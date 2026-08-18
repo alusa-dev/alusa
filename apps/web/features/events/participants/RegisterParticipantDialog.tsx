@@ -15,15 +15,14 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 
 import {
   EventApiError,
-  reactivateEventParticipant,
   registerEventParticipant,
-  removeEventParticipant,
   type SchoolEventDTO,
 } from '../events-service';
 import { EventField as Field } from '../shared/EventField';
@@ -35,8 +34,6 @@ import { useStudentAutocomplete } from './useStudentAutocomplete';
 
 type CancelledParticipantConflict = {
   participantId: string;
-  canRemove: boolean;
-  canReactivate: boolean;
   reasons: string[];
 };
 
@@ -46,8 +43,6 @@ function parseCancelledParticipantConflict(details: unknown): CancelledParticipa
   if (typeof record.participantId !== 'string') return null;
   return {
     participantId: record.participantId,
-    canRemove: record.canRemove === true,
-    canReactivate: record.canReactivate === true,
     reasons: Array.isArray(record.reasons)
       ? record.reasons.filter((reason): reason is string => typeof reason === 'string')
       : [],
@@ -56,12 +51,12 @@ function parseCancelledParticipantConflict(details: unknown): CancelledParticipa
 
 export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }: { eventId: string; event: SchoolEventDTO; open: boolean; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [billingMethod, setBillingMethod] = useState<ParticipantBillingMethod>('');
   const [chargeType, setChargeType] = useState<ParticipantChargeType>('ONE_TIME');
   const [feeText, setFeeText] = useState('');
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
   const [notificationChannels, setNotificationChannels] = useState<ParticipantNotificationChannel[]>([]);
-  const [lastPayload, setLastPayload] = useState<Record<string, unknown> | null>(null);
   const [cancelledParticipant, setCancelledParticipant] = useState<CancelledParticipantConflict | null>(null);
   const autocomplete = useStudentAutocomplete({ enabled: open });
   const {
@@ -89,7 +84,6 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
       setFeeText('');
       setDueDate(undefined);
       setNotificationChannels([]);
-      setLastPayload(null);
       setCancelledParticipant(null);
     }
   }, [open, event.registrationFee, resetAutocomplete]);
@@ -119,36 +113,20 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
     },
   });
 
-  const reactivateMutation = useMutation({
-    mutationFn: () => {
-      if (!cancelledParticipant || !lastPayload) {
-        throw new Error('Não foi possível localizar a inscrição cancelada para reinscrever.');
-      }
-      return reactivateEventParticipant(eventId, cancelledParticipant.participantId, lastPayload);
-    },
-    onSuccess: () => {
-      invalidateParticipants();
-      onOpenChange(false);
-      toast.success({ title: 'Aluno reinscrito', description: 'A inscrição foi reativada e uma nova cobrança foi gerada quando aplicável.' });
-    },
-    onError: (error) => {
-      toast.error({ title: 'Erro ao reinscrever aluno', description: error.message });
-    },
-  });
+  function handleDialogOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      onOpenChange(true);
+      return;
+    }
 
-  const removeMutation = useMutation({
-    mutationFn: (participantId: string) => removeEventParticipant(eventId, participantId),
-    onSuccess: () => {
-      invalidateParticipants();
-      setCancelledParticipant(null);
-      setLastPayload(null);
-      resetAutocomplete();
-      toast.success({ title: 'Aluno removido do evento', description: 'A inscrição cancelada sem histórico foi removida.' });
-    },
-    onError: (error) => {
-      toast.error({ title: 'Erro ao remover aluno do evento', description: error.message });
-    },
-  });
+    if (registerMutation.isPending) return;
+    setCloseConfirmOpen(true);
+  }
+
+  function confirmCloseDialog() {
+    setCloseConfirmOpen(false);
+    onOpenChange(false);
+  }
 
   function handleRegisterParticipant(formData: FormData) {
     setCancelledParticipant(null);
@@ -184,24 +162,25 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
       notificationChannelsConfigured: true,
     };
 
-    setLastPayload(payload);
     registerMutation.mutate(payload);
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <>
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogTrigger asChild>
         <Button size="sm" className={PRIMARY_BUTTON_CLASS} onClick={() => onOpenChange(true)}>
           <Plus className="mr-1.5 h-4 w-4" />
           Inscrever aluno
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Inscrever Aluno no Evento</DialogTitle>
-          <DialogDescription>Selecione um aluno cadastrado e especifique a taxa cobrada.</DialogDescription>
-        </DialogHeader>
-        <form key={open ? 'open' : 'closed'} action={handleRegisterParticipant} className="space-y-4 mt-2">
+      <DialogContent className="flex w-[calc(100vw-2rem)] max-w-md min-h-0 max-h-[min(90dvh,calc(100dvh-2rem))] flex-col gap-0 overflow-hidden bg-slate-50 p-0 sm:rounded-2xl">
+        <form key={open ? 'open' : 'closed'} action={handleRegisterParticipant} className="flex min-h-0 max-h-[min(90dvh,calc(100dvh-2rem))] flex-col overflow-hidden">
+          <DialogHeader className="shrink-0 border-b border-slate-200 bg-slate-50 px-5 py-5 pr-14 text-left sm:px-6 sm:py-6">
+            <DialogTitle className="text-xl font-semibold text-slate-900">Inscrever aluno no evento</DialogTitle>
+            <DialogDescription className="mt-2 text-sm leading-5 text-slate-600">Selecione um aluno cadastrado e especifique a taxa cobrada.</DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 [scrollbar-gutter:stable] sm:px-6 sm:py-6">
           <Field label="Aluno">
             <div className="relative">
               <Input
@@ -254,7 +233,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
           {cancelledParticipant && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
               <p className="font-semibold">Este aluno já teve uma inscrição cancelada neste evento.</p>
-              <p className="mt-1">Você pode reinscrever o aluno e gerar uma nova cobrança.</p>
+              <p className="mt-1">Exclua a inscrição cancelada antes de realizar uma nova inscrição.</p>
               {cancelledParticipant.reasons.length > 0 && (
                 <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">
                   {cancelledParticipant.reasons.map((reason) => (
@@ -262,27 +241,6 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
                   ))}
                 </ul>
               )}
-              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={!cancelledParticipant.canReactivate || reactivateMutation.isPending}
-                  onClick={() => reactivateMutation.mutate()}
-                >
-                  {reactivateMutation.isPending ? 'Reinscrevendo...' : 'Reinscrever aluno'}
-                </Button>
-                {cancelledParticipant.canRemove && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={removeMutation.isPending}
-                    onClick={() => removeMutation.mutate(cancelledParticipant.participantId)}
-                  >
-                    {removeMutation.isPending ? 'Removendo...' : 'Remover aluno do evento'}
-                  </Button>
-                )}
-              </div>
             </div>
           )}
           <ParticipantBillingFields
@@ -300,7 +258,8 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
           <Field label="Observações">
             <Textarea name="notes" className="min-h-16 rounded-lg border-slate-200" />
           </Field>
-          <DialogFooter className="pt-2">
+          </div>
+          <DialogFooter className="shrink-0 border-t border-slate-200 bg-slate-50 px-5 py-4 sm:px-6">
             <Button type="submit" disabled={registerMutation.isPending} className="w-full">
               {registerMutation.isPending ? 'Inscrevendo...' : 'Confirmar inscrição'}
             </Button>
@@ -308,5 +267,16 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
         </form>
       </DialogContent>
     </Dialog>
+    <ConfirmDialog
+      open={closeConfirmOpen}
+      onOpenChange={setCloseConfirmOpen}
+      title="Sair da inscrição?"
+      description="Os dados preenchidos serão descartados. Deseja realmente fechar este formulário?"
+      confirmText="Sair sem salvar"
+      cancelText="Continuar preenchendo"
+      variant="destructive"
+      onConfirm={confirmCloseDialog}
+    />
+    </>
   );
 }

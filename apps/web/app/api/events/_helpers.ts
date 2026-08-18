@@ -12,6 +12,7 @@ export type EventsPermission =
   | 'events.update'
   | 'events.cancel'
   | 'events.archive'
+  | 'events.deleteParticipant'
   | 'eventTickets.view'
   | 'eventTickets.manageLots'
   | 'eventTickets.createSale'
@@ -40,6 +41,7 @@ const ALL_PERMISSIONS: EventsPermission[] = [
   'events.update',
   'events.cancel',
   'events.archive',
+  'events.deleteParticipant',
   'eventTickets.view',
   'eventTickets.manageLots',
   'eventTickets.createSale',

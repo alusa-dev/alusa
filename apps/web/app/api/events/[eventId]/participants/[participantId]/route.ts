@@ -18,7 +18,6 @@ const publicOrderPaymentMethodLabels: Record<string, string> = {
 };
 
 const patchParticipantBodySchema = z.object({
-  displayName: z.string().trim().optional(),
   notes: z.string().trim().nullable().optional(),
   isFeePaid: z.boolean().optional(),
   costumes: z.array(z.object({
@@ -419,6 +418,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         asaasInstallmentId,
         eventContracts,
         consentimentos: consentimentosDaInscricao,
+        canPermanentlyDelete: ctx.role === 'ADMIN',
       },
     });
   } catch (error) {
@@ -444,11 +444,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     await prisma.$transaction(async (tx) => {
-      if (body.displayName !== undefined || body.notes !== undefined) {
+      if (body.notes !== undefined) {
         await tx.eventParticipant.update({
           where: { id: participantId },
           data: {
-            ...(body.displayName !== undefined ? { displayName: body.displayName } : {}),
             ...(body.notes !== undefined ? { notes: body.notes } : {}),
           },
         });

@@ -8,6 +8,11 @@ import {
   getEventParticipantRemovalDecision,
   reactivateEventParticipant,
 } from '@alusa/lib/events/events.service';
+import {
+  eventPaymentRulesFromRecord,
+  eventPaymentRulesToAsaas,
+  validateEventPaymentRulesForCharge,
+} from '@alusa/lib/events/events-payment-rules';
 
 import { getEventsContext, handleEventsRouteError } from '../../../../_helpers';
 
@@ -66,6 +71,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const isFeePaid = body.billingMethod === 'MANUAL_RECEIVED';
     const feePaymentMethod = isFeePaid ? body.feePaymentMethod : body.billingMethod;
+    const paymentRules = eventPaymentRulesFromRecord(participant.event);
+    const paymentRulesError = isFeePaid
+      ? null
+      : validateEventPaymentRulesForCharge(paymentRules, body.registrationFeeCharged);
+    if (paymentRulesError) {
+      throw new EventsError('REGRAS_COBRANCA_INVALIDAS', paymentRulesError, 422);
+    }
     let asaasPaymentId: string | null = null;
     let asaasInstallmentId: string | null = null;
     let standaloneChargeId: string | null = null;
@@ -90,6 +102,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           : undefined,
         notificationChannels: body.notificationChannels,
         notificationChannelsConfigured: body.notificationChannelsConfigured,
+        ...eventPaymentRulesToAsaas(paymentRules),
       });
 
       if (!billingResult.success) {

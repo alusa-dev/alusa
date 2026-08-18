@@ -85,6 +85,17 @@ type ResolvedStandaloneInstallmentPayer = {
   financialPayerName: string;
 };
 
+function paymentRulesSnapshot(input: Pick<CreateStandaloneInstallmentInput, 'interest' | 'fine' | 'discount'>) {
+  return {
+    interestValue: input.interest?.value ?? null,
+    fineValue: input.fine?.value ?? null,
+    fineType: input.fine?.type ?? null,
+    discountValue: input.discount?.value ?? null,
+    discountType: input.discount?.type ?? null,
+    discountDueDateLimitDays: input.discount?.dueDateLimitDays ?? null,
+  };
+}
+
 export async function createStandaloneInstallmentPlan(
   input: CreateStandaloneInstallmentInput
 ): Promise<Result<CreateStandaloneInstallmentOutput, CreateStandaloneInstallmentError>> {
@@ -138,6 +149,10 @@ export async function createStandaloneInstallmentPlan(
     });
 
     if (existing?.asaasInstallmentId) {
+      await prisma.standaloneInstallmentPlan.update({
+        where: { id: existing.id },
+        data: paymentRulesSnapshot(input),
+      });
       await syncInstallmentPayments({
         contaId: input.contaId,
         customerId: customer.id,
@@ -147,6 +162,7 @@ export async function createStandaloneInstallmentPlan(
         asaasInstallmentId: existing.asaasInstallmentId,
         billingType: input.billingType,
         description: input.description ?? null,
+        paymentRules: paymentRulesSnapshot(input),
       });
 
       return ok({
@@ -286,6 +302,7 @@ export async function createStandaloneInstallmentPlan(
               billingType: input.billingType,
               value: input.value,
               firstDueDate,
+              ...paymentRulesSnapshot(input),
             },
             select: {
               id: true,
@@ -311,6 +328,7 @@ export async function createStandaloneInstallmentPlan(
             value: input.value,
             firstDueDate,
             asaasInstallmentId: asaasInstallment.id,
+            ...paymentRulesSnapshot(input),
           },
           select: {
             id: true,
@@ -341,6 +359,7 @@ export async function createStandaloneInstallmentPlan(
       asaasInstallmentId: updated.asaasInstallmentId!,
       billingType: input.billingType,
       description: input.description ?? null,
+      paymentRules: paymentRulesSnapshot(input),
     });
 
     await auditLogService.record({
@@ -464,8 +483,9 @@ async function syncInstallmentPayments(params: {
   asaasInstallmentId: string;
   billingType: BillingType;
   description: string | null;
+  paymentRules: ReturnType<typeof paymentRulesSnapshot>;
 }) {
-  const { contaId, customerId, payerName, installmentPlanId, externalReference, asaasInstallmentId, billingType, description } = params;
+  const { contaId, customerId, payerName, installmentPlanId, externalReference, asaasInstallmentId, billingType, description, paymentRules } = params;
   const credentials = await loadAsaasCredentials(contaId);
   if (!credentials) return;
 
@@ -528,6 +548,7 @@ async function syncInstallmentPayments(params: {
         customerId,
         invoiceUrl: payment.invoiceUrl ?? null,
         standaloneInstallmentPlanId: installmentPlanId,
+        ...paymentRules,
         ...asaasSnapshot,
       },
       create: {
@@ -544,6 +565,7 @@ async function syncInstallmentPayments(params: {
         customerId,
         invoiceUrl: payment.invoiceUrl ?? null,
         standaloneInstallmentPlanId: installmentPlanId,
+        ...paymentRules,
         ...asaasSnapshot,
       },
     });

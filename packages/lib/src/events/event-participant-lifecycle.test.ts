@@ -26,6 +26,16 @@ describe('canRemoveEventParticipant', () => {
     expect(decision.reasons).toContain('Este participante possui lançamento financeiro realizado.');
   });
 
+  it('blocks removal when the participant has a linked contract', () => {
+    const decision = canRemoveEventParticipant({
+      cancelledAt: new Date('2026-01-01T00:00:00.000Z'),
+      eventContractCount: 1,
+    });
+
+    expect(decision.canRemove).toBe(false);
+    expect(decision.reasons).toContain('Este participante possui contrato vinculado; o histórico deve ser preservado.');
+  });
+
   it('blocks removal when the participant has a refund', () => {
     const decision = canRemoveEventParticipant({
       cancelledAt: new Date('2026-01-01T00:00:00.000Z'),

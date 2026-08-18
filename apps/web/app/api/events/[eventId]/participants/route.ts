@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { registerEventParticipantRequestSchema } from '@alusa/lib/events/events.schema';
 import { listEventParticipants, registerEventParticipant } from '@alusa/lib/events/events.service';
+import {
+  eventPaymentRulesFromRecord,
+  eventPaymentRulesToAsaas,
+  validateEventPaymentRulesForCharge,
+} from '@alusa/lib/events/events-payment-rules';
 import { createStandaloneCharge } from '@alusa/finance';
 import { prisma } from '@alusa/database';
 
@@ -17,7 +22,12 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     const { eventId } = await params;
     const ctx = await getEventsContext('events.view');
     const participants = await listEventParticipants(ctx, eventId);
-    return NextResponse.json({ data: participants });
+    return NextResponse.json({
+      data: participants.map((participant) => ({
+        ...participant,
+        canPermanentlyDelete: ctx.role === 'ADMIN',
+      })),
+    });
   } catch (error) {
     return handleEventsRouteError(error, 'ERRO_LISTAR_PARTICIPANTES');
   }
@@ -40,6 +50,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // 2. Registrar o participante localmente (isFeePaid é true se for manual/quitado na hora)
     const isFeePaid = body.billingMethod === 'MANUAL_RECEIVED';
     const feePaymentMethod = isFeePaid ? body.feePaymentMethod : body.billingMethod;
+    const paymentRules = eventPaymentRulesFromRecord(event);
+    const paymentRulesError = isFeePaid
+      ? null
+      : validateEventPaymentRulesForCharge(paymentRules, body.registrationFeeCharged);
+    if (paymentRulesError) {
+      return NextResponse.json(
+        { error: { code: 'REGRAS_COBRANCA_INVALIDAS', message: paymentRulesError } },
+        { status: 422 },
+      );
+    }
 
     const participant = await registerEventParticipant(ctx, {
       eventId,
@@ -68,6 +88,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             : undefined,
           notificationChannels: body.notificationChannels,
           notificationChannelsConfigured: body.notificationChannelsConfigured,
+          ...eventPaymentRulesToAsaas(paymentRules),
         });
 
         if (!billingResult.success) {

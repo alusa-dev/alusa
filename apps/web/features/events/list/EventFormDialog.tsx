@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
@@ -29,9 +30,18 @@ import { EventDateTimeField as DateTimeField } from '../shared/EventDateTimeFiel
 import { EventField as Field } from '../shared/EventField';
 import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
 import { eventQueryKeys } from '../shared/event-query-keys';
-import { booleanValue, datetimeValue, FILTER_INPUT_CLASS, nullableString, numberValue, OUTLINE_BUTTON_CLASS, PRIMARY_BUTTON_CLASS } from '../shared/event-form-utils';
+import { datetimeValue, FILTER_INPUT_CLASS, getRoundedNowISOString, nullableString, numberValue, OUTLINE_BUTTON_CLASS, PRIMARY_BUTTON_CLASS } from '../shared/event-form-utils';
 import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
 import { useEventResources } from '../shared/useEventResources';
+import { FieldHelpTooltip } from '@/components/ui/field-help-tooltip';
+
+type PaymentRuleType = 'FIXED' | 'PERCENTAGE';
+
+function parseOptionalNumber(value: FormDataEntryValue | null) {
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const parsed = Number(value.replace(',', '.'));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
 
 export function EventFormDialog({
   event,
@@ -45,12 +55,22 @@ export function EventFormDialog({
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [regFeeText, setRegFeeText] = useState("");
+  const [interestText, setInterestText] = useState('');
+  const [fineText, setFineText] = useState('');
+  const [discountText, setDiscountText] = useState('');
+  const [discountType, setDiscountType] = useState<PaymentRuleType>('PERCENTAGE');
+  const [discountDaysText, setDiscountDaysText] = useState('0');
   const resources = useEventResources();
 
   useEffect(() => {
     if (open) {
       const fee = event?.registrationFee ?? 0;
       setRegFeeText(fee > 0 ? fee.toFixed(2).replace('.', ',') : "");
+      setInterestText(event?.paymentRules?.interestPercent?.toString() ?? '');
+      setFineText(event?.paymentRules?.fine?.value?.toString() ?? '');
+      setDiscountText(event?.paymentRules?.discount?.value?.toString() ?? '');
+      setDiscountType(event?.paymentRules?.discount?.type ?? 'PERCENTAGE');
+      setDiscountDaysText(event?.paymentRules?.discount?.dueDateLimitDays?.toString() ?? '0');
     }
   }, [open, event]);
 
@@ -73,6 +93,27 @@ export function EventFormDialog({
     const regFeeRaw = nullableString(formData, 'registrationFee') ?? '';
     const registrationFee = regFeeRaw ? parseCurrencyInput(regFeeRaw) : undefined;
 
+    const ticketMode = nullableString(formData, 'ticketMode') ?? 'NONE';
+    const interestPercent = parseOptionalNumber(formData.get('paymentInterestPercent'));
+    const fineValue = parseOptionalNumber(formData.get('paymentFineValue'));
+    const discountValue = parseOptionalNumber(formData.get('paymentDiscountValue'));
+    const discountDays = Number(formData.get('paymentDiscountDueDateLimitDays') ?? 0);
+    const paymentRules = interestPercent || fineValue || discountValue
+      ? {
+          interestPercent,
+          fine: fineValue
+            ? { value: fineValue, type: 'PERCENTAGE' }
+            : null,
+          discount: discountValue
+            ? {
+                value: discountValue,
+                type: (formData.get('paymentDiscountType') ?? discountType) as PaymentRuleType,
+                dueDateLimitDays: Number.isFinite(discountDays) && discountDays >= 0 ? Math.trunc(discountDays) : 0,
+              }
+            : null,
+        }
+      : null;
+
     mutation.mutate({
       name: nullableString(formData, 'name'),
       type: nullableString(formData, 'type'),
@@ -83,17 +124,21 @@ export function EventFormDialog({
       locationAddress: nullableString(formData, 'locationAddress'),
       estimatedCapacity: numberValue(formData, 'estimatedCapacity'),
       responsibleUserId: nullableString(formData, 'responsibleUserId'),
-      hasTickets: booleanValue(formData, 'hasTickets'),
-      ticketMode: nullableString(formData, 'ticketMode'),
-      hasCostumes: booleanValue(formData, 'hasCostumes'),
-      hasFinancialControl: booleanValue(formData, 'hasFinancialControl'),
+      hasTickets: ticketMode !== 'NONE',
+      ticketMode,
+      // These modules are available for every event; their visibility is not
+      // a creation-time configuration option.
+      hasCostumes: event?.hasCostumes ?? true,
+      hasFinancialControl: event?.hasFinancialControl ?? true,
       registrationFee,
+      paymentRules,
       contratoModeloId: nullableString(formData, 'contratoModeloId'),
       notes: nullableString(formData, 'notes'),
     });
   }
 
   const userOptions = (resources.data?.users ?? []).map((user) => ({ value: user.id, label: user.nome }));
+  const defaultStartsAt = event?.startsAt ?? getRoundedNowISOString();
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -130,7 +175,7 @@ export function EventFormDialog({
                   />
                 </Field>
                 <Field label="Início">
-                  <DateTimeField name="startsAt" defaultValue={event?.startsAt} required />
+                  <DateTimeField name="startsAt" defaultValue={defaultStartsAt} required />
                 </Field>
                 <Field label="Fim (opcional)">
                   <DateTimeField name="endsAt" defaultValue={event?.endsAt} />
@@ -162,7 +207,11 @@ export function EventFormDialog({
             <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/40 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
               <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Contrato do evento</span>
               <div className="mt-4 max-w-xl">
-                <Field label="Modelo de contrato (opcional)">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1 text-xs font-medium text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
+                    <span>Modelo de contrato (opcional)</span>
+                    <FieldHelpTooltip content="Quando selecionado, o contrato será gerado automaticamente para cada aluno inscrito." />
+                  </div>
                   <NativeSelect
                     name="contratoModeloId"
                     defaultValue={event?.contratoModeloId ?? ''}
@@ -172,26 +221,11 @@ export function EventFormDialog({
                       label: `${modelo.nome} · versão ${modelo.versao}`,
                     }))}
                   />
-                </Field>
-                <p className="mt-2 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
-                  Quando selecionado, o contrato será gerado automaticamente para cada aluno inscrito.
-                </p>
+                </div>
               </div>
             </section>
             <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/40 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
               <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Configurações</span>
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
-                {[
-                  ['hasTickets', 'Terá ingressos?', event?.hasTickets ?? true],
-                  ['hasCostumes', 'Terá figurinos?', event?.hasCostumes ?? true],
-                  ['hasFinancialControl', 'Controle financeiro?', event?.hasFinancialControl ?? true],
-                ].map(([name, label, checked]) => (
-                  <label key={String(name)} className="flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700">
-                    <input name={String(name)} type="checkbox" defaultChecked={Boolean(checked)} className="h-4 w-4 rounded border-slate-300 accent-violet-700" />
-                    {label}
-                  </label>
-                ))}
-              </div>
               <div className="mt-4">
                 <div className="grid gap-4 md:grid-cols-2">
                 <Field label="Tipo de ingresso">
@@ -222,6 +256,99 @@ export function EventFormDialog({
                   <Textarea name="notes" defaultValue={event?.notes ?? ''} className="min-h-20 rounded-lg border-slate-200 shadow-none" />
                 </Field>
               </div>
+            </section>
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/40 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+              <div>
+                <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Juros e Multa</span>
+                <p className="mt-1 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
+                  Configure multa, juros e desconto por antecipação. Os campos são opcionais.
+                </p>
+              </div>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+                  <h3 className="mb-1 text-sm font-semibold text-gray-900">Multa por atraso</h3>
+                  <p className="mb-3 text-xs text-gray-500">Aplicada no dia seguinte ao vencimento</p>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      name="paymentFineValue"
+                      type="number"
+                      min={0}
+                      max={10}
+                      step={0.1}
+                      placeholder="Ex: 2.0"
+                      value={fineText}
+                      onChange={(e) => setFineText(e.target.value)}
+                      className="h-9 w-24 rounded-md border-gray-300 text-sm"
+                    />
+                    <span className="text-sm text-gray-600">%</span>
+                    <span className="ml-auto text-xs text-gray-400">máx. 10%</span>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+                  <h3 className="mb-1 text-sm font-semibold text-gray-900">Juros mensais</h3>
+                  <p className="mb-3 text-xs text-gray-500">Aplicados proporcionalmente aos dias em atraso</p>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      name="paymentInterestPercent"
+                      type="number"
+                      min={0}
+                      max={5}
+                      step={0.1}
+                      placeholder="Ex: 1.0"
+                      value={interestText}
+                      onChange={(e) => setInterestText(e.target.value)}
+                      className="h-9 w-24 rounded-md border-gray-300 text-sm"
+                    />
+                    <span className="text-sm text-gray-600">% a.m.</span>
+                    <span className="ml-auto text-xs text-gray-400">máx. 5%</span>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+                <h3 className="mb-1 text-sm font-semibold text-gray-900">Desconto por antecipação</h3>
+                <p className="mb-3 text-xs text-gray-500">Incentivo para pagamento antes do vencimento</p>
+                <div className="flex flex-wrap items-end gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-gray-600">Tipo</label>
+                    <input type="hidden" name="paymentDiscountType" value={discountType} />
+                    <Tabs value={discountType} onValueChange={(value) => setDiscountType(value as PaymentRuleType)}>
+                      <TabsList className="h-10 rounded-xl bg-slate-100/80 p-1">
+                        <TabsTrigger value="PERCENTAGE" className="h-8 min-w-24 rounded-lg px-4 py-0 text-sm shadow-none">%</TabsTrigger>
+                        <TabsTrigger value="FIXED" className="h-8 min-w-24 rounded-lg px-4 py-0 text-sm shadow-none">R$</TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-gray-600">Valor</label>
+                    <Input
+                      name="paymentDiscountValue"
+                      type="number"
+                      min={0}
+                      max={discountType === 'PERCENTAGE' ? 100 : 99999}
+                      step={0.1}
+                      placeholder={discountType === 'PERCENTAGE' ? '5.0' : '10.00'}
+                      value={discountText}
+                      onChange={(e) => setDiscountText(e.target.value)}
+                      className="h-9 w-24 rounded-md border-gray-300 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-gray-600">Prazo (dias antes)</label>
+                    <Input
+                      name="paymentDiscountDueDateLimitDays"
+                      type="number"
+                      min={0}
+                      max={30}
+                      value={discountDaysText}
+                      onChange={(e) => setDiscountDaysText(e.target.value)}
+                      placeholder="0"
+                      className="h-9 w-20 rounded-md border-gray-300 text-sm"
+                    />
+                  </div>
+                  <span className="pb-2 text-xs text-gray-400">0 = válido até o vencimento</span>
+                </div>
+              </div>
+              <p className="mt-4 text-xs text-gray-500">Deixe os campos vazios para não aplicar estas configurações.</p>
             </section>
           </div>
           <DialogFooter className="shrink-0 border-t border-slate-200 bg-slate-50 px-4 py-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] md:px-8">

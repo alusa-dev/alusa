@@ -13,6 +13,7 @@ import {
   SCHOOL_EVENT_STATUSES,
   SCHOOL_EVENT_TYPES,
 } from '@alusa/shared';
+import { EVENT_PAYMENT_RULE_TYPES } from './events-payment-rules';
 
 const emptyToUndefined = (value: unknown) =>
   typeof value === 'string' && value.trim() === '' ? undefined : value;
@@ -36,6 +37,28 @@ const eventCostumeAssignmentBillingModes = [
   'SEPARATE_CHARGE',
   'FREE',
 ] as const;
+
+const eventPaymentRulesSchema = z.object({
+  interestPercent: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().finite().min(0).max(5).optional().nullable(),
+  ),
+  fine: z
+    .object({
+      value: z.coerce.number().finite().min(0).max(1000000),
+      type: z.enum(EVENT_PAYMENT_RULE_TYPES),
+    })
+    .optional()
+    .nullable(),
+  discount: z
+    .object({
+      value: z.coerce.number().finite().min(0).max(1000000),
+      type: z.enum(EVENT_PAYMENT_RULE_TYPES),
+      dueDateLimitDays: z.coerce.number().int().min(0).max(30),
+    })
+    .optional()
+    .nullable(),
+});
 
 export const eventIdSchema = z.string().trim().min(1);
 
@@ -70,6 +93,7 @@ const schoolEventBaseSchema = z
     hasCostumes: z.coerce.boolean().optional().default(false),
     hasFinancialControl: z.coerce.boolean().optional().default(true),
     registrationFee: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
+    paymentRules: eventPaymentRulesSchema.optional().nullable(),
     contratoModeloId: optionalId,
     notes: optionalText,
   });

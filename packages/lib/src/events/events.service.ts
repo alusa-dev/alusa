@@ -51,6 +51,11 @@ import type {
   ReactivateEventParticipantInput,
   QuitarParticipantFeeInput,
 } from './events.schema';
+import {
+  eventPaymentRulesFromRecord,
+  eventPaymentRulesToPersistence,
+  normalizeEventPaymentRules,
+} from './events-payment-rules';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -69,6 +74,11 @@ export class EventsError extends Error {
 export type EventsContext = {
   contaId: string;
   userId: string;
+};
+
+export type PermanentlyDeleteEventParticipantInput = {
+  confirmation: string;
+  motivo: string;
 };
 
 export type PaginationInput = {
@@ -270,6 +280,7 @@ export function mapSchoolEvent(record: SchoolEventRecord, paymentSnapshots?: Map
     hasFinancialControl: record.hasFinancialControl,
     notes: record.notes,
     registrationFee: toMoney(record.registrationFee),
+    paymentRules: eventPaymentRulesFromRecord(record),
     contratoModeloId: record.contratoModeloId ?? null,
     createdByUserId: record.createdByUserId,
     createdBy: record.createdBy,
@@ -518,6 +529,8 @@ export async function createSchoolEvent(ctx: EventsContext, input: CreateSchoolE
       if (!modelo) throw new EventsError('MODELO_CONTRATO_NAO_ENCONTRADO', 'Modelo de contrato não encontrado.', 422);
     }
     const ticketSettings = resolveTicketSettings(input);
+    const paymentRules = normalizeEventPaymentRules(input.paymentRules);
+    const paymentRulesPersistence = eventPaymentRulesToPersistence(paymentRules);
     const created = await tx.schoolEvent.create({
       data: {
         contaId: ctx.contaId,
@@ -536,6 +549,7 @@ export async function createSchoolEvent(ctx: EventsContext, input: CreateSchoolE
         hasCostumes: input.hasCostumes,
         hasFinancialControl: input.hasFinancialControl,
         registrationFee: input.registrationFee != null ? decimal(input.registrationFee) : null,
+        ...paymentRulesPersistence,
         contratoModeloId: input.contratoModeloId ?? null,
         notes: input.notes,
         createdByUserId: ctx.userId,
@@ -571,6 +585,10 @@ export async function updateSchoolEvent(ctx: EventsContext, eventId: string, inp
       if (!modelo) throw new EventsError('MODELO_CONTRATO_NAO_ENCONTRADO', 'Modelo de contrato não encontrado.', 422);
     }
     const ticketSettings = resolveTicketSettings(input, current);
+    const paymentRules = normalizeEventPaymentRules(input.paymentRules);
+    const paymentRulesPersistence = input.paymentRules === undefined
+      ? {}
+      : eventPaymentRulesToPersistence(paymentRules);
 
     const updated = await tx.schoolEvent.update({
       where: { id: eventId },
@@ -589,6 +607,7 @@ export async function updateSchoolEvent(ctx: EventsContext, eventId: string, inp
         hasCostumes: input.hasCostumes,
         hasFinancialControl: input.hasFinancialControl,
         registrationFee: input.registrationFee != null ? decimal(input.registrationFee) : null,
+        ...paymentRulesPersistence,
         contratoModeloId: input.contratoModeloId,
         notes: input.notes,
       },
@@ -2335,7 +2354,7 @@ async function buildEventParticipantRemovalDecision(
 
   const buyerEmails = normalizeParticipantEmails(participant);
 
-  const [ticketSales, costumeAssignments, publicOrders] = await Promise.all([
+  const [ticketSales, costumeAssignments, publicOrders, eventContractCount] = await Promise.all([
     ticketOwnerFilters.length > 0
       ? db.eventTicketSale.findMany({
           where: {
@@ -2379,10 +2398,14 @@ async function buildEventParticipantRemovalDecision(
           },
         })
       : Promise.resolve([]),
+    db.eventoContrato.count({
+      where: { contaId: ctx.contaId, eventId, participantId: participant.id },
+    }),
   ]);
 
   const facts: EventParticipantRemovalFacts = {
     cancelledAt: participant.cancelledAt,
+    eventContractCount,
     isFeePaid: participant.isFeePaid,
     feePaidAmount: toMoney(participant.feePaidAmount),
     feeRefundedAmount: toMoney(participant.feeRefundedAmount),
@@ -2482,6 +2505,7 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
 
     let revenueEntryId: string | null = null;
     const feeCharged = input.registrationFeeCharged ?? 0;
+    const registrationPaymentRules = eventPaymentRulesFromRecord(event);
 
     // A digital charge is persisted by the financial/Asaas flow. Creating a
     // local entry here would duplicate the installment in the billing list.
@@ -2513,6 +2537,7 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
         alunoId: input.alunoId,
         displayName: aluno.nome,
         registrationFeeCharged: decimal(feeCharged),
+        registrationPaymentRules: registrationPaymentRules ?? Prisma.JsonNull,
         isFeePaid: input.isFeePaid ?? false,
         feePaymentMethod: input.feePaymentMethod ?? null,
         revenueEntryId,
@@ -2712,6 +2737,103 @@ export async function removeCancelledEventParticipant(ctx: EventsContext, eventI
   });
 }
 
+export async function permanentlyDeleteEventParticipant(
+  ctx: EventsContext,
+  eventId: string,
+  participantId: string,
+  input: PermanentlyDeleteEventParticipantInput,
+) {
+  const confirmation = input.confirmation.trim();
+  const motivo = input.motivo.trim();
+
+  return prisma.$transaction(async (tx) => {
+    const participant = await tx.eventParticipant.findFirst({
+      where: { id: participantId, eventId, contaId: ctx.contaId },
+      include: {
+        event: { select: { id: true, name: true, status: true } },
+        aluno: { select: { id: true, nome: true, cpf: true } },
+        responsavel: { select: { id: true, nome: true, cpf: true } },
+      },
+    });
+
+    if (!participant) {
+      throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
+    }
+
+    if (!participant.cancelledAt) {
+      throw new EventsError(
+        'PARTICIPANTE_NAO_CANCELADO',
+        'Cancele a inscrição antes de excluí-la definitivamente.',
+        409,
+      );
+    }
+
+    if (!motivo) {
+      throw new EventsError('MOTIVO_OBRIGATORIO', 'Informe o motivo da exclusão definitiva.', 422);
+    }
+
+    const expectedConfirmation = 'EXCLUIR';
+    if (confirmation !== expectedConfirmation) {
+      throw new EventsError(
+        'CONFIRMACAO_INVALIDA',
+        `Digite exatamente "${expectedConfirmation}" para confirmar a exclusão.`,
+        422,
+      );
+    }
+
+    const contracts = await tx.eventoContrato.findMany({
+      where: { contaId: ctx.contaId, eventId, participantId },
+      select: { id: true },
+    });
+    const contractIds = contracts.map((contract) => contract.id);
+
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.participant.permanent_delete',
+      entityType: 'EventParticipant',
+      entityId: participantId,
+      eventId,
+      before: participant,
+      after: null,
+      metadata: {
+        motivo,
+        destructive: true,
+        deletedContractIds: contractIds,
+        preservedOperationalRecords: true,
+        eventStatus: participant.event.status,
+      },
+    });
+
+    if (contractIds.length > 0) {
+      await tx.consentRecord.deleteMany({
+        where: {
+          contaId: ctx.contaId,
+          OR: contractIds.map((contractId) => ({ source: { startsWith: `EVENT_CONTRACT:${contractId}:` } })),
+        },
+      });
+      await tx.eventoContratoDocumento.deleteMany({
+        where: { contaId: ctx.contaId, eventoContratoId: { in: contractIds } },
+      });
+      await tx.eventoContratoEvidence.deleteMany({
+        where: { contaId: ctx.contaId, eventoContratoId: { in: contractIds } },
+      });
+      await tx.eventoContrato.deleteMany({
+        where: { contaId: ctx.contaId, eventId, participantId },
+      });
+    }
+
+    const deleted = await tx.eventParticipant.deleteMany({
+      where: { id: participantId, contaId: ctx.contaId, eventId },
+    });
+    if (deleted.count !== 1) {
+      throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'A inscrição não está mais disponível para exclusão.', 404);
+    }
+
+    return { ok: true as const };
+  });
+}
+
 export async function reactivateEventParticipant(
   ctx: EventsContext,
   eventId: string,
@@ -2753,6 +2875,7 @@ export async function reactivateEventParticipant(
     const isFeePaid = input.isFeePaid ?? false;
     const dueDate = input.dueDate ?? new Date();
     let revenueEntryId: string | null = null;
+    const registrationPaymentRules = eventPaymentRulesFromRecord(participant.event);
 
     if (feeCharged > 0 && isFeePaid) {
       const entry = await tx.eventFinancialEntry.create({
@@ -2781,6 +2904,7 @@ export async function reactivateEventParticipant(
       where: { id: participantId },
       data: {
         registrationFeeCharged: decimal(feeCharged),
+        registrationPaymentRules: registrationPaymentRules ?? Prisma.JsonNull,
         isFeePaid,
         feePaymentMethod: feeCharged > 0 ? (input.feePaymentMethod ?? null) : null,
         revenueEntryId,

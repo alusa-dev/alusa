@@ -224,9 +224,45 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return jsonError(404, 'PARTICIPANTE_NAO_ENCONTRADO', 'Inscrição não encontrada.');
     }
 
-    // 2. Find the asaasInstallmentId for this participant's charges
-    let asaasInstallmentId: string | null = null;
+    // 2. Resolve the Asaas installment from the durable participant link first.
+    // The event registration flow persists the installment id directly on the
+    // participant. Older records may only have it discoverable through their
+    // financial entries/charges, so those paths remain as fallbacks below.
+    let asaasInstallmentId: string | null = participant.asaasInstallmentId;
     let localPlanId: string | null = null;
+
+    if (asaasInstallmentId) {
+      const directPlan = await prisma.standaloneInstallmentPlan.findFirst({
+        where: {
+          contaId: ctx.contaId,
+          asaasInstallmentId,
+        },
+        select: { id: true, asaasInstallmentId: true },
+      });
+
+      if (directPlan) {
+        localPlanId = directPlan.id;
+        asaasInstallmentId = directPlan.asaasInstallmentId;
+      }
+    }
+
+    // New event registrations also keep the local installment-plan id in
+    // standaloneChargeId. This fallback supports records created before the
+    // Asaas installment id was copied to EventParticipant.
+    if (!localPlanId && participant.standaloneChargeId) {
+      const localPlan = await prisma.standaloneInstallmentPlan.findFirst({
+        where: {
+          id: participant.standaloneChargeId,
+          contaId: ctx.contaId,
+        },
+        select: { id: true, asaasInstallmentId: true },
+      });
+
+      if (localPlan?.asaasInstallmentId) {
+        localPlanId = localPlan.id;
+        asaasInstallmentId = localPlan.asaasInstallmentId;
+      }
+    }
     
     let entryIds: string[] = [];
     if (participant.revenueEntryId) {
@@ -272,7 +308,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           select: { id: true, asaasInstallmentId: true, billingType: true },
         });
 
-        if (plans.length > 0) {
+        if (!localPlanId && plans.length > 0) {
           asaasInstallmentId = plans[0].asaasInstallmentId;
           localPlanId = plans[0].id;
         }

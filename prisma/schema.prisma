@@ -1414,21 +1414,21 @@ model Conta {
 /// Lead capturado pela página pública de acesso antecipado.
 /// Não é tenant-scoped: ainda não representa uma Conta criada na plataforma.
 model EarlyAccessLead {
-  id              String   @id @default(cuid())
-  institutionName String
-  contactName     String
-  role            String?
-  email           String   @unique
-  phone           String?
-  studentsRange   String?
-  mainChallenge   String?
-  marketingConsent Boolean  @default(false)
-  marketingConsentAt DateTime?
-  marketingConsentIp String?
+  id                        String    @id @default(cuid())
+  institutionName           String
+  contactName               String
+  role                      String?
+  email                     String    @unique
+  phone                     String?
+  studentsRange             String?
+  mainChallenge             String?
+  marketingConsent          Boolean   @default(false)
+  marketingConsentAt        DateTime?
+  marketingConsentIp        String?
   marketingConsentUserAgent String?
-  source          String   @default("acesso-antecipado")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  source                    String    @default("acesso-antecipado")
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
 
   @@index([createdAt])
   @@index([source, createdAt])
@@ -3641,9 +3641,9 @@ model ConsentRecord {
   conta Conta    @relation(fields: [contaId], references: [id], onDelete: Restrict)
   user  Usuario? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  @@unique([contaId, source], name: "uq_consent_record_conta_source")
   @@index([contaId, subjectType, subjectId], name: "idx_consent_record_subject")
   @@index([contaId, consentType, status], name: "idx_consent_record_type_status")
-  @@unique([contaId, source], name: "uq_consent_record_conta_source")
   @@index([userId])
 }
 
@@ -3767,42 +3767,42 @@ model LogIntegracao {
 }
 
 model PlatformBillingAccount {
-  id                       String                         @id @default(cuid())
-  contaId                  String
-  environment              PlatformBillingEnvironment
-  status                   PlatformBillingAccountStatus   @default(NOT_STARTED)
-  planCode                 PlatformBillingPlanCode?
-  stripeCustomerId         String?
-  stripeSubscriptionId     String?
-  stripePriceId            String?
-  currentPeriodEnd         DateTime?
-  cancelAtPeriodEnd        Boolean                        @default(false)
-  trialEndsAt              DateTime?
-  trialWillEndNotifiedAt   DateTime?
-  accessStatus             PlatformBillingAccessStatus    @default(PENDING)
-  gracePeriodEndsAt        DateTime?
-  restrictedAt             DateTime?
-  canceledAt               DateTime?
-  lastPaymentFailedAt      DateTime?
-  firstPaidAt              DateTime?
-  lastSuccessfulPaymentAt  DateTime?
-  paymentMethodStatus      PlatformBillingPaymentMethodStatus @default(UNKNOWN)
-  paymentMethodType        String?
-  paymentMethodBrand       String?
-  paymentMethodLast4       String?
-  paymentMethodExpMonth    Int?
-  paymentMethodExpYear     Int?
-  restrictionReason        PlatformBillingRestrictionReason?
-  gracePeriodStartedAt     DateTime?
-  accessStateVersion       Int                            @default(0)
+  id                         String                             @id @default(cuid())
+  contaId                    String
+  environment                PlatformBillingEnvironment
+  status                     PlatformBillingAccountStatus       @default(NOT_STARTED)
+  planCode                   PlatformBillingPlanCode?
+  stripeCustomerId           String?
+  stripeSubscriptionId       String?
+  stripePriceId              String?
+  currentPeriodEnd           DateTime?
+  cancelAtPeriodEnd          Boolean                            @default(false)
+  trialEndsAt                DateTime?
+  trialWillEndNotifiedAt     DateTime?
+  accessStatus               PlatformBillingAccessStatus        @default(PENDING)
+  gracePeriodEndsAt          DateTime?
+  restrictedAt               DateTime?
+  canceledAt                 DateTime?
+  lastPaymentFailedAt        DateTime?
+  firstPaidAt                DateTime?
+  lastSuccessfulPaymentAt    DateTime?
+  paymentMethodStatus        PlatformBillingPaymentMethodStatus @default(UNKNOWN)
+  paymentMethodType          String?
+  paymentMethodBrand         String?
+  paymentMethodLast4         String?
+  paymentMethodExpMonth      Int?
+  paymentMethodExpYear       Int?
+  restrictionReason          PlatformBillingRestrictionReason?
+  gracePeriodStartedAt       DateTime?
+  accessStateVersion         Int                                @default(0)
   lastProviderEventCreatedAt DateTime?
-  lastReconciledAt         DateTime?
-  pendingPlanCode          PlatformBillingPlanCode?
-  pendingChangeType        PlatformBillingPlanChangeType?
-  pendingChangeEffectiveAt DateTime?
-  lastStripeEventId        String?
-  createdAt                DateTime                       @default(now())
-  updatedAt                DateTime                       @updatedAt
+  lastReconciledAt           DateTime?
+  pendingPlanCode            PlatformBillingPlanCode?
+  pendingChangeType          PlatformBillingPlanChangeType?
+  pendingChangeEffectiveAt   DateTime?
+  lastStripeEventId          String?
+  createdAt                  DateTime                           @default(now())
+  updatedAt                  DateTime                           @updatedAt
 
   conta            Conta                            @relation(fields: [contaId], references: [id], onDelete: Cascade)
   checkoutSessions PlatformBillingCheckoutSession[]
@@ -4224,31 +4224,37 @@ model PortalEventoInscricao {
 // --- Eventos escolares gerenciados internamente ---
 
 model SchoolEvent {
-  id                  String            @id @default(cuid())
-  contaId             String
-  name                String
-  description         String?
-  type                SchoolEventType
-  status              SchoolEventStatus @default(PLANNING)
-  startsAt            DateTime
-  endsAt              DateTime?
-  locationName        String?
-  locationAddress     String?
-  estimatedCapacity   Int?
-  responsibleUserId   String?
-  hasTickets          Boolean           @default(false)
-  ticketMode          EventTicketMode   @default(NONE)
-  hasCostumes         Boolean           @default(false)
-  hasFinancialControl Boolean           @default(true)
-  registrationFee     Decimal?          @db.Decimal(12, 2)
-  contratoModeloId    String?
-  notes               String?
-  createdByUserId     String?
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
-  cancelledAt         DateTime?
-  finishedAt          DateTime?
-  archivedAt          DateTime?
+  id                              String            @id @default(cuid())
+  contaId                         String
+  name                            String
+  description                     String?
+  type                            SchoolEventType
+  status                          SchoolEventStatus @default(PLANNING)
+  startsAt                        DateTime
+  endsAt                          DateTime?
+  locationName                    String?
+  locationAddress                 String?
+  estimatedCapacity               Int?
+  responsibleUserId               String?
+  hasTickets                      Boolean           @default(false)
+  ticketMode                      EventTicketMode   @default(NONE)
+  hasCostumes                     Boolean           @default(false)
+  hasFinancialControl             Boolean           @default(true)
+  registrationFee                 Decimal?          @db.Decimal(12, 2)
+  paymentInterestValue            Decimal?          @db.Decimal(12, 2)
+  paymentFineValue                Decimal?          @db.Decimal(12, 2)
+  paymentFineType                 String?
+  paymentDiscountValue            Decimal?          @db.Decimal(12, 2)
+  paymentDiscountType             String?
+  paymentDiscountDueDateLimitDays Int?
+  contratoModeloId                String?
+  notes                           String?
+  createdByUserId                 String?
+  createdAt                       DateTime          @default(now())
+  updatedAt                       DateTime          @updatedAt
+  cancelledAt                     DateTime?
+  finishedAt                      DateTime?
+  archivedAt                      DateTime?
 
   conta            Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
   responsibleUser  Usuario?                 @relation("SchoolEventResponsibleUser", fields: [responsibleUserId], references: [id], onDelete: SetNull)
@@ -4856,29 +4862,30 @@ model EventFinancialEntry {
 }
 
 model EventParticipant {
-  id                      String               @id @default(cuid())
-  contaId                 String
-  eventId                 String
-  type                    EventParticipantType
-  alunoId                 String?
-  turmaId                 String?
-  responsavelId           String?
-  displayName             String?
-  notes                   String?
-  registrationFeeCharged  Decimal              @default(0) @db.Decimal(12, 2)
-  isFeePaid               Boolean              @default(false)
-  feePaymentMethod        String?
-  revenueEntryId          String?
-  financialStatusSnapshot String?
-  feePaidAmount           Decimal              @default(0) @db.Decimal(12, 2)
-  feeRefundedAmount       Decimal              @default(0) @db.Decimal(12, 2)
-  standaloneChargeId      String?
-  asaasPaymentId          String?
-  asaasInstallmentId      String?
-  cancelledAt             DateTime?
-  cancelledReason         String?
-  createdAt               DateTime             @default(now())
-  updatedAt               DateTime             @updatedAt
+  id                       String               @id @default(cuid())
+  contaId                  String
+  eventId                  String
+  type                     EventParticipantType
+  alunoId                  String?
+  turmaId                  String?
+  responsavelId            String?
+  displayName              String?
+  notes                    String?
+  registrationFeeCharged   Decimal              @default(0) @db.Decimal(12, 2)
+  registrationPaymentRules Json?
+  isFeePaid                Boolean              @default(false)
+  feePaymentMethod         String?
+  revenueEntryId           String?
+  financialStatusSnapshot  String?
+  feePaidAmount            Decimal              @default(0) @db.Decimal(12, 2)
+  feeRefundedAmount        Decimal              @default(0) @db.Decimal(12, 2)
+  standaloneChargeId       String?
+  asaasPaymentId           String?
+  asaasInstallmentId       String?
+  cancelledAt              DateTime?
+  cancelledReason          String?
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
 
   conta       Conta            @relation(fields: [contaId], references: [id], onDelete: Cascade)
   event       SchoolEvent      @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -4956,7 +4963,7 @@ model ContratoModelo {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  conta           Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta           Conta                         @relation(fields: [contaId], references: [id], onDelete: Cascade)
   contratos       Contrato[]
   contratosEvento EventoContrato[]
   schoolEvents    SchoolEvent[]
@@ -5038,7 +5045,7 @@ model ContratoConsentimentoTemplate {
   createdAt      DateTime                            @default(now())
   updatedAt      DateTime                            @updatedAt
 
-  conta          Conta?                          @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta          Conta?                        @relation(fields: [contaId], references: [id], onDelete: Cascade)
   consentimentos ContratoModeloConsentimento[]
 
   @@unique([contaId, slug, versao], name: "uq_contrato_consentimento_template_scope_slug_versao")
@@ -5048,25 +5055,25 @@ model ContratoConsentimentoTemplate {
 }
 
 model ContratoModeloConsentimento {
-  id                    String                            @id @default(cuid())
-  contaId               String
-  modeloId              String
-  codigo                String
-  templateId            String?
-  templateVersao       Int?
-  finalidade            ContratoConsentimentoFinalidade
-  titulo                String
-  texto                 String                            @db.Text
-  papel                 ContratoConsentimentoPapel       @default(RESPONSAVEL_OU_ALUNO)
-  obrigatorio           Boolean                           @default(true)
+  id                     String                          @id @default(cuid())
+  contaId                String
+  modeloId               String
+  codigo                 String
+  templateId             String?
+  templateVersao         Int?
+  finalidade             ContratoConsentimentoFinalidade
+  titulo                 String
+  texto                  String                          @db.Text
+  papel                  ContratoConsentimentoPapel      @default(RESPONSAVEL_OU_ALUNO)
+  obrigatorio            Boolean                         @default(true)
   // @deprecated: mantido para compatibilidade histórica; recusas nunca bloqueiam a assinatura.
   recusaImpedeAssinatura Boolean                         @default(false)
-  ordem                 Int                               @default(0)
-  createdAt             DateTime                          @default(now())
-  updatedAt             DateTime                          @updatedAt
+  ordem                  Int                             @default(0)
+  createdAt              DateTime                        @default(now())
+  updatedAt              DateTime                        @updatedAt
 
-  conta  Conta          @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  modelo   ContratoModelo                  @relation(fields: [modeloId], references: [id], onDelete: Cascade)
+  conta    Conta                          @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  modelo   ContratoModelo                 @relation(fields: [modeloId], references: [id], onDelete: Cascade)
   template ContratoConsentimentoTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
   @@unique([contaId, modeloId, codigo], name: "uq_contrato_modelo_consentimento_codigo")
@@ -5099,15 +5106,15 @@ model Contrato {
   contratoOrigemId String?
 
   // PDF apresentado ao assinante. Mantido por compatibilidade com o fluxo legado.
-  arquivoPdfUrl            String
-  hashPdf                  String
-  arquivoPdfAssinadoUrl    String?
-  hashPdfAssinado          String?
+  arquivoPdfUrl               String
+  hashPdf                     String
+  arquivoPdfAssinadoUrl       String?
+  hashPdfAssinado             String?
   // Snapshot imutável dos campos usados neste contrato no momento da geração.
-  camposAssinaturaSnapshot Json?
+  camposAssinaturaSnapshot    Json?
   // Snapshot e decisões de consentimento apresentados/registrados neste contrato.
   termosConsentimentoSnapshot Json?
-  decisoesConsentimento      Json?
+  decisoesConsentimento       Json?
 
   // @deprecated - Campo legado para migração
   conteudoFinal String? @db.Text // HTML renderizado (contratos antigos)
@@ -5160,34 +5167,34 @@ model Contrato {
 // Contratos operacionais gerados para a participação de um aluno em um evento.
 // Mantido separado de Contrato para não alterar o ciclo de vida acadêmico da matrícula.
 model EventoContrato {
-  id                       String           @id @default(cuid())
-  contaId                  String
-  eventId                  String
-  participantId            String
-  alunoId                  String
-  responsavelId            String?
-  modeloId                 String
-  arquivoPdfUrl            String
-  hashPdf                  String
-  arquivoPdfAssinadoUrl    String?
-  hashPdfAssinado          String?
-  camposAssinaturaSnapshot Json?
+  id                          String           @id @default(cuid())
+  contaId                     String
+  eventId                     String
+  participantId               String
+  alunoId                     String
+  responsavelId               String?
+  modeloId                    String
+  arquivoPdfUrl               String
+  hashPdf                     String
+  arquivoPdfAssinadoUrl       String?
+  hashPdfAssinado             String?
+  camposAssinaturaSnapshot    Json?
   termosConsentimentoSnapshot Json?
-  decisoesConsentimento      Json?
-  status                   StatusAssinatura @default(PENDENTE)
-  assinadoPor              String?
-  assinadoEmail            String?
-  assinadoCpf              String?
-  assinadoIp               String?
-  assinadoEm               DateTime?
-  assinadoUserAgent        String?
-  hashAssinatura           String?
-  tokenPublico             String           @unique @default(cuid())
-  tokenPublicoHash         String?
-  tokenExpiraEm            DateTime?
-  createdByUserId          String?
-  createdAt                DateTime         @default(now())
-  updatedAt                DateTime         @updatedAt
+  decisoesConsentimento       Json?
+  status                      StatusAssinatura @default(PENDENTE)
+  assinadoPor                 String?
+  assinadoEmail               String?
+  assinadoCpf                 String?
+  assinadoIp                  String?
+  assinadoEm                  DateTime?
+  assinadoUserAgent           String?
+  hashAssinatura              String?
+  tokenPublico                String           @unique @default(cuid())
+  tokenPublicoHash            String?
+  tokenExpiraEm               DateTime?
+  createdByUserId             String?
+  createdAt                   DateTime         @default(now())
+  updatedAt                   DateTime         @updatedAt
 
   conta       Conta                     @relation(fields: [contaId], references: [id], onDelete: Restrict)
   evento      SchoolEvent               @relation(fields: [eventId], references: [id], onDelete: Restrict)
@@ -5844,6 +5851,15 @@ model Charge {
   invoiceUrl    String? // Link de pagamento (invoiceUrl do Asaas)
   familyGroupId String?
 
+  // Snapshot das regras aplicadas no momento da emissão.
+  // Não deve ser recalculado a partir da configuração atual do evento.
+  interestValue            Decimal? @db.Decimal(12, 2)
+  fineValue                Decimal? @db.Decimal(12, 2)
+  fineType                 String?
+  discountValue            Decimal? @db.Decimal(12, 2)
+  discountType             String?
+  discountDueDateLimitDays Int?
+
   standaloneInstallmentPlanId String?
   standaloneSubscriptionId    String?
 
@@ -6304,6 +6320,14 @@ model StandaloneInstallmentPlan {
   value            Decimal  @db.Decimal(12, 2)
   firstDueDate     DateTime
   familyGroupId    String?
+
+  // Snapshot das regras usado por todas as parcelas do plano.
+  interestValue            Decimal? @db.Decimal(12, 2)
+  fineValue                Decimal? @db.Decimal(12, 2)
+  fineType                 String?
+  discountValue            Decimal? @db.Decimal(12, 2)
+  discountType             String?
+  discountDueDateLimitDays Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

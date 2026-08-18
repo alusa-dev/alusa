@@ -1,6 +1,6 @@
 'use client';
 
-import { Ban, Eye, MoreVertical, RotateCcw, UserMinus } from 'lucide-react';
+import { Ban, Eye, MoreVertical, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -13,27 +13,17 @@ import {
 
 export function ParticipantActions({
   isCancelled,
-  canRemove,
-  canReactivate,
-  removeReasons,
+  canPermanentlyDelete,
   onView,
   onCancel,
-  onReactivate,
-  onRemove,
+  onPermanentDelete,
 }: {
   isCancelled: boolean;
-  canRemove: boolean;
-  canReactivate: boolean;
-  removeReasons: string[];
+  canPermanentlyDelete: boolean;
   onView: () => void;
   onCancel: () => void;
-  onReactivate: () => void;
-  onRemove: () => void;
+  onPermanentDelete: () => void;
 }) {
-  const removeTitle = canRemove
-    ? 'Remover aluno do evento'
-    : removeReasons[0] ?? 'Este participante possui histórico e não pode ser removido com segurança.';
-
   return (
     <div className="flex justify-end" onClick={(event) => event.stopPropagation()}>
       <DropdownMenu>
@@ -50,19 +40,15 @@ export function ParticipantActions({
           <DropdownMenuSeparator />
           {isCancelled ? (
             <>
-              <DropdownMenuItem disabled={!canReactivate} onClick={onReactivate}>
-                <RotateCcw className="mr-2 h-4 w-4" />
-                Reinscrever aluno
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="text-rose-700 focus:text-rose-700"
-                disabled={!canRemove}
-                onClick={onRemove}
-                title={removeTitle}
-              >
-                <UserMinus className="mr-2 h-4 w-4" />
-                Remover aluno do evento
-              </DropdownMenuItem>
+              {canPermanentlyDelete && (
+                <DropdownMenuItem
+                  className="text-rose-800 focus:text-rose-800"
+                  onClick={onPermanentDelete}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Excluir Inscrito
+                </DropdownMenuItem>
+              )}
             </>
           ) : (
             <DropdownMenuItem className="text-rose-700 focus:text-rose-700" onClick={onCancel}>

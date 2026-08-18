@@ -9,6 +9,7 @@ import {
   resolveContractConsentAnswers,
   isMaiorDeIdade,
   renderContractConsentTemplate,
+  type ContractConsentRenderContext,
   type ContractConsentAnswer,
   type ContractConsentTermSnapshot,
 } from '@alusa/domain';
@@ -130,8 +131,68 @@ function snapshotFields(fields: Array<{
   return fields.map((field) => ({ ...field }));
 }
 
+function getEventContractConsentContext(contract: any): ContractConsentRenderContext {
+  const aluno = contract.aluno;
+  const responsavel = contract.responsavel
+    ?? aluno?.responsaveis?.find((item: any) => item?.responsavel)?.responsavel
+    ?? null;
+
+  if (isMaiorDeIdade(aluno.dataNasc)) {
+    return {
+      signerType: 'ALUNO_MAIOR',
+      signerName: aluno.nome,
+      signerCpf: aluno.cpf ?? null,
+      studentName: aluno.nome,
+      studentCpf: aluno.cpf ?? null,
+      relationship: null,
+    };
+  }
+
+  return {
+    signerType: 'RESPONSAVEL',
+    signerName: responsavel?.nome ?? 'responsável legal',
+    signerCpf: responsavel?.cpf ?? null,
+    studentName: aluno.nome,
+    studentCpf: aluno.cpf ?? null,
+    relationship: 'responsável legal',
+  };
+}
+
+function getEventContractConsentTerms(contract: any): ContractConsentTermSnapshot[] {
+  const terms = Array.isArray(contract.termosConsentimentoSnapshot)
+    ? contract.termosConsentimentoSnapshot
+    : contract.modelo?.consentimentos?.map((term: any) => ({
+        id: term.id,
+        codigo: term.codigo,
+        finalidade: term.finalidade,
+        titulo: term.titulo,
+        texto: term.texto,
+        papel: 'RESPONSAVEL_OU_ALUNO',
+        obrigatorio: term.obrigatorio,
+        recusaImpedeAssinatura: term.recusaImpedeAssinatura,
+        ordem: term.ordem,
+        templateId: term.templateId ?? null,
+        templateVersao: term.templateVersao ?? null,
+      })) ?? [];
+
+  if (!terms.length || !contract.aluno) return terms as ContractConsentTermSnapshot[];
+
+  const fallbackContext = getEventContractConsentContext(contract);
+  return terms.map((term: any) => {
+    const context = term.contexto && typeof term.contexto === 'object'
+      ? term.contexto as ContractConsentRenderContext
+      : fallbackContext;
+
+    return {
+      ...term,
+      texto: renderContractConsentTemplate(String(term.texto ?? ''), context),
+      contexto: context,
+    };
+  });
+}
+
 export function mapEventContract(contract: any) {
-  const consentTerms = Array.isArray(contract.termosConsentimentoSnapshot) ? contract.termosConsentimentoSnapshot : [];
+  const consentTerms = getEventContractConsentTerms(contract);
   const consentDecisions = Array.isArray(contract.decisoesConsentimento) ? contract.decisoesConsentimento : [];
 
   return {
@@ -172,7 +233,7 @@ async function getEventContractRecord(db: DbClient, contaId: string, id: string)
   return db.eventoContrato.findFirst({
     where: { id, contaId },
     include: {
-      aluno: { select: { id: true, nome: true, cpf: true } },
+      aluno: { select: { id: true, nome: true, cpf: true, dataNasc: true, responsaveis: { select: { responsavel: { select: { nome: true, cpf: true } } } } } },
       responsavel: { select: { id: true, nome: true, cpf: true } },
       evento: { select: { id: true, name: true, startsAt: true } },
       modelo: { select: { id: true, nome: true, versao: true } },
@@ -202,6 +263,7 @@ export async function createEventContractForParticipant(
           },
         },
       },
+      responsavel: { select: { id: true, nome: true, cpf: true } },
     },
   });
 
@@ -226,7 +288,7 @@ export async function createEventContractForParticipant(
 
   const { tokenHash } = createPublicContractToken();
   const tokenExpiraEm = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-  const responsavel = participant.aluno.responsaveis[0]?.responsavel ?? null;
+  const responsavel = participant.responsavel ?? participant.aluno.responsaveis[0]?.responsavel ?? null;
   const signerContext = isMaiorDeIdade(participant.aluno.dataNasc)
     ? {
         signerType: 'ALUNO_MAIOR' as const,
@@ -306,7 +368,7 @@ export async function listEventContractsByStudent(contaId: string, alunoId: stri
   const records = await prisma.eventoContrato.findMany({
     where: { contaId, alunoId, ...(status ? { status } : {}) },
     include: {
-      aluno: { select: { id: true, nome: true, cpf: true } },
+      aluno: { select: { id: true, nome: true, cpf: true, dataNasc: true, responsaveis: { select: { responsavel: { select: { nome: true, cpf: true } } } } } },
       responsavel: { select: { id: true, nome: true, cpf: true } },
       evento: { select: { id: true, name: true, startsAt: true } },
       modelo: { select: { id: true, nome: true, versao: true } },
@@ -383,19 +445,7 @@ export function mapPublicEventContractToDTO(contract: any) {
     tokenExpiraEm: contract.tokenExpiraEm?.toISOString?.() ?? null,
     acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1,
     acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION,
-    consentimentos: Array.isArray(contract.termosConsentimentoSnapshot)
-      ? contract.termosConsentimentoSnapshot
-      : contract.modelo?.consentimentos?.map((term: any) => ({
-          id: term.id,
-          codigo: term.codigo,
-          finalidade: term.finalidade,
-          titulo: term.titulo,
-          texto: term.texto,
-          papel: 'RESPONSAVEL_OU_ALUNO',
-          obrigatorio: term.obrigatorio,
-          recusaImpedeAssinatura: term.recusaImpedeAssinatura,
-          ordem: term.ordem,
-        })) ?? [],
+    consentimentos: getEventContractConsentTerms(contract),
     escolaNome: contract.conta.nome,
     matricula: {
       aluno: { nome: contract.aluno.nome },
@@ -444,19 +494,7 @@ export async function signPublicEventContract(input: {
   if (contract.status === 'EXPIRADO') throw new Error('CONTRACT_EXPIRED');
   if (contract.tokenExpiraEm && now > contract.tokenExpiraEm) throw new Error('CONTRACT_LINK_EXPIRED');
 
-  const consentTerms: ContractConsentTermSnapshot[] = Array.isArray(contract.termosConsentimentoSnapshot)
-    ? contract.termosConsentimentoSnapshot as ContractConsentTermSnapshot[]
-    : (contract.modelo?.consentimentos ?? []).map((term: any) => ({
-        id: term.id,
-        codigo: term.codigo,
-        finalidade: term.finalidade,
-        titulo: term.titulo,
-        texto: term.texto,
-        papel: 'RESPONSAVEL_OU_ALUNO' as const,
-        obrigatorio: term.obrigatorio,
-        recusaImpedeAssinatura: term.recusaImpedeAssinatura,
-        ordem: term.ordem,
-      }));
+  const consentTerms = getEventContractConsentTerms(contract);
   const consentimentos = resolveContractConsentAnswers(consentTerms, input.consentimentos ?? []);
   const consentimentosPayload = buildContractConsentPayload(consentimentos);
 

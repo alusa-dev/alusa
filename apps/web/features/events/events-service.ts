@@ -570,6 +570,7 @@ export type EventParticipantDTO = {
   cancelledAt?: string | null;
   canRemove?: boolean;
   canReactivate?: boolean;
+  canPermanentlyDelete?: boolean;
   removalBlockReasons?: string[];
   metrics: {
     costumeCount: number;
@@ -639,6 +640,19 @@ export async function unregisterEventParticipant(eventId: string, participantId:
 export async function removeEventParticipant(eventId: string, participantId: string) {
   const response = await fetch(`/api/events/${eventId}/participants/${participantId}/remove`, {
     method: "POST",
+  });
+  return (await parseResponse<JsonEnvelope<{ ok: boolean }>>(response)).data;
+}
+
+export async function permanentlyDeleteEventParticipant(
+  eventId: string,
+  participantId: string,
+  payload: { confirmation: string; motivo: string },
+) {
+  const response = await fetch(`/api/events/${eventId}/participants/${participantId}/permanent`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
   });
   return (await parseResponse<JsonEnvelope<{ ok: boolean }>>(response)).data;
 }

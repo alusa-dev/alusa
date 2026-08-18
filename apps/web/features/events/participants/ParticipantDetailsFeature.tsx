@@ -29,7 +29,7 @@ import {
   type EventCostumeAssignmentStatus,
 } from '@alusa/shared';
 
-import { formatCurrency, formatDate, formatDateTime, regenerateEventContract, type EventContractDTO } from '@/features/events/events-service';
+import { formatCurrency, formatDate, formatDateTime, permanentlyDeleteEventParticipant, regenerateEventContract, type EventContractDTO } from '@/features/events/events-service';
 import { Button } from '@/components/ui/button';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -46,6 +46,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import ConfirmDeleteDialog from '@/components/dialogs/ConfirmDeleteDialog';
+import { DangerActionDialog } from '@/components/rematriculas/DangerActionDialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
@@ -185,36 +186,6 @@ function EditableSection({
   );
 }
 
-function Field({
-  label,
-  value,
-  editing,
-  onChange,
-  type = 'text',
-  className,
-}: {
-  label: string;
-  value: string;
-  editing: boolean;
-  onChange?: (_value: string) => void;
-  type?: string;
-  className?: string;
-}) {
-  return (
-    <div className={cn('space-y-1', className)}>
-      <label className={labelClass}>{label}</label>
-      <Input
-        type={type}
-        value={value}
-        onChange={(event) => onChange?.(event.target.value)}
-        disabled={!editing}
-        placeholder="Não informado"
-        className={editing ? controlClass : disabledControlClass}
-      />
-    </div>
-  );
-}
-
 function LockedField({ label, value }: { label: string; value: string }) {
   return (
     <div className="space-y-1">
@@ -277,6 +248,7 @@ export function ParticipantDetailsFeature({
   const queryClient = useQueryClient();
   const [editSection, setEditSection] = useState<EditSection>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [permanentDeleteConfirmOpen, setPermanentDeleteConfirmOpen] = useState(false);
   const [quitarConfirmOpen, setQuitarConfirmOpen] = useState<string | null>(null);
   const [quitarMethod, setQuitarMethod] = useState('MANUAL_PIX');
   const [refundOrderTarget, setRefundOrderTarget] = useState<{ orderId: string; buyerName: string } | null>(null);
@@ -308,6 +280,8 @@ export function ParticipantDetailsFeature({
   });
 
   const participant = data?.participant;
+  const isCancelled = Boolean(participant?.cancelledAt);
+  const canPermanentlyDelete = data?.canPermanentlyDelete === true;
   const costumes = data?.costumes ?? [];
   const ticketSales = data?.ticketSales ?? [];
   const financialEntries = data?.financialEntries ?? [];
@@ -318,9 +292,40 @@ export function ParticipantDetailsFeature({
     contratoId: string;
     titulo: string;
     finalidade: string | null;
-    decision: 'AUTORIZADO' | 'RECUSADO';
-    decididoEm: string;
+    decision: 'AUTORIZADO' | 'RECUSADO' | null;
+    decididoEm: string | null;
   }>;
+  const consentimentoRows = useMemo(() => {
+    const recordedByKey = new Map(
+      consentimentos.map((consentimento) => [`${consentimento.contratoId}:${consentimento.titulo}`, consentimento]),
+    );
+
+    const rows = eventContracts.flatMap((contract) =>
+      (contract.consentimentos ?? []).map((term) => {
+        const recorded = recordedByKey.get(`${contract.id}:${term.titulo}`);
+        const decision = term.decision ?? recorded?.decision ?? null;
+
+        return {
+          id: `${contract.id}:${term.id}`,
+          contratoId: contract.id,
+          titulo: term.titulo,
+          finalidade: term.finalidade,
+          decision,
+          decididoEm: recorded?.decididoEm ?? (decision ? contract.assinadoEm : null),
+          geradoEm: contract.createdAt,
+        };
+      }),
+    );
+
+    // Mantém compatibilidade com registros antigos que já possuem decisão,
+    // mas ainda não possuem os termos no snapshot do contrato.
+    return rows.length > 0
+      ? rows
+      : consentimentos.map((consentimento) => ({
+          ...consentimento,
+          geradoEm: eventContracts.find((contract) => contract.id === consentimento.contratoId)?.createdAt ?? consentimento.decididoEm,
+        }));
+  }, [consentimentos, eventContracts]);
   const [shareContract, setShareContract] = useState<{ token: string; alunoNome: string } | null>(null);
   const [sharingContractId, setSharingContractId] = useState<string | null>(null);
 
@@ -362,7 +367,7 @@ export function ParticipantDetailsFeature({
   }, [participant, costumes]);
 
   const updateMutation = useMutation({
-    mutationFn: async (payload: { displayName?: string; notes?: string | null; isFeePaid?: boolean; costumes?: any[] }) => {
+    mutationFn: async (payload: { notes?: string | null; isFeePaid?: boolean; costumes?: any[] }) => {
       const res = await fetch(`/api/events/${eventId}/participants/${participantId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -503,6 +508,18 @@ export function ParticipantDetailsFeature({
     },
     onError: (err) => {
       toast.error({ title: 'Erro ao desinscrever', description: err.message });
+    },
+  });
+
+  const permanentDeleteMutation = useMutation({
+    mutationFn: (motivo: string) => permanentlyDeleteEventParticipant(eventId, participantId, {
+      confirmation: 'EXCLUIR',
+      motivo,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] });
+      toast.success({ title: 'Inscrição excluída', description: 'O inscrito foi removido definitivamente.' });
+      router.push(`/events/${eventId}`);
     },
   });
 
@@ -658,7 +675,6 @@ export function ParticipantDetailsFeature({
 
   const handleGeneralSave = () => {
     updateMutation.mutate({
-      displayName: generalForm.displayName,
       notes: generalForm.notes,
       isFeePaid: generalForm.isFeePaid,
     });
@@ -877,14 +893,16 @@ export function ParticipantDetailsFeature({
                 Visualização de cadastro escolar, figurinos vinculados, bilheteria e recebimentos.
               </p>
             </div>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteConfirmOpen(true)}
-              className="text-rose-600 border-rose-200 hover:bg-rose-50 hover:text-rose-700 shadow-none shrink-0 self-start md:self-center"
-            >
-              <Trash2 className="mr-2 h-4 w-4" />
-              Cancelar Inscrição
-            </Button>
+            {(!isCancelled || canPermanentlyDelete) && (
+              <Button
+                variant="outline"
+                onClick={() => isCancelled ? setPermanentDeleteConfirmOpen(true) : setDeleteConfirmOpen(true)}
+                className="text-rose-600 border-rose-200 hover:bg-rose-50 hover:text-rose-700 shadow-none shrink-0 self-start md:self-center"
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                {isCancelled ? 'Excluir Inscrito' : 'Cancelar Inscrição'}
+              </Button>
+            )}
           </div>
         </div>
 
@@ -934,11 +952,9 @@ export function ParticipantDetailsFeature({
             onSave={handleGeneralSave}
           >
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Field
+              <LockedField
                 label="Nome do Participante"
                 value={generalForm.displayName}
-                editing={editSection === 'cadastro'}
-                onChange={(val) => setGeneralForm((f) => ({ ...f, displayName: val }))}
               />
               <LockedField
                 label="Tipo de Inscrição"
@@ -1425,8 +1441,8 @@ export function ParticipantDetailsFeature({
             <div className="mb-4 flex items-start justify-between">
               <span className="text-sm font-semibold text-slate-700">Consentimentos</span>
             </div>
-            {consentimentos.length === 0 ? (
-              <EmptyState title="Nenhuma decisão de consentimento registrada." description="A decisão aparecerá aqui após o assinante concluir o contrato." />
+            {consentimentoRows.length === 0 ? (
+              <EmptyState title="Nenhum consentimento configurado." description="Os consentimentos aparecerão aqui quando forem gerados com o contrato." />
             ) : (
               <TablePanel>
                 <DataTable
@@ -1435,7 +1451,7 @@ export function ParticipantDetailsFeature({
                       id: 'titulo',
                       header: 'Consentimento',
                       align: 'left',
-                      width: 'w-[46%]',
+                      width: 'w-[32%]',
                       render: (consentimento) => (
                         <span
                           className="block max-w-[22rem] truncate text-sm font-semibold text-slate-900"
@@ -1446,22 +1462,34 @@ export function ParticipantDetailsFeature({
                       ),
                     },
                     {
-                      id: 'decisao',
-                      header: 'Decisão',
+                      id: 'geradoEm',
+                      header: 'Gerado em',
                       align: 'left',
-                      width: 'w-[18%]',
-                      render: (consentimento) => (
-                        <SoftBadge tone={consentimento.decision === 'AUTORIZADO' ? 'success' : 'warning'}>
-                          {consentimento.decision === 'AUTORIZADO' ? 'Autorizado' : 'Não autorizado'}
-                        </SoftBadge>
-                      ),
+                      width: 'w-[15%]',
+                      headerClassName: 'whitespace-nowrap',
+                      render: (consentimento) => <span className="text-xs text-slate-500">{consentimento.geradoEm ? formatDate(consentimento.geradoEm) : '—'}</span>,
                     },
                     {
                       id: 'decididoEm',
                       header: 'Decidido em',
                       align: 'left',
-                      width: 'w-[21%]',
-                      render: (consentimento) => <span className="text-sm text-slate-600">{formatDate(consentimento.decididoEm)}</span>,
+                      width: 'w-[18%]',
+                      render: (consentimento) => <span className="text-xs text-slate-500">{consentimento.decididoEm ? formatDate(consentimento.decididoEm) : '—'}</span>,
+                    },
+                    {
+                      id: 'status',
+                      header: 'Status',
+                      align: 'left',
+                      width: 'w-[20%]',
+                      render: (consentimento) => (
+                        consentimento.decision === 'AUTORIZADO' ? (
+                          <Badge variant="success" size="sm">Autorizado</Badge>
+                        ) : consentimento.decision === 'RECUSADO' ? (
+                          <Badge variant="destructive" size="sm">Não autorizado</Badge>
+                        ) : (
+                          <Badge status="PENDING" size="sm" />
+                        )
+                      ),
                     },
                     {
                       id: 'acoes',
@@ -1487,7 +1515,7 @@ export function ParticipantDetailsFeature({
                       ),
                     },
                   ]}
-                  data={consentimentos}
+                  data={consentimentoRows}
                   rowKey={(consentimento) => consentimento.id}
                 />
               </TablePanel>
@@ -1635,6 +1663,23 @@ export function ParticipantDetailsFeature({
         description={`Tem certeza que deseja cancelar permanentemente a inscrição de ${participant.displayName}?\n\nEsta ação removerá o participante do evento e excluirá o lançamento financeiro associado à taxa de inscrição (caso ainda não esteja pago).`}
         onConfirm={async () => {
           await unregisterMutation.mutateAsync();
+        }}
+      />
+
+      <DangerActionDialog
+        open={permanentDeleteConfirmOpen}
+        onOpenChange={setPermanentDeleteConfirmOpen}
+        title="Excluir Inscrito"
+        description={`A inscrição de ${participant.displayName} será excluída permanentemente. Contratos, documentos, evidências e decisões de consentimento vinculados serão removidos. Registros financeiros e operacionais do evento serão preservados.`}
+        confirmLabel="Excluir Inscrito"
+        cancelLabel="Cancelar"
+        loadingLabel="Excluindo..."
+        confirmationText="EXCLUIR"
+        confirmationLabel="Digite EXCLUIR para confirmar"
+        motivoLabel="Motivo da exclusão"
+        motivoPlaceholder="Informe por que esta inscrição deve ser excluída definitivamente."
+        onConfirm={async (motivo) => {
+          await permanentDeleteMutation.mutateAsync(motivo);
         }}
       />
 

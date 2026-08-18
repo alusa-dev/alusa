@@ -35,6 +35,7 @@ type RemovalCostumeAssignment = {
 
 export type EventParticipantRemovalFacts = {
   cancelledAt?: Date | string | null;
+  eventContractCount?: number;
   isFeePaid?: boolean | null;
   feePaidAmount?: number | null;
   feeRefundedAmount?: number | null;
@@ -66,6 +67,10 @@ export function canRemoveEventParticipant(facts: EventParticipantRemovalFacts): 
 
   if (!facts.cancelledAt) {
     pushReason(reasons, 'Cancele a inscrição antes de remover o participante.');
+  }
+
+  if ((facts.eventContractCount ?? 0) > 0) {
+    pushReason(reasons, 'Este participante possui contrato vinculado; o histórico deve ser preservado.');
   }
 
   if (facts.isFeePaid || hasPositiveValue(facts.feePaidAmount)) {

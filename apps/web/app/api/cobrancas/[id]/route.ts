@@ -96,6 +96,84 @@ function mapChargeStatusToCobrancaStatus(status?: string | null): StatusCobranca
   return CHARGE_TO_COBRANCA_STATUS[status] ?? null;
 }
 
+type ChargePaymentRules = {
+  interestValue: number | null;
+  fineValue: number | null;
+  fineType: string | null;
+  discountValue: number | null;
+  discountType: string | null;
+  discountDueDateLimitDays: number | null;
+};
+
+function numberOrNull(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function paymentRulesFromParticipantSnapshot(value: unknown): ChargePaymentRules | null {
+  if (!value || typeof value !== 'object') return null;
+  const snapshot = value as Record<string, unknown>;
+  const interestValue = numberOrNull(snapshot.interestPercent);
+  const fine = snapshot.fine && typeof snapshot.fine === 'object'
+    ? snapshot.fine as Record<string, unknown>
+    : null;
+  const discount = snapshot.discount && typeof snapshot.discount === 'object'
+    ? snapshot.discount as Record<string, unknown>
+    : null;
+  const fineValue = numberOrNull(fine?.value);
+  const discountValue = numberOrNull(discount?.value);
+  if (interestValue == null && fineValue == null && discountValue == null) return null;
+
+  return {
+    interestValue,
+    fineValue,
+    fineType: typeof fine?.type === 'string' ? fine.type : 'PERCENTAGE',
+    discountValue,
+    discountType: typeof discount?.type === 'string' ? discount.type : 'PERCENTAGE',
+    discountDueDateLimitDays: discountValue == null ? null : Number(discount?.dueDateLimitDays ?? 0),
+  };
+}
+
+async function findEventPaymentRulesForCharge(params: {
+  contaId: string;
+  chargeId: string;
+  installmentPlanId?: string | null;
+  asaasPaymentId?: string | null;
+}): Promise<ChargePaymentRules | null> {
+  const participant = await prisma.eventParticipant.findFirst({
+    where: {
+      contaId: params.contaId,
+      OR: [
+        { standaloneChargeId: params.chargeId },
+        ...(params.installmentPlanId ? [{ standaloneChargeId: params.installmentPlanId }] : []),
+        ...(params.asaasPaymentId ? [{ asaasPaymentId: params.asaasPaymentId }] : []),
+      ],
+    },
+    select: { registrationPaymentRules: true },
+  });
+
+  return paymentRulesFromParticipantSnapshot(participant?.registrationPaymentRules);
+}
+
+function mapPaymentRulesToCobrancaFields(rules: ChargePaymentRules | null) {
+  if (!rules) return {};
+
+  return {
+    jurosPercentual: rules.interestValue,
+    multaTipo: rules.fineType === 'PERCENTAGE' ? 'PERCENTUAL' : rules.fineType === 'FIXED' ? 'VALOR_FIXO' : null,
+    multaPercentual: rules.fineType === 'PERCENTAGE' ? rules.fineValue : null,
+    multaValorFixo: rules.fineType === 'FIXED' ? rules.fineValue : null,
+    descontoTipo: rules.discountType === 'PERCENTAGE' ? 'PERCENTUAL' : rules.discountType === 'FIXED' ? 'VALOR_FIXO' : null,
+    descontoPercentual: rules.discountType === 'PERCENTAGE' ? rules.discountValue : null,
+    descontoValorFixo: rules.discountType === 'FIXED' ? rules.discountValue : null,
+    descontoPrazoMaximo: rules.discountDueDateLimitDays == null
+      ? null
+      : rules.discountDueDateLimitDays === 0
+        ? 'ATE_VENCIMENTO'
+        : `${rules.discountDueDateLimitDays}_DIAS`,
+  };
+}
+
 function getEffectiveRemotePaymentStatus(
   payment?: { status?: string | null; deleted?: boolean | null; billingType?: string | null } | null,
 ) {
@@ -616,6 +694,23 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         }
 
         const asaasData = remoteAsaasData ?? buildStandaloneAsaasData(charge);
+        const participantPaymentRules = await findEventPaymentRulesForCharge({
+          contaId,
+          chargeId: charge.id,
+          installmentPlanId: charge.standaloneInstallmentPlanId,
+          asaasPaymentId: charge.asaasPaymentId,
+        });
+        const effectivePaymentRules: ChargePaymentRules | null =
+          charge.interestValue != null || charge.fineValue != null || charge.discountValue != null
+            ? {
+                interestValue: charge.interestValue == null ? null : Number(charge.interestValue),
+                fineValue: charge.fineValue == null ? null : Number(charge.fineValue),
+                fineType: charge.fineType,
+                discountValue: charge.discountValue == null ? null : Number(charge.discountValue),
+                discountType: charge.discountType,
+                discountDueDateLimitDays: charge.discountDueDateLimitDays,
+              }
+            : participantPaymentRules;
 
         const remotePaymentStatus = getEffectiveRemotePaymentStatus(remoteAsaasData ?? asaasData);
 
@@ -680,6 +775,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
                     ? Number(remoteAsaasData?.value ?? asaasData?.value) -
                       Number(remoteAsaasData?.netValue ?? asaasData?.netValue)
                     : null,
+                ...mapPaymentRulesToCobrancaFields(effectivePaymentRules),
                 liquidacaoStatus: effectiveLiquidacaoStatus,
                 displayStatus: standaloneDisplayStatus,
                 invoiceUrl:

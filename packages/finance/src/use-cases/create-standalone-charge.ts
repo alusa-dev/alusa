@@ -188,6 +188,17 @@ export type CreateStandaloneChargeOutput = {
   };
 };
 
+function paymentRulesSnapshot(input: Pick<CreateStandaloneChargeInput, 'interest' | 'fine' | 'discount'>) {
+  return {
+    interestValue: input.interest?.value ?? null,
+    fineValue: input.fine?.value ?? null,
+    fineType: input.fine?.type ?? null,
+    discountValue: input.discount?.value ?? null,
+    discountType: input.discount?.type ?? null,
+    discountDueDateLimitDays: input.discount?.dueDateLimitDays ?? null,
+  };
+}
+
 export type CreateStandaloneChargeError =
   | 'FEATURE_DISABLED'
   | 'KYC_NAO_APROVADO'
@@ -238,6 +249,11 @@ function computeIdempotencyKey(input: CreateStandaloneChargeInput): string {
 
   const cycleKey = input.chargeType === 'SUBSCRIPTION' ? (input.cycle ?? '') : '';
   const endDateKey = input.chargeType === 'SUBSCRIPTION' ? (input.endDate ?? '') : '';
+  const paymentRulesKey = JSON.stringify({
+    discount: input.discount ?? null,
+    interest: input.interest ?? null,
+    fine: input.fine ?? null,
+  });
 
   const raw = [
     input.contaId,
@@ -248,6 +264,7 @@ function computeIdempotencyKey(input: CreateStandaloneChargeInput): string {
     dateKey,
     cycleKey,
     endDateKey,
+    paymentRulesKey,
   ].join('|');
 
   return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32);
@@ -572,6 +589,7 @@ export async function createStandaloneCharge(
             dueDate: vencimentoDate,
             billingType: input.billingType,
             customerId: customerResult.data.localCustomerId,
+            ...paymentRulesSnapshot(input),
           },
         }).catch(async (reserveError) => {
           const concurrent = await prisma.charge.findFirst({
