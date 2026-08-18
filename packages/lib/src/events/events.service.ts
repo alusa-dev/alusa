@@ -2661,7 +2661,10 @@ export async function unregisterEventParticipant(ctx: EventsContext, eventId: st
       await tx.eventFinancialEntry.update({
         where: { id: entry.id },
         data: {
-          status: payment.totalPaid > 0 ? 'PENDING' : 'CANCELLED',
+          // A inscrição pode ser cancelada, mas um pagamento manual já
+          // realizado continua sendo uma receita histórica. Reabri-lo como
+          // PENDING faria a taxa voltar indevidamente à fila de cobranças.
+          status: payment.totalPaid > 0 ? 'RECEIVED' : 'CANCELLED',
           actualAmount,
           refundedAmount: decimal(payment.totalRefunded),
           netAmount: payment.netPaid > 0 ? decimal(payment.netPaid) : null,

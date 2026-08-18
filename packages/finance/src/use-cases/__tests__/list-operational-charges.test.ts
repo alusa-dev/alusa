@@ -536,6 +536,37 @@ describe('listOperationalCharges', () => {
     });
   });
 
+  it('não expõe na fila operacional receita manual de evento já recebida', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([]);
+    mockChargeFindMany(db);
+    db.eventFinancialEntry.findMany.mockResolvedValue([
+      {
+        id: 'entry_received',
+        eventId: 'evt_1',
+        category: 'Taxa de inscrição',
+        description: 'Inscrição quitada em dinheiro',
+        expectedAmount: 780,
+        actualAmount: 780,
+        dueDate: new Date('2025-06-18T12:00:00.000Z'),
+        realizedAt: new Date('2025-06-18T12:00:00.000Z'),
+        status: 'RECEIVED',
+        paymentMethod: 'CASH',
+        asaasPaymentId: null,
+        createdAt: new Date('2025-06-10T12:00:00.000Z'),
+        event: { name: 'Festival de Dança' },
+      },
+    ]);
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
+
+    expect(result.items).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'event-entry:entry_received' }),
+      ]),
+    );
+  });
+
   it('não duplica a entrada-pai do evento quando ela representa um parcelamento Asaas', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([]);
