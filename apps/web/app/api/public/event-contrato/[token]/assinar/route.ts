@@ -17,6 +17,10 @@ function mapError(error: unknown) {
     MISSING_BIRTHDATE: { status: 403, message: 'Não foi possível validar a maioridade do aluno' },
     INVALID_CPF: { status: 400, message: 'CPF inválido' },
     NOT_AUTHORIZED: { status: 403, message: 'CPF não corresponde ao responsável ou aluno maior de idade autorizado' },
+    CONTRACT_CONSENT_REQUIRED: { status: 400, message: 'Responda todos os termos de consentimento antes de assinar' },
+    CONTRACT_CONSENT_UNKNOWN_TERM: { status: 400, message: 'Dados de consentimento inválidos' },
+    CONTRACT_CONSENT_DUPLICATE: { status: 400, message: 'Dados de consentimento inválidos' },
+    CONTRACT_CONSENT_INVALID_DECISION: { status: 400, message: 'Dados de consentimento inválidos' },
     SIGNED_PDF_SOURCE_UNAVAILABLE: { status: 500, message: 'Não foi possível carregar o PDF original' },
   };
   return map[code] ?? { status: 500, message: 'Erro ao assinar contrato' };

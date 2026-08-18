@@ -313,6 +313,14 @@ export function ParticipantDetailsFeature({
   const financialEntries = data?.financialEntries ?? [];
   const charges = data?.charges ?? [];
   const eventContracts = (data?.eventContracts ?? []) as EventContractDTO[];
+  const consentimentos = (data?.consentimentos ?? []) as Array<{
+    id: string;
+    contratoId: string;
+    titulo: string;
+    finalidade: string | null;
+    decision: 'AUTORIZADO' | 'RECUSADO';
+    decididoEm: string;
+  }>;
   const [shareContract, setShareContract] = useState<{ token: string; alunoNome: string } | null>(null);
   const [sharingContractId, setSharingContractId] = useState<string | null>(null);
 
@@ -635,6 +643,16 @@ export function ParticipantDetailsFeature({
       toast.error((error as Error).message);
     } finally {
       setSharingContractId(null);
+    }
+  }
+
+  async function handleShareConsentDocument(contractId: string) {
+    const link = `${window.location.origin}/contratos/evento/${contractId}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      toast.success('Link do documento copiado. O acesso continua protegido pela conta Alusa.');
+    } catch {
+      toast.error('Não foi possível copiar o link do documento.');
     }
   }
 
@@ -1398,6 +1416,79 @@ export function ParticipantDetailsFeature({
                   ]}
                   data={eventContracts}
                   rowKey={(contract) => contract.id}
+                />
+              </TablePanel>
+            )}
+          </section>
+
+          <section className={sectionClass}>
+            <div className="mb-4 flex items-start justify-between">
+              <span className="text-sm font-semibold text-slate-700">Consentimentos</span>
+            </div>
+            {consentimentos.length === 0 ? (
+              <EmptyState title="Nenhuma decisão de consentimento registrada." description="A decisão aparecerá aqui após o assinante concluir o contrato." />
+            ) : (
+              <TablePanel>
+                <DataTable
+                  columns={[
+                    {
+                      id: 'titulo',
+                      header: 'Consentimento',
+                      align: 'left',
+                      width: 'w-[46%]',
+                      render: (consentimento) => (
+                        <span
+                          className="block max-w-[22rem] truncate text-sm font-semibold text-slate-900"
+                          title={consentimento.titulo}
+                        >
+                          {consentimento.titulo}
+                        </span>
+                      ),
+                    },
+                    {
+                      id: 'decisao',
+                      header: 'Decisão',
+                      align: 'left',
+                      width: 'w-[18%]',
+                      render: (consentimento) => (
+                        <SoftBadge tone={consentimento.decision === 'AUTORIZADO' ? 'success' : 'warning'}>
+                          {consentimento.decision === 'AUTORIZADO' ? 'Autorizado' : 'Não autorizado'}
+                        </SoftBadge>
+                      ),
+                    },
+                    {
+                      id: 'decididoEm',
+                      header: 'Decidido em',
+                      align: 'left',
+                      width: 'w-[21%]',
+                      render: (consentimento) => <span className="text-sm text-slate-600">{formatDate(consentimento.decididoEm)}</span>,
+                    },
+                    {
+                      id: 'acoes',
+                      header: 'Ações',
+                      align: 'right',
+                      width: 'w-[15%]',
+                      render: (consentimento) => (
+                        <div className="flex justify-end">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" title="Ações do consentimento"><MoreHorizontal className="h-4 w-4" /></Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => router.push(`/contratos/evento/${consentimento.contratoId}`)}>
+                                <ExternalLink className="mr-2 h-4 w-4" /> Ver documento
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => void handleShareConsentDocument(consentimento.contratoId)}>
+                                <ExternalLink className="mr-2 h-4 w-4" /> Compartilhar documento
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      ),
+                    },
+                  ]}
+                  data={consentimentos}
+                  rowKey={(consentimento) => consentimento.id}
                 />
               </TablePanel>
             )}

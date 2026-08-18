@@ -6,6 +6,7 @@ import {
   updateContratoModeloInputDTOSchema,
 } from '@/features/contratos/dtos';
 import { mapContratoModeloRecordToDTO } from '@/features/contratos/mappers';
+import { generateContratoConsentimentoCodigo } from '@/features/contratos/consent-code';
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -33,6 +34,7 @@ export async function GET(request: NextRequest, { params }: Params) {
           select: { contratos: true },
         },
         campos: { orderBy: { ordem: 'asc' } },
+        consentimentos: { orderBy: { ordem: 'asc' }, include: { template: { select: { versao: true } } } },
       },
     });
 
@@ -99,7 +101,18 @@ export async function PUT(request: NextRequest, { params }: Params) {
       }
     }
 
-    const { campos, ...modeloData } = body;
+    const { campos, consentimentos, ...modeloData } = body;
+    const templateIds = [...new Set((consentimentos ?? []).flatMap((term) => term.templateId ? [term.templateId] : []))];
+    const templates = templateIds.length
+      ? await prisma.contratoConsentimentoTemplate.findMany({
+          where: { id: { in: templateIds }, ativo: true, OR: [{ contaId: null }, { contaId: user.contaId }] },
+          select: { id: true, versao: true },
+        })
+      : [];
+    if (templates.length !== templateIds.length) {
+      return NextResponse.json({ error: { message: 'Template de consentimento inválido' } }, { status: 400 });
+    }
+    const templateVersions = new Map(templates.map((template) => [template.id, template.versao]));
     const modelo = await prisma.$transaction(async (tx) => {
       await tx.contratoModelo.update({
         where: { id },
@@ -120,11 +133,30 @@ export async function PUT(request: NextRequest, { params }: Params) {
         });
       }
 
+      if (consentimentos !== undefined) {
+        await tx.contratoModeloConsentimento.deleteMany({
+          where: { modeloId: id, contaId: user.contaId },
+        });
+
+        if (consentimentos.length) {
+          await tx.contratoModeloConsentimento.createMany({
+            data: consentimentos.map((consentimento, index) => ({
+              contaId: user.contaId,
+              modeloId: id,
+              codigo: generateContratoConsentimentoCodigo(index),
+              templateVersao: consentimento.templateId ? templateVersions.get(consentimento.templateId) : null,
+              ...consentimento,
+            })),
+          });
+        }
+      }
+
       return tx.contratoModelo.findFirstOrThrow({
         where: { id, contaId: user.contaId },
         include: {
           _count: { select: { contratos: true } },
           campos: { orderBy: { ordem: 'asc' } },
+          consentimentos: { orderBy: { ordem: 'asc' }, include: { template: { select: { versao: true } } } },
         },
       });
     });

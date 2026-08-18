@@ -31,6 +31,12 @@ function statusForDomainError(error: Error) {
         status: 403,
         message: 'CPF não corresponde ao responsável ou aluno maior de idade autorizado',
       };
+    case 'CONTRACT_CONSENT_REQUIRED':
+      return { status: 400, message: 'Responda todos os termos de consentimento antes de assinar' };
+    case 'CONTRACT_CONSENT_UNKNOWN_TERM':
+    case 'CONTRACT_CONSENT_DUPLICATE':
+    case 'CONTRACT_CONSENT_INVALID_DECISION':
+      return { status: 400, message: 'Dados de consentimento inválidos' };
     case 'SIGNED_PDF_SOURCE_UNAVAILABLE':
       return {
         status: 500,
@@ -72,6 +78,7 @@ export async function POST(
       userAgent,
       baseUrl: request.nextUrl.origin,
       assinatura: body.assinatura,
+      consentimentos: body.consentimentos,
     });
 
     void createContractSignedNotification({

@@ -114,4 +114,32 @@ describe('generateSignedContractEvidencePdf', () => {
     expect(outputPdf.getPageCount()).toBe(2);
     expect(signedPdf.hashSha256).toMatch(/^[a-f0-9]{64}$/);
   });
+
+  it('anexa as decisões de consentimento em uma página de evidências separada', async () => {
+    const originalPdfBytes = await createOriginalPdf();
+    const signedPdf = await generateSignedContractEvidencePdf({
+      contratoId: 'contrato-consentimento',
+      matriculaId: 'matricula-consentimento',
+      contaNome: 'Escola Alusa',
+      alunoNome: 'Aluno de teste',
+      signerName: 'Responsável de teste',
+      signerCpf: '04410435264',
+      signedAtIso: '2026-06-02T04:36:49.000Z',
+      originalPdfHash: 'a'.repeat(64),
+      presentedPdfHash: 'b'.repeat(64),
+      signatureHash: 'c'.repeat(64),
+      originalPdfBytes,
+      assinatura: { tipo: 'TEXTO', valor: 'Responsável de teste' },
+      camposAssinatura: [],
+      consentimentos: [{
+        titulo: 'Uso de imagem',
+        finalidade: 'IMAGE_USE',
+        texto: 'Autorizo o uso da imagem do aluno em materiais institucionais.',
+        decision: 'RECUSADO',
+      }],
+    });
+
+    const outputPdf = await PDFDocument.load(signedPdf.bytes);
+    expect(outputPdf.getPageCount()).toBe(3);
+  });
 });

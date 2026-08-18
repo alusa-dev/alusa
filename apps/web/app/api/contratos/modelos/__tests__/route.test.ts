@@ -18,6 +18,9 @@ const { getSessionUserMock, prismaMock } = vi.hoisted(() => ({
       deleteMany: vi.fn(),
       createMany: vi.fn(),
     },
+    contratoConsentimentoTemplate: {
+      findMany: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -73,6 +76,7 @@ describe('POST /api/contratos/modelos', () => {
     vi.clearAllMocks();
     getSessionUserMock.mockResolvedValue({ id: 'user-1', contaId: 'conta-1' });
     prismaMock.contratoModelo.findFirst.mockResolvedValue(null);
+    prismaMock.contratoConsentimentoTemplate.findMany.mockResolvedValue([]);
   prismaMock.contratoModelo.create.mockResolvedValue({
       id: 'modelo-1',
       contaId: 'conta-1',
@@ -108,7 +112,10 @@ describe('POST /api/contratos/modelos', () => {
             ]),
           },
         }),
-        include: { campos: { orderBy: { ordem: 'asc' } } },
+        include: {
+          campos: { orderBy: { ordem: 'asc' } },
+          consentimentos: { orderBy: { ordem: 'asc' }, include: { template: { select: { versao: true } } } },
+        },
       }),
     );
     expect(json.campos).toHaveLength(2);

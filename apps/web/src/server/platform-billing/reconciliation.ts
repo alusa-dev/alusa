@@ -248,6 +248,54 @@ export async function reconcilePlatformBilling(input: {
   };
 }
 
+/**
+ * Atualiza rapidamente o snapshot do cartão quando a conta acabou de voltar
+ * do Checkout/Customer Portal. O Stripe pode salvar o método no Customer sem
+ * preenchê-lo em subscription.default_payment_method.
+ */
+export async function refreshPlatformBillingPaymentMethod(input: {
+  prisma: PrismaClient;
+  contaId: string;
+  environment?: PlatformBillingEnvironment;
+}): Promise<boolean> {
+  const environment = input.environment ?? resolvePlatformBillingEnvironment();
+  const account = await input.prisma.platformBillingAccount.findUnique({
+    where: {
+      uq_platform_billing_account_conta_env: {
+        contaId: input.contaId,
+        environment,
+      },
+    },
+  });
+
+  if (!account?.stripeCustomerId) return false;
+
+  const hasPaymentSnapshot = Boolean(
+    account.paymentMethodStatus === 'PRESENT' &&
+    account.paymentMethodType === 'card' &&
+    account.paymentMethodLast4,
+  );
+  if (hasPaymentSnapshot) return false;
+
+  const paymentMethod = await resolvePaymentMethod(account, account.stripeCustomerId);
+  if (!paymentMethod) return false;
+
+  await input.prisma.platformBillingAccount.update({
+    where: { id: account.id },
+    data: {
+      paymentMethodStatus: paymentMethod.status,
+      paymentMethodType: paymentMethod.type,
+      paymentMethodBrand: paymentMethod.brand,
+      paymentMethodLast4: paymentMethod.last4,
+      paymentMethodExpMonth: paymentMethod.expMonth,
+      paymentMethodExpYear: paymentMethod.expYear,
+      lastReconciledAt: new Date(),
+    },
+  });
+
+  return true;
+}
+
 async function correctAccountFromStripeSubscription(prisma: PrismaClient, input: {
   account: ReconciliationAccount;
   subscription: StripeSubscriptionRecord;
@@ -422,7 +470,10 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
   return true;
 }
 
-async function resolvePaymentMethod(account: ReconciliationAccount, subscriptionCustomerId?: string | null) {
+async function resolvePaymentMethod(
+  account: Pick<ReconciliationAccount, 'stripeCustomerId' | 'stripeSubscriptionId'>,
+  subscriptionCustomerId?: string | null,
+) {
   const customerId = account.stripeCustomerId ?? subscriptionCustomerId ?? null;
   if (!customerId) return null;
   try {

@@ -10,6 +10,7 @@ export type ValidateContractSignerInput = {
   cpf: string;
   aluno: ContractSignerCandidate;
   responsavelFinanceiro?: ContractSignerCandidate | null;
+  responsaveis?: ContractSignerCandidate[];
   now?: Date;
 };
 
@@ -17,7 +18,7 @@ export type ValidateContractSignerResult =
   | {
       ok: true;
       signer: {
-        type: 'RESPONSAVEL_FINANCEIRO' | 'ALUNO_MAIOR';
+      type: 'RESPONSAVEL_FINANCEIRO' | 'RESPONSAVEL_LEGAL' | 'ALUNO_MAIOR';
         cpf: string;
         nome: string;
       };
@@ -46,6 +47,28 @@ export function validateContractSigner(input: ValidateContractSignerInput): Vali
   }
 
   const cpf = parsedCpf.value;
+  if (!input.aluno.dataNasc) {
+    return {
+      ok: false,
+      code: 'MISSING_BIRTHDATE',
+      error: 'Não foi possível validar a maioridade do aluno.',
+    };
+  }
+
+  const alunoCpf = input.aluno.cpf ? normalizeCpf(input.aluno.cpf) : null;
+  const alunoMaior = isMaiorDeIdade(input.aluno.dataNasc, input.now);
+
+  if (alunoMaior) {
+    if (alunoCpf && cpf === alunoCpf && input.aluno.nome?.trim()) {
+      return { ok: true, signer: { type: 'ALUNO_MAIOR', cpf, nome: input.aluno.nome.trim() } };
+    }
+    return {
+      ok: false,
+      code: 'NOT_AUTHORIZED',
+      error: 'Somente o aluno maior de idade pode assinar este contrato.',
+    };
+  }
+
   const responsavelCpf = input.responsavelFinanceiro?.cpf
     ? normalizeCpf(input.responsavelFinanceiro.cpf)
     : null;
@@ -55,26 +78,24 @@ export function validateContractSigner(input: ValidateContractSignerInput): Vali
     if (nome) return { ok: true, signer: { type: 'RESPONSAVEL_FINANCEIRO', cpf, nome } };
   }
 
-  const alunoCpf = input.aluno.cpf ? normalizeCpf(input.aluno.cpf) : null;
+  const linkedResponsavel = (input.responsaveis ?? []).find((responsavel) => {
+    const linkedCpf = responsavel.cpf ? normalizeCpf(responsavel.cpf) : null;
+    return linkedCpf === cpf;
+  });
+
+  if (linkedResponsavel?.nome?.trim()) {
+    return {
+      ok: true,
+      signer: { type: 'RESPONSAVEL_LEGAL', cpf, nome: linkedResponsavel.nome.trim() },
+    };
+  }
+
   if (alunoCpf && cpf === alunoCpf) {
-    if (!input.aluno.dataNasc) {
-      return {
-        ok: false,
-        code: 'MISSING_BIRTHDATE',
-        error: 'Não foi possível validar a maioridade do aluno.',
-      };
-    }
-
-    if (!isMaiorDeIdade(input.aluno.dataNasc, input.now)) {
-      return {
-        ok: false,
-        code: 'UNDERAGE_STUDENT',
-        error: 'Aluno menor de idade não pode assinar o contrato.',
-      };
-    }
-
-    const nome = input.aluno.nome?.trim();
-    if (nome) return { ok: true, signer: { type: 'ALUNO_MAIOR', cpf, nome } };
+    return {
+      ok: false,
+      code: 'UNDERAGE_STUDENT',
+      error: 'Aluno menor de idade não pode assinar o contrato.',
+    };
   }
 
   return {

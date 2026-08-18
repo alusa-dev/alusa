@@ -1,6 +1,7 @@
 import {
   CONTRACT_ACCEPTANCE_TEXT_V1,
   CONTRACT_ACCEPTANCE_VERSION,
+  isMaiorDeIdade,
 } from '@alusa/domain';
 import {
   alunoContratoCardDTOSchema,
@@ -117,6 +118,24 @@ export function mapContratoModeloRecordToDTO(modelo: Record<string, unknown>) {
           };
         })
       : [],
+    consentimentos: Array.isArray(modelo.consentimentos)
+      ? modelo.consentimentos.map((consentimento) => {
+          const item = consentimento as Record<string, unknown>;
+          return {
+            id: String(item.id ?? ''),
+            codigo: String(item.codigo ?? ''),
+            templateId: item.templateId ? String(item.templateId) : null,
+            templateVersao: item.templateVersao == null ? null : Number(item.templateVersao),
+            finalidade: item.finalidade,
+            titulo: String(item.titulo ?? ''),
+            texto: String(item.texto ?? ''),
+            papel: item.papel,
+            obrigatorio: Boolean(item.obrigatorio ?? true),
+            recusaImpedeAssinatura: Boolean(item.recusaImpedeAssinatura ?? false),
+            ordem: Number(item.ordem ?? 0),
+          };
+        })
+      : [],
   });
 }
 
@@ -132,6 +151,9 @@ export function mapPublicContratoRecordToDTO(contrato: Record<string, unknown>) 
   const matricula = (contrato.matricula as Nullable<Record<string, unknown>>) ?? {};
   const aluno = (matricula.aluno as Nullable<Record<string, unknown>>) ?? {};
   const responsavel = (matricula.responsavelFinanceiro as Nullable<Record<string, unknown>>) ?? null;
+  const linkedResponsaveis = Array.isArray(aluno.responsaveis) ? aluno.responsaveis as Array<Record<string, unknown>> : [];
+  const linkedResponsavel = (linkedResponsaveis[0]?.responsavel as Nullable<Record<string, unknown>>) ?? null;
+  const alunoMaior = aluno.dataNasc ? isMaiorDeIdade(aluno.dataNasc as Date | string) : false;
   const conta = (contrato.conta as Nullable<Record<string, unknown>>) ?? {};
 
   const snapshot = Array.isArray(contrato.camposAssinaturaSnapshot)
@@ -141,6 +163,11 @@ export function mapPublicContratoRecordToDTO(contrato: Record<string, unknown>) 
     ? ((contrato.modelo as Record<string, unknown>).campos as Array<Record<string, unknown>>)
     : [];
   const fields = snapshot ?? modelFields;
+  const consentimentos = Array.isArray(contrato.termosConsentimentoSnapshot)
+    ? contrato.termosConsentimentoSnapshot
+    : Array.isArray((contrato.modelo as Record<string, unknown> | null)?.consentimentos)
+      ? (contrato.modelo as Record<string, unknown>).consentimentos
+      : [];
 
   return contratoPublicoDTOSchema.parse({
     id: String(contrato.id ?? ''),
@@ -150,6 +177,7 @@ export function mapPublicContratoRecordToDTO(contrato: Record<string, unknown>) 
     tokenExpiraEm: toIsoString(contrato.tokenExpiraEm as Nullable<Date | string>),
     acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1,
     acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION,
+    consentimentos,
     escolaNome: String(conta.nome ?? ''),
     matricula: {
       aluno: {
@@ -161,6 +189,9 @@ export function mapPublicContratoRecordToDTO(contrato: Record<string, unknown>) 
           }
         : null,
     },
+    signatario: alunoMaior
+      ? { nome: String(aluno.nome ?? ''), tipo: 'ALUNO_MAIOR' }
+      : { nome: String(responsavel?.nome ?? linkedResponsavel?.nome ?? ''), tipo: 'RESPONSAVEL' },
     camposAssinatura: fields.map((campo) => {
       const item = campo as Record<string, unknown>;
       return {

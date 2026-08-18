@@ -4,6 +4,10 @@ import {
   CONTRACT_ACCEPTANCE_TEXT_V1,
   CONTRACT_ACCEPTANCE_VERSION,
   hashCanonicalPayload,
+  buildContractConsentPayload,
+  resolveContractConsentAnswers,
+  type ContractConsentAnswer,
+  type ContractConsentTermSnapshot,
   validateContractSigner,
 } from '@alusa/domain';
 import { prisma } from '../../prisma';
@@ -21,6 +25,7 @@ type SignPublicContractInput = {
   userAgent?: string | null;
   baseUrl?: string | null;
   assinatura: { tipo: 'TEXTO' | 'DESENHADA'; valor: string; fonte?: string };
+  consentimentos?: ContractConsentAnswer[];
 };
 
 type SignPublicContractResult = {
@@ -99,13 +104,28 @@ export async function findPublicContractByToken(token: string) {
       modelo: {
         include: {
           campos: { orderBy: { ordem: 'asc' } },
+          consentimentos: { orderBy: { ordem: 'asc' } },
         },
       },
       matricula: {
         select: {
           id: true,
-          aluno: { select: { nome: true, cpf: true, dataNasc: true, contaId: true } },
-          responsavelFinanceiro: { select: { nome: true, cpf: true } },
+          aluno: {
+            select: {
+              id: true,
+              nome: true,
+              cpf: true,
+              dataNasc: true,
+              contaId: true,
+              responsaveis: {
+                where: {},
+                orderBy: { id: 'asc' },
+                take: 10,
+                select: { contaId: true, responsavel: { select: { nome: true, cpf: true } } },
+              },
+            },
+          },
+          responsavelFinanceiro: { select: { id: true, nome: true, cpf: true } },
         },
       },
     },
@@ -123,6 +143,24 @@ function getContractSignatureFields(contrato: Awaited<ReturnType<typeof findPubl
   return contrato.modelo?.campos ?? [];
 }
 
+function getContractConsentTerms(contrato: Awaited<ReturnType<typeof findPublicContractByToken>>): ContractConsentTermSnapshot[] {
+  if (!contrato) return [];
+  if (Array.isArray(contrato.termosConsentimentoSnapshot)) {
+    return contrato.termosConsentimentoSnapshot as ContractConsentTermSnapshot[];
+  }
+  return (contrato.modelo?.consentimentos ?? []).map((term) => ({
+    id: term.id,
+    codigo: term.codigo,
+    finalidade: term.finalidade,
+    titulo: term.titulo,
+    texto: term.texto,
+    papel: 'RESPONSAVEL_OU_ALUNO' as const,
+    obrigatorio: term.obrigatorio,
+    recusaImpedeAssinatura: term.recusaImpedeAssinatura,
+    ordem: term.ordem,
+  }));
+}
+
 export async function signPublicContract(input: SignPublicContractInput): Promise<SignPublicContractResult> {
   const now = new Date();
   const userAgent = sanitizeUserAgent(input.userAgent);
@@ -137,11 +175,20 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
   if (contrato.status === 'EXPIRADO') throw new Error('CONTRACT_EXPIRED');
   if (contrato.tokenExpiraEm && now > contrato.tokenExpiraEm) throw new Error('CONTRACT_LINK_EXPIRED');
 
+  const consentimentos = resolveContractConsentAnswers(
+    getContractConsentTerms(contrato),
+    input.consentimentos ?? [],
+  );
+  const consentimentosPayload = buildContractConsentPayload(consentimentos);
+
   const signer = validateContractSigner({
     cpf: input.cpf,
     now,
     aluno: contrato.matricula.aluno,
     responsavelFinanceiro: contrato.matricula.responsavelFinanceiro,
+    responsaveis: contrato.matricula.aluno.responsaveis
+      .filter((item) => item.contaId === contrato.contaId)
+      .map((item) => item.responsavel),
   });
 
   if (!signer.ok) {
@@ -171,6 +218,7 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
     ip: input.ip ?? null,
     userAgent,
     assinatura: input.assinatura,
+    consentimentos: consentimentosPayload,
   });
   const signatureHash = hashCanonicalPayload(signaturePayload);
 
@@ -191,6 +239,7 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
     signatureHash,
     originalPdfBytes,
     assinatura: input.assinatura,
+    consentimentos: consentimentosPayload,
     camposAssinatura: getContractSignatureFields(contrato).map((campo) => ({
       tipo: campo.tipo,
       papel: campo.papel,
@@ -229,8 +278,31 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
         acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION,
         acceptedAt: now.toISOString(),
         payloadHash: signatureHash,
+        consentimentos: consentimentosPayload,
       },
     });
+
+    if (consentimentosPayload.length) {
+      await createContractEvidence(tx as never, {
+        contaId: contrato.contaId,
+        contratoId: contrato.id,
+        type: 'CONSENT_DECISION_RECORDED',
+        ip: input.ip ?? null,
+        userAgent,
+        payload: { consentimentos: consentimentosPayload },
+      });
+
+      const imageConsent = consentimentosPayload.find((consentimento) => consentimento.finalidade === 'IMAGE_USE');
+      if (imageConsent) {
+        await tx.aluno.updateMany({
+          where: { id: contrato.matricula.aluno.id, contaId: contrato.contaId },
+          data: {
+            consentimentoImagem: imageConsent.decision === 'AUTORIZADO',
+            dataConsentimentoImagem: imageConsent.decision === 'AUTORIZADO' ? now : null,
+          },
+        });
+      }
+    }
 
     const updated = await tx.contrato.updateMany({
       where: { id: contrato.id, contaId: contrato.contaId, status: 'PENDENTE' },
@@ -245,6 +317,7 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
         hashAssinatura: signatureHash,
         arquivoPdfAssinadoUrl: signedPdfUrl,
         hashPdfAssinado: signedPdf.hashSha256,
+        decisoesConsentimento: consentimentosPayload,
       },
     });
 

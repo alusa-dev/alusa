@@ -27,6 +27,7 @@ import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
 } from '@/src/server/platform-billing/capacity';
+import { isMaiorDeIdade, renderContractConsentTemplate } from '@alusa/domain';
 
 export function replaceMentionSpans(html: string) {
   const mentionRegex = /<span\s+[^>]*?data-type=["']mention["'][^>]*?>[^<]*?<\/span>/g;
@@ -190,6 +191,7 @@ export async function POST(request: NextRequest) {
             contaId: true,
             nome: true,
             cpf: true,
+            dataNasc: true,
             email: true,
             telefone: true,
             enderecoLogradouro: true,
@@ -197,6 +199,12 @@ export async function POST(request: NextRequest) {
             enderecoBairro: true,
             enderecoCidade: true,
             enderecoUf: true,
+            responsaveis: {
+              where: { contaId, tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
+              orderBy: { id: 'asc' },
+              take: 1,
+              select: { tipoVinculo: true, responsavel: { select: { id: true, nome: true, cpf: true } } },
+            },
           },
         },
         responsavelFinanceiro: {
@@ -282,6 +290,7 @@ export async function POST(request: NextRequest) {
       where: { id: body.modeloId, contaId: user.contaId, status: 'ATIVO' },
       include: {
         campos: { orderBy: { ordem: 'asc' } },
+        consentimentos: { orderBy: { ordem: 'asc' }, include: { template: { select: { id: true, versao: true } } } },
       },
     });
 
@@ -301,6 +310,25 @@ export async function POST(request: NextRequest) {
 
     const { token: tokenPublico, tokenHash: tokenPublicoHash } = createPublicContractToken();
     const tokenExpiraEm = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const linkedResponsavelLink = matricula.aluno.responsaveis[0] ?? null;
+    const linkedResponsavel = linkedResponsavelLink?.responsavel ?? null;
+    const signerContext = isMaiorDeIdade(matricula.aluno.dataNasc)
+      ? {
+          signerType: 'ALUNO_MAIOR' as const,
+          signerName: matricula.aluno.nome,
+          signerCpf: matricula.aluno.cpf,
+          studentName: matricula.aluno.nome,
+          studentCpf: matricula.aluno.cpf,
+          relationship: null,
+        }
+      : {
+          signerType: 'RESPONSAVEL' as const,
+          signerName: matricula.responsavelFinanceiro?.nome ?? linkedResponsavel?.nome ?? 'responsável legal',
+          signerCpf: matricula.responsavelFinanceiro?.cpf ?? linkedResponsavel?.cpf ?? null,
+          studentName: matricula.aluno.nome,
+          studentCpf: matricula.aluno.cpf,
+          relationship: linkedResponsavelLink?.tipoVinculo === 'PRINCIPAL' ? 'responsável legal' : 'responsável',
+        };
 
     const contrato = await prisma.$transaction(async (tx) => {
       const created = await tx.contrato.create({
@@ -326,6 +354,19 @@ export async function POST(request: NextRequest) {
             altura: campo.altura,
             obrigatorio: campo.obrigatorio,
             ordem: campo.ordem,
+          })),
+          termosConsentimentoSnapshot: (modelo.consentimentos ?? []).map((consentimento) => ({
+            id: consentimento.id,
+            codigo: consentimento.codigo,
+            finalidade: consentimento.finalidade,
+            titulo: consentimento.titulo,
+            texto: renderContractConsentTemplate(consentimento.texto, signerContext),
+            papel: consentimento.papel,
+            obrigatorio: consentimento.obrigatorio,
+            ordem: consentimento.ordem,
+            templateId: consentimento.templateId,
+            templateVersao: consentimento.templateVersao,
+            contexto: signerContext,
           })),
         },
       });

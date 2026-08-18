@@ -29,6 +29,17 @@ describe('validateContractSigner', () => {
     if (result.ok) expect(result.signer.type).toBe('ALUNO_MAIOR');
   });
 
+  it('não permite que o responsável assine no lugar de aluno maior de idade', () => {
+    const result = validateContractSigner({
+      cpf: '529.982.247-25',
+      now,
+      aluno: { nome: 'Aluno Maior', cpf: '39053344705', dataNasc: '2000-01-01' },
+      responsavelFinanceiro: { nome: 'Responsável', cpf: '52998224725' },
+    });
+
+    expect(result).toMatchObject({ ok: false, code: 'NOT_AUTHORIZED' });
+  });
+
   it('rejeita aluno menor de idade', () => {
     const result = validateContractSigner({
       cpf: '390.533.447-05',

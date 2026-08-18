@@ -598,6 +598,13 @@ export type EventContractDTO = {
   assinadoEm: string | null;
   tokenPublico: string;
   tokenExpiraEm: string | null;
+  consentimentos?: Array<{
+    id: string;
+    codigo: string | null;
+    titulo: string;
+    finalidade: string | null;
+    decision: 'AUTORIZADO' | 'RECUSADO' | null;
+  }>;
   createdAt: string;
   updatedAt: string;
 };

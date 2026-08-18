@@ -27,16 +27,29 @@ type Field = {
   ordem: number;
 };
 
+type ConsentTerm = {
+  id: string;
+  codigo: string;
+  finalidade: string;
+  titulo: string;
+  texto: string;
+  papel: 'RESPONSAVEL_OU_ALUNO';
+  obrigatorio: boolean;
+  ordem: number;
+};
+
 type ContratoPublico = {
   id: string;
   arquivoPdfUrl: string;
   status: 'PENDENTE' | 'ASSINADO' | 'EXPIRADO' | 'CANCELADO';
-  tokenExpiraEm: string;
+  tokenExpiraEm: string | null;
   acceptanceText: string;
   acceptanceVersion: number;
+  consentimentos: ConsentTerm[];
   escolaNome: string;
   camposAssinatura: Field[];
   matricula: { aluno: { nome: string }; responsavelFinanceiro?: { nome: string } | null };
+  signatario?: { nome: string; tipo: 'ALUNO_MAIOR' | 'RESPONSAVEL' } | null;
 };
 
 type Signature = { tipo: 'TEXTO' | 'DESENHADA'; valor: string; fonte?: string };
@@ -119,7 +132,7 @@ function SignaturePad({ initialValue, onChange: handleChange }: { initialValue?:
   return <div className="space-y-2"><div className="relative"><button type="button" className="absolute left-3 top-2 z-10 text-xs font-medium text-slate-500 hover:text-slate-900" onClick={clearCanvas}>Limpar</button><canvas ref={canvasRef} className="h-36 w-full touch-none rounded-lg border border-slate-300 bg-slate-100" onPointerDown={(event) => { drawing.current = true; event.currentTarget.setPointerCapture(event.pointerId); const p = point(event); lastPoint.current = p; const context = event.currentTarget.getContext('2d'); context?.beginPath(); context?.moveTo(p.x, p.y); }} onPointerMove={(event) => { if (!drawing.current) return; const p = point(event); const previous = lastPoint.current; const context = event.currentTarget.getContext('2d'); if (!previous || !context) return; const midpoint = { x: (previous.x + p.x) / 2, y: (previous.y + p.y) / 2 }; context.quadraticCurveTo(previous.x, previous.y, midpoint.x, midpoint.y); context.stroke(); lastPoint.current = p; handleChange(exportSignature(event.currentTarget)); }} onPointerUp={(event) => { drawing.current = false; lastPoint.current = null; handleChange(exportSignature(event.currentTarget)); }} onPointerCancel={() => { drawing.current = false; lastPoint.current = null; }} /><span className="pointer-events-none absolute inset-x-3 top-1/2 border-b border-slate-300" aria-hidden="true" /></div><p className="text-xs text-slate-500">Desenhe sua assinatura sobre a linha.</p></div>;
 }
 
-function PublicPdf({ url, fields, escolaNome, signature, signedFieldId, onFieldClick: handleFieldClick }: { url: string; fields: Field[]; escolaNome: string; signature: Signature | null; signedFieldId: string | null; onFieldClick: (_field: Field) => void }) {
+function PublicPdf({ url, fields, escolaNome, signature, signedFieldId, interactive = true, onFieldClick: handleFieldClick }: { url: string; fields: Field[]; escolaNome: string; signature: Signature | null; signedFieldId: string | null; interactive?: boolean; onFieldClick: (_field: Field) => void }) {
   const [components, setComponents] = useState<{ Document: ElementType; Page: ElementType } | null>(null);
   const [pages, setPages] = useState(0);
 
@@ -163,7 +176,7 @@ function PublicPdf({ url, fields, escolaNome, signature, signedFieldId, onFieldC
                     <span className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-2 text-center font-serif text-base italic text-slate-900">
                       {escolaNome || 'Escola'}
                     </span>
-                  ) : (
+                  ) : interactive ? (
                     <button
                       type="button"
                       onClick={() => handleFieldClick(field)}
@@ -174,6 +187,10 @@ function PublicPdf({ url, fields, escolaNome, signature, signedFieldId, onFieldC
                     >
                       {isSigned ? 'Editar assinatura' : (field.tipo === 'RUBRICA' ? 'Rubrica' : 'Clique para assinar')}
                     </button>
+                  ) : (
+                    <span className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded px-2 text-center text-[11px] font-semibold text-slate-500">
+                      Campo de assinatura
+                    </span>
                   )}
                   {!isSigned && <span className="pointer-events-none absolute inset-x-0 bottom-0 border-b border-slate-400" aria-hidden="true" />}
                   {!isSchool && isSigned && signature?.valor && (signature.tipo === 'DESENHADA' ? (
@@ -203,11 +220,49 @@ function PublicPdf({ url, fields, escolaNome, signature, signedFieldId, onFieldC
   );
 }
 
-function PublicStepIndicator({ step }: { step: 1 | 2 | 3 }) {
+function ConsentDocumentPreview({ terms }: { terms: ConsentTerm[] }) {
+  return (
+    <div className="mx-auto w-full max-w-[760px] space-y-5">
+      {terms.map((term, index) => (
+        <article
+          key={term.id}
+          className="min-h-[1075px] w-full bg-white text-[15px] leading-7 text-slate-800 shadow-md"
+          style={{ padding: '2.54cm' }}
+        >
+          <div className="space-y-8">
+            <h1 className="text-left text-xl font-bold uppercase tracking-[0.04em] text-slate-950">
+              {term.titulo}
+            </h1>
+            <div className="space-y-6">
+              {term.texto.split(/\n\s*\n/).map((paragraph, paragraphIndex) => {
+                const content = paragraph.trim();
+                if (!content) return null;
+                const isHeading = content.length <= 90 && content === content.toUpperCase() && /[A-ZÁÉÍÓÚÃÕÇ]/.test(content);
+                return isHeading ? (
+                  <h2 key={`${term.id}-heading-${paragraphIndex}`} className="text-left text-sm font-bold uppercase tracking-[0.02em] text-slate-950">
+                    {content}
+                  </h2>
+                ) : (
+                  <p key={`${term.id}-paragraph-${paragraphIndex}`} className="whitespace-pre-line text-left">
+                    {content}
+                  </p>
+                );
+              })}
+            </div>
+          </div>
+          {terms.length > 1 && index < terms.length - 1 && <div className="mt-12 border-t border-slate-200 pt-4 text-xs text-slate-400">Próximo termo de consentimento</div>}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function PublicStepIndicator({ step, hasConsentimentos }: { step: 1 | 2 | 3 | 4; hasConsentimentos: boolean }) {
   const items = [
     ['1', 'Revisar'],
-    ['2', 'Assinar'],
-    ['3', 'Concluir'],
+    ...(hasConsentimentos ? [['2', 'Consentimentos']] as const : []),
+    [hasConsentimentos ? '3' : '2', 'Assinar'],
+    [hasConsentimentos ? '4' : '3', 'Concluir'],
   ] as const;
 
   return (
@@ -238,7 +293,7 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
   const [contrato, setContrato] = useState<ContratoPublico | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMSG, setErrorMSG] = useState<string | null>(null);
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [signatureField, setSignatureField] = useState<Field | null>(null);
   const [signature, setSignature] = useState<Signature | null>(null);
   const [signedFieldId, setSignedFieldId] = useState<string | null>(null);
@@ -249,12 +304,13 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
   const [cpf, setCpf] = useState('');
   const [email, setEmail] = useState('');
   const [aceite, setAceite] = useState(false);
+  const [consentAnswers, setConsentAnswers] = useState<Record<string, 'AUTORIZADO' | 'RECUSADO'>>({});
   const [assinando, setAssinando] = useState(false);
   const [signedSuccess, setSignedSuccess] = useState(false);
 
   useEffect(() => {
-    fetch(`${kind === 'event' ? '/api/public/event-contrato' : '/api/public/contrato'}/${token}`).then(async (res) => { if (!res.ok) throw new Error((await res.json()).error?.message || 'Erro ao carregar contrato'); return res.json(); }).then((data: ContratoPublico) => { setContrato(data); setNome(data.matricula.responsavelFinanceiro?.nome || data.matricula.aluno.nome); }).catch((error: unknown) => setErrorMSG(error instanceof Error ? error.message : 'Erro ao carregar contrato')).finally(() => setLoading(false));
-  }, [token]);
+    fetch(`${kind === 'event' ? '/api/public/event-contrato' : '/api/public/contrato'}/${token}`).then(async (res) => { if (!res.ok) throw new Error((await res.json()).error?.message || 'Erro ao carregar contrato'); return res.json(); }).then((data: ContratoPublico) => { setContrato(data); setNome(data.signatario?.nome || data.matricula.responsavelFinanceiro?.nome || data.matricula.aluno.nome); }).catch((error: unknown) => setErrorMSG(error instanceof Error ? error.message : 'Erro ao carregar contrato')).finally(() => setLoading(false));
+  }, [kind, token]);
 
   useEffect(() => {
     if (!signatureField) return;
@@ -267,6 +323,8 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
 
   const formatCpf = useCallback((value: string) => { const digits = value.replace(/\D/g, '').slice(0, 11); if (digits.length <= 3) return digits; if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`; if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`; return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`; }, []);
   const requiredFields = contrato?.camposAssinatura.filter((field) => field.papel === 'RESPONSAVEL_OU_ALUNO' && field.obrigatorio) ?? [];
+  const consentimentos = contrato?.consentimentos ?? [];
+  const consentimentosValidos = consentimentos.every((term) => !term.obrigatorio || Boolean(consentAnswers[term.id]));
 
   const openSignature = (field: Field) => {
     const editingCurrentSignature = signedFieldId === field.id ? signature : null;
@@ -278,8 +336,8 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
   const saveSignature = () => { const value = signatureMode === 'TEXTO' ? typedSignature.trim() : signature?.valor; if (!value || !signatureField) return toast.error('Preencha sua assinatura antes de continuar.'); setSignature({ tipo: signatureMode, valor: value, ...(signatureMode === 'TEXTO' ? { fonte: typedFont } : {}) }); setSignedFieldId(signatureField.id); setSignatureField(null); };
 
   const submit = async () => {
-    if (!signature || !nome.trim() || cpf.replace(/\D/g, '').length !== 11 || !aceite) return toast.error('Revise seus dados, assinatura e aceite antes de finalizar.');
-    try { setAssinando(true); const assinatura = { ...signature, fonte: signature.fonte || typedFont }; const res = await fetch(`${kind === 'event' ? '/api/public/event-contrato' : '/api/public/contrato'}/${token}/assinar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome: nome.trim(), cpf: cpf.replace(/\D/g, ''), email: email.trim() || undefined, aceite: true, assinatura, userAgent: navigator.userAgent }) }); const data = await res.json(); if (!res.ok) throw new Error(data.error?.message || 'Erro ao assinar contrato'); setSignedSuccess(true); toast.success('Contrato assinado com sucesso!'); } catch (error) { toast.error(error instanceof Error ? error.message : 'Erro ao assinar contrato'); } finally { setAssinando(false); }
+    if (!signature || !nome.trim() || cpf.replace(/\D/g, '').length !== 11 || !aceite || !consentimentosValidos) return toast.error('Revise seus dados, consentimentos, assinatura e aceite antes de finalizar.');
+    try { setAssinando(true); const assinatura = { ...signature, fonte: signature.fonte || typedFont }; const res = await fetch(`${kind === 'event' ? '/api/public/event-contrato' : '/api/public/contrato'}/${token}/assinar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome: nome.trim(), cpf: cpf.replace(/\D/g, ''), email: email.trim() || undefined, aceite: true, consentimentos: Object.entries(consentAnswers).map(([termId, decision]) => ({ termId, decision })), assinatura, userAgent: navigator.userAgent }) }); const data = await res.json(); if (!res.ok) throw new Error(data.error?.message || 'Erro ao assinar contrato'); setSignedSuccess(true); toast.success('Contrato assinado com sucesso!'); } catch (error) { toast.error(error instanceof Error ? error.message : 'Erro ao assinar contrato'); } finally { setAssinando(false); }
   };
 
   if (loading) return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">Carregando contrato...</div>;
@@ -296,15 +354,15 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
               <BrandWordmark variant="white" className="h-7 w-[92px]" />
             </div>
           </div>
-          <PublicStepIndicator step={step} />
+          <PublicStepIndicator step={step} hasConsentimentos={consentimentos.length > 0} />
         </div>
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px] xl:gap-8">
-<section aria-label="Documento para assinatura" className="w-fit max-w-full justify-self-center overflow-hidden rounded-2xl border-0 bg-[#dce3ec] p-5 shadow-[0_12px_40px_-24px_rgba(15,23,42,0.4)]">
+          <section aria-label={step === 2 ? 'Termo de consentimento' : 'Documento para assinatura'} className={cn('max-w-full justify-self-center overflow-hidden rounded-2xl border-0 bg-[#dce3ec] p-5 shadow-[0_12px_40px_-24px_rgba(15,23,42,0.4)]', step === 2 ? 'w-full' : 'w-fit')}>
             <div className="rounded-xl border-0 bg-transparent p-0">
-              <PublicPdf url={contrato.arquivoPdfUrl} fields={contrato.camposAssinatura} escolaNome={contrato.escolaNome} signature={signature} signedFieldId={signedFieldId} onFieldClick={(field) => { setStep(2); openSignature(field); }} />
+              {step === 2 ? <ConsentDocumentPreview terms={consentimentos} /> : <PublicPdf url={contrato.arquivoPdfUrl} fields={contrato.camposAssinatura} escolaNome={contrato.escolaNome} signature={signature} signedFieldId={signedFieldId} interactive={step === 3} onFieldClick={openSignature} />}
             </div>
           </section>
 
@@ -312,21 +370,23 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
             <Card className="overflow-hidden border-slate-200/90 shadow-[0_12px_32px_-24px_rgba(15,23,42,0.5)]">
               <CardHeader className="space-y-2 border-b border-slate-100 bg-white px-5 py-5">
                 <div className="flex items-center justify-between gap-3">
-                  <CardTitle className="text-[15px] font-bold">{step === 1 ? 'Revise o documento' : step === 2 ? 'Sua assinatura' : 'Confirmar assinatura'}</CardTitle>
+                  <CardTitle className="text-[15px] font-bold">{step === 1 ? 'Revise o documento' : step === 2 ? 'Consentimentos' : step === 3 ? 'Sua assinatura' : 'Confirmar assinatura'}</CardTitle>
                 </div>
-                <CardDescription className="leading-5">{step === 1 ? 'Leia o contrato completo. Os campos destacados indicam onde você assinará.' : step === 2 ? 'Clique no campo destacado do documento para preencher sua assinatura.' : 'Confira seus dados e aceite os termos para concluir.'}</CardDescription>
+                <CardDescription className="leading-5">{step === 1 ? 'Leia o contrato completo. Os campos destacados indicam onde você assinará.' : step === 2 ? 'Responda cada termo de consentimento. Você poderá autorizar ou recusar cada autorização.' : step === 3 ? 'Clique no campo destacado do documento para preencher sua assinatura.' : 'Confira seus dados e aceite os termos para concluir.'}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4 bg-slate-50 px-5 py-5">
-                {step === 1 && <InfoCallout variant="info" size="sm" title="Pronto para assinar?">Clique em um marcador no documento ou avance para preencher sua assinatura.</InfoCallout>}
-                {step === 2 && <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-sm">{signature ? <div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 font-semibold text-emerald-700"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-xs">✓</span>Assinatura preenchida</span><Button variant="link" className="h-auto px-0 text-xs" onClick={() => setSignatureField(requiredFields[0] ?? null)}>Alterar</Button></div> : <span className="leading-5 text-slate-600">{requiredFields.length ? 'Clique no campo destacado do PDF para assinar.' : 'Nenhum campo de assinatura configurado.'}</span>}</div>}
-                {step === 3 && <>
+                {step === 1 && <InfoCallout variant="info" size="sm" title="Revise com atenção">Confira todo o conteúdo do contrato antes de avançar para as próximas etapas.</InfoCallout>}
+                {step === 2 && <div className="space-y-3">{consentimentos.map((term) => <div key={term.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><span className="sr-only">Respostas para {term.titulo}</span><div className="space-y-3"><label className="flex cursor-pointer items-center gap-3 text-sm font-medium text-slate-800"><Checkbox checked={consentAnswers[term.id] === 'AUTORIZADO'} onCheckedChange={(checked) => setConsentAnswers((current) => { if (checked) return { ...current, [term.id]: 'AUTORIZADO' }; const next = { ...current }; delete next[term.id]; return next; })} /><span>Autorizo</span></label><label className="flex cursor-pointer items-center gap-3 text-sm font-medium text-slate-800"><Checkbox checked={consentAnswers[term.id] === 'RECUSADO'} onCheckedChange={(checked) => setConsentAnswers((current) => { if (checked) return { ...current, [term.id]: 'RECUSADO' }; const next = { ...current }; delete next[term.id]; return next; })} /><span>Não autorizo</span></label></div></div>)}</div>}
+                {step === 3 && <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-sm">{signature ? <div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 font-semibold text-emerald-700"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-xs">✓</span>Assinatura preenchida</span><Button variant="link" className="h-auto px-0 text-xs" onClick={() => setSignatureField(requiredFields[0] ?? null)}>Alterar</Button></div> : <span className="leading-5 text-slate-600">{requiredFields.length ? 'Clique no campo destacado do PDF para assinar.' : 'Nenhum campo de assinatura configurado.'}</span>}</div>}
+                {step === 4 && <>
+                  {consentimentos.length > 0 && <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm"><p className="mb-2 font-semibold text-slate-800">Suas decisões</p>{consentimentos.map((term) => <div key={term.id} className="flex items-center justify-between gap-3 border-t border-slate-100 py-2"><span className="text-slate-600">{term.titulo}</span><span className={cn('font-semibold', consentAnswers[term.id] === 'AUTORIZADO' ? 'text-emerald-700' : consentAnswers[term.id] === 'RECUSADO' ? 'text-amber-700' : 'text-slate-500')}>{consentAnswers[term.id] === 'AUTORIZADO' ? 'Autorizado' : consentAnswers[term.id] === 'RECUSADO' ? 'Não autorizado' : 'Não respondido'}</span></div>)}</div>}
                   <div className="space-y-2"><Label htmlFor="public-nome">Nome completo</Label><Input id="public-nome" value={nome} onChange={(event) => setNome(event.target.value)} className="h-10 rounded-lg border-slate-200 bg-white shadow-sm focus-visible:border-brand-accent focus-visible:ring-brand-accent/25" /></div>
                   <div className="space-y-2"><Label htmlFor="public-cpf">CPF</Label><Input id="public-cpf" value={cpf} onChange={(event) => setCpf(formatCpf(event.target.value))} maxLength={14} placeholder="000.000.000-00" className="h-10 rounded-lg border-slate-200 bg-white shadow-sm focus-visible:border-brand-accent focus-visible:ring-brand-accent/25" /></div>
                   <div className="space-y-2"><Label htmlFor="public-email">E-mail para cópia <span className="text-xs font-normal text-slate-400">(opcional)</span></Label><Input id="public-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="h-10 rounded-lg border-slate-200 bg-white shadow-sm focus-visible:border-brand-accent focus-visible:ring-brand-accent/25" /></div>
                   <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm"><Checkbox id="public-aceite" checked={aceite} onCheckedChange={(checked) => setAceite(checked === true)} /><Label htmlFor="public-aceite" className="cursor-pointer text-sm font-normal leading-5">{contrato.acceptanceText}</Label></div>
                 </>}
               </CardContent>
-              <CardFooter className="flex gap-2 border-t border-slate-200 bg-white px-5 py-4"><Button variant="outline" className="flex-1 bg-white" onClick={() => setStep((Math.max(1, step - 1)) as 1 | 2 | 3)} disabled={step === 1}>Voltar</Button>{step < 3 ? <Button className="flex-1" onClick={() => { if (step === 1) setStep(2); else if (!signature) toast.error('Preencha sua assinatura antes de continuar.'); else setStep(3); }}>{step === 1 ? 'Preencher assinatura' : 'Continuar'}</Button> : <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => void submit()} disabled={assinando || !aceite}>{assinando ? 'Finalizando...' : 'Finalizar assinatura'}</Button>}</CardFooter>
+              <CardFooter className="flex gap-2 border-t border-slate-200 bg-white px-5 py-4"><Button variant="outline" className="flex-1 bg-white" onClick={() => { if (step === 3 && consentimentos.length === 0) setStep(1); else setStep((Math.max(1, step - 1)) as 1 | 2 | 3 | 4); }} disabled={step === 1}>Voltar</Button>{step < 4 ? <Button className="flex-1" onClick={() => { if (step === 1) setStep(consentimentos.length ? 2 : 3); else if (step === 2) { if (!consentimentosValidos) toast.error('Responda todos os termos de consentimento antes de continuar.'); else setStep(3); } else if (!signature) toast.error('Preencha sua assinatura antes de continuar.'); else setStep(4); }}>{step === 1 ? (consentimentos.length ? 'Continuar para consentimentos' : 'Continuar') : step === 2 ? 'Continuar para assinatura' : 'Continuar'}</Button> : <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => void submit()} disabled={assinando || !aceite || !consentimentosValidos}>{assinando ? 'Finalizando...' : 'Finalizar assinatura'}</Button>}</CardFooter>
             </Card>
             <div className="flex justify-center rounded-xl border border-slate-200/70 bg-white/60 px-4 py-3"><AsaasSeal variant="negativo-preto" /></div>
           </aside>

@@ -9,6 +9,10 @@ const packageDistPath = (packageName, relativePath) =>
 const packageSourcePath = (packageName, relativePath) =>
   `../../packages/${packageName}/src/${relativePath}`;
 const webSourcePath = (relativePath) => `./${relativePath}`;
+// Em desenvolvimento, o app deve consumir o código-fonte dos pacotes internos.
+// Caso contrário o Turbopack pode manter um artefato dist antigo em memória e a
+// API passa a responder com serializadores desatualizados.
+const useWorkspaceSources = process.env.NODE_ENV !== 'production';
 
 const scriptSrc = [
   "script-src 'self'",
@@ -103,8 +107,12 @@ const nextConfig = {
         default: packageDistPath('finance', 'index.js'),
       },
       '@alusa/finance/*': packageDistPath('finance', '*.js'),
-      '@alusa/lib': packageDistPath('lib', 'index.js'),
-      '@alusa/lib/*': packageDistPath('lib', '*.js'),
+      '@alusa/lib': useWorkspaceSources
+        ? packageSourcePath('lib', 'index.ts')
+        : packageDistPath('lib', 'index.js'),
+      '@alusa/lib/*': useWorkspaceSources
+        ? packageSourcePath('lib', '*')
+        : packageDistPath('lib', '*.js'),
       '@alusa/platform-billing': packageDistPath('platform-billing', 'index.js'),
       '@alusa/platform-billing/*': packageDistPath('platform-billing', '*.js'),
       '@alusa/shared': packageDistPath('shared', 'index.js'),
@@ -118,9 +126,15 @@ const nextConfig = {
       '@alusa/ui/*': packageSourcePath('ui', '*'),
       // Estes subpaths não seguem o mapeamento direto dist/<subpath>.js:
       // no pacote lib eles são emitidos em utils/ ou na raiz.
-      '@alusa/lib/cpf-cnpj': packageDistPath('lib', 'utils/cpf-cnpj.js'),
-      '@alusa/lib/date-only': packageDistPath('lib', 'utils/date-only.js'),
-      '@alusa/lib/zod-error-map': packageDistPath('lib', 'zod-error-map.js'),
+      '@alusa/lib/cpf-cnpj': useWorkspaceSources
+        ? packageSourcePath('lib', 'utils/cpf-cnpj.ts')
+        : packageDistPath('lib', 'utils/cpf-cnpj.js'),
+      '@alusa/lib/date-only': useWorkspaceSources
+        ? packageSourcePath('lib', 'utils/date-only.ts')
+        : packageDistPath('lib', 'utils/date-only.js'),
+      '@alusa/lib/zod-error-map': useWorkspaceSources
+        ? packageSourcePath('lib', 'zod-error-map.ts')
+        : packageDistPath('lib', 'zod-error-map.js'),
     },
   },
   experimental: {

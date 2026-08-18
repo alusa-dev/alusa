@@ -24,6 +24,12 @@ type SignedContractPdfInput = {
   signatureHash: string;
   originalPdfBytes: Uint8Array | Buffer;
   assinatura: { tipo: 'TEXTO' | 'DESENHADA'; valor: string; fonte?: string };
+  consentimentos?: Array<{
+    titulo: string;
+    finalidade: string;
+    texto: string;
+    decision: 'AUTORIZADO' | 'RECUSADO';
+  }>;
   camposAssinatura: Array<{
     tipo: 'ASSINATURA' | 'RUBRICA';
     papel: 'ESCOLA' | 'RESPONSAVEL_OU_ALUNO';
@@ -319,6 +325,76 @@ export async function generateSignedContractEvidencePdf(input: SignedContractPdf
     font: regular,
     color: rgb(0.39, 0.45, 0.55),
   });
+
+  if (input.consentimentos?.length) {
+    const consentPage = pdf.addPage([595.28, 841.89]);
+    const consentWidth = consentPage.getSize().width;
+    let consentY = consentPage.getSize().height - margin;
+
+    consentPage.drawText('Decisoes de consentimento', {
+      x: margin,
+      y: consentY,
+      size: 18,
+      font: bold,
+      color: rgb(0.06, 0.09, 0.16),
+    });
+    consentY -= 28;
+    consentPage.drawText('Termos apresentados ao assinante no momento da assinatura.', {
+      x: margin,
+      y: consentY,
+      size: 10,
+      font: regular,
+      color: rgb(0.39, 0.45, 0.55),
+    });
+    consentY -= 30;
+
+    for (const consentimento of input.consentimentos) {
+      consentPage.drawText(consentimento.titulo, {
+        x: margin,
+        y: consentY,
+        size: 11,
+        font: bold,
+        color: rgb(0.11, 0.15, 0.22),
+        maxWidth: consentWidth - (margin * 2),
+      });
+      consentY -= 16;
+      consentPage.drawText(`Finalidade: ${consentimento.finalidade}`, {
+        x: margin,
+        y: consentY,
+        size: 8,
+        font: mono,
+        color: rgb(0.39, 0.45, 0.55),
+      });
+      consentY -= 15;
+      consentY = drawWrappedText({
+        page: consentPage,
+        text: consentimento.texto,
+        x: margin,
+        y: consentY,
+        maxLength: 88,
+        lineHeight: 12,
+        size: 9,
+        font: regular,
+      });
+      consentY -= 6;
+      consentPage.drawText(`Decisao: ${consentimento.decision === 'AUTORIZADO' ? 'Autorizado' : 'Nao autorizado'}`, {
+        x: margin,
+        y: consentY,
+        size: 10,
+        font: bold,
+        color: consentimento.decision === 'AUTORIZADO' ? rgb(0.12, 0.45, 0.3) : rgb(0.65, 0.25, 0.2),
+      });
+      consentY -= 26;
+    }
+
+    consentPage.drawText('As decisoes acima fazem parte do hash da assinatura.', {
+      x: margin,
+      y: 42,
+      size: 8,
+      font: regular,
+      color: rgb(0.39, 0.45, 0.55),
+    });
+  }
 
   page.drawText('A pagina acima foi adicionada ao PDF original no momento da assinatura.', {
     x: margin,

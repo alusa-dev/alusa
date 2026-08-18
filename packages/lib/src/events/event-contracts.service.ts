@@ -3,9 +3,16 @@ import {
   buildSignaturePayload,
   CONTRACT_ACCEPTANCE_TEXT_V1,
   CONTRACT_ACCEPTANCE_VERSION,
+  buildContractConsentPayload,
   hashCanonicalPayload,
   validateContractSigner,
+  resolveContractConsentAnswers,
+  isMaiorDeIdade,
+  renderContractConsentTemplate,
+  type ContractConsentAnswer,
+  type ContractConsentTermSnapshot,
 } from '@alusa/domain';
+import { snapshotContractConsentTerms } from '@alusa/domain';
 import { createPublicContractToken } from '../contracts/tokens';
 import { generateSignedContractEvidencePdf } from '../contracts/pdf/generate-signed-contract-pdf';
 import { prisma } from '../prisma';
@@ -19,6 +26,68 @@ type EventContractContext = {
 
 function jsonValue(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+async function persistEventContractConsentRecords(
+  tx: Prisma.TransactionClient,
+  input: {
+    contaId: string;
+    eventoContratoId: string;
+    alunoId: string;
+    signedAt: Date;
+    consentimentos: Array<{
+      id: string;
+      codigo: string;
+      titulo: string;
+      finalidade: string;
+      decision: 'AUTORIZADO' | 'RECUSADO';
+    }>;
+  },
+) {
+  await Promise.all(input.consentimentos.map((consentimento) => {
+    const source = `EVENT_CONTRACT:${input.eventoContratoId}:${consentimento.id}`;
+    const status = consentimento.decision === 'AUTORIZADO' ? 'GRANTED' : 'DENIED';
+
+    return tx.consentRecord.upsert({
+      where: {
+        uq_consent_record_conta_source: {
+          contaId: input.contaId,
+          source,
+        },
+      },
+      create: {
+        contaId: input.contaId,
+        subjectType: 'ALUNO',
+        subjectId: input.alunoId,
+        consentType: consentimento.finalidade,
+        legalBasis: 'CONSENTIMENTO',
+        status,
+        grantedAt: input.signedAt,
+        source,
+        metadata: jsonValue({
+          eventoContratoId: input.eventoContratoId,
+          termoId: consentimento.id,
+          codigo: consentimento.codigo,
+          titulo: consentimento.titulo,
+          finalidade: consentimento.finalidade,
+          decision: consentimento.decision,
+        }),
+      },
+      update: {
+        status,
+        grantedAt: input.signedAt,
+        revokedAt: null,
+        metadata: jsonValue({
+          eventoContratoId: input.eventoContratoId,
+          termoId: consentimento.id,
+          codigo: consentimento.codigo,
+          titulo: consentimento.titulo,
+          finalidade: consentimento.finalidade,
+          decision: consentimento.decision,
+        }),
+      },
+    });
+  }));
 }
 
 async function recordEvidence(
@@ -62,6 +131,9 @@ function snapshotFields(fields: Array<{
 }
 
 export function mapEventContract(contract: any) {
+  const consentTerms = Array.isArray(contract.termosConsentimentoSnapshot) ? contract.termosConsentimentoSnapshot : [];
+  const consentDecisions = Array.isArray(contract.decisoesConsentimento) ? contract.decisoesConsentimento : [];
+
   return {
     id: contract.id,
     origin: 'EVENT' as const,
@@ -84,6 +156,13 @@ export function mapEventContract(contract: any) {
     assinadoEm: contract.assinadoEm?.toISOString?.() ?? null,
     tokenPublico: contract.tokenPublico?.startsWith('hash:') ? '' : contract.tokenPublico,
     tokenExpiraEm: contract.tokenExpiraEm?.toISOString?.() ?? null,
+    consentimentos: consentTerms.map((term: any) => ({
+      id: String(term.id),
+      codigo: term.codigo ?? null,
+      titulo: term.titulo ?? 'Consentimento',
+      finalidade: term.finalidade ?? null,
+      decision: consentDecisions.find((decision: any) => decision.id === term.id)?.decision ?? null,
+    })),
     createdAt: contract.createdAt.toISOString(),
     updatedAt: contract.updatedAt.toISOString(),
   };
@@ -114,6 +193,7 @@ export async function createEventContractForParticipant(
           id: true,
           nome: true,
           cpf: true,
+          dataNasc: true,
           responsaveis: {
             where: { contaId: input.contaId, tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
             orderBy: { id: 'asc' },
@@ -134,7 +214,10 @@ export async function createEventContractForParticipant(
 
   const modelo = await tx.contratoModelo.findFirst({
     where: { id: participant.event.contratoModeloId, contaId: input.contaId, status: 'ATIVO' },
-    include: { campos: { orderBy: { ordem: 'asc' } } },
+    include: {
+      campos: { orderBy: { ordem: 'asc' } },
+      consentimentos: { orderBy: { ordem: 'asc' }, include: { template: { select: { id: true, versao: true } } } },
+    },
   });
   if (!modelo) throw new Error('MODELO_CONTRATO_EVENTO_NAO_ENCONTRADO');
 
@@ -144,6 +227,23 @@ export async function createEventContractForParticipant(
   const { tokenHash } = createPublicContractToken();
   const tokenExpiraEm = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   const responsavel = participant.aluno.responsaveis[0]?.responsavel ?? null;
+  const signerContext = isMaiorDeIdade(participant.aluno.dataNasc)
+    ? {
+        signerType: 'ALUNO_MAIOR' as const,
+        signerName: participant.aluno.nome,
+        signerCpf: participant.aluno.cpf,
+        studentName: participant.aluno.nome,
+        studentCpf: participant.aluno.cpf,
+        relationship: null,
+      }
+    : {
+        signerType: 'RESPONSAVEL' as const,
+        signerName: responsavel?.nome ?? 'responsável legal',
+        signerCpf: responsavel?.cpf ?? null,
+        studentName: participant.aluno.nome,
+        studentCpf: participant.aluno.cpf,
+        relationship: 'responsável legal',
+      };
   const contrato = await tx.eventoContrato.create({
     data: {
       contaId: input.contaId,
@@ -155,6 +255,13 @@ export async function createEventContractForParticipant(
       arquivoPdfUrl: modelo.arquivoPdfUrl,
       hashPdf: modelo.hashSha256,
       camposAssinaturaSnapshot: snapshotFields(modelo.campos),
+      termosConsentimentoSnapshot: snapshotContractConsentTerms(modelo.consentimentos ?? []).map((term) => ({
+        ...term,
+        texto: renderContractConsentTemplate(term.texto, signerContext),
+        templateId: modelo.consentimentos.find((item) => item.id === term.id)?.templateId ?? null,
+        templateVersao: modelo.consentimentos.find((item) => item.id === term.id)?.templateVersao ?? null,
+        contexto: signerContext,
+      })),
       status: 'PENDENTE',
       tokenPublico: `hash:${tokenHash}`,
       tokenPublicoHash: tokenHash,
@@ -243,10 +350,23 @@ export async function findPublicEventContractByToken(token: string) {
     },
     include: {
       conta: { select: { id: true, nome: true } },
-      aluno: { select: { id: true, nome: true, cpf: true, dataNasc: true } },
+      aluno: {
+        select: {
+          id: true,
+          nome: true,
+          cpf: true,
+          dataNasc: true,
+          responsaveis: {
+            where: {},
+            orderBy: { id: 'asc' },
+            take: 10,
+            select: { contaId: true, responsavel: { select: { nome: true, cpf: true } } },
+          },
+        },
+      },
       responsavel: { select: { id: true, nome: true, cpf: true } },
       evento: { select: { id: true, name: true, startsAt: true } },
-      modelo: { include: { campos: { orderBy: { ordem: 'asc' } } } },
+      modelo: { include: { campos: { orderBy: { ordem: 'asc' } }, consentimentos: { orderBy: { ordem: 'asc' } } } },
     },
   });
 }
@@ -263,6 +383,19 @@ export function mapPublicEventContractToDTO(contract: any) {
     tokenExpiraEm: contract.tokenExpiraEm?.toISOString?.() ?? null,
     acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1,
     acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION,
+    consentimentos: Array.isArray(contract.termosConsentimentoSnapshot)
+      ? contract.termosConsentimentoSnapshot
+      : contract.modelo?.consentimentos?.map((term: any) => ({
+          id: term.id,
+          codigo: term.codigo,
+          finalidade: term.finalidade,
+          titulo: term.titulo,
+          texto: term.texto,
+          papel: 'RESPONSAVEL_OU_ALUNO',
+          obrigatorio: term.obrigatorio,
+          recusaImpedeAssinatura: term.recusaImpedeAssinatura,
+          ordem: term.ordem,
+        })) ?? [],
     escolaNome: contract.conta.nome,
     matricula: {
       aluno: { nome: contract.aluno.nome },
@@ -297,6 +430,7 @@ export async function signPublicEventContract(input: {
   nome: string;
   email?: string | null;
   aceite: true;
+  consentimentos?: ContractConsentAnswer[];
   ip?: string | null;
   userAgent?: string | null;
   baseUrl?: string | null;
@@ -310,11 +444,30 @@ export async function signPublicEventContract(input: {
   if (contract.status === 'EXPIRADO') throw new Error('CONTRACT_EXPIRED');
   if (contract.tokenExpiraEm && now > contract.tokenExpiraEm) throw new Error('CONTRACT_LINK_EXPIRED');
 
+  const consentTerms: ContractConsentTermSnapshot[] = Array.isArray(contract.termosConsentimentoSnapshot)
+    ? contract.termosConsentimentoSnapshot as ContractConsentTermSnapshot[]
+    : (contract.modelo?.consentimentos ?? []).map((term: any) => ({
+        id: term.id,
+        codigo: term.codigo,
+        finalidade: term.finalidade,
+        titulo: term.titulo,
+        texto: term.texto,
+        papel: 'RESPONSAVEL_OU_ALUNO' as const,
+        obrigatorio: term.obrigatorio,
+        recusaImpedeAssinatura: term.recusaImpedeAssinatura,
+        ordem: term.ordem,
+      }));
+  const consentimentos = resolveContractConsentAnswers(consentTerms, input.consentimentos ?? []);
+  const consentimentosPayload = buildContractConsentPayload(consentimentos);
+
   const signer = validateContractSigner({
     cpf: input.cpf,
     now,
     aluno: contract.aluno,
     responsavelFinanceiro: contract.responsavel,
+    responsaveis: contract.aluno.responsaveis
+      .filter((item: { contaId: string }) => item.contaId === contract.contaId)
+      .map((item: { responsavel: { nome: string; cpf: string } }) => item.responsavel),
   });
   if (!signer.ok) throw new Error(signer.code);
 
@@ -330,6 +483,7 @@ export async function signPublicEventContract(input: {
     ip: input.ip ?? null,
     userAgent: input.userAgent ?? null,
     assinatura: input.assinatura,
+    consentimentos: consentimentosPayload,
   });
   const signatureHash = hashCanonicalPayload(signaturePayload);
   const signedPdf = await generateSignedContractEvidencePdf({
@@ -359,14 +513,35 @@ export async function signPublicEventContract(input: {
       largura: field.largura,
       altura: field.altura,
     })),
+    consentimentos: consentimentosPayload,
   });
 
   const signedPdfUrl = `/api/event-contracts/${contract.id}/documentos/assinado`;
   await prisma.$transaction(async (tx) => {
-    await recordEvidence(tx, { contaId: contract.contaId, eventoContratoId: contract.id, type: 'SIGNATURE_ACCEPTED', actorType: 'PUBLIC', payload: { aceite: true, acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1, acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION, payloadHash: signatureHash } });
+    await recordEvidence(tx, { contaId: contract.contaId, eventoContratoId: contract.id, type: 'SIGNATURE_ACCEPTED', actorType: 'PUBLIC', payload: { aceite: true, acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1, acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION, payloadHash: signatureHash, consentimentos: consentimentosPayload } });
+    if (consentimentosPayload.length) {
+      await recordEvidence(tx, { contaId: contract.contaId, eventoContratoId: contract.id, type: 'CONSENT_DECISION_RECORDED', actorType: 'PUBLIC', payload: { consentimentos: consentimentosPayload } });
+      await persistEventContractConsentRecords(tx, {
+        contaId: contract.contaId,
+        eventoContratoId: contract.id,
+        alunoId: contract.alunoId,
+        signedAt: now,
+        consentimentos: consentimentosPayload,
+      });
+      const imageConsent = consentimentosPayload.find((consentimento) => consentimento.finalidade === 'IMAGE_USE');
+      if (imageConsent) {
+        await tx.aluno.updateMany({
+          where: { id: contract.alunoId, contaId: contract.contaId },
+          data: {
+            consentimentoImagem: imageConsent.decision === 'AUTORIZADO',
+            dataConsentimentoImagem: imageConsent.decision === 'AUTORIZADO' ? now : null,
+          },
+        });
+      }
+    }
     const updated = await tx.eventoContrato.updateMany({
       where: { id: contract.id, contaId: contract.contaId, status: 'PENDENTE' },
-      data: { status: 'ASSINADO', assinadoPor: signer.signer.nome, assinadoCpf: signer.signer.cpf, assinadoEmail: input.email ?? null, assinadoIp: input.ip ?? null, assinadoUserAgent: input.userAgent ?? null, assinadoEm: now, hashAssinatura: signatureHash, arquivoPdfAssinadoUrl: signedPdfUrl, hashPdfAssinado: signedPdf.hashSha256 },
+      data: { status: 'ASSINADO', assinadoPor: signer.signer.nome, assinadoCpf: signer.signer.cpf, assinadoEmail: input.email ?? null, assinadoIp: input.ip ?? null, assinadoUserAgent: input.userAgent ?? null, assinadoEm: now, hashAssinatura: signatureHash, arquivoPdfAssinadoUrl: signedPdfUrl, hashPdfAssinado: signedPdf.hashSha256, decisoesConsentimento: consentimentosPayload },
     });
     if (updated.count !== 1) throw new Error('CONTRACT_ALREADY_SIGNED');
     await tx.eventoContratoDocumento.create({ data: { contaId: contract.contaId, eventoContratoId: contract.id, tipo: 'ASSINADO', arquivoUrl: signedPdf.dataUrl, hashSha256: signedPdf.hashSha256, tamanhoBytes: signedPdf.tamanhoBytes } });

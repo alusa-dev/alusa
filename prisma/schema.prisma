@@ -1341,8 +1341,10 @@ model Conta {
   eventReports                      EventReport[]
   eventAudits                       EventAudit[]
   contratoTemplates                 ContratoTemplate[]
+  contratoConsentimentoTemplates    ContratoConsentimentoTemplate[]
   contratoModelos                   ContratoModelo[]
   contratoModeloCampos              ContratoModeloCampo[]
+  contratoModeloConsentimentos      ContratoModeloConsentimento[]
   contratos                         Contrato[]
   contratoEvidencias                ContractEvidence[]
   contratoDocumentos                ContratoDocumento[]
@@ -3641,6 +3643,7 @@ model ConsentRecord {
 
   @@index([contaId, subjectType, subjectId], name: "idx_consent_record_subject")
   @@index([contaId, consentType, status], name: "idx_consent_record_type_status")
+  @@unique([contaId, source], name: "uq_consent_record_conta_source")
   @@index([userId])
 }
 
@@ -4958,6 +4961,7 @@ model ContratoModelo {
   contratosEvento EventoContrato[]
   schoolEvents    SchoolEvent[]
   campos          ContratoModeloCampo[]
+  consentimentos  ContratoModeloConsentimento[]
 
   @@unique([contaId, nome, versao], name: "uq_contrato_modelo_conta_nome_versao")
   @@index([contaId], name: "idx_contrato_modelo_conta")
@@ -4997,6 +5001,78 @@ model ContratoModeloCampo {
   @@index([contaId, papel], name: "idx_contrato_modelo_campo_conta_papel")
 }
 
+enum ContratoConsentimentoFinalidade {
+  IMAGE_USE
+  MARKETING
+  COMMUNICATIONS
+  OTHER
+}
+
+enum ContratoConsentimentoPapel {
+  RESPONSAVEL_OU_ALUNO
+}
+
+enum ContratoConsentimentoTemplateOrigem {
+  SISTEMA
+  CONTA
+}
+
+model ContratoConsentimentoTemplate {
+  id             String                              @id @default(cuid())
+  contaId        String?
+  slug           String
+  nome           String
+  finalidade     ContratoConsentimentoFinalidade
+  titulo         String
+  texto          String                              @db.Text
+  variaveis      String[]                            @default([])
+  grupoSlug      String?
+  grupoNome      String?
+  grupoDescricao String?                             @db.Text
+  introducao     String?                             @db.Text
+  encerramento   String?                             @db.Text
+  ordem          Int                                 @default(0)
+  versao         Int                                 @default(1)
+  origem         ContratoConsentimentoTemplateOrigem @default(SISTEMA)
+  ativo          Boolean                             @default(true)
+  createdAt      DateTime                            @default(now())
+  updatedAt      DateTime                            @updatedAt
+
+  conta          Conta?                          @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  consentimentos ContratoModeloConsentimento[]
+
+  @@unique([contaId, slug, versao], name: "uq_contrato_consentimento_template_scope_slug_versao")
+  @@index([grupoSlug, versao, ativo], name: "idx_contrato_consentimento_template_grupo_versao_ativo")
+  @@index([contaId, ativo], name: "idx_contrato_consentimento_template_conta_ativo")
+  @@index([origem, ativo], name: "idx_contrato_consentimento_template_origem_ativo")
+}
+
+model ContratoModeloConsentimento {
+  id                    String                            @id @default(cuid())
+  contaId               String
+  modeloId              String
+  codigo                String
+  templateId            String?
+  templateVersao       Int?
+  finalidade            ContratoConsentimentoFinalidade
+  titulo                String
+  texto                 String                            @db.Text
+  papel                 ContratoConsentimentoPapel       @default(RESPONSAVEL_OU_ALUNO)
+  obrigatorio           Boolean                           @default(true)
+  // @deprecated: mantido para compatibilidade histórica; recusas nunca bloqueiam a assinatura.
+  recusaImpedeAssinatura Boolean                         @default(false)
+  ordem                 Int                               @default(0)
+  createdAt             DateTime                          @default(now())
+  updatedAt             DateTime                          @updatedAt
+
+  conta  Conta          @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  modelo   ContratoModelo                  @relation(fields: [modeloId], references: [id], onDelete: Cascade)
+  template ContratoConsentimentoTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@unique([contaId, modeloId, codigo], name: "uq_contrato_modelo_consentimento_codigo")
+  @@index([contaId, modeloId, ordem], name: "idx_contrato_modelo_consentimento_ordem")
+}
+
 // @deprecated - Mantido temporariamente para migração de dados
 // TODO: Remover após migração completa dos templates antigos
 model ContratoTemplate {
@@ -5029,6 +5105,9 @@ model Contrato {
   hashPdfAssinado          String?
   // Snapshot imutável dos campos usados neste contrato no momento da geração.
   camposAssinaturaSnapshot Json?
+  // Snapshot e decisões de consentimento apresentados/registrados neste contrato.
+  termosConsentimentoSnapshot Json?
+  decisoesConsentimento      Json?
 
   // @deprecated - Campo legado para migração
   conteudoFinal String? @db.Text // HTML renderizado (contratos antigos)
@@ -5093,6 +5172,8 @@ model EventoContrato {
   arquivoPdfAssinadoUrl    String?
   hashPdfAssinado          String?
   camposAssinaturaSnapshot Json?
+  termosConsentimentoSnapshot Json?
+  decisoesConsentimento      Json?
   status                   StatusAssinatura @default(PENDENTE)
   assinadoPor              String?
   assinadoEmail            String?
@@ -5173,6 +5254,7 @@ enum ContractEvidenceType {
   SIGNATURE_ACCEPTED
   SIGNATURE_COMPLETED
   SIGNATURE_REJECTED
+  CONSENT_DECISION_RECORDED
   LINK_EXPIRED
   CONTRACT_CANCELLED
   SIGNED_PDF_GENERATED

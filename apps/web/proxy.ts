@@ -202,6 +202,13 @@ function platformBillingCapabilityForMutation(pathname: string, method: string) 
   return null;
 }
 
+function isLocalPlatformBillingBypass(req: NextRequest): boolean {
+  if (process.env.NODE_ENV !== 'development') return false;
+  if (process.env.PLATFORM_BILLING_LOCAL_BYPASS !== 'true') return false;
+
+  return new Set(['localhost', '127.0.0.1', '::1']).has(req.nextUrl.hostname);
+}
+
 async function handleApiRequest(req: NextRequest): Promise<NextResponse | null> {
   const pathname = req.nextUrl.pathname;
 
@@ -230,6 +237,15 @@ async function handleApiRequest(req: NextRequest): Promise<NextResponse | null> 
 
   const capability = platformBillingCapabilityForMutation(pathname, req.method);
   if (capability) {
+    if (isLocalPlatformBillingBypass(req)) {
+      console.info('[middleware:billing]', {
+        pathname,
+        capability,
+        mode: 'local_bypass',
+      });
+      return null;
+    }
+
     try {
       const accessUrl = new URL('/api/platform-billing/access', req.nextUrl.origin);
       accessUrl.searchParams.set('capability', capability);

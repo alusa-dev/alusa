@@ -37,13 +37,25 @@ export async function GET(
         tokenExpiraEm: true,
         matricula: {
           select: {
-            aluno: { select: { nome: true } },
+            aluno: {
+              select: {
+                nome: true,
+                dataNasc: true,
+                responsaveis: {
+                  where: {},
+                  orderBy: { id: 'asc' },
+                  take: 1,
+                  select: { responsavel: { select: { nome: true } } },
+                },
+              },
+            },
             responsavelFinanceiro: { select: { nome: true } },
           },
         },
         modelo: {
           select: {
             campos: { orderBy: { ordem: 'asc' } },
+            consentimentos: { orderBy: { ordem: 'asc' } },
           },
         },
       },

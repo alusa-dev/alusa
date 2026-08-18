@@ -1373,7 +1373,10 @@ async function materializeFutureContract(
 
   const modelo = await tx.contratoModelo.findFirst({
     where: { id: input.modeloId, contaId: input.contaId, status: 'ATIVO' },
-    include: { campos: { orderBy: { ordem: 'asc' } } },
+    include: {
+      campos: { orderBy: { ordem: 'asc' } },
+      consentimentos: { orderBy: { ordem: 'asc' } },
+    },
   });
   if (!modelo) throw new Error('MODELO_CONTRATO_NAO_ENCONTRADO');
 
@@ -1397,6 +1400,17 @@ async function materializeFutureContract(
         altura: campo.altura,
         obrigatorio: campo.obrigatorio,
         ordem: campo.ordem,
+      })),
+      termosConsentimentoSnapshot: (modelo.consentimentos ?? []).map((consentimento) => ({
+        id: consentimento.id,
+        codigo: consentimento.codigo,
+        finalidade: consentimento.finalidade,
+        titulo: consentimento.titulo,
+        texto: consentimento.texto,
+        papel: consentimento.papel,
+        obrigatorio: consentimento.obrigatorio,
+        recusaImpedeAssinatura: consentimento.recusaImpedeAssinatura,
+        ordem: consentimento.ordem,
       })),
       status: 'PENDENTE',
       tokenPublico: `hash:${tokenHash}`,

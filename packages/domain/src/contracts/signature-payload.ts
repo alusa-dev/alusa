@@ -41,6 +41,7 @@ export function buildSignaturePayload(input: {
   ip?: string | null;
   userAgent?: string | null;
   assinatura?: { tipo: 'TEXTO' | 'DESENHADA'; valor: string; fonte?: string };
+  consentimentos?: unknown;
 }) {
   return {
     v: 1,
@@ -57,5 +58,6 @@ export function buildSignaturePayload(input: {
     nome: input.nome,
     userAgent: input.userAgent ?? null,
     assinatura: input.assinatura ?? null,
+    consentimentos: input.consentimentos ?? [],
   };
 }

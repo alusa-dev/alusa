@@ -117,6 +117,7 @@ export * from './events/map/map-rules.js';
 // Contratos eletrônicos
 export * from './value-objects/cpf.js';
 export * from './contracts/signature-payload.js';
+export * from './contracts/consent.js';
 export * from './contracts/validate-contract-signer.js';
 
 // DTOs formais do domínio

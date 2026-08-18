@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   contratoModeloStatusSchema,
+  contratoConsentimentoFinalidadeSchema,
   contratoStatusAssinaturaSchema,
   createContratoModeloSchema,
   createContratoSchema,
@@ -38,6 +39,41 @@ export type CreateContratoModeloInputDTO = z.input<typeof createContratoModeloIn
 
 export const updateContratoModeloInputDTOSchema = updateContratoModeloSchema;
 export type UpdateContratoModeloInputDTO = z.input<typeof updateContratoModeloInputDTOSchema>;
+
+const contratoConsentimentoDTOSchema = z.object({
+  id: z.string(),
+  codigo: z.string(),
+  templateId: optionalStringDTOSchema.default(null),
+  templateVersao: z.number().int().positive().nullable().default(null),
+  finalidade: contratoConsentimentoFinalidadeSchema,
+  titulo: z.string(),
+  texto: z.string(),
+  papel: z.literal('RESPONSAVEL_OU_ALUNO'),
+  obrigatorio: z.boolean(),
+  recusaImpedeAssinatura: z.boolean().default(false),
+  ordem: z.number().int(),
+});
+export type ContratoConsentimentoDTO = z.infer<typeof contratoConsentimentoDTOSchema>;
+
+export const contratoConsentimentoTemplateDTOSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  nome: z.string(),
+  finalidade: contratoConsentimentoFinalidadeSchema,
+  titulo: z.string(),
+  texto: z.string(),
+  variaveis: z.array(z.string()).default([]),
+  grupoSlug: optionalStringDTOSchema.default(null),
+  grupoNome: optionalStringDTOSchema.default(null),
+  grupoDescricao: optionalStringDTOSchema.default(null),
+  introducao: optionalStringDTOSchema.default(null),
+  encerramento: optionalStringDTOSchema.default(null),
+  ordem: z.number().int().nonnegative().default(0),
+  versao: z.number().int().positive(),
+  origem: z.enum(['SISTEMA', 'CONTA']),
+});
+export type ContratoConsentimentoTemplateDTO = z.infer<typeof contratoConsentimentoTemplateDTOSchema>;
+export const listContratoConsentimentoTemplatesResultDTOSchema = z.array(contratoConsentimentoTemplateDTOSchema);
 
 export const publicAssinarContratoInputDTOSchema = publicAssinarContratoSchema;
 export type PublicAssinarContratoInputDTO = z.input<typeof publicAssinarContratoInputDTOSchema>;
@@ -170,6 +206,7 @@ export const contratoModeloDTOSchema = z.object({
     obrigatorio: z.boolean(),
     ordem: z.number().int(),
   })).default([]),
+  consentimentos: z.array(contratoConsentimentoDTOSchema).default([]),
 });
 export type ContratoModeloDTO = z.infer<typeof contratoModeloDTOSchema>;
 
@@ -209,6 +246,7 @@ export const contratoPublicoDTOSchema = z.object({
   tokenExpiraEm: optionalDateStringDTOSchema.default(null),
   acceptanceText: z.string(),
   acceptanceVersion: z.number().int().positive(),
+  consentimentos: z.array(contratoConsentimentoDTOSchema).default([]),
   escolaNome: z.string(),
   matricula: z.object({
     aluno: z.object({
@@ -221,6 +259,10 @@ export const contratoPublicoDTOSchema = z.object({
       .nullable()
       .default(null),
   }),
+  signatario: z.object({
+    nome: z.string(),
+    tipo: z.enum(['ALUNO_MAIOR', 'RESPONSAVEL']),
+  }).nullable().default(null),
   camposAssinatura: z.array(z.object({
     id: z.string(),
     tipo: z.enum(['ASSINATURA', 'RUBRICA']),

@@ -7,6 +7,7 @@ import {
 } from '@/features/contratos/dtos';
 import { mapContratoModeloRecordToDTO } from '@/features/contratos/mappers';
 import { ZodError } from 'zod';
+import { generateContratoConsentimentoCodigo } from '@/features/contratos/consent-code';
 
 export async function GET(request: NextRequest) {
   const user = await getSessionUser();
@@ -45,6 +46,7 @@ export async function GET(request: NextRequest) {
           select: { contratos: true },
         },
         campos: { orderBy: { ordem: 'asc' } },
+        consentimentos: { orderBy: { ordem: 'asc' }, include: { template: { select: { versao: true } } } },
       },
     });
 
@@ -75,6 +77,18 @@ export async function POST(request: NextRequest) {
     const json = await request.json();
     const body = createContratoModeloInputDTOSchema.parse(json);
 
+    const templateIds = [...new Set(body.consentimentos.flatMap((term) => term.templateId ? [term.templateId] : []))];
+    const templates = templateIds.length
+      ? await prisma.contratoConsentimentoTemplate.findMany({
+          where: { id: { in: templateIds }, ativo: true, OR: [{ contaId: null }, { contaId: user.contaId }] },
+          select: { id: true, versao: true },
+        })
+      : [];
+    if (templates.length !== templateIds.length) {
+      return NextResponse.json({ error: { message: 'Template de consentimento inválido' } }, { status: 400 });
+    }
+    const templateVersions = new Map(templates.map((template) => [template.id, template.versao]));
+
     // Verificar se já existe modelo com mesmo nome
     const existing = await prisma.contratoModelo.findFirst({
       where: {
@@ -103,15 +117,26 @@ export async function POST(request: NextRequest) {
         tamanhoBytes: body.tamanhoBytes,
         versao: 1,
         status: 'ATIVO',
-        campos: {
-          create: body.campos.map((campo) => ({
-            contaId: user.contaId,
-            ...campo,
-          })),
-        },
+          campos: {
+            create: body.campos.map((campo) => ({
+              contaId: user.contaId,
+              ...campo,
+            })),
+          },
+          consentimentos: body.consentimentos.length
+            ? {
+                create: body.consentimentos.map((consentimento, index) => ({
+                  contaId: user.contaId,
+                  codigo: generateContratoConsentimentoCodigo(index),
+                  templateVersao: consentimento.templateId ? templateVersions.get(consentimento.templateId) : null,
+                  ...consentimento,
+                })),
+              }
+            : undefined,
       },
       include: {
         campos: { orderBy: { ordem: 'asc' } },
+        consentimentos: { orderBy: { ordem: 'asc' }, include: { template: { select: { versao: true } } } },
       },
     });
 

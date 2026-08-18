@@ -414,7 +414,6 @@ async function processInvoiceEvent(
           : 'FIRST_PAYMENT_INCOMPLETE'
         : null,
       gracePeriodStartedAt: isPaymentFailedEvent && graceEligible ? paymentStateChangedAt : null,
-      paymentMethodStatus: isPaymentPaidEvent ? 'PRESENT' : undefined,
       lastProviderEventCreatedAt: readUnixDate(input.event.created),
       pendingChangeType: isPaymentFailedEvent && graceEligible
         ? 'PAYMENT_RECOVERY'

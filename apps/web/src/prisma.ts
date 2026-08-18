@@ -20,6 +20,22 @@ function hasEventContractRelation(client: PrismaClient): boolean {
   ) === true;
 }
 
+function hasModelRelation(
+  client: PrismaClient,
+  modelName: string,
+  relationName: string,
+): boolean {
+  const runtimeDataModel = (client as PrismaClient & {
+    _runtimeDataModel?: {
+      models?: Record<string, { fields?: Array<{ name: string }> }>;
+    };
+  })._runtimeDataModel;
+
+  return runtimeDataModel?.models?.[modelName]?.fields?.some(
+    (field) => field.name === relationName,
+  ) === true;
+}
+
 function hasRequiredDelegates(client: PrismaClient | undefined): client is PrismaClient {
   if (!client) return false;
   return (
@@ -37,7 +53,12 @@ function hasRequiredDelegates(client: PrismaClient | undefined): client is Prism
     // O client antigo, mantido pelo hot-reload, não conhece os contratos de eventos.
     // Recriá-lo aqui evita que o Next/Turbopack use um DMMF anterior ao schema atual.
     typeof (client as PrismaClient & Record<string, unknown>).eventoContrato === 'object' &&
-    hasEventContractRelation(client)
+    hasEventContractRelation(client) &&
+    // O client anterior à configuração de consentimentos não possui o delegate
+    // nem a relação usada pelo fluxo de modelos de contrato.
+    typeof (client as PrismaClient & Record<string, unknown>).contratoModeloConsentimento ===
+      'object' &&
+    hasModelRelation(client, 'ContratoModelo', 'consentimentos')
   );
 }
 

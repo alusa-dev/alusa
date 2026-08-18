@@ -11,6 +11,7 @@ import {
   type PlatformBillingInvoiceRecord,
 } from '@alusa/platform-billing';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
+import prisma from '@/lib/prisma';
 import { privateJson } from '@/lib/private-cache';
 import { platformBillingSummaryDTOSchema } from '@/features/platform-billing/dtos/platform-billing-summary';
 import {
@@ -19,12 +20,14 @@ import {
   resolvePlatformBillingActor,
   resolvePlatformBillingEnvironment,
 } from '@/src/server/platform-billing/platform-billing-server';
+import { refreshPlatformBillingPaymentMethod } from '@/src/server/platform-billing/reconciliation';
 
 export async function GET() {
   try {
     const environment = resolvePlatformBillingEnvironment();
 
     return withTenantSession(async ({ contaId, userId, tx }) => {
+      await refreshPlatformBillingPaymentMethod({ prisma, contaId, environment });
       const store = createPrismaPlatformBillingStore(tx);
       const [actor, account, invoices, activeStudents, planChanges, issues, latestWebhook, webhookStats, latestReconciliation] = await Promise.all([
         resolvePlatformBillingActor({ tx, contaId, userId }),

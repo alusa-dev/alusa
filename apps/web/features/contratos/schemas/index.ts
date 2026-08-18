@@ -4,6 +4,28 @@ import { z } from 'zod';
 
 export const contratoModeloStatusSchema = z.enum(['ATIVO', 'INATIVO']);
 
+export const contratoConsentimentoFinalidadeSchema = z.enum([
+  'IMAGE_USE',
+  'MARKETING',
+  'COMMUNICATIONS',
+  'OTHER',
+]);
+
+const contratoConsentimentoInputSchema = z.object({
+  templateId: z.string().trim().min(1).nullable().optional(),
+  finalidade: contratoConsentimentoFinalidadeSchema,
+  titulo: z.string().trim().min(3, 'Informe o título do consentimento').max(160),
+  texto: z.string().trim().min(10, 'Informe o texto do consentimento').max(5000),
+  papel: z.literal('RESPONSAVEL_OU_ALUNO').default('RESPONSAVEL_OU_ALUNO'),
+  obrigatorio: z.boolean().default(true),
+  ordem: z.number().int().nonnegative().default(0),
+});
+
+const contratoConsentimentosSchema = z
+  .array(contratoConsentimentoInputSchema)
+  .max(20, 'Configure no máximo 20 consentimentos.')
+  .default([]);
+
 const contratoModeloArquivoUrlSchema = z
   .string()
   .min(1, 'URL do PDF é obrigatória')
@@ -38,6 +60,7 @@ export const createContratoModeloSchema = z.object({
     (fields) => fields.some((field) => field.papel === 'ESCOLA') && fields.some((field) => field.papel === 'RESPONSAVEL_OU_ALUNO'),
     'Configure ao menos um campo da escola e um campo do responsável/aluno',
   ),
+  consentimentos: contratoConsentimentosSchema,
 });
 export type CreateContratoModeloInput = z.infer<typeof createContratoModeloSchema>;
 
@@ -60,6 +83,7 @@ export const updateContratoModeloSchema = z
       (fields) => fields.some((field) => field.papel === 'ESCOLA') && fields.some((field) => field.papel === 'RESPONSAVEL_OU_ALUNO'),
       'Configure ao menos um campo da escola e um campo do responsável/aluno',
     ).optional(),
+    consentimentos: contratoConsentimentosSchema.optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: 'Nenhum campo para atualizar',
@@ -97,6 +121,10 @@ export const publicAssinarContratoSchema = z.object({
   aceite: z.literal(true, {
     errorMap: () => ({ message: 'Aceite explícito é obrigatório.' }),
   }),
+  consentimentos: z.array(z.object({
+    termId: z.string().min(1),
+    decision: z.enum(['AUTORIZADO', 'RECUSADO']),
+  })).max(20).default([]),
   userAgent: z.string().trim().max(512, 'User agent inválido').optional(),
   assinatura: z.object({
     tipo: z.enum(['TEXTO', 'DESENHADA']),

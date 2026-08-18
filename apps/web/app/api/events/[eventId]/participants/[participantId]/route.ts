@@ -55,6 +55,48 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       ? (await listEventContractsByStudent(ctx.contaId, participant.alunoId)).filter((contract) => contract.eventId === eventId)
       : [];
 
+    const eventContractIds = new Set(eventContracts.map((contract) => contract.id));
+    const consentimentos = participant.alunoId && eventContractIds.size > 0
+      ? await prisma.consentRecord.findMany({
+        where: {
+          contaId: ctx.contaId,
+          subjectType: 'ALUNO',
+          subjectId: participant.alunoId,
+          source: { startsWith: 'EVENT_CONTRACT:' },
+        },
+        select: {
+          id: true,
+          source: true,
+          status: true,
+          grantedAt: true,
+          metadata: true,
+        },
+        orderBy: { grantedAt: 'desc' },
+      })
+      : [];
+
+    const consentimentosDaInscricao = consentimentos.flatMap((consentimento) => {
+      const sourceParts = consentimento.source.split(':');
+      if (sourceParts.length < 3 || !eventContractIds.has(sourceParts[1])) return [];
+
+      const metadata = consentimento.metadata;
+      if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return [];
+
+      const values = metadata as Record<string, unknown>;
+      const contratoId = typeof values.eventoContratoId === 'string' ? values.eventoContratoId : null;
+      const titulo = typeof values.titulo === 'string' ? values.titulo : null;
+      if (!contratoId || !titulo) return [];
+
+      return [{
+        id: consentimento.id,
+        contratoId,
+        titulo,
+        finalidade: typeof values.finalidade === 'string' ? values.finalidade : null,
+        decision: consentimento.status === 'GRANTED' ? 'AUTORIZADO' : 'RECUSADO',
+        decididoEm: consentimento.grantedAt.toISOString(),
+      }];
+    });
+
     let costumes: any[] = [];
     let ticketSales: any[] = [];
     let financialEntries: any[] = [];
@@ -376,6 +418,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         })),
         asaasInstallmentId,
         eventContracts,
+        consentimentos: consentimentosDaInscricao,
       },
     });
   } catch (error) {

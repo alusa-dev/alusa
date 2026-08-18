@@ -4,6 +4,7 @@ import {
   getMissingContractSignatureFieldsMessage,
   hasRequiredContractSignatureFields,
 } from './signature-fields';
+import { snapshotContractConsentTerms } from '@alusa/domain';
 
 export class EnrollmentContractModelNotFoundError extends Error {
   constructor() {
@@ -36,6 +37,7 @@ export async function createPendingEnrollmentContract(
     },
     include: {
       campos: { orderBy: { ordem: 'asc' } },
+      consentimentos: { orderBy: { ordem: 'asc' } },
     },
   });
 
@@ -90,6 +92,7 @@ export async function createPendingEnrollmentContract(
         obrigatorio: campo.obrigatorio,
         ordem: campo.ordem,
       })),
+      termosConsentimentoSnapshot: snapshotContractConsentTerms(modelo.consentimentos ?? []),
       status: 'PENDENTE',
       tokenPublico: `hash:${tokenHash}`,
       tokenPublicoHash: tokenHash,

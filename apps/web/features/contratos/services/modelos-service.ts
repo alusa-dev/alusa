@@ -3,9 +3,11 @@ import {
   createContratoModeloInputDTOSchema,
   deleteContratoModeloResultDTOSchema,
   listContratoModelosResultDTOSchema,
+  listContratoConsentimentoTemplatesResultDTOSchema,
   updateContratoModeloInputDTOSchema,
   uploadContratoArquivoResultDTOSchema,
   type ContratoModeloDTO,
+  type ContratoConsentimentoTemplateDTO,
   type CreateContratoModeloInputDTO,
   type UpdateContratoModeloInputDTO,
   type UploadContratoArquivoResultDTO,
@@ -22,12 +24,18 @@ export type ContratoModelo = ContratoModeloDTO;
 export type CreateContratoModeloPayload = CreateContratoModeloInputDTO;
 export type UpdateContratoModeloPayload = UpdateContratoModeloInputDTO;
 export type UploadContratoResult = UploadContratoArquivoResultDTO;
+export type ConsentimentoTemplate = ContratoConsentimentoTemplateDTO;
 
 async function parseResponse<T>(res: Response, parser: { parse: (_value: unknown) => T }, fallback: string) {
   const json = await res.json().catch(() => null);
   if (!res.ok) {
+    const payload = json as {
+      error?: { message?: string } | string;
+      message?: string;
+    } | null;
+    const nestedMessage = typeof payload?.error === 'object' ? payload.error?.message : undefined;
     throw new Error(
-      (json as { error?: { message?: string } } | null)?.error?.message || fallback,
+      nestedMessage || payload?.message || fallback,
     );
   }
   return parser.parse(json);
@@ -42,6 +50,15 @@ export async function getContratoModelos(activeOnly = false): Promise<ContratoMo
 export async function getContratoModelo(id: string): Promise<ContratoModelo> {
   const res = await fetch(`/api/contratos/modelos/${id}`);
   return parseResponse(res, contratoModeloDTOSchema, 'Erro ao carregar modelo de contrato');
+}
+
+export async function getConsentimentoTemplates(): Promise<ConsentimentoTemplate[]> {
+  const res = await fetch('/api/contratos/consentimentos/templates', { cache: 'no-store' });
+  return parseResponse(
+    res,
+    listContratoConsentimentoTemplatesResultDTOSchema,
+    'Erro ao carregar templates de consentimento',
+  );
 }
 
 export async function createContratoModelo(
