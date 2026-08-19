@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { canCancelContract } from '@alusa/domain';
 import { createContractCancelledNotification, createContractEvidence } from '@alusa/lib';
 import { prisma } from '@/prisma/client';
 import { getSessionUser } from '@/lib/auth/session';
@@ -109,17 +110,23 @@ export async function DELETE(
       );
     }
 
-    if (contrato.status === 'ASSINADO') {
+    if (!canCancelContract(contrato.status)) {
       return NextResponse.json(
         { error: { message: 'Não é possível cancelar um contrato já assinado' } },
         { status: 400 },
       );
     }
 
-    await prisma.contrato.update({
-      where: { id },
+    const cancelled = await prisma.contrato.updateMany({
+      where: { id, contaId: user.contaId, status: contrato.status },
       data: { status: 'CANCELADO' },
     });
+    if (cancelled.count !== 1) {
+      return NextResponse.json(
+        { error: { message: 'O contrato já foi alterado por outra operação.' } },
+        { status: 409 },
+      );
+    }
 
     await createContractEvidence(prisma as never, {
       contaId: user.contaId,

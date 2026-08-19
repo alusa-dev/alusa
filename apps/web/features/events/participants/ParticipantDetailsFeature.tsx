@@ -998,6 +998,22 @@ export function ParticipantDetailsFeature({
                 label="Valor da Taxa cobrado"
                 value={formatCurrency(participant.registrationFeeCharged)}
               />
+              {participant.billingMode === 'ENTRY_INSTALLMENT' && (
+                <>
+                  <LockedField
+                    label="Valor da Entrada"
+                    value={formatCurrency(participant.entryAmount)}
+                  />
+                  <LockedField
+                    label="Saldo Parcelado"
+                    value={formatCurrency(participant.balanceAmount)}
+                  />
+                  <LockedField
+                    label="Forma da Entrada"
+                    value={participant.entryPaymentMethod ? (EVENT_PAYMENT_METHOD_LABELS[participant.entryPaymentMethod as keyof typeof EVENT_PAYMENT_METHOD_LABELS] ?? participant.entryPaymentMethod) : '—'}
+                  />
+                </>
+              )}
               <div className="md:col-span-2 space-y-1">
                 <label className={labelClass}>Observações Internas (Inscrição)</label>
                 {editSection === 'cadastro' ? (

@@ -69,12 +69,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const isFeePaid = body.billingMethod === 'MANUAL_RECEIVED';
-    const feePaymentMethod = isFeePaid ? body.feePaymentMethod : body.billingMethod;
+    const isFeePaid = !body.hasEntry && body.billingMethod === 'MANUAL_RECEIVED';
+    const feePaymentMethod = body.hasEntry ? body.billingMethod : isFeePaid ? body.feePaymentMethod : body.billingMethod;
+    const entryAmount = body.hasEntry ? body.entryAmount : isFeePaid ? body.registrationFeeCharged : 0;
+    const balanceAmount = Math.max(body.registrationFeeCharged - entryAmount, 0);
+    const billingMode = body.hasEntry
+      ? 'ENTRY_INSTALLMENT'
+      : body.chargeType === 'INSTALLMENT'
+        ? 'INSTALLMENT'
+        : 'FULL';
     const paymentRules = eventPaymentRulesFromRecord(participant.event);
     const paymentRulesError = isFeePaid
       ? null
-      : validateEventPaymentRulesForCharge(paymentRules, body.registrationFeeCharged);
+      : validateEventPaymentRulesForCharge(paymentRules, balanceAmount);
     if (paymentRulesError) {
       throw new EventsError('REGRAS_COBRANCA_INVALIDAS', paymentRulesError, 422);
     }
@@ -82,7 +89,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     let asaasInstallmentId: string | null = null;
     let standaloneChargeId: string | null = null;
 
-    if (body.registrationFeeCharged > 0 && !isFeePaid) {
+    if (balanceAmount > 0 && !isFeePaid) {
       if (!participant.alunoId) {
         throw new EventsError('ALUNO_NAO_ENCONTRADO', 'Aluno não encontrado para gerar nova cobrança.', 404);
       }
@@ -93,15 +100,18 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         payer: { type: 'aluno', alunoId: participant.alunoId },
         chargeType: body.chargeType || 'ONE_TIME',
         billingType: body.billingMethod as 'BOLETO' | 'PIX' | 'CREDIT_CARD',
-        description: `Taxa de inscrição no evento - ${participant.event.name}`,
-        value: body.registrationFeeCharged,
+        description: body.hasEntry
+          ? `Saldo da taxa de inscrição no evento - ${participant.event.name}`
+          : `Taxa de inscrição no evento - ${participant.event.name}`,
+        value: balanceAmount,
         dueDate: body.dueDate,
         installmentCount: body.installmentCount,
         installmentValue: body.chargeType === 'INSTALLMENT' && body.installmentCount
-          ? Number((body.registrationFeeCharged / body.installmentCount).toFixed(2))
+          ? Number((balanceAmount / body.installmentCount).toFixed(2))
           : undefined,
         notificationChannels: body.notificationChannels,
         notificationChannelsConfigured: body.notificationChannelsConfigured,
+        uiRequestId: `event-participant:${participant.id}:reactivation:balance`,
         ...eventPaymentRulesToAsaas(paymentRules),
       });
 
@@ -117,6 +127,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const input = reactivateEventParticipantSchema.parse({
       registrationFeeCharged: body.registrationFeeCharged,
+      billingMode,
+      entryAmount,
+      entryPaymentMethod: body.hasEntry ? body.entryPaymentMethod : isFeePaid ? body.feePaymentMethod : undefined,
       isFeePaid,
       feePaymentMethod: body.registrationFeeCharged > 0 ? feePaymentMethod : undefined,
       notes: body.notes,

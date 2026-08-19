@@ -38,6 +38,8 @@ export function ReactivateParticipantDialog({
   const [billingMethod, setBillingMethod] = useState<ParticipantBillingMethod>('');
   const [chargeType, setChargeType] = useState<ParticipantChargeType>('ONE_TIME');
   const [feeText, setFeeText] = useState('');
+  const [hasEntry, setHasEntry] = useState(false);
+  const [entryText, setEntryText] = useState('');
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
   const [notificationChannels, setNotificationChannels] = useState<ParticipantNotificationChannel[]>([]);
 
@@ -45,12 +47,16 @@ export function ReactivateParticipantDialog({
     if (open) {
       const defaultFee = participant?.registrationFeeCharged ?? event.registrationFee ?? 0;
       setFeeText(defaultFee > 0 ? defaultFee.toFixed(2).replace('.', ',') : '0,00');
+      setHasEntry(false);
+      setEntryText('');
       return;
     }
 
     setBillingMethod('');
     setChargeType('ONE_TIME');
     setFeeText('');
+    setHasEntry(false);
+    setEntryText('');
     setDueDate(undefined);
     setNotificationChannels([]);
   }, [event.registrationFee, open, participant?.registrationFeeCharged]);
@@ -75,20 +81,30 @@ export function ReactivateParticipantDialog({
 
   function handleReactivate(formData: FormData) {
     const registrationFeeCharged = parseCurrencyInput(String(formData.get('registrationFeeCharged') || '0'));
+    const hasEntry = String(formData.get('hasEntry') || 'false') === 'true';
+    const entryAmount = parseCurrencyInput(String(formData.get('entryAmount') || '0'));
     const selectedBilling = String(formData.get('billingMethod') || 'MANUAL_RECEIVED');
-    const isFeePaid = selectedBilling === 'MANUAL_RECEIVED';
+    const isFeePaid = !hasEntry && selectedBilling === 'MANUAL_RECEIVED';
     const feePaymentMethod = isFeePaid ? String(formData.get('feePaymentMethod') || 'OTHER') : selectedBilling;
+    const entryPaymentMethod = hasEntry ? String(formData.get('entryPaymentMethod') || '') : undefined;
     const notes = String(formData.get('notes') || '');
-    const resolvedChargeType = selectedBilling === 'PIX' ? 'ONE_TIME' : String(formData.get('chargeType') || 'ONE_TIME');
+    const resolvedChargeType = hasEntry ? 'INSTALLMENT' : selectedBilling === 'PIX' ? 'ONE_TIME' : String(formData.get('chargeType') || 'ONE_TIME');
     const dueDateValue = formData.get('dueDate') ? String(formData.get('dueDate')) : undefined;
 
     if (selectedBilling !== 'MANUAL_RECEIVED' && !dueDateValue) {
       toast.error({ title: 'Aviso', description: 'Por favor, selecione a data de vencimento da primeira cobrança.' });
       return;
     }
+    if (hasEntry && (entryAmount <= 0 || entryAmount >= registrationFeeCharged)) {
+      toast.error({ title: 'Aviso', description: 'A entrada deve ser maior que zero e menor que a taxa total.' });
+      return;
+    }
 
     mutation.mutate({
       registrationFeeCharged,
+      hasEntry,
+      entryAmount: hasEntry ? entryAmount : undefined,
+      entryPaymentMethod,
       billingMethod: selectedBilling,
       feePaymentMethod: registrationFeeCharged > 0 ? feePaymentMethod : undefined,
       notes,
@@ -114,6 +130,10 @@ export function ReactivateParticipantDialog({
             billingMethod={billingMethod}
             chargeType={chargeType}
             feeText={feeText}
+            hasEntry={hasEntry}
+            entryText={entryText}
+            onHasEntryChange={setHasEntry}
+            onEntryTextChange={setEntryText}
             dueDate={dueDate}
             onBillingMethodChange={setBillingMethod}
             onChargeTypeChange={setChargeType}

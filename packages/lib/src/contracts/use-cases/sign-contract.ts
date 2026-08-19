@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import {
   buildSignaturePayload,
+  canSignContract,
   CONTRACT_ACCEPTANCE_TEXT_V1,
   CONTRACT_ACCEPTANCE_VERSION,
   hashCanonicalPayload,
@@ -170,9 +171,11 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
     throw new Error('CONTRACT_NOT_FOUND');
   }
 
-  if (contrato.status === 'ASSINADO') throw new Error('CONTRACT_ALREADY_SIGNED');
-  if (contrato.status === 'CANCELADO') throw new Error('CONTRACT_CANCELLED');
-  if (contrato.status === 'EXPIRADO') throw new Error('CONTRACT_EXPIRED');
+  if (!canSignContract(contrato.status)) {
+    if (contrato.status === 'ASSINADO') throw new Error('CONTRACT_ALREADY_SIGNED');
+    if (contrato.status === 'CANCELADO') throw new Error('CONTRACT_CANCELLED');
+    if (contrato.status === 'EXPIRADO') throw new Error('CONTRACT_EXPIRED');
+  }
   if (contrato.tokenExpiraEm && now > contrato.tokenExpiraEm) throw new Error('CONTRACT_LINK_EXPIRED');
 
   const consentimentos = resolveContractConsentAnswers(

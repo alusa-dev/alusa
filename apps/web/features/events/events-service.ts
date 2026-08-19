@@ -558,6 +558,11 @@ export type EventParticipantDTO = {
   aluno: { id: string; nome: string; foto: string | null } | null;
   displayName: string;
   registrationFeeCharged: number;
+  billingMode?: 'FULL' | 'INSTALLMENT' | 'ENTRY_INSTALLMENT';
+  entryAmount?: number;
+  balanceAmount?: number;
+  entryPaymentMethod?: string | null;
+  billingGroupId?: string | null;
   isFeePaid: boolean;
   percentPaid?: number;
   totalPaid?: number;
@@ -621,6 +626,30 @@ export async function listEventParticipants(eventId: string) {
   return (await parseResponse<JsonEnvelope<EventParticipantDTO[]>>(await fetch(`/api/events/${eventId}/participants`, { cache: "no-store" }))).data;
 }
 
+export type EventEligibleStudent = {
+  id: string;
+  nome: string;
+  email?: string | null;
+};
+
+export type EventEligibleStudentsResult = {
+  responsaveis: Array<{ id: string; nome: string }>;
+  selectedResponsavelId?: string;
+  items: EventEligibleStudent[];
+};
+
+export async function listEventEligibleStudents(
+  eventId: string,
+  params: { anchorAlunoId: string; responsavelId?: string; q?: string },
+) {
+  const query = new URLSearchParams({ anchorAlunoId: params.anchorAlunoId });
+  if (params.responsavelId) query.set('responsavelId', params.responsavelId);
+  if (params.q) query.set('q', params.q);
+  return (await parseResponse<JsonEnvelope<EventEligibleStudentsResult>>(
+    await fetch(`/api/events/${eventId}/participants/eligible-students?${query.toString()}`, { cache: 'no-store' }),
+  )).data;
+}
+
 export async function registerEventParticipant(eventId: string, payload: Record<string, unknown>) {
   const response = await fetch(`/api/events/${eventId}/participants`, {
     method: "POST",
@@ -634,7 +663,7 @@ export async function unregisterEventParticipant(eventId: string, participantId:
   const response = await fetch(`/api/events/${eventId}/participants/${participantId}`, {
     method: "DELETE",
   });
-  return parseResponse<{ data: { ok: boolean } }>(response);
+  return parseResponse<{ data: { ok: boolean; grouped?: boolean } }>(response);
 }
 
 export async function removeEventParticipant(eventId: string, participantId: string) {

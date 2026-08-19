@@ -2287,9 +2287,12 @@ async function collectChargesForEntries(
   db: DbClient,
   ctx: Pick<EventsContext, 'contaId'>,
   entries: Prisma.EventFinancialEntryGetPayload<Prisma.EventFinancialEntryDefaultArgs>[],
+  participantPaymentIds: string[] = [],
 ) {
-  const asaasPaymentIds = entries
-    .map((entry) => entry.asaasPaymentId)
+  const asaasPaymentIds = [
+    ...entries.map((entry) => entry.asaasPaymentId),
+    ...participantPaymentIds,
+  ]
     .filter((id): id is string => Boolean(id));
 
   if (asaasPaymentIds.length === 0) return [];
@@ -2340,7 +2343,10 @@ async function buildEventParticipantRemovalDecision(
         where: { contaId: ctx.contaId, eventId, id: participant.revenueEntryId },
       })
     : [];
-  const charges = await collectChargesForEntries(db, ctx, financialEntries);
+  const charges = await collectChargesForEntries(db, ctx, financialEntries, [
+    participant.asaasPaymentId,
+    participant.asaasInstallmentId,
+  ].filter((id): id is string => Boolean(id)));
 
   const ticketOwnerFilters = [
     participant.alunoId ? { alunoId: participant.alunoId } : null,
@@ -2503,26 +2509,48 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
     });
     if (!aluno) throw new EventsError('ALUNO_NAO_ENCONTRADO', 'Aluno não encontrado.', 404);
 
+    const financialResponsible = await tx.alunoResponsavel.findFirst({
+      where: {
+        contaId: ctx.contaId,
+        alunoId: input.alunoId,
+        ...(input.responsavelId ? { responsavelId: input.responsavelId } : {}),
+        responsavel: { financeiro: true },
+      },
+      orderBy: { id: 'asc' },
+      select: { responsavelId: true },
+    });
+    if (input.responsavelId && !financialResponsible) {
+      throw new EventsError('RESPONSAVEL_FINANCEIRO_INVALIDO', 'O responsável financeiro não está vinculado ao aluno.', 422);
+    }
+
     let revenueEntryId: string | null = null;
     const feeCharged = input.registrationFeeCharged ?? 0;
+    const billingMode = input.billingMode ?? (input.isFeePaid ? 'FULL' : 'INSTALLMENT');
+    const entryAmount = input.entryAmount && input.entryAmount > 0
+      ? toMoney(input.entryAmount)
+      : input.isFeePaid
+        ? toMoney(feeCharged)
+        : 0;
+    const balanceAmount = toMoney(Math.max(feeCharged - entryAmount, 0));
     const registrationPaymentRules = eventPaymentRulesFromRecord(event);
 
     // A digital charge is persisted by the financial/Asaas flow. Creating a
-    // local entry here would duplicate the installment in the billing list.
-    if (feeCharged > 0 && input.isFeePaid) {
+    // local entry for the digital component would duplicate the billing list.
+    // A manual entry is kept as a separate local receipt.
+    if (entryAmount > 0) {
       const entry = await tx.eventFinancialEntry.create({
         data: {
           contaId: ctx.contaId,
           eventId: input.eventId,
           type: 'REVENUE',
           category: 'Taxa de inscrição',
-          description: 'Taxa de inscrição',
-          expectedAmount: decimal(feeCharged),
-          actualAmount: input.isFeePaid ? decimal(feeCharged) : null,
+          description: billingMode === 'ENTRY_INSTALLMENT' ? 'Entrada da taxa de inscrição' : 'Taxa de inscrição',
+          expectedAmount: decimal(entryAmount),
+          actualAmount: decimal(entryAmount),
           dueDate: new Date(),
-          realizedAt: input.isFeePaid ? new Date() : null,
-          status: input.isFeePaid ? 'RECEIVED' : 'PENDING',
-          paymentMethod: mapToEventPaymentMethod(input.feePaymentMethod),
+          realizedAt: new Date(),
+          status: 'RECEIVED',
+          paymentMethod: mapToEventPaymentMethod(input.entryPaymentMethod ?? input.feePaymentMethod),
           notes: input.notes,
         },
       });
@@ -2535,12 +2563,18 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
         eventId: input.eventId,
         type: 'STUDENT',
         alunoId: input.alunoId,
+        responsavelId: financialResponsible?.responsavelId ?? input.responsavelId ?? null,
         displayName: aluno.nome,
         registrationFeeCharged: decimal(feeCharged),
+        billingMode,
+        entryAmount: decimal(entryAmount),
+        balanceAmount: decimal(balanceAmount),
+        entryPaymentMethod: entryAmount > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
         registrationPaymentRules: registrationPaymentRules ?? Prisma.JsonNull,
         isFeePaid: input.isFeePaid ?? false,
-        feePaymentMethod: input.feePaymentMethod ?? null,
+        feePaymentMethod: input.entryPaymentMethod ?? input.feePaymentMethod ?? null,
         revenueEntryId,
+        feePaidAmount: decimal(entryAmount),
         notes: input.notes,
       },
     });
@@ -2567,6 +2601,213 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
   });
 }
 
+type RegisterEventParticipantGroupInput = CreateEventParticipantInput & {
+  alunoIds: string[];
+  responsavelId: string;
+  billingMethod?: string | null;
+  chargeType?: string | null;
+  installmentCount?: number | null;
+  dueDate?: Date | null;
+  uiRequestId?: string | null;
+};
+
+function allocateGroupAmount(total: number, values: number[]): number[] {
+  const normalizedTotal = toMoney(total);
+  const totalBase = values.reduce((sum, value) => sum + Math.max(value, 0), 0);
+  if (values.length === 0) return [];
+  if (totalBase <= 0) return values.map(() => 0);
+
+  const allocations: number[] = [];
+  let allocated = 0;
+  values.forEach((value, index) => {
+    if (index === values.length - 1) {
+      allocations.push(toMoney(normalizedTotal - allocated));
+      return;
+    }
+    const amount = toMoney(normalizedTotal * (Math.max(value, 0) / totalBase));
+    allocations.push(amount);
+    allocated = toMoney(allocated + amount);
+  });
+  return allocations;
+}
+
+export async function registerEventParticipantGroup(
+  ctx: EventsContext,
+  input: RegisterEventParticipantGroupInput,
+) {
+  return prisma.$transaction(async (tx) => {
+    const alunoIds = [...new Set(input.alunoIds.filter(Boolean))];
+    if (alunoIds.length < 2) {
+      throw new EventsError('GRUPO_COBRANCA_INCOMPLETO', 'Selecione pelo menos dois alunos para uma cobrança conjunta.', 422);
+    }
+
+    if (input.uiRequestId) {
+      const existingGroup = await tx.eventBillingGroup.findFirst({
+        where: { contaId: ctx.contaId, uiRequestId: input.uiRequestId },
+        include: { participants: true },
+      });
+      if (existingGroup) {
+        if (existingGroup.status === 'PENDING') {
+          throw new EventsError('COBRANCA_AGRUPADA_EM_PROCESSAMENTO', 'Esta cobrança agrupada já está sendo processada.', 409);
+        }
+        if (existingGroup.status === 'REQUIRES_RECONCILIATION') {
+          throw new EventsError('COBRANCA_AGRUPADA_REQUER_RECONCILIACAO', 'Esta cobrança agrupada precisa ser reconciliada antes de uma nova tentativa.', 409);
+        }
+        return { group: existingGroup, participants: existingGroup.participants, reused: true };
+      }
+    }
+
+    const event = await tx.schoolEvent.findFirst({ where: { id: input.eventId, contaId: ctx.contaId } });
+    if (!event) throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
+    assertOperationalEvent(event.status);
+
+    const alunos = await tx.aluno.findMany({
+      where: { contaId: ctx.contaId, id: { in: alunoIds } },
+      select: {
+        id: true,
+        nome: true,
+        responsaveis: {
+          where: { contaId: ctx.contaId, responsavel: { financeiro: true } },
+          select: { responsavelId: true },
+        },
+      },
+    });
+    if (alunos.length !== alunoIds.length) {
+      throw new EventsError('ALUNO_NAO_ENCONTRADO', 'Um ou mais alunos selecionados não foram encontrados.', 404);
+    }
+
+    const selectedResponsible = await tx.responsavel.findFirst({
+      where: {
+        id: input.responsavelId,
+        contaId: ctx.contaId,
+        financeiro: true,
+      },
+      select: { id: true, nome: true },
+    });
+    if (!selectedResponsible) {
+      throw new EventsError('RESPONSAVEL_FINANCEIRO_INVALIDO', 'Responsável financeiro inválido para esta conta.', 422);
+    }
+
+    const notLinked = alunos.find((aluno) => !aluno.responsaveis.some((link) => link.responsavelId === input.responsavelId));
+    if (notLinked) {
+      throw new EventsError('RESPONSAVEL_DIVERGENTE', `O responsável financeiro não está vinculado ao aluno ${notLinked.nome}.`, 422);
+    }
+
+    const existingParticipants = await tx.eventParticipant.findMany({
+      where: { contaId: ctx.contaId, eventId: input.eventId, alunoId: { in: alunoIds } },
+      select: { id: true, alunoId: true, cancelledAt: true },
+    });
+    if (existingParticipants.length > 0) {
+      const active = existingParticipants.find((participant) => !participant.cancelledAt);
+      if (active) throw new EventsError('PARTICIPANTE_JA_INSCRITO', 'Um dos alunos selecionados já está inscrito neste evento.', 409);
+      throw new EventsError('PARTICIPANTE_CANCELADO_EXISTENTE', 'Um dos alunos possui uma inscrição cancelada neste evento. Reative-a separadamente.', 409);
+    }
+
+    const feePerParticipant = toMoney(input.registrationFeeCharged ?? 0);
+    const totalAmount = toMoney(feePerParticipant * alunoIds.length);
+    const isFeePaid = input.isFeePaid ?? false;
+    const billingMode = input.billingMode ?? (isFeePaid ? 'FULL' : 'INSTALLMENT');
+    const requestedEntryAmount = input.entryAmount && input.entryAmount > 0
+      ? toMoney(input.entryAmount)
+      : isFeePaid
+        ? totalAmount
+        : 0;
+    const entryAmount = Math.min(requestedEntryAmount, totalAmount);
+    const balanceAmount = toMoney(Math.max(totalAmount - entryAmount, 0));
+    const entryAllocations = allocateGroupAmount(entryAmount, alunoIds.map(() => feePerParticipant));
+    const group = await tx.eventBillingGroup.create({
+      data: {
+        contaId: ctx.contaId,
+        eventId: input.eventId,
+        responsavelId: input.responsavelId,
+        status: 'PENDING',
+        billingMode,
+        totalAmount: decimal(totalAmount),
+        entryAmount: decimal(entryAmount),
+        balanceAmount: decimal(balanceAmount),
+        entryPaymentMethod: entryAmount > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
+        billingMethod: input.billingMethod ?? null,
+        chargeType: input.chargeType ?? (billingMode === 'ENTRY_INSTALLMENT' || billingMode === 'INSTALLMENT' ? 'INSTALLMENT' : 'ONE_TIME'),
+        installmentCount: input.installmentCount ?? null,
+        dueDate: input.dueDate ?? null,
+        uiRequestId: input.uiRequestId ?? null,
+        createdByUserId: ctx.userId,
+      },
+    });
+
+    const registrationPaymentRules = eventPaymentRulesFromRecord(event);
+    const participants: Prisma.EventParticipantGetPayload<Prisma.EventParticipantDefaultArgs>[] = [];
+    for (const [index, aluno] of alunos.entries()) {
+      const allocatedEntry = entryAllocations[index] ?? 0;
+      const participantEntry = await tx.eventFinancialEntry.create({
+        data: {
+          contaId: ctx.contaId,
+          eventId: input.eventId,
+          type: 'REVENUE',
+          category: 'Taxa de inscrição',
+          description: allocatedEntry > 0
+            ? 'Entrada da cobrança agrupada do evento'
+            : 'Taxa da cobrança agrupada do evento',
+          expectedAmount: decimal(feePerParticipant),
+          actualAmount: allocatedEntry > 0 ? decimal(allocatedEntry) : null,
+          dueDate: input.dueDate ?? new Date(),
+          realizedAt: allocatedEntry > 0 ? new Date() : null,
+          status: allocatedEntry > 0 ? 'RECEIVED' : 'PENDING',
+          paymentMethod: allocatedEntry > 0
+            ? mapToEventPaymentMethod(input.entryPaymentMethod ?? input.feePaymentMethod)
+            : null,
+          notes: input.notes,
+        },
+      });
+
+      const participant = await tx.eventParticipant.create({
+        data: {
+          contaId: ctx.contaId,
+          eventId: input.eventId,
+          type: 'STUDENT',
+          alunoId: aluno.id,
+          responsavelId: input.responsavelId,
+          billingGroupId: group.id,
+          displayName: aluno.nome,
+          registrationFeeCharged: decimal(feePerParticipant),
+          billingMode,
+          entryAmount: decimal(allocatedEntry),
+          balanceAmount: decimal(Math.max(feePerParticipant - allocatedEntry, 0)),
+          entryPaymentMethod: allocatedEntry > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
+          registrationPaymentRules: registrationPaymentRules ?? Prisma.JsonNull,
+          isFeePaid,
+          feePaymentMethod: input.entryPaymentMethod ?? input.feePaymentMethod ?? null,
+          revenueEntryId: participantEntry?.id ?? null,
+          feePaidAmount: decimal(allocatedEntry),
+          notes: input.notes,
+        },
+      });
+
+      await createEventContractForParticipant(tx, {
+        contaId: ctx.contaId,
+        userId: ctx.userId,
+        eventId: input.eventId,
+        participantId: participant.id,
+        alunoId: aluno.id,
+      });
+      participants.push(participant);
+    }
+
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.participant.group_register',
+      entityType: 'EventBillingGroup',
+      entityId: group.id,
+      eventId: input.eventId,
+      after: { group, participantIds: participants.map((participant) => participant.id) },
+      metadata: { responsavelId: selectedResponsible.id, alunoIds },
+    });
+
+    return { group, participants, reused: false };
+  });
+}
+
 export async function unregisterEventParticipant(ctx: EventsContext, eventId: string, participantId: string) {
   const participant = await prisma.eventParticipant.findFirst({
     where: { id: participantId, eventId, contaId: ctx.contaId },
@@ -2576,7 +2817,16 @@ export async function unregisterEventParticipant(ctx: EventsContext, eventId: st
   assertOperationalEvent(participant.event.status);
 
   if (participant.cancelledAt) {
-    return { ok: true, canceledChargeIds: [] as string[] };
+    return { ok: true, canceledChargeIds: [] as string[], grouped: false };
+  }
+
+  if (participant.billingGroupId) {
+    const activeGroupParticipants = await prisma.eventParticipant.count({
+      where: { contaId: ctx.contaId, billingGroupId: participant.billingGroupId, cancelledAt: null },
+    });
+    if (activeGroupParticipants > 1) {
+      return unregisterEventParticipantGroup(ctx, eventId, participant.billingGroupId);
+    }
   }
 
   const entry = participant.revenueEntryId
@@ -2690,7 +2940,150 @@ export async function unregisterEventParticipant(ctx: EventsContext, eventId: st
       },
     });
 
-    return { ok: true, canceledChargeIds: openCharges.map((charge) => charge.id) };
+    return { ok: true, canceledChargeIds: openCharges.map((charge) => charge.id), grouped: false };
+  });
+}
+
+export async function unregisterEventParticipantGroup(ctx: EventsContext, eventId: string, billingGroupId: string) {
+  const group = await prisma.eventBillingGroup.findFirst({
+    where: { id: billingGroupId, contaId: ctx.contaId, eventId },
+    include: { event: true, participants: true },
+  });
+  if (!group) throw new EventsError('COBRANCA_AGRUPADA_NAO_ENCONTRADA', 'Cobrança agrupada não encontrada.', 404);
+  assertOperationalEvent(group.event.status);
+
+  const activeParticipants = group.participants.filter((participant) => !participant.cancelledAt);
+  if (activeParticipants.length === 0) {
+    return { ok: true, canceledChargeIds: [] as string[], grouped: true };
+  }
+
+  const groupCharges = await loadEventBillingGroupCharges(prisma, ctx.contaId, [group]);
+  const charges = groupCharges.get(group.id) ?? [];
+  const openCharges = charges.filter((charge) => ['CREATED', 'PENDING_SYNC', 'OPEN', 'OVERDUE'].includes(charge.status));
+  if (openCharges.length > 0) {
+    const credentials = await loadDecryptedAsaasCredentials(ctx.contaId);
+    if (credentials?.apiKey) {
+      for (const charge of openCharges) {
+        if (!charge.asaasPaymentId) continue;
+        await getEventAsaasPaymentProvider().deletePayment({
+          apiKey: credentials.apiKey,
+          paymentId: charge.asaasPaymentId,
+        });
+      }
+    }
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const entryById = new Map(
+      (
+        await tx.eventFinancialEntry.findMany({
+          where: {
+            contaId: ctx.contaId,
+            id: { in: activeParticipants.map((participant) => participant.revenueEntryId).filter((id): id is string => Boolean(id)) },
+          },
+        })
+      ).map((entry) => [entry.id, entry]),
+    );
+
+    const cancelledParticipantIds: string[] = [];
+    for (const participant of activeParticipants) {
+      const entry = participant.revenueEntryId ? entryById.get(participant.revenueEntryId) : null;
+      const participantCharges = allocateChargesToParticipant(
+        charges,
+        participant.balanceAmount.toNumber(),
+        group.balanceAmount.toNumber(),
+      );
+      const payment = calculateParticipantPayment(
+        participant.registrationFeeCharged.toNumber(),
+        participant.isFeePaid,
+        entry,
+        participantCharges,
+      );
+
+      const updated = await tx.eventParticipant.update({
+        where: { id: participant.id },
+        data: {
+          isFeePaid: false,
+          financialStatusSnapshot: 'CANCELADO',
+          feePaidAmount: decimal(payment.totalPaid),
+          feeRefundedAmount: decimal(payment.totalRefunded),
+          cancelledAt: new Date(),
+        },
+      });
+
+      if (participant.alunoId) {
+        await createEventContractForParticipant(tx, {
+          contaId: ctx.contaId,
+          userId: ctx.userId,
+          eventId,
+          participantId: participant.id,
+          alunoId: participant.alunoId,
+        });
+      }
+
+      if (entry) {
+        await tx.eventFinancialEntry.update({
+          where: { id: entry.id },
+          data: {
+            status: payment.totalPaid > 0 ? 'RECEIVED' : 'CANCELLED',
+            actualAmount: payment.totalPaid > 0 ? decimal(payment.totalPaid) : null,
+            refundedAmount: decimal(payment.totalRefunded),
+            netAmount: payment.netPaid > 0 ? decimal(payment.netPaid) : null,
+            cancelledAt: payment.totalPaid > 0 ? null : new Date(),
+            notes: [entry.notes, 'Cobrança agrupada cancelada; histórico financeiro preservado.'].filter(Boolean).join('\n'),
+          },
+        });
+      }
+
+      await recordEventAudit(tx, {
+        contaId: ctx.contaId,
+        actorUserId: ctx.userId,
+        action: 'events.participant.unregister',
+        entityType: 'EventParticipant',
+        entityId: participant.id,
+        eventId,
+        before: participant,
+        after: updated,
+        metadata: {
+          grouped: true,
+          billingGroupId: group.id,
+          cancelledOpenCharges: openCharges.map((charge) => charge.id),
+          paidAmount: payment.totalPaid,
+          refundedAmount: payment.totalRefunded,
+        },
+      });
+      cancelledParticipantIds.push(participant.id);
+    }
+
+    if (openCharges.length > 0) {
+      await tx.charge.updateMany({
+        where: { contaId: ctx.contaId, id: { in: openCharges.map((charge) => charge.id) } },
+        data: { status: 'CANCELED', statusUpdatedAt: new Date() },
+      });
+    }
+
+    const updatedGroup = await tx.eventBillingGroup.update({
+      where: { id: group.id, contaId: ctx.contaId },
+      data: { status: 'CANCELLED' },
+    });
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.participant.group_unregister',
+      entityType: 'EventBillingGroup',
+      entityId: group.id,
+      eventId,
+      before: group,
+      after: updatedGroup,
+      metadata: { cancelledParticipantIds, cancelledOpenCharges: openCharges.map((charge) => charge.id) },
+    });
+
+    return {
+      ok: true,
+      grouped: true,
+      canceledChargeIds: openCharges.map((charge) => charge.id),
+      cancelledParticipantIds,
+    };
   });
 }
 
@@ -2877,27 +3270,34 @@ export async function reactivateEventParticipant(
     const feeCharged = input.registrationFeeCharged ?? participant.registrationFeeCharged.toNumber();
     const isFeePaid = input.isFeePaid ?? false;
     const dueDate = input.dueDate ?? new Date();
+    const billingMode = input.billingMode ?? (isFeePaid ? 'FULL' : 'INSTALLMENT');
+    const entryAmount = input.entryAmount && input.entryAmount > 0
+      ? toMoney(input.entryAmount)
+      : isFeePaid
+        ? toMoney(feeCharged)
+        : 0;
+    const balanceAmount = toMoney(Math.max(feeCharged - entryAmount, 0));
     let revenueEntryId: string | null = null;
     const registrationPaymentRules = eventPaymentRulesFromRecord(participant.event);
 
-    if (feeCharged > 0 && isFeePaid) {
+    if (entryAmount > 0) {
       const entry = await tx.eventFinancialEntry.create({
         data: {
           contaId: ctx.contaId,
           eventId,
           type: 'REVENUE',
           category: 'Taxa de inscrição',
-          description: 'Taxa de inscrição',
-          expectedAmount: decimal(feeCharged),
-          actualAmount: isFeePaid ? decimal(feeCharged) : null,
+          description: billingMode === 'ENTRY_INSTALLMENT' ? 'Entrada da taxa de inscrição' : 'Taxa de inscrição',
+          expectedAmount: decimal(entryAmount),
+          actualAmount: decimal(entryAmount),
           dueDate,
-          realizedAt: isFeePaid ? new Date() : null,
-          status: isFeePaid ? 'RECEIVED' : 'PENDING',
-          paymentMethod: mapToEventPaymentMethod(input.feePaymentMethod),
+          realizedAt: new Date(),
+          status: 'RECEIVED',
+          paymentMethod: mapToEventPaymentMethod(input.entryPaymentMethod ?? input.feePaymentMethod),
           notes: input.notes,
-          paymentProvider: input.paymentProvider ?? null,
-          asaasPaymentId: input.asaasPaymentId ?? null,
-          paymentStatus: input.paymentStatus ?? null,
+          paymentProvider: billingMode === 'ENTRY_INSTALLMENT' ? null : input.paymentProvider ?? null,
+          asaasPaymentId: billingMode === 'ENTRY_INSTALLMENT' ? null : input.asaasPaymentId ?? null,
+          paymentStatus: billingMode === 'ENTRY_INSTALLMENT' ? null : input.paymentStatus ?? null,
         },
       });
       revenueEntryId = entry.id;
@@ -2907,15 +3307,19 @@ export async function reactivateEventParticipant(
       where: { id: participantId },
       data: {
         registrationFeeCharged: decimal(feeCharged),
+        billingMode,
+        entryAmount: decimal(entryAmount),
+        balanceAmount: decimal(balanceAmount),
+        entryPaymentMethod: entryAmount > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
         registrationPaymentRules: registrationPaymentRules ?? Prisma.JsonNull,
         isFeePaid,
-        feePaymentMethod: feeCharged > 0 ? (input.feePaymentMethod ?? null) : null,
+        feePaymentMethod: feeCharged > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
         revenueEntryId,
         standaloneChargeId: input.standaloneChargeId ?? null,
         asaasPaymentId: input.asaasPaymentId ?? null,
         asaasInstallmentId: input.asaasInstallmentId ?? null,
-        financialStatusSnapshot: feeCharged <= 0 ? 'ISENTO' : isFeePaid ? 'QUITADO' : 'PENDENTE',
-        feePaidAmount: isFeePaid ? decimal(feeCharged) : decimal(0),
+        financialStatusSnapshot: feeCharged <= 0 ? 'ISENTO' : isFeePaid ? 'QUITADO' : entryAmount > 0 ? 'EM_DIA' : 'PENDENTE',
+        feePaidAmount: decimal(entryAmount),
         feeRefundedAmount: decimal(0),
         cancelledAt: null,
         cancelledReason: null,
@@ -3137,12 +3541,23 @@ export function calculateParticipantPayment(
   entry: any,
   charges: any[]
 ) {
+  const manualEntryAmount = entry?.actualAmount == null ? 0 : toMoney(entry.actualAmount);
+  const resolvedCharges = manualEntryAmount > 0 && !entry?.asaasPaymentId
+    ? [
+        {
+          status: entry.status === 'REFUNDED' ? 'REFUNDED' : 'RECEIVED_IN_CASH',
+          value: manualEntryAmount,
+          refundedValue: entry.refundedAmount,
+        },
+        ...charges,
+      ]
+    : charges;
   const resolution = resolveEventParticipantPayment({
     expectedAmount: registrationFeeCharged,
     paidFallback: isFeePaid,
     cancelled: entry?.status === 'CANCELLED',
     refunded: entry?.status === 'REFUNDED',
-    charges,
+    charges: resolvedCharges,
   });
 
   return {
@@ -3154,19 +3569,101 @@ export function calculateParticipantPayment(
   };
 }
 
+function allocateChargesToParticipant(charges: any[], participantBalance: number, groupBalance: number) {
+  const ratio = groupBalance > 0 ? Math.min(Math.max(participantBalance / groupBalance, 0), 1) : 0;
+  return charges.map((charge) => ({
+    ...charge,
+    value: charge.value == null ? charge.value : toMoney(Number(charge.value) * ratio),
+    paidValue: charge.paidValue == null ? charge.paidValue : toMoney(Number(charge.paidValue) * ratio),
+    amount: charge.amount == null ? charge.amount : toMoney(Number(charge.amount) * ratio),
+    refundedValue: charge.refundedValue == null ? charge.refundedValue : toMoney(Number(charge.refundedValue) * ratio),
+  }));
+}
+
+async function loadEventBillingGroupCharges(
+  db: DbClient,
+  contaId: string,
+  groups: Array<{ id: string; standaloneChargeId: string | null; asaasPaymentId: string | null; asaasInstallmentId: string | null }>,
+) {
+  if (groups.length === 0) return new Map<string, any[]>();
+
+  const standaloneIds = groups.map((group) => group.standaloneChargeId).filter((id): id is string => Boolean(id));
+  const paymentIds = groups.flatMap((group) => [group.asaasPaymentId, group.asaasInstallmentId]).filter((id): id is string => Boolean(id));
+  const [directCharges, plans] = await Promise.all([
+    standaloneIds.length > 0 || paymentIds.length > 0
+      ? db.charge.findMany({
+          where: {
+            contaId,
+            OR: [
+              ...(standaloneIds.length > 0 ? [{ id: { in: standaloneIds } }, { standaloneInstallmentPlanId: { in: standaloneIds } }] : []),
+              ...(paymentIds.length > 0 ? [{ asaasPaymentId: { in: paymentIds } }] : []),
+            ],
+          },
+        })
+      : [],
+    standaloneIds.length > 0 || paymentIds.length > 0
+      ? db.standaloneInstallmentPlan.findMany({
+          where: {
+            contaId,
+            OR: [
+              ...(standaloneIds.length > 0 ? [{ id: { in: standaloneIds } }] : []),
+              ...(paymentIds.length > 0 ? [{ asaasInstallmentId: { in: paymentIds } }] : []),
+            ],
+          },
+          include: { charges: true },
+        })
+      : [],
+  ]);
+
+  const chargesByGroup = new Map<string, any[]>();
+  for (const group of groups) {
+    const planIds = plans
+      .filter((plan) => plan.id === group.standaloneChargeId || plan.asaasInstallmentId === group.asaasInstallmentId)
+      .map((plan) => plan.id);
+    const charges = [
+      ...directCharges.filter((charge) =>
+        charge.id === group.standaloneChargeId
+        || charge.standaloneInstallmentPlanId && planIds.includes(charge.standaloneInstallmentPlanId)
+        || charge.asaasPaymentId && charge.asaasPaymentId === group.asaasPaymentId,
+      ),
+      ...plans.filter((plan) => planIds.includes(plan.id)).flatMap((plan) => plan.charges),
+    ];
+    const seen = new Set<string>();
+    chargesByGroup.set(group.id, charges.filter((charge) => {
+      if (seen.has(charge.id)) return false;
+      seen.add(charge.id);
+      return true;
+    }));
+  }
+  return chargesByGroup;
+}
+
 async function buildParticipantPaymentSnapshots(
   ctx: Pick<EventsContext, 'contaId'>,
   records: Pick<SchoolEventRecord, 'participants' | 'financialEntries'>[],
 ): Promise<Map<string, ParticipantPaymentSnapshot>> {
   const participants = records.flatMap((record) => record.participants);
   const entryById = new Map(records.flatMap((record) => record.financialEntries.map((entry) => [entry.id, entry])));
-  const feeParticipants = participants.filter((participant) => participant.revenueEntryId);
+  const feeParticipants = participants.filter((participant) =>
+    participant.revenueEntryId || participant.asaasPaymentId || participant.asaasInstallmentId,
+  );
   const asaasPaymentIds = feeParticipants
-    .map((participant) => entryById.get(participant.revenueEntryId ?? '')?.asaasPaymentId)
+    .flatMap((participant) => [
+      entryById.get(participant.revenueEntryId ?? '')?.asaasPaymentId,
+      participant.asaasPaymentId,
+      participant.asaasInstallmentId,
+    ])
     .filter((id): id is string => Boolean(id));
 
   const snapshots = new Map<string, ParticipantPaymentSnapshot>();
   if (feeParticipants.length === 0) return snapshots;
+
+  const billingGroupIds = [...new Set(feeParticipants.map((participant) => participant.billingGroupId).filter((id): id is string => Boolean(id)))];
+  const billingGroups = billingGroupIds.length > 0
+    ? await prisma.eventBillingGroup.findMany({ where: { contaId: ctx.contaId, id: { in: billingGroupIds } }, select: { id: true, standaloneChargeId: true, asaasPaymentId: true, asaasInstallmentId: true, balanceAmount: true } })
+    : [];
+  const billingGroupById = new Map(billingGroups.map((group) => [group.id, group]));
+  const billingGroupCharges = await loadEventBillingGroupCharges(prisma, ctx.contaId, billingGroups);
 
   let plans: any[] = [];
   let directCharges: any[] = [];
@@ -3196,12 +3693,18 @@ async function buildParticipantPaymentSnapshots(
 
   for (const participant of feeParticipants) {
     const entry = entryById.get(participant.revenueEntryId ?? '');
-    if (!entry) continue;
 
-    const asaasPaymentId = entry.asaasPaymentId;
+    const group = participant.billingGroupId ? billingGroupById.get(participant.billingGroupId) : undefined;
+    const asaasPaymentId = entry?.asaasPaymentId ?? participant.asaasPaymentId ?? participant.asaasInstallmentId;
     let participantCharges: any[] = [];
 
-    if (asaasPaymentId) {
+    if (group) {
+      participantCharges = allocateChargesToParticipant(
+        billingGroupCharges.get(group.id) ?? [],
+        participant.balanceAmount.toNumber(),
+        group.balanceAmount.toNumber(),
+      );
+    } else if (asaasPaymentId) {
       const direct = directCharges.filter((charge) => charge.asaasPaymentId === asaasPaymentId);
       const directPlanIds = direct
         .map((charge) => charge.standaloneInstallmentPlanId)
@@ -3228,18 +3731,31 @@ async function buildParticipantPaymentSnapshots(
       entry,
       participantCharges,
     );
-    const realizedAt = participantCharges
-      .filter((charge) => ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED', 'PAID'].includes(charge.status))
-      .sort((a, b) => b.statusUpdatedAt.getTime() - a.statusUpdatedAt.getTime())[0]?.statusUpdatedAt ?? null;
+    const entryPayment = entry
+      ? calculateParticipantPayment(
+          entry.expectedAmount.toNumber(),
+          ['RECEIVED', 'PAID'].includes(entry.status),
+          entry,
+          [],
+        )
+      : null;
+    const snapshotPayment = participant.billingMode === 'ENTRY_INSTALLMENT' && entryPayment
+      ? entryPayment
+      : payment;
+    const realizedAt = participant.billingMode === 'ENTRY_INSTALLMENT' && entry
+      ? entry.realizedAt
+      : participantCharges
+        .filter((charge) => ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED', 'PAID'].includes(charge.status))
+        .sort((a, b) => b.statusUpdatedAt.getTime() - a.statusUpdatedAt.getTime())[0]?.statusUpdatedAt ?? null;
 
-    snapshots.set(participant.revenueEntryId ?? '', {
-      percentPaid: payment.percentPaid,
-      financialStatus: payment.status,
-      totalPaid: payment.totalPaid,
-      totalRefunded: payment.totalRefunded,
-      netPaid: payment.netPaid,
+    snapshots.set(participant.revenueEntryId ?? participant.id, {
+      percentPaid: snapshotPayment.percentPaid,
+      financialStatus: snapshotPayment.status,
+      totalPaid: snapshotPayment.totalPaid,
+      totalRefunded: snapshotPayment.totalRefunded,
+      netPaid: snapshotPayment.netPaid,
       realizedAt,
-      entryStatus: financialEntryStatusFromParticipantStatus(payment.status),
+      entryStatus: financialEntryStatusFromParticipantStatus(snapshotPayment.status),
     });
   }
 
@@ -3265,6 +3781,13 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
         where: { contaId: ctx.contaId, id: { in: revenueEntryIds } },
       })
     : [];
+
+  const billingGroupIds = [...new Set(participants.map((participant) => participant.billingGroupId).filter((id): id is string => Boolean(id)))];
+  const billingGroups = billingGroupIds.length > 0
+    ? await prisma.eventBillingGroup.findMany({ where: { contaId: ctx.contaId, id: { in: billingGroupIds } }, select: { id: true, standaloneChargeId: true, asaasPaymentId: true, asaasInstallmentId: true, balanceAmount: true } })
+    : [];
+  const billingGroupById = new Map(billingGroups.map((group) => [group.id, group]));
+  const billingGroupCharges = await loadEventBillingGroupCharges(prisma, ctx.contaId, billingGroups);
 
   const asaasPaymentIds = financialEntries
     .map((e) => e.asaasPaymentId)
@@ -3333,10 +3856,17 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
 
     // Resolve charges for this participant
     const entry = financialEntries.find((e) => e.id === part.revenueEntryId);
+    const billingGroup = part.billingGroupId ? billingGroupById.get(part.billingGroupId) : undefined;
     const asaasPaymentId = entry?.asaasPaymentId ?? part.asaasInstallmentId ?? part.asaasPaymentId;
     let participantCharges: any[] = [];
 
-    if (asaasPaymentId) {
+    if (billingGroup) {
+      participantCharges = allocateChargesToParticipant(
+        billingGroupCharges.get(billingGroup.id) ?? [],
+        part.balanceAmount.toNumber(),
+        billingGroup.balanceAmount.toNumber(),
+      );
+    } else if (asaasPaymentId) {
       const direct = directCharges.filter((c) => c.asaasPaymentId === asaasPaymentId);
       const planIdsForDirect = direct
         .map((c) => c.standaloneInstallmentPlanId)
@@ -3383,6 +3913,11 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
         : null,
       displayName: part.displayName,
       registrationFeeCharged: feeValue,
+      billingMode: part.billingMode,
+      entryAmount: part.entryAmount.toNumber(),
+      balanceAmount: part.balanceAmount.toNumber(),
+      entryPaymentMethod: part.entryPaymentMethod,
+      billingGroupId: part.billingGroupId,
       isFeePaid: part.isFeePaid,
       feePaymentMethod: part.feePaymentMethod,
       notes: part.notes,

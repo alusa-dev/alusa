@@ -21,6 +21,21 @@ function buildTx(modelExists = true) {
                 { papel: 'ESCOLA', obrigatorio: true, ordem: 0 },
                 { papel: 'RESPONSAVEL_OU_ALUNO', obrigatorio: true, ordem: 1 },
               ],
+              consentimentos: [
+                {
+                  id: 'consent-1',
+                  codigo: 'IMAGE_USE',
+                  finalidade: 'IMAGE_USE',
+                  titulo: 'Uso de imagem',
+                  texto: 'Eu, {{nome_assinante}}, autorizo a imagem de {{nome_aluno}}.',
+                  papel: 'RESPONSAVEL_OU_ALUNO',
+                  obrigatorio: true,
+                  recusaImpedeAssinatura: false,
+                  ordem: 0,
+                  templateId: 'template-1',
+                  templateVersao: 2,
+                },
+              ],
             }
           : null,
       ),
@@ -31,7 +46,19 @@ function buildTx(modelExists = true) {
     },
     contratoDocumento: { create: vi.fn().mockResolvedValue({ id: 'documento-1' }) },
     contractEvidence: { create: vi.fn().mockResolvedValue({ id: 'evidencia-1' }) },
-    matricula: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    matricula: {
+      findFirst: vi.fn().mockResolvedValue({
+        id: 'matricula-1',
+        aluno: {
+          nome: 'Aluno Teste',
+          cpf: null,
+          dataNasc: new Date('2010-01-01'),
+          responsaveis: [],
+        },
+        responsavelFinanceiro: null,
+      }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
   };
 }
 
@@ -45,15 +72,25 @@ describe('createPendingEnrollmentContract', () => {
       actorId: 'usuario-1',
     });
 
-    expect(result).toEqual({ id: 'contrato-1' });
+    expect(result).toEqual(expect.objectContaining({ id: 'contrato-1', publicToken: expect.any(String) }));
     expect(tx.contrato.create).toHaveBeenCalledOnce();
     expect(tx.contrato.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
+          tokenPublico: expect.stringMatching(/^hash:/),
+          tokenPublicoHash: expect.any(String),
           camposAssinaturaSnapshot: expect.arrayContaining([
             expect.objectContaining({ papel: 'ESCOLA', ordem: 0 }),
             expect.objectContaining({ papel: 'RESPONSAVEL_OU_ALUNO', ordem: 1 }),
           ]),
+          termosConsentimentoSnapshot: [
+            expect.objectContaining({
+              templateId: 'template-1',
+              templateVersao: 2,
+              texto: 'Eu, responsável legal, autorizo a imagem de Aluno Teste.',
+              contexto: expect.objectContaining({ signerType: 'RESPONSAVEL' }),
+            }),
+          ],
         }),
       }),
     );

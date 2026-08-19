@@ -693,9 +693,13 @@ export async function createStandaloneCharge(
     }
 
     if (input.chargeType === 'INSTALLMENT') {
-      const totalInstallmentValue = Number(
-        (input.installmentValue! * input.installmentCount!).toFixed(2),
-      );
+      // When the caller knows the total, preserve it exactly. Multiplying a
+      // rounded installment value can lose cents (e.g. 100 / 3 = 99.99).
+      // The fallback keeps compatibility with callers that only provide the
+      // installment value.
+      const totalInstallmentValue = input.value != null
+        ? Number(input.value.toFixed(2))
+        : Number((input.installmentValue! * input.installmentCount!).toFixed(2));
 
       const installmentResult = await createStandaloneInstallmentPlan({
         contaId: input.contaId,

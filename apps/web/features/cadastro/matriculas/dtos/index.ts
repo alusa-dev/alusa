@@ -772,6 +772,14 @@ export const createMatriculaResultDTOSchema = z.object({
   asaasSync: matriculaAsaasSyncDTOSchema.optional(),
   responsavelFinanceiro: matriculaResponsavelResumoDTOSchema.nullable(),
   primeiroVencimento: dateStringDTOSchema,
+  contrato: z
+    .object({
+      id: z.string(),
+      publicToken: nullableStringDTOSchema,
+      tokenExpiraEm: dateStringDTOSchema.nullable(),
+    })
+    .nullable()
+    .optional(),
   notificationSync: z
     .object({
       applied: matriculaNotificationChannelsDTOSchema,

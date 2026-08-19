@@ -282,14 +282,25 @@ export const eventReportQuerySchema = z.object({
 export const createEventParticipantSchema = z.object({
   eventId: eventIdSchema,
   alunoId: z.string().trim().min(1),
+  responsavelId: z.string().trim().optional().nullable(),
+  billingGroupId: z.string().trim().optional().nullable(),
   registrationFeeCharged: moneySchema.optional().default(0),
+  billingMode: z.enum(['FULL', 'INSTALLMENT', 'ENTRY_INSTALLMENT']).optional().default('FULL'),
+  entryAmount: moneySchema.optional().default(0),
+  entryPaymentMethod: z.string().trim().optional().nullable(),
   isFeePaid: z.coerce.boolean().optional().default(false),
   feePaymentMethod: z.string().trim().optional().nullable(),
   notes: optionalText,
 });
 
-export const eventParticipantBillingRequestSchema = z.object({
+const eventParticipantBillingBaseSchema = z.object({
+  responsavelId: z.string().trim().min(1).optional(),
+  additionalAlunoIds: z.array(z.string().trim().min(1)).max(20).optional().default([]),
+  uiRequestId: z.string().trim().min(8).max(120).optional(),
   registrationFeeCharged: z.coerce.number().optional().default(0),
+  hasEntry: z.coerce.boolean().optional().default(false),
+  entryAmount: z.coerce.number().min(0).optional().default(0),
+  entryPaymentMethod: z.string().trim().optional().nullable(),
   billingMethod: z.enum(['MANUAL_RECEIVED', 'BOLETO', 'PIX', 'CREDIT_CARD']).optional().default('MANUAL_RECEIVED'),
   feePaymentMethod: z.string().trim().optional().nullable(),
   notes: z.string().trim().optional().nullable(),
@@ -300,9 +311,39 @@ export const eventParticipantBillingRequestSchema = z.object({
   notificationChannelsConfigured: z.boolean().optional().default(false),
 });
 
-export const registerEventParticipantRequestSchema = eventParticipantBillingRequestSchema.extend({
+function validateEventParticipantBilling(input: z.infer<typeof eventParticipantBillingBaseSchema>, ctx: z.RefinementCtx) {
+  if (!input.hasEntry) return;
+
+  const participantCount = 1 + (input.additionalAlunoIds?.length ?? 0);
+  const totalRegistrationFee = input.registrationFeeCharged * participantCount;
+
+  if (input.additionalAlunoIds && input.additionalAlunoIds.length > 0 && !input.responsavelId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['responsavelId'], message: 'Selecione o responsável financeiro da cobrança agrupada.' });
+  }
+  if (input.registrationFeeCharged <= 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['registrationFeeCharged'], message: 'Informe a taxa total para usar uma entrada.' });
+  }
+  if (input.entryAmount <= 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['entryAmount'], message: 'Informe o valor da entrada.' });
+  } else if (input.entryAmount >= totalRegistrationFee) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['entryAmount'], message: 'A entrada deve ser menor que a taxa total.' });
+  }
+  if (!input.entryPaymentMethod) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['entryPaymentMethod'], message: 'Informe a forma de recebimento da entrada.' });
+  }
+  if (!['BOLETO', 'CREDIT_CARD'].includes(input.billingMethod)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['billingMethod'], message: 'O saldo parcelado deve ser cobrado por boleto ou cartão.' });
+  }
+  if (input.chargeType !== 'INSTALLMENT') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['chargeType'], message: 'O saldo com entrada deve ser parcelado.' });
+  }
+}
+
+export const eventParticipantBillingRequestSchema = eventParticipantBillingBaseSchema.superRefine(validateEventParticipantBilling);
+
+export const registerEventParticipantRequestSchema = eventParticipantBillingBaseSchema.extend({
   alunoId: z.string().trim().min(1),
-});
+}).superRefine(validateEventParticipantBilling);
 
 export const reactivateEventParticipantRequestSchema = eventParticipantBillingRequestSchema;
 
@@ -316,6 +357,9 @@ export const reactivateEventParticipantSchema = createEventParticipantSchema.omi
   billingMethod: z.enum(['MANUAL_RECEIVED', 'BOLETO', 'PIX', 'CREDIT_CARD']).optional(),
   chargeType: z.enum(['ONE_TIME', 'INSTALLMENT']).optional(),
   installmentCount: z.coerce.number().int().min(2).max(24).optional(),
+  billingMode: z.enum(['FULL', 'INSTALLMENT', 'ENTRY_INSTALLMENT']).optional(),
+  entryAmount: z.coerce.number().min(0).optional(),
+  entryPaymentMethod: z.string().trim().optional().nullable(),
 });
 
 export const quitarParticipantFeeSchema = z.object({

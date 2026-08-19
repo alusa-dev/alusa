@@ -115,6 +115,10 @@
       "schedule": "30 4 * * *"
     },
     {
+      "path": "/api/jobs/expire-contract-links?maxAccounts=100&limit=500",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/jobs/reconcile-matricula-cancellations?maxAccounts=100&limit=100",
       "schedule": "*/5 * * * *"
     },

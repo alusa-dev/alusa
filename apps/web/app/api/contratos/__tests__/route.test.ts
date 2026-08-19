@@ -9,15 +9,23 @@ const {
   getSessionUserMock,
   createSubscriptionMock,
   materializeSubscriptionPaymentForChargeMock,
+  assertPlatformAccessForContaMock,
+  platformBillingAccessResponseMock,
   prismaMock,
   transactionMock,
 } = vi.hoisted(() => ({
   getSessionUserMock: vi.fn(),
   createSubscriptionMock: vi.fn(),
   materializeSubscriptionPaymentForChargeMock: vi.fn(),
+  assertPlatformAccessForContaMock: vi.fn(),
+  platformBillingAccessResponseMock: vi.fn(),
   transactionMock: {
     contrato: {
       create: vi.fn(),
+      findFirst: vi.fn(),
+    },
+    contratoModelo: {
+      findFirst: vi.fn(),
     },
     contratoDocumento: {
       create: vi.fn(),
@@ -27,6 +35,8 @@ const {
     },
     matricula: {
       update: vi.fn(),
+      updateMany: vi.fn(),
+      findFirst: vi.fn(),
     },
   },
   prismaMock: {
@@ -69,6 +79,11 @@ vi.mock('@/src/server/matriculas/subscription-payment-materialization', () => ({
   materializeSubscriptionPaymentForCharge: materializeSubscriptionPaymentForChargeMock,
 }));
 
+vi.mock('@/src/server/platform-billing/capacity', () => ({
+  assertPlatformAccessForConta: assertPlatformAccessForContaMock,
+  platformBillingAccessResponse: platformBillingAccessResponseMock,
+}));
+
 const { POST } = await import('../route');
 
 function buildRequest(body: Record<string, unknown>) {
@@ -103,7 +118,35 @@ describe('POST /api/contratos', () => {
       createdAt: new Date('2025-02-01T00:00:00.000Z'),
       updatedAt: new Date('2025-02-01T00:00:00.000Z'),
     });
+    transactionMock.contrato.findFirst.mockResolvedValue(null);
+    transactionMock.contratoModelo.findFirst.mockResolvedValue({
+      id: 'modelo-1',
+      contaId: 'conta-1',
+      nome: 'Modelo padrão',
+      arquivoPdfUrl: 'https://example.com/contrato.pdf',
+      arquivoOriginalUrl: null,
+      hashSha256: 'hash-1',
+      tamanhoBytes: 1024,
+      mimeType: 'application/pdf',
+      status: 'ATIVO',
+      campos: [
+        { id: 'campo-escola', tipo: 'ASSINATURA', papel: 'ESCOLA', pagina: 1, x: 10, y: 10, largura: 20, altura: 10, obrigatorio: true, ordem: 0 },
+        { id: 'campo-responsavel', tipo: 'ASSINATURA', papel: 'RESPONSAVEL_OU_ALUNO', pagina: 1, x: 40, y: 10, largura: 20, altura: 10, obrigatorio: true, ordem: 1 },
+      ],
+      consentimentos: [],
+    });
+    transactionMock.matricula.findFirst.mockResolvedValue({
+      id: 'mat-1',
+      aluno: {
+        nome: 'Aluno 1',
+        cpf: '12345678900',
+        dataNasc: new Date('2000-01-01T00:00:00.000Z'),
+        responsaveis: [],
+      },
+      responsavelFinanceiro: null,
+    });
     transactionMock.matricula.update.mockResolvedValue({ id: 'mat-1' });
+    transactionMock.matricula.updateMany.mockResolvedValue({ count: 1 });
     materializeSubscriptionPaymentForChargeMock.mockResolvedValue({
       found: false,
       matchedBy: null,
@@ -111,6 +154,8 @@ describe('POST /api/contratos', () => {
       linkedChargeId: null,
       updated: false,
     });
+    assertPlatformAccessForContaMock.mockResolvedValue(undefined);
+    platformBillingAccessResponseMock.mockReturnValue(null);
     prismaMock.subscription.findFirst.mockResolvedValue(null);
   });
 

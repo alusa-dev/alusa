@@ -59,4 +59,29 @@ describe('consentimentos de contrato', () => {
       },
     )).toContain('na condição de titular da própria imagem');
   });
+
+  it('congela template, versão, contexto e texto renderizado no snapshot', () => {
+    const snapshot = snapshotContractConsentTerms([
+      {
+        ...terms[0],
+        texto: 'Eu, {{nome_assinante}}, autorizo a imagem de {{nome_aluno}}.',
+        templateId: 'template-1',
+        templateVersao: 3,
+      },
+    ], {
+      signerType: 'RESPONSAVEL',
+      signerName: 'Maria da Silva',
+      signerCpf: '123',
+      studentName: 'Pedro da Silva',
+      studentCpf: '456',
+      relationship: 'mãe',
+    });
+
+    expect(snapshot[0]).toEqual(expect.objectContaining({
+      templateId: 'template-1',
+      templateVersao: 3,
+      texto: 'Eu, Maria da Silva, autorizo a imagem de Pedro da Silva.',
+      contexto: expect.objectContaining({ signerType: 'RESPONSAVEL' }),
+    }));
+  });
 });

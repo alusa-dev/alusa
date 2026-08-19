@@ -504,6 +504,9 @@ export function mapCreateMatriculaResultToDTO(input: {
     };
     responsavelFinanceiro: Record<string, unknown> | null;
     primeiroVencimento: Date;
+    contratoId?: string | null;
+    contratoPublicToken?: string | null;
+    contratoTokenExpiraEm?: Date | null;
   };
   taxaSync: MatriculaAsaasTaxaSyncDTO | null;
   subscriptionSync: MatriculaAsaasSubscriptionSyncDTO | null;
@@ -565,6 +568,13 @@ export function mapCreateMatriculaResultToDTO(input: {
         }
       : null,
     primeiroVencimento: result.primeiroVencimento.toISOString(),
+    contrato: result.contratoId
+      ? {
+          id: result.contratoId,
+          publicToken: result.contratoPublicToken ?? null,
+          tokenExpiraEm: result.contratoTokenExpiraEm?.toISOString() ?? null,
+        }
+      : null,
     notificationSync: notificationSync
       ? {
           applied: notificationSync.applied,

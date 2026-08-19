@@ -38,7 +38,7 @@ export function EventParticipantsPanel({
   const router = useRouter();
   const queryClient = useQueryClient();
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
-  const [participantToCancel, setParticipantToCancel] = useState<{ id: string; name: string } | null>(null);
+  const [participantToCancel, setParticipantToCancel] = useState<{ id: string; name: string; grouped: boolean } | null>(null);
   const [participantToPermanentlyDelete, setParticipantToPermanentlyDelete] = useState<{ id: string; name: string } | null>(null);
 
   const invalidateParticipants = () => {
@@ -50,9 +50,14 @@ export function EventParticipantsPanel({
 
   const unregisterMutation = useMutation({
     mutationFn: (participantId: string) => unregisterEventParticipant(eventId, participantId),
-    onSuccess: () => {
+    onSuccess: (result) => {
       invalidateParticipants();
-      toast.success({ title: 'Inscrição cancelada', description: 'A inscrição do participante foi cancelada e o histórico foi preservado.' });
+      toast.success({
+        title: result.data.grouped ? 'Cobrança agrupada cancelada' : 'Inscrição cancelada',
+        description: result.data.grouped
+          ? 'As inscrições do grupo foram canceladas e o histórico financeiro foi preservado.'
+          : 'A inscrição do participante foi cancelada e o histórico foi preservado.',
+      });
       setParticipantToCancel(null);
     },
     onError: (error) => {
@@ -93,7 +98,14 @@ export function EventParticipantsPanel({
                 render: (part: EventParticipantDTO) => (
                   <div className="flex items-center gap-2 lg:gap-3 min-w-0">
                     <PersonAvatar name={part.displayName} src={part.aluno?.foto} size="sm" className="h-8 w-8 shrink-0" />
-                    <span className="font-semibold text-slate-900 truncate">{part.displayName}</span>
+                    <div className="min-w-0">
+                      <span className="block font-semibold text-slate-900 truncate">{part.displayName}</span>
+                      {part.billingGroupId ? (
+                        <span className="block text-[11px] font-medium text-violet-700 truncate" title="Cobrança compartilhada com irmãos do mesmo responsável">
+                          Cobrança agrupada
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                 ),
               },
@@ -135,7 +147,7 @@ export function EventParticipantsPanel({
                     isCancelled={Boolean(part.cancelledAt)}
                     canPermanentlyDelete={part.canPermanentlyDelete === true}
                     onView={() => router.push('/events/' + eventId + '/participants/' + part.id)}
-                    onCancel={() => setParticipantToCancel({ id: part.id, name: part.displayName })}
+                    onCancel={() => setParticipantToCancel({ id: part.id, name: part.displayName, grouped: Boolean(part.billingGroupId) })}
                     onPermanentDelete={() => setParticipantToPermanentlyDelete({ id: part.id, name: part.displayName })}
                   />
                 ),
@@ -154,9 +166,11 @@ export function EventParticipantsPanel({
         onOpenChange={(open) => {
           if (!open) setParticipantToCancel(null);
         }}
-        title="Cancelar inscrição"
-        description={'Tem certeza que deseja cancelar a inscrição de ' + participantToCancel?.name + '? O histórico financeiro e operacional será preservado.'}
-        confirmText="Cancelar inscrição"
+        title={participantToCancel?.grouped ? 'Cancelar cobrança agrupada' : 'Cancelar inscrição'}
+        description={participantToCancel?.grouped
+          ? `A inscrição de ${participantToCancel.name} pertence a uma cobrança compartilhada. Esta ação cancelará a cobrança e as inscrições dos demais alunos do grupo. O histórico será preservado.`
+          : `Tem certeza que deseja cancelar a inscrição de ${participantToCancel?.name}? O histórico financeiro e operacional será preservado.`}
+        confirmText={participantToCancel?.grouped ? 'Cancelar cobrança agrupada' : 'Cancelar inscrição'}
         cancelText="Cancelar"
         variant="destructive"
         onConfirm={() => {

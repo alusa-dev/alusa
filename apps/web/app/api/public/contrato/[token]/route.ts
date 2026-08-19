@@ -9,6 +9,7 @@ import { mapPublicContratoRecordToDTO } from '@/features/contratos/mappers';
 import { jsonSensitive } from '@/lib/http-security';
 import { createContractEvidence, hashPublicContractToken } from '@alusa/lib';
 import { ipFromRequest } from '@/lib/rate-limit';
+import { expireContractSignatureLinks } from '@/src/server/contracts/expire-contract-signature-links.service';
 
 export async function GET(
   request: NextRequest,
@@ -33,6 +34,7 @@ export async function GET(
         arquivoPdfUrl: true,
         hashPdf: true,
         camposAssinaturaSnapshot: true,
+        termosConsentimentoSnapshot: true,
         status: true,
         tokenExpiraEm: true,
         matricula: {
@@ -72,14 +74,10 @@ export async function GET(
     }
 
     if (contrato.tokenExpiraEm && new Date() > contrato.tokenExpiraEm) {
-      void createContractEvidence(prisma as never, {
-        contaId: contrato.contaId,
-        contratoId: contrato.id,
-        type: 'LINK_EXPIRED',
-        ip: ipFromRequest(request),
-        userAgent: request.headers.get('user-agent')?.slice(0, 512) ?? null,
-        payload: { tokenHash, expiredAt: contrato.tokenExpiraEm.toISOString() },
-      }).catch(() => undefined);
+      await expireContractSignatureLinks(
+        { contaId: contrato.contaId, contractId: contrato.id, limit: 1 },
+        { prisma },
+      ).catch(() => undefined);
       return jsonSensitive({ error: { message: 'Link expirado' } }, { status: 400 });
     }
 

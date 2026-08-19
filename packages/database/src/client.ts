@@ -12,6 +12,7 @@ const REQUIRED_MODEL_DELEGATES = [
   'fiscalService',
   'invoice',
   'invoiceAuditEvent',
+  'eventBillingGroup',
 ] as const;
 
 function modelDelegateName(modelName: string): string {

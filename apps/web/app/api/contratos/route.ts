@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PeriodicidadePlano } from '@prisma/client';
 import { buildSubscriptionExternalReference, createSubscription } from '@alusa/finance';
-import { createContractEvidence, createPublicContractToken } from '@alusa/lib';
 import { prisma } from '@/prisma/client';
 import { getSessionUser } from '@/lib/auth/session';
 import {
@@ -20,14 +19,15 @@ import {
   resolveChargeableFirstDueDate,
 } from '@/src/server/matriculas/recurring-billing';
 import {
-  getMissingContractSignatureFieldsMessage,
-  hasRequiredContractSignatureFields,
-} from '@/src/server/contracts/signature-fields';
+  EnrollmentContractModelNotFoundError,
+  EnrollmentContractModelSignatureFieldsError,
+  issueEnrollmentContract,
+  PendingEnrollmentContractAlreadyExistsError,
+} from '@/src/server/contracts/issue-enrollment-contract.service';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
 } from '@/src/server/platform-billing/capacity';
-import { isMaiorDeIdade, renderContractConsentTemplate } from '@alusa/domain';
 
 export function replaceMentionSpans(html: string) {
   const mentionRegex = /<span\s+[^>]*?data-type=["']mention["'][^>]*?>[^<]*?<\/span>/g;
@@ -286,152 +286,21 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const modelo = await prisma.contratoModelo.findFirst({
-      where: { id: body.modeloId, contaId: user.contaId, status: 'ATIVO' },
-      include: {
-        campos: { orderBy: { ordem: 'asc' } },
-        consentimentos: { orderBy: { ordem: 'asc' }, include: { template: { select: { id: true, versao: true } } } },
-      },
-    });
+    const issued = await prisma.$transaction((tx) => issueEnrollmentContract(tx, {
+      contaId: user.contaId,
+      matriculaId: body.matriculaId,
+      modeloId: body.modeloId,
+      contratoOrigemId: body.contratoOrigemId,
+      actorId: user.id,
+      source: 'MANUAL',
+      onExisting: 'reject',
+    }));
+    const contrato = issued.contrato;
+    const tokenPublico = issued.publicToken;
 
-    if (!modelo) {
-      return NextResponse.json(
-        { error: { message: 'Modelo de contrato não encontrado' } },
-        { status: 404 },
-      );
+    if (!tokenPublico) {
+      throw new Error('CONTRACT_PUBLIC_TOKEN_NOT_ISSUED');
     }
-
-    if (!hasRequiredContractSignatureFields(modelo.campos)) {
-      return NextResponse.json(
-        { error: { message: getMissingContractSignatureFieldsMessage(modelo.campos) } },
-        { status: 422 },
-      );
-    }
-
-    const { token: tokenPublico, tokenHash: tokenPublicoHash } = createPublicContractToken();
-    const tokenExpiraEm = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    const linkedResponsavelLink = matricula.aluno.responsaveis[0] ?? null;
-    const linkedResponsavel = linkedResponsavelLink?.responsavel ?? null;
-    const signerContext = isMaiorDeIdade(matricula.aluno.dataNasc)
-      ? {
-          signerType: 'ALUNO_MAIOR' as const,
-          signerName: matricula.aluno.nome,
-          signerCpf: matricula.aluno.cpf,
-          studentName: matricula.aluno.nome,
-          studentCpf: matricula.aluno.cpf,
-          relationship: null,
-        }
-      : {
-          signerType: 'RESPONSAVEL' as const,
-          signerName: matricula.responsavelFinanceiro?.nome ?? linkedResponsavel?.nome ?? 'responsável legal',
-          signerCpf: matricula.responsavelFinanceiro?.cpf ?? linkedResponsavel?.cpf ?? null,
-          studentName: matricula.aluno.nome,
-          studentCpf: matricula.aluno.cpf,
-          relationship: linkedResponsavelLink?.tipoVinculo === 'PRINCIPAL' ? 'responsável legal' : 'responsável',
-        };
-
-    const contrato = await prisma.$transaction(async (tx) => {
-      const created = await tx.contrato.create({
-        data: {
-          contaId: user.contaId,
-          matriculaId: body.matriculaId,
-          modeloId: body.modeloId,
-          contratoOrigemId: body.contratoOrigemId,
-          arquivoPdfUrl: modelo.arquivoPdfUrl,
-          hashPdf: modelo.hashSha256,
-          status: 'PENDENTE',
-          tokenPublico: `hash:${tokenPublicoHash}`,
-          tokenPublicoHash,
-          tokenExpiraEm,
-          camposAssinaturaSnapshot: modelo.campos.map((campo) => ({
-            id: campo.id,
-            tipo: campo.tipo,
-            papel: campo.papel,
-            pagina: campo.pagina,
-            x: campo.x,
-            y: campo.y,
-            largura: campo.largura,
-            altura: campo.altura,
-            obrigatorio: campo.obrigatorio,
-            ordem: campo.ordem,
-          })),
-          termosConsentimentoSnapshot: (modelo.consentimentos ?? []).map((consentimento) => ({
-            id: consentimento.id,
-            codigo: consentimento.codigo,
-            finalidade: consentimento.finalidade,
-            titulo: consentimento.titulo,
-            texto: renderContractConsentTemplate(consentimento.texto, signerContext),
-            papel: consentimento.papel,
-            obrigatorio: consentimento.obrigatorio,
-            ordem: consentimento.ordem,
-            templateId: consentimento.templateId,
-            templateVersao: consentimento.templateVersao,
-            contexto: signerContext,
-          })),
-        },
-      });
-
-      await tx.contratoDocumento.create({
-        data: {
-          contaId: user.contaId,
-          contratoId: created.id,
-          tipo: 'GERADO_MATRICULA',
-          arquivoUrl: modelo.arquivoPdfUrl,
-          hashSha256: modelo.hashSha256,
-          tamanhoBytes: modelo.tamanhoBytes ?? null,
-          mimeType: modelo.mimeType ?? 'application/pdf',
-        },
-      });
-
-      if (modelo.arquivoOriginalUrl) {
-        await tx.contratoDocumento.create({
-          data: {
-            contaId: user.contaId,
-            contratoId: created.id,
-            tipo: 'MODELO_ORIGINAL',
-            arquivoUrl: modelo.arquivoOriginalUrl,
-            hashSha256: modelo.hashSha256,
-            tamanhoBytes: modelo.tamanhoBytes ?? null,
-            mimeType: modelo.mimeType ?? 'application/pdf',
-          },
-        });
-      }
-
-      await createContractEvidence(tx as never, {
-        contaId: user.contaId,
-        contratoId: created.id,
-        type: 'CONTRACT_CREATED',
-        actorType: 'USER',
-        actorId: user.id,
-        payload: {
-          matriculaId: body.matriculaId,
-          modeloId: body.modeloId,
-          hashPdf: modelo.hashSha256,
-        },
-      });
-
-      await createContractEvidence(tx as never, {
-        contaId: user.contaId,
-        contratoId: created.id,
-        type: 'PUBLIC_LINK_CREATED',
-        actorType: 'USER',
-        actorId: user.id,
-        payload: {
-          tokenPublicoHash,
-          tokenExpiraEm: tokenExpiraEm.toISOString(),
-        },
-      });
-
-      await tx.matricula.update({
-        where: { id: body.matriculaId },
-        data: {
-          statusContrato: 'AGUARDANDO_ASSINATURA',
-          contratoAtualId: created.id,
-        },
-      });
-
-      return created;
-    });
 
     let subscriptionSync:
       | {
@@ -641,6 +510,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: { message: 'Já existe um contrato pendente para esta matrícula.' } },
         { status: 409 },
+      );
+    }
+
+    if (error instanceof PendingEnrollmentContractAlreadyExistsError) {
+      return NextResponse.json(
+        { error: { message: error.message } },
+        { status: 409 },
+      );
+    }
+
+    if (error instanceof EnrollmentContractModelNotFoundError) {
+      return NextResponse.json(
+        { error: { message: 'Modelo de contrato não encontrado' } },
+        { status: 404 },
+      );
+    }
+
+    if (error instanceof EnrollmentContractModelSignatureFieldsError) {
+      return NextResponse.json(
+        { error: { message: error.message } },
+        { status: 422 },
       );
     }
 

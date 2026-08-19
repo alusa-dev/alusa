@@ -142,6 +142,8 @@ async function buildCriarMatriculaResultFromExisting(
     responsavelFinanceiro: null,
     primeiroVencimento,
     contratoId: matricula.contratoAtualId,
+    contratoPublicToken: null,
+    contratoTokenExpiraEm: null,
     idempotent: true as const,
   };
 }
@@ -1382,6 +1384,8 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       preco,
       billingOutboxEventId,
       contratoId: contrato.id,
+      contratoPublicToken: contrato.publicToken,
+      contratoTokenExpiraEm: contrato.tokenExpiraEm,
     };
     });
   } catch (error) {
@@ -1409,6 +1413,8 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     primeiroVencimento,
     billingOutboxEventId: result.billingOutboxEventId,
     contratoId: result.contratoId,
+    contratoPublicToken: result.contratoPublicToken,
+    contratoTokenExpiraEm: result.contratoTokenExpiraEm,
   };
 }
 

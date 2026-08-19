@@ -176,4 +176,45 @@ describe('GET /api/public/contrato/[token]', () => {
       x: 0.73,
     });
   });
+
+  it('renderiza os dados do assinante no snapshot público do consentimento', async () => {
+    prismaMock.contrato.findFirst.mockResolvedValueOnce({
+      id: 'contrato-3',
+      contaId: 'conta-1',
+      arquivoPdfUrl: '/uploads/contratos/contrato-3.pdf',
+      hashPdf: 'c'.repeat(64),
+      status: 'PENDENTE',
+      tokenExpiraEm: new Date(Date.now() + 60_000),
+      termosConsentimentoSnapshot: [
+        {
+          id: 'consent-1',
+          codigo: 'IMAGE_USE',
+          templateId: 'template-1',
+          templateVersao: 1,
+          finalidade: 'IMAGE_USE',
+          titulo: 'Uso de imagem',
+          texto: 'Eu, {{nome_assinante}}, autorizo a imagem de {{nome_aluno}}.',
+          papel: 'RESPONSAVEL_OU_ALUNO',
+          obrigatorio: true,
+          recusaImpedeAssinatura: false,
+          ordem: 0,
+        },
+      ],
+      matricula: {
+        aluno: { nome: 'Aluno Menor' },
+        responsavelFinanceiro: { nome: 'Responsável Teste' },
+      },
+    });
+
+    const response = await GET(new NextRequest('http://localhost/api/public/contrato/token-3'), {
+      params: { token: 'token-3' },
+    });
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.consentimentos[0]).toMatchObject({
+      templateId: 'template-1',
+      texto: 'Eu, Responsável Teste, autorizo a imagem de Aluno Menor.',
+    });
+  });
 });

@@ -12,9 +12,8 @@ import {
 import { AsaasHttpError, deletePayment, deleteSubscription, isAsaasEnabled } from '@alusa/finance';
 import {
   buildSeatOccupancyWhereClause,
-  createContractEvidence,
-  createPublicContractToken,
 } from '@alusa/lib';
+import { issueEnrollmentContract } from '@/src/server/contracts/issue-enrollment-contract.service';
 import { createRenewalPending } from './renewal-governance.service';
 import { enqueueFutureFinancialProvisioning } from './renewal-outbox.service';
 import {
@@ -1371,89 +1370,14 @@ async function materializeFutureContract(
   });
   if (existing?.contratoId) return existing.contratoId;
 
-  const modelo = await tx.contratoModelo.findFirst({
-    where: { id: input.modeloId, contaId: input.contaId, status: 'ATIVO' },
-    include: {
-      campos: { orderBy: { ordem: 'asc' } },
-      consentimentos: { orderBy: { ordem: 'asc' } },
-    },
-  });
-  if (!modelo) throw new Error('MODELO_CONTRATO_NAO_ENCONTRADO');
-
-  const { tokenHash } = createPublicContractToken();
-  const tokenExpiraEm = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  const contrato = await tx.contrato.create({
-    data: {
-      contaId: input.contaId,
-      matriculaId: input.matriculaId,
-      modeloId: input.modeloId,
-      arquivoPdfUrl: modelo.arquivoPdfUrl,
-      hashPdf: modelo.hashSha256,
-      camposAssinaturaSnapshot: modelo.campos.map((campo) => ({
-        id: campo.id,
-        tipo: campo.tipo,
-        papel: campo.papel,
-        pagina: campo.pagina,
-        x: campo.x,
-        y: campo.y,
-        largura: campo.largura,
-        altura: campo.altura,
-        obrigatorio: campo.obrigatorio,
-        ordem: campo.ordem,
-      })),
-      termosConsentimentoSnapshot: (modelo.consentimentos ?? []).map((consentimento) => ({
-        id: consentimento.id,
-        codigo: consentimento.codigo,
-        finalidade: consentimento.finalidade,
-        titulo: consentimento.titulo,
-        texto: consentimento.texto,
-        papel: consentimento.papel,
-        obrigatorio: consentimento.obrigatorio,
-        recusaImpedeAssinatura: consentimento.recusaImpedeAssinatura,
-        ordem: consentimento.ordem,
-      })),
-      status: 'PENDENTE',
-      tokenPublico: `hash:${tokenHash}`,
-      tokenPublicoHash: tokenHash,
-      tokenExpiraEm,
-    },
-  });
-
-  await tx.contratoDocumento.create({
-    data: {
-      contaId: input.contaId,
-      contratoId: contrato.id,
-      tipo: 'GERADO_MATRICULA',
-      arquivoUrl: modelo.arquivoPdfUrl,
-      hashSha256: modelo.hashSha256,
-      tamanhoBytes: modelo.tamanhoBytes ?? null,
-      mimeType: modelo.mimeType,
-    },
-  });
-  await createContractEvidence(tx as never, {
+  const { contrato } = await issueEnrollmentContract(tx, {
     contaId: input.contaId,
-    contratoId: contrato.id,
-    type: 'CONTRACT_CREATED',
-    actorType: 'USER',
+    matriculaId: input.matriculaId,
+    modeloId: input.modeloId,
     actorId: input.actorId,
-    payload: {
-      processoId: input.processoId,
-      matriculaId: input.matriculaId,
-      modeloId: input.modeloId,
-      sourceEnrollmentId: input.sourceEnrollmentId,
-    },
-  });
-  await createContractEvidence(tx as never, {
-    contaId: input.contaId,
-    contratoId: contrato.id,
-    type: 'PUBLIC_LINK_CREATED',
-    actorType: 'USER',
-    actorId: input.actorId,
-    payload: { tokenPublicoHash: tokenHash, tokenExpiraEm: tokenExpiraEm.toISOString() },
-  });
-  await tx.matricula.update({
-    where: { id: input.matriculaId },
-    data: { contratoAtualId: contrato.id, statusContrato: 'AGUARDANDO_ASSINATURA' },
+    expirationDays: 30,
+    source: 'RENEWAL',
+    onExisting: 'return',
   });
   const futureContractData = {
       contaId: input.contaId,

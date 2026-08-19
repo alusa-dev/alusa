@@ -593,7 +593,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    return NextResponse.json({ data: { ok: result.ok } });
+    return NextResponse.json({ data: { ok: result.ok, grouped: result.grouped === true } });
   } catch (error) {
     return handleEventsRouteError(error, 'ERRO_DESINSCREVER_PARTICIPANTE');
   }

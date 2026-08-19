@@ -67,22 +67,32 @@ export function snapshotContractConsentTerms(
     obrigatorio: boolean;
     recusaImpedeAssinatura: boolean;
     ordem: number;
+    templateId?: string | null;
+    templateVersao?: number | null;
+    contexto?: ContractConsentRenderContext | null;
   }>,
+  context?: ContractConsentRenderContext | null,
 ): ContractConsentTermSnapshot[] {
   return terms
     .slice()
     .sort((a, b) => a.ordem - b.ordem || a.id.localeCompare(b.id))
-    .map((term) => ({
-      id: term.id,
-      codigo: term.codigo,
-      finalidade: term.finalidade,
-      titulo: term.titulo,
-      texto: term.texto,
-      papel: 'RESPONSAVEL_OU_ALUNO',
-      obrigatorio: term.obrigatorio,
-      recusaImpedeAssinatura: term.recusaImpedeAssinatura,
-      ordem: term.ordem,
-    }));
+    .map((term) => {
+      const renderContext = context ?? term.contexto ?? null;
+      return {
+        id: term.id,
+        codigo: term.codigo,
+        finalidade: term.finalidade,
+        titulo: term.titulo,
+        texto: renderContext ? renderContractConsentTemplate(term.texto, renderContext) : term.texto,
+        papel: 'RESPONSAVEL_OU_ALUNO' as const,
+        obrigatorio: term.obrigatorio,
+        recusaImpedeAssinatura: term.recusaImpedeAssinatura,
+        ordem: term.ordem,
+        templateId: term.templateId ?? null,
+        templateVersao: term.templateVersao ?? null,
+        contexto: renderContext,
+      };
+    });
 }
 
 export function resolveContractConsentAnswers(

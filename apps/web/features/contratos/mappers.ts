@@ -2,6 +2,8 @@ import {
   CONTRACT_ACCEPTANCE_TEXT_V1,
   CONTRACT_ACCEPTANCE_VERSION,
   isMaiorDeIdade,
+  renderContractConsentTemplate,
+  type ContractConsentRenderContext,
 } from '@alusa/domain';
 import {
   alunoContratoCardDTOSchema,
@@ -163,11 +165,34 @@ export function mapPublicContratoRecordToDTO(contrato: Record<string, unknown>) 
     ? ((contrato.modelo as Record<string, unknown>).campos as Array<Record<string, unknown>>)
     : [];
   const fields = snapshot ?? modelFields;
-  const consentimentos = Array.isArray(contrato.termosConsentimentoSnapshot)
+  const consentimentos = (Array.isArray(contrato.termosConsentimentoSnapshot)
     ? contrato.termosConsentimentoSnapshot
     : Array.isArray((contrato.modelo as Record<string, unknown> | null)?.consentimentos)
       ? (contrato.modelo as Record<string, unknown>).consentimentos
-      : [];
+      : []) as Array<Record<string, unknown>>;
+  const signerContext: ContractConsentRenderContext = alunoMaior
+    ? {
+        signerType: 'ALUNO_MAIOR',
+        signerName: String(aluno.nome ?? ''),
+        signerCpf: null,
+        studentName: String(aluno.nome ?? ''),
+        studentCpf: null,
+        relationship: null,
+      }
+    : {
+        signerType: 'RESPONSAVEL',
+        signerName: String(responsavel?.nome ?? linkedResponsavel?.nome ?? 'responsável legal'),
+        signerCpf: null,
+        studentName: String(aluno.nome ?? ''),
+        studentCpf: null,
+        relationship: 'responsável legal',
+      };
+  const renderedConsentimentos = consentimentos.map((item) => {
+    return {
+      ...item,
+      texto: renderContractConsentTemplate(String(item.texto ?? ''), signerContext),
+    };
+  });
 
   return contratoPublicoDTOSchema.parse({
     id: String(contrato.id ?? ''),
@@ -177,7 +202,7 @@ export function mapPublicContratoRecordToDTO(contrato: Record<string, unknown>) 
     tokenExpiraEm: toIsoString(contrato.tokenExpiraEm as Nullable<Date | string>),
     acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1,
     acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION,
-    consentimentos,
+    consentimentos: renderedConsentimentos,
     escolaNome: String(conta.nome ?? ''),
     matricula: {
       aluno: {

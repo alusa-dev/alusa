@@ -454,6 +454,22 @@ enum EventParticipantType {
   OTHER
 }
 
+enum EventParticipantBillingMode {
+  FULL
+  INSTALLMENT
+  ENTRY_INSTALLMENT
+}
+
+enum EventBillingGroupStatus {
+  PENDING
+  OPEN
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+  FAILED
+  REQUIRES_RECONCILIATION
+}
+
 enum EventReportType {
   GENERAL
   EVENT
@@ -1335,6 +1351,7 @@ model Conta {
   eventCostumeAssignments           EventCostumeAssignment[]
   eventFinancialEntries             EventFinancialEntry[]
   eventParticipants                 EventParticipant[]
+  eventBillingGroups                EventBillingGroup[]
   eventoContratos                   EventoContrato[]
   eventoContratoDocumentos          EventoContratoDocumento[]
   eventoContratoEvidencias          EventoContratoEvidence[]
@@ -1600,6 +1617,7 @@ model Usuario {
   restockOrdersCreated            RestockOrder[]                   @relation("RestockOrderCreatedBy")
   schoolEventsResponsible         SchoolEvent[]                    @relation("SchoolEventResponsibleUser")
   schoolEventsCreated             SchoolEvent[]                    @relation("SchoolEventCreatedBy")
+  eventBillingGroupsCreated       EventBillingGroup[]              @relation("EventBillingGroupCreatedBy")
   eventContracts                  EventoContrato[]                 @relation("EventoContratoCreatedBy")
   eventMapVersionsPublished       EventMapVersion[]                @relation("EventMapVersionPublishedBy")
   eventTicketSalesCreated         EventTicketSale[]                @relation("EventTicketSaleCreatedBy")
@@ -1759,6 +1777,7 @@ model Responsavel {
   sales                  Sale[]
   eventTicketSales       EventTicketSale[]
   eventParticipants      EventParticipant[]
+  eventBillingGroups     EventBillingGroup[]
   contratosEvento        EventoContrato[]
 
   // Multi-tenant: unicidade por conta
@@ -4271,6 +4290,7 @@ model SchoolEvent {
   assignments      EventCostumeAssignment[]
   financialEntries EventFinancialEntry[]
   participants     EventParticipant[]
+  billingGroups    EventBillingGroup[]
   contratos        EventoContrato[]
   reports          EventReport[]
   audits           EventAudit[]
@@ -4862,7 +4882,7 @@ model EventFinancialEntry {
 }
 
 model EventParticipant {
-  id                       String               @id @default(cuid())
+  id                       String                      @id @default(cuid())
   contaId                  String
   eventId                  String
   type                     EventParticipantType
@@ -4871,34 +4891,79 @@ model EventParticipant {
   responsavelId            String?
   displayName              String?
   notes                    String?
-  registrationFeeCharged   Decimal              @default(0) @db.Decimal(12, 2)
+  registrationFeeCharged   Decimal                     @default(0) @db.Decimal(12, 2)
+  billingMode              EventParticipantBillingMode @default(FULL)
+  entryAmount              Decimal                     @default(0) @db.Decimal(12, 2)
+  balanceAmount            Decimal                     @default(0) @db.Decimal(12, 2)
+  entryPaymentMethod       String?
+  billingGroupId           String?
   registrationPaymentRules Json?
-  isFeePaid                Boolean              @default(false)
+  isFeePaid                Boolean                     @default(false)
   feePaymentMethod         String?
   revenueEntryId           String?
   financialStatusSnapshot  String?
-  feePaidAmount            Decimal              @default(0) @db.Decimal(12, 2)
-  feeRefundedAmount        Decimal              @default(0) @db.Decimal(12, 2)
+  feePaidAmount            Decimal                     @default(0) @db.Decimal(12, 2)
+  feeRefundedAmount        Decimal                     @default(0) @db.Decimal(12, 2)
   standaloneChargeId       String?
   asaasPaymentId           String?
   asaasInstallmentId       String?
   cancelledAt              DateTime?
   cancelledReason          String?
-  createdAt                DateTime             @default(now())
-  updatedAt                DateTime             @updatedAt
+  createdAt                DateTime                    @default(now())
+  updatedAt                DateTime                    @updatedAt
 
-  conta       Conta            @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  event       SchoolEvent      @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  aluno       Aluno?           @relation(fields: [alunoId], references: [id], onDelete: SetNull)
-  turma       Turma?           @relation(fields: [turmaId], references: [id], onDelete: SetNull)
-  responsavel Responsavel?     @relation(fields: [responsavelId], references: [id], onDelete: SetNull)
-  contratos   EventoContrato[]
+  conta        Conta              @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event        SchoolEvent        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  aluno        Aluno?             @relation(fields: [alunoId], references: [id], onDelete: SetNull)
+  turma        Turma?             @relation(fields: [turmaId], references: [id], onDelete: SetNull)
+  responsavel  Responsavel?       @relation(fields: [responsavelId], references: [id], onDelete: SetNull)
+  billingGroup EventBillingGroup? @relation(fields: [contaId, billingGroupId], references: [contaId, id], onDelete: Restrict)
+  contratos    EventoContrato[]
 
   @@index([contaId], name: "idx_event_participant_conta")
   @@index([contaId, eventId, type], name: "idx_event_participant_conta_event_type")
   @@index([contaId, alunoId], name: "idx_event_participant_conta_aluno")
   @@index([contaId, turmaId], name: "idx_event_participant_conta_turma")
   @@index([contaId, responsavelId], name: "idx_event_participant_conta_responsavel")
+  @@index([contaId, billingGroupId], name: "idx_event_participant_conta_billing_group")
+}
+
+model EventBillingGroup {
+  id                 String                      @id @default(cuid())
+  contaId            String
+  eventId            String
+  responsavelId      String
+  status             EventBillingGroupStatus     @default(PENDING)
+  billingMode        EventParticipantBillingMode @default(FULL)
+  totalAmount        Decimal                     @db.Decimal(12, 2)
+  entryAmount        Decimal                     @default(0) @db.Decimal(12, 2)
+  balanceAmount      Decimal                     @default(0) @db.Decimal(12, 2)
+  entryPaymentMethod String?
+  billingMethod      String?
+  chargeType         String?
+  installmentCount   Int?
+  dueDate            DateTime?
+  standaloneChargeId String?
+  asaasPaymentId     String?
+  asaasInstallmentId String?
+  uiRequestId        String?
+  createdByUserId    String?
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @updatedAt
+
+  conta        Conta              @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event        SchoolEvent        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  responsavel  Responsavel        @relation(fields: [responsavelId], references: [id], onDelete: Restrict)
+  participants EventParticipant[]
+  createdBy    Usuario?           @relation("EventBillingGroupCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([contaId, id], name: "uq_event_billing_group_conta_id")
+  @@unique([contaId, uiRequestId], name: "uq_event_billing_group_conta_request")
+  @@index([contaId, eventId, status], name: "idx_event_billing_group_conta_event_status")
+  @@index([contaId, responsavelId, status], name: "idx_event_billing_group_conta_responsavel_status")
+  @@index([contaId, standaloneChargeId], name: "idx_event_billing_group_conta_charge")
+  @@index([contaId, asaasPaymentId], name: "idx_event_billing_group_conta_asaas_payment")
+  @@index([contaId, asaasInstallmentId], name: "idx_event_billing_group_conta_asaas_installment")
 }
 
 model EventReport {
