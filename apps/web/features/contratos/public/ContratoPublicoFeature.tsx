@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
-import { CheckCircle as CheckCircleIcon, ErrorCircle as XCircleIcon, Edit, X } from '@/components/icons/icons';
+import { Check, CheckCircle as CheckCircleIcon, ChevronRight, Download, ErrorCircle as XCircleIcon, Edit, Lock, Minus, MoreVertical, Plus, RotateCcw, X } from '@/components/icons/icons';
 import { BrandWordmark } from '@/components/brand/BrandWordmark';
 import { cn } from '@/lib/utils';
 
@@ -144,16 +144,16 @@ function SignaturePad({ initialValue, onChange: handleChange, onFillScreen }: { 
   return <div ref={padRef} className="space-y-2"><div className="relative"><button type="button" className="absolute left-3 top-2 z-10 text-xs font-medium text-slate-500 hover:text-slate-900" onClick={clearCanvas}>Limpar</button><button type="button" className="absolute right-3 top-2 z-10 block text-xs font-medium text-slate-500 hover:text-slate-900 sm:hidden" onClick={onFillScreen}>Preencher tela</button><canvas ref={canvasRef} className={cn('h-36 w-full touch-none rounded-lg border border-slate-300 bg-slate-100', isFullscreen && 'h-[calc(100dvh-250px)] min-h-[180px] rounded-none')} onPointerDown={(event) => { drawing.current = true; event.currentTarget.setPointerCapture(event.pointerId); const p = point(event); lastPoint.current = p; const context = event.currentTarget.getContext('2d', { willReadFrequently: true }); context?.beginPath(); context?.moveTo(p.x, p.y); }} onPointerMove={(event) => { if (!drawing.current) return; const p = point(event); const previous = lastPoint.current; const context = event.currentTarget.getContext('2d', { willReadFrequently: true }); if (!previous || !context) return; const midpoint = { x: (previous.x + p.x) / 2, y: (previous.y + p.y) / 2 }; context.quadraticCurveTo(previous.x, previous.y, midpoint.x, midpoint.y); context.stroke(); lastPoint.current = p; handleChange(exportSignature(event.currentTarget)); }} onPointerUp={(event) => { drawing.current = false; lastPoint.current = null; handleChange(exportSignature(event.currentTarget)); }} onPointerCancel={() => { drawing.current = false; lastPoint.current = null; }} /><span className="pointer-events-none absolute inset-x-3 top-1/2 border-b border-slate-300" aria-hidden="true" /></div><p className="text-xs text-slate-500">Desenhe sua assinatura sobre a linha.</p></div>;
 }
 
-function PublicPdf({ url, fields, escolaNome, signature, signedFieldId, interactive = true, onFieldClick: handleFieldClick }: { url: string; fields: Field[]; escolaNome: string; signature: Signature | null; signedFieldId: string | null; interactive?: boolean; onFieldClick: (_field: Field) => void }) {
+function PublicPdf({ url, fields, escolaNome, signature, signedFieldId, interactive = true, onFieldClick: handleFieldClick, onPageCount }: { url: string; fields: Field[]; escolaNome: string; signature: Signature | null; signedFieldId: string | null; interactive?: boolean; onFieldClick: (_field: Field) => void; onPageCount?: (_pages: number) => void }) {
   const [components, setComponents] = useState<{ Document: ElementType; Page: ElementType } | null>(null);
   const [pages, setPages] = useState(0);
   const [pageWidth, setPageWidth] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState(0);
   const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isMobile, setIsMobile] = useState(false);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
-  const gestureRef = useRef<{ mode: 'pan' | 'pinch' | null; startDistance: number; startZoom: number; startPan: { x: number; y: number }; startPoint: { x: number; y: number } }>({ mode: null, startDistance: 0, startZoom: 1, startPan: { x: 0, y: 0 }, startPoint: { x: 0, y: 0 } });
+  const gestureRef = useRef<{ mode: 'pan' | 'pinch' | null; startDistance: number; startZoom: number; startPoint: { x: number; y: number }; startScroll: { left: number; top: number } }>({ mode: null, startDistance: 0, startZoom: 1, startPoint: { x: 0, y: 0 }, startScroll: { left: 0, top: 0 } });
 
   useEffect(() => {
     let active = true;
@@ -167,7 +167,12 @@ function PublicPdf({ url, fields, escolaNome, signature, signedFieldId, interact
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
-    const updateWidth = () => setPageWidth(Math.max(280, viewport.clientWidth));
+    const updateWidth = () => {
+      const width = viewport.clientWidth;
+      const isCompact = window.matchMedia('(max-width: 1023px)').matches;
+      setViewportWidth(width);
+      setPageWidth(Math.max(280, Math.min(820, width - (isCompact ? 24 : 128))));
+    };
     updateWidth();
     const observer = new ResizeObserver(updateWidth);
     observer.observe(viewport);
@@ -185,123 +190,88 @@ function PublicPdf({ url, fields, escolaNome, signature, signedFieldId, interact
   useEffect(() => {
     if (!isMobile) {
       setZoom(1);
-      setPan({ x: 0, y: 0 });
     }
   }, [isMobile]);
 
   const updateGesture = () => {
     const pointers = [...pointersRef.current.values()];
+    const viewport = viewportRef.current;
+    if (!viewport) return;
     if (pointers.length >= 2) {
       const [first, second] = pointers;
       const distance = Math.hypot(second.x - first.x, second.y - first.y);
       if (gestureRef.current.mode !== 'pinch') {
-        gestureRef.current = { mode: 'pinch', startDistance: distance, startZoom: zoom, startPan: pan, startPoint: { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 } };
+        gestureRef.current = { mode: 'pinch', startDistance: distance, startZoom: zoom, startPoint: { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 }, startScroll: { left: viewport.scrollLeft, top: viewport.scrollTop } };
       }
       setZoom(Math.min(3, Math.max(0.75, gestureRef.current.startZoom * (distance / Math.max(gestureRef.current.startDistance, 1)))));
       return;
     }
     const point = pointers[0];
     if (point && gestureRef.current.mode === 'pan') {
-      setPan({ x: gestureRef.current.startPan.x + point.x - gestureRef.current.startPoint.x, y: gestureRef.current.startPan.y + point.y - gestureRef.current.startPoint.y });
+      viewport.scrollLeft = gestureRef.current.startScroll.left - (point.x - gestureRef.current.startPoint.x);
+      viewport.scrollTop = gestureRef.current.startScroll.top - (point.y - gestureRef.current.startPoint.y);
     }
   };
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!isMobile) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    if (pointersRef.current.size === 1) gestureRef.current = { mode: 'pan', startDistance: 0, startZoom: zoom, startPan: pan, startPoint: { x: event.clientX, y: event.clientY } };
+    if (pointersRef.current.size === 1) gestureRef.current = { mode: 'pan', startDistance: 0, startZoom: zoom, startPoint: { x: event.clientX, y: event.clientY }, startScroll: { left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop } };
     updateGesture();
   };
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isMobile) return;
-    if (!pointersRef.current.has(event.pointerId)) return;
+    if (!isMobile || !pointersRef.current.has(event.pointerId)) return;
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     updateGesture();
   };
   const handlePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!isMobile) return;
     pointersRef.current.delete(event.pointerId);
-    if (pointersRef.current.size === 0) gestureRef.current.mode = null;
+    const [remaining] = pointersRef.current.values();
+    if (!remaining) {
+      gestureRef.current.mode = null;
+      return;
+    }
+    gestureRef.current = { mode: 'pan', startDistance: 0, startZoom: zoom, startPoint: remaining, startScroll: { left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop } };
   };
 
-  return (
-    <div ref={viewportRef} className={cn('relative min-w-0 w-full max-w-full overflow-hidden overscroll-contain bg-transparent', isMobile ? 'touch-none' : 'touch-auto')} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerEnd} onPointerCancel={handlePointerEnd}>
-      {!components || pageWidth === 0 ? (
-        <div className="flex min-h-[420px] items-center justify-center text-sm text-slate-500">Preparando documento...</div>
-      ) : (
-        <div className="origin-top-left" style={isMobile ? { transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: 'top left' } : undefined}>
-          <components.Document
-            file={url}
-            onLoadSuccess={({ numPages: totalPages }: { numPages: number }) => setPages(totalPages)}
-            loading={<div className="p-8 text-center text-sm text-slate-500">Carregando documento...</div>}
-            error={<div className="p-8 text-center text-red-600">Não foi possível carregar o documento.</div>}
-          >
-            <div className="space-y-6 bg-[#202124] lg:bg-slate-100">
-              {Array.from({ length: pages }, (_, index) => index + 1).map((page) => (
-                <div key={page} className="relative mx-auto w-full max-w-full overflow-hidden bg-white shadow-sm [&>div]:block" style={{ width: pageWidth }} aria-label={`Página ${page}`}>
-                <components.Page pageNumber={page} width={pageWidth} renderAnnotationLayer={false} renderTextLayer={false} />
-            {fields.filter((field) => field.pagina === page).map((field) => {
-              const isSchool = field.papel === 'ESCOLA';
-              const isSigned = isSchool || (field.id === signedFieldId && signature);
+  const renderedPageWidth = Math.round(pageWidth * zoom);
+  const stageWidth = Math.max(viewportWidth, renderedPageWidth + (isMobile ? 24 : 128));
 
-              return (
-                <div
-                  key={field.id}
-                  className="absolute overflow-visible"
-                  style={{
-                    left: `${field.x * 100}%`,
-                    top: `${field.y * 100}%`,
-                    width: `${field.largura * 100}%`,
-                    height: `${field.altura * 100}%`,
-                  }}
-                >
-                  {isSchool ? (
-                    <span className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-2 text-center font-serif text-base italic text-slate-900">
-                      {escolaNome || 'Escola'}
-                    </span>
-                  ) : interactive ? (
-                    <button
-                      type="button"
-                      onClick={() => handleFieldClick(field)}
-                      className={cn(
-                        'absolute inset-0 z-10 flex min-h-11 items-center justify-center rounded-md border px-2 text-center text-[11px] font-semibold transition-colors',
-                        isSigned ? 'border-transparent text-transparent' : 'cursor-pointer border-amber-300 bg-amber-50/90 text-amber-900 shadow-sm hover:bg-amber-100',
-                      )}
-                    >
-                      {isSigned ? 'Editar assinatura' : (field.tipo === 'RUBRICA' ? 'Rubrica' : 'Clique para assinar')}
-                    </button>
-                  ) : (
-                    <span className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded px-2 text-center text-[11px] font-semibold text-slate-500">
-                      Campo de assinatura
-                    </span>
-                  )}
-                  {!isSigned && <span className="pointer-events-none absolute inset-x-0 bottom-0 border-b border-slate-400" aria-hidden="true" />}
-                  {!isSchool && isSigned && signature?.valor && (signature.tipo === 'DESENHADA' ? (
-                    <img src={signature.valor} alt="Assinatura desenhada" className="pointer-events-none absolute left-0 top-full z-[1] h-auto w-full -translate-y-1/2" />
-                  ) : (
-                    <span style={{ fontFamily: signature.fonte || 'Georgia, serif' }} className="pointer-events-none absolute left-0 top-full z-[1] w-full -translate-y-full truncate text-center text-base italic leading-tight text-slate-900">
-                      {signature.valor}
-                    </span>
-                  ))}
-                  {!isSchool && isSigned && (
-                    <button
-                      type="button"
-                      aria-label="Editar assinatura"
-                      onClick={() => handleFieldClick(field)}
-                      className="absolute -right-1 top-0 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white p-0 text-slate-500 shadow-sm hover:bg-white hover:text-brand-accent sm:-right-6 sm:h-5 sm:w-5 sm:rounded-none sm:border-0 sm:shadow-none"
-                    >
-                      <Edit className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-                </div>
-              ))}
-            </div>
-          </components.Document>
-        </div>
-      )}
+  return (
+    <div className="relative h-full min-h-0 min-w-0 w-full overflow-hidden bg-slate-100">
+      <div ref={viewportRef} className={cn('h-full min-h-0 w-full overflow-auto overscroll-contain', isMobile ? 'touch-none' : 'touch-auto')} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerEnd} onPointerCancel={handlePointerEnd}>
+        {!components || pageWidth === 0 ? (
+          <div className="flex min-h-full items-center justify-center text-sm text-slate-500">Preparando documento...</div>
+        ) : (
+          <div className="flex min-h-full items-start justify-center bg-slate-100 px-3 py-6 sm:px-6 sm:py-8 lg:px-16 lg:py-10" style={{ width: stageWidth }}>
+            <components.Document file={url} onLoadSuccess={({ numPages: totalPages }: { numPages: number }) => { setPages(totalPages); onPageCount?.(totalPages); }} loading={<div className="p-8 text-center text-sm text-slate-500">Carregando documento...</div>} error={<div className="p-8 text-center text-red-600">Não foi possível carregar o documento.</div>}>
+              <div className="flex flex-col items-center gap-6 lg:gap-8">
+                {Array.from({ length: pages }, (_, index) => index + 1).map((page) => (
+                  <div key={page} className="relative shrink-0 overflow-hidden bg-white shadow-[0_12px_28px_-18px_rgba(15,23,42,0.38)] [&>div]:block" style={{ width: renderedPageWidth }} aria-label={`Página ${page}`}>
+                    <components.Page pageNumber={page} width={pageWidth} scale={zoom} renderAnnotationLayer={false} renderTextLayer={false} />
+                    {fields.filter((field) => field.pagina === page).map((field) => {
+                      const isSchool = field.papel === 'ESCOLA';
+                      const isSigned = isSchool || (field.id === signedFieldId && signature);
+                      return <div key={field.id} className="absolute overflow-visible" style={{ left: `${field.x * 100}%`, top: `${field.y * 100}%`, width: `${field.largura * 100}%`, height: `${field.altura * 100}%` }}>
+                        {isSchool ? <span className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-2 text-center font-serif text-base italic text-slate-900">{escolaNome || 'Escola'}</span> : interactive ? <button type="button" onClick={() => handleFieldClick(field)} className={cn('absolute inset-0 z-10 flex min-h-11 items-center justify-center rounded-md border px-2 text-center text-[11px] font-semibold transition-colors', isSigned ? 'border-transparent text-transparent' : 'cursor-pointer border-amber-300 bg-amber-50/90 text-amber-900 shadow-sm hover:bg-amber-100')}>{isSigned ? 'Editar assinatura' : (field.tipo === 'RUBRICA' ? 'Rubrica' : 'Clique para assinar')}</button> : <span className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded px-2 text-center text-[11px] font-semibold text-slate-500">Campo de assinatura</span>}
+                        {!isSigned && <span className="pointer-events-none absolute inset-x-0 bottom-0 border-b border-slate-400" aria-hidden="true" />}
+                        {!isSchool && isSigned && signature?.valor && (signature.tipo === 'DESENHADA' ? <img src={signature.valor} alt="Assinatura desenhada" className="pointer-events-none absolute left-0 top-full z-[1] h-auto w-full -translate-y-1/2" /> : <span style={{ fontFamily: signature.fonte || 'Georgia, serif' }} className="pointer-events-none absolute left-0 top-full z-[1] w-full -translate-y-full truncate text-center text-base italic leading-tight text-slate-900">{signature.valor}</span>)}
+                        {!isSchool && isSigned && <button type="button" aria-label="Editar assinatura" onClick={() => handleFieldClick(field)} className="absolute -right-1 top-0 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white p-0 text-slate-500 shadow-sm hover:bg-white hover:text-brand-accent sm:-right-6 sm:h-5 sm:w-5 sm:rounded-none sm:border-0 sm:shadow-none"><Edit className="h-3 w-3" /></button>}
+                      </div>;
+                    })}
+                  </div>
+                ))}
+              </div>
+            </components.Document>
+          </div>
+        )}
+      </div>
+      <div className="absolute left-4 top-4 z-20 hidden flex-col overflow-hidden rounded-md bg-slate-700/75 text-white shadow-sm lg:flex">
+        <button type="button" className="flex h-11 w-8 items-center justify-center border-b border-white/15 hover:bg-slate-700" onClick={() => setZoom((current) => Math.min(2, current + 0.1))} aria-label="Aumentar zoom"><Plus className="h-4 w-4" /></button>
+        <button type="button" className="flex h-11 w-8 items-center justify-center border-b border-white/15 hover:bg-slate-700" onClick={() => setZoom(1)} aria-label="Redefinir visualização"><RotateCcw className="h-4 w-4" /></button>
+        <button type="button" className="flex h-11 w-8 items-center justify-center hover:bg-slate-700" onClick={() => setZoom((current) => Math.max(0.8, current - 0.1))} aria-label="Reduzir zoom"><Minus className="h-4 w-4" /></button>
+      </div>
     </div>
   );
 }
@@ -342,6 +312,24 @@ function ConsentDocumentPreview({ terms }: { terms: ConsentTerm[] }) {
   );
 }
 
+function ConsentChoices({ terms, answers, compact = false, onChange }: { terms: ConsentTerm[]; answers: Record<string, 'AUTORIZADO' | 'RECUSADO'>; compact?: boolean; onChange: (_termId: string, _decision: 'AUTORIZADO' | 'RECUSADO') => void }) {
+  return <div className={cn(compact ? 'flex min-w-0 items-center gap-2 overflow-x-auto' : 'space-y-3')}>
+    {terms.map((term) => <div key={term.id} className={cn(compact ? 'flex min-w-[300px] shrink-0 items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2' : 'rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm')}>
+      <div className={cn('min-w-0 font-semibold leading-5 text-slate-900', compact ? 'max-w-[180px] truncate text-xs' : 'text-sm')}>{term.titulo}</div>
+      <div className="flex min-w-0 flex-1 gap-2">
+        <label className={cn('flex min-h-10 flex-1 cursor-pointer items-center gap-2 whitespace-nowrap rounded-lg border px-2.5 text-xs font-medium transition-colors', answers[term.id] === 'AUTORIZADO' ? 'border-brand-accent bg-brand-accent/5 text-brand-accent' : 'border-slate-200 text-slate-700')}>
+          <input type="radio" name={`consent-${term.id}`} value="AUTORIZADO" checked={answers[term.id] === 'AUTORIZADO'} onChange={() => onChange(term.id, 'AUTORIZADO')} className="h-4 w-4 accent-brand-accent" />
+          <span>Autorizo</span>
+        </label>
+        <label className={cn('flex min-h-10 flex-1 cursor-pointer items-center gap-2 whitespace-nowrap rounded-lg border px-2.5 text-xs font-medium transition-colors', answers[term.id] === 'RECUSADO' ? 'border-amber-500 bg-amber-50 text-amber-800' : 'border-slate-200 text-slate-700')}>
+          <input type="radio" name={`consent-${term.id}`} value="RECUSADO" checked={answers[term.id] === 'RECUSADO'} onChange={() => onChange(term.id, 'RECUSADO')} className="h-4 w-4 accent-amber-500" />
+          <span>Não autorizo</span>
+        </label>
+      </div>
+    </div>)}
+  </div>;
+}
+
 export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: string; kind?: 'academic' | 'event' }) {
   const [contrato, setContrato] = useState<ContratoPublico | null>(null);
   const [loading, setLoading] = useState(true);
@@ -362,6 +350,8 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
   const [signedSuccess, setSignedSuccess] = useState(false);
   const [signedPdfUrl, setSignedPdfUrl] = useState<string | null>(null);
   const [drawingFullscreen, setDrawingFullscreen] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [documentPages, setDocumentPages] = useState(0);
   const signatureDialogRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -398,7 +388,7 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
     if (!window.matchMedia('(max-width: 1023px)').matches) return;
     setDrawingFullscreen(true);
     if (signatureDialogRef.current?.requestFullscreen) void signatureDialogRef.current.requestFullscreen().catch(() => undefined);
-    const orientation = window.screen.orientation as ScreenOrientation & { lock?: (orientation: 'landscape') => Promise<void> };
+    const orientation = window.screen.orientation as ScreenOrientation & { lock?: (_orientation: 'landscape') => Promise<void> };
     const lock = orientation.lock?.('landscape');
     void lock?.catch(() => undefined);
   };
@@ -422,53 +412,133 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
     try { setAssinando(true); const assinatura = { ...signature, fonte: signature.fonte || typedFont }; const res = await fetch(`${kind === 'event' ? '/api/public/event-contrato' : '/api/public/contrato'}/${token}/assinar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome: nome.trim(), cpf: cpf.replace(/\D/g, ''), email: email.trim() || undefined, aceite: true, consentimentos: Object.entries(consentAnswers).map(([termId, decision]) => ({ termId, decision })), assinatura, userAgent: navigator.userAgent }) }); const data = await res.json(); if (!res.ok) throw new Error(data.error?.message || 'Erro ao assinar contrato'); setSignedPdfUrl(typeof data.signedPdfUrl === 'string' ? data.signedPdfUrl : null); setSignedSuccess(true); toast.success('Contrato assinado com sucesso!'); } catch (error) { toast.error(error instanceof Error ? error.message : 'Erro ao assinar contrato'); } finally { setAssinando(false); }
   };
 
+  const workflowSteps = [
+    { id: 1 as const, label: 'Revisar', description: 'Leia o documento' },
+    ...(consentimentos.length ? [{ id: 2 as const, label: 'Consentimentos', description: 'Escolha suas opções' }] : []),
+    { id: 3 as const, label: 'Assinar', description: 'Preencha os campos' },
+    { id: 4 as const, label: 'Confirmar', description: 'Revise seus dados' },
+  ];
+  const currentStepPosition = workflowSteps.findIndex((item) => item.id === step) + 1;
+  const completedSignatures = signature ? Math.min(1, requiredFields.length || 1) : 0;
+  const stepTitle = step === 1 ? 'Revise o documento' : step === 2 ? 'Consentimentos' : step === 3 ? 'Posicione sua assinatura' : 'Confirme seus dados';
+  const stepDescription = step === 1
+    ? 'Leia o contrato completo antes de continuar.'
+    : step === 2
+      ? 'Escolha uma opção para cada termo de consentimento.'
+      : step === 3
+        ? 'Clique no campo destacado dentro do documento para assinar.'
+        : 'Confira seus dados e aceite os termos para finalizar.';
+  const goBack = () => {
+    if (step === 3 && consentimentos.length === 0) setStep(1);
+    else setStep((Math.max(1, step - 1)) as 1 | 2 | 3 | 4);
+  };
+  const goNext = () => {
+    if (step === 1) setStep(consentimentos.length ? 2 : 3);
+    else if (step === 2) {
+      if (!consentimentosValidos) toast.error('Responda todos os termos de consentimento antes de continuar.');
+      else setStep(3);
+    } else if (!signature) toast.error('Preencha sua assinatura antes de continuar.');
+    else setStep(4);
+  };
+  const primaryActionLabel = step === 1 ? 'Continuar' : step === 2 ? 'Ir para assinatura' : step === 3 ? 'Revisar dados' : assinando ? 'Finalizando...' : 'Finalizar assinatura';
+
   if (loading) return <div className="flex min-h-screen items-center justify-center bg-[#202124] text-sm text-slate-300 lg:bg-slate-50 lg:text-slate-500">Carregando contrato...</div>;
   if (errorMSG) return <StateCard title="Não foi possível acessar" message={errorMSG} tone="error" />;
   if (signedSuccess || contrato?.status === 'ASSINADO') return <StateCard title="Contrato assinado" message="Sua assinatura foi registrada com sucesso. Você pode fechar esta página com segurança." tone="success" signedPdfUrl={signedPdfUrl} />;
   if (!contrato) return null;
 
   return (
-    <div className="min-h-screen bg-[#202124] text-slate-900 lg:bg-slate-100">
-      <header className="sticky top-0 z-30 border-b border-brand-accent/80 bg-brand-accent text-white backdrop-blur">
-        <div className="mx-auto flex min-h-[58px] max-w-7xl items-center px-4 sm:min-h-[68px] sm:px-6 lg:px-8">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="min-w-0">
-              <BrandWordmark variant="white" className="h-6 w-[80px] sm:h-7 sm:w-[92px]" />
-            </div>
-          </div>
+    <div className="flex min-h-screen flex-col bg-[#202124] text-slate-900 lg:h-dvh lg:min-h-0 lg:overflow-hidden lg:bg-slate-100">
+      <header className="sticky top-0 z-30 shrink-0 border-b border-brand-accent/80 bg-brand-accent text-white">
+        <div className="flex min-h-14 items-center justify-center px-4 sm:min-h-16">
+          <BrandWordmark variant="white" className="h-6 w-[80px] sm:h-7 sm:w-[92px]" />
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-3 pb-[52vh] pt-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
-        <div className="flex flex-col gap-0 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start lg:gap-6 xl:gap-8">
-          <aside className="fixed inset-x-0 bottom-0 z-40 order-1 mx-auto max-h-[70vh] max-w-[760px] overflow-y-auto rounded-t-2xl bg-slate-100 lg:order-2 lg:max-h-none lg:max-w-none lg:overflow-visible lg:rounded-none lg:bg-transparent lg:sticky lg:top-24">
-            <Card className="overflow-hidden border-slate-200/90 shadow-none">
-              <CardHeader className="space-y-2 border-b border-slate-100 bg-white px-4 py-4 sm:px-5 sm:py-5">
+      <main className="flex min-h-0 flex-1 flex-col bg-slate-100 px-0 pb-[52vh] sm:pb-[48vh] lg:overflow-hidden lg:bg-transparent lg:pb-0">
+        <div className="relative z-20 flex min-h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 sm:px-6 lg:-mb-14 lg:ml-[228px] lg:px-8">
+          <div className="flex min-w-0 items-center gap-3">
+            <p className="text-sm font-semibold text-brand-accent">{completedSignatures}/{requiredFields.length || 1} Assinaturas</p>
+            <ChevronRight className="h-4 w-4 text-brand-accent" aria-hidden="true" />
+          </div>
+          <div className="relative flex items-center gap-3">
+            <Button type="button" variant="outline" className="h-9 rounded-full border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700" onClick={() => setOptionsOpen((current) => !current)} aria-expanded={optionsOpen} aria-haspopup="menu">
+              <span className="hidden sm:inline">Opções</span>
+              <MoreVertical className="h-4 w-4 sm:ml-1" />
+            </Button>
+            {optionsOpen && <div role="menu" className="absolute right-0 top-11 z-50 w-72 rounded-2xl border border-slate-200 bg-white p-2 text-sm shadow-[0_18px_45px_-24px_rgba(15,23,42,0.45)]">
+              <a href={contrato.arquivoPdfUrl} target="_blank" rel="noreferrer" className="flex min-h-10 items-center gap-3 whitespace-nowrap rounded-xl px-3 text-slate-700 hover:bg-slate-50" role="menuitem"><Download className="h-4 w-4 shrink-0 text-slate-500" />Baixar documento original</a>
+            </div>}
+          </div>
+        </div>
+
+        <div className="flex w-full min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[228px_minmax(0,1fr)] lg:overflow-hidden">
+          <nav aria-label="Etapas da assinatura" className="hidden border-r border-brand-accent/10 bg-[#f7f4fb] px-5 py-8 lg:block lg:min-h-0 lg:overflow-y-auto">
+            <ol className="relative space-y-7 before:absolute before:bottom-5 before:left-[13px] before:top-5 before:w-px before:bg-slate-200">
+              {workflowSteps.map((item) => {
+                const isCurrent = item.id === step;
+                const isComplete = item.id < step;
+                return <li key={item.id} className="relative flex items-start gap-3">
+                  <span className={cn('relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 bg-white text-xs font-semibold transition-colors', isCurrent ? 'border-brand-accent text-brand-accent' : isComplete ? 'border-brand-accent bg-brand-accent text-white' : 'border-slate-300 text-slate-400')}>
+                    {isComplete ? <Check className="h-4 w-4" /> : item.id}
+                  </span>
+                  <button type="button" disabled={!isComplete && !isCurrent} onClick={() => isComplete && setStep(item.id)} className={cn('min-w-0 pt-0.5 text-left', isCurrent ? 'text-slate-900' : isComplete ? 'text-slate-600' : 'cursor-default text-slate-400')}>
+                    <span className="block text-sm font-semibold">{item.label}</span>
+                    <span className="mt-0.5 block text-xs leading-4 text-slate-500">{item.description}</span>
+                  </button>
+                </li>;
+              })}
+            </ol>
+          </nav>
+
+          <div className={cn('relative flex min-h-0 min-w-0 flex-col overflow-hidden bg-slate-100 lg:border-r lg:border-slate-200 lg:pt-14', step === 4 && 'hidden')}>
+            <section aria-label={step === 2 ? 'Termo de consentimento' : 'Documento para assinatura'} className={cn('min-h-0 min-w-0 w-full max-w-full flex-1 shrink overscroll-contain', step === 2 ? 'overflow-y-auto overflow-x-hidden px-0 py-4 pb-24 sm:px-6 sm:py-6 sm:pb-24 lg:px-8 lg:py-8 lg:pb-24' : 'overflow-hidden', step === 4 && 'hidden')}>
+              {step === 2 ? <ConsentDocumentPreview terms={consentimentos} /> : <PublicPdf url={contrato.arquivoPdfUrl} fields={contrato.camposAssinatura} escolaNome={contrato.escolaNome} signature={signature} signedFieldId={signedFieldId} interactive={step === 3} onFieldClick={openSignature} onPageCount={setDocumentPages} />}
+            </section>
+          </div>
+
+          <aside className={cn('fixed inset-x-0 bottom-0 z-40 mx-auto max-h-[70vh] max-w-[760px] overflow-y-auto rounded-t-2xl bg-slate-100 lg:min-h-0 lg:max-h-none lg:overflow-y-auto lg:rounded-none', step === 1 || step === 2 || step === 3 ? 'lg:hidden' : 'lg:sticky lg:top-0 lg:flex lg:h-full lg:w-full lg:max-w-[480px] lg:items-center lg:justify-self-center lg:bg-transparent lg:pb-20 lg:pt-14')}>
+            <Card className="overflow-hidden rounded-t-2xl border-slate-200 bg-white shadow-none lg:min-h-0 lg:rounded-none lg:border-0 lg:bg-transparent">
+              <CardHeader className={cn('space-y-2 border-b border-slate-100 bg-white px-4 py-4 sm:px-5 sm:py-5 lg:border-0 lg:bg-transparent lg:px-6 lg:py-7 lg:text-center', step === 4 && 'hidden')}>
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <CardTitle className="text-base font-bold">{step === 1 ? 'Revise o documento' : step === 2 ? 'Consentimentos' : step === 3 ? 'Sua assinatura' : 'Confirmar assinatura'}</CardTitle>
+                    <CardTitle className="text-base font-bold">{stepTitle}</CardTitle>
                   </div>
                 </div>
-                <CardDescription className="leading-5">{step === 1 ? 'Leia o contrato completo. Depois, avance para preencher os campos de assinatura.' : step === 2 ? 'Escolha uma opção para cada termo. Você poderá autorizar ou recusar individualmente.' : step === 3 ? 'Toque no campo destacado do documento para preencher sua assinatura.' : 'Confira seus dados e aceite os termos para concluir.'}</CardDescription>
+                {step !== 4 && <CardDescription className="leading-5">{stepDescription}</CardDescription>}
+                <div className="flex items-center gap-2 pt-1 text-xs font-medium text-slate-400 lg:hidden"><span>Etapa {currentStepPosition} de {workflowSteps.length}</span><span aria-hidden="true">•</span><span>{completedSignatures}/{requiredFields.length || 1} campos</span></div>
               </CardHeader>
-              <CardContent className={cn('space-y-4 bg-slate-50 px-4 py-4 sm:px-5 sm:py-5', step === 1 && 'hidden')}>
-                {step === 2 && <div className="space-y-3">{consentimentos.map((term) => <div key={term.id} className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm"><div className="text-sm font-semibold leading-5 text-slate-900">{term.titulo}</div><div className="mt-3 grid grid-cols-2 gap-2"><label className={cn('flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors', consentAnswers[term.id] === 'AUTORIZADO' ? 'border-brand-accent bg-brand-accent/5 text-brand-accent' : 'border-slate-200 text-slate-700')}><input type="radio" name={`consent-${term.id}`} value="AUTORIZADO" checked={consentAnswers[term.id] === 'AUTORIZADO'} onChange={() => setConsentAnswers((current) => ({ ...current, [term.id]: 'AUTORIZADO' }))} className="h-4 w-4 accent-brand-accent" /><span>Autorizo</span></label><label className={cn('flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors', consentAnswers[term.id] === 'RECUSADO' ? 'border-amber-500 bg-amber-50 text-amber-800' : 'border-slate-200 text-slate-700')}><input type="radio" name={`consent-${term.id}`} value="RECUSADO" checked={consentAnswers[term.id] === 'RECUSADO'} onChange={() => setConsentAnswers((current) => ({ ...current, [term.id]: 'RECUSADO' }))} className="h-4 w-4 accent-amber-500" /><span>Não autorizo</span></label></div></div>)}</div>}
+              <CardContent className={cn('space-y-4 bg-slate-50 px-4 py-4 sm:px-5 sm:py-5 lg:bg-transparent lg:px-6 lg:py-6', step === 1 && 'hidden')}>
+                {step === 2 && <ConsentChoices terms={consentimentos} answers={consentAnswers} onChange={(termId, decision) => setConsentAnswers((current) => ({ ...current, [termId]: decision }))} />}
                 {step === 3 && <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-sm">{signature ? <div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 font-semibold text-emerald-700"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-xs">✓</span>Assinatura preenchida</span><Button variant="link" className="h-auto px-0 text-xs" onClick={() => setSignatureField(requiredFields[0] ?? null)}>Alterar</Button></div> : <span className="leading-5 text-slate-600">{requiredFields.length ? 'Clique no campo destacado do PDF para assinar.' : 'Nenhum campo de assinatura configurado.'}</span>}</div>}
-                {step === 4 && <>
-                  {consentimentos.length > 0 && <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm"><p className="mb-2 font-semibold text-slate-800">Suas decisões</p>{consentimentos.map((term) => <div key={term.id} className="flex items-center justify-between gap-3 border-t border-slate-100 py-2"><span className="text-slate-600">{term.titulo}</span><span className={cn('font-semibold', consentAnswers[term.id] === 'AUTORIZADO' ? 'text-emerald-700' : consentAnswers[term.id] === 'RECUSADO' ? 'text-amber-700' : 'text-slate-500')}>{consentAnswers[term.id] === 'AUTORIZADO' ? 'Autorizado' : consentAnswers[term.id] === 'RECUSADO' ? 'Não autorizado' : 'Não respondido'}</span></div>)}</div>}
+                {step === 4 && <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+                  <CardTitle className="text-base font-bold text-slate-900">Confirme seus dados</CardTitle>
                   <div className="space-y-2"><Label htmlFor="public-nome">Nome completo</Label><Input id="public-nome" value={nome} onChange={(event) => setNome(event.target.value)} className="h-10 rounded-lg border-slate-200 bg-white shadow-sm focus-visible:border-brand-accent focus-visible:ring-brand-accent/25" /></div>
                   <div className="space-y-2"><Label htmlFor="public-cpf">CPF</Label><Input id="public-cpf" value={cpf} onChange={(event) => setCpf(formatCpf(event.target.value))} maxLength={14} placeholder="000.000.000-00" className="h-10 rounded-lg border-slate-200 bg-white shadow-sm focus-visible:border-brand-accent focus-visible:ring-brand-accent/25" /></div>
                   <div className="space-y-2"><Label htmlFor="public-email">E-mail para cópia <span className="text-xs font-normal text-slate-400">(opcional)</span></Label><Input id="public-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="h-10 rounded-lg border-slate-200 bg-white shadow-sm focus-visible:border-brand-accent focus-visible:ring-brand-accent/25" /></div>
-                  <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm"><Checkbox id="public-aceite" checked={aceite} onCheckedChange={(checked) => setAceite(checked === true)} /><Label htmlFor="public-aceite" className="cursor-pointer text-sm font-normal leading-5">{contrato.acceptanceText}</Label></div>
-                </>}
+                  <div className="flex items-start gap-2 px-1 py-1"><Checkbox id="public-aceite" checked={aceite} onCheckedChange={(checked) => setAceite(checked === true)} className="mt-0.5 shrink-0" /><Label htmlFor="public-aceite" className="cursor-pointer text-sm font-normal leading-5">{contrato.acceptanceText}</Label></div>
+                </div>}
+                {step === 4 && <div className="flex items-center justify-center gap-2 text-xs text-slate-500"><Lock className="h-4 w-4" aria-hidden="true" />Ambiente seguro Alusa</div>}
               </CardContent>
-              <CardFooter className="sticky bottom-0 z-20 flex gap-2 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-5 sm:py-4"><Button variant="outline" className="min-h-11 flex-1 bg-white" onClick={() => { if (step === 3 && consentimentos.length === 0) setStep(1); else setStep((Math.max(1, step - 1)) as 1 | 2 | 3 | 4); }} disabled={step === 1}>Voltar</Button>{step < 4 ? <Button className="min-h-11 flex-1" onClick={() => { if (step === 1) setStep(consentimentos.length ? 2 : 3); else if (step === 2) { if (!consentimentosValidos) toast.error('Responda todos os termos de consentimento antes de continuar.'); else setStep(3); } else if (!signature) toast.error('Preencha sua assinatura antes de continuar.'); else setStep(4); }}>{step === 1 ? (consentimentos.length ? 'Continuar' : 'Continuar') : step === 2 ? 'Ir para assinatura' : 'Revisar dados'}</Button> : <Button className="min-h-11 flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => void submit()} disabled={assinando || !aceite || !consentimentosValidos}>{assinando ? 'Finalizando...' : 'Finalizar assinatura'}</Button>}</CardFooter>
+              <CardFooter className="sticky bottom-0 z-20 flex gap-2 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-5 sm:py-4 lg:hidden"><Button variant="outline" className="min-h-11 flex-1 bg-white" onClick={goBack} disabled={step === 1}>Voltar</Button>{step < 4 ? <Button className="min-h-11 flex-1" onClick={goNext}>{primaryActionLabel}</Button> : <Button className="min-h-11 flex-1" onClick={() => void submit()} disabled={assinando || !aceite || !consentimentosValidos}>{primaryActionLabel}</Button>}</CardFooter>
             </Card>
           </aside>
 
-          {step !== 4 && <section aria-label={step === 2 ? 'Termo de consentimento' : 'Documento para assinatura'} className="order-2 min-w-0 w-full max-w-full justify-self-center overflow-hidden bg-transparent lg:order-1">
-            {step === 2 ? <ConsentDocumentPreview terms={consentimentos} /> : <PublicPdf url={contrato.arquivoPdfUrl} fields={contrato.camposAssinatura} escolaNome={contrato.escolaNome} signature={signature} signedFieldId={signedFieldId} interactive={step === 3} onFieldClick={openSignature} />}
-          </section>}
+        </div>
+        <div className="fixed bottom-0 left-0 right-0 z-30 hidden h-20 items-center justify-between border-t border-slate-200 bg-white px-8 py-4 shadow-[0_-8px_24px_-20px_rgba(15,23,42,0.45)] lg:left-[228px] lg:flex">
+          {step === 2 ? <div className="flex min-w-0 flex-1 items-center gap-4">
+            <div className="hidden shrink-0 sm:block"><p className="text-sm font-semibold text-slate-900">Consentimentos</p><p className="text-xs text-slate-500">Escolha uma opção para cada termo.</p></div>
+            <ConsentChoices terms={consentimentos} answers={consentAnswers} compact onChange={(termId, decision) => setConsentAnswers((current) => ({ ...current, [termId]: decision }))} />
+          </div> : <div className="flex items-center gap-5 text-xs text-slate-500">
+            <span>{`Página 1 / ${documentPages || '—'}`}</span>
+          </div>}
+          <div className="flex items-center gap-3">
+            {step === 3 && <Button type="button" variant="outline" className="h-10 rounded-full border-brand-accent/30 px-4 text-xs font-semibold text-brand-accent" onClick={() => { const nextField = requiredFields.find((field) => field.id !== signedFieldId) ?? requiredFields[0]; if (nextField) openSignature(nextField); }} disabled={!requiredFields.length}>
+              Próximo campo <ChevronRight className="ml-1 h-4 w-4" />
+            </Button>}
+            <Button type="button" variant="outline" className="h-10 min-w-24 rounded-full border-slate-200 px-4 text-xs font-semibold" onClick={goBack} disabled={step === 1}>Voltar</Button>
+            {step < 4 ? <Button type="button" className="h-10 min-w-36 rounded-full px-5 text-xs font-semibold" onClick={goNext}>{primaryActionLabel}<ChevronRight className="ml-1 h-4 w-4" /></Button> : <Button type="button" className="h-10 min-w-44 rounded-full px-5 text-xs font-semibold" onClick={() => void submit()} disabled={assinando || !aceite || !consentimentosValidos}>{primaryActionLabel}</Button>}
+          </div>
         </div>
       </main>
 

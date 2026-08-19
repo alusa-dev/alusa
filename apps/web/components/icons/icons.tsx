@@ -21,6 +21,7 @@ export {
   // Estados / Feedback
   CheckCircleIcon as CheckCircle,
   ShieldCheckIcon as ShieldCheck,
+  LockClosedIcon as Lock,
   ExclamationCircleIcon as AlertCircle,
   ExclamationTriangleIcon as Warning,
   InformationCircleIcon as InfoCircle,
