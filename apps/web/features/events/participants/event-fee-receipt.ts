@@ -13,6 +13,11 @@ type EventFeeReceiptParticipant = {
     nome: string;
     cpf?: string | null;
   } | null;
+  responsavel?: {
+    id: string;
+    nome: string;
+    cpf?: string | null;
+  } | null;
   event?: {
     name?: string | null;
   } | null;
@@ -57,7 +62,7 @@ export function buildEventFeeReceiptInput(
       tipo: 'EVENT_REGISTRATION_FEE',
       category: 'EVENT_REGISTRATION_FEE',
       description,
-      payerName: participant.displayName,
+      payerName: participant.responsavel?.nome ?? participant.displayName,
       valor: entry.expectedAmount ?? participant.registrationFeeCharged,
       vencimento: entry.dueDate ?? null,
       billingType: entry.paymentMethod ?? participant.feePaymentMethod ?? null,

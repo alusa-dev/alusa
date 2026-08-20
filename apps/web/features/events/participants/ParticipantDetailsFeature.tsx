@@ -24,6 +24,7 @@ import {
 import {
   EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS,
   EVENT_PAYMENT_METHOD_LABELS,
+  EVENT_PAYMENT_METHODS,
   EVENT_FINANCIAL_STATUS_LABELS,
   EVENT_TICKET_SALE_STATUS_LABELS,
   type EventCostumeAssignmentStatus,
@@ -48,6 +49,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import ConfirmDeleteDialog from '@/components/dialogs/ConfirmDeleteDialog';
 import { DangerActionDialog } from '@/components/rematriculas/DangerActionDialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -56,6 +58,7 @@ import { Receipt, RotateCcw, Trash } from '@/components/icons/icons';
 import { exportPaidReceiptsPdf } from '@/features/financeiro/pagamentos/paid-receipts-pdf';
 import { loadPaidReceiptSchoolProfile } from '@/features/financeiro/pagamentos/receipt-school-profile';
 import { buildEventFeeReceiptInput } from './event-fee-receipt';
+import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
 import { CompartilharContratoDialog } from '@/features/contratos/components/CompartilharContratoDialog';
 
 type EditSection = 'cadastro' | 'figurinos' | null;
@@ -256,12 +259,20 @@ export function ParticipantDetailsFeature({
   const [feeActionTarget, setFeeActionTarget] = useState<{ action: 'refund' | 'delete'; entryId: string } | null>(null);
   const [costumeEditTarget, setCostumeEditTarget] = useState<{ id: string; name: string } | null>(null);
   const [costumeActionTarget, setCostumeActionTarget] = useState<{ action: 'unlink' | 'refund'; id: string; name: string } | null>(null);
+  const [manualPaymentOpen, setManualPaymentOpen] = useState(false);
+  const [manualPaymentAmountText, setManualPaymentAmountText] = useState('');
+  const [manualPaymentMethod, setManualPaymentMethod] = useState('MANUAL_PIX');
+  const [manualPaymentNotes, setManualPaymentNotes] = useState('');
+  const [manualPaymentActionTarget, setManualPaymentActionTarget] = useState<{ action: 'refund' | 'delete'; paymentId: string } | null>(null);
 
   // Form states
   const [generalForm, setGeneralForm] = useState({
     displayName: '',
     notes: '',
     isFeePaid: false,
+    registrationFeeOriginalText: '',
+    discountType: 'FIXED' as 'FIXED' | 'PERCENTAGE',
+    discountText: '',
   });
 
   const [costumeEditForm, setCostumeEditForm] = useState({ definedSize: '', status: 'PENDING', notes: '' });
@@ -285,6 +296,13 @@ export function ParticipantDetailsFeature({
   const costumes = data?.costumes ?? [];
   const ticketSales = data?.ticketSales ?? [];
   const financialEntries = data?.financialEntries ?? [];
+  const financialPayments = useMemo(
+    () => [...(data?.financialPayments ?? [])].sort((a: any, b: any) => {
+      const dateDiff = new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime();
+      return dateDiff || String(b.id).localeCompare(String(a.id));
+    }),
+    [data?.financialPayments],
+  );
   const charges = data?.charges ?? [];
   const eventContracts = (data?.eventContracts ?? []) as EventContractDTO[];
   const consentimentos = (data?.consentimentos ?? []) as Array<{
@@ -333,7 +351,24 @@ export function ParticipantDetailsFeature({
     if (!participant?.revenueEntryId) return null;
     return financialEntries.find((e: any) => e.id === participant.revenueEntryId) ?? null;
   }, [participant, financialEntries]);
-  const isManualPayment = !feeEntry?.asaasPaymentId;
+  const isManualPayment = !feeEntry?.asaasPaymentId && !participant?.asaasPaymentId && !participant?.asaasInstallmentId;
+  const canEditManualFee = isManualPayment && participant?.billingMode === 'FULL';
+  const feeEditOriginal = parseCurrencyInput(generalForm.registrationFeeOriginalText);
+  const feeEditDiscountValue = generalForm.discountType === 'FIXED'
+    ? parseCurrencyInput(generalForm.discountText)
+    : Number(generalForm.discountText.replace(',', '.')) || 0;
+  const feeEditDiscountAmount = generalForm.discountType === 'PERCENTAGE'
+    ? Math.min(feeEditOriginal, Math.round(feeEditOriginal * feeEditDiscountValue) / 100)
+    : Math.min(feeEditOriginal, feeEditDiscountValue);
+  const feeEditCharged = Math.max(feeEditOriginal - feeEditDiscountAmount, 0);
+  const manualPaymentAmount = parseCurrencyInput(manualPaymentAmountText);
+  const participantBalance = Math.max(
+    Number(participant?.registrationFeeCharged ?? 0) - financialPayments.reduce((sum: number, payment: any) => sum + Number(payment.netAmount ?? 0), 0),
+    0,
+  );
+  const canOpenManualPayment = isManualPayment && !participant?.isFeeExempt && (
+    participantBalance > 0 || participant?.financialStatus === 'PARCIAL'
+  );
 
   async function handleGenerateFeeReceipt(entry: any) {
     if (!participant) return;
@@ -355,6 +390,17 @@ export function ParticipantDetailsFeature({
     }
   }
 
+  async function handleGeneratePaymentReceipt(payment: any) {
+    if (!participant || !feeEntry) return;
+    await handleGenerateFeeReceipt({
+      ...feeEntry,
+      actualAmount: payment.amount,
+      realizedAt: payment.paidAt,
+      paymentMethod: payment.paymentMethod,
+      status: payment.status === 'REFUNDED' ? 'REFUNDED' : 'RECEIVED',
+    });
+  }
+
   // Reset forms when data changes
   useEffect(() => {
     if (participant) {
@@ -362,12 +408,19 @@ export function ParticipantDetailsFeature({
         displayName: participant.displayName ?? '',
         notes: participant.notes ?? '',
         isFeePaid: participant.isFeePaid,
+        registrationFeeOriginalText: (participant.registrationFeeOriginal ?? participant.registrationFeeCharged).toFixed(2).replace('.', ','),
+        discountType: participant.registrationFeeDiscountType === 'PERCENTAGE' ? 'PERCENTAGE' : 'FIXED',
+        discountText: participant.registrationFeeDiscountType === 'PERCENTAGE'
+          ? participant.registrationFeeOriginal && participant.registrationFeeOriginal > 0
+            ? ((participant.registrationFeeDiscount ?? 0) / participant.registrationFeeOriginal * 100).toFixed(2).replace('.', ',')
+            : ''
+          : (participant.registrationFeeDiscount ?? 0).toFixed(2).replace('.', ','),
       });
     }
   }, [participant, costumes]);
 
   const updateMutation = useMutation({
-    mutationFn: async (payload: { notes?: string | null; isFeePaid?: boolean; costumes?: any[] }) => {
+    mutationFn: async (payload: { notes?: string | null; isFeePaid?: boolean; registrationFeeOriginal?: number; discountType?: 'FIXED' | 'PERCENTAGE'; discountValue?: number; costumes?: any[] }) => {
       const res = await fetch(`/api/events/${eventId}/participants/${participantId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -547,6 +600,73 @@ export function ParticipantDetailsFeature({
     },
   });
 
+  const manualPaymentMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/events/${eventId}/participants/${participantId}/payments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: manualPaymentAmount,
+          paymentMethod: manualPaymentMethod,
+          notes: manualPaymentNotes || null,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error?.message ?? 'Erro ao registrar baixa manual.');
+      }
+      return res.json();
+    },
+    onSuccess: async () => {
+      await refetch();
+      await queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] });
+      await queryClient.invalidateQueries({ queryKey: ['events', 'detail', eventId] });
+      setManualPaymentOpen(false);
+      setManualPaymentAmountText('');
+      setManualPaymentNotes('');
+      toast.success({ title: 'Baixa registrada', description: 'O pagamento foi vinculado ao lançamento financeiro.' });
+    },
+    onError: (err) => toast.error({ title: 'Erro ao dar baixa', description: err.message }),
+  });
+
+  const manualPaymentRefundMutation = useMutation({
+    mutationFn: async (paymentId: string) => {
+      const res = await fetch(`/api/events/${eventId}/participants/${participantId}/payments/${paymentId}/refund`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error?.message ?? 'Erro ao estornar pagamento.');
+      }
+      return res.json();
+    },
+    onSuccess: async () => {
+      await refetch();
+      await queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] });
+      await queryClient.invalidateQueries({ queryKey: ['events', 'detail', eventId] });
+      setManualPaymentActionTarget(null);
+      toast.success({ title: 'Pagamento estornado', description: 'O movimento foi estornado e permanece no histórico.' });
+    },
+    onError: (err) => toast.error({ title: 'Erro ao estornar pagamento', description: err.message }),
+  });
+
+  const manualPaymentDeleteMutation = useMutation({
+    mutationFn: async (paymentId: string) => {
+      const res = await fetch(`/api/events/${eventId}/participants/${participantId}/payments/${paymentId}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error?.message ?? 'Erro ao excluir cobrança.');
+      }
+      return res.json();
+    },
+    onSuccess: async () => {
+      await refetch();
+      await queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] });
+      await queryClient.invalidateQueries({ queryKey: ['events', 'detail', eventId] });
+      setManualPaymentActionTarget(null);
+      toast.success({ title: 'Cobrança excluída', description: 'O pagamento foi removido definitivamente.' });
+    },
+    onError: (err) => toast.error({ title: 'Erro ao excluir cobrança', description: err.message }),
+  });
+
   const cancelChargeMutation = useMutation({
     mutationFn: async (chargeId: string) => {
       const res = await fetch(`/api/cobrancas/${chargeId}`, {
@@ -674,9 +794,14 @@ export function ParticipantDetailsFeature({
   }
 
   const handleGeneralSave = () => {
+    const registrationFeeOriginal = parseCurrencyInput(generalForm.registrationFeeOriginalText);
+    const discountValue = generalForm.discountType === 'FIXED'
+      ? parseCurrencyInput(generalForm.discountText)
+      : Number(generalForm.discountText.replace(',', '.')) || 0;
     updateMutation.mutate({
       notes: generalForm.notes,
       isFeePaid: generalForm.isFeePaid,
+      ...(isManualPayment ? { registrationFeeOriginal, discountType: generalForm.discountType, discountValue } : {}),
     });
   };
 
@@ -687,6 +812,13 @@ export function ParticipantDetailsFeature({
         displayName: participant.displayName ?? '',
         notes: participant.notes ?? '',
         isFeePaid: participant.isFeePaid,
+        registrationFeeOriginalText: (participant.registrationFeeOriginal ?? participant.registrationFeeCharged).toFixed(2).replace('.', ','),
+        discountType: participant.registrationFeeDiscountType === 'PERCENTAGE' ? 'PERCENTAGE' : 'FIXED',
+        discountText: participant.registrationFeeDiscountType === 'PERCENTAGE'
+          ? participant.registrationFeeOriginal && participant.registrationFeeOriginal > 0
+            ? ((participant.registrationFeeDiscount ?? 0) / participant.registrationFeeOriginal * 100).toFixed(2).replace('.', ',')
+            : ''
+          : (participant.registrationFeeDiscount ?? 0).toFixed(2).replace('.', ','),
       });
     }
   };
@@ -893,16 +1025,18 @@ export function ParticipantDetailsFeature({
                 Visualização de cadastro escolar, figurinos vinculados, bilheteria e recebimentos.
               </p>
             </div>
-            {(!isCancelled || canPermanentlyDelete) && (
-              <Button
-                variant="outline"
-                onClick={() => isCancelled ? setPermanentDeleteConfirmOpen(true) : setDeleteConfirmOpen(true)}
-                className="text-rose-600 border-rose-200 hover:bg-rose-50 hover:text-rose-700 shadow-none shrink-0 self-start md:self-center"
-              >
-                <Trash2 className="mr-2 h-4 w-4" />
-                {isCancelled ? 'Excluir Inscrito' : 'Cancelar Inscrição'}
-              </Button>
-            )}
+            <div className="flex flex-wrap items-center gap-2 self-start md:self-center">
+              {(!isCancelled || canPermanentlyDelete) && (
+                <Button
+                  variant="outline"
+                  onClick={() => isCancelled ? setPermanentDeleteConfirmOpen(true) : setDeleteConfirmOpen(true)}
+                  className="text-rose-600 border-rose-200 hover:bg-rose-50 hover:text-rose-700 shadow-none"
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  {isCancelled ? 'Excluir Inscrito' : 'Cancelar Inscrição'}
+                </Button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -964,40 +1098,69 @@ export function ParticipantDetailsFeature({
                 label="Turma"
                 value={participant.turma?.nome || '—'}
               />
-              {editSection === 'cadastro' && participant.registrationFeeCharged > 0 && isManualPayment ? (
-                <div className="space-y-1">
-                  <label className={labelClass}>Status Financeiro da Inscrição</label>
-                  <Select
-                    value={generalForm.isFeePaid ? 'true' : 'false'}
-                    onValueChange={(val) => setGeneralForm((f) => ({ ...f, isFeePaid: val === 'true' }))}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="false">Pendente</SelectItem>
-                      <SelectItem value="true">Pago</SelectItem>
-                    </SelectContent>
-                  </Select>
+              <LockedField
+                label="Status Financeiro da Inscrição"
+                value={
+                  participant.financialStatus === 'ISENTO' ? 'Isento' :
+                  participant.financialStatus === 'PARCIAL' ? 'Parcial' :
+                  participant.financialStatus === 'QUITADO' ? 'Quitado' :
+                  participant.financialStatus === 'EM_DIA' ? 'Em dia' :
+                  participant.financialStatus === 'ATRASADO' ? 'Atrasado' :
+                  participant.financialStatus === 'ESTORNADO' ? 'Estornado' :
+                  participant.financialStatus === 'CANCELADO' ? 'Cancelado' :
+                  participant.isFeePaid ? 'Pago' : 'Pendente'
+                }
+              />
+              {editSection === 'cadastro' && canEditManualFee ? (
+                <div className="space-y-3 md:col-span-2 rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className={labelClass}>Valor original da taxa</label>
+                      <div className="relative flex items-center">
+                        <span className="pointer-events-none absolute left-3 text-xs font-semibold text-slate-400">R$</span>
+                        <Input
+                          value={generalForm.registrationFeeOriginalText}
+                          onChange={(event) => setGeneralForm((form) => ({ ...form, registrationFeeOriginalText: formatCurrencyInput(event.target.value) }))}
+                          className="h-10 border-slate-200 pl-10 text-right"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className={labelClass}>Desconto concedido</label>
+                      <div className="flex items-center gap-2">
+                        <Tabs
+                          value={generalForm.discountType}
+                          onValueChange={(value) => setGeneralForm((form) => ({ ...form, discountType: value as 'FIXED' | 'PERCENTAGE' }))}
+                          aria-label="Tipo de desconto"
+                          className="shrink-0"
+                        >
+                          <TabsList className="h-10 rounded-xl bg-slate-100/80 p-1">
+                            <TabsTrigger value="PERCENTAGE" className="h-8 rounded-lg px-3 py-0 text-sm shadow-none">%</TabsTrigger>
+                            <TabsTrigger value="FIXED" className="h-8 rounded-lg px-3 py-0 text-sm shadow-none">R$</TabsTrigger>
+                          </TabsList>
+                        </Tabs>
+                        <Input
+                          value={generalForm.discountText}
+                          onChange={(event) => setGeneralForm((form) => ({
+                            ...form,
+                            discountText: form.discountType === 'FIXED' ? formatCurrencyInput(event.target.value) : event.target.value.replace(/[^\d,.]/g, ''),
+                          }))}
+                          className="h-10 flex-1 border-slate-200 text-right"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-sm">
+                    <span className="text-slate-500">Valor final da taxa</span>
+                    <strong className="text-slate-900">{formatCurrency(feeEditCharged)}</strong>
+                  </div>
                 </div>
               ) : (
                 <LockedField
-                  label="Status Financeiro da Inscrição"
-                  value={
-                    participant.financialStatus === 'ISENTO' ? 'Isento' :
-                    participant.financialStatus === 'QUITADO' ? 'Quitado' :
-                    participant.financialStatus === 'EM_DIA' ? 'Em dia' :
-                    participant.financialStatus === 'ATRASADO' ? 'Atrasado' :
-                    participant.financialStatus === 'ESTORNADO' ? 'Estornado' :
-                    participant.financialStatus === 'CANCELADO' ? 'Cancelado' :
-                    participant.isFeePaid ? 'Pago' : 'Pendente'
-                  }
+                  label="Valor da Taxa cobrado"
+                  value={formatCurrency(participant.registrationFeeCharged)}
                 />
               )}
-              <LockedField
-                label="Valor da Taxa cobrado"
-                value={formatCurrency(participant.registrationFeeCharged)}
-              />
               {participant.billingMode === 'ENTRY_INSTALLMENT' && (
                 <>
                   <LockedField
@@ -1036,9 +1199,7 @@ export function ParticipantDetailsFeature({
 
           {/* Seção 2: Fluxo Financeiro da Inscrição */}
           <div className={cn('space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4', DETAIL_SECTION_MAX)}>
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold text-slate-700">Lançamentos Financeiros Vinculados</span>
-            </div>
+            <span className="text-sm font-semibold text-slate-700">Lançamentos Financeiros Vinculados</span>
 
             <TablePanel>
               <DataTable
@@ -1095,9 +1256,10 @@ export function ParticipantDetailsFeature({
                     width: 'w-[14%]',
                     render: (entry: any) => {
                       if (participant && entry.id === participant.revenueEntryId) {
-                        const status = participant.financialStatus || (participant.registrationFeeCharged === 0 ? 'ISENTO' : participant.isFeePaid ? 'QUITADO' : 'PENDENTE');
+                        const status = participant.financialStatus || (participant.isFeeExempt ? 'ISENTO' : participant.isFeePaid ? 'QUITADO' : 'PARCIAL');
                         const statusTone = {
                           ISENTO: 'neutral',
+                          PARCIAL: 'warning',
                           QUITADO: 'success',
                           EM_DIA: 'info',
                           ATRASADO: 'danger',
@@ -1107,6 +1269,7 @@ export function ParticipantDetailsFeature({
                         }[status as string] || 'neutral';
                         const statusLabel = {
                           ISENTO: 'Isento',
+                          PARCIAL: 'Parcial',
                           QUITADO: 'Quitado',
                           EM_DIA: 'Em dia',
                           ATRASADO: 'Atrasado',
@@ -1135,7 +1298,6 @@ export function ParticipantDetailsFeature({
                     render: (entry: any) => {
                       const isParticipantFee = participant && entry.id === participant.revenueEntryId;
                       const paidAmount = entry.actualAmount ?? 0;
-                      const isAsaasEntry = Boolean(entry.asaasPaymentId || entry.paymentProvider === 'ASAAS');
                       const isPaidManualFee =
                         isParticipantFee &&
                         !entry.asaasPaymentId &&
@@ -1143,16 +1305,17 @@ export function ParticipantDetailsFeature({
                         paidAmount > 0 &&
                         entry.status !== 'REFUNDED' &&
                         entry.status !== 'CANCELLED';
-                      const canGenerateReceipt = isPaidManualFee;
-                      const canRefund = isPaidManualFee;
-                      const canDelete =
+                      const hasPaymentHistory = isParticipantFee && financialPayments.length > 0;
+                      const canGenerateReceipt = isPaidManualFee && !hasPaymentHistory;
+                      const canRefund = isPaidManualFee && !hasPaymentHistory;
+                      const canManualPayment =
                         isParticipantFee &&
-                        !isAsaasEntry &&
-                        !participant.isFeePaid &&
-                        !entry.actualAmount &&
-                        !['RECEIVED', 'PAID', 'REFUNDED', 'PARTIALLY_REFUNDED'].includes(entry.status);
+                        isManualPayment &&
+                        !participant.isFeeExempt &&
+                        canOpenManualPayment &&
+                        entry.status !== 'CANCELLED';
 
-                      if (!canGenerateReceipt && !canRefund && !canDelete) {
+                      if (!canGenerateReceipt && !canRefund && !canManualPayment) {
                         return <span className="text-slate-400">-</span>;
                       }
 
@@ -1171,6 +1334,16 @@ export function ParticipantDetailsFeature({
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-48">
+                            {canManualPayment ? (
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setManualPaymentAmountText('');
+                                  setManualPaymentOpen(true);
+                                }}
+                              >
+                                Dar baixa manual
+                              </DropdownMenuItem>
+                            ) : null}
                             {canGenerateReceipt ? (
                               <DropdownMenuItem onClick={() => void handleGenerateFeeReceipt(entry)}>
                                 <Receipt className="mr-2 h-4 w-4" />
@@ -1182,18 +1355,6 @@ export function ParticipantDetailsFeature({
                                 <RotateCcw className="mr-2 h-4 w-4" />
                                 Estornar
                               </DropdownMenuItem>
-                            ) : null}
-                            {canDelete ? (
-                              <>
-                                {(canGenerateReceipt || canRefund) ? <DropdownMenuSeparator /> : null}
-                                <DropdownMenuItem
-                                  className="text-rose-700 focus:text-rose-700"
-                                  onClick={() => setFeeActionTarget({ action: 'delete', entryId: entry.id })}
-                                >
-                                  <Trash className="mr-2 h-4 w-4" />
-                                  Excluir cobrança
-                                </DropdownMenuItem>
-                              </>
                             ) : null}
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -1207,6 +1368,70 @@ export function ParticipantDetailsFeature({
               />
             </TablePanel>
           </div>
+
+          {(financialPayments.length > 0 || canOpenManualPayment) && (
+            <div className={cn('space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4', DETAIL_SECTION_MAX)}>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-700">Pagamentos recebidos</h3>
+                  <p className="mt-1 text-xs text-slate-500">Cada baixa manual permanece registrada separadamente para recibo e estorno.</p>
+                </div>
+                {!isCancelled && canOpenManualPayment ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setManualPaymentAmountText('');
+                      setManualPaymentOpen(true);
+                    }}
+                    className="h-9 shrink-0 border-slate-300 px-3 text-sm text-slate-700 shadow-none hover:bg-slate-50"
+                  >
+                    Dar baixa manual
+                  </Button>
+                ) : null}
+              </div>
+              <TablePanel>
+                <DataTable
+                  columns={[
+                    { id: 'date', header: 'Data', render: (payment: any) => formatDate(payment.paidAt) },
+                    { id: 'method', header: 'Forma', render: (payment: any) => EVENT_PAYMENT_METHOD_LABELS[payment.paymentMethod as keyof typeof EVENT_PAYMENT_METHOD_LABELS] ?? payment.paymentMethod },
+                    { id: 'amount', header: 'Valor', align: 'right', render: (payment: any) => <span className="font-medium text-slate-900">{formatCurrency(payment.amount)}</span> },
+                    { id: 'status', header: 'Status', align: 'center', render: (payment: any) => <SoftBadge tone={payment.status === 'REFUNDED' ? 'neutral' : 'success'}>{payment.status === 'REFUNDED' ? 'Estornado' : 'Recebido'}</SoftBadge> },
+                    {
+                      id: 'actions',
+                      header: 'Ações',
+                      align: 'right',
+                      render: (payment: any) => (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button type="button" size="icon" variant="ghost" className="h-8 w-8 text-slate-500 hover:bg-slate-100" aria-label="Ações do pagamento">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-44">
+                            <DropdownMenuItem onClick={() => void handleGeneratePaymentReceipt(payment)}>
+                              <Receipt className="mr-2 h-4 w-4" /> Emitir recibo
+                            </DropdownMenuItem>
+                            {payment.status !== 'REFUNDED' ? (
+                              <DropdownMenuItem className="text-rose-700 focus:text-rose-700" onClick={() => setManualPaymentActionTarget({ action: 'refund', paymentId: payment.id })}>
+                                <RotateCcw className="mr-2 h-4 w-4" /> Estornar
+                              </DropdownMenuItem>
+                            ) : null}
+                            <DropdownMenuItem className="text-rose-700 focus:text-rose-700" onClick={() => setManualPaymentActionTarget({ action: 'delete', paymentId: payment.id })}>
+                              <Trash className="mr-2 h-4 w-4" /> Excluir cobrança
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ),
+                    },
+                  ]}
+                  data={financialPayments}
+                  rowKey={(payment) => payment.id}
+                  emptyMessage={<EmptyState title="Nenhum pagamento registrado." description="As baixas manuais aparecerão aqui." />}
+                />
+              </TablePanel>
+            </div>
+          )}
 
           {/* Seção 2.5: Parcelas da Cobrança */}
           {charges.length > 0 && (
@@ -1398,7 +1623,14 @@ export function ParticipantDetailsFeature({
                       header: 'Nome',
                       align: 'left',
                       width: 'w-[30%]',
-                      render: (contract: EventContractDTO) => <span className="font-semibold text-slate-900 text-xs sm:text-sm">{contract.modelo?.nome ?? 'Contrato do evento'}</span>,
+                      render: (contract: EventContractDTO) => (
+                        <span
+                          className="block max-w-[22rem] truncate text-xs font-semibold text-slate-900 sm:text-sm"
+                          title={contract.modelo?.nome ?? 'Contrato do evento'}
+                        >
+                          {contract.modelo?.nome ?? 'Contrato do evento'}
+                        </span>
+                      ),
                     },
                     {
                       id: 'createdAt',
@@ -1705,6 +1937,100 @@ export function ParticipantDetailsFeature({
         tokenPublico={shareContract?.token ?? ''}
         alunoNome={shareContract?.alunoNome ?? participant.displayName}
         publicPath="/p/evento-contrato"
+      />
+
+      <Dialog open={manualPaymentOpen} onOpenChange={setManualPaymentOpen}>
+        <DialogContent className="max-w-md gap-0 overflow-hidden bg-slate-50 p-0">
+          <DialogHeader className="border-b border-slate-200 bg-slate-50 px-6 py-5 pr-12">
+            <DialogTitle className="text-xl font-semibold tracking-tight text-slate-900">Dar baixa manual</DialogTitle>
+            <DialogDescription className="mt-2 text-sm leading-5 text-slate-600">
+              Registre um pagamento recebido para esta inscrição. Saldo disponível: {formatCurrency(participantBalance)}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-5 bg-white px-6 py-6">
+            <div className="space-y-1.5">
+              <label className={labelClass} htmlFor="manual-payment-amount">Valor recebido</label>
+              <div className="relative flex items-center">
+                <span className="pointer-events-none absolute left-3 text-xs font-semibold text-slate-400">R$</span>
+                <Input
+                  id="manual-payment-amount"
+                  value={manualPaymentAmountText}
+                  onChange={(event) => setManualPaymentAmountText(formatCurrencyInput(event.target.value))}
+                  className="h-10 rounded-lg border-slate-200 pl-10 text-right shadow-sm focus:border-[#A94DFF] focus:ring-2 focus:ring-[#A94DFF]/30"
+                  placeholder="0,00"
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelClass} htmlFor="manual-payment-method">Forma de recebimento</label>
+              <Select value={manualPaymentMethod} onValueChange={setManualPaymentMethod}>
+                <SelectTrigger id="manual-payment-method" className="h-10 rounded-lg border-slate-200 bg-white shadow-sm">
+                  <SelectValue placeholder="Selecione a forma de recebimento" />
+                </SelectTrigger>
+                <SelectContent>
+                {EVENT_PAYMENT_METHODS.filter((method) => method !== 'COMPLIMENTARY').map((method) => (
+                    <SelectItem key={method} value={method}>{EVENT_PAYMENT_METHOD_LABELS[method]}</SelectItem>
+                ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelClass} htmlFor="manual-payment-notes">Observações</label>
+              <Textarea
+                id="manual-payment-notes"
+                value={manualPaymentNotes}
+                onChange={(event) => setManualPaymentNotes(event.target.value)}
+                placeholder="Opcional"
+                className="min-h-[88px] resize-y rounded-lg border-slate-200 shadow-sm focus:border-[#A94DFF] focus:ring-2 focus:ring-[#A94DFF]/30"
+              />
+            </div>
+          </div>
+          <DialogFooter className="border-t border-slate-200 bg-slate-50 px-6 py-4">
+            <Button
+              variant="outline"
+              onClick={() => setManualPaymentOpen(false)}
+              className="h-10 border-slate-200 text-slate-600 shadow-none hover:bg-slate-100"
+            >
+              Cancelar
+            </Button>
+            <Button
+              disabled={manualPaymentMutation.isPending || manualPaymentAmount <= 0 || manualPaymentAmount > participantBalance}
+              onClick={() => manualPaymentMutation.mutate()}
+              className="h-10 bg-brand-accent text-white shadow-none hover:bg-brand-accent/90"
+            >
+              {manualPaymentMutation.isPending ? 'Registrando...' : 'Confirmar baixa'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={manualPaymentActionTarget?.action === 'refund'}
+        onOpenChange={(open) => !open && setManualPaymentActionTarget(null)}
+        title="Estornar pagamento manual?"
+        description="O pagamento selecionado será estornado, o saldo será recalculado e o histórico será preservado."
+        confirmText="Estornar pagamento"
+        cancelText="Cancelar"
+        variant="destructive"
+        onConfirm={() => {
+          if (manualPaymentActionTarget) manualPaymentRefundMutation.mutate(manualPaymentActionTarget.paymentId);
+        }}
+        loading={manualPaymentRefundMutation.isPending}
+      />
+
+      <ConfirmDialog
+        open={manualPaymentActionTarget?.action === 'delete'}
+        onOpenChange={(open) => !open && setManualPaymentActionTarget(null)}
+        title="Excluir cobrança?"
+        description="Esta ação excluirá definitivamente o pagamento e recalculará o saldo da inscrição. O registro não poderá ser recuperado."
+        confirmText="Excluir cobrança"
+        cancelText="Cancelar"
+        variant="destructive"
+        onConfirm={() => {
+          if (manualPaymentActionTarget) manualPaymentDeleteMutation.mutate(manualPaymentActionTarget.paymentId);
+        }}
+        loading={manualPaymentDeleteMutation.isPending}
       />
 
       <Dialog open={quitarConfirmOpen !== null} onOpenChange={(o) => !o && setQuitarConfirmOpen(null)}>

@@ -27,6 +27,9 @@ export function FinancialEntryDetailsDialog({
     ['Tipo', entry.type === 'COST' ? 'Custo' : 'Receita'],
     ['Categoria', entry.category],
     ['Previsto', formatCurrency(entry.expectedAmount)],
+    ...(entry.discountAmount && entry.discountAmount > 0
+      ? [['Valor original', formatCurrency(entry.grossAmount ?? entry.expectedAmount)], ['Desconto', formatCurrency(entry.discountAmount)]]
+      : []),
     ['Realizado', formatCurrency(entry.actualAmount ?? 0)],
     ['Estornado', entry.refundedAmount ? formatCurrency(entry.refundedAmount) : '-'],
     ['Status', EVENT_FINANCIAL_STATUS_LABELS[entry.status]],

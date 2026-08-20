@@ -31,6 +31,7 @@ const requiredDate = z.coerce.date();
 const optionalId = z.preprocess(emptyToUndefined, z.string().trim().min(1).optional().nullable());
 
 const moneySchema = z.coerce.number().finite().min(0);
+const participantDiscountTypeSchema = z.enum(['FIXED', 'PERCENTAGE']);
 const positiveIntSchema = z.coerce.number().int().positive();
 const eventCostumeAssignmentBillingModes = [
   'INCLUDED_IN_REGISTRATION_FEE',
@@ -285,10 +286,17 @@ export const createEventParticipantSchema = z.object({
   responsavelId: z.string().trim().optional().nullable(),
   billingGroupId: z.string().trim().optional().nullable(),
   registrationFeeCharged: moneySchema.optional().default(0),
+  registrationFeeOriginal: moneySchema.optional().nullable(),
+  registrationFeeDiscount: moneySchema.optional().default(0),
+  registrationFeeDiscountType: participantDiscountTypeSchema.optional().nullable(),
   billingMode: z.enum(['FULL', 'INSTALLMENT', 'ENTRY_INSTALLMENT']).optional().default('FULL'),
   entryAmount: moneySchema.optional().default(0),
   entryPaymentMethod: z.string().trim().optional().nullable(),
+  initialPaymentAmount: moneySchema.optional().default(0),
+  initialPaymentMethod: z.string().trim().optional().nullable(),
+  billingMethod: z.string().trim().optional().nullable(),
   isFeePaid: z.coerce.boolean().optional().default(false),
+  isFeeExempt: z.coerce.boolean().optional().default(false),
   feePaymentMethod: z.string().trim().optional().nullable(),
   notes: optionalText,
 });
@@ -298,9 +306,14 @@ const eventParticipantBillingBaseSchema = z.object({
   additionalAlunoIds: z.array(z.string().trim().min(1)).max(20).optional().default([]),
   uiRequestId: z.string().trim().min(8).max(120).optional(),
   registrationFeeCharged: z.coerce.number().optional().default(0),
+  registrationFeeOriginal: z.coerce.number().finite().min(0).optional(),
+  discountValue: z.coerce.number().finite().min(0).optional().default(0),
+  discountType: participantDiscountTypeSchema.optional().default('FIXED'),
   hasEntry: z.coerce.boolean().optional().default(false),
   entryAmount: z.coerce.number().min(0).optional().default(0),
   entryPaymentMethod: z.string().trim().optional().nullable(),
+  initialPaymentAmount: z.coerce.number().min(0).optional().default(0),
+  initialPaymentMethod: z.string().trim().optional().nullable(),
   billingMethod: z.enum(['MANUAL_RECEIVED', 'BOLETO', 'PIX', 'CREDIT_CARD']).optional().default('MANUAL_RECEIVED'),
   feePaymentMethod: z.string().trim().optional().nullable(),
   notes: z.string().trim().optional().nullable(),
@@ -309,9 +322,42 @@ const eventParticipantBillingBaseSchema = z.object({
   installmentCount: z.coerce.number().int().min(2).max(24).optional(),
   notificationChannels: z.array(z.enum(['EMAIL', 'SMS', 'WHATSAPP'])).optional().default([]),
   notificationChannelsConfigured: z.boolean().optional().default(false),
+  isFeeExempt: z.coerce.boolean().optional().default(false),
 });
 
 function validateEventParticipantBilling(input: z.infer<typeof eventParticipantBillingBaseSchema>, ctx: z.RefinementCtx) {
+  const originalAmount = input.registrationFeeOriginal ?? input.registrationFeeCharged;
+  const manualDiscountAmount = input.discountType === 'PERCENTAGE'
+    ? originalAmount * (input.discountValue / 100)
+    : input.discountValue;
+  const manualChargedAmount = Math.max(originalAmount - Math.min(originalAmount, manualDiscountAmount), 0);
+  if (input.discountValue > 0 && input.billingMethod !== 'MANUAL_RECEIVED') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['discountValue'], message: 'Desconto manual só pode ser usado no modo quitado na hora.' });
+  }
+  if (input.billingMethod === 'MANUAL_RECEIVED' && input.discountType === 'PERCENTAGE' && input.discountValue > 100) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['discountValue'], message: 'O desconto percentual não pode ser maior que 100%.' });
+  }
+  if (input.billingMethod === 'MANUAL_RECEIVED') {
+    if (manualDiscountAmount > originalAmount) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['discountValue'], message: 'O desconto não pode ser maior que o valor original.' });
+    }
+    if (input.hasEntry) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['hasEntry'], message: 'Use o valor recebido agora para registrar uma baixa manual.' });
+    }
+    if (input.initialPaymentAmount > manualChargedAmount) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['initialPaymentAmount'], message: 'O valor recebido não pode ser maior que o valor final da inscrição.' });
+    }
+    if (input.initialPaymentAmount > 0 && !input.initialPaymentMethod && !input.feePaymentMethod) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['initialPaymentMethod'], message: 'Informe a forma de recebimento do pagamento inicial.' });
+    }
+    if (input.isFeeExempt && input.initialPaymentAmount > 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['isFeeExempt'], message: 'Uma inscrição isenta não pode ter pagamento inicial.' });
+    }
+  } else if (input.isFeeExempt) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['isFeeExempt'], message: 'A isenção só pode ser usada no modo manual.' });
+  } else if (input.initialPaymentAmount > 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['initialPaymentAmount'], message: 'Pagamento inicial manual só pode ser usado no modo manual.' });
+  }
   if (!input.hasEntry) return;
 
   const participantCount = 1 + (input.additionalAlunoIds?.length ?? 0);
@@ -366,6 +412,13 @@ export const quitarParticipantFeeSchema = z.object({
   paymentMethod: z.string().trim().min(1),
 });
 
+export const manualEventParticipantPaymentSchema = z.object({
+  amount: moneySchema.gt(0),
+  paymentMethod: z.enum(EVENT_PAYMENT_METHODS),
+  paidAt: optionalDate,
+  notes: optionalText,
+});
+
 export type ListSchoolEventsQuery = z.infer<typeof listSchoolEventsQuerySchema>;
 export type CreateSchoolEventInput = z.infer<typeof createSchoolEventSchema>;
 export type UpdateSchoolEventInput = z.infer<typeof updateSchoolEventSchema>;
@@ -382,3 +435,4 @@ export type UpdateEventFinancialEntryInput = z.infer<typeof updateEventFinancial
 export type CreateEventParticipantInput = z.infer<typeof createEventParticipantSchema>;
 export type ReactivateEventParticipantInput = z.infer<typeof reactivateEventParticipantSchema>;
 export type QuitarParticipantFeeInput = z.infer<typeof quitarParticipantFeeSchema>;
+export type ManualEventParticipantPaymentInput = z.infer<typeof manualEventParticipantPaymentSchema>;

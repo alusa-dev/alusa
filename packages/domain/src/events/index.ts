@@ -28,6 +28,7 @@ export type EventFinancialOriginType = 'MANUAL' | 'TICKET_SALE' | 'COSTUME' | 'C
 
 export type EventParticipantFinancialStatus =
   | 'ISENTO'
+  | 'PARCIAL'
   | 'PENDENTE'
   | 'EM_DIA'
   | 'ATRASADO'
@@ -280,13 +281,29 @@ export function resolveEventParticipantPayment(input: {
   paidFallback?: boolean | null;
   cancelled?: boolean | null;
   refunded?: boolean | null;
+  isExempt?: boolean | null;
   today?: Date;
 }): EventParticipantPaymentResolution {
   const expectedAmount = roundMoney(money(input.expectedAmount));
   const today = input.today ?? new Date();
   const charges = input.charges ?? [];
 
-  if (expectedAmount <= 0) {
+  if (input.cancelled && charges.length === 0) {
+    return {
+      status: 'CANCELADO',
+      expectedAmount,
+      paidAmount: 0,
+      refundedAmount: 0,
+      netPaidAmount: 0,
+      openAmount: expectedAmount,
+      overdueAmount: 0,
+      percentPaid: 0,
+      isFullyPaid: false,
+      hasOverdue: false,
+    };
+  }
+
+  if (expectedAmount <= 0 && input.isExempt) {
     return {
       status: 'ISENTO',
       expectedAmount: 0,
@@ -301,10 +318,10 @@ export function resolveEventParticipantPayment(input: {
     };
   }
 
-  if (input.cancelled && charges.length === 0) {
+  if (expectedAmount <= 0) {
     return {
-      status: 'CANCELADO',
-      expectedAmount,
+      status: 'PARCIAL',
+      expectedAmount: 0,
       paidAmount: 0,
       refundedAmount: 0,
       netPaidAmount: 0,
@@ -363,7 +380,6 @@ export function resolveEventParticipantPayment(input: {
   if (hasOverdue) status = 'ATRASADO';
   else if (isFullyPaid) status = 'QUITADO';
   else if (hasRefunded && netPaidAmount <= 0) status = 'ESTORNADO';
-  else if (hasRefunded) status = 'ESTORNADO_PARCIAL';
   else if (netPaidAmount > 0 || hasOpen) status = 'EM_DIA';
   else if (hasCancelled || input.cancelled) status = 'CANCELADO';
 

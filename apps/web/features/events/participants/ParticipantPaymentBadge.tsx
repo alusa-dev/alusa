@@ -5,7 +5,7 @@ import { EVENT_PAYMENT_METHOD_LABELS } from '@alusa/shared';
 import type { EventParticipantDTO } from '../events-service';
 
 export function ParticipantPaymentMethod({ participant }: { participant: EventParticipantDTO }) {
-  if (participant.registrationFeeCharged === 0) {
+  if (participant.isFeeExempt) {
     return <span className="text-slate-400">—</span>;
   }
 
@@ -21,9 +21,10 @@ export function ParticipantPaymentMethod({ participant }: { participant: EventPa
 }
 
 export function ParticipantPaymentStatusBadge({ participant }: { participant: EventParticipantDTO }) {
-  const status = participant.financialStatus || (participant.registrationFeeCharged === 0 ? 'ISENTO' : participant.isFeePaid ? 'QUITADO' : 'PENDENTE');
+  const status = participant.financialStatus || (participant.isFeeExempt ? 'ISENTO' : participant.isFeePaid ? 'QUITADO' : 'PARCIAL');
   const badges = {
     ISENTO: <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">Isento</span>,
+    PARCIAL: <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">Parcial</span>,
     QUITADO: <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">Quitado</span>,
     EM_DIA: <span className="inline-flex rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-800">Em dia</span>,
     ATRASADO: <span className="inline-flex rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-800">Atrasado</span>,

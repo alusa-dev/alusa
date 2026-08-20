@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { registerEventParticipantRequestSchema } from '@alusa/lib/events/events.schema';
 import { listEventParticipants, registerEventParticipant, registerEventParticipantGroup } from '@alusa/lib/events/events.service';
+import { calculateEventParticipantDiscount } from '@alusa/lib/events/event-participant-discount';
 import {
   eventPaymentRulesFromRecord,
   eventPaymentRulesToAsaas,
@@ -76,11 +77,22 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: { code: 'EVENTO_NAO_ENCONTRADO', message: 'Evento não encontrado' } }, { status: 404 });
     }
 
-    // 2. Registrar o participante localmente (isFeePaid é true se for manual/quitado na hora)
-    const isFeePaid = !body.hasEntry && body.billingMethod === 'MANUAL_RECEIVED';
-    const feePaymentMethod = body.hasEntry ? body.billingMethod : isFeePaid ? body.feePaymentMethod : body.billingMethod;
-    const entryAmount = body.hasEntry ? body.entryAmount : isFeePaid ? body.registrationFeeCharged : 0;
-    const balanceAmount = Math.max(body.registrationFeeCharged - entryAmount, 0);
+    // 2. Registrar o participante localmente. O modo manual pode começar sem
+    // pagamento, com pagamento parcial ou totalmente quitado.
+    const discount = calculateEventParticipantDiscount({
+      originalAmount: body.registrationFeeOriginal ?? body.registrationFeeCharged,
+      discountType: body.billingMethod === 'MANUAL_RECEIVED' ? body.discountType : null,
+      discountValue: body.billingMethod === 'MANUAL_RECEIVED' ? body.discountValue : 0,
+    });
+    const registrationFeeCharged = discount.chargedAmount;
+    const initialPaymentAmount = body.billingMethod === 'MANUAL_RECEIVED' ? body.initialPaymentAmount : 0;
+    const effectiveRegistrationFeeCharged = body.isFeeExempt ? 0 : registrationFeeCharged;
+    const entryAmount = body.hasEntry ? body.entryAmount : body.billingMethod === 'MANUAL_RECEIVED' ? initialPaymentAmount : 0;
+    const isFeePaid = body.billingMethod === 'MANUAL_RECEIVED' && effectiveRegistrationFeeCharged > 0 && entryAmount >= effectiveRegistrationFeeCharged;
+    const feePaymentMethod = entryAmount > 0
+      ? body.initialPaymentMethod ?? body.entryPaymentMethod ?? body.feePaymentMethod
+      : body.hasEntry ? body.billingMethod : body.billingMethod;
+    const balanceAmount = Math.max(effectiveRegistrationFeeCharged - entryAmount, 0);
     const billingMode = body.hasEntry
       ? 'ENTRY_INSTALLMENT'
       : body.chargeType === 'INSTALLMENT'
@@ -97,7 +109,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
 
       const groupedBalanceBeforeCreate = Number((balanceAmount * alunoIds.length).toFixed(2));
-      const groupPaymentRulesError = isFeePaid
+      const groupPaymentRulesError = isFeePaid || body.billingMethod === 'MANUAL_RECEIVED'
         ? null
         : validateEventPaymentRulesForCharge(paymentRules, groupedBalanceBeforeCreate);
       if (groupPaymentRulesError) {
@@ -112,14 +124,20 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         alunoId: body.alunoId,
         alunoIds,
         responsavelId: body.responsavelId,
-        registrationFeeCharged: body.registrationFeeCharged,
+        registrationFeeCharged: effectiveRegistrationFeeCharged,
+        registrationFeeOriginal: discount.originalAmount,
+        registrationFeeDiscount: discount.discountAmount,
+        registrationFeeDiscountType: body.billingMethod === 'MANUAL_RECEIVED' && discount.discountAmount > 0 ? body.discountType : null,
         billingMode,
         entryAmount,
-        entryPaymentMethod: body.hasEntry ? body.entryPaymentMethod : isFeePaid ? body.feePaymentMethod : null,
+        entryPaymentMethod: entryAmount > 0 ? body.initialPaymentMethod ?? body.entryPaymentMethod ?? body.feePaymentMethod : null,
+        initialPaymentAmount,
+        initialPaymentMethod: body.initialPaymentMethod,
+        billingMethod: body.billingMethod,
+        isFeeExempt: body.isFeeExempt,
         isFeePaid,
         feePaymentMethod,
         notes: body.notes,
-        billingMethod: body.billingMethod,
         chargeType: body.chargeType || 'ONE_TIME',
         installmentCount: body.installmentCount,
         dueDate: parseDueDate(body.dueDate),
@@ -207,7 +225,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ data: groupedParticipant ?? groupResult.participants[0] }, { status: 201 });
     }
 
-    const paymentRulesError = isFeePaid
+    const paymentRulesError = isFeePaid || body.billingMethod === 'MANUAL_RECEIVED'
       ? null
       : validateEventPaymentRulesForCharge(paymentRules, balanceAmount);
     if (paymentRulesError) {
@@ -221,17 +239,24 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       eventId,
       alunoId: body.alunoId,
       responsavelId: body.responsavelId,
-      registrationFeeCharged: body.registrationFeeCharged,
+      registrationFeeCharged: effectiveRegistrationFeeCharged,
+      registrationFeeOriginal: discount.originalAmount,
+      registrationFeeDiscount: discount.discountAmount,
+      registrationFeeDiscountType: body.billingMethod === 'MANUAL_RECEIVED' && discount.discountAmount > 0 ? body.discountType : null,
       billingMode,
       entryAmount,
-      entryPaymentMethod: body.hasEntry ? body.entryPaymentMethod : isFeePaid ? body.feePaymentMethod : null,
+      entryPaymentMethod: entryAmount > 0 ? body.initialPaymentMethod ?? body.entryPaymentMethod ?? body.feePaymentMethod : null,
+      initialPaymentAmount,
+      initialPaymentMethod: body.initialPaymentMethod,
+      billingMethod: body.billingMethod,
+      isFeeExempt: body.isFeeExempt,
       isFeePaid,
       feePaymentMethod,
       notes: body.notes,
     });
 
     // 3. Se houver taxa cobrada e for cobrança digital via Asaas, gera a cobrança externa
-    if (balanceAmount > 0 && !isFeePaid) {
+    if (balanceAmount > 0 && !isFeePaid && body.billingMethod !== 'MANUAL_RECEIVED') {
       try {
         const billingResult = await createStandaloneCharge({
           contaId: ctx.contaId,

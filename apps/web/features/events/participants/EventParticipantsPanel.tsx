@@ -114,9 +114,18 @@ export function EventParticipantsPanel({
                 header: 'Taxa Inscrição',
                 width: 'w-[15%]',
                 align: 'left',
-                render: (part: EventParticipantDTO) => part.registrationFeeCharged === 0
-                  ? <span className="text-slate-500 font-medium">Grátis</span>
-                  : <span className="text-slate-900 font-medium">{formatCurrency(part.registrationFeeCharged)}</span>,
+                render: (part: EventParticipantDTO) => part.isFeeExempt
+                  ? <span className="text-slate-500 font-medium">Isento</span>
+                  : (
+                    <span
+                      className="text-slate-900 font-medium"
+                      title={part.registrationFeeDiscount && part.registrationFeeDiscount > 0
+                        ? `Original: ${formatCurrency(part.registrationFeeOriginal ?? part.registrationFeeCharged)} | Desconto: ${formatCurrency(part.registrationFeeDiscount)}`
+                        : undefined}
+                    >
+                      {formatCurrency(part.registrationFeeCharged)}
+                    </span>
+                  ),
               },
               {
                 id: 'percentPaid',
@@ -124,7 +133,7 @@ export function EventParticipantsPanel({
                 width: 'w-[15%]',
                 align: 'left',
                 render: (part: EventParticipantDTO) => {
-                  const pct = part.percentPaid !== undefined ? part.percentPaid : ((part.registrationFeeCharged === 0 || part.isFeePaid) ? 100 : 0);
+                  const pct = part.percentPaid !== undefined ? part.percentPaid : (part.isFeeExempt ? 100 : part.isFeePaid ? 100 : 0);
                   return (
                     <div className="flex w-full max-w-[150px] flex-col gap-1">
                       <span className="text-xs font-semibold text-slate-900">{pct}%</span>

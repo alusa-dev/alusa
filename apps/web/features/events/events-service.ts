@@ -149,6 +149,8 @@ export type FinancialEntryDTO = {
   originType: 'MANUAL' | 'TICKET_SALE' | 'COSTUME' | 'COSTUME_ASSIGNMENT';
   originId: string | null;
   expectedAmount: number;
+  grossAmount?: number | null;
+  discountAmount?: number;
   actualAmount: number | null;
   refundedAmount?: number;
   netAmount?: number | null;
@@ -558,12 +560,16 @@ export type EventParticipantDTO = {
   aluno: { id: string; nome: string; foto: string | null } | null;
   displayName: string;
   registrationFeeCharged: number;
+  registrationFeeOriginal?: number;
+  registrationFeeDiscount?: number;
+  registrationFeeDiscountType?: 'FIXED' | 'PERCENTAGE' | null;
   billingMode?: 'FULL' | 'INSTALLMENT' | 'ENTRY_INSTALLMENT';
   entryAmount?: number;
   balanceAmount?: number;
   entryPaymentMethod?: string | null;
   billingGroupId?: string | null;
   isFeePaid: boolean;
+  isFeeExempt?: boolean;
   percentPaid?: number;
   totalPaid?: number;
   totalRefunded?: number;

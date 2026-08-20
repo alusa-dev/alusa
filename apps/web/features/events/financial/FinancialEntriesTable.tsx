@@ -24,6 +24,7 @@ export function FinancialEntriesTable({ entries, eventId, loading }: { entries: 
         },
         { id: 'category', header: 'Categoria', width: 'w-[15%]', align: 'left', render: (entry: FinancialEntryDTO) => <span className="text-slate-700">{entry.category}</span> },
         { id: 'expected', header: 'Previsto', width: 'w-[13%]', align: 'right', render: (entry: FinancialEntryDTO) => formatCurrency(entry.expectedAmount) },
+        { id: 'discount', header: 'Desconto', width: 'w-[11%]', align: 'right', render: (entry: FinancialEntryDTO) => entry.discountAmount ? formatCurrency(entry.discountAmount) : '-' },
         { id: 'actual', header: 'Realizado', width: 'w-[13%]', align: 'right', render: (entry: FinancialEntryDTO) => formatCurrency(entry.actualAmount ?? 0) },
         { id: 'status', header: 'Status', width: 'w-[12%]', align: 'center', render: (entry: FinancialEntryDTO) => <SoftBadge tone={FINANCIAL_STATUS_TONES[entry.status]}>{EVENT_FINANCIAL_STATUS_LABELS[entry.status]}</SoftBadge> },
         { id: 'origin', header: 'Origem', width: 'w-[10%]', align: 'center', render: (entry: FinancialEntryDTO) => entry.originType === 'MANUAL' ? 'Manual' : 'Automática' },

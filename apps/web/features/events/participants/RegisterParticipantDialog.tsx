@@ -19,6 +19,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
+import { InfoCallout } from '@/components/ui/info-callout';
 
 import {
   EventApiError,
@@ -30,7 +31,7 @@ import { EventField as Field } from '../shared/EventField';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { FILTER_INPUT_CLASS, PRIMARY_BUTTON_CLASS } from '../shared/event-form-utils';
 import { parseCurrencyInput } from '../shared/event-formatters';
-import { ParticipantBillingFields, type ParticipantBillingMethod, type ParticipantChargeType, type ParticipantNotificationChannel } from './ParticipantBillingFields';
+import { ParticipantBillingFields, type ParticipantBillingMethod, type ParticipantChargeType, type ParticipantDiscountType, type ParticipantNotificationChannel } from './ParticipantBillingFields';
 import { useStudentAutocomplete } from './useStudentAutocomplete';
 
 type CancelledParticipantConflict = {
@@ -54,13 +55,18 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
   const queryClient = useQueryClient();
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [billingMethod, setBillingMethod] = useState<ParticipantBillingMethod>('');
+  const [chargePaymentMethod, setChargePaymentMethod] = useState<'BOLETO' | 'PIX' | 'CREDIT_CARD'>('BOLETO');
   const [chargeType, setChargeType] = useState<ParticipantChargeType>('ONE_TIME');
   const [feeText, setFeeText] = useState('');
+  const [discountType, setDiscountType] = useState<ParticipantDiscountType>('FIXED');
+  const [discountText, setDiscountText] = useState('');
   const [hasEntry, setHasEntry] = useState(false);
   const [entryText, setEntryText] = useState('');
+  const [isFeeExempt, setIsFeeExempt] = useState(false);
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
   const [notificationChannels, setNotificationChannels] = useState<ParticipantNotificationChannel[]>([]);
   const [responsaveis, setResponsaveis] = useState<Array<{ id: string; nome: string }>>([]);
+  const [responsaveisLoaded, setResponsaveisLoaded] = useState(false);
   const [selectedResponsavelId, setSelectedResponsavelId] = useState('');
   const [groupStudents, setGroupStudents] = useState<Array<{ id: string; nome: string }>>([]);
   const [groupPickerOpen, setGroupPickerOpen] = useState(false);
@@ -87,17 +93,24 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
     if (open) {
       const defaultFee = event.registrationFee ?? 0;
       setFeeText(defaultFee > 0 ? defaultFee.toFixed(2).replace('.', ',') : '0,00');
+      setDiscountType('FIXED');
+      setDiscountText('');
     } else {
       resetAutocomplete();
       setBillingMethod('');
+      setChargePaymentMethod('BOLETO');
       setChargeType('ONE_TIME');
       setFeeText('');
+      setDiscountType('FIXED');
+      setDiscountText('');
       setHasEntry(false);
       setEntryText('');
+      setIsFeeExempt(false);
       setDueDate(undefined);
       setNotificationChannels([]);
       setCancelledParticipant(null);
       setResponsaveis([]);
+      setResponsaveisLoaded(false);
       setSelectedResponsavelId('');
       setGroupStudents([]);
       setGroupPickerOpen(false);
@@ -110,6 +123,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
     if (!open || !selectedStudent?.id) {
       setResponsaveis([]);
       setSelectedResponsavelId('');
+      setResponsaveisLoaded(false);
       setGroupStudents([]);
       setGroupPickerOpen(false);
       return;
@@ -121,6 +135,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
         if (!active) return;
         setResponsaveis(result.responsaveis);
         setSelectedResponsavelId(result.selectedResponsavelId ?? result.responsaveis[0]?.id ?? '');
+        setResponsaveisLoaded(true);
         setGroupStudents([]);
         setGroupPickerOpen(false);
       })
@@ -128,6 +143,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
         if (!active) return;
         setResponsaveis([]);
         setSelectedResponsavelId('');
+        setResponsaveisLoaded(true);
       });
 
     return () => {
@@ -212,14 +228,30 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
       toast.error({ title: 'Aviso', description: 'Por favor, selecione um aluno válido.' });
       return;
     }
-    const registrationFeeCharged = parseCurrencyInput(String(formData.get('registrationFeeCharged') || '0'));
+    const registrationFeeOriginal = parseCurrencyInput(String(formData.get('registrationFeeOriginal') || '0'));
+    const discountType = String(formData.get('discountType') || 'FIXED') as ParticipantDiscountType;
+    const discountValue = discountType === 'FIXED'
+      ? parseCurrencyInput(String(formData.get('discountValue') || '0'))
+      : Number(String(formData.get('discountValue') || '0').replace(',', '.')) || 0;
+    const discountAmount = discountType === 'PERCENTAGE'
+      ? Math.min(registrationFeeOriginal, Math.round(registrationFeeOriginal * discountValue) / 100)
+      : Math.min(registrationFeeOriginal, discountValue);
+    const registrationFeeCharged = Math.max(registrationFeeOriginal - discountAmount, 0);
     const selectedStudentsCount = 1 + groupStudents.length;
     const totalRegistrationFee = registrationFeeCharged * selectedStudentsCount;
     const hasEntry = String(formData.get('hasEntry') || 'false') === 'true';
     const entryAmount = parseCurrencyInput(String(formData.get('entryAmount') || '0'));
-    const selectedBilling = String(formData.get('billingMethod') || 'MANUAL_RECEIVED');
-    const isFeePaid = !hasEntry && selectedBilling === 'MANUAL_RECEIVED';
-    const feePaymentMethod = isFeePaid ? String(formData.get('feePaymentMethod') || 'OTHER') : selectedBilling;
+    const selectedBillingMode = String(formData.get('billingMethod') || 'MANUAL_RECEIVED');
+    const selectedBilling = selectedBillingMode === 'ISSUE_CHARGE'
+      ? String(formData.get('chargePaymentMethod') || 'BOLETO')
+      : 'MANUAL_RECEIVED';
+    const initialPaymentAmount = selectedBilling === 'MANUAL_RECEIVED'
+      ? isFeeExempt ? 0 : parseCurrencyInput(String(formData.get('initialPaymentAmount') || '0'))
+      : 0;
+    const isFeePaid = !isFeeExempt && selectedBilling === 'MANUAL_RECEIVED' && registrationFeeCharged > 0 && initialPaymentAmount >= registrationFeeCharged;
+    const feePaymentMethod = selectedBilling === 'MANUAL_RECEIVED'
+      ? String(formData.get('feePaymentMethod') || 'OTHER')
+      : selectedBilling;
     const entryPaymentMethod = hasEntry ? String(formData.get('entryPaymentMethod') || '') : undefined;
     const notes = String(formData.get('notes') || '');
 
@@ -241,9 +273,15 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
       responsavelId: groupStudents.length > 0 ? selectedResponsavelId : undefined,
       uiRequestId: crypto.randomUUID(),
       registrationFeeCharged,
+      registrationFeeOriginal,
+      discountType,
+      discountValue,
       hasEntry,
       entryAmount: hasEntry ? entryAmount : undefined,
       entryPaymentMethod,
+      initialPaymentAmount,
+      initialPaymentMethod: selectedBilling === 'MANUAL_RECEIVED' ? feePaymentMethod : undefined,
+      isFeeExempt,
       billingMethod: selectedBilling,
       feePaymentMethod: registrationFeeCharged > 0 ? feePaymentMethod : undefined,
       notes,
@@ -411,16 +449,39 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
           )}
           <ParticipantBillingFields
             billingMethod={billingMethod}
+            chargePaymentMethod={chargePaymentMethod}
             chargeType={chargeType}
             feeText={feeText}
+            discountType={discountType}
+            discountText={discountText}
             hasEntry={hasEntry}
             entryText={entryText}
             onHasEntryChange={setHasEntry}
             onEntryTextChange={setEntryText}
             dueDate={dueDate}
-            onBillingMethodChange={setBillingMethod}
+            onBillingMethodChange={(value) => {
+              setBillingMethod(value);
+              if (value === 'EXEMPT') {
+                setIsFeeExempt(true);
+                setEntryText('');
+              } else if (value === 'MANUAL_RECEIVED') {
+                setIsFeeExempt(false);
+              }
+            }}
+            onChargePaymentMethodChange={setChargePaymentMethod}
+            notificationCallout={billingMethod === 'ISSUE_CHARGE' && selectedStudent && responsaveisLoaded ? (
+              <InfoCallout variant="info" size="sm" showIcon>
+                {responsaveis.length > 0 && selectedResponsavelId
+                  ? `Será criada uma cobrança para o responsável financeiro ${responsaveis.find((responsavel) => responsavel.id === selectedResponsavelId)?.nome ?? ''}, com vencimento e acompanhamento financeiro.`
+                  : 'Será criada uma cobrança para o próprio aluno, com vencimento e acompanhamento financeiro.'}
+              </InfoCallout>
+            ) : null}
             onChargeTypeChange={setChargeType}
             onFeeTextChange={setFeeText}
+            onDiscountTypeChange={setDiscountType}
+            onDiscountTextChange={setDiscountText}
+            showManualDiscount
+            useBillingModeSelection
             onDueDateChange={setDueDate}
             notificationChannels={notificationChannels}
             onNotificationChannelsChange={setNotificationChannels}

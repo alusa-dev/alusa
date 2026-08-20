@@ -50,6 +50,7 @@ import type {
   CreateEventParticipantInput,
   ReactivateEventParticipantInput,
   QuitarParticipantFeeInput,
+  ManualEventParticipantPaymentInput,
 } from './events.schema';
 import {
   eventPaymentRulesFromRecord,
@@ -138,7 +139,7 @@ function toAuditJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;
 }
 
-async function recordEventAudit(
+export async function recordEventAudit(
   tx: Prisma.TransactionClient,
   params: {
     contaId: string;
@@ -2047,6 +2048,8 @@ export function mapFinancialEntry(
     originType: entry.originType,
     originId: entry.originId,
     expectedAmount: toMoney(entry.expectedAmount),
+    grossAmount: entry.grossAmount == null ? null : toMoney(entry.grossAmount),
+    discountAmount: toMoney(entry.discountAmount),
     actualAmount: entry.actualAmount == null ? null : toMoney(entry.actualAmount),
     refundedAmount: entry.refundedAmount == null ? 0 : toMoney(entry.refundedAmount),
     netAmount: entry.netAmount == null ? null : toMoney(entry.netAmount),
@@ -2524,20 +2527,24 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
     }
 
     let revenueEntryId: string | null = null;
-    const feeCharged = input.registrationFeeCharged ?? 0;
+    const feeOriginal = toMoney(input.registrationFeeOriginal ?? input.registrationFeeCharged ?? 0);
+    const feeDiscount = toMoney(input.registrationFeeDiscount ?? Math.max(feeOriginal - (input.registrationFeeCharged ?? 0), 0));
+    const feeCharged = toMoney(input.registrationFeeCharged ?? feeOriginal);
     const billingMode = input.billingMode ?? (input.isFeePaid ? 'FULL' : 'INSTALLMENT');
-    const entryAmount = input.entryAmount && input.entryAmount > 0
-      ? toMoney(input.entryAmount)
-      : input.isFeePaid
-        ? toMoney(feeCharged)
-        : 0;
+    const entryAmount = input.billingMethod === 'MANUAL_RECEIVED'
+      ? toMoney(input.initialPaymentAmount ?? 0)
+      : input.entryAmount && input.entryAmount > 0
+        ? toMoney(input.entryAmount)
+        : input.isFeePaid
+          ? toMoney(feeCharged)
+          : 0;
     const balanceAmount = toMoney(Math.max(feeCharged - entryAmount, 0));
     const registrationPaymentRules = eventPaymentRulesFromRecord(event);
 
     // A digital charge is persisted by the financial/Asaas flow. Creating a
     // local entry for the digital component would duplicate the billing list.
     // A manual entry is kept as a separate local receipt.
-    if (entryAmount > 0) {
+    if (entryAmount > 0 || input.billingMethod === 'MANUAL_RECEIVED') {
       const entry = await tx.eventFinancialEntry.create({
         data: {
           contaId: ctx.contaId,
@@ -2545,12 +2552,14 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
           type: 'REVENUE',
           category: 'Taxa de inscrição',
           description: billingMode === 'ENTRY_INSTALLMENT' ? 'Entrada da taxa de inscrição' : 'Taxa de inscrição',
-          expectedAmount: decimal(entryAmount),
-          actualAmount: decimal(entryAmount),
+          expectedAmount: decimal(feeCharged),
+          grossAmount: decimal(feeOriginal),
+          discountAmount: decimal(feeDiscount),
+          actualAmount: entryAmount > 0 ? decimal(entryAmount) : null,
           dueDate: new Date(),
-          realizedAt: new Date(),
-          status: 'RECEIVED',
-          paymentMethod: mapToEventPaymentMethod(input.entryPaymentMethod ?? input.feePaymentMethod),
+          realizedAt: entryAmount > 0 ? new Date() : null,
+          status: entryAmount > 0 && entryAmount >= feeCharged ? 'RECEIVED' : 'PENDING',
+          paymentMethod: entryAmount > 0 ? mapToEventPaymentMethod(input.initialPaymentMethod ?? input.entryPaymentMethod ?? input.feePaymentMethod) : null,
           notes: input.notes,
         },
       });
@@ -2566,18 +2575,38 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
         responsavelId: financialResponsible?.responsavelId ?? input.responsavelId ?? null,
         displayName: aluno.nome,
         registrationFeeCharged: decimal(feeCharged),
+        registrationFeeOriginal: decimal(feeOriginal),
+        registrationFeeDiscount: decimal(feeDiscount),
+        registrationFeeDiscountType: input.registrationFeeDiscountType ?? null,
         billingMode,
         entryAmount: decimal(entryAmount),
         balanceAmount: decimal(balanceAmount),
         entryPaymentMethod: entryAmount > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
         registrationPaymentRules: registrationPaymentRules ?? Prisma.JsonNull,
         isFeePaid: input.isFeePaid ?? false,
+        isFeeExempt: input.isFeeExempt ?? false,
         feePaymentMethod: input.entryPaymentMethod ?? input.feePaymentMethod ?? null,
         revenueEntryId,
         feePaidAmount: decimal(entryAmount),
         notes: input.notes,
       },
     });
+
+    if (revenueEntryId && entryAmount > 0) {
+      await tx.eventFinancialPayment.create({
+        data: {
+          contaId: ctx.contaId,
+          eventId: input.eventId,
+          financialEntryId: revenueEntryId,
+          participantId: participant.id,
+          amount: decimal(entryAmount),
+          paymentMethod: mapToEventPaymentMethod(input.initialPaymentMethod ?? input.entryPaymentMethod ?? input.feePaymentMethod),
+          paidAt: new Date(),
+          netAmount: decimal(entryAmount),
+          createdByUserId: ctx.userId,
+        },
+      });
+    }
 
     await createEventContractForParticipant(tx, {
       contaId: ctx.contaId,
@@ -2703,15 +2732,19 @@ export async function registerEventParticipantGroup(
       throw new EventsError('PARTICIPANTE_CANCELADO_EXISTENTE', 'Um dos alunos possui uma inscrição cancelada neste evento. Reative-a separadamente.', 409);
     }
 
-    const feePerParticipant = toMoney(input.registrationFeeCharged ?? 0);
+    const feeOriginalPerParticipant = toMoney(input.registrationFeeOriginal ?? input.registrationFeeCharged ?? 0);
+    const feeDiscountPerParticipant = toMoney(input.registrationFeeDiscount ?? Math.max(feeOriginalPerParticipant - (input.registrationFeeCharged ?? 0), 0));
+    const feePerParticipant = toMoney(input.registrationFeeCharged ?? feeOriginalPerParticipant);
     const totalAmount = toMoney(feePerParticipant * alunoIds.length);
     const isFeePaid = input.isFeePaid ?? false;
     const billingMode = input.billingMode ?? (isFeePaid ? 'FULL' : 'INSTALLMENT');
-    const requestedEntryAmount = input.entryAmount && input.entryAmount > 0
-      ? toMoney(input.entryAmount)
-      : isFeePaid
-        ? totalAmount
-        : 0;
+    const requestedEntryAmount = input.billingMethod === 'MANUAL_RECEIVED'
+      ? toMoney(input.initialPaymentAmount ?? 0)
+      : input.entryAmount && input.entryAmount > 0
+        ? toMoney(input.entryAmount)
+        : isFeePaid
+          ? totalAmount
+          : 0;
     const entryAmount = Math.min(requestedEntryAmount, totalAmount);
     const balanceAmount = toMoney(Math.max(totalAmount - entryAmount, 0));
     const entryAllocations = allocateGroupAmount(entryAmount, alunoIds.map(() => feePerParticipant));
@@ -2720,9 +2753,11 @@ export async function registerEventParticipantGroup(
         contaId: ctx.contaId,
         eventId: input.eventId,
         responsavelId: input.responsavelId,
-        status: 'PENDING',
+        status: entryAmount >= totalAmount && totalAmount > 0 ? 'PAID' : entryAmount > 0 ? 'PARTIALLY_PAID' : 'PENDING',
         billingMode,
         totalAmount: decimal(totalAmount),
+        originalAmount: decimal(toMoney(feeOriginalPerParticipant * alunoIds.length)),
+        discountAmount: decimal(toMoney(feeDiscountPerParticipant * alunoIds.length)),
         entryAmount: decimal(entryAmount),
         balanceAmount: decimal(balanceAmount),
         entryPaymentMethod: entryAmount > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
@@ -2749,6 +2784,8 @@ export async function registerEventParticipantGroup(
             ? 'Entrada da cobrança agrupada do evento'
             : 'Taxa da cobrança agrupada do evento',
           expectedAmount: decimal(feePerParticipant),
+          grossAmount: decimal(feeOriginalPerParticipant),
+          discountAmount: decimal(feeDiscountPerParticipant),
           actualAmount: allocatedEntry > 0 ? decimal(allocatedEntry) : null,
           dueDate: input.dueDate ?? new Date(),
           realizedAt: allocatedEntry > 0 ? new Date() : null,
@@ -2770,18 +2807,38 @@ export async function registerEventParticipantGroup(
           billingGroupId: group.id,
           displayName: aluno.nome,
           registrationFeeCharged: decimal(feePerParticipant),
+          registrationFeeOriginal: decimal(feeOriginalPerParticipant),
+          registrationFeeDiscount: decimal(feeDiscountPerParticipant),
+          registrationFeeDiscountType: input.registrationFeeDiscountType ?? null,
           billingMode,
           entryAmount: decimal(allocatedEntry),
           balanceAmount: decimal(Math.max(feePerParticipant - allocatedEntry, 0)),
           entryPaymentMethod: allocatedEntry > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
           registrationPaymentRules: registrationPaymentRules ?? Prisma.JsonNull,
           isFeePaid,
+          isFeeExempt: input.isFeeExempt ?? false,
           feePaymentMethod: input.entryPaymentMethod ?? input.feePaymentMethod ?? null,
           revenueEntryId: participantEntry?.id ?? null,
           feePaidAmount: decimal(allocatedEntry),
           notes: input.notes,
         },
       });
+
+      if (allocatedEntry > 0) {
+        await tx.eventFinancialPayment.create({
+          data: {
+            contaId: ctx.contaId,
+            eventId: input.eventId,
+            financialEntryId: participantEntry.id,
+            participantId: participant.id,
+            amount: decimal(allocatedEntry),
+            paymentMethod: mapToEventPaymentMethod(input.initialPaymentMethod ?? input.entryPaymentMethod ?? input.feePaymentMethod),
+            paidAt: new Date(),
+            netAmount: decimal(allocatedEntry),
+            createdByUserId: ctx.userId,
+          },
+        });
+      }
 
       await createEventContractForParticipant(tx, {
         contaId: ctx.contaId,
@@ -2876,6 +2933,7 @@ export async function unregisterEventParticipant(ctx: EventsContext, eventId: st
       participant.isFeePaid,
       entry,
       linkedCharges,
+      participant.isFeeExempt,
     );
 
     const updated = await tx.eventParticipant.update({
@@ -2998,6 +3056,7 @@ export async function unregisterEventParticipantGroup(ctx: EventsContext, eventI
         participant.isFeePaid,
         entry,
         participantCharges,
+        participant.isFeeExempt,
       );
 
       const updated = await tx.eventParticipant.update({
@@ -3421,6 +3480,211 @@ export async function quitarEventParticipantFee(ctx: EventsContext, eventId: str
   });
 }
 
+type ManualPaymentTotals = {
+  received: number;
+  refunded: number;
+  net: number;
+};
+
+async function loadManualPaymentTotals(tx: Prisma.TransactionClient, contaId: string, entryId: string): Promise<ManualPaymentTotals> {
+  const payments = await tx.eventFinancialPayment.findMany({
+    where: { contaId, financialEntryId: entryId },
+    select: { amount: true, refundedAmount: true, status: true },
+  });
+  return payments.reduce<ManualPaymentTotals>((totals, payment) => {
+    const amount = toMoney(payment.amount);
+    const refunded = toMoney(payment.refundedAmount);
+    return {
+      received: toMoney(totals.received + amount),
+      refunded: toMoney(totals.refunded + refunded),
+      net: toMoney(totals.net + Math.max(amount - refunded, 0)),
+    };
+  }, { received: 0, refunded: 0, net: 0 });
+}
+
+async function refreshManualParticipantPaymentSnapshot(
+  tx: Prisma.TransactionClient,
+  participant: { id: string; contaId: string; registrationFeeCharged: Prisma.Decimal; revenueEntryId: string | null },
+  entryId: string,
+) {
+  const totals = await loadManualPaymentTotals(tx, participant.contaId, entryId);
+  const expected = toMoney(participant.registrationFeeCharged);
+  const status = totals.net <= 0 && totals.received > 0
+    ? 'REFUNDED'
+    : totals.net >= expected && expected > 0
+      ? 'RECEIVED'
+      : 'PENDING';
+  const entry = await tx.eventFinancialEntry.update({
+    where: { id: entryId },
+    data: {
+      actualAmount: totals.received > 0 ? decimal(totals.received) : null,
+      refundedAmount: decimal(totals.refunded),
+      netAmount: decimal(totals.net),
+      status,
+      realizedAt: totals.received > 0 ? new Date() : null,
+      refundedAt: totals.refunded > 0 ? new Date() : null,
+    },
+  });
+  const updatedParticipant = await tx.eventParticipant.update({
+    where: { id: participant.id },
+    data: {
+      isFeePaid: status === 'RECEIVED',
+      feePaidAmount: decimal(totals.net),
+      feeRefundedAmount: decimal(totals.refunded),
+      entryAmount: decimal(totals.net),
+      balanceAmount: decimal(Math.max(expected - totals.net, 0)),
+      financialStatusSnapshot: status === 'RECEIVED'
+        ? 'QUITADO'
+        : status === 'REFUNDED'
+          ? 'ESTORNADO'
+          : totals.net > 0
+              ? 'EM_DIA'
+              : 'PENDENTE',
+    },
+  });
+  return { entry, participant: updatedParticipant, totals };
+}
+
+export async function createManualEventParticipantPayment(
+  ctx: EventsContext,
+  eventId: string,
+  participantId: string,
+  input: ManualEventParticipantPaymentInput,
+) {
+  return prisma.$transaction(async (tx) => {
+    const participant = await tx.eventParticipant.findFirst({
+      where: { id: participantId, eventId, contaId: ctx.contaId },
+      include: { event: true },
+    });
+    if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
+    assertOperationalEvent(participant.event.status);
+    if (participant.billingMode !== 'FULL' || participant.asaasPaymentId || participant.asaasInstallmentId) {
+      throw new EventsError('BAIXA_MANUAL_BLOQUEADA', 'A baixa manual está disponível apenas para inscrições manuais.', 409);
+    }
+
+    const amount = toMoney(input.amount);
+    const expected = toMoney(participant.registrationFeeCharged);
+    if (amount <= 0) throw new EventsError('VALOR_INVALIDO', 'Informe um valor maior que zero.', 422);
+
+    let entryId = participant.revenueEntryId;
+    if (entryId) {
+      const entry = await tx.eventFinancialEntry.findFirst({ where: { id: entryId, contaId: ctx.contaId } });
+      if (!entry) entryId = null;
+      if (entry?.asaasPaymentId || entry?.paymentProvider === 'ASAAS') {
+        throw new EventsError('BAIXA_MANUAL_BLOQUEADA', 'A inscrição possui uma cobrança gerenciada pelo Asaas.', 409);
+      }
+    }
+    if (!entryId) {
+      const entry = await tx.eventFinancialEntry.create({
+        data: {
+          contaId: ctx.contaId,
+          eventId,
+          type: 'REVENUE',
+          category: 'Taxa de inscrição',
+          description: 'Taxa de inscrição',
+          expectedAmount: decimal(expected),
+          grossAmount: decimal(toMoney(participant.registrationFeeOriginal)),
+          discountAmount: decimal(toMoney(participant.registrationFeeDiscount)),
+          status: 'PENDING',
+          dueDate: new Date(),
+          paymentMethod: null,
+        },
+      });
+      entryId = entry.id;
+      await tx.eventParticipant.update({ where: { id: participant.id }, data: { revenueEntryId: entryId } });
+    }
+
+    const totalsBefore = await loadManualPaymentTotals(tx, ctx.contaId, entryId);
+    const remaining = toMoney(Math.max(expected - totalsBefore.net, 0));
+    if (amount > remaining) {
+      throw new EventsError('VALOR_ACIMA_DO_SALDO', `O valor máximo para baixa é ${remaining.toFixed(2)}.`, 422);
+    }
+
+    const payment = await tx.eventFinancialPayment.create({
+      data: {
+        contaId: ctx.contaId,
+        eventId,
+        financialEntryId: entryId,
+        participantId: participant.id,
+        amount: decimal(amount),
+        paymentMethod: mapToEventPaymentMethod(input.paymentMethod),
+        paidAt: input.paidAt ?? new Date(),
+        notes: input.notes,
+        netAmount: decimal(amount),
+        createdByUserId: ctx.userId,
+      },
+    });
+    const refreshed = await refreshManualParticipantPaymentSnapshot(tx, { ...participant, contaId: ctx.contaId }, entryId);
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.participant.manual_payment.create',
+      entityType: 'EventFinancialPayment',
+      entityId: payment.id,
+      eventId,
+      before: { participant, totals: totalsBefore },
+      after: { payment, participant: refreshed.participant, totals: refreshed.totals },
+    });
+    return { payment, ...refreshed };
+  });
+}
+
+export async function refundManualEventParticipantPayment(ctx: EventsContext, eventId: string, participantId: string, paymentId: string) {
+  return prisma.$transaction(async (tx) => {
+    const payment = await tx.eventFinancialPayment.findFirst({
+      where: { id: paymentId, participantId, eventId, contaId: ctx.contaId },
+      include: { participant: true },
+    });
+    if (!payment?.participant) throw new EventsError('PAGAMENTO_NAO_ENCONTRADO', 'Pagamento manual não encontrado.', 404);
+    if (payment.status === 'REFUNDED') throw new EventsError('PAGAMENTO_JA_ESTORNADO', 'Este pagamento já foi estornado.', 409);
+
+    const updatedPayment = await tx.eventFinancialPayment.update({
+      where: { id: payment.id },
+      data: { status: 'REFUNDED', refundedAt: new Date(), refundedAmount: payment.amount, netAmount: decimal(0) },
+    });
+    const refreshed = await refreshManualParticipantPaymentSnapshot(tx, { ...payment.participant, contaId: ctx.contaId }, payment.financialEntryId);
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.participant.manual_payment.refund',
+      entityType: 'EventFinancialPayment',
+      entityId: payment.id,
+      eventId,
+      before: payment,
+      after: { payment: updatedPayment, participant: refreshed.participant, entry: refreshed.entry },
+    });
+    return { payment: updatedPayment, ...refreshed };
+  });
+}
+
+export async function deleteManualEventParticipantPayment(ctx: EventsContext, eventId: string, participantId: string, paymentId: string) {
+  return prisma.$transaction(async (tx) => {
+    const payment = await tx.eventFinancialPayment.findFirst({
+      where: { id: paymentId, participantId, eventId, contaId: ctx.contaId },
+      include: { participant: true },
+    });
+    if (!payment?.participant) throw new EventsError('PAGAMENTO_NAO_ENCONTRADO', 'Pagamento manual não encontrado.', 404);
+    if (!['RECEIVED', 'REFUNDED'].includes(payment.status)) {
+      throw new EventsError('EXCLUSAO_PAGAMENTO_BLOQUEADA', 'Este pagamento não pode ser excluído.', 409);
+    }
+
+    const totalsBefore = await loadManualPaymentTotals(tx, ctx.contaId, payment.financialEntryId);
+    await tx.eventFinancialPayment.delete({ where: { id: payment.id } });
+    const refreshed = await refreshManualParticipantPaymentSnapshot(tx, { ...payment.participant, contaId: ctx.contaId }, payment.financialEntryId);
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.participant.manual_payment.delete',
+      entityType: 'EventFinancialPayment',
+      entityId: payment.id,
+      eventId,
+      before: { payment, totals: totalsBefore },
+      after: { participant: refreshed.participant, totals: refreshed.totals },
+    });
+    return { paymentId: payment.id, ...refreshed };
+  });
+}
+
 export async function refundManualEventParticipantFee(ctx: EventsContext, eventId: string, participantId: string) {
   return prisma.$transaction(async (tx) => {
     const participant = await tx.eventParticipant.findFirst({
@@ -3539,10 +3803,21 @@ export function calculateParticipantPayment(
   registrationFeeCharged: number,
   isFeePaid: boolean,
   entry: any,
-  charges: any[]
+  charges: any[],
+  isFeeExempt = false,
+  manualPayments: Array<{ status?: string | null; amount?: number | string | null; refundedAmount?: number | string | null }> = [],
 ) {
   const manualEntryAmount = entry?.actualAmount == null ? 0 : toMoney(entry.actualAmount);
-  const resolvedCharges = manualEntryAmount > 0 && !entry?.asaasPaymentId
+  const resolvedCharges = manualPayments.length > 0 && !entry?.asaasPaymentId
+    ? [
+        ...manualPayments.map((payment) => ({
+          status: payment.status === 'REFUNDED' ? 'REFUNDED' : 'RECEIVED_IN_CASH',
+          value: payment.amount,
+          refundedValue: payment.refundedAmount,
+        })),
+        ...charges,
+      ]
+    : manualEntryAmount > 0 && !entry?.asaasPaymentId
     ? [
         {
           status: entry.status === 'REFUNDED' ? 'REFUNDED' : 'RECEIVED_IN_CASH',
@@ -3557,6 +3832,7 @@ export function calculateParticipantPayment(
     paidFallback: isFeePaid,
     cancelled: entry?.status === 'CANCELLED',
     refunded: entry?.status === 'REFUNDED',
+    isExempt: isFeeExempt,
     charges: resolvedCharges,
   });
 
@@ -3730,6 +4006,7 @@ async function buildParticipantPaymentSnapshots(
       participant.isFeePaid,
       entry,
       participantCharges,
+      participant.isFeeExempt,
     );
     const entryPayment = entry
       ? calculateParticipantPayment(
@@ -3896,7 +4173,8 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
       feeValue,
       part.isFeePaid,
       entry,
-      participantCharges
+      participantCharges,
+      part.isFeeExempt
     );
     const removalDecision = part.cancelledAt
       ? await buildEventParticipantRemovalDecision(prisma, ctx, eventId, part)
@@ -3913,12 +4191,16 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
         : null,
       displayName: part.displayName,
       registrationFeeCharged: feeValue,
+      registrationFeeOriginal: part.registrationFeeOriginal.toNumber(),
+      registrationFeeDiscount: part.registrationFeeDiscount.toNumber(),
+      registrationFeeDiscountType: part.registrationFeeDiscountType,
       billingMode: part.billingMode,
       entryAmount: part.entryAmount.toNumber(),
       balanceAmount: part.balanceAmount.toNumber(),
       entryPaymentMethod: part.entryPaymentMethod,
       billingGroupId: part.billingGroupId,
       isFeePaid: part.isFeePaid,
+      isFeeExempt: part.isFeeExempt,
       feePaymentMethod: part.feePaymentMethod,
       notes: part.notes,
       createdAt: part.createdAt.toISOString(),
@@ -4261,9 +4543,15 @@ export async function deleteTicketLot(ctx: EventsContext, lotId: string) {
       );
     }
 
-    // Business rule: Prevent deletion if lot is linked to map sections
+    // Historical sections from archived maps do not represent an operational
+    // dependency. They are kept for audit/history, and the lot FK is SET NULL
+    // when the lot is deleted. Only active/draft maps must block deletion.
     const sectionsCount = await tx.eventMapSection.count({
-      where: { contaId: ctx.contaId, lotId },
+      where: {
+        contaId: ctx.contaId,
+        lotId,
+        map: { status: { not: 'ARCHIVED' } },
+      },
     });
     if (sectionsCount > 0) {
       throw new EventsError(

@@ -398,6 +398,11 @@ enum EventPaymentMethod {
   OTHER
 }
 
+enum EventFinancialPaymentStatus {
+  RECEIVED
+  REFUNDED
+}
+
 enum EventCostumeCategory {
   CLOTHING
   ACCESSORY
@@ -1350,6 +1355,7 @@ model Conta {
   eventCostumes                     EventCostume[]
   eventCostumeAssignments           EventCostumeAssignment[]
   eventFinancialEntries             EventFinancialEntry[]
+  eventFinancialPayments            EventFinancialPayment[]
   eventParticipants                 EventParticipant[]
   eventBillingGroups                EventBillingGroup[]
   eventoContratos                   EventoContrato[]
@@ -1624,6 +1630,7 @@ model Usuario {
   eventMapReservationsCreated     EventMapReservation[]            @relation("EventMapReservationCreatedBy")
   eventAssignmentsDelivered       EventCostumeAssignment[]         @relation("EventCostumeAssignmentDeliveredBy")
   eventFinancialEntries           EventFinancialEntry[]            @relation("EventFinancialEntryCreatedBy")
+  eventFinancialPaymentsCreated   EventFinancialPayment[]          @relation("EventFinancialPaymentCreatedBy")
   eventReportsGenerated           EventReport[]                    @relation("EventReportGeneratedBy")
   eventAudits                     EventAudit[]                     @relation("EventAuditActor")
   platformBillingCheckoutSessions PlatformBillingCheckoutSession[] @relation("PlatformBillingCheckoutCreatedBy")
@@ -4275,25 +4282,26 @@ model SchoolEvent {
   finishedAt                      DateTime?
   archivedAt                      DateTime?
 
-  conta            Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  responsibleUser  Usuario?                 @relation("SchoolEventResponsibleUser", fields: [responsibleUserId], references: [id], onDelete: SetNull)
-  createdBy        Usuario?                 @relation("SchoolEventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  contratoModelo   ContratoModelo?          @relation(fields: [contratoModeloId], references: [id], onDelete: SetNull)
-  maps             EventMap[]
-  mapPublicSeats   EventMapPublicSeat[]
-  mapReservations  EventMapReservation[]
-  mapOrders        EventMapOrder[]
-  mapTickets       EventTicket[]
-  ticketLots       EventTicketLot[]
-  ticketSales      EventTicketSale[]
-  costumes         EventCostume[]
-  assignments      EventCostumeAssignment[]
-  financialEntries EventFinancialEntry[]
-  participants     EventParticipant[]
-  billingGroups    EventBillingGroup[]
-  contratos        EventoContrato[]
-  reports          EventReport[]
-  audits           EventAudit[]
+  conta             Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  responsibleUser   Usuario?                 @relation("SchoolEventResponsibleUser", fields: [responsibleUserId], references: [id], onDelete: SetNull)
+  createdBy         Usuario?                 @relation("SchoolEventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  contratoModelo    ContratoModelo?          @relation(fields: [contratoModeloId], references: [id], onDelete: SetNull)
+  maps              EventMap[]
+  mapPublicSeats    EventMapPublicSeat[]
+  mapReservations   EventMapReservation[]
+  mapOrders         EventMapOrder[]
+  mapTickets        EventTicket[]
+  ticketLots        EventTicketLot[]
+  ticketSales       EventTicketSale[]
+  costumes          EventCostume[]
+  assignments       EventCostumeAssignment[]
+  financialEntries  EventFinancialEntry[]
+  financialPayments EventFinancialPayment[]
+  participants      EventParticipant[]
+  billingGroups     EventBillingGroup[]
+  contratos         EventoContrato[]
+  reports           EventReport[]
+  audits            EventAudit[]
 
   @@index([contaId], name: "idx_school_event_conta")
   @@index([contaId, status, startsAt], name: "idx_school_event_conta_status_start")
@@ -4850,6 +4858,8 @@ model EventFinancialEntry {
   originType      EventFinancialOriginType  @default(MANUAL)
   originId        String?
   expectedAmount  Decimal                   @db.Decimal(12, 2)
+  grossAmount     Decimal?                  @db.Decimal(12, 2)
+  discountAmount  Decimal                   @default(0) @db.Decimal(12, 2)
   actualAmount    Decimal?                  @db.Decimal(12, 2)
   dueDate         DateTime?
   realizedAt      DateTime?
@@ -4868,9 +4878,10 @@ model EventFinancialEntry {
   createdAt       DateTime                  @default(now())
   updatedAt       DateTime                  @updatedAt
 
-  conta     Conta       @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  event     SchoolEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  createdBy Usuario?    @relation("EventFinancialEntryCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  conta     Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event     SchoolEvent             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  createdBy Usuario?                @relation("EventFinancialEntryCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  payments  EventFinancialPayment[]
 
   @@unique([contaId, originType, originId], name: "uq_event_financial_entry_conta_origin")
   @@index([contaId], name: "idx_event_financial_entry_conta")
@@ -4881,36 +4892,70 @@ model EventFinancialEntry {
   @@index([contaId, asaasPaymentId], name: "idx_event_financial_entry_conta_asaas_payment")
 }
 
+model EventFinancialPayment {
+  id               String                      @id @default(cuid())
+  contaId          String
+  eventId          String
+  financialEntryId String
+  participantId    String?
+  amount           Decimal                     @db.Decimal(12, 2)
+  paymentMethod    EventPaymentMethod
+  paidAt           DateTime                    @default(now())
+  notes            String?
+  status           EventFinancialPaymentStatus @default(RECEIVED)
+  refundedAt       DateTime?
+  refundedAmount   Decimal                     @default(0) @db.Decimal(12, 2)
+  netAmount        Decimal                     @db.Decimal(12, 2)
+  createdByUserId  String?
+  createdAt        DateTime                    @default(now())
+  updatedAt        DateTime                    @updatedAt
+
+  conta          Conta               @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event          SchoolEvent         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  financialEntry EventFinancialEntry @relation(fields: [financialEntryId], references: [id], onDelete: Cascade)
+  participant    EventParticipant?   @relation(fields: [participantId], references: [id], onDelete: SetNull)
+  createdBy      Usuario?            @relation("EventFinancialPaymentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([contaId, financialEntryId, status], name: "idx_event_financial_payment_entry_status")
+  @@index([contaId, participantId, status], name: "idx_event_financial_payment_participant_status")
+  @@index([contaId, eventId, paidAt], name: "idx_event_financial_payment_event_paid")
+}
+
 model EventParticipant {
-  id                       String                      @id @default(cuid())
-  contaId                  String
-  eventId                  String
-  type                     EventParticipantType
-  alunoId                  String?
-  turmaId                  String?
-  responsavelId            String?
-  displayName              String?
-  notes                    String?
-  registrationFeeCharged   Decimal                     @default(0) @db.Decimal(12, 2)
-  billingMode              EventParticipantBillingMode @default(FULL)
-  entryAmount              Decimal                     @default(0) @db.Decimal(12, 2)
-  balanceAmount            Decimal                     @default(0) @db.Decimal(12, 2)
-  entryPaymentMethod       String?
-  billingGroupId           String?
-  registrationPaymentRules Json?
-  isFeePaid                Boolean                     @default(false)
-  feePaymentMethod         String?
-  revenueEntryId           String?
-  financialStatusSnapshot  String?
-  feePaidAmount            Decimal                     @default(0) @db.Decimal(12, 2)
-  feeRefundedAmount        Decimal                     @default(0) @db.Decimal(12, 2)
-  standaloneChargeId       String?
-  asaasPaymentId           String?
-  asaasInstallmentId       String?
-  cancelledAt              DateTime?
-  cancelledReason          String?
-  createdAt                DateTime                    @default(now())
-  updatedAt                DateTime                    @updatedAt
+  id                          String                      @id @default(cuid())
+  contaId                     String
+  eventId                     String
+  type                        EventParticipantType
+  alunoId                     String?
+  turmaId                     String?
+  responsavelId               String?
+  displayName                 String?
+  notes                       String?
+  registrationFeeCharged      Decimal                     @default(0) @db.Decimal(12, 2)
+  registrationFeeOriginal     Decimal                     @default(0) @db.Decimal(12, 2)
+  registrationFeeDiscount     Decimal                     @default(0) @db.Decimal(12, 2)
+  registrationFeeDiscountType String?
+  billingMode                 EventParticipantBillingMode @default(FULL)
+  entryAmount                 Decimal                     @default(0) @db.Decimal(12, 2)
+  balanceAmount               Decimal                     @default(0) @db.Decimal(12, 2)
+  entryPaymentMethod          String?
+  billingGroupId              String?
+  registrationPaymentRules    Json?
+  isFeePaid                   Boolean                     @default(false)
+  isFeeExempt                 Boolean                     @default(false)
+  feePaymentMethod            String?
+  revenueEntryId              String?
+  financialStatusSnapshot     String?
+  feePaidAmount               Decimal                     @default(0) @db.Decimal(12, 2)
+  feeRefundedAmount           Decimal                     @default(0) @db.Decimal(12, 2)
+  financialPayments           EventFinancialPayment[]
+  standaloneChargeId          String?
+  asaasPaymentId              String?
+  asaasInstallmentId          String?
+  cancelledAt                 DateTime?
+  cancelledReason             String?
+  createdAt                   DateTime                    @default(now())
+  updatedAt                   DateTime                    @updatedAt
 
   conta        Conta              @relation(fields: [contaId], references: [id], onDelete: Cascade)
   event        SchoolEvent        @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -4936,6 +4981,8 @@ model EventBillingGroup {
   status             EventBillingGroupStatus     @default(PENDING)
   billingMode        EventParticipantBillingMode @default(FULL)
   totalAmount        Decimal                     @db.Decimal(12, 2)
+  originalAmount     Decimal?                    @db.Decimal(12, 2)
+  discountAmount     Decimal                     @default(0) @db.Decimal(12, 2)
   entryAmount        Decimal                     @default(0) @db.Decimal(12, 2)
   balanceAmount      Decimal                     @default(0) @db.Decimal(12, 2)
   entryPaymentMethod String?

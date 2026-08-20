@@ -45,6 +45,60 @@ describe('event participant billing schema', () => {
     expect(result.hasEntry).toBe(false);
   });
 
+  it('accepts a manual fixed discount', () => {
+    const result = registerEventParticipantRequestSchema.parse({
+      alunoId: 'aluno-1',
+      registrationFeeCharged: 725,
+      registrationFeeOriginal: 780,
+      discountType: 'FIXED',
+      discountValue: 55,
+      billingMethod: 'MANUAL_RECEIVED',
+    });
+
+    expect(result.discountValue).toBe(55);
+  });
+
+  it('accepts a partial manual payment or no initial payment', () => {
+    const result = registerEventParticipantRequestSchema.parse({
+      ...base,
+      billingMethod: 'MANUAL_RECEIVED',
+      chargeType: 'ONE_TIME',
+      initialPaymentAmount: 390,
+      initialPaymentMethod: 'MANUAL_PIX',
+    });
+
+    expect(result.initialPaymentAmount).toBe(390);
+    expect(registerEventParticipantRequestSchema.parse({
+      ...base,
+      billingMethod: 'MANUAL_RECEIVED',
+      chargeType: 'ONE_TIME',
+      initialPaymentAmount: 0,
+    }).initialPaymentAmount).toBe(0);
+  });
+
+  it('rejects an initial manual payment above the final amount', () => {
+    expect(() => registerEventParticipantRequestSchema.parse({
+      ...base,
+      billingMethod: 'MANUAL_RECEIVED',
+      chargeType: 'ONE_TIME',
+      initialPaymentAmount: 781,
+      initialPaymentMethod: 'MANUAL_PIX',
+    })).toThrow('O valor recebido não pode ser maior que o valor final da inscrição.');
+  });
+
+  it('rejects discounts for digital billing', () => {
+    expect(() => registerEventParticipantRequestSchema.parse({
+      alunoId: 'aluno-1',
+      registrationFeeCharged: 725,
+      registrationFeeOriginal: 780,
+      discountType: 'FIXED',
+      discountValue: 55,
+      billingMethod: 'PIX',
+      chargeType: 'ONE_TIME',
+      dueDate: '2026-09-10',
+    })).toThrow('Desconto manual');
+  });
+
   it('validates an entry against the total of a grouped billing request', () => {
     const result = registerEventParticipantRequestSchema.parse({
       ...base,

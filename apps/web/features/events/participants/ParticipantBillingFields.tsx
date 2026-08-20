@@ -2,11 +2,13 @@
 
 import { EVENT_PAYMENT_METHOD_LABELS, EVENT_PAYMENT_METHODS } from '@alusa/shared';
 import { Info } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 import { DatePicker } from '@/components/ui/date-picker';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 
 import { EventField as Field } from '../shared/EventField';
@@ -14,14 +16,17 @@ import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
 import { FILTER_INPUT_CLASS } from '../shared/event-form-utils';
 import { formatCurrencyInput } from '../shared/event-formatters';
 
-export type ParticipantBillingMethod = '' | 'MANUAL_RECEIVED' | 'BOLETO' | 'PIX' | 'CREDIT_CARD';
+export type ParticipantBillingMethod = '' | 'MANUAL_RECEIVED' | 'EXEMPT' | 'ISSUE_CHARGE' | 'BOLETO' | 'PIX' | 'CREDIT_CARD';
 export type ParticipantChargeType = 'ONE_TIME' | 'INSTALLMENT';
 export type ParticipantNotificationChannel = 'EMAIL' | 'SMS' | 'WHATSAPP';
+export type ParticipantDiscountType = 'FIXED' | 'PERCENTAGE';
 
 export function ParticipantBillingFields({
   billingMethod,
   chargeType,
   feeText,
+  discountType = 'FIXED',
+  discountText = '',
   hasEntry,
   entryText,
   onHasEntryChange,
@@ -30,10 +35,17 @@ export function ParticipantBillingFields({
   onBillingMethodChange,
   onChargeTypeChange,
   onFeeTextChange,
+  onDiscountTypeChange,
+  onDiscountTextChange,
   onDueDateChange,
   notificationChannels,
   onNotificationChannelsChange,
   feeMultiplier = 1,
+  showManualDiscount = false,
+  useBillingModeSelection = false,
+  chargePaymentMethod = '',
+  onChargePaymentMethodChange,
+  notificationCallout,
 }: {
   billingMethod: ParticipantBillingMethod;
   chargeType: ParticipantChargeType;
@@ -50,10 +62,30 @@ export function ParticipantBillingFields({
   notificationChannels: ParticipantNotificationChannel[];
   onNotificationChannelsChange: (value: ParticipantNotificationChannel[]) => void;
   feeMultiplier?: number;
+  discountType?: ParticipantDiscountType;
+  discountText?: string;
+  onDiscountTypeChange?: (value: ParticipantDiscountType) => void;
+  onDiscountTextChange?: (value: string) => void;
+  showManualDiscount?: boolean;
+  useBillingModeSelection?: boolean;
+  chargePaymentMethod?: 'BOLETO' | 'PIX' | 'CREDIT_CARD' | '';
+  onChargePaymentMethodChange?: (value: 'BOLETO' | 'PIX' | 'CREDIT_CARD') => void;
+  notificationCallout?: ReactNode;
 }) {
+  const isManualBilling = billingMethod === 'MANUAL_RECEIVED' || billingMethod === 'EXEMPT';
+  const effectiveBillingMethod = useBillingModeSelection && billingMethod === 'ISSUE_CHARGE'
+    ? chargePaymentMethod
+    : billingMethod;
   const cleanFeeText = feeText.replace(/[^\d,]/g, '').replace(',', '.');
   const feePerParticipantVal = parseFloat(cleanFeeText) || 0;
   const totalFeeVal = feePerParticipantVal * feeMultiplier;
+  const discountInputVal = discountType === 'FIXED'
+    ? parseFloat(discountText.replace(/[^\d,]/g, '').replace(',', '.')) || 0
+    : parseFloat(discountText.replace(',', '.')) || 0;
+  const discountPerParticipantVal = discountType === 'PERCENTAGE'
+    ? Math.min(totalFeeVal, totalFeeVal * (discountInputVal / 100))
+    : Math.min(totalFeeVal, discountInputVal * feeMultiplier);
+  const chargedTotalVal = Math.max(totalFeeVal - discountPerParticipantVal, 0);
   const entryVal = parseFloat(entryText.replace(/[^\d,]/g, '').replace(',', '.')) || 0;
   const balanceVal = Math.max(totalFeeVal - entryVal, 0);
   const installmentBaseVal = hasEntry ? balanceVal : totalFeeVal;
@@ -79,7 +111,7 @@ export function ParticipantBillingFields({
 
   return (
     <>
-          <Field label={hasEntry ? 'Forma de cobrança do saldo' : 'Forma de Cobrança'}>
+          <Field label={hasEntry ? 'Forma de cobrança do saldo' : useBillingModeSelection ? 'Como será pago?' : 'Forma de Cobrança'}>
         <NativeSelect
           name="billingMethod"
           value={billingMethod || undefined}
@@ -88,41 +120,111 @@ export function ParticipantBillingFields({
           onValueChange={(value) => {
             const nextValue = value as ParticipantBillingMethod;
             onBillingMethodChange(nextValue);
-            if (nextValue === 'MANUAL_RECEIVED') onHasEntryChange(false);
+            if (nextValue === 'MANUAL_RECEIVED' || nextValue === 'EXEMPT') onHasEntryChange(false);
+            if (nextValue === 'ISSUE_CHARGE') {
+              onChargePaymentMethodChange?.(chargePaymentMethod || 'BOLETO');
+            }
             if (nextValue === 'PIX' || nextValue === 'MANUAL_RECEIVED') onChargeTypeChange('ONE_TIME');
           }}
-          options={[
-            ...(!hasEntry ? [{ value: 'MANUAL_RECEIVED', label: 'Quitado na hora (Manual)' }] : []),
-            { value: 'BOLETO', label: 'Boleto' },
-            ...(!hasEntry ? [{ value: 'PIX', label: 'Pix' }] : []),
-            { value: 'CREDIT_CARD', label: 'Cartão de Crédito' },
-          ]}
+          options={useBillingModeSelection
+            ? [
+                ...(!hasEntry ? [{ value: 'MANUAL_RECEIVED', label: 'Quitado na hora (Manual)' }] : []),
+                ...(!hasEntry ? [{ value: 'EXEMPT', label: 'Isento' }] : []),
+                { value: 'ISSUE_CHARGE', label: 'Emitir cobrança' },
+              ]
+            : [
+                ...(!hasEntry ? [{ value: 'MANUAL_RECEIVED', label: 'Quitado na hora (Manual)' }] : []),
+                ...(!hasEntry ? [{ value: 'EXEMPT', label: 'Isento' }] : []),
+                { value: 'BOLETO', label: 'Boleto' },
+                ...(!hasEntry ? [{ value: 'PIX', label: 'Pix' }] : []),
+                { value: 'CREDIT_CARD', label: 'Cartão de Crédito' },
+              ]}
         />
       </Field>
 
-      {billingMethod && (
+      {useBillingModeSelection && billingMethod === 'ISSUE_CHARGE' && (
+        <Field label="Meio de pagamento da cobrança">
+          <NativeSelect
+            name="chargePaymentMethod"
+            value={chargePaymentMethod || undefined}
+            placeholder="Selecione o meio de pagamento"
+            required
+            onValueChange={(value) => {
+              const nextValue = value as 'BOLETO' | 'PIX' | 'CREDIT_CARD';
+              onChargePaymentMethodChange?.(nextValue);
+              if (nextValue === 'PIX') onChargeTypeChange('ONE_TIME');
+            }}
+            options={[
+              { value: 'BOLETO', label: 'Boleto' },
+              { value: 'PIX', label: 'Pix' },
+              { value: 'CREDIT_CARD', label: 'Cartão de Crédito' },
+            ]}
+          />
+        </Field>
+      )}
+
+      {billingMethod && (!useBillingModeSelection || billingMethod !== 'ISSUE_CHARGE' || chargePaymentMethod) && (
         <div className="space-y-4">
-          <Field label="Taxa de inscrição cobrada">
-            <div className="relative flex items-center">
-              <span className="absolute left-3 text-xs font-semibold text-slate-400 pointer-events-none">R$</span>
-              <Input
-                name="registrationFeeCharged"
-                type="text"
-                value={feeText}
-                onChange={(event) => onFeeTextChange(formatCurrencyInput(event.target.value))}
-                className={cn(FILTER_INPUT_CLASS, 'pl-10 text-right')}
-                required
-              />
+          {billingMethod === 'EXEMPT' ? (
+            <input type="hidden" name="registrationFeeOriginal" value={feeText} />
+          ) : (
+            <Field label="Valor original da inscrição">
+              <div className="relative flex items-center">
+                <span className="absolute left-3 text-xs font-semibold text-slate-400 pointer-events-none">R$</span>
+                <Input
+                  name="registrationFeeOriginal"
+                  type="text"
+                  value={feeText}
+                  onChange={(event) => onFeeTextChange(formatCurrencyInput(event.target.value))}
+                  className={cn(FILTER_INPUT_CLASS, 'pl-10 text-right')}
+                  required
+                />
+              </div>
+              {feeMultiplier > 1 && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Total para {feeMultiplier} alunos: <strong className="text-slate-700">R$ {totalFeeVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                </p>
+              )}
+            </Field>
+          )}
+
+          {showManualDiscount && isManualBilling && billingMethod !== 'EXEMPT' && !hasEntry && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <Field label="Desconto concedido">
+                <input type="hidden" name="discountType" value={discountType} />
+                <div className="flex items-center gap-2">
+                  <Tabs
+                    value={discountType}
+                    onValueChange={(value) => onDiscountTypeChange?.(value as ParticipantDiscountType)}
+                    aria-label="Tipo de desconto"
+                    className="shrink-0"
+                  >
+                    <TabsList className="h-10 rounded-xl bg-slate-100/80 p-1">
+                      <TabsTrigger value="PERCENTAGE" className="h-8 rounded-lg px-3 py-0 text-sm shadow-none" aria-label="Desconto percentual">%</TabsTrigger>
+                      <TabsTrigger value="FIXED" className="h-8 rounded-lg px-3 py-0 text-sm shadow-none" aria-label="Desconto em valor fixo">R$</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                  <Input
+                    name="discountValue"
+                    type="text"
+                    value={discountText}
+                    onChange={(event) => onDiscountTextChange?.(
+                      discountType === 'FIXED' ? formatCurrencyInput(event.target.value) : event.target.value.replace(/[^\d,.]/g, ''),
+                    )}
+                    className={cn(FILTER_INPUT_CLASS, 'flex-1 text-right')}
+                    placeholder={discountType === 'FIXED' ? '0,00' : '0,00'}
+                  />
+                </div>
+                <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
+                  <span>Valor final para cobrança</span>
+                  <strong className="text-slate-900">R$ {chargedTotalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                </div>
+              </Field>
             </div>
-            {feeMultiplier > 1 && (
-              <p className="mt-1 text-xs text-slate-500">
-                Total para {feeMultiplier} alunos: <strong className="text-slate-700">R$ {totalFeeVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-              </p>
-            )}
-          </Field>
+          )}
 
           <input type="hidden" name="hasEntry" value={hasEntry ? 'true' : 'false'} />
-          {billingMethod !== 'MANUAL_RECEIVED' && (
+          {!isManualBilling && (
             <div className="flex items-center gap-2 py-1">
               <Checkbox
                 id="event-has-entry"
@@ -130,7 +232,12 @@ export function ParticipantBillingFields({
                 onCheckedChange={(checked) => {
                   onHasEntryChange(checked);
                   if (checked) {
-                    onBillingMethodChange(['BOLETO', 'CREDIT_CARD'].includes(billingMethod) ? billingMethod : 'BOLETO');
+                    if (useBillingModeSelection) {
+                      onBillingMethodChange('ISSUE_CHARGE');
+                      onChargePaymentMethodChange?.(chargePaymentMethod === 'CREDIT_CARD' ? 'CREDIT_CARD' : 'BOLETO');
+                    } else {
+                      onBillingMethodChange(['BOLETO', 'CREDIT_CARD'].includes(billingMethod) ? billingMethod : 'BOLETO');
+                    }
                     onChargeTypeChange('INSTALLMENT');
                   }
                 }}
@@ -192,31 +299,47 @@ export function ParticipantBillingFields({
             </div>
           )}
 
-          <input type="hidden" name="isManual" value={billingMethod === 'MANUAL_RECEIVED' ? 'true' : 'false'} />
-          {billingMethod === 'MANUAL_RECEIVED' && !hasEntry && (
-            <Field label="Forma de recebimento">
-              <NativeSelect
-                name="feePaymentMethod"
-                defaultValue="MANUAL_PIX"
-                options={EVENT_PAYMENT_METHODS.filter((method) => method !== 'COMPLIMENTARY').map((method) => ({
-                  value: method,
-                  label: EVENT_PAYMENT_METHOD_LABELS[method],
-                }))}
-              />
-            </Field>
+          <input type="hidden" name="isManual" value={isManualBilling ? 'true' : 'false'} />
+          {isManualBilling && billingMethod !== 'EXEMPT' && !hasEntry && (
+            <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <Field label="Valor recebido agora">
+                <div className="relative flex items-center">
+                  <span className="pointer-events-none absolute left-3 text-xs font-semibold text-slate-400">R$</span>
+                  <Input
+                    name="initialPaymentAmount"
+                    type="text"
+                    value={entryText}
+                    onChange={(event) => onEntryTextChange(formatCurrencyInput(event.target.value))}
+                    className={cn(FILTER_INPUT_CLASS, 'pl-10 text-right')}
+                    placeholder="0,00"
+                  />
+                </div>
+                <p className="mt-1 text-xs text-slate-500">Informe zero caso o aluno ainda não tenha pago.</p>
+              </Field>
+              <Field label="Forma de recebimento">
+                <NativeSelect
+                  name="feePaymentMethod"
+                  defaultValue="MANUAL_PIX"
+                  options={EVENT_PAYMENT_METHODS.filter((method) => method !== 'COMPLIMENTARY').map((method) => ({
+                    value: method,
+                    label: EVENT_PAYMENT_METHOD_LABELS[method],
+                  }))}
+                />
+              </Field>
+            </div>
           )}
 
-          {billingMethod !== 'MANUAL_RECEIVED' && (
+          {!isManualBilling && (
             <>
               <Field label="Tipo de cobrança">
                 <NativeSelect
                   name="chargeType"
-                  value={hasEntry ? 'INSTALLMENT' : billingMethod === 'PIX' ? 'ONE_TIME' : chargeType}
+                  value={hasEntry ? 'INSTALLMENT' : effectiveBillingMethod === 'PIX' ? 'ONE_TIME' : chargeType}
                   onValueChange={(value) => onChargeTypeChange(value as ParticipantChargeType)}
                   options={
                     hasEntry
                       ? [{ value: 'INSTALLMENT', label: 'Parcelado' }]
-                      : billingMethod === 'PIX'
+                    : effectiveBillingMethod === 'PIX'
                       ? [{ value: 'ONE_TIME', label: 'À vista' }]
                       : [
                           { value: 'ONE_TIME', label: 'À vista' },
@@ -246,8 +369,27 @@ export function ParticipantBillingFields({
             </>
           )}
 
-          {billingMethod !== 'MANUAL_RECEIVED' && (
-            <Field label="Canais de notificação">
+          {!isManualBilling && (
+            <div className="grid gap-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-slate-600">Canais de notificação</span>
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label="Sobre os canais de notificação"
+                        className="inline-flex h-4 w-4 items-center justify-center rounded-full text-slate-400 transition-colors hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
+                      >
+                        <Info className="h-3.5 w-3.5" aria-hidden="true" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="max-w-xs text-left leading-relaxed">
+                      A seleção feita aqui prevalece sobre os padrões da conta.
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
               <div className="flex flex-wrap gap-2">
                 {(['WHATSAPP', 'EMAIL', 'SMS'] as const).map((channel) => {
                   const active = notificationChannels.includes(channel);
@@ -274,9 +416,9 @@ export function ParticipantBillingFields({
                   );
                 })}
               </div>
-              <p className="mt-1 text-xs text-slate-500">A seleção feita aqui prevalece sobre os padrões da conta.</p>
-            </Field>
+            </div>
           )}
+          {notificationCallout}
         </div>
       )}
     </>

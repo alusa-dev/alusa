@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@alusa/database';
-import { unregisterEventParticipant, calculateParticipantPayment } from '@alusa/lib/events/events.service';
+import { unregisterEventParticipant, calculateParticipantPayment, EventsError, recordEventAudit } from '@alusa/lib/events/events.service';
+import { calculateEventParticipantDiscount } from '@alusa/lib/events/event-participant-discount';
 import { listEventContractsByStudent } from '@alusa/lib';
 import { ensureEventAsaasPaymentProviderRegistered } from '@/src/server/events/register-event-asaas-payment-provider';
 import { getEventsContext, handleEventsRouteError } from '../../../_helpers';
@@ -20,6 +21,9 @@ const publicOrderPaymentMethodLabels: Record<string, string> = {
 const patchParticipantBodySchema = z.object({
   notes: z.string().trim().nullable().optional(),
   isFeePaid: z.boolean().optional(),
+  registrationFeeOriginal: z.number().finite().min(0).optional(),
+  discountType: z.enum(['FIXED', 'PERCENTAGE']).optional(),
+  discountValue: z.number().finite().min(0).optional(),
   costumes: z.array(z.object({
     id: z.string(),
     definedSize: z.string().trim().nullable().optional(),
@@ -99,6 +103,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     let costumes: any[] = [];
     let ticketSales: any[] = [];
     let financialEntries: any[] = [];
+    let financialPayments: any[] = [];
 
     if (participant.alunoId || participant.responsavelId) {
       if (participant.alunoId) {
@@ -235,6 +240,17 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    if (participant.revenueEntryId) {
+      financialPayments = await prisma.eventFinancialPayment.findMany({
+        where: {
+          contaId: ctx.contaId,
+          participantId: participant.id,
+          financialEntryId: participant.revenueEntryId,
+        },
+        orderBy: { paidAt: 'asc' },
+      });
+    }
+
     let charges: any[] = [];
     let asaasInstallmentId: string | null = null;
     const planIdsByAsaasPaymentId = new Map<string, string[]>();
@@ -360,14 +376,20 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       feeValue,
       participant.isFeePaid,
       feeEntry,
-      participantCharges
+      participantCharges,
+      participant.isFeeExempt,
+      financialPayments,
     );
 
     return NextResponse.json({
       data: {
         participant: {
           ...participant,
+          isFeeExempt: participant.isFeeExempt,
           registrationFeeCharged: feeValue,
+          registrationFeeOriginal: participant.registrationFeeOriginal.toNumber(),
+          registrationFeeDiscount: participant.registrationFeeDiscount.toNumber(),
+          registrationFeeDiscountType: participant.registrationFeeDiscountType,
           percentPaid: paymentDetails.percentPaid,
           totalPaid: paymentDetails.totalPaid,
           financialStatus: paymentDetails.status,
@@ -396,9 +418,10 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
             EM_DIA: 'PENDING',
             ATRASADO: 'PENDING',
             PENDENTE: 'PENDING',
+            PARCIAL: 'PENDING',
             CANCELADO: 'CANCELLED',
             ESTORNADO: 'REFUNDED',
-            ESTORNADO_PARCIAL: 'PARTIALLY_REFUNDED',
+            ESTORNADO_PARCIAL: 'PENDING',
             ISENTO: 'RECEIVED',
           }[paymentDetails.status] ?? e.status;
 
@@ -406,11 +429,19 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
             ...e,
             status: isFeeEntry ? feeEntryStatus : e.status,
             expectedAmount: e.expectedAmount.toNumber(),
+            grossAmount: e.grossAmount == null ? null : e.grossAmount.toNumber(),
+            discountAmount: e.discountAmount.toNumber(),
             actualAmount: isFeeEntry
-              ? (paymentDetails.totalPaid > 0 ? paymentDetails.totalPaid : null)
+              ? paymentDetails.netPaid
               : (e.actualAmount ? e.actualAmount.toNumber() : null),
           };
         }),
+        financialPayments: financialPayments.map((payment) => ({
+          ...payment,
+          amount: payment.amount.toNumber(),
+          refundedAmount: payment.refundedAmount.toNumber(),
+          netAmount: payment.netAmount.toNumber(),
+        })),
         charges: charges.map((c) => ({
           ...c,
           value: c.value ? c.value.toNumber() : null,
@@ -444,6 +475,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     await prisma.$transaction(async (tx) => {
+      let revenueEntryId = participant.revenueEntryId;
+
       if (body.notes !== undefined) {
         await tx.eventParticipant.update({
           where: { id: participantId },
@@ -518,7 +551,87 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
               revenueEntryId: entry.id,
             },
           });
+          revenueEntryId = entry.id;
         }
+      }
+
+      if (body.registrationFeeOriginal !== undefined || body.discountValue !== undefined || body.discountType !== undefined) {
+        if (participant.billingMode !== 'FULL') {
+          throw new EventsError('TAXA_NAO_EDITAVEL', 'A taxa só pode ser editada em inscrições quitadas integralmente.', 409);
+        }
+
+        const currentEntry = revenueEntryId
+          ? await tx.eventFinancialEntry.findFirst({ where: { id: revenueEntryId, contaId: ctx.contaId } })
+          : null;
+        if (currentEntry?.asaasPaymentId || participant.asaasPaymentId || participant.asaasInstallmentId) {
+          throw new EventsError('TAXA_GERENCIADA_ASAAS', 'Não é possível editar uma taxa vinculada a uma cobrança digital.', 409);
+        }
+
+        const discount = calculateEventParticipantDiscount({
+          originalAmount: body.registrationFeeOriginal ?? (participant.registrationFeeOriginal.toNumber() || participant.registrationFeeCharged.toNumber()),
+          discountType: body.discountType ?? (participant.registrationFeeDiscountType as 'FIXED' | 'PERCENTAGE' | null),
+          discountValue: body.discountValue ?? participant.registrationFeeDiscount.toNumber(),
+        });
+        const isFeePaid = body.isFeePaid ?? participant.isFeePaid;
+        const updatedParticipant = await tx.eventParticipant.update({
+          where: { id: participantId },
+          data: {
+            registrationFeeOriginal: discount.originalAmount,
+            registrationFeeDiscount: discount.discountAmount,
+            registrationFeeDiscountType: discount.discountAmount > 0 ? (body.discountType ?? participant.registrationFeeDiscountType) : null,
+            registrationFeeCharged: discount.chargedAmount,
+            entryAmount: isFeePaid ? discount.chargedAmount : 0,
+            balanceAmount: 0,
+          },
+        });
+
+        if (currentEntry) {
+          await tx.eventFinancialEntry.update({
+            where: { id: currentEntry.id },
+            data: {
+              expectedAmount: discount.chargedAmount,
+              grossAmount: discount.originalAmount,
+              discountAmount: discount.discountAmount,
+              actualAmount: isFeePaid ? discount.chargedAmount : null,
+              status: isFeePaid ? 'RECEIVED' : 'PENDING',
+              realizedAt: isFeePaid ? new Date() : null,
+            },
+          });
+        } else if (discount.chargedAmount > 0) {
+          const entry = await tx.eventFinancialEntry.create({
+            data: {
+              contaId: ctx.contaId,
+              eventId: participant.eventId,
+              type: 'REVENUE',
+              category: 'Taxa de inscrição',
+              description: 'Taxa de inscrição',
+              expectedAmount: discount.chargedAmount,
+              grossAmount: discount.originalAmount,
+              discountAmount: discount.discountAmount,
+              actualAmount: isFeePaid ? discount.chargedAmount : null,
+              dueDate: new Date(),
+              realizedAt: isFeePaid ? new Date() : null,
+              status: isFeePaid ? 'RECEIVED' : 'PENDING',
+              paymentMethod: 'OTHER',
+            },
+          });
+          await tx.eventParticipant.update({
+            where: { id: participantId },
+            data: { revenueEntryId: entry.id },
+          });
+        }
+
+        await recordEventAudit(tx, {
+          contaId: ctx.contaId,
+          actorUserId: ctx.userId,
+          action: 'events.participant.registration_fee.update',
+          entityType: 'EventParticipant',
+          entityId: participantId,
+          eventId,
+          before: participant,
+          after: updatedParticipant,
+          metadata: { originalAmount: discount.originalAmount, discountAmount: discount.discountAmount },
+        });
       }
 
       if (body.costumes && body.costumes.length > 0) {
