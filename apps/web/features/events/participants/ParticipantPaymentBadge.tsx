@@ -14,6 +14,7 @@ export function ParticipantPaymentMethod({ participant }: { participant: EventPa
     BOLETO: 'Boleto',
     PIX: 'Pix',
     CREDIT_CARD: 'Cartão de Crédito',
+    MANUAL_RECEIVED: 'Pendente',
     ...EVENT_PAYMENT_METHOD_LABELS,
   };
   const label = method ? (labels[method] || method) : '—';

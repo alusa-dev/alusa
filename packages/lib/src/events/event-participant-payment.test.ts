@@ -51,6 +51,20 @@ describe('event participant payment calculation', () => {
     expect(exempt.percentPaid).toBe(100);
   });
 
+  it('keeps a zero manual payment pending when an open entry exists', () => {
+    const payment = calculateParticipantPayment(
+      780,
+      false,
+      { status: 'PENDING', actualAmount: null, refundedAmount: 0, asaasPaymentId: null },
+      [],
+      false,
+    );
+
+    expect(payment.totalPaid).toBe(0);
+    expect(payment.percentPaid).toBe(0);
+    expect(payment.status).toBe('PENDENTE');
+  });
+
   it('uses the net amount of manual payments after a refund', () => {
     const payment = calculateParticipantPayment(
       780,

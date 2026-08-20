@@ -248,16 +248,6 @@ const REFUNDED_CHARGE_STATUSES = new Set([
   'CHARGEBACK_DISPUTE',
   'CHARGEBACK_DEPOSITED',
 ]);
-const OPEN_CHARGE_STATUSES = new Set([
-  'OPEN',
-  'PENDING',
-  'PENDENTE',
-  'CREATED',
-  'PENDING_SYNC',
-  'AWAITING_RISK_ANALYSIS',
-  'DUNNING_REQUESTED',
-]);
-
 function normalizeStatus(status: string | null | undefined): string {
   return (status ?? '').trim().toUpperCase();
 }
@@ -338,7 +328,6 @@ export function resolveEventParticipantPayment(input: {
   let openAmount = input.paidFallback ? 0 : expectedAmount;
   let overdueAmount = 0;
   let hasOverdue = false;
-  let hasOpen = !input.paidFallback;
   let hasCancelled = false;
   let hasRefunded = Boolean(input.refunded);
 
@@ -346,7 +335,6 @@ export function resolveEventParticipantPayment(input: {
     paidAmount = 0;
     refundedAmount = 0;
     openAmount = 0;
-    hasOpen = false;
 
     for (const charge of charges) {
       const status = normalizeStatus(charge.status);
@@ -362,7 +350,6 @@ export function resolveEventParticipantPayment(input: {
       } else if (CANCELLED_CHARGE_STATUSES.has(status)) {
         hasCancelled = true;
       } else {
-        hasOpen = OPEN_CHARGE_STATUSES.has(status) || status === '';
         openAmount += value;
         if (OVERDUE_CHARGE_STATUSES.has(status) || isPastDue(charge, today)) {
           hasOverdue = true;
@@ -380,7 +367,7 @@ export function resolveEventParticipantPayment(input: {
   if (hasOverdue) status = 'ATRASADO';
   else if (isFullyPaid) status = 'QUITADO';
   else if (hasRefunded && netPaidAmount <= 0) status = 'ESTORNADO';
-  else if (netPaidAmount > 0 || hasOpen) status = 'EM_DIA';
+  else if (netPaidAmount > 0) status = 'EM_DIA';
   else if (hasCancelled || input.cancelled) status = 'CANCELADO';
 
   return {
