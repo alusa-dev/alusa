@@ -47,6 +47,7 @@ export function mapContratoRecordToDTO(
     assinadoPor: contrato.assinadoPor ? String(contrato.assinadoPor) : null,
     assinadoEmail: contrato.assinadoEmail ? String(contrato.assinadoEmail) : null,
     assinadoCpf: contrato.assinadoCpf ? String(contrato.assinadoCpf) : null,
+    assinadoDataNascimento: toIsoString(contrato.assinadoDataNascimento as Nullable<Date | string>),
     assinadoIp: contrato.assinadoIp ? String(contrato.assinadoIp) : null,
     assinadoEm: toIsoString(contrato.assinadoEm as Nullable<Date | string>),
     assinadoUserAgent: contrato.assinadoUserAgent ? String(contrato.assinadoUserAgent) : null,

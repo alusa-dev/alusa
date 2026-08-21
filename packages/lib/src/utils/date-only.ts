@@ -29,6 +29,13 @@ export function parseDateOnlyToUtcDate(value: string): Date {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
+export function parseBrazilianDateOnlyToUtcDate(value: string): Date {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value.trim());
+  if (!match) throw new Error('Data inválida');
+  const [, day, month, year] = match;
+  return parseDateOnlyToUtcDate(`${year}-${month}-${day}`);
+}
+
 export function isAtLeastAgeYears(value: string, minAgeYears: number, now: Date = new Date()): boolean {
   if (!isValidDateOnly(value)) return false;
 

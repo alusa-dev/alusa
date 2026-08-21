@@ -72,6 +72,7 @@ export async function POST(
       token,
       cpf: body.cpf,
       nome: body.nome,
+      dataNascimento: body.dataNascimento || null,
       email: body.email || null,
       aceite: body.aceite,
       ip: clientIp,

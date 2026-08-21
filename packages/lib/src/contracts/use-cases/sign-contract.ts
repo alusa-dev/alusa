@@ -15,11 +15,13 @@ import { prisma } from '../../prisma';
 import { createContractEvidence } from '../evidence/create-contract-evidence';
 import { generateSignedContractEvidencePdf } from '../pdf/generate-signed-contract-pdf';
 import { hashPublicContractToken } from '../tokens';
+import { parseBrazilianDateOnlyToUtcDate } from '../../utils/date-only';
 
 type SignPublicContractInput = {
   token: string;
   cpf: string;
   nome: string;
+  dataNascimento?: string | null;
   email?: string | null;
   aceite: true;
   ip?: string | null;
@@ -216,6 +218,7 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
     hashPdf: contrato.hashPdf,
     cpf: signer.signer.cpf,
     nome: signer.signer.nome,
+    dataNascimento: input.dataNascimento ?? null,
     email: input.email ?? null,
     assinadoEmIso: now.toISOString(),
     ip: input.ip ?? null,
@@ -313,6 +316,7 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
         status: 'ASSINADO',
         assinadoPor: signer.signer.nome,
         assinadoCpf: signer.signer.cpf,
+        assinadoDataNascimento: input.dataNascimento ? parseBrazilianDateOnlyToUtcDate(input.dataNascimento) : null,
         assinadoEmail: input.email || null,
         assinadoIp: input.ip ?? null,
         assinadoUserAgent: userAgent,

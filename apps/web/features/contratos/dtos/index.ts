@@ -147,6 +147,7 @@ export const contratoDTOSchema = z.object({
   assinadoPor: optionalStringDTOSchema.default(null),
   assinadoEmail: optionalStringDTOSchema.default(null),
   assinadoCpf: optionalStringDTOSchema.default(null),
+  assinadoDataNascimento: optionalDateStringDTOSchema.default(null),
   assinadoIp: optionalStringDTOSchema.default(null),
   assinadoEm: optionalDateStringDTOSchema.default(null),
   assinadoUserAgent: optionalStringDTOSchema.default(null),

@@ -17,6 +17,7 @@ import { snapshotContractConsentTerms } from '@alusa/domain';
 import { createPublicContractToken } from '../contracts/tokens';
 import { generateSignedContractEvidencePdf } from '../contracts/pdf/generate-signed-contract-pdf';
 import { prisma } from '../prisma';
+import { parseBrazilianDateOnlyToUtcDate } from '../utils/date-only';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -214,6 +215,7 @@ export function mapEventContract(contract: any) {
     assinadoPor: contract.assinadoPor ?? null,
     assinadoEmail: contract.assinadoEmail ?? null,
     assinadoCpf: contract.assinadoCpf ?? null,
+    assinadoDataNascimento: contract.assinadoDataNascimento?.toISOString?.() ?? null,
     assinadoEm: contract.assinadoEm?.toISOString?.() ?? null,
     tokenPublico: contract.tokenPublico?.startsWith('hash:') ? '' : contract.tokenPublico,
     tokenExpiraEm: contract.tokenExpiraEm?.toISOString?.() ?? null,
@@ -478,6 +480,7 @@ export async function signPublicEventContract(input: {
   token: string;
   cpf: string;
   nome: string;
+  dataNascimento?: string | null;
   email?: string | null;
   aceite: true;
   consentimentos?: ContractConsentAnswer[];
@@ -516,6 +519,7 @@ export async function signPublicEventContract(input: {
     hashPdf: contract.hashPdf,
     cpf: signer.signer.cpf,
     nome: signer.signer.nome,
+    dataNascimento: input.dataNascimento ?? null,
     email: input.email ?? null,
     assinadoEmIso: now.toISOString(),
     ip: input.ip ?? null,
@@ -579,7 +583,7 @@ export async function signPublicEventContract(input: {
     }
     const updated = await tx.eventoContrato.updateMany({
       where: { id: contract.id, contaId: contract.contaId, status: 'PENDENTE' },
-      data: { status: 'ASSINADO', assinadoPor: signer.signer.nome, assinadoCpf: signer.signer.cpf, assinadoEmail: input.email ?? null, assinadoIp: input.ip ?? null, assinadoUserAgent: input.userAgent ?? null, assinadoEm: now, hashAssinatura: signatureHash, arquivoPdfAssinadoUrl: signedPdfUrl, hashPdfAssinado: signedPdf.hashSha256, decisoesConsentimento: consentimentosPayload },
+      data: { status: 'ASSINADO', assinadoPor: signer.signer.nome, assinadoCpf: signer.signer.cpf, assinadoDataNascimento: input.dataNascimento ? parseBrazilianDateOnlyToUtcDate(input.dataNascimento) : null, assinadoEmail: input.email ?? null, assinadoIp: input.ip ?? null, assinadoUserAgent: input.userAgent ?? null, assinadoEm: now, hashAssinatura: signatureHash, arquivoPdfAssinadoUrl: signedPdfUrl, hashPdfAssinado: signedPdf.hashSha256, decisoesConsentimento: consentimentosPayload },
     });
     if (updated.count !== 1) throw new Error('CONTRACT_ALREADY_SIGNED');
     await tx.eventoContratoDocumento.create({ data: { contaId: contract.contaId, eventoContratoId: contract.id, tipo: 'ASSINADO', arquivoUrl: signedPdf.dataUrl, hashSha256: signedPdf.hashSha256, tamanhoBytes: signedPdf.tamanhoBytes } });

@@ -117,6 +117,7 @@ const cpfDigitsSchema = z
 export const publicAssinarContratoSchema = z.object({
   cpf: cpfDigitsSchema,
   nome: z.string().trim().min(2, 'Nome inválido').max(160, 'Nome inválido'),
+  dataNascimento: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, 'Data de nascimento inválida').optional(),
   email: z.string().email('Email inválido').optional().or(z.literal('')),
   aceite: z.literal(true, {
     errorMap: () => ({ message: 'Aceite explícito é obrigatório.' }),

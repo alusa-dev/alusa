@@ -37,6 +37,7 @@ export function buildSignaturePayload(input: {
   cpf: string;
   nome: string;
   email?: string | null;
+  dataNascimento?: string | null;
   assinadoEmIso: string;
   ip?: string | null;
   userAgent?: string | null;
@@ -51,6 +52,7 @@ export function buildSignaturePayload(input: {
     contaId: input.contaId,
     contratoId: input.contratoId,
     cpf: input.cpf,
+    dataNascimento: input.dataNascimento ?? null,
     email: input.email || null,
     hashPdf: input.hashPdf,
     ip: input.ip ?? null,
