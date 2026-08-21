@@ -5,6 +5,7 @@ import {
   devSetPasswordInputDTOSchema,
   devSetPasswordResultDTOSchema,
 } from '@/features/system/dtos';
+import { revokeUserSessions } from '@/lib/auth-service';
 import { mapDevSetPasswordResultToDTO } from '@/features/system/mappers';
 import { isTestRouteEnabled, notFoundJson } from '@/lib/security/runtime-guards';
 
@@ -21,9 +22,12 @@ export async function POST(req: Request) {
   const rounds = Number(process.env.BCRYPT_ROUNDS || 10);
   const pepper = process.env.BCRYPT_PEPPER || '';
   const senhaHash = await bcrypt.hash(password + pepper, rounds);
-  await prisma.usuario.update({
-    where: { id: user.id },
-    data: { senhaHash, passwordChangedAt: new Date() },
+  await prisma.$transaction(async (tx) => {
+    await tx.usuario.update({
+      where: { id: user.id },
+      data: { senhaHash, passwordChangedAt: new Date() },
+    });
+    await revokeUserSessions(user.id, tx);
   });
   return NextResponse.json(
     devSetPasswordResultDTOSchema.parse(

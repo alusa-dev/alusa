@@ -7,9 +7,17 @@ function safeCallbackUrl(callbackUrl: string): string {
   return target.origin === window.location.origin ? `${target.pathname}${target.search}${target.hash}` : '/';
 }
 
-/** Revoga a sessão no servidor, remove os cookies e descarta dados locais. */
-export async function logoutCurrentSession(callbackUrl = '/'): Promise<void> {
-  const response = await fetch('/api/auth/logout', {
+function clearLocalSession(): void {
+  useUserStore.getState().clear();
+  try {
+    sessionStorage.removeItem('alusa:user');
+  } catch {
+    // O estado em memória já foi removido; storage pode estar indisponível.
+  }
+}
+
+async function endSession(path: string, callbackUrl: string): Promise<void> {
+  const response = await fetch(path, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'content-type': 'application/json' },
@@ -20,12 +28,16 @@ export async function logoutCurrentSession(callbackUrl = '/'): Promise<void> {
     throw new Error('Não foi possível encerrar a sessão com segurança. Tente novamente.');
   }
 
-  useUserStore.getState().clear();
-  try {
-    sessionStorage.removeItem('alusa:user');
-  } catch {
-    // O estado em memória já foi removido; storage pode estar indisponível.
-  }
-
+  clearLocalSession();
   window.location.assign(safeCallbackUrl(callbackUrl));
+}
+
+/** Encerra somente a sessão deste navegador. */
+export function logoutCurrentSession(callbackUrl = '/'): Promise<void> {
+  return endSession('/api/auth/logout', callbackUrl);
+}
+
+/** Revoga todas as sessões do usuário e encerra também o navegador atual. */
+export function revokeAllSessions(callbackUrl = '/'): Promise<void> {
+  return endSession('/api/auth/revoke-all-sessions', callbackUrl);
 }

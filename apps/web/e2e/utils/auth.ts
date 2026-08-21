@@ -55,6 +55,7 @@ export async function seedAdminAndAuthenticate(page: Page, params: { email: stri
       name: 'Admin E2E',
       role: 'ADMIN',
       contaId: conta.id,
+      sessionVersion: 0,
     },
   });
 

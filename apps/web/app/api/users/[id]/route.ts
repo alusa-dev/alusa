@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth-options';
+import { revokeUserSessions } from '@/lib/auth-service';
 import prisma from '@/lib/prisma';
 import { removeManagedUserAccess } from '@/features/users/managed-user-access';
 
@@ -112,6 +113,7 @@ export async function PATCH(_req: Request, { params }: { params: Promise<{ id: s
 
     const exists = await findManagedUser(rawParams.id, auth.contaId);
     if (!exists) return NextResponse.json({ error: 'Usuário não encontrado' }, { status: 404 });
+    const shouldRevokeSessions = parsed.data.status === 'INATIVO' && exists.status !== 'INATIVO';
 
     if (
       rawParams.id === auth.currentUserId &&
@@ -163,6 +165,11 @@ export async function PATCH(_req: Request, { params }: { params: Promise<{ id: s
         return NextResponse.json({ error: 'Usuário não encontrado' }, { status: 404 });
       }
     }
+
+    if (shouldRevokeSessions) {
+      await revokeUserSessions(rawParams.id);
+    }
+
     const updated = await findManagedUser(rawParams.id, auth.contaId);
     if (!updated) return NextResponse.json({ error: 'Usuário não encontrado' }, { status: 404 });
 

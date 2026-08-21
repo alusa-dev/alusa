@@ -114,6 +114,7 @@ async function authenticate(page: Page, ids: SeedIds) {
       name: 'Admin Responsaveis',
       role: 'ADMIN',
       contaId: ids.contaId,
+      sessionVersion: 0,
     },
   });
 

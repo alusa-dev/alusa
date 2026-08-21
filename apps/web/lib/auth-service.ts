@@ -1,4 +1,4 @@
-import { type Usuario } from '@prisma/client';
+import { Prisma, type PrismaClient, type Usuario } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import prisma from '@/lib/prisma';
 
@@ -32,6 +32,31 @@ export type VerifyCredentialsDetailedResult =
 export type SessionAccessResult =
   | { ok: true; emailVerified: boolean; contaId: string; role: string; sessionVersion: number }
   | { ok: false; reason: 'USER_INACTIVE' | 'ACCOUNT_DEACTIVATED' | 'ACCOUNT_UNAVAILABLE' | 'SESSION_REVOKED' };
+
+type SessionRevocationDb = PrismaClient | Prisma.TransactionClient;
+
+/**
+ * Revoga todas as sessões JWT de um usuário.
+ *
+ * O incremento é atômico e, por aceitar um TransactionClient, pode ser usado
+ * junto com alterações críticas de credenciais ou de status do usuário.
+ */
+export async function revokeUserSessions(
+  userId: string,
+  db: SessionRevocationDb = prisma,
+): Promise<number> {
+  const normalizedUserId = userId.trim();
+  if (!normalizedUserId) {
+    throw new Error('userId é obrigatório para revogar sessões.');
+  }
+
+  const result = await db.usuario.updateMany({
+    where: { id: normalizedUserId },
+    data: { sessionVersion: { increment: 1 } },
+  });
+
+  return result.count;
+}
 
 function isAccountDeactivated(status: string | null | undefined, deletedAt: Date | null | undefined): boolean {
   return Boolean(deletedAt) || (typeof status === 'string' && status.toUpperCase() !== 'ATIVO');

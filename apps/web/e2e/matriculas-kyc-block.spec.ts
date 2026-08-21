@@ -42,6 +42,7 @@ async function seedAndAuthenticate(page: Parameters<Parameters<typeof test>[1]>[
       name: usuario.nome,
       role: usuario.role,
       contaId: usuario.contaId,
+      sessionVersion: 0,
     },
   });
 

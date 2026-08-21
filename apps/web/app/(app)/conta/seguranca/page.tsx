@@ -1,4 +1,5 @@
 import { PasswordForm } from '@/features/account/components/PasswordForm';
+import { SessionSecurityActions } from '@/features/account/components/SessionSecurityActions';
 
 export default function ContaSegurancaPage() {
   return (
@@ -18,6 +19,7 @@ export default function ContaSegurancaPage() {
         </p>
       </header>
       <PasswordForm />
+      <SessionSecurityActions />
     </section>
   );
 }

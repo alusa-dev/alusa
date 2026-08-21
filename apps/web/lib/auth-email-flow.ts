@@ -19,6 +19,7 @@ import {
 } from '@/lib/email/auth-email-templates';
 import { sendTransactionalEmail } from '@/lib/email/transactional-email';
 import { assertPasswordPolicy, hashPassword } from '@/lib/auth-password';
+import { revokeUserSessions } from '@/lib/auth-service';
 
 type RequestMetadata = {
   ip?: string | null;
@@ -351,6 +352,7 @@ export async function resetPasswordByToken(input: { token: string; password: str
       where: { id: consumed.user.id },
       data: { senhaHash, passwordChangedAt: new Date() },
     });
+    await revokeUserSessions(consumed.user.id, tx);
 
     await invalidateAuthActionTokens(consumed.user.id, 'RESET_PASSWORD', tx);
   });

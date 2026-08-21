@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
+import { revokeUserSessions } from '@/lib/auth-service';
 import prisma from '@/lib/prisma';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { resolveUserId } from '../helpers';
@@ -63,9 +64,12 @@ export async function PATCH(req: Request) {
       );
     }
 
-    await prisma.usuario.update({
-      where: { id: userId },
-      data: { email: newEmail },
+    await prisma.$transaction(async (tx) => {
+      await tx.usuario.update({
+        where: { id: userId },
+        data: { email: newEmail },
+      });
+      await revokeUserSessions(userId, tx);
     });
 
     return NextResponse.json(changeEmailResultDTOSchema.parse({ success: true, email: newEmail }));

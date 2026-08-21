@@ -1,7 +1,4 @@
 import { NextRequest } from 'next/server';
-import { getToken } from 'next-auth/jwt';
-
-import prisma from '@/lib/prisma';
 import { clearAuthCookies } from '@/lib/auth-cookies';
 import { jsonNoStore } from '@/lib/http-security';
 
@@ -23,23 +20,7 @@ export async function POST(req: NextRequest) {
   }
 
   const response = jsonNoStore({ ok: true });
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET }).catch(() => null);
-  const userId = typeof token?.id === 'string' ? token.id : typeof token?.sub === 'string' ? token.sub : null;
-
-  if (!userId) {
-    return clearAuthCookies(response, req.headers.get('cookie'));
-  }
-
-  try {
-    // A versão é conferida em toda revalidação da sessão; um JWT copiado deixa
-    // de ser aceito imediatamente após este incremento.
-    await prisma.usuario.updateMany({
-      where: { id: userId },
-      data: { sessionVersion: { increment: 1 } },
-    });
-  } catch {
-    return jsonNoStore({ ok: false, error: 'Não foi possível revogar a sessão.' }, { status: 503 });
-  }
-
+  // Logout individual somente remove as credenciais deste navegador. A
+  // revogação global é uma operação explícita e separada.
   return clearAuthCookies(response, req.headers.get('cookie'));
 }

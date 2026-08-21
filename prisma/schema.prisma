@@ -1590,7 +1590,7 @@ model Usuario {
   welcomeWizardSeenAt  DateTime?
   senhaHash            String
   passwordChangedAt    DateTime?
-  // Incrementado no logout e em alterações críticas; invalida JWTs emitidos antes disso.
+  // Incrementado somente em revogação global e alterações críticas; invalida JWTs emitidos antes disso.
   sessionVersion       Int       @default(0)
   emailVerifiedAt      DateTime?
   role                 Role      @default(RESPONSAVEL)

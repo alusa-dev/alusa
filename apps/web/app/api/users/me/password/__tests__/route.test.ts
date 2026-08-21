@@ -11,6 +11,7 @@ const {
   rateLimitAsyncMock,
   prismaMock,
   auditRecordMock,
+  revokeUserSessionsMock,
 } = vi.hoisted(() => ({
   getServerSessionMock: vi.fn(),
   comparePasswordMock: vi.fn(),
@@ -21,8 +22,10 @@ const {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    $transaction: vi.fn(),
   },
   auditRecordMock: vi.fn(),
+  revokeUserSessionsMock: vi.fn(),
 }));
 
 vi.mock('next-auth', () => ({
@@ -31,6 +34,10 @@ vi.mock('next-auth', () => ({
 
 vi.mock('@/lib/auth-options', () => ({
   authOptions: {},
+}));
+
+vi.mock('@/lib/auth-service', () => ({
+  revokeUserSessions: revokeUserSessionsMock,
 }));
 
 vi.mock('@/lib/auth-password', () => ({
@@ -75,9 +82,11 @@ describe('PATCH /api/users/me/password', () => {
       contaId: 'conta-1',
     });
     prismaMock.usuario.update.mockResolvedValue({ id: 'user-1' });
+    prismaMock.$transaction.mockImplementation(async (callback: (_tx: typeof prismaMock) => unknown) => callback(prismaMock));
     comparePasswordMock.mockResolvedValue(true);
     hashPasswordMock.mockResolvedValue('new-hash');
     auditRecordMock.mockResolvedValue(undefined);
+    revokeUserSessionsMock.mockResolvedValue(1);
   });
 
   it('rejeita requisição sem sessão', async () => {
@@ -130,6 +139,7 @@ describe('PATCH /api/users/me/password', () => {
         passwordChangedAt: expect.any(Date),
       },
     });
+    expect(revokeUserSessionsMock).toHaveBeenCalledWith('user-1', prismaMock);
     expect(auditRecordMock).toHaveBeenCalledWith(expect.objectContaining({
       action: 'auth.password_changed',
       metadata: expect.objectContaining({ result: 'success', ip: '127.0.0.1' }),

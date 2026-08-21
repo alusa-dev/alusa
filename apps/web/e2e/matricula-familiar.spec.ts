@@ -193,7 +193,7 @@ async function authenticate(page: Page, seed: Pick<SeedResult, 'userId' | 'email
 
   const token = await encode({
     secret,
-    token: { id: seed.userId, email: seed.email, name: 'Admin Familiar', role: 'ADMIN', contaId: seed.contaId },
+    token: { id: seed.userId, email: seed.email, name: 'Admin Familiar', role: 'ADMIN', contaId: seed.contaId, sessionVersion: 0 },
   });
 
   await page.context().addCookies([

@@ -22,6 +22,12 @@ describe('authOptions callbacks.jwt', () => {
     resolveSessionAccessMock.mockResolvedValue({ ok: true });
   });
 
+  it('não revoga sessões no evento de logout normal', async () => {
+    const { authOptions } = await import('@/lib/auth-options');
+
+    expect(authOptions.events?.signOut).toBeUndefined();
+  });
+
   it('ignora tentativa do cliente de promover emailVerified', async () => {
     const { authOptions } = await import('@/lib/auth-options');
 

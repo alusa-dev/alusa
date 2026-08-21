@@ -109,16 +109,6 @@ export const authOptions: NextAuthOptions = {
       },
     }) as any,
   ],
-  events: {
-    async signOut({ token }) {
-      const userId = typeof token?.id === 'string' ? token.id : typeof token?.sub === 'string' ? token.sub : null;
-      if (!userId) return;
-      await prisma.usuario.updateMany({
-        where: { id: userId },
-        data: { sessionVersion: { increment: 1 } },
-      });
-    },
-  },
   callbacks: {
     async jwt({ token, user, trigger, session }) {
       // Quando há user (login), garanta que os campos essenciais sejam copiados para o token
@@ -169,7 +159,11 @@ export const authOptions: NextAuthOptions = {
           const issuedAt = typeof (token as any).iat === 'number' ? (token as any).iat * 1000 : 0;
           (token as any).passwordChangedAt = passwordChangedAt || undefined;
 
-          if (passwordChangedAt > 0 && issuedAt > 0 && passwordChangedAt >= issuedAt) {
+          // `iat` do JWT tem precisão de segundos. Comparar diretamente com
+          // Date.getTime() poderia invalidar um novo login feito no mesmo
+          // segundo da troca de senha; a revogação canônica é sessionVersion.
+          const passwordChangedAtSecond = Math.floor(passwordChangedAt / 1000);
+          if (passwordChangedAtSecond > 0 && issuedAt > 0 && passwordChangedAtSecond > Math.floor(issuedAt / 1000)) {
             delete (token as any).id;
             (token as any).accountActive = false;
           }

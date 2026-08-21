@@ -43,7 +43,7 @@ export async function seedAdminAndLogin(
 
   const token = await encode({
     secret,
-    token: { id: user.id, email, name: 'Admin E2E', role: 'ADMIN', contaId: conta.id },
+    token: { id: user.id, email, name: 'Admin E2E', role: 'ADMIN', contaId: conta.id, sessionVersion: 0 },
   });
 
   await page.context().addCookies([

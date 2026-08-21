@@ -71,6 +71,7 @@ async function authenticate(page: Page, seed: { userId: string; userEmail: strin
       role: seed.role,
       contaId: seed.contaId,
       emailVerified: true,
+      sessionVersion: 0,
     },
   });
 
