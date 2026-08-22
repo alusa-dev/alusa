@@ -2,12 +2,31 @@
 import { SessionProvider } from 'next-auth/react';
 import type { ReactNode } from 'react';
 import { ThemeProvider } from '@/components/theme/ThemeProvider';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { toast, Toaster } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import { KycEnforcementProvider } from '@/features/kyc/KycEnforcementProvider';
 import { QueryProvider } from '@/components/providers/query-provider';
 import { PlatformBillingProvider } from '@/features/platform-billing/PlatformBillingContext';
+import { AlusaLogoLoader } from '@/components/feedback/AlusaLogoLoader';
+
+function LogoutLoadingOverlay() {
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  useEffect(() => {
+    const onLogoutStart = () => setIsLoggingOut(true);
+    const onLogoutEnd = () => setIsLoggingOut(false);
+
+    window.addEventListener('alusa:logout:start', onLogoutStart);
+    window.addEventListener('alusa:logout:end', onLogoutEnd);
+    return () => {
+      window.removeEventListener('alusa:logout:start', onLogoutStart);
+      window.removeEventListener('alusa:logout:end', onLogoutEnd);
+    };
+  }, []);
+
+  return isLoggingOut ? <AlusaLogoLoader fullScreen /> : null;
+}
 
 export function AppProviders({ children }: { children: ReactNode }) {
   useEffect(() => {
@@ -61,6 +80,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
           <ThemeProvider>
             <KycEnforcementProvider>
               {children}
+              <LogoutLoadingOverlay />
               <Toaster />
             </KycEnforcementProvider>
           </ThemeProvider>

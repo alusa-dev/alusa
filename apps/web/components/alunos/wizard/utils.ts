@@ -78,8 +78,6 @@ export function buildStepFieldMap(isMinor: boolean) {
       "tamanhoCamiseta",
       "tamanhoCalcado",
       "tags",
-      "consentimentoImagem",
-      "consentimentoComunicacoes",
     ],
     foto: [],
     responsavel: isMinor

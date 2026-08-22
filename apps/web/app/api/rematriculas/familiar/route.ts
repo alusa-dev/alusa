@@ -178,11 +178,17 @@ export async function POST(request: Request) {
         dueDay: body.vencimentoDia,
         enrollmentFeeAmount: body.taxaMatricula,
         enrollmentFeeExempt: body.taxaIsenta,
+        enrollmentFeeJustification: body.taxaJustificativa ?? null,
         feeChargeMoment: 'CHARGE_ON_START' as const,
         feeUnit: body.taxaMatricula > 0 ? ('PER_STUDENT' as const) : ('NO_FEE' as const),
         feePurpose: 'ADMINISTRATIVE_FEE' as const,
+        lateFeePercent: body.multaPercentual ?? null,
+        interestMonthlyPercent: body.jurosMensal ?? null,
         earlyDiscountPercent: body.descontoAntecipado,
+        earlyDiscountType: body.descontoTipo ?? 'PERCENTAGE',
         earlyDiscountDays: body.prazoDesconto,
+        notificationChannels: body.notificationChannels,
+        notificationChannelsConfigured: body.notificationChannelsConfigured,
       },
     };
     const preview = await previewRenewalProcess(renewalInput, { prisma });

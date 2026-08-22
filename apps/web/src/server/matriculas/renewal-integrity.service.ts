@@ -1,4 +1,11 @@
-import { type PrismaClient } from '@prisma/client';
+import {
+  NotificationCategory,
+  NotificationSeverity,
+  NotificationType,
+  Prisma,
+  type PrismaClient,
+} from '@prisma/client';
+import { createNotification } from '@alusa/lib';
 
 import { createRenewalPending } from './renewal-governance.service';
 
@@ -32,6 +39,53 @@ async function registerIssue(
     },
     deps,
   );
+}
+
+async function notifyCapacityIssue(
+  input: { contaId: string; issue: IntegrityIssue },
+) {
+  if (!['FUTURE_CLASS_OVER_CAPACITY', 'FUTURE_COMBO_OVER_CAPACITY'].includes(input.issue.code)) {
+    return;
+  }
+
+  const metadata = input.issue.metadata ?? {};
+  const targetPeriodId = typeof metadata.targetPeriodId === 'string' ? metadata.targetPeriodId : 'unknown';
+  const targetId =
+    input.issue.code === 'FUTURE_CLASS_OVER_CAPACITY'
+      ? typeof metadata.targetClassId === 'string' ? metadata.targetClassId : 'unknown'
+      : typeof metadata.targetComboId === 'string' ? metadata.targetComboId : 'unknown';
+  const entityType = input.issue.code === 'FUTURE_CLASS_OVER_CAPACITY' ? 'Turma' : 'Combo';
+
+  try {
+    await createNotification({
+      contaId: input.contaId,
+      type: NotificationType.SYSTEM_ATTENTION,
+      category: NotificationCategory.ENROLLMENT,
+      severity: NotificationSeverity.CRITICAL,
+      title: input.issue.title,
+      message: `${input.issue.message} Revise as reservas do período ${targetPeriodId}.`,
+      dedupeKey: `renewal-integrity:${input.contaId}:${input.issue.code}:${targetPeriodId}:${targetId}`,
+      relatedPath: '/rematriculas',
+      entityType,
+      entityId: targetId === 'unknown' ? null : targetId,
+      sourceType: 'RENEWAL_INTEGRITY',
+      sourceId: `${targetPeriodId}:${targetId}`,
+      metadata: {
+        ...(metadata as Prisma.InputJsonObject),
+        code: input.issue.code,
+        targetPeriodId,
+        targetId,
+      },
+      recipientRoles: ['ADMIN', 'FINANCEIRO', 'RECEPCAO'],
+      actor: { type: 'SYSTEM', id: null },
+    });
+  } catch (error) {
+    console.warn('[RenewalIntegrity] Falha ao criar alerta operacional de capacidade', {
+      contaId: input.contaId,
+      code: input.issue.code,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export async function runRenewalIntegrityCheck(
@@ -272,6 +326,7 @@ export async function runRenewalIntegrityCheck(
 
   for (const issue of issues) {
     await registerIssue({ contaId: input.contaId, issue }, deps);
+    await notifyCapacityIssue({ contaId: input.contaId, issue });
   }
 
   return {

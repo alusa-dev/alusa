@@ -56,8 +56,6 @@ export default function ConfirmacaoSection({ all, fotoPreview }: Props) {
         ['Tam. Camiseta', all.tamanhoCamiseta],
         ['Tam. Calçado', all.tamanhoCalcado],
         ['Tags', tagsJoined],
-        ['Consent. Imagem', all.consentimentoImagem ? 'Sim' : 'Não'],
-        ['Consent. Comunicações', all.consentimentoComunicacoes ? 'Sim' : 'Não'],
       ],
     },
   ];

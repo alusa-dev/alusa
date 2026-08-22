@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import * as Popover from '@radix-ui/react-popover';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import { Button } from '@/components/ui/button';
 import useCurrentUser from '@/hooks/use-current-user';
@@ -24,6 +25,16 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   RematriculaProcessCancelDialog,
   RematriculaProcessDetailsDialog,
 } from './components/RematriculaProcessDialogs';
@@ -40,14 +51,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Edit3, Megaphone, MoreVertical, Search, Trash2 } from 'lucide-react';
+import { Edit3, MoreVertical, Search, Trash2, UserRound, UsersRound } from 'lucide-react';
 import {
   cancelRematriculaProcessRequest,
-  createRematriculaCommunicationRequest,
   createRematriculaCampaignRequest,
   deleteRematriculaCampaignRequest,
-  editRematriculaFutureLinkRequest,
-  grantRematriculaExceptionRequest,
   resolveRematriculaPendingRequest,
   updateRematriculaCampaignRequest,
   type RematriculaCampaignSummary,
@@ -69,13 +77,6 @@ type RematriculaTitularGroup = {
   itens: RematriculaElegivelItem[];
 };
 
-function getDiasBadgeVariant(diasRestantes: number): BadgeVariant {
-  if (diasRestantes < 0) return 'destructive';
-  if (diasRestantes <= 15) return 'warning';
-  if (diasRestantes <= 45) return 'info';
-  return 'neutral';
-}
-
 function getInitials(name: string) {
   return name
     .split(' ')
@@ -84,31 +85,6 @@ function getInitials(name: string) {
     .join('')
     .slice(0, 2)
     .toUpperCase();
-}
-
-const NAME_PARTICLES = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
-
-/** Primeiro nome(s) + sobrenome essencial para exibição compacta (ex.: Lara Bianca de Alencar â†’ Lara Bianca). */
-function shortStudentDisplayName(fullName: string): string {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '';
-  if (parts.length === 1) return parts[0];
-
-  const lower = parts.map((w) => w.toLowerCase());
-  const particleIdx = lower.findIndex((w) => NAME_PARTICLES.has(w));
-
-  if (particleIdx === -1) {
-    return `${parts[0]} ${parts[parts.length - 1]}`;
-  }
-
-  const given = parts.slice(0, particleIdx).join(' ');
-  const afterParticle = parts[particleIdx + 1];
-
-  if (particleIdx === 1) {
-    return afterParticle ? `${parts[0]} ${afterParticle}` : parts[0];
-  }
-
-  return given || parts[0];
 }
 
 /** Lista legível em PT: "A e B" ou "A, B e C". */
@@ -218,15 +194,15 @@ function getCampaignBadgeVariant(status: RematriculaCampaignSummary['status']): 
 function getCampaignAccentClasses(index: number) {
   const accents = [
     {
-      icon: 'bg-violet-100 text-violet-700',
+      dot: 'bg-violet-100',
       bar: 'bg-violet-600',
     },
     {
-      icon: 'bg-orange-100 text-orange-600',
+      dot: 'bg-orange-100',
       bar: 'bg-orange-500',
     },
     {
-      icon: 'bg-slate-100 text-slate-600',
+      dot: 'bg-slate-100',
       bar: 'bg-slate-300',
     },
   ];
@@ -252,18 +228,6 @@ function getCampaignProgress(campaign: RematriculaCampaignSummary, processes: Re
     total,
     percentage: Math.min(100, Math.max(0, Math.round((confirmed / total) * 100))),
   };
-}
-
-function getGroupActionStatus(group: RematriculaTitularGroup) {
-  const statuses = group.itens.map((item) => item.financeiro.rematriculaActionStatus);
-  if (statuses.includes('BLOQUEADA')) return 'BLOQUEADA';
-  if (statuses.includes('REQUER_OVERRIDE')) return 'REQUER_OVERRIDE';
-  if (statuses.includes('LIBERADA_COM_AVISO')) return 'LIBERADA_COM_AVISO';
-  return 'LIBERADA';
-}
-
-function getGroupDiasRestantes(group: RematriculaTitularGroup) {
-  return Math.min(...group.itens.map((item) => item.diasRestantes));
 }
 
 function getGroupCanRenew(group: RematriculaTitularGroup) {
@@ -381,6 +345,7 @@ function buildEditProcessItem(process: RematriculaProcessSummary | null): Rematr
       multaPercentual: futureEnrollment?.multaPercentual ?? null,
       jurosMensal: futureEnrollment?.jurosMensal ?? null,
       descontoAntecipado: futureEnrollment?.descontoAntecipado ?? null,
+      descontoTipo: null,
       prazoDesconto: futureEnrollment?.prazoDesconto ?? null,
       diasTolerancia: null,
       descontos: [],
@@ -395,7 +360,6 @@ export default function RematriculasFeature() {
   const contaId = user?.contaId ?? null;
 
   const [search, setSearch] = useState('');
-  const [diasAntecedencia, setDiasAntecedencia] = useState(DEFAULT_RENEWAL_LOOKAHEAD_DAYS);
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('CAMPANHAS');
   const [campaignStatusFilter, setCampaignStatusFilter] = useState<'TODOS' | RematriculaCampaignSummary['status']>('TODOS');
   const [campaignPeriodFilter, setCampaignPeriodFilter] = useState('TODOS');
@@ -403,6 +367,7 @@ export default function RematriculasFeature() {
   const [processOriginFilter, setProcessOriginFilter] = useState<'TODOS' | RematriculaProcessSummary['origin']>('TODOS');
   const [processPeriodFilter, setProcessPeriodFilter] = useState('TODOS');
   const [standaloneSearchOpen, setStandaloneSearchOpen] = useState(false);
+  const [standaloneCloseAlertOpen, setStandaloneCloseAlertOpen] = useState(false);
   const [standaloneSearch, setStandaloneSearch] = useState('');
   const [selectedStandaloneGroupId, setSelectedStandaloneGroupId] = useState<string | null>(null);
   const [selectedMatricula, setSelectedMatricula] = useState<RematriculaElegivelItem | null>(null);
@@ -413,16 +378,29 @@ export default function RematriculasFeature() {
   const [campaignPeriod, setCampaignPeriod] = useState(String(new Date().getFullYear() + 1));
   const [campaignStartsAt, setCampaignStartsAt] = useState(new Date().toISOString().slice(0, 10));
   const [campaignEndsAt, setCampaignEndsAt] = useState('');
-  const [campaignAudienceType, setCampaignAudienceType] = useState('ALL_ACTIVE_ENROLLMENTS');
   const [campaignSaving, setCampaignSaving] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<RematriculaCampaignSummary | null>(null);
   const [selectedProcess, setSelectedProcess] = useState<RematriculaProcessSummary | null>(null);
-  const [selectedProcessReadOnly, setSelectedProcessReadOnly] = useState(false);
   const [editingProcess, setEditingProcess] = useState<RematriculaProcessSummary | null>(null);
   const [renewAgainProcess, setRenewAgainProcess] = useState<RematriculaProcessSummary | null>(null);
   const [cancelProcess, setCancelProcess] = useState<RematriculaProcessSummary | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelSaving, setCancelSaving] = useState(false);
+
+  function closeStandaloneSearch() {
+    setStandaloneSearchOpen(false);
+    setStandaloneSearch('');
+    setSelectedStandaloneGroupId(null);
+    setStandaloneCloseAlertOpen(false);
+  }
+
+  function requestCloseStandaloneSearch() {
+    if (standaloneSearch.trim() || selectedStandaloneGroupId) {
+      setStandaloneCloseAlertOpen(true);
+      return;
+    }
+    closeStandaloneSearch();
+  }
 
   const modalControlClass =
     'flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30';
@@ -434,7 +412,7 @@ export default function RematriculasFeature() {
 
   const { items, loading, reload, campaigns, processes, history } = useRematriculas({
     contaId,
-    diasAntecedencia,
+    diasAntecedencia: DEFAULT_RENEWAL_LOOKAHEAD_DAYS,
   });
 
   const quickFilterOptions: Array<{ label: string; value: QuickFilter }> = [
@@ -472,6 +450,11 @@ export default function RematriculasFeature() {
         .includes(normalizedSearch);
     });
   }, [groupedItems, standaloneSearch]);
+
+  const standaloneSuggestions = useMemo(() => {
+    if (!standaloneSearch.trim() || selectedStandaloneGroupId) return [];
+    return filteredStandaloneGroups.slice(0, 6);
+  }, [filteredStandaloneGroups, selectedStandaloneGroupId, standaloneSearch]);
 
   const selectedStandaloneGroup = useMemo(
     () => groupedItems.find((group) => group.id === selectedStandaloneGroupId) ?? null,
@@ -527,7 +510,7 @@ export default function RematriculasFeature() {
 
   const filteredCampaigns = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
-    return campaigns.filter((campaign) => {
+    const filtered = campaigns.filter((campaign) => {
       const matchesSearch =
         !normalizedSearch ||
         campaign.nome.toLowerCase().includes(normalizedSearch) ||
@@ -538,6 +521,8 @@ export default function RematriculasFeature() {
         campaignPeriodFilter === 'TODOS' || campaign.targetPeriodId === campaignPeriodFilter;
       return matchesSearch && matchesStatus && matchesPeriod;
     });
+
+    return filtered;
   }, [campaignPeriodFilter, campaignStatusFilter, campaigns, search]);
 
   function resetCampaignForm() {
@@ -546,8 +531,6 @@ export default function RematriculasFeature() {
     setCampaignPeriod(String(new Date().getFullYear() + 1));
     setCampaignStartsAt(new Date().toISOString().slice(0, 10));
     setCampaignEndsAt('');
-    setCampaignAudienceType('ALL_ACTIVE_ENROLLMENTS');
-    setDiasAntecedencia(DEFAULT_RENEWAL_LOOKAHEAD_DAYS);
     setEditingCampaign(null);
   }
 
@@ -559,24 +542,12 @@ export default function RematriculasFeature() {
   }
 
   function openEditCampaignModal(campaign: RematriculaCampaignSummary) {
-    const audienceDefinition = campaign.audienceDefinition ?? {};
-
     setEditingCampaign(campaign);
     setCampaignName(campaign.nome);
     setCampaignDescription(campaign.descricao ?? '');
     setCampaignPeriod(campaign.targetPeriodId);
     setCampaignStartsAt(toDateInputValue(campaign.campaignStartsAt));
     setCampaignEndsAt(toDateInputValue(campaign.campaignEndsAt));
-    setCampaignAudienceType(
-      typeof audienceDefinition.type === 'string'
-        ? audienceDefinition.type
-        : 'ALL_ACTIVE_ENROLLMENTS',
-    );
-    setDiasAntecedencia(
-      typeof audienceDefinition.diasAntecedencia === 'number'
-        ? audienceDefinition.diasAntecedencia
-        : DEFAULT_RENEWAL_LOOKAHEAD_DAYS,
-    );
     setCampaignFormOpen(true);
   }
 
@@ -592,8 +563,8 @@ export default function RematriculasFeature() {
         campaignStartsAt,
         campaignEndsAt: campaignEndsAt || null,
         audienceDefinition: {
-          type: campaignAudienceType,
-          diasAntecedencia,
+          type: 'ALL_ACTIVE_ENROLLMENTS',
+          diasAntecedencia: DEFAULT_RENEWAL_LOOKAHEAD_DAYS,
           filters: {
             academicStatus: ['ATIVO'],
             financialStatus: ['ADIMPLENTE', 'COM_PENDENCIA_PERMITIDA'],
@@ -731,76 +702,6 @@ export default function RematriculasFeature() {
     }
   }
 
-  async function handleGrantException(process: RematriculaProcessSummary) {
-    const rule = window.prompt('Regra ignorada ou flexibilizada:');
-    if (!rule?.trim()) return;
-    const impact = window.prompt('Impacto da exceção:');
-    if (!impact?.trim()) return;
-    const justification = window.prompt('Justificativa da exceção:');
-    if (!justification?.trim()) return;
-
-    try {
-      await grantRematriculaExceptionRequest(process.id, {
-        permission: 'renewal.exception.grant',
-        rule: rule.trim(),
-        impact: impact.trim(),
-        justification: justification.trim(),
-      });
-      toast.custom((t) => (
-        <CustomToast
-          variant="success"
-          title="Exceção registrada"
-          description="A exceção ficou vinculada ao processo."
-          onClose={() => toast.dismiss(t)}
-        />
-      ));
-      setSelectedProcess(null);
-      void reload();
-    } catch (error) {
-      toast.custom((t) => (
-        <CustomToast
-          variant="error"
-          title="Não foi possível registrar exceção"
-          description={(error as Error).message}
-          onClose={() => toast.dismiss(t)}
-        />
-      ));
-    }
-  }
-
-  async function handleCreateCommunication(process: RematriculaProcessSummary) {
-    const message = window.prompt('Mensagem para registrar na comunicação do processo:');
-    if (!message?.trim()) return;
-
-    try {
-      await createRematriculaCommunicationRequest(process.id, {
-        channel: 'PORTAL',
-        audience: process.holderType === 'RESPONSIBLE' ? 'RESPONSAVEL' : 'ALUNO',
-        subject: 'Atualização de rematrícula',
-        message: message.trim(),
-      });
-      toast.custom((t) => (
-        <CustomToast
-          variant="success"
-          title="Comunicação registrada"
-          description="A mensagem ficou no histórico do processo."
-          onClose={() => toast.dismiss(t)}
-        />
-      ));
-      setSelectedProcess(null);
-      void reload();
-    } catch (error) {
-      toast.custom((t) => (
-        <CustomToast
-          variant="error"
-          title="Não foi possível registrar comunicação"
-          description={(error as Error).message}
-          onClose={() => toast.dismiss(t)}
-        />
-      ));
-    }
-  }
-
   function startStandaloneRenewal(group: RematriculaTitularGroup | null) {
     if (!group) return;
     if (!getGroupCanRenew(group)) {
@@ -840,8 +741,7 @@ export default function RematriculasFeature() {
     setRenewAgainProcess(process);
   }
 
-  function openProcessDetails(process: RematriculaProcessSummary, readOnly = false) {
-    setSelectedProcessReadOnly(readOnly);
+  function openProcessDetails(process: RematriculaProcessSummary) {
     setSelectedProcess(process);
   }
 
@@ -1025,7 +925,7 @@ export default function RematriculasFeature() {
               className="w-40"
               onClick={(event) => event.stopPropagation()}
             >
-              <DropdownMenuItem onSelect={() => openProcessDetails(process, true)}>
+                <DropdownMenuItem onSelect={() => openProcessDetails(process)}>
                 Ver detalhes
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -1039,24 +939,21 @@ export default function RematriculasFeature() {
     {
       id: 'campanha',
       header: 'Campanha',
-      width: 'min-w-0 lg:w-[40%]',
+      width: 'min-w-0 lg:w-[30%]',
       align: 'left',
       noWrap: false,
       render: (campaign) => {
         const index = filteredCampaigns.findIndex((item) => item.id === campaign.id);
         const accent = getCampaignAccentClasses(index < 0 ? 0 : index);
-        const progress = getCampaignProgress(campaign, processes);
         return (
           <div className="flex min-w-0 items-center gap-3">
-            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${accent.icon}`}>
-              <Megaphone className="h-4 w-4" />
-            </div>
+            <div
+              aria-hidden="true"
+              className={`h-10 w-10 shrink-0 rounded-full ${accent.dot}`}
+            />
             <div className="min-w-0">
               <div className="truncate text-[13px] font-normal text-gray-900">
                 {campaign.nome}
-              </div>
-              <div className="mt-0.5 truncate text-[12px] leading-snug text-gray-500">
-                {progress.confirmed} {progress.confirmed === 1 ? 'Rematriculado' : 'Rematriculados'}
               </div>
             </div>
           </div>
@@ -1064,9 +961,19 @@ export default function RematriculasFeature() {
       },
     },
     {
+      id: 'rematriculados',
+      header: 'Rematriculados',
+      width: 'lg:w-[14%]',
+      align: 'left',
+      render: (campaign) => {
+        const progress = getCampaignProgress(campaign, processes);
+        return <span className="text-gray-700">{progress.confirmed}</span>;
+      },
+    },
+    {
       id: 'periodo',
       header: 'Período de destino',
-      width: 'lg:w-[16%]',
+      width: 'lg:w-[14%]',
       align: 'left',
       render: (campaign) => (
         <span className="leading-[20px] text-gray-700">{campaign.targetPeriodId}</span>
@@ -1075,11 +982,11 @@ export default function RematriculasFeature() {
     {
       id: 'janela',
       header: 'Janela da campanha',
-      width: 'lg:w-[22%]',
+      width: 'lg:w-[20%]',
       align: 'left',
       render: (campaign) => (
         <span className="leading-[20px] text-gray-700">
-          {formatDate(campaign.campaignStartsAt)} â€” {formatDate(campaign.campaignEndsAt)}
+          {formatDate(campaign.campaignStartsAt)} — {formatDate(campaign.campaignEndsAt)}
         </span>
       ),
     },
@@ -1211,15 +1118,17 @@ export default function RematriculasFeature() {
           {showCampaigns ? (
             <div className="space-y-7">
               <div className="flex w-full flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between lg:gap-2">
-                <label className="relative block">
-                  <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <Input
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Buscar por nome da campanha"
-                    className="h-10 w-full rounded-lg border-slate-200 pl-10 shadow-none lg:w-[360px] xl:w-[420px]"
-                  />
-                </label>
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+                  <label className="relative block">
+                    <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <Input
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Buscar por nome da campanha"
+                      className="h-10 w-full rounded-lg border-slate-200 pl-10 shadow-none lg:w-[360px] xl:w-[420px]"
+                    />
+                  </label>
+                </div>
                 <div className="grid min-w-0 grid-cols-2 gap-2 lg:flex lg:items-center lg:justify-end">
                   <Select
                     value={campaignStatusFilter}
@@ -1405,7 +1314,7 @@ export default function RematriculasFeature() {
                   </div>
                 }
                 ariaLabel="Tabela de histórico de rematrícula"
-                onRowClick={(process) => openProcessDetails(process, true)}
+                onRowClick={(process) => openProcessDetails(process)}
               />
             </div>
           ) : null}
@@ -1414,16 +1323,11 @@ export default function RematriculasFeature() {
 
       <RematriculaProcessDetailsDialog
         process={selectedProcess}
-        readOnly={selectedProcessReadOnly}
         onOpenChange={(open) => {
           if (!open) {
             setSelectedProcess(null);
-            setSelectedProcessReadOnly(false);
           }
         }}
-        onCreateCommunication={(process) => void handleCreateCommunication(process)}
-        onGrantException={(process) => void handleGrantException(process)}
-        onResolvePending={(pendingId) => void handleResolvePending(pendingId)}
       />
 
       <RematriculaProcessCancelDialog
@@ -1443,11 +1347,8 @@ export default function RematriculasFeature() {
       <Dialog
         open={standaloneSearchOpen}
         onOpenChange={(open) => {
-          setStandaloneSearchOpen(open);
-          if (!open) {
-            setStandaloneSearch('');
-            setSelectedStandaloneGroupId(null);
-          }
+          if (open) setStandaloneSearchOpen(true);
+          else requestCloseStandaloneSearch();
         }}
       >
         <DialogContent className="w-full max-w-2xl gap-0 overflow-hidden bg-white p-0 md:rounded-2xl">
@@ -1461,88 +1362,112 @@ export default function RematriculasFeature() {
           </div>
 
           <div className="space-y-4 px-6 py-5">
-            <label className="relative block">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input
-                value={standaloneSearch}
-                onChange={(event) => {
-                  setStandaloneSearch(event.target.value);
-                  setSelectedStandaloneGroupId(null);
-                }}
-                placeholder="Buscar aluno ou responsável"
-                className="h-10 w-full rounded-lg border-slate-200 pl-10 shadow-none"
-              />
-            </label>
+            <Popover.Root open={Boolean(standaloneSearch.trim()) && !selectedStandaloneGroupId}>
+              <Popover.Anchor asChild>
+                <label className="relative block">
+                  <Search className="pointer-events-none absolute left-4 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    value={standaloneSearch}
+                    onChange={(event) => {
+                      setStandaloneSearch(event.target.value);
+                      setSelectedStandaloneGroupId(null);
+                    }}
+                    placeholder="Buscar aluno ou responsável"
+                    className="h-10 w-full rounded-lg border-slate-200 pl-10 shadow-none focus:border-[#5c2f91] focus:ring-2 focus:ring-[#5c2f91]/30"
+                    aria-autocomplete="list"
+                    aria-expanded={Boolean(standaloneSearch.trim()) && !selectedStandaloneGroupId}
+                  />
+                </label>
+              </Popover.Anchor>
+              <Popover.Portal>
+                <Popover.Content
+                  className="z-[99999] w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg"
+                  sideOffset={4}
+                  align="start"
+                  onOpenAutoFocus={(event) => event.preventDefault()}
+                >
+                  <div className="max-h-[360px] overflow-y-auto">
+                    {standaloneSuggestions.length === 0 ? (
+                      <div className="px-4 py-3 text-center text-sm text-slate-500">
+                        {loading
+                          ? 'Carregando candidatos...'
+                          : 'Nenhum candidato disponível para rematrícula avulsa.'}
+                      </div>
+                    ) : (
+                      standaloneSuggestions.map((group) => {
+                        const studentNames = group.itens
+                          .map((item) => item.aluno.nome)
+                          .filter(Boolean)
+                          .join(', ');
+                        return (
+                          <button
+                            key={group.id}
+                            type="button"
+                            className="flex w-full items-center justify-between gap-3 border-b border-gray-100 bg-white px-3 py-2.5 text-left text-sm text-gray-900 transition last:border-b-0 hover:bg-gray-50"
+                            onClick={() => {
+                              setSelectedStandaloneGroupId(group.id);
+                              setStandaloneSearch(group.titular.nome);
+                            }}
+                          >
+                            <div className="min-w-0">
+                              <div className="truncate font-medium text-gray-900">
+                                {group.titular.nome}
+                              </div>
+                              <div className="mt-0.5 truncate text-xs text-gray-500">
+                                {studentNames || (group.tipo === 'RESPONSAVEL' ? 'Responsável' : 'Aluno')}
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2 text-slate-500">
+                              {group.tipo === 'RESPONSAVEL' ? (
+                                <UsersRound className="h-4 w-4" />
+                              ) : (
+                                <UserRound className="h-4 w-4" />
+                              )}
+                              <span className="text-xs font-medium">{group.itens.length}</span>
+                            </div>
+                          </button>
+                        );
+                    })
+                    )}
+                  </div>
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
 
-            <div className="max-h-[360px] overflow-y-auto rounded-lg border border-slate-200">
-              {filteredStandaloneGroups.length === 0 ? (
-                <div className="px-4 py-10 text-center text-sm text-slate-500">
-                  {loading
-                    ? 'Carregando candidatos...'
-                    : 'Nenhum candidato disponível para rematrícula avulsa.'}
+            {selectedStandaloneGroup ? (
+              <div className="rounded-xl border border-violet-100 bg-violet-50/50 px-4 py-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Avatar className="h-10 w-10">
+                      {selectedStandaloneGroup.titular.foto ? (
+                        <AvatarImage
+                          src={selectedStandaloneGroup.titular.foto}
+                          alt={selectedStandaloneGroup.titular.nome}
+                        />
+                      ) : null}
+                      <AvatarFallback className="bg-purple-100 text-purple-700">
+                        {getInitials(selectedStandaloneGroup.titular.nome)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-slate-900">
+                        {selectedStandaloneGroup.titular.nome}
+                      </div>
+                      <div className="mt-0.5 truncate text-xs text-slate-500">
+                        {selectedStandaloneGroup.itens
+                          .map((item) => item.aluno.nome)
+                          .filter(Boolean)
+                          .join(', ') ||
+                          (selectedStandaloneGroup.tipo === 'RESPONSAVEL' ? 'Responsável' : 'Aluno')}
+                      </div>
+                    </div>
+                  </div>
+                  <Badge variant="info">
+                    {selectedStandaloneGroup.itens.length} vínculo(s)
+                  </Badge>
                 </div>
-              ) : (
-                filteredStandaloneGroups.slice(0, 30).map((group) => {
-                  const selected = selectedStandaloneGroupId === group.id;
-                  const dias = getGroupDiasRestantes(group);
-                  const actionStatus = getGroupActionStatus(group);
-                  const studentNames = group.itens
-                    .map((item) => item.aluno.nome ?? '')
-                    .filter(Boolean);
-                  return (
-                    <button
-                      key={group.id}
-                      type="button"
-                      className={`flex w-full items-center gap-3 border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 ${
-                        selected ? 'bg-purple-50' : 'bg-white hover:bg-slate-50'
-                      }`}
-                      onClick={() => setSelectedStandaloneGroupId(group.id)}
-                    >
-                      <Avatar className="h-10 w-10 shrink-0">
-                        {group.titular.foto ? (
-                          <AvatarImage src={group.titular.foto} alt={group.titular.nome} />
-                        ) : null}
-                        <AvatarFallback className="bg-purple-100 text-purple-700 font-medium">
-                          {getInitials(group.titular.nome)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[13px] font-medium text-slate-900">
-                          {group.titular.nome}
-                        </div>
-                        <div className="truncate text-xs text-slate-500">
-                          {group.tipo === 'RESPONSAVEL' ? 'Responsável financeiro' : 'Aluno titular'} · {joinNamesPortuguese(studentNames.map(shortStudentDisplayName))}
-                        </div>
-                      </div>
-                      <div className="hidden shrink-0 items-center gap-2 sm:flex">
-                        <Badge variant={getDiasBadgeVariant(dias)}>
-                          {dias < 0 ? 'Expirado' : `${dias} dia${dias === 1 ? '' : 's'}`}
-                        </Badge>
-                        <Badge
-                          variant={
-                            actionStatus === 'BLOQUEADA'
-                              ? 'destructive'
-                              : actionStatus === 'REQUER_OVERRIDE'
-                                ? 'warning'
-                                : actionStatus === 'LIBERADA_COM_AVISO'
-                                  ? 'info'
-                                  : 'success'
-                          }
-                        >
-                          {actionStatus === 'BLOQUEADA'
-                            ? 'Bloqueada'
-                            : actionStatus === 'REQUER_OVERRIDE'
-                              ? 'Exceção'
-                              : actionStatus === 'LIBERADA_COM_AVISO'
-                                ? 'Aviso'
-                                : 'Liberada'}
-                        </Badge>
-                      </div>
-                    </button>
-                  );
-                })
-              )}
-            </div>
+              </div>
+            ) : null}
           </div>
 
           <DialogFooter className="gap-2 border-t border-slate-200 bg-white px-6 py-4">
@@ -1550,7 +1475,7 @@ export default function RematriculasFeature() {
               type="button"
               variant="outline"
               className="h-10 min-w-[112px] border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-              onClick={() => setStandaloneSearchOpen(false)}
+              onClick={requestCloseStandaloneSearch}
             >
               Cancelar
             </Button>
@@ -1560,11 +1485,35 @@ export default function RematriculasFeature() {
               className="h-10 min-w-[132px] bg-brand-accent text-white shadow-sm hover:bg-brand-accent/90"
               onClick={() => startStandaloneRenewal(selectedStandaloneGroup)}
             >
-              Continuar
+              Confirmar
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={standaloneCloseAlertOpen} onOpenChange={setStandaloneCloseAlertOpen}>
+        <AlertDialogContent className="max-w-md rounded-xl border border-slate-200 bg-white">
+          <AlertDialogHeader className="space-y-2 text-left">
+            <AlertDialogTitle className="text-lg font-medium text-slate-900">
+              Sair da rematrícula?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-sm text-slate-600">
+              A busca e a seleção atual serão descartadas. Deseja realmente sair?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel className="border-slate-300 bg-white text-slate-700 hover:bg-slate-50">
+              Continuar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-brand-accent text-white hover:bg-brand-accent/90"
+              onClick={closeStandaloneSearch}
+            >
+              Sair
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog
         open={campaignFormOpen}
@@ -1652,43 +1601,6 @@ export default function RematriculasFeature() {
                 </div>
               </div>
 
-              <div className={modalSectionClass}>
-                <span className="text-sm font-semibold text-slate-700">Candidatos iniciais</span>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div className="space-y-1 md:col-span-2">
-                    <label className={modalLabelClass}>Segmentação</label>
-                    <Select value={campaignAudienceType} onValueChange={setCampaignAudienceType}>
-                      <SelectTrigger className={modalControlClass}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ALL_ACTIVE_ENROLLMENTS">Matrículas ativas</SelectItem>
-                        <SelectItem value="CONTRACT_END_WINDOW">Contratos na janela</SelectItem>
-                        <SelectItem value="CURRENT_CLASSES">Turmas atuais</SelectItem>
-                        <SelectItem value="CURRENT_PLANS_OR_COMBOS">Planos ou combos atuais</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className={modalLabelClass}>Antecedência</label>
-                    <Input
-                      type="number"
-                      min={15}
-                      max={365}
-                      value={diasAntecedencia}
-                      onChange={(event) => {
-                        const parsed = Number(event.target.value);
-                        setDiasAntecedencia(
-                          Number.isFinite(parsed)
-                            ? Math.min(365, Math.max(15, parsed))
-                            : DEFAULT_RENEWAL_LOOKAHEAD_DAYS,
-                        );
-                      }}
-                      className={modalControlClass}
-                    />
-                  </div>
-                </div>
-              </div>
             </div>
 
             <DialogFooter className="shrink-0 gap-2 border-t border-slate-200 bg-white px-4 py-4 md:px-8">
@@ -1725,6 +1637,7 @@ export default function RematriculasFeature() {
       <RematriculaDialog
         open={Boolean(selectedMatricula)}
         contaId={contaId ?? undefined}
+        campaigns={campaigns}
         item={selectedMatricula}
         onOpenChange={(open) => {
           if (!open) setSelectedMatricula(null);
@@ -1785,6 +1698,7 @@ export default function RematriculasFeature() {
       <RematriculaFamiliarDialog
         open={Boolean(selectedTitular)}
         contaId={contaId ?? undefined}
+        campaigns={campaigns}
         titular={selectedTitular ? {
           id: selectedTitular.titular.id,
           tipo: selectedTitular.tipo,

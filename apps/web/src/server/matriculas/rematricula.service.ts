@@ -134,6 +134,7 @@ export async function listarRematriculasElegiveis(input: {
       multaPercentual: true,
       jurosMensal: true,
       descontoAntecipado: true,
+      descontoTipo: true,
       prazoDesconto: true,
       integrationStatus: true,
       statusFinanceiro: true,
@@ -407,6 +408,7 @@ export async function listarRematriculasElegiveis(input: {
         multaPercentual: toNullableNumber(m.multaPercentual),
         jurosMensal: toNullableNumber(m.jurosMensal),
         descontoAntecipado: toNullableNumber(m.descontoAntecipado),
+        descontoTipo: m.descontoTipo ?? null,
         prazoDesconto: m.prazoDesconto ?? null,
         diasTolerancia: null,
         descontos: m.descontos

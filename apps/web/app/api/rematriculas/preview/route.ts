@@ -40,6 +40,7 @@ const previewSchema = z.object({
   descontos: z.array(z.object({ id: z.string().trim().min(1), cumulativo: z.boolean().optional() })).optional(),
   items: z.array(renewalItemSchema).min(1),
   effectiveAt: z.string().datetime().or(z.string().date()).nullable().optional(),
+  targetContractEndsAt: z.string().datetime().or(z.string().date()).nullable().optional(),
   firstDueDate: z.string().datetime().or(z.string().date()).nullable().optional(),
   contractModelId: z.string().trim().nullable().optional(),
   financialTerms: z
@@ -49,13 +50,19 @@ const previewSchema = z.object({
       dueDay: z.number().int().min(1).max(31).nullable().optional(),
       enrollmentFeeAmount: z.number().nonnegative().nullable().optional(),
       enrollmentFeeExempt: z.boolean().nullable().optional(),
+      enrollmentFeeJustification: z.string().trim().nullable().optional(),
       feeChargeMoment: z.enum(['CHARGE_ON_CONFIRMATION', 'CHARGE_ON_START', 'EXEMPT']).optional(),
       feeUnit: z.enum(['NO_FEE', 'PER_STUDENT', 'PER_FAMILY']).optional(),
       feePurpose: z
         .enum(['ADMINISTRATIVE_FEE', 'SEAT_RESERVATION', 'ADVANCE_FIRST_TUITION'])
         .optional(),
+      lateFeePercent: z.number().nonnegative().nullable().optional(),
+      interestMonthlyPercent: z.number().nonnegative().nullable().optional(),
       earlyDiscountPercent: z.number().nonnegative().nullable().optional(),
+      earlyDiscountType: z.enum(['FIXED', 'PERCENTAGE']).nullable().optional(),
       earlyDiscountDays: z.number().int().nonnegative().nullable().optional(),
+      notificationChannels: z.array(z.enum(['EMAIL', 'SMS', 'WHATSAPP'])).optional(),
+      notificationChannelsConfigured: z.boolean().optional(),
     })
     .nullable()
     .optional(),
@@ -103,6 +110,7 @@ export async function POST(request: Request) {
         descontos: body.descontos,
         items: body.items,
         effectiveAt: parseDate(body.effectiveAt),
+        targetContractEndsAt: parseDate(body.targetContractEndsAt),
         firstDueDate: parseDate(body.firstDueDate),
         contractModelId: body.contractModelId,
         financialTerms: body.financialTerms,

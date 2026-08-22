@@ -89,6 +89,7 @@ const rematriculaFamiliarBaseSchema = z.object({
   multaPercentual: z.preprocess(coerceOptionalNumber, z.number().nonnegative().optional()),
   jurosMensal: z.preprocess(coerceOptionalNumber, z.number().nonnegative().optional()),
   descontoAntecipado: z.preprocess(coerceOptionalNumber, z.number().nonnegative().optional()),
+  descontoTipo: z.enum(['FIXED', 'PERCENTAGE']).optional(),
   prazoDesconto: z.preprocess(coerceOptionalNumber, z.number().int().nonnegative().optional()),
   overrideReason: z.preprocess(emptyToUndefined, z.string().trim().max(500).optional()),
   notificationChannels: z

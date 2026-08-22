@@ -17,14 +17,23 @@ function clearLocalSession(): void {
 }
 
 async function endSession(path: string, callbackUrl: string): Promise<void> {
-  const response = await fetch(path, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
-    body: '{}',
-  });
+  window.dispatchEvent(new Event('alusa:logout:start'));
+
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+  } catch (error) {
+    window.dispatchEvent(new Event('alusa:logout:end'));
+    throw error;
+  }
 
   if (!response.ok) {
+    window.dispatchEvent(new Event('alusa:logout:end'));
     throw new Error('Não foi possível encerrar a sessão com segurança. Tente novamente.');
   }
 

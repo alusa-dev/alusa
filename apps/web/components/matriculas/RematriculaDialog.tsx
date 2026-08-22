@@ -1,12 +1,23 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTurmas } from '@/features/cadastro/turmas/hooks/use-turmas';
 import { usePlanos } from '@/features/cadastro/planos/hooks/use-planos';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select,
   SelectContent,
@@ -17,6 +28,7 @@ import {
 import type {
   FormaPagamentoValue,
   RematriculaElegivelItem,
+  RematriculaCampaignSummary,
 } from '@/features/cadastro/rematriculas/services/rematriculas-service';
 import {
   createRematriculaRequest,
@@ -65,6 +77,7 @@ interface RematriculaDialogProps {
   open: boolean;
   contaId?: string;
   campaignId?: string | null;
+  campaigns?: RematriculaCampaignSummary[];
   targetPeriodId?: string;
   mode?: 'CREATE' | 'EDIT_FUTURE';
   item: RematriculaElegivelItem | null;
@@ -75,6 +88,10 @@ interface RematriculaDialogProps {
 }
 
 const dateFormatter = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' });
+const currencyFormatter = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'BRL',
+});
 
 function formatCpf(cpf: string | null | undefined): string {
   if (!cpf) return '—';
@@ -132,14 +149,6 @@ function normalizePaymentMethodForApi(value: string): 'BOLETO' | 'PIX' | 'CARTAO
   return null;
 }
 
-function getFirstValidStartDate(contractEndDate: string | Date): Date {
-  const today = new Date();
-  const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const contractEnd = parseDateOnly(contractEndDate);
-
-  return todayOnly > contractEnd ? todayOnly : contractEnd;
-}
-
 function formatTurmaHorario(
   horaInicio: string | null | undefined,
   horaFim: string | null | undefined,
@@ -178,6 +187,7 @@ export function RematriculaDialog({
   open,
   contaId,
   campaignId,
+  campaigns = [],
   targetPeriodId,
   mode = 'CREATE',
   item,
@@ -187,6 +197,32 @@ export function RematriculaDialog({
   onEdited,
 }: RematriculaDialogProps) {
   const [submitting, setSubmitting] = useState(false);
+  const [closeAlertOpen, setCloseAlertOpen] = useState(false);
+  const allowCloseRef = useRef(false);
+
+  function closeDialog() {
+    allowCloseRef.current = true;
+    setCloseAlertOpen(false);
+    onOpenChange(false);
+  }
+
+  function requestClose() {
+    if (submitting) return;
+    setCloseAlertOpen(true);
+  }
+
+  function handleDialogOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      onOpenChange(true);
+      return;
+    }
+    if (allowCloseRef.current) {
+      allowCloseRef.current = false;
+      onOpenChange(false);
+      return;
+    }
+    requestClose();
+  }
 
   const sanitizeMessage = (message: string) =>
     message
@@ -206,6 +242,7 @@ export function RematriculaDialog({
   // Seleção de plano e turma
   const [planoId, setPlanoId] = useState<string | null>(null);
   const [turmaId, setTurmaId] = useState<string | null>(null);
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(campaignId ?? null);
 
   // Forma de pagamento
   const [formaPagamento, setFormaPagamento] = useState<string>(HERDAR_FORMA_VALUE);
@@ -219,12 +256,16 @@ export function RematriculaDialog({
   // Regras de atraso
   const [multaPercentual, setMultaPercentual] = useState('');
   const [jurosMensal, setJurosMensal] = useState('');
-  const [diasTolerancia, setDiasTolerancia] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
 
   // Desconto antecipado
   const [descontoAntecipado, setDescontoAntecipado] = useState('');
+  const [descontoTipo, setDescontoTipo] = useState<'FIXED' | 'PERCENTAGE'>('PERCENTAGE');
   const [prazoDesconto, setPrazoDesconto] = useState('');
+  const [notificationChannels, setNotificationChannels] = useState<Array<'EMAIL' | 'SMS' | 'WHATSAPP'>>([
+    'EMAIL',
+    'SMS',
+  ]);
   const [selectedDiscountIds, setSelectedDiscountIds] = useState<string[]>([]);
   const [futureBillingStrategy, setFutureBillingStrategy] = useState<CreateRematriculaInput['futureBillingStrategy']>();
   const [futureAgreementCandidates, setFutureAgreementCandidates] = useState<NonNullable<Awaited<ReturnType<typeof previewIndividualRematriculaRequest>>['futureAgreementCandidates']>>([]);
@@ -246,6 +287,18 @@ export function RematriculaDialog({
     return turmasFiltradas.find((turma) => turma.id === turmaId) ?? null;
   }, [turmaId, turmasFiltradas]);
 
+  const campaignOptions = useMemo(
+    () => campaigns.filter((campaign) => campaign.status === 'ACTIVE'),
+    [campaigns],
+  );
+  const selectedCampaign = useMemo(
+    () => campaignOptions.find((campaign) => campaign.id === selectedCampaignId) ?? null,
+    [campaignOptions, selectedCampaignId],
+  );
+  const effectiveCampaignId = campaignId ?? selectedCampaignId;
+  const effectiveTargetPeriodId =
+    targetPeriodId ?? selectedCampaign?.targetPeriodId ?? (dataInicio ? parseDateOnly(dataInicio).getFullYear().toString() : undefined);
+
   const turmaLotada = (turmaId: string | null) => {
     if (!turmaId) return false;
     const turma = turmasFiltradas.find((t) => t.id === turmaId);
@@ -257,7 +310,6 @@ export function RematriculaDialog({
   useEffect(() => {
     if (!item) return;
 
-    const firstValidStartDate = getFirstValidStartDate(item.dataFimContrato);
     const futureItem = process?.itens.find((processItem) => processItem.decision === 'RENEW') ?? process?.itens[0];
     const futureEnrollment = futureItem?.matriculaFutura;
     const futureContract = process?.contratos[0];
@@ -267,13 +319,14 @@ export function RematriculaDialog({
     setDataInicio(
       mode === 'EDIT_FUTURE' && (futureEnrollment?.dataInicio || process?.effectiveAt)
         ? formatDateInput(parseDateOnly(futureEnrollment?.dataInicio ?? process!.effectiveAt))
-        : formatDateInput(firstValidStartDate),
+        : '',
     );
     setDataFimContrato(
       mode === 'EDIT_FUTURE' && (futureEnrollment?.dataFimContrato || futureContract?.validUntil)
         ? formatDateInput(parseDateOnly(futureEnrollment?.dataFimContrato ?? futureContract!.validUntil!))
-        : formatDateInput(parseDateOnly(item.dataFimContrato)),
+        : '',
     );
+    setSelectedCampaignId(campaignId ?? null);
     setContratoModeloId(mode === 'EDIT_FUTURE' ? futureContract?.contractModelId ?? null : null);
 
     setPlanoId(
@@ -345,14 +398,20 @@ export function RematriculaDialog({
         ? String(numberFromSnapshot(financialSnapshot, 'earlyDiscountDays'))
         : financeiro?.prazoDesconto != null ? String(financeiro.prazoDesconto) : '',
     );
-    setDiasTolerancia(financeiro?.diasTolerancia != null ? String(financeiro.diasTolerancia) : '');
+    setDescontoTipo(
+      mode === 'EDIT_FUTURE' && stringFromSnapshot(financialSnapshot, 'discountType') === 'FIXED'
+        ? 'FIXED'
+        : financeiro?.descontoTipo === 'FIXED'
+          ? 'FIXED'
+        : 'PERCENTAGE',
+    );
     setOverrideReason('');
     setFutureBillingStrategy(undefined);
     setFutureAgreementCandidates([]);
     // Descontos da matrícula atual não são herdados automaticamente.
     // O usuário precisa selecionar explicitamente um desconto ativo para o novo ciclo.
     setSelectedDiscountIds([]);
-  }, [item, mode, process]);
+  }, [campaignId, item, mode, process]);
 
   useEffect(() => {
     if (!item) return;
@@ -404,6 +463,7 @@ export function RematriculaDialog({
     blockedByPolicy ||
     submitting ||
     !validacaoDatas.valido ||
+    !dataInicio ||
     !planoId ||
     !dataFimContrato ||
     (mode === 'CREATE' && !contratoModeloId) ||
@@ -423,6 +483,14 @@ export function RematriculaDialog({
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return undefined;
     return Math.trunc(parsed);
+  };
+
+  const toggleNotificationChannel = (channel: 'EMAIL' | 'SMS' | 'WHATSAPP') => {
+    setNotificationChannels((current) =>
+      current.includes(channel)
+        ? current.filter((item) => item !== channel)
+        : [...current, channel],
+    );
   };
 
   async function handleSubmit(event: React.FormEvent) {
@@ -462,6 +530,7 @@ export function RematriculaDialog({
           lateFeePercent: parseDecimal(multaPercentual) ?? null,
           interestMonthlyPercent: parseDecimal(jurosMensal) ?? null,
           earlyDiscountPercent: parseDecimal(descontoAntecipado) ?? null,
+          earlyDiscountType: descontoTipo,
           earlyDiscountDays: parseIntegerString(prazoDesconto) ?? null,
           reason: editReason,
         });
@@ -474,7 +543,7 @@ export function RematriculaDialog({
           />
         ));
         onEdited?.();
-        onOpenChange(false);
+        closeDialog();
       } catch (error) {
         toast.custom((t) => (
           <CustomToast
@@ -494,15 +563,15 @@ export function RematriculaDialog({
 
     const payload: CreateRematriculaInput = {
       contaId,
-      campaignId,
-      targetPeriodId,
+      campaignId: effectiveCampaignId,
+      targetPeriodId: effectiveTargetPeriodId,
       matriculaId: item.id,
       dataInicio: dataInicio ? new Date(dataInicio).toISOString() : new Date().toISOString(),
       dataFimContrato: dataFimContrato
         ? new Date(dataFimContrato).toISOString()
         : new Date(item.dataFimContrato).toISOString(),
-      planoId: planoId !== item.plano?.id ? planoId : undefined,
-      turmaId: turmaId || undefined,
+      planoId: planoId ?? item.plano?.id ?? undefined,
+      turmaId: turmaId ?? item.turma?.id ?? undefined,
       contractModelId: contratoModeloId,
       billingMode: 'INDIVIDUAL',
       futureBillingStrategy,
@@ -543,20 +612,21 @@ export function RematriculaDialog({
 
     const descontoValor = parseDecimal(descontoAntecipado);
     if (typeof descontoValor === 'number') {
-      payload.descontoAntecipado = Math.min(100, Math.max(0, Number(descontoValor.toFixed(2))));
+      payload.descontoAntecipado = Math.min(
+        descontoTipo === 'PERCENTAGE' ? 100 : 99999,
+        Math.max(0, Number(descontoValor.toFixed(2))),
+      );
     }
+    payload.descontoTipo = descontoTipo;
 
     const prazoValor = parseIntegerString(prazoDesconto);
     if (typeof prazoValor === 'number') {
       payload.prazoDesconto = Math.min(30, Math.max(0, prazoValor));
     }
 
-    const toleranciaValor = parseIntegerString(diasTolerancia);
-    if (typeof toleranciaValor === 'number') {
-      payload.diasTolerancia = Math.min(30, Math.max(0, toleranciaValor));
-    }
-
     payload.descontos = selectedDiscountIds.map((id) => ({ id }));
+    payload.notificationChannels = notificationChannels;
+    payload.notificationChannelsConfigured = true;
 
     if (needsOverride && overrideReason.trim()) {
       payload.overrideReason = overrideReason.trim();
@@ -584,7 +654,7 @@ export function RematriculaDialog({
         />
       ));
       onCreated?.();
-      onOpenChange(false);
+      closeDialog();
     } catch (error) {
       toast.custom((t) => (
         <CustomToast
@@ -602,7 +672,8 @@ export function RematriculaDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <>
+      <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent
         fullScreenMobile
         data-testid="rematricula-dialog"
@@ -666,6 +737,36 @@ export function RematriculaDialog({
                 </div>
               </div>
 
+              {mode === 'CREATE' && !campaignId ? (
+                <div className={sectionClass}>
+                  <div>
+                    <span className="text-sm font-semibold text-slate-700">Campanha (Opcional)</span>
+                    <p className="text-xs text-slate-500">
+                      Vincule esta rematrícula a uma campanha para acompanhar a operação.
+                    </p>
+                  </div>
+                  <Select
+                    value={selectedCampaignId ?? 'none'}
+                    onValueChange={(value) => setSelectedCampaignId(value === 'none' ? null : value)}
+                  >
+                    <SelectTrigger className={fieldTriggerClass}>
+                      <SelectValue placeholder="Sem campanha" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sem campanha</SelectItem>
+                      {campaignOptions.map((campaign) => (
+                        <SelectItem key={campaign.id} value={campaign.id}>
+                          {campaign.nome} ({campaign.targetPeriodId})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {!selectedCampaign && campaignOptions.length === 0 ? (
+                    <p className="text-xs text-slate-500">Nenhuma campanha ativa disponível.</p>
+                  ) : null}
+                </div>
+              ) : null}
+
               {mode === 'EDIT_FUTURE' ? (
                 <div className={sectionClass}>
                   <span className="text-sm font-semibold text-slate-700">Edição</span>
@@ -686,29 +787,18 @@ export function RematriculaDialog({
                     />
                   </div>
                 </div>
-              ) : item.financeiro.rematriculaActionStatus === 'LIBERADA_COM_AVISO' ||
-              needsOverride ||
-              blockedByPolicy ? (
+              ) : needsOverride ? (
                 <div className={sectionClass}>
-                  <span className="text-sm font-semibold text-slate-700">Validação financeira</span>
+                  <span className="text-sm font-semibold text-slate-700">Autorização necessária</span>
                   <InfoCallout variant="warning" size="md" showIcon={false}>
                     <p className="font-medium">
-                      {blockedByPolicy
-                        ? 'Esta rematrícula possui bloqueio operacional.'
-                        : needsOverride
-                          ? 'Esta rematrícula exige autorização da gestão.'
-                          : 'A rematrícula está liberada com aviso financeiro.'}
-                    </p>
-                    <p className="mt-1 text-xs opacity-90">{item.financeiro.actionMessage}</p>
-                    <p className="mt-2 text-xs opacity-90">
-                      Em aberto: {item.financeiro.cobrancasEmAberto} • Atrasadas:{' '}
-                      {item.financeiro.cobrancasAtrasadas}
+                      Esta rematrícula exige autorização da gestão.
                     </p>
                   </InfoCallout>
 
                   {needsOverride ? (
                     <div className="space-y-1">
-                      <label className={labelClass}>Motivo da autorização *</label>
+                      <label className={labelClass}>Motivo da autorização</label>
                       <textarea
                         value={overrideReason}
                         onChange={(event) => setOverrideReason(event.target.value)}
@@ -726,7 +816,13 @@ export function RematriculaDialog({
                 <span className="text-sm font-semibold text-slate-700">Plano e turma</span>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-1">
-                    <label className={labelClass}>Plano *</label>
+                    <div className="flex items-center gap-1.5">
+                      <label className={labelClass}>Plano</label>
+                      <FieldHelpTooltip
+                        label="Sobre o plano"
+                        content="O plano determina o valor da mensalidade e a modalidade."
+                      />
+                    </div>
                     <Select
                       value={planoId ?? 'null'}
                       onValueChange={(v) => setPlanoId(v === 'null' ? null : v)}
@@ -740,17 +836,27 @@ export function RematriculaDialog({
                           .filter((plano) => plano.status === 'ATIVO')
                           .map((plano) => (
                             <SelectItem key={plano.id} value={plano.id}>
-                              {plano.nome}
+                              <div className="flex min-w-0 items-baseline gap-1.5 text-left">
+                                <span className="truncate font-medium text-slate-900">
+                                  {plano.nome}
+                                </span>
+                                <span className="truncate text-xs text-slate-500">
+                                  ({currencyFormatter.format(Number(plano.valor))})
+                                </span>
+                              </div>
                             </SelectItem>
                           ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-slate-500">
-                      O plano determina o valor da mensalidade e a modalidade.
-                    </p>
                   </div>
                   <div className="space-y-1">
-                    <label className={labelClass}>Turma</label>
+                    <div className="flex items-center gap-1.5">
+                      <label className={labelClass}>Turma</label>
+                      <FieldHelpTooltip
+                        label="Sobre a turma"
+                        content="Selecione uma turma ativa disponível."
+                      />
+                    </div>
                     <Select
                       value={turmaId ?? 'null'}
                       onValueChange={(v) => setTurmaId(v === 'null' ? null : v)}
@@ -808,7 +914,6 @@ export function RematriculaDialog({
                     {turmaLotada(turmaId) && (
                       <p className="text-xs text-red-600">Esta turma está sem vagas disponíveis.</p>
                     )}
-                    <p className="text-xs text-slate-500">Selecione uma turma ativa disponível.</p>
                   </div>
                 </div>
               </div>
@@ -818,7 +923,7 @@ export function RematriculaDialog({
                 <span className="text-sm font-semibold text-slate-700">Período do contrato</span>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-1">
-                    <label className={labelClass}>Data de início *</label>
+                    <label className={labelClass}>Data de início</label>
                     <Input
                       type="date"
                       value={dataInicio}
@@ -829,14 +934,9 @@ export function RematriculaDialog({
                           : 'border-slate-200 bg-white focus:border-[#A94DFF] focus:ring-[#A94DFF]/30'
                       }`}
                     />
-                    <p className="text-xs text-slate-500">
-                      Padrão: primeiro dia válido de início. Você pode alterar se necessário.
-                    </p>
                   </div>
                   <div className="space-y-1">
-                    <label className={labelClass}>
-                      Término do contrato <span className="text-red-500">*</span>
-                    </label>
+                    <label className={labelClass}>Término do contrato</label>
                     <Input
                       type="date"
                       value={dataFimContrato}
@@ -844,17 +944,12 @@ export function RematriculaDialog({
                       required
                       className={`${controlClass} ${!dataFimContrato ? 'border-amber-300' : ''}`}
                     />
-                    <p className="text-xs text-slate-500">
-                      Obrigatório. Define até quando o novo contrato ficará vigente.
-                    </p>
                   </div>
                 </div>
                 {!validacaoDatas.valido && validacaoDatas.erro && (
-                  <div className="rounded-lg border border-red-200 bg-red-50 p-3">
-                    <p className="text-sm text-red-700">
-                      <span className="font-medium">⚠️</span> {validacaoDatas.erro}
-                    </p>
-                  </div>
+                  <InfoCallout variant="warning" size="sm" showIcon>
+                    {validacaoDatas.erro}
+                  </InfoCallout>
                 )}
               </div>
 
@@ -867,7 +962,7 @@ export function RematriculaDialog({
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center gap-1.5">
-                    <label className={labelClass}>Modelo de contrato *</label>
+                    <label className={labelClass}>Modelo de contrato</label>
                     <FieldHelpTooltip content="O contrato futuro será preparado junto com o próximo ciclo. Se não houver modelo ativo, cadastre um em Contratos > Modelos." />
                   </div>
                   <Select
@@ -904,7 +999,17 @@ export function RematriculaDialog({
                 <span className="text-sm font-semibold text-slate-700">Condições de pagamento</span>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="space-y-1">
-                    <label className={labelClass}>Forma de pagamento</label>
+                    <div className="flex items-center gap-1.5">
+                      <label className={labelClass}>Forma de pagamento</label>
+                      <FieldHelpTooltip
+                        label="Sobre a forma de pagamento"
+                        content={
+                          formaPagamento === HERDAR_FORMA_VALUE
+                            ? 'Usará a forma configurada na matrícula atual.'
+                            : formaPagamentoOptions.find((o) => o.value === formaPagamento)?.helper ?? ''
+                        }
+                      />
+                    </div>
                     <Select value={formaPagamento} onValueChange={setFormaPagamento}>
                       <SelectTrigger className={fieldTriggerClass}>
                         <SelectValue placeholder="Selecione" />
@@ -918,14 +1023,15 @@ export function RematriculaDialog({
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-slate-500">
-                      {formaPagamento === HERDAR_FORMA_VALUE
-                        ? 'Usará a forma configurada na matrícula atual.'
-                        : formaPagamentoOptions.find((o) => o.value === formaPagamento)?.helper}
-                    </p>
                   </div>
                   <div className="space-y-1">
-                    <label className={labelClass}>Dia de vencimento</label>
+                    <div className="flex items-center gap-1.5">
+                      <label className={labelClass}>Dia de vencimento</label>
+                      <FieldHelpTooltip
+                        label="Sobre o dia de vencimento"
+                        content="Entre 1 e 28."
+                      />
+                    </div>
                     <Input
                       type="number"
                       min={1}
@@ -942,7 +1048,6 @@ export function RematriculaDialog({
                       placeholder="1–28"
                       className={controlClass}
                     />
-                    <p className="text-xs text-slate-500">Entre 1 e 28.</p>
                   </div>
                 </div>
                 <RematriculaDiscountSelector
@@ -955,22 +1060,25 @@ export function RematriculaDialog({
               {/* Taxa de Matrícula */}
               <div className={sectionClass}>
                 <span className="text-sm font-semibold text-slate-700">Taxa de matrícula</span>
-                <div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3">
+                <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3">
                   <Checkbox
                     id="taxa-isenta"
                     checked={taxaIsenta}
                     onCheckedChange={(checked) => setTaxaIsenta(Boolean(checked))}
                   />
                   <div className="space-y-0.5">
-                    <label
-                      htmlFor="taxa-isenta"
-                      className="text-sm font-medium text-slate-700 cursor-pointer"
-                    >
-                      Isentar taxa nesta rematrícula
-                    </label>
-                    <p className="text-xs text-slate-500">
-                      Nenhuma cobrança será enviada ao responsável.
-                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <label
+                        htmlFor="taxa-isenta"
+                        className="cursor-pointer text-sm font-medium text-slate-700"
+                      >
+                        Isentar taxa nesta rematrícula
+                      </label>
+                      <FieldHelpTooltip
+                        label="Sobre isentar a taxa"
+                        content="Nenhuma cobrança será enviada ao responsável."
+                      />
+                    </div>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -1022,10 +1130,17 @@ export function RematriculaDialog({
 
               {/* Regras Financeiras */}
               <div className={sectionClass}>
-                <span className="text-sm font-semibold text-slate-700">Regras financeiras</span>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div className="space-y-1">
-                    <label className={labelClass}>Multa por atraso (%)</label>
+                <div>
+                  <span className="text-sm font-semibold text-slate-700">Juros e Multa</span>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Configure multa, juros e desconto por antecipação. Campos opcionais.
+                  </p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+                    <h3 className="mb-1 text-sm font-semibold text-gray-900">Multa por atraso</h3>
+                    <p className="mb-3 text-xs text-gray-500">Aplicada no dia seguinte ao vencimento</p>
+                    <div className="flex items-center gap-2">
                     <Input
                       type="number"
                       min={0}
@@ -1033,13 +1148,17 @@ export function RematriculaDialog({
                       step={0.1}
                       value={multaPercentual}
                       onChange={(e) => setMultaPercentual(e.target.value)}
-                      placeholder="0–10"
-                      className={controlClass}
+                      placeholder="Ex: 2.0"
+                      className="h-9 w-24 rounded-md border-slate-300 text-sm"
                     />
-                    <p className="text-xs text-slate-500">Percentual máximo permitido: 10%.</p>
+                      <span className="text-sm text-gray-600">%</span>
+                      <span className="ml-auto text-xs text-gray-400">máx. 10%</span>
+                    </div>
                   </div>
-                  <div className="space-y-1">
-                    <label className={labelClass}>Juros mensais (%)</label>
+                  <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+                    <h3 className="mb-1 text-sm font-semibold text-gray-900">Juros mensais</h3>
+                    <p className="mb-3 text-xs text-gray-500">Aplicados proporcionalmente aos dias em atraso</p>
+                    <div className="flex items-center gap-2">
                     <Input
                       type="number"
                       min={0}
@@ -1047,57 +1166,95 @@ export function RematriculaDialog({
                       step={0.1}
                       value={jurosMensal}
                       onChange={(e) => setJurosMensal(e.target.value)}
-                      placeholder="0–5"
-                      className={controlClass}
+                      placeholder="Ex: 1.0"
+                      className="h-9 w-24 rounded-md border-slate-300 text-sm"
                     />
-                    <p className="text-xs text-slate-500">Percentual máximo permitido: 5%.</p>
+                      <span className="text-sm text-gray-600">% a.m.</span>
+                      <span className="ml-auto text-xs text-gray-400">máx. 5%</span>
+                    </div>
                   </div>
-                  <div className="space-y-1">
-                    <label className={labelClass}>Dias de tolerância</label>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={30}
-                      value={diasTolerancia}
-                      onChange={(e) => setDiasTolerancia(e.target.value)}
-                      placeholder="0–30"
-                      className={controlClass}
-                    />
-                    <p className="text-xs text-slate-500">Antes de aplicar multa/juros.</p>
+                  <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4 sm:col-span-2">
+                    <h3 className="mb-1 text-sm font-semibold text-gray-900">Desconto por antecipação</h3>
+                    <p className="mb-3 text-xs text-gray-500">Incentivo para pagamento antes do vencimento</p>
+                    <div className="flex flex-wrap items-end gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-gray-600">Tipo</label>
+                        <Tabs
+                          value={descontoTipo}
+                          onValueChange={(value) => setDescontoTipo(value as 'FIXED' | 'PERCENTAGE')}
+                        >
+                          <TabsList className="h-10 rounded-xl bg-slate-100/80 p-1">
+                            <TabsTrigger value="PERCENTAGE" className="h-8 min-w-24 rounded-lg px-4 py-0 text-sm shadow-none">
+                              %
+                            </TabsTrigger>
+                            <TabsTrigger value="FIXED" className="h-8 min-w-24 rounded-lg px-4 py-0 text-sm shadow-none">
+                              R$
+                            </TabsTrigger>
+                          </TabsList>
+                        </Tabs>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-gray-600">Valor</label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={descontoTipo === 'PERCENTAGE' ? 100 : 99999}
+                          step={0.1}
+                          value={descontoAntecipado}
+                          onChange={(e) => setDescontoAntecipado(e.target.value)}
+                          placeholder={descontoTipo === 'PERCENTAGE' ? '5.0' : '10.00'}
+                          className="h-9 w-24 rounded-md border-slate-300 text-sm"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-gray-600">Prazo (dias antes)</label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={30}
+                          value={prazoDesconto}
+                          onChange={(e) => setPrazoDesconto(e.target.value)}
+                          placeholder="0"
+                          className="h-9 w-20 rounded-md border-slate-300 text-sm"
+                        />
+                      </div>
+                      <span className="pb-2 text-xs text-gray-400">0 = válido até o vencimento</span>
+                    </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div className="space-y-1">
-                    <label className={labelClass}>Desconto antecipado (%)</label>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={100}
-                      step={0.5}
-                      value={descontoAntecipado}
-                      onChange={(e) => setDescontoAntecipado(e.target.value)}
-                      placeholder="0–100"
-                      className={controlClass}
-                    />
-                    <p className="text-xs text-slate-500">
-                      Percentual aplicado antes do vencimento.
-                    </p>
-                  </div>
-                  <div className="space-y-1">
-                    <label className={labelClass}>Dias antes do vencimento</label>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={30}
-                      value={prazoDesconto}
-                      onChange={(e) => setPrazoDesconto(e.target.value)}
-                      placeholder="0–30"
-                      className={controlClass}
-                    />
-                    <p className="text-xs text-slate-500">
-                      Quantidade de dias antes do vencimento para aplicar o desconto.
-                    </p>
-                  </div>
+                <p className="text-xs text-slate-500">
+                  Deixe os campos vazios para não aplicar estas configurações.
+                </p>
+              </div>
+
+              <div className={sectionClass}>
+                <span className="text-sm font-semibold text-slate-700">Notificações</span>
+                <p className="text-xs text-slate-500">
+                  Canais para avisos de cobranças futuras ao responsável. Toque para confirmar a sugestão da régua global.
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  {([
+                    ['WHATSAPP', 'WhatsApp'],
+                    ['EMAIL', 'E-mail'],
+                    ['SMS', 'SMS'],
+                  ] as const).map(([channel, label]) => {
+                    const selected = notificationChannels.includes(channel);
+                    return (
+                      <button
+                        key={channel}
+                        type="button"
+                        onClick={() => toggleNotificationChannel(channel)}
+                        className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                          selected
+                            ? 'border-[#5c2f91] bg-[#5c2f91] text-white'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-[#5c2f91] hover:text-[#5c2f91]'
+                        }`}
+                        aria-pressed={selected}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -1147,7 +1304,7 @@ export function RematriculaDialog({
                 type="button"
                 variant="outline"
                 className="h-11 min-h-11 w-full min-w-0 border-slate-200 bg-white text-slate-600 shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:w-auto md:min-w-[140px]"
-                onClick={() => onOpenChange(false)}
+                onClick={requestClose}
                 disabled={submitting}
               >
                 Cancelar
@@ -1163,6 +1320,28 @@ export function RematriculaDialog({
           </form>
         )}
       </DialogContent>
-    </Dialog>
+      </Dialog>
+
+    <AlertDialog open={closeAlertOpen} onOpenChange={setCloseAlertOpen}>
+      <AlertDialogContent className="max-w-md rounded-xl border border-slate-200 bg-white">
+        <AlertDialogHeader className="space-y-2 text-left">
+          <AlertDialogTitle className="text-lg font-medium text-slate-900">
+            Sair da rematrícula?
+          </AlertDialogTitle>
+          <AlertDialogDescription className="text-sm text-slate-600">
+            As informações preenchidas serão descartadas. Deseja realmente sair?
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter className="gap-2">
+          <AlertDialogCancel className="border-slate-300 bg-white text-slate-700 hover:bg-slate-50">
+            Continuar
+          </AlertDialogCancel>
+          <AlertDialogAction className="bg-brand-accent text-white hover:bg-brand-accent/90" onClick={closeDialog}>
+            Sair
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

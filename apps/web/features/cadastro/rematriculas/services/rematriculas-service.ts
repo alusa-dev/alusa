@@ -19,6 +19,11 @@ import {
 
 export type { FormaPagamentoValue, RematriculaElegivelItem, StatusContrato };
 
+function normalizePaymentMethodForApi(value: string): 'BOLETO' | 'PIX' | 'CARTAO_CREDITO' | null {
+  if (value === 'BOLETO' || value === 'PIX' || value === 'CARTAO_CREDITO') return value;
+  return null;
+}
+
 export interface ListRematriculasParams {
   contaId: string;
   diasAntecedencia?: number;
@@ -52,6 +57,43 @@ export interface RematriculaCampaignSummary {
   status: 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'PAUSED' | 'CLOSED' | 'DELETED' | 'ARCHIVED';
   version: number;
   metrics: { participantes: number; processos: number };
+}
+
+export interface RematriculaCampaignClassOverview {
+  turmaId: string;
+  turmaNome: string;
+  capacidade: number;
+  ocupadas: number;
+  reservasAtivas: number;
+  confirmados: number;
+  pendentes: number;
+  vagasDisponiveis: number;
+  percentualOcupacao: number;
+  statusCapacidade: 'DISPONIVEL' | 'PROXIMA_DO_LIMITE' | 'LOTADA' | 'EXCEDIDA';
+  alunos: Array<{
+    processoId: string;
+    itemId: string;
+    alunoId: string;
+    alunoNome: string;
+    alunoFoto: string | null;
+    processoStatus: string;
+    itemStatus: string;
+    reservaStatus: string | null;
+  }>;
+}
+
+export interface RematriculaCampaignOverview {
+  campaignId: string;
+  targetPeriodId: string;
+  totalTurmas: number;
+  totalAlunos: number;
+  totalConfirmados: number;
+  totalPendentes: number;
+  totalOcupadas: number;
+  totalCapacidade: number;
+  totalVagasDisponiveis: number;
+  inconsistenciasSemTurma: number;
+  turmas: RematriculaCampaignClassOverview[];
 }
 
 export interface RematriculaParticipantSummary {
@@ -139,7 +181,14 @@ export interface RematriculaProcessSummary {
     targetPlanId: string | null;
     effectiveAt: string | null;
     targetSnapshot: Record<string, unknown> | null;
-    aluno: { id: string; nome: string; cpf?: string | null; foto?: string | null } | null;
+    aluno: {
+      id: string;
+      nome: string;
+      dataNascimento?: string | null;
+      cpf?: string | null;
+      foto?: string | null;
+      customerId?: string | null;
+    } | null;
     matriculaAtual?: {
       id: string;
       dataInicio: string;
@@ -174,6 +223,9 @@ export interface RematriculaProcessSummary {
       multaPercentual: number;
       descontoAntecipado: number;
       prazoDesconto: number | null;
+      plano?: { id: string; nome: string } | null;
+      combo?: { id: string; nome: string } | null;
+      turma?: { id: string; nome: string } | null;
     } | null;
     turmaAtual?: { id: string; nome: string } | null;
     planoAtual?: { id: string; nome: string } | null;
@@ -249,6 +301,52 @@ function normalizeCampaign(raw: unknown): RematriculaCampaignSummary {
   };
 }
 
+function normalizeCampaignOverview(raw: unknown): RematriculaCampaignOverview {
+  const record = (raw as Record<string, unknown>) || {};
+  const turmas = Array.isArray(record.turmas) ? record.turmas : [];
+  return {
+    campaignId: String(record.campaignId ?? ''),
+    targetPeriodId: String(record.targetPeriodId ?? ''),
+    totalTurmas: parseNumber(record.totalTurmas, 0),
+    totalAlunos: parseNumber(record.totalAlunos, 0),
+    totalConfirmados: parseNumber(record.totalConfirmados, 0),
+    totalPendentes: parseNumber(record.totalPendentes, 0),
+    totalOcupadas: parseNumber(record.totalOcupadas, 0),
+    totalCapacidade: parseNumber(record.totalCapacidade, 0),
+    totalVagasDisponiveis: parseNumber(record.totalVagasDisponiveis, 0),
+    inconsistenciasSemTurma: parseNumber(record.inconsistenciasSemTurma, 0),
+    turmas: turmas.map((rawClass) => {
+      const turma = (rawClass as Record<string, unknown>) || {};
+      const alunos = Array.isArray(turma.alunos) ? turma.alunos : [];
+      return {
+        turmaId: String(turma.turmaId ?? ''),
+        turmaNome: String(turma.turmaNome ?? 'Turma sem nome'),
+        capacidade: parseNumber(turma.capacidade, 0),
+        ocupadas: parseNumber(turma.ocupadas, 0),
+        reservasAtivas: parseNumber(turma.reservasAtivas, 0),
+        confirmados: parseNumber(turma.confirmados, 0),
+        pendentes: parseNumber(turma.pendentes, 0),
+        vagasDisponiveis: parseNumber(turma.vagasDisponiveis, 0),
+        percentualOcupacao: parseNumber(turma.percentualOcupacao, 0),
+        statusCapacidade: String(turma.statusCapacidade ?? 'DISPONIVEL') as RematriculaCampaignClassOverview['statusCapacidade'],
+        alunos: alunos.map((rawStudent) => {
+          const student = (rawStudent as Record<string, unknown>) || {};
+          return {
+            processoId: String(student.processoId ?? ''),
+            itemId: String(student.itemId ?? ''),
+            alunoId: String(student.alunoId ?? ''),
+            alunoNome: String(student.alunoNome ?? 'Aluno sem nome'),
+            alunoFoto: student.alunoFoto == null ? null : String(student.alunoFoto),
+            processoStatus: String(student.processoStatus ?? ''),
+            itemStatus: String(student.itemStatus ?? ''),
+            reservaStatus: student.reservaStatus == null ? null : String(student.reservaStatus),
+          };
+        }),
+      };
+    }),
+  };
+}
+
 function normalizeParticipant(raw: unknown): RematriculaParticipantSummary {
   const record = (raw as Record<string, unknown>) || {};
   return {
@@ -314,8 +412,10 @@ function normalizeProcess(raw: unknown): RematriculaProcessSummary {
               ? {
                   id: String((itemRecord.aluno as Record<string, unknown>).id ?? ''),
                   nome: String((itemRecord.aluno as Record<string, unknown>).nome ?? ''),
+                  dataNascimento: parseDate((itemRecord.aluno as Record<string, unknown>).dataNascimento),
                   cpf: ((itemRecord.aluno as Record<string, unknown>).cpf as string | null) ?? null,
                   foto: ((itemRecord.aluno as Record<string, unknown>).foto as string | null) ?? null,
+                  customerId: ((itemRecord.aluno as Record<string, unknown>).customerId as string | null) ?? null,
                 }
               : null,
             matriculaAtual:
@@ -430,6 +530,30 @@ function normalizeProcess(raw: unknown): RematriculaProcessSummary {
                       (itemRecord.matriculaFutura as Record<string, unknown>).prazoDesconto == null
                         ? null
                         : parseNumber((itemRecord.matriculaFutura as Record<string, unknown>).prazoDesconto, 0),
+                    plano:
+                      (itemRecord.matriculaFutura as Record<string, unknown>).plano &&
+                      typeof (itemRecord.matriculaFutura as Record<string, unknown>).plano === 'object'
+                        ? ((itemRecord.matriculaFutura as Record<string, unknown>).plano as {
+                            id: string;
+                            nome: string;
+                          })
+                        : null,
+                    combo:
+                      (itemRecord.matriculaFutura as Record<string, unknown>).combo &&
+                      typeof (itemRecord.matriculaFutura as Record<string, unknown>).combo === 'object'
+                        ? ((itemRecord.matriculaFutura as Record<string, unknown>).combo as {
+                            id: string;
+                            nome: string;
+                          })
+                        : null,
+                    turma:
+                      (itemRecord.matriculaFutura as Record<string, unknown>).turma &&
+                      typeof (itemRecord.matriculaFutura as Record<string, unknown>).turma === 'object'
+                        ? ((itemRecord.matriculaFutura as Record<string, unknown>).turma as {
+                            id: string;
+                            nome: string;
+                          })
+                        : null,
                   }
                 : null,
             turmaAtual:
@@ -592,6 +716,10 @@ function normalizeFinanceiro(raw: unknown): RematriculaFinanceiro {
     multaPercentual: parseOptionalNumber(record.multaPercentual),
     jurosMensal: parseOptionalNumber(record.jurosMensal),
     descontoAntecipado: parseOptionalNumber(record.descontoAntecipado),
+    descontoTipo:
+      record.descontoTipo === 'FIXED' || record.descontoTipo === 'PERCENTAGE'
+        ? record.descontoTipo
+        : null,
     prazoDesconto: parseOptionalNumber(record.prazoDesconto),
     diasTolerancia: parseOptionalNumber(record.diasTolerancia),
     descontos: normalizeDescontos(record.descontos),
@@ -729,6 +857,24 @@ export async function listRematriculasElegiveisRequest(
   };
 }
 
+export async function getRematriculaCampaignOverviewRequest(
+  campaignId: string,
+  signal?: AbortSignal,
+): Promise<RematriculaCampaignOverview> {
+  const response = await fetch(`/api/rematriculas/campanhas/${campaignId}/overview`, {
+    headers: { Accept: 'application/json' },
+    signal,
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      (json as { error?: { message?: string } } | null)?.error?.message ||
+        'Não foi possível carregar a ocupação das turmas.',
+    );
+  }
+  return normalizeCampaignOverview(json);
+}
+
 export interface CreateRematriculaInput {
   contaId: string;
   campaignId?: string | null;
@@ -753,9 +899,11 @@ export interface CreateRematriculaInput {
   descontos?: Array<{ id: string; cumulativo?: boolean }>;
   multaPercentual?: number;
   jurosMensal?: number;
-  diasTolerancia?: number;
   descontoAntecipado?: number;
+  descontoTipo?: 'FIXED' | 'PERCENTAGE';
   prazoDesconto?: number;
+  notificationChannels?: Array<'EMAIL' | 'SMS' | 'WHATSAPP'>;
+  notificationChannelsConfigured?: boolean;
   overrideReason?: string;
   futureBillingStrategy?: {
     mode: 'SEPARATE' | 'UNIFY_EXISTING';
@@ -783,11 +931,23 @@ export interface IndividualRematriculaPreviewResponse {
 export async function previewIndividualRematriculaRequest(
   input: CreateRematriculaInput,
 ): Promise<IndividualRematriculaPreviewResponse> {
+  const targetId = input.comboId ?? input.turmaId;
+  if (!input.targetPeriodId) {
+    throw new Error('Informe o período de destino da rematrícula.');
+  }
+  if (!targetId) {
+    throw new Error('Selecione a turma do próximo ciclo.');
+  }
+  if (!input.planoId) {
+    throw new Error('Selecione o plano do próximo ciclo.');
+  }
+
   const response = await fetch('/api/rematriculas/preview', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({
-      origin: 'STANDALONE',
+      origin: input.campaignId ? 'CAMPAIGN' : 'STANDALONE',
+      campaignId: input.campaignId ?? null,
       targetPeriodId: input.targetPeriodId,
       holderType: input.responsavelFinanceiroId ? 'RESPONSIBLE' : 'STUDENT',
       holderId: input.responsavelFinanceiroId ?? input.matriculaId,
@@ -798,15 +958,26 @@ export async function previewIndividualRematriculaRequest(
         sourceEnrollmentId: input.matriculaId,
         target: {
           type: input.comboId ? 'COMBO' : 'CLASS',
-          targetId: input.comboId ?? input.turmaId,
+          targetId,
           planId: input.planoId,
         },
       }],
       effectiveAt: input.dataInicio,
       targetContractEndsAt: input.dataFimContrato,
       financialTerms: {
+        paymentMethod: input.formaPagamento ? normalizePaymentMethodForApi(input.formaPagamento) : null,
+        enrollmentFeePaymentMethod: input.formaPagamentoTaxa ? normalizePaymentMethodForApi(input.formaPagamentoTaxa) : null,
+        dueDay: input.vencimentoDia ?? null,
+        enrollmentFeeAmount: input.taxaMatricula ?? null,
+        enrollmentFeeExempt: input.taxaIsenta ?? null,
+        enrollmentFeeJustification: input.taxaJustificativa ?? null,
+        lateFeePercent: input.multaPercentual ?? null,
+        interestMonthlyPercent: input.jurosMensal ?? null,
         earlyDiscountPercent: input.descontoAntecipado ?? null,
+        earlyDiscountType: input.descontoTipo ?? 'PERCENTAGE',
         earlyDiscountDays: input.prazoDesconto ?? null,
+        notificationChannels: input.notificationChannels,
+        notificationChannelsConfigured: input.notificationChannelsConfigured,
       },
     }),
   });
@@ -930,6 +1101,7 @@ export interface CreateRematriculaFamiliarInput {
   multaPercentual?: number;
   jurosMensal?: number;
   descontoAntecipado?: number;
+  descontoTipo?: 'FIXED' | 'PERCENTAGE';
   prazoDesconto?: number;
   overrideReason?: string;
   notificationChannels?: Array<'EMAIL' | 'SMS' | 'WHATSAPP'>;
@@ -1088,6 +1260,7 @@ function buildRematriculaFamiliarRequestBody(input: CreateRematriculaFamiliarInp
   if (input.multaPercentual != null) body.multaPercentual = input.multaPercentual;
   if (input.jurosMensal != null) body.jurosMensal = input.jurosMensal;
   if (input.descontoAntecipado != null) body.descontoAntecipado = input.descontoAntecipado;
+  if (input.descontoTipo) body.descontoTipo = input.descontoTipo;
   if (input.prazoDesconto != null) body.prazoDesconto = input.prazoDesconto;
   if (input.overrideReason?.trim()) body.overrideReason = input.overrideReason.trim();
   if (input.previewId) body.previewId = input.previewId;
@@ -1273,6 +1446,7 @@ export async function editRematriculaFutureLinkRequest(
     lateFeePercent?: number | null;
     interestMonthlyPercent?: number | null;
     earlyDiscountPercent?: number | null;
+    earlyDiscountType?: 'FIXED' | 'PERCENTAGE' | null;
     earlyDiscountDays?: number | null;
     reason: string;
   },

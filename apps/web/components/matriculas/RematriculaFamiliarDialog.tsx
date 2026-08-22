@@ -1,7 +1,17 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -21,6 +31,7 @@ import { useCombos } from '@/features/cadastro/combos/hooks/use-combos';
 import { useResponsaveis } from '@/features/cadastro/responsaveis/hooks/use-responsaveis';
 import type {
   FormaPagamentoValue,
+  RematriculaCampaignSummary,
   RematriculaElegivelItem,
 } from '@/features/cadastro/rematriculas/services/rematriculas-service';
 import {
@@ -35,13 +46,6 @@ import { useModelos } from '@/features/contratos/hooks/use-modelos';
 import { toast, CustomToast } from '@/components/ui/toast';
 import { InfoCallout } from '@/components/ui/info-callout';
 import { FieldHelpTooltip } from '@/components/ui/field-help-tooltip';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
-import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import { asaasNotificationPreferencesResultDTOSchema } from '@/features/configuracoes/notificacoes/asaas/dtos';
 import { type CustomerNotificationChannel } from '@/features/configuracoes/notificacoes/asaas/customer-channel-defaults';
 import { cn } from '@/lib/utils';
@@ -90,6 +94,7 @@ interface RematriculaFamiliarDialogProps {
   open: boolean;
   contaId?: string;
   campaignId?: string | null;
+  campaigns?: RematriculaCampaignSummary[];
   targetPeriodId?: string;
   titular: TitularRematricula | null;
   itens: RematriculaElegivelItem[];
@@ -112,27 +117,6 @@ function parseDateOnly(value: string | Date): Date {
   const normalized = value.includes('T') ? value.slice(0, 10) : value;
   const [year, month, day] = normalized.split('-').map(Number);
   return new Date(year, (month || 1) - 1, day || 1);
-}
-
-function formatDateInput(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function getFirstValidStartDate(items: RematriculaElegivelItem[]): Date {
-  const today = new Date();
-  const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const contractEnds = items.map((item) => parseDateOnly(item.dataFimContrato).getTime());
-  const latestContractEnd = contractEnds.length ? Math.max(...contractEnds) : todayOnly.getTime();
-  return new Date(Math.max(todayOnly.getTime(), latestContractEnd));
-}
-
-function addOneYear(date: Date): Date {
-  const next = new Date(date);
-  next.setFullYear(next.getFullYear() + 1);
-  return next;
 }
 
 function getInitials(name: string): string {
@@ -172,6 +156,7 @@ export function RematriculaFamiliarDialog({
   open,
   contaId,
   campaignId,
+  campaigns = [],
   targetPeriodId,
   titular,
   itens,
@@ -180,8 +165,35 @@ export function RematriculaFamiliarDialog({
 }: RematriculaFamiliarDialogProps) {
   // Submissão e estado financeiro/contratual (compartilhados pela família).
   const [submitting, setSubmitting] = useState(false);
+  const [closeAlertOpen, setCloseAlertOpen] = useState(false);
+  const allowCloseRef = useRef(false);
+
+  function closeDialog() {
+    allowCloseRef.current = true;
+    setCloseAlertOpen(false);
+    onOpenChange(false);
+  }
+
+  function requestClose() {
+    if (submitting) return;
+    setCloseAlertOpen(true);
+  }
+
+  function handleDialogOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      onOpenChange(true);
+      return;
+    }
+    if (allowCloseRef.current) {
+      allowCloseRef.current = false;
+      onOpenChange(false);
+      return;
+    }
+    requestClose();
+  }
   const [dataInicio, setDataInicio] = useState('');
   const [dataFimContrato, setDataFimContrato] = useState('');
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(campaignId ?? null);
   const [formaPagamento, setFormaPagamento] =
     useState<Exclude<FormaPagamentoValue, 'INDEFINIDO'>>('BOLETO');
   const [formaPagamentoTaxa, setFormaPagamentoTaxa] =
@@ -193,6 +205,7 @@ export function RematriculaFamiliarDialog({
   const [multaPercentual, setMultaPercentual] = useState('');
   const [jurosMensal, setJurosMensal] = useState('');
   const [descontoAntecipado, setDescontoAntecipado] = useState('');
+  const [descontoTipo, setDescontoTipo] = useState<'FIXED' | 'PERCENTAGE'>('PERCENTAGE');
   const [prazoDesconto, setPrazoDesconto] = useState('');
   const [selectedDiscountIds, setSelectedDiscountIds] = useState<string[]>([]);
   const [overrideReason, setOverrideReason] = useState('');
@@ -231,6 +244,18 @@ export function RematriculaFamiliarDialog({
     () => planosDisponiveis.filter((plano) => plano.status === 'ATIVO'),
     [planosDisponiveis],
   );
+
+  const campaignOptions = useMemo(
+    () => campaigns.filter((campaign) => campaign.status === 'ACTIVE'),
+    [campaigns],
+  );
+  const selectedCampaign = useMemo(
+    () => campaignOptions.find((campaign) => campaign.id === selectedCampaignId) ?? null,
+    [campaignOptions, selectedCampaignId],
+  );
+  const effectiveCampaignId = campaignId ?? selectedCampaignId;
+  const effectiveTargetPeriodId =
+    targetPeriodId ?? selectedCampaign?.targetPeriodId ?? (dataInicio ? parseDateOnly(dataInicio).getFullYear().toString() : undefined);
 
   const selectableItems = useMemo(
     () =>
@@ -272,9 +297,9 @@ export function RematriculaFamiliarDialog({
 
   useEffect(() => {
     if (!open) return;
-    const start = getFirstValidStartDate(itens);
-    setDataInicio(formatDateInput(start));
-    setDataFimContrato(formatDateInput(addOneYear(start)));
+    setDataInicio('');
+    setDataFimContrato('');
+    setSelectedCampaignId(campaignId ?? null);
     const firstFinanceiro = itens[0]?.financeiro;
     setFormaPagamento(
       firstFinanceiro?.formaPagamento && firstFinanceiro.formaPagamento !== 'INDEFINIDO'
@@ -293,6 +318,7 @@ export function RematriculaFamiliarDialog({
     setMultaPercentual(firstFinanceiro?.multaPercentual != null ? String(firstFinanceiro.multaPercentual) : '');
     setJurosMensal(firstFinanceiro?.jurosMensal != null ? String(firstFinanceiro.jurosMensal) : '');
     setDescontoAntecipado(firstFinanceiro?.descontoAntecipado != null ? String(firstFinanceiro.descontoAntecipado) : '');
+    setDescontoTipo(firstFinanceiro?.descontoTipo === 'FIXED' ? 'FIXED' : 'PERCENTAGE');
     setPrazoDesconto(firstFinanceiro?.prazoDesconto != null ? String(firstFinanceiro.prazoDesconto) : '');
     setOverrideReason('');
     setNovoResponsavelId(null);
@@ -329,7 +355,7 @@ export function RematriculaFamiliarDialog({
       setModoTurmas('TURMAS');
       setPlanoIdGlobal(firstPlano);
     }
-  }, [itens, open]);
+  }, [campaignId, itens, open]);
 
   const selectedItems = useMemo(
     () => selectableItems.filter((item) =>
@@ -377,37 +403,6 @@ export function RematriculaFamiliarDialog({
       .filter(Boolean);
   }, [modoTurmas, planoSelecionado, selectedItems, combosDisponiveis, configs]);
   const periodicidadesIncompativeis = new Set(periodicidadesSelecionadas).size > 1;
-  const produtoResumo = useMemo(() => {
-    if (modoTurmas === 'COMBO') {
-      const combosSel = selectedItems
-        .map((item) => {
-          const id = configs[item.id]?.comboId;
-          if (!id) return null;
-          return combosDisponiveis.find((c) => c.id === id) ?? null;
-        })
-        .filter((c): c is NonNullable<typeof c> => Boolean(c));
-      if (combosSel.length === 0) return null;
-      const nomes = [...new Set(combosSel.map((c) => c.nome))];
-      const periodicidades = [...new Set(combosSel.map((c) => c.periodicidade))];
-      const primeiro = combosSel[0]!;
-      const periodicidade = periodicidadeLabels[primeiro.periodicidade] ?? 'mensal';
-      return {
-        label: nomes.length === 1 ? nomes[0]! : `${nomes.length} combos distintos`,
-        descricao:
-          nomes.length === 1 && periodicidades.length === 1
-            ? `Combo · ${currencyFormatter.format(primeiro.valor)} (${periodicidade})`
-            : periodicidades.length === 1
-              ? `Combos distintos · mesma periodicidade (${periodicidadeLabels[periodicidades[0]!] ?? 'mensal'})`
-              : 'Atenção: periodicidades diferentes podem impedir a cobrança consolidada.',
-      };
-    }
-    if (!planoSelecionado) return null;
-    const periodicidade = periodicidadeLabels[planoSelecionado.periodicidade] ?? 'mensal';
-    return {
-      label: planoSelecionado.nome,
-      descricao: `Plano · ${currencyFormatter.format(Number(planoSelecionado.valor))} (${periodicidade})`,
-    };
-  }, [modoTurmas, combosDisponiveis, configs, planoSelecionado, selectedItems]);
 
   const parseDecimal = (value: string) => {
     if (!value.trim()) return undefined;
@@ -475,8 +470,8 @@ export function RematriculaFamiliarDialog({
 
     const payload: CreateRematriculaFamiliarInput = {
       contaId,
-      campaignId,
-      targetPeriodId,
+      campaignId: effectiveCampaignId,
+      targetPeriodId: effectiveTargetPeriodId,
       responsavelId: titular.id,
       novoResponsavelId: requiresPayerChange ? novoResponsavelId : null,
       modoTurmas,
@@ -499,6 +494,7 @@ export function RematriculaFamiliarDialog({
       vencimentoDia,
       taxaIsenta,
       descontos: selectedDiscountIds.map((id) => ({ id })),
+      descontoTipo,
       notificationChannels: notificationChannelsTouched ? notificationChannels : [],
       notificationChannelsConfigured: notificationChannelsTouched,
       contratoModeloId,
@@ -520,7 +516,9 @@ export function RematriculaFamiliarDialog({
     payload.jurosMensal = typeof juros === 'number' ? Math.min(5, Math.max(0, juros)) : 0;
     const desconto = parseDecimal(descontoAntecipado);
     payload.descontoAntecipado =
-      typeof desconto === 'number' ? Math.min(100, Math.max(0, desconto)) : 0;
+      typeof desconto === 'number'
+        ? Math.min(descontoTipo === 'PERCENTAGE' ? 100 : 99999, Math.max(0, desconto))
+        : 0;
     const prazo = parseDecimal(prazoDesconto);
     payload.prazoDesconto =
       typeof prazo === 'number' ? Math.min(30, Math.max(0, Math.trunc(prazo))) : 0;
@@ -559,7 +557,7 @@ export function RematriculaFamiliarDialog({
         />
       ));
       onCreated?.();
-      onOpenChange(false);
+      closeDialog();
     } catch (error) {
       const message =
         (error as Error).message || 'Não foi possível confirmar o próximo ciclo familiar.';
@@ -581,7 +579,8 @@ export function RematriculaFamiliarDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <>
+      <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent
         fullScreenMobile
         data-testid="rematricula-familiar-dialog"
@@ -631,10 +630,35 @@ export function RematriculaFamiliarDialog({
               </div>
             </div>
 
-            <InfoCallout variant="info" size="sm" showIcon>
-              A confirmação prepara matrículas, contratos e cobranças locais. A situação financeira
-              muda para concluída apenas após as confirmações automáticas.
-            </InfoCallout>
+            {!campaignId ? (
+              <div className={sectionClass}>
+                <div>
+                  <span className="text-sm font-semibold text-slate-700">Campanha (Opcional)</span>
+                  <p className="text-xs text-slate-500">
+                    Vincule esta rematrícula familiar a uma campanha para acompanhar a operação.
+                  </p>
+                </div>
+                <Select
+                  value={selectedCampaignId ?? 'none'}
+                  onValueChange={(value) => setSelectedCampaignId(value === 'none' ? null : value)}
+                >
+                  <SelectTrigger className={controlClass}>
+                    <SelectValue placeholder="Sem campanha" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sem campanha</SelectItem>
+                    {campaignOptions.map((campaign) => (
+                      <SelectItem key={campaign.id} value={campaign.id}>
+                        {campaign.nome} ({campaign.targetPeriodId})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!selectedCampaign && campaignOptions.length === 0 ? (
+                  <p className="text-xs text-slate-500">Nenhuma campanha ativa disponível.</p>
+                ) : null}
+              </div>
+            ) : null}
 
             {/* Seção 2 — Alunos: switch incluir + modo Turma|Combo + turma por aluno */}
             <div className={sectionClass}>
@@ -773,9 +797,6 @@ export function RematriculaFamiliarDialog({
                                 </SelectTrigger>
                                   <SelectContent>
                                   <SelectItem value="REMATRICULAR_AGORA">Renovar próximo ciclo</SelectItem>
-                                  <SelectItem value="TRANSFERIR_MODALIDADE">Transferir modalidade</SelectItem>
-                                  <SelectItem value="ALTERAR_PAGADOR">Renovar e alterar pagador</SelectItem>
-                                  <SelectItem value="REMATRICULAR_SEPARADAMENTE">Renovar separadamente</SelectItem>
                                   <SelectItem value="NAO_CONTINUARA">Não continuará</SelectItem>
                                   <SelectItem value="DECIDIR_DEPOIS">Decidir depois</SelectItem>
                                 </SelectContent>
@@ -828,9 +849,6 @@ export function RematriculaFamiliarDialog({
                                 </SelectTrigger>
                                   <SelectContent>
                                   <SelectItem value="REMATRICULAR_AGORA">Renovar próximo ciclo</SelectItem>
-                                  <SelectItem value="TRANSFERIR_MODALIDADE">Transferir modalidade</SelectItem>
-                                  <SelectItem value="ALTERAR_PAGADOR">Renovar e alterar pagador</SelectItem>
-                                  <SelectItem value="REMATRICULAR_SEPARADAMENTE">Renovar separadamente</SelectItem>
                                   <SelectItem value="NAO_CONTINUARA">Não continuará</SelectItem>
                                   <SelectItem value="DECIDIR_DEPOIS">Decidir depois</SelectItem>
                                 </SelectContent>
@@ -844,13 +862,6 @@ export function RematriculaFamiliarDialog({
                             </InfoCallout>
                           ) : null}
 
-                          {config?.decision === 'NAO_CONTINUARA' || config?.decision === 'DECIDIR_DEPOIS' ? (
-                            <InfoCallout variant="info" size="sm" showIcon={false}>
-                              {config.decision === 'NAO_CONTINUARA'
-                                ? 'Este aluno permanece no ciclo atual e não receberá cobrança do novo ciclo.'
-                                : 'Este aluno ficará como pendência operacional e não receberá cobrança nova agora.'}
-                            </InfoCallout>
-                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -894,91 +905,155 @@ export function RematriculaFamiliarDialog({
               </div>
             ) : null}
 
-            {/* Seção 3 — Produto financeiro do ciclo (plano OU combo), sem card cinza */}
-            <div className="space-y-3">
-              <div>
-                <span className="text-sm font-semibold text-slate-700">
-                  {modoTurmas === 'COMBO' ? 'Cobrança com combo' : 'Plano do ciclo familiar'}
-                </span>
-                <p className="text-xs text-slate-500">
-                  {modoTurmas === 'COMBO'
-                    ? 'Em cada card de aluno, escolha o combo. O valor e a periodicidade definem a parcela na cobrança consolidada (todos devem compartilhar a mesma periodicidade).'
-                    : 'O valor e a periodicidade do plano definem a cobrança recorrente consolidada.'}
-                </p>
-              </div>
-
-              {modoTurmas === 'COMBO' ? null : (
+            {/* Seção 3 — Período do contrato */}
+            <div className={sectionClass}>
+              <span className="text-sm font-semibold text-slate-700">Período do contrato</span>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="space-y-1">
-                  <label className={labelClass}>Plano</label>
-                  <Select
-                    value={planoIdGlobal ?? 'null'}
-                    onValueChange={(value) => setPlanoIdGlobal(value === 'null' ? null : value)}
-                    disabled={planosLoading}
-                  >
-                    <SelectTrigger className={controlClass}>
-                      <SelectValue placeholder="Selecione o plano" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="null">Selecione o plano</SelectItem>
-                      {planosAtivos.map((plano) => (
-                        <SelectItem key={plano.id} value={plano.id}>
-                          {plano.nome}
-                          <span className="ml-2 text-[10px] text-slate-500">
-                            {currencyFormatter.format(Number(plano.valor))} ·{' '}
-                            {periodicidadeLabels[plano.periodicidade] ?? 'mensal'}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <label className={labelClass}>Início</label>
+                  <Input type="date" value={dataInicio} onChange={(event) => setDataInicio(event.target.value)} className={controlClass} />
+                </div>
+                <div className="space-y-1">
+                  <label className={labelClass}>Fim do contrato</label>
+                  <Input type="date" value={dataFimContrato} onChange={(event) => setDataFimContrato(event.target.value)} className={controlClass} />
+                </div>
+              </div>
+            </div>
+
+            {/* Seção 4 — Condições de pagamento */}
+            <div className={sectionClass}>
+              <span className="text-sm font-semibold text-slate-700">Condições de pagamento</span>
+              {modoTurmas === 'COMBO' ? (
+                <>
+                  <p className="text-xs text-slate-500">
+                    Os combos escolhidos em cada aluno definem a cobrança consolidada. Todos devem compartilhar a mesma periodicidade.
+                  </p>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <label className={labelClass}>Forma de pagamento</label>
+                        <FieldHelpTooltip
+                          label="Sobre a forma de pagamento"
+                          content="Usará a forma de pagamento escolhida para a cobrança familiar."
+                        />
+                      </div>
+                      <Select value={formaPagamento} onValueChange={(value) => setFormaPagamento(value as Exclude<FormaPagamentoValue, 'INDEFINIDO'>)}>
+                        <SelectTrigger className={controlClass}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {formaPagamentoOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <label className={labelClass}>Dia de vencimento</label>
+                        <FieldHelpTooltip label="Sobre o dia de vencimento" content="Entre 1 e 28." />
+                      </div>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={28}
+                        value={String(vencimentoDia)}
+                        onChange={(event) => {
+                          const parsed = Number(event.target.value);
+                          setVencimentoDia(Number.isFinite(parsed) ? Math.min(28, Math.max(1, parsed)) : 5);
+                        }}
+                        className={controlClass}
+                      />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <label className={labelClass}>Plano</label>
+                      <FieldHelpTooltip
+                        label="Sobre o plano"
+                        content="O plano determina o valor da mensalidade e a modalidade."
+                      />
+                    </div>
+                    <Select
+                      value={planoIdGlobal ?? 'null'}
+                      onValueChange={(value) => setPlanoIdGlobal(value === 'null' ? null : value)}
+                      disabled={planosLoading}
+                    >
+                      <SelectTrigger className={controlClass}>
+                        {planoSelecionado ? (
+                          <div className="flex min-w-0 items-baseline gap-1.5 text-left">
+                            <span className="truncate font-medium text-slate-900">{planoSelecionado.nome}</span>
+                            <span className="truncate text-xs text-slate-500">
+                              ({currencyFormatter.format(Number(planoSelecionado.valor))} · {periodicidadeLabels[planoSelecionado.periodicidade] ?? 'mensal'})
+                            </span>
+                          </div>
+                        ) : (
+                          <SelectValue placeholder="Selecione o plano" />
+                        )}
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="null">Selecione o plano</SelectItem>
+                        {planosAtivos.map((plano) => (
+                          <SelectItem key={plano.id} value={plano.id}>
+                            <div className="flex min-w-0 items-baseline gap-1.5 text-left">
+                              <span className="truncate font-medium text-slate-900">{plano.nome}</span>
+                              <span className="truncate text-xs text-slate-500">
+                                ({currencyFormatter.format(Number(plano.valor))} · {periodicidadeLabels[plano.periodicidade] ?? 'mensal'})
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <label className={labelClass}>Forma de pagamento</label>
+                      <FieldHelpTooltip
+                        label="Sobre a forma de pagamento"
+                        content="Usará a forma de pagamento escolhida para a cobrança familiar."
+                      />
+                    </div>
+                    <Select value={formaPagamento} onValueChange={(value) => setFormaPagamento(value as Exclude<FormaPagamentoValue, 'INDEFINIDO'>)}>
+                      <SelectTrigger className={controlClass}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {formaPagamentoOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <label className={labelClass}>Dia de vencimento</label>
+                      <FieldHelpTooltip label="Sobre o dia de vencimento" content="Entre 1 e 28." />
+                    </div>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={28}
+                      value={String(vencimentoDia)}
+                      onChange={(event) => {
+                        const parsed = Number(event.target.value);
+                        setVencimentoDia(Number.isFinite(parsed) ? Math.min(28, Math.max(1, parsed)) : 5);
+                      }}
+                      className={controlClass}
+                    />
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* Seção 4 — Período e cobrança recorrente */}
-            <div className={sectionClass}>
-              <span className="text-sm font-semibold text-slate-700">Período e cobrança familiar</span>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-                <div className="space-y-1">
-                  <label className={labelClass}>Início *</label>
-                  <Input type="date" value={dataInicio} onChange={(event) => setDataInicio(event.target.value)} className={controlClass} />
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Fim do contrato *</label>
-                  <Input type="date" value={dataFimContrato} onChange={(event) => setDataFimContrato(event.target.value)} className={controlClass} />
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Forma de pagamento</label>
-                  <Select value={formaPagamento} onValueChange={(value) => setFormaPagamento(value as Exclude<FormaPagamentoValue, 'INDEFINIDO'>)}>
-                    <SelectTrigger className={controlClass}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {formaPagamentoOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Vencimento</label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={28}
-                    value={String(vencimentoDia)}
-                    onChange={(event) => {
-                      const parsed = Number(event.target.value);
-                      setVencimentoDia(Number.isFinite(parsed) ? Math.min(28, Math.max(1, parsed)) : 5);
-                    }}
-                    className={controlClass}
-                  />
-                </div>
-              </div>
-            </div>
-
+            {/* Seção 5 — Contrato */}
             <div className={sectionClass}>
               <div>
                 <span className="text-sm font-semibold text-slate-700">Contrato</span>
@@ -988,7 +1063,7 @@ export function RematriculaFamiliarDialog({
               </div>
               <div className="space-y-1">
                 <div className="flex items-center gap-1.5">
-                  <label className={labelClass}>Modelo de contrato *</label>
+                  <label className={labelClass}>Modelo de contrato</label>
                   <FieldHelpTooltip content="O contrato futuro será preparado para cada aluno renovado. Se não houver modelo ativo, cadastre um em Contratos > Modelos." />
                 </div>
                 <Select
@@ -1020,87 +1095,96 @@ export function RematriculaFamiliarDialog({
               </div>
             </div>
 
-            {/* Seção 5 — Taxa e regras financeiras */}
+            {/* Seção 7 — Taxa de matrícula */}
             <div className={sectionClass}>
-              <span className="text-sm font-semibold text-slate-700">Taxa e regras financeiras</span>
-
-              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-center gap-3">
-                  <Checkbox checked={taxaIsenta} onCheckedChange={setTaxaIsenta} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-sm font-medium text-slate-800">
-                        Isentar taxa de rematrícula
-                      </span>
-                      <TooltipProvider delayDuration={200}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#A94DFF]/35"
-                              aria-label="Sobre isenção da taxa de rematrícula"
-                            >
-                              <InformationCircleIcon className="h-4 w-4" aria-hidden />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="max-w-xs">
-                            Quando marcado, nenhuma taxa avulsa será criada para o grupo.
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </div>
+              <span className="text-sm font-semibold text-slate-700">Taxa de matrícula</span>
+              <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3">
+                <Checkbox checked={taxaIsenta} onCheckedChange={(checked) => setTaxaIsenta(Boolean(checked))} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-medium text-slate-700">Isentar taxa nesta rematrícula</span>
+                    <FieldHelpTooltip
+                      label="Sobre isentar a taxa"
+                      content="Nenhuma cobrança será enviada ao responsável."
+                    />
                   </div>
                 </div>
               </div>
-
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="space-y-1">
-                  <label className={labelClass}>Taxa por aluno (R$)</label>
-                  <Input type="number" min={0} step={0.01} value={taxaMatricula} disabled={taxaIsenta} onChange={(event) => setTaxaMatricula(event.target.value)} className={controlClass} />
+                  <label className={labelClass}>Valor (R$)</label>
+                  <Input type="number" min={0} step={0.01} value={taxaMatricula} disabled={taxaIsenta} onChange={(event) => setTaxaMatricula(event.target.value)} className={`${controlClass} disabled:bg-slate-100 disabled:opacity-60`} />
                 </div>
                 <div className="space-y-1">
-                  <label className={labelClass}>Pagamento da taxa</label>
+                  <label className={labelClass}>Forma de pagamento da taxa</label>
                   <Select value={formaPagamentoTaxa} onValueChange={(value) => setFormaPagamentoTaxa(value as Exclude<FormaPagamentoValue, 'INDEFINIDO'>)} disabled={taxaIsenta}>
-                    <SelectTrigger className={controlClass}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {formaPagamentoOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
+                    <SelectTrigger className={`${controlClass} disabled:bg-slate-100 disabled:opacity-60`}><SelectValue /></SelectTrigger>
+                    <SelectContent>{formaPagamentoOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Multa (%)</label>
-                  <Input type="number" min={0} max={10} step={0.1} value={multaPercentual} onChange={(event) => setMultaPercentual(event.target.value)} className={controlClass} />
+              </div>
+              <div className="space-y-1">
+                <label className={labelClass}>Justificativa (opcional)</label>
+                <Input value={taxaJustificativa} onChange={(event) => setTaxaJustificativa(event.target.value)} placeholder="Motivo da isenção ou observação..." className={controlClass} />
+              </div>
+            </div>
+
+            {/* Seção 8 — Juros e multa, igual ao wizard de matrícula */}
+            <div className={sectionClass}>
+              <div>
+                <span className="text-sm font-semibold text-slate-700">Juros e Multa</span>
+                <p className="mt-1 text-xs text-slate-500">Configure multa, juros e desconto por antecipação. Campos opcionais.</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+                  <h3 className="mb-1 text-sm font-semibold text-gray-900">Multa por atraso</h3>
+                  <p className="mb-3 text-xs text-gray-500">Aplicada no dia seguinte ao vencimento</p>
+                  <div className="flex items-center gap-2">
+                    <Input type="number" min={0} max={10} step={0.1} value={multaPercentual} onChange={(event) => setMultaPercentual(event.target.value)} placeholder="Ex: 2.0" className="h-9 w-24 rounded-md border-gray-300 text-sm" />
+                    <span className="text-sm text-gray-600">%</span>
+                    <span className="ml-auto text-xs text-gray-400">máx. 10%</span>
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Juros/mês (%)</label>
-                  <Input type="number" min={0} max={5} step={0.1} value={jurosMensal} onChange={(event) => setJurosMensal(event.target.value)} className={controlClass} />
+                <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+                  <h3 className="mb-1 text-sm font-semibold text-gray-900">Juros mensais</h3>
+                  <p className="mb-3 text-xs text-gray-500">Aplicados proporcionalmente aos dias em atraso</p>
+                  <div className="flex items-center gap-2">
+                    <Input type="number" min={0} max={5} step={0.1} value={jurosMensal} onChange={(event) => setJurosMensal(event.target.value)} placeholder="Ex: 1.0" className="h-9 w-24 rounded-md border-gray-300 text-sm" />
+                    <span className="text-sm text-gray-600">% a.m.</span>
+                    <span className="ml-auto text-xs text-gray-400">máx. 5%</span>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4 sm:col-span-2">
+                  <h3 className="mb-1 text-sm font-semibold text-gray-900">Desconto por antecipação</h3>
+                  <p className="mb-3 text-xs text-gray-500">Incentivo para pagamento antes do vencimento</p>
+                  <div className="flex flex-wrap items-end gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-gray-600">Tipo</label>
+                      <Tabs value={descontoTipo} onValueChange={(value) => setDescontoTipo(value as 'FIXED' | 'PERCENTAGE')}>
+                        <TabsList className="h-10 rounded-xl bg-slate-100/80 p-1">
+                          <TabsTrigger value="PERCENTAGE" className="h-8 min-w-24 rounded-lg px-4 py-0 text-sm shadow-none">%</TabsTrigger>
+                          <TabsTrigger value="FIXED" className="h-8 min-w-24 rounded-lg px-4 py-0 text-sm shadow-none">R$</TabsTrigger>
+                        </TabsList>
+                      </Tabs>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-gray-600">Valor</label>
+                      <Input type="number" min={0} max={descontoTipo === 'PERCENTAGE' ? 100 : 99999} step={0.1} value={descontoAntecipado} onChange={(event) => setDescontoAntecipado(event.target.value)} placeholder={descontoTipo === 'PERCENTAGE' ? '5.0' : '10.00'} className="h-9 w-24 rounded-md border-gray-300 text-sm" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-gray-600">Prazo (dias antes)</label>
+                      <Input type="number" min={0} max={30} value={prazoDesconto} onChange={(event) => setPrazoDesconto(event.target.value)} placeholder="0" className="h-9 w-20 rounded-md border-gray-300 text-sm" />
+                    </div>
+                    <span className="pb-2 text-xs text-gray-400">0 = válido até o vencimento</span>
+                  </div>
                 </div>
               </div>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <div className="space-y-1">
-                  <label className={labelClass}>Desconto antecipado (%)</label>
-                  <Input type="number" min={0} max={100} step={0.5} value={descontoAntecipado} onChange={(event) => setDescontoAntecipado(event.target.value)} className={controlClass} />
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Dias antes do vencimento</label>
-                  <Input type="number" min={0} max={30} value={prazoDesconto} onChange={(event) => setPrazoDesconto(event.target.value)} className={controlClass} />
-                </div>
-                <div className="space-y-1">
-                  <label className={labelClass}>Justificativa da taxa</label>
-                  <Input value={taxaJustificativa} onChange={(event) => setTaxaJustificativa(event.target.value)} className={controlClass} />
-                </div>
-              </div>
-              <RematriculaDiscountSelector
-                contaId={contaId}
-                selectedIds={selectedDiscountIds}
-                onChange={setSelectedDiscountIds}
-              />
+              <p className="mt-1 text-xs text-gray-500">Deixe os campos vazios para não aplicar estas configurações.</p>
+            </div>
+
+            <div className={sectionClass}>
+              <span className="text-sm font-semibold text-slate-700">Descontos e benefícios</span>
+              <RematriculaDiscountSelector contaId={contaId} selectedIds={selectedDiscountIds} onChange={setSelectedDiscountIds} />
             </div>
 
             <div className={sectionClass}>
@@ -1157,31 +1241,6 @@ export function RematriculaFamiliarDialog({
               </div>
             ) : null}
 
-            <p className="text-sm text-slate-600">
-              <strong className="text-slate-800">Resumo:</strong> {selectedItems.length} aluno(s) terão o próximo ciclo preparado
-              {modoTurmas === 'COMBO' ? (
-                <>
-                  {' '}
-                  com{' '}
-                  {produtoResumo ? (
-                    <>
-                      <span className="font-medium text-slate-900">{produtoResumo.label}</span>
-                      {produtoResumo.descricao ? (
-                        <span className="text-slate-600"> — {produtoResumo.descricao}</span>
-                      ) : null}
-                    </>
-                  ) : (
-                    <span className="font-medium text-slate-900">—</span>
-                  )}
-                </>
-              ) : (
-                <>
-                  {' '}
-                  com o plano <span className="font-medium text-slate-900">{produtoResumo?.label ?? '—'}</span>
-                </>
-              )}
-              . Cobrança familiar consolidada para {titular.nome}.
-            </p>
             {periodicidadesIncompativeis ? (
               <InfoCallout variant="warning" size="sm" showIcon={false}>
                 A cobrança familiar consolidada exige a mesma periodicidade para todos os vínculos. Ajuste os combos selecionados ou use rematrículas separadas.
@@ -1242,7 +1301,7 @@ export function RematriculaFamiliarDialog({
               type="button"
               variant="outline"
               className="h-11 min-h-11 w-full min-w-0 border-slate-200 bg-white text-slate-600 shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:w-auto"
-              onClick={() => onOpenChange(false)}
+              onClick={requestClose}
               disabled={submitting}
             >
               Cancelar
@@ -1257,6 +1316,28 @@ export function RematriculaFamiliarDialog({
           </div>
         </form>
       </DialogContent>
-    </Dialog>
+      </Dialog>
+
+    <AlertDialog open={closeAlertOpen} onOpenChange={setCloseAlertOpen}>
+      <AlertDialogContent className="max-w-md rounded-xl border border-slate-200 bg-white">
+        <AlertDialogHeader className="space-y-2 text-left">
+          <AlertDialogTitle className="text-lg font-medium text-slate-900">
+            Sair da rematrícula?
+          </AlertDialogTitle>
+          <AlertDialogDescription className="text-sm text-slate-600">
+            As informações preenchidas serão descartadas. Deseja realmente sair?
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter className="gap-2">
+          <AlertDialogCancel className="border-slate-300 bg-white text-slate-700 hover:bg-slate-50">
+            Continuar
+          </AlertDialogCancel>
+          <AlertDialogAction className="bg-brand-accent text-white hover:bg-brand-accent/90" onClick={closeDialog}>
+            Sair
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

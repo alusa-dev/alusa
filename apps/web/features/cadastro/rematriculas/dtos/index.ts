@@ -115,6 +115,7 @@ export const rematriculaFinanceiroDTOSchema = z.object({
   multaPercentual: z.number().nullable(),
   jurosMensal: z.number().nullable(),
   descontoAntecipado: z.number().nullable(),
+  descontoTipo: z.enum(['FIXED', 'PERCENTAGE']).nullable(),
   prazoDesconto: z.number().nullable(),
   diasTolerancia: z.number().nullable(),
   descontos: z.array(rematriculaDescontoResumoDTOSchema),
@@ -208,9 +209,11 @@ export const createRematriculaInputDTOSchema = z.object({
     .optional(),
   multaPercentual: z.union([z.number(), z.string()]).optional(),
   jurosMensal: z.union([z.number(), z.string()]).optional(),
-  diasTolerancia: z.union([z.number(), z.string()]).optional(),
   descontoAntecipado: z.union([z.number(), z.string()]).optional(),
+  descontoTipo: z.enum(['FIXED', 'PERCENTAGE']).optional(),
   prazoDesconto: z.union([z.number(), z.string()]).optional(),
+  notificationChannels: z.array(z.enum(['EMAIL', 'SMS', 'WHATSAPP'])).optional(),
+  notificationChannelsConfigured: z.boolean().optional(),
   overrideReason: z.string().trim().optional(),
 });
 

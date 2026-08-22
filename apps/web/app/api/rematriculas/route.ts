@@ -559,11 +559,17 @@ export async function POST(req: Request) {
         dueDay: parseInteger(body.vencimentoDia),
         enrollmentFeeAmount: parseNumber(body.taxaMatricula),
         enrollmentFeeExempt: body.taxaIsenta === true || body.taxaIsenta === 'true',
+        enrollmentFeeJustification: body.taxaJustificativa ?? null,
         feeChargeMoment: 'CHARGE_ON_START' as const,
         feeUnit: 'PER_STUDENT' as const,
         feePurpose: 'ADMINISTRATIVE_FEE' as const,
+        lateFeePercent: parseNumber(body.multaPercentual),
+        interestMonthlyPercent: parseNumber(body.jurosMensal),
         earlyDiscountPercent: parseNumber(body.descontoAntecipado),
+        earlyDiscountType: body.descontoTipo ?? 'PERCENTAGE',
         earlyDiscountDays: parseInteger(body.prazoDesconto),
+        notificationChannels: body.notificationChannels,
+        notificationChannelsConfigured: body.notificationChannelsConfigured,
       },
     };
 

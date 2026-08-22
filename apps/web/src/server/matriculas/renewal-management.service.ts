@@ -1,7 +1,45 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { buildSeatOccupancyOverlapWhereClause } from '@alusa/lib';
 import { listarRematriculasElegiveis } from './rematricula.service';
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
+
+export type RenewalCampaignClassOverview = {
+  turmaId: string;
+  turmaNome: string;
+  capacidade: number;
+  ocupadas: number;
+  reservasAtivas: number;
+  confirmados: number;
+  pendentes: number;
+  vagasDisponiveis: number;
+  percentualOcupacao: number;
+  statusCapacidade: 'DISPONIVEL' | 'PROXIMA_DO_LIMITE' | 'LOTADA' | 'EXCEDIDA';
+  alunos: Array<{
+    processoId: string;
+    itemId: string;
+    alunoId: string;
+    alunoNome: string;
+    alunoFoto: string | null;
+    processoStatus: string;
+    itemStatus: string;
+    reservaStatus: string | null;
+  }>;
+};
+
+export type RenewalCampaignOverview = {
+  campaignId: string;
+  targetPeriodId: string;
+  totalTurmas: number;
+  totalAlunos: number;
+  totalConfirmados: number;
+  totalPendentes: number;
+  totalOcupadas: number;
+  totalCapacidade: number;
+  totalVagasDisponiveis: number;
+  inconsistenciasSemTurma: number;
+  turmas: RenewalCampaignClassOverview[];
+};
 
 export type CreateRenewalCampaignInput = {
   contaId: string;
@@ -146,7 +184,16 @@ function processDTO(processo: {
       multaPercentual?: unknown;
       descontoAntecipado?: unknown;
       prazoDesconto?: number | null;
-      aluno?: { id: string; nome: string; cpf?: string | null; foto?: string | null } | null;
+      aluno?: {
+        id: string;
+        nome: string;
+        dataNasc?: Date | null;
+        cpf?: string | null;
+        foto?: string | null;
+        asaasCustomerId?: string | null;
+      } | null;
+      responsavelFinanceiroId?: string | null;
+      responsavelFinanceiro?: { asaasCustomerId?: string | null } | null;
       turma?: { id: string; nome: string } | null;
       plano?: { id: string; nome: string } | null;
       combo?: { id: string; nome: string } | null;
@@ -168,6 +215,9 @@ function processDTO(processo: {
       multaPercentual?: unknown;
       descontoAntecipado?: unknown;
       prazoDesconto?: number | null;
+      plano?: { id: string; nome: string } | null;
+      combo?: { id: string; nome: string } | null;
+      turma?: { id: string; nome: string } | null;
     } | null;
   }>;
   reservas?: Array<{ id: string; status: string; targetClassId: string | null; effectiveAt: Date }>;
@@ -183,6 +233,7 @@ function processDTO(processo: {
     feeChargeMoment: string;
     feeUnit: string;
     feePurpose: string;
+    responsavelId?: string | null;
     asaasSubscriptionId: string | null;
     asaasPaymentId: string | null;
     snapshot?: unknown;
@@ -252,7 +303,20 @@ function processDTO(processo: {
         targetPlanId: item.targetPlanId,
         effectiveAt: toIso(item.effectiveAt),
         targetSnapshot: item.targetSnapshot ?? null,
-        aluno: item.matriculaOrigem?.aluno ?? null,
+        aluno: item.matriculaOrigem?.aluno
+          ? {
+              id: item.matriculaOrigem.aluno.id,
+              nome: item.matriculaOrigem.aluno.nome,
+              dataNascimento: toIso(item.matriculaOrigem.aluno.dataNasc),
+              cpf: item.matriculaOrigem.aluno.cpf,
+              foto: item.matriculaOrigem.aluno.foto,
+              customerId:
+                item.matriculaOrigem.responsavelFinanceiro?.asaasCustomerId ??
+                item.matriculaOrigem.aluno.asaasCustomerId ??
+                null,
+              responsavelFinanceiroId: item.matriculaOrigem.responsavelFinanceiroId ?? null,
+            }
+          : null,
         matriculaAtual: item.matriculaOrigem
           ? {
               id: item.matriculaOrigem.id,
@@ -290,6 +354,9 @@ function processDTO(processo: {
               multaPercentual: toNumber(item.matriculaFutura.multaPercentual),
               descontoAntecipado: toNumber(item.matriculaFutura.descontoAntecipado),
               prazoDesconto: item.matriculaFutura.prazoDesconto,
+              plano: item.matriculaFutura.plano ?? null,
+              combo: item.matriculaFutura.combo ?? null,
+              turma: item.matriculaFutura.turma ?? null,
             }
           : null,
         turmaAtual: item.matriculaOrigem?.turma ?? null,
@@ -639,7 +706,8 @@ export async function listRenewalManagement(
                 multaPercentual: true,
                 descontoAntecipado: true,
                 prazoDesconto: true,
-                aluno: { select: { id: true, nome: true, cpf: true, foto: true } },
+                aluno: { select: { id: true, nome: true, dataNasc: true, cpf: true, foto: true, asaasCustomerId: true } },
+                responsavelFinanceiro: { select: { asaasCustomerId: true } },
                 turma: { select: { id: true, nome: true } },
                 plano: { select: { id: true, nome: true } },
                 combo: { select: { id: true, nome: true } },
@@ -663,6 +731,9 @@ export async function listRenewalManagement(
                 multaPercentual: true,
                 descontoAntecipado: true,
                 prazoDesconto: true,
+                turma: { select: { id: true, nome: true } },
+                plano: { select: { id: true, nome: true } },
+                combo: { select: { id: true, nome: true } },
               },
             },
           },
@@ -689,6 +760,7 @@ export async function listRenewalManagement(
             feeChargeMoment: true,
             feeUnit: true,
             feePurpose: true,
+            responsavelId: true,
             asaasSubscriptionId: true,
             asaasPaymentId: true,
             snapshot: true,
@@ -811,6 +883,268 @@ export async function listRenewalManagement(
   };
 }
 
+function targetPeriodRange(targetPeriodId: string, fallback: Date) {
+  const year = /^\d{4}$/.test(targetPeriodId) ? Number(targetPeriodId) : null;
+  if (year === null) {
+    const start = new Date(Date.UTC(fallback.getUTCFullYear(), fallback.getUTCMonth(), fallback.getUTCDate()));
+    const end = new Date(start);
+    end.setUTCFullYear(end.getUTCFullYear() + 1);
+    return { start, end };
+  }
+
+  return {
+    start: new Date(Date.UTC(year, 0, 1)),
+    end: new Date(Date.UTC(year + 1, 0, 1)),
+  };
+}
+
+function capacityStatus(capacidade: number, ocupadas: number) {
+  if (capacidade <= 0) return 'EXCEDIDA' as const;
+  if (ocupadas > capacidade) return 'EXCEDIDA' as const;
+  if (ocupadas >= capacidade) return 'LOTADA' as const;
+  if (ocupadas / capacidade >= 0.9) return 'PROXIMA_DO_LIMITE' as const;
+  return 'DISPONIVEL' as const;
+}
+
+/**
+ * Read model operacional da campanha agrupado por turma destino.
+ * A consulta é deliberadamente separada da listagem geral: a tela precisa
+ * considerar todas as ocupações do ciclo, inclusive reservas/processos de
+ * outras campanhas, sem depender do limite da listagem de processos.
+ */
+export async function getRenewalCampaignOverview(
+  input: { contaId: string; campaignId: string },
+  deps: { prisma: PrismaLike },
+): Promise<RenewalCampaignOverview> {
+  const campaign = await deps.prisma.rematriculaCampanha.findFirst({
+    where: { id: input.campaignId, contaId: input.contaId },
+    select: { id: true, targetPeriodId: true, campaignStartsAt: true },
+  });
+  if (!campaign) throw new Error('CAMPANHA_NAO_ENCONTRADA');
+
+  const processes = await deps.prisma.rematriculaProcesso.findMany({
+    where: {
+      contaId: input.contaId,
+      campanhaId: campaign.id,
+      targetPeriodId: campaign.targetPeriodId,
+      status: { not: 'CANCELLED' },
+    },
+    select: {
+      id: true,
+      status: true,
+      itens: {
+        where: { decision: 'RENEW', status: { not: 'CANCELLED' } },
+        select: {
+          id: true,
+          status: true,
+          decision: true,
+          targetClassId: true,
+          targetComboId: true,
+          matriculaOrigem: {
+            select: { aluno: { select: { id: true, nome: true, foto: true } } },
+          },
+        },
+      },
+      reservas: {
+        where: { status: { in: ['RESERVED', 'WAITLISTED', 'CONVERTED'] } },
+        select: { id: true, itemId: true, targetClassId: true, status: true, matriculaFuturaId: true },
+      },
+    },
+  });
+
+  const comboIds = Array.from(
+    new Set(
+      processes.flatMap((process) =>
+        process.itens.map((item) => item.targetComboId).filter((id): id is string => Boolean(id)),
+      ),
+    ),
+  );
+  const directClassIds = Array.from(
+    new Set(
+      processes.flatMap((process) =>
+        process.itens.map((item) => item.targetClassId).filter((id): id is string => Boolean(id)),
+      ),
+    ),
+  );
+
+  const combos = comboIds.length
+    ? await deps.prisma.combo.findMany({
+        where: { contaId: input.contaId, id: { in: comboIds } },
+        select: {
+          id: true,
+          turmas: { select: { turma: { select: { id: true } } } },
+        },
+      })
+    : [];
+  const comboClasses = new Map(
+    combos.map((combo) => [combo.id, combo.turmas.map((entry) => entry.turma.id)]),
+  );
+  const classIds = Array.from(
+    new Set([
+      ...directClassIds,
+      ...Array.from(comboClasses.values()).flat(),
+    ]),
+  );
+
+  const [classes, reservations, enrollments] = await Promise.all([
+    classIds.length
+      ? deps.prisma.turma.findMany({
+          where: { contaId: input.contaId, id: { in: classIds } },
+          select: { id: true, nome: true, capacidade: true },
+          orderBy: { nome: 'asc' },
+        })
+      : [],
+    classIds.length
+      ? deps.prisma.reservaVagaFutura.findMany({
+          where: {
+            contaId: input.contaId,
+            targetClassId: { in: classIds },
+            targetPeriodId: campaign.targetPeriodId,
+            status: { in: ['RESERVED', 'WAITLISTED', 'CONVERTED'] },
+          },
+          select: { id: true, itemId: true, targetClassId: true, status: true, matriculaFuturaId: true },
+        })
+      : [],
+    classIds.length
+      ? deps.prisma.matricula.findMany({
+          where: {
+            contaId: input.contaId,
+            OR: [
+              { turmaId: { in: classIds } },
+              { matriculaTurmas: { some: { turmaId: { in: classIds } } } },
+            ],
+            ...buildSeatOccupancyOverlapWhereClause(
+              targetPeriodRange(campaign.targetPeriodId, campaign.campaignStartsAt).start,
+              targetPeriodRange(campaign.targetPeriodId, campaign.campaignStartsAt).end,
+            ),
+          },
+          select: {
+            id: true,
+            turmaId: true,
+            matriculaTurmas: { select: { turmaId: true } },
+          },
+        })
+      : [],
+  ]);
+
+  const classById = new Map(classes.map((turma) => [turma.id, turma]));
+  const occupiedEnrollmentIdsByClass = new Map<string, Set<string>>();
+  for (const enrollment of enrollments) {
+    const enrollmentClassIds = new Set([
+      ...(enrollment.turmaId ? [enrollment.turmaId] : []),
+      ...enrollment.matriculaTurmas.map((entry) => entry.turmaId),
+    ]);
+    for (const classId of enrollmentClassIds) {
+      if (!classById.has(classId)) continue;
+      const ids = occupiedEnrollmentIdsByClass.get(classId) ?? new Set<string>();
+      ids.add(enrollment.id);
+      occupiedEnrollmentIdsByClass.set(classId, ids);
+    }
+  }
+
+  const reservationByItemAndClass = new Map<string, string>();
+  const reservationCountByClass = new Map<string, number>();
+  for (const reservation of reservations) {
+    if (!reservation.targetClassId) continue;
+    reservationCountByClass.set(
+      reservation.targetClassId,
+      (reservationCountByClass.get(reservation.targetClassId) ?? 0) + 1,
+    );
+    if (reservation.itemId) {
+      reservationByItemAndClass.set(`${reservation.itemId}:${reservation.targetClassId}`, reservation.status);
+    }
+    if (!reservation.matriculaFuturaId) {
+      const ids = occupiedEnrollmentIdsByClass.get(reservation.targetClassId) ?? new Set<string>();
+      ids.add(`reservation:${reservation.id}`);
+      occupiedEnrollmentIdsByClass.set(reservation.targetClassId, ids);
+    }
+  }
+
+  const rowsByClass = new Map<
+    string,
+    RenewalCampaignClassOverview['alunos']
+  >();
+  let inconsistenciasSemTurma = 0;
+  const confirmedProcessStatuses = new Set(['CONFIRMED', 'WAITING_FOR_START', 'EFFECTIVE', 'COMPLETED']);
+
+  for (const process of processes) {
+    for (const item of process.itens) {
+      const targetClassIds = item.targetClassId
+        ? [item.targetClassId]
+        : item.targetComboId
+          ? comboClasses.get(item.targetComboId) ?? []
+          : [];
+      if (targetClassIds.length === 0) {
+        inconsistenciasSemTurma += 1;
+        continue;
+      }
+
+      const aluno = item.matriculaOrigem.aluno;
+      for (const targetClassId of targetClassIds) {
+        if (!classById.has(targetClassId) || !aluno) continue;
+        const rows = rowsByClass.get(targetClassId) ?? [];
+        rows.push({
+          processoId: process.id,
+          itemId: item.id,
+          alunoId: aluno.id,
+          alunoNome: aluno.nome ?? 'Aluno sem nome',
+          alunoFoto: aluno.foto ?? null,
+          processoStatus: process.status,
+          itemStatus: item.status,
+          reservaStatus: reservationByItemAndClass.get(`${item.id}:${targetClassId}`) ?? null,
+        });
+        rowsByClass.set(targetClassId, rows);
+      }
+    }
+  }
+
+  const turmas = classes.map((turma) => {
+    const alunos = rowsByClass.get(turma.id) ?? [];
+    const confirmados = alunos.filter(
+      (aluno) => aluno.itemStatus === 'RENEWED' || confirmedProcessStatuses.has(aluno.processoStatus),
+    ).length;
+    const pendentes = alunos.length - confirmados;
+    const ocupadas = occupiedEnrollmentIdsByClass.get(turma.id)?.size ?? 0;
+    const capacidade = turma.capacidade;
+    return {
+      turmaId: turma.id,
+      turmaNome: turma.nome,
+      capacidade,
+      ocupadas,
+      reservasAtivas: reservationCountByClass.get(turma.id) ?? 0,
+      confirmados,
+      pendentes,
+      vagasDisponiveis: Math.max(0, capacidade - ocupadas),
+      percentualOcupacao: capacidade > 0 ? Math.round((ocupadas / capacidade) * 100) : 0,
+      statusCapacidade: capacityStatus(capacidade, ocupadas),
+      alunos: alunos.sort((a, b) => a.alunoNome.localeCompare(b.alunoNome, 'pt-BR')),
+    } satisfies RenewalCampaignClassOverview;
+  });
+
+  const allRows = Array.from(rowsByClass.values()).flat();
+  const allItemIds = new Set(allRows.map((row) => row.itemId));
+  const confirmedItemIds = new Set(
+    allRows
+      .filter((row) => row.itemStatus === 'RENEWED' || confirmedProcessStatuses.has(row.processoStatus))
+      .map((row) => row.itemId),
+  );
+  const studentIds = new Set(allRows.map((row) => row.alunoId));
+
+  return {
+    campaignId: campaign.id,
+    targetPeriodId: campaign.targetPeriodId,
+    totalTurmas: turmas.length,
+    totalAlunos: studentIds.size,
+    totalConfirmados: confirmedItemIds.size,
+    totalPendentes: Math.max(0, allItemIds.size - confirmedItemIds.size),
+    totalOcupadas: turmas.reduce((total, turma) => total + turma.ocupadas, 0),
+    totalCapacidade: turmas.reduce((total, turma) => total + turma.capacidade, 0),
+    totalVagasDisponiveis: turmas.reduce((total, turma) => total + turma.vagasDisponiveis, 0),
+    inconsistenciasSemTurma,
+    turmas,
+  };
+}
+
 export async function getRenewalProcessDetail(
   input: { contaId: string; processId: string },
   deps: { prisma: PrismaLike },
@@ -838,7 +1172,9 @@ export async function getRenewalProcessDetail(
               multaPercentual: true,
               descontoAntecipado: true,
               prazoDesconto: true,
-              aluno: { select: { id: true, nome: true, cpf: true, foto: true } },
+              aluno: { select: { id: true, nome: true, dataNasc: true, cpf: true, foto: true, asaasCustomerId: true } },
+              responsavelFinanceiroId: true,
+              responsavelFinanceiro: { select: { asaasCustomerId: true } },
               turma: { select: { id: true, nome: true } },
               plano: { select: { id: true, nome: true } },
               combo: { select: { id: true, nome: true } },
@@ -862,6 +1198,9 @@ export async function getRenewalProcessDetail(
               multaPercentual: true,
               descontoAntecipado: true,
               prazoDesconto: true,
+              turma: { select: { id: true, nome: true } },
+              plano: { select: { id: true, nome: true } },
+              combo: { select: { id: true, nome: true } },
             },
           },
         },
@@ -882,6 +1221,7 @@ export async function getRenewalProcessDetail(
           feeChargeMoment: true,
           feeUnit: true,
           feePurpose: true,
+          responsavelId: true,
           asaasSubscriptionId: true,
           asaasPaymentId: true,
           snapshot: true,
@@ -930,5 +1270,35 @@ export async function getRenewalProcessDetail(
   });
 
   if (!processo) throw new Error('REMATRICULA_NAO_ENCONTRADA');
-  return processDTO(processo);
+
+  const payerKeys = (processo.itens ?? []).flatMap((item) => {
+    const responsavelId = item.matriculaOrigem.responsavelFinanceiroId ?? processo.financeiros[0]?.responsavelId ?? null;
+    const alunoId = item.matriculaOrigem.aluno?.id ?? null;
+    return responsavelId
+      ? [{ payerType: 'RESPONSAVEL' as const, payerId: responsavelId }]
+      : alunoId
+        ? [{ payerType: 'ALUNO' as const, payerId: alunoId }]
+        : [];
+  });
+  const customers = payerKeys.length
+    ? await deps.prisma.customer.findMany({
+        where: {
+          contaId: input.contaId,
+          OR: payerKeys,
+        },
+        select: { payerType: true, payerId: true, asaasCustomerId: true },
+      })
+    : [];
+  const customerByPayer = new Map(customers.map((customer) => [`${customer.payerType}:${customer.payerId}`, customer.asaasCustomerId]));
+  const detail = processDTO(processo);
+  detail.itens?.forEach((item, index) => {
+    const source = processo.itens?.[index];
+    if (!source?.matriculaOrigem.aluno || !item.aluno) return;
+    const responsavelId = source.matriculaOrigem.responsavelFinanceiroId ?? processo.financeiros[0]?.responsavelId ?? null;
+    const payerKey = responsavelId
+      ? `RESPONSAVEL:${responsavelId}`
+      : `ALUNO:${source.matriculaOrigem.aluno.id}`;
+    item.aluno.customerId = customerByPayer.get(payerKey) ?? item.aluno.customerId ?? null;
+  });
+  return detail;
 }

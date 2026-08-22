@@ -1,6 +1,6 @@
 import * as React from 'react';
 import Link from 'next/link';
-import { InformationCircleIcon } from '@heroicons/react/24/outline';
+import { ExclamationTriangleIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
@@ -86,10 +86,17 @@ export function InfoCallout({
       >
         <div className="flex gap-2.5 sm:gap-3">
           {showIcon ? (
-            <InformationCircleIcon
-              className={cn('h-5 w-5 shrink-0', iconVariants[resolvedVariant])}
-              aria-hidden
-            />
+            resolvedVariant === 'warning' ? (
+              <ExclamationTriangleIcon
+                className={cn('h-5 w-5 shrink-0', iconVariants[resolvedVariant])}
+                aria-hidden
+              />
+            ) : (
+              <InformationCircleIcon
+                className={cn('h-5 w-5 shrink-0', iconVariants[resolvedVariant])}
+                aria-hidden
+              />
+            )
           ) : null}
           <div className="min-w-0 flex-1">
             {title ? (
@@ -130,10 +137,17 @@ export function InfoCallout({
         )}
       >
         {showIcon ? (
-          <InformationCircleIcon
-            className={cn('h-5 w-5 shrink-0', iconVariants[resolvedVariant])}
-            aria-hidden
-          />
+          resolvedVariant === 'warning' ? (
+            <ExclamationTriangleIcon
+              className={cn('h-5 w-5 shrink-0', iconVariants[resolvedVariant])}
+              aria-hidden
+            />
+          ) : (
+            <InformationCircleIcon
+              className={cn('h-5 w-5 shrink-0', iconVariants[resolvedVariant])}
+              aria-hidden
+            />
+          )
         ) : null}
         <div className="min-w-0 flex-1">{children}</div>
       </div>

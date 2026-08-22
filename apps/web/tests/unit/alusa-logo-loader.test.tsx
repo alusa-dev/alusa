@@ -1,8 +1,12 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { AlusaLogoLoader } from '@/components/feedback/AlusaLogoLoader';
+
+afterEach(() => {
+  document.body.innerHTML = '';
+});
 
 describe('AlusaLogoLoader', () => {
   it('renders an accessible full-screen loading state using the Alusa logo', () => {

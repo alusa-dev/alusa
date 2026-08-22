@@ -45,6 +45,27 @@ function readMoney(record: JsonRecord, key: string) {
   return Number.isFinite(value) ? Math.round((value + Number.EPSILON) * 100) / 100 : 0;
 }
 
+function resolveNotificationPreferences(
+  agreement: Awaited<ReturnType<typeof loadAgreement>>,
+) {
+  const snapshot = agreement?.snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return {};
+  const record = snapshot as JsonRecord;
+  if (record.notificationChannelsConfigured !== true) return {};
+
+  const notificationChannels = Array.isArray(record.notificationChannels)
+    ? record.notificationChannels.filter(
+        (channel): channel is 'EMAIL' | 'SMS' | 'WHATSAPP' =>
+          channel === 'EMAIL' || channel === 'SMS' || channel === 'WHATSAPP',
+      )
+    : [];
+
+  return {
+    notificationChannels,
+    notificationChannelsConfigured: true,
+  };
+}
+
 function retryDate(now: Date, attempts: number) {
   const minutes = Math.min(12 * 60, Math.max(5, attempts * attempts * 5));
   return new Date(now.getTime() + minutes * 60 * 1000);
@@ -74,6 +95,11 @@ async function loadAgreement(
                   formaPagamentoTaxa: true,
                   dataFimContrato: true,
                   vencimentoDia: true,
+                  descontoAntecipado: true,
+                  descontoTipo: true,
+                  prazoDesconto: true,
+                  jurosMensal: true,
+                  multaPercentual: true,
                   plano: { select: { periodicidade: true } },
                   combo: { select: { periodicidade: true } },
                 },
@@ -108,6 +134,27 @@ function resolvePayer(agreement: Awaited<ReturnType<typeof loadAgreement>>) {
     payer: { type: 'aluno' as const, alunoId: firstFuture.alunoId },
     firstFuture,
     renewedItems,
+  };
+}
+
+function resolveBillingAdjustments(
+  firstFuture: NonNullable<ReturnType<typeof resolvePayer>>['firstFuture'],
+) {
+  const discountValue = Number(firstFuture.descontoAntecipado ?? 0);
+  const discount = discountValue > 0
+    ? {
+        value: discountValue,
+        type: firstFuture.descontoTipo === 'FIXED' ? ('FIXED' as const) : ('PERCENTAGE' as const),
+        dueDateLimitDays: Math.max(0, Number(firstFuture.prazoDesconto ?? 0)),
+      }
+    : undefined;
+  const interestValue = Number(firstFuture.jurosMensal ?? 0);
+  const fineValue = Number(firstFuture.multaPercentual ?? 0);
+
+  return {
+    ...(discount ? { discount } : {}),
+    ...(interestValue > 0 ? { interest: { value: interestValue } } : {}),
+    ...(fineValue > 0 ? { fine: { value: fineValue, type: 'PERCENTAGE' as const } } : {}),
   };
 }
 
@@ -180,6 +227,8 @@ async function handleFeeCharge(
     description: `Taxa de rematrícula - processo ${agreement.processoId}`,
     value: amount,
     dueDate: toDateKey(now),
+    ...resolveBillingAdjustments(payerContext.firstFuture),
+    ...resolveNotificationPreferences(agreement),
     uiRequestId: `renewal-fee:${agreement.id}`,
   });
 
@@ -283,6 +332,7 @@ async function handleFutureFinanceProvision(
     nextDueDate: toDateKey(agreement.firstDueDate ?? agreement.effectiveAt),
     endDate: toDateKey(payerContext.firstFuture.dataFimContrato),
     cycle: mapPeriodicidadeToCycle(periodicidade),
+    ...resolveNotificationPreferences(agreement),
     uiRequestId: `renewal-future-finance:${agreement.id}`,
   });
 

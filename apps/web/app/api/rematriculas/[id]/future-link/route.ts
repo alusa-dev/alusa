@@ -30,6 +30,7 @@ const futureLinkSchema = z.object({
   lateFeePercent: z.number().min(0).nullable().optional(),
   interestMonthlyPercent: z.number().min(0).nullable().optional(),
   earlyDiscountPercent: z.number().min(0).nullable().optional(),
+  earlyDiscountType: z.enum(['FIXED', 'PERCENTAGE']).nullable().optional(),
   earlyDiscountDays: z.number().int().min(0).nullable().optional(),
   reason: z.string().trim().min(1),
 });
@@ -91,6 +92,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         lateFeePercent: body.lateFeePercent,
         interestMonthlyPercent: body.interestMonthlyPercent,
         earlyDiscountPercent: body.earlyDiscountPercent,
+        earlyDiscountType: body.earlyDiscountType,
         earlyDiscountDays: body.earlyDiscountDays,
         reason: body.reason,
       },

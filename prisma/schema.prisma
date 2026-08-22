@@ -2628,6 +2628,8 @@ model RematriculaItem {
 }
 
 model ReservaVagaFutura {
+  // A unicidade de reserva ativa por item é um índice parcial PostgreSQL,
+  // mantido na migration porque o Prisma não expressa predicados de índice.
   id                String                    @id @default(cuid())
   contaId           String
   processoId        String

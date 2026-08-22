@@ -2,7 +2,6 @@
 
 import type React from 'react';
 import { Button } from '@/components/ui/button';
-import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
@@ -25,7 +24,7 @@ import type { RematriculaProcessSummary } from '../services/rematriculas-service
 const modalTextAreaClass =
   'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30';
 const modalSectionClass =
-  'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
+  'space-y-3 rounded-xl bg-slate-50 px-4 py-4';
 const modalLabelClass = 'text-xs font-medium text-slate-600';
 
 function formatDate(value: string | null | undefined) {
@@ -50,14 +49,6 @@ function getProcessLabel(status: RematriculaProcessSummary['status']) {
   return labels[status] ?? status;
 }
 
-function getProcessBadgeVariant(status: RematriculaProcessSummary['status']): BadgeVariant {
-  if (status === 'CONFIRMED' || status === 'EFFECTIVE') return 'success';
-  if (status === 'WAITING_FOR_START' || status === 'PREVIEWED') return 'info';
-  if (status === 'PARTIALLY_CONFIRMED' || status === 'REQUIRES_ATTENTION') return 'warning';
-  if (status === 'CANCELLED') return 'destructive';
-  return 'neutral';
-}
-
 function getDecisionLabel(decision: string | null | undefined) {
   const labels: Record<string, string> = {
     PENDING: 'Pendente',
@@ -67,13 +58,6 @@ function getDecisionLabel(decision: string | null | undefined) {
     CANCELLED: 'Cancelada',
   };
   return decision ? labels[decision] ?? decision : 'Pendente';
-}
-
-function getDecisionBadgeVariant(decision: string | null | undefined): BadgeVariant {
-  if (decision === 'RENEW') return 'success';
-  if (decision === 'PENDING' || decision === 'DECIDE_LATER' || !decision) return 'warning';
-  if (decision === 'DO_NOT_CONTINUE') return 'destructive';
-  return 'neutral';
 }
 
 function getReservaLabel(status: string | null | undefined) {
@@ -90,13 +74,6 @@ function getReservaLabel(status: string | null | undefined) {
   return status ? labels[status] ?? status : 'Sem reserva';
 }
 
-function getReservaBadgeVariant(status: string | null | undefined): BadgeVariant {
-  if (status === 'RESERVED' || status === 'CONVERTED') return 'success';
-  if (status === 'WAITLISTED') return 'warning';
-  if (status === 'FAILED' || status === 'CANCELLED') return 'destructive';
-  return 'neutral';
-}
-
 function getContratoFuturoLabel(status: string | null | undefined) {
   const labels: Record<string, string> = {
     DRAFT: 'Rascunho',
@@ -108,13 +85,6 @@ function getContratoFuturoLabel(status: string | null | undefined) {
     CANCELLED: 'Cancelado',
   };
   return status ? labels[status] ?? status : 'Rascunho';
-}
-
-function getContratoFuturoBadgeVariant(status: string | null | undefined): BadgeVariant {
-  if (status === 'ACTIVE' || status === 'SIGNED' || status === 'SIGNED_SCHEDULED') return 'success';
-  if (status === 'PREVIEWED' || status === 'WAITING_SIGNATURE') return 'info';
-  if (status === 'CANCELLED') return 'destructive';
-  return 'neutral';
 }
 
 function getFinanceiroFuturoLabel(status: string | null | undefined) {
@@ -133,178 +103,146 @@ function getFinanceiroFuturoLabel(status: string | null | undefined) {
   return status ? labels[status] ?? status : 'Não preparado';
 }
 
-function getFinanceiroFuturoBadgeVariant(status: string | null | undefined): BadgeVariant {
-  if (status === 'PREPARED' || status === 'PROVISIONED' || status === 'ACTIVE') return 'success';
-  if (status === 'SCHEDULED' || status === 'READY_TO_PROVISION' || status === 'PROVISIONING') return 'info';
-  if (status === 'PENDING') return 'warning';
-  if (status === 'FAILED' || status === 'CANCELLED') return 'destructive';
-  return 'neutral';
+function formatCurrency(value: number | null | undefined) {
+  if (value == null) return 'Não informado';
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+}
+
+function formatPaymentMethod(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    BOLETO: 'Boleto bancário',
+    PIX: 'Pix',
+    CARTAO_CREDITO: 'Cartão de crédito',
+    INDEFINIDO: 'Não definido',
+  };
+  return value ? labels[value] ?? value : 'Não informado';
+}
+
+function formatChannels(snapshot: Record<string, unknown> | null | undefined) {
+  const labels: Record<string, string> = {
+    EMAIL: 'E-mail',
+    SMS: 'SMS',
+    WHATSAPP: 'WhatsApp',
+  };
+  const channels = Array.isArray(snapshot?.notificationChannels)
+    ? snapshot.notificationChannels.filter((channel): channel is string => typeof channel === 'string')
+    : [];
+  return channels.length ? channels.map((channel) => labels[channel] ?? channel).join(', ') : 'Não configuradas';
+}
+
+function getSnapshotText(item: RematriculaProcessSummary['itens'][number] | null, key: string) {
+  if (!item) return null;
+  const value = item.targetSnapshot?.[key];
+  return typeof value === 'string' && value.trim() ? value : null;
 }
 
 type DetailsDialogProps = {
   process: RematriculaProcessSummary | null;
-  readOnly?: boolean;
   onOpenChange: (_open: boolean) => void;
-  onCreateCommunication: (_process: RematriculaProcessSummary) => void;
-  onGrantException: (_process: RematriculaProcessSummary) => void;
-  onResolvePending: (_pendingId: string) => void;
 };
 
 export function RematriculaProcessDetailsDialog({
   process,
-  readOnly = false,
   onOpenChange,
-  onCreateCommunication,
-  onGrantException,
-  onResolvePending,
 }: DetailsDialogProps) {
+  const firstItem = process?.itens.find((item) => item.decision === 'RENEW') ?? process?.itens[0] ?? null;
+  const futureEnrollment = firstItem?.matriculaFutura ?? null;
+  const currentEnrollment = firstItem?.matriculaAtual ?? null;
+  const financialSnapshot = process?.financeiros[0]?.snapshot ?? null;
+
   return (
     <Dialog open={Boolean(process)} onOpenChange={onOpenChange}>
-      <DialogContent
-        fullScreenMobile
-        className="w-full max-w-4xl gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0 max-md:flex-col md:rounded-2xl"
-      >
+      <DialogContent className="flex max-h-[90vh] w-full max-w-[30rem] flex-col gap-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-0 shadow-2xl">
         {process ? (
-          <div className="flex max-h-[88vh] min-h-0 flex-col max-md:max-h-none max-md:flex-1">
-            <div className="relative shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-8 md:py-6">
-              <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <DialogTitle className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0">
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="shrink-0 border-b border-slate-200 bg-white px-6 pb-5 pt-6 pr-14">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <DialogTitle className="text-lg font-medium tracking-tight text-slate-900">
                     Detalhes da rematrícula
                   </DialogTitle>
-                  <DialogDescription className="mt-2 text-sm text-slate-600">
-                    {process.origin === 'CAMPAIGN' ? process.campanha?.nome ?? 'Campanha' : 'Rematrícula avulsa'} ·{' '}
-                    {process.targetPeriodId} · {getProcessLabel(process.status)}
-                  </DialogDescription>
+                  <DialogDescription className="sr-only">Informações da rematrícula</DialogDescription>
                 </div>
-                <Badge variant={getProcessBadgeVariant(process.status)}>
-                  {getProcessLabel(process.status)}
-                </Badge>
               </div>
             </div>
 
-            <div className="flex-1 space-y-6 overflow-y-auto scroll-smooth bg-slate-50 px-4 py-6 max-md:min-h-0 md:px-8">
-              <div className={modalSectionClass}>
-                <span className="text-sm font-semibold text-slate-700">Vínculo atual</span>
-                <div className="space-y-3">
+            <div className="flex-1 space-y-6 overflow-y-auto scroll-smooth bg-white px-6 py-6">
+              <section className="space-y-4">
+                <div>
+                  <p className="text-xs text-slate-500">Mensalidade</p>
+                  <p className="mt-1 text-3xl font-medium tracking-tight text-slate-950">
+                    {formatCurrency(process.monthlyTotal)}
+                  </p>
+                </div>
+                <div>
+                  <DetailRow label="Customer ID" value={firstItem?.aluno?.customerId ?? 'Não informado'} />
+                  <DetailRow
+                    label="Status"
+                    value={<span className="text-emerald-700">{getProcessLabel(process.status)}</span>}
+                  />
+                  <DetailRow
+                    label="Origem"
+                    value={process.origin === 'CAMPAIGN' ? process.campanha?.nome ?? 'Campanha' : 'Rematrícula avulsa'}
+                  />
+                  <DetailRow label="Período de destino" value={process.targetPeriodId} />
+                </div>
+              </section>
+
+              <section className={modalSectionClass}>
+                <h3 className="text-sm font-medium text-slate-900">Dados básicos do aluno</h3>
+                <div>
                   {process.itens.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3"
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-slate-900">
-                          {item.aluno?.nome ?? item.matriculaOrigemId}
-                        </div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          {item.turmaAtual?.nome ?? item.comboAtual?.nome ?? 'Sem turma atual'}
-                        </div>
-                      </div>
-                      <Badge variant={getDecisionBadgeVariant(item.decision)}>
-                        {getDecisionLabel(item.decision)}
-                      </Badge>
+                    <div key={item.id} className="py-1.5 first:pt-0 last:pb-0">
+                      <DetailRow label="Nome" value={item.aluno?.nome ?? item.matriculaOrigemId} />
+                      <DetailRow label="Data de nascimento" value={formatDate(item.aluno?.dataNascimento)} />
+                      <DetailRow label="CPF" value={item.aluno?.cpf ?? 'Não informado'} />
+                      <DetailRow
+                        label="Vínculo atual"
+                        value={item.turmaAtual?.nome ?? item.comboAtual?.nome ?? 'Sem turma atual'}
+                      />
                     </div>
                   ))}
                 </div>
-              </div>
+              </section>
 
-              <div className={modalSectionClass}>
-                <span className="text-sm font-semibold text-slate-700">Próximo ciclo</span>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <SummaryTile label="Início" value={formatDate(process.effectiveAt)} />
-                  <SummaryTile
-                    label="Reserva"
-                    value={getReservaLabel(process.reservas[0]?.status)}
-                    badgeVariant={getReservaBadgeVariant(process.reservas[0]?.status)}
-                  />
-                  <SummaryTile
-                    label="Contrato futuro"
-                    value={getContratoFuturoLabel(process.contratos[0]?.status)}
-                    badgeVariant={getContratoFuturoBadgeVariant(process.contratos[0]?.status)}
-                  />
-                  <SummaryTile
-                    label="Financeiro futuro"
-                    value={getFinanceiroFuturoLabel(process.financeiros[0]?.status)}
-                    badgeVariant={getFinanceiroFuturoBadgeVariant(process.financeiros[0]?.status)}
-                  />
+              <section className={modalSectionClass}>
+                <h3 className="text-sm font-medium text-slate-900">Próximo ciclo</h3>
+                <div>
+                  <DetailRow label="Plano" value={futureEnrollment?.plano?.nome ?? getSnapshotText(firstItem, 'planName') ?? 'Não informado'} />
+                  <DetailRow label="Turma ou combo" value={futureEnrollment?.turma?.nome ?? futureEnrollment?.combo?.nome ?? getSnapshotText(firstItem, 'className') ?? getSnapshotText(firstItem, 'comboName') ?? 'Não informado'} />
+                  <DetailRow label="Data de início" value={formatDate(futureEnrollment?.dataInicio ?? process.effectiveAt)} />
+                  <DetailRow label="Término do contrato" value={formatDate(futureEnrollment?.dataFimContrato)} />
+                  <DetailRow label="Decisão" value={getDecisionLabel(firstItem?.decision)} />
+                  <DetailRow label="Reserva" value={getReservaLabel(process.reservas[0]?.status)} />
+                  <DetailRow label="Contrato futuro" value={getContratoFuturoLabel(process.contratos[0]?.status)} />
+                  <DetailRow label="Financeiro futuro" value={getFinanceiroFuturoLabel(process.financeiros[0]?.status)} />
                 </div>
-              </div>
+              </section>
 
-              <div className={modalSectionClass}>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-semibold text-slate-700">Pendências</span>
-                  {process.pendencias.length > 0 ? <Badge variant="warning">{process.pendencias.length}</Badge> : null}
+              <section className={modalSectionClass}>
+                <h3 className="text-sm font-medium text-slate-900">Condições de pagamento</h3>
+                <div>
+                  <DetailRow label="Mensalidade" value={formatCurrency(process.monthlyTotal)} />
+                  <DetailRow label="Taxa de matrícula" value={futureEnrollment?.taxaIsenta ? 'Isenta' : formatCurrency(futureEnrollment?.taxaMatricula ?? process.enrollmentFeeTotal)} />
+                  <DetailRow label="Forma de pagamento" value={formatPaymentMethod(futureEnrollment?.formaPagamento ?? currentEnrollment?.formaPagamento)} />
+                  <DetailRow label="Forma de pagamento da taxa" value={formatPaymentMethod(futureEnrollment?.formaPagamentoTaxa ?? currentEnrollment?.formaPagamentoTaxa)} />
+                  <DetailRow label="Dia de vencimento" value={futureEnrollment?.vencimentoDia ? `Dia ${futureEnrollment.vencimentoDia}` : 'Não informado'} />
+                  <DetailRow label="Desconto por antecipação" value={futureEnrollment?.descontoAntecipado ? `${futureEnrollment.descontoAntecipado}%` : 'Não aplicado'} />
+                  <DetailRow label="Prazo do desconto" value={futureEnrollment?.prazoDesconto != null ? `${futureEnrollment.prazoDesconto} dias antes` : 'Não informado'} />
+                  <DetailRow label="Juros mensais" value={`${futureEnrollment?.jurosMensal ?? currentEnrollment?.jurosMensal ?? 0}%`} />
+                  <DetailRow label="Multa por atraso" value={`${futureEnrollment?.multaPercentual ?? currentEnrollment?.multaPercentual ?? 0}%`} />
                 </div>
-                {process.pendencias.length === 0 ? (
-                  <EmptyLine>Nenhuma pendência registrada.</EmptyLine>
-                ) : (
-                  <div className="space-y-2">
-                    {process.pendencias.map((pending) => (
-                      <div
-                        key={pending.id}
-                        className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm"
-                      >
-                        <div className="min-w-0">
-                          <div className="font-medium text-amber-950">{pending.title}</div>
-                          <div className="text-amber-900">{pending.message}</div>
-                        </div>
-                        {!readOnly && ['OPEN', 'IN_PROGRESS'].includes(pending.status) ? (
-                          <Button type="button" size="sm" variant="outline" onClick={() => onResolvePending(pending.id)}>
-                            Resolver
-                          </Button>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              </section>
 
-              <div className="grid gap-6 md:grid-cols-2">
-                <div className={modalSectionClass}>
-                  <span className="text-sm font-semibold text-slate-700">Exceções</span>
-                  {process.excecoes.length === 0 ? (
-                    <EmptyLine>Nenhuma exceção registrada.</EmptyLine>
-                  ) : (
-                    <div className="space-y-2">
-                      {process.excecoes.map((exception) => (
-                        <div key={exception.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
-                          <div className="font-medium text-slate-900">{exception.rule}</div>
-                          <div className="mt-1 text-slate-700">{exception.justification}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+              <section className={modalSectionClass}>
+                <h3 className="text-sm font-medium text-slate-900">Notificações</h3>
+                <div>
+                  <DetailRow label="Canais" value={formatChannels(financialSnapshot)} />
                 </div>
-                <div className={modalSectionClass}>
-                  <span className="text-sm font-semibold text-slate-700">Comunicação</span>
-                  {process.comunicacoes.length === 0 ? (
-                    <EmptyLine>Nenhuma comunicação registrada.</EmptyLine>
-                  ) : (
-                    <div className="space-y-2">
-                      {process.comunicacoes.map((communication) => (
-                        <div key={communication.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
-                          <div className="font-medium text-slate-900">{communication.subject ?? 'Comunicação registrada'}</div>
-                          <div className="mt-1 text-xs text-slate-500">{formatDate(communication.createdAt)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
+              </section>
             </div>
 
-            <DialogFooter className="shrink-0 gap-2 border-t border-slate-200 bg-white px-4 py-4 md:px-8">
-              {!readOnly ? (
-                <>
-                  <Button type="button" variant="outline" className="h-10 min-w-[112px] border-slate-300 bg-white text-slate-700 hover:bg-slate-50" onClick={() => onCreateCommunication(process)}>
-                    Comunicação
-                  </Button>
-                  <Button type="button" variant="outline" className="h-10 min-w-[112px] border-slate-300 bg-white text-slate-700 hover:bg-slate-50" onClick={() => onGrantException(process)}>
-                    Exceção
-                  </Button>
-                </>
-              ) : null}
+            <DialogFooter className="shrink-0 border-t border-slate-200 bg-white px-6 py-4">
               <Button type="button" variant="outline" className="h-10 min-w-[112px] border-slate-300 bg-white text-slate-700 hover:bg-slate-50" onClick={() => onOpenChange(false)}>
                 Fechar
               </Button>
@@ -316,31 +254,19 @@ export function RematriculaProcessDetailsDialog({
   );
 }
 
-function SummaryTile({
+function DetailRow({
   label,
   value,
-  badgeVariant,
 }: {
   label: string;
-  value: string;
-  badgeVariant?: BadgeVariant;
+  value: React.ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-      <div className="text-xs font-medium text-slate-500">{label}</div>
-      <div className="mt-1">
-        {badgeVariant ? (
-          <Badge variant={badgeVariant}>{value}</Badge>
-        ) : (
-          <span className="text-sm font-medium text-slate-900">{value}</span>
-        )}
-      </div>
+    <div className="flex items-center justify-between gap-4 py-1.5">
+      <div className="w-[48%] text-xs font-medium text-slate-500">{label}</div>
+      <div className="w-[52%] text-left text-sm text-slate-900">{value}</div>
     </div>
   );
-}
-
-function EmptyLine({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">{children}</div>;
 }
 
 type CancelDialogProps = {

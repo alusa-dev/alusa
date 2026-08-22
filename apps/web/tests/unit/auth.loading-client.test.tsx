@@ -37,12 +37,13 @@ describe('AuthLoadingClient', () => {
     vi.useRealTimers();
   });
 
-  it('renderiza spinner e redireciona para o callback interno', async () => {
+  it('renderiza a logo da Alusa e redireciona para o callback interno', async () => {
     useSearchParamsMock.mockReturnValue(new URLSearchParams('callbackUrl=%2Ffinanceiro%2Fpagamentos'));
 
     render(<LoadingClient />);
 
-    expect(screen.getByText('Carregando...')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Carregando' })).toBeInTheDocument();
+    expect(screen.getByTestId('alusa-loader-logo')).toBeInTheDocument();
 
     await waitFor(() => {
       expect(replaceMock).toHaveBeenCalledWith('/financeiro/pagamentos');

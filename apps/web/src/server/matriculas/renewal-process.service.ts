@@ -52,11 +52,17 @@ export type RenewalFinancialTermsInput = {
   dueDay?: number | null;
   enrollmentFeeAmount?: number | null;
   enrollmentFeeExempt?: boolean | null;
+  enrollmentFeeJustification?: string | null;
   feeChargeMoment?: 'CHARGE_ON_CONFIRMATION' | 'CHARGE_ON_START' | 'EXEMPT';
   feeUnit?: 'NO_FEE' | 'PER_STUDENT' | 'PER_FAMILY';
   feePurpose?: 'ADMINISTRATIVE_FEE' | 'SEAT_RESERVATION' | 'ADVANCE_FIRST_TUITION';
+  lateFeePercent?: number | null;
+  interestMonthlyPercent?: number | null;
   earlyDiscountPercent?: number | null;
+  earlyDiscountType?: 'FIXED' | 'PERCENTAGE' | null;
   earlyDiscountDays?: number | null;
+  notificationChannels?: Array<'EMAIL' | 'SMS' | 'WHATSAPP'>;
+  notificationChannelsConfigured?: boolean;
 };
 
 export type RenewalProcessInput = {
@@ -114,6 +120,7 @@ export type EditRenewalFutureLinkInput = {
   lateFeePercent?: number | null;
   interestMonthlyPercent?: number | null;
   earlyDiscountPercent?: number | null;
+  earlyDiscountType?: 'FIXED' | 'PERCENTAGE' | null;
   earlyDiscountDays?: number | null;
   reason: string;
 };
@@ -123,6 +130,14 @@ type LoadedSource = Awaited<ReturnType<typeof loadSourceRows>>[number];
 function toMoney(value: unknown) {
   const number = Number(value ?? 0);
   return Number.isFinite(number) ? Math.round((number + Number.EPSILON) * 100) / 100 : 0;
+}
+
+function notificationPreferencesSnapshot(financialTerms?: RenewalFinancialTermsInput | null) {
+  if (!financialTerms?.notificationChannelsConfigured) return {};
+  return {
+    notificationChannels: Array.from(new Set(financialTerms.notificationChannels ?? [])),
+    notificationChannelsConfigured: true,
+  };
 }
 
 function toDateOnly(date: Date) {
@@ -679,6 +694,29 @@ async function validateRenewalPreconditions(
   const sourceById = new Map(sourceRows.map((source) => [source.id, source]));
   const sourceIds = Array.from(new Set(input.items.map((item) => item.sourceEnrollmentId)));
   const expectedSourceHolderId = input.sourceHolderId ?? input.holderId;
+
+  for (const item of input.items) {
+    if (item.decision !== 'RENEW' || item.target.type !== 'CLASS') continue;
+    if (!item.target.targetId.trim()) {
+      blockers.push({
+        sourceEnrollmentId: item.sourceEnrollmentId,
+        code: 'TARGET_CLASS_REQUIRED',
+        message: 'A rematrícula exige a seleção de uma turma para o próximo ciclo.',
+      });
+    }
+  }
+
+  for (const item of input.items) {
+    if (item.decision !== 'RENEW' || item.target.type !== 'COMBO') continue;
+    const combo = targets.combosById.get(item.target.targetId);
+    if (combo && combo.turmas.length === 0) {
+      blockers.push({
+        sourceEnrollmentId: item.sourceEnrollmentId,
+        code: 'TARGET_CLASS_REQUIRED',
+        message: 'O combo selecionado não possui turmas vinculadas para o próximo ciclo.',
+      });
+    }
+  }
 
   if (input.holderType === 'RESPONSIBLE') {
     const holder = 'responsavel' in prisma && prisma.responsavel
@@ -1311,6 +1349,15 @@ async function validateRenewalCapacity(
   return blockers;
 }
 
+async function validateRenewalCapacityForInput(
+  prisma: PrismaLike,
+  input: RenewalProcessInput,
+  effectiveAt: Date,
+) {
+  const targets = await resolveTargets(prisma, input.contaId, input.items);
+  return validateRenewalCapacity(prisma, input, effectiveAt, targets);
+}
+
 function sourceSnapshot(source: LoadedSource) {
   return {
     id: source.id,
@@ -1335,15 +1382,17 @@ function externalReferenceForProcess(contaId: string, idempotencyKey: string) {
 async function lockRenewalResources(
   tx: Prisma.TransactionClient,
   input: RenewalProcessInput,
+  additionalResourceKeys: string[] = [],
 ) {
   if (typeof tx.$executeRaw !== 'function') return;
 
-  const resourceKeys = new Set(
-    input.items
+  const resourceKeys = new Set([
+    ...input.items
       .filter((item): item is Extract<RenewalItemInput, { decision: 'RENEW' }> => item.decision === 'RENEW')
       .map((item) => `${item.target.type}:${item.target.targetId}`),
-  );
-  for (const resourceKey of resourceKeys) {
+    ...additionalResourceKeys,
+  ]);
+  for (const resourceKey of Array.from(resourceKeys).sort()) {
     await tx.$executeRaw`
       SELECT pg_advisory_xact_lock(hashtext(${`renewal:${input.contaId}:${input.targetPeriodId}:${resourceKey}`}))
     `;
@@ -1616,7 +1665,7 @@ export async function previewRenewalProcess(input: RenewalProcessInput, deps: { 
   const capacityBlockers =
     preview.blockers.length || externalBlockers.length
       ? []
-      : await validateRenewalCapacity(deps.prisma, input, effectiveAt, targets);
+      : await validateRenewalCapacityForInput(deps.prisma, input, effectiveAt);
 
   return {
     ...preview,
@@ -1675,6 +1724,7 @@ export async function confirmRenewalProcess(
     const effectiveAt = new Date(`${preview.effectiveAt}T00:00:00.000Z`);
     const firstDueDate = preview.firstDueDate ? new Date(`${preview.firstDueDate}T00:00:00.000Z`) : null;
     const targetContractEndsAt = input.targetContractEndsAt ?? addYears(effectiveAt, 1);
+    const notificationSnapshot = notificationPreferencesSnapshot(input.financialTerms);
     const processStatus =
       preview.renewCount > 0
         ? effectiveAt > new Date()
@@ -1767,16 +1817,18 @@ export async function confirmRenewalProcess(
               input.financialTerms?.enrollmentFeeExempt === true || preview.enrollmentFeeTotal <= 0
                 ? 'ISENTO'
                 : 'PENDENTE',
-            taxaJustificativa: source.taxaJustificativa,
+            taxaJustificativa:
+              input.financialTerms?.enrollmentFeeJustification ?? source.taxaJustificativa,
             formaPagamento: input.financialTerms?.paymentMethod ?? source.formaPagamento,
             formaPagamentoTaxa:
               input.financialTerms?.enrollmentFeePaymentMethod ??
               input.financialTerms?.paymentMethod ??
               source.formaPagamentoTaxa,
             vencimentoDia: input.financialTerms?.dueDay ?? source.vencimentoDia,
-            jurosMensal: source.jurosMensal,
-            multaPercentual: source.multaPercentual,
+            jurosMensal: input.financialTerms?.interestMonthlyPercent ?? source.jurosMensal,
+            multaPercentual: input.financialTerms?.lateFeePercent ?? source.multaPercentual,
             descontoAntecipado: input.financialTerms?.earlyDiscountPercent ?? source.descontoAntecipado,
+            descontoTipo: input.financialTerms?.earlyDiscountType ?? source.descontoTipo,
             prazoDesconto: input.financialTerms?.earlyDiscountDays ?? source.prazoDesconto,
             billingMode: source.billingMode,
           },
@@ -2042,6 +2094,7 @@ export async function confirmRenewalProcess(
                 unifiedIntoBillingAgreementId: existingBillingAgreement.id,
                 unifiedIntoBillingAgreementVersion: existingBillingAgreement.version,
                 contribution,
+                ...notificationSnapshot,
               } as Prisma.InputJsonValue,
             },
           });
@@ -2088,6 +2141,7 @@ export async function confirmRenewalProcess(
                 monthlyTotal: updatedMonthlyTotal,
                 enrollmentFeeTotal: updatedEnrollmentFeeTotal,
                 unifiedContributions: [...contributions, contribution],
+                ...notificationSnapshot,
               } as Prisma.InputJsonValue,
             },
           });
@@ -2117,6 +2171,7 @@ export async function confirmRenewalProcess(
                 unifiedIntoAgreementId: existingAgreement.id,
                 unifiedIntoProcessId: existingAgreement.processoId,
                 contribution,
+                ...notificationSnapshot,
               } as Prisma.InputJsonValue,
             },
           });
@@ -2187,6 +2242,7 @@ export async function confirmRenewalProcess(
               sourceEnrollmentIds: group.items.map((item) => item.sourceEnrollmentId),
               monthlyTotal: group.monthlyTotal,
               enrollmentFeeTotal: group.enrollmentFeeTotal,
+              ...notificationSnapshot,
             } as Prisma.InputJsonValue,
           },
         });
@@ -2826,6 +2882,7 @@ export async function editRenewalFutureLink(
                 jurosMensal: true,
                 multaPercentual: true,
                 descontoAntecipado: true,
+                descontoTipo: true,
                 prazoDesconto: true,
               },
             },
@@ -2910,12 +2967,19 @@ export async function editRenewalFutureLink(
           : { type: 'CLASS' as const, targetId: targetClassId!, planId: targetPlanId! },
       })),
     };
-    const capacityTargets = await resolveTargets(tx, input.contaId, capacityInput.items);
-    const capacityBlockers = await validateRenewalCapacity(
+    const currentResourceKeys = renewedItems
+      .map((item) => item.targetClassId
+        ? `CLASS:${item.targetClassId}`
+        : item.targetComboId
+          ? `COMBO:${item.targetComboId}`
+          : null)
+      .filter((key): key is string => Boolean(key));
+    await lockRenewalResources(tx, capacityInput, currentResourceKeys);
+
+    const capacityBlockers = await validateRenewalCapacityForInput(
       tx,
       capacityInput,
       input.effectiveAt ?? processo.effectiveAt,
-      capacityTargets,
     );
     if (capacityBlockers.length > 0) {
       throw new Error(capacityBlockers[0]?.message ?? 'Destino futuro sem vagas disponÃ­veis.');
@@ -3032,6 +3096,10 @@ export async function editRenewalFutureLink(
         input.earlyDiscountPercent !== undefined
           ? input.earlyDiscountPercent
           : firstFutureEnrollment?.descontoAntecipado,
+      descontoTipo:
+        input.earlyDiscountType !== undefined
+          ? input.earlyDiscountType
+          : firstFutureEnrollment?.descontoTipo,
       prazoDesconto:
         input.earlyDiscountDays !== undefined
           ? input.earlyDiscountDays
@@ -3144,6 +3212,7 @@ export async function editRenewalFutureLink(
             futureEnrollmentUpdateData.descontoAntecipado == null
               ? null
               : toMoney(futureEnrollmentUpdateData.descontoAntecipado),
+          discountType: futureEnrollmentUpdateData.descontoTipo ?? 'PERCENTAGE',
           earlyDiscountDays: futureEnrollmentUpdateData.prazoDesconto ?? null,
           feeChargeMoment,
           feeUnit,

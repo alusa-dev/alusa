@@ -354,6 +354,7 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
         ],
       },
       { status: { notIn: [StatusMatricula.ENCERRADA, StatusMatricula.CANCELADA, StatusMatricula.RECUSADA] } },
+      { dataInicio: { lte: referenceDate } },
       { dataFimContrato: { gte: referenceDate } },
     );
   }
