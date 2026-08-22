@@ -22,8 +22,8 @@ const TICKET_IMAGE_SIZE = { width: 1122, height: 1402 };
 
 function findTicketImagePath() {
   const candidates = [
-    path.join(process.cwd(), ...TICKET_IMAGE_RELATIVE_PATH),
-    path.join(process.cwd(), '..', '..', ...TICKET_IMAGE_RELATIVE_PATH),
+    path.join(/* turbopackIgnore: true */ process.cwd(), ...TICKET_IMAGE_RELATIVE_PATH),
+    path.join(/* turbopackIgnore: true */ process.cwd(), '..', '..', ...TICKET_IMAGE_RELATIVE_PATH),
   ];
 
   return candidates.find((candidate) => existsSync(candidate)) ?? null;

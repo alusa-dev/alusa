@@ -1271,15 +1271,16 @@ export async function getRenewalProcessDetail(
 
   if (!processo) throw new Error('REMATRICULA_NAO_ENCONTRADA');
 
-  const payerKeys = (processo.itens ?? []).flatMap((item) => {
+  const payerKeys: Prisma.CustomerWhereInput[] = [];
+  for (const item of processo.itens ?? []) {
     const responsavelId = item.matriculaOrigem.responsavelFinanceiroId ?? processo.financeiros[0]?.responsavelId ?? null;
     const alunoId = item.matriculaOrigem.aluno?.id ?? null;
-    return responsavelId
-      ? [{ payerType: 'RESPONSAVEL' as const, payerId: responsavelId }]
-      : alunoId
-        ? [{ payerType: 'ALUNO' as const, payerId: alunoId }]
-        : [];
-  });
+    if (responsavelId) {
+      payerKeys.push({ payerType: 'RESPONSAVEL', payerId: responsavelId });
+    } else if (alunoId) {
+      payerKeys.push({ payerType: 'ALUNO', payerId: alunoId });
+    }
+  }
   const customers = payerKeys.length
     ? await deps.prisma.customer.findMany({
         where: {

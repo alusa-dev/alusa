@@ -115,7 +115,7 @@ export async function addProductImage(input: {
     );
     url = storageUrlForKey(key);
   } else {
-    const absoluteDir = path.join(process.cwd(), relativeDir);
+    const absoluteDir = path.join(/* turbopackIgnore: true */ process.cwd(), relativeDir);
     await fs.mkdir(absoluteDir, { recursive: true });
 
     const absolutePath = path.join(absoluteDir, uniqueName);
@@ -156,7 +156,7 @@ export async function deleteProductImage(
     }
   } else {
     // Remover arquivo físico sem falhar se já não existir
-    const absolutePath = path.join(process.cwd(), image.url);
+    const absolutePath = path.join(/* turbopackIgnore: true */ process.cwd(), image.url);
     await fs.unlink(absolutePath).catch(() => null);
   }
 
