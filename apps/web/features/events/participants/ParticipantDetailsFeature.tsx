@@ -75,6 +75,11 @@ const controlClass =
 const disabledControlClass =
   'h-10 w-full rounded-lg border border-gray-200 bg-gray-100 px-3 text-sm text-gray-500 shadow-none disabled:opacity-100 disabled:cursor-not-allowed';
 
+function truncateWithThreeDots(value: string, maxLength = 28) {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
 const participantTypeLabels: Record<string, string> = {
   STUDENT: 'Aluno',
   CLASS: 'Turma',
@@ -1217,7 +1222,12 @@ export function ParticipantDetailsFeature({
                         displayDesc = displayDesc.replace('Figurino - ', '');
                       }
                       return (
-                        <span className="font-semibold text-slate-900 text-xs sm:text-sm">{displayDesc}</span>
+                        <span
+                          className="block max-w-full overflow-hidden whitespace-nowrap font-semibold text-slate-900 text-xs sm:text-sm"
+                          title={displayDesc}
+                        >
+                          {truncateWithThreeDots(displayDesc)}
+                        </span>
                       );
                     },
                   },

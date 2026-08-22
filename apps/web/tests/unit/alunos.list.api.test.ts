@@ -33,7 +33,7 @@ describe('GET /api/alunos', () => {
     vi.clearAllMocks();
   });
 
-  it('retorna CPF, Email e Telefone mascarados para aluno maior de idade', async () => {
+  it('retorna CPF mascarado e contatos completos para aluno maior de idade', async () => {
     const dataDeNascimentoAdulto = new Date();
     dataDeNascimentoAdulto.setFullYear(dataDeNascimentoAdulto.getFullYear() - 20); // 20 anos de idade
 
@@ -65,13 +65,46 @@ describe('GET /api/alunos', () => {
     expect(body.items).toHaveLength(1);
     expect(body.items[0].cpf).toBe('***.***.***-44');
     expect(body.items[0].cpfMasked).toBe('***.***.***-44');
-    expect(body.items[0].email).toBe('jo***@adulto.com');
-    expect(body.items[0].emailMasked).toBe('jo***@adulto.com');
-    expect(body.items[0].telefone).toBe('(**) *****-4567');
-    expect(body.items[0].phoneMasked).toBe('(**) *****-4567');
+    expect(body.items[0].email).toBe('joao@adulto.com');
+    expect(body.items[0].telefone).toBe('92991234567');
   });
 
-  it('retorna CPF, Email e Telefone do responsavel financeiro mascarado para aluno menor de idade', async () => {
+  it('retorna CPF completo somente quando solicitado pelo autocomplete autorizado de matrícula', async () => {
+    const dataDeNascimentoAdulto = new Date();
+    dataDeNascimentoAdulto.setFullYear(dataDeNascimentoAdulto.getFullYear() - 20);
+
+    mockTx.aluno.count.mockResolvedValueOnce(1);
+    mockTx.aluno.findMany.mockResolvedValueOnce([
+      {
+        id: 'aluno-autocomplete',
+        nome: 'Aluno Autocomplete',
+        email: 'aluno@example.com',
+        telefone: '92991234567',
+        status: 'ATIVO',
+        foto: null,
+        updatedAt: new Date(),
+        cpf: '11122233344',
+        dataNasc: dataDeNascimentoAdulto,
+        consentimentoImagem: false,
+        dataConsentimentoImagem: null,
+        isentoTaxaMatricula: false,
+        bolsaDescontoPercent: null,
+        tags: [],
+        responsaveis: [],
+      },
+    ]);
+
+    const res = await GET(
+      new NextRequest('http://localhost/api/alunos?includeFullCpf=true'),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.items[0].cpf).toBe('11122233344');
+    expect(body.items[0].cpfMasked).toBe('***.***.***-44');
+  });
+
+  it('retorna CPF mascarado e contatos completos do responsavel financeiro para aluno menor de idade', async () => {
     const dataDeNascimentoMenor = new Date();
     dataDeNascimentoMenor.setFullYear(dataDeNascimentoMenor.getFullYear() - 10); // 10 anos de idade
 
@@ -120,13 +153,11 @@ describe('GET /api/alunos', () => {
 
     const body = await res.json();
     expect(body.items).toHaveLength(1);
-    // Deve pegar os dados do pai (financeiro), mascarados
+    // Deve pegar os dados do pai (financeiro), mantendo apenas o CPF mascarado.
     expect(body.items[0].cpf).toBe('***.***.***-77');
     expect(body.items[0].cpfMasked).toBe('***.***.***-77');
-    expect(body.items[0].email).toBe('pa***@exemplo.com');
-    expect(body.items[0].emailMasked).toBe('pa***@exemplo.com');
-    expect(body.items[0].telefone).toBe('(**) *****-7777');
-    expect(body.items[0].phoneMasked).toBe('(**) *****-7777');
+    expect(body.items[0].email).toBe('pai@exemplo.com');
+    expect(body.items[0].telefone).toBe('92999997777');
   });
 
   it('retorna dados do primeiro responsavel cadastrado se nao houver financeiro/principal explicito para menor', async () => {
@@ -171,9 +202,7 @@ describe('GET /api/alunos', () => {
     expect(body.items).toHaveLength(1);
     expect(body.items[0].cpf).toBe('***.***.***-55');
     expect(body.items[0].cpfMasked).toBe('***.***.***-55');
-    expect(body.items[0].email).toBe('ti***@exemplo.com');
-    expect(body.items[0].emailMasked).toBe('ti***@exemplo.com');
-    expect(body.items[0].telefone).toBe('(**) *****-2222');
-    expect(body.items[0].phoneMasked).toBe('(**) *****-2222');
+    expect(body.items[0].email).toBe('tio@exemplo.com');
+    expect(body.items[0].telefone).toBe('92991112222');
   });
 });

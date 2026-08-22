@@ -167,8 +167,8 @@ export function mapResponsavelRecordToMaskedSummaryDTO(
   return {
     ...dto,
     cpf: dto.cpfMasked ?? '',
-    email: dto.emailMasked ?? '',
-    telefone: dto.phoneMasked ?? '',
+    email: dto.email,
+    telefone: dto.telefone,
   };
 }
 

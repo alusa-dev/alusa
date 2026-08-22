@@ -96,7 +96,7 @@ export function StepAluno({ ctx, contaId }: StepAlunoProps) {
         setLoading(true);
         const controller = new AbortController();
         try {
-          const qp = new URLSearchParams({ contaId });
+          const qp = new URLSearchParams({ contaId, includeFullCpf: 'true' });
           if (term.trim()) qp.set('q', term.trim());
           const res = await fetch(`/api/alunos?${qp.toString()}`, { signal: controller.signal });
           const json = await res.json();

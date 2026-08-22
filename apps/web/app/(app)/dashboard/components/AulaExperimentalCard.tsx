@@ -12,6 +12,7 @@ import {
 import type { DashboardAulaExperimentalDTO } from '@/features/dashboard/dtos';
 import { PersonAvatar } from '@/components/shared/PersonAvatar';
 import { cn } from '@/lib/cn';
+import { formatFirstLast } from '@alusa/lib/client';
 import { DASHBOARD_SECTION_CARD_CLASSNAME } from './utils';
 
 type AulaExperimentalCardProps = {
@@ -161,7 +162,9 @@ export function AulaExperimentalCard({ aulasExperimentais }: AulaExperimentalCar
                     fallbackClassName="bg-[#f4ecfd] text-[#383242] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-primary)]"
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{aula.alunoNome}</p>
+                    <p className="truncate text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                      {formatFirstLast(aula.alunoNome) || aula.alunoNome}
+                    </p>
                     <p className="truncate text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">
                       {aula.turmaNome} • {formatTimeLabel(aula.startAt)}
                     </p>
@@ -283,7 +286,9 @@ export function AulaExperimentalCard({ aulasExperimentais }: AulaExperimentalCar
                           />
 
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium leading-tight text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{aula.alunoNome}</p>
+                            <p className="text-sm font-medium leading-tight text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                              {formatFirstLast(aula.alunoNome) || aula.alunoNome}
+                            </p>
                             <p className="mt-0.5 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
                               {aula.turmaNome} • {formatTimeLabel(aula.startAt)} - {formatTimeLabel(aula.endAt)}
                             </p>

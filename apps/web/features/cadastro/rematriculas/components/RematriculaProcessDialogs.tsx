@@ -1,14 +1,10 @@
 ﻿'use client';
 
-import type React from 'react';
-import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogTitle,
-} from '@/components/ui/dialog';
+  DetailsDialog,
+  DetailsDialogRow,
+  DetailsDialogSection,
+} from '@/components/shared/DetailsDialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,8 +19,6 @@ import type { RematriculaProcessSummary } from '../services/rematriculas-service
 
 const modalTextAreaClass =
   'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30';
-const modalSectionClass =
-  'space-y-3 rounded-xl bg-slate-50 px-4 py-4';
 const modalLabelClass = 'text-xs font-medium text-slate-600';
 
 function formatDate(value: string | null | undefined) {
@@ -151,22 +145,13 @@ export function RematriculaProcessDetailsDialog({
   const financialSnapshot = process?.financeiros[0]?.snapshot ?? null;
 
   return (
-    <Dialog open={Boolean(process)} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] w-full max-w-[30rem] flex-col gap-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-0 shadow-2xl">
-        {process ? (
-          <div className="flex h-full min-h-0 flex-col">
-            <div className="shrink-0 border-b border-slate-200 bg-white px-6 pb-5 pt-6 pr-14">
-              <div className="flex items-start justify-between gap-3">
-                <div className="space-y-1">
-                  <DialogTitle className="text-lg font-medium tracking-tight text-slate-900">
-                    Detalhes da rematrícula
-                  </DialogTitle>
-                  <DialogDescription className="sr-only">Informações da rematrícula</DialogDescription>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex-1 space-y-6 overflow-y-auto scroll-smooth bg-white px-6 py-6">
+    <DetailsDialog
+      open={Boolean(process)}
+      onOpenChange={onOpenChange}
+      title="Detalhes da rematrícula"
+    >
+      {process ? (
+        <>
               <section className="space-y-4">
                 <div>
                   <p className="text-xs text-slate-500">Mensalidade</p>
@@ -175,97 +160,74 @@ export function RematriculaProcessDetailsDialog({
                   </p>
                 </div>
                 <div>
-                  <DetailRow label="Customer ID" value={firstItem?.aluno?.customerId ?? 'Não informado'} />
-                  <DetailRow
+                  <DetailsDialogRow label="Customer ID" value={firstItem?.aluno?.customerId ?? 'Não informado'} />
+                  <DetailsDialogRow
                     label="Status"
                     value={<span className="text-emerald-700">{getProcessLabel(process.status)}</span>}
                   />
-                  <DetailRow
+                  <DetailsDialogRow
                     label="Origem"
                     value={process.origin === 'CAMPAIGN' ? process.campanha?.nome ?? 'Campanha' : 'Rematrícula avulsa'}
                   />
-                  <DetailRow label="Período de destino" value={process.targetPeriodId} />
+                  <DetailsDialogRow label="Período de destino" value={process.targetPeriodId} />
                 </div>
               </section>
 
-              <section className={modalSectionClass}>
+              <DetailsDialogSection>
                 <h3 className="text-sm font-medium text-slate-900">Dados básicos do aluno</h3>
                 <div>
                   {process.itens.map((item) => (
                     <div key={item.id} className="py-1.5 first:pt-0 last:pb-0">
-                      <DetailRow label="Nome" value={item.aluno?.nome ?? item.matriculaOrigemId} />
-                      <DetailRow label="Data de nascimento" value={formatDate(item.aluno?.dataNascimento)} />
-                      <DetailRow label="CPF" value={item.aluno?.cpf ?? 'Não informado'} />
-                      <DetailRow
+                      <DetailsDialogRow label="Nome" value={item.aluno?.nome ?? item.matriculaOrigemId} />
+                      <DetailsDialogRow label="Data de nascimento" value={formatDate(item.aluno?.dataNascimento)} />
+                      <DetailsDialogRow label="CPF" value={item.aluno?.cpf ?? 'Não informado'} />
+                      <DetailsDialogRow
                         label="Vínculo atual"
                         value={item.turmaAtual?.nome ?? item.comboAtual?.nome ?? 'Sem turma atual'}
                       />
                     </div>
                   ))}
                 </div>
-              </section>
+              </DetailsDialogSection>
 
-              <section className={modalSectionClass}>
+              <DetailsDialogSection>
                 <h3 className="text-sm font-medium text-slate-900">Próximo ciclo</h3>
                 <div>
-                  <DetailRow label="Plano" value={futureEnrollment?.plano?.nome ?? getSnapshotText(firstItem, 'planName') ?? 'Não informado'} />
-                  <DetailRow label="Turma ou combo" value={futureEnrollment?.turma?.nome ?? futureEnrollment?.combo?.nome ?? getSnapshotText(firstItem, 'className') ?? getSnapshotText(firstItem, 'comboName') ?? 'Não informado'} />
-                  <DetailRow label="Data de início" value={formatDate(futureEnrollment?.dataInicio ?? process.effectiveAt)} />
-                  <DetailRow label="Término do contrato" value={formatDate(futureEnrollment?.dataFimContrato)} />
-                  <DetailRow label="Decisão" value={getDecisionLabel(firstItem?.decision)} />
-                  <DetailRow label="Reserva" value={getReservaLabel(process.reservas[0]?.status)} />
-                  <DetailRow label="Contrato futuro" value={getContratoFuturoLabel(process.contratos[0]?.status)} />
-                  <DetailRow label="Financeiro futuro" value={getFinanceiroFuturoLabel(process.financeiros[0]?.status)} />
+                  <DetailsDialogRow label="Plano" value={futureEnrollment?.plano?.nome ?? getSnapshotText(firstItem, 'planName') ?? 'Não informado'} />
+                  <DetailsDialogRow label="Turma ou combo" value={futureEnrollment?.turma?.nome ?? futureEnrollment?.combo?.nome ?? getSnapshotText(firstItem, 'className') ?? getSnapshotText(firstItem, 'comboName') ?? 'Não informado'} />
+                  <DetailsDialogRow label="Data de início" value={formatDate(futureEnrollment?.dataInicio ?? process.effectiveAt)} />
+                  <DetailsDialogRow label="Término do contrato" value={formatDate(futureEnrollment?.dataFimContrato)} />
+                  <DetailsDialogRow label="Decisão" value={getDecisionLabel(firstItem?.decision)} />
+                  <DetailsDialogRow label="Reserva" value={getReservaLabel(process.reservas[0]?.status)} />
+                  <DetailsDialogRow label="Contrato futuro" value={getContratoFuturoLabel(process.contratos[0]?.status)} />
+                  <DetailsDialogRow label="Financeiro futuro" value={getFinanceiroFuturoLabel(process.financeiros[0]?.status)} />
                 </div>
-              </section>
+              </DetailsDialogSection>
 
-              <section className={modalSectionClass}>
+              <DetailsDialogSection>
                 <h3 className="text-sm font-medium text-slate-900">Condições de pagamento</h3>
                 <div>
-                  <DetailRow label="Mensalidade" value={formatCurrency(process.monthlyTotal)} />
-                  <DetailRow label="Taxa de matrícula" value={futureEnrollment?.taxaIsenta ? 'Isenta' : formatCurrency(futureEnrollment?.taxaMatricula ?? process.enrollmentFeeTotal)} />
-                  <DetailRow label="Forma de pagamento" value={formatPaymentMethod(futureEnrollment?.formaPagamento ?? currentEnrollment?.formaPagamento)} />
-                  <DetailRow label="Forma de pagamento da taxa" value={formatPaymentMethod(futureEnrollment?.formaPagamentoTaxa ?? currentEnrollment?.formaPagamentoTaxa)} />
-                  <DetailRow label="Dia de vencimento" value={futureEnrollment?.vencimentoDia ? `Dia ${futureEnrollment.vencimentoDia}` : 'Não informado'} />
-                  <DetailRow label="Desconto por antecipação" value={futureEnrollment?.descontoAntecipado ? `${futureEnrollment.descontoAntecipado}%` : 'Não aplicado'} />
-                  <DetailRow label="Prazo do desconto" value={futureEnrollment?.prazoDesconto != null ? `${futureEnrollment.prazoDesconto} dias antes` : 'Não informado'} />
-                  <DetailRow label="Juros mensais" value={`${futureEnrollment?.jurosMensal ?? currentEnrollment?.jurosMensal ?? 0}%`} />
-                  <DetailRow label="Multa por atraso" value={`${futureEnrollment?.multaPercentual ?? currentEnrollment?.multaPercentual ?? 0}%`} />
+                  <DetailsDialogRow label="Mensalidade" value={formatCurrency(process.monthlyTotal)} />
+                  <DetailsDialogRow label="Taxa de matrícula" value={futureEnrollment?.taxaIsenta ? 'Isenta' : formatCurrency(futureEnrollment?.taxaMatricula ?? process.enrollmentFeeTotal)} />
+                  <DetailsDialogRow label="Forma de pagamento" value={formatPaymentMethod(futureEnrollment?.formaPagamento ?? currentEnrollment?.formaPagamento)} />
+                  <DetailsDialogRow label="Forma de pagamento da taxa" value={formatPaymentMethod(futureEnrollment?.formaPagamentoTaxa ?? currentEnrollment?.formaPagamentoTaxa)} />
+                  <DetailsDialogRow label="Dia de vencimento" value={futureEnrollment?.vencimentoDia ? `Dia ${futureEnrollment.vencimentoDia}` : 'Não informado'} />
+                  <DetailsDialogRow label="Desconto por antecipação" value={futureEnrollment?.descontoAntecipado ? `${futureEnrollment.descontoAntecipado}%` : 'Não aplicado'} />
+                  <DetailsDialogRow label="Prazo do desconto" value={futureEnrollment?.prazoDesconto != null ? `${futureEnrollment.prazoDesconto} dias antes` : 'Não informado'} />
+                  <DetailsDialogRow label="Juros mensais" value={`${futureEnrollment?.jurosMensal ?? currentEnrollment?.jurosMensal ?? 0}%`} />
+                  <DetailsDialogRow label="Multa por atraso" value={`${futureEnrollment?.multaPercentual ?? currentEnrollment?.multaPercentual ?? 0}%`} />
                 </div>
-              </section>
+              </DetailsDialogSection>
 
-              <section className={modalSectionClass}>
+              <DetailsDialogSection>
                 <h3 className="text-sm font-medium text-slate-900">Notificações</h3>
                 <div>
-                  <DetailRow label="Canais" value={formatChannels(financialSnapshot)} />
+                  <DetailsDialogRow label="Canais" value={formatChannels(financialSnapshot)} />
                 </div>
-              </section>
-            </div>
-
-            <DialogFooter className="shrink-0 border-t border-slate-200 bg-white px-6 py-4">
-              <Button type="button" variant="outline" className="h-10 min-w-[112px] border-slate-300 bg-white text-slate-700 hover:bg-slate-50" onClick={() => onOpenChange(false)}>
-                Fechar
-              </Button>
-            </DialogFooter>
-          </div>
-        ) : null}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function DetailRow({
-  label,
-  value,
-}: {
-  label: string;
-  value: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 py-1.5">
-      <div className="w-[48%] text-xs font-medium text-slate-500">{label}</div>
-      <div className="w-[52%] text-left text-sm text-slate-900">{value}</div>
-    </div>
+              </DetailsDialogSection>
+        </>
+      ) : null}
+    </DetailsDialog>
   );
 }
 

@@ -354,9 +354,9 @@ function AlunosTable({
       render: (aluno) => (
         <span
           className="inline-block max-w-full truncate leading-[20px]"
-          title={aluno.emailMasked ?? aluno.email ?? undefined}
+          title={aluno.email ?? undefined}
         >
-          {aluno.emailMasked ?? aluno.email ?? '-'}
+          {aluno.email ?? '-'}
         </span>
       ),
       skeleton: <div className="mx-auto hidden h-4 w-40 rounded bg-gray-200 lg:block" />,
@@ -370,7 +370,7 @@ function AlunosTable({
       cellClassName: 'hidden lg:table-cell',
       render: (aluno) => (
         <span className="tabular-nums leading-[20px]">
-          {aluno.phoneMasked ?? (maskPhone(aluno.telefone) || '-')}
+          {maskPhone(aluno.telefone) || '-'}
         </span>
       ),
       skeleton: <div className="mx-auto hidden h-4 w-24 rounded bg-gray-200 lg:block" />,

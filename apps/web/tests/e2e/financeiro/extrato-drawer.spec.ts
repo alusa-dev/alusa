@@ -4,10 +4,10 @@ import { expect, test } from '@playwright/test';
 import { waitForPageReady } from './helpers/api';
 import { seedAdminAndLogin } from './helpers/auth';
 
-test.describe('Extrato - drawer de detalhes', () => {
+test.describe('Extrato - modal de detalhes', () => {
   test.use({ viewport: { width: 1440, height: 1200 } });
 
-  test('abre como painel lateral compacto com boa hierarquia visual e sem colapso horizontal', async ({ page }) => {
+  test('abre como modal centralizado com boa hierarquia visual e sem colapso horizontal', async ({ page }) => {
     await seedAdminAndLogin(page);
 
     await page.goto('/financeiro/extrato?debugFixture=sample-ledger');
@@ -21,12 +21,13 @@ test.describe('Extrato - drawer de detalhes', () => {
 
     const drawerBox = await drawer.boundingBox();
     expect(drawerBox).not.toBeNull();
-    expect(drawerBox?.width ?? 0).toBeGreaterThanOrEqual(420);
-    expect(drawerBox?.width ?? 0).toBeLessThanOrEqual(440);
+    expect(drawerBox?.width ?? 0).toBeGreaterThanOrEqual(470);
+    expect(drawerBox?.width ?? 0).toBeLessThanOrEqual(490);
 
     const viewport = page.viewportSize();
     expect(viewport).not.toBeNull();
-    expect((drawerBox?.x ?? 0) + (drawerBox?.width ?? 0)).toBeGreaterThan((viewport?.width ?? 0) - 48);
+    const drawerCenter = (drawerBox?.x ?? 0) + (drawerBox?.width ?? 0) / 2;
+    expect(Math.abs(drawerCenter - (viewport?.width ?? 0) / 2)).toBeLessThanOrEqual(2);
 
     const descriptionOverflow = await page.getByTestId('drawer-description').evaluate((node) => {
       return node.scrollWidth > node.clientWidth + 1;

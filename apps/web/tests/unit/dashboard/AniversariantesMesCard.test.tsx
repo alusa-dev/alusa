@@ -37,7 +37,29 @@ describe('AniversariantesMesCard', () => {
       />,
     );
 
-    expect(getByText('Aluno do Mês')).toBeInTheDocument();
-    expect(getByText('Colaborador do Mês')).toBeInTheDocument();
+    expect(getByText('Aluno Mês')).toBeInTheDocument();
+    expect(getByText('Colaborador Mês')).toBeInTheDocument();
+  });
+
+  it('exibe somente o primeiro e o último nome', () => {
+    const { getByText, queryByText } = render(
+      <AniversariantesMesCard
+        aniversariantes={[
+          {
+            id: 'aluno-1',
+            nome: 'José Carlos de Souza',
+            tipo: 'ALUNO',
+            foto: null,
+            avatarUrl: null,
+            dia: 10,
+            mes: currentMonth,
+            dataNascimento: `${currentYear - 10}-${String(currentMonth).padStart(2, '0')}-10T12:00:00.000Z`,
+          },
+        ]}
+      />,
+    );
+
+    expect(getByText('José Souza')).toBeInTheDocument();
+    expect(queryByText('José Carlos de Souza')).not.toBeInTheDocument();
   });
 });

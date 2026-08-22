@@ -428,9 +428,9 @@ function ResponsaveisTable({
       render: (responsavel) => (
         <span
           className="block w-full truncate text-[13px] leading-5 text-gray-900"
-          title={responsavel.emailMasked ?? responsavel.email ?? undefined}
+          title={responsavel.email ?? undefined}
         >
-          {responsavel.emailMasked ?? (responsavel.email?.trim() || '—')}
+          {responsavel.email?.trim() || '—'}
         </span>
       ),
       skeleton: <div className="hidden h-4 max-w-full w-36 rounded bg-gray-200 lg:block" />,
@@ -445,9 +445,9 @@ function ResponsaveisTable({
       render: (responsavel) => (
         <span
           className="block w-full truncate text-[13px] tabular-nums leading-5 text-gray-900"
-          title={responsavel.phoneMasked ?? (maskPhone(responsavel.telefone) || undefined)}
+          title={responsavel.telefone ?? undefined}
         >
-          {responsavel.phoneMasked ?? (maskPhone(responsavel.telefone) || '—')}
+          {maskPhone(responsavel.telefone) || '—'}
         </span>
       ),
       skeleton: <div className="hidden h-4 w-28 rounded bg-gray-200 lg:block" />,

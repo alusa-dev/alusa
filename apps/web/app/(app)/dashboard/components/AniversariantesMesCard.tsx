@@ -14,6 +14,7 @@ import {
 import type { DashboardAniversarianteDTO } from '@/features/dashboard/dtos';
 import { PersonAvatar } from '@/components/shared/PersonAvatar';
 import { cn } from '@/lib/cn';
+import { formatFirstLast } from '@alusa/lib/client';
 import { DASHBOARD_SECTION_CARD_CLASSNAME } from './utils';
 
 const RDP_DEFAULT_CLASS_NAMES = getDefaultClassNames();
@@ -126,7 +127,9 @@ export function AniversariantesMesCard({ aniversariantes }: AniversariantesMesCa
                     fallbackClassName="bg-[#f4ecfd] text-[#383242] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-primary)]"
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{birthday.nome}</p>
+                    <p className="truncate text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                      {formatFirstLast(birthday.nome) || birthday.nome}
+                    </p>
                   </div>
                   <span className="shrink-0 rounded-full bg-[#f4ecfd] px-2 py-0.5 text-[11px] font-medium text-[#383242] alusa-dark:bg-[color:rgba(169,77,255,0.16)] alusa-dark:text-[color:#c9a7ff]">
                     {getBirthdayLabel(birthday.dataNascimento, birthday.dia, birthday.mes, todayMonth.getFullYear())}
@@ -243,7 +246,9 @@ export function AniversariantesMesCard({ aniversariantes }: AniversariantesMesCa
                           />
 
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium leading-tight text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{birthday.nome}</p>
+                            <p className="text-sm font-medium leading-tight text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                              {formatFirstLast(birthday.nome) || birthday.nome}
+                            </p>
                             <p className="mt-0.5 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
                               {birthday.tipo === 'COLABORADOR' ? 'Colaborador' : 'Aluno'} · Aniversário em {String(birthday.dia).padStart(2, '0')}/{String(birthday.mes).padStart(2, '0')}
                             </p>

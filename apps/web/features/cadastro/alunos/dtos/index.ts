@@ -12,8 +12,6 @@ export type UpdateAlunoInputDTO = z.input<typeof updateAlunoInputDTOSchema>;
 export const alunoListItemDTOSchema = z.object({
   id: z.string(),
   cpfMasked: z.string().nullable().optional(),
-  emailMasked: z.string().nullable().optional(),
-  phoneMasked: z.string().nullable().optional(),
   nome: z.string(),
   email: z.string().nullable().optional(),
   telefone: z.string().nullable().optional(),

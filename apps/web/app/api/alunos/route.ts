@@ -17,11 +17,7 @@ import {
 import { mapAlunoDetailToDTO, mapAlunoListItemToDTO } from '@/features/cadastro/alunos/mappers';
 import { normalizeAvatarUpload } from '@/src/server/media/avatar-storage.service';
 import { isMenorDeIdade } from '@alusa/domain';
-import {
-  maskCpf as privacyMaskCpf,
-  maskEmail as privacyMaskEmail,
-  maskPhone as privacyMaskPhone,
-} from '@alusa/shared';
+import { maskCpf as privacyMaskCpf } from '@alusa/shared';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
@@ -38,6 +34,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const q = (searchParams.get('q') || '').trim().toLowerCase();
+    const includeFullCpf = searchParams.get('includeFullCpf') === 'true';
     // A listagem sem filtro explícito mostra somente alunos ativos. O histórico
     // continua disponível quando o cliente solicita TODOS ou INATIVO.
     const status = (searchParams.get('status') || 'ATIVO').trim().toUpperCase();
@@ -133,22 +130,19 @@ export async function GET(request: NextRequest) {
           }
 
           const cpfMasked = cpfOriginal ? privacyMaskCpf(cpfOriginal) : null;
-          const emailMasked = emailOriginal ? privacyMaskEmail(emailOriginal) : null;
-
-          const phoneMasked = phoneOriginal ? privacyMaskPhone(phoneOriginal) : null;
-
           return {
             id: aluno.id,
             nome: aluno.nome ?? '',
-            email: emailMasked,
-            telefone: phoneMasked,
+            // A listagem é acessada por usuários autorizados da própria Conta.
+            // O CPF continua protegido; contatos são necessários para a rotina
+            // operacional da secretaria.
+            email: emailOriginal,
+            telefone: phoneOriginal,
             cpfMasked,
-            emailMasked,
-            phoneMasked,
             status: aluno.status ?? 'ATIVO',
             foto: aluno.foto ?? null,
             updatedAt: aluno.updatedAt,
-            cpf: cpfMasked,
+            cpf: includeFullCpf ? cpfOriginal : cpfMasked,
             consentimentoImagem: aluno.consentimentoImagem ?? null,
             dataConsentimentoImagem: aluno.dataConsentimentoImagem
               ? aluno.dataConsentimentoImagem.toISOString()
