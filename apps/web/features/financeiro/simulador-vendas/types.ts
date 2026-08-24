@@ -1,10 +1,10 @@
 export type PaymentSimulationResult = {
   requestedValue: number;
-  simulatedValue: number;
+  chargeValue: number;
   installmentCount: number;
-  passFeesToCustomer: boolean;
-  paymentValue: number;
-  paymentNetValue: number;
+  netValue: number;
+  installmentValue: number;
+  installmentNetValue: number;
   feeValue: number;
   feePercentage: number | null;
   operationFee: number | null;

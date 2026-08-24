@@ -22,45 +22,32 @@ function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-/**
- * Calcula o valor bruto necessário para preservar o líquido informado,
- * considerando a taxa percentual e a tarifa fixa retornadas pelo Asaas.
- */
-export function grossUpPaymentValue(params: {
-  netValue: number;
-  feePercentage?: number;
-  operationFee?: number;
-}): number {
-  const percentage = Math.max(0, params.feePercentage ?? 0) / 100;
-  const operationFee = Math.max(0, params.operationFee ?? 0);
-
-  if (percentage >= 1) return roundMoney(params.netValue + operationFee);
-  return roundMoney((params.netValue + operationFee) / (1 - percentage));
-}
-
 function resolveCardSimulation(response: AsaasPaymentSimulationResponse): CardSimulation | null {
   return response.creditCard ?? null;
 }
 
 function mapSimulation(params: {
   requestedValue: number;
-  simulatedValue: number;
   installmentCount: number;
-  passFeesToCustomer: boolean;
+  response: AsaasPaymentSimulationResponse;
   card: CardSimulation;
 }): PaymentSimulationOutput | null {
-  const paymentValue = params.card.installment?.paymentValue ?? params.simulatedValue;
-  const paymentNetValue = params.card.installment?.paymentNetValue ?? params.card.netValue;
-  if (typeof paymentNetValue !== 'number' || typeof paymentValue !== 'number') return null;
+  const chargeValue = params.response.value ?? params.requestedValue;
+  const netValue = params.card.netValue;
+  if (typeof chargeValue !== 'number' || typeof netValue !== 'number') return null;
+
+  const installmentValue = params.card.installment?.paymentValue ?? chargeValue / params.installmentCount;
+  const installmentNetValue = params.card.installment?.paymentNetValue ?? netValue / params.installmentCount;
+  if (typeof installmentValue !== 'number' || typeof installmentNetValue !== 'number') return null;
 
   return {
     requestedValue: roundMoney(params.requestedValue),
-    simulatedValue: roundMoney(params.simulatedValue),
+    chargeValue: roundMoney(chargeValue),
     installmentCount: params.installmentCount,
-    passFeesToCustomer: params.passFeesToCustomer,
-    paymentValue: roundMoney(paymentValue),
-    paymentNetValue: roundMoney(paymentNetValue),
-    feeValue: roundMoney(paymentValue - paymentNetValue),
+    netValue: roundMoney(netValue),
+    installmentValue: roundMoney(installmentValue),
+    installmentNetValue: roundMoney(installmentNetValue),
+    feeValue: roundMoney(chargeValue - netValue),
     feePercentage: typeof params.card.feePercentage === 'number' ? params.card.feePercentage : null,
     operationFee: typeof params.card.operationFee === 'number' ? params.card.operationFee : null,
   };
@@ -74,42 +61,18 @@ export async function simulatePaymentFees(params: {
   if (!credentials) return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
 
   try {
-    const baseResponse = await asaasSimulatePayment({
+    const response = await asaasSimulatePayment({
       apiKey: credentials.apiKey,
       value: params.input.value,
-      installmentCount: params.input.installmentCount,
+      installmentCount: params.input.installmentCount > 1 ? params.input.installmentCount : undefined,
       billingTypes: ['CREDIT_CARD'],
     });
-    const baseCard = resolveCardSimulation(baseResponse);
-    if (!baseCard) return err('RESULTADO_ASAAS_INVALIDO');
-
-    let response = baseResponse;
-    let simulatedValue = params.input.value;
-
-    if (params.input.passFeesToCustomer) {
-      simulatedValue = grossUpPaymentValue({
-        // Quando o repasse está ativo, o valor informado pelo usuário é o
-        // líquido que a instituição deseja preservar.
-        netValue: params.input.value,
-        feePercentage: baseCard.feePercentage,
-        operationFee: baseCard.operationFee,
-      });
-
-      response = await asaasSimulatePayment({
-        apiKey: credentials.apiKey,
-        value: simulatedValue,
-        installmentCount: params.input.installmentCount,
-        billingTypes: ['CREDIT_CARD'],
-      });
-    }
-
     const card = resolveCardSimulation(response);
     const result = card
       ? mapSimulation({
           requestedValue: params.input.value,
-          simulatedValue,
           installmentCount: params.input.installmentCount,
-          passFeesToCustomer: params.input.passFeesToCustomer,
+          response,
           card,
         })
       : null;

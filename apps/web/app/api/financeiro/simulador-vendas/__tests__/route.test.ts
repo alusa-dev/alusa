@@ -19,7 +19,6 @@ vi.mock('@alusa/finance', () => ({
     parse: (value: Record<string, unknown>) => ({
       value: Number(value.value),
       installmentCount: Number(value.installmentCount),
-      passFeesToCustomer: Boolean(value.passFeesToCustomer),
     }),
   },
 }));
@@ -57,11 +56,11 @@ describe('POST /api/financeiro/simulador-vendas', () => {
       success: true,
       data: {
         requestedValue: 300,
-        simulatedValue: 300,
+        chargeValue: 300,
         installmentCount: 1,
-        passFeesToCustomer: false,
-        paymentValue: 300,
-        paymentNetValue: 290.54,
+        netValue: 290.54,
+        installmentValue: 300,
+        installmentNetValue: 290.54,
         feeValue: 9.46,
         feePercentage: 2.99,
         operationFee: 0.49,
@@ -70,10 +69,10 @@ describe('POST /api/financeiro/simulador-vendas', () => {
 
     const response = await POST(buildRequest({ value: 300, installmentCount: 1 }));
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ data: { paymentNetValue: 290.54 } });
+    expect(await response.json()).toMatchObject({ data: { installmentNetValue: 290.54 } });
     expect(finance.simulatePaymentFees).toHaveBeenCalledWith({
       contaId: 'conta-1',
-      input: { value: 300, installmentCount: 1, passFeesToCustomer: false },
+      input: { value: 300, installmentCount: 1 },
     });
   });
 

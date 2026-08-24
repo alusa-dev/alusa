@@ -4,12 +4,10 @@ import { useMemo, useState } from 'react';
 import { Info } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { FieldHelpTooltip } from '@/components/ui/field-help-tooltip';
 import { InfoCallout } from '@/components/ui/info-callout';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import { Receipt, Loader2 } from '@/components/icons/icons';
 import { pushToast } from '@/components/ui/toast';
 import { simulateVenda } from './services/simulate-venda';
@@ -56,19 +54,18 @@ function ResultRow({ label, value, emphasis = false }: { label: string; value: s
 }
 
 function SimulationResult({ result }: { result: PaymentSimulationResult }) {
-  const installmentValue = result.paymentValue / result.installmentCount;
-  const receivedLabel = result.passFeesToCustomer ? 'Você recebe' : 'Você recebe (líquido)';
+  const installmentValue = result.installmentValue;
 
   return (
     <div className="space-y-3 p-4 sm:p-5">
       <div className="rounded-xl bg-slate-50 px-3.5 py-2">
-        <ResultRow label="Total da cobrança" value={formatCurrency(result.simulatedValue)} emphasis />
+        <ResultRow label="Total da cobrança" value={formatCurrency(result.chargeValue)} emphasis />
         <ResultRow label={result.installmentCount === 1 ? '1 parcela' : `${result.installmentCount} parcelas`} value={formatCurrency(installmentValue)} />
       </div>
 
       <div className="flex items-center justify-between gap-4 rounded-xl border border-brand-accent/20 bg-brand-accent/[0.04] px-3.5 py-3">
-        <p className="text-sm font-semibold text-slate-800">{receivedLabel}</p>
-        <p className="text-xl font-semibold tabular-nums text-brand-accent">{formatCurrency(result.paymentNetValue)}</p>
+        <p className="text-sm font-semibold text-slate-800">Você recebe (líquido)</p>
+        <p className="text-xl font-semibold tabular-nums text-brand-accent">{formatCurrency(result.netValue)}</p>
       </div>
 
       <div className="rounded-xl border border-slate-200 px-3.5 py-1">
@@ -85,7 +82,6 @@ function SimulationResult({ result }: { result: PaymentSimulationResult }) {
 export function SimuladorVendasPage() {
   const [value, setValue] = useState('');
   const [installmentCount, setInstallmentCount] = useState('1');
-  const [passFeesToCustomer, setPassFeesToCustomer] = useState(false);
   const [status, setStatus] = useState<SimulationStatus>('idle');
   const [result, setResult] = useState<PaymentSimulationResult | null>(null);
 
@@ -102,7 +98,6 @@ export function SimuladorVendasPage() {
       const simulation = await simulateVenda({
         value: amount,
         installmentCount: selectedInstallments,
-        passFeesToCustomer,
       });
       setResult(simulation);
       setStatus('success');
@@ -124,7 +119,6 @@ export function SimuladorVendasPage() {
     setResult(null);
     setValue('');
     setInstallmentCount('1');
-    setPassFeesToCustomer(false);
   };
 
   return (
@@ -182,23 +176,6 @@ export function SimuladorVendasPage() {
                 </Select>
                 <p className="text-xs text-slate-500">A taxa é calculada conforme as condições atuais da conta Asaas.</p>
               </div>
-
-              <div className="flex items-center gap-3">
-                <Switch
-                  id="pass-fees"
-                  checked={passFeesToCustomer}
-                  onCheckedChange={setPassFeesToCustomer}
-                  aria-describedby="pass-fees-help"
-                />
-                <label htmlFor="pass-fees" className="flex cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-700">
-                  Repassar taxas do cartão
-                  <FieldHelpTooltip
-                    label="Sobre repassar taxas do cartão"
-                    content="Os custos da taxa ficam por conta do seu cliente, preservando o valor líquido desejado para você."
-                  />
-                </label>
-              </div>
-              <p id="pass-fees-help" className="sr-only">Os custos da taxa ficam por conta do cliente.</p>
 
               <div className="flex flex-wrap gap-3 pt-1">
                 <Button

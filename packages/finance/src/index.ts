@@ -814,7 +814,7 @@ export {
   updateReceivableAnticipationConfiguration,
 } from './use-cases/anticipations';
 
-export { grossUpPaymentValue, simulatePaymentFees } from './use-cases/simulate-payment-fees';
+export { simulatePaymentFees } from './use-cases/simulate-payment-fees';
 export type { PaymentSimulationError } from './use-cases/simulate-payment-fees';
 export type {
   AutomaticAnticipationMenuVisibility,

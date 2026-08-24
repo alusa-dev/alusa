@@ -11,7 +11,6 @@ vi.mock('@alusa/asaas', () => ({
 import { simulatePayment } from '@alusa/asaas';
 import { loadAsaasCredentials } from '@alusa/database';
 import {
-  grossUpPaymentValue,
   simulatePaymentFees,
 } from '../simulate-payment-fees';
 
@@ -37,18 +36,18 @@ describe('simulatePaymentFees', () => {
 
     const result = await simulatePaymentFees({
       contaId: 'conta-a',
-      input: { value: 300, installmentCount: 1, passFeesToCustomer: false },
+      input: { value: 300, installmentCount: 1 },
     });
 
     expect(result).toEqual({
       success: true,
       data: {
         requestedValue: 300,
-        simulatedValue: 300,
+        chargeValue: 300,
         installmentCount: 1,
-        passFeesToCustomer: false,
-        paymentValue: 300,
-        paymentNetValue: 290.54,
+        netValue: 290.54,
+        installmentValue: 300,
+        installmentNetValue: 290.54,
         feeValue: 9.46,
         feePercentage: 2.99,
         operationFee: 0.49,
@@ -57,45 +56,37 @@ describe('simulatePaymentFees', () => {
     expect(mockedSimulatePayment).toHaveBeenCalledWith({
       apiKey: '$aact_hmlg_test',
       value: 300,
-      installmentCount: 1,
+      installmentCount: undefined,
       billingTypes: ['CREDIT_CARD'],
     });
   });
 
-  it('faz uma segunda simulação quando o repasse de taxa está ativo', async () => {
+  it('mantém total e parcela retornados pelo Asaas em uma venda parcelada', async () => {
     mockedLoadCredentials.mockResolvedValue({ apiKey: '$aact_hmlg_test' } as never);
-    mockedSimulatePayment
-      .mockResolvedValueOnce({
-        value: 300,
-        creditCard: {
-          netValue: 290.54,
-          feePercentage: 2.99,
-          operationFee: 0.49,
-          installment: { paymentValue: 300, paymentNetValue: 290.54 },
-        },
-      })
-      .mockResolvedValueOnce({
-        value: 309.75,
-        creditCard: {
-          netValue: 300,
-          feePercentage: 2.99,
-          operationFee: 0.49,
-          installment: { paymentValue: 309.75, paymentNetValue: 300 },
-        },
-      });
+    mockedSimulatePayment.mockResolvedValue({
+      value: 350,
+      creditCard: {
+        netValue: 339.02,
+        feePercentage: 2.99,
+        operationFee: 0.49,
+        installment: { paymentValue: 29.17, paymentNetValue: 28.25 },
+      },
+    });
 
     const result = await simulatePaymentFees({
       contaId: 'conta-a',
-      input: { value: 300, installmentCount: 1, passFeesToCustomer: true },
+      input: { value: 350, installmentCount: 12 },
     });
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.simulatedValue).toBe(309.75);
-      expect(result.data.paymentNetValue).toBe(300);
-      expect(result.data.feeValue).toBe(9.75);
+      expect(result.data.chargeValue).toBe(350);
+      expect(result.data.netValue).toBe(339.02);
+      expect(result.data.installmentValue).toBe(29.17);
+      expect(result.data.installmentNetValue).toBe(28.25);
+      expect(result.data.feeValue).toBe(10.98);
     }
-    expect(mockedSimulatePayment).toHaveBeenCalledTimes(2);
+    expect(mockedSimulatePayment).toHaveBeenCalledWith(expect.objectContaining({ installmentCount: 12 }));
   });
 
   it('retorna erro quando a conta não tem credencial Asaas', async () => {
@@ -103,15 +94,11 @@ describe('simulatePaymentFees', () => {
 
     const result = await simulatePaymentFees({
       contaId: 'conta-sem-asaas',
-      input: { value: 300, installmentCount: 1, passFeesToCustomer: false },
+      input: { value: 300, installmentCount: 1 },
     });
 
     expect(result).toEqual({ success: false, error: 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' });
     expect(mockedSimulatePayment).not.toHaveBeenCalled();
   });
 
-  it('isola o gross-up e arredonda para centavos', () => {
-    expect(grossUpPaymentValue({ netValue: 300, feePercentage: 2.99, operationFee: 0.49 })).toBe(309.75);
-    expect(grossUpPaymentValue({ netValue: 100, feePercentage: 0, operationFee: 0.99 })).toBe(100.99);
-  });
 });

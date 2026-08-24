@@ -3,7 +3,6 @@ import type { PaymentSimulationResult } from '../types';
 export async function simulateVenda(input: {
   value: number;
   installmentCount: number;
-  passFeesToCustomer: boolean;
 }): Promise<PaymentSimulationResult> {
   const response = await fetch('/api/financeiro/simulador-vendas', {
     method: 'POST',
