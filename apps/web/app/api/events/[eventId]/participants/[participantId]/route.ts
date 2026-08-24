@@ -210,7 +210,13 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
             paymentStatus: order.paymentStatus,
             invoiceUrl: order.invoiceUrl,
             chargeDetailUrl: `/cobrancas/event-map-order:${order.id}`,
-            ticketsUrl: order.status === 'CONFIRMED' ? `/api/events/public-orders/${order.id}/tickets` : null,
+            ticketsUrl:
+              order.status === 'CONFIRMED'
+              && order.ticketFulfillmentStatus === 'ISSUED'
+              && order.items.length > 0
+              && order.items.every((item) => Boolean(item.ticket))
+                ? `/api/events/public-orders/${order.id}/tickets`
+                : null,
             lot: {
               id: primaryLot?.id ?? `public-order:${order.id}`,
               name: uniqueLots.length <= 1 ? (primaryLot?.name ?? 'Mapa público') : `${primaryLot?.name ?? 'Mapa público'} +${uniqueLots.length - 1}`,

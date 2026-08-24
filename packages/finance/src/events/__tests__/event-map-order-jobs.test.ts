@@ -6,6 +6,7 @@ import {
   getExpiredReservationDecision,
   inspectEventFinancialInconsistencies,
   reconcilePendingEventMapOrders,
+  reconcilePendingEventMapTicketFulfillment,
   type ExpirableEventMapReservationRecord,
   type InspectableEventMapOrder,
 } from '../event-map-order-jobs';
@@ -110,6 +111,7 @@ describe('expireEventMapReservations', () => {
           status: 'CONFIRMED',
           asaasPaymentId: 'pay-1',
           paymentStatus: 'RECEIVED',
+          paidAt: now,
           ticketCount: 1,
         },
       })],
@@ -202,6 +204,68 @@ describe('reconcilePendingEventMapOrders', () => {
     expect(result.skipped).toBe(1);
     expect(result.consistent).toBe(1);
     expect(result.errors[0]?.orderId).toBe('order-1');
+  });
+});
+
+describe('reconcilePendingEventMapTicketFulfillment', () => {
+  it('emits tickets automatically and records failures without stopping the batch', async () => {
+    const fulfilled: string[] = [];
+    const failures: Array<{ orderId: string; reason: string }> = [];
+    const dependencies = {
+      resolveTargetContaIds: async () => ['conta-1'],
+      findOrders: async () => [
+        {
+          id: 'order-1',
+          contaId: 'conta-1',
+          asaasPaymentId: 'pay-1',
+          paymentStatus: 'RECEIVED',
+          ticketFulfillmentStatus: 'FAILED' as const,
+          ticketFulfillmentAttempts: 1,
+        },
+        {
+          id: 'order-2',
+          contaId: 'conta-1',
+          asaasPaymentId: 'pay-2',
+          paymentStatus: 'RECEIVED',
+          paidAt: now,
+          ticketFulfillmentStatus: 'FAILED' as const,
+          ticketFulfillmentAttempts: 1,
+        },
+      ],
+      fulfillOrder: async (order: { id: string }) => {
+        if (order.id === 'order-2') throw new Error('reserva indisponível');
+        fulfilled.push(order.id);
+        return { ticketsCreated: 2 };
+      },
+      recordFailure: async (input: { orderId: string; reason: string }) => {
+        failures.push(input);
+      },
+    };
+
+    const result = await reconcilePendingEventMapTicketFulfillment(
+      { contaId: 'conta-1', useLock: false },
+      dependencies,
+    );
+
+    expect(result).toMatchObject({ processed: 2, issued: 1, skipped: 1 });
+    expect(fulfilled).toEqual(['order-1']);
+    expect(failures).toEqual([{ contaId: 'conta-1', orderId: 'order-2', reason: 'reserva indisponível' }]);
+  });
+
+  it('returns an empty result when there are no pending fulfillment orders', async () => {
+    const dependencies = {
+      resolveTargetContaIds: async () => ['conta-1'],
+      findOrders: async () => [],
+      fulfillOrder: async () => ({ ticketsCreated: 1 }),
+      recordFailure: async () => undefined,
+    };
+
+    const result = await reconcilePendingEventMapTicketFulfillment(
+      { contaId: 'conta-1', useLock: false },
+      dependencies,
+    );
+
+    expect(result.processed).toBe(0);
   });
 });
 

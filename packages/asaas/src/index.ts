@@ -124,6 +124,18 @@ export type {
   AsaasWebhookEventType,
   AsaasWebhookPayload,
 } from './types/asaas';
+
+// Payment simulation
+export { simulatePayment } from './payments/simulatePayment';
+export type {
+  AsaasPaymentSimulationBankSlip,
+  AsaasPaymentSimulationCreditCard,
+  AsaasPaymentSimulationInstallment,
+  AsaasPaymentSimulationPix,
+  AsaasPaymentSimulationResponse,
+  PaymentSimulationBillingType,
+  SimulatePaymentParams,
+} from './payments/simulatePayment';
 export { ASAAS_WEBHOOK_EVENTS } from './types/asaas';
 
 // Invoices (NFS-e)

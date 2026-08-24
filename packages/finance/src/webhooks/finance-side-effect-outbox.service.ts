@@ -11,6 +11,7 @@ import { emitBillingNotifications } from '@alusa/lib';
 
 const MAX_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 60_000;
+const MAX_RETRY_DELAY_MS = 30 * 60_000;
 const SIDE_EFFECT_LEASE_MS = 10 * 60 * 1000;
 
 export type FinanceSideEffectType =
@@ -40,6 +41,7 @@ type EventPublicOrderTicketEmailPayload = {
   ticketsPath: string;
   ticketsHtmlPath?: string | null;
   statusPath: string;
+  deliveryKey?: string;
 };
 
 type EventPublicOrderCreatedEmailPayload = {
@@ -119,13 +121,7 @@ async function sendResendEmail(params: {
 }) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    if (process.env.NODE_ENV === 'production') throw new Error('RESEND_API_KEY ausente em produção.');
-    console.info('[EMAIL][DEV_FALLBACK]');
-    console.info(`category: event_ticket`);
-    console.info(`to: ${params.to}`);
-    console.info(`subject: ${params.subject}`);
-    console.info(`idempotencyKey: ${params.idempotencyKey}`);
-    return { id: null, delivery: 'logged' as const };
+    throw new Error('RESEND_API_KEY ausente; e-mail não foi enviado.');
   }
 
   const response = await fetch('https://api.resend.com/emails', {
@@ -153,17 +149,6 @@ async function sendResendEmail(params: {
         : Array.isArray(json?.errors)
           ? JSON.stringify(json.errors)
           : `Falha ao enviar e-mail (${response.status}).`;
-    if (
-      process.env.NODE_ENV !== 'production' &&
-      message.includes('You can only send testing emails to your own email address')
-    ) {
-      console.info('[EMAIL][DEV_FALLBACK]');
-      console.info(`category: event_ticket`);
-      console.info(`to: ${params.to}`);
-      console.info(`subject: ${params.subject}`);
-      console.info(`idempotencyKey: ${params.idempotencyKey}`);
-      return { id: null, delivery: 'logged' as const };
-    }
     throw new Error(message);
   }
 
@@ -201,7 +186,7 @@ async function sendEventPublicOrderTicketEmail(payload: EventPublicOrderTicketEm
     subject,
     html,
     text,
-    idempotencyKey: `event-ticket-email:${payload.orderId}`,
+    idempotencyKey: `event-ticket-email:${payload.orderId}:${payload.deliveryKey ?? 'initial'}`,
     tags: [
       { name: 'category', value: 'event_ticket' },
       { name: 'order_id', value: payload.orderId },
@@ -412,6 +397,10 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
     const message = error instanceof Error ? error.message : String(error);
     const attempts = event.attempts + 1;
     const exhausted = attempts >= MAX_ATTEMPTS;
+    const retryDelayMs = Math.min(
+      MAX_RETRY_DELAY_MS,
+      RETRY_DELAY_MS * (2 ** Math.max(0, attempts - 1)),
+    );
 
     const failed = await prisma.financeWebhookSideEffectOutbox.updateMany({
       where: {
@@ -427,12 +416,22 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
         leaseExpiresAt: null,
         lockToken: null,
         lastError: message,
-        availableAt: exhausted ? event.availableAt : new Date(Date.now() + RETRY_DELAY_MS),
+        availableAt: exhausted ? event.availableAt : new Date(Date.now() + retryDelayMs),
       },
     });
 
     if (failed.count === 0) {
       return { processed: false, reason: 'lease_lost' };
+    }
+
+    if (exhausted) {
+      console.error('[finance-side-effect-outbox] Efeito exaurido; requer observabilidade/reprocessamento', {
+        eventId,
+        effectType: event.effectType,
+        contaId: event.contaId,
+        attempts,
+        message,
+      });
     }
 
     return { processed: false, reason: message };

@@ -1174,6 +1174,24 @@ type PublicCheckoutOrderRecord = Prisma.EventMapOrderGetPayload<{
   include: { items: { include: { ticket: true } } };
 }>;
 
+function hasCompletePublicOrderTickets(order: { items: Array<{ ticket: EventTicketRecord | null }> }) {
+  return order.items.length > 0 && order.items.every((item) => Boolean(item.ticket));
+}
+
+function ticketFulfillmentFailureStatus(reason: string | null | undefined) {
+  const normalized = (reason ?? '').toUpperCase();
+  return normalized.includes('RESERVA_EXPIRADA')
+    || normalized.includes('ASSENTOS_INDISPONIVEIS')
+    || normalized.includes('RESERVA_INVALIDA')
+    ? 'REQUIRES_RECONCILIATION' as const
+    : 'FAILED' as const;
+}
+
+function normalizeTicketFulfillmentError(reason: string | null | undefined) {
+  const normalized = reason?.trim();
+  return normalized ? normalized.slice(0, 500) : 'Falha ao emitir ingressos do pedido público.';
+}
+
 function mapPublicSeat(seat: EventMapPublicSeatRecord) {
   const metadata = seat.metadata && typeof seat.metadata === 'object' && !Array.isArray(seat.metadata)
     ? (seat.metadata as Record<string, unknown>)
@@ -1258,11 +1276,19 @@ async function buildPublicCheckoutResponse(
     expiresAt: order.expiresAt?.toISOString() ?? order.createdAt.toISOString(),
     asaasPaymentId: order.asaasPaymentId,
     invoiceUrl: order.invoiceUrl,
-    ticketsUrl: order.status === 'CONFIRMED' ? publicOrderTicketsPath(order.id, order.accessToken) : null,
+    ticketsUrl:
+      order.status === 'CONFIRMED'
+      && order.ticketFulfillmentStatus === 'ISSUED'
+      && hasCompletePublicOrderTickets(order)
+        ? publicOrderTicketsPath(order.id, order.accessToken)
+        : null,
     ticketsHtmlUrl:
       order.status === 'CONFIRMED'
+      && order.ticketFulfillmentStatus === 'ISSUED'
+      && hasCompletePublicOrderTickets(order)
         ? publicOrderTicketsHtmlPath(params?.publicSlug, order.id, order.accessToken)
         : null,
+    ticketFulfillmentStatus: order.ticketFulfillmentStatus,
     statusUrl: publicOrderStatusPath(params?.publicSlug, order.id, order.accessToken),
     items: order.items.map((item) => ({
       ticketCode: item.ticket?.ticketCode ?? '',
@@ -1821,9 +1847,13 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
 
   const reservedSeats = order.reservation?.seats.map((seat) => seat.publicSeat) ?? [];
   const confirmedItems = order.items;
-  const ticketsUrl = order.status === 'CONFIRMED' ? publicOrderTicketsPath(order.id, order.accessToken) : null;
-  const ticketsHtmlUrl =
+  const ticketsAvailable =
     order.status === 'CONFIRMED'
+    && order.ticketFulfillmentStatus === 'ISSUED'
+    && hasCompletePublicOrderTickets(order);
+  const ticketsUrl = ticketsAvailable ? publicOrderTicketsPath(order.id, order.accessToken) : null;
+  const ticketsHtmlUrl =
+    ticketsAvailable
       ? publicOrderTicketsHtmlPath(order.map.publicSlug, order.id, order.accessToken)
       : null;
 
@@ -1833,6 +1863,8 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
     buyerEmail: order.buyerEmail,
     totalAmount: toMoney(order.totalAmount),
     status: order.status,
+    ticketFulfillmentStatus: order.ticketFulfillmentStatus,
+    ticketFulfillmentLastError: order.ticketFulfillmentLastError,
     paymentStatus: order.paymentStatus,
     invoiceUrl: order.invoiceUrl,
     expiresAt: order.expiresAt?.toISOString() ?? null,
@@ -1907,6 +1939,7 @@ async function enqueuePublicOrderTicketEmail(
         ticketsPath: params.ticketsPath,
         ticketsHtmlPath: params.ticketsHtmlPath ?? null,
         statusPath: params.statusPath,
+        deliveryKey: params.dedupeSuffix ?? 'initial',
       }),
       status: FinanceWebhookSideEffectStatus.PENDING,
     },
@@ -2000,7 +2033,7 @@ export async function confirmPublicEventMapOrderPayment(params: {
     });
     if (!order) return null;
 
-    if (order.status === 'CONFIRMED' && order.items.length > 0) {
+    if (order.status === 'CONFIRMED' && order.ticketFulfillmentStatus === 'ISSUED' && hasCompletePublicOrderTickets(order)) {
       return {
         orderId: order.id,
         status: order.status,
@@ -2008,7 +2041,7 @@ export async function confirmPublicEventMapOrderPayment(params: {
       };
     }
 
-    if (order.status !== 'PAYMENT_PENDING') {
+    if (order.status !== 'PAYMENT_PENDING' && order.status !== 'CONFIRMED') {
       throw new EventsError('PEDIDO_NAO_CONFIRMAVEL', 'Pedido público não está pendente de pagamento.', 409);
     }
 
@@ -2131,6 +2164,11 @@ export async function confirmPublicEventMapOrderPayment(params: {
       where: { id: order.id },
       data: {
         status: 'CONFIRMED',
+        ticketFulfillmentStatus: 'ISSUED',
+        ticketFulfillmentAttempts: { increment: 1 },
+        ticketFulfillmentLastAttemptAt: new Date(),
+        ticketFulfillmentLastError: null,
+        ticketFulfilledAt: paidAt,
         asaasPaymentId: order.asaasPaymentId ?? params.asaasPaymentId,
         paymentStatus: params.paymentStatus ?? order.paymentStatus,
         invoiceUrl: params.invoiceUrl ?? order.invoiceUrl,
@@ -2195,6 +2233,7 @@ export async function reconcileEventMapOrderFinancialStateFromAsaas(params: {
   invoiceUrl?: string | null;
   paidAt?: Date | string | null;
   paidAmount?: number | null;
+  ticketFulfillmentError?: string | null;
 }): Promise<{ orderId: string; status: 'CONFIRMED'; financialOnly: true } | null> {
   const paymentStatus = (params.paymentStatus ?? '').trim().toUpperCase();
   if (!PAID_ASAAS_PAYMENT_STATUSES.has(paymentStatus)) return null;
@@ -2217,6 +2256,10 @@ export async function reconcileEventMapOrderFinancialStateFromAsaas(params: {
     where: { id: order.id },
     data: {
       status: 'CONFIRMED',
+      ticketFulfillmentStatus: ticketFulfillmentFailureStatus(params.ticketFulfillmentError),
+      ticketFulfillmentAttempts: { increment: 1 },
+      ticketFulfillmentLastAttemptAt: new Date(),
+      ticketFulfillmentLastError: normalizeTicketFulfillmentError(params.ticketFulfillmentError),
       asaasPaymentId: params.asaasPaymentId,
       paymentStatus,
       paymentProvider: 'ASAAS',
@@ -2244,6 +2287,30 @@ export async function reconcileEventMapOrderFinancialStateFromAsaas(params: {
   });
 
   return { orderId: order.id, status: 'CONFIRMED', financialOnly: true };
+}
+
+export async function recordPublicOrderTicketFulfillmentFailure(params: {
+  contaId: string;
+  orderId: string;
+  reason?: string | null;
+}) {
+  const reason = normalizeTicketFulfillmentError(params.reason);
+  const updated = await prisma.eventMapOrder.updateMany({
+    where: {
+      id: params.orderId,
+      contaId: params.contaId,
+      status: 'CONFIRMED',
+      ticketFulfillmentStatus: { in: ['PENDING', 'FAILED'] },
+    },
+    data: {
+      ticketFulfillmentStatus: ticketFulfillmentFailureStatus(reason),
+      ticketFulfillmentAttempts: { increment: 1 },
+      ticketFulfillmentLastAttemptAt: new Date(),
+      ticketFulfillmentLastError: reason,
+    },
+  });
+
+  return { updated: updated.count > 0, status: ticketFulfillmentFailureStatus(reason) };
 }
 
 export async function cancelPublicEventMapOrder(orderId: string, reason?: string | null) {
@@ -2421,6 +2488,9 @@ export async function getPublicEventMapOrderTickets(orderId: string, accessToken
   });
 
   if (!order) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido não encontrado.', 404);
+  if (order.ticketFulfillmentStatus !== 'ISSUED' || !hasCompletePublicOrderTickets(order)) {
+    throw new EventsError('INGRESSOS_INDISPONIVEIS', 'Os ingressos ainda estão sendo emitidos. Tente novamente em instantes.', 409);
+  }
 
   return {
     id: order.id,
@@ -2465,6 +2535,9 @@ export async function getEventMapOrderTicketsForAdmin(contaId: string, orderId: 
   });
 
   if (!order) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido confirmado não encontrado.', 404);
+  if (order.ticketFulfillmentStatus !== 'ISSUED' || !hasCompletePublicOrderTickets(order)) {
+    throw new EventsError('INGRESSOS_INDISPONIVEIS', 'Os ingressos ainda estão sendo emitidos.', 409);
+  }
 
   return {
     id: order.id,
@@ -2534,6 +2607,9 @@ export async function requestPublicOrderTicketEmailResend(orderId: string, acces
   }
 
   const ticketCount = order.items.filter((item) => item.ticket).length;
+  if (ticketCount === 0) {
+    throw new EventsError('INGRESSOS_INDISPONIVEIS', 'Não há ingressos emitidos para este pedido.', 409);
+  }
   const dedupeSuffix = `resend:${Math.floor(Date.now() / PUBLIC_ORDER_RESEND_EMAIL_WINDOW_MS)}`;
 
   await prisma.$transaction(async (tx) => {
@@ -2574,13 +2650,14 @@ export async function syncPublicEventMapOrderPaymentByBuyer(orderId: string, acc
       id: true,
       contaId: true,
       status: true,
+      ticketFulfillmentStatus: true,
       asaasPaymentId: true,
       accessToken: true,
     },
   });
   if (!order) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido não encontrado.', 404);
 
-  if (order.status === 'CONFIRMED') {
+  if (order.status === 'CONFIRMED' && order.ticketFulfillmentStatus === 'ISSUED') {
     return {
       synced: false as const,
       status: order.status,
@@ -2658,6 +2735,7 @@ export async function syncPublicEventMapOrderPaymentByBuyer(orderId: string, acc
         invoiceUrl: payment.invoiceUrl ?? null,
         paidAt: payment.paymentDate ?? payment.clientPaymentDate ?? new Date(),
         paidAmount: payment.value ?? null,
+        ticketFulfillmentError: confirmError instanceof EventsError ? confirmError.code : String(confirmError),
       }).catch(() => null);
     } else {
       throw confirmError;
@@ -2682,6 +2760,7 @@ export async function listEventPublicMapOrdersForAdmin(contaId: string, eventId:
       buyerEmail: true,
       totalAmount: true,
       status: true,
+      ticketFulfillmentStatus: true,
       paymentMethod: true,
       paymentStatus: true,
       asaasPaymentId: true,
@@ -2701,6 +2780,7 @@ export async function listEventPublicMapOrdersForAdmin(contaId: string, eventId:
     buyerEmail: order.buyerEmail,
     totalAmount: toMoney(order.totalAmount),
     status: order.status,
+    ticketFulfillmentStatus: order.ticketFulfillmentStatus,
     paymentMethod: order.paymentMethod,
     paymentStatus: order.paymentStatus,
     asaasPaymentId: order.asaasPaymentId,

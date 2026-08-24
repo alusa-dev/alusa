@@ -1150,7 +1150,10 @@ async function handlePaymentWebhookCore(
         try {
           const confirmed = await confirmPublicEventMapOrderPayment(eventPaymentParams);
           if (!confirmed) {
-            await reconcileEventMapOrderFinancialStateFromAsaas(eventPaymentParams);
+            await reconcileEventMapOrderFinancialStateFromAsaas({
+              ...eventPaymentParams,
+              ticketFulfillmentError: 'PEDIDO_NAO_ENCONTRADO',
+            });
           }
         } catch (confirmError) {
           console.warn('[payment-webhook] Confirmação completa do pedido público falhou; tentando reconciliação financeira', {
@@ -1158,7 +1161,15 @@ async function handlePaymentWebhookCore(
             asaasPaymentId: payload.payment.id,
             message: confirmError instanceof Error ? confirmError.message : String(confirmError),
           });
-          await reconcileEventMapOrderFinancialStateFromAsaas(eventPaymentParams);
+          await reconcileEventMapOrderFinancialStateFromAsaas({
+            ...eventPaymentParams,
+            ticketFulfillmentError:
+              typeof (confirmError as { code?: unknown })?.code === 'string'
+                ? (confirmError as { code: string }).code
+                : confirmError instanceof Error
+                  ? confirmError.message
+                  : String(confirmError),
+          });
         }
       } else if (payload.event === 'PAYMENT_CREATED' || payload.payment.status === 'PENDING') {
         await syncPublicEventMapOrderPaymentCreated({

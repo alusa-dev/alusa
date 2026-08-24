@@ -508,6 +508,12 @@ export {
   listAnticipationsQueryDTOSchema,
   updateAnticipationConfigurationInputDTOSchema,
 } from './dtos/anticipations';
+
+export { paymentSimulationInputDTOSchema } from './dtos/payment-simulation';
+export type {
+  PaymentSimulationInputDTO,
+  PaymentSimulationOutput,
+} from './dtos/payment-simulation';
 export type {
   AnticipationTargetInputDTO,
   ListAnticipationCandidatesQueryDTO,
@@ -807,6 +813,9 @@ export {
   simulateReceivableAnticipation,
   updateReceivableAnticipationConfiguration,
 } from './use-cases/anticipations';
+
+export { grossUpPaymentValue, simulatePaymentFees } from './use-cases/simulate-payment-fees';
+export type { PaymentSimulationError } from './use-cases/simulate-payment-fees';
 export type {
   AutomaticAnticipationMenuVisibility,
   AnticipationCandidate,
@@ -1774,6 +1783,7 @@ export {
   getExpiredReservationDecision,
   inspectEventFinancialInconsistencies,
   reconcilePendingEventMapOrders,
+  reconcilePendingEventMapTicketFulfillment,
 } from './events/event-map-order-jobs';
 export type {
   EventFinancialInconsistency,
@@ -1787,6 +1797,8 @@ export type {
   InspectEventFinancialInconsistenciesResult,
   ReconcilePendingEventMapOrdersInput,
   ReconcilePendingEventMapOrdersResult,
+  ReconcilePendingEventMapTicketFulfillmentInput,
+  ReconcilePendingEventMapTicketFulfillmentResult,
 } from './events/event-map-order-jobs';
 export {
   logEventsFinance,

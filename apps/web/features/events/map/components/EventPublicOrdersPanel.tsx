@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Loader2, Mail, RefreshCw, Search, Ticket } from 'lucide-react';
+import { CheckCircle2, Loader2, RefreshCw, Search, Ticket } from 'lucide-react';
 import { useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +19,7 @@ type PublicOrderListItem = {
   buyerEmail: string;
   totalAmount: number;
   status: string;
+  ticketFulfillmentStatus: 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
   paymentMethod: string | null;
   paymentStatus: string | null;
   asaasPaymentId: string | null;
@@ -64,10 +65,18 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return (json as { data: T }).data;
 }
 
-function statusVariant(status: string) {
-  if (status === 'CONFIRMED') return 'success' as const;
+function statusVariant(status: string, ticketFulfillmentStatus: PublicOrderListItem['ticketFulfillmentStatus']) {
+  if (status === 'CONFIRMED' && ticketFulfillmentStatus === 'ISSUED') return 'success' as const;
+  if (status === 'CONFIRMED') return 'warning' as const;
   if (status === 'PAYMENT_PENDING') return 'warning' as const;
   return 'neutral' as const;
+}
+
+function statusLabel(order: PublicOrderListItem) {
+  if (order.status === 'CONFIRMED' && order.ticketFulfillmentStatus !== 'ISSUED') {
+    return 'Pagamento confirmado · emissão pendente';
+  }
+  return publicOrderStatusLabel(order.status);
 }
 
 export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
@@ -91,15 +100,6 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
       toast.success({ title: 'Reconciliação iniciada', description: 'O pedido foi verificado no Asaas.' });
     },
     onError: (error) => toast.error({ title: 'Falha na reconciliação', description: (error as Error).message }),
-  });
-
-  const resendMutation = useMutation({
-    mutationFn: async (orderId: string) =>
-      parseResponse(
-        await fetch(`/api/events/${event.id}/public-orders/${orderId}/resend-ticket-email`, { method: 'POST' }),
-      ),
-    onSuccess: () => toast.success({ title: 'E-mail reenviado', description: 'Os ingressos foram enviados ao comprador.' }),
-    onError: (error) => toast.error({ title: 'Falha no reenvio', description: (error as Error).message }),
   });
 
   const verifyMutation = useMutation({
@@ -219,7 +219,7 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
                       <span className="text-xs text-slate-500">{order.buyerEmail}</span>
                     </td>
                     <td className="py-3 pr-3">
-                      <Badge variant={statusVariant(order.status)}>{publicOrderStatusLabel(order.status)}</Badge>
+                      <Badge variant={statusVariant(order.status, order.ticketFulfillmentStatus)}>{statusLabel(order)}</Badge>
                     </td>
                     <td className="py-3 pr-3">{formatCurrency(order.totalAmount)}</td>
                     <td className="py-3 pr-3 text-slate-600">
@@ -240,19 +240,7 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
                             Reconciliar
                           </Button>
                         ) : null}
-                        {order.status === 'CONFIRMED' ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={resendMutation.isPending}
-                            onClick={() => resendMutation.mutate(order.id)}
-                          >
-                            <Mail className="h-3.5 w-3.5" />
-                            Reenviar
-                          </Button>
-                        ) : null}
-                        {order.status === 'CONFIRMED' ? (
+                        {order.status === 'CONFIRMED' && order.ticketCount === order.seatCount && order.ticketCount > 0 ? (
                           <Button asChild size="sm" variant="outline">
                             <a href={`/api/events/public-orders/${order.id}/tickets`} target="_blank" rel="noreferrer">
                               <Ticket className="h-3.5 w-3.5" />

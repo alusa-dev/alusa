@@ -1,5 +1,9 @@
 import { prisma } from '@alusa/database';
 import { Prisma } from '@prisma/client';
+import {
+  confirmPublicEventMapOrderPayment,
+  recordPublicOrderTicketFulfillmentFailure,
+} from '@alusa/lib/events/map/event-map.service';
 
 import { withWebhookJobLock } from '../foundation/webhook-job-lock.service';
 import { logEventsFinance } from './events-finance-observability';
@@ -12,6 +16,7 @@ import {
 type EventMapPublicSeatStatusValue = 'AVAILABLE' | 'HELD' | 'SOLD' | 'BLOCKED' | 'UNAVAILABLE';
 type EventMapReservationStatusValue = 'HELD' | 'EXPIRED' | 'CONSUMED' | 'CANCELLED';
 type EventMapOrderStatusValue = 'PAYMENT_PENDING' | 'CONFIRMED' | 'CANCELLED' | 'EXPIRED' | 'REFUNDED' | 'PARTIALLY_REFUNDED';
+type EventMapTicketFulfillmentStatusValue = 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
 
 export type ExpirableEventMapReservationRecord = {
   id: string;
@@ -591,6 +596,166 @@ async function reconcilePendingEventMapOrdersUnlocked(
   });
 
   return result;
+}
+
+export type ReconcilePendingEventMapTicketFulfillmentInput = {
+  contaId?: string;
+  limit?: number;
+  maxAccounts?: number;
+  maxAttempts?: number;
+  useLock?: boolean;
+};
+
+export type ReconcilePendingEventMapTicketFulfillmentResult = {
+  processed: number;
+  issued: number;
+  skipped: number;
+  errors: Array<{ orderId: string; contaId: string; reason: string }>;
+  generatedAt: Date;
+  skippedDueToLock?: boolean;
+};
+
+type EventMapTicketFulfillmentCandidate = {
+  id: string;
+  contaId: string;
+  asaasPaymentId: string;
+  paymentStatus: string | null;
+  paidAt: Date | null;
+  ticketFulfillmentStatus: EventMapTicketFulfillmentStatusValue;
+  ticketFulfillmentAttempts: number;
+};
+
+type ReconcilePendingEventMapTicketFulfillmentDependencies = {
+  resolveTargetContaIds: (input: { contaId?: string; maxAccounts: number }) => Promise<string[]>;
+  findOrders: (input: {
+    contaId: string;
+    limit: number;
+    maxAttempts: number;
+  }) => Promise<EventMapTicketFulfillmentCandidate[]>;
+  fulfillOrder: (input: EventMapTicketFulfillmentCandidate) => Promise<{ ticketsCreated: number }>;
+  recordFailure: (input: { contaId: string; orderId: string; reason: string }) => Promise<void>;
+};
+
+const defaultReconcilePendingEventMapTicketFulfillmentDependencies = {
+  resolveTargetContaIds: resolveEventMapContaIds,
+  findOrders: async (input: {
+    contaId: string;
+    limit: number;
+    maxAttempts: number;
+  }) => {
+    const orders = await prisma.eventMapOrder.findMany({
+      where: {
+        contaId: input.contaId,
+        status: 'CONFIRMED',
+        ticketFulfillmentStatus: { in: ['PENDING', 'FAILED'] },
+        asaasPaymentId: { not: null },
+        ticketFulfillmentAttempts: { lt: input.maxAttempts },
+      },
+      select: {
+        id: true,
+        contaId: true,
+        asaasPaymentId: true,
+        paymentStatus: true,
+        paidAt: true,
+        ticketFulfillmentStatus: true,
+        ticketFulfillmentAttempts: true,
+      },
+      orderBy: { updatedAt: 'asc' },
+      take: input.limit,
+    });
+
+    return orders.flatMap((order) => order.asaasPaymentId ? [{
+      ...order,
+      asaasPaymentId: order.asaasPaymentId,
+    }] : []);
+  },
+  fulfillOrder: async (input: EventMapTicketFulfillmentCandidate) => {
+    const result = await confirmPublicEventMapOrderPayment({
+      contaId: input.contaId,
+      asaasPaymentId: input.asaasPaymentId,
+      externalReference: `event-map-order:${input.id}`,
+      paymentStatus: input.paymentStatus,
+      paidAt: input.paidAt,
+    });
+    return { ticketsCreated: result?.ticketsCreated ?? 0 };
+  },
+  recordFailure: async (input: { contaId: string; orderId: string; reason: string }) => {
+    await recordPublicOrderTicketFulfillmentFailure(input);
+  },
+} satisfies ReconcilePendingEventMapTicketFulfillmentDependencies;
+
+export async function reconcilePendingEventMapTicketFulfillment(
+  input: ReconcilePendingEventMapTicketFulfillmentInput = {},
+  dependencies: ReconcilePendingEventMapTicketFulfillmentDependencies = defaultReconcilePendingEventMapTicketFulfillmentDependencies,
+): Promise<ReconcilePendingEventMapTicketFulfillmentResult> {
+  const run = async () => {
+    const maxAccounts = Math.max(1, Math.min(50, input.maxAccounts ?? 20));
+    const limit = Math.max(1, Math.min(500, input.limit ?? 100));
+    const maxAttempts = Math.max(1, Math.min(50, input.maxAttempts ?? 10));
+    const result: ReconcilePendingEventMapTicketFulfillmentResult = {
+      processed: 0,
+      issued: 0,
+      skipped: 0,
+      errors: [],
+      generatedAt: new Date(),
+    };
+
+    const contaIds = await dependencies.resolveTargetContaIds({ contaId: input.contaId, maxAccounts });
+    for (const contaId of contaIds) {
+      const orders = await dependencies.findOrders({ contaId, limit, maxAttempts });
+      for (const order of orders) {
+        result.processed += 1;
+        try {
+          const fulfilled = await dependencies.fulfillOrder(order);
+          if (fulfilled.ticketsCreated > 0) {
+            result.issued += 1;
+          } else {
+            result.skipped += 1;
+          }
+        } catch (error) {
+          result.skipped += 1;
+          const reason = error instanceof Error ? error.message : String(error);
+          result.errors.push({ orderId: order.id, contaId, reason });
+          await dependencies.recordFailure({ contaId, orderId: order.id, reason }).catch(() => null);
+          logEventsFinance(
+            'eventMapOrder.ticketFulfillment.job.error',
+            { contaId, orderId: order.id, asaasPaymentId: order.asaasPaymentId, reason },
+            'warn',
+          );
+        }
+      }
+    }
+
+    logEventsFinance('eventMapOrder.ticketFulfillment.job', {
+      processed: result.processed,
+      skipped: result.skipped,
+      errors: result.errors.length,
+      message: `tickets_issued=${result.issued}`,
+    });
+
+    return result;
+  };
+
+  const useLock = input.useLock ?? dependencies === defaultReconcilePendingEventMapTicketFulfillmentDependencies;
+  if (!useLock) return run();
+
+  const locked = await withWebhookJobLock(
+    `events-fulfill-tickets:${input.contaId ?? 'global'}`,
+    run,
+    { ttlMs: 10 * 60_000 },
+  );
+  if (!locked.acquired) {
+    return {
+      processed: 0,
+      issued: 0,
+      skipped: 0,
+      errors: [],
+      generatedAt: new Date(),
+      skippedDueToLock: true,
+    };
+  }
+
+  return locked.result;
 }
 
 export type EventFinancialInconsistencyType =

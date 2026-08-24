@@ -148,6 +148,7 @@ export function PublicMapExperience({
     ticketsHtmlUrl?: string | null;
     invoiceUrl: string | null;
     status: string;
+    ticketFulfillmentStatus: 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
     expiresAt: string;
     statusUrl?: string | null;
     items: Array<{ ticketCode: string; seatLabel: string; sectionName: string }>;
@@ -256,6 +257,7 @@ export function PublicMapExperience({
         order: {
           orderId: string;
           status: string;
+          ticketFulfillmentStatus: 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
           ticketsUrl: string | null;
           ticketsHtmlUrl?: string | null;
           invoiceUrl: string | null;
@@ -273,6 +275,7 @@ export function PublicMapExperience({
           ? {
               ...current,
               status: result.order.status,
+              ticketFulfillmentStatus: result.order.ticketFulfillmentStatus,
               ticketsUrl: result.order.ticketsUrl,
               ticketsHtmlUrl: result.order.ticketsHtmlUrl,
               invoiceUrl: result.order.invoiceUrl,
@@ -339,6 +342,7 @@ export function PublicMapExperience({
         ticketsHtmlUrl?: string | null;
         invoiceUrl: string | null;
         status: string;
+        ticketFulfillmentStatus: 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
         expiresAt: string;
         statusUrl?: string | null;
         items: Array<{ ticketCode: string; seatLabel: string; sectionName: string }>;
@@ -380,11 +384,23 @@ export function PublicMapExperience({
     }
   }
 
-  useEffect(() => {
-    if (!order || order.status !== 'PAYMENT_PENDING') return;
+  const currentOrderId = order?.orderId;
+  const currentOrderAccessToken = order?.accessToken;
+  const currentOrderStatus = order?.status;
+  const currentTicketFulfillmentStatus = order?.ticketFulfillmentStatus;
 
-    const orderId = order.orderId;
-    const accessToken = order.accessToken;
+  useEffect(() => {
+    if (
+      !currentOrderId
+      || !currentOrderAccessToken
+      || (currentOrderStatus !== 'PAYMENT_PENDING'
+        && !(currentOrderStatus === 'CONFIRMED'
+          && currentTicketFulfillmentStatus !== 'ISSUED'
+          && currentTicketFulfillmentStatus !== 'REQUIRES_RECONCILIATION'))
+    ) return;
+
+    const orderId = currentOrderId;
+    const accessToken = currentOrderAccessToken;
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     const startedAt = Date.now();
@@ -402,6 +418,7 @@ export function PublicMapExperience({
           ticketsHtmlUrl?: string | null;
           invoiceUrl: string | null;
           status: string;
+          ticketFulfillmentStatus: 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
           expiresAt: string | null;
           items: Array<{ ticketCode: string | null; seatLabel: string; sectionName: string }>;
         }>(
@@ -414,6 +431,7 @@ export function PublicMapExperience({
             ? {
                 ...current,
                 status: status.status,
+                ticketFulfillmentStatus: status.ticketFulfillmentStatus,
                 ticketsUrl: status.ticketsUrl,
                 ticketsHtmlUrl: status.ticketsHtmlUrl,
                 invoiceUrl: status.invoiceUrl,
@@ -427,7 +445,12 @@ export function PublicMapExperience({
             : current,
         );
 
-        if (status.status === 'PAYMENT_PENDING') {
+        if (
+          status.status === 'PAYMENT_PENDING'
+          || (status.status === 'CONFIRMED'
+            && status.ticketFulfillmentStatus !== 'ISSUED'
+            && status.ticketFulfillmentStatus !== 'REQUIRES_RECONCILIATION')
+        ) {
           timeoutId = setTimeout(pollStatus, 7000);
         }
       } catch (pollError) {
@@ -443,7 +466,15 @@ export function PublicMapExperience({
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [order?.accessToken, order?.orderId, order?.status]);
+  }, [currentOrderAccessToken, currentOrderId, currentOrderStatus, currentTicketFulfillmentStatus]);
+
+  const ticketsIssued =
+    order?.status === 'CONFIRMED'
+    && order.ticketFulfillmentStatus === 'ISSUED'
+    && Boolean(order.ticketsUrl);
+  const ticketFulfillmentNeedsReconciliation =
+    order?.status === 'CONFIRMED'
+    && order.ticketFulfillmentStatus === 'REQUIRES_RECONCILIATION';
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-950">
@@ -913,7 +944,7 @@ export function PublicMapExperience({
                         : 'text-amber-700'
                   }`}
                 >
-                  {order.status === 'CONFIRMED' ? (
+                  {order.status === 'CONFIRMED' && ticketsIssued ? (
                     <CheckCircle2 className="h-5 w-5" />
                   ) : order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED' ? (
                     <CheckCircle2 className="h-5 w-5" />
@@ -921,16 +952,24 @@ export function PublicMapExperience({
                     <Loader2 className="h-5 w-5 animate-spin" />
                   )}
                   <h2 className="text-sm font-semibold">
-                    {order.status === 'CONFIRMED'
+                    {order.status === 'CONFIRMED' && ticketsIssued
                       ? 'Pagamento confirmado!'
+                      : order.status === 'CONFIRMED'
+                        ? ticketFulfillmentNeedsReconciliation
+                          ? 'Pagamento confirmado; emissão em análise'
+                          : 'Pagamento confirmado; preparando ingressos'
                       : order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED'
                         ? publicOrderStatusLabel(order.status)
                         : 'Reserva criada!'}
                   </h2>
                 </div>
                 <p className="mt-2 text-sm text-slate-650">
-                  {order.status === 'CONFIRMED'
+                  {order.status === 'CONFIRMED' && ticketsIssued
                     ? 'Seus ingressos foram emitidos e já podem ser baixados.'
+                    : order.status === 'CONFIRMED'
+                      ? ticketFulfillmentNeedsReconciliation
+                        ? 'O pagamento foi confirmado e o pedido está em reconciliação automática. Não é necessário realizar uma nova compra.'
+                        : 'A emissão dos ingressos está sendo processada automaticamente. Esta página será atualizada quando estiver concluída.'
                     : order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED'
                       ? 'Esta reserva não está mais disponível. Selecione novos assentos no mapa.'
                       : 'Complete o pagamento para garantir seus ingressos.'}
@@ -938,7 +977,7 @@ export function PublicMapExperience({
                 {order.status === 'PAYMENT_PENDING' ? (
                   <PublicOrderReservationCountdown expiresAt={order.expiresAt} className="mt-2 text-xs" />
                 ) : null}
-                {order.status === 'CONFIRMED' && order.ticketsUrl ? (
+                {ticketsIssued && order.ticketsUrl ? (
                   <div className="mt-3 flex flex-col gap-2">
                     <Button asChild className="w-full bg-emerald-700 text-white hover:bg-emerald-800">
                       <a href={order.ticketsUrl} target="_blank" rel="noreferrer">

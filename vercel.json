@@ -91,6 +91,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/jobs/events-fulfill-tickets?maxAccounts=20&limit=100",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/jobs/events-inspect-financial-inconsistencies?maxAccounts=30&limit=200",
       "schedule": "15 * * * *"
     },

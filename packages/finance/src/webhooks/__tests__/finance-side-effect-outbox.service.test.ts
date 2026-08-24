@@ -139,4 +139,48 @@ describe('finance side-effect outbox leases', () => {
       }),
     );
   });
+
+  it('não marca ingresso como enviado quando o Resend não está configurado', async () => {
+    const previousApiKey = process.env.RESEND_API_KEY;
+    delete process.env.RESEND_API_KEY;
+    outboxMock.findUnique.mockResolvedValue({
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
+      payload: {
+        orderId: 'order-1',
+        buyerEmail: 'buyer@example.com',
+        buyerName: 'Buyer',
+        eventName: 'Event',
+        eventStartsAt: '2026-08-23T20:00:00.000Z',
+        ticketCount: 1,
+        ticketsPath: '/tickets',
+        ticketsHtmlPath: '/tickets/html',
+        statusPath: '/order',
+      },
+    } as never);
+    outboxMock.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    try {
+      const result = await processFinanceWebhookSideEffectOutboxEvent('effect-1');
+
+      expect(result).toEqual({
+        processed: false,
+        reason: 'RESEND_API_KEY ausente; e-mail não foi enviado.',
+      });
+      expect(outboxMock.updateMany).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: FinanceWebhookSideEffectStatus.PENDING,
+            lastError: 'RESEND_API_KEY ausente; e-mail não foi enviado.',
+          }),
+        }),
+      );
+    } finally {
+      if (previousApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousApiKey;
+    }
+  });
 });

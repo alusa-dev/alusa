@@ -374,6 +374,13 @@ enum EventMapOrderStatus {
   PARTIALLY_REFUNDED
 }
 
+enum EventMapTicketFulfillmentStatus {
+  PENDING
+  ISSUED
+  FAILED
+  REQUIRES_RECONCILIATION
+}
+
 enum EventTicketStatus {
   VALID
   USED
@@ -4639,6 +4646,11 @@ model EventMapOrder {
   buyerDocument   String?
   totalAmount     Decimal             @default(0) @db.Decimal(12, 2)
   status          EventMapOrderStatus @default(PAYMENT_PENDING)
+  ticketFulfillmentStatus EventMapTicketFulfillmentStatus @default(PENDING)
+  ticketFulfillmentAttempts Int       @default(0)
+  ticketFulfillmentLastAttemptAt DateTime?
+  ticketFulfillmentLastError String?
+  ticketFulfilledAt DateTime?
   paymentProvider String?
   asaasCustomerId String?
   asaasPaymentId  String?
@@ -4664,6 +4676,7 @@ model EventMapOrder {
   tickets     EventTicket[]
 
   @@index([contaId, eventMapId, versionId, status], name: "idx_event_map_order_conta_map_version_status")
+  @@index([contaId, status, ticketFulfillmentStatus, updatedAt], name: "idx_event_map_order_conta_fulfillment")
   @@index([contaId, eventId, createdAt], name: "idx_event_map_order_conta_event_created")
   @@index([contaId, asaasPaymentId], name: "idx_event_map_order_conta_asaas_payment")
   @@index([contaId, expiresAt, status], name: "idx_event_map_order_conta_expires_status")
