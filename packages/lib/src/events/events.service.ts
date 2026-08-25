@@ -198,6 +198,27 @@ function financialEntryStatusFromParticipantStatus(status: string): ParticipantP
   return 'PENDING';
 }
 
+const PARTICIPANT_FINANCIAL_STATUS_PRIORITY: Record<string, number> = {
+  ATRASADO: 0,
+  PARCIAL: 1,
+  PENDENTE: 2,
+  EM_DIA: 3,
+  ESTORNADO: 4,
+  QUITADO: 5,
+  ISENTO: 6,
+  CANCELADO: 7,
+};
+
+function participantStatusPriority(status: string | null | undefined) {
+  return PARTICIPANT_FINANCIAL_STATUS_PRIORITY[status ?? ''] ?? 2;
+}
+
+function participantDueDate(entry: any, charges: any[]) {
+  const dates = [entry?.dueDate, ...charges.map((charge) => charge.dueDate)]
+    .filter((date): date is Date => date instanceof Date && !Number.isNaN(date.getTime()));
+  return dates.sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
+}
+
 function applyParticipantPaymentSnapshotsToEntries<T extends { id: string; status: any; actualAmount: any; realizedAt?: Date | null; refundedAmount?: any; netAmount?: any }>(
   entries: T[],
   snapshots: Map<string, ParticipantPaymentSnapshot> | undefined,
@@ -4101,6 +4122,7 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
   }
 
   const participantData: any[] = [];
+  const participantSortData = new Map<string, { status: string; dueDate: Date | null; createdAt: Date }>();
   for (const part of participants) {
     let costumeCount = 0;
     let pendingCostumes = 0;
@@ -4176,6 +4198,11 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
       participantCharges,
       part.isFeeExempt
     );
+    participantSortData.set(part.id, {
+      status: part.cancelledAt ? 'CANCELADO' : paymentDetails.status,
+      dueDate: participantDueDate(entry, participantCharges),
+      createdAt: part.createdAt,
+    });
     const removalDecision = part.cancelledAt
       ? await buildEventParticipantRemovalDecision(prisma, ctx, eventId, part)
       : null;
@@ -4224,7 +4251,18 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
     });
   }
 
-  return participantData;
+  return participantData.sort((a, b) => {
+    const aSort = participantSortData.get(a.id);
+    const bSort = participantSortData.get(b.id);
+    const priorityDifference = participantStatusPriority(aSort?.status) - participantStatusPriority(bSort?.status);
+    if (priorityDifference !== 0) return priorityDifference;
+
+    const aDueDate = aSort?.dueDate?.getTime() ?? Number.POSITIVE_INFINITY;
+    const bDueDate = bSort?.dueDate?.getTime() ?? Number.POSITIVE_INFINITY;
+    if (aDueDate !== bDueDate && participantStatusPriority(aSort?.status) <= 3) return aDueDate - bDueDate;
+
+    return (bSort?.createdAt.getTime() ?? 0) - (aSort?.createdAt.getTime() ?? 0);
+  });
 }
 
 export async function deleteSchoolEvent(ctx: EventsContext, eventId: string) {
