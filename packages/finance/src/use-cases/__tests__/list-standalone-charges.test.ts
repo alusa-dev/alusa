@@ -160,6 +160,21 @@ describe('listStandaloneCharges', () => {
     expect(where.contaId).toBe('ct_1');
   });
 
+  it('exclui pagamentos Asaas sem vínculo local da fila de avulsas', async () => {
+    const db = createMockDb();
+    await listStandaloneCharges({ contaId: 'ct_1' }, db);
+
+    const where = db.charge.findMany.mock.calls[0][0].where;
+    expect(where.NOT).toEqual(
+      expect.arrayContaining([
+        { payerName: 'NEEDS_REVIEW' },
+        { description: { startsWith: '[NEEDS_REVIEW]' } },
+        { externalReference: { startsWith: 'needsReview:payment:' } },
+        { externalReference: { contains: ':needs-review:' } },
+      ]),
+    );
+  });
+
   it('statusView=open filtra status CREATED/OPEN/OVERDUE', async () => {
     const db = createMockDb();
     await listStandaloneCharges({ contaId: 'ct_1', statusView: 'open' }, db);

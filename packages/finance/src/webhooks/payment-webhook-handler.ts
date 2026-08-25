@@ -2048,62 +2048,14 @@ async function handlePaymentWebhookCore(
 
       const rawStatus = typeof payload.payment.status === 'string' ? payload.payment.status : '';
       const normalizedStatus = rawStatus.trim().toUpperCase();
-      const placeholderExternalReference =
-        paymentExternalReference && paymentExternalReference.trim().length > 0
-          ? `${paymentExternalReference}:needs-review:${payload.payment.id}`
-          : `needsReview:payment:${payload.payment.id}`;
-
-      const parsedDueDate = payload.payment.dueDate;
-      const placeholderDueDate = parsedDueDate ? new Date(parsedDueDate) : null;
-
-      const placeholderCharge = await prisma.charge.upsert({
-        where: {
-          uq_charge_conta_asaas_payment: {
-            contaId,
-            asaasPaymentId: payload.payment.id,
-          },
-        },
-        update: {
-          status: mapAsaasToChargeStatus(normalizedStatus),
-          statusUpdatedAt: new Date(),
-          dueDate: placeholderDueDate,
-          billingType: payload.payment.billingType ?? null,
-          description: '[NEEDS_REVIEW] Payment sem vínculo local',
-          value: payload.payment.value,
-          invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
-          ...buildChargeAsaasSnapshotUpdate(payload, {
-            localChargeStatus: mapAsaasToChargeStatus(normalizedStatus),
-          }),
-        },
-        create: {
-          contaId,
-          externalReference: placeholderExternalReference,
-          status: mapAsaasToChargeStatus(normalizedStatus),
-          statusUpdatedAt: new Date(),
-          asaasPaymentId: payload.payment.id,
-          payerName: 'NEEDS_REVIEW',
-          description: '[NEEDS_REVIEW] Payment sem vínculo local',
-          value: payload.payment.value,
-          dueDate: placeholderDueDate,
-          billingType: payload.payment.billingType ?? null,
-          invoiceUrl: payload.payment.invoiceUrl ?? null,
-          ...buildChargeAsaasSnapshotUpdate(payload, {
-            localChargeStatus: mapAsaasToChargeStatus(normalizedStatus),
-          }),
-        },
-        select: { id: true },
-      });
-
-      await refreshReadModel({ chargeId: placeholderCharge.id });
-
       await upsertFinanceReconciliationIssue({
         contaId,
-        entityType: 'CHARGE',
-        entityId: placeholderCharge.id,
+        entityType: 'PAYMENT',
+        entityId: null,
         asaasId: payload.payment.id,
-        issueType: 'PAYMENT_NEEDS_REVIEW',
+        issueType: 'PAYMENT_MISSING_LOCAL_ENTITY',
         severity: 'HIGH',
-        localStatus: 'NEEDS_REVIEW',
+        localStatus: null,
         remoteStatus: normalizedStatus || null,
         metadata: {
           event: payload.event,
@@ -2133,18 +2085,16 @@ async function handlePaymentWebhookCore(
           installment: payload.payment.installment,
           installmentNumber: payload.payment.installmentNumber,
           externalReference: paymentExternalReference,
-          createdPlaceholderCharge: true,
+          createdPlaceholderCharge: false,
         },
       });
 
-      await publishPaymentRealtimeUpdate({
-        contaId,
-        entityId: placeholderCharge.id,
-        payload,
-        dueDate: placeholderDueDate,
-      });
-
-      return { success: true };
+      return {
+        success: true,
+        skipped: true,
+        skipReason: 'UNMATCHED_PAYMENT_REQUIRES_RECONCILIATION',
+        localEntityType: 'Payment',
+      };
     }
 
     if (payload.payment.subscription) {

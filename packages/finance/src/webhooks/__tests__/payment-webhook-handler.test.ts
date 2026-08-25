@@ -8,12 +8,14 @@ const {
   mockEnsureAcademicChargeForCobranca,
   mockProjectAcademicEnrollmentFeeState,
   mockProjectFamilyEnrollmentFeeState,
+  mockUpsertFinanceReconciliationIssue,
 } = vi.hoisted(() => ({
   mockUpdateFinanceStatusFromPayment: vi.fn(async () => ({ success: true })),
   mockResolvePaymentToLocalEntity: vi.fn(async () => ({ type: 'not_found', reason: 'test_default' })),
   mockEnsureAcademicChargeForCobranca: vi.fn(async () => ({ id: 'charge_academic_mock', cobrancaId: 'c_mock' })),
   mockProjectAcademicEnrollmentFeeState: vi.fn(async () => ({ projected: true })),
   mockProjectFamilyEnrollmentFeeState: vi.fn(async () => ({ projected: true })),
+  mockUpsertFinanceReconciliationIssue: vi.fn(async () => ({ id: 'issue-1' })),
 }));
 
 vi.mock('../../foundation/payment-resolution-policy', () => {
@@ -49,6 +51,10 @@ vi.mock('../../use-cases/store-inventory', () => ({
 vi.mock('../../projections/enrollment-fee-projection.service', () => ({
   projectAcademicEnrollmentFeeState: mockProjectAcademicEnrollmentFeeState,
   projectFamilyEnrollmentFeeState: mockProjectFamilyEnrollmentFeeState,
+}));
+
+vi.mock('../../reconciliation/finance-reconciliation-issue.service', () => ({
+  upsertFinanceReconciliationIssue: mockUpsertFinanceReconciliationIssue,
 }));
 
 vi.mock('@alusa/database', () => ({
@@ -127,6 +133,7 @@ describe('handlePaymentWebhook', () => {
     mockEnsureAcademicChargeForCobranca.mockResolvedValue({ id: 'charge_academic_mock', cobrancaId: 'c_mock' });
     mockProjectAcademicEnrollmentFeeState.mockResolvedValue({ projected: true });
     mockProjectFamilyEnrollmentFeeState.mockResolvedValue({ projected: true });
+    mockUpsertFinanceReconciliationIssue.mockResolvedValue({ id: 'issue-1' });
     vi.mocked(prisma.$transaction).mockImplementation(
       async (callback: (_tx: unknown) => Promise<unknown>) => callback(prisma),
     );
@@ -161,6 +168,49 @@ describe('handlePaymentWebhook', () => {
       data: { asaasEnrollmentFeePaymentId: 'pay-fee-1' },
     });
     expect(prisma.charge.upsert).not.toHaveBeenCalled();
+  });
+
+  it('não materializa cobrança operacional para payment sem vínculo local', async () => {
+    const { prisma } = await import('@alusa/database');
+    const { auditLogService } = await import('../../foundation/audit-log.service');
+
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce(null as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CREATED',
+      payment: {
+        id: 'pay_external_only',
+        status: 'PENDING',
+        value: 170,
+        netValue: 168,
+        dueDate: '2026-09-10',
+        description: 'Mensalidade externa',
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      skipped: true,
+      skipReason: 'UNMATCHED_PAYMENT_REQUIRES_RECONCILIATION',
+      localEntityType: 'Payment',
+    });
+    expect(prisma.charge.upsert).not.toHaveBeenCalled();
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contaId: 'conta-1',
+        entityType: 'PAYMENT',
+        entityId: null,
+        asaasId: 'pay_external_only',
+        issueType: 'PAYMENT_MISSING_LOCAL_ENTITY',
+      }),
+    );
+    expect(auditLogService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'finance.webhook.cobranca_not_found',
+        metadata: expect.objectContaining({ createdPlaceholderCharge: false }),
+      }),
+    );
   });
 
   it('deve projetar a taxa de matrícula quando o pagamento for confirmado', async () => {

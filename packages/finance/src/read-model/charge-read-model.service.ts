@@ -417,6 +417,8 @@ export async function listStandaloneChargesFromReadModel(
     origin: 'STANDALONE',
     chargeType: 'ONE_TIME',
     isGroup: false,
+    // Pagamentos externos sem vínculo local não pertencem à fila operacional.
+    NOT: [{ payerName: 'NEEDS_REVIEW' }, { description: { startsWith: '[NEEDS_REVIEW]' } }],
   };
 
   if (statusView === 'open') {

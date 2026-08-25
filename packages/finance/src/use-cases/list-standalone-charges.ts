@@ -60,7 +60,13 @@ function buildStandaloneChargeWhere(input: {
     contaId: input.contaId,
     cobrancaId: null,
     standaloneInstallmentPlanId: null,
+    // Pagamentos recebidos do Asaas sem vínculo local ficam em reconciliação,
+    // não são cobranças avulsas operacionais.
     NOT: [
+      { payerName: 'NEEDS_REVIEW' },
+      { description: { startsWith: '[NEEDS_REVIEW]' } },
+      { externalReference: { startsWith: 'needsReview:payment:' } },
+      { externalReference: { contains: ':needs-review:' } },
       { externalReference: { startsWith: 'alusa:standalone-subscription:' } },
       { externalReference: { startsWith: 'alusa:installment:' } },
       { externalReference: { startsWith: 'installmentPlan:' } },
