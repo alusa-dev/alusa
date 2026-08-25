@@ -214,6 +214,15 @@ describe('listChargesAggregated', () => {
         paymentMethod: 'MANUAL_PIX',
         asaasPaymentId: 'pay_evt_1',
         createdAt: new Date('2026-01-03T00:00:00.000Z'),
+        payments: [
+          {
+            participant: {
+              displayName: 'Maria Júlia Marciel Abreu',
+              aluno: null,
+              responsavel: { nome: 'Greidilene Maciel Abreu' },
+            },
+          },
+        ],
         event: { name: 'Festival' },
       },
     ] as never);
@@ -227,6 +236,7 @@ describe('listChargesAggregated', () => {
       eventId: 'evt-1',
       tipo: 'EVENTO',
       description: 'Festival · Inscrição',
+      payerName: 'Maria Júlia Marciel Abreu',
       value: 90,
       status: 'PENDING',
     });

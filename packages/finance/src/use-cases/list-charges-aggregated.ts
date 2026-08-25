@@ -105,6 +105,25 @@ function mapEventMapOrderStatus(status: string): UnifiedChargeStatus {
   }
 }
 
+function resolveEventFinancialPayerName(entry: {
+  payments?: Array<{
+    participant?: {
+      displayName: string | null;
+      aluno: { nome: string } | null;
+      responsavel: { nome: string } | null;
+    } | null;
+  }>;
+}) {
+  const names = (entry.payments ?? [])
+    .map((payment) => {
+      const participant = payment.participant;
+      return participant?.displayName?.trim() || participant?.aluno?.nome || participant?.responsavel?.nome || null;
+    })
+    .filter((name): name is string => Boolean(name));
+
+  return [...new Set(names)].join(', ') || '-';
+}
+
 function matchesStatusView(status: UnifiedChargeStatus, statusView: 'open' | 'paid' | 'all') {
   if (statusView === 'all') return true;
   if (statusView === 'paid') return status === 'PAID';
@@ -405,6 +424,18 @@ export async function listChargesAggregated(
         paymentMethod: true,
         asaasPaymentId: true,
         createdAt: true,
+        payments: {
+          orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+          select: {
+            participant: {
+              select: {
+                displayName: true,
+                aluno: { select: { nome: true } },
+                responsavel: { select: { nome: true } },
+              },
+            },
+          },
+        },
         event: { select: { name: true } },
       },
     }),
@@ -613,7 +644,7 @@ export async function listChargesAggregated(
       id: `event-entry:${entry.id}`,
       origin: 'EVENT' as const,
       description: `${entry.event.name} · ${entry.description || entry.category}`,
-      payerName: entry.event.name,
+      payerName: resolveEventFinancialPayerName(entry),
       value: Number(entry.expectedAmount),
       dueDate: entry.dueDate?.toISOString() ?? null,
       billingType: entry.paymentMethod,
