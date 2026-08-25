@@ -240,6 +240,9 @@ importers:
       '@alusa/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@alusa/whatsapp':
+        specifier: workspace:*
+        version: link:../../packages/whatsapp
       '@aws-sdk/client-s3':
         specifier: ^3.1107.0
         version: 3.1107.0
@@ -776,6 +779,22 @@ importers:
       vitest:
         specifier: ^1.6.0
         version: 1.6.0(@types/node@22.19.1)(jsdom@27.3.0(postcss@8.5.26))(lightningcss@1.32.0)(terser@5.47.1)
+
+  packages/whatsapp:
+    dependencies:
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.1
+        version: 22.19.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.5
+        version: 2.1.9(@types/node@22.19.1)(jsdom@27.3.0(postcss@8.5.26))(lightningcss@1.32.0)(msw@2.12.4(@types/node@22.19.1)(typescript@5.9.3))(terser@5.47.1)
 
 packages:
 

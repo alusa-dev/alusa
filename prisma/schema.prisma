@@ -52,6 +52,46 @@ enum SupportCasePriority {
   URGENT
 }
 
+enum WhatsAppConnectionScope {
+  PLATFORM
+  TENANT
+}
+
+enum WhatsAppConnectionStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+}
+
+enum WhatsAppMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum WhatsAppMessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum WhatsAppWebhookEventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  DLQ
+}
+
+enum WhatsAppOutboundJobStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  DLQ
+}
+
 enum PlatformBillingEnvironment {
   TEST
   LIVE
@@ -1416,6 +1456,10 @@ model Conta {
   inventoryBalances                 InventoryBalance[]
   inventoryMovements                InventoryMovement[]
   restockOrders                     RestockOrder[]
+  whatsappConnections                WhatsAppConnection[]
+  whatsappMessages                   WhatsAppMessage[]
+  whatsappWebhookEvents              WhatsAppWebhookEvent[]
+  whatsappOutboundJobs               WhatsAppOutboundJob[]
   /// Fuso horário IANA para materialização da agenda (ex.: America/Sao_Paulo, America/Manaus)
   timezone                          String                              @default("America/Sao_Paulo") @db.VarChar(64)
   // Campos de endereço da conta (escola)
@@ -6983,6 +7027,120 @@ model SupportCase {
   @@index([contaId, entityType, entityId])
   @@index([status, priority, updatedAt])
   @@index([assignedToId, status])
+}
+
+/// Conexão da Cloud API do WhatsApp. A conexão PLATFORM é a linha institucional
+/// da Alusa; contaId só é preenchido quando a mensagem pertence a um tenant.
+model WhatsAppConnection {
+  id                String                    @id @default(cuid())
+  scope             WhatsAppConnectionScope   @default(PLATFORM)
+  contaId           String?
+  phoneNumberId     String                    @db.VarChar(64)
+  wabaId            String                    @db.VarChar(64)
+  displayPhoneNumber String?
+  verifiedName      String?
+  status            WhatsAppConnectionStatus  @default(ACTIVE)
+  lastHealthCheckAt DateTime?
+  lastErrorCode     String?
+  lastErrorMessage  String?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  conta       Conta?                 @relation(fields: [contaId], references: [id], onDelete: SetNull)
+  messages    WhatsAppMessage[]
+  webhookEvents WhatsAppWebhookEvent[]
+  outboundJobs WhatsAppOutboundJob[]
+
+  @@unique([scope, phoneNumberId], name: "uq_whatsapp_connection_scope_phone")
+  @@index([contaId, status], name: "idx_whatsapp_connection_conta_status")
+  @@index([wabaId])
+}
+
+model WhatsAppMessage {
+  id                String                 @id @default(cuid())
+  connectionId      String
+  contaId           String?
+  direction         WhatsAppMessageDirection
+  status            WhatsAppMessageStatus   @default(QUEUED)
+  externalMessageId String?
+  toPhoneNumber     String?                @db.VarChar(32)
+  fromPhoneNumber   String?                @db.VarChar(32)
+  messageType       String                 @db.VarChar(32)
+  templateName      String?
+  body              String?                @db.Text
+  payload           Json
+  errorCode         String?
+  errorMessage      String?
+  correlationId     String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  connection WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  conta      Conta?             @relation(fields: [contaId], references: [id], onDelete: SetNull)
+  outboundJob WhatsAppOutboundJob?
+
+  @@unique([connectionId, externalMessageId], name: "uq_whatsapp_message_connection_external")
+  @@index([contaId, createdAt], name: "idx_whatsapp_message_conta_created")
+  @@index([connectionId, status, createdAt], name: "idx_whatsapp_message_connection_status")
+  @@index([correlationId])
+}
+
+model WhatsAppWebhookEvent {
+  id             String                    @id @default(cuid())
+  eventKey       String                    @unique
+  connectionId   String?
+  contaId        String?
+  topic          String                    @db.VarChar(64)
+  payload        Json
+  payloadHash    String                    @db.VarChar(64)
+  signatureValid Boolean                   @default(false)
+  status         WhatsAppWebhookEventStatus @default(RECEIVED)
+  attempts       Int                       @default(0)
+  maxAttempts    Int                       @default(8)
+  nextRetryAt    DateTime                  @default(now())
+  lastErrorCode  String?
+  lastError      String?
+  receivedAt     DateTime                  @default(now())
+  processedAt    DateTime?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+
+  connection WhatsAppConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  conta      Conta?              @relation(fields: [contaId], references: [id], onDelete: SetNull)
+
+  @@index([status, nextRetryAt], name: "idx_whatsapp_webhook_status_retry")
+  @@index([contaId, status, nextRetryAt], name: "idx_whatsapp_webhook_conta_status_retry")
+  @@index([connectionId, receivedAt], name: "idx_whatsapp_webhook_connection_received")
+}
+
+model WhatsAppOutboundJob {
+  id              String                    @id @default(cuid())
+  messageId       String                    @unique
+  connectionId    String
+  contaId         String?
+  idempotencyKey  String                    @unique
+  status          WhatsAppOutboundJobStatus @default(PENDING)
+  payload         Json
+  attempts        Int                       @default(0)
+  maxAttempts     Int                       @default(8)
+  nextAttemptAt   DateTime                  @default(now())
+  lockedAt        DateTime?
+  lockedBy        String?
+  lastErrorCode   String?
+  lastError       String?
+  correlationId   String?
+  createdAt       DateTime                  @default(now())
+  processedAt     DateTime?
+  updatedAt       DateTime                  @updatedAt
+
+  message    WhatsAppMessage    @relation(fields: [messageId], references: [id], onDelete: Restrict)
+  connection WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  conta      Conta?             @relation(fields: [contaId], references: [id], onDelete: SetNull)
+
+  @@index([status, nextAttemptAt], name: "idx_whatsapp_outbound_status_retry")
+  @@index([contaId, status, nextAttemptAt], name: "idx_whatsapp_outbound_conta_status_retry")
+  @@index([connectionId, createdAt], name: "idx_whatsapp_outbound_connection_created")
+  @@index([correlationId])
 }
 
 model SupportNote {

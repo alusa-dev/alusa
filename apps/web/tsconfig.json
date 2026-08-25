@@ -21,6 +21,8 @@
       "@alusa/finance/*": ["../../packages/finance/src/*"],
       "@alusa/platform-billing": ["../../packages/platform-billing/src/index.ts"],
       "@alusa/platform-billing/*": ["../../packages/platform-billing/src/*"],
+      "@alusa/whatsapp": ["../../packages/whatsapp/src/index.ts"],
+      "@alusa/whatsapp/*": ["../../packages/whatsapp/src/*"],
       "@alusa/shared": ["../../packages/shared/src/index.ts"],
       "@alusa/shared/*": ["../../packages/shared/src/*"],
       "@alusa/lib": ["../../packages/lib/src/index.ts"],

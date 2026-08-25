@@ -124,11 +124,6 @@ export function SimuladorVendasPage() {
   return (
     <div className="alusa-session-panel w-full space-y-5 pb-2">
       <div className="flex flex-col gap-1">
-        <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-          <span>Cobranças</span>
-          <span aria-hidden>/</span>
-          <span className="text-brand-accent">Simulador de vendas</span>
-        </div>
         <h1 className="text-[22px] font-semibold tracking-tight text-gray-900 md:text-[24px]">Simulador de vendas</h1>
       </div>
 

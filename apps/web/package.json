@@ -46,6 +46,7 @@
     "@alusa/platform-billing": "workspace:*",
     "@alusa/shared": "workspace:*",
     "@alusa/stripe": "workspace:*",
+    "@alusa/whatsapp": "workspace:*",
     "@alusa/ui": "workspace:*",
     "@aws-sdk/client-s3": "^3.1107.0",
     "@date-fns/tz": "^1.5.0",

@@ -38,6 +38,8 @@
       "@alusa/stripe/*": ["./packages/stripe/src/*"],
       "@alusa/platform-billing": ["./packages/platform-billing/src"],
       "@alusa/platform-billing/*": ["./packages/platform-billing/src/*"],
+      "@alusa/whatsapp": ["./packages/whatsapp/src"],
+      "@alusa/whatsapp/*": ["./packages/whatsapp/src/*"],
       "@alusa/lib": ["./packages/lib/src"],
       "@alusa/lib/*": ["./packages/lib/src/*"],
       "@alusa/config/*": ["./packages/config/*"],

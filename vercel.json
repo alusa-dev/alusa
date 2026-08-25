@@ -129,6 +129,10 @@
     {
       "path": "/api/jobs/rematriculas/run?maxAccounts=25&limit=25",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/jobs/whatsapp?outboxLimit=50&webhookLimit=100",
+      "schedule": "* * * * *"
     }
   ]
 }
