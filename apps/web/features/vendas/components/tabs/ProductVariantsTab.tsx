@@ -11,10 +11,34 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
-import { ChevronDown, ChevronUp, Loader2, Plus, Trash2 } from '@/components/icons/icons';
+import {
+  ChevronDown,
+  ChevronUp,
+  Edit3,
+  Eye,
+  Loader2,
+  Plus,
+  Trash2,
+} from '@/components/icons/icons';
 import { calculatePricingMetrics, formatMarginPercent } from '../../pricing-utils';
-import type { ProductOptionDTO, ProductVariantDTO } from '../../services/product-variant-service';
+import {
+  formatVariantDisplayName,
+  groupProductVariants,
+  getVariantAttributeEntries,
+  type ProductOptionDTO,
+  type ProductVariantDTO,
+} from '../../services/product-variant-service';
 import {
   listProductOptions,
   createProductOption,
@@ -29,6 +53,7 @@ import {
 
 interface Props {
   productId: string;
+  productName?: string;
   defaultPrice?: number;
   onHasVariantsChange?: (_hasVariants: boolean) => void;
 }
@@ -52,9 +77,15 @@ function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 }
 
-export function ProductVariantsTab({ productId, defaultPrice = 0, onHasVariantsChange }: Props) {
+export function ProductVariantsTab({
+  productId,
+  productName,
+  defaultPrice = 0,
+  onHasVariantsChange,
+}: Props) {
   const [options, setOptions] = useState<ProductOptionDTO[]>([]);
   const [variants, setVariants] = useState<ProductVariantDTO[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<ReturnType<typeof groupProductVariants>[number] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,6 +105,7 @@ export function ProductVariantsTab({ productId, defaultPrice = 0, onHasVariantsC
     lowStockThreshold: '0',
     isActive: true,
   });
+  const [confirmExitOpen, setConfirmExitOpen] = useState(false);
   const [savingVariant, setSavingVariant] = useState<string | null>(null);
 
   // Track open option panels
@@ -100,6 +132,18 @@ export function ProductVariantsTab({ productId, defaultPrice = 0, onHasVariantsC
       ]);
       setOptions(opts);
       setVariants(vars);
+
+      // Older versions generated cartesian combinations. Normalize those
+      // records automatically when they are safe to replace.
+      if (opts.length > 0 && vars.some((variant) => variant.options.length !== 1)) {
+        try {
+          const normalized = await generateProductVariants(productId);
+          setVariants(normalized);
+        } catch (normalizationError) {
+          setError((normalizationError as Error).message);
+        }
+      }
+
       if (!hasMounted.current) {
         const initial: Record<string, boolean> = {};
         opts.forEach((o) => {
@@ -190,20 +234,23 @@ export function ProductVariantsTab({ productId, defaultPrice = 0, onHasVariantsC
     }
   }
 
-  function getEffectivePrice(variant: ProductVariantDTO): number {
-    return Number(variant.price ?? defaultPrice);
-  }
-
   function openVariantEditor(variant: ProductVariantDTO) {
-    setEditingVariant(variant);
-    setVariantForm({
+    const nextForm = {
       sku: variant.sku ?? '',
       price: String((variant.price ?? defaultPrice) || ''),
       averageCost: String(variant.averageCost ?? 0),
       lowStockThreshold: String(variant.lowStockThreshold ?? 0),
       isActive: variant.isActive,
-    });
+    };
+    setEditingVariant(variant);
+    setVariantForm(nextForm);
+    setConfirmExitOpen(false);
     setError(null);
+  }
+
+  function requestCloseVariantEditor() {
+    if (!editingVariant || isSavingEditingVariant) return;
+    setConfirmExitOpen(true);
   }
 
   function patchVariantForm(field: keyof VariantEditForm, value: string | boolean) {
@@ -276,6 +323,20 @@ export function ProductVariantsTab({ productId, defaultPrice = 0, onHasVariantsC
     ? calculatePricingMetrics(editingPrice, editingAverageCost)
     : null;
   const isSavingEditingVariant = savingVariant === editingVariant?.id;
+  const optionOrder = options.map((option) => option.name);
+  const variantGroups = groupProductVariants(variants, optionOrder);
+
+  function getAvailabilityState(available: number, threshold: number) {
+    if (available <= 0) {
+      return { label: '', width: '0%', track: 'bg-red-100', bar: 'bg-red-500' };
+    }
+
+    if (available <= threshold) {
+      return { label: 'Estoque baixo', width: '42%', track: 'bg-amber-100', bar: 'bg-amber-500' };
+    }
+
+    return { label: 'Disponível', width: '100%', track: 'bg-emerald-100', bar: 'bg-emerald-500' };
+  }
 
   return (
     <div className="space-y-5">
@@ -283,11 +344,14 @@ export function ProductVariantsTab({ productId, defaultPrice = 0, onHasVariantsC
         <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">{error}</p>
       )}
 
-      {/* Opções */}
+      {/* Atributos */}
       <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-5 space-y-4">
         <header>
-          <h3 className="text-sm font-semibold text-slate-800">Opções</h3>
-          <p className="text-xs text-slate-500 mt-0.5">Ex.: Cor, Tamanho, Material.</p>
+          <h3 className="text-sm font-semibold text-slate-800">Variantes e valores</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Cadastre uma variante como Rosa ou Tamanho e adicione os valores correspondentes, como
+            31 ou 32.
+          </p>
         </header>
 
         {options.map((option) => (
@@ -295,7 +359,7 @@ export function ProductVariantsTab({ productId, defaultPrice = 0, onHasVariantsC
             key={option.id}
             className="rounded-xl border border-slate-200 bg-white overflow-hidden"
           >
-            {/* Option header */}
+            {/* Attribute header */}
             <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-b border-slate-100">
               <button
                 type="button"
@@ -388,7 +452,7 @@ export function ProductVariantsTab({ productId, defaultPrice = 0, onHasVariantsC
                 void handleAddOption();
               }
             }}
-            placeholder="Nome da opção (ex.: Tamanho)"
+            placeholder="Nome da variante (ex.: Rosa, Tamanho)"
             className={cn(inputSm, 'flex-1')}
           />
           <Button
@@ -404,7 +468,7 @@ export function ProductVariantsTab({ productId, defaultPrice = 0, onHasVariantsC
             ) : (
               <Plus className="size-3 mr-1" />
             )}
-            Nova opção
+            Nova variante
           </Button>
         </div>
       </div>
@@ -412,101 +476,77 @@ export function ProductVariantsTab({ productId, defaultPrice = 0, onHasVariantsC
       {/* Tabela de variantes */}
       {variants.length > 0 && (
         <div className="rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden">
-          <div className="px-5 py-3 border-b border-slate-200">
-            <h3 className="text-sm font-semibold text-slate-800">
-              Variantes{' '}
-              <span className="ml-1 text-xs font-normal text-slate-400">({variants.length})</span>
-            </h3>
+          <div className="border-b border-slate-200 px-5 py-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800">
+                Variantes{' '}
+                <span className="ml-1 text-xs font-normal text-slate-400">({variants.length})</span>
+              </h3>
+              <p className="mt-1 text-xs text-slate-500">
+                Cada linha representa uma variante. Clique para ver os valores e o estoque
+                individual.
+              </p>
+            </div>
           </div>
           <div className="overflow-hidden">
-            <table className="w-full table-fixed text-xs">
+            <table className="w-full table-fixed whitespace-nowrap text-sm">
               <colgroup>
-                <col className="w-[26%]" />
-                <col className="w-[15%]" />
-                <col className="w-[15%]" />
-                <col className="w-[16%]" />
-                <col className="w-[14%]" />
-                <col className="w-[14%]" />
+                <col className="w-[36%]" />
+                <col className="w-[28%]" />
+                <col className="w-[24%]" />
+                <col className="w-[12%]" />
               </colgroup>
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-100">
                   <th className="px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                    Variantes
+                    Nome
                   </th>
-                  <th className="px-2 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                    Preço
-                  </th>
-                  <th className="px-2 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                    Custo
-                  </th>
-                  <th className="px-2 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                    Lucro
-                  </th>
-                  <th className="px-2 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                    Margem
+                  <th className="px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    Variante
                   </th>
                   <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    Estoque
+                  </th>
+                  <th className="whitespace-nowrap px-3 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">
                     Ações
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {variants.map((variant) => {
-                  const effectivePrice = getEffectivePrice(variant);
-                  const pricing = calculatePricingMetrics(effectivePrice, variant.averageCost);
-
+                {variantGroups.map((group) => {
                   return (
                     <tr
-                      key={variant.id}
+                      key={group.key}
                       className="cursor-pointer border-b border-slate-100 bg-white last:border-0 hover:bg-slate-50"
-                      onClick={() => openVariantEditor(variant)}
+                      onClick={() => setSelectedGroup(group)}
                     >
                       <td className="px-4 py-4 align-middle">
-                        <span className="truncate font-semibold text-slate-900">
-                          {variant.title}
+                        <span className="font-semibold text-slate-900">
+                          {productName || 'Produto'}
                         </span>
                       </td>
-                      <td className="px-2 py-4 text-right align-middle">
+                      <td className="px-4 py-4 align-middle">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-slate-900">{group.value}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 text-right align-middle">
                         <div className="font-semibold tabular-nums text-slate-900">
-                          {formatCurrency(effectivePrice)}
+                          {group.available} disponível
                         </div>
-                        {variant.price == null ? (
-                          <div className="mt-1 text-[10px] text-slate-400">padrão</div>
-                        ) : null}
                       </td>
-                      <td className="px-2 py-4 text-right align-middle tabular-nums text-slate-600">
-                        {formatCurrency(pricing.averageCost)}
-                      </td>
-                      <td
-                        className={cn(
-                          'px-2 py-4 text-right align-middle font-medium tabular-nums',
-                          pricing.profitPerUnit >= 0 ? 'text-emerald-700' : 'text-red-700',
-                        )}
-                      >
-                        {formatCurrency(pricing.profitPerUnit)}
-                      </td>
-                      <td
-                        className={cn(
-                          'px-2 py-4 text-right align-middle font-medium tabular-nums',
-                          pricing.profitPerUnit >= 0 ? 'text-emerald-700' : 'text-red-700',
-                        )}
-                      >
-                        {formatMarginPercent(pricing.marginPercent)}
-                      </td>
-                      <td
-                        className="px-4 py-4 align-middle"
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            type="button"
-                            onClick={() => void handleDeleteVariant(variant.id)}
-                            className="flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-500"
-                            aria-label={`Remover variante ${variant.title}`}
-                          >
-                            <Trash2 className="size-3.5" />
-                          </button>
-                        </div>
+                      <td className="px-4 py-4 text-right align-middle">
+                        <button
+                          type="button"
+                          className="ml-auto flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedGroup(group);
+                          }}
+                          aria-label={`Ver detalhes de ${productName} ${group.value}`}
+                        >
+                          <Eye className="size-4" />
+                        </button>
                       </td>
                     </tr>
                   );
@@ -519,20 +559,141 @@ export function ProductVariantsTab({ productId, defaultPrice = 0, onHasVariantsC
 
       {variants.length === 0 && options.length === 0 && (
         <p className="text-center text-xs text-slate-400 py-4">
-          Adicione opções e gere as variantes do produto.
+          Adicione variantes e valores para gerar o estoque do produto.
         </p>
       )}
 
       <Dialog
+        open={!!selectedGroup}
+        onOpenChange={(open) => {
+          if (!open) setSelectedGroup(null);
+        }}
+      >
+        <DialogContent className="max-w-4xl gap-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-0">
+          <div className="px-6 pb-0 pt-5">
+            <DialogTitle className="text-xl font-semibold text-slate-900">
+              Detalhes da variante
+            </DialogTitle>
+            <DialogDescription className="mt-1 text-sm text-slate-500">
+              Estoque detalhado por valor de {selectedGroup?.value ?? 'variante'}.
+            </DialogDescription>
+          </div>
+
+          <div className="px-6 pb-6 pt-4">
+            <div className="overflow-hidden rounded-xl border border-slate-200">
+              <table className="w-full table-fixed whitespace-nowrap text-sm">
+                <colgroup>
+                  <col className="w-[30%]" />
+                  <col className="w-[19%]" />
+                  <col className="w-[18%]" />
+                  <col className="w-[23%]" />
+                  <col className="w-[10%]" />
+                </colgroup>
+                <thead className="bg-slate-50">
+                  <tr className="border-b border-slate-100 text-left">
+                    <th className="px-6 py-3 text-xs font-medium text-slate-500">Nome</th>
+                    <th className="px-3 py-3 text-xs font-medium text-slate-500">Valor</th>
+                    <th className="px-3 py-3 text-right text-xs font-medium text-slate-500">
+                      Estoque
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500">
+                      Disponibilidade
+                    </th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-slate-500">
+                      Ações
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                {selectedGroup?.variants.map((variant) => {
+                  const allAttributes = getVariantAttributeEntries(variant, optionOrder);
+                  const attributes = selectedGroup.isLegacyCombination
+                    ? allAttributes
+                    : allAttributes.filter(
+                        (attribute) => attribute.name !== selectedGroup.optionName,
+                      );
+                  const valueLabel = attributes.length
+                    ? attributes
+                        .map((attribute) => `${attribute.name}: ${attribute.value}`)
+                        .join(' · ')
+                    : allAttributes[0]?.value ?? variant.title;
+                  const threshold = Math.max(variant.lowStockThreshold, 1);
+                  const availability = getAvailabilityState(variant.available, threshold);
+
+                  return (
+                    <tr
+                      key={variant.id}
+                      className="cursor-pointer border-b border-slate-100 last:border-0 hover:bg-slate-50"
+                      onClick={() => {
+                        setSelectedGroup(null);
+                        openVariantEditor(variant);
+                      }}
+                    >
+                      <td className="px-6 py-4 align-middle font-medium text-slate-900">
+                        {productName || 'Produto'} · {selectedGroup.value}
+                      </td>
+                      <td className="px-3 py-4 align-middle text-slate-700">{valueLabel}</td>
+                      <td className="px-3 py-4 text-right align-middle">
+                        <div className="font-semibold tabular-nums text-slate-900">
+                          {variant.available} disponível
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 align-middle">
+                        <div className="flex min-w-[140px] items-center gap-3">
+                          <div className={`h-2 flex-1 rounded-full ${availability.track}`}>
+                            <div
+                              className={`h-full rounded-full ${availability.bar}`}
+                              style={{ width: availability.width }}
+                            />
+                          </div>
+                          {availability.label && (
+                            <span className="w-[78px] text-[10px] text-slate-500">
+                              {availability.label}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-right align-middle">
+                        <button
+                          type="button"
+                          className="ml-auto flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                          aria-label={`Editar valor ${valueLabel}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedGroup(null);
+                            openVariantEditor(variant);
+                          }}
+                        >
+                          <Edit3 className="size-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={!!editingVariant}
         onOpenChange={(open) => {
-          if (!open && !isSavingEditingVariant) setEditingVariant(null);
+          if (!open && !isSavingEditingVariant) requestCloseVariantEditor();
         }}
       >
         <DialogContent className="max-w-2xl gap-0 overflow-hidden p-0">
           <DialogHeader className="border-b border-slate-100 px-6 py-5">
             <DialogTitle className="text-base text-slate-900">
-              Editar {editingVariant?.title ?? 'variante'}
+              Editar{' '}
+              {editingVariant
+                ? formatVariantDisplayName(
+                    editingVariant,
+                    productName,
+                    options.map((option) => option.name),
+                  )
+                : 'variante'}
             </DialogTitle>
             <DialogDescription className="text-sm text-slate-500">
               Defina preço, status e dados de estoque em um único lugar.
@@ -688,10 +849,22 @@ export function ProductVariantsTab({ productId, defaultPrice = 0, onHasVariantsC
           <DialogFooter className="border-t border-slate-100 px-6 py-4">
             <Button
               type="button"
+              variant="ghost"
+              className="mr-auto h-10 text-red-600 hover:bg-red-50 hover:text-red-700"
+              disabled={isSavingEditingVariant}
+              onClick={() => {
+                if (editingVariant) void handleDeleteVariant(editingVariant.id);
+              }}
+            >
+              <Trash2 className="mr-2 size-4" />
+              Excluir variante
+            </Button>
+            <Button
+              type="button"
               variant="outline"
               className="h-10"
               disabled={isSavingEditingVariant}
-              onClick={() => setEditingVariant(null)}
+              onClick={requestCloseVariantEditor}
             >
               Cancelar
             </Button>
@@ -713,6 +886,29 @@ export function ProductVariantsTab({ productId, defaultPrice = 0, onHasVariantsC
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={confirmExitOpen} onOpenChange={setConfirmExitOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Sair da edição?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza de que deseja sair? Alterações não salvas serão perdidas.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Continuar editando</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 text-white hover:bg-red-700"
+              onClick={() => {
+                setConfirmExitOpen(false);
+                setEditingVariant(null);
+              }}
+            >
+              Sair
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

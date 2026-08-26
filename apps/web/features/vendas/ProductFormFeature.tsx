@@ -486,6 +486,7 @@ export function ProductFormFeature({ mode, productId }: Props) {
             ) : (
               <ProductVariantsTab
                 productId={currentProductId!}
+                productName={product?.name ?? values.name}
                 defaultPrice={currentPrice}
                 onHasVariantsChange={setManagesStockByVariants}
               />

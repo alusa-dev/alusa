@@ -5,7 +5,11 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/compone
 import { Button } from '@/components/ui/button';
 import { Loader2 } from '@/components/icons/icons';
 import { cn } from '@/lib/cn';
-import { listProductVariants, type ProductVariantDTO } from '../services/product-variant-service';
+import {
+  formatVariantDisplayName,
+  listProductVariants,
+  type ProductVariantDTO,
+} from '../services/product-variant-service';
 
 interface Props {
   open: boolean;
@@ -96,7 +100,7 @@ export function VariantSelectorModal({
                 >
                   <span>
                     <span className="block text-sm font-medium text-slate-800">
-                      {variant.title}
+                      {formatVariantDisplayName(variant, productName)}
                     </span>
                     <span className="block text-xs text-slate-500 mt-0.5">
                       {variant.sku ? `SKU ${variant.sku} · ` : ''}

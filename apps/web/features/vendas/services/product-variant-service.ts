@@ -39,6 +39,135 @@ export interface ProductVariantDTO {
   }[];
 }
 
+export interface VariantAttributeEntry {
+  name: string;
+  value: string;
+}
+
+export interface ProductVariantGroup {
+  key: string;
+  optionName: string;
+  value: string;
+  isLegacyCombination: boolean;
+  variants: ProductVariantDTO[];
+  onHand: number;
+  reserved: number;
+  available: number;
+  incoming: number;
+  averageCost: number;
+}
+
+/**
+ * Returns the attribute/value pairs that identify a sellable variant.
+ * The persisted `title` is kept as a fallback for legacy variants that do
+ * not have option links available.
+ */
+export function getVariantAttributeEntries(
+  variant: Pick<ProductVariantDTO, 'options'>,
+  optionOrder: string[] = [],
+): VariantAttributeEntry[] {
+  const order = new Map(optionOrder.map((name, index) => [name, index]));
+
+  return variant.options
+    .map((item) => ({
+      name: item.optionValue.option.name,
+      value: item.optionValue.value,
+    }))
+    .sort((left, right) => {
+      const leftIndex = order.get(left.name) ?? Number.MAX_SAFE_INTEGER;
+      const rightIndex = order.get(right.name) ?? Number.MAX_SAFE_INTEGER;
+      return leftIndex - rightIndex;
+    });
+}
+
+export function formatVariantLabel(
+  variant: Pick<ProductVariantDTO, 'title' | 'options'>,
+  optionOrder: string[] = [],
+): string {
+  const attributes = getVariantAttributeEntries(variant, optionOrder);
+  return attributes.length > 0
+    ? attributes.map((attribute) => `${attribute.name}: ${attribute.value}`).join(' · ')
+    : variant.title;
+}
+
+export function formatVariantDisplayName(
+  variant: Pick<ProductVariantDTO, 'title' | 'options'>,
+  productName?: string,
+  optionOrder: string[] = [],
+): string {
+  const attributes = getVariantAttributeEntries(variant, optionOrder);
+  const values = attributes.length > 0
+    ? attributes.flatMap((attribute) => [attribute.name, attribute.value])
+    : [variant.title];
+  return [productName?.trim(), ...values].filter(Boolean).join(' · ');
+}
+
+export function groupProductVariants(
+  variants: ProductVariantDTO[],
+  optionOrder: string[] = [],
+): ProductVariantGroup[] {
+  const groups = new Map<string, ProductVariantGroup>();
+
+  for (const variant of variants) {
+    const isLegacyCombination = variant.options.length !== 1;
+    const primaryOption = variant.options[0];
+    const optionName = primaryOption?.optionValue.option.name ?? '';
+    const key = isLegacyCombination
+      ? 'legacy-combinations'
+      : optionName || `variant:${variant.id}`;
+    const value = isLegacyCombination ? 'Combinações antigas' : optionName || variant.title;
+    const current = groups.get(key);
+
+    if (current) {
+      current.variants.push(variant);
+      current.onHand += variant.onHand;
+      current.reserved += variant.reserved;
+      current.available += variant.available;
+      current.incoming += variant.incoming;
+      continue;
+    }
+
+    groups.set(key, {
+      key,
+      optionName,
+      value,
+      isLegacyCombination,
+      variants: [variant],
+      onHand: variant.onHand,
+      reserved: variant.reserved,
+      available: variant.available,
+      incoming: variant.incoming,
+      averageCost: 0,
+    });
+  }
+
+  return [...groups.values()]
+    .sort((left, right) => {
+      const leftIndex = optionOrder.indexOf(left.value);
+      const rightIndex = optionOrder.indexOf(right.value);
+      return (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex) -
+        (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex);
+    })
+    .map((group) => {
+      const weightedCost = group.variants.reduce(
+        (total, variant) => total + variant.onHand * variant.averageCost,
+        0,
+      );
+      const averageFallback = group.variants.reduce(
+        (total, variant) => total + variant.averageCost,
+        0,
+      );
+
+      return {
+        ...group,
+        averageCost:
+          group.onHand > 0
+            ? Number((weightedCost / group.onHand).toFixed(4))
+            : Number((averageFallback / group.variants.length).toFixed(4)),
+      };
+    });
+}
+
 // ---------- Options ----------
 
 export async function listProductOptions(productId: string): Promise<ProductOptionDTO[]> {

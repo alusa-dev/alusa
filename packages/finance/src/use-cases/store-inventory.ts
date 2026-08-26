@@ -32,6 +32,15 @@ const INVENTORY_BALANCE_INCLUDE = {
           name: true,
         },
       },
+      options: {
+        orderBy: { sortOrder: 'asc' },
+        select: {
+          name: true,
+          values: {
+            select: { value: true },
+          },
+        },
+      },
     },
   },
   variant: {
@@ -42,6 +51,20 @@ const INVENTORY_BALANCE_INCLUDE = {
       price: true,
       lowStockThreshold: true,
       isActive: true,
+      options: {
+        select: {
+          optionValue: {
+            select: {
+              value: true,
+              option: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+      },
     },
   },
 } satisfies Prisma.InventoryBalanceInclude;
@@ -114,6 +137,7 @@ export type InventoryBalanceDTO = {
   productName: string;
   variantId: string | null;
   variantTitle: string | null;
+  variantAttributes: Array<{ name: string; value: string }>;
   sku: string | null;
   categoryId: string | null;
   categoryName: string | null;
@@ -397,6 +421,23 @@ function formatBalanceRecord(record: InventoryBalanceRecord): InventoryBalanceDT
     productName: record.product.name,
     variantId: record.variantId ?? null,
     variantTitle: record.variant?.title ?? null,
+    variantAttributes: record.variant?.options.length
+      ? record.variant.options.map((entry) => ({
+          name: entry.optionValue.option.name,
+          value: entry.optionValue.value,
+        }))
+      : record.variant?.title && record.product.options[0]
+        ? [
+            {
+              name: record.variant.title.includes('·')
+                ? record.variant.title.split('·')[0].trim()
+                : record.product.options[0].name,
+              value: record.variant.title.includes('·')
+                ? record.variant.title.split('·').slice(1).join(' · ').trim()
+                : record.variant.title.trim(),
+            },
+          ]
+        : [],
     sku: record.variant?.sku ?? record.product.sku ?? null,
     categoryId: record.product.categoryId ?? null,
     categoryName: record.product.category?.name ?? null,

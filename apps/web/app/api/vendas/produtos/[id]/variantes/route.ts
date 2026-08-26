@@ -39,7 +39,7 @@ export async function POST(req: Request, context: RouteContext) {
       return NextResponse.json({ data: variants }, { status: 201 });
     }
 
-    return jsonError(422, 'ACAO_INVALIDA', 'Use { "action": "gerar" } para gerar combinações');
+    return jsonError(422, 'ACAO_INVALIDA', 'Use { "action": "gerar" } para gerar variantes');
   } catch (e) {
     return jsonError(400, 'ERRO_GERAR_VARIANTES', (e as Error).message);
   }

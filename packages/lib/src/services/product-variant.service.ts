@@ -4,7 +4,6 @@ import {
   calculateAvailable,
   calculateProjected,
   ensureProductInventoryBalance,
-  ensureVariantInventoryBalance,
   listInventoryBalanceRows,
   setInventoryAverageCost,
 } from './inventory-balance.service';
@@ -123,7 +122,7 @@ export async function generateProductVariants(
   });
   if (!product) throw new Error('Produto não encontrado');
   if (product.options.length === 0)
-    throw new Error('Adicione pelo menos uma opção antes de gerar variantes');
+    throw new Error('Adicione pelo menos uma variante antes de gerar valores');
 
   const existingBalances = await listInventoryBalanceRows(contaId, [productId]);
   const parentBalance = existingBalances.find((balance) => balance.variantId == null);
@@ -136,8 +135,11 @@ export async function generateProductVariants(
     );
   }
 
-  // Produto cartesiano das opções × valores
-  const combinations = cartesian(product.options.map((opt) => opt.values.map((v) => v)));
+  // Cada opção representa uma variante agrupadora (ex.: Rosa) e cada valor
+  // representa uma unidade vendável dentro dela (ex.: 31 ou 32).
+  const variantValues = product.options.flatMap((option) =>
+    option.values.map((value) => ({ option, value })),
+  );
 
   // Variantes existentes para checar duplicidade
   const existing = await prisma.productVariant.findMany({
@@ -155,47 +157,86 @@ export async function generateProductVariants(
   );
 
   let sortOrder = existing.length;
-  const created: string[] = [];
+  const expectedValueIds = new Set(variantValues.map(({ value }) => value.id));
+  const obsolete = existing.filter(
+    (variant) =>
+      variant.options.length !== 1 || !expectedValueIds.has(variant.options[0]?.optionValueId),
+  );
 
-  for (const combo of combinations) {
-    const key = combo
-      .map((v) => v.id)
-      .sort()
-      .join('|');
+  await prisma.$transaction(async (tx) => {
+    for (const variant of obsolete) {
+      const balance = existingBalances.find((item) => item.variantId === variant.id);
+      if (balance && (balance.onHand > 0 || balance.reserved > 0 || balance.incoming > 0)) {
+        throw new Error(
+          `Não é possível reorganizar a variante "${variant.title}" porque ela possui estoque, reserva ou entrada pendente.`,
+        );
+      }
 
-    if (existingKeys.has(key)) continue;
+      const [saleItems, restockItems, inventoryMovements] = await Promise.all([
+        tx.saleItem.count({ where: { variantId: variant.id } }),
+        tx.restockOrderItem.count({ where: { variantId: variant.id } }),
+        tx.inventoryMovement.count({ where: { variantId: variant.id } }),
+      ]);
 
-    const title = combo.map((v) => v.value).join(' / ');
+      if (saleItems > 0 || restockItems > 0 || inventoryMovements > 0) {
+        throw new Error(
+          `Não é possível reorganizar a variante "${variant.title}" porque ela possui histórico registrado.`,
+        );
+      }
 
-    const variant = await prisma.productVariant.create({
-      data: {
-        productId,
-        title,
-        stock: 0,
-        lowStockThreshold: product.lowStockThreshold,
-        sortOrder,
-        isDefault: sortOrder === 0 && existing.length === 0,
-        options: {
-          create: combo.map((v) => ({ optionValueId: v.id })),
+      await tx.inventoryBalance.deleteMany({
+        where: { contaId, productId, variantId: variant.id },
+      });
+      await tx.productVariant.delete({ where: { id: variant.id } });
+    }
+
+    for (const { option, value } of variantValues) {
+      const key = value.id;
+      if (existingKeys.has(key)) continue;
+
+      const variant = await tx.productVariant.create({
+        data: {
+          productId,
+          title: `${option.name} · ${value.value}`,
+          stock: 0,
+          lowStockThreshold: product.lowStockThreshold,
+          sortOrder,
+          isDefault: sortOrder === 0 && existing.length === 0,
+          options: {
+            create: [{ optionValueId: value.id }],
+          },
         },
-      },
+      });
+
+      await tx.inventoryBalance.upsert({
+        where: {
+          contaId_inventoryItemKey: {
+            contaId,
+            inventoryItemKey: `variant:${variant.id}`,
+          },
+        },
+        update: {},
+        create: {
+          contaId,
+          inventoryItemKey: `variant:${variant.id}`,
+          productId,
+          variantId: variant.id,
+          onHand: 0,
+          reserved: 0,
+          incoming: 0,
+          averageCost: 0,
+        },
+      });
+
+      existingKeys.add(key);
+      sortOrder++;
+    }
+
+    // Marcar produto como hasVariants
+    await tx.product.update({
+      where: { id: productId },
+      data: { hasVariants: true, stock: 0 },
     });
-
-    await ensureVariantInventoryBalance({
-      contaId,
-      productId,
-      variantId: variant.id,
-      initialOnHand: 0,
-    });
-
-    created.push(variant.id);
-    sortOrder++;
-  }
-
-  // Marcar produto como hasVariants
-  await prisma.product.update({
-    where: { id: productId },
-    data: { hasVariants: true, stock: 0 },
   });
 
   return listProductVariants(productId, contaId);
@@ -318,12 +359,4 @@ export async function deleteProductVariant(
       initialOnHand: 0,
     });
   }
-}
-
-// Produto cartesiano de arrays de T
-function cartesian<T>(arrays: T[][]): T[][] {
-  if (arrays.length === 0) return [[]];
-  const [first, ...rest] = arrays;
-  const restProduct = cartesian(rest);
-  return first.flatMap((item) => restProduct.map((combo) => [item, ...combo]));
 }

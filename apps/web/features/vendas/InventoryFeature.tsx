@@ -9,6 +9,8 @@ import {
   ClipboardDocumentCheck,
   Clock,
   DollarSign,
+  Edit3,
+  Eye,
   Filter,
   Plus,
   RectangleStack,
@@ -76,6 +78,72 @@ function buildItemLabel(item: InventoryBalanceItem): string {
   return item.variantTitle ? `${item.productName} · ${item.variantTitle}` : item.productName;
 }
 
+type InventoryVariantGroup = {
+  key: string;
+  productId: string;
+  productName: string;
+  variantName: string;
+  items: InventoryBalanceItem[];
+  onHand: number;
+  reserved: number;
+  available: number;
+  incoming: number;
+  inventoryValue: number;
+  alertState: InventoryBalanceItem['alertState'];
+};
+
+function getVariantAttributes(item: InventoryBalanceItem): Array<{ name: string; value: string }> {
+  if (!item.variantId) return [{ name: 'Nenhuma', value: 'Nenhuma' }];
+  if (item.variantAttributes?.length) return item.variantAttributes;
+
+  const parts = item.variantTitle?.split('·').map((part) => part.trim()).filter(Boolean) ?? [];
+  if (parts.length > 1) {
+    return [{ name: parts[0], value: parts.slice(1).join(' · ') }];
+  }
+
+  return [{ name: 'Variante', value: item.variantTitle || 'Principal' }];
+}
+
+function groupInventoryBalances(items: InventoryBalanceItem[]): InventoryVariantGroup[] {
+  const groups = new Map<string, InventoryVariantGroup>();
+
+  items.forEach((item) => {
+    const variantName = getVariantAttributes(item)[0]?.name || 'Variante';
+    const key = `${item.productId}:${variantName}`;
+    const current = groups.get(key);
+
+    if (current) {
+      current.items.push(item);
+      current.onHand += item.onHand;
+      current.reserved += item.reserved;
+      current.available += item.available;
+      current.incoming += item.incoming;
+      current.inventoryValue += item.inventoryValue;
+      const threshold = current.items.reduce((sum, entry) => sum + entry.lowStockThreshold, 0);
+      current.alertState =
+        current.available <= 0 ? 'OUT' : current.available <= threshold ? 'LOW' : 'OK';
+      return;
+    }
+
+    const threshold = item.lowStockThreshold;
+    groups.set(key, {
+      key,
+      productId: item.productId,
+      productName: item.productName,
+      variantName,
+      items: [item],
+      onHand: item.onHand,
+      reserved: item.reserved,
+      available: item.available,
+      incoming: item.incoming,
+      inventoryValue: item.inventoryValue,
+      alertState: item.available <= 0 ? 'OUT' : item.available <= threshold ? 'LOW' : 'OK',
+    });
+  });
+
+  return Array.from(groups.values());
+}
+
 function normalizeNumber(value: string): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -92,6 +160,7 @@ export function InventoryFeature() {
   const [lowOnly, setLowOnly] = useState(false);
   const [entryOpen, setEntryOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<InventoryVariantGroup | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const [entryForm, setEntryForm] = useState({
@@ -166,6 +235,7 @@ export function InventoryFeature() {
       ),
     [balances],
   );
+  const groupedBalances = useMemo(() => groupInventoryBalances(balances), [balances]);
 
   const entryQuantity = normalizeNumber(entryForm.quantity);
   const entryNewBalance = selectedEntryTarget ? selectedEntryTarget.onHand + entryQuantity : 0;
@@ -215,75 +285,61 @@ export function InventoryFeature() {
     }));
   }
 
-  const columns: DataTableColumn<InventoryBalanceItem>[] = [
+  function openAdjustForItem(item: InventoryBalanceItem) {
+    setAdjustForm((current) => ({
+      ...current,
+      targetKey: item.inventoryItemKey,
+      mode: 'SET',
+      quantity: String(item.onHand),
+    }));
+    setSelectedGroup(null);
+    setAdjustOpen(true);
+  }
+
+  const columns: DataTableColumn<InventoryVariantGroup>[] = [
     {
       id: 'item',
       header: 'Produto',
-      width: 'min-w-0 lg:w-[34%]',
+      width: 'min-w-0 lg:w-[30%]',
       align: 'left',
-      noWrap: false,
       render: (item) => (
-        <div className="min-w-0 space-y-1">
-          <div className="font-normal text-[13px] text-gray-900">{buildItemLabel(item)}</div>
-          <div className="text-xs text-gray-500">
-            {item.sku ? `SKU ${item.sku}` : 'Sem SKU'}
-            {item.categoryName ? ` · ${item.categoryName}` : ''}
-          </div>
-          <div className="space-y-0.5 text-[11px] text-gray-600 lg:hidden">
-            <div>
-              Em estoque {item.onHand} · Disp. {item.available}
-            </div>
-            <div>
-              Reserv. {item.reserved} · Compra {item.incoming}
-            </div>
-            <div className="font-medium text-gray-900">{formatInventoryCurrency(item.inventoryValue)}</div>
-          </div>
-        </div>
+        <span className="font-medium text-[13px] text-gray-900">{item.productName}</span>
+      ),
+    },
+    {
+      id: 'variant',
+      header: 'Variante',
+      align: 'left',
+      width: 'min-w-0 lg:w-[26%]',
+      render: (item) => (
+        <button
+          type="button"
+          className="font-medium text-gray-900 transition hover:text-brand-accent"
+          onClick={() => setSelectedGroup(item)}
+        >
+          {item.variantName}
+        </button>
       ),
     },
     {
       id: 'onHand',
       header: 'Em estoque',
       align: 'right',
-      width: 'lg:w-[10%]',
-      headerClassName: 'hidden lg:table-cell',
-      cellClassName: 'hidden lg:table-cell',
+      width: 'lg:w-[14%]',
       render: (item) => item.onHand,
-    },
-    {
-      id: 'reserved',
-      header: 'Reservado',
-      align: 'right',
-      width: 'lg:w-[10%]',
-      headerClassName: 'hidden lg:table-cell',
-      cellClassName: 'hidden lg:table-cell',
-      render: (item) => item.reserved,
     },
     {
       id: 'available',
       header: 'Disponível',
       align: 'right',
-      width: 'lg:w-[10%]',
-      headerClassName: 'hidden lg:table-cell',
-      cellClassName: 'hidden lg:table-cell',
+      width: 'lg:w-[14%]',
       render: (item) => item.available,
-    },
-    {
-      id: 'incoming',
-      header: 'Em compra',
-      align: 'right',
-      width: 'lg:w-[10%]',
-      headerClassName: 'hidden lg:table-cell',
-      cellClassName: 'hidden lg:table-cell',
-      render: (item) => item.incoming,
     },
     {
       id: 'alert',
       header: 'Alerta',
       align: 'center',
-      width: 'w-[5.5rem] max-lg:shrink-0 lg:w-[10%]',
-      headerClassName: 'max-lg:px-1',
-      cellClassName: 'max-lg:px-1',
+      width: 'w-[6rem] lg:w-[12%]',
       render: (item) => (
         <Badge variant={ALERT_VARIANTS[item.alertState]} size="sm">
           {ALERT_LABELS[item.alertState]}
@@ -291,13 +347,20 @@ export function InventoryFeature() {
       ),
     },
     {
-      id: 'value',
-      header: 'Valor em estoque',
+      id: 'actions',
+      header: 'Ações',
       align: 'right',
-      width: 'lg:w-[16%]',
-      headerClassName: 'hidden lg:table-cell',
-      cellClassName: 'hidden lg:table-cell',
-      render: (item) => formatInventoryCurrency(item.inventoryValue),
+      width: 'lg:w-[14%]',
+      render: (item) => (
+        <button
+          type="button"
+          className="ml-auto flex size-8 items-center justify-center rounded-lg text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
+          aria-label={`Ver detalhes de ${item.productName} ${item.variantName}`}
+          onClick={() => setSelectedGroup(item)}
+        >
+          <Eye className="size-4" />
+        </button>
+      ),
     },
   ];
 
@@ -462,9 +525,10 @@ export function InventoryFeature() {
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
           <DataTable
             columns={columns}
-            data={balances}
-            rowKey={(item) => item.id}
+            data={groupedBalances}
+            rowKey={(item) => item.key}
             loading={loading}
+            onRowClick={(group) => setSelectedGroup(group)}
             emptyMessage={
               <div className="px-6 py-12 text-center text-sm text-gray-500">
                 Nenhum item de estoque encontrado.
@@ -474,6 +538,116 @@ export function InventoryFeature() {
           />
         </div>
       </TableLayout>
+
+      <Dialog
+        open={!!selectedGroup}
+        onOpenChange={(open) => {
+          if (!open) setSelectedGroup(null);
+        }}
+      >
+        <DialogContent className="max-w-4xl gap-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-0">
+          <div className="px-6 pb-0 pt-5">
+            <DialogTitle className="text-xl font-semibold text-slate-900">
+              Detalhes da variante
+            </DialogTitle>
+            <DialogDescription className="mt-1 text-sm text-slate-500">
+              {selectedGroup?.productName} · {selectedGroup?.variantName}
+            </DialogDescription>
+          </div>
+
+          <div className="px-6 pb-6 pt-4">
+            <div className="overflow-hidden rounded-xl border border-slate-200">
+              <table className="w-full table-fixed whitespace-nowrap text-sm">
+                <colgroup>
+                  <col className="w-[28%]" />
+                  <col className="w-[20%]" />
+                  <col className="w-[18%]" />
+                  <col className="w-[24%]" />
+                  <col className="w-[10%]" />
+                </colgroup>
+                <thead className="bg-slate-50">
+                  <tr className="border-b border-slate-100 text-left">
+                    <th className="px-6 py-3 text-xs font-medium text-slate-500">Produto</th>
+                    <th className="px-3 py-3 text-xs font-medium text-slate-500">Valor</th>
+                    <th className="px-3 py-3 text-right text-xs font-medium text-slate-500">
+                      Estoque
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-slate-500">
+                      Disponibilidade
+                    </th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-slate-500">
+                      Ações
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {selectedGroup?.items.map((item) => {
+                    const attributes = getVariantAttributes(item);
+                    const valueAttributes = attributes.slice(1);
+                    const valueLabel = valueAttributes.length
+                      ? valueAttributes
+                          .map((attribute) => `${attribute.name}: ${attribute.value}`)
+                          .join(' · ')
+                      : attributes[0]?.value ?? item.variantTitle ?? 'Principal';
+                    const isOut = item.available <= 0;
+                    const isLow = !isOut && item.available <= item.lowStockThreshold;
+                    const trackClass = isOut
+                      ? 'bg-red-100'
+                      : isLow
+                        ? 'bg-amber-100'
+                        : 'bg-emerald-100';
+                    const barClass = isOut
+                      ? 'bg-red-500'
+                      : isLow
+                        ? 'bg-amber-500'
+                        : 'bg-emerald-500';
+                    const barWidth = isOut ? '0%' : isLow ? '42%' : '100%';
+
+                    return (
+                      <tr
+                        key={item.id}
+                        className="cursor-pointer border-b border-slate-100 last:border-0 hover:bg-slate-50"
+                        onClick={() => openAdjustForItem(item)}
+                      >
+                        <td className="px-6 py-4 align-middle font-medium text-slate-900">
+                          {item.productName} · {selectedGroup.variantName}
+                        </td>
+                        <td className="px-3 py-4 align-middle text-slate-700">{valueLabel}</td>
+                        <td className="px-3 py-4 text-right align-middle">
+                          <span className="font-semibold tabular-nums text-slate-900">
+                            {item.available} disponível
+                          </span>
+                        </td>
+                        <td className="px-3 py-4 align-middle">
+                          <div className={`h-2 w-full rounded-full ${trackClass}`}>
+                            <div
+                              className={`h-full rounded-full ${barClass}`}
+                              style={{ width: barWidth }}
+                            />
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-right align-middle">
+                          <button
+                            type="button"
+                            className="ml-auto flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                            aria-label={`Ajustar estoque de ${item.productName} ${valueLabel}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openAdjustForItem(item);
+                            }}
+                          >
+                            <Edit3 className="size-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={entryOpen} onOpenChange={setEntryOpen}>
         <DialogContent
