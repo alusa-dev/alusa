@@ -98,30 +98,16 @@ export function StepNotificacoes({ ctx }: StepNotificacoesProps) {
     });
   };
 
-  const showTouchedHint = state.notificationChannelsTouched === true;
-
   return (
     <SectionCard>
       <StepHeader
         title="Notificações"
-        hint="Defina quais canais serão usados nas cobranças geradas para esta matrícula."
+        hint="Escolha os canais de aviso que serão usados nas cobranças desta matrícula."
       />
 
       <div className="space-y-4" role="group" aria-label="Canais de notificação">
-        <p className="text-xs text-slate-500 leading-relaxed">
-          Os canais valem para o pagador no Asaas e afetam cobranças futuras deste responsável.
-          Parcelas geradas automaticamente por assinatura não disparam o aviso de criação de
-          cobrança (regra do Asaas).
-        </p>
-
         {loadingDefaults ? <p className="text-sm text-slate-500">Carregando configuração atual...</p> : null}
         {defaultsError ? <p className="text-sm text-amber-700">{defaultsError}</p> : null}
-        {!showTouchedHint && state.notificationChannelsInitialized && !defaultsError ? (
-          <p className="text-sm text-slate-500">
-            Sugestão carregada da régua global. Toque nos canais para confirmar ou alterar antes de
-            avançar; sem alteração, mantemos a configuração já aplicada ao pagador.
-          </p>
-        ) : null}
 
         <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
           <div className="flex flex-wrap gap-3">

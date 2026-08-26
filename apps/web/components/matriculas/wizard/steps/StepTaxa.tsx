@@ -116,7 +116,7 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
               type="button"
               className={`rounded-lg border p-3 text-left transition ${
                 !isenta
-                  ? 'border-violet-500 bg-violet-50 text-violet-700'
+                  ? 'border-transparent bg-violet-200/80 text-gray-900'
                   : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
               }`}
               onClick={() => setIsenta(false)}
@@ -128,7 +128,7 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
               type="button"
               className={`rounded-lg border p-3 text-left transition ${
                 isenta
-                  ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                  ? 'border-transparent bg-violet-200/80 text-gray-900'
                   : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
               }`}
               onClick={() => setIsenta(true)}
@@ -180,7 +180,7 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
                       type="button"
                       className={`h-9 rounded-md border text-center transition ${
                         formaPagamento === 'PIX'
-                          ? 'border-violet-500 bg-violet-50 text-violet-700'
+                          ? 'border-transparent bg-violet-200/80 text-gray-900'
                           : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
                       }`}
                       onClick={() => setFormaPagamento('PIX')}
@@ -191,7 +191,7 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
                       type="button"
                       className={`h-9 rounded-md border text-center transition ${
                         formaPagamento === 'BOLETO'
-                          ? 'border-violet-500 bg-violet-50 text-violet-700'
+                          ? 'border-transparent bg-violet-200/80 text-gray-900'
                           : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
                       }`}
                       onClick={() => setFormaPagamento('BOLETO')}
@@ -202,7 +202,7 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
                       type="button"
                       className={`h-9 rounded-md border text-center transition ${
                         formaPagamento === 'CARTAO'
-                          ? 'border-violet-500 bg-violet-50 text-violet-700'
+                          ? 'border-transparent bg-violet-200/80 text-gray-900'
                           : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
                       }`}
                       onClick={() => setFormaPagamento('CARTAO')}

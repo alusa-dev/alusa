@@ -62,10 +62,10 @@ export function StepModoMatricula({ ctx }: StepModoMatriculaProps) {
               data-testid={`modo-${valor.toLowerCase()}`}
               onClick={() => handleSelect(valor)}
               className={cn(
-                'flex flex-col gap-2 rounded-lg border p-4 text-left transition-colors hover:border-violet-400 hover:bg-violet-50/50',
+                'flex flex-col gap-2 rounded-lg border p-4 text-left transition-colors',
                 ativo
-                  ? 'border-violet-500 bg-violet-50 ring-1 ring-violet-500'
-                  : 'border-slate-200 bg-white',
+                  ? 'border-transparent bg-violet-200/80 text-gray-900'
+                  : 'border-slate-200 bg-white hover:border-transparent hover:bg-gray-100',
               )}
             >
               <div
@@ -79,8 +79,8 @@ export function StepModoMatricula({ ctx }: StepModoMatriculaProps) {
               <div>
                 <p
                   className={cn(
-                    'text-sm font-semibold',
-                    ativo ? 'text-violet-900' : 'text-slate-800',
+                  'text-sm font-semibold',
+                    ativo ? 'text-gray-900' : 'text-slate-800',
                   )}
                 >
                   {titulo}

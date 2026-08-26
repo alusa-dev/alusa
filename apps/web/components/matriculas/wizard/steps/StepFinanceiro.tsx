@@ -365,7 +365,7 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
                   onClick={() => update({ formaPagamento: option.value })}
                   className={`flex flex-col rounded-lg border p-3 text-left transition ${
                     active
-                      ? 'border-violet-500 bg-violet-50 text-violet-700'
+                      ? 'border-transparent bg-violet-200/80 text-gray-900'
                       : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
                   }`}
                 >
@@ -413,10 +413,11 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
                   className={cn(
                     'flex min-h-[92px] flex-col rounded-lg border p-3 text-left transition',
                     active
-                      ? 'border-violet-500 bg-violet-50 text-violet-700'
+                      ? 'border-transparent bg-violet-200/80 text-gray-900'
                       : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100',
                     disabled && 'cursor-not-allowed opacity-60 hover:bg-white',
                   )}
+                  aria-pressed={active}
                 >
                   <span className="text-sm font-semibold">
                     {state.modoMatricula === 'FAMILIAR' && option.kind === 'SEPARATE'

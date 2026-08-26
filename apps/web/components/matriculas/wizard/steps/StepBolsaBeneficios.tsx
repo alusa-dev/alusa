@@ -16,9 +16,6 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
 import type { WizardContextValue } from '../types';
 import {
-  calcularValorDescontoBeneficio,
-  calcularValorLiquidoComBeneficio,
-  descreverBeneficioSelecionado,
   trimTrailingZeros,
 } from '../beneficios';
 
@@ -62,17 +59,8 @@ export function StepBolsaBeneficios({ ctx, contaId }: StepBolsaBeneficiosProps) 
     [],
   );
 
-  const valorBase = state.modoTurmas === 'COMBO'
-    ? state.modoMatricula === 'FAMILIAR'
-      ? state.alunosFamiliares.reduce((total, aluno) => total + (aluno.comboValor ?? 0), 0)
-      : (state.comboValor ?? 0)
-    : (state.planoValor ?? 0);
-
   const modoBeneficio = state.modoBeneficio ?? (state.beneficioSelecionado ? 'COM' : 'SEM');
   const selectedId = state.beneficioSelecionado?.id ?? null;
-  const valorDesconto = calcularValorDescontoBeneficio(valorBase, state.beneficioSelecionado);
-  const valorLiquido = calcularValorLiquidoComBeneficio(valorBase, state.beneficioSelecionado);
-  const descricaoBeneficio = descreverBeneficioSelecionado(state.beneficioSelecionado);
 
   const resetCreateForm = useCallback(() => {
     setNovoNome('');
@@ -226,12 +214,6 @@ export function StepBolsaBeneficios({ ctx, contaId }: StepBolsaBeneficiosProps) 
     }
   };
 
-  const selectedBenefitLabel = state.beneficioSelecionado
-    ? state.beneficioSelecionado.tipo === 'PERCENTUAL'
-      ? `${trimTrailingZeros(state.beneficioSelecionado.valor)}%`
-      : formatter.format(state.beneficioSelecionado.valor)
-    : null;
-
   return (
     <>
       <SectionCard>
@@ -250,8 +232,8 @@ export function StepBolsaBeneficios({ ctx, contaId }: StepBolsaBeneficiosProps) 
                   onClick={() => handleSelectModo('SEM')}
                   className={`rounded-xl border p-4 text-left transition ${
                     modoBeneficio === 'SEM'
-                      ? 'border-violet-500 bg-violet-50 text-violet-700 shadow-sm'
-                      : 'border-gray-200 bg-white text-gray-700 hover:border-slate-300 hover:bg-slate-50'
+                      ? 'border-transparent bg-violet-200/80 text-gray-900'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-transparent hover:bg-gray-100'
                   }`}
                 >
                   <span className="text-sm font-semibold">Sem benefício</span>
@@ -265,8 +247,8 @@ export function StepBolsaBeneficios({ ctx, contaId }: StepBolsaBeneficiosProps) 
                   onClick={() => handleSelectModo('COM')}
                   className={`rounded-xl border p-4 text-left transition ${
                     modoBeneficio === 'COM'
-                      ? 'border-violet-500 bg-violet-50 text-violet-700 shadow-sm'
-                      : 'border-gray-200 bg-white text-gray-700 hover:border-slate-300 hover:bg-slate-50'
+                      ? 'border-transparent bg-violet-200/80 text-gray-900'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-transparent hover:bg-gray-100'
                   }`}
                 >
                   <span className="text-sm font-semibold">Com benefício</span>
@@ -326,8 +308,8 @@ export function StepBolsaBeneficios({ ctx, contaId }: StepBolsaBeneficiosProps) 
                           onClick={() => handleSelectBeneficio(beneficio)}
                           className={`rounded-xl border p-4 text-left transition ${
                             active
-                              ? 'border-violet-500 bg-violet-50 text-violet-700 shadow-sm'
-                              : 'border-gray-200 bg-white text-gray-700 hover:border-slate-300 hover:bg-slate-50'
+                              ? 'border-transparent bg-violet-200/80 text-gray-900'
+                              : 'border-gray-200 bg-white text-gray-700 hover:border-transparent hover:bg-gray-100'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-3">
@@ -349,49 +331,6 @@ export function StepBolsaBeneficios({ ctx, contaId }: StepBolsaBeneficiosProps) 
               </div>
             )}
 
-            <div className="rounded-xl border border-gray-200 bg-white p-4">
-              <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-                    Resumo financeiro
-                  </p>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Visualize o impacto do benefício antes de avançar.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 grid gap-4 md:grid-cols-3">
-                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                  <p className="text-xs text-gray-600">Valor base</p>
-                  <p className="mt-1 text-xl font-semibold text-gray-900">{formatter.format(valorBase)}</p>
-                </div>
-
-                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                  <p className="text-xs text-gray-600">Benefício aplicado</p>
-                  <p className="mt-1 text-sm font-medium text-gray-900">
-                    {modoBeneficio === 'SEM'
-                      ? 'Nenhum benefício aplicado'
-                      : descricaoBeneficio ?? 'Selecione um benefício'}
-                  </p>
-                  <p className="mt-2 text-xs text-gray-500">
-                    {modoBeneficio === 'COM' && selectedBenefitLabel
-                      ? `Condição atual: ${selectedBenefitLabel}`
-                      : 'Desconto estimado: R$ 0,00'}
-                  </p>
-                  <p className="mt-1 text-xs text-gray-500">
-                    Desconto estimado: {formatter.format(valorDesconto)}
-                  </p>
-                </div>
-
-                <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-4">
-                  <p className="text-xs uppercase tracking-[0.12em] text-slate-500">
-                    Mensalidade líquida
-                  </p>
-                  <p className="mt-1 text-2xl font-semibold text-slate-900">{formatter.format(valorLiquido)}</p>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </SectionCard>

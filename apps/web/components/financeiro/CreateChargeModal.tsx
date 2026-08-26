@@ -91,20 +91,20 @@ const CHARGE_TYPE_LABELS = {
 
 const PAYMENT_OPTIONS_BY_CHARGE_TYPE = {
   ONE_TIME: [
-    { value: 'PIX', label: 'Pix', icon: '📱' },
-    { value: 'BOLETO', label: 'Boleto', icon: '📄' },
-    { value: 'CREDIT_CARD', label: 'Cartão de Crédito', icon: '💳' },
-    { value: 'UNDEFINED', label: 'Cliente escolhe', icon: '🔄' },
+    { value: 'PIX', label: 'Pix' },
+    { value: 'BOLETO', label: 'Boleto' },
+    { value: 'CREDIT_CARD', label: 'Cartão de Crédito' },
+    { value: 'UNDEFINED', label: 'Cliente escolhe' },
   ],
   INSTALLMENT: [
-    { value: 'BOLETO', label: 'Boleto', icon: '📄' },
-    { value: 'CREDIT_CARD', label: 'Cartão de Crédito', icon: '💳' },
+    { value: 'BOLETO', label: 'Boleto' },
+    { value: 'CREDIT_CARD', label: 'Cartão de Crédito' },
   ],
   SUBSCRIPTION: [
-    { value: 'PIX', label: 'Pix', icon: '📱' },
-    { value: 'BOLETO', label: 'Boleto', icon: '📄' },
-    { value: 'CREDIT_CARD', label: 'Cartão de Crédito', icon: '💳' },
-    { value: 'UNDEFINED', label: 'Cliente escolhe', icon: '🔄' },
+    { value: 'PIX', label: 'Pix' },
+    { value: 'BOLETO', label: 'Boleto' },
+    { value: 'CREDIT_CARD', label: 'Cartão de Crédito' },
+    { value: 'UNDEFINED', label: 'Cliente escolhe' },
   ],
 } as const;
 
@@ -580,7 +580,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                                       <div className="flex flex-col gap-0.5">
                                         <span className="font-medium text-slate-900">{result.name}</span>
                                         {result.cpf && (
-                                          <div className="text-xs text-slate-500">{maskCPF(result.cpf)}</div>
+                                          <div className="text-xs text-slate-500">CPF: {maskCPF(result.cpf)}</div>
                                         )}
                                       </div>
                                     </CommandPrimitive.Item>
@@ -592,14 +592,14 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                         </Popover.Root>
                       </div>
                     ) : (
-                      <div className="relative flex items-start gap-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+                      <div className="relative flex items-start gap-4 rounded-xl bg-violet-100/80 p-4 text-slate-700">
                         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#5c2f91]/15 text-sm font-semibold text-[#5c2f91]">
                           {payerInitials || 'A'}
                         </div>
                         <div className="flex-1 space-y-1 text-sm text-gray-700">
-                          <p className="text-base font-semibold text-gray-900">{selectedPayer.name}</p>
+                          <p className="text-base font-semibold text-slate-900">{selectedPayer.name}</p>
                           {selectedPayer.cpf && (
-                            <p className="text-xs font-medium text-gray-600 tracking-wide">
+                            <p className="text-sm text-slate-600 tracking-wide">
                               CPF: {maskCPF(selectedPayer.cpf)}
                             </p>
                           )}
@@ -620,7 +620,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                             setSearchResults([]);
                             setTimeout(() => searchInputRef.current?.focus(), 100);
                           }}
-                          className="absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center rounded-md text-gray-400 hover:bg-white/60 hover:text-gray-600"
+                          className="absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-500 hover:bg-white/60 hover:text-slate-700"
                           aria-label="Remover pagador selecionado"
                         >
                           <span className="text-lg leading-none">×</span>
@@ -806,14 +806,13 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                           type="button"
                           onClick={() => setValue('billingType', option.value as ChargeFormData['billingType'])}
                           className={cn(
-                            'flex flex-col rounded-lg border p-3 text-left transition',
+                            'flex min-h-[76px] flex-col justify-center rounded-lg border p-4 text-left transition',
                             billingType === option.value
-                              ? 'border-violet-500 bg-violet-50 text-violet-700'
-                              : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
+                              ? 'border-transparent bg-violet-100/80 text-slate-900'
+                              : 'border-slate-200 bg-white text-slate-700 hover:border-transparent hover:bg-slate-100'
                           )}
                         >
-                          <div className="text-2xl">{option.icon}</div>
-                          <div className="mt-1 text-sm font-semibold">{option.label}</div>
+                          <div className="text-sm font-semibold">{option.label}</div>
                         </button>
                       ))}
                     </div>
@@ -1103,76 +1102,32 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                     <StepHeader title="Resumo" hint="Confirme os dados antes de gerar a cobrança." />
 
                     <div className="space-y-4">
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
-                          <p className="text-xs text-gray-600">Contratante</p>
-                          <p className="text-sm font-semibold text-gray-900">{selectedPayer?.name ?? '—'}</p>
-                          <p className="text-xs text-gray-500">
-                            {selectedPayer?.cpf ? maskCPF(selectedPayer.cpf) : 'Sem CPF'}
-                          </p>
+                      <div className="rounded-xl bg-slate-50/80 p-4">
+                        <p className="text-sm font-semibold text-slate-900">Contratante</p>
+                        <div className="mt-3 grid gap-2 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
+                          <span className="text-slate-500">Nome</span>
+                          <span className="font-medium text-slate-900 sm:text-right">{selectedPayer?.name ?? '—'}</span>
+                          <span className="text-slate-500">CPF</span>
+                          <span className="font-medium tabular-nums text-slate-900 sm:text-right">
+                            {selectedPayer?.cpf ? maskCPF(selectedPayer.cpf) : 'Não informado'}
+                          </span>
                         </div>
                       </div>
 
-                      <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4 text-sm">
-                        <div className="space-y-2">
-                          <p className="text-gray-600">
-                            Tipo:{' '}
-                            <span className="font-medium text-gray-900">
-                              {isSubscription ? 'Assinatura' : installments > 1 ? 'Parcelada' : 'À vista'}
-                            </span>
-                          </p>
-                          <p className="text-gray-600">
-                            Valor:{' '}
-                            <span className="font-medium text-gray-900">
-                              {!isSubscription && installments > 1
-                                ? `${installments}x ${formatCurrency((value || 0) / installments)}`
-                                : formatCurrency(value || 0)}
-                            </span>
-                          </p>
-                          <p className="text-gray-600">
-                            Vencimento:{' '}
-                            <span className="font-medium text-gray-900">
-                              {isSubscription ? formatDate(watch('nextDueDate')) : formatDate(watch('dueDate'))}
-                            </span>
-                          </p>
-                          {isSubscription && (
-                            <p className="text-gray-600">
-                              Fim da assinatura:{' '}
-                              <span className="font-medium text-gray-900">
-                                {formatDate(watch('endDate'))}
-                              </span>
-                            </p>
-                          )}
-                          <p className="text-gray-600">
-                            Pagamento:{' '}
-                            <span className="font-medium text-gray-900">
-                              {billingType === 'PIX'
-                                ? 'Pix'
-                                : billingType === 'BOLETO'
-                                  ? 'Boleto'
-                                  : billingType === 'CREDIT_CARD'
-                                    ? 'Cartão'
-                                    : 'Cliente escolhe'}
-                            </span>
-                          </p>
-                          {notificationChannelsTouched && (
-                            <p className="text-gray-600">
-                              Notificações:{' '}
-                              <span className="font-medium text-gray-900">
-                                {notificationChannels.length > 0
-                                  ? notificationChannels
-                                      .map((c) => (c === 'WHATSAPP' ? 'WhatsApp' : c === 'EMAIL' ? 'E-mail' : 'SMS'))
-                                      .join(', ')
-                                  : 'Nenhuma'}
-                              </span>
-                            </p>
-                          )}
-                          {watch('description') && (
-                            <p className="text-gray-600">
-                              Descrição:{' '}
-                              <span className="font-medium text-gray-900">{watch('description')}</span>
-                            </p>
-                          )}
+                      <div className="rounded-xl bg-slate-50/80 p-4 text-sm">
+                        <p className="text-sm font-semibold text-slate-900">Dados da cobrança</p>
+                        <div className="mt-3 grid gap-2 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
+                          <span className="text-slate-500">Tipo</span>
+                          <span className="font-medium text-slate-900 sm:text-right">{isSubscription ? 'Assinatura' : installments > 1 ? 'Parcelada' : 'À vista'}</span>
+                          <span className="text-slate-500">Valor</span>
+                          <span className="font-medium text-slate-900 sm:text-right">{!isSubscription && installments > 1 ? `${installments}x ${formatCurrency((value || 0) / installments)}` : formatCurrency(value || 0)}</span>
+                          <span className="text-slate-500">Vencimento</span>
+                          <span className="font-medium text-slate-900 sm:text-right">{isSubscription ? formatDate(watch('nextDueDate')) : formatDate(watch('dueDate'))}</span>
+                          {isSubscription && <><span className="text-slate-500">Fim da assinatura</span><span className="font-medium text-slate-900 sm:text-right">{formatDate(watch('endDate'))}</span></>}
+                          <span className="text-slate-500">Pagamento</span>
+                          <span className="font-medium text-slate-900 sm:text-right">{billingType === 'PIX' ? 'Pix' : billingType === 'BOLETO' ? 'Boleto' : billingType === 'CREDIT_CARD' ? 'Cartão' : 'Cliente escolhe'}</span>
+                          {notificationChannelsTouched && <><span className="text-slate-500">Notificações</span><span className="font-medium text-slate-900 sm:text-right">{notificationChannels.length > 0 ? notificationChannels.map((c) => (c === 'WHATSAPP' ? 'WhatsApp' : c === 'EMAIL' ? 'E-mail' : 'SMS')).join(', ') : 'Nenhuma'}</span></>}
+                          {watch('description') && <><span className="text-slate-500">Descrição</span><span className="font-medium text-slate-900 sm:text-right">{watch('description')}</span></>}
                         </div>
                       </div>
                     </div>

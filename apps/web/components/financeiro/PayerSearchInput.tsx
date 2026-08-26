@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { Input } from '@/components/ui/input';
 import { controlClass, labelClass } from '@/lib/finance-form-utils';
 import type { FinancePayerCandidateDTO } from '@/features/finance/dtos';
+import { maskCPF } from '@/lib/utils/masks';
 
 export type PayerSearchResult = FinancePayerCandidateDTO;
 
@@ -84,6 +85,7 @@ export function PayerSearchInput({
                 >
                   <div className="font-medium text-gray-900">{item.name}</div>
                   <div className="text-xs text-gray-500">
+                    {item.cpf ? `CPF: ${maskCPF(item.cpf)} · ` : ''}
                     {item.type === 'aluno' ? 'Aluno' : 'Responsável financeiro'}
                     {item.payerResolved.type === 'responsavel' && item.type === 'aluno'
                       ? ` · Pagador: ${item.payerResolved.name}`

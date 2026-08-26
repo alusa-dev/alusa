@@ -92,6 +92,7 @@ export const listAlunosComContratosQueryDTOSchema = z.object({
   q: z.string().trim().optional(),
   status: contratoStatusDTOSchema.optional(),
   turmaId: z.string().trim().min(1).optional(),
+  page: z.coerce.number().int().min(1).default(1),
 });
 export type ListAlunosComContratosQueryDTO = z.infer<typeof listAlunosComContratosQueryDTOSchema>;
 
@@ -172,7 +173,17 @@ export const alunoContratoCardDTOSchema = z.object({
 });
 export type AlunoContratoCardDTO = z.infer<typeof alunoContratoCardDTOSchema>;
 
-export const listAlunosComContratosResultDTOSchema = z.array(alunoContratoCardDTOSchema);
+export const listAlunosComContratosResultDTOSchema = z.object({
+  data: z.array(alunoContratoCardDTOSchema),
+  pagination: z.object({
+    page: z.number().int().positive(),
+    pageSize: z.number().int().positive(),
+    total: z.number().int().nonnegative(),
+    totalPages: z.number().int().positive(),
+    hasNextPage: z.boolean(),
+    hasPreviousPage: z.boolean(),
+  }),
+});
 export type ListAlunosComContratosResultDTO = z.infer<typeof listAlunosComContratosResultDTOSchema>;
 
 export const contratoModeloCountDTOSchema = z.object({

@@ -9,12 +9,14 @@ import {
   type ContratoDTO,
   type ContratoStatusDTO,
   type CreateContratoInputDTO,
+  type ListAlunosComContratosResultDTO,
 } from '../dtos';
 
 export type Contrato = ContratoDTO;
 export type CreateContratoPayload = CreateContratoInputDTO;
 export type ContratoStatus = ContratoStatusDTO;
 export type AlunoContratoCard = AlunoContratoCardDTO;
+export type AlunosComContratosPage = ListAlunosComContratosResultDTO;
 
 export function getContratoPdfUrl(contrato: Pick<Contrato, 'arquivoPdfUrl' | 'arquivoPdfAssinadoUrl'>) {
   return contrato.arquivoPdfAssinadoUrl || contrato.arquivoPdfUrl;
@@ -129,16 +131,18 @@ export interface ListAlunosComContratosParams {
   q?: string;
   status?: ContratoStatus;
   turmaId?: string;
+  page?: number;
 }
 
 export async function listAlunosComContratos(
   params: ListAlunosComContratosParams,
   signal?: AbortSignal,
-): Promise<AlunoContratoCard[]> {
+): Promise<AlunosComContratosPage> {
   const qs = new URLSearchParams();
   if (params.q && params.q.trim()) qs.set('q', params.q.trim());
   if (params.status) qs.set('status', params.status);
   if (params.turmaId) qs.set('turmaId', params.turmaId);
+  if (params.page && params.page > 1) qs.set('page', String(params.page));
 
   const res = await fetch(`/api/contratos/alunos?${qs.toString()}`, { signal });
   return parseResponse(

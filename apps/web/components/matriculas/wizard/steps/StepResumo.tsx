@@ -49,10 +49,14 @@ function BillingOperationalSummary({
   return (
     <InfoCallout
       variant={blocked || requiresAttention ? 'warning' : 'info'}
-      size="sm"
-      showIcon
+      size="md"
+      className={
+        blocked || requiresAttention
+          ? "relative border-0 !pl-8 before:absolute before:bottom-3 before:left-3 before:top-3 before:w-1 before:rounded-full before:bg-amber-500 before:content-['']"
+          : "relative border-0 !pl-8 before:absolute before:bottom-3 before:left-3 before:top-3 before:w-1 before:rounded-full before:bg-[#1f6b75] before:content-['']"
+      }
       role={blocked ? 'alert' : 'status'}
-      title={blocked ? 'Revise antes de continuar' : 'Como ficará a cobrança'}
+      title={blocked ? 'Revise antes de continuar' : 'Como ficará a cobrança?'}
     >
       <InfoCalloutItem label="Próximo passo">{friendlyMessage}</InfoCalloutItem>
       {preview.billingImpact.currentChargeDueDate && (
@@ -255,13 +259,14 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
       <div className="space-y-4">
         {/* Responsável */}
         {state.responsavelFamiliar && (
-          <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-violet-500 mb-1">
-              Responsável financeiro
-            </p>
-            <p className="text-sm font-semibold text-violet-900">
-              {state.responsavelFamiliar.nome}
-            </p>
+          <div className="rounded-xl bg-slate-50/70 p-4">
+            <h3 className="text-sm font-semibold text-slate-900">Responsável financeiro</h3>
+            <div className="mt-3 flex justify-between gap-4 text-sm">
+              <span className="text-gray-600">Nome</span>
+              <span className="text-right font-medium text-gray-900">
+                {state.responsavelFamiliar.nome}
+              </span>
+            </div>
           </div>
         )}
 
@@ -284,7 +289,7 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
             return (
               <div
                 key={aluno.itemId ?? aluno.id}
-                className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/50 p-3"
+                className="flex items-center gap-3 rounded-xl bg-slate-50/70 p-3"
               >
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-semibold text-violet-700">
                   {iniciais}
@@ -311,76 +316,71 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
           })}
         </div>
 
-        <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm">
-          <p className="font-medium text-slate-900">Impacto financeiro</p>
+        <div className="rounded-xl bg-slate-50/70 p-4 text-sm">
+          <h3 className="font-semibold text-slate-900">O que será cobrado</h3>
+
+          <div className="mt-3 space-y-2">
+            <div className="flex justify-between gap-4">
+              <span className="text-slate-600">
+                {state.modoTurmas === 'COMBO' ? 'Total das mensalidades' : 'Plano familiar'}
+              </span>
+              <span className="font-semibold text-slate-900">{formatter.format(totalMensalidades)}</span>
+            </div>
+            {beneficioDescricao && (
+              <div className="flex justify-between gap-4">
+                <span className="text-slate-600">Benefício</span>
+                <span className="text-right font-medium text-slate-900">
+                  {beneficioDescricao} (-{formatter.format(valorBeneficio)})
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between gap-4">
+              <span className="text-slate-600">Pagamento mensal</span>
+              <span className="font-medium text-slate-900">{formaPagamentoLabel(state.formaPagamento)}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-slate-600">Taxa de matrícula</span>
+              <span className="font-semibold text-slate-900">
+                {state.taxaIsenta ? 'Isenta' : formatter.format(totalTaxas)}
+              </span>
+            </div>
+            {!state.taxaIsenta && state.formaPagamentoTaxa && (
+              <div className="flex justify-between gap-4">
+                <span className="text-slate-600">Pagamento da taxa</span>
+                <span className="font-medium text-slate-900">
+                  {formaPagamentoLabel(state.formaPagamentoTaxa)}
+                </span>
+              </div>
+            )}
+            {state.criarCobranca && (
+              <div className="flex justify-between gap-4 text-sm">
+                <span className="text-slate-600">Cobranças recorrentes</span>
+                <span className="font-medium text-slate-900">1 cobrança consolidada</span>
+              </div>
+            )}
+          </div>
+
           {billingPreviewLoading ? (
             <p className="mt-2 text-slate-600">Validando agrupamento e valores...</p>
           ) : billingPreviewError ? (
             <p className="mt-2 text-red-700" role="alert">{billingPreviewError}</p>
           ) : billingPreview ? (
             <div className="mt-2 space-y-3">
-              <div className="grid gap-1 text-slate-600 sm:grid-cols-3">
-                <span>Atual: {formatter.format(billingPreview.billingImpact.currentMonthlyAmount)}</span>
-                <span>Acréscimo: {formatter.format(billingPreview.billingImpact.addedMonthlyAmount)}</span>
-                <strong className="text-slate-900">
-                  Total: {formatter.format(billingPreview.billingImpact.resultingMonthlyAmount)}
-                </strong>
-              </div>
+              {billingPreview.billingImpact.application !== 'SEPARATE' && (
+                <div className="grid gap-1 text-slate-600 sm:grid-cols-2">
+                  <span>Valor atual: {formatter.format(billingPreview.billingImpact.currentMonthlyAmount)}</span>
+                  <strong className="text-slate-900">
+                    Novo total mensal: {formatter.format(billingPreview.billingImpact.resultingMonthlyAmount)}
+                  </strong>
+                </div>
+              )}
               <BillingOperationalSummary preview={billingPreview} />
             </div>
           ) : null}
         </div>
 
-        {/* Totais */}
-        <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-1.5 text-sm">
-          <div className="flex justify-between">
-            <span className="text-slate-600">Taxa de matrícula familiar</span>
-            <span className="font-medium">{formatter.format(totalTaxas)}</span>
-          </div>
-          {beneficioDescricao && (
-            <div className="flex justify-between text-green-700">
-              <span>Desconto ({beneficioDescricao})</span>
-              <span>- {formatter.format(valorBeneficio)}</span>
-            </div>
-          )}
-          <div className="flex justify-between font-semibold text-slate-900 border-t pt-1.5">
-            <span>
-              {state.modoTurmas === 'COMBO' ? 'Total mensalidades' : 'Plano familiar'}
-            </span>
-            <span>{formatter.format(totalMensalidades)}</span>
-          </div>
-          {state.criarCobranca ? (
-            <div className="flex justify-between text-xs text-violet-700">
-              <span>Cobranças recorrentes que serão criadas</span>
-              <span>1 cobrança consolidada</span>
-            </div>
-          ) : null}
-          {!state.taxaIsenta && (state.gerarCobrancaTaxa ?? false) && totalTaxas > 0 ? (
-            <div className="flex justify-between text-xs text-violet-700">
-              <span>Taxa de matrícula</span>
-              <span>1 cobrança consolidada</span>
-            </div>
-          ) : null}
-          <div className="flex justify-between text-xs text-slate-500">
-            <span>Forma de pagamento</span>
-            <span>{formaPagamentoLabel(state.formaPagamento)}</span>
-          </div>
-          {state.dataInicio && (
-            <div className="flex justify-between text-xs text-slate-500">
-              <span>Início</span>
-              <span>
-                {new Date(state.dataInicio).toLocaleDateString('pt-BR', {
-                  day: '2-digit',
-                  month: '2-digit',
-                  year: 'numeric',
-                })}
-              </span>
-            </div>
-          )}
-        </div>
-
         {/* Confirmação */}
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="rounded-xl bg-slate-50/70 p-4">
           <div className="flex items-center gap-3">
             <Checkbox
               id="confirmacao-revisao-familiar"
@@ -558,7 +558,7 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
 
       <div className="space-y-4">
         {/* Aluno + detalhes (sem segundo card de plano/combo) */}
-        <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+        <div className="rounded-xl bg-slate-50/70 p-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-sm font-semibold text-violet-700">
               {initials || 'A'}
@@ -576,7 +576,7 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
               </div>
             </div>
           </div>
-          <div className="mt-4 space-y-1 border-t border-gray-200 pt-4 text-sm text-gray-600">
+          <div className="mt-4 space-y-1 pt-4 text-sm text-gray-600">
             {state.modeloId && (
               <p>
                 Modelo:{' '}
@@ -620,8 +620,60 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
           </div>
         </div>
 
-        <div className="rounded-lg border border-violet-200 bg-violet-50/40 p-4">
-          <h3 className="text-sm font-semibold text-gray-900">Impacto da cobrança</h3>
+        {state.aluno?.responsavel && (
+          <div className="rounded-xl bg-slate-50/70 p-4">
+            <h3 className="text-sm font-semibold text-gray-900">Responsável financeiro</h3>
+            <div className="mt-3 flex justify-between gap-4 text-sm">
+              <span className="text-gray-600">Nome</span>
+              <span className="text-right font-medium text-gray-900">
+                {state.aluno.responsavel.nome}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-xl bg-slate-50/70 p-4">
+          <h3 className="text-sm font-semibold text-gray-900">O que será cobrado</h3>
+
+          <div className="mt-3 space-y-2 text-sm">
+            <div className="flex justify-between gap-4">
+              <span className="text-gray-600">Mensalidade</span>
+              <span className="font-semibold text-gray-900">{formatter.format(valorMensalidadeLiquido)}</span>
+            </div>
+            {beneficioDescricao && (
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-600">Benefício</span>
+                <span className="text-right font-medium text-gray-900">
+                  {beneficioDescricao} (-{formatter.format(valorBeneficio)})
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between gap-4">
+              <span className="text-gray-600">Pagamento mensal</span>
+              <span className="font-medium text-gray-900">{formaPagamentoLabel(state.formaPagamento)}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-gray-600">Taxa de matrícula</span>
+              <span className="font-semibold text-gray-900">
+                {state.taxaIsenta ? 'Isenta' : formatter.format(state.taxaMatricula ?? 0)}
+              </span>
+            </div>
+            {!state.taxaIsenta && state.formaPagamentoTaxa && (
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-600">Pagamento da taxa</span>
+                <span className="font-medium text-gray-900">
+                  {formaPagamentoLabel(state.formaPagamentoTaxa)}
+                </span>
+              </div>
+            )}
+            {state.taxaIsenta && state.taxaJustificativa && (
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-600">Motivo da isenção</span>
+                <span className="text-right font-medium text-gray-900">{state.taxaJustificativa}</span>
+              </div>
+            )}
+          </div>
+
           {billingPreviewLoading ? (
             <p className="mt-2 text-sm text-gray-600">Calculando valores atuais e resultantes...</p>
           ) : billingPreviewError ? (
@@ -630,7 +682,7 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
             <div className="mt-3 space-y-2 text-sm">
               {billingPreview.billingImpact.targetLabel && (
                 <div className="flex justify-between gap-4">
-                  <span className="text-gray-600">Destino</span>
+                  <span className="text-gray-600">Cobrança de destino</span>
                   <span className="text-right font-medium text-gray-900">{billingPreview.billingImpact.targetLabel}</span>
                 </div>
               )}
@@ -640,94 +692,30 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
                   <span className="font-medium">{formatter.format(billingPreview.billingImpact.currentMonthlyAmount)}</span>
                 </div>
               )}
-              <div className="flex justify-between">
-                <span className="text-gray-600">Nova mensalidade</span>
-                <span className="font-medium">+ {formatter.format(billingPreview.billingImpact.addedMonthlyAmount)}</span>
-              </div>
-              <div className="flex justify-between border-t border-violet-200 pt-2 text-base">
-                <span className="font-semibold text-gray-900">
-                  {billingPreview.billingImpact.application === 'SEPARATE' ? 'Nova cobrança mensal' : 'Novo valor mensal'}
-                </span>
-                <span className="font-semibold text-violet-800">{formatter.format(billingPreview.billingImpact.resultingMonthlyAmount)}</span>
-              </div>
-              {billingPreview.billingImpact.enrollmentFeeAmount > 0 && (
-                <p className="text-xs text-gray-600">
-                  Taxa de matrícula separada: {formatter.format(billingPreview.billingImpact.enrollmentFeeAmount)}.
-                </p>
+              {billingPreview.billingImpact.application !== 'SEPARATE' && (
+                <div className="flex justify-between pt-2 text-base">
+                  <span className="font-semibold text-gray-900">Novo total mensal</span>
+                  <span className="font-semibold text-violet-800">
+                    {formatter.format(billingPreview.billingImpact.resultingMonthlyAmount)}
+                  </span>
+                </div>
               )}
               {billingPreview.billingImpact.updatesPendingPayments && (
-                <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-800">
+                <p className="rounded-md bg-amber-50 p-2 text-sm text-amber-800">
                   Aplicação no ciclo atual: cobranças pendentes já emitidas poderão ter o valor atualizado.
                 </p>
               )}
               {billingPreview.billingImpact.application === 'NEXT_CYCLE' && (
-                <p className="text-xs text-gray-600">O valor será unificado somente no próximo ciclo.</p>
+                <p className="text-sm text-gray-600">O valor será unificado somente no próximo ciclo.</p>
               )}
               <BillingOperationalSummary preview={billingPreview} />
             </div>
           ) : null}
         </div>
 
-        {/* Box Taxa de Matrícula + Box Mensalidade */}
-        <div className="grid gap-4 sm:grid-cols-2">
-          {/* Taxa de Matrícula */}
-          <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
-            <h3 className="text-sm font-semibold text-gray-900 mb-2">Taxa de Matrícula</h3>
-            <div className="space-y-1 text-sm">
-              <p className="text-gray-600">
-                Valor:{' '}
-                <span className="font-semibold text-gray-900">
-                  {state.taxaIsenta ? 'Isenta' : formatter.format(state.taxaMatricula ?? 0)}
-                </span>
-              </p>
-              {!state.taxaIsenta && state.formaPagamentoTaxa && (
-                <p className="text-gray-600">
-                  Pagamento:{' '}
-                  <span className="font-medium text-gray-900">
-                    {formaPagamentoLabel(state.formaPagamentoTaxa)}
-                  </span>
-                </p>
-              )}
-              {state.taxaIsenta && state.taxaJustificativa && (
-                <p className="text-gray-600">
-                  Justificativa:{' '}
-                  <span className="font-medium text-gray-900">{state.taxaJustificativa}</span>
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* Mensalidade */}
-          <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
-            <h3 className="text-sm font-semibold text-gray-900 mb-2">Mensalidade</h3>
-            <div className="space-y-1 text-sm">
-              <p className="text-gray-600">
-                Valor:{' '}
-                <span className="font-semibold text-gray-900">
-                  {formatter.format(valorMensalidadeLiquido)}
-                </span>
-              </p>
-              {beneficioDescricao && (
-                <p className="text-gray-600">
-                  Benefício:{' '}
-                  <span className="font-medium text-gray-900">
-                    {beneficioDescricao} (-{formatter.format(valorBeneficio)})
-                  </span>
-                </p>
-              )}
-              <p className="text-gray-600">
-                Pagamento:{' '}
-                <span className="font-medium text-gray-900">
-                  {formaPagamentoLabel(state.formaPagamento)}
-                </span>
-              </p>
-            </div>
-          </div>
-        </div>
-
         {/* Box Configurações de Cobrança - só se houver */}
         {(temMulta || temJuros || temDesconto) && (
-          <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+          <div className="rounded-xl bg-slate-50/70 p-4">
             <h3 className="text-sm font-semibold text-gray-900 mb-2">Configurações de cobrança</h3>
             <div className="grid gap-4 sm:grid-cols-3 text-sm">
               {temMulta && (
@@ -757,7 +745,7 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
         )}
 
         {(state.notificationChannelsTouched || state.notificationChannels.length > 0) && (
-          <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+          <div className="rounded-xl bg-slate-50/70 p-4">
             <h3 className="text-sm font-semibold text-gray-900 mb-2">Notificações</h3>
             <p className="text-sm text-gray-600">
               Canais:{' '}
@@ -771,7 +759,7 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
         )}
 
         {/* Checkbox de confirmação */}
-        <div className="rounded-lg border border-gray-200 bg-white p-4">
+        <div className="rounded-xl bg-slate-50/70 p-4">
           <div className="flex items-center gap-3">
             <Checkbox
               id="confirmacao-revisao"

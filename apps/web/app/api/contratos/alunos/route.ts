@@ -7,6 +7,8 @@ import {
 } from '@/features/contratos/dtos';
 import { mapAlunoContratoCardToDTO } from '@/features/contratos/mappers';
 
+const PAGE_SIZE = 7;
+
 export async function GET(request: NextRequest) {
   const user = await getSessionUser();
   if (!user) {
@@ -28,44 +30,48 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const { q, status, turmaId } = parsed.data;
+  const { q, status, turmaId, page: requestedPage } = parsed.data;
   const qTerm = q?.toLowerCase() ?? '';
   const qDigits = (q ?? '').replace(/\D/g, '');
 
   try {
-    const alunos = await prisma.aluno.findMany({
-      where: {
-        contaId: user.contaId,
-        ...(qTerm || qDigits
-          ? {
-              OR: [
-                { nome: { contains: qTerm, mode: 'insensitive' } },
-                { nomeSocial: { contains: qTerm, mode: 'insensitive' } },
-                { email: { contains: qTerm, mode: 'insensitive' } },
-                ...(qDigits
-                  ? [{ cpf: { contains: qDigits } }]
-                  : []),
-              ],
-            }
-          : {}),
-        ...(turmaId
-          ? {
-              matriculas: {
-                some: {
-                  turmaId,
-                  contratos: { some: { ...(status ? { status } : {}) } },
-                },
+    const where = {
+      contaId: user.contaId,
+      ...(qTerm || qDigits
+        ? {
+            OR: [
+              { nome: { contains: qTerm, mode: 'insensitive' as const } },
+              { nomeSocial: { contains: qTerm, mode: 'insensitive' as const } },
+              { email: { contains: qTerm, mode: 'insensitive' as const } },
+              ...(qDigits ? [{ cpf: { contains: qDigits } }] : []),
+            ],
+          }
+        : {}),
+      ...(turmaId
+        ? {
+            matriculas: {
+              some: {
+                turmaId,
+                contratos: { some: { ...(status ? { status } : {}) } },
               },
-            }
-          : {
-              AND: [{
-                OR: [
-                  { matriculas: { some: { contratos: { some: { ...(status ? { status } : {}) } } } } },
-                  { contratosEvento: { some: { ...(status ? { status } : {}) } } },
-                ],
-              }],
-            }),
-      },
+            },
+          }
+        : {
+            AND: [{
+              OR: [
+                { matriculas: { some: { contratos: { some: { ...(status ? { status } : {}) } } } } },
+                { contratosEvento: { some: { ...(status ? { status } : {}) } } },
+              ],
+            }],
+          }),
+    };
+    const total = await prisma.aluno.count({ where });
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const page = Math.min(requestedPage, totalPages);
+    const alunos = await prisma.aluno.findMany({
+      where,
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
       select: {
         id: true,
         nome: true,
@@ -75,7 +81,17 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.json(
-      listAlunosComContratosResultDTOSchema.parse(alunos.map((aluno) => mapAlunoContratoCardToDTO(aluno))),
+      listAlunosComContratosResultDTOSchema.parse({
+        data: alunos.map((aluno) => mapAlunoContratoCardToDTO(aluno)),
+        pagination: {
+          page,
+          pageSize: PAGE_SIZE,
+          total,
+          totalPages,
+          hasNextPage: page < totalPages,
+          hasPreviousPage: page > 1,
+        },
+      }),
     );
   } catch (error) {
     console.error('[CONTRATOS_ALUNOS_GET]', error);

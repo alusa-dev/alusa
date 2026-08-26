@@ -86,8 +86,8 @@ export function StepPlano({ ctx, contaId }: StepPlanoProps) {
                 onClick={() => update({ planoId: p.id, planoLabel: p.nome, planoValor: p.valor })}
                 className={`flex items-center justify-between rounded-xl border p-4 text-left shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-200 ${
                   active
-                    ? 'border-violet-500 bg-violet-50'
-                    : 'border-gray-200 bg-white hover:border-violet-200 hover:bg-violet-50/40'
+                    ? 'border-transparent bg-violet-200/80'
+                    : 'border-gray-200 bg-white hover:border-transparent hover:bg-gray-100'
                 }`}
               >
                 <div className="flex flex-col gap-1">

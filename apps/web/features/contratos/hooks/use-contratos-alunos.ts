@@ -4,6 +4,7 @@ import {
   listAlunosComContratos,
   type AlunoContratoCard,
   type ContratoStatus,
+  type AlunosComContratosPage,
 } from '../services/contratos-service';
 
 export type ContratosAlunoStatusFilter = 'TODOS' | ContratoStatus;
@@ -14,8 +15,16 @@ export interface UseContratosAlunosFilters {
   turmaId: string;
 }
 
-export function useContratosAlunos(filters: UseContratosAlunosFilters) {
+export function useContratosAlunos(filters: UseContratosAlunosFilters & { page: number }) {
   const [alunos, setAlunos] = useState<AlunoContratoCard[]>([]);
+  const [pagination, setPagination] = useState<AlunosComContratosPage['pagination']>({
+    page: 1,
+    pageSize: 7,
+    total: 0,
+    totalPages: 1,
+    hasNextPage: false,
+    hasPreviousPage: false,
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -34,20 +43,23 @@ export function useContratosAlunos(filters: UseContratosAlunosFilters) {
           q: filters.search,
           status: filters.status === 'TODOS' ? undefined : filters.status,
           turmaId: filters.turmaId || undefined,
+          page: filters.page,
         },
         controller.signal,
       );
-      setAlunos(data);
+      setAlunos(data.data);
+      setPagination(data.pagination);
     } catch (err) {
       if ((err as { name?: string }).name === 'AbortError') return;
       const message = (err as Error).message;
       setError(message);
       toast.error(message);
       setAlunos([]);
+      setPagination((current) => ({ ...current, page: filters.page }));
     } finally {
       setLoading(false);
     }
-  }, [filters.search, filters.status, filters.turmaId]);
+  }, [filters.page, filters.search, filters.status, filters.turmaId]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -60,5 +72,5 @@ export function useContratosAlunos(filters: UseContratosAlunosFilters) {
     };
   }, [load]);
 
-  return { alunos, loading, error, reload: load };
+  return { alunos, loading, error, pagination, reload: load };
 }
