@@ -104,6 +104,8 @@ export type PaymentWebhookPayload = {
 
 export type PaymentWebhookResult = {
   success: boolean;
+  /** True only when the local financial state actually transitioned. */
+  stateChanged?: boolean;
   error?: string;
   skipped?: boolean;
   skipReason?: string;
@@ -813,6 +815,7 @@ async function handleStandaloneChargeWebhook(
     });
     return {
       success: true,
+      stateChanged: false,
       skipped: true,
       skipReason: 'STATUS_TRANSITION_BLOCKED',
       localEntityType: 'Charge',
@@ -936,7 +939,10 @@ async function handleStandaloneChargeWebhook(
     console.error('[handleStandaloneChargeWebhook] Falha ao sincronizar EventFinancialEntry:', err);
   }
 
-  return { success: true };
+  return {
+    success: true,
+    stateChanged: stateDecision.kind === 'APPLY' && charge.status !== nextStatusCharge,
+  };
 }
 
 async function updateEventFinancialEntryFromWebhook(
@@ -1534,7 +1540,7 @@ async function handlePaymentWebhookCore(
             dueDate: vencimento,
           });
 
-          return { success: true };
+          return { success: true, stateChanged: true };
         }
 
         // Fallback legado: buscar no auditLog (para subscriptions criadas antes da migração)
@@ -1642,7 +1648,7 @@ async function handlePaymentWebhookCore(
               dueDate: vencimento,
             });
 
-            return { success: true };
+            return { success: true, stateChanged: true };
           }
         }
 
@@ -1980,7 +1986,7 @@ async function handlePaymentWebhookCore(
             dueDate: vencimento,
           });
 
-          return { success: true };
+          return { success: true, stateChanged: true };
         }
 
         console.warn('InstallmentPlan não encontrado para payment.id:', payload.payment.id, {
@@ -2091,6 +2097,7 @@ async function handlePaymentWebhookCore(
 
       return {
         success: true,
+        stateChanged: false,
         skipped: true,
         skipReason: 'UNMATCHED_PAYMENT_REQUIRES_RECONCILIATION',
         localEntityType: 'Payment',
@@ -2386,7 +2393,7 @@ async function handlePaymentWebhookCore(
           metadata: { asaasPaymentId: payload.payment.id },
         });
 
-        return { success: true };
+        return { success: true, stateChanged: true };
       }
 
       await prisma.cobranca.update({
@@ -2423,7 +2430,7 @@ async function handlePaymentWebhookCore(
         metadata: { asaasPaymentId: payload.payment.id },
       });
 
-      return { success: true };
+      return { success: true, stateChanged: false };
     }
 
     // 4. Atualizar status da cobrança + campos asaas* (apenas se houver progressão de status)
@@ -3025,7 +3032,10 @@ async function handlePaymentWebhookCore(
       console.error('[handlePaymentWebhookCore] Falha ao sincronizar EventFinancialEntry:', err);
     }
 
-    return { success: true };
+    return {
+      success: true,
+      stateChanged: stateDecision.kind === 'APPLY' && currentStatus !== nextStatusCobranca,
+    };
   } catch (error) {
     console.error('❌ Erro ao processar webhook:', error);
     return {

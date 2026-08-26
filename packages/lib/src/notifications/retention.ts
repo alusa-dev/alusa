@@ -14,6 +14,7 @@ export async function archiveLowValueNotifications(params: {
 
   const where: Prisma.NotificationRecipientWhereInput = {
     ...(params.contaId ? { contaId: params.contaId } : {}),
+    deletedAt: null,
     archivedAt: null,
     notification: {
       createdAt: { lt: cutoff },

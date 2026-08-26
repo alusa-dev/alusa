@@ -2,6 +2,14 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { syncPaymentStateFromAsaas } from '../sync-payment-state-from-asaas';
 
+const { emitBillingNotificationCandidate } = vi.hoisted(() => ({
+  emitBillingNotificationCandidate: vi.fn(async () => ({ emitted: true })),
+}));
+
+vi.mock('@alusa/lib', () => ({
+  emitBillingNotificationCandidate,
+}));
+
 vi.mock('../asaas-ops', () => ({
   isAsaasEnabled: vi.fn(() => true),
   getPayment: vi.fn(),
@@ -42,7 +50,7 @@ describe('syncPaymentStateFromAsaas', () => {
       deleted: false,
     } as never);
 
-    vi.mocked(handlePaymentWebhook).mockResolvedValueOnce({ success: true } as never);
+    vi.mocked(handlePaymentWebhook).mockResolvedValueOnce({ success: true, stateChanged: true } as never);
 
     const result = await syncPaymentStateFromAsaas({
       contaId: 'conta_1',
@@ -70,6 +78,38 @@ describe('syncPaymentStateFromAsaas', () => {
         }),
       })
     );
+    expect(emitBillingNotificationCandidate).toHaveBeenCalledWith(
+      {
+        contaId: 'conta_1',
+        event: 'PAYMENT_CONFIRMED',
+        asaasPaymentId: 'pay_123',
+      },
+      'ASAAS_SYNC',
+    );
+  });
+
+  it('nao emite notificacao quando a sincronizacao reaplica o mesmo estado', async () => {
+    const { getPayment } = await import('../asaas-ops');
+    const { handlePaymentWebhook } = await import('../../webhooks/payment-webhook-handler');
+
+    vi.mocked(getPayment).mockResolvedValueOnce({
+      id: 'pay_deleted_noop',
+      status: 'CANCELED',
+      value: 99,
+      netValue: 99,
+      billingType: 'PIX',
+      deleted: true,
+    } as never);
+    vi.mocked(handlePaymentWebhook).mockResolvedValueOnce({ success: true, stateChanged: false } as never);
+
+    const result = await syncPaymentStateFromAsaas({
+      contaId: 'conta_1',
+      asaasPaymentId: 'pay_deleted_noop',
+      eventName: 'PAYMENT_DELETED',
+    });
+
+    expect(result.success).toBe(true);
+    expect(emitBillingNotificationCandidate).not.toHaveBeenCalled();
   });
 
   it('retorna erro quando o pipeline interno falha', async () => {

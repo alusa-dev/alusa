@@ -59,21 +59,23 @@ export async function syncPaymentStateFromAsaas(
     providerStatus: snapshotResult.paymentStatus,
   });
 
-  void emitBillingNotificationCandidate(
-    {
-      contaId: input.contaId,
-      event: snapshotResult.appliedEvent,
-      asaasPaymentId: payment.id,
-    },
-    'ASAAS_SYNC',
-  ).catch((error: unknown) => {
-    console.warn('[syncPaymentStateFromAsaas] Falha não crítica ao emitir inbox', {
-      contaId: input.contaId,
-      asaasPaymentId: payment.id,
-      appliedEvent: snapshotResult.appliedEvent,
-      message: error instanceof Error ? error.message : String(error),
+  if (snapshotResult.stateChanged) {
+    void emitBillingNotificationCandidate(
+      {
+        contaId: input.contaId,
+        event: snapshotResult.appliedEvent,
+        asaasPaymentId: payment.id,
+      },
+      'ASAAS_SYNC',
+    ).catch((error: unknown) => {
+      console.warn('[syncPaymentStateFromAsaas] Falha não crítica ao emitir inbox', {
+        contaId: input.contaId,
+        asaasPaymentId: payment.id,
+        appliedEvent: snapshotResult.appliedEvent,
+        message: error instanceof Error ? error.message : String(error),
+      });
     });
-  });
+  }
 
   return {
     success: true,

@@ -96,13 +96,14 @@ function formatDate(value: Date | string | null | undefined): string | null {
 }
 
 function buildRecipientWhere(view: NotificationFeedView): Prisma.NotificationRecipientWhereInput {
+  const activeRecipient = { deletedAt: null };
   if (view === ARCHIVED_VIEW) {
-    return { archivedAt: { not: null } };
+    return { ...activeRecipient, archivedAt: { not: null } };
   }
   if (view === ACTIVE_VIEW) {
-    return { archivedAt: null };
+    return { ...activeRecipient, archivedAt: null };
   }
-  return {};
+  return activeRecipient;
 }
 
 async function resolveRecipientUserIds(
@@ -541,6 +542,7 @@ async function createPaymentDigestNotification(params: {
           notificationId: notification.id,
           contaId: input.contaId,
           userId: { in: recipientUserIds },
+          deletedAt: null,
         },
         data: { readAt: null, archivedAt: null },
       });
@@ -653,6 +655,7 @@ export async function listNotifications(params: {
         userId: params.userId,
         archivedAt: null,
         readAt: null,
+        deletedAt: null,
       },
     }),
     prisma.notificationRecipient.count({ where }),
@@ -678,6 +681,7 @@ export async function getUnreadNotificationCount(params: {
       userId: params.userId,
       archivedAt: null,
       readAt: null,
+      deletedAt: null,
     },
   });
 }
@@ -709,6 +713,7 @@ export async function updateNotificationRecipientState(params: {
       contaId: params.contaId,
       userId: params.userId,
       notificationId: params.notificationId,
+      deletedAt: null,
     },
     data,
   });
@@ -735,31 +740,23 @@ export async function deleteNotificationRecipient(params: {
   notificationId: string;
 }): Promise<boolean> {
   return prisma.$transaction(async (tx) => {
-    const deleted = await tx.notificationRecipient.deleteMany({
+    const deletedAt = new Date();
+    const deleted = await tx.notificationRecipient.updateMany({
       where: {
         contaId: params.contaId,
         userId: params.userId,
         notificationId: params.notificationId,
+        deletedAt: null,
+      },
+      data: {
+        deletedAt,
+        readAt: deletedAt,
+        archivedAt: deletedAt,
       },
     });
 
     if (deleted.count === 0) {
       return false;
-    }
-
-    const remainingRecipients = await tx.notificationRecipient.count({
-      where: {
-        notificationId: params.notificationId,
-      },
-    });
-
-    if (remainingRecipients === 0) {
-      await tx.notification.deleteMany({
-        where: {
-          id: params.notificationId,
-          contaId: params.contaId,
-        },
-      });
     }
 
     await tx.auditLog.create({

@@ -45,6 +45,7 @@ export type ApplyProviderPaymentSnapshotOutput =
       asaasPaymentId: string;
       paymentStatus: string;
       appliedEvent: string;
+      stateChanged: boolean;
       webhookPayload: PaymentWebhookPayload;
     }
   | {
@@ -155,6 +156,7 @@ export async function applyProviderPaymentSnapshot(
     asaasPaymentId: payment.id,
     paymentStatus: effectiveAsaasStatus,
     appliedEvent,
+    stateChanged: result.stateChanged === true,
     webhookPayload,
   };
 }

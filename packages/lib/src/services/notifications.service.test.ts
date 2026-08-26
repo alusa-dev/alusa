@@ -77,7 +77,6 @@ describe('notifications.service', () => {
     txMock.notificationDigestEvent.createMany.mockResolvedValue({ count: 1 });
     txMock.notificationRecipient.createMany.mockResolvedValue({ count: 0 });
     txMock.notification.deleteMany.mockResolvedValue({ count: 1 });
-    txMock.notificationRecipient.deleteMany.mockResolvedValue({ count: 1 });
     txMock.notificationRecipient.count.mockResolvedValue(0);
     txMock.notificationRecipient.updateMany.mockResolvedValue({ count: 1 });
     txMock.auditLog.create.mockResolvedValue({ id: 'audit-1' });
@@ -383,6 +382,7 @@ describe('notifications.service', () => {
         contaId: 'conta-1',
         userId: 'user-1',
         notificationId: 'notif-1',
+        deletedAt: null,
       },
       data: expect.objectContaining({
         readAt: expect.any(Date),
@@ -391,7 +391,7 @@ describe('notifications.service', () => {
     expect(prismaMock.auditLog.create).toHaveBeenCalledTimes(1);
   });
 
-  it('exclui o recipient e remove a notificação quando ele é o último destinatário', async () => {
+  it('oculta o recipient sem remover a notificacao nem sua chave de deduplicacao', async () => {
     const deleted = await deleteNotificationRecipient({
       contaId: 'conta-1',
       userId: 'user-1',
@@ -399,19 +399,20 @@ describe('notifications.service', () => {
     });
 
     expect(deleted).toBe(true);
-    expect(txMock.notificationRecipient.deleteMany).toHaveBeenCalledWith({
+    expect(txMock.notificationRecipient.updateMany).toHaveBeenCalledWith({
       where: {
         contaId: 'conta-1',
         userId: 'user-1',
         notificationId: 'notif-1',
+        deletedAt: null,
+      },
+      data: {
+        deletedAt: expect.any(Date),
+        readAt: expect.any(Date),
+        archivedAt: expect.any(Date),
       },
     });
-    expect(txMock.notification.deleteMany).toHaveBeenCalledWith({
-      where: {
-        id: 'notif-1',
-        contaId: 'conta-1',
-      },
-    });
+    expect(txMock.notification.deleteMany).not.toHaveBeenCalled();
   });
 
   it('marca todas as notificações ativas como lidas', async () => {

@@ -7230,6 +7230,7 @@ model NotificationRecipient {
   userId         String
   readAt         DateTime?
   archivedAt     DateTime?
+  deletedAt      DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -7242,6 +7243,7 @@ model NotificationRecipient {
   @@index([contaId, userId, archivedAt, createdAt], name: "idx_notification_recipient_feed")
   @@index([contaId, userId, readAt], name: "idx_notification_recipient_read")
   @@index([contaId, userId, archivedAt, readAt, createdAt], name: "idx_notification_recipient_unread_feed")
+  @@index([contaId, userId, deletedAt, archivedAt, createdAt], name: "idx_notification_recipient_deleted_feed")
   @@index([userId, createdAt])
 }
 
