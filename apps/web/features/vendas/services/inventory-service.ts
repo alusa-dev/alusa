@@ -9,6 +9,7 @@ export interface InventoryBalanceItem {
   productName: string;
   variantId: string | null;
   variantTitle: string | null;
+  variantAttributes: Array<{ name: string; value: string }>;
   sku: string | null;
   categoryId: string | null;
   categoryName: string | null;
