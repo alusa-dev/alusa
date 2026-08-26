@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { cn } from '@/lib/cn';
 
 import {
   CheckCircle,
@@ -29,6 +30,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
   SelectContent,
@@ -91,6 +93,8 @@ type InventoryVariantGroup = {
   inventoryValue: number;
   alertState: InventoryBalanceItem['alertState'];
 };
+
+type InventoryAlertFilter = 'ALL' | InventoryBalanceItem['alertState'];
 
 function getVariantAttributes(item: InventoryBalanceItem): Array<{ name: string; value: string }> {
   if (!item.variantId) return [{ name: 'Nenhuma', value: 'Nenhuma' }];
@@ -157,7 +161,7 @@ export function InventoryFeature() {
   const [balances, setBalances] = useState<InventoryBalanceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [lowOnly, setLowOnly] = useState(false);
+  const [alertFilter, setAlertFilter] = useState<InventoryAlertFilter>('ALL');
   const [entryOpen, setEntryOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<InventoryVariantGroup | null>(null);
@@ -192,7 +196,7 @@ export function InventoryFeature() {
     try {
       const nextBalances = await listInventoryBalances({
         search,
-        lowOnly,
+        alertState: alertFilter === 'ALL' ? undefined : alertFilter,
         productId: presetProductId,
         variantId: presetVariantId,
       });
@@ -219,7 +223,7 @@ export function InventoryFeature() {
   useEffect(() => {
     void loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, lowOnly, presetProductId, presetVariantId]);
+  }, [search, alertFilter, presetProductId, presetVariantId]);
 
   const totals = useMemo(
     () =>
@@ -477,15 +481,53 @@ export function InventoryFeature() {
                 placeholder="Buscar por produto, variante ou SKU"
               />
             </div>
-            <Button
-              type="button"
-              variant={lowOnly ? 'default' : 'outline'}
-              className="h-10 w-full whitespace-nowrap px-4 shadow-none lg:w-auto"
-              onClick={() => setLowOnly((current) => !current)}
-            >
-              <Filter className="mr-2 h-4 w-4" />
-              {lowOnly ? 'Exibindo baixo estoque' : 'Filtrar baixo estoque'}
-            </Button>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant={alertFilter === 'ALL' ? 'outline' : 'default'}
+                  className="h-10 w-full whitespace-nowrap px-4 shadow-none lg:w-auto"
+                  aria-label="Abrir filtros de estoque"
+                >
+                  <Filter className="mr-2 h-4 w-4" />
+                  Filtro
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-64 rounded-xl border-slate-200 p-3">
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Filtrar estoque</p>
+                    <p className="mt-0.5 text-xs text-slate-500">Escolha uma situação.</p>
+                  </div>
+                  <div className="space-y-1" role="radiogroup" aria-label="Situação do estoque">
+                    {(
+                      [
+                        ['ALL', 'Todos'],
+                        ['LOW', 'Estoque baixo'],
+                        ['OUT', 'Sem estoque'],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <PopoverClose key={value} asChild>
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={alertFilter === value}
+                          className={cn(
+                            'flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition-colors',
+                            alertFilter === value
+                              ? 'bg-brand-accent/10 font-medium text-brand-accent'
+                              : 'text-slate-700 hover:bg-slate-50',
+                          )}
+                          onClick={() => setAlertFilter(value)}
+                        >
+                          {label}
+                        </button>
+                      </PopoverClose>
+                    ))}
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
         }
       >
@@ -545,8 +587,8 @@ export function InventoryFeature() {
           if (!open) setSelectedGroup(null);
         }}
       >
-        <DialogContent className="max-w-4xl gap-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-0">
-          <div className="px-6 pb-0 pt-5">
+        <DialogContent className="flex max-h-[640px] max-w-4xl flex-col gap-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 max-md:max-h-[calc(100dvh-1rem)]">
+          <div className="shrink-0 px-6 pb-0 pt-4">
             <DialogTitle className="text-xl font-semibold text-slate-900">
               Detalhes da variante
             </DialogTitle>
@@ -555,7 +597,7 @@ export function InventoryFeature() {
             </DialogDescription>
           </div>
 
-          <div className="px-6 pb-6 pt-4">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-5 pt-3">
             <div className="overflow-hidden rounded-xl border border-slate-200">
               <table className="w-full table-fixed whitespace-nowrap text-sm">
                 <colgroup>
@@ -565,7 +607,7 @@ export function InventoryFeature() {
                   <col className="w-[24%]" />
                   <col className="w-[10%]" />
                 </colgroup>
-                <thead className="bg-slate-50">
+                <thead className="sticky top-0 z-10 bg-slate-50">
                   <tr className="border-b border-slate-100 text-left">
                     <th className="px-6 py-3 text-xs font-medium text-slate-500">Produto</th>
                     <th className="px-3 py-3 text-xs font-medium text-slate-500">Valor</th>

@@ -220,6 +220,7 @@ export type ListInventoryBalancesInput = {
   search?: string;
   productId?: string;
   variantId?: string;
+  alertState?: InventoryAlertState;
   lowOnly?: boolean;
   includeInactive?: boolean;
 };
@@ -906,6 +907,10 @@ export async function listInventoryBalances(
 
   if (input.lowOnly) {
     data = data.filter((item) => item.alertState === 'LOW' || item.alertState === 'OUT');
+  }
+
+  if (input.alertState) {
+    data = data.filter((item) => item.alertState === input.alertState);
   }
 
   return data;

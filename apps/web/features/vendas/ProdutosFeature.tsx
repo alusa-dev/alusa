@@ -12,7 +12,20 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Archive, ArchiveRestore, Edit3, Package2, Plus } from '@/components/icons/icons';
+import {
+  Archive,
+  ArchiveRestore,
+  Edit3,
+  MoreVertical,
+  Package2,
+  Plus,
+} from '@/components/icons/icons';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import ConfirmDeleteDialog from '@/components/dialogs/ConfirmDeleteDialog';
 import { toast } from '@/components/ui/toast';
 import { useDeleteDialog } from '@/hooks/use-delete-dialog';
@@ -128,56 +141,71 @@ function ProdutosTable({
   const actionColumn = {
     id: 'actions',
     header: 'Ações',
-    width: viewMode === 'archived' ? 'w-[7rem] max-lg:shrink-0 lg:w-[12%]' : 'w-[3.25rem] max-lg:shrink-0 lg:w-[16%]',
+    width: 'w-[4rem] max-lg:shrink-0 lg:w-[7%]',
     align: 'right',
-    headerClassName: 'max-lg:px-1',
-    cellClassName: 'max-lg:px-1',
-    skeleton: <div className="ml-auto h-8 w-28 rounded-lg bg-gray-200" />,
+    headerClassName: 'px-3 md:px-4',
+    cellClassName: 'px-3 md:px-4',
+    skeleton: <div className="ml-auto size-8 rounded-lg bg-gray-200" />,
     render: (row: ProductListItem) => {
       const isPending = pendingIds.has(row.id);
 
       if (viewMode === 'archived') {
         return (
           <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8 max-lg:px-2 max-lg:text-[11px] rounded-lg px-3 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
-              disabled={isPending || !canWrite}
-              onClick={() => onRestore(row)}
-            >
-              <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" />
-              Restaurar
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
+                  aria-label={`Abrir ações de ${row.name}`}
+                  disabled={isPending || !canWrite}
+                >
+                  <MoreVertical className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onSelect={() => onRestore(row)}>
+                  <ArchiveRestore className="mr-2 size-4" />
+                  Restaurar produto
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         );
       }
 
       return (
-        <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
-            aria-label={`Editar produto ${row.name}`}
-            disabled={!canWrite}
-            onClick={() => onEdit(row)}
-          >
-            <Edit3 className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 rounded-lg text-amber-600 hover:bg-amber-50 hover:text-amber-700 alusa-dark:text-amber-300 alusa-dark:hover:bg-amber-500/10 alusa-dark:hover:text-amber-200"
-            disabled={isPending || !canWrite}
-            aria-label={`Arquivar produto ${row.name}`}
-            onClick={() => onDelete(row)}
-          >
-            <Archive className="h-4 w-4" />
-          </Button>
+        <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
+                aria-label={`Abrir ações de ${row.name}`}
+                disabled={isPending || !canWrite}
+              >
+                <MoreVertical className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem onSelect={() => onEdit(row)}>
+                <Edit3 className="mr-2 size-4" />
+                Editar produto
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="text-amber-700 hover:text-amber-800 data-[highlighted]:text-amber-800"
+                disabled={isPending}
+                onSelect={() => onDelete(row)}
+              >
+                <Archive className="mr-2 size-4" />
+                Arquivar produto
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       );
     },
@@ -187,7 +215,7 @@ function ProdutosTable({
     {
       id: 'name',
       header: 'Produto',
-      width: 'min-w-0 lg:w-[28%]',
+      width: 'min-w-0 lg:w-[30%]',
       align: 'left',
       noWrap: false,
       skeleton: (
@@ -255,7 +283,7 @@ function ProdutosTable({
     {
       id: 'price',
       header: 'Preço',
-      width: 'lg:w-[14%]',
+      width: 'lg:w-[13%]',
       align: 'left',
       headerClassName: 'hidden lg:table-cell',
       cellClassName: 'hidden lg:table-cell',
@@ -272,7 +300,7 @@ function ProdutosTable({
     {
       id: 'margin',
       header: 'Custo e margem',
-      width: 'lg:w-[18%]',
+      width: 'lg:w-[21%]',
       align: 'left',
       noWrap: false,
       headerClassName: 'hidden lg:table-cell',
@@ -332,7 +360,7 @@ function ProdutosTable({
     {
       id: 'status',
       header: 'Status',
-      width: 'w-[4.5rem] max-lg:shrink-0 lg:w-[10%]',
+      width: 'w-[4.5rem] max-lg:shrink-0 lg:w-[8%]',
       align: 'center',
       headerClassName: 'max-lg:px-1',
       cellClassName: 'max-lg:px-1',
@@ -359,7 +387,7 @@ function ProdutosTable({
                 row.isActive ? `Inativar produto ${row.name}` : `Ativar produto ${row.name}`
               }
               onCheckedChange={(active) => onToggleStatus(row, active)}
-              className="h-5 w-9 bg-slate-200 disabled:cursor-wait disabled:opacity-70 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-red-400"
+              className="h-5 w-9 bg-slate-200 focus-visible:ring-2 focus-visible:ring-emerald-500/30 disabled:cursor-wait disabled:opacity-70 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-slate-300"
               thumbClassName="h-4 w-4 bg-white shadow-sm data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0"
             />
           </div>

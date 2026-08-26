@@ -78,6 +78,7 @@ export async function listInventoryBalances(params: {
   search?: string;
   productId?: string;
   variantId?: string;
+  alertState?: InventoryAlertState;
   lowOnly?: boolean;
   includeInactive?: boolean;
 } = {}): Promise<InventoryBalanceItem[]> {
@@ -85,6 +86,7 @@ export async function listInventoryBalances(params: {
   if (params.search?.trim()) searchParams.set('search', params.search.trim());
   if (params.productId) searchParams.set('productId', params.productId);
   if (params.variantId) searchParams.set('variantId', params.variantId);
+  if (params.alertState) searchParams.set('alertState', params.alertState);
   if (params.lowOnly) searchParams.set('lowOnly', 'true');
   if (params.includeInactive) searchParams.set('includeInactive', 'true');
 

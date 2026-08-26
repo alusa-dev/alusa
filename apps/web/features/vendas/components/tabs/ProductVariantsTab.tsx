@@ -22,6 +22,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
+import { InfoCallout } from '@/components/ui/info-callout';
 import {
   ChevronDown,
   ChevronUp,
@@ -67,6 +68,10 @@ interface VariantEditForm {
   isActive: boolean;
 }
 
+type DeleteRequest =
+  | { type: 'option'; optionId: string; label: string }
+  | { type: 'value'; optionId: string; valueId: string; label: string };
+
 const inputSm =
   'h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30';
 const inputMd =
@@ -107,6 +112,8 @@ export function ProductVariantsTab({
     isActive: true,
   });
   const [confirmExitOpen, setConfirmExitOpen] = useState(false);
+  const [deleteRequest, setDeleteRequest] = useState<DeleteRequest | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [savingVariant, setSavingVariant] = useState<string | null>(null);
 
   // Track open option panels
@@ -177,6 +184,19 @@ export function ProductVariantsTab({
     }
   }
 
+  function requestDeleteOption(optionId: string) {
+    const option = options.find((item) => item.id === optionId);
+    if (!option) return;
+    setDeleteRequest({ type: 'option', optionId, label: option.name });
+  }
+
+  function requestDeleteValue(optionId: string, valueId: string) {
+    const option = options.find((item) => item.id === optionId);
+    const value = option?.values.find((item) => item.id === valueId);
+    if (!option || !value) return;
+    setDeleteRequest({ type: 'value', optionId, valueId, label: `${option.name}: ${value.value}` });
+  }
+
   async function handleDeleteOption(optionId: string) {
     setError(null);
     try {
@@ -188,12 +208,23 @@ export function ProductVariantsTab({
       }
     } catch (e) {
       setError((e as Error).message);
+      throw e;
     }
   }
 
   async function handleAddValue(optionId: string) {
     const value = newValueInputs[optionId]?.trim();
     if (!value) return;
+
+    const option = options.find((item) => item.id === optionId);
+    const alreadyExists = option?.values.some(
+      (item) => item.value.trim().toLocaleLowerCase() === value.toLocaleLowerCase(),
+    );
+    if (alreadyExists) {
+      setError(`O valor “${value}” já foi cadastrado nesta variante.`);
+      return;
+    }
+
     setError(null);
     try {
       const val = await addOptionValue(productId, optionId, value);
@@ -223,6 +254,22 @@ export function ProductVariantsTab({
       }
     } catch (e) {
       setError((e as Error).message);
+      throw e;
+    }
+  }
+
+  async function confirmDeleteRequest() {
+    if (!deleteRequest) return;
+    setDeleting(true);
+    try {
+      if (deleteRequest.type === 'option') {
+        await handleDeleteOption(deleteRequest.optionId);
+      } else {
+        await handleDeleteValue(deleteRequest.optionId, deleteRequest.valueId);
+      }
+      setDeleteRequest(null);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -233,6 +280,7 @@ export function ProductVariantsTab({
       setVariants(vars);
     } catch (e) {
       setError((e as Error).message);
+      throw e;
     }
   }
 
@@ -343,7 +391,9 @@ export function ProductVariantsTab({
   return (
     <div className="space-y-5">
       {error && !editingVariant && (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">{error}</p>
+        <InfoCallout variant="warning" size="sm" showIcon title="Não foi possível concluir">
+          {error}
+        </InfoCallout>
       )}
 
       {/* Atributos */}
@@ -379,7 +429,7 @@ export function ProductVariantsTab({
               </button>
               <button
                 type="button"
-                onClick={() => void handleDeleteOption(option.id)}
+                onClick={() => requestDeleteOption(option.id)}
                 className="flex size-6 items-center justify-center rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 transition"
               >
                 <Trash2 className="size-3.5" />
@@ -398,7 +448,7 @@ export function ProductVariantsTab({
                       {v.value}
                       <button
                         type="button"
-                        onClick={() => void handleDeleteValue(option.id, v.id)}
+                        onClick={() => requestDeleteValue(option.id, v.id)}
                         className="ml-0.5 hover:text-red-500 transition"
                         aria-label={`Remover ${v.value}`}
                       >
@@ -571,8 +621,8 @@ export function ProductVariantsTab({
           if (!open) setSelectedGroup(null);
         }}
       >
-        <DialogContent className="max-w-4xl gap-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-0">
-          <div className="px-6 pb-0 pt-5">
+        <DialogContent className="flex max-h-[640px] max-w-4xl flex-col gap-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 max-md:max-h-[calc(100dvh-1rem)]">
+          <div className="shrink-0 px-6 pb-0 pt-4">
             <DialogTitle className="text-xl font-semibold text-slate-900">
               Detalhes da variante
             </DialogTitle>
@@ -581,7 +631,7 @@ export function ProductVariantsTab({
             </DialogDescription>
           </div>
 
-          <div className="px-6 pb-6 pt-4">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-5 pt-3">
             <div className="overflow-hidden rounded-xl border border-slate-200">
               <table className="w-full table-fixed whitespace-nowrap text-sm">
                 <colgroup>
@@ -591,7 +641,7 @@ export function ProductVariantsTab({
                   <col className="w-[23%]" />
                   <col className="w-[10%]" />
                 </colgroup>
-                <thead className="bg-slate-50">
+                <thead className="sticky top-0 z-10 bg-slate-50">
                   <tr className="border-b border-slate-100 text-left">
                     <th className="px-6 py-3 text-xs font-medium text-slate-500">Nome</th>
                     <th className="px-3 py-3 text-xs font-medium text-slate-500">Valor</th>
@@ -907,6 +957,39 @@ export function ProductVariantsTab({
               }}
             >
               Sair
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={Boolean(deleteRequest)}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteRequest(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Excluir {deleteRequest?.type === 'option' ? 'variante' : 'valor'}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              <span className="font-medium text-slate-900">{deleteRequest?.label}</span>{' '}
+              será removido permanentemente. Variantes geradas relacionadas serão reorganizadas
+              automaticamente, desde que não tenham estoque, reservas ou histórico.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 text-white hover:bg-red-700"
+              disabled={deleting}
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmDeleteRequest();
+              }}
+            >
+              {deleting ? 'Excluindo...' : 'Excluir permanentemente'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -12,6 +12,7 @@ const querySchema = z.object({
   search: z.string().trim().optional(),
   productId: z.string().trim().optional(),
   variantId: z.string().trim().optional(),
+  alertState: z.enum(['OUT', 'LOW', 'OK']).optional(),
   lowOnly: z
     .enum(['true', 'false'])
     .optional()
@@ -37,6 +38,7 @@ export async function GET(request: Request) {
       search: parsed.data.search,
       productId: parsed.data.productId,
       variantId: parsed.data.variantId,
+      alertState: parsed.data.alertState,
       lowOnly: parsed.data.lowOnly,
       includeInactive: parsed.data.includeInactive,
     });
