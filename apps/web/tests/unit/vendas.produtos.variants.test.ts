@@ -5,6 +5,7 @@ import {
   formatVariantLabel,
   groupProductVariants,
   getVariantAttributeEntries,
+  needsVariantGeneration,
   type ProductVariantDTO,
 } from '@/features/vendas/services/product-variant-service';
 
@@ -81,5 +82,44 @@ describe('rótulo de variante', () => {
     expect(group.reserved).toBe(1);
     expect(group.incoming).toBe(2);
     expect(group.averageCost).toBe(26);
+  });
+
+  it('detecta valores ainda não materializados como variantes vendáveis', () => {
+    const options = [
+      {
+        id: 'cor',
+        productId: 'product-1',
+        name: 'Cor',
+        sortOrder: 0,
+        values: [
+          { id: 'rosa', optionId: 'cor', value: 'Rosa', sortOrder: 0 },
+          { id: 'preto', optionId: 'cor', value: 'Preto', sortOrder: 1 },
+        ],
+      },
+    ];
+    const variants = [makeVariant('Rosa', [['Cor', 'Rosa']])];
+
+    expect(needsVariantGeneration(options, variants)).toBe(true);
+  });
+
+  it('detecta combinações legadas mesmo quando todos os valores esperados existem', () => {
+    const options = [
+      {
+        id: 'cor',
+        productId: 'product-1',
+        name: 'Cor',
+        sortOrder: 0,
+        values: [{ id: 'rosa', optionId: 'cor', value: 'Rosa', sortOrder: 0 }],
+      },
+    ];
+    const variants = [
+      makeVariant('Rosa', [['Cor', 'Rosa']]),
+      makeVariant('Rosa / 32', [
+        ['Cor', 'Rosa'],
+        ['Tamanho', '32'],
+      ]),
+    ];
+
+    expect(needsVariantGeneration(options, variants)).toBe(true);
   });
 });

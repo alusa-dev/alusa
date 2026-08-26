@@ -156,7 +156,6 @@ export async function generateProductVariants(
     ),
   );
 
-  let sortOrder = existing.length;
   const expectedValueIds = new Set(variantValues.map(({ value }) => value.id));
   const obsolete = existing.filter(
     (variant) =>
@@ -164,32 +163,78 @@ export async function generateProductVariants(
   );
 
   await prisma.$transaction(async (tx) => {
-    for (const variant of obsolete) {
-      const balance = existingBalances.find((item) => item.variantId === variant.id);
-      if (balance && (balance.onHand > 0 || balance.reserved > 0 || balance.incoming > 0)) {
-        throw new Error(
-          `Não é possível reorganizar a variante "${variant.title}" porque ela possui estoque, reserva ou entrada pendente.`,
-        );
-      }
+    const obsoleteIds = obsolete.map((variant) => variant.id);
 
-      const [saleItems, restockItems, inventoryMovements] = await Promise.all([
-        tx.saleItem.count({ where: { variantId: variant.id } }),
-        tx.restockOrderItem.count({ where: { variantId: variant.id } }),
-        tx.inventoryMovement.count({ where: { variantId: variant.id } }),
-      ]);
-
-      if (saleItems > 0 || restockItems > 0 || inventoryMovements > 0) {
-        throw new Error(
-          `Não é possível reorganizar a variante "${variant.title}" porque ela possui histórico registrado.`,
-        );
-      }
-
-      await tx.inventoryBalance.deleteMany({
-        where: { contaId, productId, variantId: variant.id },
+    if (obsoleteIds.length > 0) {
+      // Interactive transactions use a single database connection. Running
+      // these checks with Promise.all makes a large legacy cleanup queue
+      // queries on that connection and can close the transaction before the
+      // following deleteMany call. Keep the checks grouped and sequential.
+      const balances = await tx.inventoryBalance.findMany({
+        where: {
+          contaId,
+          productId,
+          variantId: { in: obsoleteIds },
+        },
+        select: {
+          variantId: true,
+          onHand: true,
+          reserved: true,
+          incoming: true,
+        },
       });
-      await tx.productVariant.delete({ where: { id: variant.id } });
+      const balanceWithQuantity = balances.find(
+        (balance) =>
+          balance.variantId &&
+          (balance.onHand > 0 || balance.reserved > 0 || balance.incoming > 0),
+      );
+      if (balanceWithQuantity) {
+        const variant = obsolete.find((item) => item.id === balanceWithQuantity.variantId);
+        throw new Error(
+          `Não é possível reorganizar a variante "${variant?.title ?? 'desconhecida'}" porque ela possui estoque, reserva ou entrada pendente.`,
+        );
+      }
+
+      const saleItems = await tx.saleItem.findMany({
+        where: { variantId: { in: obsoleteIds } },
+        select: { variantId: true },
+        distinct: ['variantId'],
+      });
+      const restockItems = await tx.restockOrderItem.findMany({
+        where: { variantId: { in: obsoleteIds } },
+        select: { variantId: true },
+        distinct: ['variantId'],
+      });
+      const inventoryMovements = await tx.inventoryMovement.findMany({
+        where: { variantId: { in: obsoleteIds } },
+        select: { variantId: true },
+        distinct: ['variantId'],
+      });
+      const historicalVariantIds = new Set(
+        [...saleItems, ...restockItems, ...inventoryMovements]
+          .map((item) => item.variantId)
+          .filter((variantId): variantId is string => Boolean(variantId)),
+      );
+      const variantWithHistory = obsolete.find((variant) => historicalVariantIds.has(variant.id));
+      if (variantWithHistory) {
+        throw new Error(
+          `Não é possível reorganizar a variante "${variantWithHistory.title}" porque ela possui histórico registrado.`,
+        );
+      }
+
+      // Both relations are tenant/product scoped and the checks above happen
+      // in this same transaction, so the cleanup remains atomic and cannot
+      // remove a variant that acquired stock or history concurrently.
+      await tx.inventoryBalance.deleteMany({
+        where: { contaId, productId, variantId: { in: obsoleteIds } },
+      });
+      await tx.productVariant.deleteMany({
+        where: { productId, id: { in: obsoleteIds } },
+      });
     }
 
+    const retainedVariantCount = existing.length - obsolete.length;
+    let nextSortOrder = retainedVariantCount;
     for (const { option, value } of variantValues) {
       const key = value.id;
       if (existingKeys.has(key)) continue;
@@ -200,8 +245,8 @@ export async function generateProductVariants(
           title: `${option.name} · ${value.value}`,
           stock: 0,
           lowStockThreshold: product.lowStockThreshold,
-          sortOrder,
-          isDefault: sortOrder === 0 && existing.length === 0,
+          sortOrder: nextSortOrder,
+          isDefault: nextSortOrder === 0 && retainedVariantCount === 0,
           options: {
             create: [{ optionValueId: value.id }],
           },
@@ -229,7 +274,7 @@ export async function generateProductVariants(
       });
 
       existingKeys.add(key);
-      sortOrder++;
+      nextSortOrder++;
     }
 
     // Marcar produto como hasVariants
@@ -237,7 +282,7 @@ export async function generateProductVariants(
       where: { id: productId },
       data: { hasVariants: true, stock: 0 },
     });
-  });
+  }, { maxWait: 10_000, timeout: 30_000 });
 
   return listProductVariants(productId, contaId);
 }

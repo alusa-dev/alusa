@@ -7,6 +7,19 @@ function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
 }
 
+function publicVariantError(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  if (
+    message.startsWith('Não é possível') ||
+    message === 'Produto não encontrado' ||
+    message.startsWith('Adicione')
+  ) {
+    return message;
+  }
+
+  return 'Não foi possível sincronizar as variantes. Tente novamente.';
+}
+
 interface RouteContext {
   params: { id: string } | Promise<{ id: string }>;
 }
@@ -41,6 +54,7 @@ export async function POST(req: Request, context: RouteContext) {
 
     return jsonError(422, 'ACAO_INVALIDA', 'Use { "action": "gerar" } para gerar variantes');
   } catch (e) {
-    return jsonError(400, 'ERRO_GERAR_VARIANTES', (e as Error).message);
+    console.error('[vendas/produtos/variantes] Falha ao gerar variantes', e);
+    return jsonError(400, 'ERRO_GERAR_VARIANTES', publicVariantError(e));
   }
 }

@@ -36,6 +36,7 @@ import {
   formatVariantDisplayName,
   groupProductVariants,
   getVariantAttributeEntries,
+  needsVariantGeneration,
   type ProductOptionDTO,
   type ProductVariantDTO,
 } from '../../services/product-variant-service';
@@ -133,9 +134,10 @@ export function ProductVariantsTab({
       setOptions(opts);
       setVariants(vars);
 
-      // Older versions generated cartesian combinations. Normalize those
-      // records automatically when they are safe to replace.
-      if (opts.length > 0 && vars.some((variant) => variant.options.length !== 1)) {
+      // Older versions generated cartesian combinations. Also fill values
+      // added after the last generation. Normalize these records
+      // automatically when they are safe to replace.
+      if (needsVariantGeneration(opts, vars)) {
         try {
           const normalized = await generateProductVariants(productId);
           setVariants(normalized);

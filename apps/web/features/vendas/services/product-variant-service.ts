@@ -57,6 +57,31 @@ export interface ProductVariantGroup {
   averageCost: number;
 }
 
+export function needsVariantGeneration(
+  options: ProductOptionDTO[],
+  variants: Pick<ProductVariantDTO, 'options'>[],
+): boolean {
+  if (options.length === 0) return false;
+
+  const expectedValueIds = new Set(
+    options.flatMap((option) => option.values.map((value) => value.id)),
+  );
+  const linkedValueIds = new Set<string>();
+  const hasLegacyCombination = variants.some((variant) => {
+    if (variant.options.length !== 1) return true;
+    const optionValueId = variant.options[0]?.optionValueId;
+    if (optionValueId) linkedValueIds.add(optionValueId);
+    return false;
+  });
+
+  return (
+    hasLegacyCombination ||
+    expectedValueIds.size !== linkedValueIds.size ||
+    [...expectedValueIds].some((valueId) => !linkedValueIds.has(valueId)) ||
+    [...linkedValueIds].some((valueId) => !expectedValueIds.has(valueId))
+  );
+}
+
 /**
  * Returns the attribute/value pairs that identify a sellable variant.
  * The persisted `title` is kept as a fallback for legacy variants that do
