@@ -38,6 +38,10 @@ vi.mock('@/src/server/matriculas/matricula-sync.service', () => ({
   reconcilePendingMatriculaCancellations: vi.fn(),
 }));
 
+vi.mock('@/src/server/matriculas/enrollment-closure.service', () => ({
+  finalizeExpiredFamilyEnrollments: vi.fn(async () => ({ processed: 0, updated: 0, errors: [] })),
+}));
+
 vi.mock('@/lib/notifications/emit-billing-notifications', () => ({
   emitBillingNotificationCandidate: vi.fn(),
   emitBillingNotifications: vi.fn(),
@@ -134,14 +138,35 @@ describe('admin jobs multi-tenant isolation', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(reconcileFinanceWebhooksJob).toHaveBeenCalledWith({
+    expect(reconcileFinanceWebhooksJob).toHaveBeenCalledWith(expect.objectContaining({
       contaId: 'conta-2',
       windowHours: 24,
       limit: 100,
       dryRun: false,
       includeGaps: true,
       maxAccounts: 1,
-    });
+      mode: 'targeted',
+      providerCheckIntervalMinutes: 360,
+      maxAsaasCalls: 100,
+      accountConcurrency: 2,
+      maxDurationMs: 100000,
+    }));
+  });
+
+  it('usa intervalo de 24h quando safety sweep não informa intervalo explícito', async () => {
+    vi.mocked(getServerSession).mockResolvedValue(null as never);
+
+    const response = await postReconcileWebhooks(
+      makeRequest('http://localhost/api/jobs/reconcile-finance-webhooks?mode=safety_sweep', {
+        'x-cron-token': 'cron-secret',
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(reconcileFinanceWebhooksJob).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'safety_sweep',
+      providerCheckIntervalMinutes: 1440,
+    }));
   });
 
   it('reconcilia um pagamento específico sem executar a reconciliação ampla', async () => {

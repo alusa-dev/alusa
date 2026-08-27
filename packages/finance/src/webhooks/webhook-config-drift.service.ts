@@ -126,11 +126,12 @@ export interface WebhookConfigDriftStatus {
 
 export interface RepairWebhookConfigDriftResult {
   repaired: boolean;
-  reason: 'REPAIRED' | 'NO_DRIFT' | 'REMOTE_NOT_FOUND' | 'ASAAS_ACCOUNT_NOT_READY' | 'CREDENTIALS_MISSING';
+  reason: 'REPAIRED' | 'NO_DRIFT' | 'REMOTE_NOT_FOUND' | 'ASAAS_ACCOUNT_NOT_READY' | 'CREDENTIALS_MISSING' | 'PROVIDER_ERROR';
   before: WebhookConfigDriftStatus | null;
   after: WebhookConfigDriftStatus | null;
   failureCategory?: string;
   failureStatus?: number | null;
+  failureDetails?: Array<{ code?: string; description?: string }>;
 }
 
 function computeDrift(params: {
@@ -281,13 +282,29 @@ export async function repairWebhookConfigDrift(params: {
     return { repaired: true, reason: 'REPAIRED', before, after };
   } catch (error) {
     const failure = classifyAsaasOperationalError(error, 'subaccount');
+    const reason = failure.category === 'invalid_subaccount_credentials'
+      ? 'CREDENTIALS_MISSING'
+      : failure.status === 404
+        ? 'REMOTE_NOT_FOUND'
+        : 'PROVIDER_ERROR';
+
+    console.warn('[finance.webhook-config] Falha ao verificar/reparar webhook', {
+      contaId: params.contaId,
+      reason,
+      failureCategory: failure.category,
+      failureStatus: failure.status,
+      failureDetails: failure.details,
+      retryable: failure.retryable,
+    });
+
     return {
       repaired: false,
-      reason: 'CREDENTIALS_MISSING',
+      reason,
       before: null,
       after: null,
       failureCategory: failure.category,
       failureStatus: failure.status,
+      failureDetails: failure.details,
     };
   }
 }

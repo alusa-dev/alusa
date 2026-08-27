@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { prisma } from '@alusa/database';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { Prisma as PrismaTypes } from '@prisma/client';
 
 export type WebhookJobLockAcquireResult =
   | { acquired: true; jobName: string; workerId: string; lockedUntil: Date }
@@ -10,7 +11,7 @@ export type WebhookJobLockAcquireResult =
 export interface WebhookJobLockOptions {
   ttlMs?: number;
   workerId?: string;
-  metadata?: Prisma.InputJsonValue;
+  metadata?: PrismaTypes.InputJsonValue;
 }
 
 const DEFAULT_JOB_LOCK_TTL_MS = 4 * 60 * 1000;
@@ -18,10 +19,6 @@ const DEFAULT_JOB_LOCK_TTL_MS = 4 * 60 * 1000;
 function resolveTtlMs(ttlMs?: number): number {
   if (!Number.isFinite(ttlMs) || !ttlMs || ttlMs <= 0) return DEFAULT_JOB_LOCK_TTL_MS;
   return Math.min(Math.max(Math.floor(ttlMs), 10_000), 30 * 60_000);
-}
-
-function isUniqueConstraintError(error: unknown): boolean {
-  return Boolean(error && typeof error === 'object' && 'code' in error && (error as { code?: string }).code === 'P2002');
 }
 
 export async function acquireWebhookJobLock(
@@ -38,39 +35,43 @@ export async function acquireWebhookJobLock(
   const lockedUntil = new Date(now.getTime() + ttlMs);
   const workerId = options.workerId ?? `worker:${process.pid}:${randomUUID()}`;
 
-  try {
-    await prisma.webhookJobLock.create({
-      data: {
-        jobName: normalizedJobName,
-        workerId,
-        lockedAt: now,
-        lockedUntil,
-        lastHeartbeatAt: now,
-        metadata: options.metadata ?? undefined,
-      },
-      select: { jobName: true },
-    });
+  const metadata = options.metadata === undefined ? null : JSON.stringify(options.metadata);
+  const claimed = await prisma.$queryRaw<Array<{ jobName: string }>>(
+    Prisma.sql`
+      INSERT INTO "WebhookJobLock" (
+        "jobName",
+        "lockedAt",
+        "lockedUntil",
+        "workerId",
+        "lastHeartbeatAt",
+        "metadata",
+        "createdAt",
+        "updatedAt"
+      )
+      VALUES (
+        ${normalizedJobName},
+        ${now},
+        ${lockedUntil},
+        ${workerId},
+        ${now},
+        ${metadata}::jsonb,
+        ${now},
+        ${now}
+      )
+      ON CONFLICT ("jobName") DO UPDATE
+      SET
+        "lockedAt" = EXCLUDED."lockedAt",
+        "lockedUntil" = EXCLUDED."lockedUntil",
+        "workerId" = EXCLUDED."workerId",
+        "lastHeartbeatAt" = EXCLUDED."lastHeartbeatAt",
+        "metadata" = EXCLUDED."metadata",
+        "updatedAt" = EXCLUDED."updatedAt"
+      WHERE "WebhookJobLock"."lockedUntil" < EXCLUDED."lockedAt"
+      RETURNING "jobName"
+    `,
+  );
 
-    return { acquired: true, jobName: normalizedJobName, workerId, lockedUntil };
-  } catch (error) {
-    if (!isUniqueConstraintError(error)) throw error;
-  }
-
-  const updated = await prisma.webhookJobLock.updateMany({
-    where: {
-      jobName: normalizedJobName,
-      lockedUntil: { lt: now },
-    },
-    data: {
-      workerId,
-      lockedAt: now,
-      lockedUntil,
-      lastHeartbeatAt: now,
-      metadata: options.metadata ?? undefined,
-    },
-  });
-
-  if (updated.count === 1) {
+  if (claimed.length === 1) {
     return { acquired: true, jobName: normalizedJobName, workerId, lockedUntil };
   }
 

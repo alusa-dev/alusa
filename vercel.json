@@ -15,12 +15,8 @@
       "schedule": "*/30 * * * *"
     },
     {
-      "path": "/api/jobs/reconcile-finance-webhooks?includeGaps=true&windowHours=24&limit=100&maxAccounts=20",
+      "path": "/api/jobs/reconcile-finance-webhooks?includeGaps=true&mode=targeted&providerCheckIntervalMinutes=360&limit=100&maxAccounts=20&maxAsaasCalls=100&accountConcurrency=2&maxDurationMs=100000",
       "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/jobs/reconcile-portal-finance?maxAccounts=20&limit=50&staleOlderThanMinutes=30",
-      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/jobs/reconcile-payment-commands?limit=50&pollOlderThanSeconds=60&staleOlderThanMinutes=10",

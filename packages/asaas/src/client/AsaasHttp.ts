@@ -261,6 +261,7 @@ export class AsaasHttp {
             statusText: response.statusText,
             contentType,
             emptyBody: isEmptyBody,
+            responseDetails: buildSafeResponseErrorDetails(data),
             requestBodyPreview: buildSafeRequestBodyPreview(body),
             idempotencyKey: options?.headers?.['Idempotency-Key'] ?? undefined,
           });
@@ -357,6 +358,8 @@ const SENSITIVE_BODY_KEYS = new Set([
   'access_token',
   'apikey',
   'api_key',
+  'authtoken',
+  'auth_token',
   'authorization',
   'ccv',
   'cvv',
@@ -365,7 +368,38 @@ const SENSITIVE_BODY_KEYS = new Set([
   'token',
 ]);
 
+type SafeResponseErrorDetail = { code?: string; description?: string };
+
+const SENSITIVE_TEXT_PATTERN = /\b(auth[_-]?token|access[_-]?token|api[_-]?key|authorization|token)\s*[:=]\s*["']?[^,\s"'}]+/gi;
+
+function redactSensitiveText(value: string): string {
+  return value.replace(SENSITIVE_TEXT_PATTERN, '$1=[REDACTED]');
+}
+
+function buildSafeResponseErrorDetails(value: unknown): SafeResponseErrorDetail[] | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+
+  const rawErrors = (value as { errors?: unknown }).errors;
+  if (!Array.isArray(rawErrors)) {
+    const message = (value as { message?: unknown }).message;
+    return typeof message === 'string' ? [{ description: redactSensitiveText(message).slice(0, 300) }] : undefined;
+  }
+
+  const details = rawErrors.flatMap((entry): SafeResponseErrorDetail[] => {
+    if (!entry || typeof entry !== 'object') return [];
+    const record = entry as Record<string, unknown>;
+    const code = typeof record.code === 'string' ? record.code.slice(0, 120) : undefined;
+    const description = typeof record.description === 'string'
+      ? String(redactSensitiveBody(record.description)).slice(0, 300)
+      : undefined;
+    return code || description ? [{ ...(code ? { code } : {}), ...(description ? { description } : {}) }] : [];
+  });
+
+  return details.length > 0 ? details.slice(0, 10) : undefined;
+}
+
 function redactSensitiveBody(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (typeof value === 'string') return redactSensitiveText(value);
   if (!value || typeof value !== 'object') return value;
   if (seen.has(value)) return '[Circular]';
   seen.add(value);

@@ -2,23 +2,28 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@alusa/database', () => ({
   prisma: {
-    cobranca: {
-      findMany: vi.fn(),
-    },
     charge: {
       findMany: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    cobranca: {
+      findMany: vi.fn(),
+      updateMany: vi.fn(),
     },
     subscription: {
       findMany: vi.fn(),
+      updateMany: vi.fn(),
     },
     billingAgreement: {
       findMany: vi.fn(),
     },
     installmentPlan: {
       findMany: vi.fn(),
+      updateMany: vi.fn(),
     },
     standaloneInstallmentPlan: {
       findMany: vi.fn(),
+      updateMany: vi.fn(),
     },
     webhookAsaas: {
       findFirst: vi.fn(),
@@ -30,6 +35,9 @@ vi.mock('@alusa/database', () => ({
 }));
 
 vi.mock('@alusa/asaas', () => ({
+  AsaasHttpError: class AsaasHttpError extends Error {
+    status = 500;
+  },
   getPayment: vi.fn(),
   getSubscription: vi.fn(),
   getInstallment: vi.fn(),
@@ -54,12 +62,14 @@ vi.mock('../../foundation/asaas-read-intent', () => ({
 }));
 
 import { prisma, loadAsaasCredentials } from '@alusa/database';
-import { getPayment } from '@alusa/asaas';
+import { getPayment, getSubscription } from '@alusa/asaas';
 import { handlePaymentWebhook } from '../payment-webhook-handler';
+import { handleSubscriptionWebhook } from '../subscription-webhook-handler';
 import { upsertFinanceReconciliationIssue } from '../../reconciliation/finance-reconciliation-issue.service';
 import {
   detectWebhookGaps,
   getWebhookMetrics,
+  isProviderCheckDue,
   listWebhooks,
   reconcileWithAsaas,
 } from '../webhook-reconciliation.service';
@@ -71,8 +81,15 @@ describe('webhook-reconciliation.service', () => {
     vi.mocked(prisma.billingAgreement.findMany).mockResolvedValue([]);
     vi.mocked(prisma.installmentPlan.findMany).mockResolvedValue([]);
     vi.mocked(prisma.standaloneInstallmentPlan.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.webhookAsaas.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.charge.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.cobranca.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.subscription.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.installmentPlan.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.standaloneInstallmentPlan.updateMany).mockResolvedValue({ count: 1 });
     vi.mocked(loadAsaasCredentials).mockResolvedValue({ apiKey: 'test-key' } as never);
     vi.mocked(handlePaymentWebhook).mockResolvedValue({ success: true } as never);
+    vi.mocked(handleSubscriptionWebhook).mockResolvedValue({ success: true });
   });
 
   describe('detectWebhookGaps', () => {
@@ -119,9 +136,10 @@ describe('webhook-reconciliation.service', () => {
         },
       ] as never);
       vi.mocked(prisma.charge.findMany).mockResolvedValue([] as never);
-      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue({
+      vi.mocked(prisma.webhookAsaas.findMany).mockResolvedValue([{
+        asaasPaymentId: 'pay_123',
         recebidoEm: recentWebhookDate,
-      } as never);
+      }] as never);
       vi.mocked(prisma.subscription.findMany).mockResolvedValue([]);
 
       const result = await detectWebhookGaps('conta-1', { windowDays: 7 });
@@ -131,6 +149,31 @@ describe('webhook-reconciliation.service', () => {
   });
 
   describe('reconcileWithAsaas', () => {
+    it('considera somente registros cujo intervalo persistido de verificação venceu', async () => {
+      const cutoff = new Date('2026-06-13T12:00:00.000Z');
+      expect(isProviderCheckDue(null, cutoff)).toBe(true);
+      expect(isProviderCheckDue(new Date('2026-06-13T11:59:59.000Z'), cutoff)).toBe(true);
+      expect(isProviderCheckDue(new Date('2026-06-13T12:00:01.000Z'), cutoff)).toBe(false);
+    });
+
+    it('não consulta Asaas novamente para pagamento saudável recém-verificado', async () => {
+      vi.mocked(prisma.charge.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'conta-1', limit: 10 });
+
+      expect(result.asaasCalls).toBe(0);
+      expect(getPayment).not.toHaveBeenCalled();
+      expect(prisma.charge.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { lastProviderCheckAt: null },
+            { lastProviderCheckAt: expect.objectContaining({ lte: expect.any(Date) }) },
+          ],
+        }),
+      }));
+    });
+
     it('reconcilia charge avulsa em status não-final quando Asaas está pago', async () => {
       vi.mocked(prisma.charge.findMany).mockResolvedValue([
         {
@@ -168,6 +211,61 @@ describe('webhook-reconciliation.service', () => {
         }),
       );
       expect(upsertFinanceReconciliationIssue).toHaveBeenCalled();
+    });
+
+    it('não avança o cursor quando o handler local falha após consulta ao Asaas', async () => {
+      vi.mocked(prisma.charge.findMany).mockResolvedValue([
+        {
+          id: 'ch-1',
+          asaasPaymentId: 'pay_1',
+          status: 'OPEN',
+          externalReference: null,
+        },
+      ] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
+      vi.mocked(getPayment).mockResolvedValue({
+        id: 'pay_1',
+        status: 'CONFIRMED',
+        value: 360,
+        netValue: 350,
+      } as never);
+      vi.mocked(handlePaymentWebhook).mockResolvedValue({
+        success: false,
+        error: 'erro interno não deve ser propagado',
+      });
+
+      const result = await reconcileWithAsaas({ contaId: 'conta-1', limit: 10 });
+
+      expect(result.errors).toContain('payment:pay_1:handler_failed');
+      expect(result.errors.join(' ')).not.toContain('erro interno não deve ser propagado');
+      expect(prisma.charge.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('não avança o cursor de assinatura quando a aplicação local falha', async () => {
+      vi.mocked(prisma.charge.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.subscription.findMany).mockResolvedValue([
+        {
+          id: 'sub-1',
+          asaasSubscriptionId: 'sub_1',
+          status: 'ACTIVE',
+        },
+      ] as never);
+      vi.mocked(getSubscription).mockResolvedValue({
+        id: 'sub_1',
+        status: 'INACTIVE',
+        deleted: false,
+      } as never);
+      vi.mocked(handleSubscriptionWebhook).mockResolvedValue({
+        success: false,
+        error: 'erro interno não deve ser propagado',
+      });
+
+      const result = await reconcileWithAsaas({ contaId: 'conta-1', limit: 10 });
+
+      expect(result.errors).toContain('subscription:sub_1:handler_failed');
+      expect(prisma.subscription.updateMany).not.toHaveBeenCalled();
     });
 
     it('não chama Asaas quando webhook ainda está na fila', async () => {

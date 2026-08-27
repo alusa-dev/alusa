@@ -125,6 +125,28 @@ describe('AsaasHttp (idempotência + retry)', () => {
     expect(details.requestBodyPreview).toContain('[REDACTED]');
   });
 
+  it('remove authToken e credenciais aninhadas do log de falha do provedor', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const client = new AsaasHttp({ apiKey: 'k' });
+    const authToken = 'webhook-secret-that-must-never-reach-logs';
+    const accessToken = 'access-token-that-must-never-reach-logs';
+
+    mockFetchOnce(400, { errors: [{ code: 'invalid_webhook', description: 'Webhook inválido' }] });
+
+    await expect(
+      client.put('/webhooks/wh_1', {
+        authToken,
+        nested: { AUTH_TOKEN: authToken, access_token: accessToken },
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+
+    const details = warnSpy.mock.calls[0]?.[1] as { requestBodyPreview?: string; responseDetails?: unknown };
+    expect(details.requestBodyPreview).not.toContain(authToken);
+    expect(details.requestBodyPreview).not.toContain(accessToken);
+    expect(details.requestBodyPreview).toContain('[REDACTED]');
+    expect(details.responseDetails).toEqual([{ code: 'invalid_webhook', description: 'Webhook inválido' }]);
+  });
+
   it('404 esperado não emite log de erro nem success=false no hook', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const hookSpy = vi.spyOn(globalAsaasHooks, 'emitApiCall');

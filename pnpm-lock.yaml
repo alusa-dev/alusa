@@ -666,6 +666,9 @@ importers:
       '@aws-sdk/client-s3':
         specifier: ^3.1107.0
         version: 3.1107.0
+      '@prisma/client':
+        specifier: 5.18.0
+        version: 5.18.0(prisma@5.18.0)
       axios:
         specifier: ^1.16.1
         version: 1.16.1

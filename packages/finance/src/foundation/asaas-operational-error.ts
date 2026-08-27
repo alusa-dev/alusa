@@ -45,7 +45,7 @@ function extractDetails(error: unknown): ErrorDetail[] {
     if (!entry || typeof entry !== 'object') return [];
     const record = entry as Record<string, unknown>;
     const code = typeof record.code === 'string' ? record.code : undefined;
-    const description = typeof record.description === 'string' ? record.description : undefined;
+    const description = typeof record.description === 'string' ? record.description.slice(0, 300) : undefined;
     if (!code && !description) return [];
     return [{ ...(code ? { code } : {}), ...(description ? { description } : {}) }];
   });

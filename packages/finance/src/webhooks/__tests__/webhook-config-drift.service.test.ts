@@ -140,4 +140,21 @@ describe('webhook-config-drift.service', () => {
     });
     expect(mocks.listWebhooks).toHaveBeenCalledTimes(2);
   });
+
+  it('classifica 400 do Asaas como erro do provedor e preserva detalhes seguros', async () => {
+    mocks.listWebhooks.mockResolvedValue({
+      data: [remoteWebhook({ enabled: false })],
+      hasMore: false,
+    });
+    mocks.ensureWebhook.mockRejectedValue(Object.assign(new Error('Webhook inválido'), { status: 400 }));
+
+    const result = await repairWebhookConfigDrift({ contaId: 'conta-1', actor: { type: 'SYSTEM' } });
+
+    expect(result).toMatchObject({
+      repaired: false,
+      reason: 'PROVIDER_ERROR',
+      failureStatus: 400,
+      failureCategory: 'unknown_error',
+    });
+  });
 });

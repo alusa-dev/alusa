@@ -9,11 +9,11 @@ function jsonError(status: number, code: string, message: string) {
 }
 
 /**
- * POST /api/jobs/process-pending-inbox-notifications
+ * GET|POST /api/jobs/process-pending-inbox-notifications
  *
  * Reprocessa notificações internas enfileiradas (ex.: webhook antes da entidade local).
  */
-export async function POST(req: Request) {
+async function runProcessPendingInboxNotifications(req: Request) {
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -32,9 +32,21 @@ export async function POST(req: Request) {
       limit,
     });
 
-    return NextResponse.json({ success: true, ...result });
+    return NextResponse.json({
+      success: result.failed === 0,
+      outcome: result.failed > 0 ? 'partial' : 'completed',
+      ...result,
+    });
   } catch (error) {
-    console.error('[Job Process Pending Inbox] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', (error as Error).message);
+    console.error('[Job Process Pending Inbox] Erro:', error instanceof Error ? error.message : String(error));
+    return jsonError(500, 'ERRO_JOB', 'Não foi possível processar a fila de notificações.');
   }
+}
+
+export async function GET(req: Request) {
+  return runProcessPendingInboxNotifications(req);
+}
+
+export async function POST(req: Request) {
+  return runProcessPendingInboxNotifications(req);
 }

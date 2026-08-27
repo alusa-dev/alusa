@@ -1188,6 +1188,7 @@ enum NotificationType {
 
 enum PendingInboxNotificationStatus {
   PENDING
+  PROCESSING
   DONE
   FAILED
 }
@@ -1354,6 +1355,7 @@ model Conta {
   financeDailyAggregates            FinanceDailyAggregate[]
   financeMonthlyAggregates          FinanceMonthlyAggregate[]
   financialOperationalAlerts        FinancialOperationalAlert[]
+  financeReconciliationRuns         FinanceReconciliationRun[]
   invoices                          Invoice[]
   contaFiscalSettings               ContaFiscalSettings?
   fiscalServices                    FiscalService[]
@@ -3397,6 +3399,7 @@ model Cobranca {
   @@index([tipo, status, dataPagamento], name: "idx_cobranca_tipo_status_data_pagamento")
   @@index([createdAt], name: "idx_cobranca_created_at")
   @@index([lastAsaasFetchAt], name: "idx_cobranca_last_asaas_fetch")
+  @@index([contaId, lastProviderCheckAt, status], name: "idx_cobranca_conta_provider_check")
 }
 
 model ArquivoCobranca {
@@ -5759,6 +5762,7 @@ model AsaasAccount {
   lastWebhookCheckAt DateTime?
   lastApiKeyCheckAt  DateTime?
   lastAsaasSyncAt    DateTime?
+  lastFinanceReconciliationAt DateTime?
   provisionLockKey   String?
   provisionLastStage String?
 
@@ -5808,6 +5812,7 @@ model AsaasAccount {
   @@index([webhookStatus])
   @@index([webhookProvisionLockedAt])
   @@index([operationalStatus])
+  @@index([status, lastFinanceReconciliationAt], name: "idx_asaas_account_reconciliation_cursor")
   @@index([sandboxApprovalRequestedAt])
   @@index([deletionState])
   @@index([previousWebhookAuthTokenExpiresAt], name: "idx_asaas_account_prev_webhook_token_expires")
@@ -6068,6 +6073,7 @@ model Charge {
   @@index([standaloneInstallmentPlanId])
   @@index([standaloneSubscriptionId])
   @@index([familyGroupId])
+  @@index([contaId, lastProviderCheckAt, status], name: "idx_charge_conta_provider_check")
 }
 
 /// Histórico append-only das decisões da máquina de estados financeira.
@@ -6474,6 +6480,35 @@ model FinancialOperationalAlert {
   @@index([status, lastSeenAt], name: "idx_fin_operational_alert_status_seen")
 }
 
+/// Execução auditável da reconciliação por tenant. Não armazena payload nem credencial.
+model FinanceReconciliationRun {
+  id                 String   @id @default(cuid())
+  contaId            String
+  correlationId      String
+  mode               String
+  outcome            String
+  startedAt          DateTime
+  completedAt        DateTime?
+  durationMs         Int?
+  asaasCalls         Int      @default(0)
+  maxAsaasCalls      Int
+  budgetExhausted    Boolean  @default(false)
+  checkedPayments    Int      @default(0)
+  paymentDrift      Int      @default(0)
+  checkedSubscriptions Int    @default(0)
+  subscriptionDrift  Int      @default(0)
+  checkedInstallments Int      @default(0)
+  installmentDrift   Int      @default(0)
+  errors             Json?
+  createdAt          DateTime @default(now())
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@index([contaId, startedAt], name: "idx_fin_reconciliation_run_conta_started")
+  @@index([contaId, outcome, startedAt], name: "idx_fin_reconciliation_run_conta_outcome")
+  @@index([correlationId], name: "idx_fin_reconciliation_run_correlation")
+}
+
 model StandaloneInstallmentPlan {
   id      String @id @default(cuid())
   contaId String
@@ -6487,6 +6522,7 @@ model StandaloneInstallmentPlan {
   statusUpdatedAt DateTime          @default(now())
 
   asaasInstallmentId String? @unique
+  lastProviderCheckAt DateTime?
 
   installmentCount Int
   billingType      String
@@ -6517,6 +6553,7 @@ model StandaloneInstallmentPlan {
   @@index([asaasInstallmentId])
   @@index([customerId])
   @@index([familyGroupId])
+  @@index([contaId, lastProviderCheckAt], name: "idx_standalone_installment_conta_provider_check")
 }
 
 model StandaloneSubscription {
@@ -6796,6 +6833,7 @@ model Subscription {
   asaasInvoiceSettingsConfigured Boolean   @default(false)
   fiscalInvoiceSettingsSyncedAt  DateTime?
   fiscalInvoiceSettingsError     String?
+  lastProviderCheckAt            DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -6816,6 +6854,7 @@ model Subscription {
   @@index([contaId, status, createdAt], name: "idx_subscription_conta_status_created")
   @@index([asaasSubscriptionId])
   @@index([contaId, billingAgreementId], name: "idx_subscription_conta_agreement")
+  @@index([contaId, lastProviderCheckAt], name: "idx_subscription_conta_provider_check")
 }
 
 model InstallmentPlan {
@@ -6831,6 +6870,7 @@ model InstallmentPlan {
   statusUpdatedAt DateTime          @default(now())
 
   asaasInstallmentId String? @unique
+  lastProviderCheckAt DateTime?
 
   installmentCount Int
   billingType      String
@@ -6851,6 +6891,7 @@ model InstallmentPlan {
   @@index([status])
   @@index([contaId, status, firstDueDate], name: "idx_installmentplan_conta_status_due")
   @@index([asaasInstallmentId])
+  @@index([contaId, lastProviderCheckAt], name: "idx_installmentplan_conta_provider_check")
 }
 
 model TransferRequest {
@@ -7272,12 +7313,16 @@ model PendingInboxNotification {
   attempts    Int                            @default(0)
   maxAttempts Int                            @default(5)
   nextRetryAt DateTime                       @default(now())
+  processingToken String?
+  processingStartedAt DateTime?
+  leaseUntil DateTime?
   lastError   String?
   createdAt   DateTime                       @default(now())
   processedAt DateTime?
 
   @@index([status, nextRetryAt])
   @@index([contaId, status, nextRetryAt])
+  @@index([status, leaseUntil])
 }
 
 // ==================== Troca de Pagador (PR4) ====================

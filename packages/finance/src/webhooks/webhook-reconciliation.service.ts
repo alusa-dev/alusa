@@ -15,7 +15,7 @@
 import { loadAsaasCredentials, prisma } from '@alusa/database';
 import type { ChargeStatus, Prisma } from '@prisma/client';
 import { getInstallment, getPayment, getSubscription, listInstallmentPayments, listPayments } from '@alusa/asaas';
-import type { AsaasPayment } from '@alusa/asaas';
+import type { AsaasPayment, AsaasSubscription } from '@alusa/asaas';
 import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
 import { alertService } from '../foundation/alert-channel';
 import { mapAsaasToChargeStatus } from '../core';
@@ -25,6 +25,7 @@ import { handleSubscriptionWebhook } from './subscription-webhook-handler';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
 import { reconcileEnrollmentFeeProjections } from '../projections/enrollment-fee-projection.service';
+import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -92,15 +93,32 @@ export interface ArchiveWebhooksResult {
 
 export interface AsaasReconcileOptions {
   contaId: string;
-  /** Janela para assinaturas/parcelamentos (pagamentos usam status local não-final). */
+  /** Janela histórica usada pela detecção de gaps. */
   windowHours?: number;
   limit?: number;
   dryRun?: boolean;
+  mode?: 'targeted' | 'safety_sweep';
+  /** Intervalo mínimo entre leituras do provedor para o mesmo registro. */
+  providerCheckIntervalMinutes?: number;
+  /** Orçamento máximo de chamadas externas nesta execução. */
+  maxAsaasCalls?: number;
+  /** Deadline operacional para esta conta. */
+  maxDurationMs?: number;
+  correlationId?: string;
 }
 
 export interface AsaasReconcileResult {
   contaId: string;
   dryRun: boolean;
+  mode: 'targeted' | 'safety_sweep';
+  correlationId: string | null;
+  startedAt: Date;
+  completedAt: Date;
+  durationMs: number;
+  asaasCalls: number;
+  maxAsaasCalls: number;
+  budgetExhausted: boolean;
+  providerCheckIntervalMinutes: number;
   checkedPayments: number;
   reconciledPayments: number;
   paymentDrift: number;
@@ -137,8 +155,11 @@ const DEFAULT_WINDOW_DAYS = 7;
 const DEFAULT_CHARGE_LIMIT = 100;
 const DEFAULT_ARCHIVE_DAYS = 30;
 const DEFAULT_ARCHIVE_LIMIT = 500;
-const DEFAULT_RECONCILE_WINDOW_HOURS = 24;
 const DEFAULT_RECONCILE_LIMIT = 200;
+const DEFAULT_PROVIDER_CHECK_INTERVAL_MINUTES = 6 * 60;
+const DEFAULT_SAFETY_SWEEP_INTERVAL_MINUTES = 24 * 60;
+const DEFAULT_MAX_ASAAS_CALLS = 100;
+const DEFAULT_MAX_RECONCILE_DURATION_MS = 100_000;
 const DEFAULT_PROCESSING_TIMEOUT_MINUTES = 5;
 
 /** Status acadêmico (Cobranca) que indicam estado não-final */
@@ -189,7 +210,51 @@ type PaymentReconciliationCandidate = {
   persistedAsaasStatus: string | null;
   externalReference: string | null;
   source: 'charge' | 'cobranca';
+  lastProviderCheckAt: Date | null;
 };
+
+export function isProviderCheckDue(
+  lastProviderCheckAt: Date | null | undefined,
+  cutoff: Date,
+): boolean {
+  return !lastProviderCheckAt || lastProviderCheckAt <= cutoff;
+}
+
+function providerCheckDueWhere(cutoff: Date) {
+  return {
+    OR: [
+      { lastProviderCheckAt: null },
+      { lastProviderCheckAt: { lte: cutoff } },
+    ],
+  };
+}
+
+function safeReconciliationError(error: unknown, context: 'subaccount' = 'subaccount'): string {
+  const classified = classifyAsaasOperationalError(error, context);
+  const status = classified.status ? `:${classified.status}` : '';
+  const detailCode = classified.details[0]?.code ? `:${classified.details[0].code}` : '';
+  return `${classified.category}${status}${detailCode}`;
+}
+
+type ReconciliationBudget = {
+  used: number;
+  max: number;
+  startedAtMs: number;
+  maxDurationMs: number;
+  exhausted: boolean;
+};
+
+function reserveAsaasCall(budget: ReconciliationBudget, errors: string[]): boolean {
+  if (budget.exhausted) return false;
+  if (budget.used >= budget.max || Date.now() - budget.startedAtMs >= budget.maxDurationMs) {
+    budget.exhausted = true;
+    const reason = budget.used >= budget.max ? 'ASAAS_CALL_BUDGET_EXCEEDED' : 'RECONCILIATION_DEADLINE_EXCEEDED';
+    if (!errors.includes(reason)) errors.push(reason);
+    return false;
+  }
+  budget.used += 1;
+  return true;
+}
 
 async function hasInflightWebhookForPayment(contaId: string, asaasPaymentId: string): Promise<boolean> {
   const inflight = await prisma.webhookAsaas.findFirst({
@@ -210,6 +275,7 @@ async function hasInflightWebhookForPayment(contaId: string, asaasPaymentId: str
 async function listPaymentReconciliationCandidates(
   contaId: string,
   limit: number,
+  cutoff: Date,
 ): Promise<PaymentReconciliationCandidate[]> {
   const [standaloneCharges, academicCobrancas] = await Promise.all([
     prisma.charge.findMany({
@@ -217,6 +283,7 @@ async function listPaymentReconciliationCandidates(
         contaId,
         asaasPaymentId: { not: null },
         status: { in: NON_FINAL_CHARGE_STATUSES },
+        ...providerCheckDueWhere(cutoff),
       },
       orderBy: [{ dueDate: 'asc' }, { updatedAt: 'asc' }],
       take: limit,
@@ -225,14 +292,17 @@ async function listPaymentReconciliationCandidates(
         asaasPaymentId: true,
         status: true,
         asaasStatus: true,
+        lastProviderCheckAt: true,
         externalReference: true,
       },
     }),
     prisma.cobranca.findMany({
       where: {
+        contaId,
         matricula: { aluno: { contaId } },
         asaasPaymentId: { not: null },
         status: { in: NON_FINAL_STATUSES as Prisma.EnumStatusCobrancaFilter['in'] },
+        ...providerCheckDueWhere(cutoff),
       },
       orderBy: { vencimento: 'asc' },
       take: limit,
@@ -241,6 +311,7 @@ async function listPaymentReconciliationCandidates(
         asaasPaymentId: true,
         status: true,
         asaasStatus: true,
+        lastProviderCheckAt: true,
         charge: { select: { externalReference: true } },
       },
     }),
@@ -257,6 +328,7 @@ async function listPaymentReconciliationCandidates(
       persistedAsaasStatus: charge.asaasStatus,
       externalReference: charge.externalReference,
       source: 'charge',
+      lastProviderCheckAt: charge.lastProviderCheckAt,
     });
   }
 
@@ -269,6 +341,7 @@ async function listPaymentReconciliationCandidates(
       persistedAsaasStatus: cobranca.asaasStatus,
       externalReference: cobranca.charge?.externalReference ?? null,
       source: 'cobranca',
+      lastProviderCheckAt: cobranca.lastProviderCheckAt,
     });
   }
 
@@ -327,27 +400,50 @@ async function attachLastWebhookAt<T extends { asaasPaymentId: string | null }>(
   contaId: string,
   rows: T[],
 ): Promise<Array<T & { lastWebhookAt: Date | null }>> {
-  return Promise.all(
-    rows.map(async (row) => {
-      if (!row.asaasPaymentId) {
-        return { ...row, lastWebhookAt: null };
-      }
-
-      const lastWebhook = await prisma.webhookAsaas.findFirst({
-        where: {
-          contaId,
-          asaasPaymentId: row.asaasPaymentId,
-        },
+  const paymentIds = rows.flatMap((row) => row.asaasPaymentId ? [row.asaasPaymentId] : []);
+  const webhooks = paymentIds.length === 0
+    ? []
+    : (await prisma.webhookAsaas.findMany({
+        where: { contaId, asaasPaymentId: { in: paymentIds } },
         orderBy: { recebidoEm: 'desc' },
-        select: { recebidoEm: true },
-      });
+        select: { asaasPaymentId: true, recebidoEm: true },
+      }) ?? []);
+  const latestByPaymentId = new Map<string, Date>();
+  for (const webhook of webhooks) {
+    if (webhook.asaasPaymentId && !latestByPaymentId.has(webhook.asaasPaymentId)) {
+      latestByPaymentId.set(webhook.asaasPaymentId, webhook.recebidoEm);
+    }
+  }
+  return rows.map((row) => ({
+    ...row,
+    lastWebhookAt: row.asaasPaymentId ? latestByPaymentId.get(row.asaasPaymentId) ?? null : null,
+  }));
+}
 
-      return {
-        ...row,
-        lastWebhookAt: lastWebhook?.recebidoEm ?? null,
-      };
-    }),
-  );
+async function attachLastWebhookAtToSubscriptions<T extends { asaasSubscriptionId: string | null }>(
+  contaId: string,
+  rows: T[],
+): Promise<Array<T & { lastWebhookAt: Date | null }>> {
+  const subscriptionIds = rows.flatMap((row) => row.asaasSubscriptionId ? [row.asaasSubscriptionId] : []);
+  const webhooks = subscriptionIds.length === 0
+    ? []
+    : (await prisma.webhookAsaas.findMany({
+        where: { contaId, asaasSubscriptionId: { in: subscriptionIds } },
+        orderBy: { recebidoEm: 'desc' },
+        select: { asaasSubscriptionId: true, recebidoEm: true },
+      }) ?? []);
+  const latestBySubscriptionId = new Map<string, Date>();
+  for (const webhook of webhooks) {
+    if (webhook.asaasSubscriptionId && !latestBySubscriptionId.has(webhook.asaasSubscriptionId)) {
+      latestBySubscriptionId.set(webhook.asaasSubscriptionId, webhook.recebidoEm);
+    }
+  }
+  return rows.map((row) => ({
+    ...row,
+    lastWebhookAt: row.asaasSubscriptionId
+      ? latestBySubscriptionId.get(row.asaasSubscriptionId) ?? null
+      : null,
+  }));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -375,10 +471,12 @@ export async function detectWebhookGaps(
   const [academicCobrancas, standaloneCharges] = await Promise.all([
     prisma.cobranca.findMany({
       where: {
+        contaId,
         matricula: {
           aluno: { contaId },
         },
         status: { in: NON_FINAL_STATUSES as Prisma.EnumStatusCobrancaFilter['in'] },
+        asaasPaymentId: { not: null },
         vencimento: {
           gte: windowStart,
           lte: now,
@@ -428,9 +526,9 @@ export async function detectWebhookGaps(
 
   const chargesWithWebhookInfo = await attachLastWebhookAt(contaId, chargesWithMissingFinalStatus);
 
-  // Filtrar cobranças sem webhook recente (24h)
+  // O gap é uma ausência de evento além da tolerância operacional configurada.
   const oneDayAgo = new Date(now);
-  oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+  oneDayAgo.setTime(oneDayAgo.getTime() - windowDays * 24 * 60 * 60 * 1000);
 
   const chargesWithGap = chargesWithWebhookInfo.filter(
     (c) => !c.lastWebhookAt || c.lastWebhookAt < oneDayAgo
@@ -441,6 +539,7 @@ export async function detectWebhookGaps(
     where: {
       contaId,
       status: 'ACTIVE',
+      asaasSubscriptionId: { not: null },
     },
     select: {
       id: true,
@@ -450,33 +549,9 @@ export async function detectWebhookGaps(
     take: chargeLimit,
   });
 
-  const subscriptionsWithWebhookInfo = await Promise.all(
-    subscriptionsWithMissingEvents.map(async (sub) => {
-      if (!sub.asaasSubscriptionId) {
-        return {
-          id: sub.id,
-          asaasSubscriptionId: sub.asaasSubscriptionId,
-          status: sub.status,
-          lastWebhookAt: null,
-        };
-      }
-
-      const lastWebhook = await prisma.webhookAsaas.findFirst({
-        where: {
-          contaId,
-          asaasSubscriptionId: sub.asaasSubscriptionId,
-        },
-        orderBy: { recebidoEm: 'desc' },
-        select: { recebidoEm: true },
-      });
-
-      return {
-        id: sub.id,
-        asaasSubscriptionId: sub.asaasSubscriptionId,
-        status: sub.status,
-        lastWebhookAt: lastWebhook?.recebidoEm ?? null,
-      };
-    })
+  const subscriptionsWithWebhookInfo = await attachLastWebhookAtToSubscriptions(
+    contaId,
+    subscriptionsWithMissingEvents,
   );
 
   const subscriptionsWithGap = subscriptionsWithWebhookInfo.filter(
@@ -711,10 +786,10 @@ export async function getWebhookDetails(
     return { webhook: null, relatedCharge: null, relatedSubscription: null };
   }
 
-  // Cobranca não tem contaId direto - usa join via Matricula → Aluno
   const relatedCharge = webhook.asaasPaymentId
     ? await prisma.cobranca.findFirst({
         where: {
+          contaId,
           asaasPaymentId: webhook.asaasPaymentId,
           matricula: { aluno: { contaId } },
         },
@@ -1132,17 +1207,45 @@ function chooseSyntheticSubscriptionEvent(remote: {
 export async function reconcileWithAsaas(
   options: AsaasReconcileOptions
 ): Promise<AsaasReconcileResult> {
-  const now = new Date();
-  const since = new Date(now.getTime() - (Math.max(1, options.windowHours ?? DEFAULT_RECONCILE_WINDOW_HOURS) * 60 * 60 * 1000));
+  const startedAt = new Date();
+  const now = startedAt;
+  const mode = options.mode ?? 'targeted';
+  const providerCheckIntervalMinutes = Math.max(
+    5,
+    Math.min(
+      7 * 24 * 60,
+      options.providerCheckIntervalMinutes
+        ?? (mode === 'safety_sweep'
+          ? DEFAULT_SAFETY_SWEEP_INTERVAL_MINUTES
+          : DEFAULT_PROVIDER_CHECK_INTERVAL_MINUTES),
+    ),
+  );
+  const providerCheckCutoff = new Date(now.getTime() - providerCheckIntervalMinutes * 60_000);
   const limit = Math.min(1000, Math.max(1, options.limit ?? DEFAULT_RECONCILE_LIMIT));
   const dryRun = options.dryRun ?? false;
   const errors: string[] = [];
+  const budget: ReconciliationBudget = {
+    used: 0,
+    max: Math.min(1000, Math.max(1, options.maxAsaasCalls ?? DEFAULT_MAX_ASAAS_CALLS)),
+    startedAtMs: startedAt.getTime(),
+    maxDurationMs: Math.min(110_000, Math.max(5_000, options.maxDurationMs ?? DEFAULT_MAX_RECONCILE_DURATION_MS)),
+    exhausted: false,
+  };
 
-  const credentials = await loadAsaasCredentials(options.contaId);
-  if (!credentials?.apiKey) {
+  const buildResult = (overrides: Partial<AsaasReconcileResult> = {}): AsaasReconcileResult => {
+    const completedAt = new Date();
     return {
       contaId: options.contaId,
       dryRun,
+      mode,
+      correlationId: options.correlationId ?? null,
+      startedAt,
+      completedAt,
+      durationMs: completedAt.getTime() - startedAt.getTime(),
+      asaasCalls: budget.used,
+      maxAsaasCalls: budget.max,
+      budgetExhausted: budget.exhausted,
+      providerCheckIntervalMinutes,
       checkedPayments: 0,
       reconciledPayments: 0,
       paymentDrift: 0,
@@ -1151,12 +1254,23 @@ export async function reconcileWithAsaas(
       subscriptionDrift: 0,
       checkedInstallments: 0,
       installmentDrift: 0,
-      errors: ['CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'],
-      generatedAt: now,
+      errors,
+      generatedAt: completedAt,
+      ...overrides,
     };
+  };
+
+  const credentials = await loadAsaasCredentials(options.contaId);
+  if (!credentials?.apiKey) {
+    errors.push('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+    return buildResult();
   }
 
-  const paymentCandidates = await listPaymentReconciliationCandidates(options.contaId, limit);
+  const paymentCandidates = await listPaymentReconciliationCandidates(
+    options.contaId,
+    limit,
+    providerCheckCutoff,
+  );
 
   let checkedPayments = 0;
   let reconciledPayments = 0;
@@ -1166,13 +1280,14 @@ export async function reconcileWithAsaas(
   let subscriptionDrift = 0;
   let checkedInstallments = 0;
   let installmentDrift = 0;
+  const remoteSubscriptions = new Map<string, AsaasSubscription>();
 
   const [subscriptions, canonicalAgreements, installmentPlans, standaloneInstallments] = await Promise.all([
     prisma.subscription.findMany({
       where: {
         contaId: options.contaId,
         asaasSubscriptionId: { not: null },
-        updatedAt: { gte: since },
+        OR: [{ lastProviderCheckAt: null }, { lastProviderCheckAt: { lte: providerCheckCutoff } }],
       },
       orderBy: { updatedAt: 'desc' },
       take: limit,
@@ -1180,6 +1295,7 @@ export async function reconcileWithAsaas(
         id: true,
         asaasSubscriptionId: true,
         status: true,
+        lastProviderCheckAt: true,
       },
     }),
     prisma.billingAgreement.findMany({
@@ -1187,6 +1303,7 @@ export async function reconcileWithAsaas(
         contaId: options.contaId,
         asaasSubscriptionId: { not: null },
         status: { notIn: ['CANCELLED', 'DRAFT'] },
+        OR: [{ lastReconciledAt: null }, { lastReconciledAt: { lte: providerCheckCutoff } }],
       },
       orderBy: [{ lastReconciledAt: 'asc' }, { updatedAt: 'asc' }],
       take: limit,
@@ -1197,37 +1314,40 @@ export async function reconcileWithAsaas(
         remoteStatus: true,
         desiredValue: true,
         confirmedValue: true,
+        lastReconciledAt: true,
       },
     }),
     prisma.installmentPlan.findMany({
       where: {
         contaId: options.contaId,
         asaasInstallmentId: { not: null },
-        updatedAt: { gte: since },
+        OR: [{ lastProviderCheckAt: null }, { lastProviderCheckAt: { lte: providerCheckCutoff } }],
       },
       orderBy: { updatedAt: 'desc' },
       take: limit,
-      select: { id: true, asaasInstallmentId: true },
+      select: { id: true, asaasInstallmentId: true, lastProviderCheckAt: true },
     }),
     prisma.standaloneInstallmentPlan.findMany({
       where: {
         contaId: options.contaId,
         asaasInstallmentId: { not: null },
-        updatedAt: { gte: since },
+        OR: [{ lastProviderCheckAt: null }, { lastProviderCheckAt: { lte: providerCheckCutoff } }],
       },
       orderBy: { updatedAt: 'desc' },
       take: limit,
-      select: { id: true, asaasInstallmentId: true },
+      select: { id: true, asaasInstallmentId: true, lastProviderCheckAt: true },
     }),
   ]);
 
   for (const candidate of paymentCandidates) {
+    if (budget.exhausted) break;
     checkedPayments += 1;
     try {
       if (await hasInflightWebhookForPayment(options.contaId, candidate.asaasPaymentId)) {
         continue;
       }
 
+      if (!reserveAsaasCall(budget, errors)) break;
       recordAsaasReadIntent('RECONCILIATION');
       const remote = await getPayment({
         apiKey: credentials.apiKey,
@@ -1236,6 +1356,20 @@ export async function reconcileWithAsaas(
       const remoteStatus = resolveRemotePaymentSnapshotStatus(remote);
       const remoteLocalStatus = mapAsaasToChargeStatus(remoteStatus);
       if (!hasPaymentReconciliationDrift(remoteStatus, candidate)) {
+        if (!dryRun) {
+          const providerCheckAt = new Date();
+          if (candidate.source === 'charge') {
+            await prisma.charge.updateMany({
+              where: { id: candidate.entityId, contaId: options.contaId },
+              data: { lastProviderCheckAt: providerCheckAt, lastAsaasFetchAt: providerCheckAt },
+            });
+          } else {
+            await prisma.cobranca.updateMany({
+              where: { id: candidate.entityId, contaId: options.contaId },
+              data: { lastProviderCheckAt: providerCheckAt, lastAsaasFetchAt: providerCheckAt },
+            });
+          }
+        }
         continue;
       }
 
@@ -1259,7 +1393,7 @@ export async function reconcileWithAsaas(
           },
         });
         const event = PAYMENT_EVENT_BY_STATUS[remoteStatus] ?? 'PAYMENT_UPDATED';
-        await handlePaymentWebhook(options.contaId, {
+        const handlerResult = await handlePaymentWebhook(options.contaId, {
           event,
           eventId: `reconciliation:${remote.id}:${remoteStatus}`,
           source: 'RECONCILIATION',
@@ -1283,28 +1417,49 @@ export async function reconcileWithAsaas(
             deleted: remote.deleted ?? false,
           },
         });
+        if (!handlerResult.success) {
+          errors.push(`payment:${candidate.asaasPaymentId}:handler_failed`);
+          continue;
+        }
+        const providerCheckAt = new Date();
+        if (candidate.source === 'charge') {
+          await prisma.charge.updateMany({
+            where: { id: candidate.entityId, contaId: options.contaId },
+            data: { lastProviderCheckAt: providerCheckAt, lastAsaasFetchAt: providerCheckAt },
+          });
+        } else {
+          await prisma.cobranca.updateMany({
+            where: { id: candidate.entityId, contaId: options.contaId },
+            data: { lastProviderCheckAt: providerCheckAt, lastAsaasFetchAt: providerCheckAt },
+          });
+        }
         reconciledPayments += 1;
       }
     } catch (error) {
-      errors.push(
-        `payment:${candidate.asaasPaymentId}:${error instanceof Error ? error.message : String(error)}`,
-      );
+      errors.push(`payment:${candidate.asaasPaymentId}:${safeReconciliationError(error)}`);
     }
   }
 
   for (const sub of subscriptions) {
+    if (budget.exhausted) break;
     if (!sub.asaasSubscriptionId) continue;
     checkedSubscriptions += 1;
     try {
-      recordAsaasReadIntent('RECONCILIATION');
-      const remote = await getSubscription({
-        apiKey: credentials.apiKey,
-        subscriptionId: sub.asaasSubscriptionId,
-      });
+      let remote = remoteSubscriptions.get(sub.asaasSubscriptionId);
+      if (!remote) {
+        if (!reserveAsaasCall(budget, errors)) break;
+        recordAsaasReadIntent('RECONCILIATION');
+        remote = await getSubscription({
+          apiKey: credentials.apiKey,
+          subscriptionId: sub.asaasSubscriptionId,
+        });
+        remoteSubscriptions.set(sub.asaasSubscriptionId, remote);
+      }
       const nextStatus = mapAsaasSubscriptionStatus({
         status: remote.status,
         deleted: remote.deleted,
       });
+      let providerStateApplied = nextStatus === sub.status;
 
       if (nextStatus !== sub.status) {
         subscriptionDrift += 1;
@@ -1339,25 +1494,38 @@ export async function reconcileWithAsaas(
           });
           if (result.success) {
             reconciledSubscriptions += 1;
+            providerStateApplied = true;
           } else {
-            errors.push(`subscription:${sub.asaasSubscriptionId}:${result.error ?? 'handler_failed'}`);
+            errors.push(`subscription:${sub.asaasSubscriptionId}:handler_failed`);
           }
         }
       }
+      if (!dryRun && providerStateApplied) {
+        await prisma.subscription.updateMany({
+          where: { id: sub.id, contaId: options.contaId },
+          data: { lastProviderCheckAt: new Date() },
+        });
+      }
     } catch (error) {
-      errors.push(`subscription:${sub.asaasSubscriptionId}:${error instanceof Error ? error.message : String(error)}`);
+      errors.push(`subscription:${sub.asaasSubscriptionId}:${safeReconciliationError(error)}`);
     }
   }
 
   for (const agreement of canonicalAgreements) {
+    if (budget.exhausted) break;
     if (!agreement.asaasSubscriptionId) continue;
     checkedSubscriptions += 1;
     try {
-      recordAsaasReadIntent('RECONCILIATION');
-      const remote = await getSubscription({
-        apiKey: credentials.apiKey,
-        subscriptionId: agreement.asaasSubscriptionId,
-      });
+      let remote = remoteSubscriptions.get(agreement.asaasSubscriptionId);
+      if (!remote) {
+        if (!reserveAsaasCall(budget, errors)) break;
+        recordAsaasReadIntent('RECONCILIATION');
+        remote = await getSubscription({
+          apiKey: credentials.apiKey,
+          subscriptionId: agreement.asaasSubscriptionId,
+        });
+        remoteSubscriptions.set(agreement.asaasSubscriptionId, remote);
+      }
       const remoteValue = Number(remote.value ?? 0);
       const remoteStatus = remote.deleted ? 'DELETED' : remote.status ?? 'UNKNOWN';
       const valueDrift = Number(agreement.confirmedValue) !== remoteValue;
@@ -1397,15 +1565,11 @@ export async function reconcileWithAsaas(
             confirmedValue: remoteValue,
             remoteStatus,
             remoteStatusUpdatedAt: now,
-            lastReconciledAt: now,
             status: desiredDiverges ? 'REQUIRES_RECONCILIATION' : agreement.status,
-            reconciliationError: desiredDiverges
-              ? `Valor desejado ${Number(agreement.desiredValue).toFixed(2)} diverge do Asaas ${remoteValue.toFixed(2)}.`
-              : null,
           },
         });
         const event = chooseSyntheticSubscriptionEvent({ status: remote.status, deleted: remote.deleted });
-        await handleSubscriptionWebhook(options.contaId, {
+        const handlerResult = await handleSubscriptionWebhook(options.contaId, {
           event,
           subscription: {
             id: remote.id,
@@ -1414,19 +1578,25 @@ export async function reconcileWithAsaas(
             deleted: remote.deleted,
           },
         });
-        if (desiredDiverges) {
-          await prisma.billingAgreement.updateMany({
-            where: { id: agreement.id, contaId: options.contaId },
-            data: {
-              status: 'REQUIRES_RECONCILIATION',
-              reconciliationError: `Valor desejado ${Number(agreement.desiredValue).toFixed(2)} diverge do Asaas ${remoteValue.toFixed(2)}.`,
-            },
-          });
+        const reconciliationError = handlerResult.success
+          ? desiredDiverges
+            ? `Valor desejado ${Number(agreement.desiredValue).toFixed(2)} diverge do Asaas ${remoteValue.toFixed(2)}.`
+            : null
+          : `Handler de assinatura falhou: ${handlerResult.error ?? 'unknown'}`;
+        await prisma.billingAgreement.updateMany({
+          where: { id: agreement.id, contaId: options.contaId },
+          data: {
+            reconciliationError,
+            ...(handlerResult.success ? { lastReconciledAt: now } : {}),
+          },
+        });
+        if (!handlerResult.success) {
+          errors.push(`agreement:${agreement.id}:handler_failed`);
         }
-        reconciledSubscriptions += 1;
+        if (handlerResult.success) reconciledSubscriptions += 1;
       }
     } catch (error) {
-      errors.push(`agreement:${agreement.id}:${error instanceof Error ? error.message : String(error)}`);
+      errors.push(`agreement:${agreement.id}:${safeReconciliationError(error)}`);
     }
   }
 
@@ -1436,9 +1606,12 @@ export async function reconcileWithAsaas(
   ];
 
   for (const plan of allInstallments) {
+    if (budget.exhausted) break;
     checkedInstallments += 1;
     try {
+      if (!reserveAsaasCall(budget, errors)) break;
       await getInstallment({ apiKey: credentials.apiKey, installmentId: plan.asaasInstallmentId });
+      if (!reserveAsaasCall(budget, errors)) break;
       const remotePayments = await listInstallmentPayments({
         apiKey: credentials.apiKey,
         installmentId: plan.asaasInstallmentId,
@@ -1484,8 +1657,21 @@ export async function reconcileWithAsaas(
           });
         }
       }
+      if (!dryRun) {
+        if (plan.source === 'ACADEMIC') {
+          await prisma.installmentPlan.updateMany({
+            where: { id: plan.id, contaId: options.contaId },
+            data: { lastProviderCheckAt: new Date() },
+          });
+        } else {
+          await prisma.standaloneInstallmentPlan.updateMany({
+            where: { id: plan.id, contaId: options.contaId },
+            data: { lastProviderCheckAt: new Date() },
+          });
+        }
+      }
     } catch (error) {
-      errors.push(`installment:${plan.asaasInstallmentId}:${error instanceof Error ? error.message : String(error)}`);
+      errors.push(`installment:${plan.asaasInstallmentId}:${safeReconciliationError(error)}`);
     }
   }
 
@@ -1500,7 +1686,7 @@ export async function reconcileWithAsaas(
       })
       .catch((error) => {
         errors.push(
-          `enrollment-fee-projection:${error instanceof Error ? error.message : String(error)}`,
+          `enrollment-fee-projection:${safeReconciliationError(error)}`,
         );
       });
     await alertService
@@ -1510,13 +1696,14 @@ export async function reconcileWithAsaas(
         installments: installmentDrift,
       })
       .catch((err: unknown) => {
-        console.warn('[reconciliation][alert-failed]', { contaId: options.contaId, err });
+        console.warn('[reconciliation][alert-failed]', {
+          contaId: options.contaId,
+          error: err instanceof Error ? err.name : 'UNKNOWN_ERROR',
+        });
       });
   }
 
-  return {
-    contaId: options.contaId,
-    dryRun,
+  return buildResult({
     checkedPayments,
     reconciledPayments,
     paymentDrift,
@@ -1525,9 +1712,7 @@ export async function reconcileWithAsaas(
     subscriptionDrift,
     checkedInstallments,
     installmentDrift,
-    errors,
-    generatedAt: now,
-  };
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
