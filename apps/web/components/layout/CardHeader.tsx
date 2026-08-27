@@ -46,7 +46,8 @@ export default function CardHeader(): JSX.Element {
     markAllAsRead,
   } = useNotificationsFeed({
     limit: 5,
-    enabled: inboxNotificationsEnabled && notificationsOpen,
+    enabled: inboxNotificationsEnabled,
+    isOpen: notificationsOpen,
   });
 
   const initials = useMemo(() => {

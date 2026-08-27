@@ -156,12 +156,15 @@ export function useNotificationsFeed(params?: {
   page?: number;
   autoRefreshMs?: number;
   enabled?: boolean;
+  /** Controls the panel visibility without discarding the loaded feed. */
+  isOpen?: boolean;
 }) {
   const view = params?.view ?? 'active';
   const limit = params?.limit ?? 20;
   const page = params?.page ?? 1;
   const autoRefreshMs = params?.autoRefreshMs ?? 0;
   const enabled = params?.enabled ?? true;
+  const isOpen = params?.isOpen ?? true;
 
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -169,6 +172,7 @@ export function useNotificationsFeed(params?: {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const lastLoadedAtRef = useRef(0);
+  const wasOpenRef = useRef(false);
 
   const applyLocalAction = useCallback((notificationId: string, action: NotificationAction) => {
     setItems((currentItems) => {
@@ -229,6 +233,10 @@ export function useNotificationsFeed(params?: {
       setLoading(false);
       return;
     }
+    if (!isOpen) {
+      setLoading(false);
+      return;
+    }
     if (!force && Date.now() - lastLoadedAtRef.current < 15_000) {
       setLoading(false);
       return;
@@ -260,11 +268,25 @@ export function useNotificationsFeed(params?: {
     } finally {
       setLoading(false);
     }
-  }, [enabled, limit, page, view]);
+  }, [enabled, isOpen, limit, page, view]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!enabled) {
+      wasOpenRef.current = false;
+      void load();
+      return;
+    }
+
+    if (!isOpen) {
+      wasOpenRef.current = false;
+      setLoading(false);
+      return;
+    }
+
+    const openedNow = !wasOpenRef.current;
+    wasOpenRef.current = true;
+    void load(openedNow);
+  }, [enabled, isOpen, load]);
 
   useEffect(() => {
     if (!enabled || autoRefreshMs <= 0) return undefined;
