@@ -6,7 +6,6 @@ import { useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/cn';
 
 import {
-  ClipboardDocumentCheck,
   Clock,
   DollarSign,
   Edit3,
@@ -319,12 +318,9 @@ export function InventoryFeature() {
       balances.reduce(
         (acc, item) => ({
           onHand: acc.onHand + item.onHand,
-          reserved: acc.reserved + item.reserved,
-          available: acc.available + item.available,
-          incoming: acc.incoming + item.incoming,
           value: acc.value + calculateStockSaleValue(item),
         }),
-        { onHand: 0, reserved: 0, available: 0, incoming: 0, value: 0 },
+        { onHand: 0, value: 0 },
       ),
     [balances],
   );
@@ -620,24 +616,12 @@ export function InventoryFeature() {
           </div>
         }
       >
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <InventoryMetricCard
             label="Em estoque"
             detail="quantidade física agora"
             value={totals.onHand}
             icon={<RectangleStack className="h-5 w-5" />}
-          />
-          <InventoryMetricCard
-            label="Reservado"
-            detail="separado para vendas"
-            value={totals.reserved}
-            icon={<ClipboardDocumentCheck className="h-5 w-5" />}
-          />
-          <InventoryMetricCard
-            label="Em compra"
-            detail="reposição ainda não recebida"
-            value={totals.incoming}
-            icon={<Plus className="h-5 w-5" />}
           />
           <InventoryMetricCard
             label="Valor em estoque"
