@@ -302,6 +302,12 @@ export interface PlatformBillingStore {
   updateAccountFromStripeSubscription(
     _input: UpdatePlatformBillingAccountFromStripeSubscriptionInput,
   ): Promise<PlatformBillingAccountRecord>;
+  resolveOpenIssuesForPaidAccount?(_input: {
+    contaId: string;
+    billingAccountId: string;
+    environment: PlatformBillingEnvironment;
+    correlationId?: string;
+  }): Promise<number>;
   findCheckoutSessionByIdempotencyKey(_input: {
     contaId: string;
     environment: PlatformBillingEnvironment;

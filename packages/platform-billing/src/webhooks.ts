@@ -189,6 +189,13 @@ async function processCheckoutCompleted(
     lastProviderEventCreatedAt: readUnixDate(input.event.created),
   });
 
+  await store.resolveOpenIssuesForPaidAccount?.({
+    contaId,
+    billingAccountId: account.id,
+    environment: input.environment,
+    correlationId: input.event.id,
+  });
+
   await store.createAuditLog({
     contaId,
     billingAccountId: account.id,
@@ -427,6 +434,15 @@ async function processInvoiceEvent(
           : undefined,
       lastStripeEventId: input.event.id,
     });
+
+    if (isPaymentPaidEvent) {
+      await store.resolveOpenIssuesForPaidAccount?.({
+        contaId: account.contaId,
+        billingAccountId: account.id,
+        environment: input.environment,
+        correlationId: input.event.id,
+      });
+    }
   }
 
   return account.contaId;

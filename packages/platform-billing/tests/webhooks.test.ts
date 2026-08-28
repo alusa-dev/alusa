@@ -138,6 +138,9 @@ describe('@alusa/platform-billing webhooks', () => {
       status: 'PAID',
       amountPaid: 14_900,
     });
+    expect(store.paidIssueResolutions).toEqual([
+      { billingAccountId: 'pba_1', correlationId: 'evt_invoice_1' },
+    ]);
   });
 
   it('preserva status TRIALING quando invoice paid chega durante teste gratis', async () => {
@@ -586,17 +589,20 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
   const invoices: PlatformBillingInvoiceRecord[] = [];
   const webhookEvents: PlatformBillingWebhookEventRecord[] = [];
   const auditLogs: PlatformBillingAuditLogInput[] = [];
+  const paidIssueResolutions: Array<{ billingAccountId: string; correlationId?: string }> = [];
 
   const store: PlatformBillingStore & {
     accounts: PlatformBillingAccountRecord[];
     invoices: PlatformBillingInvoiceRecord[];
     webhookEvents: PlatformBillingWebhookEventRecord[];
     auditLogs: PlatformBillingAuditLogInput[];
+    paidIssueResolutions: Array<{ billingAccountId: string; correlationId?: string }>;
   } = {
     accounts,
     invoices,
     webhookEvents,
     auditLogs,
+    paidIssueResolutions,
     async findAccount(input) {
       return accounts.find((account) => account.contaId === input.contaId && account.environment === input.environment) ?? null;
     },
@@ -654,6 +660,13 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
         account.pendingChangeEffectiveAt = null;
       }
       return account;
+    },
+    async resolveOpenIssuesForPaidAccount(input) {
+      paidIssueResolutions.push({
+        billingAccountId: input.billingAccountId,
+        correlationId: input.correlationId,
+      });
+      return 1;
     },
     async findCheckoutSessionByIdempotencyKey(input) {
       return checkoutSessions.find((session) => session.contaId === input.contaId && session.environment === input.environment && session.idempotencyKey === input.idempotencyKey) ?? null;

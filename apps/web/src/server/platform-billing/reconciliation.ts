@@ -537,6 +537,12 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
         status: 'OPEN',
         code: {
           in: [
+            'FIRST_PAYMENT_INCOMPLETE',
+            'PAYMENT_PAST_DUE',
+            'PAYMENT_UNPAID',
+            'GRACE_PERIOD_EXPIRED',
+            'TRIAL_EXPIRED_WITHOUT_PAYMENT',
+            'SUBSCRIPTION_RETRIEVE_FAILED',
             'ACTIVE_LOCAL_WITHOUT_SUBSCRIPTION',
             'SUBSCRIPTION_PRICE_DIVERGENT',
             'PLAN_DIVERGENT_FROM_STRIPE_PRICE',

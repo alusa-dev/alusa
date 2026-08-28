@@ -19,6 +19,7 @@ type PlatformBillingPrismaClientBase = Pick<
   | 'platformBillingInvoice'
   | 'platformBillingWebhookEvent'
   | 'platformBillingAuditLog'
+  | 'platformBillingIssue'
   | 'platformBillingPlanChange'
   | '$executeRaw'
 >;
@@ -206,6 +207,53 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
       });
 
       return toAccountRecord(account);
+    },
+
+    resolveOpenIssuesForPaidAccount: async (input) => {
+      const resolvedAt = new Date();
+      const result = await db.platformBillingIssue.updateMany({
+        where: {
+          contaId: input.contaId,
+          billingAccountId: input.billingAccountId,
+          environment: input.environment,
+          status: 'OPEN',
+          code: {
+            in: [
+              'FIRST_PAYMENT_INCOMPLETE',
+              'PAYMENT_PAST_DUE',
+              'PAYMENT_UNPAID',
+              'GRACE_PERIOD_EXPIRED',
+              'TRIAL_EXPIRED_WITHOUT_PAYMENT',
+              'SUBSCRIPTION_RETRIEVE_FAILED',
+            ],
+          },
+        },
+        data: {
+          status: 'RESOLVED',
+          resolvedAt,
+          ignoredAt: null,
+        },
+      });
+
+      if (result.count > 0) {
+        await db.platformBillingAuditLog.create({
+          data: {
+            contaId: input.contaId,
+            billingAccountId: input.billingAccountId,
+            actorUserId: null,
+            action: 'PLATFORM_BILLING_PAYMENT_ISSUES_RESOLVED',
+            entityType: 'PlatformBillingAccount',
+            entityId: input.billingAccountId,
+            correlationId: input.correlationId,
+            metadata: {
+              environment: input.environment,
+              resolvedIssueCount: result.count,
+            },
+          },
+        });
+      }
+
+      return result.count;
     },
 
     findCheckoutSessionByIdempotencyKey: async (input) => {
