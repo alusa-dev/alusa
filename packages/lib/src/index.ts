@@ -39,6 +39,7 @@ export * from './schemas/category.schema';
 export * from './services/product.service';
 export * from './services/product-option.service';
 export * from './services/product-variant.service';
+export * from './services/product-variant-rules';
 export {
   calculateInventoryCostBasis,
   type InventoryCostBasis,

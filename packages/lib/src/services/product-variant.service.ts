@@ -1,5 +1,6 @@
 import { prisma } from '../prisma';
 import type { ProductVariant, ProductVariantOption, ProductOptionValue } from '@prisma/client';
+import { formatProductVariantTitle } from './product-variant-rules';
 import {
   calculateAvailable,
   calculateProjected,
@@ -48,6 +49,13 @@ function mapVariantsWithInventory<
 
     return {
       ...variant,
+      title: formatProductVariantTitle(
+        variant.options.map((entry) => ({
+          name: entry.optionValue.option.name,
+          value: entry.optionValue.value,
+        })),
+        variant.title,
+      ),
       stock: inventory.onHand,
       onHand: inventory.onHand,
       reserved: inventory.reserved,

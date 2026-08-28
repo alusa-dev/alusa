@@ -547,6 +547,54 @@ describe('store-sales', () => {
     expect(inventory.applySaleInventoryOnCreate).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects a variant without its own sale price instead of using the product price', async () => {
+    state.products.set('prod-sapatilha', {
+      id: 'prod-sapatilha',
+      contaId: 'conta-1',
+      name: 'Sapatilha',
+      price: new Prisma.Decimal('55.00'),
+      stock: 0,
+      hasVariants: true,
+    });
+    state.inventoryBalances.set('variant-rosa-30', {
+      productId: 'prod-sapatilha',
+      variantId: 'variant-rosa-30',
+      onHand: 7,
+      reserved: 0,
+      averageCost: new Prisma.Decimal('28.00'),
+    });
+    state.prisma.productVariant.findMany.mockResolvedValueOnce([
+      {
+        id: 'variant-rosa-30',
+        productId: 'prod-sapatilha',
+        title: 'Rosa · Número 30',
+        price: null,
+        stock: 7,
+        isActive: true,
+        options: [{ optionValue: { value: 'Número 30', option: { name: 'Rosa' } } }],
+      },
+    ]);
+
+    await expect(
+      createStoreSale({
+        contaId: 'conta-1',
+        operatorId: 'user-1',
+        uiRequestId: 'sale-variant-without-price',
+        customer: { type: 'AVULSO', name: 'Cliente Balcão' },
+        items: [{ productId: 'prod-sapatilha', variantId: 'variant-rosa-30', quantity: 1 }],
+        discount: 0,
+        finalization: {
+          type: 'RECEBIMENTO_PRESENCIAL',
+          paymentMethod: 'DINHEIRO',
+          amountReceived: 55,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'PRECO_VARIANTE_NAO_INFORMADO',
+      status: 422,
+    });
+  });
+
   it('cria cobrança para cliente avulso sem vínculo com matrícula', async () => {
     state.products.set('prod-1', {
       id: 'prod-1',

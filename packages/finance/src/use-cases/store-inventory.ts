@@ -1,5 +1,9 @@
 import { prisma } from '@alusa/database';
-import { calculateInventoryCostBasis } from '@alusa/lib';
+import {
+  calculateInventoryCostBasis,
+  formatProductVariantTitle,
+  resolveProductSalePrice,
+} from '@alusa/lib';
 import {
   InventoryMovementType,
   Prisma,
@@ -403,6 +407,19 @@ function formatBalanceRecord(
   const projected = calculateProjected(record);
   const lowStockThreshold = record.variant?.lowStockThreshold ?? record.product.lowStockThreshold;
   const averageCost = averageCostOverride ?? moneyToNumber(record.averageCost);
+  const variantAttributes = (record.variant?.options ?? []).map((entry) => ({
+    name: entry.optionValue.option.name,
+    value: entry.optionValue.value,
+  }));
+  const variantTitle = record.variant
+    ? formatProductVariantTitle(variantAttributes, record.variant.title)
+    : null;
+  const resolvedPrice = resolveProductSalePrice({
+    hasVariants: record.product.hasVariants,
+    productPrice: record.product.price,
+    variantId: record.variantId,
+    variantPrice: record.variant?.price,
+  });
 
   return {
     id: record.id,
@@ -410,13 +427,10 @@ function formatBalanceRecord(
     productId: record.productId,
     productName: record.product.name,
     variantId: record.variantId ?? null,
-    variantTitle: record.variant?.title ?? null,
-    variantAttributes: record.variant?.options.length
-      ? record.variant.options.map((entry) => ({
-          name: entry.optionValue.option.name,
-          value: entry.optionValue.value,
-        }))
-      : record.variant?.title && record.product.options[0]
+    variantTitle,
+    variantAttributes: variantAttributes.length
+      ? variantAttributes
+      : record.variant?.title && record.product.options?.[0]
         ? [
             {
               name: record.variant.title.includes('·')
@@ -441,7 +455,7 @@ function formatBalanceRecord(
     projected,
     averageCost,
     inventoryValue: calculateInventoryValue(onHand, averageCost),
-    price: record.variant?.price != null ? moneyToNumber(record.variant.price) : moneyToNumber(record.product.price),
+    price: resolvedPrice != null ? moneyToNumber(resolvedPrice) : null,
     alertState: calculateAlertState(available, lowStockThreshold),
   };
 }

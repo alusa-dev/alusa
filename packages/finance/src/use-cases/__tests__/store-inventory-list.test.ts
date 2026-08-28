@@ -8,6 +8,9 @@ const prismaMock = vi.hoisted(() => ({
   inventoryBalance: {
     findMany: vi.fn(),
   },
+  inventoryMovement: {
+    findMany: vi.fn().mockResolvedValue([]),
+  },
 }));
 
 vi.mock('@alusa/database', () => ({
@@ -24,6 +27,8 @@ type BalanceFixtureInput = {
   variantId?: string | null;
   variantTitle?: string | null;
   variantSku?: string | null;
+  variantPrice?: string | null;
+  variantAttributes?: Array<{ name: string; value: string }>;
   onHand: number;
   reserved?: number;
   incoming?: number;
@@ -66,9 +71,15 @@ function balanceFixture(input: BalanceFixtureInput) {
           id: input.variantId,
           title: input.variantTitle ?? '',
           sku: input.variantSku ?? null,
-          price: null,
+          price: input.variantPrice != null ? new Prisma.Decimal(input.variantPrice) : null,
           lowStockThreshold: input.lowStockThreshold ?? 5,
           isActive: input.variantActive ?? true,
+          options: (input.variantAttributes ?? []).map((attribute) => ({
+            optionValue: {
+              value: attribute.value,
+              option: { name: attribute.name },
+            },
+          })),
         }
       : null,
   };
@@ -148,6 +159,47 @@ describe('listInventoryBalances', () => {
 
     expect(result.map((item) => item.variantTitle)).toEqual(['29', '30', '31']);
     expect(result.some((item) => item.variantId === null)).toBe(false);
+  });
+
+  it('does not use the product price for a variant without an individual price', async () => {
+    prismaMock.inventoryBalance.findMany.mockResolvedValueOnce([
+      balanceFixture({
+        id: 'balance-rosa-30',
+        productId: 'product-sapatilha',
+        productName: 'Sapatilha',
+        hasVariants: true,
+        variantId: 'variant-rosa-30',
+        variantTitle: 'Número 30',
+        variantAttributes: [{ name: 'Rosa', value: 'Número 30' }],
+        onHand: 7,
+      }),
+    ]);
+
+    const [result] = await listInventoryBalances({ contaId: 'conta-1' });
+
+    expect(result).toMatchObject({
+      variantTitle: 'Rosa · Número 30',
+      variantAttributes: [{ name: 'Rosa', value: 'Número 30' }],
+      price: null,
+    });
+  });
+
+  it('uses the individual variant price when it is configured', async () => {
+    prismaMock.inventoryBalance.findMany.mockResolvedValueOnce([
+      balanceFixture({
+        id: 'balance-rosa-31',
+        productId: 'product-sapatilha',
+        productName: 'Sapatilha',
+        hasVariants: true,
+        variantId: 'variant-rosa-31',
+        variantPrice: '62.00',
+        onHand: 3,
+      }),
+    ]);
+
+    const [result] = await listInventoryBalances({ contaId: 'conta-1' });
+
+    expect(result?.price).toBe(62);
   });
 
   it('calcula totais apenas com itens exibíveis quando produto tem variantes', async () => {

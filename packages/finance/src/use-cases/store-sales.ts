@@ -11,6 +11,7 @@ import {
   SaleStatus,
   StatusMatricula,
 } from '@prisma/client';
+import { formatProductVariantTitle, resolveProductSalePrice } from '@alusa/lib';
 
 import { isPrismaUniqueViolation } from '../core';
 import { auditLogService } from '../foundation/audit-log.service';
@@ -1238,7 +1239,21 @@ function prepareItems(
         );
       }
 
-      const unitPrice = moneyToNumber(variant.price ?? product.price);
+      const resolvedPrice = resolveProductSalePrice({
+        hasVariants: product.hasVariants,
+        productPrice: product.price,
+        variantId: variant.id,
+        variantPrice: variant.price,
+      });
+      if (resolvedPrice == null) {
+        throw new StoreSaleError(
+          'PRECO_VARIANTE_NAO_INFORMADO',
+          `Informe o preço da variante ${product.name} - ${variant.title} antes de vendê-la.`,
+          422,
+        );
+      }
+
+      const unitPrice = moneyToNumber(resolvedPrice);
       const subtotal = roundMoney(unitPrice * rawItem.quantity);
       const unitCostAtSale = roundRate(variant.averageCost);
       const totalCostAtSale = roundMoney(unitCostAtSale * rawItem.quantity);
@@ -1399,7 +1414,7 @@ async function prepareSaleContext(input: CreateStoreSaleInput): Promise<Prepared
     },
   });
 
-  const variants = variantIds.length
+  const variantRecords = variantIds.length
     ? await prisma.productVariant.findMany({
         where: {
           id: { in: variantIds },
@@ -1412,9 +1427,29 @@ async function prepareSaleContext(input: CreateStoreSaleInput): Promise<Prepared
           price: true,
           stock: true,
           isActive: true,
+          options: {
+            select: {
+              optionValue: {
+                select: {
+                  value: true,
+                  option: { select: { name: true } },
+                },
+              },
+            },
+          },
         },
       })
     : [];
+  const variants = variantRecords.map((variant) => ({
+    ...variant,
+    title: formatProductVariantTitle(
+      variant.options.map((entry) => ({
+        name: entry.optionValue.option.name,
+        value: entry.optionValue.value,
+      })),
+      variant.title,
+    ),
+  }));
 
   const inventoryBalances = await prisma.inventoryBalance.findMany({
     where: {
