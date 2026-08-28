@@ -7,6 +7,11 @@ import { isPublicApiPath } from '@/lib/middleware/public-api-paths';
 import { hasCronSecret, resolveRouteProtection } from '@/lib/security/route-protection-registry';
 import { isTestRouteEnabled } from '@/lib/security/runtime-guards';
 import { clearAuthCookies } from '@/lib/auth-cookies';
+import {
+  getKnownApiMethods,
+  isKnownApiMethodAllowed,
+  methodNotAllowedResponse,
+} from '@/lib/security/http-method-observability';
 
 type WizardSnapshot = { completedAt?: string | null; step?: number | null };
 type WizardResponse = { data?: { wizard?: WizardSnapshot } };
@@ -230,6 +235,11 @@ async function handleApiRequest(req: NextRequest): Promise<NextResponse | null> 
       { error: 'Unauthorized' },
       { status: 401, headers: { 'cache-control': 'no-store' } },
     );
+  }
+
+  const allowedMethods = getKnownApiMethods(pathname);
+  if (allowedMethods && !isKnownApiMethodAllowed(req.method, allowedMethods)) {
+    return methodNotAllowedResponse(req, allowedMethods, 'route_method_not_declared');
   }
 
   if (isPublicApiPath(pathname)) {

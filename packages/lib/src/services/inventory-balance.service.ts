@@ -1,5 +1,5 @@
 import { prisma } from '../prisma';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 export type InventoryBalanceRow = {
   productId: string;
@@ -9,6 +9,58 @@ export type InventoryBalanceRow = {
   incoming: number;
   averageCost: Prisma.Decimal;
 };
+
+export type InventoryCostMovement = {
+  onHandDelta: number;
+  unitCost: number | Prisma.Decimal | null;
+};
+
+export type InventoryCostBasis = {
+  onHand: number;
+  inventoryValue: number;
+  averageCost: number;
+};
+
+/**
+ * Reconstructs the acquisition cost of the current physical stock from the
+ * inventory ledger. A zero cost is an explicit acquisition cost, not a
+ * missing value, so it participates in the weighted average as zero.
+ */
+export function calculateInventoryCostBasis(
+  movements: readonly InventoryCostMovement[],
+): InventoryCostBasis {
+  let onHand = 0;
+  let inventoryValue = 0;
+
+  for (const movement of movements) {
+    const delta = Number(movement.onHandDelta);
+    if (!Number.isFinite(delta) || delta === 0) continue;
+
+    if (delta > 0) {
+      const unitCost = Math.max(Number(movement.unitCost ?? 0), 0);
+      onHand += delta;
+      inventoryValue += delta * unitCost;
+      continue;
+    }
+
+    const quantityRemoved = Math.min(Math.abs(delta), onHand);
+    const currentAverageCost = onHand > 0 ? inventoryValue / onHand : 0;
+    onHand -= quantityRemoved;
+    inventoryValue = Math.max(0, inventoryValue - quantityRemoved * currentAverageCost);
+  }
+
+  const normalizedOnHand = Math.max(0, Math.trunc(onHand));
+  const normalizedValue = Number(Math.max(0, inventoryValue).toFixed(4));
+
+  return {
+    onHand: normalizedOnHand,
+    inventoryValue: normalizedValue,
+    averageCost:
+      normalizedOnHand > 0
+        ? Number((normalizedValue / normalizedOnHand).toFixed(4))
+        : 0,
+  };
+}
 
 export function buildInventoryItemKey(productId: string, variantId?: string | null): string {
   return variantId ? `variant:${variantId}` : `product:${productId}`;
@@ -214,7 +266,7 @@ export async function revalueInventoryAverageCostInTransaction(
 export async function listInventoryBalanceRows(contaId: string, productIds: string[]) {
   if (productIds.length === 0) return [];
 
-  return prisma.inventoryBalance.findMany({
+  const balances = await prisma.inventoryBalance.findMany({
     where: {
       contaId,
       productId: {
@@ -222,6 +274,7 @@ export async function listInventoryBalanceRows(contaId: string, productIds: stri
       },
     },
     select: {
+      inventoryItemKey: true,
       productId: true,
       variantId: true,
       onHand: true,
@@ -229,5 +282,42 @@ export async function listInventoryBalanceRows(contaId: string, productIds: stri
       incoming: true,
       averageCost: true,
     },
+  });
+
+  const inventoryItemKeys = balances.map((balance) => balance.inventoryItemKey);
+  if (inventoryItemKeys.length === 0) return balances;
+
+  const movements = await prisma.inventoryMovement.findMany({
+    where: {
+      contaId,
+      inventoryItemKey: { in: inventoryItemKeys },
+      onHandDelta: { not: 0 },
+    },
+    select: {
+      inventoryItemKey: true,
+      onHandDelta: true,
+      unitCost: true,
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  });
+
+  const movementsByItem = new Map<string, InventoryCostMovement[]>();
+  for (const movement of movements) {
+    const itemMovements = movementsByItem.get(movement.inventoryItemKey) ?? [];
+    itemMovements.push(movement);
+    movementsByItem.set(movement.inventoryItemKey, itemMovements);
+  }
+
+  return balances.map((balance) => {
+    const itemMovements = movementsByItem.get(balance.inventoryItemKey);
+    if (!itemMovements?.length) return balance;
+
+    const costBasis = calculateInventoryCostBasis(itemMovements);
+    if (costBasis.onHand !== balance.onHand) return balance;
+
+    return {
+      ...balance,
+      averageCost: new Prisma.Decimal(costBasis.averageCost),
+    };
   });
 }

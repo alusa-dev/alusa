@@ -9,7 +9,7 @@ function jsonError(status: number, code: string, message: string) {
 }
 
 /**
- * POST /api/jobs/archive-finance-webhooks
+ * GET/POST /api/jobs/archive-finance-webhooks
  *
  * Arquiva webhooks processados antigos da tabela hot para tabela cold.
  *
@@ -50,4 +50,8 @@ export async function POST(req: Request) {
     console.error('[Job Archive Finance Webhooks] Erro:', error);
     return jsonError(500, 'ERRO_JOB', (error as Error).message);
   }
+}
+
+export async function GET(req: Request) {
+  return POST(req);
 }

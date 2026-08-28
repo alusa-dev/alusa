@@ -1,4 +1,5 @@
 import { prisma } from '@alusa/database';
+import { calculateInventoryCostBasis } from '@alusa/lib';
 import {
   InventoryMovementType,
   Prisma,
@@ -391,14 +392,17 @@ function buildMovementTotalCost(input: {
   return input.unitCost.mul(quantityBase);
 }
 
-function formatBalanceRecord(record: InventoryBalanceRecord): InventoryBalanceDTO {
+function formatBalanceRecord(
+  record: InventoryBalanceRecord,
+  averageCostOverride?: number,
+): InventoryBalanceDTO {
   const onHand = record.onHand;
   const reserved = record.reserved;
   const incoming = record.incoming;
   const available = calculateAvailable(record);
   const projected = calculateProjected(record);
   const lowStockThreshold = record.variant?.lowStockThreshold ?? record.product.lowStockThreshold;
-  const averageCost = moneyToNumber(record.averageCost);
+  const averageCost = averageCostOverride ?? moneyToNumber(record.averageCost);
 
   return {
     id: record.id,
@@ -884,7 +888,44 @@ export async function listInventoryBalances(
     orderBy: [{ product: { name: 'asc' } }, { variant: { title: 'asc' } }],
   });
 
-  let data = records.map(formatBalanceRecord).filter(isSellableInventoryBalance);
+  const inventoryItemKeys = records.map((record) => record.inventoryItemKey);
+  const movements = inventoryItemKeys.length
+    ? await prisma.inventoryMovement.findMany({
+        where: {
+          contaId: input.contaId,
+          inventoryItemKey: { in: inventoryItemKeys },
+          onHandDelta: { not: 0 },
+        },
+        select: {
+          inventoryItemKey: true,
+          onHandDelta: true,
+          unitCost: true,
+        },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      })
+    : [];
+  const movementsByItem = new Map<string, Array<{ onHandDelta: number; unitCost: number | null }>>();
+  for (const movement of movements) {
+    const itemMovements = movementsByItem.get(movement.inventoryItemKey) ?? [];
+    itemMovements.push({
+      onHandDelta: movement.onHandDelta,
+      unitCost: movement.unitCost != null ? moneyToNumber(movement.unitCost) : null,
+    });
+    movementsByItem.set(movement.inventoryItemKey, itemMovements);
+  }
+
+  let data = records
+    .map((record) => {
+      const itemMovements = movementsByItem.get(record.inventoryItemKey);
+      if (!itemMovements?.length) return formatBalanceRecord(record);
+
+      const costBasis = calculateInventoryCostBasis(itemMovements);
+      return formatBalanceRecord(
+        record,
+        costBasis.onHand === record.onHand ? costBasis.averageCost : undefined,
+      );
+    })
+    .filter(isSellableInventoryBalance);
 
   if (!input.includeInactive) {
     data = data.filter((item) => item.isActive);

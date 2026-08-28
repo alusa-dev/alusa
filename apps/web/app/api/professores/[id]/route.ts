@@ -7,6 +7,7 @@ import {
   updateProfessorInputDTOSchema,
 } from '@/features/cadastro/professores/dtos';
 import { mapProfessorRecordToDTO } from '@/features/cadastro/professores/mappers';
+import { logMethodNotAllowed } from '@/lib/security/http-method-observability';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -94,6 +95,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
 
 export const PATCH = PUT;
 
-export async function DELETE() {
+export async function DELETE(req: Request) {
+  logMethodNotAllowed(req, ['GET', 'PUT', 'PATCH'], 'soft_delete_required');
   return jsonError(405, 'NAO_SUPORTADO', 'Use status INATIVO como soft delete');
 }

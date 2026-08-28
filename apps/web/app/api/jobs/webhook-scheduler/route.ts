@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 /**
- * POST /api/jobs/webhook-scheduler
+ * GET/POST /api/jobs/webhook-scheduler
  *
  * Execução unificada de manutenção de webhooks.
  * Projetado para cron externo (ex: Vercel Cron, a cada 2 minutos).

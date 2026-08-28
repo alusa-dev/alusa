@@ -10,7 +10,7 @@ function jsonError(status: number, code: string, message: string) {
 }
 
 /**
- * POST /api/jobs/process-overdue-billing-notifications
+ * GET/POST /api/jobs/process-overdue-billing-notifications
  *
  * Emite notificações de cobrança vencida (fallback local ao webhook PAYMENT_OVERDUE).
  */
@@ -63,4 +63,8 @@ export async function POST(req: Request) {
     console.error('[Job Process Overdue Billing] Erro:', error);
     return jsonError(500, 'ERRO_JOB', (error as Error).message);
   }
+}
+
+export async function GET(req: Request) {
+  return POST(req);
 }

@@ -6,6 +6,7 @@ import {
   financeiroLancamentoMutationResultDTOSchema,
 } from '@/features/financeiro/dtos';
 import { mapFinanceiroLancamentoRecordToDTO } from '@/features/financeiro/mappers';
+import { logMethodNotAllowed } from '@/lib/security/http-method-observability';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -188,6 +189,7 @@ export async function DELETE(req: NextRequest, { params: _params }: { params: Pr
   try {
     const auth = await ensureAuth(req);
     if ('error' in auth) return auth.error;
+    logMethodNotAllowed(req, ['GET', 'PUT'], 'financial_entries_are_reversed_not_deleted');
     return err(405, 'NAO_SUPORTADO', 'Lancamento nao pode ser excluido. Use estorno/ajuste.');
   } catch (e) {
     console.error('[API lancamentos][DELETE]', e);

@@ -10,7 +10,7 @@ function jsonError(status: number, code: string, message: string) {
 }
 
 /**
- * POST /api/jobs/notify-contracts-expiring
+ * GET/POST /api/jobs/notify-contracts-expiring
  *
  * Alerta contratos que vencem em 7, 3 ou 1 dia(s).
  */
@@ -55,4 +55,8 @@ export async function POST(req: Request) {
     console.error('[Job Notify Contracts Expiring] Erro:', error);
     return jsonError(500, 'ERRO_JOB', (error as Error).message);
   }
+}
+
+export async function GET(req: Request) {
+  return POST(req);
 }

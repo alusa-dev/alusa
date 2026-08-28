@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { reconcileOutboundFinancialOperations, reconcilePendingPaymentCommands } from '@alusa/finance';
@@ -6,12 +7,40 @@ import { reconcileEnrollmentCreationOperations } from '@/src/server/matriculas/r
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
-function jsonError(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status });
+type ReconciliationStage = 'payment_commands' | 'outbound_operations' | 'enrollment_creations';
+
+type StageResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; stage: ReconciliationStage; correlationId: string };
+
+function getSafeErrorMetadata(error: unknown): { errorName: string; errorCode?: string } {
+  const errorCode =
+    typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+      ? error.code.slice(0, 64)
+      : undefined;
+  return {
+    errorName: error instanceof Error ? error.name : 'UnknownError',
+    ...(errorCode ? { errorCode } : {}),
+  };
+}
+
+async function runStage<T>(stage: ReconciliationStage, run: () => Promise<T>): Promise<StageResult<T>> {
+  try {
+    return { ok: true, value: await run() };
+  } catch (error) {
+    const correlationId = randomUUID();
+    console.error('[job:reconcile-payment-commands]', {
+      event: 'stage_failed',
+      stage,
+      correlationId,
+      ...getSafeErrorMetadata(error),
+    });
+    return { ok: false, stage, correlationId };
+  }
 }
 
 /**
- * POST /api/jobs/reconcile-payment-commands
+ * GET/POST /api/jobs/reconcile-payment-commands
  *
  * Reconsulta o Asaas para comandos financeiros pendentes e abre divergência
  * quando a confirmação por webhook/sync não chega dentro da janela esperada.
@@ -41,8 +70,8 @@ async function run(req: Request) {
       contaId: tenantScope.contaId,
       limit: Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, limitRaw)) : 50,
     };
-    const [commands, creations, enrollmentCreations] = await Promise.all([
-      reconcilePendingPaymentCommands({
+    const [commandsResult, creationsResult, enrollmentCreationsResult] = await Promise.all([
+      runStage('payment_commands', () => reconcilePendingPaymentCommands({
         ...common,
         pollOlderThanSeconds: Number.isFinite(pollOlderThanSecondsRaw)
           ? Math.max(5, Math.min(60 * 60, pollOlderThanSecondsRaw))
@@ -50,20 +79,40 @@ async function run(req: Request) {
         staleOlderThanMinutes: Number.isFinite(staleOlderThanMinutesRaw)
           ? Math.max(1, Math.min(24 * 60, staleOlderThanMinutesRaw))
           : 10,
-      }),
-      reconcileOutboundFinancialOperations({
+      })),
+      runStage('outbound_operations', () => reconcileOutboundFinancialOperations({
         ...common,
         olderThanSeconds: Number.isFinite(pollOlderThanSecondsRaw)
           ? Math.max(5, Math.min(60 * 60, pollOlderThanSecondsRaw))
           : 30,
-      }),
-      reconcileEnrollmentCreationOperations({
+      })),
+      runStage('enrollment_creations', () => reconcileEnrollmentCreationOperations({
         ...common,
         olderThanSeconds: Number.isFinite(staleOlderThanMinutesRaw)
           ? Math.max(1, Math.min(24 * 60, staleOlderThanMinutesRaw)) * 60
           : 600,
-      }),
+      })),
     ]);
+    if (!commandsResult.ok || !creationsResult.ok || !enrollmentCreationsResult.ok) {
+      const failures = [commandsResult, creationsResult, enrollmentCreationsResult]
+        .filter((result): result is Extract<StageResult<unknown>, { ok: false }> => !result.ok)
+        .map(({ stage, correlationId }) => ({ stage, correlationId }));
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'ERRO_JOB',
+            message: 'Uma ou mais etapas da reconciliação falharam.',
+            failures,
+          },
+        },
+        { status: 500 },
+      );
+    }
+
+    const commands = commandsResult.value;
+    const creations = creationsResult.value;
+    const enrollmentCreations = enrollmentCreationsResult.value;
     // Preserva o contrato legado em `result` e expõe a nova trilha separadamente.
     return NextResponse.json({
       success: true,
@@ -72,8 +121,16 @@ async function run(req: Request) {
       enrollmentCreations,
     });
   } catch (error) {
-    console.error('[Job Reconcile Payment Commands] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', error instanceof Error ? error.message : String(error));
+    const correlationId = randomUUID();
+    console.error('[job:reconcile-payment-commands]', {
+      event: 'request_failed',
+      correlationId,
+      ...getSafeErrorMetadata(error),
+    });
+    return NextResponse.json(
+      { error: { code: 'ERRO_JOB', message: 'Não foi possível concluir a reconciliação.', correlationId } },
+      { status: 500 },
+    );
   }
 }
 
