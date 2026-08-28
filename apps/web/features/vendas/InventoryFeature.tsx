@@ -153,6 +153,10 @@ function normalizeNumber(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function calculateStockSaleValue(item: InventoryBalanceItem): number {
+  return item.onHand * (item.price ?? 0);
+}
+
 function InventoryProductAutocomplete({
   items,
   value,
@@ -319,7 +323,7 @@ export function InventoryFeature() {
           reserved: acc.reserved + item.reserved,
           available: acc.available + item.available,
           incoming: acc.incoming + item.incoming,
-          value: acc.value + item.inventoryValue,
+          value: acc.value + calculateStockSaleValue(item),
         }),
         { onHand: 0, reserved: 0, available: 0, incoming: 0, value: 0 },
       ),
@@ -644,7 +648,7 @@ export function InventoryFeature() {
           />
           <InventoryMetricCard
             label="Valor em estoque"
-            detail="estimativa por custo médio"
+            detail="valor total pelo preço de venda"
             value={formatInventoryCurrency(totals.value)}
             icon={<DollarSign className="h-5 w-5" />}
           />
