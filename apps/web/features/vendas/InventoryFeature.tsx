@@ -155,6 +155,10 @@ function calculateStockSaleValue(item: InventoryBalanceItem): number {
   return item.onHand * (item.price ?? 0);
 }
 
+function calculateStockNetValue(item: InventoryBalanceItem): number {
+  return item.onHand * ((item.price ?? 0) - item.averageCost);
+}
+
 function InventoryProductAutocomplete({
   items,
   value,
@@ -318,9 +322,10 @@ export function InventoryFeature() {
       balances.reduce(
         (acc, item) => ({
           onHand: acc.onHand + item.onHand,
-          value: acc.value + calculateStockSaleValue(item),
+          grossValue: acc.grossValue + calculateStockSaleValue(item),
+          netValue: acc.netValue + calculateStockNetValue(item),
         }),
-        { onHand: 0, value: 0 },
+        { onHand: 0, grossValue: 0, netValue: 0 },
       ),
     [balances],
   );
@@ -616,7 +621,7 @@ export function InventoryFeature() {
           </div>
         }
       >
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           <InventoryMetricCard
             label="Em estoque"
             detail="quantidade física agora"
@@ -624,9 +629,15 @@ export function InventoryFeature() {
             icon={<RectangleStack className="h-5 w-5" />}
           />
           <InventoryMetricCard
-            label="Valor em estoque"
-            detail="valor total pelo preço de venda"
-            value={formatInventoryCurrency(totals.value)}
+            label="Valor bruto em estoque"
+            detail="total pelo preço de venda"
+            value={formatInventoryCurrency(totals.grossValue)}
+            icon={<DollarSign className="h-5 w-5" />}
+          />
+          <InventoryMetricCard
+            label="Valor líquido em estoque"
+            detail="venda menos custo médio"
+            value={formatInventoryCurrency(totals.netValue)}
             icon={<DollarSign className="h-5 w-5" />}
           />
         </div>
