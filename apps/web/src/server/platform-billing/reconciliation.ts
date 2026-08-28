@@ -10,7 +10,13 @@ import {
   type PlatformBillingEnvironment,
   type PlatformPlanCode,
 } from '@alusa/platform-billing';
-import { getStripeClient, retrieveStripeDefaultPaymentMethod, type StripeSubscriptionRecord } from '@alusa/stripe';
+import {
+  getStripeClient,
+  listStripePaidInvoices,
+  retrieveStripeDefaultPaymentMethod,
+  type StripeInvoiceRecord,
+  type StripeSubscriptionRecord,
+} from '@alusa/stripe';
 import { resolvePlatformBillingEnvironment } from './platform-billing-server';
 
 type ReconciliationAccount = {
@@ -114,6 +120,7 @@ export async function reconcilePlatformBilling(input: {
     try {
       const subscription = await gateway.retrieveSubscription(account.stripeSubscriptionId);
       const paymentMethod = await resolvePaymentMethod(account, subscription.customerId);
+      const paidInvoices = await listPaidInvoices(subscription.customerId ?? account.stripeCustomerId);
       if (subscription.priceId && account.stripePriceId && subscription.priceId !== account.stripePriceId) {
         await upsertIssue(input.prisma, {
           contaId: account.contaId,
@@ -179,6 +186,7 @@ export async function reconcilePlatformBilling(input: {
           planCode: resolvedPlanCode,
           environment,
           paymentMethod,
+          paidInvoices,
         });
         if (corrected) {
           console.info('[platform-billing][reconciliation]', {
@@ -302,8 +310,10 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
   planCode: PlatformPlanCode;
   environment: PlatformBillingEnvironment;
   paymentMethod: Awaited<ReturnType<typeof resolvePaymentMethod>>;
+  paidInvoices: StripeInvoiceRecord[];
 }): Promise<boolean> {
   const now = new Date();
+  const paymentHistory = resolvePaymentHistory(input.paidInvoices);
   const desiredStatus = mapStripeSubscriptionStatus(input.subscription.status);
   const policyAccount = {
     ...input.account,
@@ -313,6 +323,8 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
     cancelAtPeriodEnd: input.subscription.cancelAtPeriodEnd,
     trialEndsAt: input.subscription.trialEndsAt,
     paymentMethodStatus: input.paymentMethod?.status ?? input.account.paymentMethodStatus,
+    firstPaidAt: input.account.firstPaidAt ?? paymentHistory.firstPaidAt,
+    lastSuccessfulPaymentAt: input.account.lastSuccessfulPaymentAt ?? paymentHistory.lastSuccessfulPaymentAt,
   };
   const desiredAccessStatus = derivePlatformAccessStatus({ account: policyAccount, now });
   const restrictionReason = derivePlatformRestrictionReason({ account: policyAccount, now });
@@ -335,6 +347,12 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
   }
   if (input.account.stripeSubscriptionId !== input.subscription.id) update.stripeSubscriptionId = input.subscription.id;
   if (input.account.stripePriceId !== input.subscription.priceId) update.stripePriceId = input.subscription.priceId;
+  if (paymentHistory.firstPaidAt && (!input.account.firstPaidAt || paymentHistory.firstPaidAt < input.account.firstPaidAt)) {
+    update.firstPaidAt = paymentHistory.firstPaidAt;
+  }
+  if (paymentHistory.lastSuccessfulPaymentAt && (!input.account.lastSuccessfulPaymentAt || paymentHistory.lastSuccessfulPaymentAt > input.account.lastSuccessfulPaymentAt)) {
+    update.lastSuccessfulPaymentAt = paymentHistory.lastSuccessfulPaymentAt;
+  }
   if (!sameInstant(input.account.currentPeriodEnd, input.subscription.currentPeriodEnd)) {
     update.currentPeriodEnd = input.subscription.currentPeriodEnd;
   }
@@ -394,7 +412,7 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
 
   const correctionFields = Object.keys(update).filter((field) => field !== 'lastReconciledAt');
 
-  if (correctionFields.length === 0 && !hasStaleCancellationChange) {
+  if (correctionFields.length === 0 && !hasStaleCancellationChange && input.paidInvoices.length === 0) {
     await prisma.platformBillingAccount.update({
       where: { id: input.account.id },
       data: {
@@ -407,6 +425,72 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
   update.lastStripeEventId = `reconciliation:${input.subscription.id}`;
 
   await prisma.$transaction(async (tx) => {
+    for (const invoice of input.paidInvoices) {
+      const priceId = invoice.priceId ?? input.subscription.priceId ?? input.account.stripePriceId;
+      await tx.platformBillingInvoice.upsert({
+        where: {
+          uq_platform_billing_invoice_env_invoice: {
+            environment: input.environment,
+            stripeInvoiceId: invoice.id,
+          },
+        },
+        create: {
+          contaId: input.account.contaId,
+          billingAccountId: input.account.id,
+          environment: input.environment,
+          stripeInvoiceId: invoice.id,
+          stripeCustomerId: invoice.customerId,
+          stripeSubscriptionId: invoice.subscriptionId ?? input.subscription.id,
+          stripePriceId: priceId,
+          planCode: input.planCode,
+          number: invoice.number,
+          status: 'PAID',
+          amountDue: invoice.amountDue,
+          amountPaid: invoice.amountPaid,
+          currency: invoice.currency,
+          hostedInvoiceUrl: invoice.hostedInvoiceUrl,
+          invoicePdf: invoice.invoicePdf,
+          periodStart: invoice.periodStart,
+          periodEnd: invoice.periodEnd,
+          dueDate: invoice.dueDate,
+          paidAt: invoice.paidAt ?? invoice.createdAt ?? now,
+          failedAt: null,
+          attempted: invoice.attempted,
+          attemptCount: invoice.attemptCount,
+          nextPaymentAttempt: null,
+          lastPaymentErrorCode: null,
+          lastPaymentErrorMessage: null,
+          raw: invoice.raw as Prisma.InputJsonValue,
+          lastStripeEventId: `reconciliation:invoice:${invoice.id}`,
+        },
+        update: {
+          billingAccountId: input.account.id,
+          stripeCustomerId: invoice.customerId,
+          stripeSubscriptionId: invoice.subscriptionId ?? input.subscription.id,
+          stripePriceId: priceId,
+          planCode: input.planCode,
+          number: invoice.number,
+          status: 'PAID',
+          amountDue: invoice.amountDue,
+          amountPaid: invoice.amountPaid,
+          currency: invoice.currency,
+          hostedInvoiceUrl: invoice.hostedInvoiceUrl,
+          invoicePdf: invoice.invoicePdf,
+          periodStart: invoice.periodStart,
+          periodEnd: invoice.periodEnd,
+          dueDate: invoice.dueDate,
+          paidAt: invoice.paidAt ?? invoice.createdAt ?? now,
+          failedAt: null,
+          attempted: invoice.attempted,
+          attemptCount: invoice.attemptCount,
+          nextPaymentAttempt: null,
+          lastPaymentErrorCode: null,
+          lastPaymentErrorMessage: null,
+          raw: invoice.raw as Prisma.InputJsonValue,
+          lastStripeEventId: `reconciliation:invoice:${invoice.id}`,
+        },
+      });
+    }
     if (Object.keys(update).length > 0) {
       await tx.platformBillingAccount.update({
         where: { id: input.account.id },
@@ -468,6 +552,26 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
   });
 
   return true;
+}
+
+async function listPaidInvoices(customerId: string | null): Promise<StripeInvoiceRecord[]> {
+  if (!customerId) return [];
+  return listStripePaidInvoices(getStripeClient(process.env), customerId);
+}
+
+function resolvePaymentHistory(invoices: StripeInvoiceRecord[]): {
+  firstPaidAt: Date | null;
+  lastSuccessfulPaymentAt: Date | null;
+} {
+  const paidAt = invoices
+    .map((invoice) => invoice.paidAt ?? invoice.createdAt)
+    .filter((value): value is Date => value instanceof Date && Number.isFinite(value.getTime()))
+    .sort((left, right) => left.getTime() - right.getTime());
+
+  return {
+    firstPaidAt: paidAt[0] ?? null,
+    lastSuccessfulPaymentAt: paidAt.at(-1) ?? null,
+  };
 }
 
 async function resolvePaymentMethod(

@@ -60,6 +60,31 @@ export interface StripeSubscriptionRecord {
   pendingUpdateId: string | null;
 }
 
+export interface StripeInvoiceRecord {
+  id: string;
+  customerId: string;
+  subscriptionId: string | null;
+  priceId: string | null;
+  number: string | null;
+  status: string | null;
+  amountDue: number;
+  amountPaid: number;
+  currency: string;
+  hostedInvoiceUrl: string | null;
+  invoicePdf: string | null;
+  periodStart: Date | null;
+  periodEnd: Date | null;
+  dueDate: Date | null;
+  paidAt: Date | null;
+  createdAt: Date | null;
+  attempted: boolean;
+  attemptCount: number;
+  nextPaymentAttempt: Date | null;
+  lastPaymentErrorCode: string | null;
+  lastPaymentErrorMessage: string | null;
+  raw: Record<string, unknown>;
+}
+
 export interface RetrieveStripeDefaultPaymentMethodInput {
   customerId: string;
   subscriptionId?: string | null;
@@ -211,6 +236,21 @@ export async function retrieveStripeSubscription(
   return toSubscriptionRecord(subscription);
 }
 
+export async function listStripePaidInvoices(
+  client: Stripe,
+  customerId: string,
+): Promise<StripeInvoiceRecord[]> {
+  const invoices = await client.invoices.list({
+    customer: customerId,
+    status: 'paid',
+    limit: 100,
+  });
+
+  return invoices.data
+    .map(toInvoiceRecord)
+    .filter((invoice) => invoice.amountPaid > 0);
+}
+
 export async function retrieveStripeDefaultPaymentMethod(
   client: Stripe,
   input: RetrieveStripeDefaultPaymentMethodInput,
@@ -350,6 +390,40 @@ function toSubscriptionRecord(subscription: Stripe.Subscription): StripeSubscrip
   };
 }
 
+function toInvoiceRecord(invoice: Stripe.Invoice): StripeInvoiceRecord {
+  const raw = readRecord(invoice);
+  const statusTransitions = readRecord(raw.status_transitions);
+  const paymentError = readRecord(raw.last_finalization_error ?? raw.last_payment_error);
+  const lines = readRecord(raw.lines);
+  const firstLine = Array.isArray(lines.data) ? readRecord(lines.data[0]) : {};
+  const firstPrice = readRecord(firstLine.price);
+
+  return {
+    id: invoice.id,
+    customerId: readStripeId(invoice.customer) ?? '',
+    subscriptionId: readString(raw.subscription) ?? readString(readRecord(raw.subscription).id) ?? readNestedString(raw, ['parent', 'subscription_details', 'subscription']),
+    priceId: readString(firstPrice.id),
+    number: readString(invoice.number),
+    status: readString(invoice.status),
+    amountDue: invoice.amount_due ?? 0,
+    amountPaid: invoice.amount_paid ?? 0,
+    currency: invoice.currency ?? 'brl',
+    hostedInvoiceUrl: readString(invoice.hosted_invoice_url),
+    invoicePdf: readString(invoice.invoice_pdf),
+    periodStart: readUnixDate(invoice.period_start),
+    periodEnd: readUnixDate(invoice.period_end),
+    dueDate: readUnixDate(invoice.due_date),
+    paidAt: readUnixDate(statusTransitions.paid_at),
+    createdAt: readUnixDate(invoice.created),
+    attempted: invoice.attempted === true,
+    attemptCount: invoice.attempt_count ?? 0,
+    nextPaymentAttempt: readUnixDate(invoice.next_payment_attempt),
+    lastPaymentErrorCode: readString(paymentError.code),
+    lastPaymentErrorMessage: readString(paymentError.message),
+    raw,
+  };
+}
+
 async function resolvePaymentMethodRecord(
   client: Stripe,
   value: unknown,
@@ -390,6 +464,14 @@ function readRecord(value: unknown): Record<string, unknown> {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
+}
+
+function readNestedString(value: unknown, path: string[]): string | null {
+  let current: unknown = value;
+  for (const key of path) {
+    current = readRecord(current)[key];
+  }
+  return readString(current) ?? readString(readRecord(current).id);
 }
 
 function readNumber(value: unknown): number | null {
