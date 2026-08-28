@@ -49,6 +49,7 @@ export interface ProductListItem {
   category: ProductCategory | null;
   isActive: boolean;
   hasVariants: boolean;
+  variantGroupCount: number;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -190,6 +191,7 @@ function normalizeProduct(input: Record<string, unknown>): ProductListItem {
       : null,
     isActive: input.isActive !== false,
     hasVariants,
+    variantGroupCount: Number(input.variantGroupCount ?? 0),
     archivedAt: input.archivedAt != null ? String(input.archivedAt) : null,
     createdAt: String(input.createdAt ?? ''),
     updatedAt: String(input.updatedAt ?? ''),

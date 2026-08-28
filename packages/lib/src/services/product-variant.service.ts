@@ -5,7 +5,7 @@ import {
   calculateProjected,
   ensureProductInventoryBalance,
   listInventoryBalanceRows,
-  setInventoryAverageCost,
+  revalueInventoryAverageCostInTransaction,
 } from './inventory-balance.service';
 
 export type ProductVariantWithOptions = ProductVariant & {
@@ -291,6 +291,7 @@ export async function updateProductVariant(input: {
   variantId: string;
   productId: string;
   contaId: string;
+  actorUserId?: string | null;
   sku?: string | null;
   price?: number | null;
   averageCost?: number;
@@ -333,18 +334,26 @@ export async function updateProductVariant(input: {
   if (input.imageUrl !== undefined) data.imageUrl = input.imageUrl;
   if (input.isActive !== undefined) data.isActive = input.isActive;
 
-  if (Object.keys(data).length > 0) {
-    await prisma.productVariant.update({ where: { id: input.variantId }, data });
-  }
+  await prisma.$transaction(async (tx) => {
+    if (Object.keys(data).length > 0) {
+      await tx.productVariant.update({ where: { id: input.variantId }, data });
+    }
 
-  if (input.averageCost !== undefined) {
-    await setInventoryAverageCost({
-      contaId: input.contaId,
-      productId: input.productId,
-      variantId: input.variantId,
-      averageCost: input.averageCost,
-    });
-  }
+    if (input.averageCost !== undefined) {
+      await revalueInventoryAverageCostInTransaction(
+        tx,
+        {
+          contaId: input.contaId,
+          productId: input.productId,
+          variantId: input.variantId,
+          averageCost: input.averageCost,
+          actorUserId: input.actorUserId,
+          reason: 'Atualização manual do custo médio da variante.',
+        },
+        input.averageCost,
+      );
+    }
+  });
 
   const updated = await prisma.productVariant.findFirst({
     where: { id: input.variantId },
@@ -359,6 +368,63 @@ export async function updateProductVariant(input: {
   const balances = await listInventoryBalanceRows(input.contaId, [input.productId]);
   const [mapped] = mapVariantsWithInventory(input.productId, [updated], balances);
   return mapped;
+}
+
+export async function bulkUpdateProductVariants(input: {
+  productId: string;
+  contaId: string;
+  actorUserId?: string | null;
+  variantIds: string[];
+  price: number;
+  averageCost: number;
+}): Promise<Awaited<ReturnType<typeof listProductVariants>>> {
+  const variantIds = [...new Set(input.variantIds.filter(Boolean))];
+  if (variantIds.length === 0) throw new Error('Selecione pelo menos uma variante.');
+  if (!Number.isFinite(input.price) || input.price <= 0) {
+    throw new Error('Informe um preço de venda válido.');
+  }
+  if (!Number.isFinite(input.averageCost) || input.averageCost < 0) {
+    throw new Error('Informe um custo válido.');
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const product = await tx.product.findFirst({
+      where: { id: input.productId, contaId: input.contaId },
+      select: { id: true },
+    });
+    if (!product) throw new Error('Produto não encontrado');
+
+    const variants = await tx.productVariant.findMany({
+      where: { id: { in: variantIds }, productId: input.productId },
+      select: { id: true },
+    });
+    if (variants.length !== variantIds.length) {
+      throw new Error('Uma ou mais variantes não pertencem a este produto.');
+    }
+
+    await tx.productVariant.updateMany({
+      where: { id: { in: variantIds }, productId: input.productId },
+      data: { price: Number(input.price.toFixed(2)) },
+    });
+
+    const averageCost = Number(input.averageCost.toFixed(4));
+    for (const variantId of variantIds) {
+      await revalueInventoryAverageCostInTransaction(
+        tx,
+        {
+          contaId: input.contaId,
+          productId: input.productId,
+          variantId,
+          averageCost,
+          actorUserId: input.actorUserId,
+          reason: 'Precificação em massa do grupo de variantes.',
+        },
+        averageCost,
+      );
+    }
+  }, { maxWait: 10_000, timeout: 30_000 });
+
+  return listProductVariants(input.productId, input.contaId);
 }
 
 export async function deleteProductVariant(

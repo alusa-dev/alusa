@@ -284,6 +284,7 @@ type CreatedSaleInventoryLine = {
   variantId: string | null;
   productName: string;
   quantity: number;
+  unitCostAtSale: number;
 };
 
 export type StoreSaleFilterStatus =
@@ -1818,6 +1819,7 @@ async function createLocalSaleRecord(input: {
             variantId: createdItem.variantId,
             productName: createdItem.productName,
             quantity: createdItem.quantity,
+            unitCostAtSale: item.unitCostAtSale,
           });
         }
 

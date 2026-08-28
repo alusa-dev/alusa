@@ -89,6 +89,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       const product = await updateProduct({
         id: ctxParams.id,
         contaId,
+        actorUserId:
+          (session as { user?: { id?: string } } | null)?.user?.id?.trim() || null,
         ...updateData,
         averageCost,
       });

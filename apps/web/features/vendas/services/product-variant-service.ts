@@ -307,6 +307,22 @@ export async function updateProductVariant(
   return (json as { data: ProductVariantDTO }).data;
 }
 
+export async function bulkUpdateProductVariants(
+  productId: string,
+  variantIds: string[],
+  data: { price: number; averageCost: number },
+): Promise<ProductVariantDTO[]> {
+  const res = await fetch(`/api/vendas/produtos/${productId}/variantes`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'precificar-massa', variantIds, ...data }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok)
+    throw new Error((json as { error?: { message?: string } } | null)?.error?.message ?? 'Erro');
+  return (json as { data: ProductVariantDTO[] }).data;
+}
+
 export async function deleteProductVariant(productId: string, variantId: string): Promise<void> {
   const res = await fetch(`/api/vendas/produtos/${productId}/variantes/${variantId}`, {
     method: 'DELETE',

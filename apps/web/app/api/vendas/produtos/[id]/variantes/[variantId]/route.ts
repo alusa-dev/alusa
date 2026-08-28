@@ -19,12 +19,15 @@ export async function PATCH(req: Request, context: RouteContext) {
     if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
 
     const { id: productId, variantId } = await Promise.resolve(context.params);
+    const actorUserId =
+      (session as { user?: { id?: string } } | null)?.user?.id?.trim() || null;
     const body = await req.json();
 
     const variant = await updateProductVariant({
       variantId,
       productId,
       contaId,
+      actorUserId,
       sku: body.sku,
       price:
         body.price !== undefined ? (body.price === null ? null : Number(body.price)) : undefined,

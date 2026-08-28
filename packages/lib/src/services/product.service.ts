@@ -6,7 +6,7 @@ import {
   calculateAvailable,
   calculateProjected,
   listInventoryBalanceRows,
-  setInventoryAverageCost,
+  revalueInventoryAverageCostInTransaction,
 } from './inventory-balance.service';
 
 export interface ProductListOptions {
@@ -135,6 +135,7 @@ export async function createProduct(input: {
 export async function updateProduct(input: {
   id: string;
   contaId: string;
+  actorUserId?: string | null;
   name?: string;
   description?: string;
   sku?: string;
@@ -183,25 +184,28 @@ export async function updateProduct(input: {
     throw new Error('Informe um custo médio válido.');
   }
 
-  await prisma.product.updateMany({
-    where: { id: input.id, contaId: input.contaId },
-    data: {
-      name: parsed.name,
-      description: parsed.description,
-      sku: parsed.sku,
-      price: parsed.price,
-      lowStockThreshold: parsed.lowStockThreshold,
-      categoryId: parsed.categoryId,
-    },
-  });
-
-  if (input.averageCost !== undefined) {
-    await setInventoryAverageCost({
-      contaId: input.contaId,
-      productId: input.id,
-      averageCost: input.averageCost,
+  await prisma.$transaction(async (tx) => {
+    await tx.product.updateMany({
+      where: { id: input.id, contaId: input.contaId },
+      data: {
+        name: parsed.name,
+        description: parsed.description,
+        sku: parsed.sku,
+        price: parsed.price,
+        lowStockThreshold: parsed.lowStockThreshold,
+        categoryId: parsed.categoryId,
+      },
     });
-  }
+
+    if (input.averageCost !== undefined) {
+      await revalueInventoryAverageCostInTransaction(tx, {
+        contaId: input.contaId,
+        productId: input.id,
+        averageCost: input.averageCost,
+        reason: 'Atualização do custo médio do produto.',
+      });
+    }
+  });
 
   const updated = await prisma.product.findFirst({
     where: { id: input.id, contaId: input.contaId },
@@ -235,6 +239,7 @@ function mapProductsWithInventory<
     price: { toString(): string } | number;
     lowStockThreshold: number;
     hasVariants: boolean;
+    options?: Array<{ name: string }>;
     variants: Array<{
       id: string;
       stock: number;
@@ -319,6 +324,7 @@ function mapProductsWithInventory<
       averageCost,
       inventoryValue: Number((derivedInventory.onHand * averageCost).toFixed(4)),
       variants: mappedVariants,
+      variantGroupCount: product.options?.length ?? 0,
     };
   });
 }
@@ -356,6 +362,7 @@ export async function listProducts(contaId: string, opts: ProductListOptions = {
             isActive: true,
           },
         },
+        options: { select: { name: true } },
       },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * pageSize,

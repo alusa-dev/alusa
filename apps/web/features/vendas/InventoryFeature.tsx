@@ -153,6 +153,92 @@ function normalizeNumber(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function InventoryProductAutocomplete({
+  items,
+  value,
+  onChange,
+  placeholder = 'Pesquise um produto',
+}: {
+  items: InventoryBalanceItem[];
+  value: string;
+  onChange: (_value: string) => void;
+  placeholder?: string;
+}) {
+  const selected = items.find((item) => item.inventoryItemKey === value) ?? null;
+  const [query, setQuery] = useState(selected ? buildItemLabel(selected) : '');
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) setQuery(selected ? buildItemLabel(selected) : '');
+  }, [open, selected]);
+
+  const filteredItems = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase('pt-BR');
+    if (!normalizedQuery) return items.slice(0, 8);
+    return items
+      .filter((item) => buildItemLabel(item).toLocaleLowerCase('pt-BR').includes(normalizedQuery))
+      .slice(0, 8);
+  }, [items, query]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 z-10 size-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            value={query}
+            placeholder={placeholder}
+            className="h-10 rounded-lg border-slate-200 bg-white pl-10 text-sm shadow-none placeholder:text-slate-400 focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
+            onFocus={() => setOpen(true)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setOpen(true);
+              if (!event.target.value.trim()) onChange('');
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setOpen(false);
+            }}
+            aria-autocomplete="list"
+            aria-expanded={open}
+            aria-controls="inventory-product-suggestions"
+          />
+        </div>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-[var(--radix-popover-trigger-width)] overflow-hidden p-1"
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
+        <div id="inventory-product-suggestions" role="listbox" className="max-h-64 overflow-y-auto">
+          {filteredItems.length === 0 ? (
+            <p className="px-3 py-2 text-sm text-slate-500">Nenhum produto encontrado.</p>
+          ) : (
+            filteredItems.map((item) => (
+              <button
+                key={item.inventoryItemKey}
+                type="button"
+                role="option"
+                aria-selected={item.inventoryItemKey === value}
+                className={cn(
+                  'flex w-full items-center rounded-md px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-purple-50 hover:text-slate-900',
+                  item.inventoryItemKey === value && 'bg-purple-50 font-medium text-slate-900',
+                )}
+                onClick={() => {
+                  onChange(item.inventoryItemKey);
+                  setQuery(buildItemLabel(item));
+                  setOpen(false);
+                }}
+              >
+                {buildItemLabel(item)}
+              </button>
+            ))
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function InventoryFeature() {
   const searchParams = useSearchParams();
   const presetProductId = searchParams.get('productId') || undefined;
@@ -708,30 +794,19 @@ export function InventoryFeature() {
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
             <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 max-md:min-h-0 md:px-6 md:py-5">
             <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-500">Produto</label>
-              <Select
+              <label className="text-xs font-medium text-slate-600">Produto</label>
+              <InventoryProductAutocomplete
+                items={balances}
                 value={entryForm.targetKey}
-                onValueChange={(value) =>
-                  setEntryForm((current) => ({ ...current, targetKey: value }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione um produto" />
-                </SelectTrigger>
-                <SelectContent>
-                  {balances.map((item) => (
-                    <SelectItem key={item.inventoryItemKey} value={item.inventoryItemKey}>
-                      {buildItemLabel(item)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onChange={(value) => setEntryForm((current) => ({ ...current, targetKey: value }))}
+              />
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <label className="text-xs font-medium text-gray-500">Quantidade recebida</label>
+                <label className="text-xs font-medium text-slate-600">Quantidade recebida</label>
                 <Input
                   type="number"
+                  className="h-10 rounded-lg border-slate-200 bg-white shadow-none focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
                   min="1"
                   value={entryForm.quantity}
                   onChange={(event) =>
@@ -741,13 +816,14 @@ export function InventoryFeature() {
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-medium text-gray-500">
+                <label className="text-xs font-medium text-slate-600">
                   <LabelWithTooltip tooltip="Valor pago por unidade nesta entrada. Ajuda a calcular o custo médio.">
                     Custo unitário
                   </LabelWithTooltip>
                 </label>
                 <Input
                   type="number"
+                  className="h-10 rounded-lg border-slate-200 bg-white shadow-none focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
                   min="0"
                   step="0.01"
                   value={entryForm.unitCost}
@@ -759,7 +835,7 @@ export function InventoryFeature() {
               </div>
             </div>
             {selectedEntryTarget ? (
-              <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-600">
                 Saldo atual:{' '}
                 <span className="font-semibold text-gray-900">{selectedEntryTarget.onHand}</span>
                 {' → '}
@@ -767,9 +843,10 @@ export function InventoryFeature() {
               </div>
             ) : null}
             <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-500">Fornecedor opcional</label>
+              <label className="text-xs font-medium text-slate-600">Fornecedor opcional</label>
               <Input
                 value={entryForm.supplierName}
+                className="h-10 rounded-lg border-slate-200 bg-white text-sm shadow-none placeholder:text-slate-400 focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
                 onChange={(event) =>
                   setEntryForm((current) => ({ ...current, supplierName: event.target.value }))
                 }
@@ -777,10 +854,11 @@ export function InventoryFeature() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-500">Observação opcional</label>
+              <label className="text-xs font-medium text-slate-600">Observação opcional</label>
               <Textarea
                 rows={3}
                 value={entryForm.reason}
+                className="min-h-24 rounded-lg border-slate-200 bg-white text-sm shadow-none placeholder:text-slate-400 focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
                 onChange={(event) =>
                   setEntryForm((current) => ({ ...current, reason: event.target.value }))
                 }
@@ -827,29 +905,22 @@ export function InventoryFeature() {
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
             <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 max-md:min-h-0 md:px-6 md:py-5">
             <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-500">Produto</label>
-              <Select value={adjustForm.targetKey} onValueChange={handleAdjustTargetChange}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione um produto" />
-                </SelectTrigger>
-                <SelectContent>
-                  {balances.map((item) => (
-                    <SelectItem key={item.inventoryItemKey} value={item.inventoryItemKey}>
-                      {buildItemLabel(item)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <label className="text-xs font-medium text-slate-600">Produto</label>
+              <InventoryProductAutocomplete
+                items={balances}
+                value={adjustForm.targetKey}
+                onChange={handleAdjustTargetChange}
+              />
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <label className="text-xs font-medium text-gray-500">
+                <label className="text-xs font-medium text-slate-600">
                   <LabelWithTooltip tooltip="Na maioria dos casos, informe a quantidade contada. Use mudança manual somente quando quiser somar ou subtrair uma diferença específica.">
                     Forma de correção
                   </LabelWithTooltip>
                 </label>
                 <Select value={adjustForm.mode} onValueChange={handleAdjustModeChange}>
-                  <SelectTrigger>
+                  <SelectTrigger className="h-10 rounded-lg border-slate-200 bg-white shadow-none focus:ring-brand-accent/20">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -859,7 +930,7 @@ export function InventoryFeature() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-medium text-gray-500">
+                <label className="text-xs font-medium text-slate-600">
                   {adjustForm.mode === 'SET' ? (
                     'Quantidade contada agora'
                   ) : (
@@ -870,6 +941,7 @@ export function InventoryFeature() {
                 </label>
                 <Input
                   type="number"
+                  className="h-10 rounded-lg border-slate-200 bg-white shadow-none focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
                   value={adjustForm.quantity}
                   onChange={(event) =>
                     setAdjustForm((current) => ({ ...current, quantity: event.target.value }))
@@ -879,7 +951,7 @@ export function InventoryFeature() {
               </div>
             </div>
             {selectedAdjustTarget ? (
-              <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-600">
                 Saldo atual:{' '}
                 <span className="font-semibold text-gray-900">{selectedAdjustTarget.onHand}</span>
                 {' → '}
@@ -898,14 +970,14 @@ export function InventoryFeature() {
               </div>
             ) : null}
             <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-500">Motivo</label>
+              <label className="text-xs font-medium text-slate-600">Motivo</label>
               <Select
                 value={adjustForm.reasonCode}
                 onValueChange={(value: keyof typeof ADJUST_REASON_LABELS) =>
                   setAdjustForm((current) => ({ ...current, reasonCode: value }))
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger className="h-10 rounded-lg border-slate-200 bg-white shadow-none focus:ring-brand-accent/20">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -918,10 +990,11 @@ export function InventoryFeature() {
               </Select>
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-500">Observação opcional</label>
+              <label className="text-xs font-medium text-slate-600">Observação opcional</label>
               <Textarea
                 rows={3}
                 value={adjustForm.note}
+                className="min-h-24 rounded-lg border-slate-200 bg-white text-sm shadow-none placeholder:text-slate-400 focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
                 onChange={(event) =>
                   setAdjustForm((current) => ({ ...current, note: event.target.value }))
                 }

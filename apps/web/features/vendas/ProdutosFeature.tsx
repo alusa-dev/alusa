@@ -9,7 +9,6 @@ import EntityFiltersBar, {
 } from '@/components/layout/EntityFiltersBar';
 import Pagination from '@/components/layout/Pagination';
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -33,16 +32,11 @@ import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import useCurrentUser from '@/hooks/use-current-user';
 import { useProducts } from './hooks/use-products';
 import { type ProductListItem } from './services/products-service';
-import { formatMarginPercent } from './pricing-utils';
 import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 
 const PAGE_SIZE = 20;
 
 type ProductViewMode = 'catalog' | 'archived';
-
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
-}
 
 function getProductReference(product: ProductListItem) {
   const sku = product.sku?.trim();
@@ -54,62 +48,6 @@ function getProductReference(product: ProductListItem) {
   return {
     label: 'ID',
     value: product.id.slice(0, 8).toUpperCase(),
-  };
-}
-
-function getStockProgress(stock: number, threshold: number) {
-  const safeThreshold = Math.max(threshold, 1);
-
-  if (stock <= 0) {
-    return {
-      value: 0,
-      trackClassName: 'bg-red-100',
-      indicatorClassName: 'bg-red-500',
-      label: 'Sem estoque',
-    };
-  }
-
-  if (stock <= safeThreshold) {
-    return {
-      value: 42,
-      trackClassName: 'bg-amber-100',
-      indicatorClassName: 'bg-amber-500',
-      label: 'Estoque baixo',
-    };
-  }
-
-  return {
-    value: 100,
-    trackClassName: 'bg-emerald-100',
-    indicatorClassName: 'bg-emerald-500',
-    label: 'Estoque disponível',
-  };
-}
-
-function getDerivedStockProgress(product: ProductListItem) {
-  if (product.stockAlertState === 'OUT') {
-    return {
-      value: 0,
-      trackClassName: 'bg-red-100',
-      indicatorClassName: 'bg-red-500',
-      label: 'Sem estoque',
-    };
-  }
-
-  if (product.stockAlertState === 'LOW') {
-    return {
-      value: 42,
-      trackClassName: 'bg-amber-100',
-      indicatorClassName: 'bg-amber-500',
-      label: product.hasVariants ? 'Variantes com estoque baixo' : 'Estoque baixo',
-    };
-  }
-
-  return {
-    value: 100,
-    trackClassName: 'bg-emerald-100',
-    indicatorClassName: 'bg-emerald-500',
-    label: 'Estoque disponível',
   };
 }
 
@@ -141,10 +79,10 @@ function ProdutosTable({
   const actionColumn = {
     id: 'actions',
     header: 'Ações',
-    width: 'w-[4rem] max-lg:shrink-0 lg:w-[7%]',
+    width: 'w-[4rem] max-lg:shrink-0 lg:w-[8%]',
     align: 'right',
-    headerClassName: 'px-3 md:px-4',
-    cellClassName: 'px-3 md:px-4',
+    headerClassName: 'px-3 md:px-6',
+    cellClassName: 'px-3 md:px-6',
     skeleton: <div className="ml-auto size-8 rounded-lg bg-gray-200" />,
     render: (row: ProductListItem) => {
       const isPending = pendingIds.has(row.id);
@@ -215,7 +153,7 @@ function ProdutosTable({
     {
       id: 'name',
       header: 'Produto',
-      width: 'min-w-0 lg:w-[30%]',
+      width: 'min-w-0 lg:w-[32%]',
       align: 'left',
       noWrap: false,
       skeleton: (
@@ -253,7 +191,7 @@ function ProdutosTable({
               </div>
               <div className="mt-1.5 space-y-0.5 lg:hidden text-[11px] text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
                 {row.category?.name ? <div className="truncate">{row.category.name}</div> : null}
-                <div className="font-medium text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{formatCurrency(row.price)}</div>
+                <div>{row.hasVariants ? `${row.variantGroupCount} variantes` : 'Sem variantes'}</div>
                 <div>{effectiveStock} un. em estoque</div>
               </div>
             </div>
@@ -264,7 +202,7 @@ function ProdutosTable({
     {
       id: 'category',
       header: 'Categoria',
-      width: 'lg:w-[16%]',
+      width: 'lg:w-[17%]',
       align: 'left',
       noWrap: false,
       headerClassName: 'hidden lg:table-cell',
@@ -281,79 +219,40 @@ function ProdutosTable({
       ),
     },
     {
-      id: 'price',
-      header: 'Preço',
-      width: 'lg:w-[13%]',
+      id: 'variants',
+      header: 'Variantes',
+      width: 'lg:w-[15%]',
       align: 'left',
       headerClassName: 'hidden lg:table-cell',
       cellClassName: 'hidden lg:table-cell',
-      skeleton: <div className="h-4 w-24 rounded bg-gray-200" />,
+      skeleton: <div className="h-4 w-20 rounded bg-gray-200" />,
       render: (row) => (
-        <div>
-          <span className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{formatCurrency(row.price)}</span>
-          {row.hasVariants ? (
-            <span className="mt-0.5 block text-[11px] text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">padrão</span>
-          ) : null}
-        </div>
-      ),
-    },
-    {
-      id: 'margin',
-      header: 'Custo e margem',
-      width: 'lg:w-[21%]',
-      align: 'left',
-      noWrap: false,
-      headerClassName: 'hidden lg:table-cell',
-      cellClassName: 'hidden lg:table-cell',
-      skeleton: (
-        <div className="space-y-1.5">
-          <div className="h-3 w-24 rounded bg-gray-100" />
-          <div className="h-3 w-28 rounded bg-gray-100" />
-        </div>
-      ),
-      render: (row) => (
-        <div className="space-y-0.5 text-[11px] text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
-          <div>Custo: {formatCurrency(row.averageCost)}</div>
-          <div>
-            Lucro: {formatCurrency(row.profitPerUnit)} ·{' '}
-            <span className={row.profitPerUnit >= 0 ? 'text-emerald-700 alusa-dark:text-emerald-300' : 'text-red-700 alusa-dark:text-red-300'}>
-              {formatMarginPercent(row.marginPercent)}
-            </span>
-          </div>
-          {row.hasVariants ? <div className="text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">média das variantes</div> : null}
-        </div>
+        <span className="text-sm text-slate-700 alusa-dark:text-[color:var(--color-text-secondary)]">
+          {row.hasVariants ? `${row.variantGroupCount} variantes` : 'Sem variantes'}
+        </span>
       ),
     },
     {
       id: 'stock',
       header: 'Estoque',
-      width: 'lg:w-[14%]',
+      width: 'lg:w-[20%]',
       align: 'left',
       noWrap: false,
       headerClassName: 'hidden lg:table-cell',
       cellClassName: 'hidden lg:table-cell',
       skeleton: (
-        <div className="space-y-2">
-          <div className="h-1.5 w-28 rounded-full bg-gray-100" />
-          <div className="h-3 w-14 rounded bg-gray-100" />
-        </div>
+        <div className="h-4 w-20 rounded bg-gray-100" />
       ),
       render: (row) => {
         const effectiveStock = row.totalStock;
-        const stockProgress = row.hasVariants
-          ? getDerivedStockProgress(row)
-          : getStockProgress(effectiveStock, row.lowStockThreshold);
 
         return (
-          <div className="w-full max-w-[132px]">
-            <Progress
-              value={stockProgress.value}
-              className={`h-1.5 ${stockProgress.trackClassName}`}
-              indicatorClassName={stockProgress.indicatorClassName}
-              aria-label={`${stockProgress.label}: ${effectiveStock} unidade(s) em estoque`}
-            />
-            <div className="mt-1 text-[11px] text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">{effectiveStock} unidade(s)</div>
-          </div>
+          <span
+            className="text-sm font-medium text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]"
+            aria-label={`${effectiveStock} unidade(s) em estoque`}
+          >
+            {effectiveStock} unidades
+          </span>
         );
       },
     },
@@ -387,8 +286,8 @@ function ProdutosTable({
                 row.isActive ? `Inativar produto ${row.name}` : `Ativar produto ${row.name}`
               }
               onCheckedChange={(active) => onToggleStatus(row, active)}
-              className="h-5 w-9 bg-slate-200 focus-visible:ring-2 focus-visible:ring-emerald-500/30 disabled:cursor-wait disabled:opacity-70 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-slate-300"
-              thumbClassName="h-4 w-4 bg-white shadow-sm data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0"
+              className="box-border h-5 w-9 overflow-hidden border-transparent bg-slate-200 p-0.5 shadow-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 disabled:cursor-wait disabled:opacity-70 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-slate-300"
+              thumbClassName="size-4 shrink-0 bg-white shadow-sm data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0"
             />
           </div>
         );

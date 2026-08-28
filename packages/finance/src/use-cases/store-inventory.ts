@@ -9,6 +9,10 @@ import {
 } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
+import {
+  calculateInventoryValue,
+  computeWeightedAverageCost,
+} from './inventory-cost';
 
 const DEFAULT_MOVEMENTS_LIMIT = 100;
 
@@ -126,6 +130,7 @@ type SaleInventoryLineInput = {
   variantId: string | null;
   productName: string;
   quantity: number;
+  unitCostAtSale?: number | null;
 };
 
 export type InventoryAlertState = 'OUT' | 'LOW' | 'OK';
@@ -374,33 +379,13 @@ function calculateAlertState(
   return 'OK';
 }
 
-function computeAverageCost(
-  currentOnHand: number,
-  currentAverageCost: number,
-  deltaQuantity: number,
-  incomingUnitCost: number,
-): number {
-  const safeDelta = Math.max(deltaQuantity, 0);
-  const safeUnitCost = Math.max(incomingUnitCost, 0);
-  if (safeDelta <= 0) return currentAverageCost;
-
-  const nextOnHand = currentOnHand + safeDelta;
-  if (nextOnHand <= 0) return currentAverageCost;
-  if (currentOnHand <= 0) return safeUnitCost;
-
-  const currentValue = currentOnHand * currentAverageCost;
-  const incomingValue = safeDelta * safeUnitCost;
-
-  return Number(((currentValue + incomingValue) / nextOnHand).toFixed(4));
-}
-
 function buildMovementTotalCost(input: {
   movementType: InventoryMovementType;
   unitCost: Prisma.Decimal | null;
   onHandDelta: number;
   incomingDelta: number;
 }): Prisma.Decimal | null {
-  if (!input.unitCost) return null;
+  if (input.unitCost == null) return null;
   const quantityBase = Math.abs(input.onHandDelta) > 0 ? Math.abs(input.onHandDelta) : Math.abs(input.incomingDelta);
   if (quantityBase <= 0) return null;
   return input.unitCost.mul(quantityBase);
@@ -451,7 +436,7 @@ function formatBalanceRecord(record: InventoryBalanceRecord): InventoryBalanceDT
     incoming,
     projected,
     averageCost,
-    inventoryValue: Number((onHand * averageCost).toFixed(4)),
+    inventoryValue: calculateInventoryValue(onHand, averageCost),
     price: record.variant?.price != null ? moneyToNumber(record.variant.price) : moneyToNumber(record.product.price),
     alertState: calculateAlertState(available, lowStockThreshold),
   };
@@ -776,7 +761,7 @@ async function applyInventoryChange(
   const currentAverageCost = moneyToNumber(balance.averageCost);
   const nextAverageCost =
     input.averageCostMode === 'recalculate' && onHandDelta > 0 && input.unitCost != null
-      ? computeAverageCost(balance.onHand, currentAverageCost, onHandDelta, input.unitCost)
+      ? computeWeightedAverageCost(balance.onHand, currentAverageCost, onHandDelta, input.unitCost)
       : currentAverageCost;
 
   await tx.inventoryBalance.update({
@@ -986,7 +971,7 @@ export async function registerInventoryEntry(
     throw new StoreInventoryError('QUANTIDADE_INVALIDA', 'Informe uma quantidade válida.', 422);
   }
 
-  if (Number.isNaN(input.unitCost) || input.unitCost < 0) {
+  if (!Number.isFinite(input.unitCost) || input.unitCost < 0) {
     throw new StoreInventoryError('CUSTO_INVALIDO', 'Informe um custo unitário válido.', 422);
   }
 
@@ -1190,7 +1175,7 @@ export async function createRestockOrder(
         throw new StoreInventoryError('QUANTIDADE_INVALIDA', 'A quantidade esperada deve ser positiva.', 422);
       }
 
-      if (Number.isNaN(rawItem.unitCost) || rawItem.unitCost < 0) {
+      if (!Number.isFinite(rawItem.unitCost) || rawItem.unitCost < 0) {
         throw new StoreInventoryError('CUSTO_INVALIDO', 'O custo estimado deve ser válido.', 422);
       }
 
@@ -1297,7 +1282,7 @@ export async function receiveRestockOrder(
       const unitCost =
         receipt.unitCost != null ? receipt.unitCost : orderItem.estimatedUnitCost != null ? moneyToNumber(orderItem.estimatedUnitCost) : null;
 
-      if (unitCost == null || Number.isNaN(unitCost) || unitCost < 0) {
+      if (unitCost == null || !Number.isFinite(unitCost) || unitCost < 0) {
         throw new StoreInventoryError(
           'CUSTO_INVALIDO',
           `Informe um custo unitário válido para ${orderItem.product.name}.`,
@@ -1493,6 +1478,10 @@ export async function applySaleInventoryOnCreate(
           : InventoryMovementType.SALE_OUT,
       onHandDelta: input.inventoryMode === SaleInventoryMode.IMMEDIATE ? -item.quantity : 0,
       reservedDelta: input.inventoryMode === SaleInventoryMode.RESERVE ? item.quantity : 0,
+      unitCost:
+        input.inventoryMode === SaleInventoryMode.IMMEDIATE
+          ? item.unitCostAtSale ?? moneyToNumber(balance.averageCost)
+          : null,
       averageCostMode: 'keep',
       originType: 'SALE',
       originId: input.saleId,
@@ -1517,6 +1506,7 @@ async function restoreInventoryForCanceledSale(
       productName: string;
       quantity: number;
       returnedQuantity: number;
+      unitCostAtSale: Prisma.Decimal | null;
     }>;
   },
 ): Promise<void> {
@@ -1544,6 +1534,9 @@ async function restoreInventoryForCanceledSale(
       continue;
     }
 
+    const unitCostAtReturn =
+      item.unitCostAtSale != null ? moneyToNumber(item.unitCostAtSale) : null;
+
     await applyInventoryChange(tx, {
       contaId: input.contaId,
       actorUserId: input.actorUserId,
@@ -1551,8 +1544,8 @@ async function restoreInventoryForCanceledSale(
       variantId: item.variantId,
       movementType: InventoryMovementType.RETURN_IN,
       onHandDelta: effectiveQuantity,
-      unitCost: null,
-      averageCostMode: 'keep',
+      unitCost: unitCostAtReturn,
+      averageCostMode: unitCostAtReturn != null ? 'recalculate' : 'keep',
       originType: 'SALE',
       originId: input.saleId,
       originLineId: item.id,
@@ -1587,6 +1580,7 @@ export async function fulfillReservedSale(
             productName: true,
             quantity: true,
             returnedQuantity: true,
+            unitCostAtSale: true,
           },
         },
       },
@@ -1626,6 +1620,8 @@ export async function fulfillReservedSale(
         movementType: InventoryMovementType.SALE_OUT,
         onHandDelta: -outstanding,
         reservedDelta: -outstanding,
+        unitCost:
+          item.unitCostAtSale != null ? moneyToNumber(item.unitCostAtSale) : null,
         averageCostMode: 'keep',
         originType: 'SALE',
         originId: currentSale.id,
@@ -1692,6 +1688,7 @@ export async function registerSaleReturn(
             quantity: true,
             returnedQuantity: true,
             productName: true,
+            unitCostAtSale: true,
           },
         },
       },
@@ -1751,7 +1748,9 @@ export async function registerSaleReturn(
         variantId: saleItem.variantId,
         movementType: InventoryMovementType.RETURN_IN,
         onHandDelta: rawItem.quantity,
-        averageCostMode: 'keep',
+        unitCost:
+          saleItem.unitCostAtSale != null ? moneyToNumber(saleItem.unitCostAtSale) : null,
+        averageCostMode: saleItem.unitCostAtSale != null ? 'recalculate' : 'keep',
         originType: 'SALE',
         originId: currentSale.id,
         originLineId: saleItem.id,
@@ -1835,6 +1834,7 @@ export async function cancelSaleInventory(
             productName: true,
             quantity: true,
             returnedQuantity: true,
+            unitCostAtSale: true,
           },
         },
       },
@@ -1895,6 +1895,7 @@ export async function fulfillReservedSaleOnPayment(input: {
           variantId: true,
           quantity: true,
           returnedQuantity: true,
+          unitCostAtSale: true,
         },
       },
     },
@@ -1918,6 +1919,8 @@ export async function fulfillReservedSaleOnPayment(input: {
         movementType: InventoryMovementType.SALE_OUT,
         onHandDelta: -outstanding,
         reservedDelta: -outstanding,
+        unitCost:
+          item.unitCostAtSale != null ? moneyToNumber(item.unitCostAtSale) : null,
         averageCostMode: 'keep',
         originType: 'SALE',
         originId: sale.id,

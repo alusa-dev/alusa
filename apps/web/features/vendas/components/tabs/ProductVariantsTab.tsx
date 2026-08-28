@@ -24,10 +24,18 @@ import {
 import { Input } from '@/components/ui/input';
 import { InfoCallout } from '@/components/ui/info-callout';
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   ChevronDown,
   ChevronUp,
+  DollarSign,
   Edit3,
   Eye,
+  MoreVertical,
   Loader2,
   Plus,
   Trash2,
@@ -49,6 +57,7 @@ import {
   deleteOptionValue,
   listProductVariants,
   generateProductVariants,
+  bulkUpdateProductVariants,
   updateProductVariant,
   deleteProductVariant,
 } from '../../services/product-variant-service';
@@ -83,6 +92,28 @@ function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 }
 
+function maskCurrencyInput(raw: string): string {
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return '';
+  return (Number(digits) / 100).toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function parseCurrencyInput(value: string): number {
+  if (!value.trim()) return 0;
+  const parsed = Number(value.replace(/\./g, '').replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatCurrencyInputValue(value: number | null | undefined): string {
+  return value == null ? '' : value.toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 export function ProductVariantsTab({
   productId,
   productName,
@@ -92,6 +123,9 @@ export function ProductVariantsTab({
   const [options, setOptions] = useState<ProductOptionDTO[]>([]);
   const [variants, setVariants] = useState<ProductVariantDTO[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<ReturnType<typeof groupProductVariants>[number] | null>(null);
+  const [bulkPricingGroup, setBulkPricingGroup] = useState<ReturnType<typeof groupProductVariants>[number] | null>(null);
+  const [bulkPricingForm, setBulkPricingForm] = useState({ price: '', averageCost: '' });
+  const [savingBulkPricing, setSavingBulkPricing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -359,6 +393,50 @@ export function ProductVariantsTab({
     }
   }
 
+  function openBulkPricing(group: ReturnType<typeof groupProductVariants>[number]) {
+    const firstWithPrice = group.variants.find((variant) => variant.price != null);
+    const firstWithCost = group.variants.find((variant) => variant.averageCost > 0);
+    setBulkPricingForm({
+      price: firstWithPrice?.price != null
+        ? formatCurrencyInputValue(firstWithPrice.price)
+        : formatCurrencyInputValue(defaultPrice),
+      averageCost: firstWithCost ? formatCurrencyInputValue(firstWithCost.averageCost) : '',
+    });
+    setSelectedGroup(null);
+    setBulkPricingGroup(group);
+    setError(null);
+  }
+
+  async function handleBulkPricing() {
+    if (!bulkPricingGroup) return;
+    const price = parseCurrencyInput(bulkPricingForm.price);
+    const averageCost = parseCurrencyInput(bulkPricingForm.averageCost);
+    if (!bulkPricingForm.price.trim() || !Number.isFinite(price) || price <= 0) {
+      setError('Informe um preço de venda válido.');
+      return;
+    }
+    if (!bulkPricingForm.averageCost.trim() || !Number.isFinite(averageCost) || averageCost < 0) {
+      setError('Informe um custo válido.');
+      return;
+    }
+
+    setSavingBulkPricing(true);
+    setError(null);
+    try {
+      const updated = await bulkUpdateProductVariants(
+        productId,
+        bulkPricingGroup.variants.map((variant) => variant.id),
+        { price, averageCost },
+      );
+      setVariants(updated);
+      setBulkPricingGroup(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSavingBulkPricing(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -372,6 +450,9 @@ export function ProductVariantsTab({
   const editingPricing = editingVariant
     ? calculatePricingMetrics(editingPrice, editingAverageCost)
     : null;
+  const bulkPrice = parseCurrencyInput(bulkPricingForm.price);
+  const bulkAverageCost = parseCurrencyInput(bulkPricingForm.averageCost);
+  const bulkPricing = calculatePricingMetrics(bulkPrice, bulkAverageCost);
   const isSavingEditingVariant = savingVariant === editingVariant?.id;
   const optionOrder = options.map((option) => option.name);
   const variantGroups = groupProductVariants(variants, optionOrder);
@@ -588,17 +669,37 @@ export function ProductVariantsTab({
                         </div>
                       </td>
                       <td className="px-4 py-4 text-right align-middle">
-                        <button
-                          type="button"
-                          className="ml-auto flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setSelectedGroup(group);
-                          }}
-                          aria-label={`Ver detalhes de ${productName} ${group.value}`}
-                        >
-                          <Eye className="size-4" />
-                        </button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              className="ml-auto flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                              onClick={(event) => event.stopPropagation()}
+                              aria-label={`Ações de ${productName} ${group.value}`}
+                            >
+                              <MoreVertical className="size-4" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent
+                            align="end"
+                            className="w-52"
+                            onClick={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                          >
+                            <DropdownMenuItem
+                              onSelect={() => openBulkPricing(group)}
+                            >
+                              <DollarSign className="mr-2 size-4 text-slate-400" />
+                              Precificar grupo
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() => setSelectedGroup(group)}
+                            >
+                              <Eye className="mr-2 size-4 text-slate-400" />
+                              Ver detalhes
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </td>
                     </tr>
                   );
@@ -614,6 +715,91 @@ export function ProductVariantsTab({
           Adicione variantes e valores para gerar o estoque do produto.
         </p>
       )}
+
+      <Dialog
+        open={!!bulkPricingGroup}
+        onOpenChange={(open) => {
+          if (!open && !savingBulkPricing) setBulkPricingGroup(null);
+        }}
+      >
+        <DialogContent
+          fullScreenMobile
+          className="gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 sm:max-w-[520px] md:rounded-2xl"
+        >
+          <DialogHeader className="relative shrink-0 space-y-0 border-b border-slate-200 bg-slate-50 px-4 py-4 text-left max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] sm:px-6 sm:py-5">
+            <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+            <DialogTitle className="text-base text-slate-900">
+              Precificar grupo
+            </DialogTitle>
+            <DialogDescription className="pt-1 text-sm text-slate-600">
+              Aplicar aos {bulkPricingGroup?.variants.length ?? 0} tamanhos de{' '}
+              <span className="font-medium text-slate-700">{bulkPricingGroup?.value}</span>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
+            <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+            {error && !editingVariant ? (
+              <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">
+                {error}
+              </p>
+            ) : null}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className={labelClass} htmlFor="bulk-variant-price">Preço de venda (R$)</label>
+                <Input
+                  id="bulk-variant-price"
+                  type="text"
+                  value={bulkPricingForm.price}
+                  onChange={(event) => setBulkPricingForm((prev) => ({ ...prev, price: maskCurrencyInput(event.target.value) }))}
+                  placeholder="0,00"
+                  inputMode="decimal"
+                  className={inputMd}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className={labelClass} htmlFor="bulk-variant-cost">Custo (R$)</label>
+                <Input
+                  id="bulk-variant-cost"
+                  type="text"
+                  value={bulkPricingForm.averageCost}
+                  onChange={(event) => setBulkPricingForm((prev) => ({ ...prev, averageCost: maskCurrencyInput(event.target.value) }))}
+                  placeholder="0,00"
+                  inputMode="decimal"
+                  className={inputMd}
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <span className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                <span>Lucro</span>
+                <strong className={cn('font-semibold', bulkPricing.profitPerUnit >= 0 ? 'text-emerald-700' : 'text-red-700')}>
+                  {formatCurrency(bulkPricing.profitPerUnit)}
+                </strong>
+              </span>
+              <span className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                <span>Margem</span>
+                <strong className={cn('font-semibold', bulkPricing.profitPerUnit >= 0 ? 'text-emerald-700' : 'text-red-700')}>
+                  {formatMarginPercent(bulkPricing.marginPercent)}
+                </strong>
+              </span>
+            </div>
+            <p className="text-xs leading-5 text-slate-500">
+              O preço e o custo serão aplicados a todos os tamanhos deste grupo.
+            </p>
+            </div>
+          </div>
+
+          <DialogFooter className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:px-6 sm:py-4">
+            <Button type="button" variant="outline" className="h-11 min-h-11 w-full border-slate-200 bg-white shadow-none hover:bg-slate-100 sm:h-10 sm:min-h-0 sm:w-auto" disabled={savingBulkPricing} onClick={() => setBulkPricingGroup(null)}>
+              Cancelar
+            </Button>
+            <Button type="button" className="h-11 min-h-11 w-full bg-brand-accent px-5 text-white shadow-none hover:bg-brand-accent/90 sm:h-10 sm:min-h-0 sm:w-auto" disabled={savingBulkPricing} onClick={() => void handleBulkPricing()}>
+              {savingBulkPricing ? <><Loader2 className="mr-2 size-4 animate-spin" /> Aplicando...</> : 'Aplicar aos tamanhos'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={!!selectedGroup}
@@ -635,23 +821,25 @@ export function ProductVariantsTab({
             <div className="overflow-hidden rounded-xl border border-slate-200">
               <table className="w-full table-fixed whitespace-nowrap text-sm">
                 <colgroup>
-                  <col className="w-[30%]" />
-                  <col className="w-[19%]" />
+                  <col className="w-[24%]" />
+                  <col className="w-[14%]" />
                   <col className="w-[18%]" />
-                  <col className="w-[23%]" />
-                  <col className="w-[10%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[22%]" />
+                  <col className="w-[8%]" />
                 </colgroup>
                 <thead className="sticky top-0 z-10 bg-slate-50">
                   <tr className="border-b border-slate-100 text-left">
-                    <th className="px-6 py-3 text-xs font-medium text-slate-500">Nome</th>
-                    <th className="px-3 py-3 text-xs font-medium text-slate-500">Valor</th>
-                    <th className="px-3 py-3 text-right text-xs font-medium text-slate-500">
+                    <th className="px-4 py-3 text-xs font-medium text-slate-500">Nome</th>
+                    <th className="px-4 py-3 text-xs font-medium text-slate-500">Valor</th>
+                    <th className="px-4 py-3 text-xs font-medium text-slate-500">Valor / Custo</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-slate-500">
                       Estoque
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-slate-500">
                       Disponibilidade
                     </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-slate-500">
+                    <th className="px-4 py-3 text-right text-xs font-medium text-slate-500">
                       Ações
                     </th>
                   </tr>
@@ -681,31 +869,39 @@ export function ProductVariantsTab({
                         openVariantEditor(variant);
                       }}
                     >
-                      <td className="px-6 py-4 align-middle font-medium text-slate-900">
+                      <td className="px-4 py-4 align-middle font-medium text-slate-900">
                         {productName || 'Produto'} · {selectedGroup.value}
                       </td>
-                      <td className="px-3 py-4 align-middle text-slate-700">{valueLabel}</td>
-                      <td className="px-3 py-4 text-right align-middle">
+                      <td className="px-4 py-4 align-middle text-slate-700">{valueLabel}</td>
+                      <td className="px-4 py-4 align-middle">
+                        <div className="font-semibold tabular-nums text-slate-900">
+                          {formatCurrency(variant.price ?? defaultPrice)}
+                        </div>
+                        <div className="mt-1 text-xs tabular-nums text-slate-500">
+                          Custo: {formatCurrency(variant.averageCost)}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 text-right align-middle">
                         <div className="font-semibold tabular-nums text-slate-900">
                           {variant.available} disponível
                         </div>
                       </td>
-                      <td className="px-6 py-4 align-middle">
-                        <div className="flex min-w-[140px] items-center gap-3">
-                          <div className={`h-2 flex-1 rounded-full ${availability.track}`}>
+                      <td className="px-4 py-4 align-middle">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className={`h-2 min-w-0 flex-1 rounded-full ${availability.track}`}>
                             <div
                               className={`h-full rounded-full ${availability.bar}`}
                               style={{ width: availability.width }}
                             />
                           </div>
                           {availability.label && (
-                            <span className="w-[78px] text-[10px] text-slate-500">
+                            <span className="w-[70px] shrink-0 text-[10px] text-slate-500">
                               {availability.label}
                             </span>
                           )}
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-right align-middle">
+                      <td className="px-4 py-4 text-right align-middle">
                         <button
                           type="button"
                           className="ml-auto flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"

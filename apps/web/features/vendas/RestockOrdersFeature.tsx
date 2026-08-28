@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { RestockOrderStatus } from '@prisma/client';
 
 import {
@@ -9,6 +9,7 @@ import {
   ClipboardDocumentCheck,
   Plus,
   Search,
+  Trash2,
 } from '@/components/icons/icons';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import TableLayout from '@/components/layout/TableLayout';
@@ -59,6 +60,9 @@ function buildItemLabel(item: InventoryBalanceItem): string {
   return item.variantTitle ? `${item.productName} · ${item.variantTitle}` : item.productName;
 }
 
+const RESTOCK_CONTROL_CLASS =
+  'h-10 rounded-lg border-slate-200 bg-white text-sm shadow-none focus:border-brand-accent focus:ring-brand-accent/20';
+
 function formatOrderItems(order: RestockOrder): string {
   const labels = order.items
     .slice(0, 2)
@@ -99,6 +103,10 @@ export function RestockOrdersFeature() {
   const [createOpen, setCreateOpen] = useState(false);
   const [receiveOrder, setReceiveOrder] = useState<RestockOrder | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [shouldScrollCreateDialog, setShouldScrollCreateDialog] = useState(false);
+  const createDialogHeaderRef = useRef<HTMLDivElement>(null);
+  const createDialogBodyRef = useRef<HTMLDivElement>(null);
+  const createDialogFooterRef = useRef<HTMLDivElement>(null);
 
   const [supplierName, setSupplierName] = useState('');
   const [expectedAt, setExpectedAt] = useState<Date | undefined>(undefined);
@@ -107,6 +115,36 @@ export function RestockOrdersFeature() {
     { targetKey: '', quantity: '1', unitCost: '0' },
   ]);
   const [receiptValues, setReceiptValues] = useState<Record<string, string>>({});
+
+  useLayoutEffect(() => {
+    if (!createOpen) return;
+
+    let frameId: number | undefined;
+    const updateDialogOverflow = () => {
+      const headerHeight = createDialogHeaderRef.current?.offsetHeight ?? 0;
+      const bodyHeight = createDialogBodyRef.current?.scrollHeight ?? 0;
+      const footerHeight = createDialogFooterRef.current?.offsetHeight ?? 0;
+      const viewportLimit = window.innerHeight - 48;
+      setShouldScrollCreateDialog(headerHeight + bodyHeight + footerHeight > viewportLimit);
+    };
+    const scheduleDialogOverflowUpdate = () => {
+      window.cancelAnimationFrame(frameId ?? 0);
+      frameId = window.requestAnimationFrame(updateDialogOverflow);
+    };
+
+    scheduleDialogOverflowUpdate();
+    const observer = new ResizeObserver(scheduleDialogOverflowUpdate);
+    [createDialogHeaderRef.current, createDialogBodyRef.current, createDialogFooterRef.current]
+      .filter((element): element is HTMLDivElement => Boolean(element))
+      .forEach((element) => observer.observe(element));
+    window.addEventListener('resize', scheduleDialogOverflowUpdate);
+
+    return () => {
+      window.cancelAnimationFrame(frameId ?? 0);
+      observer.disconnect();
+      window.removeEventListener('resize', scheduleDialogOverflowUpdate);
+    };
+  }, [createOpen, draftItems, expectedAt, notes, supplierName]);
 
   async function loadData() {
     setLoading(true);
@@ -459,48 +497,62 @@ export function RestockOrdersFeature() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent
           fullScreenMobile
-          className="max-w-2xl gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
+          className={`grid h-auto max-h-[calc(100dvh-3rem)] max-w-2xl min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden bg-slate-50 p-0 max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0 md:rounded-2xl ${shouldScrollCreateDialog ? 'md:h-[calc(100dvh-3rem)]' : ''}`}
         >
-          <DialogHeader className="relative shrink-0 space-y-0 border-b border-slate-200 bg-slate-50 px-4 py-4 text-left max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
-            <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
-            <DialogTitle className="pr-2 text-lg font-semibold text-slate-900 md:pr-0">
-              Nova reposição
-            </DialogTitle>
-            <DialogDescription className="pt-1 text-sm text-slate-600">
-              Use quando fez ou planejou uma compra que ainda pode chegar depois.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
-            <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 max-md:min-h-0 md:px-6 md:py-5">
+          <div ref={createDialogHeaderRef}>
+            <DialogHeader className="relative shrink-0 space-y-0 border-b border-slate-200 bg-slate-50 px-4 py-4 text-left max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
+              <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+              <DialogTitle className="pr-2 text-lg font-semibold text-slate-900 md:pr-0">
+                Nova reposição
+              </DialogTitle>
+              <DialogDescription className="pt-1 text-sm text-slate-600">
+                Use quando fez ou planejou uma compra que ainda pode chegar depois.
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          <div className="min-h-0 overflow-hidden max-md:min-h-0">
+            <div
+              ref={createDialogBodyRef}
+              className={`min-h-0 space-y-4 px-4 py-4 md:px-6 md:py-5 ${
+                shouldScrollCreateDialog ? 'h-full overflow-y-auto' : ''
+              }`}
+            >
               <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <label className="text-xs font-medium text-gray-500">Fornecedor opcional</label>
+                <label className="text-xs font-medium text-slate-600">Fornecedor opcional</label>
                 <Input
                   value={supplierName}
+                  className={RESTOCK_CONTROL_CLASS}
                   onChange={(event) => setSupplierName(event.target.value)}
                   placeholder="Ex: Fornecedor ABC"
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-medium text-gray-500">
+                <label className="text-xs font-medium text-slate-600">
                   <LabelWithTooltip tooltip="Data estimada para os itens chegarem fisicamente.">
                     Previsão de chegada
                   </LabelWithTooltip>
                 </label>
-                <DatePicker value={expectedAt} onChange={setExpectedAt} variant="input" />
+                <DatePicker
+                  value={expectedAt}
+                  onChange={setExpectedAt}
+                  variant="input"
+                  className={RESTOCK_CONTROL_CLASS}
+                />
               </div>
               </div>
               <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-500">Observação opcional</label>
+              <label className="text-xs font-medium text-slate-600">Observação opcional</label>
               <Textarea
                 rows={3}
                 value={notes}
+                className="min-h-24 rounded-lg border-slate-200 bg-white text-sm shadow-none placeholder:text-slate-400 focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
                 onChange={(event) => setNotes(event.target.value)}
                 placeholder="Ex: pedido feito por WhatsApp"
               />
               </div>
               <div className="space-y-3">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-gray-500">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
                 Produtos da reposição
                 <LabelWithTooltip tooltip="Essas quantidades aparecem como “em compra” até serem recebidas.">
                   <span className="sr-only">Ajuda sobre produtos da reposição</span>
@@ -509,59 +561,69 @@ export function RestockOrdersFeature() {
               {draftItems.map((item, index) => (
                 <div
                   key={`${index}-${item.targetKey}`}
-                  className="grid gap-3 rounded-xl border border-gray-200 p-3 md:grid-cols-[1fr,130px,140px,88px]"
+                  className="grid items-end gap-3 rounded-lg border border-slate-200 bg-white p-3 md:grid-cols-[minmax(0,1fr),130px,140px,auto]"
                 >
-                  <Select
-                    value={item.targetKey}
-                    onValueChange={(value) =>
-                      setDraftItems((current) =>
-                        current.map((draft, draftIndex) =>
-                          draftIndex === index ? { ...draft, targetKey: value } : draft,
-                        ),
-                      )
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione o produto" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {targets.map((target) => (
-                        <SelectItem key={target.inventoryItemKey} value={target.inventoryItemKey}>
-                          {buildItemLabel(target)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    type="number"
-                    min="1"
-                    value={item.quantity}
-                    onChange={(event) =>
-                      setDraftItems((current) =>
-                        current.map((draft, draftIndex) =>
-                          draftIndex === index ? { ...draft, quantity: event.target.value } : draft,
-                        ),
-                      )
-                    }
-                    placeholder="Quantidade"
-                  />
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={item.unitCost}
-                    onChange={(event) =>
-                      setDraftItems((current) =>
-                        current.map((draft, draftIndex) =>
-                          draftIndex === index ? { ...draft, unitCost: event.target.value } : draft,
-                        ),
-                      )
-                    }
-                    placeholder="Custo unit."
-                  />
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-slate-600">Produto</label>
+                    <Select
+                      value={item.targetKey}
+                      onValueChange={(value) =>
+                        setDraftItems((current) =>
+                          current.map((draft, draftIndex) =>
+                            draftIndex === index ? { ...draft, targetKey: value } : draft,
+                          ),
+                        )
+                      }
+                    >
+                      <SelectTrigger className={RESTOCK_CONTROL_CLASS}>
+                        <SelectValue placeholder="Selecione o produto" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {targets.map((target) => (
+                          <SelectItem key={target.inventoryItemKey} value={target.inventoryItemKey}>
+                            {buildItemLabel(target)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-slate-600">Quantidade</label>
+                    <Input
+                      type="number"
+                      min="1"
+                      className={RESTOCK_CONTROL_CLASS}
+                      value={item.quantity}
+                      onChange={(event) =>
+                        setDraftItems((current) =>
+                          current.map((draft, draftIndex) =>
+                            draftIndex === index ? { ...draft, quantity: event.target.value } : draft,
+                          ),
+                        )
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-slate-600">Custo unitário</label>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className={RESTOCK_CONTROL_CLASS}
+                      value={item.unitCost}
+                      onChange={(event) =>
+                        setDraftItems((current) =>
+                          current.map((draft, draftIndex) =>
+                            draftIndex === index ? { ...draft, unitCost: event.target.value } : draft,
+                          ),
+                        )
+                      }
+                    />
+                  </div>
                   <Button
                     type="button"
                     variant="outline"
+                    className="h-10 whitespace-nowrap rounded-lg border-red-200 bg-red-50 px-3 text-sm text-red-600 shadow-none hover:border-red-300 hover:bg-red-100 hover:text-red-700"
                     disabled={draftItems.length === 1}
                     onClick={() =>
                       setDraftItems((current) =>
@@ -569,6 +631,7 @@ export function RestockOrdersFeature() {
                       )
                     }
                   >
+                    <Trash2 className="mr-2 size-4" />
                     Remover
                   </Button>
                 </div>
@@ -576,6 +639,7 @@ export function RestockOrdersFeature() {
               <Button
                 type="button"
                 variant="outline"
+                className="h-10 rounded-lg border-slate-200 bg-white text-sm shadow-none hover:bg-slate-100"
                 onClick={() =>
                   setDraftItems((current) => [
                     ...current,
@@ -583,28 +647,29 @@ export function RestockOrdersFeature() {
                   ])
                 }
               >
+                <Plus className="mr-2 size-4" />
                 Adicionar produto
               </Button>
               </div>
             </div>
-            <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-6 md:py-4">
-              <Button
-                type="button"
-                variant="outline"
-                className="h-11 min-h-11 w-full border-slate-200 bg-white shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:w-auto"
-                onClick={() => setCreateOpen(false)}
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="button"
-                disabled={submitting}
-                onClick={() => void handleCreateOrder()}
-                className="h-11 min-h-11 w-full bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[180px]"
-              >
-                Criar reposição
-              </Button>
-            </div>
+          </div>
+          <div ref={createDialogFooterRef} className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-6 md:py-4">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 min-h-11 w-full border-slate-200 bg-white shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:w-auto"
+              onClick={() => setCreateOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={submitting}
+              onClick={() => void handleCreateOrder()}
+              className="h-11 min-h-11 w-full bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[180px]"
+            >
+              Criar reposição
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
