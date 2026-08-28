@@ -5,6 +5,7 @@ import {
   resolveProductSalePrice,
 } from '@alusa/lib';
 import {
+  ChargeStatus,
   InventoryMovementType,
   Prisma,
   RestockOrderStatus,
@@ -1928,14 +1929,148 @@ export async function cancelSaleInventory(
 }
 
 /**
+ * Vincula a primeira parcela materializada à venda. O parcelamento pode ser
+ * criado antes das Charges locais existirem, portanto esta operação precisa
+ * ser segura para retries e concorrência.
+ */
+export async function linkSaleToFirstInstallmentCharge(input: {
+  contaId: string;
+  installmentPlanId: string;
+}): Promise<string | null> {
+  const firstCharge = await prisma.charge.findFirst({
+    where: {
+      contaId: input.contaId,
+      standaloneInstallmentPlanId: input.installmentPlanId,
+    },
+    orderBy: [{ dueDate: 'asc' }, { createdAt: 'asc' }],
+    select: { id: true },
+  });
+
+  if (!firstCharge) return null;
+
+  await prisma.sale.updateMany({
+    where: {
+      contaId: input.contaId,
+      standaloneInstallmentPlanId: input.installmentPlanId,
+      chargeId: null,
+    },
+    data: { chargeId: firstCharge.id },
+  });
+
+  return firstCharge.id;
+}
+
+export type ReconcilePaidReservedStoreSalesResult = {
+  checked: number;
+  fulfilled: number;
+  errors: Array<{ saleId: string; error: string }>;
+};
+
+/**
+ * Recupera vendas de cobrança que já estão pagas localmente, mas ainda
+ * conservam estoque reservado. É usado pelo job de reconciliação e também
+ * cobre baixas offline e webhooks que chegaram antes da materialização.
+ */
+export async function reconcilePaidReservedStoreSales(input: {
+  contaId: string;
+  dryRun?: boolean;
+}): Promise<ReconcilePaidReservedStoreSalesResult> {
+  const sales = await prisma.sale.findMany({
+    where: {
+      contaId: input.contaId,
+      inventoryMode: SaleInventoryMode.RESERVE,
+      inventoryStatus: SaleInventoryStatus.RESERVED,
+      status: { not: SaleStatus.CANCELADA },
+      OR: [
+        { charge: { is: { status: ChargeStatus.PAID } } },
+        {
+          standaloneInstallmentPlan: {
+            is: { charges: { some: { status: ChargeStatus.PAID } } },
+          },
+        },
+      ],
+    },
+    select: {
+      id: true,
+      chargeId: true,
+      charge: { select: { id: true, status: true } },
+      standaloneInstallmentPlan: {
+        select: {
+          charges: {
+            where: { status: ChargeStatus.PAID },
+            orderBy: [{ dueDate: 'asc' }, { createdAt: 'asc' }],
+            select: { id: true },
+          },
+        },
+      },
+    },
+  });
+
+  const result: ReconcilePaidReservedStoreSalesResult = {
+    checked: sales.length,
+    fulfilled: 0,
+    errors: [],
+  };
+
+  if (input.dryRun) return result;
+
+  for (const sale of sales) {
+    const paidChargeId =
+      (sale.charge?.status === ChargeStatus.PAID ? sale.charge.id : null) ??
+      sale.standaloneInstallmentPlan?.charges[0]?.id ??
+      sale.chargeId;
+
+    if (!paidChargeId) continue;
+
+    try {
+      const fulfillment = await fulfillReservedSaleOnPayment({
+        contaId: input.contaId,
+        chargeId: paidChargeId,
+        trigger: 'financial_reconciliation',
+      });
+      if (fulfillment.fulfilled) result.fulfilled += 1;
+    } catch (error) {
+      result.errors.push({
+        saleId: sale.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await auditLogService.record({
+        contaId: input.contaId,
+        action: 'loja.sale.fulfillment_failed',
+        entity: { type: 'Sale', id: sale.id },
+        metadata: {
+          trigger: 'financial_reconciliation',
+          chargeId: paidChargeId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      }).catch((auditError) => {
+        console.error('[store-inventory] Falha ao auditar fulfillment pendente', auditError);
+      });
+    }
+  }
+
+  return result;
+}
+
+/**
  * Cumpre a reserva de estoque de uma venda quando o pagamento é confirmado via webhook.
  * Idempotente: se a venda já foi cumprida ou não é RESERVE, retorna sem erro.
  */
 export async function fulfillReservedSaleOnPayment(input: {
   contaId: string;
   chargeId: string;
+  trigger?:
+    | 'webhook_payment_confirmed'
+    | 'webhook_installment_payment_confirmed'
+    | 'manual_offline_payment'
+    | 'financial_reconciliation';
 }): Promise<{ fulfilled: boolean }> {
-  const sale = await prisma.sale.findFirst({
+  const charge = await prisma.charge.findFirst({
+    where: { id: input.chargeId, contaId: input.contaId },
+    select: { id: true, standaloneInstallmentPlanId: true },
+  });
+
+  const directSale = await prisma.sale.findFirst({
     where: { chargeId: input.chargeId, contaId: input.contaId },
     select: {
       id: true,
@@ -1955,6 +2090,53 @@ export async function fulfillReservedSaleOnPayment(input: {
       },
     },
   });
+
+  let sale = directSale;
+
+  if (!sale && charge?.standaloneInstallmentPlanId) {
+    const firstCharge = await prisma.charge.findFirst({
+      where: {
+        contaId: input.contaId,
+        standaloneInstallmentPlanId: charge.standaloneInstallmentPlanId,
+      },
+      orderBy: [{ dueDate: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true },
+    });
+
+    // A venda é efetivada pela primeira parcela. Pagamento posterior não
+    // deve antecipar o fulfillment se a primeira ainda não foi paga.
+    if (firstCharge?.id === input.chargeId) {
+      await prisma.sale.updateMany({
+        where: {
+          contaId: input.contaId,
+          standaloneInstallmentPlanId: charge.standaloneInstallmentPlanId,
+          chargeId: null,
+        },
+        data: { chargeId: input.chargeId },
+      });
+
+      sale = await prisma.sale.findFirst({
+        where: { chargeId: input.chargeId, contaId: input.contaId },
+        select: {
+          id: true,
+          status: true,
+          inventoryMode: true,
+          inventoryStatus: true,
+          items: {
+            orderBy: { createdAt: 'asc' },
+            select: {
+              id: true,
+              productId: true,
+              variantId: true,
+              quantity: true,
+              returnedQuantity: true,
+              unitCostAtSale: true,
+            },
+          },
+        },
+      });
+    }
+  }
 
   if (!sale) return { fulfilled: false };
   if (sale.inventoryMode !== SaleInventoryMode.RESERVE) return { fulfilled: false };
@@ -2001,7 +2183,7 @@ export async function fulfillReservedSaleOnPayment(input: {
     metadata: {
       chargeId: input.chargeId,
       previousInventoryStatus: sale.inventoryStatus,
-      trigger: 'webhook_payment_confirmed',
+      trigger: input.trigger ?? 'payment_confirmation',
     },
   });
 

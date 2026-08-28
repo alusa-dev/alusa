@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { handlePaymentWebhook } from '../payment-webhook-handler';
+import { fulfillReservedSaleOnPayment } from '../../use-cases/store-inventory';
 
 const {
   mockUpdateFinanceStatusFromPayment,
@@ -9,6 +10,7 @@ const {
   mockProjectAcademicEnrollmentFeeState,
   mockProjectFamilyEnrollmentFeeState,
   mockUpsertFinanceReconciliationIssue,
+  mockLinkSaleToFirstInstallmentCharge,
 } = vi.hoisted(() => ({
   mockUpdateFinanceStatusFromPayment: vi.fn(async () => ({ success: true })),
   mockResolvePaymentToLocalEntity: vi.fn(async () => ({ type: 'not_found', reason: 'test_default' })),
@@ -16,6 +18,7 @@ const {
   mockProjectAcademicEnrollmentFeeState: vi.fn(async () => ({ projected: true })),
   mockProjectFamilyEnrollmentFeeState: vi.fn(async () => ({ projected: true })),
   mockUpsertFinanceReconciliationIssue: vi.fn(async () => ({ id: 'issue-1' })),
+  mockLinkSaleToFirstInstallmentCharge: vi.fn(async () => null),
 }));
 
 vi.mock('../../foundation/payment-resolution-policy', () => {
@@ -46,6 +49,7 @@ vi.mock('../../use-cases/payment-command-ledger', () => ({
 
 vi.mock('../../use-cases/store-inventory', () => ({
   fulfillReservedSaleOnPayment: vi.fn(async () => ({ fulfilled: false })),
+  linkSaleToFirstInstallmentCharge: mockLinkSaleToFirstInstallmentCharge,
 }));
 
 vi.mock('../../projections/enrollment-fee-projection.service', () => ({
@@ -58,6 +62,7 @@ vi.mock('../../reconciliation/finance-reconciliation-issue.service', () => ({
 }));
 
 vi.mock('@alusa/database', () => ({
+  loadAsaasCredentials: vi.fn(),
   prisma: {
     $transaction: vi.fn(async (callback: (_tx: unknown) => Promise<unknown>) => callback((await import('@alusa/database')).prisma)),
     $executeRaw: vi.fn(),
@@ -82,6 +87,12 @@ vi.mock('@alusa/database', () => ({
       findFirst: vi.fn(),
     },
     standaloneSubscription: {
+      findFirst: vi.fn(),
+    },
+    standaloneInstallmentPlan: {
+      findFirst: vi.fn(),
+    },
+    installmentPlan: {
       findFirst: vi.fn(),
     },
     matricula: {
@@ -134,9 +145,12 @@ describe('handlePaymentWebhook', () => {
     mockProjectAcademicEnrollmentFeeState.mockResolvedValue({ projected: true });
     mockProjectFamilyEnrollmentFeeState.mockResolvedValue({ projected: true });
     mockUpsertFinanceReconciliationIssue.mockResolvedValue({ id: 'issue-1' });
+    mockLinkSaleToFirstInstallmentCharge.mockResolvedValue(null);
     vi.mocked(prisma.$transaction).mockImplementation(
       async (callback: (_tx: unknown) => Promise<unknown>) => callback(prisma),
     );
+    const { loadAsaasCredentials } = await import('@alusa/database');
+    vi.mocked(loadAsaasCredentials).mockResolvedValue(null as never);
     vi.mocked(prisma.financePaymentStateTransition.create).mockResolvedValue({ id: 'state-transition-1' } as never);
   });
 
@@ -566,6 +580,56 @@ describe('handlePaymentWebhook', () => {
         }),
       }),
     );
+  });
+
+  it('liga a primeira parcela e dispara fulfillment quando o webhook chega antes da venda', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.installmentPlan.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.standaloneInstallmentPlan.findFirst).mockResolvedValueOnce({
+      id: 'plan-standalone-1',
+      externalReference: 'alusa:standalone-installment:plan-standalone-1',
+      billingType: 'PIX',
+      interestValue: null,
+      fineValue: null,
+      fineType: null,
+      discountValue: null,
+      discountType: null,
+      discountDueDateLimitDays: null,
+      customer: { id: 'customer-1', payerType: 'ALUNO', payerId: 'aluno-1' },
+    } as never);
+    vi.mocked(prisma.aluno.findFirst).mockResolvedValueOnce({ nome: 'Cliente Parcelado' } as never);
+    vi.mocked(prisma.charge.upsert).mockResolvedValueOnce({ id: 'charge-installment-1' } as never);
+    mockLinkSaleToFirstInstallmentCharge.mockResolvedValueOnce('charge-installment-1');
+    vi.mocked(fulfillReservedSaleOnPayment).mockResolvedValueOnce({ fulfilled: true });
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay-installment-1',
+        status: 'CONFIRMED',
+        value: 90,
+        netValue: 88,
+        installment: 'asaas-installment-1',
+        installmentNumber: 1,
+        dueDate: '2026-08-01',
+        billingType: 'PIX',
+      },
+    });
+
+    expect(result).toMatchObject({ success: true, stateChanged: true });
+    expect(mockLinkSaleToFirstInstallmentCharge).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      installmentPlanId: 'plan-standalone-1',
+    });
+    expect(fulfillReservedSaleOnPayment).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      chargeId: 'charge-installment-1',
+      trigger: 'webhook_installment_payment_confirmed',
+    });
   });
 
   it('deve atualizar charge standalone por asaasPaymentId mesmo sem externalReference', async () => {

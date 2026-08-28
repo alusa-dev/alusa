@@ -29,7 +29,10 @@ import { updateFinanceStatusFromPayment } from '../guards/finance-status-guard';
 import { withSessionAdvisoryLock } from '../core/idempotency.service';
 import { getPayment, isAsaasEnabled } from '../use-cases/asaas-ops';
 import { confirmPaymentCommandsByProviderEvent } from '../use-cases/payment-command-ledger';
-import { fulfillReservedSaleOnPayment } from '../use-cases/store-inventory';
+import {
+  fulfillReservedSaleOnPayment,
+  linkSaleToFirstInstallmentCharge,
+} from '../use-cases/store-inventory';
 import { handleChargeInvoicePaymentEvent } from '../use-cases/handle-charge-invoice-payment-event';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 import { Prisma } from '@prisma/client';
@@ -870,13 +873,29 @@ async function handleStandaloneChargeWebhook(
   // Cumprir reserva de estoque automaticamente quando pagamento é confirmado
   if (nextStatusCharge === 'PAID') {
     try {
-      await fulfillReservedSaleOnPayment({ contaId, chargeId: charge.id });
+      await fulfillReservedSaleOnPayment({
+        contaId,
+        chargeId: charge.id,
+        trigger: 'webhook_payment_confirmed',
+      });
     } catch (fulfillError) {
       // Não falhar o webhook por erro de fulfillment — logar e seguir
       console.error('[handleStandaloneChargeWebhook] Erro ao cumprir reserva de estoque:', {
         chargeId: charge.id,
         contaId,
         error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
+      });
+      await auditLogService.record({
+        contaId,
+        action: 'loja.sale.fulfillment_failed',
+        entity: { type: 'Charge', id: charge.id },
+        metadata: {
+          chargeId: charge.id,
+          trigger: 'webhook_payment_confirmed',
+          error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
+        },
+      }).catch((auditError) => {
+        console.error('[handleStandaloneChargeWebhook] Falha ao auditar fulfillment pendente:', auditError);
       });
     }
   }
@@ -1964,6 +1983,41 @@ async function handlePaymentWebhookCore(
           });
 
           await refreshReadModel({ chargeId: standaloneInstallmentCharge.id });
+
+          const firstSaleChargeId = await linkSaleToFirstInstallmentCharge({
+            contaId,
+            installmentPlanId: standalonePlan.id,
+          });
+
+          if (chargeStatus === 'PAID' && firstSaleChargeId === standaloneInstallmentCharge.id) {
+            try {
+              await fulfillReservedSaleOnPayment({
+                contaId,
+                chargeId: standaloneInstallmentCharge.id,
+                trigger: 'webhook_installment_payment_confirmed',
+              });
+            } catch (fulfillError) {
+              console.error('[payment-webhook] Falha ao cumprir venda parcelada via webhook:', {
+                contaId,
+                chargeId: standaloneInstallmentCharge.id,
+                standaloneInstallmentPlanId: standalonePlan.id,
+                error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
+              });
+              await auditLogService.record({
+                contaId,
+                action: 'loja.sale.fulfillment_failed',
+                entity: { type: 'Charge', id: standaloneInstallmentCharge.id },
+                metadata: {
+                  chargeId: standaloneInstallmentCharge.id,
+                  standaloneInstallmentPlanId: standalonePlan.id,
+                  trigger: 'webhook_installment_payment_confirmed',
+                  error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
+                },
+              }).catch((auditError) => {
+                console.error('[payment-webhook] Falha ao auditar fulfillment parcelado pendente:', auditError);
+              });
+            }
+          }
 
           await auditLogService.record({
             contaId,

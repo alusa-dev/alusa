@@ -20,6 +20,7 @@ import {
   registerPaymentCommand,
 } from './payment-command-ledger';
 import { resolveOperationalChargePayment } from './resolve-operational-charge-payment';
+import { fulfillReservedSaleOnPayment } from './store-inventory';
 
 // Status que permitem marcação como pago
 const PAYABLE_STATUSES = new Set<StatusCobranca>([
@@ -315,6 +316,35 @@ export async function markChargeAsPaid(input: MarkChargeAsPaidInput): Promise<Ma
         throw new Error('Cobrança não encontrada ou não pertence à conta');
       }
     });
+
+    if (standaloneCharge) {
+      try {
+        await fulfillReservedSaleOnPayment({
+          contaId,
+          chargeId: standaloneCharge.id,
+          trigger: 'manual_offline_payment',
+        });
+      } catch (fulfillError) {
+        console.error('[mark-charge-as-paid] Falha ao cumprir estoque após baixa offline', {
+          contaId,
+          chargeId: standaloneCharge.id,
+          error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
+        });
+        await auditLogService.record({
+          contaId,
+          actor: { type: 'USER', id: userId },
+          action: 'loja.sale.fulfillment_failed',
+          entity: { type: 'Charge', id: standaloneCharge.id },
+          metadata: {
+            chargeId: standaloneCharge.id,
+            trigger: 'manual_offline_payment',
+            error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
+          },
+        }).catch((auditError) => {
+          console.error('[mark-charge-as-paid] Falha ao auditar fulfillment pendente', auditError);
+        });
+      }
+    }
   }
 
   // 4. Auditoria

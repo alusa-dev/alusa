@@ -34,6 +34,6 @@ export async function GET(
       return jsonError(error.status, error.code, error.message);
     }
 
-    return jsonError(500, 'ERRO_OBTER_VENDA', (error as Error).message);
+    return jsonError(500, 'ERRO_OBTER_VENDA', 'Não foi possível obter a venda.');
   }
 }

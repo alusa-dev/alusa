@@ -25,6 +25,9 @@ vi.mock('@alusa/database', () => ({
       findMany: vi.fn(),
       updateMany: vi.fn(),
     },
+    sale: {
+      findMany: vi.fn(),
+    },
     webhookAsaas: {
       findFirst: vi.fn(),
       findMany: vi.fn(),
@@ -81,6 +84,7 @@ describe('webhook-reconciliation.service', () => {
     vi.mocked(prisma.billingAgreement.findMany).mockResolvedValue([]);
     vi.mocked(prisma.installmentPlan.findMany).mockResolvedValue([]);
     vi.mocked(prisma.standaloneInstallmentPlan.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.sale.findMany).mockResolvedValue([]);
     vi.mocked(prisma.webhookAsaas.findMany).mockResolvedValue([]);
     vi.mocked(prisma.charge.updateMany).mockResolvedValue({ count: 1 });
     vi.mocked(prisma.cobranca.updateMany).mockResolvedValue({ count: 1 });

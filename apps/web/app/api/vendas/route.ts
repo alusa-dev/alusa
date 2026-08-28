@@ -100,7 +100,7 @@ export async function GET(request: Request) {
       return jsonError(error.status, error.code, error.message);
     }
 
-    return jsonError(500, 'ERRO_LISTAR_VENDAS', (error as Error).message);
+    return jsonError(500, 'ERRO_LISTAR_VENDAS', 'Não foi possível listar as vendas.');
   }
 }
 
@@ -147,6 +147,6 @@ export async function POST(request: Request) {
       return jsonError(error.status, error.code, error.message);
     }
 
-    return jsonError(500, 'ERRO_CRIAR_VENDA', (error as Error).message);
+    return jsonError(500, 'ERRO_CRIAR_VENDA', 'Não foi possível criar a venda.');
   }
 }

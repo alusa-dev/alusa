@@ -3,6 +3,7 @@ import { prisma } from '@alusa/database';
 import { isValidCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
 import {
   Prisma,
+  ChargeStatus,
   type FormaPagamento,
   SaleFinalizationType,
   SaleInventoryMode,
@@ -13,7 +14,7 @@ import {
 } from '@prisma/client';
 import { formatProductVariantTitle, resolveProductSalePrice } from '@alusa/lib';
 
-import { isPrismaUniqueViolation } from '../core';
+import { hashPayload, isPrismaUniqueViolation } from '../core';
 import { auditLogService } from '../foundation/audit-log.service';
 import { deleteInstallmentPayments, deletePayment } from './asaas-ops';
 import { createStandaloneCharge } from './create-standalone-charge';
@@ -213,6 +214,16 @@ const SALE_DETAIL_INCLUDE = {
 } satisfies Prisma.SaleInclude;
 
 type SaleRecord = Prisma.SaleGetPayload<{ include: typeof SALE_DETAIL_INCLUDE }>;
+
+function buildSaleRequestFingerprint(input: CreateStoreSaleInput): string {
+  return hashPayload({
+    customer: input.customer,
+    items: input.items,
+    discount: input.discount ?? 0,
+    inventoryMode: input.inventoryMode ?? null,
+    finalization: input.finalization,
+  });
+}
 
 type PreparedSaleItem = {
   productId: string;
@@ -506,6 +517,39 @@ export type ListStoreSalesOutput = {
     total: number;
     totalPages: number;
   };
+};
+
+export type StoreSaleOperationalIssueCode =
+  | 'SALE_PENDING_TOO_LONG'
+  | 'CHARGE_NOT_MATERIALIZED'
+  | 'INSTALLMENT_CHARGE_PENDING'
+  | 'PAID_RESERVED_STOCK';
+
+export type StoreSaleOperationalIssueDTO = {
+  saleId: string;
+  saleNumber: number;
+  issueCode: StoreSaleOperationalIssueCode;
+  customerName: string;
+  total: number;
+  createdAt: string;
+  status: SaleStatus;
+  inventoryStatus: SaleInventoryStatus;
+  chargeStatus: string | null;
+  installmentPlanId: string | null;
+};
+
+export type StoreSaleOperationalSummaryDTO = {
+  checkedAt: string;
+  staleAfterMinutes: number;
+  totalIssues: number;
+  counts: Record<StoreSaleOperationalIssueCode, number>;
+  issues: StoreSaleOperationalIssueDTO[];
+};
+
+export type ListStoreSaleOperationalIssuesInput = {
+  contaId: string;
+  staleAfterMinutes?: number;
+  limit?: number;
 };
 
 export type EligibleStoreSaleMatriculaDTO = {
@@ -1727,6 +1771,7 @@ async function createLocalSaleRecord(input: {
   contaId: string;
   operatorId: string;
   uiRequestId: string;
+  requestFingerprint: string;
   prepared: PreparedSaleContext;
 }): Promise<SaleRecord> {
   let attempts = 0;
@@ -1768,6 +1813,7 @@ async function createLocalSaleRecord(input: {
           data: {
             contaId: input.contaId,
             uiRequestId: input.uiRequestId,
+            requestFingerprint: input.requestFingerprint,
             saleNumber,
             status:
               input.prepared.finalizationType === SaleFinalizationType.RECEBIMENTO_PRESENCIAL
@@ -1891,7 +1937,16 @@ async function createLocalSaleRecord(input: {
 
       if (isPrismaUniqueViolation(error)) {
         const existing = await findSaleByUiRequestId(input.contaId, input.uiRequestId);
-        if (existing) return existing;
+        if (existing) {
+          if (existing.requestFingerprint && existing.requestFingerprint !== input.requestFingerprint) {
+            throw new StoreSaleError(
+              'IDEMPOTENCY_CONFLICT',
+              'A solicitação já foi usada para outra venda. Gere uma nova tentativa.',
+              409,
+            );
+          }
+          return existing;
+        }
         continue;
       }
 
@@ -2176,8 +2231,18 @@ export async function listEligibleStoreSaleMatriculas(
 
 export async function createStoreSale(input: CreateStoreSaleInput): Promise<StoreSaleDTO> {
   const startedAt = Date.now();
-  const prepared = await prepareSaleContext(input);
+  const requestFingerprint = buildSaleRequestFingerprint(input);
   const existing = await findSaleByUiRequestId(input.contaId, input.uiRequestId);
+
+  if (existing?.requestFingerprint && existing.requestFingerprint !== requestFingerprint) {
+    throw new StoreSaleError(
+      'IDEMPOTENCY_CONFLICT',
+      'A solicitação já foi usada para outra venda. Gere uma nova tentativa.',
+      409,
+    );
+  }
+
+  const prepared = await prepareSaleContext(input);
 
   if (existing) {
     const existingDto = mapSaleRecord(existing);
@@ -2207,6 +2272,7 @@ export async function createStoreSale(input: CreateStoreSaleInput): Promise<Stor
     contaId: input.contaId,
     operatorId: input.operatorId,
     uiRequestId: input.uiRequestId,
+    requestFingerprint,
     prepared,
   });
 
@@ -2334,6 +2400,128 @@ export async function listStoreSales(input: ListStoreSalesInput): Promise<ListSt
       total,
       totalPages: Math.ceil(total / pageSize),
     },
+  };
+}
+
+export async function listStoreSaleOperationalIssues(
+  input: ListStoreSaleOperationalIssuesInput,
+): Promise<StoreSaleOperationalSummaryDTO> {
+  const staleAfterMinutes = Math.min(24 * 60, Math.max(1, input.staleAfterMinutes ?? 30));
+  const limit = Math.min(100, Math.max(1, input.limit ?? 25));
+  const cutoff = new Date(Date.now() - staleAfterMinutes * 60_000);
+
+  const records = await prisma.sale.findMany({
+    where: {
+      contaId: input.contaId,
+      status: { not: SaleStatus.CANCELADA },
+      createdAt: { lte: cutoff },
+      OR: [
+        { status: SaleStatus.PENDENTE },
+        {
+          finalizationType: SaleFinalizationType.COBRANCA,
+          charge: { is: null },
+          standaloneInstallmentPlan: { is: null },
+        },
+        {
+          inventoryMode: SaleInventoryMode.RESERVE,
+          inventoryStatus: SaleInventoryStatus.RESERVED,
+          charge: { is: { status: ChargeStatus.PAID } },
+        },
+        {
+          inventoryMode: SaleInventoryMode.RESERVE,
+          inventoryStatus: SaleInventoryStatus.RESERVED,
+          standaloneInstallmentPlan: {
+            is: { charges: { some: { status: ChargeStatus.PAID } } },
+          },
+        },
+        {
+          finalizationType: SaleFinalizationType.COBRANCA,
+          standaloneInstallmentPlan: { is: { charges: { none: {} } } },
+        },
+      ],
+    },
+    orderBy: { createdAt: 'asc' },
+    take: limit,
+    select: {
+      id: true,
+      saleNumber: true,
+      status: true,
+      finalizationType: true,
+      inventoryStatus: true,
+      inventoryMode: true,
+      total: true,
+      createdAt: true,
+      customerType: true,
+      walkInName: true,
+      aluno: { select: { nome: true } },
+      responsavel: { select: { nome: true } },
+      charge: { select: { status: true } },
+      standaloneInstallmentPlan: {
+        select: {
+          id: true,
+          charges: { select: { status: true } },
+        },
+      },
+    },
+  });
+
+  const counts: Record<StoreSaleOperationalIssueCode, number> = {
+    SALE_PENDING_TOO_LONG: 0,
+    CHARGE_NOT_MATERIALIZED: 0,
+    INSTALLMENT_CHARGE_PENDING: 0,
+    PAID_RESERVED_STOCK: 0,
+  };
+
+  const issues = records.flatMap((record): StoreSaleOperationalIssueDTO[] => {
+    const hasPaidInstallment = record.standaloneInstallmentPlan?.charges.some(
+      (charge) => charge.status === ChargeStatus.PAID,
+    );
+    const issueCode: StoreSaleOperationalIssueCode | null =
+      record.inventoryMode === SaleInventoryMode.RESERVE &&
+      record.inventoryStatus === SaleInventoryStatus.RESERVED &&
+      (record.charge?.status === ChargeStatus.PAID || hasPaidInstallment)
+        ? 'PAID_RESERVED_STOCK'
+        : record.finalizationType === SaleFinalizationType.COBRANCA &&
+            !record.charge &&
+            !record.standaloneInstallmentPlan
+          ? 'CHARGE_NOT_MATERIALIZED'
+          : record.finalizationType === SaleFinalizationType.COBRANCA &&
+              Boolean(record.standaloneInstallmentPlan) &&
+              record.standaloneInstallmentPlan?.charges.length === 0
+            ? 'INSTALLMENT_CHARGE_PENDING'
+            : record.status === SaleStatus.PENDENTE
+              ? 'SALE_PENDING_TOO_LONG'
+              : null;
+
+    if (!issueCode) return [];
+    counts[issueCode] += 1;
+
+    return [
+      {
+        saleId: record.id,
+        saleNumber: record.saleNumber,
+        issueCode,
+        customerName:
+          record.walkInName ??
+          record.aluno?.nome ??
+          record.responsavel?.nome ??
+          'Cliente não identificado',
+        total: moneyToNumber(record.total),
+        createdAt: record.createdAt.toISOString(),
+        status: record.status,
+        inventoryStatus: record.inventoryStatus,
+        chargeStatus: record.charge?.status ?? null,
+        installmentPlanId: record.standaloneInstallmentPlan?.id ?? null,
+      },
+    ];
+  });
+
+  return {
+    checkedAt: new Date().toISOString(),
+    staleAfterMinutes,
+    totalIssues: issues.length,
+    counts,
+    issues,
   };
 }
 

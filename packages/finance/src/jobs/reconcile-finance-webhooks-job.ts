@@ -222,6 +222,7 @@ async function reconcileFinanceWebhooksJobUnlocked(
         subscriptionDrift: 0,
         checkedInstallments: 0,
         installmentDrift: 0,
+        storeSalesFulfilled: 0,
         errors: [safeError],
         generatedAt: new Date(),
       };

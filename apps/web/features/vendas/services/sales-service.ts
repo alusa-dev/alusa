@@ -1,4 +1,10 @@
-import type { ListStoreSalesOutput, StoreSaleDTO, StoreSaleFilterStatus } from '@alusa/finance';
+import type {
+  ListStoreSaleOperationalIssuesInput,
+  ListStoreSalesOutput,
+  StoreSaleDTO,
+  StoreSaleFilterStatus,
+  StoreSaleOperationalSummaryDTO,
+} from '@alusa/finance';
 
 export type SaleFinalizationValue = 'RECEBIMENTO_PRESENCIAL' | 'COBRANCA';
 export type SalePaymentMethodValue =
@@ -174,6 +180,25 @@ export async function listSales(params: ListSalesParams = {}): Promise<ListStore
   });
 
   return parseResponse<ListStoreSalesOutput>(response);
+}
+
+export async function getSalesOperationalSummary(
+  params: Omit<ListStoreSaleOperationalIssuesInput, 'contaId'> = {},
+): Promise<StoreSaleOperationalSummaryDTO> {
+  const searchParams = new URLSearchParams();
+  if (params.staleAfterMinutes) {
+    searchParams.set('staleAfterMinutes', String(params.staleAfterMinutes));
+  }
+  if (params.limit) searchParams.set('limit', String(params.limit));
+
+  const response = await fetch(`/api/vendas/operacional?${searchParams.toString()}`, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    cache: 'no-store',
+  });
+
+  const parsed = await parseResponse<{ data: StoreSaleOperationalSummaryDTO }>(response);
+  return parsed.data;
 }
 
 export async function getSale(id: string): Promise<StoreSaleDTO> {

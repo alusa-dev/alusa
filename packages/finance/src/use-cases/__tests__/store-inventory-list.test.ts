@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Prisma } from '@prisma/client';
 
-import { listInventoryBalances } from '../store-inventory';
+import { listInventoryBalances, reconcilePaidReservedStoreSales } from '../store-inventory';
 
 const prismaMock = vi.hoisted(() => ({
   inventoryBalance: {
@@ -10,6 +10,9 @@ const prismaMock = vi.hoisted(() => ({
   },
   inventoryMovement: {
     findMany: vi.fn().mockResolvedValue([]),
+  },
+  sale: {
+    findMany: vi.fn(),
   },
 }));
 
@@ -112,6 +115,24 @@ describe('listInventoryBalances', () => {
       onHand: 4,
       inventoryValue: 34,
     });
+  });
+
+  it('identifica vendas pagas com estoque reservado em modo dry-run', async () => {
+    prismaMock.sale.findMany.mockResolvedValueOnce([
+      {
+        id: 'sale-1',
+        chargeId: 'charge-1',
+        charge: { id: 'charge-1', status: 'PAID' },
+        standaloneInstallmentPlan: null,
+      },
+    ]);
+
+    const result = await reconcilePaidReservedStoreSales({ contaId: 'conta-1', dryRun: true });
+
+    expect(result).toEqual({ checked: 1, fulfilled: 0, errors: [] });
+    expect(prismaMock.sale.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ contaId: 'conta-1' }) }),
+    );
   });
 
   it('não lista produto pai com variantes, mas lista as variantes reais', async () => {

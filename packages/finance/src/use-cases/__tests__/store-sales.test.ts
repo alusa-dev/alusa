@@ -14,6 +14,7 @@ import {
   createStoreSale,
   getStoreSaleById,
   listStoreSales,
+  listStoreSaleOperationalIssues,
   StoreSaleError,
 } from '../store-sales';
 
@@ -50,6 +51,7 @@ type StoredSale = {
   id: string;
   contaId: string;
   uiRequestId: string | null;
+  requestFingerprint: string | null;
   saleNumber: number;
   status: SaleStatus;
   customerType: string;
@@ -357,12 +359,14 @@ function createMockState(): MockState {
             | 'canceledById'
             | 'chargeId'
             | 'standaloneInstallmentPlanId'
-          > & { chargeId?: string | null; standaloneInstallmentPlanId?: string | null };
+            | 'requestFingerprint'
+          > & { chargeId?: string | null; standaloneInstallmentPlanId?: string | null; requestFingerprint?: string | null };
         }) => {
           const sale: StoredSale = {
             id: `sale-${state.sales.size + 1}`,
             chargeId: args.data.chargeId ?? null,
             standaloneInstallmentPlanId: args.data.standaloneInstallmentPlanId ?? null,
+            requestFingerprint: args.data.requestFingerprint ?? null,
             canceledAt: null,
             cancelReason: null,
             canceledById: null,
@@ -499,6 +503,56 @@ describe('store-sales', () => {
     vi.clearAllMocks();
   });
 
+  it('classifica pendências operacionais sem cruzar o tenant', async () => {
+    state.prisma.sale.findMany.mockResolvedValueOnce([
+      {
+        id: 'sale-pending',
+        saleNumber: 10,
+        status: SaleStatus.PENDENTE,
+        finalizationType: SaleFinalizationType.COBRANCA,
+        inventoryStatus: SaleInventoryStatus.RESERVED,
+        inventoryMode: SaleInventoryMode.RESERVE,
+        total: new Prisma.Decimal('120.00'),
+        createdAt: new Date('2026-01-01T10:00:00.000Z'),
+        customerType: 'AVULSO',
+        walkInName: 'Cliente Pendente',
+        aluno: null,
+        responsavel: null,
+        charge: null,
+        standaloneInstallmentPlan: null,
+      },
+      {
+        id: 'sale-paid-reserved',
+        saleNumber: 11,
+        status: SaleStatus.PENDENTE,
+        finalizationType: SaleFinalizationType.COBRANCA,
+        inventoryStatus: SaleInventoryStatus.RESERVED,
+        inventoryMode: SaleInventoryMode.RESERVE,
+        total: new Prisma.Decimal('80.00'),
+        createdAt: new Date('2026-01-02T10:00:00.000Z'),
+        customerType: 'AVULSO',
+        walkInName: 'Cliente Pago',
+        aluno: null,
+        responsavel: null,
+        charge: { status: 'PAID' },
+        standaloneInstallmentPlan: null,
+      },
+    ] as never);
+
+    const result = await listStoreSaleOperationalIssues({ contaId: 'conta-1' });
+
+    expect(result.totalIssues).toBe(2);
+    expect(result.counts.CHARGE_NOT_MATERIALIZED).toBe(1);
+    expect(result.counts.PAID_RESERVED_STOCK).toBe(1);
+    expect(result.issues.map((issue) => issue.issueCode)).toEqual([
+      'CHARGE_NOT_MATERIALIZED',
+      'PAID_RESERVED_STOCK',
+    ]);
+    expect(state.prisma.sale.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ contaId: 'conta-1' }) }),
+    );
+  });
+
   it('cria venda presencial e devolve troco corretamente', async () => {
     state.products.set('prod-1', {
       id: 'prod-1',
@@ -545,6 +599,50 @@ describe('store-sales', () => {
     expect(result.changeGiven).toBe(30);
     const inventory = await import('../store-inventory');
     expect(inventory.applySaleInventoryOnCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejeita o mesmo uiRequestId quando o payload da venda muda', async () => {
+    state.products.set('prod-idempotency', {
+      id: 'prod-idempotency',
+      contaId: 'conta-1',
+      name: 'Produto idempotência',
+      price: new Prisma.Decimal('50.00'),
+      stock: 5,
+      hasVariants: false,
+    });
+    state.inventoryBalances.set('prod-idempotency', {
+      productId: 'prod-idempotency',
+      variantId: null,
+      onHand: 5,
+      reserved: 0,
+      averageCost: new Prisma.Decimal('20.00'),
+    });
+
+    const input = {
+      contaId: 'conta-1',
+      operatorId: 'user-1',
+      uiRequestId: 'sale-request-idempotency',
+      customer: { type: 'AVULSO' as const, name: 'Cliente balcão' },
+      items: [{ productId: 'prod-idempotency', quantity: 1 }],
+      discount: 0,
+      finalization: {
+        type: 'RECEBIMENTO_PRESENCIAL' as const,
+        paymentMethod: 'PIX_PRESENCIAL' as const,
+        amountReceived: null,
+      },
+    };
+
+    await createStoreSale(input);
+
+    await expect(
+      createStoreSale({
+        ...input,
+        discount: 5,
+      }),
+    ).rejects.toMatchObject<Partial<StoreSaleError>>({
+      code: 'IDEMPOTENCY_CONFLICT',
+      status: 409,
+    });
   });
 
   it('rejects a variant without its own sale price instead of using the product price', async () => {

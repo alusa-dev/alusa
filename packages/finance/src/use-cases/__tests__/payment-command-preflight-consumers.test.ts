@@ -2,9 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@alusa/database', () => ({
   prisma: {
+    $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback((await import('@alusa/database')).prisma),
+    ),
     cobranca: {
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    charge: {
+      findFirst: vi.fn(),
       updateMany: vi.fn(),
     },
   },
@@ -46,7 +53,7 @@ vi.mock('../payment-command-ledger', () => ({
 }));
 
 import { prisma } from '@alusa/database';
-import { confirmCashPayment, deletePayment, updatePayment } from '../asaas-ops';
+import { confirmCashPayment, deletePayment, isAsaasEnabled, updatePayment } from '../asaas-ops';
 import { readPaymentStatusPreflight } from '../payment-command-preflight';
 import { syncPaymentStateFromAsaas } from '../sync-payment-state-from-asaas';
 import { markPaymentCommandSent, registerPaymentCommand } from '../payment-command-ledger';
@@ -54,9 +61,16 @@ import { deleteCharge } from '../delete-charge';
 import { markChargeAsPaid } from '../mark-charge-as-paid';
 import { updateCharge } from '../update-charge';
 
+vi.mock('../store-inventory', () => ({
+  fulfillReservedSaleOnPayment: vi.fn(async () => ({ fulfilled: true })),
+}));
+
+import { fulfillReservedSaleOnPayment } from '../store-inventory';
+
 describe('payment-command-preflight consumers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(isAsaasEnabled).mockReturnValue(true);
   });
 
   it('deleteCharge usa preflight status-only antes de deletar', async () => {
@@ -205,6 +219,40 @@ describe('payment-command-preflight consumers', () => {
       contaId: 'conta-1',
       asaasPaymentId: 'pay_1',
       eventName: 'PAYMENT_RECEIVED',
+    });
+  });
+
+  it('baixa Charge offline e cumpre estoque reservado da venda', async () => {
+    vi.mocked(isAsaasEnabled).mockReturnValue(false);
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+      id: 'charge-offline-sale',
+      contaId: 'conta-1',
+      status: 'OPEN',
+      asaasPaymentId: null,
+      value: 75,
+    } as never);
+    vi.mocked(prisma.charge.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+
+    const result = await markChargeAsPaid({
+      chargeId: 'charge-offline-sale',
+      contaId: 'conta-1',
+      userId: 'user-1',
+      formaPagamentoManual: 'PIX',
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      data: { entityType: 'Charge', asaasProcessed: false, isOffline: true },
+    });
+    expect(prisma.charge.updateMany).toHaveBeenCalledWith({
+      where: { id: 'charge-offline-sale', contaId: 'conta-1' },
+      data: expect.objectContaining({ status: 'PAID' }),
+    });
+    expect(fulfillReservedSaleOnPayment).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      chargeId: 'charge-offline-sale',
+      trigger: 'manual_offline_payment',
     });
   });
 });

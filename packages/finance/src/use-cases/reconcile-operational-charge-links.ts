@@ -3,6 +3,7 @@ import { AsaasHttpError } from '@alusa/asaas';
 import { auditLogService } from '../foundation/audit-log.service';
 import { getPayment, isAsaasEnabled } from './asaas-ops';
 import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
+import { reconcilePaidReservedStoreSales } from './store-inventory';
 
 export type ReconcileOperationalChargeLinksInput = {
   contaId: string;
@@ -16,6 +17,7 @@ export type ReconcileOperationalChargeLinksResult = {
   synced: number;
   removed: number;
   skipped: number;
+  inventoryRepaired: number;
   errors: Array<{ asaasPaymentId: string; error: string }>;
 };
 
@@ -298,11 +300,15 @@ export async function reconcileOperationalChargeLinks(
     synced: 0,
     removed: 0,
     skipped: 0,
+    inventoryRepaired: 0,
     errors: [],
   };
 
   if (!isAsaasEnabled()) {
     result.synced += await reconcileCancelledCostumeAssignmentEntries(contaId, dryRun);
+    const inventory = await reconcilePaidReservedStoreSales({ contaId, dryRun });
+    result.inventoryRepaired = inventory.fulfilled;
+    result.errors.push(...inventory.errors.map((error) => ({ asaasPaymentId: `sale:${error.saleId}`, error: error.error })));
     result.skipped = 1;
     result.errors.push({ asaasPaymentId: '*', error: 'ASAAS_DISABLED' });
     return result;
@@ -342,6 +348,10 @@ export async function reconcileOperationalChargeLinks(
       });
     }
   }
+
+  const inventory = await reconcilePaidReservedStoreSales({ contaId, dryRun });
+  result.inventoryRepaired = inventory.fulfilled;
+  result.errors.push(...inventory.errors.map((error) => ({ asaasPaymentId: `sale:${error.saleId}`, error: error.error })));
 
   return result;
 }

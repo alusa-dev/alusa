@@ -666,6 +666,7 @@ export {
   StoreSaleError,
   createStoreSale,
   listStoreSales,
+  listStoreSaleOperationalIssues,
   getStoreSaleById,
   cancelStoreSale,
   fulfillStoreSale,
@@ -686,6 +687,10 @@ export type {
   StoreSaleMerchantDTO,
   ListStoreSalesInput,
   ListStoreSalesOutput,
+  ListStoreSaleOperationalIssuesInput,
+  StoreSaleOperationalIssueCode,
+  StoreSaleOperationalIssueDTO,
+  StoreSaleOperationalSummaryDTO,
   GetStoreSaleInput,
   CancelStoreSaleInput,
   FulfillStoreSaleInput,
@@ -704,6 +709,9 @@ export {
   createRestockOrder,
   receiveRestockOrder,
   cancelRestockOrder,
+  linkSaleToFirstInstallmentCharge,
+  fulfillReservedSaleOnPayment,
+  reconcilePaidReservedStoreSales,
 } from './use-cases/store-inventory';
 export type {
   InventoryAlertState,
@@ -719,6 +727,7 @@ export type {
   CreateRestockOrderInput,
   ReceiveRestockOrderInput,
   CancelRestockOrderInput,
+  ReconcilePaidReservedStoreSalesResult,
 } from './use-cases/store-inventory';
 
 export { processCheckoutCreditCard } from './use-cases/process-checkout-credit-card';

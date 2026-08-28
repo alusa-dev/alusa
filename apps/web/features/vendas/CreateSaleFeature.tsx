@@ -183,6 +183,8 @@ export function CreateSaleFeature() {
   );
   const total = useMemo(() => Math.max(cartSubtotal - discount, 0), [cartSubtotal, discount]);
   const canUseInstallments = billingType === 'BOLETO' || billingType === 'CREDIT_CARD';
+  const requiresWalkInFinancialData =
+    finalizationType === 'COBRANCA' || saveWalkInCustomer === 'SIM';
   const activeProducts = useMemo(() => products.filter((product) => product.isActive), [products]);
 
   const addProductToCart = useCallback((product: ProductListItem) => {
@@ -816,8 +818,8 @@ export function CreateSaleFeature() {
                           </p>
                           {selectedPayer.financialStatus === 'INCOMPLETE' ? (
                             <p className="mt-2 text-amber-700">
-                              Cadastro incompleto. Cobrança pode ser bloqueada até informar
-                              CPF/CNPJ.
+                              Cadastro financeiro incompleto. Para gerar cobrança, complete os
+                              dados do pagador no cadastro.
                             </p>
                           ) : null}
                         </div>
@@ -835,7 +837,9 @@ export function CreateSaleFeature() {
                       </div>
                       <div className="space-y-2">
                         <div className="flex min-h-4 items-center gap-2">
-                          <label className={cn(labelClass, 'block')}>CPF/CNPJ</label>
+                          <label className={cn(labelClass, 'block')}>
+                            CPF/CNPJ{requiresWalkInFinancialData ? ' *' : ''}
+                          </label>
                           {walkInDocumentError ? (
                             <span className="text-xs font-medium text-red-600">
                               {walkInDocumentError}
@@ -847,28 +851,35 @@ export function CreateSaleFeature() {
                           onChange={(event) =>
                             setWalkInDocument(formatCpfCnpjBR(event.target.value))
                           }
+                          aria-required={requiresWalkInFinancialData}
                           placeholder="000.000.000-00"
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className={cn(labelClass, 'block')}>Telefone</label>
+                        <label className={cn(labelClass, 'block')}>
+                          Telefone{requiresWalkInFinancialData ? ' *' : ''}
+                        </label>
                         <Input
                           value={walkInPhone}
                           onChange={(event) => setWalkInPhone(formatPhoneBR(event.target.value))}
+                          aria-required={requiresWalkInFinancialData}
                           placeholder="(00) 00000-0000"
                         />
                       </div>
                       <div className="space-y-2 sm:col-span-2">
-                        <label className={cn(labelClass, 'block')}>E-mail</label>
+                        <label className={cn(labelClass, 'block')}>
+                          E-mail{requiresWalkInFinancialData ? ' *' : ''}
+                        </label>
                         <Input
                           type="email"
                           value={walkInEmail}
                           onChange={(event) => setWalkInEmail(event.target.value)}
+                          aria-required={requiresWalkInFinancialData}
                           placeholder="cliente@email.com"
                         />
                       </div>
                       <div className="space-y-2 sm:col-span-2">
-                        <label className={cn(labelClass, 'block')}>Observação</label>
+                        <label className={cn(labelClass, 'block')}>Observação interna</label>
                         <Textarea
                           value={walkInNotes}
                           onChange={(event) => setWalkInNotes(event.target.value)}
@@ -876,6 +887,11 @@ export function CreateSaleFeature() {
                           placeholder="Informações adicionais"
                         />
                       </div>
+                      <p className="text-xs text-slate-500 sm:col-span-2">
+                        {requiresWalkInFinancialData
+                          ? 'CPF/CNPJ, telefone e e-mail são obrigatórios para gerar cobrança ou salvar o cliente.'
+                          : 'CPF/CNPJ, telefone e e-mail são opcionais para recebimento presencial.'}
+                      </p>
                     </div>
                   )}
                 </CardContent>
@@ -1227,7 +1243,7 @@ export function CreateSaleFeature() {
 
                   {customerMode === 'AVULSO' ? (
                     <div className="space-y-2">
-                      <label className={labelClass}>Salvar cliente no sistema?</label>
+                      <label className={labelClass}>Exibir cliente em buscas futuras?</label>
                       <Select
                         value={saveWalkInCustomer}
                         onValueChange={(value: 'NAO' | 'SIM') => setSaveWalkInCustomer(value)}
@@ -1236,8 +1252,8 @@ export function CreateSaleFeature() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="NAO">Não salvar</SelectItem>
-                          <SelectItem value="SIM">Salvar cliente</SelectItem>
+                          <SelectItem value="NAO">Não exibir na busca</SelectItem>
+                          <SelectItem value="SIM">Salvar e exibir</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

@@ -26,6 +26,7 @@ import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reco
 import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
 import { reconcileEnrollmentFeeProjections } from '../projections/enrollment-fee-projection.service';
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
+import { reconcilePaidReservedStoreSales } from '../use-cases/store-inventory';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -127,6 +128,7 @@ export interface AsaasReconcileResult {
   subscriptionDrift: number;
   checkedInstallments: number;
   installmentDrift: number;
+  storeSalesFulfilled: number;
   errors: string[];
   generatedAt: Date;
 }
@@ -1254,6 +1256,7 @@ export async function reconcileWithAsaas(
       subscriptionDrift: 0,
       checkedInstallments: 0,
       installmentDrift: 0,
+      storeSalesFulfilled: 0,
       errors,
       generatedAt: completedAt,
       ...overrides,
@@ -1263,6 +1266,14 @@ export async function reconcileWithAsaas(
   const credentials = await loadAsaasCredentials(options.contaId);
   if (!credentials?.apiKey) {
     errors.push('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+    if (!dryRun) {
+      try {
+        const inventoryResult = await reconcilePaidReservedStoreSales({ contaId: options.contaId });
+        return buildResult({ storeSalesFulfilled: inventoryResult.fulfilled });
+      } catch (error) {
+        errors.push(`store-sale-inventory:${safeReconciliationError(error)}`);
+      }
+    }
     return buildResult();
   }
 
@@ -1675,7 +1686,18 @@ export async function reconcileWithAsaas(
     }
   }
 
+  let storeSalesFulfilled = 0;
   if (!dryRun) {
+    try {
+      const inventoryResult = await reconcilePaidReservedStoreSales({ contaId: options.contaId });
+      storeSalesFulfilled = inventoryResult.fulfilled;
+      errors.push(
+        ...inventoryResult.errors.map((error) => `store-sale-inventory:${error.saleId}:${error.error}`),
+      );
+    } catch (error) {
+      errors.push(`store-sale-inventory:${safeReconciliationError(error)}`);
+    }
+
     await reconcileEnrollmentFeeProjections({ contaId: options.contaId, limit })
       .then((result) => {
         if (result.failures > 0) {
@@ -1712,6 +1734,7 @@ export async function reconcileWithAsaas(
     subscriptionDrift,
     checkedInstallments,
     installmentDrift,
+    storeSalesFulfilled,
   });
 }
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import {
@@ -39,6 +40,13 @@ interface MarcarPagoBody {
   notifyCustomer?: boolean;
 }
 
+const marcarPagoBodySchema = z.object({
+  dataPagamento: z.string().trim().min(1).optional(),
+  formaPagamentoManual: z.enum(['DINHEIRO', 'PIX', 'TRANSFERENCIA']).optional(),
+  observacao: z.string().trim().max(2000).optional(),
+  notifyCustomer: z.boolean().optional(),
+});
+
 /**
  * POST /api/financeiro/cobrancas/[id]/marcar-pago
  *
@@ -57,7 +65,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const { id } = await params;
-    const body = (await req.json().catch(() => ({}))) as MarcarPagoBody;
+    const parsedBody = marcarPagoBodySchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsedBody.success) {
+      return err(422, 'ERRO_VALIDACAO', 'Dados de baixa manual inválidos.');
+    }
+    const body: MarcarPagoBody = parsedBody.data;
 
     const result = await markChargeAsPaid({
       chargeId: id,
@@ -117,6 +129,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       );
     }
     console.error('[API Marcar Pago] Erro', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return err(500, 'ERRO_INTERNO', 'Não foi possível concluir a baixa manual.');
   }
 }

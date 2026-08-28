@@ -7487,6 +7487,7 @@ model Sale {
   id          String  @id @default(cuid())
   contaId     String
   uiRequestId String?
+  requestFingerprint String?
 
   saleNumber Int
   status     SaleStatus @default(PENDENTE)
@@ -7545,6 +7546,7 @@ model Sale {
   @@unique([contaId, uiRequestId])
   @@unique([contaId, saleNumber])
   @@index([contaId])
+  @@index([contaId, requestFingerprint], name: "idx_sale_conta_request_fingerprint")
   @@index([contaId, status])
   @@index([contaId, createdAt])
   @@index([contaId, alunoId], name: "idx_sale_conta_aluno")

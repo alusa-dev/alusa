@@ -1,6 +1,6 @@
 'use client';
 
-import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { formatFirstLast } from '@alusa/lib/client';
@@ -9,7 +9,7 @@ import type { StoreSaleDTO } from '@alusa/finance';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import Pagination from '@/components/layout/Pagination';
 import TableLayout from '@/components/layout/TableLayout';
-import { Filter, RotateCcw, Search } from '@/components/icons/icons';
+import { Filter, Refresh, RotateCcw, Search, Warning } from '@/components/icons/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -31,12 +31,20 @@ import {
   formatCurrencyBRL,
   formatDateBR,
   formatSaleNumber,
+  getSalesOperationalSummary,
   listSales,
   SALE_FINALIZATION_LABELS,
   SALE_PAYMENT_METHOD_LABELS,
   type CurrentSaleStatusFilter,
   type SaleFinalizationValue,
 } from './services/sales-service';
+
+const OPERATIONAL_ISSUE_LABELS = {
+  SALE_PENDING_TOO_LONG: 'Venda pendente há muito tempo',
+  CHARGE_NOT_MATERIALIZED: 'Cobrança não criada',
+  INSTALLMENT_CHARGE_PENDING: 'Parcelas ainda não materializadas',
+  PAID_RESERVED_STOCK: 'Pagamento recebido, estoque reservado',
+} as const;
 
 const PAGE_SIZE = 10;
 const TOOLBAR_TRIGGER_CLASS =
@@ -106,6 +114,8 @@ export function SalesHistoryFeature() {
   );
   const [fromDate, setFromDate] = useState<Date | undefined>(undefined);
   const [toDate, setToDate] = useState<Date | undefined>(undefined);
+  const [operationalSummary, setOperationalSummary] = useState<Awaited<ReturnType<typeof getSalesOperationalSummary>> | null>(null);
+  const [operationalLoading, setOperationalLoading] = useState(true);
 
   const deferredSearch = useDeferredValue(search);
   const activeFilters = useMemo(
@@ -117,6 +127,24 @@ export function SalesHistoryFeature() {
   );
   const hasSearch = deferredSearch.trim().length > 0;
   const hasRefinements = hasSearch || activeFilters > 0;
+
+  const loadOperationalSummary = useCallback(async () => {
+    setOperationalLoading(true);
+    try {
+      setOperationalSummary(await getSalesOperationalSummary({ staleAfterMinutes: 30, limit: 10 }));
+    } catch (error) {
+      toast.error({
+        title: 'Erro ao carregar operação',
+        description: (error as Error).message,
+      });
+    } finally {
+      setOperationalLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadOperationalSummary();
+  }, [loadOperationalSummary]);
 
   useEffect(() => {
     const load = async () => {
@@ -475,6 +503,73 @@ export function SalesHistoryFeature() {
         }
         footer={<Pagination total={total} page={page} pageSize={PAGE_SIZE} onChange={setPage} />}
       >
+        <section
+          aria-labelledby="sales-operational-title"
+          className="mb-4 rounded-xl border border-amber-200 bg-amber-50/60 p-4"
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex gap-3">
+              <Warning className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              <div>
+                <h2 id="sales-operational-title" className="text-sm font-semibold text-slate-900">
+                  Visão operacional
+                </h2>
+                <p className="mt-1 text-xs text-slate-600">
+                  Pendências com mais de 30 minutos que podem exigir conferência ou reconciliação.
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9 rounded-xl border-amber-200 bg-white px-3 shadow-none"
+              onClick={() => void loadOperationalSummary()}
+              disabled={operationalLoading}
+            >
+              <Refresh className={operationalLoading ? 'animate-spin' : undefined} />
+              Atualizar
+            </Button>
+          </div>
+
+          {operationalLoading && !operationalSummary ? (
+            <p className="mt-4 text-xs text-slate-500">Carregando pendências…</p>
+          ) : operationalSummary && operationalSummary.totalIssues > 0 ? (
+            <>
+              <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+                {(Object.entries(OPERATIONAL_ISSUE_LABELS) as Array<
+                  [keyof typeof OPERATIONAL_ISSUE_LABELS, string]
+                >).map(([code, label]) => (
+                  <div key={code} className="rounded-lg border border-amber-100 bg-white px-3 py-2">
+                    <div className="text-lg font-semibold text-slate-900">
+                      {operationalSummary.counts[code]}
+                    </div>
+                    <div className="text-[11px] leading-4 text-slate-500">{label}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 space-y-2">
+                {operationalSummary.issues.slice(0, 5).map((issue) => (
+                  <button
+                    key={`${issue.saleId}-${issue.issueCode}`}
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 rounded-lg border border-amber-100 bg-white px-3 py-2 text-left transition-colors hover:bg-amber-50"
+                    onClick={() => router.push(`/vendas/${issue.saleId}`)}
+                  >
+                    <span className="min-w-0 truncate text-xs text-slate-700">
+                      <span className="font-semibold text-slate-900">
+                        {formatSaleNumber(issue.saleNumber)} · {issue.customerName}
+                      </span>{' '}
+                      — {OPERATIONAL_ISSUE_LABELS[issue.issueCode]}
+                    </span>
+                    <span className="shrink-0 text-[11px] font-medium text-amber-700">Abrir</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : operationalSummary ? (
+            <p className="mt-4 text-xs text-emerald-700">Nenhuma pendência operacional encontrada.</p>
+          ) : null}
+        </section>
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
           <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6">
             <div>
