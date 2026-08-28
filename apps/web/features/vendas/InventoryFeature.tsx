@@ -6,7 +6,6 @@ import { useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/cn';
 
 import {
-  CheckCircle,
   ClipboardDocumentCheck,
   Clock,
   DollarSign,
@@ -621,7 +620,7 @@ export function InventoryFeature() {
           </div>
         }
       >
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <InventoryMetricCard
             label="Em estoque"
             detail="quantidade física agora"
@@ -633,12 +632,6 @@ export function InventoryFeature() {
             detail="separado para vendas"
             value={totals.reserved}
             icon={<ClipboardDocumentCheck className="h-5 w-5" />}
-          />
-          <InventoryMetricCard
-            label="Disponível"
-            detail="pode ser vendido agora"
-            value={totals.available}
-            icon={<CheckCircle className="h-5 w-5" />}
           />
           <InventoryMetricCard
             label="Em compra"
