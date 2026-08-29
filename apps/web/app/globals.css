@@ -875,6 +875,31 @@ html:not([data-theme='dark']) .alusa-dialog-list-row-slot:active {
 	--brand-muted2: #828282;
 	--brand-stroke: #DDDDDD;
 
+	/* Agenda: tokens semânticos por tipo e estado de ocorrência */
+	--calendar-event-aula-bg: #EEE6F4;
+	--calendar-event-aula-fg: #19143A;
+	--calendar-event-experimental-bg: #EDE8FB;
+	--calendar-event-experimental-fg: #5c2f91;
+	--calendar-event-makeup-bg: #E8E4F9;
+	--calendar-event-makeup-fg: #3e1f63;
+	--calendar-event-internal-bg: #F4EEFC;
+	--calendar-event-internal-fg: #4b217a;
+	--calendar-event-external-bg: #EFE7FA;
+	--calendar-event-external-fg: #602b96;
+	--calendar-event-workshop-bg: #F3EBFA;
+	--calendar-event-workshop-fg: #7243aa;
+	--calendar-event-holiday-bg: #ECEBF3;
+	--calendar-event-holiday-fg: #554f6d;
+	--calendar-event-break-bg: #EDE6F9;
+	--calendar-event-break-fg: #5c5277;
+	--calendar-event-cancellation-bg: #EFE8EE;
+	--calendar-event-cancellation-fg: #6b5570;
+	--calendar-event-substitution-bg: #E8EAFA;
+	--calendar-event-substitution-fg: #382f7a;
+	--calendar-event-past-bg: #EDE9F7;
+	--calendar-event-completed-bg: #E8EAF3;
+	--calendar-event-completed-fg: #3f4c66;
+
 	/* Largura padrão do sidebar (usada para deslocar o conteúdo) */
 	--sidebar-w: 262px;
 
@@ -1332,6 +1357,29 @@ select:focus {
 /* Tema escuro Alusa Premium — tokens + pontes compatíveis (:root claro intacto). */
 :root[data-theme="dark"],
 [data-theme="dark"] {
+	--calendar-event-aula-bg: rgba(237, 230, 244, 0.13);
+	--calendar-event-aula-fg: var(--color-text-primary);
+	--calendar-event-experimental-bg: rgba(169, 77, 255, 0.16);
+	--calendar-event-experimental-fg: var(--color-text-brand);
+	--calendar-event-makeup-bg: rgba(126, 87, 194, 0.18);
+	--calendar-event-makeup-fg: #d9c7ff;
+	--calendar-event-internal-bg: rgba(169, 77, 255, 0.12);
+	--calendar-event-internal-fg: #dcc7ff;
+	--calendar-event-external-bg: rgba(169, 77, 255, 0.14);
+	--calendar-event-external-fg: #d4b8ff;
+	--calendar-event-workshop-bg: rgba(169, 77, 255, 0.12);
+	--calendar-event-workshop-fg: #d8c1ff;
+	--calendar-event-holiday-bg: rgba(255, 255, 255, 0.07);
+	--calendar-event-holiday-fg: var(--color-text-secondary);
+	--calendar-event-break-bg: rgba(255, 255, 255, 0.06);
+	--calendar-event-break-fg: var(--color-text-secondary);
+	--calendar-event-cancellation-bg: rgba(239, 68, 68, 0.12);
+	--calendar-event-cancellation-fg: #fecdd3;
+	--calendar-event-substitution-bg: rgba(99, 102, 241, 0.16);
+	--calendar-event-substitution-fg: #c7d2fe;
+	--calendar-event-past-bg: rgba(255, 255, 255, 0.06);
+	--calendar-event-completed-bg: rgba(34, 197, 94, 0.13);
+	--calendar-event-completed-fg: #d1fae5;
 	/* ─── Base / marca legada ─── */
 	--color-bg-page: #0d1015;
 	--color-bg-sidebar: #0b0d12;
@@ -2946,7 +2994,7 @@ svg:hover,
 	line-height: 1;
 	white-space: nowrap;
 	text-decoration: none;
-	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+	box-shadow: none;
 }
 
 .calendar-scheduler-wrapper--week .fc-timegrid-more-link:hover,

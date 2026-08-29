@@ -63,7 +63,7 @@ type EventFormState = {
 };
 
 const EMPTY_VALUE = '__NONE__';
-const CONTROL_CLASS = 'h-10 rounded-xl border-slate-200 bg-white text-[13px] alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)]';
+const CONTROL_CLASS = 'h-10 rounded-lg border-slate-200 bg-white text-sm shadow-sm alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)]';
 const CREATE_EVENT_TYPE_OPTIONS = CALENDAR_EVENT_TYPE_OPTIONS.filter((option) => option.value !== 'AULA_EXPERIMENTAL');
 
 function wallCalendarPickerDate(year: number, month: number, day: number, accountTz: string) {
@@ -162,8 +162,8 @@ function buildAgendaEventToast(error: unknown) {
   };
 }
 
-function FieldLabel({ children }: { children: string }) {
-  return <label className="text-xs font-medium uppercase tracking-wide text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">{children}</label>;
+function FieldLabel({ children, htmlFor }: { children: string; htmlFor?: string }) {
+  return <label htmlFor={htmlFor} className="text-xs font-medium text-slate-600 alusa-dark:text-[color:var(--color-text-muted)]">{children}</label>;
 }
 
 function SectionBlock({
@@ -176,7 +176,7 @@ function SectionBlock({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+    <section className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
       <div>
         <h3 className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{title}</h3>
         <p className="mt-1 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">{description}</p>
@@ -294,7 +294,7 @@ export function CalendarEventDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[96vw] max-w-3xl gap-0 overflow-hidden rounded-3xl p-0 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+      <DialogContent className="w-[96vw] max-w-4xl gap-0 overflow-hidden rounded-2xl p-0 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -319,10 +319,11 @@ export function CalendarEventDialog({
               >
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-2 md:col-span-2">
-                    <FieldLabel>Título</FieldLabel>
+                    <FieldLabel htmlFor="agenda-event-title">Título</FieldLabel>
                     <Input
                       value={values.title}
                       onChange={(event) => setValues((current) => ({ ...current, title: event.target.value }))}
+                      id="agenda-event-title"
                       className={CONTROL_CLASS}
                       placeholder="Ex.: Ballet • Turma Intermediária"
                       data-testid="agenda-event-title"
@@ -330,14 +331,14 @@ export function CalendarEventDialog({
                   </div>
 
                   <div className="space-y-2">
-                    <FieldLabel>Tipo</FieldLabel>
+                    <FieldLabel htmlFor="agenda-event-type">Tipo</FieldLabel>
                     <Select
                       value={values.type}
                       onValueChange={(value: CalendarEventTypeDTO) =>
                         setValues((current) => ({ ...current, type: value }))
                       }
                     >
-                      <SelectTrigger className={cn(CONTROL_CLASS, 'w-full')} data-testid="agenda-event-type">
+                      <SelectTrigger id="agenda-event-type" className={cn(CONTROL_CLASS, 'w-full')} data-testid="agenda-event-type">
                         <SelectValue placeholder="Tipo" />
                       </SelectTrigger>
                       <SelectContent>
@@ -352,14 +353,14 @@ export function CalendarEventDialog({
 
                   {mode === 'edit' ? (
                     <div className="space-y-2">
-                      <FieldLabel>Status</FieldLabel>
+                      <FieldLabel htmlFor="agenda-event-status">Status</FieldLabel>
                       <Select
                         value={values.status}
                         onValueChange={(value: CalendarEventStatusDTO) =>
                           setValues((current) => ({ ...current, status: value }))
                         }
                       >
-                        <SelectTrigger className={cn(CONTROL_CLASS, 'w-full')} data-testid="agenda-event-status">
+                        <SelectTrigger id="agenda-event-status" className={cn(CONTROL_CLASS, 'w-full')} data-testid="agenda-event-status">
                           <SelectValue placeholder="Status" />
                         </SelectTrigger>
                         <SelectContent>
@@ -373,14 +374,14 @@ export function CalendarEventDialog({
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      <FieldLabel>Turma</FieldLabel>
+                      <FieldLabel htmlFor="agenda-event-turma">Turma</FieldLabel>
                       <Select
                         value={values.turmaId || EMPTY_VALUE}
                         onValueChange={(value) =>
                           setValues((current) => ({ ...current, turmaId: value === EMPTY_VALUE ? '' : value }))
                         }
                       >
-                        <SelectTrigger className={cn(CONTROL_CLASS, 'w-full')} data-testid="agenda-event-turma">
+                        <SelectTrigger id="agenda-event-turma" className={cn(CONTROL_CLASS, 'w-full')} data-testid="agenda-event-turma">
                           <SelectValue placeholder="Sem turma" />
                         </SelectTrigger>
                         <SelectContent>
@@ -397,14 +398,14 @@ export function CalendarEventDialog({
 
                   {mode === 'edit' ? (
                     <div className="space-y-2">
-                      <FieldLabel>Turma</FieldLabel>
+                      <FieldLabel htmlFor="agenda-event-turma">Turma</FieldLabel>
                       <Select
                         value={values.turmaId || EMPTY_VALUE}
                         onValueChange={(value) =>
                           setValues((current) => ({ ...current, turmaId: value === EMPTY_VALUE ? '' : value }))
                         }
                       >
-                        <SelectTrigger className={cn(CONTROL_CLASS, 'w-full')} data-testid="agenda-event-turma">
+                        <SelectTrigger id="agenda-event-turma" className={cn(CONTROL_CLASS, 'w-full')} data-testid="agenda-event-turma">
                           <SelectValue placeholder="Sem turma" />
                         </SelectTrigger>
                         <SelectContent>
@@ -420,7 +421,7 @@ export function CalendarEventDialog({
                   ) : null}
 
                   <div className="space-y-2">
-                    <FieldLabel>Início</FieldLabel>
+                    <FieldLabel htmlFor="agenda-event-start">Início</FieldLabel>
                     <DateTimeField
                       id="agenda-event-start"
                       value={values.startAt}
@@ -431,7 +432,7 @@ export function CalendarEventDialog({
                   </div>
 
                   <div className="space-y-2">
-                    <FieldLabel>Fim</FieldLabel>
+                    <FieldLabel htmlFor="agenda-event-end">Fim</FieldLabel>
                     <DateTimeField
                       id="agenda-event-end"
                       value={values.endAt}
@@ -449,14 +450,14 @@ export function CalendarEventDialog({
               >
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <FieldLabel>Sala</FieldLabel>
+                    <FieldLabel htmlFor="agenda-event-sala">Sala</FieldLabel>
                     <Select
                       value={values.salaId || EMPTY_VALUE}
                       onValueChange={(value) =>
                         setValues((current) => ({ ...current, salaId: value === EMPTY_VALUE ? '' : value }))
                       }
                     >
-                      <SelectTrigger className={cn(CONTROL_CLASS, 'w-full')} data-testid="agenda-event-sala">
+                      <SelectTrigger id="agenda-event-sala" className={cn(CONTROL_CLASS, 'w-full')} data-testid="agenda-event-sala">
                         <SelectValue placeholder="Sem sala" />
                       </SelectTrigger>
                       <SelectContent>
@@ -471,14 +472,14 @@ export function CalendarEventDialog({
                   </div>
 
                   <div className="space-y-2">
-                    <FieldLabel>Professor</FieldLabel>
+                    <FieldLabel htmlFor="agenda-event-professor">Professor</FieldLabel>
                     <Select
                       value={values.professorId || EMPTY_VALUE}
                       onValueChange={(value) =>
                         setValues((current) => ({ ...current, professorId: value === EMPTY_VALUE ? '' : value }))
                       }
                     >
-                      <SelectTrigger className={cn(CONTROL_CLASS, 'w-full')} data-testid="agenda-event-professor">
+                      <SelectTrigger id="agenda-event-professor" className={cn(CONTROL_CLASS, 'w-full')} data-testid="agenda-event-professor">
                         <SelectValue placeholder="Sem professor" />
                       </SelectTrigger>
                       <SelectContent>
@@ -493,11 +494,12 @@ export function CalendarEventDialog({
                   </div>
 
                   <div className="space-y-2 md:col-span-2">
-                    <FieldLabel>Descrição</FieldLabel>
+                    <FieldLabel htmlFor="agenda-event-description">Descrição</FieldLabel>
                     <Textarea
                       value={values.description}
                       onChange={(event) => setValues((current) => ({ ...current, description: event.target.value }))}
-                      className="min-h-[120px] rounded-2xl border-slate-200 bg-white alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)]"
+                      id="agenda-event-description"
+                      className="min-h-[120px] rounded-lg border-slate-200 bg-white shadow-sm alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)]"
                       placeholder="Observações rápidas, instruções internas ou contexto operacional."
                     />
                   </div>
@@ -511,14 +513,14 @@ export function CalendarEventDialog({
             <Button
               type="button"
               variant="outline"
-              className="rounded-xl alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-transparent alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)]"
+              className="h-10 rounded-lg alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-transparent alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)]"
               onClick={() => onOpenChange(false)}
             >
               Cancelar
             </Button>
             <Button
               type="submit"
-              className="rounded-xl bg-brand-accent text-white hover:bg-brand-accent/90"
+              className="h-10 rounded-lg bg-primary text-primary-foreground shadow-none hover:bg-primary/90"
               disabled={submitting}
               data-testid="agenda-event-submit"
             >

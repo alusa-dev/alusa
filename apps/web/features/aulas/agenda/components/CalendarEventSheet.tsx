@@ -145,13 +145,13 @@ export function CalendarEventSheet({
         <SheetDescription className="sr-only">
           Visualize dados do evento, acompanhe conflitos e execute ações operacionais da agenda.
         </SheetDescription>
-        <div className="flex h-full flex-col overflow-hidden bg-white alusa-dark:bg-[color:var(--color-bg-card)] sm:rounded-2xl sm:border sm:border-slate-200 sm:shadow-[0_20px_60px_rgba(15,23,42,0.18)] alusa-dark:sm:border-[color:var(--color-border-default)] alusa-dark:sm:shadow-none">
+        <div className="flex h-full flex-col overflow-hidden bg-white alusa-dark:bg-[color:var(--color-bg-card)] sm:rounded-xl sm:border sm:border-slate-200 sm:shadow-sm alusa-dark:sm:border-[color:var(--color-border-default)] alusa-dark:sm:shadow-none">
           <div className="flex-1 overflow-y-auto bg-white px-6 pb-6 pt-12 alusa-dark:bg-[color:var(--color-bg-card)]">
             <div className="space-y-5">
           {loading ? (
             <div className="space-y-3 text-sm text-slate-500">Carregando evento...</div>
           ) : error ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {error}
             </div>
           ) : event ? (
@@ -370,7 +370,7 @@ export function CalendarEventSheet({
           <div className="space-y-3">
           {canRegisterAttendance && event ? (
             <Button
-              className="h-10 w-full rounded-lg bg-brand-accent text-sm font-medium text-white hover:bg-brand-accent/90"
+              className="h-10 w-full rounded-lg bg-primary text-primary-foreground shadow-none hover:bg-primary/90"
               onClick={() => onGoToAttendance(event.id)}
               data-testid="agenda-event-go-attendance"
             >

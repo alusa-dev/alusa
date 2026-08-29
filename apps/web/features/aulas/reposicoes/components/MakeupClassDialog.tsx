@@ -38,7 +38,7 @@ type MakeupClassDialogProps = {
 };
 
 const EMPTY_VALUE = '__NONE__';
-const CONTROL_CLASS = 'h-10 rounded-xl border-slate-200 bg-white text-[13px]';
+const CONTROL_CLASS = 'h-10 rounded-lg border-slate-200 bg-white text-sm shadow-sm';
 
 type MakeupFormValues = {
   scope: 'INDIVIDUAL' | 'COLETIVA';
@@ -93,8 +93,8 @@ function combineDateAndTimeZoned(date: Date | undefined, time: string, accountTz
   return Number.isNaN(new Date(iso).getTime()) ? null : iso;
 }
 
-function FieldLabel({ children }: { children: string }) {
-  return <label className="text-xs font-medium uppercase tracking-wide text-slate-500">{children}</label>;
+function FieldLabel({ children, htmlFor }: { children: string; htmlFor?: string }) {
+  return <label htmlFor={htmlFor} className="text-xs font-medium text-slate-600">{children}</label>;
 }
 
 function SectionBlock({
@@ -107,7 +107,7 @@ function SectionBlock({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-5">
+    <section className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-5">
       <div>
         <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
         <p className="mt-1 text-xs text-slate-500">{description}</p>
@@ -118,7 +118,7 @@ function SectionBlock({
 }
 
 export function MakeupClassDialog({
-  open,
+  open: _open,
   resources,
   onOpenChange,
   onSaved,
@@ -132,7 +132,7 @@ export function MakeupClassDialog({
   const [values, setValues] = useState<MakeupFormValues>(getInitialValues);
 
   useEffect(() => {
-    if (!open) return;
+    if (!_open) return;
 
     let cancelled = false;
 
@@ -166,14 +166,14 @@ export function MakeupClassDialog({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [_open]);
 
   useEffect(() => {
-    if (!open) {
+    if (!_open) {
       setValues(getInitialValues());
       setError(null);
     }
-  }, [open]);
+  }, [_open]);
 
   async function handleSubmit() {
     const startAt = combineDateAndTimeZoned(values.startDate, values.startTime, tz);
@@ -236,8 +236,8 @@ export function MakeupClassDialog({
       : Boolean(values.startDate && values.startTime && values.endDate && values.endTime));
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[96vw] max-w-3xl gap-0 overflow-hidden rounded-3xl p-0">
+    <Dialog open={_open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[96vw] max-w-4xl gap-0 overflow-hidden rounded-2xl p-0">
         <DialogHeader className="border-b border-slate-100 px-6 py-5">
           <DialogTitle className="text-lg font-semibold text-slate-900">Nova reposição</DialogTitle>
           <DialogDescription className="text-sm text-slate-500">
@@ -253,7 +253,7 @@ export function MakeupClassDialog({
             >
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <FieldLabel>Escopo</FieldLabel>
+                  <FieldLabel htmlFor="makeup-scope">Escopo</FieldLabel>
                   <Select
                     value={values.scope}
                     onValueChange={(value: 'INDIVIDUAL' | 'COLETIVA') =>
@@ -264,7 +264,7 @@ export function MakeupClassDialog({
                       }))
                     }
                   >
-                    <SelectTrigger className={CONTROL_CLASS} data-testid="makeup-scope">
+                    <SelectTrigger id="makeup-scope" className={CONTROL_CLASS} data-testid="makeup-scope">
                       <SelectValue placeholder="Escopo" />
                     </SelectTrigger>
                     <SelectContent>
@@ -278,7 +278,7 @@ export function MakeupClassDialog({
                 </div>
 
                 <div className="space-y-2">
-                  <FieldLabel>Aluno</FieldLabel>
+                  <FieldLabel htmlFor="makeup-aluno">Aluno</FieldLabel>
                   <Select
                     value={values.alunoId || EMPTY_VALUE}
                     onValueChange={(value) =>
@@ -286,7 +286,7 @@ export function MakeupClassDialog({
                     }
                     disabled={values.scope !== 'INDIVIDUAL'}
                   >
-                    <SelectTrigger className={CONTROL_CLASS} data-testid="makeup-aluno">
+                    <SelectTrigger id="makeup-aluno" className={CONTROL_CLASS} data-testid="makeup-aluno">
                       <SelectValue placeholder="Selecione um aluno" />
                     </SelectTrigger>
                     <SelectContent>
@@ -308,7 +308,7 @@ export function MakeupClassDialog({
                 </div>
 
                 <div className="space-y-2 md:col-span-2">
-                  <FieldLabel>Evento de origem</FieldLabel>
+                  <FieldLabel htmlFor="makeup-evento-origem">Evento de origem</FieldLabel>
                   <Select
                     value={values.eventoOrigemId || EMPTY_VALUE}
                     onValueChange={(value) => {
@@ -324,7 +324,7 @@ export function MakeupClassDialog({
                       }));
                     }}
                   >
-                    <SelectTrigger className={CONTROL_CLASS} data-testid="makeup-evento-origem">
+                    <SelectTrigger id="makeup-evento-origem" className={CONTROL_CLASS} data-testid="makeup-evento-origem">
                       <SelectValue placeholder={loadingEvents ? 'Carregando eventos...' : 'Selecione o evento'} />
                     </SelectTrigger>
                     <SelectContent>
@@ -345,7 +345,7 @@ export function MakeupClassDialog({
                 </div>
 
                 <div className="space-y-2">
-                  <FieldLabel>Turma origem</FieldLabel>
+                  <FieldLabel htmlFor="makeup-turma-origem">Turma origem</FieldLabel>
                   <Select
                     value={values.turmaOrigemId || EMPTY_VALUE}
                     disabled={Boolean(values.eventoOrigemId)}
@@ -353,7 +353,7 @@ export function MakeupClassDialog({
                       setValues((current) => ({ ...current, turmaOrigemId: value === EMPTY_VALUE ? '' : value }))
                     }
                   >
-                    <SelectTrigger className={CONTROL_CLASS} data-testid="makeup-turma-origem">
+                    <SelectTrigger id="makeup-turma-origem" className={CONTROL_CLASS} data-testid="makeup-turma-origem">
                       <SelectValue placeholder="Turma origem" />
                     </SelectTrigger>
                     <SelectContent>
@@ -368,7 +368,7 @@ export function MakeupClassDialog({
                 </div>
 
                 <div className="space-y-2">
-                  <FieldLabel>Turma destino</FieldLabel>
+                  <FieldLabel htmlFor="makeup-turma-destino">Turma destino</FieldLabel>
                   <Select
                     value={values.turmaDestinoId || EMPTY_VALUE}
                     onValueChange={(value) =>
@@ -379,7 +379,7 @@ export function MakeupClassDialog({
                       }))
                     }
                   >
-                    <SelectTrigger className={CONTROL_CLASS} data-testid="makeup-turma-destino">
+                    <SelectTrigger id="makeup-turma-destino" className={CONTROL_CLASS} data-testid="makeup-turma-destino">
                       <SelectValue placeholder="Turma destino" />
                     </SelectTrigger>
                     <SelectContent>
@@ -401,7 +401,7 @@ export function MakeupClassDialog({
             >
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2 md:col-span-2">
-                  <FieldLabel>Destino da reposição</FieldLabel>
+                  <FieldLabel htmlFor="makeup-destination-mode">Destino da reposição</FieldLabel>
                   <Select
                     value={values.destinationMode}
                     onValueChange={(value: 'create' | 'existing') =>
@@ -416,7 +416,7 @@ export function MakeupClassDialog({
                       }))
                     }
                   >
-                    <SelectTrigger className={CONTROL_CLASS} data-testid="makeup-destination-mode">
+                    <SelectTrigger id="makeup-destination-mode" className={CONTROL_CLASS} data-testid="makeup-destination-mode">
                       <SelectValue placeholder="Como definir o destino" />
                     </SelectTrigger>
                     <SelectContent>
@@ -428,7 +428,7 @@ export function MakeupClassDialog({
 
                 {values.destinationMode === 'existing' ? (
                   <div className="space-y-2 md:col-span-2">
-                    <FieldLabel>Evento destino</FieldLabel>
+                    <FieldLabel htmlFor="makeup-evento-destino">Evento destino</FieldLabel>
                     <Select
                       value={values.eventoDestinoId || EMPTY_VALUE}
                       onValueChange={(value) => {
@@ -444,7 +444,7 @@ export function MakeupClassDialog({
                         }));
                       }}
                     >
-                      <SelectTrigger className={CONTROL_CLASS} data-testid="makeup-evento-destino">
+                      <SelectTrigger id="makeup-evento-destino" className={CONTROL_CLASS} data-testid="makeup-evento-destino">
                         <SelectValue placeholder={loadingEvents ? 'Carregando eventos...' : 'Selecione o evento destino'} />
                       </SelectTrigger>
                       <SelectContent>
@@ -466,10 +466,11 @@ export function MakeupClassDialog({
                 ) : (
                   <>
                     <div className="space-y-2 md:col-span-2">
-                      <FieldLabel>Título do evento destino</FieldLabel>
+                      <FieldLabel htmlFor="makeup-destination-title">Título do evento destino</FieldLabel>
                       <Input
                         value={values.title}
                         onChange={(event) => setValues((current) => ({ ...current, title: event.target.value }))}
+                        id="makeup-destination-title"
                         className={CONTROL_CLASS}
                         placeholder="Ex.: Reposição • Ballet Intermediário"
                         data-testid="makeup-destination-title"
@@ -477,13 +478,14 @@ export function MakeupClassDialog({
                     </div>
 
                     <div className="space-y-2">
-                      <FieldLabel>Início</FieldLabel>
+                      <FieldLabel htmlFor="makeup-start-date">Início</FieldLabel>
                       <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-2" data-testid="makeup-destination-start">
                         <DatePicker
                           variant="input"
                           value={values.startDate}
                           onChange={(date) => setValues((current) => ({ ...current, startDate: date }))}
                           placeholder="dd/mm/aaaa"
+                          id="makeup-start-date"
                           className={CONTROL_CLASS}
                         />
                         <Input
@@ -492,19 +494,21 @@ export function MakeupClassDialog({
                           onChange={(event) =>
                             setValues((current) => ({ ...current, startTime: event.target.value }))
                           }
+                          id="makeup-start-time"
                           className={CONTROL_CLASS}
                         />
                       </div>
                     </div>
 
                     <div className="space-y-2">
-                      <FieldLabel>Fim</FieldLabel>
+                      <FieldLabel htmlFor="makeup-end-date">Fim</FieldLabel>
                       <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-2" data-testid="makeup-destination-end">
                         <DatePicker
                           variant="input"
                           value={values.endDate}
                           onChange={(date) => setValues((current) => ({ ...current, endDate: date }))}
                           placeholder="dd/mm/aaaa"
+                          id="makeup-end-date"
                           className={CONTROL_CLASS}
                         />
                         <Input
@@ -513,6 +517,7 @@ export function MakeupClassDialog({
                           onChange={(event) =>
                             setValues((current) => ({ ...current, endTime: event.target.value }))
                           }
+                          id="makeup-end-time"
                           className={CONTROL_CLASS}
                         />
                       </div>
@@ -527,18 +532,19 @@ export function MakeupClassDialog({
               description="Registre contexto, combinação com responsável acadêmico ou detalhes úteis para auditoria."
             >
               <div className="space-y-2">
-                <FieldLabel>Observação</FieldLabel>
+                <FieldLabel htmlFor="makeup-observacao">Observação</FieldLabel>
                 <Textarea
                   value={values.observacao}
                   onChange={(event) => setValues((current) => ({ ...current, observacao: event.target.value }))}
-                  className="min-h-[120px] rounded-2xl border-slate-200 bg-white"
+                  id="makeup-observacao"
+                  className="min-h-[120px] rounded-lg border-slate-200 bg-white shadow-sm"
                   placeholder="Contexto da reposição, justificativa ou combinação com professor/aluno."
                 />
               </div>
             </SectionBlock>
 
             {error ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                 {error}
               </div>
             ) : null}
@@ -546,11 +552,11 @@ export function MakeupClassDialog({
         </div>
 
         <DialogFooter className="border-t border-slate-100 px-6 py-4 sm:justify-between">
-          <Button variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" className="h-10 rounded-lg" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
           <Button
-            className="rounded-xl bg-brand-accent text-white hover:bg-brand-accent/90"
+            className="h-10 rounded-lg bg-primary text-primary-foreground shadow-none hover:bg-primary/90"
             onClick={handleSubmit}
             disabled={!canSubmit}
             data-testid="makeup-submit"

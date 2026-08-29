@@ -34,7 +34,7 @@ function getLevelVariant(level: AgendaOperationLogDTO['level']) {
 }
 
 export function AgendaOperationLogSheet({
-  open,
+  open: _open,
   onOpenChange,
   rebuildResult,
   syncing,
@@ -45,7 +45,7 @@ export function AgendaOperationLogSheet({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!_open) return;
 
     let cancelled = false;
 
@@ -67,12 +67,12 @@ export function AgendaOperationLogSheet({
     return () => {
       cancelled = true;
     };
-  }, [open, rebuildResult]);
+  }, [_open, rebuildResult]);
 
   const summary = rebuildResult?.data.summary ?? null;
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={_open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="overflow-y-auto">
         <SheetHeader>
           <SheetTitle>Operação da agenda</SheetTitle>
@@ -83,7 +83,7 @@ export function AgendaOperationLogSheet({
 
         <div className="space-y-5 px-6 py-6">
           {summary ? (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
               <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Última sincronização</div>
               <div className="mt-3 grid grid-cols-2 gap-3">
                 <div>
@@ -112,14 +112,14 @@ export function AgendaOperationLogSheet({
 
           {loading ? <div className="text-sm text-slate-500">Carregando logs...</div> : null}
           {error ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {error}
             </div>
           ) : null}
 
           <div className="space-y-3">
             {logs.map((log) => (
-              <div key={log.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div key={log.id} className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant={getLevelVariant(log.level)}>{log.level}</Badge>
                   <Badge variant="outline">{log.action}</Badge>
@@ -137,7 +137,7 @@ export function AgendaOperationLogSheet({
             ))}
 
             {!loading && !logs.length ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
                 Nenhum log operacional encontrado.
               </div>
             ) : null}
@@ -145,10 +145,10 @@ export function AgendaOperationLogSheet({
         </div>
 
         <SheetFooter>
-          <Button variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" className="h-10 rounded-lg" onClick={() => onOpenChange(false)}>
             Fechar
           </Button>
-          <Button className="rounded-xl bg-brand-accent text-white hover:bg-brand-accent/90" onClick={onSyncWindow} disabled={syncing}>
+          <Button className="h-10 rounded-lg bg-primary text-primary-foreground shadow-none hover:bg-primary/90" onClick={onSyncWindow} disabled={syncing}>
             {syncing ? 'Sincronizando...' : 'Sincronizar janela'}
           </Button>
         </SheetFooter>

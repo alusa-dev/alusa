@@ -134,16 +134,16 @@ function useIsMobileCalendar() {
 
 /** Tons violeta/indigo derivados dos tokens `--brand-accent`, `--brand-primary` (globals). Sem traço. */
 const COLOR_BY_TYPE: Record<CalendarEventListItemDTO['type'], string> = {
-  AULA: 'border-0 bg-[#EEE6F4] text-[#19143A] alusa-dark:bg-[color:rgba(237,230,244,0.13)] alusa-dark:text-[color:var(--color-text-primary)]',
-  AULA_EXPERIMENTAL: 'border-0 bg-[#EDE8FB] text-[#5c2f91] alusa-dark:bg-[color:rgba(169,77,255,0.16)] alusa-dark:text-[color:var(--color-text-brand)]',
-  REPOSICAO: 'border-0 bg-[#E8E4F9] text-[#3e1f63] alusa-dark:bg-[color:rgba(126,87,194,0.18)] alusa-dark:text-[color:#d9c7ff]',
-  EVENTO_INTERNO: 'border-0 bg-[#F4EEFC] text-[#4b217a] alusa-dark:bg-[color:rgba(169,77,255,0.12)] alusa-dark:text-[color:#dcc7ff]',
-  EVENTO_EXTERNO: 'border-0 bg-[#EFE7FA] text-[#602b96] alusa-dark:bg-[color:rgba(169,77,255,0.14)] alusa-dark:text-[color:#d4b8ff]',
-  WORKSHOP: 'border-0 bg-[#F3EBFA] text-[#7243aa] alusa-dark:bg-[color:rgba(169,77,255,0.12)] alusa-dark:text-[color:#d8c1ff]',
-  FERIADO: 'border-0 bg-[#ECEBF3] text-[#554f6d] alusa-dark:bg-[color:rgba(255,255,255,0.07)] alusa-dark:text-[color:var(--color-text-secondary)]',
-  PAUSA: 'border-0 bg-[#EDE6F9] text-[#5c5277] alusa-dark:bg-[color:rgba(255,255,255,0.06)] alusa-dark:text-[color:var(--color-text-secondary)]',
-  CANCELAMENTO: 'border-0 bg-[#EFE8EE] text-[#6b5570] alusa-dark:bg-[color:rgba(239,68,68,0.12)] alusa-dark:text-red-200',
-  SUBSTITUICAO: 'border-0 bg-[#E8EAFA] text-[#382f7a] alusa-dark:bg-[color:rgba(99,102,241,0.16)] alusa-dark:text-[color:#c7d2fe]',
+  AULA: 'border-0 bg-[color:var(--calendar-event-aula-bg)] text-[color:var(--calendar-event-aula-fg)]',
+  AULA_EXPERIMENTAL: 'border-0 bg-[color:var(--calendar-event-experimental-bg)] text-[color:var(--calendar-event-experimental-fg)]',
+  REPOSICAO: 'border-0 bg-[color:var(--calendar-event-makeup-bg)] text-[color:var(--calendar-event-makeup-fg)]',
+  EVENTO_INTERNO: 'border-0 bg-[color:var(--calendar-event-internal-bg)] text-[color:var(--calendar-event-internal-fg)]',
+  EVENTO_EXTERNO: 'border-0 bg-[color:var(--calendar-event-external-bg)] text-[color:var(--calendar-event-external-fg)]',
+  WORKSHOP: 'border-0 bg-[color:var(--calendar-event-workshop-bg)] text-[color:var(--calendar-event-workshop-fg)]',
+  FERIADO: 'border-0 bg-[color:var(--calendar-event-holiday-bg)] text-[color:var(--calendar-event-holiday-fg)]',
+  PAUSA: 'border-0 bg-[color:var(--calendar-event-break-bg)] text-[color:var(--calendar-event-break-fg)]',
+  CANCELAMENTO: 'border-0 bg-[color:var(--calendar-event-cancellation-bg)] text-[color:var(--calendar-event-cancellation-fg)]',
+  SUBSTITUICAO: 'border-0 bg-[color:var(--calendar-event-substitution-bg)] text-[color:var(--calendar-event-substitution-fg)]',
 };
 
 function toEventInput(event: CalendarEventListItemDTO): EventInput {
@@ -300,9 +300,9 @@ function renderEventContent(isWeekView: boolean) {
           'h-full rounded-lg border-0 px-2 py-1.5 text-[11px] leading-4',
           COLOR_BY_TYPE[type] ?? COLOR_BY_TYPE.AULA,
           cardTone === 'in_progress' && 'shadow-[inset_0_0_0_1px_rgba(92,47,145,0.28)]',
-          cardTone === 'past' && 'border-0 bg-[#EDE9F7]/85 text-brand-muted opacity-95 alusa-dark:bg-[color:rgba(255,255,255,0.06)] alusa-dark:text-[color:var(--color-text-muted)]',
-          cardTone === 'completed' && 'border-0 bg-[#E8EAF3] text-[#3f4c66] alusa-dark:bg-[color:rgba(34,197,94,0.13)] alusa-dark:text-emerald-100',
-          cardTone === 'cancelled' && 'border-0 bg-[#EDE9EF] text-brand-muted opacity-95 alusa-dark:bg-[color:rgba(239,68,68,0.12)] alusa-dark:text-red-200',
+          cardTone === 'past' && 'border-0 bg-[color:var(--calendar-event-past-bg)] text-brand-muted opacity-95',
+          cardTone === 'completed' && 'border-0 bg-[color:var(--calendar-event-completed-bg)] text-[color:var(--calendar-event-completed-fg)]',
+          cardTone === 'cancelled' && 'border-0 bg-[color:var(--calendar-event-cancellation-bg)] text-brand-muted opacity-95',
         )}
         data-event-status={eventState.status}
         data-event-type={type}
@@ -333,7 +333,7 @@ function renderEventContent(isWeekView: boolean) {
 function CalendarEmptyState() {
   return (
     <div className="pointer-events-none absolute inset-x-4 top-24 z-10 flex justify-center">
-      <div className="rounded-2xl border border-dashed border-slate-200 bg-white/95 px-5 py-4 text-center shadow-sm">
+      <div className="rounded-xl border border-dashed border-slate-200 bg-white/95 px-5 py-4 text-center">
         <p className="text-sm font-semibold text-slate-700">Nenhum evento neste período</p>
         <p className="mt-1 text-xs text-slate-500">Ajuste os filtros ou crie um novo evento para começar.</p>
       </div>
@@ -410,10 +410,10 @@ function MobileAgendaList({
                     key={event.id}
                     type="button"
                     className={cn(
-                      'w-full rounded-xl border border-slate-200 border-l-4 bg-white px-3 py-3 text-left shadow-sm transition hover:border-brand-accent/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/40',
+                      'w-full rounded-xl border border-slate-200 border-l-4 bg-white px-3 py-3 text-left transition hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
                       tone === 'cancelled' && 'border-l-rose-400 bg-rose-50/40',
                       tone === 'completed' && 'border-l-emerald-400 bg-emerald-50/40',
-                      tone === 'in_progress' && 'border-l-brand-accent bg-violet-50/50',
+                      tone === 'in_progress' && 'border-l-primary bg-violet-50/50',
                       tone === 'past' && 'border-l-slate-300 opacity-80',
                     )}
                     aria-label={`${event.title}, ${formatAgendaTimeLabel(event.startAt, timeZone)}, ${EVENT_TYPE_LABELS[event.type]}`}
@@ -432,7 +432,7 @@ function MobileAgendaList({
                       </span>
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-medium">
-                      {temporalBadge ? <span className="text-brand-accent">{temporalBadge.label}</span> : null}
+                      {temporalBadge ? <span className="text-primary">{temporalBadge.label}</span> : null}
                       {event.status !== 'AGENDADO' ? (
                         <span className="text-slate-500">{EVENT_STATUS_LABELS[event.status]}</span>
                       ) : null}

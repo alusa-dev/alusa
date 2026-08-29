@@ -47,7 +47,7 @@ export function AgendaFilters({
     (filters.type?.length ? 1 : 0);
 
   return (
-    <div className={embedded ? '' : 'rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm'}>
+    <div className={embedded ? '' : 'rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-none'}>
       <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         {showCurrentLabel ? (
           <div className={embedded ? 'min-w-[112px]' : ''}>
@@ -64,14 +64,14 @@ export function AgendaFilters({
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
-                  className="h-9 rounded-xl border-slate-200 px-3"
+                  className="h-10 rounded-lg border-slate-200 px-4"
                   data-testid="agenda-secondary-filters"
                 >
                   <Filter className="mr-2 h-4 w-4" />
                   {activeSecondaryFilters > 0 ? `Filtros (${activeSecondaryFilters})` : 'Filtros'}
                 </Button>
               </PopoverTrigger>
-              <PopoverContent align="end" className="w-[320px] max-w-[calc(100vw-2rem)] rounded-2xl border-slate-200 p-4">
+              <PopoverContent align="end" className="w-[320px] max-w-[calc(100vw-2rem)] rounded-xl border-slate-200 p-4">
                 <div className="space-y-4">
                   <div>
                     <div className="text-sm font-semibold text-slate-900">Filtros adicionais</div>
@@ -82,7 +82,7 @@ export function AgendaFilters({
 
                   <div className="space-y-3">
                     <div className="space-y-2">
-                      <label className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                      <label htmlFor="agenda-filter-turma" className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
                         Turma
                       </label>
                       <Select
@@ -91,7 +91,7 @@ export function AgendaFilters({
                           onFiltersChange({ turmaId: value === ALL ? undefined : value })
                         }
                       >
-                        <SelectTrigger className="h-9 rounded-xl border-slate-200 bg-white">
+                        <SelectTrigger id="agenda-filter-turma" className="h-10 rounded-lg border-slate-200 bg-white">
                           <SelectValue placeholder="Turma" />
                         </SelectTrigger>
                         <SelectContent>
@@ -106,7 +106,7 @@ export function AgendaFilters({
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                      <label htmlFor="agenda-filter-professor" className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
                         Professor
                       </label>
                       <Select
@@ -115,7 +115,7 @@ export function AgendaFilters({
                           onFiltersChange({ professorId: value === ALL ? undefined : value })
                         }
                       >
-                        <SelectTrigger className="h-9 rounded-xl border-slate-200 bg-white">
+                        <SelectTrigger id="agenda-filter-professor" className="h-10 rounded-lg border-slate-200 bg-white">
                           <SelectValue placeholder="Professor" />
                         </SelectTrigger>
                         <SelectContent>
@@ -130,7 +130,7 @@ export function AgendaFilters({
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                      <label htmlFor="agenda-filter-sala" className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
                         Sala
                       </label>
                       <Select
@@ -139,7 +139,7 @@ export function AgendaFilters({
                           onFiltersChange({ salaId: value === ALL ? undefined : value })
                         }
                       >
-                        <SelectTrigger className="h-9 rounded-xl border-slate-200 bg-white">
+                        <SelectTrigger id="agenda-filter-sala" className="h-10 rounded-lg border-slate-200 bg-white">
                           <SelectValue placeholder="Sala" />
                         </SelectTrigger>
                         <SelectContent>
@@ -157,7 +157,7 @@ export function AgendaFilters({
                       <legend className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
                         Tipo
                       </legend>
-                      <div className="grid max-h-44 grid-cols-2 gap-2 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/60 p-2">
+                      <div className="grid max-h-44 grid-cols-2 gap-2 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50/60 p-2">
                         {CALENDAR_EVENT_TYPE_OPTIONS.map((option) => {
                           const id = `agenda-type-${option.value.toLowerCase()}`;
                           const checked = filters.type?.includes(option.value as CalendarEventTypeDTO) ?? false;
@@ -208,13 +208,13 @@ export function AgendaFilters({
               </PopoverContent>
             </Popover>
 
-            <Button variant="outline" className="h-9 rounded-xl border-slate-200" onClick={() => onNavigatePeriod('today')}>
+            <Button variant="outline" className="h-10 rounded-lg border-slate-200 px-4" onClick={() => onNavigatePeriod('today')}>
               Hoje
             </Button>
             <Button
               variant="outline"
               size="icon"
-              className="h-9 w-9 rounded-xl border-slate-200"
+              className="h-10 w-10 rounded-lg border-slate-200"
               aria-label="Período anterior"
               title="Período anterior"
               onClick={() => onNavigatePeriod('prev')}
@@ -224,7 +224,7 @@ export function AgendaFilters({
             <Button
               variant="outline"
               size="icon"
-              className="h-9 w-9 rounded-xl border-slate-200"
+              className="h-10 w-10 rounded-lg border-slate-200"
               aria-label="Próximo período"
               title="Próximo período"
               onClick={() => onNavigatePeriod('next')}

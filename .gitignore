@@ -9,6 +9,8 @@ dist/
 
 build/
 **/build/
+storybook-static/
+**/storybook-static/
 
 coverage/
 **/coverage/
