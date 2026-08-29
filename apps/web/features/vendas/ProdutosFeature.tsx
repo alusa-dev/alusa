@@ -171,7 +171,7 @@ function ProdutosTable({
 
         return (
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-14 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 shadow-sm overflow-hidden alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:shadow-none">
+            <div className="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
               {row.primaryImageUrl ? (
                 <img
                   src={row.primaryImageUrl}
@@ -286,8 +286,8 @@ function ProdutosTable({
                 row.isActive ? `Inativar produto ${row.name}` : `Ativar produto ${row.name}`
               }
               onCheckedChange={(active) => onToggleStatus(row, active)}
-              className="box-border h-5 w-9 overflow-hidden border-transparent bg-slate-200 p-0.5 shadow-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 disabled:cursor-wait disabled:opacity-70 data-[state=checked]:bg-emerald-500 data-[state=unchecked]:bg-slate-300"
-              thumbClassName="size-4 shrink-0 bg-white shadow-sm data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0"
+              className="h-5 w-10"
+              thumbClassName="h-4 w-4 data-[state=unchecked]:translate-x-0.5 data-[state=checked]:translate-x-5"
             />
           </div>
         );
@@ -435,7 +435,7 @@ export function ProdutosFeature() {
           <Button
             onClick={() => router.push('/vendas/produtos/novo')}
             disabled={billingLoading || !canWrite}
-            className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 lg:w-auto"
+            className="h-10 w-full rounded-lg bg-primary px-4 text-white shadow-none hover:bg-primary/90 lg:w-auto"
           >
             <Plus className="h-4 w-4" />
             Novo produto

@@ -102,6 +102,26 @@ function findFirstAuditAt(auditLogs: TransferAuditLog[], actions: string[]): str
   return found ? found.createdAt.toISOString() : null;
 }
 
+function transferStatusDetail(status: string) {
+  switch (status) {
+    case 'DONE':
+      return 'A transferência foi concluída com sucesso.';
+    case 'FAILED':
+      return 'A transferência não foi concluída.';
+    case 'BLOCKED':
+      return 'A transferência está bloqueada e aguarda regularização.';
+    case 'PROCESSING':
+      return 'A transferência está sendo processada.';
+    case 'CANCELED':
+      return 'A transferência foi cancelada.';
+    case 'REQUESTED':
+      return 'A solicitação foi enviada e aguarda processamento.';
+    case 'PENDING':
+    default:
+      return 'A solicitação aguarda processamento.';
+  }
+}
+
 function buildTransferTimeline(input: {
   transfer: {
     asaasTransferId: string | null;
@@ -136,49 +156,49 @@ function buildTransferTimeline(input: {
   const items: TransferTimelineItem[] = [
     {
       key: 'requested',
-      label: 'Solicitação criada',
+      label: 'Solicitação enviada',
       at: input.transfer.createdAt.toISOString(),
       status: 'DONE',
-      detail: 'Pedido registrado na Alusa com referência de idempotência.',
+      detail: 'Solicitação registrada com sucesso.',
     },
     {
       key: 'provider-created',
-      label: 'Envio ao provedor financeiro',
+      label: 'Transferência encaminhada',
       at: asaasCreatedAt ?? (input.transfer.asaasTransferId ? input.transfer.createdAt.toISOString() : null),
       status: input.transfer.asaasTransferId ? 'DONE' : input.status === 'FAILED' ? 'FAILED' : 'PENDING',
       detail: input.transfer.asaasTransferId
-        ? 'Identificador externo recebido e salvo localmente.'
-        : 'Ainda sem identificador externo confirmado.',
+        ? 'Transferência enviada para processamento.'
+        : 'A transferência ainda aguarda envio para processamento.',
     },
   ];
 
   if (input.transfer.authorized === false) {
     items.push({
       key: 'authorization',
-      label: 'Autorização pendente',
+      label: 'Autorização necessária',
       at: input.transfer.statusUpdatedAt?.toISOString() ?? null,
       status: 'CURRENT',
-      detail: 'O provedor informou que a transferência aguarda autorização adicional.',
+      detail: 'A transferência aguarda uma autorização para continuar.',
     });
   }
 
   items.push({
     key: 'webhook',
-    label: 'Evento do provedor',
+    label: 'Processamento atualizado',
     at: latestWebhook?.recebidoEm.toISOString() ?? null,
     status: latestWebhook ? (latestWebhook.status === 'PROCESSADO' ? 'DONE' : 'CURRENT') : 'PENDING',
     detail: latestWebhook
-      ? `${latestWebhook.evento} recebido${latestWebhook.processadoEm ? ' e processado' : ''}.`
-      : 'Aguardando evento para convergir o espelho local.',
+      ? `Atualização do processamento recebida${latestWebhook.processadoEm ? ' e processada' : ''}.`
+      : 'Aguardando atualização do processamento.',
   });
 
   if (input.lastReconciledAt) {
     items.push({
       key: 'reconciled',
-      label: 'Reconciliação',
+      label: 'Dados conferidos',
       at: input.lastReconciledAt,
       status: 'DONE',
-      detail: 'Consulta oficial usada para atualizar o espelho local.',
+      detail: 'Os dados foram conferidos com o provedor.',
     });
   }
 
@@ -187,7 +207,7 @@ function buildTransferTimeline(input: {
     label: TERMINAL_TRANSFER_STATUSES.has(input.status) ? 'Conclusão' : 'Situação atual',
     at: terminalAt,
     status: TERMINAL_TRANSFER_STATUSES.has(input.status) ? terminalStatus : 'CURRENT',
-    detail: `Status atual: ${input.status}.`,
+    detail: transferStatusDetail(input.status),
   });
 
   return items;

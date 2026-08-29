@@ -19,7 +19,7 @@ function InfoCard({
   detail: string;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+    <div className="rounded-xl border border-slate-200 bg-white p-5">
       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-2 text-lg font-semibold text-slate-900">{value}</p>
       <p className="mt-1 text-xs leading-5 text-slate-500">{detail}</p>
@@ -107,8 +107,8 @@ export function AntecipacaoAutomaticaPage() {
   }
 
   return (
-    <div className="w-full min-w-0 space-y-5">
-      <section className="rounded-xl border border-slate-200 bg-white px-5 py-5 md:px-6">
+    <div className="w-full min-w-0 space-y-6">
+      <section className="rounded-xl border border-slate-200 bg-white px-5 py-6 md:px-6">
         <div className="max-w-2xl">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Antecipações</p>
           <h1 className="mt-1 text-[22px] font-semibold text-gray-900 md:text-[24px]">Antecipação automática</h1>
@@ -118,7 +118,7 @@ export function AntecipacaoAutomaticaPage() {
         </div>
       </section>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section className="rounded-xl border border-slate-200 bg-white p-6">
           <div className="min-w-0">
             <h2 className="text-lg font-semibold text-slate-900">Antecipação automática de cartão</h2>
@@ -143,10 +143,10 @@ export function AntecipacaoAutomaticaPage() {
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
               {isInitialLoading ? (
-                <Button disabled className="rounded-xl">Carregando...</Button>
+                <Button disabled className="rounded-lg">Carregando...</Button>
               ) : enabled ? (
                 <Button
-                  className="rounded-xl bg-rose-700 text-white hover:bg-rose-800"
+                  className="rounded-lg bg-rose-700 text-white hover:bg-rose-800"
                   disabled={saving}
                   onClick={() => setConfirmDisable(true)}
                 >
@@ -154,7 +154,7 @@ export function AntecipacaoAutomaticaPage() {
                 </Button>
               ) : (
                 <Button
-                  className="rounded-xl bg-brand-accent text-white hover:bg-brand-accent/90"
+                  className="rounded-lg bg-primary text-white hover:bg-primary/90"
                   disabled={saving || !automaticEligible}
                   onClick={() => void updateConfiguration(true)}
                 >
@@ -196,7 +196,7 @@ export function AntecipacaoAutomaticaPage() {
         </aside>
       </div>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5">
+      <section className="rounded-xl border border-slate-200 bg-white p-6">
         <h2 className="text-base font-semibold text-slate-900">Principais dúvidas</h2>
         <div className="mt-3 divide-y divide-slate-100">
           <details className="group py-4">
@@ -222,9 +222,9 @@ export function AntecipacaoAutomaticaPage() {
 
       {confirmDisable ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
             <div className="flex items-start gap-4">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 text-rose-700">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-rose-50 text-rose-700">
                 <Warning className="h-6 w-6" />
               </div>
               <div>
@@ -235,10 +235,10 @@ export function AntecipacaoAutomaticaPage() {
               </div>
             </div>
             <div className="mt-6 flex justify-end gap-3">
-              <Button variant="outline" className="rounded-xl" disabled={saving} onClick={() => setConfirmDisable(false)}>
+              <Button variant="outline" className="rounded-lg" disabled={saving} onClick={() => setConfirmDisable(false)}>
                 Voltar
               </Button>
-              <Button className="rounded-xl bg-rose-700 text-white hover:bg-rose-800" disabled={saving} onClick={() => void updateConfiguration(false)}>
+              <Button className="rounded-lg bg-rose-700 text-white hover:bg-rose-800" disabled={saving} onClick={() => void updateConfiguration(false)}>
                 {saving ? 'Desativando...' : 'Desativar'}
               </Button>
             </div>

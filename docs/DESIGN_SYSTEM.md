@@ -179,7 +179,36 @@ O tema escuro usa tokens CSS em `apps/web/app/globals.css`. Componentes novos de
 
 Não criar uma segunda paleta escura localmente em uma feature.
 
-### 4.6 Escala de espaçamento
+### 4.6 Loading padrão da aplicação
+
+O loading padrão da Alusa é a logo `alusa` em cinza claro, centralizada na área que está sendo carregada. A implementação oficial é [AlusaLogoLoader](/Users/blendstudio/Projects/alusa/apps/web/components/feedback/AlusaLogoLoader.tsx).
+
+Usar esse padrão quando o carregamento bloquear uma página, uma área principal ou uma transição de tela. A logo deve:
+
+- ficar centralizada horizontal e verticalmente na superfície disponível;
+- usar a máscara oficial `/brand/logo-sidebar-mask.svg`;
+- usar a cor cinza `#dfe4e9`;
+- apresentar animação suave de pulsação (`animate-pulse`), respeitando `prefers-reduced-motion`;
+- expor `role="status"` e `aria-label="Carregando"`;
+- permanecer sobre fundo branco, sem spinner adicional, skeleton ou box decorativo concorrendo com a marca.
+
+Exemplo para carregamento de uma área da aplicação:
+
+```tsx
+import { AlusaLogoLoader } from '@/components/feedback/AlusaLogoLoader';
+
+return <AlusaLogoLoader className="min-h-[640px]" />;
+```
+
+Usar `fullScreen` somente quando toda a aplicação estiver indisponível durante a transição, como autenticação, logout ou uma navegação global:
+
+```tsx
+return <AlusaLogoLoader fullScreen />;
+```
+
+Skeletons continuam permitidos apenas em carregamentos parciais nos quais a estrutura do conteúdo permanece disponível e o usuário consegue identificar o contexto da tela. Não usar spinner isolado como loading principal de uma página.
+
+### 4.7 Escala de espaçamento
 
 A interface atual usa principalmente a escala Tailwind baseada em múltiplos de `4px`:
 
@@ -206,7 +235,7 @@ Padrões recorrentes:
 - distância entre seções de detalhe: `32px`;
 - distância entre título e descrição: `4px` ou `8px` conforme o componente.
 
-### 4.7 Arredondamento e profundidade
+### 4.8 Arredondamento e profundidade
 
 | Uso | Valor atual |
 | --- | ---: |

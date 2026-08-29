@@ -2,7 +2,13 @@ import { notFound } from 'next/navigation';
 
 import { requireGlobalAdminSessionForPage } from '@/features/global-admin/auth/session.server';
 import { getSupportChargeDetail, listSupportNotes } from '@/features/support/queries/support-entities';
-import { compactId, formatCurrency, formatDate, formatDateTime } from '@/features/support/shared/format';
+import {
+  compactId,
+  formatCurrency,
+  formatDate,
+  formatDateTime,
+  supportChargeTitle,
+} from '@/features/support/shared/format';
 import { SupportCaseForm, SupportNoteForm, SupportSafeActionButton } from '@/features/support/shared/SupportActionForms';
 import { SupportShell } from '@/features/support/shared/SupportShell';
 import { KeyValue, RowLink, StatusBadge, SupportPageHeader, SupportPanel } from '@/features/support/shared/SupportUI';
@@ -20,7 +26,7 @@ export default async function SupportChargePage({ params }: { params: Promise<{ 
 
   return (
     <SupportShell session={session}>
-      <SupportPageHeader eyebrow="Cobrança" title={read.payerName} description="Diagnóstico local, Asaas, jobs e webhooks relacionados." />
+      <SupportPageHeader eyebrow="Cobrança" title={supportChargeTitle(read)} description="Diagnóstico local, Asaas, jobs e webhooks relacionados." />
       <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
         <div className="space-y-6">
           <SupportPanel title="Read model">

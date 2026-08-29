@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { AlusaLogoLoader } from '@/components/feedback/AlusaLogoLoader';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -25,6 +26,21 @@ import {
 const ALL_STATUS = '__ALL_STATUS__';
 const PAGE_SIZE = 20;
 
+function isTechnicalTrace(value: string | null | undefined) {
+  return Boolean(value && /^(?:NEEDS_REVIEW|PAYMENT_NEEDS_REVIEW|PAYMENT\s+SEM\s+VÍNCULO\s+LOCAL)(?:\s*[·-].*)?$/i.test(value.trim()));
+}
+
+function anticipationTitle(item: AnticipationItem) {
+  return !isTechnicalTrace(item.context.description)
+    ? item.context.description ?? item.payment ?? item.installment ?? 'Recebível sem identificação'
+    : item.payment ?? item.installment ?? 'Recebível sem identificação';
+}
+
+function anticipationTrace(item: AnticipationItem) {
+  const label = isTechnicalTrace(item.context.payerName) ? 'Pagador não identificado' : item.context.payerName ?? 'Pagador não identificado';
+  return `${label} • ${item.payment ?? item.installment ?? item.id}`;
+}
+
 function SummaryCard({
   label,
   value,
@@ -35,9 +51,9 @@ function SummaryCard({
   detail: string;
 }) {
   return (
-    <div className="flex min-h-[132px] flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4 alusa-dark:border alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+    <div className="flex min-h-[140px] flex-col justify-between rounded-2xl bg-[#f4ecfd] p-5 alusa-dark:border alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#e9dffc] text-[#2b2634] alusa-dark:bg-[color:var(--color-bg-elevated)] alusa-dark:text-[color:var(--color-brand-300)]">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#e9dffc] text-[#2b2634] alusa-dark:bg-[color:var(--color-bg-elevated)] alusa-dark:text-[color:var(--color-brand-300)]">
           <DollarSign className="h-5 w-5" />
         </div>
         <div>
@@ -45,7 +61,7 @@ function SummaryCard({
           <p className="text-[11px] text-[#2b2634]/65 alusa-dark:text-[color:var(--color-text-muted)]">{detail}</p>
         </div>
       </div>
-      <span className="block text-2xl font-semibold tracking-tight text-[#2b2634] alusa-dark:text-[color:var(--color-text-primary)]">
+      <span className="block text-[30px] font-semibold leading-none tracking-tight text-[#2b2634] alusa-dark:text-[color:var(--color-text-primary)]">
         {formatCurrency(value)}
       </span>
     </div>
@@ -87,7 +103,7 @@ function EmptyState() {
       <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">
         As solicitações feitas pelo Asaas aparecem aqui com status, taxa, valor líquido e data prevista.
       </p>
-      <Button asChild className="mt-5 rounded-xl bg-brand-accent px-5 text-white hover:bg-brand-accent/90">
+      <Button asChild className="mt-5 rounded-lg bg-primary px-5 text-white hover:bg-primary/90">
         <Link href="/antecipacoes/antecipar">Antecipar recebimento</Link>
       </Button>
     </div>
@@ -108,22 +124,7 @@ function AnticipationsTable({
   onPreview: (_item: AnticipationItem) => void;
 }) {
   if (loading) {
-    return (
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-100">
-          <tbody>
-            <tr>
-              <td colSpan={7} className="px-6 py-10 text-center text-sm text-slate-500">
-                <div className="flex items-center justify-center gap-2">
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
-                  Carregando...
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    );
+    return <AlusaLogoLoader className="min-h-[320px]" />;
   }
 
   if (!items.length) {
@@ -144,28 +145,28 @@ function AnticipationsTable({
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-slate-100 alusa-dark:divide-[color:var(--color-border-subtle)]">
+      <table className="min-w-full table-fixed divide-y divide-slate-100 alusa-dark:divide-[color:var(--color-border-subtle)]">
         <thead className="hidden bg-gray-50 lg:table-header-group alusa-dark:bg-[color:var(--color-bg-card-soft)]">
           <tr>
-            <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 lg:px-5 alusa-dark:text-[color:var(--color-text-muted)]">
+            <th className="w-[38%] px-3 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-500 lg:px-5 alusa-dark:text-[color:var(--color-text-muted)]">
               Recebível
             </th>
-            <th className="w-[1%] whitespace-nowrap px-2 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 lg:px-5 alusa-dark:text-[color:var(--color-text-muted)]">
+            <th className="w-[12%] whitespace-nowrap px-2 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-500 lg:px-5 alusa-dark:text-[color:var(--color-text-muted)]">
               Status
             </th>
-            <th className="hidden px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
+            <th className="hidden w-[11%] px-5 py-3 text-right text-xs font-medium uppercase tracking-wide text-slate-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
               Valor
             </th>
-            <th className="hidden px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
+            <th className="hidden w-[11%] px-5 py-3 text-right text-xs font-medium uppercase tracking-wide text-slate-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
               Taxa
             </th>
-            <th className="hidden px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
+            <th className="hidden w-[12%] px-5 py-3 text-right text-xs font-medium uppercase tracking-wide text-slate-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
               Líquido
             </th>
-            <th className="hidden px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
+            <th className="hidden w-[10%] px-5 py-3 text-left text-xs font-medium uppercase tracking-wide text-slate-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
               Previsão
             </th>
-            <th className="w-[1%] whitespace-nowrap px-2 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 lg:px-5 alusa-dark:text-[color:var(--color-text-muted)]">
+            <th className="w-[6%] whitespace-nowrap px-2 py-3 text-right text-xs font-medium uppercase tracking-wide text-slate-500 lg:px-5 alusa-dark:text-[color:var(--color-text-muted)]">
               Ações
             </th>
           </tr>
@@ -173,8 +174,8 @@ function AnticipationsTable({
         <tbody className="divide-y divide-slate-100 bg-white alusa-dark:divide-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card)]">
           {items.map((item) => {
             const canCancel = item.status === 'PENDING' || item.status === 'SCHEDULED';
-            const title = item.context.description ?? item.payment ?? item.installment ?? item.id;
-            const subtitle = `${item.context.payerName ?? sourceLabel(item.context.source)} • ${item.payment ?? item.installment ?? '—'}`;
+            const title = anticipationTitle(item);
+            const subtitle = anticipationTrace(item);
             const billing = item.context.billingType ? formatBillingType(item.context.billingType) : null;
             return (
               <tr key={item.id} className="transition-colors hover:bg-slate-50/80 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]">
@@ -218,7 +219,7 @@ function AnticipationsTable({
                     <div className="flex shrink-0 flex-col items-end justify-between self-stretch">
                       <button
                         type="button"
-                        className="-mr-1 -mt-0.5 rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#753CB8] focus-visible:ring-offset-1 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:hover:bg-[color:var(--color-bg-card-soft)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
+                        className="-mr-1 -mt-0.5 rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:hover:bg-[color:var(--color-bg-card-soft)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
                         aria-label="Ver detalhes da antecipação"
                         onClick={(event) => {
                           event.stopPropagation();
@@ -255,15 +256,19 @@ function AnticipationsTable({
                   {formatDate(item.anticipationDate ?? item.dueDate)}
                 </td>
                 <td className="hidden px-2 py-4 text-right lg:table-cell lg:px-5">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 rounded-lg"
-                    disabled={!canCancel || cancelingId === item.id}
-                    onClick={() => onCancel(item)}
-                  >
-                    {cancelingId === item.id ? 'Cancelando...' : 'Cancelar'}
-                  </Button>
+                  {canCancel ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 rounded-lg"
+                      disabled={cancelingId === item.id}
+                      onClick={() => onCancel(item)}
+                    >
+                      {cancelingId === item.id ? 'Cancelando...' : 'Cancelar'}
+                    </Button>
+                  ) : (
+                    <span className="text-sm text-slate-300" aria-label="Sem ações disponíveis">—</span>
+                  )}
                 </td>
               </tr>
             );
@@ -297,7 +302,7 @@ export function MinhasAntecipacoesPage() {
     { deps: [page, status], intervalMs: 30_000, minIntervalMs: 8_000 },
   );
 
-  const tableBusy = isInitialLoading || isRefreshing;
+  const tableBusy = isInitialLoading;
 
   const visibleItems = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('pt-BR');
@@ -341,8 +346,8 @@ export function MinhasAntecipacoesPage() {
     : null;
 
   return (
-    <div className="w-full min-w-0 space-y-5">
-      <section className="rounded-xl border border-slate-200 bg-white px-5 py-5 md:px-6 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+    <div className="w-full min-w-0 space-y-6">
+      <section className="rounded-xl border border-slate-200 bg-white px-5 py-6 md:px-6 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-2xl">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Antecipações</p>
@@ -351,7 +356,7 @@ export function MinhasAntecipacoesPage() {
               Acompanhe solicitações de recebíveis, taxas, valor líquido e retorno da análise feita pelo Asaas.
             </p>
           </div>
-          <Button asChild className="h-10 w-full rounded-xl bg-brand-accent px-5 text-white hover:bg-brand-accent/90 lg:w-auto">
+          <Button asChild className="h-10 w-full rounded-lg bg-primary px-5 text-white hover:bg-primary/90 lg:w-auto">
             <Link href="/antecipacoes/antecipar">
               Antecipar recebimento
               <ChevronRight className="ml-2 h-4 w-4" />
@@ -377,8 +382,8 @@ export function MinhasAntecipacoesPage() {
                 {lastSyncLabel ? ` • atualizado às ${lastSyncLabel}` : ''}
               </p>
             </div>
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_auto]">
-              <div className="relative min-w-0">
+            <div className="grid gap-3 lg:grid-cols-[minmax(280px,320px)_180px_104px] lg:justify-end">
+              <div className="relative min-w-0 lg:w-[320px]">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                 <Input
                   value={search}
@@ -410,8 +415,8 @@ export function MinhasAntecipacoesPage() {
               </Select>
               <Button
                 variant="outline"
-                className="h-10 w-full rounded-lg lg:w-auto"
-                disabled={tableBusy}
+                className="h-10 w-full rounded-lg lg:w-[104px]"
+                disabled={isRefreshing}
                 onClick={() => void refresh()}
               >
                 Atualizar
@@ -469,7 +474,7 @@ export function MinhasAntecipacoesPage() {
                   <div>
                     <p className="text-xs font-medium text-slate-500">Pagador / origem</p>
                     <p className="text-slate-800">
-                      {previewItem.context.payerName ?? '—'} · {sourceLabel(previewItem.context.source)}
+                      {isTechnicalTrace(previewItem.context.payerName) ? 'Pagador não identificado' : previewItem.context.payerName ?? 'Pagador não identificado'} · {sourceLabel(previewItem.context.source)}
                     </p>
                   </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

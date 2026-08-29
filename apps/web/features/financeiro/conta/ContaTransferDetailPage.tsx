@@ -1,20 +1,22 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 
-import { ArrowLeft, CheckCircle2, Clock3, ReceiptText, XCircle } from 'lucide-react';
+import { ArrowLeft, ReceiptText, XCircle } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Skeleton } from '@/components/ui/skeleton';
+import { AlusaLogoLoader } from '@/components/feedback/AlusaLogoLoader';
 import { pushToast } from '@/components/ui/toast';
 import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
+import { cn } from '@/lib/utils';
 import type { TransferDetailResultDTO } from '@alusa/finance';
 
 import { formatCurrency, formatDate } from '../extrato/utils/extrato-formatters';
 import { InfoCallout } from '@/components/ui/info-callout';
+
+const DETAIL_SECTION_MAX = 'mx-auto w-full max-w-4xl';
 
 function sanitizeErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
@@ -62,20 +64,20 @@ async function readJson<T>(input: RequestInfo | URL, init?: RequestInit): Promis
 function mapTransferStatus(status: TransferDetailResultDTO['status']) {
   switch (status) {
     case 'DONE':
-      return { label: 'Concluída', badgeStatus: 'CONCLUIDO' as const };
+      return { label: 'Concluída' };
     case 'FAILED':
-      return { label: 'Falhou', badgeStatus: 'RECUSADA' as const };
+      return { label: 'Falhou' };
     case 'BLOCKED':
-      return { label: 'Bloqueada', badgeStatus: 'RECUSADA' as const };
+      return { label: 'Bloqueada' };
     case 'PROCESSING':
-      return { label: 'Processando', badgeStatus: 'PROCESSANDO' as const };
+      return { label: 'Processando' };
     case 'CANCELED':
-      return { label: 'Cancelada', badgeStatus: 'CANCELADA' as const };
+      return { label: 'Cancelada' };
     case 'REQUESTED':
-      return { label: 'Solicitada', badgeStatus: 'AGUARDANDO' as const };
+      return { label: 'Solicitada' };
     case 'PENDING':
     default:
-      return { label: 'Pendente', badgeStatus: 'PENDENTE' as const };
+      return { label: 'Pendente' };
   }
 }
 
@@ -129,13 +131,20 @@ type DetailFieldValue = {
   label: string;
   value: string;
   span?: 'full';
+  mono?: boolean;
 };
 
-function DetailField({ label, value, span }: DetailFieldValue) {
+function DetailField({ label, value, span, mono = false }: DetailFieldValue) {
   return (
     <div className={span === 'full' ? 'md:col-span-2 lg:col-span-3' : undefined}>
-      <label className="block text-xs text-gray-600 mb-1.5">{label}</label>
-      <div className="min-h-[42px] w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 break-words">
+      <label className="mb-2 block text-xs font-medium text-slate-500">{label}</label>
+      <div
+        className={cn(
+          'flex min-h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] leading-5 text-slate-700',
+          span === 'full' ? 'items-start' : 'items-center',
+          mono && 'font-mono text-xs',
+        )}
+      >
         {value}
       </div>
     </div>
@@ -146,29 +155,25 @@ function mapTimelineItemClasses(status: TransferDetailResultDTO['timeline'][numb
   switch (status) {
     case 'DONE':
       return {
-        marker: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+        marker: 'bg-emerald-500',
         text: 'text-emerald-700',
-        icon: CheckCircle2,
       };
     case 'FAILED':
     case 'CANCELED':
       return {
-        marker: 'border-rose-200 bg-rose-50 text-rose-700',
+        marker: 'bg-rose-500',
         text: 'text-rose-700',
-        icon: XCircle,
       };
     case 'CURRENT':
       return {
-        marker: 'border-amber-200 bg-amber-50 text-amber-700',
+        marker: 'bg-amber-500',
         text: 'text-amber-700',
-        icon: Clock3,
       };
     case 'PENDING':
     default:
       return {
-        marker: 'border-gray-200 bg-gray-50 text-gray-500',
+        marker: 'bg-slate-300',
         text: 'text-gray-500',
-        icon: Clock3,
       };
   }
 }
@@ -178,7 +183,7 @@ function mapOperationalAlertVariant(alert: TransferDetailResultDTO['operationalA
 }
 
 function buildRecipientFields(data: TransferDetailResultDTO) {
-  const items = [
+  const items: Array<DetailFieldValue | null> = [
     data.recipient.name ? { label: 'Nome do destinatário', value: data.recipient.name } : null,
     data.recipient.cpfCnpj ? { label: 'CPF/CNPJ', value: data.recipient.cpfCnpj } : null,
     data.recipient.bankName ? { label: 'Banco', value: data.recipient.bankName } : null,
@@ -201,7 +206,7 @@ function buildRecipientFields(data: TransferDetailResultDTO) {
 }
 
 function buildTransferInfoFields(data: TransferDetailResultDTO) {
-  const items = [
+  const items: Array<DetailFieldValue | null> = [
     { label: 'Operação', value: formatTransferOperation(data) },
     { label: 'Valor solicitado', value: formatCurrencyString(data.amount) },
     { label: 'Taxa', value: formatCurrencyString(data.feeAmount) },
@@ -210,7 +215,9 @@ function buildTransferInfoFields(data: TransferDetailResultDTO) {
     data.transferDate ? { label: 'Data da transferência', value: formatMaybeDate(data.transferDate) } : null,
     data.scheduleDate ? { label: 'Agendada para', value: formatMaybeDate(data.scheduleDate) } : null,
     data.description ? { label: 'Descrição', value: data.description, span: 'full' as const } : null,
-    data.endToEndIdentifier ? { label: 'ID da transação (E2E)', value: data.endToEndIdentifier, span: 'full' as const } : null,
+    data.endToEndIdentifier
+      ? { label: 'ID da transação (E2E)', value: data.endToEndIdentifier, span: 'full' as const, mono: true }
+      : null,
   ];
 
   return items.filter((item): item is DetailFieldValue => item !== null);
@@ -218,14 +225,9 @@ function buildTransferInfoFields(data: TransferDetailResultDTO) {
 
 function DetailSkeleton() {
   return (
-    <div className="w-full min-w-0 px-4 py-6 pb-8">
-      <div className="mb-8 space-y-5">
-        <Skeleton className="h-5 w-24" />
-        <Skeleton className="h-10 w-80" />
-      </div>
-      <div className="space-y-6">
-        <Skeleton className="h-80 rounded-xl" />
-        <Skeleton className="h-72 rounded-xl" />
+    <div className="h-full overflow-y-auto">
+      <div className="w-full min-w-0 px-4 py-6 pb-8">
+        <AlusaLogoLoader className="min-h-[640px]" />
       </div>
     </div>
   );
@@ -307,19 +309,23 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
 
   if (!data || error) {
     return (
-      <div className="w-full min-w-0 px-4 py-6 pb-8">
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-6 py-5">
-          <p className="text-sm font-semibold text-rose-900">Não foi possível carregar a transferência</p>
-          <p className="mt-1 text-sm text-rose-700">
-            {error === 'TRANSFER_NAO_ENCONTRADA'
-              ? 'A transferência solicitada não foi encontrada para esta conta.'
-              : 'Recarregue os dados para consultar o estado oficial e o comprovante da transferência.'}
-          </p>
-          <div className="mt-4 flex gap-3">
-            <Button asChild variant="outline">
-              <Link href="/financeiro/conta">Voltar para saldo</Link>
-            </Button>
-            <Button onClick={() => window.location.reload()}>Tentar novamente</Button>
+      <div className="h-full overflow-y-auto">
+        <div className="w-full min-w-0 px-4 py-6 pb-8">
+          <div className={DETAIL_SECTION_MAX}>
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-6 py-5">
+              <p className="text-sm font-semibold text-rose-900">Não foi possível carregar a transferência</p>
+              <p className="mt-1 text-sm text-rose-700">
+                {error === 'TRANSFER_NAO_ENCONTRADA'
+                  ? 'A transferência solicitada não foi encontrada para esta conta.'
+                  : 'Recarregue os dados para consultar o estado oficial e o comprovante da transferência.'}
+              </p>
+              <div className="mt-4 flex gap-3">
+                <Button asChild variant="outline">
+                  <Link href="/financeiro/conta">Voltar para saldo</Link>
+                </Button>
+                <Button onClick={() => window.location.reload()}>Tentar novamente</Button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -327,11 +333,12 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
   }
 
   return (
-    <div className="w-full min-w-0 px-4 py-6 pb-8">
-      <div className="mb-8">
+    <div className="h-full overflow-y-auto">
+      <div className="w-full min-w-0 px-4 py-6 pb-8">
+        <div className={cn('mb-8', DETAIL_SECTION_MAX)}>
         <Link
           href="/financeiro/conta"
-          className="mb-5 inline-flex items-center gap-2 text-sm text-gray-600 transition-colors hover:text-gray-900"
+          className="mb-6 inline-flex items-center gap-2 text-sm text-slate-600 transition-colors hover:text-slate-900"
         >
           <ArrowLeft className="h-4 w-4" />
           Voltar
@@ -339,8 +346,8 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
 
         <div className="flex items-start justify-between gap-6">
           <div className="flex-1">
-            <h1 className="text-3xl font-bold leading-tight text-gray-900">Detalhes da transferência</h1>
-            <p className="mt-2 text-sm font-mono text-gray-600">ID: {data.id}</p>
+            <h1 className="text-3xl font-bold leading-tight text-slate-900">Detalhes da transferência</h1>
+            <p className="mt-2 font-mono text-sm text-slate-500">ID: {data.id}</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -348,7 +355,7 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
               <Button
                 type="button"
                 onClick={() => setCancelDialogOpen(true)}
-                className="h-10 px-4 bg-red-600 text-white hover:bg-red-700"
+                className="h-10 rounded-lg bg-red-600 px-4 text-white hover:bg-red-700"
               >
                 <XCircle className="mr-2 h-4 w-4" />
                 Cancelar transferência
@@ -357,7 +364,7 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
               data.transactionReceiptUrl ? (
                 <Button
                   asChild
-                  className="h-10 px-4 bg-brand-accent text-white hover:bg-brand-accent/90"
+                  className="h-10 rounded-lg bg-primary px-4 text-white hover:bg-primary/90"
                 >
                   <a href={data.transactionReceiptUrl} target="_blank" rel="noreferrer noopener">
                     <ReceiptText className="mr-2 h-4 w-4" />
@@ -368,7 +375,7 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
                 <Button
                   type="button"
                   disabled
-                  className="h-10 px-4 bg-brand-accent/40 text-white"
+                  className="h-10 rounded-lg bg-primary/40 px-4 text-white"
                 >
                   <ReceiptText className="mr-2 h-4 w-4" />
                   Comprovante indisponível
@@ -377,17 +384,17 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
             )}
           </div>
         </div>
-      </div>
+        </div>
 
-      {data.failReason ? (
-        <InfoCallout variant="warning" size="md" showIcon={false} className="mb-5">
+        {data.failReason ? (
+        <InfoCallout variant="warning" size="md" showIcon={false} className={cn('mb-5', DETAIL_SECTION_MAX)}>
           <p className="font-semibold">Motivo da falha</p>
           <p className="mt-1">{data.failReason}</p>
         </InfoCallout>
-      ) : null}
+        ) : null}
 
-      {operationalAlerts.length > 0 ? (
-        <div className="mb-5 space-y-3">
+        {operationalAlerts.length > 0 ? (
+        <div className={cn('mb-5 space-y-3', DETAIL_SECTION_MAX)}>
           {operationalAlerts.map((alert) => (
             <InfoCallout
               key={alert.code}
@@ -402,56 +409,60 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
             </InfoCallout>
           ))}
         </div>
-      ) : null}
+        ) : null}
 
-      <div className="space-y-6">
-        <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
-          <div className="px-6 py-5 border-b border-gray-100">
-            <h2 className="text-xl font-semibold text-gray-900">Informações da transferência</h2>
-            <p className="mt-1 text-sm text-gray-600">Dados financeiros e situação atual da transferência.</p>
+        <div className={cn('space-y-8', DETAIL_SECTION_MAX)}>
+        <section className="rounded-xl border border-slate-200 bg-white">
+          <div className="border-b border-slate-100 px-6 py-5">
+            <h2 className="text-xl font-semibold text-slate-900">Informações da transferência</h2>
+            <p className="mt-1 text-sm text-slate-600">Dados financeiros e situação atual da transferência.</p>
           </div>
 
           <div className="px-6 py-6">
-            <div className="grid grid-cols-1 gap-x-8 gap-y-6 md:grid-cols-2 lg:grid-cols-3">
-              <div>
-                <p className="mb-2 text-sm font-medium text-gray-500">Situação</p>
-                {status ? <Badge status={status.badgeStatus}>{status.label}</Badge> : null}
-              </div>
+            <div className="grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2 lg:grid-cols-3">
+              <DetailField label="Situação" value={status?.label ?? '—'} />
               {transferInfoFields.map((field) => (
-                <DetailField key={field.label} label={field.label} value={field.value} span={field.span} />
+                <DetailField key={field.label} label={field.label} value={field.value} span={field.span} mono={field.mono} />
               ))}
               <DetailField
                 label="Comprovante"
                 value={data.transactionReceiptUrl ? 'Disponível para visualização' : 'Ainda indisponível'}
               />
-            </div>
-          </div>
+        </div>
+      </div>
         </section>
 
         {timeline.length > 0 ? (
-          <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
-            <div className="px-6 py-5 border-b border-gray-100">
-              <h2 className="text-xl font-semibold text-gray-900">Acompanhamento operacional</h2>
-              <p className="mt-1 text-sm text-gray-600">Eventos locais, retorno oficial e reconciliações do saque.</p>
+          <section className="rounded-xl border border-slate-200 bg-white">
+            <div className="border-b border-slate-100 px-6 py-5">
+              <h2 className="text-xl font-semibold text-slate-900">Acompanhamento operacional</h2>
+              <p className="mt-1 text-sm text-slate-600">Eventos locais, retorno oficial e reconciliações do saque.</p>
             </div>
 
             <div className="px-6 py-6">
-              <div className="space-y-4">
+              <div className="relative space-y-6 pl-5">
                 {timeline.map((item) => {
                   const classes = mapTimelineItemClasses(item.status);
-                  const Icon = classes.icon;
+                  const isLastItem = item.key === timeline[timeline.length - 1]?.key;
 
                   return (
-                    <div key={item.key} className="flex gap-3">
-                      <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${classes.marker}`}>
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
+                    <div key={item.key} className="relative">
+                      {!isLastItem ? (
+                        <span
+                          aria-hidden="true"
+                          className="absolute -bottom-7 -left-[1.15rem] top-3 w-px translate-x-[4px] bg-slate-200"
+                        />
+                      ) : null}
+                      <span
+                        aria-hidden="true"
+                        className={`absolute -left-[1.15rem] top-1.5 h-2.5 w-2.5 rounded-full ring-4 ring-white ${classes.marker}`}
+                      />
+                      <div className="min-w-0">
                         <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-                          <p className="text-sm font-semibold text-gray-900">{item.label}</p>
+                          <p className="text-sm font-semibold text-slate-900">{item.label}</p>
                           <p className={`text-xs font-medium ${classes.text}`}>{formatMaybeDateTime(item.at)}</p>
                         </div>
-                        {item.detail ? <p className="mt-1 text-sm text-gray-600">{item.detail}</p> : null}
+                        {item.detail ? <p className="mt-1 text-sm leading-6 text-slate-600">{item.detail}</p> : null}
                       </div>
                     </div>
                   );
@@ -461,16 +472,16 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
           </section>
         ) : null}
 
-        <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
-          <div className="px-6 py-5 border-b border-gray-100">
-            <h2 className="text-xl font-semibold text-gray-900">Informações do destinatário</h2>
-            <p className="mt-1 text-sm text-gray-600">Dados relevantes para identificar a conta de destino.</p>
+        <section className="rounded-xl border border-slate-200 bg-white">
+          <div className="border-b border-slate-100 px-6 py-5">
+            <h2 className="text-xl font-semibold text-slate-900">Informações do destinatário</h2>
+            <p className="mt-1 text-sm text-slate-600">Dados relevantes para identificar a conta de destino.</p>
           </div>
 
           <div className="px-6 py-6">
-            <div className="grid grid-cols-1 gap-x-8 gap-y-6 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2 lg:grid-cols-3">
               {recipientFields.map((field) => (
-                <DetailField key={field.label} label={field.label} value={field.value} span={field.span} />
+                <DetailField key={field.label} label={field.label} value={field.value} span={field.span} mono={field.mono} />
               ))}
             </div>
           </div>
@@ -490,6 +501,7 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
           void handleCancelTransfer();
         }}
       />
+      </div>
     </div>
   );
 }

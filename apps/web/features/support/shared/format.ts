@@ -33,6 +33,45 @@ export function compactId(value?: string | null) {
   return `${value.slice(0, 8)}...${value.slice(-6)}`;
 }
 
+function isTechnicalChargeText(value?: string | null): boolean {
+  if (!value) return true;
+  const normalized = value.trim().toUpperCase();
+  return (
+    normalized === 'NEEDS_REVIEW' ||
+    normalized.startsWith('NEEDS_REVIEW ·') ||
+    normalized.startsWith('[NEEDS_REVIEW]') ||
+    normalized === 'PAYMENT SEM VÍNCULO LOCAL'
+  );
+}
+
+export function supportChargeTitle(input: {
+  description?: string | null;
+  payerName?: string | null;
+}): string {
+  const description = input.description?.trim();
+  if (description && !isTechnicalChargeText(description)) return description;
+
+  const payerName = input.payerName?.trim();
+  if (payerName && !isTechnicalChargeText(payerName)) return payerName;
+
+  return 'Cobrança sem identificação';
+}
+
+export function supportChargeTrace(input: {
+  description?: string | null;
+  status?: string | null;
+  asaasPaymentId?: string | null;
+  id?: string | null;
+}): string {
+  const status = input.status?.trim().toUpperCase();
+  const needsReview =
+    status === 'NEEDS_REVIEW' ||
+    status === 'PAYMENT_NEEDS_REVIEW' ||
+    isTechnicalChargeText(input.description);
+  const statusLabel = needsReview ? 'Revisão necessária' : input.status ?? 'Sem status';
+  return `${statusLabel} · ${compactId(input.asaasPaymentId ?? input.id)}`;
+}
+
 export function normalizeSearch(query: string) {
   return query.trim().replace(/\s+/g, ' ').slice(0, 120);
 }

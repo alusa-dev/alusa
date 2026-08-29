@@ -232,7 +232,7 @@ async function resolvePaymentContexts(contaId: string, paymentIds: string[]) {
   const contexts = new Map<string, AnticipationLocalContext>();
   if (!unique.length) return contexts;
 
-  const [academicCharges, standaloneCharges] = await Promise.all([
+  const [academicCharges, standaloneCharges, eventTicketSales, eventMapOrders] = await Promise.all([
     prisma.cobranca.findMany({
       where: {
         asaasPaymentId: { in: unique },
@@ -263,9 +263,52 @@ async function resolvePaymentContexts(contaId: string, paymentIds: string[]) {
         status: true,
         dueDate: true,
         value: true,
+        customer: { select: { payerType: true, payerId: true } },
       },
     }),
+    prisma.eventTicketSale.findMany({
+      where: { contaId, asaasPaymentId: { in: unique } },
+      select: {
+        id: true,
+        asaasPaymentId: true,
+        buyerName: true,
+        aluno: { select: { nome: true } },
+        responsavel: { select: { nome: true } },
+      },
+    }),
+    prisma.eventMapOrder.findMany({
+      where: { contaId, asaasPaymentId: { in: unique } },
+      select: { id: true, asaasPaymentId: true, buyerName: true },
+    }),
   ]);
+
+  const alunoIds = Array.from(
+    new Set(
+      standaloneCharges
+        .filter((charge) => charge.customer?.payerType === 'ALUNO')
+        .map((charge) => charge.customer?.payerId)
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+  const responsavelIds = Array.from(
+    new Set(
+      standaloneCharges
+        .filter((charge) => charge.customer?.payerType === 'RESPONSAVEL')
+        .map((charge) => charge.customer?.payerId)
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+  const [alunos, responsaveis] = await Promise.all([
+    alunoIds.length
+      ? prisma.aluno.findMany({ where: { contaId, id: { in: alunoIds } }, select: { id: true, nome: true } })
+      : Promise.resolve([]),
+    responsavelIds.length
+      ? prisma.responsavel.findMany({ where: { contaId, id: { in: responsavelIds } }, select: { id: true, nome: true } })
+      : Promise.resolve([]),
+  ]);
+  const payerNameByKey = new Map<string, string>();
+  for (const aluno of alunos) payerNameByKey.set(`ALUNO:${aluno.id}`, aluno.nome);
+  for (const responsavel of responsaveis) payerNameByKey.set(`RESPONSAVEL:${responsavel.id}`, responsavel.nome);
 
   for (const charge of standaloneCharges) {
     if (!charge.asaasPaymentId) continue;
@@ -273,7 +316,10 @@ async function resolvePaymentContexts(contaId: string, paymentIds: string[]) {
       source: 'STANDALONE',
       localId: charge.id,
       description: charge.description,
-      payerName: charge.payerName,
+      payerName:
+        (charge.customer
+          ? payerNameByKey.get(`${charge.customer.payerType}:${charge.customer.payerId}`)
+          : undefined) ?? (charge.payerName === 'NEEDS_REVIEW' ? null : charge.payerName),
       billingType: charge.billingType,
       dueDate: isoDate(charge.dueDate),
       status: charge.status,
@@ -299,6 +345,37 @@ async function resolvePaymentContexts(contaId: string, paymentIds: string[]) {
       dueDate: isoDate(charge.vencimento),
       status: charge.status,
       value: Number(charge.valor),
+    });
+  }
+
+  for (const sale of eventTicketSales) {
+    if (!sale.asaasPaymentId) continue;
+    const current = contexts.get(sale.asaasPaymentId);
+    contexts.set(sale.asaasPaymentId, {
+      source: current?.source ?? 'STANDALONE',
+      localId: current?.localId ?? sale.id,
+      description: current?.description ?? null,
+      payerName: sale.responsavel?.nome ?? sale.aluno?.nome ?? sale.buyerName,
+      billingType: current?.billingType ?? null,
+      dueDate: current?.dueDate ?? null,
+      status: current?.status ?? null,
+      value: current?.value ?? null,
+    });
+  }
+
+  for (const order of eventMapOrders) {
+    if (!order.asaasPaymentId) continue;
+    const current = contexts.get(order.asaasPaymentId);
+    if (current?.payerName && current.payerName !== 'NEEDS_REVIEW') continue;
+    contexts.set(order.asaasPaymentId, {
+      source: current?.source ?? 'STANDALONE',
+      localId: current?.localId ?? order.id,
+      description: current?.description ?? null,
+      payerName: order.buyerName,
+      billingType: current?.billingType ?? null,
+      dueDate: current?.dueDate ?? null,
+      status: current?.status ?? null,
+      value: current?.value ?? null,
     });
   }
 

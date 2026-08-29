@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -48,7 +48,9 @@ function normalizeCandidateText(value: string | null | undefined): string | null
 function getCandidateClientName(candidate: AnticipationCandidate): string {
   const hasLocalLink = Boolean(candidate.localId);
   const normalizedPayerName = normalizeCandidateText(candidate.payerName);
-  return normalizedPayerName ?? (hasLocalLink ? 'Pagador não identificado' : 'Disponível apenas no Asaas');
+  return normalizedPayerName
+    ?? normalizeCandidateText(candidate.description)
+    ?? (hasLocalLink ? 'Recebível local' : 'Recebível disponível no Asaas');
 }
 
 function LimitCard({
@@ -69,7 +71,7 @@ function LimitCard({
         <span className="text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">{percentage.toFixed(0)}% livre</span>
       </div>
       <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100 alusa-dark:bg-[color:var(--color-bg-card-soft)]">
-        <div className="h-full rounded-full bg-brand-accent" style={{ width: `${percentage}%` }} />
+        <div className="h-full rounded-full bg-primary" style={{ width: `${percentage}%` }} />
       </div>
       <div className="mt-3 flex items-center justify-between text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">
         <span>Disponível {formatCurrency(available)}</span>
@@ -180,7 +182,7 @@ function CandidateMobileRow({
       <div className="flex shrink-0 flex-col items-end justify-between self-stretch">
         <button
           type="button"
-          className="-mr-1 -mt-0.5 rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#753CB8] focus-visible:ring-offset-1 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:hover:bg-[color:var(--color-bg-card-soft)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
+          className="-mr-1 -mt-0.5 rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:hover:bg-[color:var(--color-bg-card-soft)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
           aria-label="Ver detalhes do recebível"
           onClick={() => onPreview(candidate)}
         >
@@ -304,7 +306,7 @@ function SummaryPanel({
   return (
     <aside className="rounded-xl border border-slate-200 bg-white p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#f4ecfd] text-[#2b2634] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-brand-300)]">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#f4ecfd] text-[#2b2634] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-brand-300)]">
           <DollarSign className="h-5 w-5" />
         </div>
         <div>
@@ -364,7 +366,7 @@ function SummaryPanel({
       ) : null}
 
       <Button
-        className="mt-5 h-10 w-full rounded-xl bg-brand-accent text-white hover:bg-brand-accent/90"
+        className="mt-5 h-10 w-full rounded-lg bg-primary text-white hover:bg-primary/90"
         disabled={!canSubmit || (simulation?.isDocumentationRequired && !documentFile)}
         onClick={onRequest}
       >
@@ -417,7 +419,7 @@ export function AnteciparRecebimentoPage() {
     },
   );
 
-  const candidateItems = candidates?.items ?? [];
+  const candidateItems = useMemo(() => candidates?.items ?? [], [candidates]);
 
   const selectedItems = useMemo(
     () => candidateItems.filter((candidate) => selectedIds.includes(candidate.id)),
@@ -565,8 +567,8 @@ export function AnteciparRecebimentoPage() {
   }
 
   return (
-    <div className="w-full min-w-0 space-y-5">
-      <section className="rounded-xl border border-slate-200 bg-white px-5 py-5 md:px-6 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+    <div className="w-full min-w-0 space-y-6">
+      <section className="rounded-xl border border-slate-200 bg-white px-5 py-6 md:px-6 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-2xl">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Antecipações</p>
@@ -575,7 +577,7 @@ export function AnteciparRecebimentoPage() {
               Selecione um recebível elegível, simule o valor líquido e envie a solicitação para análise.
             </p>
           </div>
-          <Button asChild variant="outline" className="h-10 rounded-xl border-slate-200">
+          <Button asChild variant="outline" className="h-10 rounded-lg border-slate-200">
             <Link href="/antecipacoes/minhas">
               Minhas antecipações
               <ChevronRight className="ml-2 h-4 w-4" />
@@ -597,7 +599,7 @@ export function AnteciparRecebimentoPage() {
         />
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section className="overflow-hidden rounded-xl border border-slate-200 bg-white alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
           <div className="border-b border-slate-100 bg-gray-50 px-4 py-4 md:px-5 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card)]">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -605,8 +607,8 @@ export function AnteciparRecebimentoPage() {
                 <p className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">Disponível para antecipar</p>
                 <p className="mt-1 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">{candidates?.total ?? 0} recebível(is) elegíveis no Asaas</p>
               </div>
-              <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
-                <div className="relative min-w-0 w-full">
+              <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(280px,320px)_180px] sm:justify-end">
+                <div className="relative min-w-0 w-full sm:w-[320px]">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                   <Input
                     value={search}
@@ -705,7 +707,7 @@ export function AnteciparRecebimentoPage() {
             </>
           ) : (
             <div className="flex min-h-[320px] flex-col items-center justify-center px-6 text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#f4ecfd] text-[#2b2634] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-brand-300)]">
+              <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-[#f4ecfd] text-[#2b2634] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-brand-300)]">
                 <DollarSign className="h-7 w-7" />
               </div>
               <h2 className="mt-5 text-lg font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">Nenhum recebível elegível</h2>

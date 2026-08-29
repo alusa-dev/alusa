@@ -6,16 +6,15 @@ import Link from 'next/link';
 import type { StoreSaleChargeDTO, StoreSaleDTO } from '@alusa/finance';
 
 import {
-  CheckCircle,
   ChevronDown,
   Download,
   DocumentText,
   ExternalLink,
-  Loader2,
   Receipt,
   ShoppingBag,
   WalletCards,
 } from '@/components/icons/icons';
+import { AlusaLogoLoader } from '@/components/feedback/AlusaLogoLoader';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -329,9 +328,7 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
 
   if (loading) {
     return (
-      <div className="flex min-h-[420px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
-      </div>
+      <AlusaLogoLoader className="min-h-[640px]" />
     );
   }
 
@@ -612,73 +609,93 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 px-4 pb-12 pt-6 md:px-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
-            <WalletCards className="h-4 w-4" />
-            Loja
+    <div className="mx-auto w-full max-w-6xl space-y-8 px-4 pb-12 pt-6 md:px-8">
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0 space-y-2">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+            <WalletCards className="h-4 w-4 text-primary" />
+            Loja <span className="text-slate-300">/</span> Cobrança
           </div>
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+            <h1 className="text-[26px] font-semibold leading-tight tracking-tight text-slate-900">
               Cobrança gerada
             </h1>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-2 text-sm text-slate-500">
               {formatSaleNumber(sale.saleNumber)} · {sale.customer.displayName} ·{' '}
               {formatDateBR(sale.createdAt)}
             </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Button asChild variant="outline">
+        <div className="flex flex-wrap gap-2 sm:justify-end">
+          <Button asChild variant="outline" className="border-slate-200 bg-white">
             <Link href="/vendas/nova">
               <ShoppingBag className="mr-2 h-4 w-4" />
               Nova venda
             </Link>
           </Button>
-          <Button asChild variant="outline">
+          <Button asChild variant="outline" className="border-slate-200 bg-white">
             <Link href="/vendas/historico">Histórico</Link>
           </Button>
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr,340px]">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr),336px]">
         <div className="space-y-6">
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Itens</CardTitle>
+            <CardHeader className="border-b border-slate-100 px-5 py-4">
+              <CardTitle className="text-sm">Itens da venda</CardTitle>
             </CardHeader>
             <CardContent className="divide-y divide-slate-100 p-0">
               {sale.items.map((item) => (
-                <div key={item.id} className="flex items-start justify-between gap-4 px-6 py-4">
-                  <div>
-                    <p className="font-medium text-slate-900">{item.productName}</p>
-                    <p className="mt-1 text-sm text-slate-500">
+                <div key={item.id} className="flex items-start justify-between gap-5 px-5 py-5">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-900">{item.productName}</p>
+                    <p className="mt-1 text-xs text-slate-500">
                       {item.quantity} un. · {formatCurrencyBRL(item.unitPrice)}
                     </p>
                   </div>
-                  <p className="font-semibold text-slate-900">{formatCurrencyBRL(item.subtotal)}</p>
+                  <p className="shrink-0 text-sm font-semibold text-slate-900">
+                    {formatCurrencyBRL(item.subtotal)}
+                  </p>
                 </div>
               ))}
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">
+            <CardHeader className="border-b border-slate-100 px-5 py-4">
+              <CardTitle className="text-sm">
                 {sale.installmentPlan ? 'Parcelas da cobrança' : 'Detalhes da cobrança'}
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="space-y-3 p-5">
               {charges.length > 0 ? (
                 charges.map((charge, index) => (
                   <div
                     key={charge.id}
-                    className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 md:grid-cols-[1fr,140px,140px]"
+                    className="group grid gap-4 rounded-lg border border-slate-200 bg-slate-50/60 p-4 transition-colors hover:border-slate-300 md:grid-cols-[minmax(0,1fr),100px,132px]"
+                    style={charge.invoiceUrl ? { cursor: 'pointer' } : undefined}
+                    role={charge.invoiceUrl ? 'link' : undefined}
+                    tabIndex={charge.invoiceUrl ? 0 : undefined}
+                    onClick={
+                      charge.invoiceUrl
+                        ? () => window.open(charge.invoiceUrl as string, '_blank', 'noopener,noreferrer')
+                        : undefined
+                    }
+                    onKeyDown={
+                      charge.invoiceUrl
+                        ? (event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              window.open(charge.invoiceUrl as string, '_blank', 'noopener,noreferrer');
+                            }
+                          }
+                        : undefined
+                    }
                   >
                     <div>
-                      <p className="text-sm font-medium text-slate-900">
+                      <p className="text-sm font-semibold text-slate-900">
                         {sale.installmentPlan
                           ? `Parcela ${index + 1}/${sale.installmentPlan.installmentCount}`
                           : 'Cobrança'}
@@ -688,22 +705,22 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
                         {formatDateBR(charge.dueDate)}
                       </p>
                     </div>
-                    <div className="text-sm">
+                    <div className="text-xs">
                       <span className="text-slate-500">Status</span>
                       <p className="font-medium text-slate-900">
                         {formatChargeStatus(charge.status)}
                       </p>
                     </div>
                     <div className="flex items-center justify-between gap-3 md:justify-end">
-                      <span className="text-sm font-semibold text-slate-900">
+                      <span className="text-sm font-semibold tabular-nums text-slate-900">
                         {formatCurrencyBRL(charge.value ?? 0)}
                       </span>
                       {charge.invoiceUrl ? (
-                        <Button asChild size="sm" variant="outline">
-                          <a href={charge.invoiceUrl} target="_blank" rel="noreferrer">
-                            <ExternalLink className="h-4 w-4" />
-                          </a>
-                        </Button>
+                        <ExternalLink
+                          className="h-4 w-4 text-slate-400 transition-colors group-hover:text-primary"
+                          aria-label="Abrir cobrança em nova aba"
+                          title="Abrir cobrança"
+                        />
                       ) : null}
                     </div>
                   </div>
@@ -717,15 +734,15 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
           </Card>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-4 lg:sticky lg:top-6">
           <Card>
-            <CardHeader>
+            <CardHeader className="border-b border-slate-100 px-5 py-4">
               <CardTitle className="flex items-center gap-2 text-base">
-                <CheckCircle className="h-5 w-5 text-emerald-600" />
+                <Receipt className="h-5 w-5 text-primary" />
                 Resumo
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3 text-sm">
+            <CardContent className="space-y-4 p-5 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-slate-500">Status</span>
                 <Badge variant={sale.status === 'CONCLUIDA' ? 'success' : 'warning'}>
@@ -755,9 +772,9 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
                   <span>Desconto</span>
                   <span>{formatCurrencyBRL(sale.discount)}</span>
                 </div>
-                <div className="mt-3 flex items-center justify-between text-base font-semibold text-slate-900">
+                <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-base font-semibold text-slate-900">
                   <span>Total</span>
-                  <span>{formatCurrencyBRL(sale.total)}</span>
+                  <span className="tabular-nums">{formatCurrencyBRL(sale.total)}</span>
                 </div>
               </div>
             </CardContent>
@@ -765,11 +782,11 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
 
           {firstChargeLink ? (
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Link de pagamento</CardTitle>
+              <CardHeader className="px-5 pb-3 pt-5">
+                <CardTitle className="text-sm">Link de pagamento</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
-                <Button asChild className="w-full">
+              <CardContent className="space-y-3 px-5 pb-5">
+                <Button asChild className="h-10 w-full">
                   <a href={firstChargeLink} target="_blank" rel="noreferrer">
                     <ExternalLink className="mr-2 h-4 w-4" />
                     Abrir cobrança

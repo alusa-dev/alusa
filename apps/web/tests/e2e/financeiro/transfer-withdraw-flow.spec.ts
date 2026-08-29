@@ -156,38 +156,38 @@ test.describe('Financeiro → Conta → saque', () => {
             timeline: [
               {
                 key: 'requested',
-                label: 'Solicitação criada',
+                label: 'Solicitação enviada',
                 at: '2026-04-09T17:30:00.000Z',
                 status: 'DONE',
-                detail: 'Pedido registrado na Alusa com referência de idempotência.',
+                detail: 'Solicitação registrada com sucesso.',
               },
               {
                 key: 'provider-created',
-                label: 'Envio ao provedor financeiro',
+                label: 'Transferência encaminhada',
                 at: '2026-04-09T17:31:00.000Z',
                 status: 'DONE',
-                detail: 'Identificador externo recebido e salvo localmente.',
+                detail: 'Transferência enviada para processamento.',
               },
               {
                 key: 'webhook',
-                label: 'Evento do provedor',
+                label: 'Processamento atualizado',
                 at: null,
                 status: 'PENDING',
-                detail: 'Aguardando evento para convergir o espelho local.',
+                detail: 'Aguardando atualização do processamento.',
               },
               {
                 key: 'reconciled',
-                label: 'Reconciliação',
+                label: 'Dados conferidos',
                 at: '2026-04-09T17:40:00.000Z',
                 status: 'DONE',
-                detail: 'Consulta oficial usada para atualizar o espelho local.',
+                detail: 'Os dados foram conferidos com o provedor.',
               },
               {
                 key: 'current-status',
                 label: 'Situação atual',
                 at: '2026-04-09T17:31:00.000Z',
                 status: 'CURRENT',
-                detail: 'Status atual: PENDING.',
+                detail: 'A solicitação aguarda processamento.',
               },
             ],
             operationalAlerts: [
@@ -255,8 +255,8 @@ test.describe('Financeiro → Conta → saque', () => {
     await expect(page).toHaveURL(new RegExp(`/financeiro/conta/transferencias/${TRANSFER_ID}$`));
     await expect(page.getByRole('heading', { name: 'Detalhes da transferência' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Acompanhamento operacional' })).toBeVisible();
-    await expect(page.getByText('Solicitação criada')).toBeVisible();
-    await expect(page.getByText('Evento do provedor')).toBeVisible();
+    await expect(page.getByText('Solicitação enviada')).toBeVisible();
+    await expect(page.getByText('Processamento atualizado')).toBeVisible();
     await expect(page.getByText('Atenção operacional')).toBeVisible();
   });
 });

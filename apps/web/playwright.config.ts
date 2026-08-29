@@ -62,7 +62,7 @@ export default defineConfig({
       'pnpm -C ../.. --filter @alusa/database build && ' +
       'pnpm -C ../.. --filter @alusa/lib build && ' +
       'pnpm -C ../.. --filter @alusa/finance build && ' +
-      `cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev -p ${port}`,
+      `cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev --webpack -p ${port}`,
     url: baseURL,
     timeout: 120_000,
     reuseExistingServer: !process.env.CI,

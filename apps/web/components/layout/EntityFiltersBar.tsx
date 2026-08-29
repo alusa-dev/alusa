@@ -105,7 +105,7 @@ export default function EntityFiltersBar({
               variant="outline"
               className="h-10 w-full rounded-lg border-slate-200 bg-white px-4 text-slate-700 shadow-none hover:bg-slate-50 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.06)] lg:w-auto"
             >
-              <Filter className="mr-2 h-4 w-4" /> Filtro
+              <Filter className="mr-2 h-4 w-4" /> Filtros
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">

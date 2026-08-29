@@ -7,7 +7,12 @@ import {
   getSupportFinanceOverview,
   listSupportAccountFinance,
 } from '@/features/support/queries/support-account';
-import { compactId, formatCurrency, formatDate } from '@/features/support/shared/format';
+import {
+  compactId,
+  formatCurrency,
+  formatDate,
+  supportChargeTitle,
+} from '@/features/support/shared/format';
 import { SupportShell } from '@/features/support/shared/SupportShell';
 import { StatusBadge, SupportMetric, SupportPageHeader, SupportPanel } from '@/features/support/shared/SupportUI';
 
@@ -65,7 +70,7 @@ export default async function SupportAccountFinancePage({
                       className="font-medium text-slate-950 hover:underline"
                       href={`/developer/contas/${resolvedParams.contaId}/financeiro/cobrancas/${charge.id}`}
                     >
-                      {charge.payerName}
+                      {supportChargeTitle(charge)}
                     </Link>
                   </td>
                   <td className="py-3 pr-4">

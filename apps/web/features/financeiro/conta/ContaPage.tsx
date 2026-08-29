@@ -1,6 +1,5 @@
 'use client';
 
-import React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -19,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
+import { AlusaLogoLoader } from '@/components/feedback/AlusaLogoLoader';
 import { pushToast } from '@/components/ui/toast';
 import type { GetAccountBalanceSummaryOutput } from '@alusa/finance';
 
@@ -105,7 +104,7 @@ function mapTransferStatusMobileBadge(status: TransferStatus, asaasTransferId?: 
 
   switch (status) {
     case 'DONE':
-      return 'Confirmado';
+      return 'Concluída';
     case 'FAILED':
       return 'Falhou';
     case 'BLOCKED':
@@ -113,7 +112,7 @@ function mapTransferStatusMobileBadge(status: TransferStatus, asaasTransferId?: 
     case 'PROCESSING':
       return 'Processando';
     case 'CANCELED':
-      return 'Cancelado';
+      return 'Cancelada';
     case 'REQUESTED':
       return 'Solicitada';
     case 'PENDING':
@@ -327,36 +326,7 @@ function getAccountSummaryUrl(opts: { bypassCache?: boolean } = {}) {
 }
 
 function ContaSkeleton() {
-  return (
-    <div className="w-full min-w-0 max-w-full space-y-5">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0 space-y-2">
-          <Skeleton className="h-8 w-40" />
-          <Skeleton className="h-4 w-full max-w-md" />
-        </div>
-        <div className="flex gap-2">
-          <Skeleton className="h-10 w-28" />
-          <Skeleton className="h-10 w-36" />
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
-        <Skeleton className="h-4 w-32" />
-        <Skeleton className="mt-4 h-10 w-44" />
-        <Skeleton className="mt-3 h-4 w-3/5 max-w-sm" />
-      </div>
-
-      <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
-        <Skeleton className="h-5 w-44" />
-        <Skeleton className="mt-2 h-4 w-full max-w-lg" />
-        <div className="mt-4 space-y-3">
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
-        </div>
-      </div>
-    </div>
-  );
+  return <AlusaLogoLoader className="min-h-[640px]" />;
 }
 
 
@@ -399,22 +369,22 @@ function TransferTableSection({
         </p>
       </div>
 
-      <div className="min-w-0 border-b border-slate-100 bg-[#F8FAFC] p-3 sm:p-4 md:p-5 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
-        <div className="grid min-w-0 gap-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] p-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
-            <div className="relative min-w-0 w-full">
+      <div className="min-w-0 border-b border-slate-100 bg-slate-50 px-4 py-4 md:px-5 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+        <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-center">
+            <div className="relative min-w-0 flex-1 xl:max-w-[520px]">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
               <Input
                 type="text"
                 placeholder="Buscar por nome ou documento do titular"
                 value={filters.search}
                 onChange={(event) => onFiltersChange({ search: event.target.value })}
-                className="h-10 rounded-xl border-slate-200 bg-white pl-9"
+                className="h-10 rounded-lg border-slate-200 bg-white pl-9"
               />
             </div>
 
-            <div className="flex max-lg:flex-col flex-wrap items-stretch gap-3 lg:items-center">
+            <div className="flex flex-wrap items-stretch gap-3 lg:items-center xl:ml-auto">
               <Select value={filters.direction} onValueChange={(value) => onFiltersChange({ direction: value as 'asc' | 'desc' })}>
-                <SelectTrigger className="h-10 w-full min-w-0 rounded-xl border-slate-200 bg-white lg:w-[170px]">
+                <SelectTrigger className="h-10 w-full min-w-0 rounded-lg border-slate-200 bg-white lg:w-[170px]">
                   <SelectValue placeholder="Ordem" />
                 </SelectTrigger>
                 <SelectContent>
@@ -425,17 +395,17 @@ function TransferTableSection({
 
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant="outline" className="relative h-10 w-full rounded-xl border-slate-200 bg-white px-4 lg:w-auto">
+                  <Button variant="outline" className="relative h-10 w-full rounded-lg border-slate-200 bg-white px-4 lg:w-auto">
                     <Filter className="mr-2 h-4 w-4" />
                     Filtros avançados
                     {activeCount > 0 ? (
-                      <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 text-xs text-white">
+                        <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-xs text-white">
                         {activeCount}
                       </span>
                     ) : null}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-80 rounded-xl border-slate-200 p-4 shadow-[0_8px_30px_rgba(15,23,42,0.12)]" align="end" sideOffset={10}>
+                <PopoverContent className="w-80 rounded-xl border-slate-200 p-4 shadow-md" align="end" sideOffset={10}>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <h4 className="text-sm font-semibold text-slate-900">Refinar transferências</h4>
@@ -453,7 +423,7 @@ function TransferTableSection({
                           type="date"
                           value={filters.from}
                           onChange={(event) => onFiltersChange({ from: event.target.value })}
-                          className="h-9 rounded-xl border-slate-200 bg-white"
+                          className="h-9 rounded-lg border-slate-200 bg-white"
                           max={filters.to || undefined}
                         />
                       </div>
@@ -464,7 +434,7 @@ function TransferTableSection({
                           type="date"
                           value={filters.to}
                           onChange={(event) => onFiltersChange({ to: event.target.value })}
-                          className="h-9 rounded-xl border-slate-200 bg-white"
+                          className="h-9 rounded-lg border-slate-200 bg-white"
                           min={filters.from || undefined}
                         />
                       </div>
@@ -472,13 +442,13 @@ function TransferTableSection({
                       <div className="space-y-1.5 border-t border-slate-100 pt-3">
                         <label className="text-xs font-medium text-gray-500">Operação</label>
                         <Select value={filters.operation} onValueChange={(value) => onFiltersChange({ operation: value as TransferFiltersState['operation'] })}>
-                          <SelectTrigger className="h-9 w-full rounded-xl border-slate-200 bg-white">
+                          <SelectTrigger className="h-9 w-full rounded-lg border-slate-200 bg-white">
                             <SelectValue placeholder="Todas" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="ALL">Todas</SelectItem>
                             <SelectItem value="PIX">Pix</SelectItem>
-                            <SelectItem value="TED">Ted</SelectItem>
+                            <SelectItem value="TED">TED</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -486,7 +456,7 @@ function TransferTableSection({
                       <div className="space-y-1.5">
                         <label className="text-xs font-medium text-gray-500">Situação</label>
                         <Select value={filters.status} onValueChange={(value) => onFiltersChange({ status: value as TransferFiltersState['status'] })}>
-                          <SelectTrigger className="h-9 w-full rounded-xl border-slate-200 bg-white">
+                          <SelectTrigger className="h-9 w-full rounded-lg border-slate-200 bg-white">
                             <SelectValue placeholder="Todas" />
                           </SelectTrigger>
                           <SelectContent>
@@ -495,7 +465,7 @@ function TransferTableSection({
                             <SelectItem value="PENDING">Pendente</SelectItem>
                             <SelectItem value="BLOCKED">Bloqueada</SelectItem>
                             <SelectItem value="PROCESSING">Processando</SelectItem>
-                            <SelectItem value="DONE">Efetuada</SelectItem>
+                            <SelectItem value="DONE">Concluída</SelectItem>
                             <SelectItem value="CANCELED">Cancelada</SelectItem>
                             <SelectItem value="FAILED">Falhou</SelectItem>
                           </SelectContent>
@@ -506,46 +476,46 @@ function TransferTableSection({
                 </PopoverContent>
               </Popover>
 
-              <Button onClick={onExport} disabled={exporting || !data?.items.length} className="h-10 w-full rounded-xl bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 disabled:bg-brand-accent/40 sm:px-4 lg:w-auto">
+              <Button onClick={onExport} disabled={exporting || !data?.items.length} className="h-10 w-full rounded-lg bg-primary px-4 text-white shadow-none hover:bg-primary/90 disabled:bg-primary/40 sm:px-4 lg:w-auto">
                 <Download className="mr-2 h-4 w-4" />
-                {exporting ? 'Exportando...' : 'Exportar Dados'}
+                {exporting ? 'Exportando...' : 'Exportar dados'}
               </Button>
             </div>
         </div>
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-100 alusa-dark:divide-[color:var(--color-border-subtle)]">
+        <table className="min-w-[1180px] table-fixed divide-y divide-gray-100 alusa-dark:divide-[color:var(--color-border-subtle)]">
           <thead>
             <tr className="bg-gray-50 alusa-dark:bg-[color:var(--color-bg-card-soft)]">
-              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 lg:px-6 alusa-dark:text-[color:var(--color-text-muted)]">
+              <th className="w-[14%] px-3 py-3 text-left text-xs font-medium text-gray-500 lg:px-6 alusa-dark:text-[color:var(--color-text-muted)]">
                 Solicitação
               </th>
-              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
+              <th className="hidden w-[9%] px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Agendada para
               </th>
-              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
+              <th className="hidden w-[12%] px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Data da transferência
               </th>
-              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
+              <th className="hidden w-[8%] px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Operação
               </th>
-              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
+              <th className="hidden w-[13%] px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Nome
               </th>
-              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
+              <th className="hidden w-[11%] px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 CPF ou CNPJ
               </th>
-              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
+              <th className="hidden w-[15%] px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Banco
               </th>
-              <th className="hidden px-6 py-3 text-right text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
+              <th className="hidden w-[7%] px-6 py-3 text-right text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Taxa
               </th>
-              <th className="hidden px-6 py-3 text-right text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
+              <th className="hidden w-[9%] px-6 py-3 text-right text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Valor enviado
               </th>
-              <th className="hidden px-3 py-3 text-center text-xs font-medium text-gray-500 lg:table-cell lg:px-6 alusa-dark:text-[color:var(--color-text-muted)]">
+              <th className="hidden w-[8%] px-3 py-3 text-center text-xs font-medium text-gray-500 lg:table-cell lg:px-6 alusa-dark:text-[color:var(--color-text-muted)]">
                 Situação
               </th>
             </tr>
@@ -553,8 +523,8 @@ function TransferTableSection({
           <tbody className="divide-y divide-gray-200 bg-white alusa-dark:divide-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card)]">
             {loading ? (
               <tr>
-                <td className="px-6 py-8 text-center text-sm text-gray-500" colSpan={10}>
-                  Carregando transferências...
+                <td className="p-0" colSpan={10}>
+                  <AlusaLogoLoader className="min-h-[220px]" />
                 </td>
               </tr>
             ) : data?.items.length ? (
@@ -861,7 +831,7 @@ export function ContaPage() {
   }
 
   return (
-    <div className="w-full min-w-0 max-w-full space-y-5 pb-2 sm:space-y-6 sm:pb-0">
+    <div className="w-full min-w-0 max-w-full space-y-6 pb-2">
       <section className="min-w-0 space-y-1">
         <h1 className="text-[22px] font-semibold tracking-tight text-slate-900 sm:text-2xl alusa-dark:text-[color:var(--color-text-primary)]">
           Saldo
@@ -870,12 +840,12 @@ export function ContaPage() {
           Acompanhe o saldo disponível, as receitas do extrato e as transferências da conta.
         </p>
       </section>
-      <section className="min-w-0 rounded-xl bg-[#EEE7FB] px-4 py-6 shadow-sm sm:px-6 sm:py-8 lg:px-8 lg:py-10 alusa-dark:border alusa-dark:border-[color:var(--color-border-brand)]/60 alusa-dark:bg-[linear-gradient(135deg,var(--color-bg-card-soft)_0%,var(--color-bg-elevated)_100%)]">
+      <section className="min-w-0 rounded-2xl bg-[#f4ecfd] p-6 alusa-dark:border alusa-dark:border-[color:var(--color-border-brand)]/60 alusa-dark:bg-[linear-gradient(135deg,var(--color-bg-card-soft)_0%,var(--color-bg-elevated)_100%)]">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between lg:gap-8">
-          <div className="min-w-0 space-y-3 sm:space-y-4">
+          <div className="min-w-0 space-y-3">
             <div>
               <p className="text-sm font-medium text-[#6B6480] alusa-dark:text-[color:var(--color-text-secondary)]">Saldo disponível</p>
-              <p className="mt-2 break-words text-3xl font-semibold leading-none tracking-tight text-[#15121D] sm:text-[2.5rem] lg:text-[2.75rem] alusa-dark:text-[color:var(--color-text-primary)]">
+              <p className="mt-2 break-words text-[37px] font-normal leading-none tracking-tight text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-primary)]">
                 {formatCurrency(availableBalance)}
               </p>
             </div>
@@ -890,18 +860,18 @@ export function ContaPage() {
               Transfira valores para contas cadastradas e acompanhe cada saída da conta pelo extrato.
             </p>
 
-            <div className="flex max-lg:flex-col flex-wrap items-stretch gap-2 sm:gap-3 lg:justify-end">
+            <div className="flex flex-wrap items-stretch gap-3 lg:justify-end">
             <Button
               onClick={() => openTransferDialog()}
               disabled={!canTransfer}
-              className="h-10 w-full justify-center rounded-xl bg-brand-accent px-6 text-sm font-medium text-white shadow-none hover:bg-brand-accent/90 disabled:bg-brand-accent/40 sm:px-8 lg:w-auto"
+              className="h-10 w-full justify-center rounded-lg bg-primary px-6 text-sm font-medium text-white shadow-none hover:bg-primary/90 disabled:bg-primary/40 sm:w-auto sm:px-8"
             >
               <ArrowUpRight className="mr-2 h-4 w-4" />
               Transferir
             </Button>
             <Link
               href="/financeiro/extrato"
-              className="inline-flex h-10 w-full items-center justify-center rounded-xl bg-brand-accent px-6 text-sm font-medium text-white shadow-none transition hover:bg-brand-accent/90 sm:px-8 lg:w-auto"
+              className="inline-flex h-10 w-full items-center justify-center rounded-lg border border-primary bg-white px-6 text-sm font-medium text-primary shadow-none transition hover:bg-[#f8f3fd] sm:w-auto sm:px-8"
             >
               <ReceiptText className="mr-2 h-4 w-4" />
               Ver extrato

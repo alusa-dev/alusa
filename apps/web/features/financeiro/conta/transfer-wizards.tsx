@@ -44,6 +44,8 @@ export type TransferDestinationType = 'PIX' | 'BANK_ACCOUNT';
 export type PixKeyType = 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'EVP';
 export type BankAccountType = 'CONTA_CORRENTE' | 'CONTA_POUPANCA';
 
+const WIZARD_CONTROL_CLASS = 'h-10 rounded-lg border-slate-200 bg-white text-sm shadow-sm';
+
 export type TransferRecipient = {
   id: string;
   type: TransferDestinationType;
@@ -615,21 +617,20 @@ function WizardDialogFrame({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full max-w-4xl overflow-hidden rounded-2xl bg-slate-50 p-0">
+      <DialogContent className="flex max-h-[88vh] w-[calc(100vw-2rem)] max-w-4xl flex-col gap-0 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 p-0 shadow-lg">
         <DialogHeader className="sr-only">
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
-        <div className="relative rounded-t-2xl border-b border-slate-200 bg-slate-50 p-4 md:p-6">
-          <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+        <div className="relative shrink-0 rounded-t-2xl border-b border-slate-200 bg-slate-50 px-4 py-5 md:px-8 md:py-6">
           <h2 className="text-xl font-semibold tracking-tight text-slate-900">{title}</h2>
           <p className="mt-1 text-sm text-slate-600">{description}</p>
-          <div className="mt-4">
-            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/50">
+          <div className="mt-5">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200">
               <Progress
                 value={(step / totalSteps) * 100}
-                className="h-2 bg-transparent [&>div]:bg-gradient-to-r [&>div]:from-brand-accent [&>div]:to-brand-accent/70"
+                className="h-2 bg-transparent [&>div]:bg-primary"
                 aria-label="Progresso do wizard financeiro"
                 aria-valuemin={0}
                 aria-valuemax={100}
@@ -642,26 +643,26 @@ function WizardDialogFrame({
           </div>
         </div>
 
-        <div className="flex max-h-[78vh] flex-col">
+        <div className="flex min-h-0 flex-1 flex-col">
           <div
-            className="flex-1 overflow-y-auto bg-slate-50 p-4 md:p-6 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent"
+            className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-4 py-5 md:px-8 md:py-6 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent"
             style={{ scrollbarWidth: 'thin', scrollbarGutter: 'stable', scrollbarColor: '#d1d5db transparent' }}
           >
-            <div className="mx-auto w-full max-w-4xl space-y-6">{children}</div>
+            <div className="mx-auto w-full max-w-4xl space-y-5">{children}</div>
           </div>
-          <div className="flex items-center justify-between gap-3 rounded-b-2xl border-t border-slate-200 bg-slate-50 p-4 md:p-6">
+          <div className="flex shrink-0 items-center justify-between gap-3 rounded-b-2xl border-t border-slate-200 bg-slate-50 px-4 py-4 md:px-8">
             <Button
               type="button"
               variant="outline"
               onClick={onBack}
               disabled={!canGoBack || loading}
-              className="h-10 min-w-[140px] border-slate-200 bg-white text-slate-600 shadow-none hover:bg-slate-100"
+              className="h-10 min-w-[120px] rounded-lg border-slate-200 bg-white text-slate-700 shadow-none hover:bg-slate-100"
             >
               Voltar
             </Button>
             <Button
               type="button"
-              className="h-10 min-w-[180px] bg-brand-accent px-5 text-white shadow-none hover:bg-brand-accent/90"
+              className="h-10 min-w-[176px] rounded-lg bg-primary px-5 text-white shadow-none hover:bg-primary/90"
               disabled={!canProceed || loading}
               onClick={onNext}
               data-testid={nextTestId}
@@ -685,13 +686,13 @@ function WizardSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-none">
       <div>
         <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
         {hint ? <p className="mt-1 text-xs text-slate-500">{hint}</p> : null}
       </div>
       {children}
-    </div>
+    </section>
   );
 }
 
@@ -714,9 +715,9 @@ function ChoiceCard({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        'rounded-2xl border p-4 text-left transition',
+        'rounded-xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-0',
         selected
-          ? 'border-brand-accent bg-brand-accent/5 ring-2 ring-brand-accent/20'
+          ? 'border-violet-200/80 bg-[#e6d6fb]'
           : 'border-slate-200 bg-white hover:border-slate-300',
         disabled ? 'cursor-not-allowed opacity-50' : '',
       )}
@@ -758,24 +759,24 @@ function RecipientCard({
       type="button"
       onClick={onSelect}
       className={cn(
-        'flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-all',
+        'flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all focus-visible:outline-none focus-visible:ring-0',
         selected
-          ? 'border-brand-primary/40 bg-brand-primary/5 shadow-sm'
+          ? 'border-violet-200/80 bg-[#e6d6fb]'
           : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white',
       )}
     >
       <span className={cn(
         'flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold',
-        selected ? 'bg-brand-accent text-white' : 'bg-brand-accent/10 text-brand-accent',
+        selected ? 'bg-primary text-white' : 'bg-primary/10 text-primary',
       )}>
         {initials || 'PX'}
       </span>
 
       <span className="min-w-0 flex-1">
-        <span className={cn('block truncate text-sm font-semibold', selected ? 'text-brand-primary' : 'text-slate-900')}>
+        <span className={cn('block truncate text-sm font-semibold', selected ? 'text-primary' : 'text-slate-900')}>
           {getRecipientPrimaryLine(recipient)}
         </span>
-        <span className={cn('mt-0.5 block truncate text-xs', selected ? 'text-brand-primary/75' : 'text-slate-500')}>
+        <span className={cn('mt-0.5 block truncate text-xs', selected ? 'text-primary/75' : 'text-slate-500')}>
           {getRecipientSecondaryLine(recipient)}
         </span>
       </span>
@@ -799,15 +800,15 @@ function RecipientCard({
               }
             }}
             className={cn(
-              'inline-flex h-9 w-9 items-center justify-center rounded-full border border-brand-accent/20 bg-white text-brand-accent transition',
-              deleting ? 'cursor-wait opacity-60' : 'hover:border-brand-accent/40 hover:bg-brand-accent/10 hover:text-brand-accent',
+              'inline-flex h-9 w-9 items-center justify-center rounded-full border border-primary/20 bg-white text-primary transition',
+              deleting ? 'cursor-wait opacity-60' : 'hover:border-primary/40 hover:bg-primary/10 hover:text-primary',
             )}
           >
             <Trash2 className="h-4 w-4" />
           </span>
         ) : null}
         {selected ? (
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-accent text-white">
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-white">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
               <path fillRule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clipRule="evenodd" />
             </svg>
@@ -1269,13 +1270,13 @@ export function TransferWizardDialog({
       nextTestId="wizard-next"
       >
       {step === 1 ? (
-        <WizardSection title="Escolha como deseja transferir" hint="Cada opcao abre apenas os campos necessarios para esse envio.">
+        <WizardSection title="Escolha como deseja transferir" hint="Cada opção abre apenas os campos necessários para este envio.">
           <div className="grid gap-3 md:grid-cols-2">
             <ChoiceCard
               selected={form.type === 'PIX'}
               disabled={!canPix}
               title="Pix por chave"
-              description="Mais rapido para chaves CPF, CNPJ, e-mail, telefone ou aleatoria."
+              description="Mais rápido para chaves CPF, CNPJ, e-mail, telefone ou aleatória."
               onClick={() => handleTypeChange('PIX')}
             />
             <ChoiceCard
@@ -1296,7 +1297,7 @@ export function TransferWizardDialog({
               <div className="space-y-5">
                 {/* Chave Pix */}
                 <div className="space-y-1.5">
-                  <Label htmlFor="transfer-pix-key" className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  <Label htmlFor="transfer-pix-key" className="text-xs font-medium text-slate-600">
                     Chave Pix
                   </Label>
                   <div className="flex gap-2">
@@ -1316,12 +1317,12 @@ export function TransferWizardDialog({
                       }}
                       placeholder={selectedPixRecipient ? 'Chave salva selecionada. Digite para informar outra chave.' : 'CPF, CNPJ, e-mail, celular ou chave aleatória'}
                       aria-label="Chave Pix"
-                      className="h-11"
+                      className={WIZARD_CONTROL_CLASS}
                     />
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-11 shrink-0"
+                      className={`${WIZARD_CONTROL_CLASS} shrink-0`}
                       disabled={pixLookupLoading || !effectivePixKeyType || (effectivePixKeyType === 'PHONE' ? !isValidPixPhoneKey(form.pixAddressKey) : !isPixKeyValid(form.pixAddressKey, effectivePixKeyType))}
                       onClick={() => void handlePixLookup()}
                     >
@@ -1330,7 +1331,7 @@ export function TransferWizardDialog({
                     </Button>
                   </div>
                   {selectedPixRecipient ? (
-                    <p className="text-xs text-brand-accent">
+                    <p className="text-xs text-primary">
                       Chave salva selecionada. Clique nela novamente para desmarcar ou digite outra chave manualmente.
                     </p>
                   ) : null}
@@ -1368,16 +1369,22 @@ export function TransferWizardDialog({
                 {/* Busca + lista de recentes */}
                 {recipients.some((r) => r.type === 'PIX') || filteredRecipients.length > 0 ? (
                   <div className="space-y-2">
-                    <Input
-                      id="transfer-recipient-search"
-                      value={recipientSearch}
-                      onChange={(event) => setRecipientSearch(event.target.value)}
-                      placeholder="Buscar por nome ou chave"
-                      className="h-9 bg-slate-50 text-sm"
-                    />
+                    <div className="relative">
+                      <Search
+                        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                        aria-hidden="true"
+                      />
+                      <Input
+                        id="transfer-recipient-search"
+                        value={recipientSearch}
+                        onChange={(event) => setRecipientSearch(event.target.value)}
+                        placeholder="Buscar por nome ou chave"
+                        className={`${WIZARD_CONTROL_CLASS} bg-slate-50 pl-9`}
+                      />
+                    </div>
 
                     {filteredRecipients.length > 0 ? (
-                      <div className="max-h-52 space-y-2 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-brand-accent/30 scrollbar-track-transparent">
+                      <div className="max-h-52 space-y-2 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-primary/30 scrollbar-track-transparent">
                         {filteredRecipients.map((recipient) => {
                           const isSelected = recipient.id === recipientId;
                           return (
@@ -1411,14 +1418,20 @@ export function TransferWizardDialog({
                 {/* Lista de recentes */}
                 <>
                   <div className="space-y-2">
-                    <Input
-                      value={recipientSearch}
-                      onChange={(event) => setRecipientSearch(event.target.value)}
-                      placeholder="Buscar por nome ou banco"
-                      className="h-9 bg-slate-50 text-sm"
-                    />
+                    <div className="relative">
+                      <Search
+                        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                        aria-hidden="true"
+                      />
+                      <Input
+                        value={recipientSearch}
+                        onChange={(event) => setRecipientSearch(event.target.value)}
+                        placeholder="Buscar por nome ou banco"
+                        className={`${WIZARD_CONTROL_CLASS} bg-slate-50 pl-9`}
+                      />
+                    </div>
                     {filteredRecipients.length > 0 ? (
-                      <div className="max-h-52 space-y-2 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-brand-accent/30 scrollbar-track-transparent">
+                      <div className="max-h-52 space-y-2 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-primary/30 scrollbar-track-transparent">
                         {filteredRecipients.map((recipient) => {
                           const isSelected = recipient.id === recipientId;
                           return (
@@ -1448,41 +1461,45 @@ export function TransferWizardDialog({
             </WizardSection>
             ) : null}
 
-            <WizardSection title="Informe os dados bancarios" hint="Preencha os dados do titular e da conta que vai receber.">
+            <WizardSection title="Informe os dados bancários" hint="Preencha os dados do titular e da conta que vai receber.">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label>Codigo do banco</Label>
+                  <Label className="text-xs font-medium text-slate-600">Código do banco</Label>
                   <Input
                     value={form.bankCode}
                     onChange={(event) => setForm((current) => ({ ...current, bankCode: event.target.value }))}
                     placeholder="001"
+                    className={WIZARD_CONTROL_CLASS}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Nome do titular</Label>
+                  <Label className="text-xs font-medium text-slate-600">Nome do titular</Label>
                   <Input
                     value={form.ownerName}
                     onChange={(event) => setForm((current) => ({ ...current, ownerName: event.target.value }))}
                     placeholder="Nome completo"
+                    className={WIZARD_CONTROL_CLASS}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>CPF ou CNPJ</Label>
+                  <Label className="text-xs font-medium text-slate-600">CPF ou CNPJ</Label>
                   <Input
                     value={form.cpfCnpj}
                     onChange={(event) =>
                       setForm((current) => ({ ...current, cpfCnpj: formatCpfCnpjBR(normalizeDigits(event.target.value)) }))
                     }
-                    placeholder="Somente numeros ou documento formatado"
+                    placeholder="Somente números ou documento formatado"
+                    className={WIZARD_CONTROL_CLASS}
                   />
                 </div>
                 {requiresBirthDate ? (
                   <div className="space-y-2 md:col-span-2">
-                    <Label>Data de nascimento do titular</Label>
+                    <Label className="text-xs font-medium text-slate-600">Data de nascimento do titular</Label>
                     <Input
                       type="date"
                       value={form.ownerBirthDate}
                       onChange={(event) => setForm((current) => ({ ...current, ownerBirthDate: event.target.value }))}
+                      className={WIZARD_CONTROL_CLASS}
                     />
                     <p className="text-xs text-slate-500">
                       Necessário quando o favorecido é pessoa física com CPF diferente da conta financeira.
@@ -1490,52 +1507,56 @@ export function TransferWizardDialog({
                   </div>
                 ) : null}
                 <div className="space-y-2">
-                  <Label>Agencia</Label>
+                  <Label className="text-xs font-medium text-slate-600">Agência</Label>
                   <Input
                     value={form.agency}
                     onChange={(event) => setForm((current) => ({ ...current, agency: event.target.value }))}
                     placeholder="0001"
+                    className={WIZARD_CONTROL_CLASS}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Conta</Label>
+                  <Label className="text-xs font-medium text-slate-600">Conta</Label>
                   <Input
                     value={form.account}
                     onChange={(event) => setForm((current) => ({ ...current, account: event.target.value }))}
                     placeholder="12345"
+                    className={WIZARD_CONTROL_CLASS}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Digito</Label>
+                  <Label className="text-xs font-medium text-slate-600">Dígito</Label>
                   <Input
                     value={form.accountDigit}
                     onChange={(event) => setForm((current) => ({ ...current, accountDigit: event.target.value }))}
                     placeholder="6"
+                    className={WIZARD_CONTROL_CLASS}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Tipo da conta</Label>
+                  <Label className="text-xs font-medium text-slate-600">Tipo da conta</Label>
                   <Select
                     value={form.bankAccountType}
                     onValueChange={(value) =>
                       setForm((current) => ({ ...current, bankAccountType: value as BankAccountType }))
                     }
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className={WIZARD_CONTROL_CLASS}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="CONTA_CORRENTE">Conta corrente</SelectItem>
-                      <SelectItem value="CONTA_POUPANCA">Conta poupanca</SelectItem>
+                      <SelectItem value="CONTA_POUPANCA">Conta poupança</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Descrição da conta</Label>
+                  <Label className="text-xs font-medium text-slate-600">Descrição da conta</Label>
                   <Input
                     value={form.accountName}
                     onChange={(event) => setForm((current) => ({ ...current, accountName: event.target.value }))}
                     placeholder="Opcional"
+                    className={WIZARD_CONTROL_CLASS}
                   />
                 </div>
               </div>
@@ -1582,7 +1603,7 @@ export function TransferWizardDialog({
         <WizardSection title="Agendamento" hint="Escolha a data da transferência e adicione uma descrição interna se quiser.">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <Label>Agendar para</Label>
+              <Label className="text-xs font-medium text-slate-600">Agendar para</Label>
               <Input
                 type="date"
                 min={new Date().toISOString().slice(0, 10)}
@@ -1590,16 +1611,18 @@ export function TransferWizardDialog({
                 onChange={(event) => {
                   setForm((current) => ({ ...current, scheduleDate: event.target.value }));
                 }}
+                className={WIZARD_CONTROL_CLASS}
               />
             </div>
             <div className="space-y-2">
-              <Label>Descrição operacional</Label>
+              <Label className="text-xs font-medium text-slate-600">Descrição operacional</Label>
               <Input
                 value={form.description}
                 onChange={(event) => {
                   setForm((current) => ({ ...current, description: event.target.value }));
                 }}
                 placeholder="Opcional"
+                className={WIZARD_CONTROL_CLASS}
               />
             </div>
           </div>
@@ -1607,7 +1630,7 @@ export function TransferWizardDialog({
       ) : null}
 
       {step === 5 ? (
-        <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-none">
           <div className="space-y-5">
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
               <div className="min-w-0">
@@ -1670,7 +1693,7 @@ export function TransferWizardDialog({
                   className={cn(
                     'flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all',
                     savePixKey
-                      ? 'border-brand-primary/40 bg-brand-primary/5'
+                      ? 'border-primary/40 bg-primary/5'
                       : 'border-slate-100 bg-slate-50 hover:border-slate-200 hover:bg-white',
                   )}
                 >
@@ -1678,7 +1701,7 @@ export function TransferWizardDialog({
                     className={cn(
                       'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-all',
                       savePixKey
-                        ? 'border-brand-primary bg-brand-primary'
+                        ? 'border-primary bg-primary'
                         : 'border-slate-300 bg-white',
                     )}
                   >
@@ -1688,7 +1711,7 @@ export function TransferWizardDialog({
                       </svg>
                     ) : null}
                   </span>
-                  <span className={cn('text-sm font-medium', savePixKey ? 'text-brand-primary' : 'text-slate-700')}>
+                  <span className={cn('text-sm font-medium', savePixKey ? 'text-primary' : 'text-slate-700')}>
                     Salvar esta chave Pix para reutilizar depois
                   </span>
                 </button>
@@ -1707,7 +1730,7 @@ export function TransferWizardDialog({
               </div>
             ) : null}
           </div>
-        </div>
+        </section>
       ) : null}
       </WizardDialogFrame>
 
@@ -1739,15 +1762,16 @@ export function TransferWizardDialog({
                   if (currentPasswordError) setCurrentPasswordError(null);
                 }}
                 disabled={submitting}
+                className={WIZARD_CONTROL_CLASS}
               />
               {currentPasswordError ? <p className="text-xs text-destructive">{currentPasswordError}</p> : null}
             </div>
 
-            <DialogFooter className="gap-2 sm:justify-end">
-              <Button type="button" variant="outline" onClick={() => handlePasswordDialogOpenChange(false)} disabled={submitting}>
+            <DialogFooter className="gap-2 pt-2 sm:justify-end">
+              <Button type="button" variant="outline" className="h-10 rounded-lg" onClick={() => handlePasswordDialogOpenChange(false)} disabled={submitting}>
                 Voltar
               </Button>
-              <Button type="submit" disabled={submitting} data-testid="confirm-transfer-password">
+              <Button type="submit" className="h-10 rounded-lg" disabled={submitting} data-testid="confirm-transfer-password">
                 {submitting ? 'Validando...' : 'Confirmar e solicitar'}
               </Button>
             </DialogFooter>

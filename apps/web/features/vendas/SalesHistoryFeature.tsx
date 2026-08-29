@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { formatFirstLast } from '@alusa/lib/client';
@@ -9,7 +9,7 @@ import type { StoreSaleDTO } from '@alusa/finance';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import Pagination from '@/components/layout/Pagination';
 import TableLayout from '@/components/layout/TableLayout';
-import { Filter, Refresh, RotateCcw, Search, Warning } from '@/components/icons/icons';
+import { Filter, Search, ShoppingBag } from '@/components/icons/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -31,7 +31,6 @@ import {
   formatCurrencyBRL,
   formatDateBR,
   formatSaleNumber,
-  getSalesOperationalSummary,
   listSales,
   SALE_FINALIZATION_LABELS,
   SALE_PAYMENT_METHOD_LABELS,
@@ -39,16 +38,9 @@ import {
   type SaleFinalizationValue,
 } from './services/sales-service';
 
-const OPERATIONAL_ISSUE_LABELS = {
-  SALE_PENDING_TOO_LONG: 'Venda pendente há muito tempo',
-  CHARGE_NOT_MATERIALIZED: 'Cobrança não criada',
-  INSTALLMENT_CHARGE_PENDING: 'Parcelas ainda não materializadas',
-  PAID_RESERVED_STOCK: 'Pagamento recebido, estoque reservado',
-} as const;
-
 const PAGE_SIZE = 10;
 const TOOLBAR_TRIGGER_CLASS =
-  'h-10 rounded-xl border-slate-200 bg-white text-slate-700 shadow-none';
+  'h-10 rounded-lg border-slate-200 bg-white text-slate-700 shadow-none';
 const FILTER_LABEL_CLASS = 'text-[11px] font-medium uppercase tracking-wide text-slate-400';
 const STATUS_LABELS: Record<CurrentSaleStatusFilter, string> = {
   TODOS: 'Todos os status',
@@ -114,9 +106,6 @@ export function SalesHistoryFeature() {
   );
   const [fromDate, setFromDate] = useState<Date | undefined>(undefined);
   const [toDate, setToDate] = useState<Date | undefined>(undefined);
-  const [operationalSummary, setOperationalSummary] = useState<Awaited<ReturnType<typeof getSalesOperationalSummary>> | null>(null);
-  const [operationalLoading, setOperationalLoading] = useState(true);
-
   const deferredSearch = useDeferredValue(search);
   const activeFilters = useMemo(
     () =>
@@ -127,24 +116,6 @@ export function SalesHistoryFeature() {
   );
   const hasSearch = deferredSearch.trim().length > 0;
   const hasRefinements = hasSearch || activeFilters > 0;
-
-  const loadOperationalSummary = useCallback(async () => {
-    setOperationalLoading(true);
-    try {
-      setOperationalSummary(await getSalesOperationalSummary({ staleAfterMinutes: 30, limit: 10 }));
-    } catch (error) {
-      toast.error({
-        title: 'Erro ao carregar operação',
-        description: (error as Error).message,
-      });
-    } finally {
-      setOperationalLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadOperationalSummary();
-  }, [loadOperationalSummary]);
 
   useEffect(() => {
     const load = async () => {
@@ -181,7 +152,7 @@ export function SalesHistoryFeature() {
       {
         id: 'numero',
         header: 'Venda',
-        width: 'min-w-0 lg:w-[14%]',
+        width: 'min-w-0 lg:w-[12%]',
         align: 'left',
         render: (sale) => (
           <div className="min-w-0">
@@ -210,7 +181,7 @@ export function SalesHistoryFeature() {
       {
         id: 'data',
         header: 'Data',
-        width: 'lg:w-[12%]',
+        width: 'lg:w-[10%]',
         align: 'left',
         headerClassName: 'hidden lg:table-cell',
         cellClassName: 'hidden lg:table-cell',
@@ -219,21 +190,28 @@ export function SalesHistoryFeature() {
       {
         id: 'produto',
         header: 'Produto',
-        width: 'lg:w-[18%]',
-        align: 'left',
-        headerClassName: 'hidden lg:table-cell',
-        cellClassName: 'hidden lg:table-cell',
-        render: (sale) => <span className="text-slate-700">{formatProductSummary(sale)}</span>,
-      },
-      {
-        id: 'cliente',
-        header: 'Cliente',
-        width: 'lg:w-[17%]',
+        width: 'lg:w-[15%]',
         align: 'left',
         headerClassName: 'hidden lg:table-cell',
         cellClassName: 'hidden lg:table-cell',
         render: (sale) => (
-          <span className="font-medium text-slate-900">
+          <span className="block truncate text-slate-700" title={formatProductSummary(sale)}>
+            {formatProductSummary(sale)}
+          </span>
+        ),
+      },
+      {
+        id: 'cliente',
+        header: 'Cliente',
+        width: 'lg:w-[15%]',
+        align: 'left',
+        headerClassName: 'hidden lg:table-cell',
+        cellClassName: 'hidden lg:table-cell',
+        render: (sale) => (
+          <span
+            className="block truncate font-medium text-slate-900"
+            title={sale.customer.displayName}
+          >
             {formatFirstLast(sale.customer.displayName) || sale.customer.displayName}
           </span>
         ),
@@ -241,11 +219,15 @@ export function SalesHistoryFeature() {
       {
         id: 'pagamento',
         header: 'Pagamento',
-        width: 'lg:w-[18%]',
+        width: 'lg:w-[20%]',
         align: 'left',
         headerClassName: 'hidden lg:table-cell',
         cellClassName: 'hidden lg:table-cell',
-        render: (sale) => <span className="text-slate-700">{formatPaymentSummary(sale)}</span>,
+        render: (sale) => (
+          <span className="block truncate text-slate-700" title={formatPaymentSummary(sale)}>
+            {formatPaymentSummary(sale)}
+          </span>
+        ),
       },
       {
         id: 'total',
@@ -261,7 +243,7 @@ export function SalesHistoryFeature() {
       {
         id: 'lucro',
         header: 'Lucro',
-        width: 'lg:w-[10%]',
+        width: 'lg:w-[8%]',
         align: 'right',
         headerClassName: 'hidden lg:table-cell',
         cellClassName: 'hidden lg:table-cell',
@@ -286,7 +268,7 @@ export function SalesHistoryFeature() {
       {
         id: 'status',
         header: 'Status',
-        width: 'w-[36%] max-lg:shrink-0 lg:w-[11%]',
+        width: 'w-[36%] max-lg:shrink-0 lg:w-[10%]',
         align: 'left',
         headerClassName: 'max-lg:px-2',
         cellClassName: 'max-lg:px-2',
@@ -296,50 +278,42 @@ export function SalesHistoryFeature() {
     [],
   );
 
-  const clearFilters = () => {
-    setSearch('');
-    setStatus('TODOS');
-    setFinalizationType('TODOS');
-    setFromDate(undefined);
-    setToDate(undefined);
-    setPage(1);
-  };
-
   return (
-    <>
-      <TableLayout
-        title="Histórico da Loja"
-        subtitle="Acompanhe os registros da Loja, filtre por período e abra os detalhes sempre que precisar."
-        actions={
+    <TableLayout
+      title="Histórico da Loja"
+      subtitle="Acompanhe as vendas realizadas e encontre rapidamente os detalhes de cada cobrança."
+      actions={
+        <>
           <Button
             disabled={billingLoading || !canWrite}
-            className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 lg:w-auto"
+            className="h-10 w-full rounded-lg bg-primary px-4 text-white shadow-none hover:bg-primary/90 lg:w-auto"
             onClick={() => {
               window.location.assign('/vendas/nova');
             }}
           >
+            <ShoppingBag className="mr-2 h-4 w-4" />
             Nova venda
           </Button>
-        }
-        filtersBar={
-          <div className="flex w-full flex-col gap-3">
-            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="relative min-w-0 w-full flex-1 lg:max-w-[420px]">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <Input
-                  placeholder="Buscar por cliente, número da venda ou produto"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  className="h-10 rounded-xl border-slate-200 bg-white pl-10 shadow-none"
-                />
-              </div>
-
-              <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:flex-nowrap sm:items-center sm:justify-end sm:gap-2 sm:ml-auto">
+        </>
+      }
+      filtersBar={
+        <div className="flex w-full justify-end">
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+            <div className="relative min-w-0 w-full sm:w-[min(360px,42vw)] lg:w-[360px]">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                placeholder="Buscar cliente, venda ou produto"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                className="h-10 rounded-lg border-slate-200 bg-white pl-10 shadow-none placeholder:text-slate-400"
+              />
+            </div>
+            <div className="grid w-full grid-cols-1 sm:w-auto">
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button
                       variant="outline"
-                      className="h-10 w-full min-w-0 shrink-0 rounded-xl border-slate-200 px-4 shadow-none sm:w-auto"
+                      className="h-10 w-full min-w-0 shrink-0 rounded-lg border-slate-200 px-4 shadow-none sm:w-auto"
                     >
                       <Filter className="mr-2 h-4 w-4" />
                       {activeFilters > 0 ? `Filtros (${activeFilters})` : 'Filtros'}
@@ -347,7 +321,7 @@ export function SalesHistoryFeature() {
                   </PopoverTrigger>
                   <PopoverContent
                     align="end"
-                    className="w-[360px] rounded-2xl border-slate-200 p-4"
+                    className="w-[min(360px,calc(100vw-2rem))] rounded-xl border-slate-200 p-5"
                   >
                     <div className="space-y-4">
                       <div>
@@ -357,8 +331,8 @@ export function SalesHistoryFeature() {
                         <div className="mt-1 text-xs text-slate-500">
                           Ajuste status, finalização e período para encontrar a venda certa mais
                           rápido.
-                        </div>
-                      </div>
+            </div>
+          </div>
 
                       <div className="space-y-3">
                         <div className="space-y-2">
@@ -409,7 +383,7 @@ export function SalesHistoryFeature() {
                               onChange={setFromDate}
                               variant="input"
                               placeholder="Data inicial"
-                              className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
+                          className="h-10 rounded-lg border-slate-200 bg-white shadow-none"
                             />
                           </div>
 
@@ -420,39 +394,16 @@ export function SalesHistoryFeature() {
                               onChange={setToDate}
                               variant="input"
                               placeholder="Data final"
-                              className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
+                              className="h-10 rounded-lg border-slate-200 bg-white shadow-none"
                             />
                           </div>
                         </div>
                       </div>
 
-                      <div className="flex justify-end">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="h-9 rounded-xl border-slate-200 px-3 shadow-none"
-                          onClick={clearFilters}
-                          disabled={!hasRefinements}
-                        >
-                          <RotateCcw className="mr-2 h-4 w-4" />
-                          Limpar filtros
-                        </Button>
-                      </div>
                     </div>
                   </PopoverContent>
                 </Popover>
 
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="col-span-2 h-10 w-full rounded-xl border-slate-200 px-4 shadow-none sm:col-span-1 sm:w-auto"
-                  onClick={clearFilters}
-                  disabled={!hasRefinements}
-                >
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  Limpar
-                </Button>
-              </div>
             </div>
 
             {hasRefinements ? (
@@ -460,7 +411,7 @@ export function SalesHistoryFeature() {
                 {hasSearch ? (
                   <Badge
                     variant="outline"
-                    className="rounded-full px-2.5 py-1 text-[11px] font-medium text-slate-600"
+                    className="rounded-full border-[#e6d6fb] bg-[#f8f3fd] px-2.5 py-1 text-[11px] font-medium text-[#4b217a]"
                   >
                     Busca: {deferredSearch}
                   </Badge>
@@ -468,7 +419,7 @@ export function SalesHistoryFeature() {
                 {status !== 'TODOS' ? (
                   <Badge
                     variant="outline"
-                    className="rounded-full px-2.5 py-1 text-[11px] font-medium text-slate-600"
+                    className="rounded-full border-[#e6d6fb] bg-[#f8f3fd] px-2.5 py-1 text-[11px] font-medium text-[#4b217a]"
                   >
                     Status: {STATUS_LABELS[status]}
                   </Badge>
@@ -476,7 +427,7 @@ export function SalesHistoryFeature() {
                 {finalizationType !== 'TODOS' ? (
                   <Badge
                     variant="outline"
-                    className="rounded-full px-2.5 py-1 text-[11px] font-medium text-slate-600"
+                    className="rounded-full border-[#e6d6fb] bg-[#f8f3fd] px-2.5 py-1 text-[11px] font-medium text-[#4b217a]"
                   >
                     Finalização: {FINALIZATION_FILTER_LABELS[finalizationType]}
                   </Badge>
@@ -484,7 +435,7 @@ export function SalesHistoryFeature() {
                 {fromDate ? (
                   <Badge
                     variant="outline"
-                    className="rounded-full px-2.5 py-1 text-[11px] font-medium text-slate-600"
+                    className="rounded-full border-[#e6d6fb] bg-[#f8f3fd] px-2.5 py-1 text-[11px] font-medium text-[#4b217a]"
                   >
                     De: {formatDateBR(fromDate.toISOString())}
                   </Badge>
@@ -492,7 +443,7 @@ export function SalesHistoryFeature() {
                 {toDate ? (
                   <Badge
                     variant="outline"
-                    className="rounded-full px-2.5 py-1 text-[11px] font-medium text-slate-600"
+                    className="rounded-full border-[#e6d6fb] bg-[#f8f3fd] px-2.5 py-1 text-[11px] font-medium text-[#4b217a]"
                   >
                     Até: {formatDateBR(toDate.toISOString())}
                   </Badge>
@@ -500,105 +451,38 @@ export function SalesHistoryFeature() {
               </div>
             ) : null}
           </div>
-        }
-        footer={<Pagination total={total} page={page} pageSize={PAGE_SIZE} onChange={setPage} />}
-      >
-        <section
-          aria-labelledby="sales-operational-title"
-          className="mb-4 rounded-xl border border-amber-200 bg-amber-50/60 p-4"
-        >
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex gap-3">
-              <Warning className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-              <div>
-                <h2 id="sales-operational-title" className="text-sm font-semibold text-slate-900">
-                  Visão operacional
-                </h2>
-                <p className="mt-1 text-xs text-slate-600">
-                  Pendências com mais de 30 minutos que podem exigir conferência ou reconciliação.
-                </p>
-              </div>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-9 rounded-xl border-amber-200 bg-white px-3 shadow-none"
-              onClick={() => void loadOperationalSummary()}
-              disabled={operationalLoading}
-            >
-              <Refresh className={operationalLoading ? 'animate-spin' : undefined} />
-              Atualizar
-            </Button>
-          </div>
-
-          {operationalLoading && !operationalSummary ? (
-            <p className="mt-4 text-xs text-slate-500">Carregando pendências…</p>
-          ) : operationalSummary && operationalSummary.totalIssues > 0 ? (
-            <>
-              <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
-                {(Object.entries(OPERATIONAL_ISSUE_LABELS) as Array<
-                  [keyof typeof OPERATIONAL_ISSUE_LABELS, string]
-                >).map(([code, label]) => (
-                  <div key={code} className="rounded-lg border border-amber-100 bg-white px-3 py-2">
-                    <div className="text-lg font-semibold text-slate-900">
-                      {operationalSummary.counts[code]}
-                    </div>
-                    <div className="text-[11px] leading-4 text-slate-500">{label}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-3 space-y-2">
-                {operationalSummary.issues.slice(0, 5).map((issue) => (
-                  <button
-                    key={`${issue.saleId}-${issue.issueCode}`}
-                    type="button"
-                    className="flex w-full items-center justify-between gap-3 rounded-lg border border-amber-100 bg-white px-3 py-2 text-left transition-colors hover:bg-amber-50"
-                    onClick={() => router.push(`/vendas/${issue.saleId}`)}
-                  >
-                    <span className="min-w-0 truncate text-xs text-slate-700">
-                      <span className="font-semibold text-slate-900">
-                        {formatSaleNumber(issue.saleNumber)} · {issue.customerName}
-                      </span>{' '}
-                      — {OPERATIONAL_ISSUE_LABELS[issue.issueCode]}
-                    </span>
-                    <span className="shrink-0 text-[11px] font-medium text-amber-700">Abrir</span>
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : operationalSummary ? (
-            <p className="mt-4 text-xs text-emerald-700">Nenhuma pendência operacional encontrada.</p>
-          ) : null}
-        </section>
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-900">Registros da Loja</h2>
-              <p className="mt-1 text-xs text-slate-500">
-                Clique em uma linha para abrir a página completa da venda.
-              </p>
-            </div>
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-400">
-              {total} registro(s)
-            </div>
-          </div>
-          <DataTable
-            columns={columns}
-            data={items}
-            rowKey={(sale) => sale.id}
-            loading={loading}
-            skeletonRows={8}
-            ariaLabel="Histórico da Loja"
-            bodyClassName="[&_td]:py-5"
-            emptyMessage={
-              <div className="px-6 py-12 text-center text-sm text-slate-500">
-                Nenhuma venda encontrada com os filtros atuais.
-              </div>
-            }
-            onRowClick={(sale) => router.push(`/vendas/${sale.id}`)}
-          />
         </div>
-      </TableLayout>
-    </>
+      }
+      footer={<Pagination total={total} page={page} pageSize={PAGE_SIZE} onChange={setPage} />}
+    >
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-6">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">Registros da Loja</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Clique em uma linha para abrir os detalhes completos da venda.
+            </p>
+          </div>
+          <div className="text-xs font-medium uppercase tracking-[0.08em] text-slate-400">
+            {total} registro(s)
+          </div>
+        </div>
+        <DataTable
+          columns={columns}
+          data={items}
+          rowKey={(sale) => sale.id}
+          loading={loading}
+          skeletonRows={8}
+          ariaLabel="Histórico da Loja"
+          bodyClassName="[&_td]:py-4"
+          emptyMessage={
+            <div className="px-6 py-12 text-center text-sm text-slate-500">
+              Nenhuma venda encontrada com os filtros atuais.
+            </div>
+          }
+          onRowClick={(sale) => router.push(`/vendas/${sale.id}`)}
+        />
+      </div>
+    </TableLayout>
   );
 }

@@ -4,7 +4,12 @@ import { notFound } from 'next/navigation';
 import { requireGlobalAdminSessionForPage } from '@/features/global-admin/auth/session.server';
 import { SupportAsaasRepairPanel } from '@/features/support/components/SupportAsaasRepairPanel';
 import { getSupportAccount } from '@/features/support/queries/support-account';
-import { compactId, formatDateTime, maskDocument } from '@/features/support/shared/format';
+import {
+  formatDateTime,
+  maskDocument,
+  supportChargeTitle,
+  supportChargeTrace,
+} from '@/features/support/shared/format';
 import { SupportShell } from '@/features/support/shared/SupportShell';
 import {
   KeyValue,
@@ -137,8 +142,8 @@ export default async function SupportAccountPage({ params }: { params: Promise<{
               <RowLink
                 key={charge.id}
                 href={`/developer/contas/${conta.id}/financeiro`}
-                title={charge.payerName}
-                description={charge.description ?? compactId(charge.asaasPaymentId)}
+                title={supportChargeTitle(charge)}
+                description={supportChargeTrace(charge)}
                 meta={<StatusBadge value={charge.status} />}
               />
             ))}
