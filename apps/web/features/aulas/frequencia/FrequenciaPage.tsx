@@ -5,6 +5,7 @@ import { TZDateMini } from '@date-fns/tz';
 import { addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight, Filter, Search, Users } from '@/components/icons/icons';
+import { cn } from '@/lib/utils';
 
 import TableLayout from '@/components/layout/TableLayout';
 import { Badge } from '@/components/ui/badge';
@@ -19,7 +20,7 @@ import type {
   AttendanceWorkspaceLaunchStateDTO,
   AttendanceWorkspaceTurmaItemDTO,
 } from '@/features/aulas/dtos';
-import { AttendanceHistoryTurmaDialog } from '@/features/aulas/frequencia/components/AttendanceHistoryTurmaDialog';
+import { AttendanceHistoryDetailsDialog } from '@/features/aulas/frequencia/components/AttendanceHistoryDetailsDialog';
 import { AttendanceTurmaDialog } from '@/features/aulas/frequencia/components/AttendanceTurmaDialog';
 import { useAttendance } from '@/features/aulas/frequencia/hooks/use-attendance';
 import { useAttendanceWorkspace } from '@/features/aulas/frequencia/hooks/use-attendance-workspace';
@@ -37,7 +38,7 @@ const tzDefault = DEFAULT_ACCOUNT_TIMEZONE;
 const zNowDefault = new TZDateMini(Date.now(), tzDefault);
 const DEFAULT_START = startOfZonedDayClient(new Date(addDays(zNowDefault, -30).getTime()), tzDefault).toISOString();
 const DEFAULT_END = endOfZonedDayClient(new Date(addDays(zNowDefault, 30).getTime()), tzDefault).toISOString();
-const TOOLBAR_TRIGGER_CLASS = 'h-9 rounded-xl border-slate-200 bg-white';
+const TOOLBAR_TRIGGER_CLASS = 'h-10 rounded-lg border-slate-200 bg-white';
 
 function toZonedDateInputValue(value: string | undefined, timeZone: string) {
   if (!value) return '';
@@ -86,38 +87,35 @@ function AttendanceHistoryRow({
   timeZone: string;
 }) {
   return (
-    <button
-      type="button"
+    <tr
       onClick={() => item.turma && onSelect(item.turma.id)}
-      className="grid w-full gap-4 border-b border-slate-100 px-4 py-4 text-left transition-colors hover:bg-slate-50 lg:grid-cols-[1.5fr_1fr_1fr_auto] lg:px-6"
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          if (item.turma) onSelect(item.turma.id);
+        }
+      }}
+      tabIndex={0}
+      role="button"
+      className="cursor-pointer border-b border-slate-100 text-left transition-colors last:border-b-0 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none"
     >
-      <div className="min-w-0">
-        <div className="truncate text-sm font-semibold text-slate-900">{item.turma?.label ?? 'Turma sem vínculo'}</div>
-        <div className="mt-1 text-xs text-slate-500">
-          Última frequência:{' '}
-          {formatInstantInAccountZone(item.lastLaunchedAt, "dd/MM/yyyy 'às' HH:mm", timeZone, { locale: ptBR })}
-        </div>
-      </div>
-
-      <div className="min-w-0">
-        <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Professor(es)</div>
-        <div className="mt-1 truncate text-sm text-slate-700">
-          {item.professores.map((professor) => professor.label).join(', ') || 'Sem professor'}
-        </div>
-      </div>
-
-      <div className="min-w-0">
-        <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Resumo do período</div>
-        <div className="mt-1 text-sm text-slate-700">
-          {item.summary.recorded} lançamentos • {item.summary.presentes} presentes • {item.summary.faltas} faltas
-        </div>
-      </div>
-
-      <div className="flex flex-col items-stretch justify-between gap-3 lg:flex-row lg:items-center lg:justify-end">
-        <Badge variant="info">{item.occurrenceCount} ocorrência(s)</Badge>
-        <span className="text-xs font-medium text-slate-400">Abrir histórico</span>
-      </div>
-    </button>
+      <td className="max-w-[240px] truncate px-4 py-4 text-sm font-semibold text-slate-900 sm:px-6">
+        {item.turma?.label ?? 'Turma sem vínculo'}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-600 sm:px-6">
+        {formatInstantInAccountZone(item.lastLaunchedAt, "dd/MM/yyyy 'às' HH:mm", timeZone, { locale: ptBR })}
+      </td>
+      <td className="max-w-[220px] truncate px-4 py-4 text-sm text-slate-700 sm:px-6">
+        {item.professores.map((professor) => professor.label).join(', ') || 'Sem professor'}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-700 sm:px-6">{item.summary.recorded}</td>
+      <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-700 sm:px-6">{item.summary.presentes}</td>
+      <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-700 sm:px-6">{item.summary.faltas}</td>
+      <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-700 sm:px-6">{item.occurrenceCount}</td>
+      <td className="whitespace-nowrap px-4 py-4 text-right text-sm font-medium text-[#5c2f91] sm:px-6">
+        Abrir histórico
+      </td>
+    </tr>
   );
 }
 
@@ -133,7 +131,7 @@ function AttendanceTurmaCard({
   const occurrence = item.selectedOccurrence;
 
   return (
-    <Card className="h-full rounded-2xl border-slate-200 bg-white shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
+    <Card className="h-full rounded-xl border-slate-200 bg-white shadow-sm transition-colors hover:border-slate-300">
       <button
         type="button"
         onClick={() => onSelect(item.turma.id)}
@@ -142,7 +140,7 @@ function AttendanceTurmaCard({
         <CardHeader className="space-y-2 border-b border-slate-100 p-5 pb-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <CardTitle className="truncate text-xl font-semibold leading-tight text-slate-900">
+              <CardTitle className="truncate text-lg font-semibold leading-tight text-slate-900">
                 {item.turma.label}
               </CardTitle>
               <p className="mt-2 text-sm text-slate-500">
@@ -156,7 +154,7 @@ function AttendanceTurmaCard({
         </CardHeader>
 
         <CardContent className="p-5 pt-4">
-          <div className="grid gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 p-4 sm:grid-cols-3">
+          <div className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50/80 p-4 sm:grid-cols-3">
             <div>
               <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">Horário</div>
               <div className="mt-1.5 text-sm font-semibold text-slate-900">
@@ -211,12 +209,12 @@ function AttendanceHistoryToolbar({
       <div className="flex flex-wrap items-center justify-end gap-2">
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" className="h-9 rounded-xl border-slate-200 px-3">
+            <Button variant="outline" className="h-10 rounded-lg border-slate-200 px-3">
               <Filter className="mr-2 h-4 w-4" />
               {activeFilters > 0 ? `Filtros (${activeFilters})` : 'Filtros'}
             </Button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="w-[340px] rounded-2xl border-slate-200 p-4">
+          <PopoverContent align="end" className="w-[340px] rounded-xl border-slate-200 p-4">
             <div className="space-y-4">
               <div>
                 <div className="text-sm font-semibold text-slate-900">Filtros do histórico</div>
@@ -293,7 +291,7 @@ function AttendanceHistoryToolbar({
                             : undefined,
                         }))
                       }
-                      className="h-9 rounded-xl border-slate-200"
+                      className="h-10 rounded-lg border-slate-200"
                     />
                   </div>
 
@@ -315,7 +313,7 @@ function AttendanceHistoryToolbar({
                             : undefined,
                         }))
                       }
-                      className="h-9 rounded-xl border-slate-200"
+                      className="h-10 rounded-lg border-slate-200"
                     />
                   </div>
                 </div>
@@ -369,13 +367,13 @@ function AttendanceHistoryContent({
   return (
     <div className="space-y-5">
       {error ? (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-col justify-between gap-3 border-b border-slate-100 px-4 py-5 sm:flex-row sm:items-center sm:px-6">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:flex-row sm:items-center sm:px-6">
           <div>
             <h2 className="text-sm font-semibold text-slate-900">Histórico por turma</h2>
             <p className="mt-1 text-xs text-slate-500">
@@ -394,20 +392,50 @@ function AttendanceHistoryContent({
             Nenhum registro encontrado.
           </div>
         ) : (
-          <div>
-            {items.map((item) => (
-              <AttendanceHistoryRow
-                key={item.turma?.id ?? item.lastLaunchedAt}
-                item={item}
-                onSelect={onSelectedTurmaIdChange}
-                timeZone={timeZone}
-              />
-            ))}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[980px] table-fixed divide-y divide-slate-100">
+              <colgroup>
+                <col className="w-[20%]" />
+                <col className="w-[14%]" />
+                <col className="w-[18%]" />
+                <col className="w-[10%]" />
+                <col className="w-[10%]" />
+                <col className="w-[8%]" />
+                <col className="w-[10%]" />
+                <col className="w-[10%]" />
+              </colgroup>
+              <thead className="bg-gray-50">
+                <tr>
+                  {['Turma', 'Última frequência', 'Professor(es)', 'Lançamentos', 'Presentes', 'Faltas', 'Ocorrências', 'Ações'].map((label, index) => (
+                    <th
+                      key={label}
+                      scope="col"
+                      className={cn(
+                        'px-4 py-3 text-xs font-medium uppercase tracking-wide text-slate-500 sm:px-6',
+                        index === 7 ? 'text-right' : 'text-left',
+                      )}
+                    >
+                      {label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="bg-white">
+                {items.map((item) => (
+                  <AttendanceHistoryRow
+                    key={item.turma?.id ?? item.lastLaunchedAt}
+                    item={item}
+                    onSelect={onSelectedTurmaIdChange}
+                    timeZone={timeZone}
+                  />
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
 
-      <AttendanceHistoryTurmaDialog
+      <AttendanceHistoryDetailsDialog
         open={Boolean(selectedTurmaId)}
         turmaId={selectedTurmaId}
         filters={filters}
@@ -452,18 +480,17 @@ export function FrequenciaPage() {
     <TableLayout
       title="Frequência"
       subtitle="Lance a chamada por turma e navegue entre datas sem sair do padrão operacional da Alusa."
-      className="pr-4 xl:pr-6"
     >
       <div className="space-y-5">
-        <Card className="overflow-hidden rounded-2xl border-slate-200 bg-white shadow-sm">
+        <Card className="overflow-hidden rounded-xl border-slate-200 bg-white shadow-sm">
           <Tabs value={view} onValueChange={(value) => setView(value as 'workspace' | 'history')}>
-            <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-4 py-3 sm:px-6 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-4 py-4 sm:px-6 xl:flex-row xl:items-center xl:justify-between">
               <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
-                <TabsList className="h-9">
-                  <TabsTrigger value="workspace" className="px-4 text-xs">
+                <TabsList className="h-10">
+                  <TabsTrigger value="workspace" className="px-4 text-sm">
                     Lançar frequência
                   </TabsTrigger>
-                  <TabsTrigger value="history" className="px-4 text-xs">
+                  <TabsTrigger value="history" className="px-4 text-sm">
                     Histórico
                   </TabsTrigger>
                 </TabsList>
@@ -485,18 +512,18 @@ export function FrequenciaPage() {
                       value={search}
                       onChange={(event) => setSearch(event.target.value)}
                       placeholder="Buscar turma"
-                      className="h-9 rounded-xl border-slate-200 pl-9"
+                      className="h-10 rounded-lg border-slate-200 pl-9"
                     />
                   </div>
 
                   <div className="flex flex-wrap items-center justify-end gap-2">
-                    <div className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium capitalize text-slate-900 shadow-sm">
+                    <div className="inline-flex h-10 items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium capitalize text-slate-900 shadow-sm">
                       {formatInstantInAccountZone(selectedDate, "dd 'de' MMMM", workspaceTz, { locale: ptBR })}
                     </div>
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-9 rounded-xl border-slate-200"
+                      className="h-10 rounded-lg border-slate-200"
                       onClick={() =>
                         setSelectedDate(startOfZonedDayClient(new Date(), workspaceTz).toISOString())
                       }
@@ -507,7 +534,7 @@ export function FrequenciaPage() {
                       type="button"
                       variant="outline"
                       size="icon"
-                      className="h-9 w-9 rounded-xl border-slate-200"
+                      className="h-10 w-10 rounded-lg border-slate-200"
                       onClick={() => {
                         const z = new TZDateMini(new Date(selectedDate).getTime(), workspaceTz);
                         const shifted = addDays(z, -1);
@@ -522,7 +549,7 @@ export function FrequenciaPage() {
                       type="button"
                       variant="outline"
                       size="icon"
-                      className="h-9 w-9 rounded-xl border-slate-200"
+                      className="h-10 w-10 rounded-lg border-slate-200"
                       onClick={() => {
                         const z = new TZDateMini(new Date(selectedDate).getTime(), workspaceTz);
                         const shifted = addDays(z, 1);
@@ -549,51 +576,53 @@ export function FrequenciaPage() {
 
         {view === 'workspace' ? (
           <>
-          {error ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
-            </div>
-          ) : null}
+            {error ? (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {error}
+              </div>
+            ) : null}
 
-          {workspace?.professorScope.reason === 'PROFESSOR_NOT_LINKED' ? (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-              {workspace.professorScope.message}
-            </div>
-          ) : null}
+            {workspace?.professorScope.reason === 'PROFESSOR_NOT_LINKED' ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                {workspace.professorScope.message}
+              </div>
+            ) : null}
 
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-col justify-between gap-3 border-b border-slate-100 px-4 py-5 sm:flex-row sm:items-center sm:px-6">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-900">Turmas operacionais</h2>
-                <p className="mt-1 text-xs text-slate-500">
-                  Escolha uma turma para lançar a chamada do dia e manter a frequência sempre em dia.
-                </p>
+            <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex flex-col justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:flex-row sm:items-center sm:px-6">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-900">Turmas operacionais</h2>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Escolha uma turma para lançar a chamada do dia e manter a frequência sempre em dia.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                  <Users className="h-3.5 w-3.5" />
+                  {workspace?.items.length ?? 0} turma(s)
+                </div>
               </div>
-              <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-                <Users className="h-3.5 w-3.5" />
-                {workspace?.items.length ?? 0} turma(s)
-              </div>
-            </div>
 
-            {loading ? (
-              <div className="px-6 py-10 text-sm text-slate-500">Carregando turmas...</div>
-            ) : workspace?.items.length ? (
-              <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2 2xl:grid-cols-3">
-                {workspace.items.map((item) => (
-                  <AttendanceTurmaCard
-                    key={item.turma.id}
-                    item={item}
-                    onSelect={setSelectedTurmaId}
-                    timeZone={workspaceTz}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="m-6 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-12 text-center text-sm text-slate-500">
-                Nenhuma turma encontrada para a data e busca selecionadas.
-              </div>
-            )}
-          </div>
+              {loading ? (
+                <div className="flex min-h-[240px] items-center justify-center px-6 py-10 text-sm text-slate-500">
+                  Carregando turmas...
+                </div>
+              ) : workspace?.items.length ? (
+                <div className="grid gap-4 p-4 sm:p-6 lg:grid-cols-2 2xl:grid-cols-3">
+                  {workspace.items.map((item) => (
+                    <AttendanceTurmaCard
+                      key={item.turma.id}
+                      item={item}
+                      onSelect={setSelectedTurmaId}
+                      timeZone={workspaceTz}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="m-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-12 text-center text-sm text-slate-500 sm:m-6">
+                  Nenhuma turma encontrada para a data e busca selecionadas.
+                </div>
+              )}
+            </div>
 
           <AttendanceTurmaDialog
             open={Boolean(selectedTurmaId)}

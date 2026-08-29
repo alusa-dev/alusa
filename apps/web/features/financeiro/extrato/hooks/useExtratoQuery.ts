@@ -11,6 +11,17 @@ const REFRESH_INTERVAL = 30_000;
 export function useExtratoQuery(filters: ExtratoFiltersState) {
   const [data, setData] = useState<ExtratoResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const filterDependencyKey = [
+    filters.startDate,
+    filters.endDate,
+    filters.type.join(','),
+    filters.status.join(','),
+    filters.search,
+    filters.page,
+    filters.pageSize,
+    filters.sort,
+    filters.direction,
+  ].join('|');
 
   const { isInitialLoading, isRefreshing, refresh } = useFinanceListLoad(
     async ({ signal }) => {
@@ -28,11 +39,12 @@ export function useExtratoQuery(filters: ExtratoFiltersState) {
         },
         { signal },
       );
+      if (signal.aborted) return;
       setData(result);
       setError(null);
     },
     {
-      deps: [filters],
+      deps: [filterDependencyKey],
       intervalMs: REFRESH_INTERVAL,
       minIntervalMs: 8_000,
     },

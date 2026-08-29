@@ -25,7 +25,7 @@ const DEFAULTS: ExtratoFiltersState = {
   page: 1,
   pageSize: 20,
   sort: 'date',
-  direction: 'desc',
+  direction: 'asc',
 };
 
 function parseFiltersFromParams(params: URLSearchParams): ExtratoFiltersState {
@@ -39,7 +39,7 @@ function parseFiltersFromParams(params: URLSearchParams): ExtratoFiltersState {
     page: Math.max(1, Number(params.get('page') ?? 1)),
     pageSize: Math.max(1, Math.min(100, Number(params.get('pageSize') ?? 20))),
     sort: (params.get('sort') ?? 'date') as ExtratoQueryInput['sort'],
-    direction: (params.get('direction') ?? 'desc') as ExtratoQueryInput['direction'],
+    direction: (params.get('direction') ?? 'asc') as ExtratoQueryInput['direction'],
   };
 }
 
@@ -54,7 +54,9 @@ function filtersToParams(filters: ExtratoFiltersState): URLSearchParams {
   if (filters.page > 1) params.set('page', String(filters.page));
   if (filters.pageSize !== 20) params.set('pageSize', String(filters.pageSize));
   if (filters.sort !== 'date') params.set('sort', filters.sort);
-  if (filters.direction !== 'desc') params.set('direction', filters.direction);
+  // A direção precisa permanecer explícita: sem o parâmetro, a tela usa
+  // "Mais antigo" como padrão e uma escolha por "Mais recente" seria perdida.
+  params.set('direction', filters.direction);
 
   return params;
 }

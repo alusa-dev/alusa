@@ -1,86 +1,69 @@
 'use client';
 
-import React from 'react';
 import { Eye } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { CalendarDaysIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import type { LedgerEntry } from '../dtos';
 import {
   abbreviateBankName,
   extratoMobileMethodLine,
+  formatExtratoDescription,
   formatCurrency,
   formatDate,
   formatStatusLabel,
-  formatTypeLabel,
   transferDocumentForList,
 } from '../utils/extrato-formatters';
-import { getTypeBadgeVariant, getStatusBadgeVariant } from '../utils/extrato-badges';
+import { getStatusBadgeVariant } from '../utils/extrato-badges';
 import { ExtratoEmptyState } from './ExtratoEmptyState';
 
 interface ExtratoTableProps {
   entries: LedgerEntry[];
   loading?: boolean;
   hasActiveFilters?: boolean;
-  onSelect: (entry: LedgerEntry) => void;
+  onSelect: (_entry: LedgerEntry) => void;
 }
 
 export function ExtratoTable({ entries, loading, hasActiveFilters, onSelect }: ExtratoTableProps) {
-  const relatedTransferFees = buildRelatedTransferFeeMap(entries);
-
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-100">
+      <table className="w-full min-w-[900px] table-fixed divide-y divide-gray-100">
         <thead className="hidden lg:table-header-group">
           <tr className="bg-gray-50">
             <th
               scope="col"
-              className="px-3 py-3 text-left text-xs font-medium tracking-wider text-gray-500 uppercase lg:px-6 lg:py-3"
-            >
-              Cliente
-            </th>
-            <th
-              scope="col"
-              className="hidden px-6 py-3 text-left text-xs font-medium tracking-wider text-gray-500 uppercase lg:table-cell lg:w-[160px]"
-            >
-              Cobrança
-            </th>
-            <th
-              scope="col"
-              className="hidden px-6 py-3 text-left text-xs font-medium tracking-wider text-gray-500 uppercase lg:table-cell"
+              className="w-[10%] px-4 py-3 text-left text-xs font-medium tracking-wider text-gray-500 uppercase lg:px-6"
             >
               Data
             </th>
             <th
               scope="col"
-              className="hidden px-6 py-3 text-right text-xs font-medium tracking-wider text-gray-500 uppercase lg:table-cell"
+              className="hidden w-[16%] px-6 py-3 text-left text-xs font-medium tracking-wider text-gray-500 uppercase lg:table-cell"
             >
-              Valor
+              Transação
             </th>
             <th
               scope="col"
-              className="hidden px-6 py-3 text-right text-xs font-medium tracking-wider text-gray-500 uppercase lg:table-cell"
+              className="hidden w-[46%] px-6 py-3 text-left text-xs font-medium tracking-wider text-gray-500 uppercase lg:table-cell"
             >
-              Taxa
+              Descrição
             </th>
             <th
               scope="col"
-              className="hidden w-[130px] px-6 py-3 text-center text-xs font-medium tracking-wider text-gray-500 uppercase lg:table-cell"
+              className="hidden w-[14%] px-6 py-3 text-right text-xs font-medium tracking-wider text-gray-500 uppercase lg:table-cell"
             >
-              Tipo
+              Valor (R$)
             </th>
             <th
               scope="col"
-              className="hidden w-[120px] px-6 py-3 text-center text-xs font-medium tracking-wider text-gray-500 uppercase lg:table-cell"
+              className="hidden w-[14%] px-6 py-3 text-right text-xs font-medium tracking-wider text-gray-500 uppercase lg:table-cell"
             >
-              Status
+              Saldo (R$)
             </th>
-            <th scope="col" className="hidden w-9 px-2 py-3 lg:table-cell lg:w-[36px] lg:px-4" />
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200 bg-white">
           {loading && (
             <tr>
-              <td className="px-6 py-8 text-center text-gray-500" colSpan={8}>
+              <td className="px-6 py-8 text-center text-gray-500" colSpan={5}>
                 <div className="flex items-center justify-center gap-2">
                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
                   Carregando...
@@ -90,13 +73,14 @@ export function ExtratoTable({ entries, loading, hasActiveFilters, onSelect }: E
           )}
           {!loading && entries.length === 0 && (
             <tr>
-              <td colSpan={8} className="px-6 py-4 text-center text-gray-500">
+              <td colSpan={5} className="px-6 py-4 text-center text-gray-500">
                 <ExtratoEmptyState hasActiveFilters={hasActiveFilters} />
               </td>
             </tr>
           )}
           {entries.map((entry) => {
             const isPositive = entry.grossValue >= 0;
+            const transactionReference = formatTransactionReference(entry);
             const displayName = formatClientName(resolveDisplayCustomer(entry));
             const maskedDoc = transferDocumentForList(entry.metadata?.transferRecipientDocumentMasked);
             const bankFull = entry.metadata?.transferRecipientBank ?? resolveDisplayReference(entry);
@@ -120,7 +104,7 @@ export function ExtratoTable({ entries, loading, hasActiveFilters, onSelect }: E
                   }
                 }}
               >
-                <td className="px-3 py-3 text-sm text-gray-700 sm:py-4 lg:px-6">
+                <td className="px-3 py-3 text-sm text-gray-700 sm:py-4 lg:hidden lg:px-6">
                   <div className="flex items-stretch gap-3">
                     <span
                       className={`mt-1.5 hidden h-2 w-2 shrink-0 self-start rounded-full lg:inline-flex ${isPositive ? 'bg-emerald-500' : 'bg-rose-500'}`}
@@ -178,31 +162,26 @@ export function ExtratoTable({ entries, loading, hasActiveFilters, onSelect }: E
                     </div>
                   </div>
                 </td>
-                <td className="hidden max-w-[160px] truncate whitespace-nowrap px-6 py-4 text-sm text-gray-500 lg:table-cell">
-                  {resolveDisplayReference(entry)}
+                <td className="hidden whitespace-nowrap px-4 py-4 text-sm text-gray-600 lg:table-cell lg:px-6">
+                  {formatDate(entry.date)}
                 </td>
-                <td className="hidden whitespace-nowrap px-6 py-4 text-sm text-gray-500 lg:table-cell">
-                  <div className="flex items-center gap-2">
-                    <CalendarDaysIcon className="h-4 w-4 text-gray-400" />
-                    {formatDate(entry.date)}
-                  </div>
+                <td
+                  className="hidden max-w-0 truncate whitespace-nowrap px-6 py-4 font-mono text-[11px] tracking-tight text-gray-500 lg:table-cell"
+                  title={transactionReference !== '—' ? transactionReference : undefined}
+                  aria-label={`ID da transação: ${transactionReference}`}
+                >
+                  {transactionReference}
+                </td>
+                <td className="hidden min-w-0 truncate px-6 py-4 text-sm text-gray-700 lg:table-cell" title={entry.description}>
+                  <span className="block truncate font-medium text-gray-900">{formatExtratoDescription(entry.description)}</span>
                 </td>
                 <td className="hidden whitespace-nowrap px-6 py-4 text-right text-sm lg:table-cell">
                   <span className={`font-medium ${isPositive ? 'text-emerald-600' : 'text-red-600'}`}>
                     {amountText}
                   </span>
                 </td>
-                <td className="hidden whitespace-nowrap px-6 py-4 text-right text-sm text-gray-500 lg:table-cell">
-                  {formatFee(entry, relatedTransferFees)}
-                </td>
-                <td className="hidden whitespace-nowrap px-6 py-4 text-center lg:table-cell">
-                  <Badge variant={getTypeBadgeVariant(entry.type)}>{formatTypeLabel(entry.type)}</Badge>
-                </td>
-                <td className="hidden whitespace-nowrap px-6 py-4 text-center lg:table-cell">
-                  <Badge variant={getStatusBadgeVariant(entry.status)}>{statusLabel}</Badge>
-                </td>
-                <td className="hidden px-2 py-4 text-right text-slate-300 transition-colors group-hover:text-slate-500 lg:table-cell lg:px-4">
-                  <ChevronRightIcon className="h-4 w-4" />
+                <td className="hidden whitespace-nowrap px-6 py-4 text-right text-sm font-medium text-emerald-700 lg:table-cell">
+                  {entry.balanceAfter != null ? formatCurrency(entry.balanceAfter) : '—'}
                 </td>
               </tr>
             );
@@ -226,35 +205,13 @@ function resolveDisplayReference(entry: LedgerEntry): string {
   );
 }
 
-function buildRelatedTransferFeeMap(entries: LedgerEntry[]): Map<string, number> {
-  const feeMap = new Map<string, number>();
-
-  for (const entry of entries) {
-    const transferId = entry.transferId?.trim();
-    const rawCategory = entry.metadata?.rawCategory;
-    if (!transferId) continue;
-    if (entry.type !== 'TAXA') continue;
-    if (rawCategory !== 'TRANSFER_FEE' && rawCategory !== 'PIX_FEE') continue;
-
-    feeMap.set(transferId, (feeMap.get(transferId) ?? 0) + Math.abs(entry.grossValue));
-  }
-
-  return feeMap;
-}
-
-function formatFee(entry: LedgerEntry, relatedTransferFees: Map<string, number>): string {
-  if (entry.fee > 0) {
-    return formatCurrency(entry.fee, { absolute: true });
-  }
-
-  if (entry.type === 'TRANSFERENCIA' && entry.transferId) {
-    const relatedFee = relatedTransferFees.get(entry.transferId);
-    if (relatedFee && relatedFee > 0) {
-      return formatCurrency(relatedFee, { absolute: true });
-    }
-  }
-
-  return '—';
+function formatTransactionReference(entry: LedgerEntry): string {
+  return entry.externalId
+    ?? entry.paymentId
+    ?? entry.transferId
+    ?? entry.externalReference
+    ?? entry.id
+    ?? '—';
 }
 
 function formatClientName(name: string | null | undefined): string {

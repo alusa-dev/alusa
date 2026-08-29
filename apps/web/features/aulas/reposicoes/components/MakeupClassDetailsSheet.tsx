@@ -99,7 +99,7 @@ export function MakeupClassDetailsSheet({
         <div className="space-y-5 px-6 py-6">
           {loading ? <div className="text-sm text-slate-500">Carregando reposição...</div> : null}
           {error ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {error}
             </div>
           ) : null}
@@ -111,7 +111,7 @@ export function MakeupClassDetailsSheet({
                 <Badge variant="outline">{item.scope}</Badge>
               </div>
 
-              <div className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+              <div className="grid gap-4 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
                 <div>
                   <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Aluno</div>
                   <div className="mt-1 text-sm text-slate-900">{item.aluno?.label ?? 'Reposição coletiva'}</div>
@@ -152,7 +152,7 @@ export function MakeupClassDetailsSheet({
           {item && item.status === 'AGENDADA' ? (
             <Button
               variant="outline"
-              className="rounded-xl"
+              className="h-10 rounded-lg"
               onClick={() => handleUpdateStatus('REALIZADA')}
               disabled={updatingStatus !== null}
               data-testid="makeup-mark-realizada"
@@ -163,7 +163,7 @@ export function MakeupClassDetailsSheet({
           {item && item.status !== 'CANCELADA' ? (
             <Button
               variant="outline"
-              className="rounded-xl text-rose-700"
+              className="h-10 rounded-lg text-rose-700"
               onClick={() => handleUpdateStatus('CANCELADA')}
               disabled={updatingStatus !== null}
               data-testid="makeup-cancel"
@@ -174,13 +174,13 @@ export function MakeupClassDetailsSheet({
           {item ? (
             <Button
               variant="outline"
-              className="rounded-xl"
+              className="h-10 rounded-lg"
               onClick={() => router.push(`/aulas/agenda?turmaId=${encodeURIComponent(item.turmaDestino.id)}`)}
             >
               Abrir agenda
             </Button>
           ) : null}
-          <Button variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" className="h-10 rounded-lg" onClick={() => onOpenChange(false)}>
             Fechar
           </Button>
         </SheetFooter>

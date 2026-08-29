@@ -19,7 +19,7 @@ import { Filter, Plus } from '@/components/icons/icons';
 const ALL = '__ALL__';
 const DEFAULT_START = startOfDay(subDays(new Date(), 30)).toISOString();
 const DEFAULT_END = endOfDay(addDays(new Date(), 30)).toISOString();
-const TRIGGER_CLASS = 'h-9 rounded-xl border-slate-200 bg-white';
+const TRIGGER_CLASS = 'h-10 rounded-lg border-slate-200 bg-white';
 
 function toDateInputValue(value?: string) {
   if (!value) return '';
@@ -46,7 +46,7 @@ function MakeupRow({
       data-testid="makeup-row"
       data-makeup-id={item.id}
       data-origin-title={item.eventoOrigem.title}
-      className="grid w-full gap-3 border-b border-slate-100 px-5 py-4 text-left transition-colors hover:bg-slate-50 md:grid-cols-[1.1fr_1.1fr_1fr_0.8fr]"
+      className="grid w-full gap-4 border-b border-slate-100 px-4 py-4 text-left transition-colors hover:bg-slate-50 sm:px-6 md:grid-cols-[1.1fr_1.1fr_1fr_0.8fr]"
     >
       <div className="min-w-0">
         <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Origem</div>
@@ -108,17 +108,17 @@ export function ReposicoesPage() {
   }
 
   return (
-    <div className="space-y-4 pr-4 xl:pr-6">
-      <div className="px-1">
+    <div className="space-y-5">
+      <div>
         <h1 className="text-[24px] font-semibold tracking-tight text-slate-900">Reposições</h1>
         <p className="mt-1 text-sm text-slate-500">
           Registre compensações sem quebrar a agenda base da turma e mantenha origem e destino vinculados.
         </p>
       </div>
 
-      <Card className="overflow-hidden rounded-2xl border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-6 py-3">
-        <div className="flex items-center justify-between gap-4">
+      <Card className="overflow-hidden rounded-xl border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-4 py-4 sm:px-6">
+        <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
           <div className="text-sm font-semibold text-slate-900">Painel operacional</div>
           <div className="flex items-center gap-2">
             <Popover>
@@ -133,7 +133,7 @@ export function ReposicoesPage() {
                   )}
                 </Button>
               </PopoverTrigger>
-              <PopoverContent align="end" className="w-[320px] rounded-2xl border-slate-200 p-4">
+              <PopoverContent align="end" className="w-[320px] rounded-xl border-slate-200 p-4">
                 <div className="space-y-3">
                   <div>
                     <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400">
@@ -254,7 +254,7 @@ export function ReposicoesPage() {
 
             <Button
               size="sm"
-              className="h-9 rounded-xl bg-brand-accent text-xs text-white hover:bg-brand-accent/90"
+              className="h-10 rounded-lg bg-[#5c2f91] px-4 text-sm text-white hover:bg-[#4b217a]"
               onClick={() => setCreateOpen(true)}
               data-testid="makeup-create-open"
               disabled={loading || !data}
@@ -265,7 +265,7 @@ export function ReposicoesPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4 text-xs text-slate-500">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-500">
           <span>
             <span className="font-semibold text-slate-900">{summary.agendadas}</span> agendadas
           </span>
@@ -288,9 +288,13 @@ export function ReposicoesPage() {
         ) : null}
 
         {loading ? (
-          <div className="px-5 py-10 text-sm text-slate-500">Carregando reposições...</div>
+          <div className="flex min-h-[180px] items-center justify-center px-5 py-10 text-sm text-slate-500">
+            Carregando reposições...
+          </div>
         ) : items.length === 0 ? (
-          <div className="px-5 py-10 text-sm text-slate-500">Nenhuma reposição encontrada.</div>
+          <div className="m-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-12 text-center text-sm text-slate-500 sm:m-6">
+            Nenhuma reposição encontrada.
+          </div>
         ) : (
           <div>
             {items.map((item) => (

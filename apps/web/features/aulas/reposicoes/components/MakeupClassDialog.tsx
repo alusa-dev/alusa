@@ -237,7 +237,8 @@ export function MakeupClassDialog({
 
   return (
     <Dialog open={_open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[96vw] max-w-4xl gap-0 overflow-hidden rounded-2xl p-0">
+      <DialogContent fullScreenMobile className="w-[96vw] max-w-4xl gap-0 overflow-hidden rounded-xl p-0">
+        <div className="flex max-h-[76vh] flex-col bg-slate-50/80 max-md:max-h-[100dvh]">
         <DialogHeader className="border-b border-slate-100 px-6 py-5">
           <DialogTitle className="text-lg font-semibold text-slate-900">Nova reposição</DialogTitle>
           <DialogDescription className="text-sm text-slate-500">
@@ -245,7 +246,7 @@ export function MakeupClassDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-[76vh] overflow-y-auto px-6 py-6">
+        <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
           <div className="space-y-5">
             <SectionBlock
               title="Vínculo da reposição"
@@ -564,6 +565,7 @@ export function MakeupClassDialog({
             {submitting ? 'Salvando...' : 'Criar reposição'}
           </Button>
         </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );

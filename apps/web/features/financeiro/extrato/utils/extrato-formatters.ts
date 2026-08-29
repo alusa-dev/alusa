@@ -35,6 +35,18 @@ export function formatPeriodLabel(startDate?: string, endDate?: string): string 
   return 'Período completo';
 }
 
+/**
+ * Organiza a descrição oficial do ledger para leitura na listagem.
+ * O conteúdo continua vindo do Asaas; apenas normalizamos a pontuação visual.
+ */
+export function formatExtratoDescription(description: string): string {
+  return description
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\s+-\s+/g, ' — ')
+    .replace(/\bfatura\s+nr\.\s*/gi, 'fatura nº ');
+}
+
 const TYPE_LABELS: Record<LedgerEntryType, string> = {
   RECEITA: 'Receita',
   TAXA: 'Taxa',

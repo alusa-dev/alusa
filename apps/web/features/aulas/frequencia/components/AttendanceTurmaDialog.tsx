@@ -6,7 +6,6 @@ import { ptBR } from 'date-fns/locale';
 import { useEffect, useMemo, useState } from 'react';
 
 import { Calendar, ChevronLeft, ChevronRight } from '@/components/icons/icons';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -16,6 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { InfoCallout } from '@/components/ui/info-callout';
 import { Textarea } from '@/components/ui/textarea';
 import type { AttendanceStatusDTO } from '@/features/aulas/dtos';
 import {
@@ -69,40 +69,6 @@ function formatTimeWindow(startAt: string, endAt: string, timeZone: string) {
   return `${formatInstantInAccountZone(startAt, 'HH:mm', timeZone)} - ${formatInstantInAccountZone(endAt, 'HH:mm', timeZone)}`;
 }
 
-function toStateLabel(state: string) {
-  switch (state) {
-    case 'EM_ANDAMENTO':
-      return 'Em andamento';
-    case 'PENDENTE':
-      return 'Pendente';
-    case 'REALIZADA':
-      return 'Realizada';
-    case 'CANCELADA':
-      return 'Cancelada';
-    case 'FUTURA':
-      return 'Futura';
-    default:
-      return 'Sem aula';
-  }
-}
-
-function getStateBadgeVariant(state: string) {
-  switch (state) {
-    case 'EM_ANDAMENTO':
-      return 'info';
-    case 'PENDENTE':
-      return 'warning';
-    case 'REALIZADA':
-      return 'success';
-    case 'CANCELADA':
-      return 'neutral';
-    case 'FUTURA':
-      return 'default';
-    default:
-      return 'neutral';
-  }
-}
-
 function SectionCard({
   children,
   className,
@@ -110,12 +76,12 @@ function SectionCard({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <section className={cn('rounded-2xl border border-slate-200 bg-white p-5 shadow-sm', className)}>{children}</section>;
+  return <section className={cn('rounded-xl border border-slate-200 bg-white p-5', className)}>{children}</section>;
 }
 
 function MetaStat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+    <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
       <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">{label}</div>
       <div className="mt-1.5 text-sm font-semibold text-slate-900">{value}</div>
     </div>
@@ -324,9 +290,9 @@ export function AttendanceTurmaDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[96vw] max-w-6xl gap-0 overflow-hidden rounded-3xl p-0">
-        <div className="flex max-h-[88vh] flex-col bg-slate-50/80">
-          <DialogHeader className="border-b border-slate-200 bg-white px-8 py-6">
+      <DialogContent fullScreenMobile className="w-[96vw] max-w-6xl gap-0 overflow-hidden rounded-xl p-0">
+        <div className="flex max-h-[88vh] flex-col bg-slate-50/80 max-md:max-h-[100dvh]">
+          <DialogHeader className="border-b border-slate-200 bg-white px-6 py-5 sm:px-8">
             <DialogTitle className="text-xl font-semibold text-slate-900">
               {workspace?.data.turma.label ?? 'Frequência da turma'}
             </DialogTitle>
@@ -335,9 +301,9 @@ export function AttendanceTurmaDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto px-8 py-6">
-            <div className="space-y-6">
-              <SectionCard className="bg-gradient-to-br from-white to-slate-50/80">
+          <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-8 sm:py-6">
+            <div className="space-y-5">
+              <SectionCard>
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-400">
@@ -348,12 +314,12 @@ export function AttendanceTurmaDialog({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-1.5">
+                  <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="h-9 w-9 rounded-xl"
+                      className="h-9 w-9 rounded-lg"
                       onClick={() => {
                         const z = new TZDateMini(new Date(selectedDate).getTime(), accountTz);
                         const shifted = addDays(z, -1);
@@ -365,7 +331,7 @@ export function AttendanceTurmaDialog({
                     <Button
                       type="button"
                       variant="ghost"
-                      className="h-9 rounded-xl px-4 text-sm font-medium text-slate-700"
+                      className="h-9 rounded-lg px-4 text-sm font-medium text-slate-700"
                       onClick={() =>
                         setSelectedDate(startOfZonedDayClient(new Date(), accountTz).toISOString())
                       }
@@ -376,7 +342,7 @@ export function AttendanceTurmaDialog({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="h-9 w-9 rounded-xl"
+                      className="h-9 w-9 rounded-lg"
                       onClick={() => {
                         const z = new TZDateMini(new Date(selectedDate).getTime(), accountTz);
                         const shifted = addDays(z, 1);
@@ -390,20 +356,20 @@ export function AttendanceTurmaDialog({
               </SectionCard>
 
               {loadingWorkspace ? (
-                <div className="rounded-2xl border border-slate-200 bg-white px-5 py-10 text-sm text-slate-500 shadow-sm">
+                <div className="rounded-xl border border-slate-200 bg-white px-5 py-10 text-sm text-slate-500">
                   Carregando programação da turma...
                 </div>
               ) : null}
 
               {error ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                   {error}
                 </div>
               ) : null}
 
               {!loadingWorkspace && workspace && workspace.data.occurrences.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-6 py-10 text-center shadow-sm">
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
+                <div className="rounded-xl border border-dashed border-slate-200 bg-white px-6 py-10 text-center">
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
                     <Calendar className="h-6 w-6" />
                   </div>
                   <div className="mt-4 text-lg font-semibold text-slate-900">Sem aula nesta data</div>
@@ -429,9 +395,9 @@ export function AttendanceTurmaDialog({
                         type="button"
                         onClick={() => setSelectedOccurrenceId(occurrence.eventId)}
                         className={cn(
-                          'rounded-2xl border px-4 py-3 text-left transition-colors',
+                          'rounded-lg border px-4 py-3 text-left transition-colors',
                           selectedOccurrenceId === occurrence.eventId
-                            ? 'border-brand-accent bg-brand-accent/8 shadow-[0_10px_25px_rgba(91,47,167,0.10)]'
+                            ? 'border-[#5c2f91] bg-[#f8f3fd]'
                             : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50',
                         )}
                       >
@@ -439,9 +405,6 @@ export function AttendanceTurmaDialog({
                           <span className="text-sm font-semibold text-slate-900">
                             {formatTimeWindow(occurrence.startAt, occurrence.endAt, accountTz)}
                           </span>
-                          <Badge variant={getStateBadgeVariant(occurrence.launchState)}>
-                            {toStateLabel(occurrence.launchState)}
-                          </Badge>
                         </div>
                       </button>
                     ))}
@@ -456,9 +419,6 @@ export function AttendanceTurmaDialog({
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <div className="text-base font-semibold text-slate-900">{selectedOccurrence.title}</div>
-                          <Badge variant={getStateBadgeVariant(selectedOccurrence.launchState)}>
-                            {toStateLabel(selectedOccurrence.launchState)}
-                          </Badge>
                         </div>
                         <p className="mt-2 text-sm text-slate-600">
                           {formatFullDate(selectedOccurrence.startAt, accountTz)} •{' '}
@@ -488,22 +448,15 @@ export function AttendanceTurmaDialog({
                   </SectionCard>
 
                   {!canSave && launchPolicy ? (
-                    <div
-                      className={cn(
-                        'rounded-2xl px-4 py-3 text-sm',
-                        launchPolicy.reason === 'WINDOW_EXPIRED'
-                          ? 'border border-rose-200 bg-rose-50 text-rose-700'
-                          : 'border border-amber-200 bg-amber-50 text-amber-700',
-                      )}
-                    >
+                    <InfoCallout variant="warning" size="md" showIcon>
                       {getAttendanceLaunchPolicyMessage(launchPolicy.reason)}
-                    </div>
+                    </InfoCallout>
                   ) : null}
 
                   {canSave && isUpcomingToday ? (
-                    <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700">
+                    <InfoCallout variant="info" size="md" showIcon>
                       A aula ainda não começou, mas a frequência já pode ser lançada hoje para essa turma.
-                    </div>
+                    </InfoCallout>
                   ) : null}
 
                   <SectionCard>
@@ -517,7 +470,7 @@ export function AttendanceTurmaDialog({
                       <Button
                         type="button"
                         variant="outline"
-                        className="rounded-xl"
+                        className="h-9 rounded-lg"
                         onClick={() =>
                           setRecords((current) =>
                             current.map((record) => ({
@@ -534,25 +487,22 @@ export function AttendanceTurmaDialog({
 
                     <div className="mt-5 space-y-4">
                       {loadingEvent ? (
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
                           Carregando alunos da ocorrência...
                         </div>
                       ) : records.length === 0 ? (
-                        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
                           Não há alunos elegíveis nesta ocorrência.
                         </div>
                       ) : (
                         records.map((record) => (
-                          <div key={record.alunoId} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                          <div key={record.alunoId} className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
                             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                               <div>
                                 <div className="flex flex-wrap items-center gap-2">
                                   <div className="text-sm font-semibold text-slate-900">{record.nome}</div>
-                                  {record.source === 'REPOSICAO' ? <Badge variant="info">Reposição</Badge> : null}
-                                  {record.status ? (
-                                    <Badge variant={record.status === 'PRESENTE' ? 'success' : record.status === 'FALTA' ? 'neutral' : 'warning'}>
-                                      {ATTENDANCE_STATUS_OPTIONS.find((option) => option.value === record.status)?.label ?? record.status}
-                                    </Badge>
+                                  {record.source === 'REPOSICAO' ? (
+                                    <span className="text-xs font-medium text-slate-500">Reposição</span>
                                   ) : null}
                                 </div>
                                 <p className="mt-1 text-xs text-slate-500">
@@ -577,7 +527,7 @@ export function AttendanceTurmaDialog({
                                     className={cn(
                                       'rounded-full border px-3 py-1.5 text-xs font-medium transition-colors',
                                       record.status === option.value
-                                        ? 'border-brand-accent bg-brand-accent text-white'
+                                        ? 'border-[#5c2f91] bg-[#5c2f91] text-white'
                                         : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900',
                                       !canSave && 'pointer-events-none opacity-60',
                                     )}
@@ -599,7 +549,7 @@ export function AttendanceTurmaDialog({
                                   ),
                                 )
                               }
-                              className="mt-3 min-h-[84px] rounded-2xl border-slate-200 bg-white"
+                              className="mt-3 min-h-[84px] rounded-lg border-slate-200 bg-white"
                               placeholder="Observação opcional"
                               disabled={!canSave}
                             />
@@ -613,16 +563,16 @@ export function AttendanceTurmaDialog({
             </div>
           </div>
 
-          <DialogFooter className="border-t border-slate-200 bg-white px-8 py-5 sm:justify-between sm:space-x-0">
-            <Button variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)}>
+          <DialogFooter className="border-t border-slate-200 bg-white px-6 py-4 sm:justify-between sm:space-x-0 sm:px-8">
+            <Button variant="outline" className="h-10 rounded-lg" onClick={() => onOpenChange(false)}>
               Fechar
             </Button>
             <Button
               className={cn(
-                'rounded-xl text-white',
+                'h-10 rounded-lg text-white',
                 isAlreadyLaunched && !isDirty
                   ? 'bg-emerald-600 hover:bg-emerald-600'
-                  : 'bg-brand-accent hover:bg-brand-accent/90',
+                  : 'bg-[#5c2f91] hover:bg-[#4b217a]',
               )}
               onClick={() => void handleSave()}
               disabled={saving || !canSave || !selectedOccurrenceId || (isAlreadyLaunched && !isDirty)}

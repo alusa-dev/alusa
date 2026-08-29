@@ -183,7 +183,7 @@ Não criar uma segunda paleta escura localmente em uma feature.
 
 O loading padrão da Alusa é a logo `alusa` em cinza claro, centralizada na área que está sendo carregada. A implementação oficial é [AlusaLogoLoader](/Users/blendstudio/Projects/alusa/apps/web/components/feedback/AlusaLogoLoader.tsx).
 
-Usar esse padrão quando o carregamento bloquear uma página, uma área principal ou uma transição de tela. A logo deve:
+Usar esse padrão quando o carregamento bloquear uma página inteira, uma área principal sem conteúdo identificável ou uma transição de tela. A logo deve:
 
 - ficar centralizada horizontal e verticalmente na superfície disponível;
 - usar a máscara oficial `/brand/logo-sidebar-mask.svg`;
@@ -206,7 +206,11 @@ Usar `fullScreen` somente quando toda a aplicação estiver indisponível durant
 return <AlusaLogoLoader fullScreen />;
 ```
 
-Skeletons continuam permitidos apenas em carregamentos parciais nos quais a estrutura do conteúdo permanece disponível e o usuário consegue identificar o contexto da tela. Não usar spinner isolado como loading principal de uma página.
+Skeletons são o padrão preferencial para carregamentos parciais. Use-os quando o contexto da tela, o cabeçalho ou a estrutura da área continuar visível enquanto os dados são buscados — por exemplo, lista de turmas, tabela, cards ou linhas de formulário. O skeleton deve reproduzir de forma discreta a geometria do conteúdo esperado e não deve substituir a tela inteira.
+
+Também é permitido usar um estado textual contextual quando a área for simples e o texto explicar claramente o que está sendo carregado, como `Carregando turmas...`. Esse estado deve permanecer dentro da própria área, com alinhamento e espaçamento consistentes, sem spinner adicional.
+
+Não aplicar automaticamente a logo da Alusa em todo loading. Não usar spinner isolado como loading principal de uma página; para carregamentos parciais, preferir skeleton ou mensagem contextual.
 
 ### 4.7 Escala de espaçamento
 
