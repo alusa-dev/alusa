@@ -255,6 +255,8 @@ async function processAsaasWebhookForRecord(params: {
   httpStatus: number;
   error?: string;
   message?: string;
+  /** O evento foi persistido, mas não pôde ser vinculado a uma entidade local. */
+  skipped?: boolean;
   duracaoMs: number;
   processedPayment?: {
     contaId: string;
@@ -370,8 +372,11 @@ async function processAsaasWebhookForRecord(params: {
         ok,
         httpStatus: ok ? 200 : 500,
         error,
+        skipped: paymentResult.skipped,
         duracaoMs: Date.now() - startedAt,
-        processedPayment: ok
+        // Um pagamento órfão já foi registrado para reconciliação pelo handler.
+        // Ele não pode alimentar notificações como se tivesse sido aplicado.
+        processedPayment: ok && !paymentResult.skipped
           ? {
               contaId,
               event,
@@ -1051,7 +1056,7 @@ export async function processAsaasWebhookQueue(params?: {
         event,
         eventId: hook.eventId ?? null,
         contaId: hook.contaId,
-        result: result.ok ? 'SUCCESS' : 'ERROR',
+        result: result.ok ? (result.skipped ? 'SKIPPED' : 'SUCCESS') : 'ERROR',
         durationMs: result.duracaoMs,
         error: result.error,
         source,

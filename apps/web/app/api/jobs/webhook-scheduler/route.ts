@@ -15,7 +15,7 @@ export const maxDuration = 60;
  *
  * Query params opcionais:
  * - contaId: restringe para 1 conta
- * - drainLimit: máx de webhooks a processar (default 200)
+ * - drainLimit: máx de webhooks a processar (default 500)
  * - skipHealthCheck: "true" para pular health check remoto
  * - skipDriftCheck: "true" para pular drift detection
  * - skipArchive: "true" para pular archiving
@@ -31,11 +31,11 @@ async function run(req: Request) {
       return tenantScope.response;
     }
 
-    const drainLimit = Number(url.searchParams.get('drainLimit') ?? '200');
+    const drainLimit = Number(url.searchParams.get('drainLimit') ?? '500');
 
     const result = await runWebhookScheduler({
       contaId: tenantScope.contaId,
-      drainLimit: Number.isFinite(drainLimit) ? drainLimit : 200,
+      drainLimit: Number.isFinite(drainLimit) ? drainLimit : 500,
       skipHealthCheck: url.searchParams.get('skipHealthCheck') === 'true',
       skipDriftCheck: url.searchParams.get('skipDriftCheck') === 'true',
       skipArchive: url.searchParams.get('skipArchive') === 'true',
@@ -44,9 +44,9 @@ async function run(req: Request) {
 
     return NextResponse.json({ success: true, result });
   } catch (error) {
-    console.error('[webhook-scheduler] Erro:', error);
+    console.error('[webhook-scheduler] Erro:', error instanceof Error ? error.message : String(error));
     return NextResponse.json(
-      { error: { code: 'SCHEDULER_ERROR', message: (error as Error).message } },
+      { error: { code: 'SCHEDULER_ERROR', message: 'Falha ao executar o scheduler de webhooks.' } },
       { status: 500 },
     );
   }

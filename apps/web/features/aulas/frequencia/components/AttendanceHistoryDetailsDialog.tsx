@@ -185,23 +185,6 @@ export function AttendanceHistoryDetailsDialog({
                 </div>
               ) : (
                 <div className="space-y-7">
-                  <div className="grid gap-x-8 gap-y-5 border-b border-slate-200 pb-6 sm:grid-cols-3">
-                    <div>
-                      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Turma</div>
-                      <div className="mt-2 text-sm text-slate-900">{data.data.turma.label}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Professor(es)</div>
-                      <div className="mt-2 text-sm text-slate-900">
-                        {data.data.items[0]?.professores.map((professor) => professor.nome).join(', ') || 'Sem professor'}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Ocorrências</div>
-                      <div className="mt-2 text-sm text-slate-900">{data.data.summary.totalOcorrencias} lançadas</div>
-                    </div>
-                  </div>
-
                   {data.data.items.map((item) => {
                     const details = eventDetails[item.eventId];
                     const event = details?.data.event;

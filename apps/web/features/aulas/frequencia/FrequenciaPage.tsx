@@ -482,15 +482,15 @@ export function FrequenciaPage() {
       subtitle="Lance a chamada por turma e navegue entre datas sem sair do padrão operacional da Alusa."
     >
       <div className="space-y-5">
-        <Card className="overflow-hidden rounded-xl border-slate-200 bg-white shadow-sm">
-          <Tabs value={view} onValueChange={(value) => setView(value as 'workspace' | 'history')}>
-            <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-4 py-4 sm:px-6 xl:flex-row xl:items-center xl:justify-between">
+        <Card className="overflow-hidden rounded-xl border-0 bg-transparent shadow-none">
+          <Tabs variant="line" value={view} onValueChange={(value) => setView(value as 'workspace' | 'history')}>
+            <div className="flex flex-col gap-4 border-b border-slate-200 bg-transparent px-0 py-3 sm:px-0 xl:flex-row xl:items-center xl:justify-between">
               <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
-                <TabsList className="h-10">
-                  <TabsTrigger value="workspace" className="px-4 text-sm">
+                <TabsList>
+                  <TabsTrigger value="workspace" className="text-sm">
                     Lançar frequência
                   </TabsTrigger>
-                  <TabsTrigger value="history" className="px-4 text-sm">
+                  <TabsTrigger value="history" className="text-sm">
                     Histórico
                   </TabsTrigger>
                 </TabsList>

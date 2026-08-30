@@ -59,7 +59,7 @@ export interface WebhookSchedulerResult {
 export interface WebhookSchedulerOptions {
   /** Se definido, processa apenas uma conta específica */
   contaId?: string;
-  /** Limite de webhooks a processar por execução (default: 200) */
+  /** Limite de webhooks a processar por execução (default: 500) */
   drainLimit?: number;
   /** Se true, pula health check remoto (útil em dev) */
   skipHealthCheck?: boolean;
@@ -171,7 +171,8 @@ async function runWebhookSchedulerUnlocked(
 ): Promise<WebhookSchedulerResult> {
   const executedAt = new Date();
   const steps: SchedulerStepResult[] = [];
-  const drainLimit = Math.min(1000, Math.max(1, options.drainLimit ?? 200));
+  const configuredDrainLimit = options.drainLimit ?? 500;
+  const drainLimit = Math.min(1000, Math.max(1, configuredDrainLimit));
 
   // ── Step 1: Recuperar webhooks stuck ───────────────────────────────────
   const { step: stuckStep } = await timed('recover_stuck', () =>

@@ -9,7 +9,7 @@
       "schedule": "*/5 * * * *"
     },
     {
-      "path": "/api/jobs/webhook-scheduler?drainLimit=200&skipArchive=true&skipHealthCheck=true&skipDriftCheck=true",
+      "path": "/api/jobs/webhook-scheduler?drainLimit=500&skipArchive=true&skipHealthCheck=true&skipDriftCheck=true",
       "schedule": "*/2 * * * *"
     },
     {
