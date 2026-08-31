@@ -11,6 +11,7 @@ import {
 } from '../dtos/unified-billing';
 import { parseExternalReference } from '../core';
 import { resolveChargeDisplayStatus, unifiedChargeStatusToLocal } from '../mappers/asaas-display-status';
+import { isMaterializedGroupedEventEntry } from '../mappers/event-billing-entry';
 import { resolveEventPayerName } from '../mappers/event-payer';
 
 // ---------------------------------------------------------------------------
@@ -790,6 +791,8 @@ async function buildOperationalChargesCollection(
         dueDate: true,
         status: true,
         paymentMethod: true,
+        paymentProvider: true,
+        actualAmount: true,
         asaasPaymentId: true,
         createdAt: true,
         event: { select: { name: true } },
@@ -807,6 +810,8 @@ async function buildOperationalChargesCollection(
         dueDate: true,
         status: true,
         paymentMethod: true,
+        paymentProvider: true,
+        actualAmount: true,
         asaasPaymentId: true,
         createdAt: true,
         event: { select: { name: true } },
@@ -881,22 +886,22 @@ async function buildOperationalChargesCollection(
       ),
     ),
   );
-  const eventFinancialEntries = mergeRecordsById(
+  const rawEventFinancialEntries = mergeRecordsById(
     eventFinancialEntriesMain,
     eventFinancialEntriesRecent,
-  ).filter(
-    (entry) =>
-      !entry.asaasPaymentId ||
-      !standaloneInstallmentPlanReferences.has(entry.asaasPaymentId),
   );
   const eventMapOrders = mergeRecordsById(eventMapOrdersMain, eventMapOrdersRecent);
 
-  const eventRevenueEntryIds = eventFinancialEntries.map((entry) => entry.id);
+  const eventRevenueEntryIds = rawEventFinancialEntries.map((entry) => entry.id);
   const eventParticipants = eventRevenueEntryIds.length
     ? await _db.eventParticipant.findMany({
         where: { contaId, revenueEntryId: { in: eventRevenueEntryIds } },
         select: {
           revenueEntryId: true,
+          billingGroupId: true,
+          standaloneChargeId: true,
+          asaasPaymentId: true,
+          asaasInstallmentId: true,
           displayName: true,
           aluno: { select: { nome: true } },
           responsavel: { select: { nome: true } },
@@ -918,6 +923,19 @@ async function buildOperationalChargesCollection(
     });
     eventPayerCandidatesByEntry.set(participant.revenueEntryId, candidates);
   }
+
+  const eventFinancialEntries = rawEventFinancialEntries.filter((entry) => {
+    if (entry.asaasPaymentId && standaloneInstallmentPlanReferences.has(entry.asaasPaymentId)) {
+      return false;
+    }
+
+    const participant = eventParticipants.find((candidate) => candidate.revenueEntryId === entry.id);
+    return !isMaterializedGroupedEventEntry(
+      entry,
+      participant,
+      standaloneInstallmentPlanReferences,
+    );
+  });
 
   // Mapa cobrancaId → installmentPlanId
   const cobrancaToInstallmentPlan = new Map<string, string>();

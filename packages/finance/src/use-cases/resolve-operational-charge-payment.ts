@@ -128,6 +128,145 @@ function mapEventPaymentMethod(method?: string | null): string | null {
   }
 }
 
+function mapMaterializedChargeStatus(
+  status: string,
+): ResolvedOperationalChargePayment['localStatus'] {
+  switch (status) {
+    case 'PAID':
+      return 'PAID';
+    case 'OVERDUE':
+      return 'OVERDUE';
+    case 'CANCELED':
+      return 'CANCELED';
+    case 'REFUNDED':
+      return 'REFUNDED';
+    case 'CREATED':
+    case 'PENDING_SYNC':
+    case 'OPEN':
+    default:
+      return 'PENDING';
+  }
+}
+
+async function resolveMaterializedGroupedEntry(
+  contaId: string,
+  entry: {
+    id: string;
+    dueDate: Date | null;
+    asaasPaymentId: string | null;
+    actualAmount: unknown;
+    status: string;
+    paymentProvider: string | null;
+    description: string;
+  },
+) {
+  if (
+    entry.asaasPaymentId ||
+    entry.actualAmount != null ||
+    !['EXPECTED', 'PENDING'].includes(entry.status) ||
+    entry.paymentProvider !== 'ASAAS' ||
+    !entry.description.toLowerCase().includes('cobrança agrupada do evento')
+  ) {
+    return null;
+  }
+
+  const participant = await prisma.eventParticipant.findFirst({
+    where: { contaId, revenueEntryId: entry.id },
+    select: {
+      displayName: true,
+      aluno: { select: { nome: true } },
+      responsavel: { select: { nome: true } },
+      standaloneChargeId: true,
+      asaasPaymentId: true,
+      asaasInstallmentId: true,
+      billingGroup: {
+        select: {
+          standaloneChargeId: true,
+          asaasPaymentId: true,
+          asaasInstallmentId: true,
+        },
+      },
+    },
+  });
+  if (!participant?.billingGroup) return null;
+
+  const references = [
+    participant.standaloneChargeId,
+    participant.asaasPaymentId,
+    participant.asaasInstallmentId,
+    participant.billingGroup.standaloneChargeId,
+    participant.billingGroup.asaasPaymentId,
+    participant.billingGroup.asaasInstallmentId,
+  ].filter((value): value is string => Boolean(value));
+  if (references.length === 0) return null;
+
+  const [directCharges, plans] = await Promise.all([
+    prisma.charge.findMany({
+      where: { contaId, OR: [{ id: { in: references } }, { asaasPaymentId: { in: references } }] },
+      select: {
+        id: true,
+        status: true,
+        asaasPaymentId: true,
+        invoiceUrl: true,
+        billingType: true,
+        value: true,
+        dueDate: true,
+        payerName: true,
+        description: true,
+        statusUpdatedAt: true,
+      },
+    }),
+    prisma.standaloneInstallmentPlan.findMany({
+      where: {
+        contaId,
+        OR: [{ id: { in: references } }, { asaasInstallmentId: { in: references } }],
+      },
+      include: {
+        charges: {
+          select: {
+            id: true,
+            status: true,
+            asaasPaymentId: true,
+            invoiceUrl: true,
+            billingType: true,
+            value: true,
+            dueDate: true,
+            payerName: true,
+            description: true,
+            statusUpdatedAt: true,
+          },
+        },
+      },
+    }),
+  ]);
+
+  const charges = [
+    ...directCharges,
+    ...plans.flatMap((plan) => plan.charges),
+  ].filter((charge, index, all) => all.findIndex((candidate) => candidate.id === charge.id) === index)
+    .sort((left, right) => (left.dueDate?.getTime() ?? 0) - (right.dueDate?.getTime() ?? 0));
+  if (charges.length === 0) return null;
+
+  const charge = charges.find((candidate) =>
+    entry.dueDate && candidate.dueDate
+      ? candidate.dueDate.getTime() === entry.dueDate.getTime()
+      : false,
+  ) ?? charges[0];
+  const localStatus = applyOverdueIfNeeded(mapMaterializedChargeStatus(charge.status), charge.dueDate);
+
+  return {
+    asaasPaymentId: charge.asaasPaymentId,
+    invoiceUrl: charge.invoiceUrl,
+    billingType: mapEventPaymentMethod(charge.billingType),
+    localStatus,
+    value: Number(charge.value),
+    dueDate: charge.dueDate,
+    payerName: participant.responsavel?.nome ?? charge.payerName ?? participant.aluno?.nome ?? participant.displayName ?? 'Cliente',
+    description: charge.description ?? entry.description,
+    paidAt: ['PAID'].includes(charge.status) ? charge.statusUpdatedAt : null,
+  };
+}
+
 export async function resolveOperationalChargePayment(
   contaId: string,
   operationalId: string,
@@ -141,6 +280,20 @@ export async function resolveOperationalChargePayment(
       include: { event: { select: { id: true, name: true } } },
     });
     if (!entry) return null;
+
+    const materialized = await resolveMaterializedGroupedEntry(contaId, entry);
+    if (materialized) {
+      return {
+        operationalId,
+        kind: parsed.kind,
+        entityId: entry.id,
+        contaId,
+        eventId: entry.eventId,
+        ...materialized,
+        refundedAmount: 0,
+        alunoId: null,
+      };
+    }
 
     const dueDate = entry.dueDate ?? entry.realizedAt ?? entry.createdAt;
     const localStatus = applyOverdueIfNeeded(mapEventFinancialEntryStatus(entry.status), entry.dueDate);

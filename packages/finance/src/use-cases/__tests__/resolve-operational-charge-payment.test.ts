@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@alusa/database', () => ({
   prisma: {
     eventFinancialEntry: { findFirst: vi.fn() },
+    eventParticipant: { findFirst: vi.fn() },
+    charge: { findMany: vi.fn() },
+    standaloneInstallmentPlan: { findMany: vi.fn() },
     eventTicketSale: { findFirst: vi.fn() },
     eventMapOrder: { findFirst: vi.fn() },
   },
@@ -36,6 +39,66 @@ describe('resolve-operational-charge-payment', () => {
     expect(parseOperationalChargeId('ch_abc')).toBeNull();
   });
 
+  it('resolve lançamento legado de grupo para a parcela real do Asaas', async () => {
+    const dueDate = new Date('2026-09-01T00:00:00.000Z');
+    vi.mocked(prisma.eventFinancialEntry.findFirst).mockResolvedValue({
+      id: 'entry_group_1',
+      eventId: 'event-1',
+      status: 'PENDING',
+      expectedAmount: 702,
+      actualAmount: null,
+      paymentProvider: 'ASAAS',
+      asaasPaymentId: null,
+      description: 'Taxa da cobrança agrupada do evento',
+      category: 'Taxa de inscrição',
+      dueDate,
+      realizedAt: null,
+      refundedAmount: 0,
+      proofUrl: null,
+      paymentMethod: null,
+      event: { id: 'event-1', name: 'Festival' },
+    } as never);
+    vi.mocked(prisma.eventParticipant.findFirst).mockResolvedValue({
+      displayName: 'Aluno',
+      aluno: { nome: 'Aluno' },
+      responsavel: { nome: 'Responsável' },
+      standaloneChargeId: 'plan-1',
+      asaasPaymentId: null,
+      asaasInstallmentId: 'installment-1',
+      billingGroup: {
+        standaloneChargeId: 'plan-1',
+        asaasPaymentId: null,
+        asaasInstallmentId: 'installment-1',
+      },
+    } as never);
+    vi.mocked(prisma.charge.findMany).mockResolvedValue([
+      {
+        id: 'charge-1',
+        status: 'OPEN',
+        asaasPaymentId: 'pay-1',
+        invoiceUrl: 'https://asaas.example/invoice',
+        billingType: 'CREDIT_CARD',
+        value: 1053,
+        dueDate,
+        payerName: 'Responsável',
+        description: 'Parcela 1 de 2',
+        statusUpdatedAt: dueDate,
+      },
+    ] as never);
+    vi.mocked(prisma.standaloneInstallmentPlan.findMany).mockResolvedValue([]);
+
+    const resolved = await resolveOperationalChargePayment('conta-1', 'event-entry:entry_group_1');
+
+    expect(resolved).toMatchObject({
+      asaasPaymentId: 'pay-1',
+      invoiceUrl: 'https://asaas.example/invoice',
+      billingType: 'CREDIT_CARD',
+      value: 1053,
+      payerName: 'Responsável',
+      localStatus: 'PENDING',
+    });
+  });
+
   it('resolve venda de ingresso tenant-scoped', async () => {
     vi.mocked(prisma.eventTicketSale.findFirst).mockResolvedValue({
       id: 'sale_1',
@@ -47,7 +110,7 @@ describe('resolve-operational-charge-payment', () => {
       totalAmount: 650,
       paymentMethod: 'PIX',
       status: 'PENDING',
-      soldAt: new Date('2026-06-03T12:00:00.000Z'),
+      soldAt: new Date('2026-09-03T12:00:00.000Z'),
       paidAt: null,
       asaasPaymentId: 'pay_123',
       refundedAmount: 0,

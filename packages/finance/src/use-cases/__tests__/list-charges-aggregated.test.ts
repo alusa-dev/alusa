@@ -245,6 +245,55 @@ describe('listChargesAggregated', () => {
     });
   });
 
+  it('não deve listar alocação interna de evento já materializada no Asaas', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    vi.mocked(prisma.cobranca.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.charge.findMany)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.cobranca.count).mockResolvedValueOnce(0 as never);
+    vi.mocked(prisma.charge.count).mockResolvedValueOnce(0 as never);
+    vi.mocked(prisma.eventFinancialEntry.findMany).mockResolvedValueOnce([
+      {
+        id: 'entry-grouped-legacy',
+        eventId: 'evt-1',
+        category: 'Taxa de inscrição',
+        description: '6º Festival de Dança · Taxa da cobrança agrupada do evento',
+        expectedAmount: 702,
+        dueDate: new Date('2026-09-01T00:00:00.000Z'),
+        status: 'PENDING',
+        paymentMethod: null,
+        paymentProvider: 'ASAAS',
+        actualAmount: null,
+        asaasPaymentId: null,
+        createdAt: new Date('2026-08-20T00:00:00.000Z'),
+        payments: [],
+        event: { name: '6º Festival de Dança' },
+      },
+    ] as never);
+    vi.mocked(prisma.eventParticipant.findMany).mockResolvedValueOnce([
+      {
+        revenueEntryId: 'entry-grouped-legacy',
+        billingGroupId: 'group-1',
+        standaloneChargeId: 'plan-1',
+        asaasPaymentId: null,
+        asaasInstallmentId: 'inst-1',
+        displayName: 'Nayandra',
+        aluno: null,
+        responsavel: { nome: 'Responsável' },
+      },
+    ] as never);
+    vi.mocked(prisma.standaloneInstallmentPlan.findMany).mockResolvedValueOnce([
+      { id: 'plan-1', asaasInstallmentId: 'inst-1' },
+    ] as never);
+
+    const result = await listChargesAggregated({ contaId: 'c1', statusView: 'all' });
+
+    expect(result.total).toBe(0);
+    expect(result.items).toHaveLength(0);
+  });
+
   it('deve incluir campos necessários para listagem', async () => {
     const { prisma } = await import('@alusa/database');
 

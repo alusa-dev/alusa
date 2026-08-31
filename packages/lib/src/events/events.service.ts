@@ -2799,28 +2799,29 @@ export async function registerEventParticipantGroup(
     const participants: Prisma.EventParticipantGetPayload<Prisma.EventParticipantDefaultArgs>[] = [];
     for (const [index, aluno] of alunos.entries()) {
       const allocatedEntry = entryAllocations[index] ?? 0;
-      const participantEntry = await tx.eventFinancialEntry.create({
-        data: {
-          contaId: ctx.contaId,
-          eventId: input.eventId,
-          type: 'REVENUE',
-          category: 'Taxa de inscrição',
-          description: allocatedEntry > 0
-            ? 'Entrada da cobrança agrupada do evento'
-            : 'Taxa da cobrança agrupada do evento',
-          expectedAmount: decimal(feePerParticipant),
-          grossAmount: decimal(feeOriginalPerParticipant),
-          discountAmount: decimal(feeDiscountPerParticipant),
-          actualAmount: allocatedEntry > 0 ? decimal(allocatedEntry) : null,
-          dueDate: input.dueDate ?? new Date(),
-          realizedAt: allocatedEntry > 0 ? new Date() : null,
-          status: allocatedEntry > 0 ? 'RECEIVED' : 'PENDING',
-          paymentMethod: allocatedEntry > 0
-            ? mapToEventPaymentMethod(input.entryPaymentMethod ?? input.feePaymentMethod)
-            : null,
-          notes: input.notes,
-        },
-      });
+      // Digital grouped charges are represented by the Asaas plan below.
+      // Persist an internal entry only for money actually received manually;
+      // otherwise this allocation would appear as a second operational charge.
+      const participantEntry = input.billingMethod === 'MANUAL_RECEIVED' && allocatedEntry > 0
+        ? await tx.eventFinancialEntry.create({
+            data: {
+              contaId: ctx.contaId,
+              eventId: input.eventId,
+              type: 'REVENUE',
+              category: 'Taxa de inscrição',
+              description: 'Entrada manual da cobrança agrupada do evento',
+              expectedAmount: decimal(allocatedEntry),
+              grossAmount: decimal(feeOriginalPerParticipant),
+              discountAmount: decimal(feeDiscountPerParticipant),
+              actualAmount: decimal(allocatedEntry),
+              dueDate: input.dueDate ?? new Date(),
+              realizedAt: new Date(),
+              status: 'RECEIVED',
+              paymentMethod: mapToEventPaymentMethod(input.entryPaymentMethod ?? input.feePaymentMethod),
+              notes: input.notes,
+            },
+          })
+        : null;
 
       const participant = await tx.eventParticipant.create({
         data: {
@@ -2849,7 +2850,7 @@ export async function registerEventParticipantGroup(
         },
       });
 
-      if (allocatedEntry > 0) {
+      if (participantEntry) {
         await tx.eventFinancialPayment.create({
           data: {
             contaId: ctx.contaId,

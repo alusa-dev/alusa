@@ -7,6 +7,7 @@ import {
 } from '../dtos/unified-billing';
 import { parseExternalReference } from '../core';
 import { resolveChargeDisplayStatus } from '../mappers/asaas-display-status';
+import { isMaterializedGroupedEventEntry } from '../mappers/event-billing-entry';
 import { resolveEventPayerName } from '../mappers/event-payer';
 
 export type ChargeOrigin = 'ACADEMIC' | 'STANDALONE' | 'all';
@@ -324,7 +325,7 @@ export async function listChargesAggregated(
     standaloneCount,
     linkedCharges,
     standaloneSubscriptions,
-    eventFinancialEntries,
+    eventFinancialEntriesResult,
     eventTicketSales,
     eventMapOrders,
   ] = await Promise.all([
@@ -425,6 +426,8 @@ export async function listChargesAggregated(
         dueDate: true,
         status: true,
         paymentMethod: true,
+        paymentProvider: true,
+        actualAmount: true,
         asaasPaymentId: true,
         createdAt: true,
         payments: {
@@ -482,12 +485,17 @@ export async function listChargesAggregated(
     }),
   ]);
 
-  const eventRevenueEntryIds = eventFinancialEntries.map((entry) => entry.id);
+  const rawEventFinancialEntries = eventFinancialEntriesResult;
+  const eventRevenueEntryIds = rawEventFinancialEntries.map((entry) => entry.id);
   const eventParticipants = eventRevenueEntryIds.length
     ? await _db.eventParticipant.findMany({
         where: { contaId, revenueEntryId: { in: eventRevenueEntryIds } },
         select: {
           revenueEntryId: true,
+          billingGroupId: true,
+          standaloneChargeId: true,
+          asaasPaymentId: true,
+          asaasInstallmentId: true,
           displayName: true,
           aluno: { select: { nome: true } },
           responsavel: { select: { nome: true } },
@@ -509,6 +517,28 @@ export async function listChargesAggregated(
     });
     eventPayerCandidatesByEntry.set(participant.revenueEntryId, candidates);
   }
+
+  const eventPlanIds = Array.from(new Set(
+    eventParticipants
+      .flatMap((participant) => [participant.standaloneChargeId].filter((value): value is string => Boolean(value))),
+  ));
+  const eventPlans = eventPlanIds.length
+    ? await _db.standaloneInstallmentPlan.findMany({
+        where: { contaId, id: { in: eventPlanIds }, status: { in: ['ACTIVE', 'COMPLETED'] } },
+        select: { id: true, asaasInstallmentId: true },
+      })
+    : [];
+  const materializedEventPlanReferences = new Set(
+    eventPlans.flatMap((plan) => [plan.id, plan.asaasInstallmentId].filter((value): value is string => Boolean(value))),
+  );
+  const eventFinancialEntries = rawEventFinancialEntries.filter((entry) => {
+    const participant = eventParticipants.find((candidate) => candidate.revenueEntryId === entry.id);
+    return !isMaterializedGroupedEventEntry(
+      entry,
+      participant,
+      materializedEventPlanReferences,
+    );
+  });
 
   // Criar mapa de cobrancaId -> installmentPlanId
   const cobrancaToInstallmentPlan = new Map<string, string>();
