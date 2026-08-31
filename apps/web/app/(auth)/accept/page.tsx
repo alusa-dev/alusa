@@ -3,6 +3,9 @@ import prisma from '@/lib/prisma';
 import AuthPageContainer from '@/components/auth/AuthPageContainer';
 import AuthCard from '@/components/auth/AuthCard';
 
+// A validade do convite depende do banco e muda por token/tempo.
+export const dynamic = 'force-dynamic';
+
 type Props = { searchParams?: { [key: string]: string | string[] | undefined } };
 
 export default async function AcceptInvitePage(props: Props) {

@@ -3,7 +3,6 @@ import "@/lib/zod-error-map";
 import { AppProviders } from "./providers";
 import React from "react";
 import { Inter } from "next/font/google";
-import { cookies } from "next/headers";
 import type { Metadata, Viewport } from "next";
 import { WebVitalsReporter } from "./WebVitalsReporter";
 import { ConsentAwareAnalytics, CookieConsentBanner } from "@/components/legal/CookieConsentBanner";
@@ -46,22 +45,19 @@ export const viewport: Viewport = {
   themeColor: "#ffffff",
 };
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const cookieStore = await cookies();
-  const themeCookie = (cookieStore.get('alusa.theme')?.value as 'light' | 'dark' | undefined) ?? undefined;
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   const themeInitPrefixes = JSON.stringify([...AUTH_LIGHT_THEME_PATH_PREFIXES]);
   const themeInitRoots = JSON.stringify([...AUTH_LIGHT_THEME_ROOT_PATHS]);
   return (
     <html
       lang="pt-BR"
       className={`${inter.variable} min-h-full bg-white`}
-      data-theme={themeCookie}
       suppressHydrationWarning
     >
       <head />
       <body className="bg-white text-gray-900 antialiased">
         {/* Scripts globais ficam no body para o App Router tratar o conteúdo inline sem o interpretar como HTML bruto. */}
-        <script id="theme-init" dangerouslySetInnerHTML={{ __html: `(function(){try{var d=document.documentElement;var path=typeof location!=="undefined"?location.pathname||"":"";var prefixes=${themeInitPrefixes};var roots=${themeInitRoots};function forceLight(p){for(var i=0;i<prefixes.length;i++){var pr=prefixes[i];if(p===pr||p.indexOf(pr+"/")===0)return true;}for(var j=0;j<roots.length;j++){var r=roots[j];if(p===r||p.indexOf(r+"/")===0)return true;}return false;}if(forceLight(path)){d.setAttribute("data-theme","light");return;}if(d.hasAttribute("data-theme"))return;var t=null;try{t=localStorage.getItem("alusa.theme");}catch(e){}if(!t){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}d.setAttribute("data-theme",t);}catch(e){}})();` }} />
+        <script id="theme-init" dangerouslySetInnerHTML={{ __html: `(function(){try{var d=document.documentElement;var path=typeof location!=="undefined"?location.pathname||"":"";var prefixes=${themeInitPrefixes};var roots=${themeInitRoots};function forceLight(p){for(var i=0;i<prefixes.length;i++){var pr=prefixes[i];if(p===pr||p.indexOf(pr+"/")===0)return true;}for(var j=0;j<roots.length;j++){var r=roots[j];if(p===r||p.indexOf(r+"/")===0)return true;}return false;}if(forceLight(path)){d.setAttribute("data-theme","light");return;}if(d.hasAttribute("data-theme"))return;var t=null;try{t=localStorage.getItem("alusa.theme");}catch(e){}if(!t){try{var m=document.cookie.match(/(?:^|; )alusa[.]theme=(light|dark)(?:;|$)/);if(m)t=m[1];}catch(e){}}if(!t){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}d.setAttribute("data-theme",t);}catch(e){}})();` }} />
         <AppProviders>
           {children}
         </AppProviders>
