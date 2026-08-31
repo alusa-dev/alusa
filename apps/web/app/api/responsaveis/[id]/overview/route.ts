@@ -2,7 +2,10 @@ import { NextResponse } from 'next/server';
 
 import { getSessionUser } from '@/lib/auth/session';
 import { prisma } from '@/prisma/client';
-import { validarElegibilidadeRematricula } from '@alusa/domain';
+import {
+  deriveInstallmentPlanLifecycleStatus,
+  validarElegibilidadeRematricula,
+} from '@alusa/domain';
 import {
   buildFinancialSnapshot,
   evaluateCanonicalRematriculaDecision,
@@ -10,6 +13,30 @@ import {
 import { resolveResponsavelRouteId } from '../../_lib/resolve-responsavel-route-id';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
+
+function deriveStandalonePlanStatus(plan: {
+  status: 'ACTIVE' | 'COMPLETED' | 'CANCELED';
+  charges: Array<{ status: string; asaasStatus: string | null }>;
+}) {
+  const paidProviderStatuses = new Set(['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'PAID']);
+  const canceledProviderStatuses = new Set(['CANCELED', 'CANCELLED', 'DELETED']);
+  const chargeStatuses = plan.charges.map((charge) => {
+    const localStatus = charge.status.toUpperCase();
+    const providerStatus = charge.asaasStatus?.toUpperCase() ?? null;
+    if (localStatus === 'CANCELED' || canceledProviderStatuses.has(providerStatus ?? '')) {
+      return 'CANCELED' as const;
+    }
+    if (localStatus === 'PAID' || paidProviderStatuses.has(providerStatus ?? '')) {
+      return 'PAID' as const;
+    }
+    return 'OPEN' as const;
+  });
+
+  return deriveInstallmentPlanLifecycleStatus({
+    currentStatus: plan.status,
+    chargeStatuses,
+  });
+}
 
 function mapEventChargeStatus(status: string) {
   switch (status) {
@@ -332,6 +359,7 @@ export async function GET(
           firstDueDate: true,
           familyGroupId: true,
           createdAt: true,
+          charges: { select: { status: true, asaasStatus: true } },
         },
       }),
     ]);
@@ -560,6 +588,7 @@ export async function GET(
         }),
         installmentPlans: standaloneInstallmentPlans.map((plan) => ({
           ...plan,
+          status: deriveStandalonePlanStatus(plan),
           source: 'AVULSO',
           value: Number(plan.value ?? 0),
           firstDueDate: plan.firstDueDate.toISOString(),

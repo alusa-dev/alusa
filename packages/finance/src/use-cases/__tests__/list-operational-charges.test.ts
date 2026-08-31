@@ -27,6 +27,9 @@ function createMockDb() {
     eventFinancialEntry: {
       findMany: vi.fn().mockResolvedValue([]),
     },
+    eventParticipant: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     eventTicketSale: {
       findMany: vi.fn().mockResolvedValue([]),
     },
@@ -521,6 +524,14 @@ describe('listOperationalCharges', () => {
         event: { name: 'Festival de Dança' },
       },
     ]);
+    db.eventParticipant.findMany.mockResolvedValue([
+      {
+        revenueEntryId: 'entry_1',
+        displayName: 'Alice da Silveira Alves Leão',
+        aluno: { nome: 'Alice da Silveira Alves Leão' },
+        responsavel: { nome: 'Franciele da Silveira Leão' },
+      },
+    ]);
 
     const result = await listOperationalCharges(BASE_INPUT, db);
 
@@ -530,7 +541,7 @@ describe('listOperationalCharges', () => {
       origin: 'EVENT',
       tipo: 'EVENTO',
       description: 'Festival de Dança · Inscrição do festival',
-      payerName: 'Festival de Dança',
+      payerName: 'Franciele da Silveira Leão',
       status: 'PENDING',
       asaasPaymentId: 'pay_evt_1',
     });

@@ -35,7 +35,8 @@
     "storybook": "storybook dev -p 6006",
     "build:storybook": "storybook build",
     "mcp": "npx shadcn@latest mcp",
-    "rebuild:agendas": "dotenv -o -e ../../.env.local -e .env.local -- tsx scripts/rebuild-all-contas-agenda.ts"
+    "rebuild:agendas": "dotenv -o -e ../../.env.local -e .env.local -- tsx scripts/rebuild-all-contas-agenda.ts",
+    "finance:reconcile-standalone-installment-plans": "dotenv -o -e ../../.env.vercel.production -- cross-env NODE_ENV=production tsx scripts/reconcile-standalone-installment-plans.ts"
   },
   "dependencies": {
     "@alusa/asaas": "workspace:*",

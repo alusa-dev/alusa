@@ -7,6 +7,7 @@ import {
 } from '../dtos/unified-billing';
 import { parseExternalReference } from '../core';
 import { resolveChargeDisplayStatus } from '../mappers/asaas-display-status';
+import { resolveEventPayerName } from '../mappers/event-payer';
 
 export type ChargeOrigin = 'ACADEMIC' | 'STANDALONE' | 'all';
 
@@ -113,15 +114,17 @@ function resolveEventFinancialPayerName(entry: {
       responsavel: { nome: string } | null;
     } | null;
   }>;
-}) {
-  const names = (entry.payments ?? [])
-    .map((payment) => {
-      const participant = payment.participant;
-      return participant?.displayName?.trim() || participant?.aluno?.nome || participant?.responsavel?.nome || null;
-    })
-    .filter((name): name is string => Boolean(name));
-
-  return [...new Set(names)].join(', ') || '-';
+}, additionalCandidates: Array<{
+  responsibleName: string | null;
+  studentName: string | null;
+  displayName: string | null;
+}> = []) {
+  const paymentCandidates = (entry.payments ?? []).map((payment) => ({
+    responsibleName: payment.participant?.responsavel?.nome ?? null,
+    studentName: payment.participant?.aluno?.nome ?? null,
+    displayName: payment.participant?.displayName ?? null,
+  }));
+  return resolveEventPayerName([...additionalCandidates, ...paymentCandidates]) ?? '-';
 }
 
 function matchesStatusView(status: UnifiedChargeStatus, statusView: 'open' | 'paid' | 'all') {
@@ -479,6 +482,34 @@ export async function listChargesAggregated(
     }),
   ]);
 
+  const eventRevenueEntryIds = eventFinancialEntries.map((entry) => entry.id);
+  const eventParticipants = eventRevenueEntryIds.length
+    ? await _db.eventParticipant.findMany({
+        where: { contaId, revenueEntryId: { in: eventRevenueEntryIds } },
+        select: {
+          revenueEntryId: true,
+          displayName: true,
+          aluno: { select: { nome: true } },
+          responsavel: { select: { nome: true } },
+        },
+      })
+    : [];
+  const eventPayerCandidatesByEntry = new Map<string, Array<{
+    responsibleName: string | null;
+    studentName: string | null;
+    displayName: string | null;
+  }>>();
+  for (const participant of eventParticipants) {
+    if (!participant.revenueEntryId) continue;
+    const candidates = eventPayerCandidatesByEntry.get(participant.revenueEntryId) ?? [];
+    candidates.push({
+      responsibleName: participant.responsavel?.nome ?? null,
+      studentName: participant.aluno?.nome ?? null,
+      displayName: participant.displayName,
+    });
+    eventPayerCandidatesByEntry.set(participant.revenueEntryId, candidates);
+  }
+
   // Criar mapa de cobrancaId -> installmentPlanId
   const cobrancaToInstallmentPlan = new Map<string, string>();
   for (const charge of linkedCharges) {
@@ -644,7 +675,10 @@ export async function listChargesAggregated(
       id: `event-entry:${entry.id}`,
       origin: 'EVENT' as const,
       description: `${entry.event.name} · ${entry.description || entry.category}`,
-      payerName: resolveEventFinancialPayerName(entry),
+      payerName: resolveEventFinancialPayerName(
+        entry,
+        eventPayerCandidatesByEntry.get(entry.id) ?? [],
+      ),
       value: Number(entry.expectedAmount),
       dueDate: entry.dueDate?.toISOString() ?? null,
       billingType: entry.paymentMethod,

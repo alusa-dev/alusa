@@ -23,6 +23,7 @@ export type {
 } from './state-machine/payment-state-machine';
 export { recordPaymentStateTransition } from './state-machine/payment-state-transition.service';
 export { eventAsaasPaymentProvider } from './events/event-asaas-payment-provider';
+export { resolveEventPayerName, type EventPayerCandidate } from './mappers/event-payer';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Integration contracts — Asaas (fachada para apps/web e packages/lib)

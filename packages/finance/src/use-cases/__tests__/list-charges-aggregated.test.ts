@@ -25,6 +25,9 @@ vi.mock('@alusa/database', () => {
       eventFinancialEntry: {
         findMany: vi.fn().mockResolvedValue([]),
       },
+      eventParticipant: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
       eventTicketSale: {
         findMany: vi.fn().mockResolvedValue([]),
       },
@@ -236,7 +239,7 @@ describe('listChargesAggregated', () => {
       eventId: 'evt-1',
       tipo: 'EVENTO',
       description: 'Festival · Inscrição',
-      payerName: 'Maria Júlia Marciel Abreu',
+      payerName: 'Greidilene Maciel Abreu',
       value: 90,
       status: 'PENDING',
     });

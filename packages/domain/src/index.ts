@@ -65,6 +65,12 @@ export type {
   RenewalTargetType,
 } from './rules/renewal-process.js';
 
+export {
+  deriveInstallmentPlanLifecycleStatus,
+  type InstallmentChargeLifecycleStatus,
+  type InstallmentPlanLifecycleStatus,
+} from './rules/installment-plan-status.js';
+
 // Máquina de estados de matrícula
 export {
   isTerminalStatus,

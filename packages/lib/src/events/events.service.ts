@@ -20,6 +20,10 @@ import {
 
 import { prisma } from '../prisma';
 import { loadDecryptedAsaasCredentials } from '../services/integracoes/asaas-credentials-service';
+import {
+  convergeStandaloneInstallmentPlanStatus,
+  listStandaloneInstallmentPlanIdsForParticipant,
+} from '../services/standalone-installment-plan-status.service';
 import { getEventAsaasPaymentProvider } from './event-asaas-payment-provider';
 import { createEventContractForParticipant } from './event-contracts.service';
 import {
@@ -2932,6 +2936,19 @@ export async function unregisterEventParticipant(ctx: EventsContext, eventId: st
       })
     : [];
 
+  const standaloneInstallmentPlanIds = new Set(
+    linkedCharges
+      .map((charge) => charge.standaloneInstallmentPlanId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  for (const planId of await listStandaloneInstallmentPlanIdsForParticipant({
+    contaId: ctx.contaId,
+    standaloneChargeId: participant.standaloneChargeId,
+    asaasInstallmentId: participant.asaasInstallmentId,
+  })) {
+    standaloneInstallmentPlanIds.add(planId);
+  }
+
   const openCharges = linkedCharges.filter((charge) =>
     ['CREATED', 'PENDING_SYNC', 'OPEN', 'OVERDUE'].includes(charge.status),
   );
@@ -2982,6 +2999,14 @@ export async function unregisterEventParticipant(ctx: EventsContext, eventId: st
       await tx.charge.updateMany({
         where: { contaId: ctx.contaId, id: { in: openCharges.map((charge) => charge.id) } },
         data: { status: 'CANCELED', statusUpdatedAt: new Date() },
+      });
+    }
+
+    for (const planId of standaloneInstallmentPlanIds) {
+      await convergeStandaloneInstallmentPlanStatus({
+        contaId: ctx.contaId,
+        planId,
+        db: tx,
       });
     }
 
@@ -3038,6 +3063,18 @@ export async function unregisterEventParticipantGroup(ctx: EventsContext, eventI
 
   const groupCharges = await loadEventBillingGroupCharges(prisma, ctx.contaId, [group]);
   const charges = groupCharges.get(group.id) ?? [];
+  const standaloneInstallmentPlanIds = new Set(
+    charges
+      .map((charge) => charge.standaloneInstallmentPlanId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  for (const planId of await listStandaloneInstallmentPlanIdsForParticipant({
+    contaId: ctx.contaId,
+    standaloneChargeId: group.standaloneChargeId,
+    asaasInstallmentId: group.asaasInstallmentId,
+  })) {
+    standaloneInstallmentPlanIds.add(planId);
+  }
   const openCharges = charges.filter((charge) => ['CREATED', 'PENDING_SYNC', 'OPEN', 'OVERDUE'].includes(charge.status));
   if (openCharges.length > 0) {
     const credentials = await loadDecryptedAsaasCredentials(ctx.contaId);
@@ -3142,6 +3179,14 @@ export async function unregisterEventParticipantGroup(ctx: EventsContext, eventI
       });
     }
 
+    for (const planId of standaloneInstallmentPlanIds) {
+      await convergeStandaloneInstallmentPlanStatus({
+        contaId: ctx.contaId,
+        planId,
+        db: tx,
+      });
+    }
+
     const updatedGroup = await tx.eventBillingGroup.update({
       where: { id: group.id, contaId: ctx.contaId },
       data: { status: 'CANCELLED' },
@@ -3189,7 +3234,21 @@ export async function removeCancelledEventParticipant(ctx: EventsContext, eventI
     );
   }
 
+  const standaloneInstallmentPlanIds = await listStandaloneInstallmentPlanIdsForParticipant({
+    contaId: ctx.contaId,
+    standaloneChargeId: participant.standaloneChargeId,
+    asaasInstallmentId: participant.asaasInstallmentId,
+  });
+
   return prisma.$transaction(async (tx) => {
+    for (const planId of standaloneInstallmentPlanIds) {
+      await convergeStandaloneInstallmentPlanStatus({
+        contaId: ctx.contaId,
+        planId,
+        db: tx,
+      });
+    }
+
     await recordEventAudit(tx, {
       contaId: ctx.contaId,
       actorUserId: ctx.userId,
@@ -3255,6 +3314,20 @@ export async function permanentlyDeleteEventParticipant(
         `Digite exatamente "${expectedConfirmation}" para confirmar a exclusão.`,
         422,
       );
+    }
+
+    const standaloneInstallmentPlanIds = await listStandaloneInstallmentPlanIdsForParticipant({
+      contaId: ctx.contaId,
+      standaloneChargeId: participant.standaloneChargeId,
+      asaasInstallmentId: participant.asaasInstallmentId,
+      db: tx,
+    });
+    for (const planId of standaloneInstallmentPlanIds) {
+      await convergeStandaloneInstallmentPlanStatus({
+        contaId: ctx.contaId,
+        planId,
+        db: tx,
+      });
     }
 
     const contracts = await tx.eventoContrato.findMany({

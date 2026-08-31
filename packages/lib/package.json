@@ -30,6 +30,10 @@
       "types": "./dist/events/map/event-map.service.d.ts",
       "default": "./dist/events/map/event-map.service.js"
     },
+    "./services/standalone-installment-plan-status.service": {
+      "types": "./dist/services/standalone-installment-plan-status.service.d.ts",
+      "default": "./dist/services/standalone-installment-plan-status.service.js"
+    },
     "./prisma": {
       "types": "./dist/prisma.d.ts",
       "default": "./dist/prisma.js"

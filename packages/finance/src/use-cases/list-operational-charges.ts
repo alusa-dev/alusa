@@ -11,6 +11,7 @@ import {
 } from '../dtos/unified-billing';
 import { parseExternalReference } from '../core';
 import { resolveChargeDisplayStatus, unifiedChargeStatusToLocal } from '../mappers/asaas-display-status';
+import { resolveEventPayerName } from '../mappers/event-payer';
 
 // ---------------------------------------------------------------------------
 // Input / Output
@@ -890,6 +891,34 @@ async function buildOperationalChargesCollection(
   );
   const eventMapOrders = mergeRecordsById(eventMapOrdersMain, eventMapOrdersRecent);
 
+  const eventRevenueEntryIds = eventFinancialEntries.map((entry) => entry.id);
+  const eventParticipants = eventRevenueEntryIds.length
+    ? await _db.eventParticipant.findMany({
+        where: { contaId, revenueEntryId: { in: eventRevenueEntryIds } },
+        select: {
+          revenueEntryId: true,
+          displayName: true,
+          aluno: { select: { nome: true } },
+          responsavel: { select: { nome: true } },
+        },
+      })
+    : [];
+  const eventPayerCandidatesByEntry = new Map<string, Array<{
+    responsibleName: string | null;
+    studentName: string | null;
+    displayName: string | null;
+  }>>();
+  for (const participant of eventParticipants) {
+    if (!participant.revenueEntryId) continue;
+    const candidates = eventPayerCandidatesByEntry.get(participant.revenueEntryId) ?? [];
+    candidates.push({
+      responsibleName: participant.responsavel?.nome ?? null,
+      studentName: participant.aluno?.nome ?? null,
+      displayName: participant.displayName,
+    });
+    eventPayerCandidatesByEntry.set(participant.revenueEntryId, candidates);
+  }
+
   // Mapa cobrancaId → installmentPlanId
   const cobrancaToInstallmentPlan = new Map<string, string>();
   const cobrancaToSubscriptionKey = new Map<string, string>();
@@ -1143,7 +1172,7 @@ async function buildOperationalChargesCollection(
       id: `event-entry:${entry.id}`,
       origin: 'EVENT' as const,
       description: `${entry.event.name} · ${entry.description || entry.category}`,
-      payerName: entry.event.name,
+      payerName: resolveEventPayerName(eventPayerCandidatesByEntry.get(entry.id) ?? []) ?? entry.event.name,
       value: Number(entry.expectedAmount),
       dueDate: entry.dueDate?.toISOString() ?? null,
       billingType: entry.paymentMethod,

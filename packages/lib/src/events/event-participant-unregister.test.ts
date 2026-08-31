@@ -6,6 +6,7 @@ vi.mock('../prisma', () => ({
     eventParticipant: { findFirst: vi.fn() },
     eventFinancialEntry: { findFirst: vi.fn() },
     charge: { findMany: vi.fn() },
+    standaloneInstallmentPlan: { findFirst: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -20,6 +21,10 @@ function createTransactionMock() {
     },
     charge: {
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    standaloneInstallmentPlan: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      update: vi.fn().mockResolvedValue({ id: 'plan-1', status: 'CANCELED' }),
     },
     eventFinancialEntry: {
       update: vi.fn().mockResolvedValue({ id: 'entry-1' }),
@@ -80,6 +85,48 @@ describe('unregisterEventParticipant', () => {
         actualAmount: expect.anything(),
         cancelledAt: null,
       }),
+    }));
+  });
+
+  it('converge o parcelamento vinculado quando todas as parcelas são canceladas', async () => {
+    const tx = createTransactionMock();
+    vi.mocked(prisma.eventParticipant.findFirst).mockResolvedValue({
+      id: 'participant-1',
+      contaId: 'conta-1',
+      eventId: 'event-1',
+      alunoId: null,
+      registrationFeeCharged: new Prisma.Decimal(780),
+      isFeePaid: false,
+      revenueEntryId: null,
+      asaasPaymentId: null,
+      asaasInstallmentId: 'asaas-installment-1',
+      standaloneChargeId: null,
+      cancelledAt: null,
+      event: { status: 'ACTIVE' },
+    } as never);
+    vi.mocked(prisma.eventFinancialEntry.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.charge.findMany).mockResolvedValue([
+      { id: 'charge-1', status: 'CANCELED', standaloneInstallmentPlanId: 'plan-1' },
+    ] as never);
+    vi.mocked(prisma.standaloneInstallmentPlan.findFirst).mockResolvedValue({ id: 'plan-1' } as never);
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback) => {
+      tx.standaloneInstallmentPlan.findFirst.mockResolvedValue({
+        id: 'plan-1',
+        status: 'ACTIVE',
+        charges: [{ status: 'CANCELED', asaasStatus: 'DELETED' }],
+      });
+      return callback(tx as never);
+    });
+
+    await unregisterEventParticipant(
+      { contaId: 'conta-1', userId: 'admin-1' },
+      'event-1',
+      'participant-1',
+    );
+
+    expect(tx.standaloneInstallmentPlan.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'plan-1' },
+      data: expect.objectContaining({ status: 'CANCELED' }),
     }));
   });
 });

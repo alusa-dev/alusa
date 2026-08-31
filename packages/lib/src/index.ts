@@ -70,6 +70,12 @@ export * from './contracts/providers/signature-provider';
 export * from './contracts/use-cases/sign-contract';
 // Integrações / Credenciais
 export * from './services/integracoes/asaas-credentials-service';
+export {
+  convergeStandaloneInstallmentPlanStatus,
+  listStandaloneInstallmentPlanIdsForParticipant,
+  reconcileStandaloneInstallmentPlanStatuses,
+} from './services/standalone-installment-plan-status.service';
+export type { StandaloneInstallmentPlanStatusConvergence } from './services/standalone-installment-plan-status.service';
 
 // Ocupação de Vagas (Matrícula)
 export {

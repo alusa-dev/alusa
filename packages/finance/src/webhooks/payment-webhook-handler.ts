@@ -1,4 +1,5 @@
 import { prisma } from '@alusa/database';
+import { convergeStandaloneInstallmentPlanStatus } from '@alusa/lib/services/standalone-installment-plan-status.service';
 import type { PaymentStatus } from '@alusa/asaas';
 import {
   refundTicketSalesByAsaasPayment,
@@ -1983,6 +1984,26 @@ async function handlePaymentWebhookCore(
           });
 
           await refreshReadModel({ chargeId: standaloneInstallmentCharge.id });
+
+          const planStatusConvergence = await convergeStandaloneInstallmentPlanStatus({
+            contaId,
+            planId: standalonePlan.id,
+          });
+          if (planStatusConvergence?.changed) {
+            await auditLogService.record({
+              contaId,
+              action: 'finance.webhook.standalone_installment_plan_status_changed',
+              entity: { type: 'StandaloneInstallmentPlan', id: standalonePlan.id },
+              metadata: {
+                event: payload.event,
+                asaasPaymentId: payload.payment.id,
+                asaasInstallmentId,
+                previousStatus: planStatusConvergence.previousStatus,
+                nextStatus: planStatusConvergence.nextStatus,
+                chargeStatuses: planStatusConvergence.chargeStatuses,
+              },
+            });
+          }
 
           const firstSaleChargeId = await linkSaleToFirstInstallmentCharge({
             contaId,
