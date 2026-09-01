@@ -2,8 +2,8 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { ModalityCarousel } from '@/features/site/components/ModalityCarousel';
 
-const DASHBOARD_IMAGE = '/images/site/figma/dashboard.png';
-const SECTION_LINE = '/images/site/figma/section-line.svg';
+const DASHBOARD_IMAGE = '/images/site/dashboard/Dashboard.webp';
+const SECTION_LINE = '/images/site/site/section-line.svg';
 
 function PillLink({
   children,
@@ -16,42 +16,42 @@ function PillLink({
   variant?: 'primary' | 'secondary';
   className?: string;
 }) {
-  return <Link href={href} className={`figma-pill button-${variant} ${className}`}>{children}</Link>;
+  return <Link href={href} className={`site-pill button-${variant} ${className}`}>{children}</Link>;
 }
 
-export function FigmaLanding() {
+export function SiteLanding() {
   return (
-    <div className="figma-landing">
-      <section className="figma-hero">
-        <div className="figma-container">
-          <div className="figma-hero-copy">
+    <div className="site-landing">
+      <section className="site-hero">
+        <div className="site-container">
+          <div className="site-hero-copy">
             <h1>
               Sua escola pode ser mais
               <br />
               simples de administrar.
             </h1>
-            <div className="figma-hero-actions">
+            <div className="site-hero-actions">
               <PillLink href="#modulos" variant="primary">Conhecer a Alusa</PillLink>
               <PillLink href="/register" variant="secondary">Teste grátis por 14 dias</PillLink>
             </div>
           </div>
 
-          <p className="figma-hero-description">
-            Alunos, mensalidades, matrículas, turmas e<br className="figma-desktop-only" /> tudo o que faz parte da rotina da escola,
-            <br className="figma-desktop-only" /> em um só lugar.
+          <p className="site-hero-description">
+            Alunos, mensalidades, matrículas, turmas e<br className="site-desktop-only" /> tudo o que faz parte da rotina da escola,
+            <br className="site-desktop-only" /> em um só lugar.
           </p>
 
-          <div className="figma-dashboard-frame">
+          <div className="site-dashboard-frame">
             <img src={DASHBOARD_IMAGE} alt="Dashboard da Alusa" />
           </div>
         </div>
       </section>
 
-      <img className="figma-section-line" src={SECTION_LINE} alt="" aria-hidden="true" />
+      <img className="site-section-line" src={SECTION_LINE} alt="" aria-hidden="true" />
 
-      <section id="modulos" className="figma-section figma-section-modules">
-        <div className="figma-container">
-          <div className="figma-section-intro">
+      <section id="modulos" className="site-section site-section-modules">
+        <div className="site-container">
+          <div className="site-section-intro">
             <div>
               <h2>
                 Cuide da escola sem passar
@@ -65,24 +65,24 @@ export function FigmaLanding() {
             </p>
           </div>
 
-          <div className="figma-placeholder-grid" aria-label="Módulos da plataforma">
+          <div className="site-placeholder-grid" aria-label="Módulos da plataforma">
             <article />
             <article />
           </div>
         </div>
       </section>
 
-      <img className="figma-section-line" src={SECTION_LINE} alt="" aria-hidden="true" />
+      <img className="site-section-line" src={SECTION_LINE} alt="" aria-hidden="true" />
 
-      <section className="figma-section figma-section-brand">
-        <div className="figma-container">
-          <div className="figma-brand-layout">
+      <section className="site-section site-section-brand">
+        <div className="site-container">
+          <div className="site-brand-layout">
             <h2>
               Feita para escolas.
               <br />
               Não adaptada para elas.
             </h2>
-            <div className="figma-brand-copy">
+            <div className="site-brand-copy">
               <p>
                 Sua escola <strong>não funciona como uma academia, um CRM ou uma empresa qualquer.</strong> Ela tem{' '}
                 <strong>alunos, famílias, turmas, mensalidades, aulas, rematrículas</strong> e uma{' '}
@@ -94,21 +94,21 @@ export function FigmaLanding() {
         </div>
       </section>
 
-      <img className="figma-section-line" src={SECTION_LINE} alt="" aria-hidden="true" />
+      <img className="site-section-line" src={SECTION_LINE} alt="" aria-hidden="true" />
 
       <ModalityCarousel />
 
-      <img className="figma-section-line" src={SECTION_LINE} alt="" aria-hidden="true" />
+      <img className="site-section-line" src={SECTION_LINE} alt="" aria-hidden="true" />
 
-      <section id="financeiro" className="figma-section figma-section-finance">
-        <div className="figma-container">
+      <section id="financeiro" className="site-section site-section-finance">
+        <div className="site-container">
           <h2>
             Saiba quem pagou.
             <br />
             E quem ainda precisa pagar.
           </h2>
-          <div className="figma-finance-placeholder" />
-          <div className="figma-section-intro figma-finance-copy">
+          <div className="site-finance-placeholder" />
+          <div className="site-section-intro site-finance-copy">
             <p>
               Acompanhe mensalidades, pagamentos e pendências de forma clara, sem transformar todo começo de mês em uma conferência manual.
             </p>
@@ -117,7 +117,7 @@ export function FigmaLanding() {
         </div>
       </section>
 
-      <img className="figma-section-line" src={SECTION_LINE} alt="" aria-hidden="true" />
+      <img className="site-section-line" src={SECTION_LINE} alt="" aria-hidden="true" />
     </div>
   );
 }

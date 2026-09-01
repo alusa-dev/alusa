@@ -8,17 +8,22 @@ public/
 ├── site.webmanifest
 ├── brand/                   # Logos Alusa → ver brand/README.md
 ├── images/
-│   ├── auth/                # Hero login e cadastro
-│   └── welcome-wizard/      # Onboarding dashboard
-├── integrations/            # Logos de parceiros (Asaas, etc.)
+│   ├── auth/                # Imagens de login e cadastro
+│   ├── kyc/                 # Imagens do fluxo KYC
+│   ├── onboarding/          # Onboarding da plataforma
+│   └── site/                # Imagens do site público
+│       ├── dashboard/       # Capturas e visuais do produto
+│       ├── decorative/      # Elementos decorativos
+│       └── hero/            # Imagens principais do site
+├── integrations/            # Logos de parceiros (Asaas, Stripe, etc.)
 └── uploads/                 # Runtime local (gitignored) — dev sem R2/S3
 ```
 
 ## Regras
 
 - **Brand**: identidade da plataforma Alusa.
-- **images/**: fotos/ilustrações de produto versionadas no git.
-- **integrations/**: ícones de terceiros; path canônico `/integrations/<nome>.png`.
+- **images/**: fotos e ilustrações versionadas no git, organizadas por finalidade.
+- **integrations/**: ícones de terceiros; path canônico `/integrations/<nome>.<ext>`.
 - **uploads/**: arquivos gerados em runtime (avatars, contratos, produtos). Não commitar conteúdo — ver `.gitignore`.
 
 ## Ícones de interface

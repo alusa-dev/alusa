@@ -1087,7 +1087,7 @@ export function FinanceWizard() {
               <>
                 Cadastrar cartão com a
                 <img
-                  src="/brand/stripe_logo.svg"
+                  src="/integrations/stripe-logo.svg"
                   alt="Stripe"
                   className="pointer-events-none h-[29px] w-auto select-none brightness-0 invert"
                   draggable={false}

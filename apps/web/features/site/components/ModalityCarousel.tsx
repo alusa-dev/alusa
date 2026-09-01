@@ -52,7 +52,7 @@ export function ModalityCarousel() {
     const viewport = viewportRef.current;
     if (!viewport) return;
 
-    const firstCard = viewport.querySelector<HTMLElement>('.figma-modality-card');
+    const firstCard = viewport.querySelector<HTMLElement>('.site-modality-card');
     const cardStep = (firstCard?.getBoundingClientRect().width ?? viewport.clientWidth * 0.82) + 16;
 
     viewport.scrollBy({
@@ -62,49 +62,49 @@ export function ModalityCarousel() {
   };
 
   return (
-    <section className="figma-section figma-section-modalities" aria-labelledby="modalities-title">
-      <div className="figma-container">
-        <div className="figma-carousel-header">
+    <section className="site-section site-section-modalities" aria-labelledby="modalities-title">
+      <div className="site-container">
+        <div className="site-carousel-header">
           <h2 id="modalities-title">
             Uma Alusa para diferentes
             <br />
             formas de ensinar.
           </h2>
-          <div className="figma-carousel-controls" aria-label="Navegação das modalidades">
+          <div className="site-carousel-controls" aria-label="Navegação das modalidades">
             {canScrollPrevious && (
               <button
                 type="button"
-                className="figma-carousel-arrow"
+                className="site-carousel-arrow"
                 aria-label="Modalidades anteriores"
                 onClick={() => moveCarousel('previous')}
               >
-                <ArrowLeft className="figma-carousel-arrow-icon" aria-hidden="true" />
+                <ArrowLeft className="site-carousel-arrow-icon" aria-hidden="true" />
               </button>
             )}
             {canScrollNext && (
               <button
                 type="button"
-                className="figma-carousel-arrow"
+                className="site-carousel-arrow"
                 aria-label="Próximas modalidades"
                 onClick={() => moveCarousel('next')}
               >
-                <ArrowRight className="figma-carousel-arrow-icon" aria-hidden="true" />
+                <ArrowRight className="site-carousel-arrow-icon" aria-hidden="true" />
               </button>
             )}
           </div>
         </div>
 
-        <div ref={frameRef} className="figma-carousel-frame">
+        <div ref={frameRef} className="site-carousel-frame">
           <div
             ref={viewportRef}
-            className="figma-carousel-viewport"
+            className="site-carousel-viewport"
             tabIndex={0}
             role="region"
             aria-label="Modalidades atendidas pela Alusa"
           >
-            <div className="figma-carousel-track">
+            <div className="site-carousel-track">
               {modalities.map((modality) => (
-                <article className="figma-modality-card" key={modality}>
+                <article className="site-modality-card" key={modality}>
                   <p>{modality}</p>
                 </article>
               ))}

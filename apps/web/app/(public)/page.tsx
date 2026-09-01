@@ -1,5 +1,5 @@
-import { FigmaLanding } from '@/features/site/components/FigmaLanding';
+import { SiteLanding } from '@/features/site/components/SiteLanding';
 
 export default function HomePage() {
-  return <FigmaLanding />;
+  return <SiteLanding />;
 }

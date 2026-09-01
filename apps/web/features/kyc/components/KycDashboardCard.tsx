@@ -56,7 +56,7 @@ export function KycDashboardCard({ onDismiss }: KycDashboardCardProps) {
         >
           <div className="relative h-full w-full rotate-[10deg]">
             <Image
-              src="/images/KYC/document-pending-folder.png"
+              src="/images/kyc/document-pending-folder.png"
               alt=""
               fill
               sizes="168px"

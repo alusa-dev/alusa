@@ -76,7 +76,7 @@ export function SiteHeader() {
 
   const headerContent = (
     <>
-      <div className="figma-site-header-inner">
+      <div className="site-site-header-inner">
         <Link
           href="/"
           onClick={(event) => {
@@ -85,27 +85,27 @@ export function SiteHeader() {
               scrollToSiteTop();
             }
           }}
-          className="figma-site-logo flex items-center gap-3 font-display text-xl font-bold tracking-tight text-white hover:opacity-90 transition-opacity"
+          className="site-site-logo flex items-center gap-3 font-display text-xl font-bold tracking-tight text-white hover:opacity-90 transition-opacity"
           aria-label="Alusa"
         >
           <Logo className="h-7 w-auto text-white" />
         </Link>
 
         {!isLegalPage && (
-            <nav className="figma-site-nav hidden items-center gap-8 lg:flex" aria-label="Principal">
+            <nav className="site-site-nav hidden items-center gap-8 lg:flex" aria-label="Principal">
             {primaryNavigation.map((item) => (
               <PrimaryNavItem
                 key={`${item.label}-${siteNavItemKey(item)}`}
                 item={item}
-                className="figma-nav-link text-sm font-medium text-white transition-opacity hover:opacity-70"
+                className="site-nav-link text-sm font-medium text-white transition-opacity hover:opacity-70"
               />
             ))}
           </nav>
         )}
 
         {!isLegalPage && (
-          <div className="figma-site-actions hidden items-center gap-2 lg:flex">
-            <ButtonLink href={appLoginUrl} variant="ghost" tone="dark" showArrow={false} className="figma-header-login text-white">
+          <div className="site-site-actions hidden items-center gap-2 lg:flex">
+            <ButtonLink href={appLoginUrl} variant="ghost" tone="dark" showArrow={false} className="site-header-login text-white">
               Entrar
             </ButtonLink>
             <ButtonLink
@@ -114,7 +114,7 @@ export function SiteHeader() {
               tone="dark"
               event="hero_cta_clicked"
               showArrow={false}
-              className="figma-header-signup bg-white text-[var(--alusa-purple-dark)] shadow-sm"
+              className="site-header-signup bg-white text-[var(--alusa-purple-dark)] shadow-sm"
             >
               Teste grátis por 14 dias
             </ButtonLink>
@@ -124,7 +124,7 @@ export function SiteHeader() {
         {!isLegalPage && (
           <button
             type="button"
-            className="figma-menu-button grid h-10 w-10 place-items-center rounded-lg border border-white/20 text-white lg:hidden"
+            className="site-menu-button grid h-10 w-10 place-items-center rounded-lg border border-white/20 text-white lg:hidden"
             aria-label={open ? 'Fechar menu' : 'Abrir menu'}
             aria-expanded={open}
             onClick={() => setOpen((current) => !current)}
@@ -161,14 +161,14 @@ export function SiteHeader() {
 
   return (
     <>
-      <header ref={originalHeaderRef} className="figma-site-header figma-original-header">
+      <header ref={originalHeaderRef} className="site-site-header site-original-header">
         {headerContent}
       </header>
       <header
         aria-hidden={!floatingVisible}
         className={cn(
-          'figma-site-header figma-floating-header',
-          floatingVisible && 'figma-floating-header--visible',
+          'site-site-header site-floating-header',
+          floatingVisible && 'site-floating-header--visible',
         )}
       >
         {headerContent}

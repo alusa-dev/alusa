@@ -111,7 +111,7 @@ export function WelcomeWizardDialog({
               <div className="relative overflow-hidden bg-[#43206d]">
                 <div className="relative aspect-[1600/880] w-full bg-[radial-gradient(circle_at_top,rgba(123,86,184,0.18),transparent_52%),linear-gradient(135deg,#f8f4ff_0%,#f2ebff_52%,#efe8ff_100%)]">
                   <img
-                    src="/images/welcome-wizard/alusa-welcome.png"
+                    src="/images/onboarding/alusa-welcome.png"
                     alt="Bem-vindo à Alusa"
                     className="absolute inset-0 h-full w-full object-cover"
                   />
