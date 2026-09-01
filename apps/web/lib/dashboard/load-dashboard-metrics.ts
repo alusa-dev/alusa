@@ -7,6 +7,7 @@ import {
 } from '@/lib/media/avatar-url';
 import { runWithTenant } from '@/lib/prisma-tenant';
 import { withPerfTimer } from '@/lib/perf-logger';
+import { loadRecentDashboardCharges } from './load-recent-charges';
 
 type DashboardLessonEvent = {
   turmaId: string | null;
@@ -313,22 +314,7 @@ export async function loadDashboardMetricsBody(contaId: string) {
             updatedAt: true,
           },
         }),
-        tx.cobranca.findMany({
-          take: 5,
-          where: cobrancaFilter,
-          orderBy: { createdAt: 'desc' },
-          select: {
-            id: true,
-            valor: true,
-            vencimento: true,
-            status: true,
-            matricula: {
-              select: {
-                aluno: { select: { id: true, nome: true, foto: true } },
-              },
-            },
-          },
-        }),
+        loadRecentDashboardCharges(tx, contaId),
         tx.aluno.findMany({
           take: 4,
           where: alunoFilter,
@@ -420,19 +406,7 @@ export async function loadDashboardMetricsBody(contaId: string) {
     )).length,
   );
 
-  const ultimasCobrancas = ultimasCobrancasData.map((cobranca) => {
-    const aluno = cobranca.matricula.aluno;
-    const avatarUrl = resolveAlunoPublicAvatar(aluno);
-    return {
-      id: cobranca.id,
-      alunoId: aluno.id,
-      aluno: aluno.nome,
-      alunoAvatarUrl: avatarUrl,
-      valor: Number(cobranca.valor),
-      vencimento: cobranca.vencimento.toISOString(),
-      status: cobranca.status,
-    };
-  });
+  const ultimasCobrancas = ultimasCobrancasData;
 
   const alunosRecentes = alunosRecentesData.map((aluno) => {
     const avatarUrl = resolveAlunoPublicAvatar(aluno);
