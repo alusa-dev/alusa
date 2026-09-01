@@ -5,7 +5,7 @@ import React from "react";
 import { Inter } from "next/font/google";
 import type { Metadata, Viewport } from "next";
 import { WebVitalsReporter } from "./WebVitalsReporter";
-import { ConsentAwareAnalytics, CookieConsentBanner } from "@/components/legal/CookieConsentBanner";
+import { CookieConsentBanner } from "@/components/legal/CookieConsentBanner";
 import {
   AUTH_LIGHT_THEME_PATH_PREFIXES,
   AUTH_LIGHT_THEME_ROOT_PATHS,
@@ -62,7 +62,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {children}
         </AppProviders>
         <CookieConsentBanner />
-        <ConsentAwareAnalytics />
         <WebVitalsReporter />
       </body>
     </html>

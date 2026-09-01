@@ -2492,6 +2492,7 @@ export async function getEventParticipantRemovalDecision(
 
 export async function registerEventParticipant(ctx: EventsContext, input: CreateEventParticipantInput) {
   return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`event-participant:${ctx.contaId}:${input.eventId}:${input.alunoId}`}, 0))`;
     const event = await tx.schoolEvent.findFirst({
       where: { id: input.eventId, contaId: ctx.contaId },
     });
@@ -2693,6 +2694,13 @@ export async function registerEventParticipantGroup(
     const alunoIds = [...new Set(input.alunoIds.filter(Boolean))];
     if (alunoIds.length < 2) {
       throw new EventsError('GRUPO_COBRANCA_INCOMPLETO', 'Selecione pelo menos dois alunos para uma cobrança conjunta.', 422);
+    }
+
+    // Serialize registrations for the same event/student set. The locks are
+    // transaction-scoped and acquired in deterministic order to avoid races
+    // without relying on process-local state in serverless instances.
+    for (const alunoId of [...alunoIds].sort()) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`event-participant:${ctx.contaId}:${input.eventId}:${alunoId}`}, 0))`;
     }
 
     if (input.uiRequestId) {

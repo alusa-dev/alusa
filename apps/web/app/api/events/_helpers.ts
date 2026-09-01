@@ -5,6 +5,7 @@ import { EventsError, type EventsContext } from '@alusa/lib/events/events.servic
 
 import { safeGetServerSession } from '@/lib/safe-server-session';
 import { assertPlatformAccessForConta, platformBillingAccessResponse } from '@/src/server/platform-billing/capacity';
+import { logApiError, logApiResponse } from '@/lib/observability/api-logger';
 
 export type EventsPermission =
   | 'events.view'
@@ -141,19 +142,35 @@ export async function getEventsContext(permission: EventsPermission): Promise<Ev
   return { contaId, userId, role };
 }
 
-export function handleEventsRouteError(error: unknown, fallbackCode: string) {
+export function handleEventsRouteError(
+  error: unknown,
+  fallbackCode: string,
+  context?: { route: string; requestId: string; method: string; startedAt: number; tenantId?: string },
+) {
   const billing = platformBillingAccessResponse(error);
-  if (billing) return NextResponse.json(billing.body, { status: billing.status });
+  if (billing) {
+    const response = NextResponse.json(billing.body, { status: billing.status });
+    if (context) logApiResponse({ ...context, status: billing.status, errorCode: 'PLATFORM_BILLING_ACCESS_RESTRICTED' });
+    return response;
+  }
 
   if (error instanceof EventsError) {
-    return jsonError(error.status, error.code, error.message, error.details);
+    const response = jsonError(error.status, error.code, error.message, error.details);
+    if (context) logApiResponse({ ...context, status: error.status, errorCode: error.code });
+    return response;
   }
 
   if (error instanceof ZodError) {
-    return jsonError(422, 'ERRO_VALIDACAO', 'Dados inválidos.', error.flatten());
+    const response = jsonError(422, 'ERRO_VALIDACAO', 'Dados inválidos.', error.flatten());
+    if (context) logApiResponse({ ...context, status: 422, errorCode: 'ERRO_VALIDACAO' });
+    return response;
   }
 
-  console.error('[api/events][error]', error);
+  if (context) {
+    logApiError({ ...context, status: 500, errorCode: fallbackCode, error });
+  } else {
+    console.error('[api/events][error]', error);
+  }
   return jsonError(500, fallbackCode, (error as Error).message || 'Erro interno.');
 }
 

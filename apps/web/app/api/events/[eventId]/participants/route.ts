@@ -11,6 +11,7 @@ import {
 import { createStandaloneCharge } from '@alusa/finance';
 import { prisma } from '@alusa/database';
 
+import { getRequestId, logApiResponse } from '@/lib/observability/api-logger';
 import { getEventsContext, handleEventsRouteError } from '../../_helpers';
 
 export const dynamic = 'force-dynamic';
@@ -39,6 +40,10 @@ function parseDueDate(value?: string) {
   return value ? new Date(`${value}T00:00:00.000`) : null;
 }
 
+function isUniqueConstraintError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && (error as { code?: string }).code === 'P2002');
+}
+
 async function rollbackParticipantGroup(contaId: string, groupId: string, participantIds: string[], entryIds: string[]) {
   await prisma.$transaction(async (tx) => {
     await tx.eventoContrato.deleteMany({ where: { contaId, participantId: { in: participantIds }, status: 'PENDENTE' } });
@@ -65,17 +70,41 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 }
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
+  const route = '/api/events/[eventId]/participants';
+  const requestId = getRequestId(request);
+  const startedAt = Date.now();
+  let eventIdForLog: string | undefined;
+  let tenantId: string | undefined;
+  let uiRequestId: string | undefined;
+  const complete = (response: Response, errorCode?: string, fields?: Record<string, unknown>) => {
+    logApiResponse({
+      route,
+      requestId,
+      method: 'POST',
+      startedAt,
+      status: response.status,
+      errorCode,
+      tenantId,
+      resourceId: eventIdForLog,
+      ...fields,
+    });
+    return response;
+  };
+
   try {
     const { eventId } = await params;
+    eventIdForLog = eventId;
     const ctx = await getEventsContext('events.update');
+    tenantId = ctx.contaId;
     const body = registerEventParticipantRequestSchema.parse(await request.json());
+    uiRequestId = body.uiRequestId;
 
     // 1. Verificar se o evento existe
     const event = await prisma.schoolEvent.findFirst({
       where: { id: eventId, contaId: ctx.contaId },
     });
     if (!event) {
-      return NextResponse.json({ error: { code: 'EVENTO_NAO_ENCONTRADO', message: 'Evento não encontrado' } }, { status: 404 });
+      return complete(NextResponse.json({ error: { code: 'EVENTO_NAO_ENCONTRADO', message: 'Evento não encontrado' } }, { status: 404 }), 'EVENTO_NAO_ENCONTRADO');
     }
 
     // 2. Registrar o participante localmente. O modo manual pode começar sem
@@ -106,10 +135,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       && entryAmount >= totalRegistrationFee;
     if (alunoIds.length > 1) {
       if (!body.responsavelId) {
-        return NextResponse.json(
+        return complete(NextResponse.json(
           { error: { code: 'RESPONSAVEL_FINANCEIRO_OBRIGATORIO', message: 'Selecione o responsável financeiro para agrupar as inscrições.' } },
           { status: 422 },
-        );
+        ), 'RESPONSAVEL_FINANCEIRO_OBRIGATORIO', { participantCount: alunoIds.length });
       }
 
       const groupedBalanceBeforeCreate = Number((balanceAmount * alunoIds.length).toFixed(2));
@@ -117,10 +146,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         ? null
         : validateEventPaymentRulesForCharge(paymentRules, groupedBalanceBeforeCreate);
       if (groupPaymentRulesError) {
-        return NextResponse.json(
+        return complete(NextResponse.json(
           { error: { code: 'REGRAS_COBRANCA_INVALIDAS', message: groupPaymentRulesError } },
           { status: 422 },
-        );
+        ), 'REGRAS_COBRANCA_INVALIDAS', { participantCount: alunoIds.length });
       }
 
       const groupResult = await registerEventParticipantGroup(ctx, {
@@ -149,7 +178,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
 
       if (groupResult.reused) {
-        return NextResponse.json({ data: groupResult.participants[0] }, { status: 200 });
+        return complete(NextResponse.json({ data: groupResult.participants[0] }, { status: 200 }), undefined, {
+          participantCount: alunoIds.length,
+          idempotentReplay: true,
+        });
       }
 
       const groupBalanceAmount = Number(groupResult.group.balanceAmount);
@@ -184,7 +216,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
               groupResult.participants.map((participant) => participant.revenueEntryId).filter((id): id is string => Boolean(id)),
             );
             const errInfo = billingErrorMap[billingResult.error] ?? { status: 500, message: `Erro ao gerar cobrança: ${billingResult.error}` };
-            return NextResponse.json({ error: { code: billingResult.error, message: errInfo.message } }, { status: errInfo.status });
+            return complete(NextResponse.json({ error: { code: billingResult.error, message: errInfo.message } }, { status: errInfo.status }), billingResult.error, {
+              participantCount: alunoIds.length,
+            });
           }
 
           const updatedGroup = await prisma.eventBillingGroup.update({
@@ -226,17 +260,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
 
       const groupedParticipant = await prisma.eventParticipant.findFirst({ where: { id: groupResult.participants[0].id, contaId: ctx.contaId } });
-      return NextResponse.json({ data: groupedParticipant ?? groupResult.participants[0] }, { status: 201 });
+      return complete(NextResponse.json({ data: groupedParticipant ?? groupResult.participants[0] }, { status: 201 }), undefined, {
+        participantCount: alunoIds.length,
+      });
     }
 
     const paymentRulesError = isFeePaid || body.billingMethod === 'MANUAL_RECEIVED'
       ? null
       : validateEventPaymentRulesForCharge(paymentRules, balanceAmount);
     if (paymentRulesError) {
-      return NextResponse.json(
+      return complete(NextResponse.json(
         { error: { code: 'REGRAS_COBRANCA_INVALIDAS', message: paymentRulesError } },
         { status: 422 },
-      );
+      ), 'REGRAS_COBRANCA_INVALIDAS');
     }
 
     const participant = await registerEventParticipant(ctx, {
@@ -317,7 +353,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           };
 
           const errInfo = errorMap[billingResult.error] ?? { status: 500, message: `Erro ao gerar cobrança: ${billingResult.error}` };
-          return NextResponse.json({ error: { code: billingResult.error, message: errInfo.message } }, { status: errInfo.status });
+          return complete(NextResponse.json({ error: { code: billingResult.error, message: errInfo.message } }, { status: errInfo.status }), billingResult.error);
         }
 
         await prisma.eventParticipant.update({
@@ -348,8 +384,28 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const createdParticipant = await prisma.eventParticipant.findFirst({
       where: { id: participant.id, contaId: ctx.contaId },
     });
-    return NextResponse.json({ data: createdParticipant ?? participant }, { status: 201 });
+    return complete(NextResponse.json({ data: createdParticipant ?? participant }, { status: 201 }));
   } catch (error) {
-    return handleEventsRouteError(error, 'ERRO_REGISTRAR_PARTICIPANTE');
+    if (isUniqueConstraintError(error) && tenantId && eventIdForLog && uiRequestId) {
+      const existingGroup = await prisma.eventBillingGroup.findFirst({
+        where: { contaId: tenantId, eventId: eventIdForLog, uiRequestId },
+        include: { participants: true },
+      });
+      if (existingGroup?.participants[0]) {
+        return complete(NextResponse.json({ data: existingGroup.participants[0] }, { status: 200 }), undefined, {
+          participantCount: existingGroup.participants.length,
+          idempotentReplay: true,
+        });
+      }
+
+    }
+
+    return handleEventsRouteError(error, 'ERRO_REGISTRAR_PARTICIPANTE', {
+      route,
+      requestId,
+      method: 'POST',
+      startedAt,
+      tenantId,
+    });
   }
 }

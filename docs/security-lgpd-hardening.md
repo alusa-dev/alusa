@@ -9,7 +9,7 @@ Este documento registra a primeira entrega de hardening LGPD e segurança da Alu
 - Cadastro com aceite legal forte por modal, incluindo Termos de Uso, Política de Privacidade, DPA e contexto de serviços financeiros Asaas.
 - Registro de aceite em `LegalAcceptance` com versão do documento, origem, conta, usuário, hashes de IP/user-agent e metadados mínimos.
 - Banner de cookies apenas em áreas públicas, com rejeição real de cookies não necessários e preferências por categoria.
-- Analytics do site público carregado somente após consentimento de análise.
+- Analytics do Vercel desabilitado; nenhum script de analytics é carregado no site.
 - Páginas públicas: `/privacidade`, `/termos`, `/cookies`, `/seguranca`, `/suboperadores`, `/dpa`, `/direitos-lgpd` e `/direitos-lgpd/solicitar`.
 - Modelos operacionais: `CookieConsent`, `PrivacyRequest`, `SensitiveAccessLog` e `ConsentRecord`.
 - RLS obrigatório em produção via `assertProductionSecurityEnv`, exigindo `RLS_RUNTIME_ENABLED=true` e `DATABASE_RLS_URL`.

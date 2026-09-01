@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Trash2 } from 'lucide-react';
 
@@ -74,6 +74,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
   const [groupResults, setGroupResults] = useState<Array<{ id: string; nome: string; email?: string | null }>>([]);
   const [groupSearchLoading, setGroupSearchLoading] = useState(false);
   const [cancelledParticipant, setCancelledParticipant] = useState<CancelledParticipantConflict | null>(null);
+  const registrationRequestIdRef = useRef<string | null>(null);
   const autocomplete = useStudentAutocomplete({ enabled: open });
   const {
     resetAutocomplete,
@@ -91,11 +92,13 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
 
   useEffect(() => {
     if (open) {
+      if (!registrationRequestIdRef.current) registrationRequestIdRef.current = crypto.randomUUID();
       const defaultFee = event.registrationFee ?? 0;
       setFeeText(defaultFee > 0 ? defaultFee.toFixed(2).replace('.', ',') : '0,00');
       setDiscountType('FIXED');
       setDiscountText('');
     } else {
+      registrationRequestIdRef.current = null;
       resetAutocomplete();
       setBillingMethod('');
       setChargePaymentMethod('BOLETO');
@@ -248,7 +251,6 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
     const initialPaymentAmount = selectedBilling === 'MANUAL_RECEIVED'
       ? isFeeExempt ? 0 : parseCurrencyInput(String(formData.get('initialPaymentAmount') || '0'))
       : 0;
-    const isFeePaid = !isFeeExempt && selectedBilling === 'MANUAL_RECEIVED' && registrationFeeCharged > 0 && initialPaymentAmount >= registrationFeeCharged;
     const feePaymentMethod = selectedBilling === 'MANUAL_RECEIVED'
       ? String(formData.get('feePaymentMethod') || 'OTHER')
       : selectedBilling;
@@ -271,7 +273,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
       alunoId,
       additionalAlunoIds: groupStudents.map((student) => student.id),
       responsavelId: groupStudents.length > 0 ? selectedResponsavelId : undefined,
-      uiRequestId: crypto.randomUUID(),
+      uiRequestId: registrationRequestIdRef.current ?? crypto.randomUUID(),
       registrationFeeCharged,
       registrationFeeOriginal,
       discountType,

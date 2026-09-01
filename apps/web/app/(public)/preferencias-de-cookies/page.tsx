@@ -102,23 +102,8 @@ const CATEGORIES_METADATA: CategoryInfo[] = [
   {
     key: 'analytics',
     title: 'Análise de Uso',
-    description: 'Ajudam a entender como os visitantes navegam pelas páginas públicas, permitindo medir e melhorar o desempenho do site através de dados agregados.',
-    cookies: [
-      {
-        name: '_ga',
-        domain: '.alusa.com.br',
-        type: 'Terceiro',
-        duration: '2 anos',
-        description: 'Utilizado para distinguir usuários únicos de forma anônima e medir visitas.'
-      },
-      {
-        name: '_gid',
-        domain: '.alusa.com.br',
-        type: 'Terceiro',
-        duration: '24 horas',
-        description: 'Armazena e atualiza um valor único para cada página visitada para estatísticas.'
-      }
-    ]
+    description: 'Nenhuma ferramenta de análise de uso está ativa neste momento. Esta categoria permanece disponível para uma futura ativação, sempre mediante consentimento quando aplicável.',
+    cookies: []
   },
   {
     key: 'marketing',

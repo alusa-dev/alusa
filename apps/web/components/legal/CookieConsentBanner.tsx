@@ -1,16 +1,14 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { Analytics } from '@vercel/analytics/next';
 
 import { Button } from '@/components/ui/button';
 import {
   COOKIE_POLICY_VERSION,
 } from '@/lib/privacy/legal-versions';
 import type { CookieCategories } from '@/lib/privacy/cookie-consent';
-import { defaultCookieCategories } from '@/lib/privacy/cookie-consent';
 
 const STORAGE_KEY = 'alusa.cookie-consent.v1';
 const ANON_KEY = 'alusa.anonymous-id';
@@ -112,7 +110,6 @@ async function persistConsent(categories: CookieCategories, decision: 'ACCEPT_AL
 export function CookieConsentBanner() {
   const pathname = usePathname() ?? '/';
   const [visible, setVisible] = useState(false);
-  const [categories, setCategories] = useState<CookieCategories>(defaultCookieCategories);
 
   const shouldRender = useMemo(() => isCookieBannerPath(pathname), [pathname]);
 
@@ -124,7 +121,6 @@ export function CookieConsentBanner() {
 
     const stored = readStoredConsent();
     if (stored) {
-      setCategories(stored.categories);
       setVisible(false);
     } else {
       setVisible(true);
@@ -144,14 +140,12 @@ export function CookieConsentBanner() {
 
   async function acceptAll() {
     const next: CookieCategories = { essential: true, analytics: true, marketing: true, preferences: true };
-    setCategories(next);
     setVisible(false);
     await persistConsent(next, 'ACCEPT_ALL');
   }
 
   async function rejectNonEssential() {
     const next: CookieCategories = { essential: true, analytics: false, marketing: false, preferences: false };
-    setCategories(next);
     setVisible(false);
     await persistConsent(next, 'REJECT_NON_ESSENTIAL');
   }
@@ -198,26 +192,4 @@ export function CookieConsentBanner() {
       </div>
     </>
   );
-}
-
-export function ConsentAwareAnalytics() {
-  const pathname = usePathname() ?? '/';
-  const [enabled, setEnabled] = useState(false);
-
-  useEffect(() => {
-    function syncConsent() {
-      if (!isCookieBannerPath(pathname)) {
-        setEnabled(false);
-        return;
-      }
-      const stored = readStoredConsent();
-      setEnabled(stored?.categories.analytics === true);
-    }
-
-    syncConsent();
-    window.addEventListener(CONSENT_EVENT, syncConsent);
-    return () => window.removeEventListener(CONSENT_EVENT, syncConsent);
-  }, [pathname]);
-
-  return enabled ? <Analytics /> : null;
 }
