@@ -476,15 +476,25 @@ export async function ensureAsaasCustomerForPayer(
   const phones = buildCustomerPhones(input.payer);
   const address = buildCustomerAddress(input.payer);
 
-  const payload: CreateCustomerInput = compact({
+  const customerData = compact({
     name,
     cpfCnpj,
     email: normalizeEmail(input.payer.email),
     ...phones,
     ...address,
     externalReference,
-    notificationDisabled: true,
-  }) as CreateCustomerInput;
+  });
+
+  // `notificationDisabled` é uma preferência global do customer no Asaas.
+  // Atualizar customers existentes com `true` apagava a intenção de canais
+  // escolhida na inscrição. Em customers novos, o padrão seguro é habilitar
+  // notificações; em customers existentes, o campo é omitido para preservar
+  // um opt-out explícito feito no Asaas.
+  const updatePayload = customerData as CreateCustomerInput;
+  const createPayload = {
+    ...customerData,
+    notificationDisabled: false,
+  } as CreateCustomerInput;
 
   try {
     const localCustomerId = normalizeString(input.payer.asaasCustomerId);
@@ -502,7 +512,7 @@ export async function ensureAsaasCustomerForPayer(
           const updateResult = await pushExistingCustomerUpdate({
             apiKey,
             customerId: localCustomer.id,
-            payload,
+            payload: updatePayload,
             strictUpdate: input.strictCustomerUpdate,
             step,
             logContext: {
@@ -618,7 +628,7 @@ export async function ensureAsaasCustomerForPayer(
       const updateResult = await pushExistingCustomerUpdate({
         apiKey,
         customerId: existingCustomer.id,
-        payload,
+        payload: updatePayload,
         strictUpdate: input.strictCustomerUpdate,
         step,
         logContext: {
@@ -653,7 +663,7 @@ export async function ensureAsaasCustomerForPayer(
     step = 'CREATE_CUSTOMER';
     const created = await createCustomer({
       apiKey,
-      data: payload,
+      data: createPayload,
     });
 
     if (!created?.id) {
@@ -702,7 +712,7 @@ export async function ensureAsaasCustomerForPayer(
         cpfCnpj: maskCpfCnpj(cpfCnpj),
         step,
         response,
-        payloadKeys: Object.keys(payload),
+        payloadKeys: Object.keys(createPayload),
       });
 
       // Body vazio = problema de infra, não validação de payer

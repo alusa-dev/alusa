@@ -82,7 +82,7 @@ describe('createAsaasCustomer', () => {
     });
   });
 
-  it('reativa notificacoes e atualiza celular em customer existente', async () => {
+  it('atualiza celular em customer existente sem sobrescrever opt-out de notificações', async () => {
     const { listCustomers, updateCustomer } = await import('@alusa/asaas');
 
     vi.mocked(listCustomers).mockResolvedValueOnce({
@@ -115,7 +115,6 @@ describe('createAsaasCustomer', () => {
         phone: '92979817409',
         mobilePhone: '92979817409',
         externalReference: 'customer:r1',
-        notificationDisabled: false,
       },
     });
   });

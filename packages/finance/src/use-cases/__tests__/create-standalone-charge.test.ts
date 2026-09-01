@@ -93,6 +93,25 @@ vi.mock('../../services/sync-customer-notifications-at-charge', () => ({
   })),
 }));
 
+const {
+  ensureCustomerNotificationsEnabledMock,
+  enqueueAsaasNotificationSyncMock,
+  recordNotificationSyncAuditMock,
+} = vi.hoisted(() => ({
+  ensureCustomerNotificationsEnabledMock: vi.fn(),
+  enqueueAsaasNotificationSyncMock: vi.fn(),
+  recordNotificationSyncAuditMock: vi.fn(),
+}));
+
+vi.mock('../../services/customer-notification.service', () => ({
+  ensureCustomerNotificationsEnabled: ensureCustomerNotificationsEnabledMock,
+}));
+
+vi.mock('../../services/asaas-notification-sync-outbox.service', () => ({
+  enqueueAsaasNotificationSync: enqueueAsaasNotificationSyncMock,
+  recordNotificationSyncAudit: recordNotificationSyncAuditMock,
+}));
+
 // Mock foundation
 vi.mock('../../foundation/kyc-guard', () => ({
   requireKycApproved: vi.fn(async () => ({ success: true })),
@@ -107,6 +126,8 @@ vi.mock('../../foundation/audit-log.service', () => ({
 describe('createStandaloneCharge', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    ensureCustomerNotificationsEnabledMock.mockResolvedValue({ success: true });
+    enqueueAsaasNotificationSyncMock.mockResolvedValue({ id: 'notification-outbox-1' });
   });
 
   describe('Resolução de pagador para aluno', () => {
@@ -374,8 +395,8 @@ describe('createStandaloneCharge', () => {
     });
   });
 
-  describe('Notificações (best-effort)', () => {
-    it('deve retornar sucesso mesmo com WhatsApp invalid_action', async () => {
+  describe('Notificações', () => {
+    it('deve criar a cobrança com aviso quando WhatsApp não for suportado pelo Asaas', async () => {
       const { prisma } = await import('@alusa/database');
       const { ensureCustomer } = await import('../ensure-customer');
       const { createAsaasPayment } = await import('../create-payment');
@@ -397,7 +418,7 @@ describe('createStandaloneCharge', () => {
       } as never);
 
       vi.mocked(syncCustomerNotificationsForUserSelection).mockResolvedValueOnce({
-        success: false,
+        success: true,
         applied: { email: true, sms: true, whatsapp: false },
         warnings: [
           {
@@ -430,11 +451,53 @@ describe('createStandaloneCharge', () => {
       });
 
       expect(result.success).toBe(true);
+      expect(ensureCustomerNotificationsEnabledMock).toHaveBeenCalledWith(
+        'conta-1',
+        'cust_asaas_123',
+      );
       expect(syncCustomerNotificationsForUserSelection).toHaveBeenCalled();
       if (result.success) {
         expect(result.data.notificationSync?.applied.whatsapp).toBe(false);
         expect(result.data.notificationSync?.warnings.length).toBeGreaterThan(0);
       }
+    });
+
+    it('não cria cobrança quando o bloqueio global não pode ser removido', async () => {
+      const { prisma } = await import('@alusa/database');
+      const { ensureCustomer } = await import('../ensure-customer');
+
+      vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null);
+      vi.mocked(prisma.matricula.findFirst).mockResolvedValueOnce({
+        id: 'mat-1',
+        contratoAtualId: 'cont-1',
+      } as never);
+      vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({
+        nome: 'Responsável 1',
+      } as never);
+      vi.mocked(ensureCustomer).mockResolvedValueOnce({
+        success: true,
+        data: { customerId: 'cust_asaas_123', localCustomerId: 'cust_local_4', externalReference: 'ref' },
+      } as never);
+      ensureCustomerNotificationsEnabledMock.mockResolvedValueOnce({
+        success: false,
+        reason: 'Customer permanece bloqueado',
+      });
+
+      const result = await createStandaloneCharge({
+        contaId: 'conta-1',
+        actor: { type: 'USER', id: 'user-1' },
+        payer: { type: 'responsavel', responsavelId: 'resp-1' },
+        chargeType: 'ONE_TIME',
+        billingType: 'PIX',
+        value: 100,
+        dueDate: '2099-12-01',
+        notificationChannels: ['EMAIL'],
+        notificationChannelsConfigured: true,
+      });
+
+      expect(result).toEqual({ success: false, error: 'NOTIFICACOES_NAO_CONFIGURADAS' });
+      const { createAsaasPayment } = await import('../create-payment');
+      expect(vi.mocked(createAsaasPayment)).not.toHaveBeenCalled();
     });
 
     it('deve permitir desabilitar todos os canais quando a configuração foi confirmada', async () => {
@@ -493,6 +556,7 @@ describe('createStandaloneCharge', () => {
           whatsapp: false,
         },
       );
+      expect(ensureCustomerNotificationsEnabledMock).not.toHaveBeenCalled();
     });
   });
 

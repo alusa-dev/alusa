@@ -239,10 +239,11 @@ describe('ensureAsaasCustomerForPayer', () => {
         customerId: 'cust_existing',
         data: expect.objectContaining({
           externalReference: `alusa_${contaId}_aluno_${aluno.id}`,
-          notificationDisabled: true,
         }),
       }),
     );
+    const updateCall = updateCustomerMock.mock.calls.at(-1)?.[0];
+    expect(updateCall.data).not.toHaveProperty('notificationDisabled');
   });
 
   it('reaproveita customer local por id e sincroniza dados cadastrais no Asaas', async () => {
@@ -388,7 +389,7 @@ describe('ensureAsaasCustomerForPayer', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           externalReference: `alusa_${contaId}_aluno_${aluno.id}`,
-          notificationDisabled: true,
+          notificationDisabled: false,
         }),
       }),
     );
@@ -491,7 +492,7 @@ describe('ensureAsaasCustomerForPayer', () => {
     );
   });
 
-  it('normaliza customer encontrado por cpfCnpj com externalReference e notificationDisabled', async () => {
+  it('normaliza customer encontrado por cpfCnpj sem sobrescrever o bloqueio global', async () => {
     listCustomersMock
       .mockResolvedValueOnce({
         object: 'list',
@@ -563,10 +564,11 @@ describe('ensureAsaasCustomerForPayer', () => {
         customerId: 'cust_existing',
         data: expect.objectContaining({
           externalReference: `alusa_${contaId}_aluno_${aluno.id}`,
-          notificationDisabled: true,
         }),
       }),
     );
+    const updateCall = updateCustomerMock.mock.calls.at(-1)?.[0];
+    expect(updateCall.data).not.toHaveProperty('notificationDisabled');
   });
 
   it('atualiza apiKeyStatus para CONNECTED quando o ping é bem-sucedido', async () => {

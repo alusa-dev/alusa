@@ -41,6 +41,8 @@ const MANAGED_ALERT_KEYS = [
   'webhook_failed',
   'notification_outbox_failed',
   'notification_outbox_backlog',
+  'notification_sync_outbox_failed',
+  'notification_sync_outbox_backlog',
   'asaas_job_failed',
   'asaas_job_stale',
   'customer_snapshot_missing',
@@ -141,6 +143,8 @@ async function collectMetrics(contaId: string): Promise<FinancialOperationalMetr
     failedWebhooks,
     notificationBacklog,
     failedNotifications,
+    notificationSyncBacklog,
+    failedNotificationSyncs,
     failedJobs,
     staleJobs,
     customerWithAsaas,
@@ -167,6 +171,12 @@ async function collectMetrics(contaId: string): Promise<FinancialOperationalMetr
     }),
     prisma.asaasNotificationPreferenceOutbox.count({
       where: { contaId, status: 'FAILED' },
+    }),
+    prisma.asaasNotificationSyncOutbox.count({
+      where: { contaId, status: { in: ['PENDING', 'FAILED', 'PROCESSING'] } },
+    }),
+    prisma.asaasNotificationSyncOutbox.count({
+      where: { contaId, status: { in: ['FAILED', 'EXHAUSTED'] } },
     }),
     prisma.asaasIntegrationJob.count({
       where: { contaId, status: 'FAILED' },
@@ -196,6 +206,8 @@ async function collectMetrics(contaId: string): Promise<FinancialOperationalMetr
     metric('webhook_failed', failedWebhooks, 1, 5),
     metric('notification_outbox_backlog', notificationBacklog, 100, 1_000),
     metric('notification_outbox_failed', failedNotifications, 1, 20),
+    metric('notification_sync_outbox_backlog', notificationSyncBacklog, 10, 100),
+    metric('notification_sync_outbox_failed', failedNotificationSyncs, 1, 10),
     metric('asaas_job_failed', failedJobs, 1, 20),
     metric('asaas_job_stale', staleJobs, 1, 20),
     metric('customer_snapshot_missing', missingCustomerSnapshots, 1, 50),
@@ -227,6 +239,14 @@ function alertFromMetric(metricItem: FinancialOperationalMetric): AlertCandidate
     notification_outbox_backlog: {
       title: 'Outbox de notificações Asaas acumulando',
       description: 'Há muitas preferências de notificação aguardando aplicação.',
+    },
+    notification_sync_outbox_failed: {
+      title: 'Sincronizações de notificações em falha',
+      description: 'Há clientes com canais de notificação que não foram aplicados após tentativas de retry.',
+    },
+    notification_sync_outbox_backlog: {
+      title: 'Fila de notificações de cobranças acumulando',
+      description: 'Há sincronizações explícitas de canais aguardando processamento.',
     },
     asaas_job_failed: {
       title: 'Jobs Asaas com falha',

@@ -41,6 +41,12 @@ import type {
   NotificationChannelPreferences,
   NotificationWarning,
 } from '../services/customer-notification.service';
+import { ensureCustomerNotificationsEnabled } from '../services/customer-notification.service';
+import {
+  enqueueAsaasNotificationSync,
+  recordNotificationSyncAudit,
+  type NotificationSyncChannel,
+} from '../services/asaas-notification-sync-outbox.service';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
 
 async function materializeFirstSubscriptionPayment(params: {
@@ -199,6 +205,31 @@ function paymentRulesSnapshot(input: Pick<CreateStandaloneChargeInput, 'interest
   };
 }
 
+async function queueNotificationSyncRetry(input: {
+  contaId: string;
+  asaasCustomerId: string;
+  channels: NotificationSyncChannel[];
+  externalReference: string;
+  correlationId: string;
+  reason: string;
+  actor: CreateStandaloneChargeInput['actor'];
+}) {
+  try {
+    const outbox = await enqueueAsaasNotificationSync(input);
+    await recordNotificationSyncAudit({
+      ...input,
+      status: 'QUEUED',
+      outboxId: outbox.id,
+    });
+  } catch (error) {
+    console.error('[createStandaloneCharge] Falha ao enfileirar retry de notificações', {
+      contaId: input.contaId,
+      customerId: input.asaasCustomerId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export type CreateStandaloneChargeError =
   | 'FEATURE_DISABLED'
   | 'KYC_NAO_APROVADO'
@@ -214,6 +245,7 @@ export type CreateStandaloneChargeError =
   | 'DATA_INVALIDA'
   | 'PARCELAS_INVALIDAS'
   | 'CICLO_OBRIGATORIO'
+  | 'NOTIFICACOES_NAO_CONFIGURADAS'
   | 'ERRO_AO_CRIAR_PAGAMENTO'
   | 'COBRANCA_DUPLICADA'
   | 'SUBSCRIPTION_DUPLICADA'
@@ -521,12 +553,59 @@ export async function createStandaloneCharge(
       try {
         const { syncCustomerNotificationsForUserSelection, channelPreferencesFromWizardSelection } =
           await import('../services/sync-customer-notifications-at-charge');
-        const channelPrefs = channelPreferencesFromWizardSelection(
-          (input.notificationChannels ?? []).filter(
-            (c): c is 'EMAIL' | 'SMS' | 'WHATSAPP' =>
-              c === 'EMAIL' || c === 'SMS' || c === 'WHATSAPP',
-          ),
+        const selectedChannels = (input.notificationChannels ?? []).filter(
+          (c): c is 'EMAIL' | 'SMS' | 'WHATSAPP' =>
+            c === 'EMAIL' || c === 'SMS' || c === 'WHATSAPP',
         );
+        const channelPrefs = channelPreferencesFromWizardSelection(
+          selectedChannels,
+        );
+        await recordNotificationSyncAudit({
+          contaId: input.contaId,
+          asaasCustomerId,
+          status: 'STARTED',
+          channels: selectedChannels,
+          externalReference,
+          correlationId: idempotencyKey,
+          actor: input.actor,
+        });
+
+        // A seleção explícita de canais deve prevalecer sobre o estado
+        // global do customer. O bloqueio precisa ser removido antes da
+        // cobrança nascer, pois PAYMENT_CREATED é disparado na criação.
+        if (selectedChannels.length > 0) {
+          const enabledResult = await ensureCustomerNotificationsEnabled(
+            input.contaId,
+            asaasCustomerId,
+          );
+          if (!enabledResult.success) {
+            console.warn('[createStandaloneCharge] Não foi possível habilitar notificações', {
+              customerId: asaasCustomerId,
+              reason: enabledResult.reason,
+            });
+            await queueNotificationSyncRetry({
+              contaId: input.contaId,
+              asaasCustomerId,
+              channels: selectedChannels,
+              externalReference,
+              correlationId: idempotencyKey,
+              reason: enabledResult.reason ?? 'CUSTOMER_NOTIFICATION_DISABLED',
+              actor: input.actor,
+            });
+            await recordNotificationSyncAudit({
+              contaId: input.contaId,
+              asaasCustomerId,
+              status: 'FAILED',
+              channels: selectedChannels,
+              externalReference,
+              correlationId: idempotencyKey,
+              reason: enabledResult.reason ?? 'CUSTOMER_NOTIFICATION_DISABLED',
+              actor: input.actor,
+            });
+            return err('NOTIFICACOES_NAO_CONFIGURADAS');
+          }
+        }
+
         const syncResult = await syncCustomerNotificationsForUserSelection(
           input.contaId,
           asaasCustomerId,
@@ -537,6 +616,34 @@ export async function createStandaloneCharge(
           applied: syncResult.applied,
           warnings: syncResult.warnings,
         };
+
+        if (!syncResult.success) {
+          console.warn('[createStandaloneCharge] Preferências de notificação não foram aplicadas', {
+            customerId: asaasCustomerId,
+            warningsCount: syncResult.warnings.length,
+          });
+          await queueNotificationSyncRetry({
+            contaId: input.contaId,
+            asaasCustomerId,
+            channels: selectedChannels,
+            externalReference,
+            correlationId: idempotencyKey,
+            reason: 'NOTIFICATION_PREFERENCE_SYNC_FAILED',
+            actor: input.actor,
+          });
+          await recordNotificationSyncAudit({
+            contaId: input.contaId,
+            asaasCustomerId,
+            status: 'FAILED',
+            channels: selectedChannels,
+            externalReference,
+            correlationId: idempotencyKey,
+            warningsCount: syncResult.warnings.length,
+            reason: 'NOTIFICATION_PREFERENCE_SYNC_FAILED',
+            actor: input.actor,
+          });
+          return err('NOTIFICACOES_NAO_CONFIGURADAS');
+        }
 
         if (syncResult.warnings.length > 0) {
           console.warn('[createStandaloneCharge] Notificações parcialmente configuradas', {
@@ -550,11 +657,46 @@ export async function createStandaloneCharge(
             })),
           });
         }
+        await recordNotificationSyncAudit({
+          contaId: input.contaId,
+          asaasCustomerId,
+          status: syncResult.warnings.length > 0 ? 'PARTIAL' : 'SUCCESS',
+          channels: selectedChannels,
+          externalReference,
+          correlationId: idempotencyKey,
+          warningsCount: syncResult.warnings.length,
+          actor: input.actor,
+        });
       } catch (syncError) {
-        console.warn('[createStandaloneCharge] Falha ao sincronizar notificações (não crítico)', {
+        console.warn('[createStandaloneCharge] Falha ao sincronizar notificações', {
           customerId: asaasCustomerId,
           error: syncError instanceof Error ? syncError.message : String(syncError),
         });
+        const reason = syncError instanceof Error ? syncError.message : String(syncError);
+        const selectedChannels = (input.notificationChannels ?? []).filter(
+          (c): c is NotificationSyncChannel =>
+            c === 'EMAIL' || c === 'SMS' || c === 'WHATSAPP',
+        );
+        await queueNotificationSyncRetry({
+          contaId: input.contaId,
+          asaasCustomerId,
+          channels: selectedChannels,
+          externalReference,
+          correlationId: idempotencyKey,
+          reason,
+          actor: input.actor,
+        });
+        await recordNotificationSyncAudit({
+          contaId: input.contaId,
+          asaasCustomerId,
+          status: 'FAILED',
+          channels: selectedChannels,
+          externalReference,
+          correlationId: idempotencyKey,
+          reason,
+          actor: input.actor,
+        });
+        return err('NOTIFICACOES_NAO_CONFIGURADAS');
       }
     }
 

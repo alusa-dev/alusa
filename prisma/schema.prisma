@@ -1352,6 +1352,7 @@ model Conta {
   financeSubscriptionReadModels     FinanceSubscriptionReadModel[]
   financeInstallmentPlanReadModels  FinanceInstallmentPlanReadModel[]
   asaasNotificationPreferenceOutbox AsaasNotificationPreferenceOutbox[]
+  asaasNotificationSyncOutboxes     AsaasNotificationSyncOutbox[]
   financeDailyAggregates            FinanceDailyAggregate[]
   financeMonthlyAggregates          FinanceMonthlyAggregate[]
   financialOperationalAlerts        FinancialOperationalAlert[]
@@ -6399,6 +6400,42 @@ model AsaasNotificationPreferenceOutbox {
   @@index([status, nextAttemptAt, createdAt], name: "idx_asaas_notif_outbox_status_next")
   @@index([contaId, status, nextAttemptAt], name: "idx_asaas_notif_outbox_conta_status_next")
   @@index([contaId, asaasCustomerId], name: "idx_asaas_notif_outbox_conta_customer")
+}
+
+/// Retryable, customer-scoped notification synchronization requested by a
+/// charge flow. This is intentionally separate from the global preference
+/// outbox so a tenant-wide overwrite can never consume or reset a charge
+/// notification operation.
+model AsaasNotificationSyncOutbox {
+  id      String @id @default(cuid())
+  contaId String
+
+  asaasCustomerId   String
+  dedupeKey         String
+  requestedChannels Json
+  externalReference String?
+  correlationId     String?
+  reason            String?
+  status            String   @default("PENDING")
+
+  attempts      Int       @default(0)
+  maxAttempts   Int       @default(8)
+  nextAttemptAt DateTime  @default(now())
+  processingAt  DateTime?
+  processedAt   DateTime?
+  lastError     String?
+  lastErrorAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, dedupeKey], name: "uq_asaas_notification_sync_conta_dedupe")
+  @@index([status, nextAttemptAt, createdAt], name: "idx_asaas_notification_sync_status_next")
+  @@index([contaId, status, nextAttemptAt], name: "idx_asaas_notification_sync_conta_status_next")
+  @@index([contaId, asaasCustomerId], name: "idx_asaas_notification_sync_conta_customer")
+  @@index([contaId, correlationId], name: "idx_asaas_notification_sync_conta_correlation")
 }
 
 model FinanceDailyAggregate {

@@ -59,6 +59,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/jobs/process-asaas-notification-sync?limit=25",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/jobs/reconcile-asaas-customers?maxAccounts=20&limit=50",
       "schedule": "20 */3 * * *"
     },

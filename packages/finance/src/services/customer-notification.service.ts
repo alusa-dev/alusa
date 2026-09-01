@@ -2,10 +2,11 @@
  * Customer Notification Service
  * 
  * Gerencia sincronização de canais de notificação do cliente no Asaas.
- * Implementa política "best-effort com degradação controlada":
+ * Implementa política de sincronização idempotente com degradação controlada:
  * - Tenta aplicar preferências do usuário
  * - Se WhatsApp falhar para certos eventos (invalid_action), faz fallback
- * - Nunca bloqueia o fluxo principal (criação de cobrança)
+ * - O fluxo de cobrança decide explicitamente se pode prosseguir; quando a
+ *   sincronização é obrigatória, a cobrança não nasce sem essa confirmação
  */
 
 import { loadAsaasCredentials, prisma } from '@alusa/database';
@@ -57,6 +58,11 @@ export interface CustomerNotificationChannelsSnapshot {
   sms: boolean;
   whatsapp: boolean;
   notificationCount: number;
+}
+
+export interface EnsureCustomerNotificationsEnabledResult {
+  success: boolean;
+  reason?: string;
 }
 
 interface AsaasNotification {
@@ -317,6 +323,96 @@ export async function getCustomerNotificationChannels(
   };
 }
 
+/**
+ * Garante que o bloqueio global de notificações do customer está desligado.
+ *
+ * O Asaas aplica `notificationDisabled` no nível do customer, enquanto as
+ * preferências por canal/evento são configuradas em endpoints separados.
+ * Portanto, aplicar os canais sem remover esse bloqueio pode resultar em uma
+ * cobrança criada corretamente, mas sem qualquer notificação ao cliente.
+ */
+export async function ensureCustomerNotificationsEnabled(
+  contaId: string,
+  customerId: string,
+): Promise<EnsureCustomerNotificationsEnabledResult> {
+  try {
+    const creds = await loadAsaasCredentials(contaId);
+    if (!creds) {
+      return { success: false, reason: 'Credenciais Asaas não encontradas' };
+    }
+
+    const baseUrl = buildAsaasUrl(creds.apiKey);
+    const headers = {
+      'Content-Type': 'application/json',
+      access_token: creds.apiKey,
+    };
+
+    const updateResponse = await fetch(`${baseUrl}/customers/${customerId}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ notificationDisabled: false }),
+    });
+
+    if (!updateResponse.ok) {
+      console.warn('[ensureCustomerNotificationsEnabled] Asaas rejeitou habilitação', {
+        contaId,
+        customerId,
+        status: updateResponse.status,
+      });
+      return {
+        success: false,
+        reason: `Asaas rejeitou a habilitação (${updateResponse.status})`,
+      };
+    }
+
+    // Confirma o estado efetivo após a escrita. Isso reduz a chance de criar
+    // uma cobrança enquanto uma escrita concorrente ainda mantém o bloqueio.
+    const verifyResponse = await fetch(`${baseUrl}/customers/${customerId}`, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!verifyResponse.ok) {
+      console.warn('[ensureCustomerNotificationsEnabled] Falha ao verificar habilitação', {
+        contaId,
+        customerId,
+        status: verifyResponse.status,
+      });
+      return {
+        success: false,
+        reason: `Não foi possível verificar o customer (${verifyResponse.status})`,
+      };
+    }
+
+    const customer = (await verifyResponse.json().catch(() => null)) as
+      | { notificationDisabled?: boolean }
+      | null;
+
+    if (customer?.notificationDisabled === true) {
+      console.warn('[ensureCustomerNotificationsEnabled] Customer permanece bloqueado', {
+        contaId,
+        customerId,
+      });
+      return {
+        success: false,
+        reason: 'Customer permanece com notificações desabilitadas',
+      };
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.warn('[ensureCustomerNotificationsEnabled] Falha inesperada', {
+      contaId,
+      customerId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      success: false,
+      reason: error instanceof Error ? error.message : 'Erro inesperado',
+    };
+  }
+}
+
 // =============================================================================
 // Main Function
 // =============================================================================
@@ -325,7 +421,8 @@ export async function getCustomerNotificationChannels(
  * Política:
  * - Tenta aplicar email/sms/whatsapp conforme preferências
  * - Se WhatsApp falhar (invalid_action), faz retry sem WhatsApp para eventos afetados
- * - Registra warnings em vez de falhar
+ * - Registra warnings para capacidades parciais e falha quando o estado não
+ *   pode ser confirmado
  * - Máximo 1 retry
  * 
  * @param contaId - ID da conta (para buscar credenciais)

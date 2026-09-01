@@ -595,6 +595,19 @@ export type {
   ProcessAsaasNotificationPreferenceOutboxResult,
 } from './services/asaas-notification-preference-outbox.service';
 export {
+  enqueueAsaasNotificationSync,
+  processAsaasNotificationSyncOutbox,
+  recordNotificationSyncAudit,
+} from './services/asaas-notification-sync-outbox.service';
+export type {
+  EnqueueAsaasNotificationSyncInput,
+  NotificationSyncChannel,
+  NotificationSyncOutboxStatus,
+  ProcessAsaasNotificationSyncOutboxInput,
+  ProcessAsaasNotificationSyncOutboxResult,
+  RecordNotificationSyncAuditInput,
+} from './services/asaas-notification-sync-outbox.service';
+export {
   reconcileAsaasCustomerSnapshots,
   upsertAsaasCustomerSnapshot,
 } from './services/asaas-customer-snapshot.service';

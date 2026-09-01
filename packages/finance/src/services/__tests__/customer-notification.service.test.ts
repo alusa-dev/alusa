@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  ensureCustomerNotificationsEnabled,
   syncCustomerNotificationChannels,
 } from '../customer-notification.service';
 
@@ -79,6 +80,42 @@ describe('syncCustomerNotificationChannels', () => {
   afterEach(() => {
     fetchSpy?.mockRestore();
     delete process.env.ASAAS_BASE_URL;
+  });
+
+  it('habilita e confirma o customer antes da criação da cobrança', async () => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ notificationDisabled: false }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ notificationDisabled: false }) } as Response);
+
+    const result = await ensureCustomerNotificationsEnabled(MOCK_CONTA_ID, MOCK_CUSTOMER_ID);
+
+    expect(result).toEqual({ success: true });
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining(`/customers/${MOCK_CUSTOMER_ID}`),
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ notificationDisabled: false }),
+      }),
+    );
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining(`/customers/${MOCK_CUSTOMER_ID}`),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('falha com segurança se o Asaas mantiver o customer bloqueado', async () => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ notificationDisabled: true }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ notificationDisabled: true }) } as Response);
+
+    const result = await ensureCustomerNotificationsEnabled(MOCK_CONTA_ID, MOCK_CUSTOMER_ID);
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toContain('permanece');
   });
 
   it('deve retornar sucesso quando batch update funciona', async () => {

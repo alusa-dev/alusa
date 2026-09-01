@@ -78,7 +78,6 @@ export async function syncAsaasCustomerContact(
         email: input.email?.trim().toLowerCase(),
         ...buildCustomerPhonePayload(input.phone),
         externalReference: input.externalReference,
-        notificationDisabled: false,
       },
     });
 

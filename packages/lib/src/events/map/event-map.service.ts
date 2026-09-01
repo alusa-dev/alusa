@@ -1701,7 +1701,6 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
             province: input.buyerProvince ?? undefined,
             postalCode: input.buyerPostalCode ?? undefined,
             externalReference: `event-map-order:${pending.order.id}`,
-            notificationDisabled: false,
           },
         });
       }
