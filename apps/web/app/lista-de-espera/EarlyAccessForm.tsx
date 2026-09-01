@@ -58,7 +58,7 @@ export function EarlyAccessForm() {
       <div className="early-access-success" role="status">
         <span className="early-access-success-mark" aria-hidden="true">✓</span>
         <h2>Muito obrigado!</h2>
-        <p>Em breve, você receberá mais informações sobre o acesso antecipado da Alusa.</p>
+        <p>Em breve, você receberá mais informações sobre a lista de espera da Alusa.</p>
       </div>
     );
   }
@@ -98,7 +98,7 @@ export function EarlyAccessForm() {
             >
               <SelectValue placeholder="Selecione uma faixa" />
             </SelectTrigger>
-            <SelectContent className="early-access-students-content">
+            <SelectContent className="early-access-students-content data-[state=open]:animate-none data-[state=closed]:animate-none">
               <SelectItem value="ate-200">Até 200</SelectItem>
               <SelectItem value="201-500">201 a 500</SelectItem>
               <SelectItem value="501-1000">501 a 1.000</SelectItem>
@@ -127,7 +127,7 @@ export function EarlyAccessForm() {
         <span>Aceito receber comunicações promocionais da Alusa.</span>
       </label>
       <button type="submit" disabled={status === 'submitting'}>
-        {status === 'submitting' ? 'Confirmando…' : 'Quero acesso antecipado'}
+        {status === 'submitting' ? 'Confirmando…' : 'Entrar na lista de espera'}
         <span aria-hidden="true">↗</span>
       </button>
       <p className="early-access-privacy">

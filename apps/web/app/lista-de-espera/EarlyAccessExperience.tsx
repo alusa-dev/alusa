@@ -25,7 +25,7 @@ export function EarlyAccessExperience() {
                 Cadastre-se para ter prioridade quando a Alusa for lançada e acompanhar de perto as novidades.
               </p>
               <button className="early-access-mobile-cta" type="button" onClick={() => setMobileFormOpen(true)}>
-                Quero acesso antecipado
+                Entrar na lista de espera
                 <span aria-hidden="true">↗</span>
               </button>
             </div>

@@ -3,7 +3,10 @@ import type { ReactNode } from 'react';
 import { ModalityCarousel } from '@/features/site/components/ModalityCarousel';
 
 const DASHBOARD_IMAGE = '/images/site/dashboard/Dashboard.webp';
-const SECTION_LINE = '/images/site/site/section-line.svg';
+const SECTION_LINE = '/images/site/decorative/section-line.svg';
+const ALUNOS_IMAGE = '/images/site/sections/alunos.webp';
+const MATRICULAS_IMAGE = '/images/site/sections/matriculas.webp';
+const COBRANCAS_IMAGE = '/images/site/sections/cobrancas.webp';
 
 function PillLink({
   children,
@@ -66,8 +69,12 @@ export function SiteLanding() {
           </div>
 
           <div className="site-placeholder-grid" aria-label="Módulos da plataforma">
-            <article />
-            <article />
+            <article>
+              <img className="site-module-image" src={ALUNOS_IMAGE} alt="Alunos da Alusa" />
+            </article>
+            <article>
+              <img className="site-module-image" src={MATRICULAS_IMAGE} alt="Matrículas da Alusa" />
+            </article>
           </div>
         </div>
       </section>
@@ -107,7 +114,9 @@ export function SiteLanding() {
             <br />
             E quem ainda precisa pagar.
           </h2>
-          <div className="site-finance-placeholder" />
+          <div className="site-finance-placeholder">
+            <img className="site-finance-image" src={COBRANCAS_IMAGE} alt="Cobranças da Alusa" />
+          </div>
           <div className="site-section-intro site-finance-copy">
             <p>
               Acompanhe mensalidades, pagamentos e pendências de forma clara, sem transformar todo começo de mês em uma conferência manual.
