@@ -89,7 +89,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const initialPaymentAmount = body.billingMethod === 'MANUAL_RECEIVED' ? body.initialPaymentAmount : 0;
     const effectiveRegistrationFeeCharged = body.isFeeExempt ? 0 : registrationFeeCharged;
     const entryAmount = body.hasEntry ? body.entryAmount : body.billingMethod === 'MANUAL_RECEIVED' ? initialPaymentAmount : 0;
-    const isFeePaid = body.billingMethod === 'MANUAL_RECEIVED' && effectiveRegistrationFeeCharged > 0 && entryAmount >= effectiveRegistrationFeeCharged;
     const feePaymentMethod = entryAmount > 0
       ? body.initialPaymentMethod ?? body.entryPaymentMethod ?? body.feePaymentMethod
       : body.hasEntry ? body.billingMethod : body.billingMethod;
@@ -101,6 +100,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         : 'FULL';
     const paymentRules = eventPaymentRulesFromRecord(event);
     const alunoIds = [...new Set([body.alunoId, ...(body.additionalAlunoIds ?? [])])];
+    const totalRegistrationFee = Number((effectiveRegistrationFeeCharged * alunoIds.length).toFixed(2));
+    const isFeePaid = body.billingMethod === 'MANUAL_RECEIVED'
+      && totalRegistrationFee > 0
+      && entryAmount >= totalRegistrationFee;
     if (alunoIds.length > 1) {
       if (!body.responsavelId) {
         return NextResponse.json(
@@ -145,12 +148,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         uiRequestId: body.uiRequestId,
       });
 
-      if (groupResult.reused || groupResult.group.status !== 'PENDING') {
+      if (groupResult.reused) {
         return NextResponse.json({ data: groupResult.participants[0] }, { status: 200 });
       }
 
       const groupBalanceAmount = Number(groupResult.group.balanceAmount);
-      if (groupBalanceAmount > 0 && !isFeePaid) {
+      if (groupBalanceAmount > 0 && !isFeePaid && body.billingMethod !== 'MANUAL_RECEIVED') {
         try {
           const billingResult = await createStandaloneCharge({
             contaId: ctx.contaId,
@@ -218,7 +221,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           });
           throw billingError;
         }
-      } else {
+      } else if (body.billingMethod !== 'MANUAL_RECEIVED' || body.isFeeExempt) {
         await prisma.eventBillingGroup.update({ where: { id: groupResult.group.id, contaId: ctx.contaId }, data: { status: 'PAID' } });
       }
 

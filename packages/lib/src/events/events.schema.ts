@@ -331,6 +331,8 @@ function validateEventParticipantBilling(input: z.infer<typeof eventParticipantB
     ? originalAmount * (input.discountValue / 100)
     : input.discountValue;
   const manualChargedAmount = Math.max(originalAmount - Math.min(originalAmount, manualDiscountAmount), 0);
+  const participantCount = 1 + new Set(input.additionalAlunoIds ?? []).size;
+  const manualChargedTotal = manualChargedAmount * participantCount;
   if (input.discountValue > 0 && input.billingMethod !== 'MANUAL_RECEIVED') {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['discountValue'], message: 'Desconto manual só pode ser usado no modo quitado na hora.' });
   }
@@ -344,7 +346,7 @@ function validateEventParticipantBilling(input: z.infer<typeof eventParticipantB
     if (input.hasEntry) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['hasEntry'], message: 'Use o valor recebido agora para registrar uma baixa manual.' });
     }
-    if (input.initialPaymentAmount > manualChargedAmount) {
+    if (input.initialPaymentAmount > manualChargedTotal) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['initialPaymentAmount'], message: 'O valor recebido não pode ser maior que o valor final da inscrição.' });
     }
     if (input.initialPaymentAmount > 0 && !input.initialPaymentMethod && !input.feePaymentMethod) {
@@ -360,7 +362,6 @@ function validateEventParticipantBilling(input: z.infer<typeof eventParticipantB
   }
   if (!input.hasEntry) return;
 
-  const participantCount = 1 + (input.additionalAlunoIds?.length ?? 0);
   const totalRegistrationFee = input.registrationFeeCharged * participantCount;
 
   if (input.additionalAlunoIds && input.additionalAlunoIds.length > 0 && !input.responsavelId) {

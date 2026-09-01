@@ -76,6 +76,38 @@ describe('event participant billing schema', () => {
     }).initialPaymentAmount).toBe(0);
   });
 
+  it('accepts a fully paid manual grouped request using the group total', () => {
+    const result = registerEventParticipantRequestSchema.parse({
+      alunoId: 'aluno-1',
+      additionalAlunoIds: ['aluno-2'],
+      responsavelId: 'responsavel-1',
+      registrationFeeCharged: 702,
+      registrationFeeOriginal: 780,
+      discountType: 'PERCENTAGE',
+      discountValue: 10,
+      billingMethod: 'MANUAL_RECEIVED',
+      initialPaymentAmount: 1404,
+      initialPaymentMethod: 'EXTERNAL_CARD',
+    });
+
+    expect(result.initialPaymentAmount).toBe(1404);
+  });
+
+  it('rejects a manual grouped payment above the group total', () => {
+    expect(() => registerEventParticipantRequestSchema.parse({
+      alunoId: 'aluno-1',
+      additionalAlunoIds: ['aluno-2'],
+      responsavelId: 'responsavel-1',
+      registrationFeeCharged: 702,
+      registrationFeeOriginal: 780,
+      discountType: 'PERCENTAGE',
+      discountValue: 10,
+      billingMethod: 'MANUAL_RECEIVED',
+      initialPaymentAmount: 1405,
+      initialPaymentMethod: 'EXTERNAL_CARD',
+    })).toThrow('O valor recebido não pode ser maior que o valor final da inscrição.');
+  });
+
   it('rejects an initial manual payment above the final amount', () => {
     expect(() => registerEventParticipantRequestSchema.parse({
       ...base,
