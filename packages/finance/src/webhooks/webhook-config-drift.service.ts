@@ -6,7 +6,7 @@ import type { AuditActorType } from '@prisma/client';
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
 import {
   buildExpectedWebhookConfig,
-  hasSameWebhookEvents,
+  hasRequiredWebhookEvents,
   normalizeWebhookUrlBase,
 } from '../use-cases/asaas-account/expected-webhook-config.server';
 import {
@@ -126,7 +126,14 @@ export interface WebhookConfigDriftStatus {
 
 export interface RepairWebhookConfigDriftResult {
   repaired: boolean;
-  reason: 'REPAIRED' | 'NO_DRIFT' | 'REMOTE_NOT_FOUND' | 'ASAAS_ACCOUNT_NOT_READY' | 'CREDENTIALS_MISSING' | 'PROVIDER_ERROR';
+  reason:
+    | 'REPAIRED'
+    | 'NO_DRIFT'
+    | 'REMOTE_NOT_FOUND'
+    | 'ASAAS_ACCOUNT_NOT_READY'
+    | 'CREDENTIALS_MISSING'
+    | 'UNSUPPORTED_FEATURE'
+    | 'PROVIDER_ERROR';
   before: WebhookConfigDriftStatus | null;
   after: WebhookConfigDriftStatus | null;
   failureCategory?: string;
@@ -157,7 +164,7 @@ function computeDrift(params: {
     interrupted: webhook ? webhook.interrupted === true : false,
     missingAuthToken: webhook ? webhook.hasAuthToken === false : false,
     sendTypeMismatch: webhook ? webhook.sendType !== expected.sendType : false,
-    eventsMismatch: webhook ? !hasSameWebhookEvents(webhook.events, expected.events) : false,
+    eventsMismatch: webhook ? !hasRequiredWebhookEvents(webhook.events, expected.events) : false,
     localHashMismatch: account.webhookAuthTokenHash !== expected.authTokenHash,
     // O contador pode permanecer histórico após reativar a fila. Só é acionável
     // quando a fila também está interrompida.
@@ -255,7 +262,7 @@ export async function repairWebhookConfigDrift(params: {
 
     const hasDrift = hasWebhookConfigDrift(before);
 
-    if (!hasDrift && before.drift.missingEvents.length === 0 && before.drift.extraEvents.length === 0) {
+    if (!hasDrift) {
       await resolveWebhookConfigDriftIssue(before);
       return { repaired: false, reason: 'NO_DRIFT', before, after: before };
     }
@@ -275,7 +282,7 @@ export async function repairWebhookConfigDrift(params: {
 
     const after = await getWebhookConfigDriftStatus(params.contaId);
 
-    if (after && !hasWebhookConfigDrift(after) && after.drift.missingEvents.length === 0 && after.drift.extraEvents.length === 0) {
+    if (after && !hasWebhookConfigDrift(after)) {
       await resolveWebhookConfigDriftIssue(after);
     }
 
@@ -284,6 +291,8 @@ export async function repairWebhookConfigDrift(params: {
     const failure = classifyAsaasOperationalError(error, 'subaccount');
     const reason = failure.category === 'invalid_subaccount_credentials'
       ? 'CREDENTIALS_MISSING'
+      : failure.category === 'unsupported_feature'
+        ? 'UNSUPPORTED_FEATURE'
       : failure.status === 404
         ? 'REMOTE_NOT_FOUND'
         : 'PROVIDER_ERROR';

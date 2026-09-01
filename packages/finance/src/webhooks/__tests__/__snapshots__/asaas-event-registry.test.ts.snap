@@ -643,7 +643,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "requiresReconciliation": true,
   },
   {
-    "category": "UNUSED",
+    "category": "PIX_AUTOMATIC",
     "criticality": "INFO",
     "event": "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED",
     "handlingMode": "NOT_USED",
@@ -651,7 +651,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "requiresReconciliation": false,
   },
   {
-    "category": "UNUSED",
+    "category": "PIX_AUTOMATIC",
     "criticality": "INFO",
     "event": "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CANCELLED",
     "handlingMode": "NOT_USED",
@@ -659,7 +659,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "requiresReconciliation": false,
   },
   {
-    "category": "UNUSED",
+    "category": "PIX_AUTOMATIC",
     "criticality": "INFO",
     "event": "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CREATED",
     "handlingMode": "NOT_USED",
@@ -667,7 +667,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "requiresReconciliation": false,
   },
   {
-    "category": "UNUSED",
+    "category": "PIX_AUTOMATIC",
     "criticality": "INFO",
     "event": "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_EXPIRED",
     "handlingMode": "NOT_USED",
@@ -675,7 +675,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "requiresReconciliation": false,
   },
   {
-    "category": "UNUSED",
+    "category": "PIX_AUTOMATIC",
     "criticality": "INFO",
     "event": "PIX_AUTOMATIC_RECURRING_AUTHORIZATION_REFUSED",
     "handlingMode": "NOT_USED",
@@ -683,7 +683,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "requiresReconciliation": false,
   },
   {
-    "category": "UNUSED",
+    "category": "PIX_AUTOMATIC",
     "criticality": "INFO",
     "event": "PIX_AUTOMATIC_RECURRING_ELIGIBILITY_UPDATED",
     "handlingMode": "NOT_USED",
@@ -691,7 +691,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "requiresReconciliation": false,
   },
   {
-    "category": "UNUSED",
+    "category": "PIX_AUTOMATIC",
     "criticality": "INFO",
     "event": "PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_CANCELLED",
     "handlingMode": "NOT_USED",
@@ -699,7 +699,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "requiresReconciliation": false,
   },
   {
-    "category": "UNUSED",
+    "category": "PIX_AUTOMATIC",
     "criticality": "INFO",
     "event": "PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_CREATED",
     "handlingMode": "NOT_USED",
@@ -707,7 +707,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "requiresReconciliation": false,
   },
   {
-    "category": "UNUSED",
+    "category": "PIX_AUTOMATIC",
     "criticality": "INFO",
     "event": "PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_REFUSED",
     "handlingMode": "NOT_USED",
@@ -715,7 +715,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "requiresReconciliation": false,
   },
   {
-    "category": "UNUSED",
+    "category": "PIX_AUTOMATIC",
     "criticality": "INFO",
     "event": "PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_SCHEDULED",
     "handlingMode": "NOT_USED",

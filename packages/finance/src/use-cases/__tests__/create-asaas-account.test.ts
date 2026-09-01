@@ -110,7 +110,7 @@ vi.mock('../../webhooks/ensure-asaas-webhook-configuration', () => ({
       webhookId: 'webhook-1',
       action: 'created',
       authTokenHash: 'test-webhook-hash',
-      eventsCount: 111,
+      eventsCount: 101,
       duplicateWebhookIdsRemoved: [],
     };
   }),

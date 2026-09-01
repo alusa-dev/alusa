@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { AsaasHttpError } from '@alusa/asaas';
 
 const mocks = vi.hoisted(() => ({
   findFirst: vi.fn(),
@@ -23,10 +24,21 @@ vi.mock('@alusa/database', () => ({
 vi.mock('@alusa/asaas', () => ({
   listWebhooks: mocks.listWebhooks,
   ASAAS_WEBHOOK_EVENTS: ['PAYMENT_CONFIRMED', 'PAYMENT_PARTIALLY_REFUNDED'],
-  AsaasHttpError: class AsaasHttpError extends Error {},
+  AsaasHttpError: class AsaasHttpError extends Error {
+    status: number;
+    responseBody: unknown;
+
+    constructor(message: string, status: number, responseBody: unknown) {
+      super(message);
+      this.status = status;
+      this.responseBody = responseBody;
+    }
+  },
 }));
 
 vi.mock('../webhook-provisioning-events', () => ({
+  DEFAULT_WEBHOOK_PROVISIONING_CAPABILITIES: ['CORE_FINANCE'],
+  getWebhookEventsForCapabilities: () => ['PAYMENT_CONFIRMED', 'PAYMENT_PARTIALLY_REFUNDED'],
   PROVISIONED_WEBHOOK_EVENTS: ['PAYMENT_CONFIRMED', 'PAYMENT_PARTIALLY_REFUNDED'],
 }));
 
@@ -123,6 +135,21 @@ describe('webhook-config-drift.service', () => {
     expect(result?.drift.penalized).toBe(false);
   });
 
+  it('trata evento opcional extra como informação, sem criar drift do núcleo', async () => {
+    mocks.listWebhooks.mockResolvedValue({
+      data: [remoteWebhook({
+        events: ['PAYMENT_CONFIRMED', 'PAYMENT_PARTIALLY_REFUNDED', 'PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED'],
+      })],
+      hasMore: false,
+    });
+
+    const result = await getWebhookConfigDriftStatus('conta-1');
+
+    expect(result?.drift.eventsMismatch).toBe(false);
+    expect(result?.drift.missingEvents).toEqual([]);
+    expect(result?.drift.extraEvents).toEqual(['PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED']);
+  });
+
   it('delega o reparo ao serviço canônico e verifica novamente', async () => {
     mocks.listWebhooks
       .mockResolvedValueOnce({ data: [remoteWebhook({ enabled: false })], hasMore: false })
@@ -155,6 +182,28 @@ describe('webhook-config-drift.service', () => {
       reason: 'PROVIDER_ERROR',
       failureStatus: 400,
       failureCategory: 'unknown_error',
+    });
+  });
+
+  it('classifica indisponibilidade do Pix Automático sem sugerir retry', async () => {
+    mocks.listWebhooks.mockResolvedValue({
+      data: [remoteWebhook({ enabled: false })],
+      hasMore: false,
+    });
+    mocks.ensureWebhook.mockRejectedValue(new AsaasHttpError('Bad Request', 400, {
+      errors: [{
+        code: 'invalid_object',
+        description: 'O Pix Automático não está disponível para sua conta no momento.',
+      }],
+    }));
+
+    const result = await repairWebhookConfigDrift({ contaId: 'conta-1', actor: { type: 'SYSTEM' } });
+
+    expect(result).toMatchObject({
+      repaired: false,
+      reason: 'UNSUPPORTED_FEATURE',
+      failureStatus: 400,
+      failureCategory: 'unsupported_feature',
     });
   });
 });

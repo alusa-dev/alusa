@@ -49,7 +49,8 @@ export type WebhookEventPolicyCategory =
   | 'ACCESS_TOKEN'
   | 'ANTICIPATION'
   | 'AUDIT_ONLY'
-  | 'UNUSED';
+  | 'UNUSED'
+  | 'PIX_AUTOMATIC';
 
 export type WebhookEventHandlingMode =
   | 'STATE_CHANGE'
@@ -1101,6 +1102,10 @@ function toPolicyCategory(category: EventCategory): WebhookEventPolicyCategory {
 
   if (category === 'INTERNAL_TRANSFER' || category === 'BILL') {
     return 'AUDIT_ONLY';
+  }
+
+  if (category === 'PIX_AUTOMATIC') {
+    return 'PIX_AUTOMATIC';
   }
 
   return 'UNUSED';

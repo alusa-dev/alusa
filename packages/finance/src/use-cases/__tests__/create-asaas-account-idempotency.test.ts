@@ -5,7 +5,7 @@ const mockEnsureWebhook = vi.hoisted(() =>
     webhookId: 'wh_1',
     action: 'updated' as const,
     authTokenHash: 'hash123',
-    eventsCount: 111,
+    eventsCount: 101,
     duplicateWebhookIdsRemoved: [],
   })),
 );

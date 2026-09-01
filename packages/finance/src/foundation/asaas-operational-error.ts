@@ -8,6 +8,7 @@ export type AsaasOperationalErrorCategory =
   | 'rate_limit_concurrency'
   | 'rate_limit_quota'
   | 'rate_limit_endpoint'
+  | 'unsupported_feature'
   | 'temporary_asaas_error'
   | 'unknown_error';
 
@@ -61,6 +62,21 @@ function classifyRateLimit(details: ErrorDetail[]): AsaasOperationalErrorCategor
   return 'rate_limit_endpoint';
 }
 
+function isUnsupportedPixAutomaticFeature(status: number | null, details: ErrorDetail[]): boolean {
+  if (status !== 400) return false;
+
+  const text = details
+    .map((detail) => `${detail.code ?? ''} ${detail.description ?? ''}`.trim())
+    .join(' ')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  return text.includes('invalid_object') &&
+    text.includes('pix automatico') &&
+    (text.includes('nao esta disponivel') || text.includes('indisponivel') || text.includes('not available'));
+}
+
 export function classifyAsaasOperationalError(error: unknown, context: Context): AsaasOperationalErrorInfo {
   if (error instanceof Error && error.name === 'AsaasApiKeyError') {
     return {
@@ -103,6 +119,16 @@ export function classifyAsaasOperationalError(error: unknown, context: Context):
       message,
       details,
       retryable: true,
+    };
+  }
+
+  if (isUnsupportedPixAutomaticFeature(status, details)) {
+    return {
+      category: 'unsupported_feature',
+      status,
+      message,
+      details,
+      retryable: false,
     };
   }
 

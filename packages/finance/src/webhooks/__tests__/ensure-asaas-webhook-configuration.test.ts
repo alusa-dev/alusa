@@ -18,8 +18,8 @@ vi.mock('../../use-cases/asaas-account/expected-webhook-config.server', () => ({
   RECOMMENDED_WEBHOOK_NAME: 'Alusa - Webhook financeiro',
   buildRecommendedWebhookName: (id: string) => `Alusa - Webhook financeiro - ${id}`,
   normalizeWebhookUrlBase: (url: string) => url.replace(/\/+$/, ''),
-  hasSameWebhookEvents: (current: string[] = [], expected: string[]) =>
-    [...current].sort().join('|') === [...expected].sort().join('|'),
+  hasRequiredWebhookEvents: (current: string[] = [], expected: string[]) =>
+    expected.every((event) => current.includes(event)),
   buildExpectedWebhookConfig: (id: string) => ({
     name: `Alusa - Webhook financeiro - ${id}`,
     url: 'https://app.alusa.test/api/webhooks/asaas',
@@ -88,6 +88,21 @@ describe('ensureAsaasWebhookConfiguration', () => {
     expect(payload).toMatchObject({ interrupted: false, authToken: expect.any(String) });
     expect(payload).not.toHaveProperty('email');
     expect(payload).not.toHaveProperty('apiVersion');
+  });
+
+  it('preserva eventos opcionais já habilitados no webhook remoto', async () => {
+    mocks.findFirst.mockResolvedValue({ id: 'acc_1', webhookId: 'wh_1', webhookAuthTokenHash: 'hash-new' });
+    mocks.list.mockResolvedValue({ data: [remote({ events: [
+      'PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED',
+    ] })] });
+    mocks.get.mockResolvedValue(remote({ events: [
+      'PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED',
+    ] }));
+
+    const result = await ensureAsaasWebhookConfiguration({ contaId: 'conta_1', financeProfileId: 'fp_1', apiKey: 'api_key' });
+
+    expect(result.action).toBe('unchanged');
+    expect(mocks.updateRemote).not.toHaveBeenCalled();
   });
 
   it('serializa concorrência com lease antes de chamar o Asaas', async () => {

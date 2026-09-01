@@ -1264,6 +1264,12 @@ export {
   getWebhookConfigDriftStatus,
   repairWebhookConfigDrift,
 } from './webhooks/webhook-config-drift.service';
+export {
+  DEFAULT_WEBHOOK_PROVISIONING_CAPABILITIES,
+  getWebhookEventsForCapabilities,
+  PROVISIONED_WEBHOOK_EVENTS,
+} from './webhooks/webhook-provisioning-events';
+export type { WebhookProvisioningCapability } from './webhooks/webhook-provisioning-events';
 export type {
   WebhookConfigDriftStatus,
   RepairWebhookConfigDriftResult,

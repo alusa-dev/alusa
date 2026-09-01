@@ -102,7 +102,7 @@ describe('connectExternalAsaasAccount', () => {
       webhookId: 'wh_1',
       action: 'created',
       authTokenHash: 'hash_1',
-      eventsCount: 111,
+      eventsCount: 101,
       duplicateWebhookIdsRemoved: [],
     });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>

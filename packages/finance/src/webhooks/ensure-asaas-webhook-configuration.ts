@@ -16,12 +16,13 @@ import { auditLogService } from '../foundation/audit-log.service';
 import {
   buildExpectedWebhookConfig,
   buildRecommendedWebhookName,
-  hasSameWebhookEvents,
+  hasRequiredWebhookEvents,
   normalizeWebhookUrlBase,
   RECOMMENDED_WEBHOOK_NAME,
 } from '../use-cases/asaas-account/expected-webhook-config.server';
 import { resolveWebhookNotificationEmail } from '../use-cases/asaas-account/webhook-notification-email.server';
 import { buildWebhookAuthTokenRotationData } from './asaas-webhook-auth';
+import type { WebhookProvisioningCapability } from './webhook-provisioning-events';
 
 const WEBHOOK_LEASE_MS = 90_000;
 const ALUSA_WEBHOOK_NAME_PREFIX = RECOMMENDED_WEBHOOK_NAME;
@@ -109,7 +110,7 @@ export function isWebhookConfigurationOperational(
     webhook.apiVersion === expected.apiVersion &&
     webhook.hasAuthToken === true &&
     webhook.sendType === expected.sendType &&
-    hasSameWebhookEvents(webhook.events, expected.events)
+    hasRequiredWebhookEvents(webhook.events, expected.events)
   );
 }
 
@@ -205,11 +206,16 @@ export async function ensureAsaasWebhookConfiguration(params: {
   persistResult?: boolean;
   persistFailure?: boolean;
   forceAuthTokenRefresh?: boolean;
+  capabilities?: readonly WebhookProvisioningCapability[];
 }): Promise<EnsureAsaasWebhookConfigurationResult> {
   let stage: EnsureAsaasWebhookStage = 'PREPARE';
   let expected: ReturnType<typeof buildExpectedWebhookConfig>;
   try {
-    expected = buildExpectedWebhookConfig(params.financeProfileId);
+    expected = buildExpectedWebhookConfig(
+      params.financeProfileId,
+      undefined,
+      params.capabilities,
+    );
   } catch (error) {
     throw new AsaasWebhookConfigurationError(
       'CONFIGURATION_INVALID',

@@ -29,6 +29,7 @@ export type ConnectExternalAsaasAccountErrorCode =
   | 'WEBHOOK_CONFIGURATION_INVALID'
   | 'WEBHOOK_LIMIT_REACHED'
   | 'PROVISIONING_IN_PROGRESS'
+  | 'UNSUPPORTED_FEATURE'
   | 'TEMPORARY_ASAAS_ERROR'
   | 'UNEXPECTED_ERROR';
 
@@ -128,6 +129,13 @@ function mapWebhookFailure(error: unknown): {
     return {
       errorCode: 'INVALID_API_KEY',
       summary: 'API key inválida, expirada, desabilitada ou sem permissão no Asaas.',
+      retryable: false,
+    };
+  }
+  if (failure.category === 'unsupported_feature') {
+    return {
+      errorCode: 'UNSUPPORTED_FEATURE',
+      summary: 'A conta Asaas não possui o recurso solicitado habilitado ou elegível.',
       retryable: false,
     };
   }

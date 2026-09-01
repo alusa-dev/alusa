@@ -51,4 +51,18 @@ describe('classifyAsaasOperationalError', () => {
     expect(result.category).toBe('rate_limit_quota');
     expect(result.retryable).toBe(true);
   });
+
+  it('classifica recurso Pix Automático indisponível como falha permanente', () => {
+    const error = new AsaasHttpError('Bad Request', 400, {
+      errors: [{
+        code: 'invalid_object',
+        description: 'O Pix Automático não está disponível para sua conta no momento.',
+      }],
+    });
+
+    const result = classifyAsaasOperationalError(error, 'subaccount');
+
+    expect(result.category).toBe('unsupported_feature');
+    expect(result.retryable).toBe(false);
+  });
 });

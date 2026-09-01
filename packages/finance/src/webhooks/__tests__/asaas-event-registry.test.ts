@@ -17,7 +17,10 @@ import {
   getWebhookEventPolicy,
   shouldAlertUnknownWebhookEvent,
 } from '../asaas-event-registry';
-import { PROVISIONED_WEBHOOK_EVENTS } from '../webhook-provisioning-events';
+import {
+  getWebhookEventsForCapabilities,
+  PROVISIONED_WEBHOOK_EVENTS,
+} from '../webhook-provisioning-events';
 
 vi.mock('@alusa/asaas', async () => {
   const actual = await vi.importActual<typeof import('@alusa/asaas')>('@alusa/asaas');
@@ -324,11 +327,20 @@ describe('Asaas Event Registry', () => {
       expect(unhandledCritical.length, 'Todos os eventos críticos devem ter handler').toBe(0);
     });
 
-    it('todos os eventos oficiais registrados devem ser provisionados no webhook da subconta', () => {
-      expect(new Set(PROVISIONED_WEBHOOK_EVENTS)).toEqual(new Set(ASAAS_WEBHOOK_EVENTS));
-      expect(new Set(PROVISIONED_WEBHOOK_EVENTS)).toEqual(new Set(Object.keys(ASAAS_EVENT_REGISTRY)));
-      expect(PROVISIONED_WEBHOOK_EVENTS).toHaveLength(111);
+    it('provisiona o núcleo financeiro e mantém Pix Automático opt-in', () => {
+      const pixAutomaticEvents = Object.entries(ASAAS_EVENT_REGISTRY)
+        .filter(([, definition]) => definition.category === 'PIX_AUTOMATIC')
+        .map(([event]) => event);
+      const coreEvents = getWebhookEventsForCapabilities(['CORE_FINANCE']);
+      const allCapabilitiesEvents = getWebhookEventsForCapabilities(['CORE_FINANCE', 'PIX_AUTOMATIC']);
+
+      expect(new Set(PROVISIONED_WEBHOOK_EVENTS)).toEqual(new Set(coreEvents));
+      expect(new Set(PROVISIONED_WEBHOOK_EVENTS)).not.toEqual(new Set(ASAAS_WEBHOOK_EVENTS));
+      expect(PROVISIONED_WEBHOOK_EVENTS).toHaveLength(101);
       expect(PROVISIONED_WEBHOOK_EVENTS).toEqual(expect.arrayContaining(getHandledEvents()));
+      expect(PROVISIONED_WEBHOOK_EVENTS).not.toEqual(expect.arrayContaining(pixAutomaticEvents));
+      expect(new Set(allCapabilitiesEvents)).toEqual(new Set(ASAAS_WEBHOOK_EVENTS));
+      expect(new Set(allCapabilitiesEvents)).toEqual(new Set(Object.keys(ASAAS_EVENT_REGISTRY)));
     });
 
     it('todos os eventos registrados devem ter política operacional canônica', () => {
@@ -373,6 +385,14 @@ describe('Asaas Event Registry', () => {
         requiresReconciliation: true,
       });
       expect(shouldAlertUnknownWebhookEvent('ASAAS_NEW_CRITICAL_EVENT')).toBe(true);
+    });
+
+    it('mantém Pix Automático explicitamente separado na política', () => {
+      expect(getWebhookEventPolicy('PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED')).toMatchObject({
+        category: 'PIX_AUTOMATIC',
+        handlingMode: 'NOT_USED',
+        mustProvision: false,
+      });
     });
   });
 });
