@@ -2519,7 +2519,8 @@ export async function getEventParticipantRemovalDecision(
 ) {
   const participant = await prisma.eventParticipant.findFirst({
     where: { id: participantId, eventId, contaId: ctx.contaId },
-    include: {
+    select: {
+      ...eventParticipantScalarSelect,
       aluno: { select: { email: true } },
       responsavel: { select: { email: true } },
     },
@@ -2547,7 +2548,8 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
         eventId: input.eventId,
         alunoId: input.alunoId,
       },
-      include: {
+      select: {
+        ...eventParticipantScalarSelect,
         aluno: { select: { email: true } },
         responsavel: { select: { email: true } },
       },
@@ -2950,7 +2952,7 @@ export async function registerEventParticipantGroup(
 export async function unregisterEventParticipant(ctx: EventsContext, eventId: string, participantId: string) {
   const participant = await prisma.eventParticipant.findFirst({
     where: { id: participantId, eventId, contaId: ctx.contaId },
-    include: { event: true },
+    select: { ...eventParticipantScalarSelect, event: true },
   });
   if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
   assertOperationalEvent(participant.event.status);
@@ -3272,7 +3274,8 @@ export async function unregisterEventParticipantGroup(ctx: EventsContext, eventI
 export async function removeCancelledEventParticipant(ctx: EventsContext, eventId: string, participantId: string) {
   const participant = await prisma.eventParticipant.findFirst({
     where: { id: participantId, eventId, contaId: ctx.contaId },
-    include: {
+    select: {
+      ...eventParticipantScalarSelect,
       event: true,
       aluno: { select: { email: true } },
       responsavel: { select: { email: true } },
@@ -3341,7 +3344,8 @@ export async function permanentlyDeleteEventParticipant(
   return prisma.$transaction(async (tx) => {
     const participant = await tx.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
-      include: {
+      select: {
+        ...eventParticipantScalarSelect,
         event: { select: { id: true, name: true, status: true } },
         aluno: { select: { id: true, nome: true, cpf: true } },
         responsavel: { select: { id: true, nome: true, cpf: true } },
@@ -3449,7 +3453,8 @@ export async function reactivateEventParticipant(
   return prisma.$transaction(async (tx) => {
     const participant = await tx.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
-      include: {
+      select: {
+        ...eventParticipantScalarSelect,
         event: true,
         aluno: { select: { email: true } },
         responsavel: { select: { email: true } },
@@ -3563,7 +3568,7 @@ export async function quitarEventParticipantFee(ctx: EventsContext, eventId: str
   return prisma.$transaction(async (tx) => {
     const participant = await tx.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
-      include: { event: true },
+      select: { ...eventParticipantScalarSelect, event: true },
     });
     if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
     assertOperationalEvent(participant.event.status);
@@ -3705,7 +3710,7 @@ export async function createManualEventParticipantPayment(
   return prisma.$transaction(async (tx) => {
     const participant = await tx.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
-      include: { event: true },
+      select: { ...eventParticipantScalarSelect, event: true },
     });
     if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
     assertOperationalEvent(participant.event.status);
@@ -3840,7 +3845,7 @@ export async function refundManualEventParticipantFee(ctx: EventsContext, eventI
   return prisma.$transaction(async (tx) => {
     const participant = await tx.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
-      include: { event: true },
+      select: { ...eventParticipantScalarSelect, event: true },
     });
     if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
     assertOperationalEvent(participant.event.status);
@@ -3903,7 +3908,7 @@ export async function deleteManualEventParticipantFee(ctx: EventsContext, eventI
   return prisma.$transaction(async (tx) => {
     const participant = await tx.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
-      include: { event: true },
+      select: { ...eventParticipantScalarSelect, event: true },
     });
     if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
     assertOperationalEvent(participant.event.status);
