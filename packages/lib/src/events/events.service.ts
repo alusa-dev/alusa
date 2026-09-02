@@ -98,7 +98,7 @@ export type EventsListMeta = {
   pageCount: number;
 };
 
-const eventParticipantScalarSelect = {
+export const eventParticipantScalarSelect = {
   id: true,
   contaId: true,
   eventId: true,

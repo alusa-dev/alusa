@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { registerEventParticipantRequestSchema } from '@alusa/lib/events/events.schema';
-import { listEventParticipants, registerEventParticipant, registerEventParticipantGroup } from '@alusa/lib/events/events.service';
+import {
+  eventParticipantScalarSelect,
+  listEventParticipants,
+  registerEventParticipant,
+  registerEventParticipantGroup,
+} from '@alusa/lib/events/events.service';
 import { calculateEventParticipantDiscount } from '@alusa/lib/events/event-participant-discount';
 import {
   eventPaymentRulesFromRecord,
@@ -263,7 +268,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         await prisma.eventBillingGroup.update({ where: { id: groupResult.group.id, contaId: ctx.contaId }, data: { status: 'PAID' } });
       }
 
-      const groupedParticipant = await prisma.eventParticipant.findFirst({ where: { id: groupResult.participants[0].id, contaId: ctx.contaId } });
+      const groupedParticipant = await prisma.eventParticipant.findFirst({
+        where: { id: groupResult.participants[0].id, contaId: ctx.contaId },
+        select: eventParticipantScalarSelect,
+      });
       return complete(NextResponse.json({ data: groupedParticipant ?? groupResult.participants[0] }, { status: 201 }), undefined, {
         participantCount: alunoIds.length,
       });
@@ -387,13 +395,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const createdParticipant = await prisma.eventParticipant.findFirst({
       where: { id: participant.id, contaId: ctx.contaId },
+      select: eventParticipantScalarSelect,
     });
     return complete(NextResponse.json({ data: createdParticipant ?? participant }, { status: 201 }));
   } catch (error) {
     if (isUniqueConstraintError(error) && tenantId && eventIdForLog && uiRequestId) {
       const existingGroup = await prisma.eventBillingGroup.findFirst({
         where: { contaId: tenantId, eventId: eventIdForLog, uiRequestId },
-        include: { participants: true },
+        include: { participants: { select: eventParticipantScalarSelect } },
       });
       if (existingGroup?.participants[0]) {
         return complete(NextResponse.json({ data: existingGroup.participants[0] }, { status: 200 }), undefined, {

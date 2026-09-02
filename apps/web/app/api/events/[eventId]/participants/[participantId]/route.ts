@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@alusa/database';
-import { unregisterEventParticipant, calculateParticipantPayment, EventsError, recordEventAudit } from '@alusa/lib/events/events.service';
+import {
+  unregisterEventParticipant,
+  calculateParticipantPayment,
+  eventParticipantScalarSelect,
+  EventsError,
+  recordEventAudit,
+} from '@alusa/lib/events/events.service';
 import { calculateEventParticipantDiscount } from '@alusa/lib/events/event-participant-discount';
 import { listEventContractsByStudent } from '@alusa/lib';
 import { ensureEventAsaasPaymentProviderRegistered } from '@/src/server/events/register-event-asaas-payment-provider';
@@ -39,7 +45,8 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 
     const participant = await prisma.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
-      include: {
+      select: {
+        ...eventParticipantScalarSelect,
         aluno: true,
         event: true,
         responsavel: true,
@@ -471,6 +478,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     const participant = await prisma.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
+      select: eventParticipantScalarSelect,
     });
 
     if (!participant) {
@@ -674,6 +682,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
 
     const participant = await prisma.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
+      select: eventParticipantScalarSelect,
     });
 
     if (!participant) {

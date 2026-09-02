@@ -249,7 +249,8 @@ export async function createEventContractForParticipant(
 ) {
   const participant = await tx.eventParticipant.findFirst({
     where: { id: input.participantId, eventId: input.eventId, alunoId: input.alunoId, contaId: input.contaId },
-    include: {
+    select: {
+      id: true,
       event: { select: { id: true, name: true, contratoModeloId: true } },
       aluno: {
         select: {

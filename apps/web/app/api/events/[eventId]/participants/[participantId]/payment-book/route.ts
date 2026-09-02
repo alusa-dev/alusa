@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma, loadAsaasCredentials } from '@alusa/database';
 import { getAsaasBaseUrlForApiKeyOrThrow } from '@alusa/finance';
+import { eventParticipantScalarSelect } from '@alusa/lib/events/events.service';
 import { jsPDF } from 'jspdf';
 import { getEventsContext, handleEventsRouteError, jsonError } from '../../../../_helpers';
 
@@ -218,6 +219,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // 1. Fetch the participant to check if it belongs to the active account/tenant
     const participant = await prisma.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
+      select: eventParticipantScalarSelect,
     });
 
     if (!participant) {
@@ -368,7 +370,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const participant = await prisma.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
-      include: {
+      select: {
+        ...eventParticipantScalarSelect,
         event: true,
         turma: true,
       },

@@ -5,6 +5,7 @@ import { prisma } from '@alusa/database';
 import { reactivateEventParticipantRequestSchema, reactivateEventParticipantSchema } from '@alusa/lib/events/events.schema';
 import {
   EventsError,
+  eventParticipantScalarSelect,
   getEventParticipantRemovalDecision,
   reactivateEventParticipant,
 } from '@alusa/lib/events/events.service';
@@ -50,7 +51,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const participant = await prisma.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
-      include: { event: true },
+      select: { ...eventParticipantScalarSelect, event: true },
     });
     if (!participant) {
       throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
