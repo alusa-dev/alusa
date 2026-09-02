@@ -2,13 +2,14 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { ModalityCarousel } from '@/features/site/components/ModalityCarousel';
 
-const DASHBOARD_IMAGE = '/images/site/dashboard/Dashboard.webp';
-const DASHBOARD_MOBILE_IMAGE = '/images/site/dashboard/dashboard-mobile.webp';
+const SITE_ASSET_VERSION = '20260901';
+const DASHBOARD_IMAGE = `/images/site/dashboard/Dashboard.webp?v=${SITE_ASSET_VERSION}`;
+const DASHBOARD_MOBILE_IMAGE = `/images/site/dashboard/dashboard-mobile.webp?v=${SITE_ASSET_VERSION}`;
 const SECTION_LINE = '/images/site/decorative/section-line.svg';
-const ALUNOS_IMAGE = '/images/site/sections/alunos.webp';
-const MATRICULAS_IMAGE = '/images/site/sections/matriculas.webp';
-const COBRANCAS_IMAGE = '/images/site/sections/cobrancas.webp';
-const COBRANCAS_MOBILE_IMAGE = '/images/site/sections/cobrancas-mobile.webp';
+const ALUNOS_IMAGE = `/images/site/sections/alunos.webp?v=${SITE_ASSET_VERSION}`;
+const MATRICULAS_IMAGE = `/images/site/sections/matriculas.webp?v=${SITE_ASSET_VERSION}`;
+const COBRANCAS_IMAGE = `/images/site/sections/cobrancas.webp?v=${SITE_ASSET_VERSION}`;
+const COBRANCAS_MOBILE_IMAGE = `/images/site/sections/cobrancas-mobile.webp?v=${SITE_ASSET_VERSION}`;
 
 function PillLink({
   children,
