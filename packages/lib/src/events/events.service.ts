@@ -98,6 +98,42 @@ export type EventsListMeta = {
   pageCount: number;
 };
 
+const eventParticipantScalarSelect = {
+  id: true,
+  contaId: true,
+  eventId: true,
+  type: true,
+  alunoId: true,
+  turmaId: true,
+  responsavelId: true,
+  displayName: true,
+  notes: true,
+  registrationFeeCharged: true,
+  registrationFeeOriginal: true,
+  registrationFeeDiscount: true,
+  registrationFeeDiscountType: true,
+  billingMode: true,
+  entryAmount: true,
+  balanceAmount: true,
+  entryPaymentMethod: true,
+  billingGroupId: true,
+  registrationPaymentRules: true,
+  isFeePaid: true,
+  isFeeExempt: true,
+  feePaymentMethod: true,
+  revenueEntryId: true,
+  financialStatusSnapshot: true,
+  feePaidAmount: true,
+  feeRefundedAmount: true,
+  standaloneChargeId: true,
+  asaasPaymentId: true,
+  asaasInstallmentId: true,
+  cancelledAt: true,
+  cancelledReason: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.EventParticipantSelect;
+
 const eventInclude = {
   responsibleUser: { select: { id: true, nome: true, email: true } },
   createdBy: { select: { id: true, nome: true, email: true } },
@@ -110,39 +146,7 @@ const eventInclude = {
   // expand the relation with columns that are not present in the database.
   participants: {
     select: {
-      id: true,
-      contaId: true,
-      eventId: true,
-      type: true,
-      alunoId: true,
-      turmaId: true,
-      responsavelId: true,
-      displayName: true,
-      notes: true,
-      registrationFeeCharged: true,
-      registrationFeeOriginal: true,
-      registrationFeeDiscount: true,
-      registrationFeeDiscountType: true,
-      billingMode: true,
-      entryAmount: true,
-      balanceAmount: true,
-      entryPaymentMethod: true,
-      billingGroupId: true,
-      registrationPaymentRules: true,
-      isFeePaid: true,
-      isFeeExempt: true,
-      feePaymentMethod: true,
-      revenueEntryId: true,
-      financialStatusSnapshot: true,
-      feePaidAmount: true,
-      feeRefundedAmount: true,
-      standaloneChargeId: true,
-      asaasPaymentId: true,
-      asaasInstallmentId: true,
-      cancelledAt: true,
-      cancelledReason: true,
-      createdAt: true,
-      updatedAt: true,
+      ...eventParticipantScalarSelect,
     },
   },
 } satisfies Prisma.SchoolEventInclude;
@@ -4189,7 +4193,8 @@ async function buildParticipantPaymentSnapshots(
 export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>, eventId: string) {
   const participants = await prisma.eventParticipant.findMany({
     where: { contaId: ctx.contaId, eventId },
-    include: {
+    select: {
+      ...eventParticipantScalarSelect,
       aluno: { select: { id: true, nome: true, foto: true, email: true } },
       responsavel: { select: { email: true } },
     },
