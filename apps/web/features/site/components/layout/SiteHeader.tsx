@@ -88,7 +88,7 @@ export function SiteHeader() {
           className="site-site-logo flex items-center gap-3 font-display text-xl font-bold tracking-tight text-white hover:opacity-90 transition-opacity"
           aria-label="Alusa"
         >
-          <Logo className="h-7 w-auto text-white" />
+          <Logo variant="purple" className="h-7 w-auto" />
         </Link>
 
         {!isLegalPage && (
@@ -134,28 +134,6 @@ export function SiteHeader() {
         )}
       </div>
 
-      {!isLegalPage && (
-        <div className={cn('border-t border-white/10 bg-[var(--alusa-purple-dark)] lg:hidden', open ? 'block' : 'hidden')}>
-          <nav className="mx-auto grid max-w-7xl gap-1 px-6 py-4" aria-label="Principal mobile">
-            {primaryNavigation.map((item) => (
-              <PrimaryNavItem
-                key={`mobile-${item.label}-${siteNavItemKey(item)}`}
-                item={item}
-                onNavigate={() => setOpen(false)}
-                className="rounded-lg px-3 py-2.5 text-left text-base font-medium text-white/70 hover:bg-white/10 hover:text-white"
-              />
-            ))}
-            <div className="grid gap-2 pt-3 sm:grid-cols-2">
-              <ButtonLink href={appLoginUrl} variant="secondary" tone="dark">
-                Entrar
-              </ButtonLink>
-              <ButtonLink href="/register" variant="primary" tone="dark" event="hero_cta_clicked">
-                Criar conta grátis
-              </ButtonLink>
-            </div>
-          </nav>
-        </div>
-      )}
     </>
   );
 
@@ -165,7 +143,7 @@ export function SiteHeader() {
         {headerContent}
       </header>
       <header
-        aria-hidden={!floatingVisible}
+        inert={!floatingVisible ? true : undefined}
         className={cn(
           'site-site-header site-floating-header',
           floatingVisible && 'site-floating-header--visible',
@@ -173,6 +151,28 @@ export function SiteHeader() {
       >
         {headerContent}
       </header>
+      {!isLegalPage && (
+        <div className={cn('site-mobile-menu border-t border-white/10 bg-[var(--alusa-purple-dark)] lg:hidden', open ? 'site-mobile-menu--open' : 'site-mobile-menu--closed')}>
+          <nav className="site-mobile-nav mx-auto grid max-w-7xl gap-1 px-6 py-4" aria-label="Principal mobile">
+            {primaryNavigation.map((item) => (
+              <PrimaryNavItem
+                key={`mobile-${item.label}-${siteNavItemKey(item)}`}
+                item={item}
+                onNavigate={() => setOpen(false)}
+                className="rounded-lg px-3 py-2.5 text-left text-base font-medium text-white/70 hover:bg-white/10 hover:text-white"
+              />
+            ))}
+            <div className="grid gap-2 pt-3 sm:grid-cols-2">
+              <ButtonLink href={appLoginUrl} variant="secondary" tone="dark" showArrow={false}>
+                Entrar
+              </ButtonLink>
+              <ButtonLink href="/register" variant="primary" tone="dark" event="hero_cta_clicked" showArrow={false}>
+                Criar conta grátis
+              </ButtonLink>
+            </div>
+          </nav>
+        </div>
+      )}
     </>
   );
 }

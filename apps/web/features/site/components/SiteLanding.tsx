@@ -3,10 +3,12 @@ import type { ReactNode } from 'react';
 import { ModalityCarousel } from '@/features/site/components/ModalityCarousel';
 
 const DASHBOARD_IMAGE = '/images/site/dashboard/Dashboard.webp';
+const DASHBOARD_MOBILE_IMAGE = '/images/site/dashboard/dashboard-mobile.webp';
 const SECTION_LINE = '/images/site/decorative/section-line.svg';
 const ALUNOS_IMAGE = '/images/site/sections/alunos.webp';
 const MATRICULAS_IMAGE = '/images/site/sections/matriculas.webp';
 const COBRANCAS_IMAGE = '/images/site/sections/cobrancas.webp';
+const COBRANCAS_MOBILE_IMAGE = '/images/site/sections/cobrancas-mobile.webp';
 
 function PillLink({
   children,
@@ -30,8 +32,8 @@ export function SiteLanding() {
           <div className="site-hero-copy">
             <h1>
               Sua escola pode ser mais
-              <br />
-              simples de administrar.
+              <br className="site-hero-title-break" />
+              {' '}simples de administrar.
             </h1>
             <div className="site-hero-actions">
               <PillLink href="#modulos" variant="primary">Conhecer a Alusa</PillLink>
@@ -45,7 +47,10 @@ export function SiteLanding() {
           </p>
 
           <div className="site-dashboard-frame">
-            <img src={DASHBOARD_IMAGE} alt="Dashboard da Alusa" />
+            <picture>
+              <source media="(max-width: 900px)" srcSet={DASHBOARD_MOBILE_IMAGE} />
+              <img src={DASHBOARD_IMAGE} alt="Dashboard da Alusa" />
+            </picture>
           </div>
         </div>
       </section>
@@ -59,7 +64,7 @@ export function SiteLanding() {
               <h2>
                 Cuide da escola sem passar
                 <br />
-                o dia organizando a escola.
+                {' '}o dia organizando a escola.
               </h2>
               <PillLink href="/register" variant="primary">Conhecer a Alusa</PillLink>
             </div>
@@ -87,7 +92,7 @@ export function SiteLanding() {
             <h2>
               Feita para escolas.
               <br />
-              Não adaptada para elas.
+              {' '}Não adaptada para elas.
             </h2>
             <div className="site-brand-copy">
               <p>
@@ -111,11 +116,16 @@ export function SiteLanding() {
         <div className="site-container">
           <h2>
             Saiba quem pagou.
-            <br />
-            E quem ainda precisa pagar.
+            <br className="site-mobile-visible-break" />
+            E quem ainda
+            <br className="site-mobile-visible-break" />
+            precisa pagar.
           </h2>
           <div className="site-finance-placeholder">
-            <img className="site-finance-image" src={COBRANCAS_IMAGE} alt="Cobranças da Alusa" />
+            <picture>
+              <source media="(max-width: 900px)" srcSet={COBRANCAS_MOBILE_IMAGE} />
+              <img className="site-finance-image" src={COBRANCAS_IMAGE} alt="Cobranças da Alusa" />
+            </picture>
           </div>
           <div className="site-section-intro site-finance-copy">
             <p>

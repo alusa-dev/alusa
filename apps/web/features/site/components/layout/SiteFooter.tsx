@@ -33,7 +33,7 @@ export function SiteFooter() {
   return (
     <footer className="site-site-footer relative overflow-hidden border-t border-[#340e63]/40 bg-[#140528] text-white">
       <VerticalGridLines tone="dark" />
-      <div className="relative z-10 mx-auto grid max-w-7xl gap-12 px-6 py-16 sm:px-8 lg:grid-cols-[1.15fr_2fr] lg:gap-16 lg:py-20">
+      <div className="site-footer-main relative z-10 mx-auto grid max-w-7xl gap-12 px-6 py-16 sm:px-8 lg:grid-cols-[1.15fr_2fr] lg:gap-16 lg:py-20">
         <div>
           <div className="flex items-center gap-3 font-display text-xl font-bold tracking-tight">
             <Logo className="h-8 w-auto text-white" />
@@ -54,8 +54,8 @@ export function SiteFooter() {
           ))}
         </div>
       </div>
-      <div className="relative z-10 border-t border-white/10 py-8">
-        <div className="mx-auto max-w-7xl px-6 sm:px-8">
+      <div className="site-footer-bottom relative z-10 border-t border-white/10 py-8">
+        <div className="site-footer-bottom-inner mx-auto max-w-7xl px-6 sm:px-8">
           <div className="flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-col gap-4 max-w-3xl">
               <p className="text-xs leading-relaxed text-white/55">

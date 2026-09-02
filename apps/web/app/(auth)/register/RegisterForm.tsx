@@ -269,25 +269,23 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
 
   return (
     <AuthShell
-      heroImageSrc="/images/auth/register.jpg"
+      hideHero
+      heroImageSrc="/images/auth/login.webp"
       heroContent={(
-        <div className="flex w-full justify-center -mt-6">
-          <p className="max-w-[460px] text-center text-[30px] font-normal leading-tight tracking-[-0.02em] text-white drop-shadow-[0_6px_18px_rgba(0,0,0,0.24)]">
-            Abra sua conta e conte com uma gestão escolar{' '}
-            <span className="font-bold text-[#c9a6ff]">simples</span>
-            {' '}e{' '}
-            <span className="font-bold text-[#c9a6ff]">segura</span>.
+        <div className="flex w-full justify-start">
+          <p className="max-w-[360px] text-left text-3xl font-normal leading-tight text-[#3d3a3f]">
+            Abra sua conta e conte com uma gestão escolar <span className="font-bold">simples</span> e <span className="font-bold">segura</span>.
           </p>
         </div>
       )}
     >
-      <div data-layer="form register" className="flex w-[min(100%,21.5rem)] min-[400px]:w-[min(100%,24rem)] flex-col items-stretch self-center text-left lg:max-w-[320px] lg:w-full lg:self-auto">
-        <header className="mb-6 w-full space-y-2 text-left lg:mb-8">
-          <h1 className="w-full text-left text-[1.25rem] font-medium leading-snug tracking-tight text-brand-primary min-[400px]:text-[1.375rem] lg:text-[1.625rem] lg:font-semibold lg:leading-tight">
+      <div data-layer="form register" className="auth-card auth-login-card flex w-[min(100%,21.5rem)] min-[400px]:w-[min(100%,24rem)] flex-col items-stretch self-center text-left lg:w-full lg:self-auto">
+        <header className="mb-6 w-full space-y-2 text-left lg:mb-8 lg:text-center">
+          <h1 className="w-full text-left text-[1.25rem] font-medium leading-snug tracking-tight text-brand-primary min-[400px]:text-[1.375rem] lg:text-center lg:text-[1.625rem] lg:font-semibold lg:leading-tight">
             {mode === 'invite' ? 'Aceitar convite' : 'Crie sua conta Alusa'}
           </h1>
           {mode === 'invite' && inviteData ? (
-            <p className="text-left text-sm font-medium leading-relaxed text-brand-muted lg:text-[12px]">
+            <p className="text-left text-sm font-medium leading-relaxed text-brand-muted lg:text-center lg:text-[12px]">
               Você foi convidado como {inviteData.role} para acessar o sistema.
             </p>
           ) : null}
@@ -460,7 +458,7 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
           >
             {isSubmitting ? 'Processando...' : (mode === 'invite' ? 'Aceitar Convite' : 'Criar conta')}
           </button>
-          <p className="mt-6 pb-4 text-left text-[0.8125rem] font-medium min-[400px]:text-sm lg:mt-8 lg:pb-0 lg:text-[11px]">
+          <p className="mt-6 w-full pb-4 text-center text-[0.8125rem] font-medium min-[400px]:text-sm lg:mt-8 lg:pb-0 lg:text-[11px]">
             <span className="text-[#686868]">{mode === 'invite' ? 'Não recebeu este convite? ' : 'Já tenho uma conta! '}</span>
             <a href="/auth/login" className="text-brand-accent hover:underline">
               {mode === 'invite' ? 'Contatar administrador' : 'Fazer login'}

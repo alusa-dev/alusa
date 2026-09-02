@@ -68,7 +68,7 @@ export function ModalityCarousel() {
           <h2 id="modalities-title">
             Uma Alusa para diferentes
             <br />
-            formas de ensinar.
+            {' '}formas de ensinar.
           </h2>
           <div className="site-carousel-controls" aria-label="Navegação das modalidades">
             {canScrollPrevious && (

@@ -4,9 +4,9 @@ import { siteUrl } from '@/features/site/lib/urls';
 
 export const siteMetadata = {
   name: 'Alusa',
-  title: 'Alusa | Infraestrutura financeira e operacional para negocios recorrentes',
+  title: 'Alusa | ERP educacional para gestão escolar e financeira',
   description:
-    'A Alusa conecta cobrancas, contratos, agenda, atendimento e indicadores em uma plataforma para operacoes recorrentes com controle e previsibilidade.',
+    'Sistema de gestão escolar para centralizar alunos, matrículas, contratos, cobranças, pagamentos e rotina acadêmica em um só lugar.',
   url: siteUrl
 } as const;
 

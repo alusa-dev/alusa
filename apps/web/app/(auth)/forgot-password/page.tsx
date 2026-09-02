@@ -84,13 +84,13 @@ export default function ForgotPasswordPage() {
 
   return (
     <AuthPageContainer>
-      <AuthShell>
-        <div className="flex w-[min(100%,21.5rem)] min-[400px]:w-[min(100%,24rem)] flex-col items-stretch self-center text-left lg:max-w-[320px] lg:w-full lg:self-auto">
-          <header className="mb-6 w-full space-y-2 text-left lg:mb-8">
-            <h1 className="w-full text-left text-[1.25rem] font-medium leading-snug tracking-tight text-brand-primary min-[400px]:text-[1.375rem] lg:text-[1.625rem] lg:font-semibold lg:leading-tight">
+      <AuthShell hideHero>
+        <div className="auth-card auth-login-card flex w-[min(100%,21.5rem)] min-[400px]:w-[min(100%,24rem)] flex-col items-stretch self-center text-left lg:w-full lg:self-auto">
+          <header className="mb-6 w-full space-y-2 text-left lg:mb-8 lg:text-center">
+            <h1 className="w-full text-left text-[1.25rem] font-medium leading-snug tracking-tight text-brand-primary min-[400px]:text-[1.375rem] lg:text-center lg:text-[1.625rem] lg:font-semibold lg:leading-tight">
               Recuperar Senha
             </h1>
-            <p className="text-left text-justify text-sm font-medium leading-relaxed text-brand-muted lg:text-[12px]">
+            <p className="text-left text-justify text-sm font-medium leading-relaxed text-brand-muted lg:text-center lg:text-[12px]">
               Informe o e-mail associado à sua conta para receber um link de redefinição de senha.
             </p>
           </header>
@@ -123,7 +123,7 @@ export default function ForgotPasswordPage() {
             >
               {loading ? 'Enviando...' : 'Enviar link'}
             </button>
-            <p className="mt-8 w-full text-left text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-[11px]">
+            <p className="mt-8 w-full text-left text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-center lg:text-[11px]">
               <span className="text-[#686868]">Tenho uma conta? </span>
               <a href="/auth/login" className="text-brand-accent hover:underline">
                 Fazer login

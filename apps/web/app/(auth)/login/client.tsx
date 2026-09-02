@@ -15,6 +15,7 @@ import { debugLog, isAuthDebug } from '@/lib/debug-logger';
 import { nextParamToRedirect } from '@/lib/safe-redirect';
 import AuthShell from '@/components/auth/AuthShell';
 import { Checkbox } from '@/components/ui/checkbox';
+import { BrandWordmark } from '@/components/brand/BrandWordmark';
 
 type LoginValidationReason =
   | 'INVALID_INPUT'
@@ -304,15 +305,18 @@ export default function LoginClient() {
   };
 
   return (
-    <AuthShell>
-      <div className="flex w-[min(100%,21.5rem)] min-[400px]:w-[min(100%,24rem)] flex-col items-stretch self-center text-left lg:max-w-[320px] lg:w-full lg:self-auto">
+    <AuthShell hideHero>
+      <div className="auth-card auth-login-card flex w-[min(100%,21.5rem)] min-[400px]:w-[min(100%,24rem)] flex-col items-stretch self-center text-left lg:w-full lg:self-auto">
+        <div className="mb-8 hidden justify-center lg:flex" aria-label="Alusa">
+          <BrandWordmark variant="purple" className="h-9 w-auto" />
+        </div>
         <h1 className="w-full text-left text-[1.25rem] font-medium leading-snug tracking-tight text-brand-primary min-[400px]:text-[1.375rem] lg:hidden">
           Acesse sua conta
         </h1>
-        <h1 className="mt-6 hidden text-left text-[1.625rem] font-semibold leading-tight tracking-tight text-brand-primary lg:mt-0 lg:block">
+        <h1 className="mt-6 hidden text-left text-[1.625rem] font-semibold leading-tight tracking-tight text-brand-primary lg:mt-0 lg:block lg:text-center">
           Bem-vindo de volta!
         </h1>
-        <p className="mt-2 hidden text-left text-[12px] font-medium leading-normal text-brand-muted lg:block">
+        <p className="mt-2 hidden text-left text-[12px] font-medium leading-normal text-brand-muted lg:block lg:text-center">
           Informe seu e-mail e senha para acessar
           <br />
           sua conta na alusa.
@@ -381,7 +385,7 @@ export default function LoginClient() {
               Fazer login
             </button>
           </div>
-          <p className="mt-4 w-full text-left text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-[11px]">
+          <p className="mt-4 w-full text-left text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-center lg:text-[11px]">
             <span className="text-[#686868]">Não tem uma conta? </span>
             <Link href="/auth/register" className="text-brand-accent hover:underline outline-none rounded">
               Cadastre-se
