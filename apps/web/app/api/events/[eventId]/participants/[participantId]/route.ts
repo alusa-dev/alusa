@@ -497,6 +497,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
           data: {
             ...(body.notes !== undefined ? { notes: body.notes } : {}),
           },
+          select: { id: true },
         });
       }
 
@@ -521,6 +522,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
           data: {
             isFeePaid: body.isFeePaid,
           },
+          select: { id: true },
         });
 
         if (participant.revenueEntryId) {
@@ -564,6 +566,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             data: {
               revenueEntryId: entry.id,
             },
+            select: { id: true },
           });
           revenueEntryId = entry.id;
         }
@@ -597,6 +600,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             entryAmount: isFeePaid ? discount.chargedAmount : 0,
             balanceAmount: 0,
           },
+          select: eventParticipantScalarSelect,
         });
 
         if (currentEntry) {
@@ -632,6 +636,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
           await tx.eventParticipant.update({
             where: { id: participantId },
             data: { revenueEntryId: entry.id },
+            select: { id: true },
           });
         }
 

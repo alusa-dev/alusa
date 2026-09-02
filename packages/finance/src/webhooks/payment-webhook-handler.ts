@@ -1102,6 +1102,7 @@ async function updateEventFinancialEntryFromWebhook(
         isFeePaid: nextStatus === 'RECEIVED',
         ...(nextStatus === 'RECEIVED' && p.billingType && { feePaymentMethod: p.billingType }),
       },
+      select: { id: true },
     });
   }
 }

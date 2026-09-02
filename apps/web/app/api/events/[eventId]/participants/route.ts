@@ -340,6 +340,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           });
           await prisma.eventParticipant.delete({
             where: { id: participant.id },
+            select: { id: true },
           });
           if (participant.revenueEntryId) {
             await prisma.eventFinancialEntry.delete({
@@ -375,6 +376,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             asaasPaymentId: billingResult.data.asaasPaymentId ?? null,
             asaasInstallmentId: billingResult.data.asaasInstallmentId ?? null,
           },
+          select: { id: true },
         });
       } catch (billingError) {
         // Rollback caso ocorra exceção
@@ -383,6 +385,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         });
         await prisma.eventParticipant.delete({
           where: { id: participant.id },
+          select: { id: true },
         });
         if (participant.revenueEntryId) {
           await prisma.eventFinancialEntry.delete({

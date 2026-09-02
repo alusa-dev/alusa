@@ -2660,6 +2660,7 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
         feePaidAmount: decimal(entryAmount),
         notes: input.notes,
       },
+      select: eventParticipantScalarSelect,
     });
 
     if (revenueEntryId && entryAmount > 0) {
@@ -2753,7 +2754,7 @@ export async function registerEventParticipantGroup(
     if (input.uiRequestId) {
       const existingGroup = await tx.eventBillingGroup.findFirst({
         where: { contaId: ctx.contaId, uiRequestId: input.uiRequestId },
-        include: { participants: true },
+        include: { participants: { select: eventParticipantScalarSelect } },
       });
       if (existingGroup) {
         if (existingGroup.status === 'PENDING') {
@@ -2906,6 +2907,7 @@ export async function registerEventParticipantGroup(
           feePaidAmount: decimal(allocatedEntry),
           notes: input.notes,
         },
+        select: eventParticipantScalarSelect,
       });
 
       if (participantEntry) {
@@ -3042,6 +3044,7 @@ export async function unregisterEventParticipant(ctx: EventsContext, eventId: st
         feeRefundedAmount: decimal(payment.totalRefunded),
         cancelledAt: new Date(),
       },
+      select: eventParticipantScalarSelect,
     });
 
     if (participant.alunoId) {
@@ -3110,7 +3113,7 @@ export async function unregisterEventParticipant(ctx: EventsContext, eventId: st
 export async function unregisterEventParticipantGroup(ctx: EventsContext, eventId: string, billingGroupId: string) {
   const group = await prisma.eventBillingGroup.findFirst({
     where: { id: billingGroupId, contaId: ctx.contaId, eventId },
-    include: { event: true, participants: true },
+    include: { event: true, participants: { select: eventParticipantScalarSelect } },
   });
   if (!group) throw new EventsError('COBRANCA_AGRUPADA_NAO_ENCONTRADA', 'Cobrança agrupada não encontrada.', 404);
   assertOperationalEvent(group.event.status);
@@ -3185,6 +3188,7 @@ export async function unregisterEventParticipantGroup(ctx: EventsContext, eventI
           feeRefundedAmount: decimal(payment.totalRefunded),
           cancelledAt: new Date(),
         },
+        select: eventParticipantScalarSelect,
       });
 
       if (participant.alunoId) {
@@ -3326,6 +3330,7 @@ export async function removeCancelledEventParticipant(ctx: EventsContext, eventI
 
     await tx.eventParticipant.delete({
       where: { id: participantId },
+      select: { id: true },
     });
 
     return { ok: true };
@@ -3540,6 +3545,7 @@ export async function reactivateEventParticipant(
         cancelledReason: null,
         notes: input.notes ?? participant.notes,
       },
+      select: eventParticipantScalarSelect,
     });
 
     await recordEventAudit(tx, {
@@ -3619,6 +3625,7 @@ export async function quitarEventParticipantFee(ctx: EventsContext, eventId: str
         feePaymentMethod: input.paymentMethod,
         revenueEntryId,
       },
+      select: eventParticipantScalarSelect,
     });
 
     await recordEventAudit(tx, {
@@ -3697,6 +3704,7 @@ async function refreshManualParticipantPaymentSnapshot(
               ? 'EM_DIA'
               : 'PENDENTE',
     },
+    select: eventParticipantScalarSelect,
   });
   return { entry, participant: updatedParticipant, totals };
 }
@@ -3747,7 +3755,11 @@ export async function createManualEventParticipantPayment(
         },
       });
       entryId = entry.id;
-      await tx.eventParticipant.update({ where: { id: participant.id }, data: { revenueEntryId: entryId } });
+      await tx.eventParticipant.update({
+        where: { id: participant.id },
+        data: { revenueEntryId: entryId },
+        select: { id: true },
+      });
     }
 
     const totalsBefore = await loadManualPaymentTotals(tx, ctx.contaId, entryId);
@@ -3887,6 +3899,7 @@ export async function refundManualEventParticipantFee(ctx: EventsContext, eventI
         feePaidAmount: decimal(0),
         financialStatusSnapshot: 'ESTORNADO',
       },
+      select: eventParticipantScalarSelect,
     });
 
     await recordEventAudit(tx, {
@@ -3945,6 +3958,7 @@ export async function deleteManualEventParticipantFee(ctx: EventsContext, eventI
         isFeePaid: false,
         financialStatusSnapshot: null,
       },
+      select: { id: true },
     });
 
     await tx.eventFinancialEntry.delete({
