@@ -15,6 +15,11 @@
 	}
 }
 
+html:has([data-area='public']),
+body:has([data-area='public']) {
+	background: #f6f3f7;
+}
+
 /* Site marketing — escopo público (data-area="public") */
 [data-area='public'] {
 	color-scheme: light;
@@ -77,9 +82,8 @@
 	top: 0;
 	right: 0;
 	left: 0;
-	background: rgba(253, 252, 253, .92);
+	background: #f6f3f7;
 	border-bottom-color: rgba(61, 58, 63, .18);
-	backdrop-filter: blur(12px);
 	opacity: 0;
 	visibility: hidden;
 	transform: translateY(-120%);
@@ -162,6 +166,7 @@
 
 @media (min-width: 901px) {
 	.site-section > .site-container { padding-inline: 0; }
+	.site-landing .site-mobile-visible-break { display: none; }
 }
 .site-section-intro { display: flex; justify-content: space-between; align-items: flex-start; gap: 32px; }
 .site-section-intro h2, .site-section-finance h2 { font-size: var(--site-title-size); line-height: var(--site-title-leading); font-weight: 300; letter-spacing: var(--site-title-tracking); }
@@ -197,11 +202,11 @@
 .site-carousel-frame::before { left: calc(var(--carousel-edge-bleed) * -1); background: linear-gradient(90deg, var(--site-purple), transparent); opacity: var(--carousel-left-mask, 0); }
 .site-carousel-frame::after { right: calc(var(--carousel-edge-bleed) * -1); background: linear-gradient(270deg, var(--site-purple), transparent); opacity: var(--carousel-right-mask, 1); }
 .site-carousel-track { display: flex; gap: 16px; width: max-content; }
-.site-modality-card { --site-modality-card-width: 360px; --site-modality-card-height: 420px; display: flex; flex: 0 0 var(--site-modality-card-width); min-height: var(--site-modality-card-height); align-items: flex-end; padding: 32px; border-radius: 24px; background: var(--site-card); scroll-snap-align: start; transition: flex-basis 180ms ease-out, min-height 180ms ease-out, margin 180ms ease-out; }
+.site-modality-card { --site-modality-card-width: 360px; --site-modality-card-height: 420px; display: flex; flex: 0 0 var(--site-modality-card-width); min-height: var(--site-modality-card-height); align-items: flex-end; padding: 32px; border: 1px solid rgba(95, 56, 149, .12); border-radius: 24px; background-color: #d8baf2; background-image: none; color: #3d3a3f; scroll-snap-align: start; transition: flex-basis 180ms ease-out, min-height 180ms ease-out, margin 180ms ease-out; }
 .site-modality-card:hover { flex-basis: calc(var(--site-modality-card-width) + 20px); min-height: calc(var(--site-modality-card-height) + 20px); margin: -10px; }
 .site-modality-card:has(+ .site-modality-card:hover),
 .site-modality-card:hover + .site-modality-card { flex-basis: calc(var(--site-modality-card-width) - 20px); min-height: calc(var(--site-modality-card-height) - 20px); }
-.site-modality-card p { color: #f6f3f7; font-size: 24px; line-height: 1.2; font-weight: 500; }
+.site-modality-card p { color: #3d3a3f; font-size: 24px; line-height: 1.2; font-weight: 500; }
 
 [data-area='public']:has(.site-landing) footer {
 	background: #2b2830;
@@ -375,6 +380,8 @@
 		overflow-wrap: normal;
 	}
 	.site-landing .site-mobile-visible-break { display: block !important; }
+	.site-landing .site-desktop-visible-break { display: none !important; }
+	.site-landing .site-all-visible-break { display: block !important; }
 	.site-hero .site-container {
 		display: flex;
 		flex-direction: column;
@@ -427,7 +434,10 @@
 		font-size: 36px;
 		letter-spacing: -0.72px;
 	}
-	.site-hero-actions { flex-wrap: wrap; }
+	.site-hero-actions {
+		flex-wrap: wrap;
+		margin-top: 16px;
+	}
 	.site-pill { height: 40px; font-size: 14px; }
 	.site-hero-description {
 		width: 100%;
@@ -447,6 +457,8 @@
 		line-height: 24px;
 	}
 	.site-brand-layout { gap: 16px; }
+	.site-brand-copy p { margin-top: 0; }
+	.site-carousel-header { gap: 16px; }
 	.site-section-modules > .site-container {
 		display: flex;
 		flex-direction: column;
@@ -480,6 +492,7 @@
 	.site-finance-placeholder {
 		min-height: 0;
 		height: auto;
+		margin-top: 32px;
 	}
 	.site-finance-placeholder picture,
 	.site-finance-placeholder .site-finance-image {
@@ -489,7 +502,14 @@
 		height: auto;
 		object-fit: contain;
 	}
-	.site-finance-copy > p { font-size: 16px; }
+	.site-finance-copy {
+		margin-top: 32px;
+	}
+	.site-finance-copy > p {
+		margin-top: 0;
+		font-size: 16px;
+	}
+	.site-finance-copy .site-pill { margin-top: 16px; }
 }
 
 [data-area='public'] ::selection {

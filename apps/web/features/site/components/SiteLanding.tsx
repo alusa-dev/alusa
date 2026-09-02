@@ -63,9 +63,13 @@ export function SiteLanding() {
           <div className="site-section-intro">
             <div>
               <h2>
-                Cuide da escola sem passar
-                <br />
-                {' '}o dia organizando a escola.
+                Cuide da escola
+                <br className="site-mobile-visible-break" />
+                {' '}sem passar
+                <br className="site-desktop-visible-break" />
+                {' '}o dia
+                <br className="site-mobile-visible-break" />
+                {' '}organizando a escola.
               </h2>
               <PillLink href="/register" variant="primary">Conhecer a Alusa</PillLink>
             </div>
@@ -117,7 +121,7 @@ export function SiteLanding() {
         <div className="site-container">
           <h2>
             Saiba quem pagou.
-            <br className="site-mobile-visible-break" />
+            <br className="site-all-visible-break" />
             E quem ainda
             <br className="site-mobile-visible-break" />
             precisa pagar.
