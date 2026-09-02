@@ -18,4 +18,22 @@ describe('event participant discount', () => {
       discountValue: 7.05,
     })).toEqual({ originalAmount: 780, discountAmount: 54.99, chargedAmount: 725.01 });
   });
+
+  it('applies a percentage discount once to the combined group amount', () => {
+    expect(calculateEventParticipantDiscount({
+      originalAmount: 780,
+      discountType: 'PERCENTAGE',
+      discountValue: 10,
+      quantity: 3,
+    })).toEqual({ originalAmount: 2340, discountAmount: 234, chargedAmount: 2106 });
+  });
+
+  it('applies a fixed discount once to the combined group amount', () => {
+    expect(calculateEventParticipantDiscount({
+      originalAmount: 780,
+      discountType: 'FIXED',
+      discountValue: 100,
+      quantity: 3,
+    })).toEqual({ originalAmount: 2340, discountAmount: 100, chargedAmount: 2240 });
+  });
 });

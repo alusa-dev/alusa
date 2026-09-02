@@ -107,12 +107,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return complete(NextResponse.json({ error: { code: 'EVENTO_NAO_ENCONTRADO', message: 'Evento não encontrado' } }, { status: 404 }), 'EVENTO_NAO_ENCONTRADO');
     }
 
-    // 2. Registrar o participante localmente. O modo manual pode começar sem
-    // pagamento, com pagamento parcial ou totalmente quitado.
+    // 2. Registrar o participante localmente. A taxa pode ser paga na hora
+    // ou gerar uma cobrança externa, inclusive para grupos.
+    const alunoIds = [...new Set([body.alunoId, ...(body.additionalAlunoIds ?? [])])];
     const discount = calculateEventParticipantDiscount({
       originalAmount: body.registrationFeeOriginal ?? body.registrationFeeCharged,
-      discountType: body.billingMethod === 'MANUAL_RECEIVED' ? body.discountType : null,
-      discountValue: body.billingMethod === 'MANUAL_RECEIVED' ? body.discountValue : 0,
+      discountType: body.discountType,
+      discountValue: body.discountValue,
+      quantity: alunoIds.length,
     });
     const registrationFeeCharged = discount.chargedAmount;
     const initialPaymentAmount = body.billingMethod === 'MANUAL_RECEIVED' ? body.initialPaymentAmount : 0;
@@ -128,8 +130,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         ? 'INSTALLMENT'
         : 'FULL';
     const paymentRules = eventPaymentRulesFromRecord(event);
-    const alunoIds = [...new Set([body.alunoId, ...(body.additionalAlunoIds ?? [])])];
-    const totalRegistrationFee = Number((effectiveRegistrationFeeCharged * alunoIds.length).toFixed(2));
+    const totalRegistrationFee = Number(effectiveRegistrationFeeCharged.toFixed(2));
     const isFeePaid = body.billingMethod === 'MANUAL_RECEIVED'
       && totalRegistrationFee > 0
       && entryAmount >= totalRegistrationFee;
@@ -141,7 +142,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         ), 'RESPONSAVEL_FINANCEIRO_OBRIGATORIO', { participantCount: alunoIds.length });
       }
 
-      const groupedBalanceBeforeCreate = Number((balanceAmount * alunoIds.length).toFixed(2));
+      const groupedBalanceBeforeCreate = balanceAmount;
       const groupPaymentRulesError = isFeePaid || body.billingMethod === 'MANUAL_RECEIVED'
         ? null
         : validateEventPaymentRulesForCharge(paymentRules, groupedBalanceBeforeCreate);
@@ -157,10 +158,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         alunoId: body.alunoId,
         alunoIds,
         responsavelId: body.responsavelId,
-        registrationFeeCharged: effectiveRegistrationFeeCharged,
-        registrationFeeOriginal: discount.originalAmount,
-        registrationFeeDiscount: discount.discountAmount,
-        registrationFeeDiscountType: body.billingMethod === 'MANUAL_RECEIVED' && discount.discountAmount > 0 ? body.discountType : null,
+        registrationFeeCharged: body.registrationFeeCharged,
+        registrationFeeOriginal: body.registrationFeeOriginal,
+        registrationFeeDiscount: body.discountValue,
+        registrationFeeOriginalTotal: discount.originalAmount,
+        registrationFeeDiscountTotal: discount.discountAmount,
+        registrationFeeChargedTotal: effectiveRegistrationFeeCharged,
+        registrationFeeDiscountType: discount.discountAmount > 0 ? body.discountType : null,
         billingMode,
         entryAmount,
         entryPaymentMethod: entryAmount > 0 ? body.initialPaymentMethod ?? body.entryPaymentMethod ?? body.feePaymentMethod : null,
@@ -282,7 +286,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       registrationFeeCharged: effectiveRegistrationFeeCharged,
       registrationFeeOriginal: discount.originalAmount,
       registrationFeeDiscount: discount.discountAmount,
-      registrationFeeDiscountType: body.billingMethod === 'MANUAL_RECEIVED' && discount.discountAmount > 0 ? body.discountType : null,
+      registrationFeeDiscountType: discount.discountAmount > 0 ? body.discountType : null,
       billingMode,
       entryAmount,
       entryPaymentMethod: entryAmount > 0 ? body.initialPaymentMethod ?? body.entryPaymentMethod ?? body.feePaymentMethod : null,

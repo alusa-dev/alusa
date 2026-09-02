@@ -118,8 +118,8 @@ describe('event participant billing schema', () => {
     })).toThrow('O valor recebido não pode ser maior que o valor final da inscrição.');
   });
 
-  it('rejects discounts for digital billing', () => {
-    expect(() => registerEventParticipantRequestSchema.parse({
+  it('accepts a discount for digital billing', () => {
+    const result = registerEventParticipantRequestSchema.parse({
       alunoId: 'aluno-1',
       registrationFeeCharged: 725,
       registrationFeeOriginal: 780,
@@ -128,7 +128,26 @@ describe('event participant billing schema', () => {
       billingMethod: 'PIX',
       chargeType: 'ONE_TIME',
       dueDate: '2026-09-10',
-    })).toThrow('Desconto manual');
+    });
+
+    expect(result.discountValue).toBe(55);
+  });
+
+  it('validates a group discount against the combined original amount', () => {
+    const result = registerEventParticipantRequestSchema.parse({
+      alunoId: 'aluno-1',
+      additionalAlunoIds: ['aluno-2', 'aluno-3'],
+      responsavelId: 'responsavel-1',
+      registrationFeeCharged: 702,
+      registrationFeeOriginal: 780,
+      discountType: 'PERCENTAGE',
+      discountValue: 10,
+      billingMethod: 'BOLETO',
+      chargeType: 'ONE_TIME',
+      dueDate: '2026-09-10',
+    });
+
+    expect(result.discountValue).toBe(10);
   });
 
   it('validates an entry against the total of a grouped billing request', () => {

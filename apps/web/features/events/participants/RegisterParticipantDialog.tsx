@@ -236,12 +236,15 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
     const discountValue = discountType === 'FIXED'
       ? parseCurrencyInput(String(formData.get('discountValue') || '0'))
       : Number(String(formData.get('discountValue') || '0').replace(',', '.')) || 0;
-    const discountAmount = discountType === 'PERCENTAGE'
-      ? Math.min(registrationFeeOriginal, Math.round(registrationFeeOriginal * discountValue) / 100)
-      : Math.min(registrationFeeOriginal, discountValue);
-    const registrationFeeCharged = Math.max(registrationFeeOriginal - discountAmount, 0);
     const selectedStudentsCount = 1 + groupStudents.length;
-    const totalRegistrationFee = registrationFeeCharged * selectedStudentsCount;
+    const totalRegistrationFeeOriginal = registrationFeeOriginal * selectedStudentsCount;
+    const discountAmount = discountType === 'PERCENTAGE'
+      ? Math.min(totalRegistrationFeeOriginal, Math.round(totalRegistrationFeeOriginal * discountValue) / 100)
+      : Math.min(totalRegistrationFeeOriginal, discountValue);
+    const totalRegistrationFee = Math.max(totalRegistrationFeeOriginal - discountAmount, 0);
+    const registrationFeeCharged = selectedStudentsCount > 1
+      ? totalRegistrationFee / selectedStudentsCount
+      : totalRegistrationFee;
     const hasEntry = String(formData.get('hasEntry') || 'false') === 'true';
     const entryAmount = parseCurrencyInput(String(formData.get('entryAmount') || '0'));
     const selectedBillingMode = String(formData.get('billingMethod') || 'MANUAL_RECEIVED');

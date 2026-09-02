@@ -14,8 +14,10 @@ export function calculateEventParticipantDiscount(input: {
   originalAmount: number;
   discountType?: EventParticipantDiscountType | null;
   discountValue?: number | null;
+  quantity?: number;
 }): EventParticipantDiscountResult {
-  const originalAmount = money(input.originalAmount);
+  const quantity = Math.max(1, Math.trunc(input.quantity ?? 1));
+  const originalAmount = money(input.originalAmount * quantity);
   const discountValue = money(input.discountValue ?? 0);
   const requestedDiscount = input.discountType === 'PERCENTAGE'
     ? money(originalAmount * (discountValue / 100))

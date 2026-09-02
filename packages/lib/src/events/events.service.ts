@@ -2659,6 +2659,9 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
 type RegisterEventParticipantGroupInput = CreateEventParticipantInput & {
   alunoIds: string[];
   responsavelId: string;
+  registrationFeeOriginalTotal?: number;
+  registrationFeeDiscountTotal?: number;
+  registrationFeeChargedTotal?: number;
   billingMethod?: string | null;
   chargeType?: string | null;
   installmentCount?: number | null;
@@ -2766,9 +2769,12 @@ export async function registerEventParticipantGroup(
     }
 
     const feeOriginalPerParticipant = toMoney(input.registrationFeeOriginal ?? input.registrationFeeCharged ?? 0);
-    const feeDiscountPerParticipant = toMoney(input.registrationFeeDiscount ?? Math.max(feeOriginalPerParticipant - (input.registrationFeeCharged ?? 0), 0));
-    const feePerParticipant = toMoney(input.registrationFeeCharged ?? feeOriginalPerParticipant);
-    const totalAmount = toMoney(feePerParticipant * alunoIds.length);
+    const totalOriginalAmount = toMoney(input.registrationFeeOriginalTotal ?? feeOriginalPerParticipant * alunoIds.length);
+    const totalAmount = toMoney(input.registrationFeeChargedTotal ?? toMoney(input.registrationFeeCharged ?? feeOriginalPerParticipant) * alunoIds.length);
+    const totalDiscountAmount = toMoney(input.registrationFeeDiscountTotal ?? input.registrationFeeDiscount ?? Math.max(totalOriginalAmount - totalAmount, 0));
+    const originalAllocations = allocateGroupAmount(totalOriginalAmount, alunoIds.map(() => feeOriginalPerParticipant));
+    const chargedAllocations = allocateGroupAmount(totalAmount, originalAllocations);
+    const discountAllocations = originalAllocations.map((original, index) => toMoney(original - (chargedAllocations[index] ?? 0)));
     const isFeePaid = input.isFeePaid ?? false;
     const billingMode = input.billingMode ?? (isFeePaid ? 'FULL' : 'INSTALLMENT');
     const requestedEntryAmount = input.billingMethod === 'MANUAL_RECEIVED'
@@ -2780,7 +2786,7 @@ export async function registerEventParticipantGroup(
           : 0;
     const entryAmount = Math.min(requestedEntryAmount, totalAmount);
     const balanceAmount = toMoney(Math.max(totalAmount - entryAmount, 0));
-    const entryAllocations = allocateGroupAmount(entryAmount, alunoIds.map(() => feePerParticipant));
+    const entryAllocations = allocateGroupAmount(entryAmount, chargedAllocations);
     const group = await tx.eventBillingGroup.create({
       data: {
         contaId: ctx.contaId,
@@ -2789,8 +2795,8 @@ export async function registerEventParticipantGroup(
         status: entryAmount >= totalAmount && totalAmount > 0 ? 'PAID' : entryAmount > 0 ? 'PARTIALLY_PAID' : 'PENDING',
         billingMode,
         totalAmount: decimal(totalAmount),
-        originalAmount: decimal(toMoney(feeOriginalPerParticipant * alunoIds.length)),
-        discountAmount: decimal(toMoney(feeDiscountPerParticipant * alunoIds.length)),
+        originalAmount: decimal(totalOriginalAmount),
+        discountAmount: decimal(totalDiscountAmount),
         entryAmount: decimal(entryAmount),
         balanceAmount: decimal(balanceAmount),
         entryPaymentMethod: entryAmount > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
@@ -2819,8 +2825,8 @@ export async function registerEventParticipantGroup(
               category: 'Taxa de inscrição',
               description: 'Entrada manual da cobrança agrupada do evento',
               expectedAmount: decimal(allocatedEntry),
-              grossAmount: decimal(feeOriginalPerParticipant),
-              discountAmount: decimal(feeDiscountPerParticipant),
+              grossAmount: decimal(originalAllocations[index] ?? 0),
+              discountAmount: decimal(discountAllocations[index] ?? 0),
               actualAmount: decimal(allocatedEntry),
               dueDate: input.dueDate ?? new Date(),
               realizedAt: new Date(),
@@ -2840,13 +2846,13 @@ export async function registerEventParticipantGroup(
           responsavelId: input.responsavelId,
           billingGroupId: group.id,
           displayName: aluno.nome,
-          registrationFeeCharged: decimal(feePerParticipant),
-          registrationFeeOriginal: decimal(feeOriginalPerParticipant),
-          registrationFeeDiscount: decimal(feeDiscountPerParticipant),
+          registrationFeeCharged: decimal(chargedAllocations[index] ?? 0),
+          registrationFeeOriginal: decimal(originalAllocations[index] ?? 0),
+          registrationFeeDiscount: decimal(discountAllocations[index] ?? 0),
           registrationFeeDiscountType: input.registrationFeeDiscountType ?? null,
           billingMode,
           entryAmount: decimal(allocatedEntry),
-          balanceAmount: decimal(Math.max(feePerParticipant - allocatedEntry, 0)),
+          balanceAmount: decimal(Math.max((chargedAllocations[index] ?? 0) - allocatedEntry, 0)),
           entryPaymentMethod: allocatedEntry > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
           registrationPaymentRules: registrationPaymentRules ?? Prisma.JsonNull,
           isFeePaid,

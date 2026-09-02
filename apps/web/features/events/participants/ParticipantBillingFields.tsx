@@ -82,13 +82,13 @@ export function ParticipantBillingFields({
   const discountInputVal = discountType === 'FIXED'
     ? parseFloat(discountText.replace(/[^\d,]/g, '').replace(',', '.')) || 0
     : parseFloat(discountText.replace(',', '.')) || 0;
-  const discountPerParticipantVal = discountType === 'PERCENTAGE'
+  const discountAmountVal = discountType === 'PERCENTAGE'
     ? Math.min(totalFeeVal, totalFeeVal * (discountInputVal / 100))
-    : Math.min(totalFeeVal, discountInputVal * feeMultiplier);
-  const chargedTotalVal = Math.max(totalFeeVal - discountPerParticipantVal, 0);
+    : Math.min(totalFeeVal, discountInputVal);
+  const chargedTotalVal = Math.max(totalFeeVal - discountAmountVal, 0);
   const entryVal = parseFloat(entryText.replace(/[^\d,]/g, '').replace(',', '.')) || 0;
   const balanceVal = Math.max(totalFeeVal - entryVal, 0);
-  const installmentBaseVal = hasEntry ? balanceVal : totalFeeVal;
+  const installmentBaseVal = hasEntry ? balanceVal : chargedTotalVal;
   const installmentOptions: Array<{ value: string; label: string }> = [];
 
   if (installmentBaseVal > 0) {
@@ -188,7 +188,7 @@ export function ParticipantBillingFields({
             </Field>
           )}
 
-          {showManualDiscount && isManualBilling && billingMethod !== 'EXEMPT' && !hasEntry && (
+          {showManualDiscount && (isManualBilling || billingMethod === 'ISSUE_CHARGE') && billingMethod !== 'EXEMPT' && !hasEntry && (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
               <Field label="Desconto concedido">
                 <input type="hidden" name="discountType" value={discountType} />
@@ -216,7 +216,14 @@ export function ParticipantBillingFields({
                   />
                 </div>
                 <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
-                  <span>Valor final para cobrança</span>
+                  <span className="flex flex-col">
+                    <span>Valor final para cobrança</span>
+                    {feeMultiplier > 1 && (
+                      <span className="mt-0.5 text-[11px] text-slate-500">
+                        Desconto aplicado sobre o total dos {feeMultiplier} alunos
+                      </span>
+                    )}
+                  </span>
                   <strong className="text-slate-900">R$ {chargedTotalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
                 </div>
               </Field>

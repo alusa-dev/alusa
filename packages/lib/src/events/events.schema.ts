@@ -14,6 +14,7 @@ import {
   SCHOOL_EVENT_TYPES,
 } from '@alusa/shared';
 import { EVENT_PAYMENT_RULE_TYPES } from './events-payment-rules';
+import { calculateEventParticipantDiscount } from './event-participant-discount';
 
 const emptyToUndefined = (value: unknown) =>
   typeof value === 'string' && value.trim() === '' ? undefined : value;
@@ -326,23 +327,25 @@ const eventParticipantBillingBaseSchema = z.object({
 });
 
 function validateEventParticipantBilling(input: z.infer<typeof eventParticipantBillingBaseSchema>, ctx: z.RefinementCtx) {
-  const originalAmount = input.registrationFeeOriginal ?? input.registrationFeeCharged;
-  const manualDiscountAmount = input.discountType === 'PERCENTAGE'
-    ? originalAmount * (input.discountValue / 100)
-    : input.discountValue;
-  const manualChargedAmount = Math.max(originalAmount - Math.min(originalAmount, manualDiscountAmount), 0);
   const participantCount = 1 + new Set(input.additionalAlunoIds ?? []).size;
-  const manualChargedTotal = manualChargedAmount * participantCount;
-  if (input.discountValue > 0 && input.billingMethod !== 'MANUAL_RECEIVED') {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['discountValue'], message: 'Desconto manual só pode ser usado no modo quitado na hora.' });
-  }
-  if (input.billingMethod === 'MANUAL_RECEIVED' && input.discountType === 'PERCENTAGE' && input.discountValue > 100) {
+  const originalAmount = input.registrationFeeOriginal ?? input.registrationFeeCharged;
+  const discount = calculateEventParticipantDiscount({
+    originalAmount,
+    discountType: input.discountType,
+    discountValue: input.discountValue,
+    quantity: participantCount,
+  });
+  const requestedDiscountAmount = input.discountType === 'PERCENTAGE'
+    ? discount.originalAmount * (input.discountValue / 100)
+    : input.discountValue;
+  if (input.discountType === 'PERCENTAGE' && input.discountValue > 100) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['discountValue'], message: 'O desconto percentual não pode ser maior que 100%.' });
   }
+  if (requestedDiscountAmount > discount.originalAmount) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['discountValue'], message: 'O desconto não pode ser maior que o valor original.' });
+  }
   if (input.billingMethod === 'MANUAL_RECEIVED') {
-    if (manualDiscountAmount > originalAmount) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['discountValue'], message: 'O desconto não pode ser maior que o valor original.' });
-    }
+    const manualChargedTotal = discount.chargedAmount;
     if (input.hasEntry) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['hasEntry'], message: 'Use o valor recebido agora para registrar uma baixa manual.' });
     }
@@ -362,7 +365,7 @@ function validateEventParticipantBilling(input: z.infer<typeof eventParticipantB
   }
   if (!input.hasEntry) return;
 
-  const totalRegistrationFee = input.registrationFeeCharged * participantCount;
+  const totalRegistrationFee = discount.chargedAmount;
 
   if (input.additionalAlunoIds && input.additionalAlunoIds.length > 0 && !input.responsavelId) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['responsavelId'], message: 'Selecione o responsável financeiro da cobrança agrupada.' });
