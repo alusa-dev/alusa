@@ -1,5 +1,5 @@
 /**
- * Cria ou atualiza um utilizador da central de suporte (SupportUser).
+ * Cria ou atualiza uma identidade administrativa do Alusa Admin.
  *
  * Produção (Neon alusa_prod, etc.):
  *   SUPPORT_UPSERT_CONFIRM=YES pnpm exec dotenv -e ./.env.production.local -- tsx scripts/support-upsert-admin-user.ts alusa 'senha-forte'
@@ -47,23 +47,23 @@ const prisma = new PrismaClient();
 async function main() {
   const passwordHash = await bcrypt.hash(password, 12);
 
-  const row = await prisma.supportUser.upsert({
+  const row = await prisma.adminUser.upsert({
     where: { username },
     create: {
       username,
       passwordHash,
-      role: 'SUPPORT_ADMIN',
+      role: 'OWNER',
       status: 'ACTIVE',
     },
     update: {
       passwordHash,
-      role: 'SUPPORT_ADMIN',
+      role: 'OWNER',
       status: 'ACTIVE',
     },
     select: { id: true, username: true, role: true, status: true },
   });
 
-  console.log('[support-upsert] OK:', row);
+  console.log('[admin-upsert] OK:', row);
 }
 
 main()

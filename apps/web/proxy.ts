@@ -18,22 +18,10 @@ type WizardResponse = { data?: { wizard?: WizardSnapshot } };
 type AccountAccessResponse = { ok?: boolean; reason?: string };
 
 const isTest = isTestRouteEnabled();
-const legacyDeveloperPaths = [
-  '/developer/dashboard',
-  '/developer/search',
-  '/developer/requests',
-  '/developer/users',
-  '/developer/tenants',
-  '/developer/problems',
-  '/developer/actions',
-  '/developer/errors',
-];
 const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const financeiroPageRoles = new Set(['ADMIN', 'FINANCEIRO']);
 const originCheckExemptApiPrefixes = [
   '/api/auth/',
-  '/api/developer/auth/',
-  '/api/global-admin/auth/',
   '/api/webhooks/',
   '/api/jobs/',
 ];
@@ -145,8 +133,6 @@ function platformBillingCapabilityForMutation(pathname: string, method: string) 
 
   const excluded = [
     '/api/auth/',
-    '/api/developer/auth/',
-    '/api/global-admin/auth/',
     '/api/webhooks/',
     '/api/jobs/',
     '/api/admin/',
@@ -420,22 +406,6 @@ export default async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
-  if (pathname === '/developer' || pathname.startsWith('/developer/')) {
-    if (pathname === '/developer/login') {
-      return NextResponse.next();
-    }
-
-    if (
-      legacyDeveloperPaths.some(
-        (legacyPath) => pathname === legacyPath || pathname.startsWith(`${legacyPath}/`),
-      )
-    ) {
-      return NextResponse.redirect(new URL('/developer', req.nextUrl.origin));
-    }
-
-    return NextResponse.next();
-  }
-
   if (!isProtectedPagePath(pathname)) {
     return NextResponse.next();
   }
@@ -446,8 +416,6 @@ export default async function proxy(req: NextRequest) {
 export const config = {
   matcher: [
     '/',
-    '/developer',
-    '/developer/:path*',
     '/dashboard',
     '/admin/:path*',
     '/alunos/:path*',

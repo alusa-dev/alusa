@@ -9,8 +9,7 @@ describe('route protection registry', () => {
   it('classifica rotas criticas explicitamente', () => {
     expect(resolveRouteProtection('/api/jobs/webhook-scheduler')).toBe('CRON_SECRET');
     expect(resolveRouteProtection('/api/webhooks/asaas')).toBe('WEBHOOK_TOKEN');
-    expect(resolveRouteProtection('/api/developer/contas')).toBe('GLOBAL_ADMIN');
-    expect(resolveRouteProtection('/api/global-admin/auth/login')).toBe('DEVELOPER_MFA');
+    expect(resolveRouteProtection('/api/admin/contas')).toBe('AUTH_USER');
     expect(resolveRouteProtection('/api/alunos')).toBe('AUTH_USER');
   });
 

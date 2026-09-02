@@ -5,18 +5,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const { getTokenMock, verifyGlobalAdminSessionTokenMock } = vi.hoisted(() => ({
+const { getTokenMock } = vi.hoisted(() => ({
   getTokenMock: vi.fn(),
-  verifyGlobalAdminSessionTokenMock: vi.fn(async () => null),
 }));
 
 vi.mock('next-auth/jwt', () => ({
   getToken: getTokenMock,
-}));
-
-vi.mock('@/features/global-admin/auth/session', () => ({
-  GLOBAL_ADMIN_SESSION_COOKIE: 'alusa.global_admin.session',
-  verifyGlobalAdminSessionToken: verifyGlobalAdminSessionTokenMock,
 }));
 
 import proxy from '@/proxy';

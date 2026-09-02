@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "jsx": "preserve",
+    "types": ["node", "next", "@types/react", "@types/react-dom"],
+    "paths": {
+      "@/*": ["./*"],
+      "@alusa/admin-auth": ["../../packages/admin-auth/src/index.ts"],
+      "@alusa/admin-auth/*": ["../../packages/admin-auth/src/*"],
+      "@alusa/database": ["../../packages/database/src/index.ts"],
+      "@alusa/database/*": ["../../packages/database/src/*"],
+      "@alusa/finance": ["../../packages/finance/dist/index.d.ts"],
+      "@alusa/finance/*": ["../../packages/finance/dist/*"],
+      "@alusa/lib": ["../../packages/lib/src/index.ts"],
+      "@alusa/lib/*": ["../../packages/lib/src/*"]
+    },
+    "plugins": [{ "name": "next" }]
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules", ".next"]
+}

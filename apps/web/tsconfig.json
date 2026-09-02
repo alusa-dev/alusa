@@ -10,6 +10,8 @@
       "@/*": ["./*"],
       "@alusa/ui": ["../../packages/ui/src/index.ts"],
       "@alusa/ui/*": ["../../packages/ui/src/*"],
+      "@alusa/admin-auth": ["../../packages/admin-auth/src/index.ts"],
+      "@alusa/admin-auth/*": ["../../packages/admin-auth/src/*"],
       "@alusa/asaas": ["../../packages/asaas/src/index.ts"],
       "@alusa/asaas/*": ["../../packages/asaas/src/*"],
       "@alusa/database": ["../../packages/database/src/index.ts"],

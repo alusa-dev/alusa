@@ -84,6 +84,7 @@ const nextConfig = {
     'zod',
   ],
   transpilePackages: [
+    '@alusa/admin-auth',
     '@alusa/lib',
     '@alusa/ui',
     '@alusa/domain',
@@ -96,6 +97,8 @@ const nextConfig = {
     // Turbopack even when their dist files exist.
     root: turbopackRoot,
     resolveAlias: {
+      '@alusa/admin-auth': packageSourcePath('admin-auth', 'index.ts'),
+      '@alusa/admin-auth/*': packageSourcePath('admin-auth', '*'),
       '@alusa/asaas': packageDistPath('asaas', 'index.js'),
       '@alusa/asaas/*': packageDistPath('asaas', '*.js'),
       '@alusa/database': packageDistPath('database', 'index.js'),
@@ -135,6 +138,9 @@ const nextConfig = {
       '@alusa/lib/zod-error-map': useWorkspaceSources
         ? packageSourcePath('lib', 'zod-error-map.ts')
         : packageDistPath('lib', 'zod-error-map.js'),
+      '@alusa/lib/security/rate-limit': useWorkspaceSources
+        ? packageSourcePath('lib', 'security/rate-limit.ts')
+        : packageDistPath('lib', 'security/rate-limit.js'),
     },
   },
   experimental: {
@@ -220,6 +226,10 @@ const nextConfig = {
     config.resolve.alias['@alusa/lib/date-only'] = resolvePath(
       libBase,
       dev ? 'utils/date-only.ts' : 'utils/date-only.js',
+    );
+    config.resolve.alias['@alusa/lib/security/rate-limit'] = resolvePath(
+      libBase,
+      dev ? 'security/rate-limit.ts' : 'security/rate-limit.js',
     );
     config.resolve.alias['@alusa/lib/errors/asaas-customer-ensure-error'] = resolvePath(
       libBase,

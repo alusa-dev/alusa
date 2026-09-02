@@ -4,9 +4,7 @@ export type RouteProtection =
   | 'TENANT_ADMIN'
   | 'TENANT_FINANCE'
   | 'CRON_SECRET'
-  | 'WEBHOOK_TOKEN'
-  | 'GLOBAL_ADMIN'
-  | 'DEVELOPER_MFA';
+  | 'WEBHOOK_TOKEN';
 
 type RouteProtectionRule = {
   prefix: string;
@@ -29,9 +27,6 @@ export const routeProtectionRegistry = [
   { prefix: '/api/observability/web-vitals', protection: 'PUBLIC', exact: true },
   { prefix: '/api/internal/health', protection: 'CRON_SECRET', exact: true },
   { prefix: '/api/internal/rls-health', protection: 'CRON_SECRET', exact: true },
-  { prefix: '/api/developer/auth/', protection: 'DEVELOPER_MFA' },
-  { prefix: '/api/developer/', protection: 'GLOBAL_ADMIN' },
-  { prefix: '/api/global-admin/auth/', protection: 'DEVELOPER_MFA' },
 ] as const satisfies readonly RouteProtectionRule[];
 
 function matchesRule(pathname: string, rule: RouteProtectionRule): boolean {
@@ -45,7 +40,7 @@ export function resolveRouteProtection(pathname: string): RouteProtection {
 
 export function isRegisteredPublicApiPath(pathname: string): boolean {
   const protection = resolveRouteProtection(pathname);
-  return protection === 'PUBLIC' || protection === 'WEBHOOK_TOKEN' || protection === 'CRON_SECRET' || protection === 'DEVELOPER_MFA';
+  return protection === 'PUBLIC' || protection === 'WEBHOOK_TOKEN' || protection === 'CRON_SECRET';
 }
 
 export function hasCronSecret(req: Request): boolean {

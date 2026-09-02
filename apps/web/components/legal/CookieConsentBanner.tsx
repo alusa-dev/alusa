@@ -47,7 +47,6 @@ const authenticatedPrefixes = [
   '/financeiro',
   '/conta',
   '/portal',
-  '/developer',
 ];
 
 function isCookieBannerPath(pathname: string): boolean {

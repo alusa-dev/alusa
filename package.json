@@ -50,6 +50,8 @@
     "mcp:asaas": "npx -y mcp-remote@0.1.38 https://docs.asaas.com/mcp",
     "sandbox:asaas:add-balance": "dotenv -e .env.local -- node scripts/asaas/sandbox-add-wallet-balance.mjs",
     "support:upsert-admin": "tsx scripts/support-upsert-admin-user.ts",
+    "admin:upsert-user": "tsx scripts/support-upsert-admin-user.ts",
+    "admin:backfill-users": "tsx scripts/admin/backfill-admin-users.ts",
     "security:check": "tsx scripts/security/run-all.ts",
     "validate:cron-config": "node scripts/validate-vercel-cron-config.mjs"
   },
@@ -88,6 +90,8 @@
     }
   },
   "dependencies": {
+    "@alusa/admin-auth": "workspace:*",
+    "@alusa/database": "workspace:*",
     "@luquinhasbrito/asaas-api-sdk-typescript": "^1.0.1",
     "@prisma/client": "5.18.0",
     "dotenv": "^17.2.3",

@@ -41,6 +41,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, '..', '..', 'packages', 'lib', 'src', 'utils', 'date-only.ts'),
       },
       {
+        find: /^@alusa\/admin-auth(.*)$/,
+        replacement: path.resolve(__dirname, '..', '..', 'packages', 'admin-auth', 'src') + '$1',
+      },
+      {
         find: /^@alusa\/lib(.*)$/,
         replacement: path.resolve(__dirname, '..', '..', 'packages', 'lib', 'src') + '$1',
       },
