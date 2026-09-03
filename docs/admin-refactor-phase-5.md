@@ -6,7 +6,7 @@ Concluir a migração do backoffice para `apps/admin`, mantendo os casos de uso 
 
 ## Entregas
 
-- Todas as telas operacionais migradas para `apps/admin`: busca, contas, detalhes 360º, alunos, responsáveis, usuários, matrículas, financeiro, cobranças, webhooks, casos, auditoria e configurações.
+- Todas as telas operacionais migradas para `apps/admin`: busca, contas, detalhes 360º, alunos, responsáveis, usuários, matrículas, financeiro, cobranças, webhooks, auditoria e configurações.
 - Todas as APIs migradas de `/api/developer/**` para `/api/admin/**`, incluindo ações Asaas, reconciliação, replay de webhook, notas, casos, convites e read models.
 - Autenticação exclusivamente por `AdminUser` + `AdminSession`, com cookie httpOnly, TTL, revogação, rate limit e auditoria.
 - Configurações administrativas passam a criar e alterar `AdminUser`; não criam novas identidades no modelo legado `SupportUser`.
@@ -22,7 +22,7 @@ O campo `AdminUser.legacySupportUserId` mantém a rastreabilidade entre a identi
 
 ## Rotas oficiais
 
-- Admin: `/login`, `/`, `/contas`, `/financeiro`, `/webhooks`, `/casos`, `/auditoria` e `/configuracoes`.
+- Admin: `/login`, `/`, `/contas`, `/financeiro`, `/webhooks`, `/auditoria` e `/configuracoes`.
 - APIs administrativas: `/api/auth/**` e `/api/admin/**`.
 - Aplicação web: não possui mais rota `/developer` nem `/api/developer`.
 

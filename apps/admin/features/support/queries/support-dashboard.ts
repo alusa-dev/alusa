@@ -34,32 +34,59 @@ async function withPerfTimer<T>(_area: string, _resource: string, load: () => Pr
 }
 
 async function getSupportOverviewUncached() {
+  const periodStart = monthStartUtc();
+  const periodEnd = nextMonthStartUtc();
   const [
     contasAtivas,
-    usuariosAtivos,
-    alunosAtivos,
-    matriculasAtivas,
-    cobrancasAbertas,
-    webhooksComErro,
+    contasInativas,
+    assinaturasEmAtraso,
+    cancelamentosNoMes,
+    receitaMensal,
   ] = await Promise.all([
     prisma.conta.count({ where: { status: 'ATIVO', deletedAt: null } }),
-    prisma.usuario.count({ where: { status: 'ATIVO' } }),
-    prisma.aluno.count({ where: { status: 'ATIVO' } }),
-    prisma.matricula.count({ where: { status: 'ATIVA' } }),
-    prisma.chargeReadModel.count({
-      where: { status: { in: ['PENDING', 'OVERDUE', 'PENDENTE', 'ATRASADO'] } },
+    prisma.conta.count({ where: { status: 'INATIVO', deletedAt: null } }),
+    prisma.platformBillingAccount.count({
+      where: {
+        environment: 'LIVE',
+        status: { in: ['PAST_DUE', 'UNPAID'] },
+        conta: { status: 'ATIVO', deletedAt: null },
+      },
     }),
-    prisma.webhookAsaas.count({ where: { status: { in: ['ERRO', 'FAILED', 'ERROR'] } } }),
+    prisma.platformBillingAccount.count({
+      where: {
+        environment: 'LIVE',
+        canceledAt: { gte: periodStart, lt: periodEnd },
+      },
+    }),
+    prisma.platformBillingInvoice.aggregate({
+      where: {
+        environment: 'LIVE',
+        status: 'PAID',
+        currency: { in: ['brl', 'BRL'] },
+        paidAt: {
+          gte: periodStart,
+          lt: periodEnd,
+        },
+      },
+      _sum: { amountPaid: true },
+    }),
   ]);
 
   return {
     contasAtivas,
-    usuariosAtivos,
-    alunosAtivos,
-    matriculasAtivas,
-    cobrancasAbertas,
-    webhooksComErro,
+    contasInativas,
+    assinaturasEmAtraso,
+    cancelamentosNoMes,
+    receitaMensalCents: receitaMensal._sum.amountPaid ?? 0,
   };
+}
+
+function monthStartUtc(now = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+}
+
+function nextMonthStartUtc(now = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
 }
 
 export async function searchSupport(query: string): Promise<SupportSearchResult[]> {
@@ -367,7 +394,7 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
       type: 'Assinatura' as const,
       title: item.matricula.aluno.nome,
       description: item.asaasSubscriptionId ?? item.externalReference,
-      href: `/contas/${item.contaId}/financeiro`,
+      href: `/contas/${item.contaId}`,
       contaId: item.contaId,
       meta: item.status,
     })),
@@ -375,7 +402,7 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
       type: 'Assinatura' as const,
       title: item.externalReference,
       description: item.asaasSubscriptionId ?? `assinatura ${item.id}`,
-      href: `/contas/${item.contaId}/financeiro`,
+      href: `/contas/${item.contaId}`,
       contaId: item.contaId,
       meta: item.status,
     })),
@@ -383,7 +410,7 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
       type: 'Parcelamento' as const,
       title: item.matricula.aluno.nome,
       description: item.asaasInstallmentId ?? item.externalReference,
-      href: `/contas/${item.contaId}/financeiro`,
+      href: `/contas/${item.contaId}`,
       contaId: item.contaId,
       meta: item.status,
     })),
@@ -391,7 +418,7 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
       type: 'Parcelamento' as const,
       title: item.externalReference,
       description: item.asaasInstallmentId ?? `parcelamento ${item.id}`,
-      href: `/contas/${item.contaId}/financeiro`,
+      href: `/contas/${item.contaId}`,
       contaId: item.contaId,
       meta: item.status,
     })),
@@ -399,7 +426,7 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
       type: 'Transferência' as const,
       title: item.externalReference,
       description: item.asaasTransferId ?? `transfer ${item.id}`,
-      href: `/contas/${item.contaId}/financeiro`,
+      href: `/contas/${item.contaId}`,
       contaId: item.contaId,
       meta: item.status,
     })),
@@ -407,7 +434,7 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
       type: 'Rematrícula' as const,
       title: item.externalReference ?? item.id,
       description: `${item.origin} · período ${item.targetPeriodId} · ${item.holderType}:${item.holderId}`,
-      href: `/contas/${item.contaId}/timeline`,
+      href: `/contas/${item.contaId}`,
       contaId: item.contaId,
       meta: item.status,
     })),
@@ -422,41 +449,125 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
   ];
 }
 
-export async function listSupportAccounts(query = '') {
+function supportAccountsWhere(query: string): Prisma.ContaWhereInput {
   const q = normalizeSearch(query);
   const digits = q.replace(/\D/g, '');
 
-  return prisma.conta.findMany({
-    where: q
-      ? {
-          deletedAt: null,
-          OR: [
-            { id: q },
-            { nome: { contains: q, mode: Prisma.QueryMode.insensitive } },
-            ...(digits.length >= 3 ? [{ cpfCnpj: { contains: digits } }] : []),
-          ],
-        }
-      : { deletedAt: null },
+  return q
+    ? {
+        deletedAt: null,
+        OR: [
+          { id: q },
+          { nome: { contains: q, mode: Prisma.QueryMode.insensitive } },
+          {
+            usuarios: {
+              some: {
+                OR: [
+                  { nome: { contains: q, mode: Prisma.QueryMode.insensitive } },
+                  { email: { contains: q, mode: Prisma.QueryMode.insensitive } },
+                ],
+              },
+            },
+          },
+          {
+            alunos: {
+              some: {
+                nome: { contains: q, mode: Prisma.QueryMode.insensitive },
+              },
+            },
+          },
+          {
+            responsaveis: {
+              some: {
+                OR: [
+                  { nome: { contains: q, mode: Prisma.QueryMode.insensitive } },
+                  { email: { contains: q, mode: Prisma.QueryMode.insensitive } },
+                ],
+              },
+            },
+          },
+          {
+            professores: {
+              some: {
+                OR: [
+                  { nome: { contains: q, mode: Prisma.QueryMode.insensitive } },
+                  { email: { contains: q, mode: Prisma.QueryMode.insensitive } },
+                ],
+              },
+            },
+          },
+          {
+            colaboradores: {
+              some: {
+                OR: [
+                  { nome: { contains: q, mode: Prisma.QueryMode.insensitive } },
+                  { email: { contains: q, mode: Prisma.QueryMode.insensitive } },
+                ],
+              },
+            },
+          },
+          ...(digits.length >= 3
+            ? [
+                { cpfCnpj: { contains: digits } },
+                { alunos: { some: { cpf: { contains: digits } } } },
+                { responsaveis: { some: { cpf: { contains: digits } } } },
+                { professores: { some: { cpf: { contains: digits } } } },
+                { colaboradores: { some: { cpf: { contains: digits } } } },
+              ]
+            : []),
+        ],
+      }
+    : { deletedAt: null };
+}
+
+const supportAccountSelect = {
+  id: true,
+  nome: true,
+  status: true,
+  financeStatus: true,
+  externalAsaasOnboardingStatus: true,
+  createdAt: true,
+  updatedAt: true,
+  _count: {
     select: {
-      id: true,
-      nome: true,
-      status: true,
-      financeStatus: true,
-      externalAsaasOnboardingStatus: true,
-      createdAt: true,
-      updatedAt: true,
-      _count: {
-        select: {
-          usuariosConta: true,
-          alunos: true,
-          matriculas: true,
-          chargeReadModels: true,
-          webhooks: true,
-        },
-      },
+      usuariosConta: true,
+      alunos: true,
+      matriculas: true,
+      chargeReadModels: true,
+      webhooks: true,
     },
+  },
+} satisfies Prisma.ContaSelect;
+
+export async function listSupportAccounts(query = '') {
+  return prisma.conta.findMany({
+    where: supportAccountsWhere(query),
+    select: supportAccountSelect,
     take: 40,
     orderBy: { updatedAt: 'desc' },
   });
 }
 
+export const SUPPORT_ACCOUNTS_PAGE_SIZE = 20;
+
+export async function listSupportAccountsPage(query = '', requestedPage = 1) {
+  const where = supportAccountsWhere(query);
+  const total = await prisma.conta.count({ where });
+  const totalPages = Math.max(1, Math.ceil(total / SUPPORT_ACCOUNTS_PAGE_SIZE));
+  const page = Math.min(Math.max(1, requestedPage), totalPages);
+  const accounts = await prisma.conta.findMany({
+    where,
+    select: supportAccountSelect,
+    skip: (page - 1) * SUPPORT_ACCOUNTS_PAGE_SIZE,
+    take: SUPPORT_ACCOUNTS_PAGE_SIZE,
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  return {
+    accounts,
+    total,
+    page,
+    pageSize: SUPPORT_ACCOUNTS_PAGE_SIZE,
+    totalPages,
+  };
+}

@@ -110,6 +110,9 @@ importers:
       '@alusa/lib':
         specifier: workspace:*
         version: link:../../packages/lib
+      '@heroicons/react':
+        specifier: 2.1.5
+        version: 2.1.5(react@19.2.8)
       '@prisma/client':
         specifier: 5.18.0
         version: 5.18.0(prisma@5.18.0)

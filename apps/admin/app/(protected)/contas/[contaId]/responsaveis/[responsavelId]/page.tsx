@@ -18,7 +18,7 @@ export default async function SupportResponsavelPage({ params }: { params: Promi
 
   return (
     <SupportShell session={session}>
-      <SupportPageHeader eyebrow="Responsável" title={responsavel.nome} description="Dados de pagador e vínculos com alunos." />
+      <SupportPageHeader title={responsavel.nome} description="Dados de pagador e vínculos com alunos." />
       <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
         <div className="space-y-6">
           <SupportPanel title="Dados do responsável">
@@ -72,4 +72,3 @@ export default async function SupportResponsavelPage({ params }: { params: Promi
     </SupportShell>
   );
 }
-

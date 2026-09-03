@@ -2,10 +2,10 @@ import { notFound } from 'next/navigation';
 
 import { requireAdminSessionForPage } from '@/lib/admin-session';
 import { getSupportUserDetail, listSupportNotes } from '@/features/support/queries/support-entities';
-import { formatDateTime, maskEmail, maskPhone } from '@/features/support/shared/format';
+import { formatDateTime, formatSupportStatus, maskEmail, maskPhone } from '@/features/support/shared/format';
 import { SupportNoteForm } from '@/features/support/shared/SupportActionForms';
 import { SupportShell } from '@/features/support/shared/SupportShell';
-import { KeyValue, StatusBadge, SupportPageHeader, SupportPanel } from '@/features/support/shared/SupportUI';
+import { SupportField, SupportPageHeader, SupportPanel } from '@/features/support/shared/SupportUI';
 
 export default async function SupportUserDetailPage({
   params,
@@ -24,18 +24,18 @@ export default async function SupportUserDetailPage({
 
   return (
     <SupportShell session={session}>
-      <SupportPageHeader eyebrow="Usuário" title={user.nome} description="Detalhe de acesso e vínculos da conta." />
+      <SupportPageHeader title={user.nome} description="Detalhe de acesso e vínculos da conta." />
       <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
         <SupportPanel title="Dados do usuário">
-          <dl>
-            <KeyValue label="ID" value={user.id} />
-            <KeyValue label="E-mail" value={maskEmail(user.email)} />
-            <KeyValue label="Telefone" value={maskPhone(user.telefone)} />
-            <KeyValue label="Papel legado" value={<StatusBadge value={user.role} />} />
-            <KeyValue label="Status" value={<StatusBadge value={user.status} />} />
-            <KeyValue label="E-mail verificado" value={formatDateTime(user.emailVerifiedAt)} />
-            <KeyValue label="Atualizado em" value={formatDateTime(user.updatedAt)} />
-          </dl>
+          <div className="support-fields">
+            <SupportField label="ID" value={user.id} />
+            <SupportField label="E-mail" value={maskEmail(user.email)} />
+            <SupportField label="Telefone" value={maskPhone(user.telefone)} />
+            <SupportField label="Papel legado" value={formatSupportStatus(user.role)} />
+            <SupportField label="Status" value={formatSupportStatus(user.status)} />
+            <SupportField label="E-mail verificado" value={formatDateTime(user.emailVerifiedAt)} />
+            <SupportField label="Atualizado em" value={formatDateTime(user.updatedAt)} />
+          </div>
         </SupportPanel>
         <SupportPanel title="Ações seguras">
           <SupportNoteForm contaId={resolvedParams.contaId} entityType="USUARIO" entityId={user.id} />
@@ -58,4 +58,3 @@ export default async function SupportUserDetailPage({
     </SupportShell>
   );
 }
-

@@ -1,9 +1,21 @@
-import { getSubaccount } from '@alusa/asaas';
+import {
+  createSubaccountAccessToken,
+  deleteSubaccountAccessToken,
+  getMyAccount,
+  getSubaccount,
+} from '@alusa/asaas';
 import { inspectAsaasCredentials, prisma } from '@alusa/database';
 import { normalizeCpfCnpjDigits } from '@alusa/lib';
 import { FinanceIntegrationMode, type AuditActorType } from '@prisma/client';
 
 import { auditLogService } from '../../foundation/audit-log.service';
+import { classifyAsaasOperationalError } from '../../foundation/asaas-operational-error';
+import { credentialVault } from '../../foundation/credential-vault';
+import {
+  ensureWebhookReady,
+  syncAsaasOperationalStatus,
+} from '../../foundation/asaas-operational-guard';
+import { withAdvisoryLock } from '../../foundation/advisory-lock';
 import { enqueueAsaasSubaccountProvisioning } from '../../jobs/provision-asaas-subaccounts';
 import { reconcileAsaasAccount } from '../asaas-account/reconcile-asaas-account';
 import { getMasterAsaasApiKey } from '../asaas-account/asaas-env';
@@ -59,7 +71,7 @@ export type AsaasSupportRecommendedAction =
   | 'WAIT'
   | 'BOOTSTRAP_LOCAL'
   | 'ENQUEUE_PROVISION'
-  | 'SAVE_MANUAL_API_KEY'
+  | 'RECOVER_API_KEY'
   | 'REPAIR_WEBHOOK'
   | 'RECONCILE'
   | 'LINK_SUBACCOUNT'
@@ -75,6 +87,7 @@ export type AsaasSupportDiagnosis = {
   missingWizardFields: string[];
   provisionJob: { status: string; type: string } | null;
   webhookJob: { status: string; type: string } | null;
+  lastCheckedAt: string | null;
   needsApiKeyRecovery: boolean;
   credentialHealth: 'CONNECTED' | 'MISSING' | 'DISCONNECTED' | 'DECRYPTION_FAILED';
   credentialSource: string;
@@ -91,7 +104,8 @@ export type AsaasSupportRepairExecuteAction =
   | 'ENQUEUE_PROVISION'
   | 'REPAIR_WEBHOOK'
   | 'RECONCILE'
-  | 'LINK_SUBACCOUNT';
+  | 'LINK_SUBACCOUNT'
+  | 'RECOVER_API_KEY';
 
 export type AsaasSupportRepairStep = { step: string; summary: string };
 
@@ -125,7 +139,12 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
               asaasAccountId: true,
               apiKeyEncrypted: true,
               apiKeyStatus: true,
-              provisionLastError: true,
+              webhookStatus: true,
+      provisionLastError: true,
+              lastHealthCheckAt: true,
+              lastWebhookCheckAt: true,
+              lastApiKeyCheckAt: true,
+              lastAsaasSyncAt: true,
             },
           },
         },
@@ -144,6 +163,7 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
       missingWizardFields: [],
       provisionJob: null,
       webhookJob: null,
+      lastCheckedAt: null,
       needsApiKeyRecovery: false,
       credentialHealth: 'MISSING',
       credentialSource: 'none',
@@ -170,6 +190,7 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
       missingWizardFields: [],
       provisionJob: null,
       webhookJob: null,
+      lastCheckedAt: null,
       needsApiKeyRecovery: false,
       credentialHealth: 'MISSING',
       credentialSource: 'none',
@@ -185,6 +206,15 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
   const profile = conta.financeProfile;
   const asaasRow = profile?.asaasAccount ?? null;
   const effectiveAsaasAccountId = asaasRow?.asaasAccountId ?? profile?.asaasAccountId ?? null;
+  const lastCheckedAt = [
+    asaasRow?.lastHealthCheckAt,
+    asaasRow?.lastWebhookCheckAt,
+    asaasRow?.lastApiKeyCheckAt,
+    asaasRow?.lastAsaasSyncAt,
+  ]
+    .filter((value): value is Date => value instanceof Date)
+    .sort((a, b) => b.getTime() - a.getTime())[0]
+    ?.toISOString() ?? null;
 
   const readiness = await readWizardReadiness(contaId);
   const canCreateSubaccount = readiness?.canCreateSubaccount ?? false;
@@ -229,6 +259,14 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
     webhookDrift = driftStatus ? hasActionableWebhookDrift(driftStatus) : null;
   }
 
+  // Um job antigo não pode sobrescrever um estado já confirmado como ativo.
+  // Se houver divergência real, o job continua relevante para permitir o reparo.
+  const effectiveWebhookJob = webhookJob && (
+    asaasRow?.webhookStatus !== 'ACTIVE' || webhookDrift === true
+  )
+    ? webhookJob
+    : null;
+
   let phase: AsaasSupportRepairPhase = 'CONNECTED_HEALTHY';
   let recommendedAction: AsaasSupportRecommendedAction = 'RECONCILE';
   let hint = 'Integração operacional. Reconciliar alinha estado local com o Asaas.';
@@ -250,7 +288,7 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
     recommendedAction = 'WAIT';
     hint =
       'Job de provisionamento de subconta em andamento ou na fila. Aguarde o worker ou execute o processador de jobs.';
-  } else if (integrationOperational && webhookJob) {
+  } else if (integrationOperational && effectiveWebhookJob) {
     phase = 'WEBHOOK_JOB_IN_FLIGHT';
     recommendedAction = webhookDrift === true ? 'REPAIR_WEBHOOK' : 'WAIT';
     hint =
@@ -264,9 +302,9 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
       'O provisionamento exige intervenção manual: vincule o ID da subconta criada no Asaas (com conferência de CPF/CNPJ).';
   } else if (credentialInspection.health === 'DECRYPTION_FAILED') {
     phase = 'CREDENTIAL_DECRYPTION_FAILED';
-    recommendedAction = 'SAVE_MANUAL_API_KEY';
+    recommendedAction = 'RECOVER_API_KEY';
     hint =
-      'A credencial está registrada como conectada, mas não pode ser descriptografada. Verifique a ENCRYPTION_KEY do ambiente ou gere uma nova API Key da subconta e salve-a novamente.';
+      'A credencial está registrada, mas não pode ser lida com segurança. Verifique a configuração de criptografia ou recupere o acesso pela integração.';
   } else if (
     effectiveAsaasAccountId &&
     (needsApiKeyRecovery ||
@@ -274,9 +312,9 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
         Boolean(asaasRow?.provisionLastError?.startsWith(RECOVERY_REQUIRED_PREFIX))))
   ) {
     phase = 'API_KEY_OR_SUBACCOUNT_RECOVERY';
-    recommendedAction = 'SAVE_MANUAL_API_KEY';
+    recommendedAction = 'RECOVER_API_KEY';
     hint =
-      'Subconta Asaas existente, mas API Key ausente ou inválida. Gere uma nova chave com o script local e cole no painel para validação, armazenamento seguro, reparo de webhook e reconciliação.';
+      'A Alusa não consegue autenticar nesta subconta. Recupere o acesso pela integração para validar e armazenar uma nova credencial com segurança.';
   } else if (!effectiveAsaasAccountId) {
     phase = 'READY_TO_ENQUEUE_PROVISION';
     recommendedAction = 'ENQUEUE_PROVISION';
@@ -300,7 +338,8 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
     canCreateSubaccount,
     missingWizardFields,
     provisionJob,
-    webhookJob,
+    webhookJob: effectiveWebhookJob,
+    lastCheckedAt,
     needsApiKeyRecovery,
     credentialHealth: credentialInspection.health,
     credentialSource: credentialInspection.source,
@@ -310,6 +349,283 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
     recoveryStuckWithoutSubaccountId,
     recommendedAction,
     hint,
+  };
+}
+
+function parseProviderDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function normalizeDigits(value: string | null | undefined) {
+  return value?.replace(/\D/g, '') ?? '';
+}
+
+function remoteAccountMatchesExpected(params: {
+  remoteAccount: { id?: string | null; cpfCnpj?: string | null };
+  expectedAsaasAccountId: string;
+  contaCpfCnpj?: string | null;
+}) {
+  if (params.remoteAccount.id?.trim()) {
+    return params.remoteAccount.id.trim() === params.expectedAsaasAccountId;
+  }
+
+  const expectedDocument = normalizeDigits(params.contaCpfCnpj);
+  const remoteDocument = normalizeDigits(params.remoteAccount.cpfCnpj);
+  return Boolean(expectedDocument && remoteDocument && expectedDocument === remoteDocument);
+}
+
+function recoveryFailure(error: unknown, context: 'master' | 'subaccount' = 'master'): { summary: string; errorCode: string } {
+  if (error instanceof Error && error.name === 'MissingAsaasApiKeyError') {
+    return {
+      summary: 'A credencial principal do Asaas não está configurada neste ambiente.',
+      errorCode: 'MASTER_KEY_MISSING',
+    };
+  }
+
+  const failure = classifyAsaasOperationalError(error, context);
+
+  if (failure.status === 403) {
+    return {
+      summary:
+        'O Asaas bloqueou a recuperação. Habilite temporariamente o gerenciamento de chaves de subcontas no Asaas e confirme se o IP de saída da Alusa está autorizado na whitelist.',
+      errorCode: 'ASAAS_KEY_MANAGEMENT_NOT_AUTHORIZED',
+    };
+  }
+
+  if (failure.status === 401 || failure.category === 'invalid_master_credentials') {
+    return {
+      summary: context === 'master'
+        ? 'A credencial principal do Asaas não está autorizada para esta operação.'
+        : 'O Asaas não aceitou a nova credencial criada para a subconta.',
+      errorCode: context === 'master' ? 'MASTER_CREDENTIAL_INVALID' : 'SUBACCOUNT_CREDENTIAL_INVALID',
+    };
+  }
+
+  if (failure.status === 404 || failure.category === 'subaccount_not_found') {
+    return {
+      summary: 'A subconta não foi encontrada no Asaas. Verifique o vínculo antes de tentar novamente.',
+      errorCode: 'SUBACCOUNT_NOT_FOUND',
+    };
+  }
+
+  return {
+    summary: 'O Asaas não permitiu recuperar a credencial agora. Tente novamente em instantes.',
+    errorCode: 'ASAAS_KEY_RECOVERY_FAILED',
+  };
+}
+
+async function revokeCreatedAccessToken(accountId: string, accessTokenId: string) {
+  if (!accessTokenId) return;
+
+  try {
+    await deleteSubaccountAccessToken({
+      apiKey: getMasterAsaasApiKey(),
+      accountId,
+      accessTokenId,
+    });
+  } catch {
+    // O token criado não é persistido quando a validação ou o armazenamento falha.
+    // A falha fica restrita ao retorno da operação para não expor detalhes sensíveis.
+  }
+}
+
+async function recoverSubaccountApiKeyCore(input: {
+  contaId: string;
+  reason: string;
+  actor: { type: AuditActorType; id?: string | null };
+}): Promise<ExecuteAsaasSupportRepairOk | ExecuteAsaasSupportRepairFail> {
+  const conta = await prisma.conta.findUnique({
+    where: { id: input.contaId },
+    select: { id: true, cpfCnpj: true, financeIntegrationMode: true },
+  });
+
+  if (!conta) return { ok: false, summary: 'Conta não encontrada.', errorCode: 'NO_CONTA' };
+  if (conta.financeIntegrationMode !== FinanceIntegrationMode.WHITELABEL_BAAS) {
+    return {
+      ok: false,
+      summary: 'A recuperação de credencial só se aplica a escolas em modo white-label BaaS.',
+      errorCode: 'NOT_WHITELABEL_BAAS',
+    };
+  }
+
+  const profile = await prisma.financeProfile.findUnique({
+    where: { contaId: input.contaId },
+    select: {
+      id: true,
+      asaasAccountId: true,
+      asaasAccount: {
+        select: {
+          id: true,
+          asaasAccountId: true,
+          apiKeyId: true,
+        },
+      },
+    },
+  });
+  const asaasAccount = profile?.asaasAccount;
+  const asaasAccountId = asaasAccount?.asaasAccountId ?? profile?.asaasAccountId ?? null;
+
+  if (!profile || !asaasAccount) {
+    return { ok: false, summary: 'Registro financeiro local não encontrado.', errorCode: 'NO_ASAAS_ACCOUNT' };
+  }
+  if (!asaasAccountId) {
+    return { ok: false, summary: 'A subconta Asaas ainda não está vinculada.', errorCode: 'NO_SUBACCOUNT_ID' };
+  }
+
+  let accessToken: Awaited<ReturnType<typeof createSubaccountAccessToken>>;
+  try {
+    accessToken = await createSubaccountAccessToken({
+      apiKey: getMasterAsaasApiKey(),
+      accountId: asaasAccountId,
+      name: `Alusa - Integração ${input.contaId.slice(0, 8)}`,
+    });
+  } catch (error) {
+    return { ok: false, ...recoveryFailure(error, 'subaccount') };
+  }
+
+  const newApiKey = accessToken.apiKey?.trim();
+  if (!newApiKey || !accessToken.id) {
+    await revokeCreatedAccessToken(asaasAccountId, accessToken.id ?? '');
+    return {
+      ok: false,
+      summary: 'O Asaas não retornou uma credencial utilizável para a subconta.',
+      errorCode: 'ASAAS_KEY_RECOVERY_FAILED',
+    };
+  }
+
+  try {
+    const remoteAccount = await getMyAccount({ apiKey: newApiKey });
+    if (!remoteAccountMatchesExpected({
+      remoteAccount,
+      expectedAsaasAccountId: asaasAccountId,
+      contaCpfCnpj: conta.cpfCnpj,
+    })) {
+      await revokeCreatedAccessToken(asaasAccountId, accessToken.id);
+      return {
+        ok: false,
+        summary: 'A nova credencial não pertence à subconta esperada.',
+        errorCode: 'ACCOUNT_MISMATCH',
+      };
+    }
+  } catch (error) {
+    await revokeCreatedAccessToken(asaasAccountId, accessToken.id);
+    return { ok: false, ...recoveryFailure(error, 'subaccount') };
+  }
+
+  let encryptedApiKey: string;
+  try {
+    encryptedApiKey = credentialVault.encrypt(newApiKey);
+    credentialVault.verifyRoundTrip(encryptedApiKey, newApiKey);
+  } catch {
+    await revokeCreatedAccessToken(asaasAccountId, accessToken.id);
+    return {
+      ok: false,
+      summary: 'A nova credencial foi validada, mas não pôde ser armazenada com segurança.',
+      errorCode: 'ENCRYPTION_FAILED',
+    };
+  }
+
+  const now = new Date();
+  const actor = sanitizeActor(input.actor);
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.asaasAccount.update({
+        where: { id: asaasAccount.id },
+        data: {
+          apiKeyEncrypted: encryptedApiKey,
+          apiKeyStatus: 'CONNECTED',
+          apiKeyId: accessToken.id,
+          apiKeyCreatedAt: parseProviderDate(accessToken.dateCreated) ?? now,
+          apiKeyExpiresAt: parseProviderDate(accessToken.expirationDate),
+          apiKeyProjectedExpirationAt: parseProviderDate(accessToken.projectedExpirationDateByLackOfUse),
+          status: 'CREATED',
+          webhookStatus: 'PENDING',
+          operationalStatus: 'WEBHOOK_REQUIRED',
+          lastApiKeyCheckAt: now,
+          provisionLastError: null,
+        },
+        select: { id: true },
+      });
+
+      await tx.asaasCredential.upsert({
+        where: { financeProfileId: profile.id },
+        update: { apiKeyEncrypted: encryptedApiKey },
+        create: { financeProfileId: profile.id, apiKeyEncrypted: encryptedApiKey },
+        select: { id: true },
+      });
+    });
+  } catch {
+    await revokeCreatedAccessToken(asaasAccountId, accessToken.id);
+    return {
+      ok: false,
+      summary: 'A nova credencial foi validada, mas não pôde ser salva.',
+      errorCode: 'SAVE_FAILED',
+    };
+  }
+
+  const steps: AsaasSupportRepairStep[] = [
+    { step: 'recover_api_key', summary: 'Nova credencial criada, validada e armazenada com segurança.' },
+  ];
+  const warnings: string[] = [];
+
+  if (asaasAccount.apiKeyId && asaasAccount.apiKeyId !== accessToken.id) {
+    try {
+      await deleteSubaccountAccessToken({
+        apiKey: getMasterAsaasApiKey(),
+        accountId: asaasAccountId,
+        accessTokenId: asaasAccount.apiKeyId,
+      });
+      steps.push({ step: 'revoke_previous_api_key', summary: 'Credencial anterior da Alusa revogada após a validação da nova.' });
+    } catch {
+      warnings.push('A credencial anterior não pôde ser revogada automaticamente.');
+    }
+  }
+
+  try {
+    await ensureWebhookReady(input.contaId);
+    steps.push({ step: 'repair_webhook', summary: 'Webhook verificado e alinhado.' });
+  } catch {
+    warnings.push('A credencial foi recuperada, mas o webhook precisa ser verificado novamente.');
+  }
+
+  try {
+    const reconciled = await reconcileAsaasAccount({
+      contaId: input.contaId,
+      actor,
+      reason: input.reason,
+    });
+    if (reconciled.reconciled) steps.push({ step: 'reconcile', summary: 'Estado da subconta reconciliado com o Asaas.' });
+  } catch {
+    warnings.push('A credencial foi recuperada, mas a reconciliação precisa ser executada novamente.');
+  }
+
+  try {
+    await syncAsaasOperationalStatus(input.contaId);
+  } catch {
+    warnings.push('A credencial foi recuperada, mas o status operacional será atualizado na próxima verificação.');
+  }
+  await auditLogService.record({
+    contaId: input.contaId,
+    action: 'finance.asaas.recover_subaccount_api_key',
+    entity: { type: 'AsaasAccount', id: asaasAccount.id },
+    metadata: {
+      asaasAccountId,
+      previousApiKeyId: asaasAccount.apiKeyId,
+      newApiKeyId: accessToken.id,
+      previousApiKeyRevoked: steps.some((step) => step.step === 'revoke_previous_api_key'),
+      warnings,
+      reason: input.reason,
+    },
+    actor,
+  });
+
+  if (warnings.length) steps.push({ step: 'warnings', summary: warnings.join(' ') });
+  return {
+    ok: true,
+    steps,
+    finalDiagnosis: await diagnoseAsaasSupportRepair(input.contaId),
   };
 }
 
@@ -450,7 +766,7 @@ async function linkWhitelabelSubaccountCore(input: {
 
   return {
     ok: true,
-    summary: `Subconta ${trimmedId} vinculada à conta. Em seguida gere uma nova API Key com o script local e cole no painel.`,
+    summary: `Subconta ${trimmedId} vinculada à conta. Agora é possível recuperar o acesso pela integração.`,
   };
 }
 
@@ -495,6 +811,28 @@ export async function executeAsaasSupportRepair(input: {
     };
   }
 
+  if (input.action === 'RECOVER_API_KEY') {
+    const locked = await withAdvisoryLock(
+      `asaas-api-key-recovery:${input.contaId}`,
+      () => recoverSubaccountApiKeyCore({
+        contaId: input.contaId,
+        reason,
+        actor: sanitizeActor(input.actor),
+      }),
+      { timeout: 60000, logContext: { contaId: input.contaId } },
+    );
+
+    if (!locked.acquired) {
+      return {
+        ok: false,
+        summary: 'A recuperação desta credencial já está em andamento. Aguarde e atualize o diagnóstico.',
+        errorCode: 'RECOVERY_IN_PROGRESS',
+      };
+    }
+
+    return locked.result;
+  }
+
   if (input.action === 'BOOTSTRAP_LOCAL') {
     await startFinancialOnboarding({ contaId: input.contaId, actor: sanitizeActor(input.actor) });
     return {
@@ -519,7 +857,7 @@ export async function executeAsaasSupportRepair(input: {
       if (r.status === 'CONNECTED') {
         summary = 'Subconta já estava conectada.';
       } else if (r.status === 'RECOVERY_REQUIRED') {
-        summary = 'Provisionamento requer geração manual de API Key com o script local.';
+        summary = 'Provisionamento requer recuperação da credencial pela integração.';
       } else if (r.queued) {
         summary = 'Job de provisionamento enfileirado. Aguarde o processamento.';
       } else {

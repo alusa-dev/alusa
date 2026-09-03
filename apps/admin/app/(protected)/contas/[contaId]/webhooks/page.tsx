@@ -30,7 +30,6 @@ export default async function SupportAccountWebhooksPage({
   return (
     <SupportShell session={session}>
       <SupportPageHeader
-        eyebrow="Webhooks"
         title={`Eventos Asaas de ${account.conta.nome}`}
         description="Eventos recebidos, arquivados, rejeitados, tentativas, erro normalizado e correlação com IDs Asaas."
       />
@@ -122,4 +121,3 @@ export default async function SupportAccountWebhooksPage({
     </SupportShell>
   );
 }
-

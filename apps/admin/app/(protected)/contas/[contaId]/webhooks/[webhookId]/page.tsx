@@ -33,7 +33,6 @@ export default async function SupportWebhookDetailPage({
   return (
     <SupportShell session={session}>
       <SupportPageHeader
-        eyebrow="Webhook"
         title={webhook.evento}
         description="Payload mascarado, tentativas e ação de replay individual auditada."
       />
@@ -80,4 +79,3 @@ export default async function SupportWebhookDetailPage({
     </SupportShell>
   );
 }
-

@@ -1,4 +1,3 @@
-import { Icon } from '@/components/icons/Icon';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { requireAdminSessionForPage } from '@/lib/admin-session';
@@ -21,79 +20,75 @@ export default async function DeveloperSupportHome({
   const session = await requireAdminSessionForPage('');
   const query = searchParams?.q ?? '';
   const [overview, results] = await Promise.all([getSupportOverview(), searchSupport(query)]);
+  const receitaMensal = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(overview.receitaMensalCents / 100);
 
   return (
     <SupportShell session={session}>
-      <SupportPageHeader
-        eyebrow="Central"
-        title="Busca universal"
-        description="Encontre contas, usuários, alunos, responsáveis, matrículas, cobranças e eventos de webhook sem acessar o banco diretamente."
-      />
+      <div className="admin-overview">
+        <SupportPageHeader
+          title="Central do Administrador"
+          description="Consulte e acompanhe as principais informações da plataforma em um só lugar."
+        />
 
-      <SupportPanel>
-        <form className="flex flex-col gap-3 sm:flex-row" action="">
-          <div className="relative flex-1">
-            <Icon
-              name="Search"
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-            />
+        <SupportPanel className="overview-search-panel">
+          <form className="overview-search-form" action="">
+            <div className="overview-search-field">
             <Input
               name="q"
               defaultValue={query}
-              className="pl-9"
-              placeholder="Buscar por escola, contaId, e-mail, aluno, cobrança, Asaas ID ou webhook"
+              className="overview-search-input"
+              placeholder="Nome, e-mail, escola, ID ou cobrança"
             />
-          </div>
-          <Button type="submit">Buscar</Button>
-        </form>
-      </SupportPanel>
-
-      <div className="mt-6 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <SupportMetric label="Contas ativas" value={overview.contasAtivas} />
-        <SupportMetric label="Usuários ativos" value={overview.usuariosAtivos} />
-        <SupportMetric label="Alunos ativos" value={overview.alunosAtivos} />
-        <SupportMetric label="Matrículas ativas" value={overview.matriculasAtivas} />
-        <SupportMetric label="Cobranças abertas" value={overview.cobrancasAbertas} tone="warning" />
-        <SupportMetric label="Webhooks com erro" value={overview.webhooksComErro} tone="danger" />
-      </div>
-
-      <div className="mt-6">
-        <SupportPanel
-          title={query ? `Resultados para "${query}"` : 'Como começar'}
-          description={
-            query
-              ? 'Resultados agrupados por entidades operacionais.'
-              : 'Digite pelo menos dois caracteres para iniciar um diagnóstico.'
-          }
-        >
-          {query && results.length > 0 ? (
-            <div className="space-y-3">
-              {results.map((item, index) => (
-                <RowLink
-                  key={`${item.type}-${item.contaId}-${index}`}
-                  href={item.href}
-                  title={`${item.type}: ${item.title}`}
-                  description={item.description}
-                  meta={
-                    <>
-                      <StatusBadge value={item.meta} />
-                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">
-                        contaId {item.contaId}
-                      </span>
-                    </>
-                  }
-                />
-              ))}
             </div>
-          ) : (
-            <EmptyState
-              title={query ? 'Nenhum resultado encontrado' : 'Busca orientada a suporte'}
-              description="A busca preserva o contexto multi-tenant e sempre direciona para uma conta antes de expor detalhes operacionais."
-            />
-          )}
+            <Button className="overview-search-button" type="submit">Buscar</Button>
+          </form>
         </SupportPanel>
+
+        <div className="overview-metrics">
+          <SupportMetric label="Contas ativas" value={overview.contasAtivas} />
+          <SupportMetric label="Contas inativas" value={overview.contasInativas} />
+          <SupportMetric label="Assinaturas em atraso" value={overview.assinaturasEmAtraso} tone="warning" />
+          <SupportMetric label="Cancelamentos no mês" value={overview.cancelamentosNoMes} tone="danger" />
+          <SupportMetric label="Receita mensal" value={receitaMensal} tone="success" />
+        </div>
+
+        <div className="overview-results">
+          <SupportPanel
+            title={query ? `Resultados para "${query}"` : 'Como começar'}
+            description={
+              query
+                ? 'Resultados agrupados por entidades operacionais.'
+                : 'Digite pelo menos dois caracteres para iniciar um diagnóstico.'
+            }
+          >
+            {query && results.length > 0 ? (
+              <div className="space-y-3">
+                {results.map((item, index) => (
+                  <RowLink
+                    key={`${item.type}-${item.contaId}-${index}`}
+                    href={item.href}
+                    title={`${item.type}: ${item.title}`}
+                    description={item.description}
+                    meta={
+                      <>
+                        <StatusBadge value={item.meta} />
+                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">
+                          contaId {item.contaId}
+                        </span>
+                      </>
+                    }
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                title={query ? 'Nenhum resultado encontrado' : 'Busca orientada a suporte'}
+                description="A busca preserva o contexto multi-tenant e sempre direciona para uma conta antes de expor detalhes operacionais."
+              />
+            )}
+          </SupportPanel>
+        </div>
       </div>
     </SupportShell>
   );
 }
-

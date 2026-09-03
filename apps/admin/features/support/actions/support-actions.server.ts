@@ -149,13 +149,7 @@ export async function reconcileSupportCharge(input: {
     throw new Error('Permissão insuficiente para reconciliação.');
   }
 
-  const readModel = await prisma.chargeReadModel.findFirst({
-    where: {
-      contaId: input.contaId,
-      OR: [{ id: input.chargeId }, { sourceId: input.chargeId }, { asaasPaymentId: input.chargeId }],
-    },
-    select: { id: true, sourceKind: true, sourceId: true, asaasPaymentId: true },
-  });
+  const readModel = await findSupportChargeForAction(input.contaId, input.chargeId);
 
   if (!readModel?.asaasPaymentId) {
     throw new Error('Cobrança sem paymentId Asaas para reconciliação individual.');
@@ -243,11 +237,34 @@ async function findSupportChargeForAction(contaId: string, chargeId: string) {
     },
   });
 
-  if (!readModel?.asaasPaymentId) {
+  if (readModel) {
+    if (!readModel.asaasPaymentId) {
+      throw new Error('Cobrança sem paymentId Asaas.');
+    }
+
+    return { ...readModel, asaasPaymentId: readModel.asaasPaymentId };
+  }
+
+  const cobranca = await prisma.cobranca.findFirst({
+    where: { contaId, OR: [{ id: chargeId }, { asaasPaymentId: chargeId }] },
+    select: { id: true, asaasPaymentId: true, status: true },
+  });
+
+  if (!cobranca) {
+    throw new Error('Cobrança não encontrada para esta conta.');
+  }
+
+  if (!cobranca.asaasPaymentId) {
     throw new Error('Cobrança sem paymentId Asaas.');
   }
 
-  return { ...readModel, asaasPaymentId: readModel.asaasPaymentId };
+  return {
+    id: cobranca.id,
+    sourceKind: 'COBRANCA',
+    sourceId: cobranca.id,
+    asaasPaymentId: cobranca.asaasPaymentId,
+    status: String(cobranca.status),
+  };
 }
 
 export async function checkSupportAsaasChargeStatus(input: {

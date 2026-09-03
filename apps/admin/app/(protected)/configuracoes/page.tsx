@@ -21,7 +21,6 @@ export default async function SupportSettingsPage() {
   return (
     <SupportShell session={session}>
       <SupportPageHeader
-        eyebrow="Configurações internas"
         title="Permissões e políticas de suporte"
         description="Identidades administrativas persistidas, com menor privilégio e auditoria."
       />

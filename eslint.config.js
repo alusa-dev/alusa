@@ -97,6 +97,12 @@ export default [
     },
   },
   {
+    files: ['apps/admin/components/icons/Icon.tsx'],
+    rules: {
+      'no-restricted-imports': 'off',
+    },
+  },
+  {
     files: ['apps/web/**/*.{ts,tsx}'],
     rules: {
       'no-restricted-imports': [

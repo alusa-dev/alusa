@@ -161,12 +161,72 @@ export async function getSupportChargeDetail(contaId: string, chargeId: string) 
     },
   });
 
+  const cobranca = readModel
+    ? null
+    : await prisma.cobranca.findFirst({
+        where: { contaId, OR: [{ id: chargeId }, { asaasPaymentId: chargeId }] },
+        select: {
+          id: true,
+          contaId: true,
+          matriculaId: true,
+          tipo: true,
+          descricao: true,
+          valor: true,
+          vencimento: true,
+          formaPagamento: true,
+          status: true,
+          asaasPaymentId: true,
+          createdAt: true,
+          updatedAt: true,
+          matricula: {
+            select: {
+              aluno: { select: { id: true, nome: true } },
+              responsavelFinanceiro: { select: { nome: true } },
+            },
+          },
+        },
+      });
+
+  const resolvedReadModel =
+    readModel ??
+    (cobranca
+      ? {
+          id: cobranca.id,
+          contaId: cobranca.contaId,
+          sourceKind: 'COBRANCA',
+          sourceId: cobranca.id,
+          origin: 'ACADEMIC',
+          chargeType:
+            String(cobranca.tipo) === 'PARCELADA'
+              ? 'INSTALLMENT'
+              : String(cobranca.tipo) === 'RECORRENTE'
+                ? 'SUBSCRIPTION'
+                : 'ONE_TIME',
+          linkStatus: cobranca.asaasPaymentId ? 'LINKED' : 'NEEDS_REVIEW',
+          payerName: cobranca.matricula.responsavelFinanceiro?.nome ?? cobranca.matricula.aluno.nome,
+          description: cobranca.descricao ?? String(cobranca.tipo),
+          value: cobranca.valor,
+          dueDate: cobranca.vencimento,
+          billingType: String(cobranca.formaPagamento),
+          status: String(cobranca.status),
+          asaasPaymentId: cobranca.asaasPaymentId,
+          matriculaId: cobranca.matriculaId,
+          alunoId: cobranca.matricula.aluno.id,
+          installmentCount: null,
+          installmentsPaid: null,
+          createdAt: cobranca.createdAt,
+          updatedAt: cobranca.updatedAt,
+        }
+      : null);
+
+  if (!resolvedReadModel) return null;
+
   const [webhooks, jobs, localCharge] = await Promise.all([
     prisma.webhookAsaas.findMany({
       where: {
         contaId,
         OR: [
-          { asaasPaymentId: readModel?.asaasPaymentId ?? chargeId },
+          { asaasPaymentId: resolvedReadModel.asaasPaymentId ?? chargeId },
           { eventId: chargeId },
           { id: chargeId },
         ],
@@ -187,8 +247,8 @@ export async function getSupportChargeDetail(contaId: string, chargeId: string) 
       where: {
         contaId,
         OR: [
-          { chargeId: readModel?.sourceKind === 'CHARGE' ? readModel.sourceId : undefined },
-          { cobrancaId: readModel?.sourceKind === 'COBRANCA' ? readModel.sourceId : undefined },
+          { chargeId: resolvedReadModel.sourceKind === 'CHARGE' ? resolvedReadModel.sourceId : undefined },
+          { cobrancaId: resolvedReadModel.sourceKind === 'COBRANCA' ? resolvedReadModel.sourceId : undefined },
         ].filter(Boolean) as { chargeId?: string; cobrancaId?: string }[],
       },
       select: {
@@ -203,9 +263,9 @@ export async function getSupportChargeDetail(contaId: string, chargeId: string) 
       take: 10,
       orderBy: { createdAt: 'desc' },
     }),
-    readModel?.sourceKind === 'COBRANCA'
+    resolvedReadModel.sourceKind === 'COBRANCA'
       ? prisma.cobranca.findFirst({
-          where: { id: readModel.sourceId, contaId },
+          where: { id: resolvedReadModel.sourceId, contaId },
           select: {
             id: true,
             status: true,
@@ -221,7 +281,7 @@ export async function getSupportChargeDetail(contaId: string, chargeId: string) 
       : null,
   ]);
 
-  return readModel ? { readModel, webhooks, jobs, localCharge } : null;
+  return { readModel: resolvedReadModel, webhooks, jobs, localCharge };
 }
 
 export async function getSupportWebhookDetail(contaId: string, webhookId: string) {
@@ -241,26 +301,6 @@ export async function getSupportWebhookDetail(contaId: string, webhookId: string
   };
 }
 
-export async function listSupportCases(contaId?: string) {
-  const cases = await prisma.supportCase.findMany({
-    where: contaId ? { contaId } : undefined,
-    orderBy: { updatedAt: 'desc' },
-    take: 50,
-  });
-
-  const contaIds = Array.from(new Set(cases.map((item) => item.contaId)));
-  const contas = await prisma.conta.findMany({
-    where: { id: { in: contaIds } },
-    select: { id: true, nome: true },
-  });
-  const contaNames = new Map(contas.map((item) => [item.id, item.nome]));
-
-  return cases.map((item) => ({
-    ...item,
-    conta: { nome: contaNames.get(item.contaId) ?? item.contaId },
-  }));
-}
-
 export async function listSupportNotes(input: { contaId: string; entityType?: string; entityId?: string }) {
   return prisma.supportNote.findMany({
     where: {
@@ -272,4 +312,3 @@ export async function listSupportNotes(input: { contaId: string; entityType?: st
     take: 50,
   });
 }
-

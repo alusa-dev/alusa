@@ -15,7 +15,7 @@ export default async function SupportEnrollmentPage({ params }: { params: Promis
 
   return (
     <SupportShell session={session}>
-      <SupportPageHeader eyebrow="Matrícula" title={matricula.aluno.nome} description="Contrato, financeiro e cobranças vinculadas." />
+              <SupportPageHeader title={matricula.aluno.nome} description="Contrato, financeiro e cobranças vinculadas." />
       <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
         <div className="space-y-6">
           <SupportPanel title="Dados da matrícula">
@@ -58,4 +58,3 @@ export default async function SupportEnrollmentPage({ params }: { params: Promis
     </SupportShell>
   );
 }
-

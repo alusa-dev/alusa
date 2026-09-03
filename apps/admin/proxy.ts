@@ -7,7 +7,7 @@ export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   if (pathname === '/login' || pathname.startsWith('/api/auth/')) return NextResponse.next();
   if (pathname.startsWith('/api/')) return NextResponse.next();
-  if (pathname.startsWith('/_next/') || pathname === '/favicon.ico') return NextResponse.next();
+  if (pathname.startsWith('/_next/') || pathname.startsWith('/brand/') || pathname === '/favicon.ico' || pathname === '/icon.svg') return NextResponse.next();
   if (SESSION_COOKIES.some((name) => request.cookies.has(name))) return NextResponse.next();
   const login = new URL('/login', request.url);
   login.searchParams.set('callbackUrl', `${pathname}${request.nextUrl.search}`);
@@ -15,5 +15,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!_next/static|_next/image|brand/|favicon.ico|icon.svg).*)'],
 };

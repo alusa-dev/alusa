@@ -2,10 +2,10 @@ import { notFound } from 'next/navigation';
 
 import { requireAdminSessionForPage } from '@/lib/admin-session';
 import { getSupportStudentDetail, listSupportNotes } from '@/features/support/queries/support-entities';
-import { formatDateTime, maskDocument, maskEmail, maskPhone } from '@/features/support/shared/format';
+import { formatDateTime, formatSupportStatus, maskDocument, maskEmail, maskPhone } from '@/features/support/shared/format';
 import { SupportCaseForm, SupportNoteForm } from '@/features/support/shared/SupportActionForms';
 import { SupportShell } from '@/features/support/shared/SupportShell';
-import { KeyValue, RowLink, StatusBadge, SupportPageHeader, SupportPanel } from '@/features/support/shared/SupportUI';
+import { RowLink, StatusBadge, SupportField, SupportPageHeader, SupportPanel } from '@/features/support/shared/SupportUI';
 
 export default async function SupportStudentDetailPage({ params }: { params: Promise<{ contaId: string; alunoId: string }> }) {
   const resolvedParams = await params;
@@ -18,19 +18,19 @@ export default async function SupportStudentDetailPage({ params }: { params: Pro
 
   return (
     <SupportShell session={session}>
-      <SupportPageHeader eyebrow="Aluno" title={student.nome} description="Dados mascarados, responsáveis e matrículas vinculadas." />
+      <SupportPageHeader title={student.nome} description="Dados mascarados, responsáveis e matrículas vinculadas." />
       <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
         <div className="space-y-6">
           <SupportPanel title="Dados do aluno">
-            <dl>
-              <KeyValue label="ID" value={student.id} />
-              <KeyValue label="CPF" value={maskDocument(student.cpf)} />
-              <KeyValue label="E-mail" value={maskEmail(student.email)} />
-              <KeyValue label="Telefone" value={maskPhone(student.telefone)} />
-              <KeyValue label="Status" value={<StatusBadge value={student.status} />} />
-              <KeyValue label="Customer Asaas" value={student.asaasCustomerId ?? 'Não vinculado'} />
-              <KeyValue label="Atualizado em" value={formatDateTime(student.updatedAt)} />
-            </dl>
+            <div className="support-fields">
+              <SupportField label="ID" value={student.id} />
+              <SupportField label="CPF" value={maskDocument(student.cpf)} />
+              <SupportField label="E-mail" value={maskEmail(student.email)} />
+              <SupportField label="Telefone" value={maskPhone(student.telefone)} />
+              <SupportField label="Status" value={formatSupportStatus(student.status)} />
+              <SupportField label="Customer Asaas" value={student.asaasCustomerId ?? 'Não vinculado'} />
+              <SupportField label="Atualizado em" value={formatDateTime(student.updatedAt)} />
+            </div>
           </SupportPanel>
           <SupportPanel title="Matrículas">
             <div className="space-y-3">
@@ -82,4 +82,3 @@ export default async function SupportStudentDetailPage({ params }: { params: Pro
     </SupportShell>
   );
 }
-

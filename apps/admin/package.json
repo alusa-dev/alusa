@@ -16,6 +16,7 @@
     "@alusa/database": "workspace:*",
     "@alusa/finance": "workspace:*",
     "@alusa/lib": "workspace:*",
+    "@heroicons/react": "2.1.5",
     "@prisma/client": "5.18.0",
     "bcryptjs": "^2.4.3",
     "next": "16.3.0",

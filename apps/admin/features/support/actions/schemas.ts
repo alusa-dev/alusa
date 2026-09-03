@@ -52,6 +52,7 @@ export const supportAsaasRepairActionSchema = z.enum([
   'REPAIR_WEBHOOK',
   'RECONCILE',
   'LINK_SUBACCOUNT',
+  'RECOVER_API_KEY',
 ]);
 
 export const supportAsaasDiagnoseSchema = z.object({
@@ -76,4 +77,3 @@ export const supportAsaasSaveManualApiKeySchema = z.object({
     understandsEncryptedStorage: z.literal(true),
   }),
 });
-
