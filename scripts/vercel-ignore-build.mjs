@@ -14,7 +14,6 @@ if (!projectDirectories[projectName]) {
 }
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const base = process.env.VERCEL_GIT_PREVIOUS_SHA?.trim() || 'HEAD^';
 const appDirectory = `apps/${projectDirectories[projectName]}`;
 
 // O grafo do Turbo não inclui automaticamente todos os artefatos operacionais
@@ -52,6 +51,24 @@ function run(command, args, options = {}) {
   });
 }
 
+function resolveBaseCommit() {
+  const candidates = [process.env.VERCEL_GIT_PREVIOUS_SHA?.trim(), 'HEAD^'].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const resolved = run('git', ['rev-parse', '--verify', `${candidate}^{commit}`], { capture: true });
+    if (resolved.status === 0 && resolved.stdout.trim()) {
+      if (candidate !== process.env.VERCEL_GIT_PREVIOUS_SHA?.trim()) {
+        console.log(`SHA anterior não disponível; usando ${resolved.stdout.trim()} como fallback.`);
+      }
+      return resolved.stdout.trim();
+    }
+  }
+
+  console.error('Nenhum commit base está disponível para comparação; mantendo o build por segurança.');
+  process.exit(1);
+}
+
+const base = resolveBaseCommit();
 const globalDiff = run('git', ['diff', '--name-only', base, 'HEAD', '--'], { capture: true });
 
 if (globalDiff.error || globalDiff.status !== 0) {
