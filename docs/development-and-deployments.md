@@ -53,7 +53,8 @@ Na Vercel, código de saída `0` ignora o build e código `1` continua o build.
 O script segue esta ordem:
 
 1. Usa `VERCEL_GIT_PREVIOUS_SHA`, fornecido pela Vercel quando existe deployment
-   anterior; se não existir, compara com `HEAD^`.
+   anterior; se o checkout raso não contiver esse SHA, tenta buscá-lo com fetch
+   limitado; se ainda não existir, compara com `HEAD^`.
 2. Força o build quando muda Prisma, lockfile, workspace, Turbo, configurações
    da Vercel/Next, configurações globais ou o próprio script de decisão.
 3. Executa `turbo query affected` para considerar o app e suas dependências

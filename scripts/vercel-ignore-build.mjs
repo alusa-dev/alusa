@@ -15,6 +15,7 @@ if (!projectDirectories[projectName]) {
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const appDirectory = `apps/${projectDirectories[projectName]}`;
+const previousSha = process.env.VERCEL_GIT_PREVIOUS_SHA?.trim();
 
 // O grafo do Turbo não inclui automaticamente todos os artefatos operacionais
 // que alteram o resultado do deploy, especialmente o schema/migrations do Prisma.
@@ -52,12 +53,27 @@ function run(command, args, options = {}) {
 }
 
 function resolveBaseCommit() {
-  const candidates = [process.env.VERCEL_GIT_PREVIOUS_SHA?.trim(), 'HEAD^'].filter(Boolean);
+  const candidates = [previousSha, 'HEAD^'].filter(Boolean);
 
   for (const candidate of candidates) {
-    const resolved = run('git', ['rev-parse', '--verify', `${candidate}^{commit}`], { capture: true });
+    let resolved = run('git', ['rev-parse', '--verify', `${candidate}^{commit}`], { capture: true });
+
+    // O checkout da Vercel pode ser raso. Tenta buscar somente o SHA anterior
+    // antes de desistir; isso evita builds extras sem confiar no histórico local.
+    if (resolved.status !== 0 && candidate === previousSha) {
+      run('git', ['fetch', '--no-tags', '--depth=1', 'origin', candidate], { capture: true });
+      resolved = run('git', ['rev-parse', '--verify', `${candidate}^{commit}`], { capture: true });
+    }
+
+    // Quando não há SHA anterior fornecido, aprofunda o branch atual uma vez
+    // para tentar resolver o fallback HEAD^.
+    if (resolved.status !== 0 && candidate === 'HEAD^' && process.env.VERCEL_GIT_COMMIT_REF) {
+      run('git', ['fetch', '--no-tags', '--deepen=1', 'origin', process.env.VERCEL_GIT_COMMIT_REF], { capture: true });
+      resolved = run('git', ['rev-parse', '--verify', `${candidate}^{commit}`], { capture: true });
+    }
+
     if (resolved.status === 0 && resolved.stdout.trim()) {
-      if (candidate !== process.env.VERCEL_GIT_PREVIOUS_SHA?.trim()) {
+      if (candidate !== previousSha) {
         console.log(`SHA anterior não disponível; usando ${resolved.stdout.trim()} como fallback.`);
       }
       return resolved.stdout.trim();
