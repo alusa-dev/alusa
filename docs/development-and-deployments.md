@@ -50,17 +50,17 @@ node ../../scripts/vercel-ignore-build.mjs @alusa/admin
 ```
 
 Na Vercel, código de saída `0` ignora o build e código `1` continua o build.
-O script segue esta ordem:
+O script compartilhado chama `turbo query affected`, usando os SHAs fornecidos
+pela Vercel:
 
-1. Usa `VERCEL_GIT_PREVIOUS_SHA`, fornecido pela Vercel quando existe deployment
-   anterior; se o checkout raso não contiver esse SHA, tenta buscá-lo com fetch
-   limitado; se ainda não existir, compara com `HEAD^`.
-2. Força o build quando muda Prisma, lockfile, workspace, Turbo, configurações
-   da Vercel/Next, configurações globais ou o próprio script de decisão.
-3. Executa `turbo query affected` para considerar o app e suas dependências
+1. Usa `VERCEL_GIT_PREVIOUS_SHA`; no primeiro deployment, tenta `HEAD^` como
+   fallback.
+2. Executa `turbo query affected` para considerar o app e suas dependências
    internas declaradas no `package.json`.
+3. Usa `globalDependencies` no `turbo.json` para que Prisma, lockfile,
+   workspace, Turbo e arquivos operacionais invalidem os dois projetos.
 4. Ignora somente quando o Turbo confirma que o pacote não foi afetado.
-5. Em qualquer erro de Git/Turbo, mantém o build por segurança.
+5. Em qualquer erro de análise, mantém o build por segurança.
 
 Essa estratégia é deliberadamente conservadora: um build extra é preferível a
 deixar produção usando um artefato incompatível com uma alteração compartilhada.
