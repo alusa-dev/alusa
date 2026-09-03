@@ -2,8 +2,9 @@ import * as Sentry from '@sentry/nextjs';
 import { redactSensitiveData } from './lib/security/sensitive-redaction';
 
 const dsn = process.env.SENTRY_DSN ?? process.env.NEXT_PUBLIC_SENTRY_DSN;
+const isProduction = process.env.VERCEL_ENV === 'production';
 
-if (dsn) {
+if (dsn && isProduction) {
   Sentry.init({
     dsn,
     environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,

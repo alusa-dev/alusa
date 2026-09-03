@@ -67,6 +67,10 @@ const securityHeaders = [
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  env: {
+    NEXT_PUBLIC_VERCEL_ENV: process.env.VERCEL_ENV ?? '',
+    NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA: process.env.VERCEL_GIT_COMMIT_SHA ?? '',
+  },
   // Permite que o Playwright use um diretório de desenvolvimento isolado sem
   // disputar o lock do servidor local do workspace.
   distDir: process.env.NEXT_DIST_DIR || '.next',

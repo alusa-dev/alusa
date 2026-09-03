@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/nextjs';
 import { redactSensitiveData } from '@/lib/security/sensitive-redaction';
 
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+const isProduction = process.env.NEXT_PUBLIC_VERCEL_ENV === 'production';
 const pathname = typeof window === 'undefined' ? '' : window.location.pathname;
 const replayAllowed =
   pathname === '/' ||
@@ -13,7 +14,7 @@ const replayAllowed =
   pathname.startsWith('/dpa') ||
   pathname.startsWith('/direitos-lgpd');
 
-if (dsn) {
+if (dsn && isProduction) {
   Sentry.init({
     dsn,
     environment:

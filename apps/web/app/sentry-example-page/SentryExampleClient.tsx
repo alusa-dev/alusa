@@ -3,6 +3,8 @@
 import * as Sentry from '@sentry/nextjs';
 import { useState } from 'react';
 
+const isProduction = process.env.NEXT_PUBLIC_VERCEL_ENV === 'production';
+
 /** Mesmo padrão do wizard Sentry: ReferenceError em runtime. */
 function triggerUndefinedFunctionCall() {
   new Function('return myUndefinedFunction()')();
@@ -26,6 +28,10 @@ export function SentryExampleClient() {
           type="button"
           className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
           onClick={() => {
+            if (!isProduction) {
+              setStatus('O Sentry só está ativo em produção.');
+              return;
+            }
             setStatus('Enviando exceção capturada…');
             Sentry.captureException(new Error('[Sentry verify] captureException'));
             setStatus('captureException disparado — confira Issues no Sentry em ~30s.');

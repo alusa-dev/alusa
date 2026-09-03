@@ -10,7 +10,7 @@ export type ApiErrorContext = {
 
 export function reportApiError(error: unknown, context: ApiErrorContext): void {
   console.error(`[${context.route}]`, error);
-  if (process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN) {
+  if (process.env.VERCEL_ENV === 'production') {
     Sentry.captureException(error, {
       tags: { route: context.route },
       extra: context.extra,

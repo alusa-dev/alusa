@@ -14,4 +14,8 @@ export async function register() {
   }
 }
 
-export const onRequestError = Sentry.captureRequestError;
+export const onRequestError = (...args: Parameters<typeof Sentry.captureRequestError>) => {
+  if (process.env.VERCEL_ENV === 'production') {
+    Sentry.captureRequestError(...args);
+  }
+};
