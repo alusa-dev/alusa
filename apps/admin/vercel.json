@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "ignoreCommand": "node ../../scripts/vercel-ignore-build.mjs @alusa/admin",
   "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
-  "buildCommand": "cd ../.. && pnpm prisma:generate && pnpm exec turbo run build --filter=@alusa/admin --force",
+  "buildCommand": "cd ../.. && pnpm prisma:generate && pnpm exec turbo run build --filter=@alusa/admin",
   "regions": ["gru1"]
 }
