@@ -62,6 +62,10 @@ pela Vercel:
 4. Ignora somente quando o Turbo confirma que o pacote não foi afetado.
 5. Em qualquer erro de análise, mantém o build por segurança.
 
+O `.vercelignore` não exclui `.git`: o Ignored Build Step precisa do metadata
+Git para o Turbo comparar o commit atual com o último deployment bem-sucedido.
+Segredos e artefatos de build continuam excluídos normalmente.
+
 Essa estratégia é deliberadamente conservadora: um build extra é preferível a
 deixar produção usando um artefato incompatível com uma alteração compartilhada.
 
