@@ -269,6 +269,11 @@ export default withSentryConfig(nextConfig, {
   // Mantém o upload de sourcemaps focado nos bundles necessários para reduzir
   // o tempo de build sem desativar a observabilidade do Sentry.
   widenClientFileUpload: false,
+  // O upload de sourcemaps excede o tempo limite da Vercel neste monorepo;
+  // os eventos de runtime continuam sendo enviados normalmente ao Sentry.
+  sourcemaps: {
+    disable: true,
+  },
   tunnelRoute: '/monitoring',
   silent: !process.env.CI,
 });
