@@ -38,26 +38,36 @@ const alwaysBuildPaths = [
   `${appDirectory}/next.config.mjs`,
   `${appDirectory}/proxy.ts`,
   `${appDirectory}/tsconfig.json`,
-  `${appDirectory}/postcss.config.*`,
-  `${appDirectory}/tailwind.config.*`,
+  `${appDirectory}/postcss.config.cjs`,
+  `${appDirectory}/postcss.config.mjs`,
+  `${appDirectory}/tailwind.config.js`,
 ];
 
-function run(command, args) {
+function run(command, args, options = {}) {
   return spawnSync(command, args, {
     cwd: repositoryRoot,
     env: { ...process.env, CI: '1' },
-    stdio: 'inherit',
+    stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    encoding: options.capture ? 'utf8' : undefined,
   });
 }
 
-const globalDiff = run('git', ['diff', '--quiet', base, 'HEAD', '--', ...alwaysBuildPaths]);
+const globalDiff = run('git', ['diff', '--name-only', base, 'HEAD', '--'], { capture: true });
 
-if (globalDiff.error || (globalDiff.status !== 0 && globalDiff.status !== 1)) {
-  console.error(`Não foi possível comparar ${base} com HEAD; mantendo o build por segurança.`);
+if (globalDiff.error || globalDiff.status !== 0) {
+  const reason = globalDiff.stderr?.trim().split('\n')[0];
+  console.error(`Não foi possível comparar ${base} com HEAD${reason ? ` (${reason})` : ''}; mantendo o build por segurança.`);
   process.exit(1);
 }
 
-if (globalDiff.status === 1) {
+const changedFiles = globalDiff.stdout.split('\n').filter(Boolean);
+const changedOperationalFile = alwaysBuildPaths.some((filePath) =>
+  filePath.endsWith('/')
+    ? changedFiles.some((changedFile) => changedFile.startsWith(filePath))
+    : changedFiles.includes(filePath),
+);
+
+if (changedOperationalFile) {
   console.log(`Alteração operacional detectada; mantendo o build de ${projectName}.`);
   process.exit(1);
 }
