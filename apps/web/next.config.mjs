@@ -266,7 +266,9 @@ export default withSentryConfig(nextConfig, {
   org: 'alusa',
   project: 'javascript-nextjs',
   authToken: process.env.SENTRY_AUTH_TOKEN,
-  widenClientFileUpload: true,
+  // Mantém o upload de sourcemaps focado nos bundles necessários para reduzir
+  // o tempo de build sem desativar a observabilidade do Sentry.
+  widenClientFileUpload: false,
   tunnelRoute: '/monitoring',
   silent: !process.env.CI,
 });
