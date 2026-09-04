@@ -254,9 +254,20 @@ async function applyCandidates(
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`event-financial-backfill:${contaId}:${eventId}`}, 0))`;
 
-    const currentUnlinkedCount = await tx.eventFinancialEntry.count({
-      where: { contaId, eventId, type: 'REVENUE', originType: 'MANUAL', originId: null },
+    const currentLinkedParticipants = await tx.eventParticipant.findMany({
+      where: { contaId, eventId, revenueEntryId: { not: null } },
+      select: { revenueEntryId: true },
     });
+    const currentLinkedEntryIds = new Set(
+      currentLinkedParticipants
+        .map((participant) => participant.revenueEntryId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const currentManualEntries = await tx.eventFinancialEntry.findMany({
+      where: { contaId, eventId, type: 'REVENUE', originType: 'MANUAL', originId: null },
+      select: { id: true },
+    });
+    const currentUnlinkedCount = currentManualEntries.filter((entry) => !currentLinkedEntryIds.has(entry.id)).length;
     if (currentUnlinkedCount > 0 && !acknowledgeUnlinked) {
       throw new Error(
         `Backfill bloqueado dentro da transação: existem ${currentUnlinkedCount} lançamento(s) manual(is) sem vínculo.`,
