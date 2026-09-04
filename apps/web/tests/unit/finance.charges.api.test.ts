@@ -7,6 +7,10 @@ vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
 }));
 
+vi.mock('@/lib/finance/financial-account-gate', () => ({
+  guardFinancialAccountOr412: vi.fn(async () => ({ ok: true })),
+}));
+
 vi.mock('@alusa/finance', () => ({
   getKycSummary: vi.fn(),
   createCharge: vi.fn(),

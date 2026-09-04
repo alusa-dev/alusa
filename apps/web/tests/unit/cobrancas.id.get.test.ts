@@ -23,6 +23,9 @@ vi.mock('@/lib/prisma', () => ({
     subscription: {
       findFirst: vi.fn(),
     },
+    eventParticipant: {
+      findFirst: vi.fn(),
+    },
   },
 }));
 
@@ -78,6 +81,7 @@ vi.mock('@alusa/finance', () => ({
   updatePayment: vi.fn(),
   auditLogService: { record: vi.fn() },
   syncPaymentStateFromAsaas: vi.fn(),
+  runAsaasPaymentCommand: vi.fn(),
 }));
 
 import { prisma } from '@/lib/prisma';
