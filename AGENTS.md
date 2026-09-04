@@ -28,6 +28,14 @@ Contratos canônicos em **`.agents/`**:
 
 Este arquivo (**`AGENTS.md`**) espelha as **regras universais** do agente **core**. Contrato operacional completo (UI, fluxo, checklists): [`.agents/core.md`](.agents/core.md). Skills Cursor: `.cursor/skills/`.
 
+## Operação de deploy
+
+- Para mudanças de build, CI, Vercel, migrations ou publicação em produção, seguir o [runbook de deploy](docs/runbooks/deploy-production.md).
+- Não considerar um commit enviado para `main` como publicado até confirmar a implantação `Ready`, o commit e os aliases de produção.
+- Preferir PR com CI verde e promoção do artefato validado; não fazer push direto em `main` para contornar checks.
+- Em falhas de build, reproduzir o comando real da Vercel e corrigir a causa sem relaxar TypeScript, testes, autenticação ou validações.
+- Migrations e backfills devem ser seguros, escopados, idempotentes e validados antes da promoção da aplicação.
+
 ## Regras universais obrigatórias
 
 ### Produto e domínio
