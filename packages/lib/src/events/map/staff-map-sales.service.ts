@@ -9,6 +9,10 @@ import {
 
 import { prisma } from '../../prisma';
 import { assertEventScopedTicketSaleLinks } from '../event-participant-scope';
+import {
+  buildPublicEventTicketSalePath,
+  enqueueEventTicketEmail,
+} from '../ticket-email-outbox';
 import { EventsError, type EventsContext } from '../events.service';
 import type { CreateTicketSaleInput } from '../events.schema';
 
@@ -35,6 +39,39 @@ function createLocalId(prefix: string) {
 
 function createPublicToken(prefix: string) {
   return `${prefix}_${globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`;
+}
+
+function normalizeEmail(value: string | null | undefined) {
+  const email = value?.trim().toLowerCase();
+  return email || null;
+}
+
+async function resolveTicketBuyerEmail(
+  db: DbClient,
+  contaId: string,
+  input: Pick<CreateTicketSaleInput, 'buyerEmail' | 'alunoId' | 'responsavelId'>,
+) {
+  const explicitEmail = normalizeEmail(input.buyerEmail);
+  if (explicitEmail) return explicitEmail;
+
+  if (input.responsavelId) {
+    const responsavel = await db.responsavel.findFirst({
+      where: { id: input.responsavelId, contaId },
+      select: { email: true },
+    });
+    const responsavelEmail = normalizeEmail(responsavel?.email);
+    if (responsavelEmail) return responsavelEmail;
+  }
+
+  if (input.alunoId) {
+    const aluno = await db.aluno.findFirst({
+      where: { id: input.alunoId, contaId },
+      select: { email: true },
+    });
+    return normalizeEmail(aluno?.email);
+  }
+
+  return null;
 }
 
 function addMinutes(date: Date, minutes: number) {
@@ -464,6 +501,8 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
       responsavelId: input.responsavelId,
     });
 
+    const buyerEmail = await resolveTicketBuyerEmail(tx, ctx.contaId, input);
+
     const now = new Date();
     const paidAt = saleStatus === 'PAID' ? now : null;
     const lotGroups = groupStaffSeatsByLot(publicSeats);
@@ -493,6 +532,8 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
           eventId: input.eventId,
           lotId,
           buyerName: input.buyerName,
+          buyerEmail,
+          accessToken: createPublicToken('sale'),
           alunoId: input.alunoId,
           responsavelId: input.responsavelId,
           quantity: groupSeats.length,
@@ -578,6 +619,28 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
       data: { status: 'CONSUMED', consumedAt: now, checkoutKey: null },
     });
 
+    if (buyerEmail && (saleStatus === 'PAID' || saleStatus === 'COMPLIMENTARY')) {
+      for (const saleId of createdSaleIds) {
+        const sale = await tx.eventTicketSale.findUniqueOrThrow({
+          where: { id: saleId },
+          include: { event: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } }, lot: { select: { name: true } }, tickets: { where: { status: 'VALID' }, select: { id: true } } },
+        });
+        if (!sale.accessToken || sale.tickets.length === 0) continue;
+        await enqueueEventTicketEmail(tx, {
+          contaId: ctx.contaId,
+          purchaseId: sale.id,
+          buyerEmail,
+          buyerName: sale.buyerName,
+          eventName: sale.event.name,
+          eventStartsAt: sale.event.startsAt,
+          eventLocation: [sale.event.locationName, sale.event.locationAddress].filter(Boolean).join(' — ') || null,
+          ticketType: sale.lot.name,
+          ticketCount: sale.tickets.length,
+          ticketsPath: buildPublicEventTicketSalePath(sale.id, sale.accessToken),
+        });
+      }
+    }
+
     return { saleIds: createdSaleIds, primarySaleId: createdSaleIds[0]! };
   });
 }
@@ -586,20 +649,22 @@ function compareSeatLabels(left: string, right: string) {
   return left.localeCompare(right, 'pt-BR', { numeric: true, sensitivity: 'base' });
 }
 
-export async function getStaffSaleTicketsForAdmin(contaId: string, saleId: string) {
+async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string, contaId?: string) {
   const sale = await prisma.eventTicketSale.findFirst({
-    where: { id: saleId, contaId },
+    where: { id: saleId, ...(accessToken ? { accessToken } : {}), ...(contaId ? { contaId } : {}) },
     include: {
       saleSeats: {
         include: {
           ticket: { select: { id: true, ticketCode: true, status: true } },
         },
       },
+      tickets: { where: { status: 'VALID' }, select: { id: true, ticketCode: true, status: true }, orderBy: { createdAt: 'asc' } },
       event: { select: { id: true, name: true, startsAt: true, locationName: true, locationAddress: true } },
+      lot: { select: { name: true } },
     },
   });
-  if (!sale || sale.saleSeats.length === 0) {
-    throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda com ingressos numerados não encontrada.', 404);
+  if (!sale || (sale.saleSeats.length === 0 && sale.tickets.length === 0)) {
+    throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda com ingressos não encontrada.', 404);
   }
 
   if (!canPrintStaffSaleTickets(sale.status)) {
@@ -619,7 +684,26 @@ export async function getStaffSaleTicketsForAdmin(contaId: string, saleId: strin
   const printableSeats = saleSeats.filter(
     (seat) => seat.ticket?.ticketCode && seat.ticket.status === 'VALID',
   );
-  if (printableSeats.length === 0) {
+  const items = printableSeats.length > 0
+    ? printableSeats.map((seat) => ({
+        id: seat.id,
+        sectionName: seat.sectionName,
+        seatLabel: seat.seatLabel,
+        technicalCode: seat.technicalCode,
+        unitPrice: toMoney(seat.unitPriceSnapshot),
+        ticketCode: seat.ticket!.ticketCode,
+        ticketStatus: seat.ticket?.status ?? 'VALID',
+      }))
+    : sale.tickets.map((ticket, index) => ({
+        id: ticket.id,
+        sectionName: sale.lot.name,
+        seatLabel: `Ingresso ${index + 1}`,
+        technicalCode: ticket.ticketCode,
+        unitPrice: toMoney(sale.quantity > 0 ? toNumber(sale.totalAmount) / sale.quantity : 0),
+        ticketCode: ticket.ticketCode,
+        ticketStatus: ticket.status,
+      }));
+  if (items.length === 0) {
     throw new EventsError('INGRESSOS_NAO_ENCONTRADOS', 'Nenhum ingresso válido encontrado para esta venda.', 404);
   }
 
@@ -631,14 +715,14 @@ export async function getStaffSaleTicketsForAdmin(contaId: string, saleId: strin
       ...sale.event,
       startsAt: sale.event.startsAt.toISOString(),
     },
-    items: printableSeats.map((seat) => ({
-      id: seat.id,
-      sectionName: seat.sectionName,
-      seatLabel: seat.seatLabel,
-      technicalCode: seat.technicalCode,
-      unitPrice: toMoney(seat.unitPriceSnapshot),
-      ticketCode: seat.ticket!.ticketCode,
-      ticketStatus: seat.ticket?.status ?? 'VALID',
-    })),
+    items,
   };
+}
+
+export async function getStaffSaleTicketsForAdmin(contaId: string, saleId: string) {
+  return getStaffSaleTicketsByAccess(saleId, undefined, contaId);
+}
+
+export async function getPublicStaffSaleTickets(saleId: string, accessToken: string) {
+  return getStaffSaleTicketsByAccess(saleId, accessToken);
 }

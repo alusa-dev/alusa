@@ -116,6 +116,7 @@ export function SaleFormDialog({
         eventId,
         holdToken: seatSelection.holdToken,
         buyerName: nullableString(formData, 'buyerName'),
+        buyerEmail: nullableString(formData, 'buyerEmail'),
         alunoId: nullableString(formData, 'alunoId'),
         responsavelId: nullableString(formData, 'responsavelId'),
         paymentMethod: nullableString(formData, 'paymentMethod'),
@@ -130,6 +131,7 @@ export function SaleFormDialog({
       eventId,
       lotId: nullableString(formData, 'lotId'),
       buyerName: nullableString(formData, 'buyerName'),
+      buyerEmail: nullableString(formData, 'buyerEmail'),
       alunoId: nullableString(formData, 'alunoId'),
       responsavelId: nullableString(formData, 'responsavelId'),
       quantity: numberValue(formData, 'quantity') ?? 1,
@@ -178,6 +180,7 @@ export function SaleFormDialog({
 
     const formData = new FormData(form);
     if (nullableString(formData, 'buyerName')?.trim()) return true;
+    if (nullableString(formData, 'buyerEmail')?.trim()) return true;
     if (nullableString(formData, 'notes')?.trim()) return true;
     if (nullableString(formData, 'alunoId')) return true;
     if (nullableString(formData, 'responsavelId')) return true;
@@ -310,6 +313,9 @@ export function SaleFormDialog({
               ) : null}
               <Field label="Comprador">
                 <Input name="buyerName" required className={FILTER_INPUT_CLASS} />
+              </Field>
+              <Field label="E-mail para receber os ingressos">
+                <Input name="buyerEmail" type="email" className={FILTER_INPUT_CLASS} />
               </Field>
               <Field label="Aluno vinculado">
                 <NativeSelect name="alunoId" placeholder="Opcional" options={mergeScopedPersonOptions(scopedResources?.alunos ?? [])} />

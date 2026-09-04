@@ -169,6 +169,7 @@ export const createTicketSaleSchema = z
     eventId: eventIdSchema,
     lotId: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional()),
     buyerName: requiredText('Informe o comprador.'),
+    buyerEmail: z.preprocess(emptyToUndefined, z.string().trim().email('Informe um e-mail válido.').max(180).optional().nullable()),
     alunoId: optionalId,
     responsavelId: optionalId,
     quantity: z.preprocess(emptyToUndefined, positiveIntSchema.optional()),

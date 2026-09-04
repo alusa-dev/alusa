@@ -313,3 +313,38 @@ describe('verifyEmailByToken', () => {
     expect(sendTransactionalEmailMock).not.toHaveBeenCalled();
   });
 });
+
+describe('sendInviteEmail', () => {
+  it('envia o template publicado com as variáveis do convite', async () => {
+    process.env.NEXT_PUBLIC_APP_URL = 'https://alusa.app';
+    sendTransactionalEmailMock.mockResolvedValueOnce({
+      delivery: 'sent',
+      emailId: 'email_invite_1',
+    });
+
+    const { sendInviteEmail } = await import('@/lib/auth-email-flow');
+    await sendInviteEmail({
+      inviteId: 'invite_1',
+      inviteUrl: 'https://alusa.app/auth/register?token=invite-token',
+      email: 'ana@example.com',
+      role: 'RECEPCAO',
+      expiresAt: new Date('2026-09-12T12:00:00.000Z'),
+    });
+
+    expect(sendTransactionalEmailMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'invite_user',
+        idempotencyKey: 'invite-user/invite_1',
+        template: {
+          id: 'd13d18cf-e209-43b5-8d8b-d6a7d937cbed',
+          variables: {
+            ROLE: 'recepção',
+            INVITE_URL: 'https://alusa.app/auth/register?token=invite-token',
+            INVITE_EXPIRES_AT: '12/09/26',
+            SUPPORT_URL: 'https://alusa.app',
+          },
+        },
+      }),
+    );
+  });
+});

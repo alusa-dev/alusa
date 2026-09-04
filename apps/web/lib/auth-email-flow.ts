@@ -13,7 +13,6 @@ import {
 } from '@/lib/auth-action-tokens';
 import {
   buildAccountReactivationTemplate,
-  buildInviteUserTemplate,
   buildResetPasswordTemplate,
   buildVerifyEmailTemplate,
 } from '@/lib/email/auth-email-templates';
@@ -29,6 +28,22 @@ type RequestMetadata = {
 type AuthEmailOptions = {
   callbackUrl?: string | null;
 };
+
+const INVITE_TEMPLATE_ID = process.env.RESEND_INVITE_TEMPLATE_ID || 'd13d18cf-e209-43b5-8d8b-d6a7d937cbed';
+
+function formatInviteExpiration(expiresAt?: Date | string | null): string {
+  if (!expiresAt) return 'a data informada';
+
+  const date = expiresAt instanceof Date ? expiresAt : new Date(expiresAt);
+  if (Number.isNaN(date.getTime())) return 'a data informada';
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Manaus',
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+  }).format(date);
+}
 
 function isAccountDeactivated(status: string | null | undefined, deletedAt: Date | null | undefined): boolean {
   return Boolean(deletedAt) || (typeof status === 'string' && status.toUpperCase() !== 'ATIVO');
@@ -247,22 +262,23 @@ export async function sendInviteEmail(input: {
   email: string;
   role: Role;
   invitedByName?: string | null;
+  expiresAt?: Date | string | null;
 }) {
-  const template = buildInviteUserTemplate({
-    inviteUrl: input.inviteUrl,
-    roleLabel: getRoleLabel(input.role),
-    invitedByName: input.invitedByName,
-    expiresInLabel: '7 dias',
-  });
-
   return sendTransactionalEmail({
     to: input.email,
-    subject: template.subject,
-    html: template.html,
-    text: template.text,
+    subject: 'Seu convite para acessar a Alusa',
     category: 'invite_user',
     idempotencyKey: `invite-user/${input.inviteId}`,
     actionUrl: input.inviteUrl,
+    template: {
+      id: INVITE_TEMPLATE_ID,
+      variables: {
+        ROLE: getRoleLabel(input.role),
+        INVITE_URL: input.inviteUrl,
+        INVITE_EXPIRES_AT: formatInviteExpiration(input.expiresAt),
+        SUPPORT_URL: process.env.NEXT_PUBLIC_APP_URL || 'https://alusa.app',
+      },
+    },
     tags: [
       { name: 'category', value: 'invite_user' },
       { name: 'invite_id', value: input.inviteId },

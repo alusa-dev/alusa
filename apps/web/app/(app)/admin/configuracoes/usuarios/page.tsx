@@ -245,7 +245,23 @@ export default function ConfigUsuariosPage() {
       const link: string | undefined =
         json?.invite?.inviteUrl || (token ? buildInviteUrl(base, token) : undefined);
       setInviteUrl(link ?? null);
-      setToast({ title: 'Convite criado', description: link, variant: 'success' });
+      if (json?.emailDelivery === 'failed') {
+        setToast({
+          title: 'Convite criado, mas o e-mail não foi enviado',
+          description: 'Use o link do convite ou tente reenviar após revisar a configuração de e-mail.',
+          variant: 'warning',
+        });
+      } else if (json?.emailDelivery === 'logged') {
+        setToast({
+          title: 'Convite criado',
+          description: 'O e-mail foi registrado no log local e não foi enviado.',
+          variant: 'info',
+        });
+      } else if (json?.emailDelivery === 'sent') {
+        setToast({ title: 'Convite criado e enviado', description: link, variant: 'success' });
+      } else {
+        setToast({ title: 'Convite criado', description: link, variant: 'success' });
+      }
       setEmail('');
       setSelectedAlunos([]); // Limpar seleção
       setSearchAlunoTerm(''); // Limpar busca
@@ -314,7 +330,7 @@ export default function ConfigUsuariosPage() {
 
   const onDeleteInvite = useCallback(async (id: string) => {
     try {
-      const res = await fetch(`/api/users/invite/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/users/invite/${encodeURIComponent(id)}`, { method: 'DELETE' });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
         throw new Error(json?.error || 'Falha ao excluir convite');

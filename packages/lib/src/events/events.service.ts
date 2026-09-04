@@ -27,6 +27,10 @@ import {
 import { getEventAsaasPaymentProvider } from './event-asaas-payment-provider';
 import { createEventContractForParticipant } from './event-contracts.service';
 import {
+  buildPublicEventTicketSalePath,
+  enqueueEventTicketEmail,
+} from './ticket-email-outbox';
+import {
   canRemoveEventParticipant,
   type EventParticipantRemovalDecision,
   type EventParticipantRemovalFacts,
@@ -168,8 +172,45 @@ function toMoney(value: Prisma.Decimal | number | string | null | undefined): nu
   return Math.round((toNumber(value) + Number.EPSILON) * 100) / 100;
 }
 
+function normalizeOptionalEmail(value: string | null | undefined) {
+  const email = value?.trim().toLowerCase();
+  return email || null;
+}
+
+async function resolveTicketBuyerEmail(
+  tx: Prisma.TransactionClient,
+  contaId: string,
+  input: Pick<CreateTicketSaleInput, 'buyerEmail' | 'alunoId' | 'responsavelId'>,
+) {
+  const explicitEmail = normalizeOptionalEmail(input.buyerEmail);
+  if (explicitEmail) return explicitEmail;
+
+  if (input.responsavelId) {
+    const responsavel = await tx.responsavel.findFirst({
+      where: { id: input.responsavelId, contaId },
+      select: { email: true },
+    });
+    const email = normalizeOptionalEmail(responsavel?.email);
+    if (email) return email;
+  }
+
+  if (input.alunoId) {
+    const aluno = await tx.aluno.findFirst({
+      where: { id: input.alunoId, contaId },
+      select: { email: true },
+    });
+    return normalizeOptionalEmail(aluno?.email);
+  }
+
+  return null;
+}
+
 function decimal(value: number): Prisma.Decimal {
   return new Prisma.Decimal(value);
+}
+
+function createPublicToken(prefix: string) {
+  return `${prefix}_${globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`;
 }
 
 function pageMeta(total: number, page = 1, pageSize = 25): EventsListMeta {
@@ -1290,6 +1331,8 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
       responsavelId: input.responsavelId,
     });
 
+    const buyerEmail = await resolveTicketBuyerEmail(tx, ctx.contaId, input);
+
     const unitPrice = toMoney(lot.unitPrice);
     const totalAmount = saleStatus === 'COMPLIMENTARY' ? 0 : unitPrice * quantity;
     const sale = await tx.eventTicketSale.create({
@@ -1298,6 +1341,8 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
         eventId: lot.eventId,
         lotId: lot.id,
         buyerName: input.buyerName,
+        buyerEmail,
+        accessToken: createPublicToken('sale'),
         alunoId: input.alunoId,
         responsavelId: input.responsavelId,
         quantity,
@@ -1334,7 +1379,31 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
       await tx.eventTicketSale.update({ where: { id: sale.id }, data: { revenueEntryId: entry.id } });
     }
 
+    await tx.eventTicket.createMany({
+      data: Array.from({ length: quantity }, () => ({
+        contaId: ctx.contaId,
+        eventId: lot.eventId,
+        eventTicketSaleId: sale.id,
+        ticketCode: createPublicToken('ticket').toUpperCase(),
+      })),
+    });
+
     await syncLotQuantity(tx, ctx.contaId, lot.id);
+
+    if (buyerEmail && (saleStatus === 'PAID' || saleStatus === 'COMPLIMENTARY') && sale.accessToken) {
+      await enqueueEventTicketEmail(tx, {
+        contaId: ctx.contaId,
+        purchaseId: sale.id,
+        buyerEmail,
+        buyerName: sale.buyerName,
+        eventName: lot.event.name,
+        eventStartsAt: lot.event.startsAt,
+        eventLocation: [lot.event.locationName, lot.event.locationAddress].filter(Boolean).join(' — ') || null,
+        ticketType: lot.name,
+        ticketCount: quantity,
+        ticketsPath: buildPublicEventTicketSalePath(sale.id, sale.accessToken),
+      });
+    }
 
     await recordEventAudit(tx, {
       contaId: ctx.contaId,
@@ -1353,22 +1422,51 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
 
 export async function markTicketSalePaid(ctx: EventsContext, saleId: string) {
   return prisma.$transaction(async (tx) => {
-    const current = await tx.eventTicketSale.findFirst({ where: { id: saleId, contaId: ctx.contaId } });
+    const current = await tx.eventTicketSale.findFirst({
+      where: { id: saleId, contaId: ctx.contaId },
+      include: {
+        event: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } },
+        lot: { select: { name: true } },
+        aluno: { select: { email: true } },
+        responsavel: { select: { email: true } },
+        tickets: { where: { status: 'VALID' }, select: { id: true } },
+      },
+    });
     if (!current) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
 
     const transition = validateTicketSaleStatusTransition(current.status, 'PAID');
     if (!transition.ok) throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
 
     const now = new Date();
+    const accessToken = current.accessToken ?? createPublicToken('sale');
+    const buyerEmail =
+      normalizeOptionalEmail(current.buyerEmail) ??
+      normalizeOptionalEmail(current.responsavel?.email) ??
+      normalizeOptionalEmail(current.aluno?.email);
     const updated = await tx.eventTicketSale.update({
       where: { id: saleId },
-      data: { status: 'PAID', paidAt: now },
+      data: { status: 'PAID', paidAt: now, accessToken },
     });
 
     await tx.eventFinancialEntry.updateMany({
       where: { contaId: ctx.contaId, originType: 'TICKET_SALE', originId: saleId },
       data: { status: 'RECEIVED', actualAmount: current.totalAmount, realizedAt: now },
     });
+
+    if (buyerEmail && current.tickets.length > 0) {
+      await enqueueEventTicketEmail(tx, {
+        contaId: ctx.contaId,
+        purchaseId: current.id,
+        buyerEmail,
+        buyerName: current.buyerName,
+        eventName: current.event.name,
+        eventStartsAt: current.event.startsAt,
+        eventLocation: [current.event.locationName, current.event.locationAddress].filter(Boolean).join(' — ') || null,
+        ticketType: current.lot.name,
+        ticketCount: current.tickets.length,
+        ticketsPath: buildPublicEventTicketSalePath(current.id, accessToken),
+      });
+    }
 
     await recordEventAudit(tx, {
       contaId: ctx.contaId,

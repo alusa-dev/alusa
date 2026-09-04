@@ -13,6 +13,19 @@ const MAX_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 60_000;
 const MAX_RETRY_DELAY_MS = 30 * 60_000;
 const SIDE_EFFECT_LEASE_MS = 10 * 60 * 1000;
+const EVENT_TICKET_TEMPLATE_ID =
+  process.env.RESEND_EVENT_TICKET_TEMPLATE_ID || 'c395cbe5-b1fb-4d2d-ae3f-825e1e0d94e0';
+const EVENT_TIME_ZONE = process.env.APP_TIMEZONE || 'America/Manaus';
+
+class SideEffectDeliveryError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = 'SideEffectDeliveryError';
+  }
+}
 
 export type FinanceSideEffectType =
   | 'BILLING_NOTIFICATION'
@@ -37,10 +50,12 @@ type EventPublicOrderTicketEmailPayload = {
   buyerName: string;
   eventName: string;
   eventStartsAt: string;
+  eventLocation?: string | null;
+  ticketType?: string | null;
   ticketCount: number;
   ticketsPath: string;
   ticketsHtmlPath?: string | null;
-  statusPath: string;
+  statusPath?: string | null;
   deliveryKey?: string;
 };
 
@@ -111,6 +126,23 @@ function formatEventDate(value: string): string {
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
 
+function formatEventTemplateDateParts(value: string) {
+  const date = new Date(value);
+  return {
+    date: new Intl.DateTimeFormat('pt-BR', {
+      timeZone: EVENT_TIME_ZONE,
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    }).format(date),
+    time: new Intl.DateTimeFormat('pt-BR', {
+      timeZone: EVENT_TIME_ZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date),
+  };
+}
+
 async function sendResendEmail(params: {
   to: string;
   subject: string;
@@ -149,44 +181,73 @@ async function sendResendEmail(params: {
         : Array.isArray(json?.errors)
           ? JSON.stringify(json.errors)
           : `Falha ao enviar e-mail (${response.status}).`;
-    throw new Error(message);
+    throw new SideEffectDeliveryError(message, response.status === 429 || response.status >= 500);
+  }
+
+  return { id: typeof json?.id === 'string' ? json.id : null, delivery: 'sent' as const };
+}
+
+async function sendResendTemplateEmail(params: {
+  to: string;
+  variables: Record<string, string>;
+  idempotencyKey: string;
+  tags?: Array<{ name: string; value: string }>;
+}) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error('RESEND_API_KEY ausente; e-mail não foi enviado.');
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'Idempotency-Key': params.idempotencyKey,
+    },
+    body: JSON.stringify({
+      from: process.env.EMAIL_FROM_EVENTS || process.env.EMAIL_FROM_INVITES || process.env.EMAIL_FROM_AUTH || 'Alusa <onboarding@resend.dev>',
+      to: [params.to],
+      template: {
+        id: EVENT_TICKET_TEMPLATE_ID,
+        variables: params.variables,
+      },
+      tags: params.tags,
+    }),
+  });
+
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message =
+      typeof json?.message === 'string'
+        ? json.message
+        : Array.isArray(json?.errors)
+          ? JSON.stringify(json.errors)
+          : `Falha ao enviar e-mail (${response.status}).`;
+    throw new SideEffectDeliveryError(message, response.status === 429 || response.status >= 500);
   }
 
   return { id: typeof json?.id === 'string' ? json.id : null, delivery: 'sent' as const };
 }
 
 async function sendEventPublicOrderTicketEmail(payload: EventPublicOrderTicketEmailPayload) {
+  const eventDate = formatEventTemplateDateParts(payload.eventStartsAt);
   const ticketsUrl = buildAppUrl(payload.ticketsPath);
-  const ticketsHtmlUrl = payload.ticketsHtmlPath ? buildAppUrl(payload.ticketsHtmlPath) : null;
-  const statusUrl = buildAppUrl(payload.statusPath);
-  const eventName = escapeHtml(payload.eventName);
-  const buyerName = escapeHtml(payload.buyerName);
-  const ticketLabel = payload.ticketCount === 1 ? '1 ingresso' : `${payload.ticketCount} ingressos`;
-  const eventDate = escapeHtml(formatEventDate(payload.eventStartsAt));
+  const supportUrl = process.env.EMAIL_SUPPORT_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://alusa.app';
 
-  const subject = `Seus ingressos para ${payload.eventName}`;
-  const html = `
-    <div style="font-family:Arial,Helvetica,sans-serif;background:#f6f3ee;padding:32px;color:#1f2937;">
-      <div style="max-width:580px;margin:0 auto;background:#ffffff;border:1px solid #e7ddd0;border-radius:18px;padding:30px;">
-        <p style="margin:0 0 10px;font-size:13px;color:#7c6f60;font-weight:700;text-transform:uppercase;letter-spacing:.08em;">alusa eventos</p>
-        <h1 style="margin:0 0 14px;font-size:26px;line-height:1.2;color:#271a10;">Ingressos confirmados</h1>
-        <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">Olá, ${buyerName}. O pagamento foi confirmado e seus ${ticketLabel} para <strong>${eventName}</strong> estão disponíveis.</p>
-        <p style="margin:0 0 20px;font-size:14px;line-height:1.5;color:#475569;">Data do evento: <strong>${eventDate}</strong></p>
-        <a href="${ticketsUrl}" style="display:inline-block;padding:13px 20px;border-radius:10px;background:#3e1f63;color:#ffffff;text-decoration:none;font-weight:700;">Baixar ingressos (PDF)</a>
-        ${ticketsHtmlUrl ? `<p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:#64748b;">Alternativa no navegador: <a href="${ticketsHtmlUrl}" style="color:#3e1f63;">ver ingressos online</a>.</p>` : ''}
-        <p style="margin:20px 0 0;font-size:13px;line-height:1.6;color:#64748b;">Você também pode acompanhar o pedido por este link: <a href="${statusUrl}" style="color:#3e1f63;">status do pedido</a>.</p>
-        <p style="margin:18px 0 0;font-size:12px;line-height:1.6;color:#8b8378;word-break:break-all;">Se o botão não funcionar, copie e cole este link no navegador:<br />${ticketsUrl}</p>
-      </div>
-    </div>
-  `;
-  const text = `Olá, ${payload.buyerName}.\n\nO pagamento foi confirmado e seus ${ticketLabel} para ${payload.eventName} estão disponíveis.\n\nBaixe o PDF: ${ticketsUrl}${ticketsHtmlUrl ? `\n\nVer online: ${ticketsHtmlUrl}` : ''}\n\nAcompanhe o pedido: ${statusUrl}`;
-
-  return sendResendEmail({
+  return sendResendTemplateEmail({
     to: payload.buyerEmail,
-    subject,
-    html,
-    text,
     idempotencyKey: `event-ticket-email:${payload.orderId}:${payload.deliveryKey ?? 'initial'}`,
+    variables: {
+      BUYER_NAME: payload.buyerName,
+      EVENT_NAME: payload.eventName,
+      EVENT_DATE: eventDate.date,
+      EVENT_TIME: eventDate.time,
+      EVENT_LOCATION: payload.eventLocation || 'A confirmar',
+      TICKET_TYPE: payload.ticketType || 'Ingresso',
+      TICKETS_URL: ticketsUrl,
+      SUPPORT_URL: supportUrl,
+    },
     tags: [
       { name: 'category', value: 'event_ticket' },
       { name: 'order_id', value: payload.orderId },
@@ -359,6 +420,11 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
     return { processed: false, reason: 'not_claimed' };
   }
 
+  let providerMessageId: string | null = null;
+  const isEmailEffect =
+    event.effectType === 'EVENT_PUBLIC_ORDER_TICKET_EMAIL' ||
+    event.effectType === 'EVENT_PUBLIC_ORDER_CREATED_EMAIL';
+
   try {
     if (event.effectType === 'BILLING_NOTIFICATION') {
       const payload = event.payload as {
@@ -367,9 +433,13 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
       };
       await emitBillingNotifications([payload.candidate], payload.sourceType);
     } else if (event.effectType === 'EVENT_PUBLIC_ORDER_TICKET_EMAIL') {
-      await sendEventPublicOrderTicketEmail(event.payload as EventPublicOrderTicketEmailPayload);
+      providerMessageId = (await sendEventPublicOrderTicketEmail(
+        event.payload as EventPublicOrderTicketEmailPayload,
+      )).id;
     } else if (event.effectType === 'EVENT_PUBLIC_ORDER_CREATED_EMAIL') {
-      await sendEventPublicOrderCreatedEmail(event.payload as EventPublicOrderCreatedEmailPayload);
+      providerMessageId = (await sendEventPublicOrderCreatedEmail(
+        event.payload as EventPublicOrderCreatedEmailPayload,
+      )).id;
     }
 
     const completed = await prisma.financeWebhookSideEffectOutbox.updateMany({
@@ -385,6 +455,13 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
         leaseExpiresAt: null,
         lockToken: null,
         lastError: null,
+        ...(isEmailEffect
+          ? {
+              providerMessageId,
+              deliveryStatus: 'SENT',
+              deliveryStatusAt: new Date(),
+            }
+          : {}),
       },
     });
 
@@ -396,7 +473,8 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const attempts = event.attempts + 1;
-    const exhausted = attempts >= MAX_ATTEMPTS;
+    const retryable = error instanceof SideEffectDeliveryError ? error.retryable : true;
+    const exhausted = !retryable || attempts >= MAX_ATTEMPTS;
     const retryDelayMs = Math.min(
       MAX_RETRY_DELAY_MS,
       RETRY_DELAY_MS * (2 ** Math.max(0, attempts - 1)),
@@ -417,6 +495,12 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
         lockToken: null,
         lastError: message,
         availableAt: exhausted ? event.availableAt : new Date(Date.now() + retryDelayMs),
+        ...(isEmailEffect
+          ? {
+              deliveryStatus: 'FAILED',
+              deliveryStatusAt: new Date(),
+            }
+          : {}),
       },
     });
 
@@ -441,6 +525,7 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
 export async function drainFinanceWebhookSideEffectOutbox(params?: {
   contaId?: string;
   limit?: number;
+  effectTypes?: FinanceSideEffectType[];
 }): Promise<{ attempted: number; processed: number; failed: number }> {
   const limit = Math.max(1, Math.min(500, params?.limit ?? 100));
 
@@ -460,6 +545,7 @@ export async function drainFinanceWebhookSideEffectOutbox(params?: {
         },
       ],
       ...(params?.contaId ? { contaId: params.contaId } : {}),
+      ...(params?.effectTypes?.length ? { effectType: { in: params.effectTypes } } : {}),
     },
     orderBy: { availableAt: 'asc' },
     take: limit,

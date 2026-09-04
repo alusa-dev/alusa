@@ -9,14 +9,18 @@ export type EmailCategory =
 
 export type SendTransactionalEmailInput = {
   to: string;
-  subject: string;
-  html: string;
-  text: string;
+  subject?: string;
+  html?: string;
+  text?: string;
   category: EmailCategory;
   idempotencyKey: string;
   from?: string;
   tags?: Array<{ name: string; value: string }>;
   actionUrl?: string;
+  template?: {
+    id: string;
+    variables?: Record<string, string | number>;
+  };
 };
 
 export type SendTransactionalEmailResult = {
@@ -37,13 +41,17 @@ function getResendClient(): Resend | null {
 
 function getDefaultFrom(category: EmailCategory): string {
   if (category === 'invite_user') {
-    return process.env.EMAIL_FROM_INVITES || process.env.EMAIL_FROM_AUTH || 'Alusa <onboarding@resend.dev>';
+    const sender = process.env.EMAIL_FROM_INVITES || process.env.EMAIL_FROM_AUTH;
+    if (!sender) {
+      throw new Error('EMAIL_FROM_INVITES ausente para o envio de convites.');
+    }
+    return sender;
   }
 
   return process.env.EMAIL_FROM_AUTH || 'Alusa <onboarding@resend.dev>';
 }
 
-function canFallbackToLog(error: unknown): boolean {
+function canFallbackToLog(): boolean {
   if (process.env.NODE_ENV === 'production') {
     return false;
   }
@@ -52,15 +60,14 @@ function canFallbackToLog(error: unknown): boolean {
     return true;
   }
 
-  const message = error instanceof Error ? error.message : String(error || '');
-  return message.includes('You can only send testing emails to your own email address');
+  return false;
 }
 
 function logEmail(input: SendTransactionalEmailInput): void {
   console.info('[EMAIL][DEV_FALLBACK]');
   console.info(`category: ${input.category}`);
   console.info(`to: ${input.to}`);
-  console.info(`subject: ${input.subject}`);
+  console.info(`subject: ${input.subject || input.template?.id || 'transactional-email'}`);
   if (input.actionUrl) {
     console.info(`actionUrl: ${input.actionUrl}`);
   }
@@ -82,19 +89,25 @@ export async function sendTransactionalEmail(
   }
 
   try {
-    const { data, error } = await resend.emails.send(
-      {
-        from: input.from || getDefaultFrom(input.category),
-        to: [input.to],
-        subject: input.subject,
-        html: input.html,
-        text: input.text,
-        tags: input.tags,
-      },
-      {
-        idempotencyKey: input.idempotencyKey,
-      },
-    );
+    const payload = input.template
+      ? {
+          from: input.from || getDefaultFrom(input.category),
+          to: [input.to],
+          template: input.template,
+          tags: input.tags,
+        }
+      : {
+          from: input.from || getDefaultFrom(input.category),
+          to: [input.to],
+          subject: input.subject || '',
+          html: input.html || '',
+          text: input.text || '',
+          tags: input.tags,
+        };
+
+    const { data, error } = await resend.emails.send(payload, {
+      idempotencyKey: input.idempotencyKey,
+    });
 
     if (error) {
       throw new Error(error.message);
@@ -102,7 +115,7 @@ export async function sendTransactionalEmail(
 
     return { delivery: 'sent', emailId: data?.id ?? null };
   } catch (error) {
-    if (canFallbackToLog(error)) {
+    if (canFallbackToLog()) {
       logEmail(input);
       return { delivery: 'logged', emailId: null };
     }

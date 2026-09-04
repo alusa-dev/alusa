@@ -18,6 +18,7 @@ import { prisma } from '../../prisma';
 import { loadDecryptedAsaasCredentials } from '../../services/integracoes/asaas-credentials-service';
 import { getEventAsaasPaymentProvider, type EventAsaasPayment } from '../event-asaas-payment-provider';
 import { EventsError, type EventsContext } from '../events.service';
+import { enqueueEventTicketEmail } from '../ticket-email-outbox';
 import type {
   CreateEventMapInput,
   DuplicateEventMapInput,
@@ -1903,49 +1904,6 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
 
 export type PublicOrderStatusDTO = Awaited<ReturnType<typeof getPublicEventMapOrderStatus>>;
 
-async function enqueuePublicOrderTicketEmail(
-  tx: Prisma.TransactionClient,
-  params: {
-    contaId: string;
-    orderId: string;
-    buyerEmail: string;
-    buyerName: string;
-    eventName: string;
-    eventStartsAt: Date;
-    ticketCount: number;
-    ticketsPath: string;
-    ticketsHtmlPath?: string | null;
-    statusPath: string;
-    dedupeSuffix?: string;
-  },
-) {
-  const dedupeKey = params.dedupeSuffix
-    ? `${params.contaId}:EVENT_PUBLIC_ORDER_TICKET_EMAIL:${params.orderId}:${params.dedupeSuffix}`
-    : `${params.contaId}:EVENT_PUBLIC_ORDER_TICKET_EMAIL:${params.orderId}`;
-
-  await tx.financeWebhookSideEffectOutbox.createMany({
-    data: {
-      contaId: params.contaId,
-      effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
-      dedupeKey,
-      payload: toAuditJson({
-        orderId: params.orderId,
-        buyerEmail: params.buyerEmail,
-        buyerName: params.buyerName,
-        eventName: params.eventName,
-        eventStartsAt: params.eventStartsAt.toISOString(),
-        ticketCount: params.ticketCount,
-        ticketsPath: params.ticketsPath,
-        ticketsHtmlPath: params.ticketsHtmlPath ?? null,
-        statusPath: params.statusPath,
-        deliveryKey: params.dedupeSuffix ?? 'initial',
-      }),
-      status: FinanceWebhookSideEffectStatus.PENDING,
-    },
-    skipDuplicates: true,
-  });
-}
-
 async function enqueuePublicOrderCreatedEmail(
   tx: Prisma.TransactionClient,
   params: {
@@ -2025,7 +1983,7 @@ export async function confirmPublicEventMapOrderPayment(params: {
       where: eventMapOrderPaymentWhere(params),
       include: {
         map: true,
-        event: { select: { name: true, startsAt: true } },
+        event: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } },
         reservation: { include: { seats: { include: { publicSeat: true } } } },
         items: { include: { ticket: true, publicSeat: true } },
       },
@@ -2042,6 +2000,18 @@ export async function confirmPublicEventMapOrderPayment(params: {
 
     if (order.status !== 'PAYMENT_PENDING' && order.status !== 'CONFIRMED') {
       throw new EventsError('PEDIDO_NAO_CONFIRMAVEL', 'Pedido público não está pendente de pagamento.', 409);
+    }
+
+    const expectedAmount = toMoney(order.totalAmount);
+    const receivedAmount = typeof params.paidAmount === 'number' && Number.isFinite(params.paidAmount)
+      ? toMoney(params.paidAmount)
+      : null;
+    if (receivedAmount === null || Math.abs(receivedAmount - expectedAmount) > 0.01) {
+      throw new EventsError(
+        'VALOR_PAGAMENTO_DIVERGENTE',
+        'O valor confirmado pelo provedor não corresponde ao valor do pedido. O pedido ficará disponível para reconciliação.',
+        409,
+      );
     }
 
     const reservation = order.reservation;
@@ -2192,13 +2162,15 @@ export async function confirmPublicEventMapOrderPayment(params: {
       },
     });
 
-    await enqueuePublicOrderTicketEmail(tx, {
+    await enqueueEventTicketEmail(tx, {
       contaId: order.contaId,
-      orderId: order.id,
+      purchaseId: order.id,
       buyerEmail: order.buyerEmail,
       buyerName: order.buyerName,
       eventName: order.event.name,
       eventStartsAt: order.event.startsAt,
+      eventLocation: [order.event.locationName, order.event.locationAddress].filter(Boolean).join(' — ') || null,
+      ticketType: [...new Set(publicSeats.map((seat) => seat.lotName).filter(Boolean))].join(', ') || 'Ingresso',
       ticketCount: createdItems.length,
       ticketsPath: publicOrderTicketsPath(order.id, order.accessToken),
       ticketsHtmlPath: publicOrderTicketsHtmlPath(order.map.publicSlug, order.id, order.accessToken),
@@ -2588,9 +2560,9 @@ export async function requestPublicOrderTicketEmailResend(orderId: string, acces
   const order = await prisma.eventMapOrder.findFirst({
     where: { id: orderId, accessToken, status: 'CONFIRMED' },
     include: {
-      event: { select: { name: true, startsAt: true } },
+      event: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } },
       map: { select: { publicSlug: true } },
-      items: { include: { ticket: true } },
+      items: { include: { ticket: true, publicSeat: { select: { lotName: true } } } },
     },
   });
   if (!order) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido confirmado não encontrado.', 404);
@@ -2612,18 +2584,20 @@ export async function requestPublicOrderTicketEmailResend(orderId: string, acces
   const dedupeSuffix = `resend:${Math.floor(Date.now() / PUBLIC_ORDER_RESEND_EMAIL_WINDOW_MS)}`;
 
   await prisma.$transaction(async (tx) => {
-    await enqueuePublicOrderTicketEmail(tx, {
+    await enqueueEventTicketEmail(tx, {
       contaId: order.contaId,
-      orderId: order.id,
+      purchaseId: order.id,
       buyerEmail: order.buyerEmail,
       buyerName: order.buyerName,
       eventName: order.event.name,
       eventStartsAt: order.event.startsAt,
+      eventLocation: [order.event.locationName, order.event.locationAddress].filter(Boolean).join(' — ') || null,
+      ticketType: [...new Set(order.items.map((item) => item.publicSeat?.lotName).filter(Boolean))].join(', ') || 'Ingresso',
       ticketCount,
       ticketsPath: publicOrderTicketsPath(order.id, order.accessToken),
       ticketsHtmlPath: publicOrderTicketsHtmlPath(order.map.publicSlug, order.id, order.accessToken),
       statusPath: publicOrderStatusPath(order.map.publicSlug, order.id, order.accessToken),
-      dedupeSuffix,
+      deliveryKey: dedupeSuffix,
     });
 
     await tx.auditLog.create({

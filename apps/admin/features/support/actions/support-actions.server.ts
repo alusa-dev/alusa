@@ -388,7 +388,7 @@ export async function resendSupportInvite(input: {
     inviteUrl,
     email: invite.email,
     role: invite.role,
-    invitedByName: input.session.username,
+    expiresAt: invite.expiresAt,
   });
 
   await recordSupportAudit({

@@ -96,17 +96,21 @@ export async function POST(req: Request) {
       
       const inviteUrl = `${base}/auth/register?token=${invite.token}`;
 
+      let emailDelivery: 'sent' | 'logged' | 'failed' | 'not_applicable' = 'not_applicable';
       if (email) {
         try {
-          await sendInviteEmail({
+          const delivery = await sendInviteEmail({
             inviteId: invite.id,
             inviteUrl,
             email,
             role: PrismaRole[role as keyof typeof PrismaRole],
             invitedByName,
+            expiresAt: invite.expiresAt,
           });
+          emailDelivery = delivery.delivery;
         } catch (emailError) {
           console.error('[invite][email-send-failed]', emailError);
+          emailDelivery = 'failed';
         }
       }
       
@@ -116,6 +120,7 @@ export async function POST(req: Request) {
             ...invite,
             inviteUrl,
           }),
+          emailDelivery,
         }),
         { status: 201 },
       );

@@ -234,6 +234,7 @@ export type CreateInviteInputDTO = z.input<typeof createInviteInputDTOSchema>;
 
 export const createInviteResultDTOSchema = z.object({
   invite: inviteSummaryDTOSchema,
+  emailDelivery: z.enum(['sent', 'logged', 'failed', 'not_applicable']).default('not_applicable'),
 });
 
 export type CreateInviteResultDTO = z.infer<typeof createInviteResultDTOSchema>;

@@ -3801,6 +3801,9 @@ model FinanceWebhookSideEffectOutbox {
   processedAt    DateTime?
   lastAttemptAt  DateTime?
   lastError      String?
+  providerMessageId String?
+  deliveryStatus    String?
+  deliveryStatusAt  DateTime?
   createdAt      DateTime                       @default(now())
   updatedAt      DateTime                       @updatedAt
 
@@ -4799,6 +4802,8 @@ model EventTicketSale {
   eventId           String
   lotId             String
   buyerName         String
+  buyerEmail        String?
+  accessToken       String?               @unique
   alunoId           String?
   responsavelId     String?
   quantity          Int

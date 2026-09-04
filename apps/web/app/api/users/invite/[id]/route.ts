@@ -5,15 +5,16 @@ import { authOptions } from '@/lib/auth-options';
 import { InviteUserService } from '@alusa/lib';
 import { deleteInviteResultDTOSchema } from '@/features/users/dtos';
 
-const ParamsSchema = z.object({ params: z.object({ id: z.string().min(1) }) });
+const ParamsSchema = z.object({ id: z.string().min(1) });
+type RouteContext = { params: Promise<{ id: string }> };
 
-export async function DELETE(_req: Request, ctx: unknown) {
+export async function DELETE(_req: Request, ctx: RouteContext) {
   try {
-    const parsed = ParamsSchema.safeParse(ctx);
+    const parsed = ParamsSchema.safeParse(await ctx.params);
     if (!parsed.success) {
       return NextResponse.json({ error: 'Parâmetros inválidos' }, { status: 400 });
     }
-    const id = parsed.data.params.id;
+    const id = parsed.data.id;
 
     const isTest =
       process.env.NODE_ENV === 'test' ||

@@ -619,6 +619,7 @@ type EventMapTicketFulfillmentCandidate = {
   id: string;
   contaId: string;
   asaasPaymentId: string;
+  totalAmount: number;
   paymentStatus: string | null;
   paidAt: Date | null;
   ticketFulfillmentStatus: EventMapTicketFulfillmentStatusValue;
@@ -655,6 +656,7 @@ const defaultReconcilePendingEventMapTicketFulfillmentDependencies = {
         id: true,
         contaId: true,
         asaasPaymentId: true,
+        totalAmount: true,
         paymentStatus: true,
         paidAt: true,
         ticketFulfillmentStatus: true,
@@ -667,6 +669,7 @@ const defaultReconcilePendingEventMapTicketFulfillmentDependencies = {
     return orders.flatMap((order) => order.asaasPaymentId ? [{
       ...order,
       asaasPaymentId: order.asaasPaymentId,
+      totalAmount: Number(order.totalAmount),
     }] : []);
   },
   fulfillOrder: async (input: EventMapTicketFulfillmentCandidate) => {
@@ -676,6 +679,7 @@ const defaultReconcilePendingEventMapTicketFulfillmentDependencies = {
       externalReference: `event-map-order:${input.id}`,
       paymentStatus: input.paymentStatus,
       paidAt: input.paidAt,
+      paidAmount: input.totalAmount,
     });
     return { ticketsCreated: result?.ticketsCreated ?? 0 };
   },

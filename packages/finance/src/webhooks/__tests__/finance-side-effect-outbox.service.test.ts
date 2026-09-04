@@ -183,4 +183,121 @@ describe('finance side-effect outbox leases', () => {
       else process.env.RESEND_API_KEY = previousApiKey;
     }
   });
+
+  it('envia ingressos pelo template publicado do Resend com as variáveis do evento', async () => {
+    const previousApiKey = process.env.RESEND_API_KEY;
+    const previousSender = process.env.EMAIL_FROM_EVENTS;
+    process.env.RESEND_API_KEY = 'test-key';
+    process.env.EMAIL_FROM_EVENTS = 'Alusa Eventos <eventos@alusa.app>';
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 'email-1' }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    outboxMock.findUnique.mockResolvedValue({
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
+      payload: {
+        orderId: 'order-1',
+        buyerEmail: 'buyer@example.com',
+        buyerName: 'Buyer',
+        eventName: 'Evento Alusa',
+        eventStartsAt: '2026-08-23T20:00:00.000Z',
+        eventLocation: 'Teatro Alusa',
+        ticketType: 'Inteira',
+        ticketCount: 1,
+        ticketsPath: '/tickets',
+        statusPath: '/order',
+      },
+    } as never);
+    outboxMock.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    try {
+      const result = await processFinanceWebhookSideEffectOutboxEvent('effect-1');
+
+      expect(result).toEqual({ processed: true });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('https://api.resend.com/emails');
+      expect(request.headers).toEqual(expect.objectContaining({
+        Authorization: 'Bearer test-key',
+        'Idempotency-Key': 'event-ticket-email:order-1:initial',
+      }));
+      expect(JSON.parse(String(request.body))).toEqual(expect.objectContaining({
+        from: 'Alusa Eventos <eventos@alusa.app>',
+        to: ['buyer@example.com'],
+        template: {
+          id: 'c395cbe5-b1fb-4d2d-ae3f-825e1e0d94e0',
+          variables: expect.objectContaining({
+            BUYER_NAME: 'Buyer',
+            EVENT_NAME: 'Evento Alusa',
+            EVENT_LOCATION: 'Teatro Alusa',
+            TICKET_TYPE: 'Inteira',
+            TICKETS_URL: expect.stringContaining('/tickets'),
+          }),
+        },
+      }));
+      expect(outboxMock.updateMany).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          data: expect.objectContaining({
+            providerMessageId: 'email-1',
+            deliveryStatus: 'SENT',
+            deliveryStatusAt: expect.any(Date),
+          }),
+        }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousApiKey;
+      if (previousSender === undefined) delete process.env.EMAIL_FROM_EVENTS;
+      else process.env.EMAIL_FROM_EVENTS = previousSender;
+    }
+  });
+
+  it('envia erro permanente do provedor para FAILED sem consumir retries', async () => {
+    const previousApiKey = process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = 'test-key';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ message: 'Template inválido' }), { status: 422 }),
+    ));
+    outboxMock.findUnique.mockResolvedValue({
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
+      payload: {
+        orderId: 'order-1',
+        buyerEmail: 'buyer@example.com',
+        buyerName: 'Buyer',
+        eventName: 'Evento Alusa',
+        eventStartsAt: '2026-08-23T20:00:00.000Z',
+        ticketCount: 1,
+        ticketsPath: '/tickets',
+      },
+    } as never);
+    outboxMock.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    try {
+      const result = await processFinanceWebhookSideEffectOutboxEvent('effect-1');
+
+      expect(result).toEqual({ processed: false, reason: 'Template inválido' });
+      expect(outboxMock.updateMany).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: FinanceWebhookSideEffectStatus.FAILED,
+            deliveryStatus: 'FAILED',
+            lastError: 'Template inválido',
+          }),
+        }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousApiKey;
+    }
+  });
 });
