@@ -165,6 +165,128 @@ describe('events domain rules', () => {
     expect(metrics.receitaPrevista).toBe(5000);
   });
 
+  it('mantém receita realizada zerada quando todas as inscrições estão pendentes', () => {
+    const metrics = calculateEventMetrics({
+      financialEntries: Array.from({ length: 27 }, () => ({
+        type: 'REVENUE' as const,
+        status: 'PENDING' as const,
+        expectedAmount: 353.5,
+        grossAmount: 780,
+        discountAmount: 426.5,
+        actualAmount: null,
+        originType: 'MANUAL' as const,
+      })),
+    });
+
+    expect(metrics.receitaBrutaPrevista).toBe(21060);
+    expect(metrics.descontosPrevistos).toBe(11515.5);
+    expect(metrics.receitaPrevista).toBe(9544.5);
+    expect(metrics.receitaRealizada).toBe(0);
+    expect(metrics.resultadoRealizado).toBe(0);
+    expect(metrics.consistency.isConsistent).toBe(true);
+  });
+
+  it('inclui obrigações antigas sem lançamento local sem duplicar entradas vinculadas', () => {
+    const metrics = calculateEventMetrics({
+      participantObligations: [
+        {
+          id: 'legacy-participant',
+          grossAmount: 780,
+          discountAmount: 426.5,
+          expectedAmount: 353.5,
+          actualAmount: null,
+        },
+        {
+          id: 'linked-participant',
+          revenueEntryId: 'entry-1',
+          grossAmount: 780,
+          discountAmount: 78,
+          expectedAmount: 702,
+          actualAmount: null,
+        },
+      ],
+      financialEntries: [{
+        id: 'entry-1',
+        type: 'REVENUE',
+        status: 'PENDING',
+        expectedAmount: 702,
+        grossAmount: 780,
+        discountAmount: 78,
+        actualAmount: null,
+        originType: 'MANUAL',
+      }],
+    });
+
+    expect(metrics.receitaPrevista).toBe(1055.5);
+    expect(metrics.receitaBrutaPrevista).toBe(1560);
+    expect(metrics.descontosPrevistos).toBe(504.5);
+  });
+
+  it('bloqueia o fallback quando há receita manual sem vínculo para evitar dupla contagem', () => {
+    const metrics = calculateEventMetrics({
+      financialEntries: [{
+        id: 'manual-unlinked',
+        type: 'REVENUE',
+        status: 'RECEIVED',
+        expectedAmount: 780,
+        actualAmount: 780,
+        originType: 'MANUAL',
+      }],
+      participantObligations: [{
+        id: 'legacy-participant',
+        revenueEntryId: null,
+        grossAmount: 780,
+        discountAmount: 0,
+        expectedAmount: 780,
+        actualAmount: 0,
+      }],
+    });
+
+    expect(metrics.receitaPrevista).toBe(780);
+    expect(metrics.receitaRealizada).toBe(780);
+    expect(metrics.consistency.isConsistent).toBe(false);
+    expect(metrics.consistency.issues).toEqual(expect.arrayContaining([
+      'REVENUE:manual-unlinked:unlinked_manual_entry',
+      'PARTICIPANT:legacy-participant:missing_financial_entry',
+    ]));
+  });
+
+  it('separa lucro bruto de resultado líquido por classe de custo', () => {
+    const metrics = calculateEventMetrics({
+      financialEntries: [
+        {
+          type: 'REVENUE', status: 'RECEIVED', expectedAmount: 1000, actualAmount: 1000,
+          originType: 'MANUAL', grossAmount: 1000, discountAmount: 0,
+        },
+        {
+          type: 'COST', status: 'PAID', expectedAmount: 300, actualAmount: 300,
+          originType: 'MANUAL', costClass: 'DIRECT',
+        },
+        {
+          type: 'COST', status: 'PAID', expectedAmount: 100, actualAmount: 100,
+          originType: 'MANUAL', costClass: 'FINANCIAL',
+        },
+      ],
+    });
+
+    expect(metrics.lucroBrutoRealizado).toBe(700);
+    expect(metrics.lucroLiquidoRealizado).toBe(600);
+    expect(metrics.taxasFinanceirasRealizadas).toBe(100);
+  });
+
+  it('não reconhece como pago um custo de figurino pendente', () => {
+    const metrics = calculateEventMetrics({
+      costumes: [{ id: 'costume-1', schoolCost: 500, quantity: 1 }],
+      financialEntries: [{
+        type: 'COST', status: 'PENDING', expectedAmount: 500, actualAmount: null,
+        originType: 'COSTUME', originId: 'costume-1', costClass: 'DIRECT',
+      }],
+    });
+
+    expect(metrics.custoPrevisto).toBe(500);
+    expect(metrics.custoRealizado).toBe(0);
+  });
+
   it('bloqueia transicoes operacionais invalidas', () => {
     expect(validateSchoolEventStatusTransition('FINISHED', 'ACTIVE').ok).toBe(true);
     expect(validateSchoolEventStatusTransition('FINISHED', 'PLANNING').ok).toBe(false);

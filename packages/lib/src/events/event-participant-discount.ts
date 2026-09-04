@@ -1,4 +1,9 @@
-export type EventParticipantDiscountType = 'FIXED' | 'PERCENTAGE';
+import {
+  calculateEventParticipantDiscount as calculateCanonicalEventParticipantDiscount,
+  type EventParticipantDiscountType,
+} from '@alusa/domain/events';
+
+export type { EventParticipantDiscountType };
 
 export type EventParticipantDiscountResult = {
   originalAmount: number;
@@ -6,27 +11,17 @@ export type EventParticipantDiscountResult = {
   chargedAmount: number;
 };
 
-function money(value: number) {
-  return Math.round((Math.max(value, 0) + Number.EPSILON) * 100) / 100;
-}
-
 export function calculateEventParticipantDiscount(input: {
   originalAmount: number;
   discountType?: EventParticipantDiscountType | null;
   discountValue?: number | null;
   quantity?: number;
 }): EventParticipantDiscountResult {
-  const quantity = Math.max(1, Math.trunc(input.quantity ?? 1));
-  const originalAmount = money(input.originalAmount * quantity);
-  const discountValue = money(input.discountValue ?? 0);
-  const requestedDiscount = input.discountType === 'PERCENTAGE'
-    ? money(originalAmount * (discountValue / 100))
-    : discountValue;
-  const discountAmount = money(Math.min(requestedDiscount, originalAmount));
+  const result = calculateCanonicalEventParticipantDiscount(input);
 
   return {
-    originalAmount,
-    discountAmount,
-    chargedAmount: money(originalAmount - discountAmount),
+    originalAmount: result.grossAmount,
+    discountAmount: result.discountAmount,
+    chargedAmount: result.netAmount,
   };
 }

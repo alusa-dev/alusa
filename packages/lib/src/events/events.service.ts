@@ -10,6 +10,8 @@ const mapToEventPaymentMethod = (method?: string | null): EventPaymentMethod => 
 import {
   buildStaffSaleTicketsUrl,
   calculateEventMetrics,
+  normalizeEventFinancialLine,
+  normalizeEventFinancialPayment,
   resolveEventParticipantPayment,
   validateCostumeAssignmentStatusTransition,
   validateSchoolEventStatusTransition,
@@ -328,7 +330,7 @@ function applyParticipantPaymentSnapshotsToEntries<T extends { id: string; statu
 }
 
 function buildMetrics(
-  record: Pick<SchoolEventRecord, 'ticketSales' | 'ticketLots' | 'financialEntries' | 'assignments' | 'costumes'>,
+  record: Pick<SchoolEventRecord, 'ticketSales' | 'ticketLots' | 'financialEntries' | 'assignments' | 'costumes' | 'participants'>,
   paymentSnapshots?: Map<string, ParticipantPaymentSnapshot>,
 ): EventMetrics {
   const financialEntries = applyParticipantPaymentSnapshotsToEntries(record.financialEntries, paymentSnapshots);
@@ -345,12 +347,18 @@ function buildMetrics(
       unitPrice: toMoney(lot.unitPrice),
     })),
     financialEntries: financialEntries.map((entry) => ({
+      id: entry.id,
       type: entry.type,
       status: entry.status,
       expectedAmount: toMoney(entry.expectedAmount),
+      grossAmount: entry.grossAmount == null ? null : toMoney(entry.grossAmount),
+      discountAmount: entry.discountAmount == null ? null : toMoney(entry.discountAmount),
+      netAmount: entry.netAmount == null ? null : toMoney(entry.netAmount),
       actualAmount: entry.actualAmount == null ? null : toMoney(entry.actualAmount),
       refundedAmount: entry.refundedAmount == null ? null : toMoney(entry.refundedAmount),
       originType: entry.originType,
+      originId: entry.originId,
+      costClass: entry.costClass,
       category: entry.category,
     })),
     costumeAssignments: record.assignments.map((assignment) => ({
@@ -360,9 +368,27 @@ function buildMetrics(
       isPaid: assignment.isPaid,
     })),
     costumes: record.costumes.map((costume) => ({
+      id: costume.id,
       schoolCost: toMoney(costume.schoolCost),
       quantity: costume.quantity,
     })),
+    participantObligations: record.participants.map((participant) => {
+      const snapshot = paymentSnapshots?.get(participant.revenueEntryId ?? participant.id);
+      return {
+        id: participant.id,
+        revenueEntryId: participant.revenueEntryId,
+        grossAmount: toMoney(participant.registrationFeeOriginal) || toMoney(participant.registrationFeeCharged),
+        discountAmount: toMoney(participant.registrationFeeDiscount),
+        expectedAmount: toMoney(participant.registrationFeeCharged),
+        actualAmount: snapshot?.totalPaid
+          ?? (toMoney(participant.feePaidAmount) > 0
+            ? toMoney(participant.feePaidAmount)
+            : participant.isFeePaid ? toMoney(participant.registrationFeeCharged) : null),
+        refundedAmount: snapshot?.totalRefunded ?? toMoney(participant.feeRefundedAmount),
+        isExempt: participant.isFeeExempt,
+        cancelled: Boolean(participant.cancelledAt),
+      };
+    }),
   });
 }
 
@@ -626,6 +652,137 @@ export async function getSchoolEvent(ctx: Pick<EventsContext, 'contaId'>, eventI
   const record = await getEventRecordOrThrow(ctx.contaId, eventId);
   const paymentSnapshots = await buildParticipantPaymentSnapshots(ctx, [record]);
   return mapSchoolEvent(record, paymentSnapshots);
+}
+
+export type EventFinancialConsistencyReport = {
+  eventId: string;
+  contaId: string;
+  isConsistent: boolean;
+  issues: Array<{ code: string; message: string; difference?: number }>;
+  totals: {
+    activeParticipantGross: number;
+    activeParticipantDiscount: number;
+    activeParticipantExpected: number;
+    linkedEntryExpected: number;
+    activeParticipantReceived: number;
+  };
+};
+
+function moneyDifference(left: number, right: number) {
+  return toMoney(Math.abs(left - right));
+}
+
+function normalizeFinancialLineOrThrow(input: Parameters<typeof normalizeEventFinancialLine>[0]) {
+  try {
+    return normalizeEventFinancialLine(input);
+  } catch (error) {
+    throw new EventsError('LANCAMENTO_INCONSISTENTE', error instanceof Error ? error.message : 'Valores financeiros inconsistentes.', 422);
+  }
+}
+
+function normalizeFinancialPaymentOrThrow(input: Parameters<typeof normalizeEventFinancialPayment>[0]) {
+  try {
+    return normalizeEventFinancialPayment(input);
+  } catch (error) {
+    throw new EventsError('PAGAMENTO_INCONSISTENTE', error instanceof Error ? error.message : 'Pagamento financeiro inconsistente.', 422);
+  }
+}
+
+function assertFinancialEntryState(type: string, status: string, actualAmount: number | null) {
+  const requiresPayment = type === 'COST'
+    ? status === 'PAID'
+    : ['RECEIVED', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(status);
+  if (requiresPayment && actualAmount == null) {
+    throw new EventsError('STATUS_FINANCEIRO_INCONSISTENTE', 'Um lançamento realizado precisa possuir valor efetivamente recebido ou pago.', 422);
+  }
+}
+
+/**
+ * Read-only reconciliation for the event summary. This intentionally does
+ * not repair records: financial repairs must go through their source of
+ * truth (payment webhook or an audited administrative command).
+ */
+export async function inspectEventFinancialConsistency(
+  ctx: Pick<EventsContext, 'contaId'>,
+  eventId: string,
+): Promise<EventFinancialConsistencyReport> {
+  const record = await getEventRecordOrThrow(ctx.contaId, eventId);
+  const paymentSnapshots = await buildParticipantPaymentSnapshots(ctx, [record]);
+  const activeParticipants = record.participants.filter((participant) => !participant.cancelledAt);
+  const linkedEntryIds = new Set<string>();
+  const issues: EventFinancialConsistencyReport['issues'] = [];
+
+  let activeParticipantGross = 0;
+  let activeParticipantDiscount = 0;
+  let activeParticipantExpected = 0;
+  let activeParticipantReceived = 0;
+  let linkedEntryExpected = 0;
+
+  for (const participant of activeParticipants) {
+    const expected = toMoney(participant.registrationFeeCharged);
+    const gross = toMoney(participant.registrationFeeOriginal) || toMoney(participant.registrationFeeCharged);
+    const discount = toMoney(participant.registrationFeeDiscount);
+    activeParticipantGross += gross;
+    activeParticipantDiscount += discount;
+    activeParticipantExpected += expected;
+
+    const snapshot = paymentSnapshots.get(participant.revenueEntryId ?? participant.id);
+    activeParticipantReceived += snapshot?.netPaid ?? 0;
+
+    if (expected <= 0 || participant.isFeeExempt) continue;
+    if (!participant.revenueEntryId) {
+      issues.push({
+        code: 'PARTICIPANT_WITHOUT_REVENUE_ENTRY',
+        message: `A inscrição ${participant.id} não possui lançamento de receita local.`,
+      });
+      continue;
+    }
+
+    if (linkedEntryIds.has(participant.revenueEntryId)) continue;
+    linkedEntryIds.add(participant.revenueEntryId);
+    const entry = record.financialEntries.find((candidate) => candidate.id === participant.revenueEntryId);
+    if (!entry) {
+      issues.push({
+        code: 'REVENUE_ENTRY_NOT_FOUND',
+        message: `O lançamento ${participant.revenueEntryId} da inscrição ${participant.id} não foi encontrado no evento.`,
+      });
+      continue;
+    }
+
+    linkedEntryExpected += toMoney(entry.expectedAmount);
+  }
+
+  const expectedDifference = moneyDifference(activeParticipantExpected, linkedEntryExpected);
+  if (expectedDifference > 0.01) {
+    issues.push({
+      code: 'PARTICIPANT_ENTRY_EXPECTED_MISMATCH',
+      message: 'A soma das obrigações das inscrições diverge dos lançamentos financeiros vinculados.',
+      difference: expectedDifference,
+    });
+  }
+
+  const discountDifference = moneyDifference(activeParticipantGross - activeParticipantDiscount, activeParticipantExpected);
+  if (discountDifference > 0.01) {
+    issues.push({
+      code: 'PARTICIPANT_DISCOUNT_MISMATCH',
+      message: 'Valor bruto menos descontos diverge do valor líquido das inscrições.',
+      difference: discountDifference,
+    });
+  }
+
+  return {
+    eventId,
+    contaId: ctx.contaId,
+    isConsistent: issues.length === 0,
+    issues,
+    totals: {
+      activeParticipantGross: toMoney(activeParticipantGross),
+      activeParticipantDiscount: toMoney(activeParticipantDiscount),
+      activeParticipantExpected: toMoney(activeParticipantExpected),
+      linkedEntryExpected: toMoney(linkedEntryExpected),
+      activeParticipantReceived: toMoney(activeParticipantReceived),
+    },
+  };
 }
 
 export async function createSchoolEvent(ctx: EventsContext, input: CreateSchoolEventInput) {
@@ -2212,6 +2369,7 @@ export function mapFinancialEntry(
     supplier: entry.supplier,
     originType: entry.originType,
     originId: entry.originId,
+    costClass: entry.costClass,
     expectedAmount: toMoney(entry.expectedAmount),
     grossAmount: entry.grossAmount == null ? null : toMoney(entry.grossAmount),
     discountAmount: toMoney(entry.discountAmount),
@@ -2267,22 +2425,37 @@ export async function createFinancialEntry(ctx: EventsContext, input: CreateEven
     if (!event) throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
     assertFinancialAdjustmentEvent(event.status);
 
-    const actualAmount = input.actualAmount == null ? null : decimal(input.actualAmount);
-    const refundedAmount = input.refundedAmount == null ? decimal(0) : decimal(input.refundedAmount);
-    const netAmount = input.actualAmount == null ? null : decimal(Math.max(input.actualAmount - (input.refundedAmount ?? 0), 0));
+    const line = normalizeFinancialLineOrThrow({
+      expectedAmount: input.expectedAmount,
+      grossAmount: input.grossAmount,
+      discountAmount: input.discountAmount,
+    });
+    const payment = normalizeFinancialPaymentOrThrow({
+      actualAmount: input.actualAmount,
+      refundedAmount: input.refundedAmount,
+      expectedAmount: line.netAmount,
+      enforceExpectedLimit: input.type === 'REVENUE',
+    });
+    if (input.type === 'REVENUE' && payment.actualAmount != null && payment.actualAmount > line.netAmount) {
+      throw new EventsError('VALOR_RECEBIDO_INVALIDO', 'O valor recebido não pode ser maior que o valor líquido esperado.', 422);
+    }
+    assertFinancialEntryState(input.type, input.status, payment.actualAmount);
     const entry = await tx.eventFinancialEntry.create({
       data: {
         contaId: ctx.contaId,
         eventId: input.eventId,
         type: input.type,
+        costClass: input.costClass ?? 'DIRECT',
         category: input.category,
         description: input.description,
         supplier: input.supplier,
         originType: 'MANUAL',
-        expectedAmount: decimal(input.expectedAmount),
-        actualAmount,
-        refundedAmount,
-        netAmount,
+        expectedAmount: decimal(line.netAmount),
+        grossAmount: decimal(line.grossAmount),
+        discountAmount: decimal(line.discountAmount),
+        actualAmount: payment.actualAmount == null ? null : decimal(payment.actualAmount),
+        refundedAmount: decimal(payment.refundedAmount),
+        netAmount: payment.netAmount == null ? null : decimal(payment.netAmount),
         dueDate: input.dueDate,
         realizedAt: input.realizedAt,
         status: input.status,
@@ -2323,25 +2496,39 @@ export async function updateFinancialEntry(ctx: EventsContext, entryId: string, 
     }
     assertFinancialAdjustmentEvent(current.event.status);
 
-    const actualAmount = input.actualAmount == null ? undefined : decimal(input.actualAmount);
-    const refundedAmount = input.refundedAmount == null ? undefined : decimal(input.refundedAmount);
-    const nextActual = input.actualAmount ?? toMoney(current.actualAmount);
-    const nextRefunded = input.refundedAmount ?? toMoney(current.refundedAmount);
-    const netAmount = input.actualAmount == null && input.refundedAmount == null
-      ? undefined
-      : decimal(Math.max(nextActual - nextRefunded, 0));
+    const line = normalizeFinancialLineOrThrow({
+      expectedAmount: input.expectedAmount ?? current.expectedAmount.toNumber(),
+      grossAmount: input.grossAmount ?? current.grossAmount?.toNumber(),
+      discountAmount: input.discountAmount ?? current.discountAmount.toNumber(),
+    });
+    const nextActual = input.actualAmount === undefined ? toMoney(current.actualAmount) : input.actualAmount;
+    const nextRefunded = input.refundedAmount === undefined ? toMoney(current.refundedAmount) : input.refundedAmount;
+    const nextType = input.type ?? current.type;
+    const payment = normalizeFinancialPaymentOrThrow({
+      actualAmount: nextActual,
+      refundedAmount: nextRefunded,
+      expectedAmount: line.netAmount,
+      enforceExpectedLimit: nextType === 'REVENUE',
+    });
+    if (nextType === 'REVENUE' && payment.actualAmount != null && payment.actualAmount > line.netAmount) {
+      throw new EventsError('VALOR_RECEBIDO_INVALIDO', 'O valor recebido não pode ser maior que o valor líquido esperado.', 422);
+    }
+    assertFinancialEntryState(nextType, input.status ?? current.status, payment.actualAmount);
 
     const updated = await tx.eventFinancialEntry.update({
       where: { id: entryId },
       data: {
         type: input.type,
+        costClass: input.costClass,
         category: input.category,
         description: input.description,
         supplier: input.supplier,
-        expectedAmount: input.expectedAmount == null ? undefined : decimal(input.expectedAmount),
-        actualAmount,
-        refundedAmount,
-        netAmount,
+        expectedAmount: decimal(line.netAmount),
+        grossAmount: decimal(line.grossAmount),
+        discountAmount: decimal(line.discountAmount),
+        actualAmount: payment.actualAmount == null ? null : decimal(payment.actualAmount),
+        refundedAmount: decimal(payment.refundedAmount),
+        netAmount: payment.netAmount == null ? null : decimal(payment.netAmount),
         dueDate: input.dueDate,
         realizedAt: input.realizedAt,
         status: input.status,
@@ -2695,9 +2882,14 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
     }
 
     let revenueEntryId: string | null = null;
-    const feeOriginal = toMoney(input.registrationFeeOriginal ?? input.registrationFeeCharged ?? 0);
-    const feeDiscount = toMoney(input.registrationFeeDiscount ?? Math.max(feeOriginal - (input.registrationFeeCharged ?? 0), 0));
-    const feeCharged = toMoney(input.registrationFeeCharged ?? feeOriginal);
+    const feeLine = normalizeFinancialLineOrThrow({
+      expectedAmount: input.registrationFeeCharged,
+      grossAmount: input.registrationFeeOriginal,
+      discountAmount: input.registrationFeeDiscount,
+    });
+    const feeOriginal = feeLine.grossAmount;
+    const feeDiscount = feeLine.discountAmount;
+    const feeCharged = feeLine.netAmount;
     const billingMode = input.billingMode ?? (input.isFeePaid ? 'FULL' : 'INSTALLMENT');
     const entryAmount = input.billingMethod === 'MANUAL_RECEIVED'
       ? toMoney(input.initialPaymentAmount ?? 0)
@@ -2709,10 +2901,11 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
     const balanceAmount = toMoney(Math.max(feeCharged - entryAmount, 0));
     const registrationPaymentRules = eventPaymentRulesFromRecord(event);
 
-    // A digital charge is persisted by the financial/Asaas flow. Creating a
-    // local entry for the digital component would duplicate the billing list.
-    // A manual entry is kept as a separate local receipt.
-    if (entryAmount > 0 || input.billingMethod === 'MANUAL_RECEIVED') {
+    // Every billable registration has one local obligation. The Asaas charge
+    // is only the payment channel; keeping the obligation locally makes the
+    // event forecast complete and lets webhook snapshots update realization
+    // without creating a second revenue source.
+    if (feeCharged > 0) {
       const entry = await tx.eventFinancialEntry.create({
         data: {
           contaId: ctx.contaId,
@@ -2915,8 +3108,16 @@ export async function registerEventParticipantGroup(
     const totalOriginalAmount = toMoney(input.registrationFeeOriginalTotal ?? feeOriginalPerParticipant * alunoIds.length);
     const totalAmount = toMoney(input.registrationFeeChargedTotal ?? toMoney(input.registrationFeeCharged ?? feeOriginalPerParticipant) * alunoIds.length);
     const totalDiscountAmount = toMoney(input.registrationFeeDiscountTotal ?? input.registrationFeeDiscount ?? Math.max(totalOriginalAmount - totalAmount, 0));
-    const originalAllocations = allocateGroupAmount(totalOriginalAmount, alunoIds.map(() => feeOriginalPerParticipant));
-    const chargedAllocations = allocateGroupAmount(totalAmount, originalAllocations);
+    const totalLine = normalizeFinancialLineOrThrow({
+      expectedAmount: totalAmount,
+      grossAmount: totalOriginalAmount,
+      discountAmount: totalDiscountAmount,
+    });
+    const normalizedTotalOriginalAmount = totalLine.grossAmount;
+    const normalizedTotalAmount = totalLine.netAmount;
+    const normalizedTotalDiscountAmount = totalLine.discountAmount;
+    const originalAllocations = allocateGroupAmount(normalizedTotalOriginalAmount, alunoIds.map(() => feeOriginalPerParticipant));
+    const chargedAllocations = allocateGroupAmount(normalizedTotalAmount, originalAllocations);
     const discountAllocations = originalAllocations.map((original, index) => toMoney(original - (chargedAllocations[index] ?? 0)));
     const isFeePaid = input.isFeePaid ?? false;
     const billingMode = input.billingMode ?? (isFeePaid ? 'FULL' : 'INSTALLMENT');
@@ -2937,9 +3138,9 @@ export async function registerEventParticipantGroup(
         responsavelId: input.responsavelId,
         status: entryAmount >= totalAmount && totalAmount > 0 ? 'PAID' : entryAmount > 0 ? 'PARTIALLY_PAID' : 'PENDING',
         billingMode,
-        totalAmount: decimal(totalAmount),
-        originalAmount: decimal(totalOriginalAmount),
-        discountAmount: decimal(totalDiscountAmount),
+        totalAmount: decimal(normalizedTotalAmount),
+        originalAmount: decimal(normalizedTotalOriginalAmount),
+        discountAmount: decimal(normalizedTotalDiscountAmount),
         entryAmount: decimal(entryAmount),
         balanceAmount: decimal(balanceAmount),
         entryPaymentMethod: entryAmount > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
@@ -2956,25 +3157,31 @@ export async function registerEventParticipantGroup(
     const participants: Prisma.EventParticipantGetPayload<Prisma.EventParticipantDefaultArgs>[] = [];
     for (const [index, aluno] of alunos.entries()) {
       const allocatedEntry = entryAllocations[index] ?? 0;
-      // Digital grouped charges are represented by the Asaas plan below.
-      // Persist an internal entry only for money actually received manually;
-      // otherwise this allocation would appear as a second operational charge.
-      const participantEntry = input.billingMethod === 'MANUAL_RECEIVED' && allocatedEntry > 0
+      // Persist one obligation per participant. For digital grouped charges,
+      // the payment is reconciled later from the group charge; for manual
+      // registrations, allocatedEntry is the amount received now.
+      const participantEntry = (chargedAllocations[index] ?? 0) > 0
         ? await tx.eventFinancialEntry.create({
             data: {
               contaId: ctx.contaId,
               eventId: input.eventId,
               type: 'REVENUE',
               category: 'Taxa de inscrição',
-              description: 'Entrada manual da cobrança agrupada do evento',
-              expectedAmount: decimal(allocatedEntry),
+              description: input.billingMethod === 'MANUAL_RECEIVED' && allocatedEntry > 0
+                ? 'Entrada manual da cobrança agrupada do evento'
+                : 'Taxa de inscrição agrupada do evento',
+              // The entry represents the participant's full obligation. The
+              // payment amount is only the amount received now; otherwise a
+              // grouped registration with an entry would disappear from the
+              // event forecast after creation.
+              expectedAmount: decimal(chargedAllocations[index] ?? 0),
               grossAmount: decimal(originalAllocations[index] ?? 0),
               discountAmount: decimal(discountAllocations[index] ?? 0),
-              actualAmount: decimal(allocatedEntry),
+              actualAmount: allocatedEntry > 0 ? decimal(allocatedEntry) : null,
               dueDate: input.dueDate ?? new Date(),
-              realizedAt: new Date(),
-              status: 'RECEIVED',
-              paymentMethod: mapToEventPaymentMethod(input.entryPaymentMethod ?? input.feePaymentMethod),
+              realizedAt: allocatedEntry > 0 ? new Date() : null,
+              status: allocatedEntry >= (chargedAllocations[index] ?? 0) ? 'RECEIVED' : 'PENDING',
+              paymentMethod: allocatedEntry > 0 ? mapToEventPaymentMethod(input.entryPaymentMethod ?? input.feePaymentMethod) : null,
               notes: input.notes,
             },
           })
@@ -3598,7 +3805,7 @@ export async function reactivateEventParticipant(
     let revenueEntryId: string | null = null;
     const registrationPaymentRules = eventPaymentRulesFromRecord(participant.event);
 
-    if (entryAmount > 0) {
+    if (feeCharged > 0) {
       const entry = await tx.eventFinancialEntry.create({
         data: {
           contaId: ctx.contaId,
@@ -3606,12 +3813,14 @@ export async function reactivateEventParticipant(
           type: 'REVENUE',
           category: 'Taxa de inscrição',
           description: billingMode === 'ENTRY_INSTALLMENT' ? 'Entrada da taxa de inscrição' : 'Taxa de inscrição',
-          expectedAmount: decimal(entryAmount),
-          actualAmount: decimal(entryAmount),
+          expectedAmount: decimal(feeCharged),
+          grossAmount: decimal(toMoney(participant.registrationFeeOriginal)),
+          discountAmount: decimal(toMoney(participant.registrationFeeDiscount)),
+          actualAmount: entryAmount > 0 ? decimal(entryAmount) : null,
           dueDate,
-          realizedAt: new Date(),
-          status: 'RECEIVED',
-          paymentMethod: mapToEventPaymentMethod(input.entryPaymentMethod ?? input.feePaymentMethod),
+          realizedAt: entryAmount > 0 ? new Date() : null,
+          status: entryAmount >= feeCharged ? 'RECEIVED' : 'PENDING',
+          paymentMethod: entryAmount > 0 ? mapToEventPaymentMethod(input.entryPaymentMethod ?? input.feePaymentMethod) : null,
           notes: input.notes,
           paymentProvider: billingMode === 'ENTRY_INSTALLMENT' ? null : input.paymentProvider ?? null,
           asaasPaymentId: billingMode === 'ENTRY_INSTALLMENT' ? null : input.asaasPaymentId ?? null,
@@ -4276,22 +4485,18 @@ async function buildParticipantPaymentSnapshots(
       participantCharges,
       participant.isFeeExempt,
     );
-    const entryPayment = entry
-      ? calculateParticipantPayment(
-          entry.expectedAmount.toNumber(),
-          ['RECEIVED', 'PAID'].includes(entry.status),
-          entry,
-          [],
-        )
-      : null;
-    const snapshotPayment = participant.billingMode === 'ENTRY_INSTALLMENT' && entryPayment
-      ? entryPayment
-      : payment;
-    const realizedAt = participant.billingMode === 'ENTRY_INSTALLMENT' && entry
-      ? entry.realizedAt
-      : participantCharges
+    // ENTRY_INSTALLMENT has two payment channels: the manual entry and the
+    // external balance. calculateParticipantPayment already merges both;
+    // selecting only the local entry would understate what the event received
+    // after the Asaas balance was settled.
+    const snapshotPayment = payment;
+    const realizationDates = [
+      entry?.realizedAt ?? null,
+      ...participantCharges
         .filter((charge) => ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED', 'PAID'].includes(charge.status))
-        .sort((a, b) => b.statusUpdatedAt.getTime() - a.statusUpdatedAt.getTime())[0]?.statusUpdatedAt ?? null;
+        .map((charge) => charge.statusUpdatedAt as Date),
+    ].filter((date): date is Date => date instanceof Date && !Number.isNaN(date.getTime()));
+    const realizedAt = realizationDates.sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
 
     snapshots.set(participant.revenueEntryId ?? participant.id, {
       percentPaid: snapshotPayment.percentPaid,

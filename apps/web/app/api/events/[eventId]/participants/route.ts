@@ -378,6 +378,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           },
           select: { id: true },
         });
+        if (participant.revenueEntryId) {
+          await prisma.eventFinancialEntry.update({
+            where: { id: participant.revenueEntryId, contaId: ctx.contaId },
+            data: {
+              paymentProvider: 'ASAAS',
+              paymentStatus: 'PENDING',
+              asaasPaymentId: billingResult.data.asaasPaymentId ?? billingResult.data.asaasInstallmentId ?? null,
+            },
+          });
+        }
       } catch (billingError) {
         // Rollback caso ocorra exceção
         await prisma.eventoContrato.deleteMany({

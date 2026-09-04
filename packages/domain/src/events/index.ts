@@ -16,6 +16,7 @@ export type EventCostumeAssignmentBillingMode =
   | 'SEPARATE_CHARGE'
   | 'FREE';
 export type EventFinancialEntryType = 'COST' | 'REVENUE';
+export * from './financial';
 export type EventFinancialEntryStatus =
   | 'EXPECTED'
   | 'PENDING'
@@ -162,12 +163,18 @@ export type EventMetricTicketLot = {
 };
 
 export type EventMetricFinancialEntry = {
+  id?: string | null;
   type: EventFinancialEntryType;
   status: EventFinancialEntryStatus;
   expectedAmount: number | string | null;
   actualAmount: number | string | null;
+  grossAmount?: number | string | null;
+  discountAmount?: number | string | null;
+  netAmount?: number | string | null;
   refundedAmount?: number | string | null;
   originType?: EventFinancialOriginType | null;
+  originId?: string | null;
+  costClass?: import('./financial').EventFinancialCostClass | null;
   category?: string | null;
 };
 
@@ -179,8 +186,26 @@ export type EventMetricCostumeAssignment = {
 };
 
 export type EventMetricCostume = {
+  id?: string | null;
   schoolCost: number | string | null;
   quantity: number;
+};
+
+export type EventMetricParticipantObligation = {
+  id: string;
+  revenueEntryId?: string | null;
+  grossAmount: number | string | null;
+  discountAmount: number | string | null;
+  expectedAmount: number | string | null;
+  actualAmount?: number | string | null;
+  refundedAmount?: number | string | null;
+  isExempt?: boolean;
+  cancelled?: boolean;
+};
+
+export type EventMetricConsistency = {
+  isConsistent: boolean;
+  issues: string[];
 };
 
 export type EventMetricsInput = {
@@ -189,13 +214,24 @@ export type EventMetricsInput = {
   financialEntries?: EventMetricFinancialEntry[];
   costumeAssignments?: EventMetricCostumeAssignment[];
   costumes?: EventMetricCostume[];
+  participantObligations?: EventMetricParticipantObligation[];
 };
 
 export type EventMetrics = {
   receitaPrevista: number;
+  receitaBrutaPrevista: number;
+  descontosPrevistos: number;
   receitaRealizada: number;
   custoPrevisto: number;
   custoRealizado: number;
+  custoDiretoPrevisto: number;
+  custoDiretoRealizado: number;
+  custoIndiretoPrevisto: number;
+  custoIndiretoRealizado: number;
+  taxasFinanceirasPrevistas: number;
+  taxasFinanceirasRealizadas: number;
+  impostosPrevistos: number;
+  impostosRealizados: number;
   resultadoPrevisto: number;
   resultadoRealizado: number;
   lucroBrutoPrevisto: number;
@@ -210,6 +246,7 @@ export type EventMetrics = {
   receitaRecebidaBruta: number;
   receitaEstornada: number;
   receitaRecebidaLiquida: number;
+  consistency: EventMetricConsistency;
   taxaOcupacao: number | null;
   figurinosPendentes: number;
   figurinosEntregues: number;
@@ -227,7 +264,8 @@ function roundMoney(value: number): number {
 }
 
 function isAutomaticEventFinance(entry: EventMetricFinancialEntry): boolean {
-  return entry.originType === 'TICKET_SALE' || entry.originType === 'COSTUME_ASSIGNMENT' || entry.originType === 'COSTUME';
+  return entry.type === 'REVENUE'
+    && (entry.originType === 'TICKET_SALE' || entry.originType === 'COSTUME_ASSIGNMENT' || entry.originType === 'COSTUME');
 }
 
 const PAID_CHARGE_STATUSES = new Set([
@@ -390,35 +428,117 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   const financialEntries = input.financialEntries ?? [];
   const costumeAssignments = input.costumeAssignments ?? [];
   const costumes = input.costumes ?? [];
+  const participantObligations = input.participantObligations ?? [];
 
   let receitaPrevista = 0;
+  let receitaBrutaPrevista = 0;
+  let descontosPrevistos = 0;
   let receitaRealizada = 0;
   let receitaRecebidaBruta = 0;
   let receitaEstornada = 0;
   let custoPrevisto = 0;
   let custoRealizado = 0;
+  let custoDiretoPrevisto = 0;
+  let custoDiretoRealizado = 0;
+  let custoIndiretoPrevisto = 0;
+  let custoIndiretoRealizado = 0;
+  let taxasFinanceirasPrevistas = 0;
+  let taxasFinanceirasRealizadas = 0;
+  let impostosPrevistos = 0;
+  let impostosRealizados = 0;
   let ingressosVendidos = 0;
   let ingressosPagos = 0;
   let cortesias = 0;
+  const consistencyIssues: string[] = [];
 
   let costumeCost = 0;
+  const costumeCostRealizedById = new Map<string, number>();
+  for (const entry of financialEntries) {
+    if (entry.type !== 'COST' || entry.originType !== 'COSTUME' || !entry.originId) continue;
+    if (entry.status === 'PAID') {
+      costumeCostRealizedById.set(entry.originId, money(entry.actualAmount));
+    }
+  }
+
+  const financialEntryIds = new Set(financialEntries.map((entry) => entry.id).filter(Boolean));
+  const linkedParticipantEntryIds = new Set(
+    participantObligations
+      .map((obligation) => obligation.revenueEntryId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const unresolvedUnlinkedRevenueEntries = financialEntries.filter((entry) =>
+    entry.type === 'REVENUE'
+    && !isAutomaticEventFinance(entry)
+    && (entry.id
+      ? !linkedParticipantEntryIds.has(entry.id)
+      : participantObligations.length > 0),
+  );
+  const legacyFallbackBlocked = unresolvedUnlinkedRevenueEntries.length > 0;
+
+  // Older digital registrations may have a provider charge and no local
+  // EventFinancialEntry. Include those obligations only while there is no
+  // unlinked manual revenue in the event. Once an unlinked entry exists, its
+  // owner cannot be inferred safely from amount alone; counting both sources
+  // would overstate the forecast. The consistency report then becomes the
+  // explicit reconciliation queue.
+  if (legacyFallbackBlocked) {
+    for (const entry of unresolvedUnlinkedRevenueEntries) {
+      consistencyIssues.push(`REVENUE:${entry.id ?? 'unknown'}:unlinked_manual_entry`);
+    }
+  }
+
+  for (const obligation of participantObligations) {
+    if (obligation.cancelled || obligation.isExempt || (obligation.revenueEntryId && financialEntryIds.has(obligation.revenueEntryId))) continue;
+    if (legacyFallbackBlocked) {
+      consistencyIssues.push(`PARTICIPANT:${obligation.id}:missing_financial_entry`);
+      continue;
+    }
+    const expected = money(obligation.expectedAmount);
+    const gross = money(obligation.grossAmount ?? expected);
+    const discount = money(obligation.discountAmount ?? Math.max(gross - expected, 0));
+    const actual = money(obligation.actualAmount);
+    const refunded = money(obligation.refundedAmount);
+    receitaPrevista += expected;
+    receitaBrutaPrevista += gross;
+    descontosPrevistos += discount;
+    if (actual > 0) {
+      receitaRecebidaBruta += actual;
+      receitaEstornada += refunded;
+      receitaRealizada += Math.max(actual - refunded, 0);
+    }
+    if (Math.abs(gross - discount - expected) > 0.01) {
+      consistencyIssues.push(`PARTICIPANT:${obligation.id}:gross_discount_mismatch`);
+    }
+  }
+  let costumeCostRealized = 0;
   for (const costume of costumes) {
-    costumeCost += money(costume.schoolCost) * costume.quantity;
+    const amount = money(costume.schoolCost) * costume.quantity;
+    costumeCost += amount;
+    // Legacy costumes without a linked cost entry remain recognized for
+    // backwards compatibility. Linked entries use their persisted payment
+    // status, so a pending purchase is not reported as paid.
+    costumeCostRealized += costume.id && financialEntries.some((entry) => entry.originType === 'COSTUME' && entry.originId === costume.id)
+      ? costumeCostRealizedById.get(costume.id) ?? 0
+      : amount;
   }
 
   custoPrevisto += costumeCost;
-  custoRealizado += costumeCost;
+  custoRealizado += costumeCostRealized;
+  custoDiretoPrevisto += costumeCost;
+  custoDiretoRealizado += costumeCostRealized;
 
   for (const sale of ticketSales) {
     const total = money(sale.totalAmount);
 
     if (sale.status === 'PENDING') {
       receitaPrevista += total;
+      receitaBrutaPrevista += total;
       ingressosVendidos += sale.quantity;
     }
 
     if (sale.status === 'PAID') {
       receitaPrevista += total;
+      receitaBrutaPrevista += total;
       receitaRealizada += total;
       receitaRecebidaBruta += total;
       ingressosVendidos += sale.quantity;
@@ -433,12 +553,31 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
 
   for (const entry of financialEntries) {
     if (isAutomaticEventFinance(entry)) continue;
+    if (
+      entry.type === 'COST'
+      && entry.originType === 'COSTUME'
+      && entry.originId
+      && costumes.some((costume) => costume.id === entry.originId)
+    ) continue;
 
     const expected = money(entry.expectedAmount);
     const actual = money(entry.actualAmount);
     const refunded = money(entry.refundedAmount);
 
     if (entry.type === 'REVENUE') {
+      const gross = money(entry.grossAmount ?? expected);
+      const discount = money(entry.discountAmount ?? Math.max(gross - expected, 0));
+      if (Math.abs(gross - discount - expected) > 0.01) {
+        consistencyIssues.push(`REVENUE:${entry.originId ?? 'unknown'}:gross_discount_mismatch`);
+      }
+      if (actual > expected && entry.status !== 'REFUNDED') {
+        consistencyIssues.push(`REVENUE:${entry.originId ?? 'unknown'}:actual_above_expected`);
+      }
+      if (refunded > actual) {
+        consistencyIssues.push(`REVENUE:${entry.originId ?? 'unknown'}:refund_above_actual`);
+      }
+      receitaBrutaPrevista += gross;
+      descontosPrevistos += discount;
       if (entry.status === 'EXPECTED' || entry.status === 'PENDING' || entry.status === 'RECEIVED') {
         receitaPrevista += expected;
       }
@@ -452,12 +591,22 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     }
 
     if (entry.type === 'COST') {
+      const costClass = entry.costClass ?? 'DIRECT';
       if (entry.status === 'EXPECTED' || entry.status === 'PENDING' || entry.status === 'PAID') {
         custoPrevisto += expected;
+        if (costClass === 'DIRECT') custoDiretoPrevisto += expected;
+        if (costClass === 'INDIRECT') custoIndiretoPrevisto += expected;
+        if (costClass === 'FINANCIAL') taxasFinanceirasPrevistas += expected;
+        if (costClass === 'TAX') impostosPrevistos += expected;
       }
       if (entry.status === 'PAID') {
         custoRealizado += actual;
+        if (costClass === 'DIRECT') custoDiretoRealizado += actual;
+        if (costClass === 'INDIRECT') custoIndiretoRealizado += actual;
+        if (costClass === 'FINANCIAL') taxasFinanceirasRealizadas += actual;
+        if (costClass === 'TAX') impostosRealizados += actual;
       }
+      if (actual < 0) consistencyIssues.push(`COST:${entry.originId ?? 'unknown'}:negative_actual`);
     }
   }
 
@@ -467,6 +616,7 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     const value = money(assignment.chargedValue);
     if (value > 0) {
       receitaPrevista += value;
+      receitaBrutaPrevista += value;
       if (assignment.isPaid) {
         receitaRealizada += value;
         receitaRecebidaBruta += value;
@@ -478,6 +628,7 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     const unsoldQty = Math.max(lot.quantityTotal - lot.quantitySold, 0);
     const lotPrice = lot.unitPrice ?? 0;
     receitaPrevista += unsoldQty * lotPrice;
+    receitaBrutaPrevista += unsoldQty * lotPrice;
   }
 
   const totalCapacity = ticketLots.reduce((sum, lot) => sum + lot.quantityTotal, 0);
@@ -485,14 +636,24 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   const ingressosDisponiveis = Math.max(totalCapacity - lotSold, 0);
   const resultadoPrevisto = receitaPrevista - custoPrevisto;
   const resultadoRealizado = receitaRealizada - custoRealizado;
-  const lucroBrutoPrevisto = receitaPrevista - custoPrevisto;
-  const lucroBrutoRealizado = receitaRealizada - custoRealizado;
+  const lucroBrutoPrevisto = receitaPrevista - custoDiretoPrevisto;
+  const lucroBrutoRealizado = receitaRealizada - custoDiretoRealizado;
 
   return {
     receitaPrevista: roundMoney(receitaPrevista),
+    receitaBrutaPrevista: roundMoney(receitaBrutaPrevista),
+    descontosPrevistos: roundMoney(descontosPrevistos),
     receitaRealizada: roundMoney(receitaRealizada),
     custoPrevisto: roundMoney(custoPrevisto),
     custoRealizado: roundMoney(custoRealizado),
+    custoDiretoPrevisto: roundMoney(custoDiretoPrevisto),
+    custoDiretoRealizado: roundMoney(custoDiretoRealizado),
+    custoIndiretoPrevisto: roundMoney(custoIndiretoPrevisto),
+    custoIndiretoRealizado: roundMoney(custoIndiretoRealizado),
+    taxasFinanceirasPrevistas: roundMoney(taxasFinanceirasPrevistas),
+    taxasFinanceirasRealizadas: roundMoney(taxasFinanceirasRealizadas),
+    impostosPrevistos: roundMoney(impostosPrevistos),
+    impostosRealizados: roundMoney(impostosRealizados),
     resultadoPrevisto: roundMoney(resultadoPrevisto),
     resultadoRealizado: roundMoney(resultadoRealizado),
     lucroBrutoPrevisto: roundMoney(lucroBrutoPrevisto),
@@ -508,6 +669,10 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     receitaRecebidaBruta: roundMoney(receitaRecebidaBruta),
     receitaEstornada: roundMoney(receitaEstornada),
     receitaRecebidaLiquida: roundMoney(receitaRealizada),
+    consistency: {
+      isConsistent: consistencyIssues.length === 0,
+      issues: consistencyIssues,
+    },
     taxaOcupacao: totalCapacity > 0 ? roundMoney(ingressosVendidos / totalCapacity) : null,
     figurinosPendentes: costumeAssignments.filter((item) =>
       ['PENDING', 'ORDERED', 'RECEIVED'].includes(item.status),

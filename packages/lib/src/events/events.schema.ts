@@ -259,10 +259,13 @@ export const listFinancialEntriesQuerySchema = listByEventQuerySchema.extend({
 export const createEventFinancialEntrySchema = z.object({
   eventId: eventIdSchema,
   type: z.enum(EVENT_FINANCIAL_ENTRY_TYPES),
+  costClass: z.enum(['DIRECT', 'INDIRECT', 'FINANCIAL', 'TAX']).optional(),
   category: requiredText('Informe a categoria.'),
   description: requiredText('Informe a descrição.'),
   supplier: optionalText,
   expectedAmount: moneySchema,
+  grossAmount: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
+  discountAmount: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
   actualAmount: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
   refundedAmount: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
   dueDate: optionalDate,

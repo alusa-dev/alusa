@@ -148,6 +148,7 @@ export type FinancialEntryDTO = {
   supplier: string | null;
   originType: 'MANUAL' | 'TICKET_SALE' | 'COSTUME' | 'COSTUME_ASSIGNMENT';
   originId: string | null;
+  costClass?: 'DIRECT' | 'INDIRECT' | 'FINANCIAL' | 'TAX';
   expectedAmount: number;
   grossAmount?: number | null;
   discountAmount?: number;

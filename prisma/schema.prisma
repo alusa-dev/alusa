@@ -495,6 +495,13 @@ enum EventFinancialEntryType {
   REVENUE
 }
 
+enum EventFinancialCostClass {
+  DIRECT
+  INDIRECT
+  FINANCIAL
+  TAX
+}
+
 enum EventFinancialEntryStatus {
   EXPECTED
   PENDING
@@ -4934,6 +4941,7 @@ model EventFinancialEntry {
   contaId         String
   eventId         String
   type            EventFinancialEntryType
+  costClass       EventFinancialCostClass   @default(DIRECT)
   category        String
   description     String
   supplier        String?
