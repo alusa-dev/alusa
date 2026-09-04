@@ -11,11 +11,7 @@ import {
   invalidateAuthActionTokens,
   markAuthActionTokenEmailSent,
 } from '@/lib/auth-action-tokens';
-import {
-  buildAccountReactivationTemplate,
-  buildResetPasswordTemplate,
-  buildVerifyEmailTemplate,
-} from '@/lib/email/auth-email-templates';
+import { buildAccountReactivationTemplate } from '@/lib/email/auth-email-templates';
 import { sendTransactionalEmail } from '@/lib/email/transactional-email';
 import { assertPasswordPolicy, hashPassword } from '@/lib/auth-password';
 import { revokeUserSessions } from '@/lib/auth-service';
@@ -29,7 +25,12 @@ type AuthEmailOptions = {
   callbackUrl?: string | null;
 };
 
-const INVITE_TEMPLATE_ID = process.env.RESEND_INVITE_TEMPLATE_ID || 'd13d18cf-e209-43b5-8d8b-d6a7d937cbed';
+const INVITE_TEMPLATE_ID =
+  process.env.RESEND_INVITE_TEMPLATE_ID || 'd13d18cf-e209-43b5-8d8b-d6a7d937cbed';
+const VERIFY_EMAIL_TEMPLATE_ID =
+  process.env.RESEND_VERIFY_EMAIL_TEMPLATE_ID || '23622898-1216-4bb8-9a5c-d9e623206f05';
+const RESET_PASSWORD_TEMPLATE_ID =
+  process.env.RESEND_RESET_PASSWORD_TEMPLATE_ID || '8076d73d-66d7-43be-8dde-172afb123a0b';
 
 function formatInviteExpiration(expiresAt?: Date | string | null): string {
   if (!expiresAt) return 'a data informada';
@@ -45,7 +46,10 @@ function formatInviteExpiration(expiresAt?: Date | string | null): string {
   }).format(date);
 }
 
-function isAccountDeactivated(status: string | null | undefined, deletedAt: Date | null | undefined): boolean {
+function isAccountDeactivated(
+  status: string | null | undefined,
+  deletedAt: Date | null | undefined,
+): boolean {
   return Boolean(deletedAt) || (typeof status === 'string' && status.toUpperCase() !== 'ATIVO');
 }
 
@@ -126,29 +130,20 @@ async function issueAuthEmail(
     type === 'VERIFY_EMAIL' || type === 'ACCOUNT_REACTIVATION'
       ? buildVerifyEmailUrl(
           token,
-          isReactivationEmail ? options.callbackUrl ?? '/auth/login?reactivated=1' : options.callbackUrl,
+          isReactivationEmail
+            ? (options.callbackUrl ?? '/auth/login?reactivated=1')
+            : options.callbackUrl,
         )
       : buildResetPasswordUrl(token);
 
   const expiresInLabel = getAuthActionTokenExpiryLabel(type);
-  const template =
-    type === 'VERIFY_EMAIL' || type === 'ACCOUNT_REACTIVATION'
-      ? isReactivationEmail
-        ? buildAccountReactivationTemplate({
-            recipientName: user.nome,
-            actionUrl,
-            expiresInLabel,
-          })
-        : buildVerifyEmailTemplate({
-            recipientName: user.nome,
-            actionUrl,
-            expiresInLabel,
-          })
-      : buildResetPasswordTemplate({
-          recipientName: user.nome,
-          actionUrl,
-          expiresInLabel,
-        });
+  const renderedTemplate = isReactivationEmail
+    ? buildAccountReactivationTemplate({
+        recipientName: user.nome,
+        actionUrl,
+        expiresInLabel,
+      })
+    : undefined;
 
   const category =
     type === 'VERIFY_EMAIL' || type === 'ACCOUNT_REACTIVATION'
@@ -157,14 +152,44 @@ async function issueAuthEmail(
         : 'verify_email'
       : 'reset_password';
 
+  const resendTemplate =
+    type === 'VERIFY_EMAIL'
+      ? {
+          id: VERIFY_EMAIL_TEMPLATE_ID,
+          variables: {
+            RECIPIENT_NAME: user.nome?.trim() || 'você',
+            ACTION_URL: actionUrl,
+            EXPIRES_IN: expiresInLabel,
+            SUPPORT_URL:
+              process.env.EMAIL_SUPPORT_URL ||
+              process.env.NEXT_PUBLIC_APP_URL ||
+              'https://alusa.app',
+          },
+        }
+      : type === 'RESET_PASSWORD'
+        ? {
+            id: RESET_PASSWORD_TEMPLATE_ID,
+            variables: {
+              RECIPIENT_NAME: user.nome?.trim() || 'você',
+              ACTION_URL: actionUrl,
+              EXPIRES_IN: expiresInLabel,
+              SUPPORT_URL:
+                process.env.EMAIL_SUPPORT_URL ||
+                process.env.NEXT_PUBLIC_APP_URL ||
+                'https://alusa.app',
+            },
+          }
+        : undefined;
+
   const delivery = await sendTransactionalEmail({
     to: user.email,
-    subject: template.subject,
-    html: template.html,
-    text: template.text,
+    subject: renderedTemplate?.subject,
+    html: renderedTemplate?.html,
+    text: renderedTemplate?.text,
     category,
     idempotencyKey: `${category}/${record.id}`,
     actionUrl,
+    template: resendTemplate,
     tags: [
       { name: 'category', value: category },
       { name: 'user_id', value: user.id },
@@ -210,14 +235,9 @@ export async function sendAccountReactivationForEmail(
     return;
   }
 
-  const delivery = await issueAuthEmail(
-    'ACCOUNT_REACTIVATION',
-    user.id,
-    metadata,
-    {
-      callbackUrl: '/auth/login?reactivated=1',
-    },
-  );
+  const delivery = await issueAuthEmail('ACCOUNT_REACTIVATION', user.id, metadata, {
+    callbackUrl: '/auth/login?reactivated=1',
+  });
 
   await auditLogService.record({
     contaId: user.contaId,

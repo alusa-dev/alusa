@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const consumeAuthActionTokenMock = vi.fn();
 const createAuthActionTokenMock = vi.fn();
@@ -14,9 +14,9 @@ const usuarioFindUniqueMock = vi.fn();
 const usuarioFindFirstMock = vi.fn();
 const sendTransactionalEmailMock = vi.fn();
 const buildAccountReactivationTemplateMock = vi.fn();
-const buildVerifyEmailTemplateMock = vi.fn();
 const originalNextAuthUrl = process.env.NEXTAUTH_URL;
 const originalNextPublicAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+const originalEmailSupportUrl = process.env.EMAIL_SUPPORT_URL;
 
 vi.mock('@/lib/auth-action-tokens', () => ({
   consumeAuthActionToken: consumeAuthActionTokenMock,
@@ -55,7 +55,7 @@ vi.mock('@/lib/email/auth-email-templates', () => ({
   buildAccountReactivationTemplate: buildAccountReactivationTemplateMock,
   buildInviteUserTemplate: vi.fn(),
   buildResetPasswordTemplate: vi.fn(),
-  buildVerifyEmailTemplate: buildVerifyEmailTemplateMock,
+  buildVerifyEmailTemplate: vi.fn(),
 }));
 
 describe('verifyEmailByToken', () => {
@@ -82,6 +82,9 @@ describe('verifyEmailByToken', () => {
 
     if (originalNextPublicAppUrl === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
     else process.env.NEXT_PUBLIC_APP_URL = originalNextPublicAppUrl;
+
+    if (originalEmailSupportUrl === undefined) delete process.env.EMAIL_SUPPORT_URL;
+    else process.env.EMAIL_SUPPORT_URL = originalEmailSupportUrl;
   });
 
   it('retorna sucesso quando o mesmo token já foi consumido e o e-mail já está confirmado', async () => {
@@ -133,7 +136,11 @@ describe('verifyEmailByToken', () => {
       where: { id: 'user_2' },
       data: { emailVerifiedAt: expect.any(Date) },
     });
-    expect(invalidateAuthActionTokensMock).toHaveBeenCalledWith('user_2', 'VERIFY_EMAIL', expect.any(Object));
+    expect(invalidateAuthActionTokensMock).toHaveBeenCalledWith(
+      'user_2',
+      'VERIFY_EMAIL',
+      expect.any(Object),
+    );
   });
 
   it('reativa a conta quando o token é usado por um usuário com conta desativada', async () => {
@@ -198,6 +205,7 @@ describe('verifyEmailByToken', () => {
   it('inclui o callbackUrl no link de confirmação quando o destino é o onboarding', async () => {
     process.env.NEXTAUTH_URL = 'http://localhost:3001';
     process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+    process.env.EMAIL_SUPPORT_URL = 'http://localhost:3000';
 
     usuarioFindUniqueMock.mockResolvedValueOnce({
       id: 'user_3',
@@ -212,11 +220,6 @@ describe('verifyEmailByToken', () => {
       record: { id: 'token_3' },
     });
     getAuthActionTokenExpiryLabelMock.mockReturnValueOnce('1 dia');
-    buildVerifyEmailTemplateMock.mockReturnValueOnce({
-      subject: 'Confirme seu e-mail',
-      html: '<p>template</p>',
-      text: 'template',
-    });
     sendTransactionalEmailMock.mockResolvedValueOnce({
       delivery: 'sent',
       emailId: 'email_3',
@@ -229,20 +232,74 @@ describe('verifyEmailByToken', () => {
       { callbackUrl: '/finance/wizard' },
     );
 
-    expect(buildVerifyEmailTemplateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        actionUrl: expect.stringContaining('callbackUrl=%2Ffinance%2Fwizard'),
-      }),
-    );
     expect(sendTransactionalEmailMock).toHaveBeenCalledWith(
       expect.objectContaining({
         actionUrl: expect.stringContaining('callbackUrl=%2Ffinance%2Fwizard'),
         idempotencyKey: 'verify_email/token_3',
+        template: {
+          id: '23622898-1216-4bb8-9a5c-d9e623206f05',
+          variables: {
+            RECIPIENT_NAME: 'Admin Example',
+            ACTION_URL: expect.stringContaining('callbackUrl=%2Ffinance%2Fwizard'),
+            EXPIRES_IN: '1 dia',
+            SUPPORT_URL: 'http://localhost:3000',
+          },
+        },
       }),
     );
     expect(markAuthActionTokenEmailSentMock).toHaveBeenCalledWith('token_3', 'email_3');
     expect(result.actionUrl?.startsWith('http://localhost:3001/auth/verify-email')).toBe(true);
     expect(result.actionUrl).toContain('callbackUrl=%2Ffinance%2Fwizard');
+  });
+
+  it('envia o template publicado de recuperação de senha com as variáveis do fluxo', async () => {
+    process.env.NEXTAUTH_URL = 'http://localhost:3001';
+    process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+    process.env.EMAIL_SUPPORT_URL = 'http://localhost:3000';
+
+    usuarioFindFirstMock.mockResolvedValueOnce({
+      id: 'user_reset',
+      contaId: 'conta_reset',
+      email: 'reset@example.com',
+    });
+    usuarioFindUniqueMock.mockResolvedValueOnce({
+      id: 'user_reset',
+      nome: 'Reset User',
+      email: 'reset@example.com',
+      emailVerifiedAt: new Date('2026-03-20T10:00:00.000Z'),
+      contaId: 'conta_reset',
+      conta: { status: 'ATIVO', deletedAt: null },
+    });
+    createAuthActionTokenMock.mockResolvedValueOnce({
+      token: 'reset-token',
+      record: { id: 'token_reset' },
+    });
+    getAuthActionTokenExpiryLabelMock.mockReturnValueOnce('1 hora');
+    sendTransactionalEmailMock.mockResolvedValueOnce({
+      delivery: 'sent',
+      emailId: 'email_reset',
+    });
+
+    const { sendPasswordResetForEmail } = await import('@/lib/auth-email-flow');
+    await sendPasswordResetForEmail('RESET@example.com', { ip: '127.0.0.1' });
+
+    expect(sendTransactionalEmailMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'reset@example.com',
+        category: 'reset_password',
+        idempotencyKey: 'reset_password/token_reset',
+        template: {
+          id: '8076d73d-66d7-43be-8dde-172afb123a0b',
+          variables: {
+            RECIPIENT_NAME: 'Reset User',
+            ACTION_URL: 'http://localhost:3001/auth/reset-password?token=reset-token',
+            EXPIRES_IN: '1 hora',
+            SUPPORT_URL: 'http://localhost:3000',
+          },
+        },
+      }),
+    );
+    expect(markAuthActionTokenEmailSentMock).toHaveBeenCalledWith('token_reset', 'email_reset');
   });
 
   it('envia template de reativação quando a conta está desativada', async () => {
