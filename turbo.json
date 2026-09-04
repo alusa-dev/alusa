@@ -24,7 +24,7 @@
     },
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**", "build/**"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**", "build/**"],
       "cache": true
     },
     "test": {

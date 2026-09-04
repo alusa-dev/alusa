@@ -3,7 +3,7 @@
   "regions": ["gru1"],
   "ignoreCommand": "node ../../scripts/vercel-ignore-build.mjs @alusa/web",
   "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
-  "buildCommand": "cd ../.. && pnpm prisma:generate && NODE_OPTIONS=--max-old-space-size=4096 pnpm exec turbo run build --filter=@alusa/web^... && pnpm --dir apps/web build:webpack",
+  "buildCommand": "cd ../.. && pnpm prisma:generate && NODE_OPTIONS=--max-old-space-size=4096 pnpm exec turbo run build --filter=@alusa/web^... --concurrency=2 && pnpm --dir apps/web build:webpack",
   "crons": [
     {
       "path": "/api/jobs/platform-billing-maintenance?limit=100",
