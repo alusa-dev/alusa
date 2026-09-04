@@ -7,8 +7,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextRequest } from 'next/server';
 import { NextRequest as NextRequestCtor } from 'next/server';
+import { PlatformBillingError } from '@alusa/platform-billing';
 
 import { GET, POST } from '@/app/api/finance/subscriptions/route';
+import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
@@ -122,13 +124,16 @@ describe('API Finance Subscriptions', () => {
     expect(createSubscription).not.toHaveBeenCalled();
   });
 
-  it('POST: 403 quando feature flag desabilitada', async () => {
+  it('POST: 402 quando a conta está restrita pelo faturamento da plataforma', async () => {
     mockSession({ id: 'u1', contaId: 'c1', role: 'FINANCEIRO' });
 
-    vi.mocked(createSubscription).mockResolvedValueOnce({
-      success: false,
-      error: 'FEATURE_DISABLED',
-    } as never);
+    vi.mocked(assertPlatformAccessForConta).mockRejectedValueOnce(
+      new PlatformBillingError(
+        'Conta restrita',
+        'PLATFORM_BILLING_ACCESS_RESTRICTED',
+        { reason: 'PAST_DUE' },
+      ),
+    );
 
     const res = await POST(
       makePostReq({
@@ -141,7 +146,7 @@ describe('API Finance Subscriptions', () => {
       }),
     );
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(402);
   });
 
   it('POST: 409 quando KYC não aprovado', async () => {
