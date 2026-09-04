@@ -68,6 +68,8 @@ export * from './contracts/evidence/create-contract-evidence';
 export * from './contracts/pdf/generate-signed-contract-pdf';
 export * from './contracts/providers/signature-provider';
 export * from './contracts/use-cases/sign-contract';
+export * from './contracts/use-cases/signature-otp';
+export * from './contracts/use-cases/resolve-public-signer';
 // Integrações / Credenciais
 export * from './services/integracoes/asaas-credentials-service';
 export {

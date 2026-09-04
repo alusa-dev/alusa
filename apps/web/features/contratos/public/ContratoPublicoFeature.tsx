@@ -11,6 +11,7 @@ import { toast } from '@/components/ui/toast';
 import { Check, CheckCircle as CheckCircleIcon, ChevronRight, Download, ErrorCircle as XCircleIcon, Edit, Lock, Minus, MoreVertical, Plus, RotateCcw, X } from '@/components/icons/icons';
 import { BrandWordmark } from '@/components/brand/BrandWordmark';
 import { cn } from '@/lib/utils';
+import { OtpCodeInput } from './OtpCodeInput';
 
 type Field = {
   id: string;
@@ -316,6 +317,14 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
   const [nome, setNome] = useState('');
   const [cpf, setCpf] = useState('');
   const [dataNascimento, setDataNascimento] = useState('');
+  const [signatureStage, setSignatureStage] = useState<'details' | 'otp'>('details');
+  const [otpCode, setOtpCode] = useState('');
+  const [maskedEmail, setMaskedEmail] = useState('');
+  const [verificationToken, setVerificationToken] = useState<string | null>(null);
+  const [otpSending, setOtpSending] = useState(false);
+  const [otpVerifying, setOtpVerifying] = useState(false);
+  const [otpResendAt, setOtpResendAt] = useState<number | null>(null);
+  const [otpResendSeconds, setOtpResendSeconds] = useState(0);
   const [aceite, setAceite] = useState(false);
   const [consentAnswers, setConsentAnswers] = useState<Record<string, 'AUTORIZADO' | 'RECUSADO'>>({});
   const [mobileDockHeight, setMobileDockHeight] = useState(0);
@@ -381,7 +390,18 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
     const observer = new ResizeObserver(updateHeight);
     observer.observe(dock);
     return () => observer.disconnect();
-  }, [step, consentimentos.length, consentAnswers, aceite, signature, assinando]);
+  }, [step, signatureStage, consentimentos.length, consentAnswers, aceite, signature, assinando, otpSending, otpVerifying]);
+
+  useEffect(() => {
+    if (!otpResendAt) {
+      setOtpResendSeconds(0);
+      return;
+    }
+    const updateCountdown = () => setOtpResendSeconds(Math.max(0, Math.ceil((otpResendAt - Date.now()) / 1000)));
+    updateCountdown();
+    const timer = window.setInterval(updateCountdown, 1000);
+    return () => window.clearInterval(timer);
+  }, [otpResendAt]);
 
   const openSignature = (field: Field) => {
     const editingCurrentSignature = signedFieldId === field.id ? signature : null;
@@ -392,9 +412,84 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
   };
   const saveSignature = () => { const value = signatureMode === 'TEXTO' ? typedSignature.trim() : signature?.valor; if (!value || !signatureField) return toast.error('Preencha sua assinatura antes de continuar.'); setSignature({ tipo: signatureMode, valor: value, ...(signatureMode === 'TEXTO' ? { fonte: typedFont } : {}) }); setSignedFieldId(signatureField.id); exitDrawingFullscreen(); setSignatureField(null); };
 
-  const submit = async () => {
-    if (!signature || !nome.trim() || cpf.replace(/\D/g, '').length !== 11 || !/^\d{2}\/\d{2}\/\d{4}$/.test(dataNascimento) || !aceite || !consentimentosValidos) return toast.error('Revise seus dados, consentimentos, assinatura e aceite antes de finalizar.');
-    try { setAssinando(true); const assinatura = { ...signature, fonte: signature.fonte || typedFont }; const res = await fetch(`${kind === 'event' ? '/api/public/event-contrato' : '/api/public/contrato'}/${token}/assinar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome: nome.trim(), cpf: cpf.replace(/\D/g, ''), dataNascimento, aceite: true, consentimentos: Object.entries(consentAnswers).map(([termId, decision]) => ({ termId, decision })), assinatura, userAgent: navigator.userAgent }) }); const data = await res.json(); if (!res.ok) throw new Error(data.error?.message || 'Erro ao assinar contrato'); setSignedPdfUrl(typeof data.signedPdfUrl === 'string' ? data.signedPdfUrl : null); setSignedSuccess(true); toast.success('Contrato assinado com sucesso!'); } catch (error) { toast.error(error instanceof Error ? error.message : 'Erro ao assinar contrato'); } finally { setAssinando(false); }
+  const detailsAreValid = () => {
+    if (!signature || !nome.trim() || cpf.replace(/\D/g, '').length !== 11 || !/^\d{2}\/\d{2}\/\d{4}$/.test(dataNascimento) || !aceite || !consentimentosValidos) {
+      toast.error('Revise seus dados, consentimentos, assinatura e aceite antes de finalizar.');
+      return false;
+    }
+    return true;
+  };
+
+  const requestOtp = async () => {
+    if (!detailsAreValid()) return;
+    try {
+      setOtpSending(true);
+      const res = await fetch(`${kind === 'event' ? '/api/public/event-contrato' : '/api/public/contrato'}/${token}/otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cpf: cpf.replace(/\D/g, '') }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || 'Não foi possível enviar o código');
+      setMaskedEmail(typeof data.maskedEmail === 'string' ? data.maskedEmail : 'seu e-mail cadastrado');
+      setOtpCode('');
+      setVerificationToken(null);
+      setOtpResendAt(Date.now() + 60_000);
+      setSignatureStage('otp');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível enviar o código');
+    } finally {
+      setOtpSending(false);
+    }
+  };
+
+  const verifyOtpAndSubmit = async () => {
+    if (otpCode.length !== 6) {
+      toast.error('Digite os 6 dígitos do código recebido.');
+      return;
+    }
+    try {
+      setOtpVerifying(true);
+      let nextVerificationToken = verificationToken;
+      if (!nextVerificationToken) {
+        const verifyRes = await fetch(`${kind === 'event' ? '/api/public/event-contrato' : '/api/public/contrato'}/${token}/otp/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cpf: cpf.replace(/\D/g, ''), code: otpCode }),
+        });
+        const verifyData = await verifyRes.json();
+        if (!verifyRes.ok) throw new Error(verifyData.error?.message || 'Não foi possível confirmar o código');
+        nextVerificationToken = String(verifyData.verificationToken || '');
+      }
+      if (!nextVerificationToken) throw new Error('Autorização de assinatura inválida');
+      setVerificationToken(nextVerificationToken);
+      setAssinando(true);
+      const assinatura = { ...signature!, fonte: signature!.fonte || typedFont };
+      const signRes = await fetch(`${kind === 'event' ? '/api/public/event-contrato' : '/api/public/contrato'}/${token}/assinar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nome: nome.trim(),
+          cpf: cpf.replace(/\D/g, ''),
+          verificationToken: nextVerificationToken,
+          dataNascimento,
+          aceite: true,
+          consentimentos: Object.entries(consentAnswers).map(([termId, decision]) => ({ termId, decision })),
+          assinatura,
+          userAgent: navigator.userAgent,
+        }),
+      });
+      const signData = await signRes.json();
+      if (!signRes.ok) throw new Error(signData.error?.message || 'Erro ao assinar contrato');
+      setSignedPdfUrl(typeof signData.signedPdfUrl === 'string' ? signData.signedPdfUrl : null);
+      setSignedSuccess(true);
+      toast.success('Contrato assinado com sucesso!');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Não foi possível confirmar o código');
+    } finally {
+      setOtpVerifying(false);
+      setAssinando(false);
+    }
   };
 
   const workflowSteps = [
@@ -414,6 +509,12 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
         ? 'Clique no campo destacado dentro do documento para assinar.'
         : 'Confira seus dados e aceite os termos para finalizar.';
   const goBack = () => {
+    if (step === 4 && signatureStage === 'otp') {
+      setSignatureStage('details');
+      setOtpCode('');
+      setVerificationToken(null);
+      return;
+    }
     if (step === 3 && consentimentos.length === 0) setStep(1);
     else setStep((Math.max(1, step - 1)) as 1 | 2 | 3 | 4);
   };
@@ -425,7 +526,7 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
     } else if (!signature) toast.error('Preencha sua assinatura antes de continuar.');
     else setStep(4);
   };
-  const primaryActionLabel = step === 1 ? 'Continuar' : step === 2 ? 'Ir para assinatura' : step === 3 ? 'Revisar dados' : assinando ? 'Finalizando...' : 'Finalizar assinatura';
+  const primaryActionLabel = step === 1 ? 'Continuar' : step === 2 ? 'Ir para assinatura' : step === 3 ? 'Revisar dados' : signatureStage === 'otp' ? (otpVerifying || assinando ? 'Confirmando...' : 'Confirmar código') : otpSending ? 'Enviando código...' : 'Finalizar assinatura';
 
   if (loading) return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">Carregando contrato...</div>;
   if (errorMSG) return <StateCard title="Não foi possível acessar" message={errorMSG} tone="error" />;
@@ -495,16 +596,27 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
               <CardContent className={cn('space-y-4 bg-slate-50 px-4 py-4 sm:px-5 sm:py-5 lg:bg-transparent lg:px-6 lg:py-6', step === 1 && 'hidden', step === 4 && 'flex flex-1 flex-col justify-center')}>
                 {step === 2 && <ConsentChoices terms={consentimentos} answers={consentAnswers} onChange={(termId, decision) => setConsentAnswers((current) => ({ ...current, [termId]: decision }))} />}
                 {step === 3 && <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-sm">{signature ? <div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 font-semibold text-emerald-700"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-xs">✓</span>Assinatura preenchida</span><Button variant="link" className="h-auto px-0 text-xs" onClick={() => setSignatureField(requiredFields[0] ?? null)}>Alterar</Button></div> : <span className="leading-5 text-slate-600">{requiredFields.length ? 'Clique no campo destacado do PDF para assinar.' : 'Nenhum campo de assinatura configurado.'}</span>}</div>}
-                {step === 4 && <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+                {step === 4 && signatureStage === 'details' && <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
                   <CardTitle className="text-base font-bold text-slate-900">Confirme seus dados</CardTitle>
                   <div className="space-y-2"><Label htmlFor="public-nome">Nome completo</Label><Input id="public-nome" value={nome} onChange={(event) => setNome(event.target.value)} className="h-10 rounded-lg border-slate-200 bg-white shadow-sm focus-visible:border-brand-accent focus-visible:ring-brand-accent/25" /></div>
                   <div className="space-y-2"><Label htmlFor="public-cpf">CPF</Label><Input id="public-cpf" value={cpf} onChange={(event) => setCpf(formatCpf(event.target.value))} maxLength={14} placeholder="000.000.000-00" className="h-10 rounded-lg border-slate-200 bg-white shadow-sm focus-visible:border-brand-accent focus-visible:ring-brand-accent/25" /></div>
                   <div className="space-y-2"><Label htmlFor="public-data-nascimento">Data de Nascimento</Label><Input id="public-data-nascimento" type="text" inputMode="numeric" autoComplete="bday" value={dataNascimento} onChange={(event) => setDataNascimento(formatDataNascimento(event.target.value))} maxLength={10} placeholder="DD/MM/AAAA" className="h-10 rounded-lg border-slate-200 bg-white shadow-sm focus-visible:border-brand-accent focus-visible:ring-brand-accent/25" /></div>
                   <div className="flex items-start gap-2 px-1 py-1"><Checkbox id="public-aceite" checked={aceite} onCheckedChange={(checked) => setAceite(checked === true)} className="mt-0.5 shrink-0" /><Label htmlFor="public-aceite" className="cursor-pointer text-sm font-normal leading-5">{contrato.acceptanceText}</Label></div>
                 </div>}
+                {step === 4 && signatureStage === 'otp' && <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+                  <div>
+                    <CardTitle id="otp-title" className="text-base font-bold text-slate-900">Confirme o código</CardTitle>
+                    <p id="public-otp-label" className="mt-2 text-sm leading-5 text-slate-600">Enviamos um código de 6 dígitos para <span className="font-semibold text-slate-900">{maskedEmail}</span>.</p>
+                  </div>
+                  <OtpCodeInput value={otpCode} onChange={setOtpCode} disabled={otpVerifying || assinando} autoFocus />
+                  <p className="text-center text-xs leading-5 text-slate-500">O código expira em 10 minutos.</p>
+                  <div className="flex items-center justify-center text-xs text-slate-500">
+                    {otpResendSeconds > 0 ? <span>Você poderá solicitar outro código em {otpResendSeconds}s.</span> : <button type="button" className="font-semibold text-brand-accent underline underline-offset-2 disabled:opacity-50" onClick={() => void requestOtp()} disabled={otpSending || otpVerifying || assinando}>Reenviar código</button>}
+                  </div>
+                </div>}
                 {step === 4 && <div className="flex items-center justify-center gap-2 text-xs text-slate-500"><Lock className="h-4 w-4" aria-hidden="true" />Ambiente seguro Alusa</div>}
               </CardContent>
-              <CardFooter className="sticky bottom-0 z-20 flex gap-2 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-5 sm:py-4 lg:hidden"><Button variant="outline" className="min-h-11 flex-1 bg-white" onClick={goBack} disabled={step === 1}>Voltar</Button>{step < 4 ? <Button className="min-h-11 flex-1" onClick={goNext}>{primaryActionLabel}</Button> : <Button className="min-h-11 flex-1" onClick={() => void submit()} disabled={assinando || !aceite || !consentimentosValidos}>{primaryActionLabel}</Button>}</CardFooter>
+              <CardFooter className="sticky bottom-0 z-20 flex gap-2 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-5 sm:py-4 lg:hidden"><Button variant="outline" className="min-h-11 flex-1 bg-white" onClick={goBack} disabled={step === 1 || otpSending || otpVerifying || assinando}>Voltar</Button>{step < 4 ? <Button className="min-h-11 flex-1" onClick={goNext}>{primaryActionLabel}</Button> : <Button className="min-h-11 flex-1" onClick={() => void (signatureStage === 'details' ? requestOtp() : verifyOtpAndSubmit())} disabled={otpSending || otpVerifying || assinando || (signatureStage === 'details' && (!aceite || !consentimentosValidos)) || (signatureStage === 'otp' && otpCode.length !== 6)}>{primaryActionLabel}</Button>}</CardFooter>
             </Card>
           </aside>
 
@@ -521,7 +633,7 @@ export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: st
               Próximo campo <ChevronRight className="ml-1 h-4 w-4" />
             </Button>}
             <Button type="button" variant="outline" className="h-10 min-w-24 rounded-full border-slate-200 px-4 text-xs font-semibold" onClick={goBack} disabled={step === 1}>Voltar</Button>
-            {step < 4 ? <Button type="button" className="h-10 min-w-36 rounded-full px-5 text-xs font-semibold" onClick={goNext}>{primaryActionLabel}<ChevronRight className="ml-1 h-4 w-4" /></Button> : <Button type="button" className="h-10 min-w-44 rounded-full px-5 text-xs font-semibold" onClick={() => void submit()} disabled={assinando || !aceite || !consentimentosValidos}>{primaryActionLabel}</Button>}
+            {step < 4 ? <Button type="button" className="h-10 min-w-36 rounded-full px-5 text-xs font-semibold" onClick={goNext}>{primaryActionLabel}<ChevronRight className="ml-1 h-4 w-4" /></Button> : <Button type="button" className="h-10 min-w-44 rounded-full px-5 text-xs font-semibold" onClick={() => void (signatureStage === 'details' ? requestOtp() : verifyOtpAndSubmit())} disabled={otpSending || otpVerifying || assinando || (signatureStage === 'details' && (!aceite || !consentimentosValidos)) || (signatureStage === 'otp' && otpCode.length !== 6)}>{primaryActionLabel}</Button>}
           </div>
         </div>
       </main>

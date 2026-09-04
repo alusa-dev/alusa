@@ -6,6 +6,8 @@ import {
   createContratoModeloSchema,
   createContratoSchema,
   publicAssinarContratoSchema,
+  publicSolicitarAssinaturaOtpSchema,
+  publicVerificarAssinaturaOtpSchema,
   updateContratoModeloSchema,
   uploadContratoArquivoSchema,
 } from '../schemas';
@@ -77,6 +79,10 @@ export const listContratoConsentimentoTemplatesResultDTOSchema = z.array(contrat
 
 export const publicAssinarContratoInputDTOSchema = publicAssinarContratoSchema;
 export type PublicAssinarContratoInputDTO = z.input<typeof publicAssinarContratoInputDTOSchema>;
+export const publicSolicitarAssinaturaOtpInputDTOSchema = publicSolicitarAssinaturaOtpSchema;
+export type PublicSolicitarAssinaturaOtpInputDTO = z.input<typeof publicSolicitarAssinaturaOtpInputDTOSchema>;
+export const publicVerificarAssinaturaOtpInputDTOSchema = publicVerificarAssinaturaOtpSchema;
+export type PublicVerificarAssinaturaOtpInputDTO = z.input<typeof publicVerificarAssinaturaOtpInputDTOSchema>;
 
 export const uploadContratoArquivoInputDTOSchema = uploadContratoArquivoSchema;
 export type UploadContratoArquivoInputDTO = z.input<typeof uploadContratoArquivoInputDTOSchema>;

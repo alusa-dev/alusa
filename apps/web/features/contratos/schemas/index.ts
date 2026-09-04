@@ -116,6 +116,7 @@ const cpfDigitsSchema = z
 
 export const publicAssinarContratoSchema = z.object({
   cpf: cpfDigitsSchema,
+  verificationToken: z.string().min(32, 'Autorização de assinatura inválida'),
   nome: z.string().trim().min(2, 'Nome inválido').max(160, 'Nome inválido'),
   dataNascimento: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, 'Data de nascimento inválida').optional(),
   email: z.string().email('Email inválido').optional().or(z.literal('')),
@@ -134,6 +135,15 @@ export const publicAssinarContratoSchema = z.object({
   }),
 });
 export type PublicAssinarContratoInput = z.infer<typeof publicAssinarContratoSchema>;
+
+export const publicSolicitarAssinaturaOtpSchema = z.object({
+  cpf: cpfDigitsSchema,
+});
+
+export const publicVerificarAssinaturaOtpSchema = z.object({
+  cpf: cpfDigitsSchema,
+  code: z.string().regex(/^\d{6}$/, 'Código inválido'),
+});
 
 // ===================== Upload de PDF =====================
 
