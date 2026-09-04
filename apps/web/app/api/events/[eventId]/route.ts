@@ -8,13 +8,22 @@ import { getEventsContext, handleEventsRouteError } from '../_helpers';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+const privateNoStoreHeaders = {
+  'Cache-Control': 'private, no-store, max-age=0, must-revalidate',
+  'CDN-Cache-Control': 'no-store',
+  'Vercel-CDN-Cache-Control': 'no-store',
+};
+
 type RouteParams = { params: Promise<{ eventId: string }> };
 
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   try {
     const { eventId } = await params;
     const ctx = await getEventsContext('events.view');
-    return NextResponse.json({ data: await getSchoolEvent(ctx, eventId) });
+    return NextResponse.json(
+      { data: await getSchoolEvent(ctx, eventId) },
+      { headers: privateNoStoreHeaders },
+    );
   } catch (error) {
     return handleEventsRouteError(error, 'ERRO_BUSCAR_EVENTO');
   }

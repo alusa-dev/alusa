@@ -19,7 +19,14 @@ import { EventTicketsPanel } from './tickets/EventTicketsPanel';
 
 export function EventDetailFeature({ eventId }: { eventId: string }) {
   const scopedResources = useEventScopedResources(eventId);
-  const eventQuery = useQuery({ queryKey: eventQueryKeys.event(eventId), queryFn: () => getEvent(eventId) });
+  const eventQuery = useQuery({
+    queryKey: eventQueryKeys.event(eventId),
+    queryFn: () => getEvent(eventId),
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+  });
   const participantsQuery = useQuery({
     queryKey: ['events', 'participants', eventId],
     queryFn: () => listEventParticipants(eventId),
