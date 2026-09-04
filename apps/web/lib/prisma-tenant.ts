@@ -17,7 +17,9 @@ function normalizeTenantId(contaId: string) {
 }
 
 function shouldUseRlsRuntime() {
-  return process.env.RLS_RUNTIME_ENABLED === 'true' && Boolean(process.env.DATABASE_RLS_URL);
+  // Fail closed: an explicit RLS runtime configuration must not silently
+  // fall back to the unrestricted client when its dedicated URL is missing.
+  return process.env.RLS_RUNTIME_ENABLED === 'true';
 }
 
 function getRlsPrismaClient() {

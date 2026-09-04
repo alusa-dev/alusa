@@ -38,6 +38,7 @@ describe('Rematrículas DTO', () => {
           },
           combo: null,
           financeiro: {
+            descontoTipo: null,
             pendencias: 2,
             cobrancasEmAberto: 2,
             cobrancasAtrasadas: 1,

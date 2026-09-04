@@ -28,7 +28,7 @@ describe('AsaasCredentialsService', () => {
     const masked = await getAsaasCredentials(contaId);
     expect(masked.apiKeyMasked).toBeTruthy();
     expect(masked.webhookSecretMasked).toBeTruthy();
-    expect(masked.apiKeyMasked).toContain('test');
+    expect(masked.apiKeyMasked).toBe('tes••••der');
   });
 
   it('retorna descriptografado para uso interno', async () => {

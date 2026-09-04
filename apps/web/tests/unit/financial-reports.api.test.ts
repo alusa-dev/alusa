@@ -60,6 +60,18 @@ const report = {
   rankingByClass: [],
   rankingByPlan: [],
   classOccupancy: [],
+  enrollmentSeries: [],
+  enrollmentHealth: {
+    enrollmentsInPeriod: 0,
+    cancellationsInPeriod: 0,
+    openingActiveEnrollments: 0,
+    activeEnrollments: 0,
+    endingSoon: 0,
+    overdue: 0,
+    retentionRate: 0,
+    renewalRate: 0,
+  },
+  cancellationsByClass: [],
   details: { items: [], total: 0, page: 1, pageSize: 20, totalPages: 1 },
   dataQuality: { excludedRecords: 0, warnings: [] },
 };

@@ -92,6 +92,18 @@ describe('serviço de matrícula', () => {
       const conta = await prisma.conta.findFirstOrThrow({ where: { cpfCnpj: '00000000000191' } });
       const owner = await prisma.usuario.findFirstOrThrow({ where: { contaId: conta.id } });
 
+      await prisma.platformBillingAccount.upsert({
+        where: { uq_platform_billing_account_conta_env: { contaId: conta.id, environment: 'TEST' } },
+        update: { status: 'ACTIVE', accessStatus: 'ACTIVE', planCode: 'STARTER' },
+        create: {
+          contaId: conta.id,
+          environment: 'TEST',
+          status: 'ACTIVE',
+          accessStatus: 'ACTIVE',
+          planCode: 'STARTER',
+        },
+      });
+
       // Modalidade & Sala compatíveis com novo modelo
       const modalidade = await prisma.modalidade.upsert({
         where: { id: 'mod-matricula-test' },
@@ -174,6 +186,13 @@ describe('serviço de matrícula', () => {
           status: Status.ATIVO,
           arquivoPdfUrl: 'https://example.test/contrato-matricula.pdf',
           hashSha256: 'a'.repeat(64),
+          campos: {
+            deleteMany: {},
+            create: [
+              { contaId: conta.id, tipo: 'ASSINATURA', papel: 'ESCOLA', pagina: 1, x: 0.1, y: 0.8, largura: 0.3, altura: 0.08, obrigatorio: true, ordem: 0 },
+              { contaId: conta.id, tipo: 'ASSINATURA', papel: 'RESPONSAVEL_OU_ALUNO', pagina: 1, x: 0.6, y: 0.8, largura: 0.3, altura: 0.08, obrigatorio: true, ordem: 1 },
+            ],
+          },
         },
         create: {
           contaId: conta.id,
@@ -182,6 +201,12 @@ describe('serviço de matrícula', () => {
           status: Status.ATIVO,
           arquivoPdfUrl: 'https://example.test/contrato-matricula.pdf',
           hashSha256: 'a'.repeat(64),
+          campos: {
+            create: [
+              { contaId: conta.id, tipo: 'ASSINATURA', papel: 'ESCOLA', pagina: 1, x: 0.1, y: 0.8, largura: 0.3, altura: 0.08, obrigatorio: true, ordem: 0 },
+              { contaId: conta.id, tipo: 'ASSINATURA', papel: 'RESPONSAVEL_OU_ALUNO', pagina: 1, x: 0.6, y: 0.8, largura: 0.3, altura: 0.08, obrigatorio: true, ordem: 1 },
+            ],
+          },
         },
       });
 
@@ -403,9 +428,9 @@ describe('serviço de matrícula', () => {
       ).resolves.toBe(1);
     });
 
-    it('listarMatriculas da turma inclui matrícula futura já confirmada', async () => {
+    it('listarMatriculas da turma inclui matrícula ativa dentro da vigência', async () => {
       const dataInicio = new Date();
-      dataInicio.setHours(dataInicio.getHours() + 6);
+      dataInicio.setHours(dataInicio.getHours() - 6);
       const dataFimContrato = new Date(dataInicio);
       dataFimContrato.setMonth(dataFimContrato.getMonth() + 12);
 

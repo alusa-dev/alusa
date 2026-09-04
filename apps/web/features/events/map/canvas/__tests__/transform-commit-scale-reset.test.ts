@@ -136,7 +136,7 @@ describe('transform commit scale reset', () => {
     const stage = {
       findOne: (selector: string) => (selector === '#node-seatgroup-group-1' ? node : null),
     };
-    const transformer = { getActiveAnchor: () => 'bottom-right' };
+    const transformer = { getActiveAnchor: () => 'bottom-right', rotation: () => 0 };
 
     const session = beginMapTransformSession({
       kind: 'generic',

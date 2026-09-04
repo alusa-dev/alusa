@@ -15,6 +15,15 @@ vi.mock('@alusa/finance', () => ({
   getDashboardFinanceKpisLocal: mockGetDashboardFinanceKpisLocal,
 }));
 
+vi.mock('@/app/api/dashboard/_blocks', () => ({
+  cachedDashboardBlockWithTenant: vi.fn(
+    async (_contaId: string, _resource: string, load: (tx: unknown) => unknown) => {
+      const body = await load({});
+      return Response.json(body);
+    },
+  ),
+}));
+
 import { GET } from '@/app/api/dashboard/finance-kpis/route';
 
 describe('GET /api/dashboard/finance-kpis', () => {
@@ -45,7 +54,7 @@ describe('GET /api/dashboard/finance-kpis', () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(mockGetDashboardFinanceKpisLocal).toHaveBeenCalledWith({ contaId: 'conta-1' });
+    expect(mockGetDashboardFinanceKpisLocal).toHaveBeenCalledWith({ contaId: 'conta-1', db: {} });
     expect(json).toEqual({
       success: true,
       data: {

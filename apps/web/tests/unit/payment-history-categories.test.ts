@@ -12,9 +12,9 @@ describe('payment-history-categories', () => {
     expect(normalizePaymentHistoryCategory({ tipo: 'TAXA_MATRICULA' })).toBe('TAXA_MATRICULA');
     expect(normalizePaymentHistoryCategory({ tipo: 'MENSALIDADE' })).toBe('MENSALIDADE');
     expect(normalizePaymentHistoryCategory({ tipo: 'PARCELADA' })).toBe('PARCELAMENTO');
-    expect(normalizePaymentHistoryCategory({ chargeType: 'INSTALLMENT' })).toBe('PARCELAMENTO');
+    expect(normalizePaymentHistoryCategory({ sourceKind: 'charge', chargeType: 'INSTALLMENT' })).toBe('PARCELAMENTO');
     expect(normalizePaymentHistoryCategory({ tipo: 'RECORRENTE' })).toBe('ASSINATURA');
-    expect(normalizePaymentHistoryCategory({ chargeType: 'SUBSCRIPTION' })).toBe('ASSINATURA');
+    expect(normalizePaymentHistoryCategory({ sourceKind: 'charge', chargeType: 'SUBSCRIPTION' })).toBe('ASSINATURA');
     expect(normalizePaymentHistoryCategory({ tipo: 'LOJA', origin: 'LOJA' })).toBe('LOJA');
     expect(normalizePaymentHistoryCategory({ sourceKind: 'sale', tipo: 'LOJA' })).toBe('LOJA');
     expect(normalizePaymentHistoryCategory({ sourceKind: 'event_ticket_sale', origin: 'EVENTOS' })).toBe('EVENTOS');

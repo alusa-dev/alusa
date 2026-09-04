@@ -137,7 +137,7 @@ describe('DELETE /api/matriculas/[id]', () => {
         cobrancas: 3,
         pagamentos: 1,
         subscriptions: 1,
-        contratoComAceite: 1,
+        contratos: 1,
         asaasSubscriptionId: 'sub_123',
         cobrancasPorStatus: {
           PENDENTE: 1,

@@ -12,8 +12,13 @@ const { getServerSessionMock, buscarMatriculaPorIdMock, getSubscriptionMock, pri
     subscription: {
       findFirst: vi.fn(),
     },
+    billingAllocation: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
+
+const resolveMatriculaFinancialContextMock = vi.hoisted(() => vi.fn().mockResolvedValue(null));
 
 vi.mock('next-auth', () => ({
   getServerSession: getServerSessionMock,
@@ -42,6 +47,11 @@ vi.mock('@/src/server/matriculas/matricula-sync.service', async () => {
     syncMatriculaStatus: vi.fn(),
   };
 });
+
+vi.mock('@/src/server/matriculas/financial-context.service', () => ({
+  resolveMatriculaFinancialContext: resolveMatriculaFinancialContextMock,
+  updateFamilyFinancialLocalState: vi.fn(),
+}));
 
 vi.mock('@/features/cadastro/matriculas/mappers', () => ({
   mapMatriculaDeleteResultToDTO: vi.fn(),

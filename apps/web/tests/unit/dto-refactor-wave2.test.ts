@@ -138,6 +138,7 @@ describe('DTO Refactor Wave 2', () => {
         receitaSemanal: [1, 2, 3, 4, 5, 6, 7],
         matriculasNovasSemanal: [0, 0, 0, 0, 0, 0, 1],
         matriculasCanceladasSemanal: [0, 0, 0, 0, 0, 0, 0],
+        aulasExperimentais: [],
         ultimasCobrancas: [],
         alunosRecentes: [],
         aniversariantesDoMes: [
