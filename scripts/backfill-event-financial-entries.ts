@@ -336,7 +336,7 @@ async function applyCandidates(
             source: 'backfill-event-financial-entries',
             participantId: current.id,
             unlinkedRevenueEntries: unlinkedEntries.length,
-            acknowledgedUnlinked,
+            acknowledgedUnlinked: acknowledgeUnlinked,
             idempotencyKey: `event-financial-backfill:${contaId}:${current.id}`,
           },
         },
