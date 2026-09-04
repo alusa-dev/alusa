@@ -21,6 +21,9 @@ function maskEmail(email: string): string {
 
 function mapError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
+  if (code.includes('Invalid `to` field')) {
+    return { status: 422, message: 'O e-mail cadastrado não pode receber mensagens de teste. Use um e-mail real para receber o código.' };
+  }
   const map: Record<string, { status: number; message: string }> = {
     CONTRACT_NOT_FOUND: { status: 404, message: 'Contrato não encontrado' },
     CONTRACT_ALREADY_SIGNED: { status: 400, message: 'Contrato já assinado' },
