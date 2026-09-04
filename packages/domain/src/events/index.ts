@@ -474,13 +474,20 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   }
 
   const financialEntryIds = new Set(financialEntries.map((entry) => entry.id).filter(Boolean));
+  const linkedParticipantEntryIds = new Set(
+    participantObligations
+      .map((obligation) => obligation.revenueEntryId)
+      .filter((id): id is string => Boolean(id)),
+  );
   // Participant obligations are the canonical source for registration-fee
   // forecasting. Historical manual fee entries without an origin participant
   // cannot be safely attributed by amount alone, so they remain visible in the
   // consistency queue but are excluded from the aggregate when obligations are
   // available. This prevents double counting without hiding unpaid students.
   const unresolvedUnlinkedRevenueEntries = participantObligations.length > 0
-    ? financialEntries.filter(isUnlinkedParticipantFeeEntry)
+    ? financialEntries.filter((entry) =>
+      isUnlinkedParticipantFeeEntry(entry) && !linkedParticipantEntryIds.has(entry.id ?? ''),
+    )
     : [];
   const unresolvedUnlinkedRevenueEntryIds = new Set(
     unresolvedUnlinkedRevenueEntries.map((entry) => entry.id).filter((id): id is string => Boolean(id)),
