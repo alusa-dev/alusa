@@ -222,6 +222,7 @@ export type EventMetrics = {
   receitaBrutaPrevista: number;
   descontosPrevistos: number;
   receitaRealizada: number;
+  saldoAReceber: number;
   custoPrevisto: number;
   custoRealizado: number;
   custoDiretoPrevisto: number;
@@ -266,6 +267,18 @@ function roundMoney(value: number): number {
 function isAutomaticEventFinance(entry: EventMetricFinancialEntry): boolean {
   return entry.type === 'REVENUE'
     && (entry.originType === 'TICKET_SALE' || entry.originType === 'COSTUME_ASSIGNMENT' || entry.originType === 'COSTUME');
+}
+
+function isUnlinkedParticipantFeeEntry(entry: EventMetricFinancialEntry): boolean {
+  if (entry.type !== 'REVENUE' || entry.originType !== 'MANUAL' || entry.originId) return false;
+
+  const normalizedCategory = (entry.category ?? '')
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .trim()
+    .toLowerCase();
+
+  return normalizedCategory === 'taxa de inscricao';
 }
 
 const PAID_CHARGE_STATUSES = new Set([
@@ -461,38 +474,23 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   }
 
   const financialEntryIds = new Set(financialEntries.map((entry) => entry.id).filter(Boolean));
-  const linkedParticipantEntryIds = new Set(
-    participantObligations
-      .map((obligation) => obligation.revenueEntryId)
-      .filter((id): id is string => Boolean(id)),
+  // Participant obligations are the canonical source for registration-fee
+  // forecasting. Historical manual fee entries without an origin participant
+  // cannot be safely attributed by amount alone, so they remain visible in the
+  // consistency queue but are excluded from the aggregate when obligations are
+  // available. This prevents double counting without hiding unpaid students.
+  const unresolvedUnlinkedRevenueEntries = participantObligations.length > 0
+    ? financialEntries.filter(isUnlinkedParticipantFeeEntry)
+    : [];
+  const unresolvedUnlinkedRevenueEntryIds = new Set(
+    unresolvedUnlinkedRevenueEntries.map((entry) => entry.id).filter((id): id is string => Boolean(id)),
   );
-  const unresolvedUnlinkedRevenueEntries = financialEntries.filter((entry) =>
-    entry.type === 'REVENUE'
-    && !isAutomaticEventFinance(entry)
-    && (entry.id
-      ? !linkedParticipantEntryIds.has(entry.id)
-      : participantObligations.length > 0),
-  );
-  const legacyFallbackBlocked = unresolvedUnlinkedRevenueEntries.length > 0;
-
-  // Older digital registrations may have a provider charge and no local
-  // EventFinancialEntry. Include those obligations only while there is no
-  // unlinked manual revenue in the event. Once an unlinked entry exists, its
-  // owner cannot be inferred safely from amount alone; counting both sources
-  // would overstate the forecast. The consistency report then becomes the
-  // explicit reconciliation queue.
-  if (legacyFallbackBlocked) {
-    for (const entry of unresolvedUnlinkedRevenueEntries) {
-      consistencyIssues.push(`REVENUE:${entry.id ?? 'unknown'}:unlinked_manual_entry`);
-    }
+  for (const entry of unresolvedUnlinkedRevenueEntries) {
+    consistencyIssues.push(`REVENUE:${entry.id ?? 'unknown'}:unlinked_manual_entry`);
   }
 
   for (const obligation of participantObligations) {
     if (obligation.cancelled || obligation.isExempt || (obligation.revenueEntryId && financialEntryIds.has(obligation.revenueEntryId))) continue;
-    if (legacyFallbackBlocked) {
-      consistencyIssues.push(`PARTICIPANT:${obligation.id}:missing_financial_entry`);
-      continue;
-    }
     const expected = money(obligation.expectedAmount);
     const gross = money(obligation.grossAmount ?? expected);
     const discount = money(obligation.discountAmount ?? Math.max(gross - expected, 0));
@@ -553,6 +551,7 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
 
   for (const entry of financialEntries) {
     if (isAutomaticEventFinance(entry)) continue;
+    if (entry.id && unresolvedUnlinkedRevenueEntryIds.has(entry.id)) continue;
     if (
       entry.type === 'COST'
       && entry.originType === 'COSTUME'
@@ -636,6 +635,7 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   const ingressosDisponiveis = Math.max(totalCapacity - lotSold, 0);
   const resultadoPrevisto = receitaPrevista - custoPrevisto;
   const resultadoRealizado = receitaRealizada - custoRealizado;
+  const saldoAReceber = Math.max(receitaPrevista - receitaRealizada, 0);
   const lucroBrutoPrevisto = receitaPrevista - custoDiretoPrevisto;
   const lucroBrutoRealizado = receitaRealizada - custoDiretoRealizado;
 
@@ -644,6 +644,7 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     receitaBrutaPrevista: roundMoney(receitaBrutaPrevista),
     descontosPrevistos: roundMoney(descontosPrevistos),
     receitaRealizada: roundMoney(receitaRealizada),
+    saldoAReceber: roundMoney(saldoAReceber),
     custoPrevisto: roundMoney(custoPrevisto),
     custoRealizado: roundMoney(custoRealizado),
     custoDiretoPrevisto: roundMoney(custoDiretoPrevisto),

@@ -3,19 +3,21 @@
  *
  * The command is read-only by default. Applying changes requires an explicit
  * tenant and event because financial backfills must be reviewed event by
- * event. It refuses to write when the event still has manual revenue entries
- * without a participant link; those rows need reconciliation first.
+ * event. It preserves manual revenue entries without a participant link for
+ * a separate reconciliation queue. Applying with such rows requires an
+ * explicit --acknowledge-unlinked flag. No Asaas API is called.
  *
  * Examples:
  *   pnpm exec tsx scripts/backfill-event-financial-entries.ts --dry-run
  *   pnpm exec tsx scripts/backfill-event-financial-entries.ts --dry-run --conta-id=<id> --event-id=<id>
- *   pnpm exec tsx scripts/backfill-event-financial-entries.ts --apply --conta-id=<id> --event-id=<id>
+ *   pnpm exec tsx scripts/backfill-event-financial-entries.ts --apply --acknowledge-unlinked --conta-id=<id> --event-id=<id>
  */
 
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 const apply = process.argv.includes('--apply');
+const acknowledgeUnlinked = process.argv.includes('--acknowledge-unlinked');
 const contaId = process.argv.find((arg) => arg.startsWith('--conta-id='))?.split('=')[1];
 const eventId = process.argv.find((arg) => arg.startsWith('--event-id='))?.split('=')[1];
 
@@ -237,10 +239,10 @@ async function applyCandidates(
   unlinkedEntries: UnlinkedEntry[],
   groupIssues: GroupIssue[],
 ) {
-  if (unlinkedEntries.length > 0) {
+  if (unlinkedEntries.length > 0 && !acknowledgeUnlinked) {
     throw new Error(
       `Backfill bloqueado: existem ${unlinkedEntries.length} lançamento(s) manual(is) sem vínculo no escopo. `
-      + 'Reconcilie-os antes de usar --apply.',
+      + 'Use --acknowledge-unlinked somente após registrar a revisão desses lançamentos.',
     );
   }
   if (groupIssues.length > 0) {
@@ -255,7 +257,7 @@ async function applyCandidates(
     const currentUnlinkedCount = await tx.eventFinancialEntry.count({
       where: { contaId, eventId, type: 'REVENUE', originType: 'MANUAL', originId: null },
     });
-    if (currentUnlinkedCount > 0) {
+    if (currentUnlinkedCount > 0 && !acknowledgeUnlinked) {
       throw new Error(
         `Backfill bloqueado dentro da transação: existem ${currentUnlinkedCount} lançamento(s) manual(is) sem vínculo.`,
       );
@@ -333,6 +335,8 @@ async function applyCandidates(
           metadata: {
             source: 'backfill-event-financial-entries',
             participantId: current.id,
+            unlinkedRevenueEntries: unlinkedEntries.length,
+            acknowledgedUnlinked,
             idempotencyKey: `event-financial-backfill:${contaId}:${current.id}`,
           },
         },

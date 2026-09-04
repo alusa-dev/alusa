@@ -11,9 +11,11 @@ valor bruto - desconto = valor líquido esperado
 pagamentos recebidos - estornos = receita realizada líquida
 ```
 
-Inscrições antigas sem `EventFinancialEntry` continuam sendo consideradas no
-resumo por um fallback de leitura. O endpoint de consistência identifica essas
-linhas para correção operacional.
+Inscrições antigas sem `EventFinancialEntry` continuam compondo a previsão pelo
+vínculo com o participante. Receitas manuais históricas de categoria `Taxa de
+inscrição` sem `originId` são mantidas na fila de reconciliação e excluídas do
+agregado quando as obrigações dos participantes estão disponíveis, evitando
+dupla contagem.
 
 ## Métricas
 
@@ -22,6 +24,9 @@ vendas pagas, figurinos cobrados e outras receitas previstas.
 
 `receitaRealizada` usa apenas pagamentos efetivos, abatendo estornos. Uma
 inscrição pendente sem pagamento não compõe a receita realizada.
+
+`saldoAReceber` é a diferença não negativa entre a receita prevista e a receita
+realizada. Ele representa o que ainda falta receber, não o lucro líquido.
 
 `resultadoPrevisto` é receita prevista menos custos previstos.
 
@@ -52,6 +57,8 @@ fonte de verdade do pagamento, auditoria e reconciliação por tenant.
 Para materializar lançamentos ausentes de dados legados, existe o script
 `scripts/backfill-event-financial-entries.ts`. Ele é dry-run por padrão. O modo
 `--apply` exige `--conta-id=<id>` e `--event-id=<id>`, usa uma transação com lock
-por evento e identifica cada materialização pela inscrição. O script bloqueia a
-escrita quando há receita manual sem vínculo ou divergência em cobrança
-agrupada; esses casos precisam ser reconciliados antes da aplicação.
+por evento e identifica cada materialização pela inscrição. O script exige
+`--acknowledge-unlinked` quando há receita manual sem vínculo; essas linhas são
+preservadas para reconciliação. Divergências em cobrança agrupada continuam
+bloqueando a aplicação. O backfill cria somente lançamentos locais e não cria,
+atualiza ou consulta cobranças no Asaas.

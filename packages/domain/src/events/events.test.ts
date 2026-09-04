@@ -41,6 +41,7 @@ describe('events domain rules', () => {
 
     expect(metrics.receitaPrevista).toBe(1700);
     expect(metrics.receitaRealizada).toBe(1200);
+    expect(metrics.saldoAReceber).toBe(500);
     expect(metrics.custoPrevisto).toBe(300);
     expect(metrics.custoRealizado).toBe(250);
     expect(metrics.resultadoPrevisto).toBe(1400);
@@ -222,7 +223,7 @@ describe('events domain rules', () => {
     expect(metrics.descontosPrevistos).toBe(504.5);
   });
 
-  it('bloqueia o fallback quando há receita manual sem vínculo para evitar dupla contagem', () => {
+  it('mantém a obrigação do participante e isola receita manual sem vínculo', () => {
     const metrics = calculateEventMetrics({
       financialEntries: [{
         id: 'manual-unlinked',
@@ -231,6 +232,7 @@ describe('events domain rules', () => {
         expectedAmount: 780,
         actualAmount: 780,
         originType: 'MANUAL',
+        category: 'Taxa de inscrição',
       }],
       participantObligations: [{
         id: 'legacy-participant',
@@ -243,12 +245,40 @@ describe('events domain rules', () => {
     });
 
     expect(metrics.receitaPrevista).toBe(780);
-    expect(metrics.receitaRealizada).toBe(780);
+    expect(metrics.receitaRealizada).toBe(0);
+    expect(metrics.saldoAReceber).toBe(780);
     expect(metrics.consistency.isConsistent).toBe(false);
     expect(metrics.consistency.issues).toEqual(expect.arrayContaining([
       'REVENUE:manual-unlinked:unlinked_manual_entry',
-      'PARTICIPANT:legacy-participant:missing_financial_entry',
     ]));
+  });
+
+  it('calcula o saldo a receber pelo previsto menos o realizado', () => {
+    const pending = calculateEventMetrics({
+      participantObligations: [{
+        id: 'pending-participant',
+        grossAmount: 780,
+        discountAmount: 0,
+        expectedAmount: 780,
+        actualAmount: null,
+      }],
+    });
+    const partial = calculateEventMetrics({
+      participantObligations: [{
+        id: 'partial-participant',
+        grossAmount: 780,
+        discountAmount: 0,
+        expectedAmount: 780,
+        actualAmount: 80,
+      }],
+    });
+
+    expect(pending.receitaPrevista).toBe(780);
+    expect(pending.receitaRealizada).toBe(0);
+    expect(pending.saldoAReceber).toBe(780);
+    expect(partial.receitaPrevista).toBe(780);
+    expect(partial.receitaRealizada).toBe(80);
+    expect(partial.saldoAReceber).toBe(700);
   });
 
   it('separa lucro bruto de resultado líquido por classe de custo', () => {
