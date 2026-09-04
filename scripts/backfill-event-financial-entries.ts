@@ -345,7 +345,7 @@ async function applyCandidates(
     }
 
     console.log(`Aplicação concluída: ${created} lançamento(s) criado(s), ${linked} vínculo(s) reutilizado(s).`);
-  });
+  }, { maxWait: 10000, timeout: 60000 });
 }
 
 async function main() {
