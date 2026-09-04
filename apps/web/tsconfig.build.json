@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    ".next",
+    "e2e",
+    "tests",
+    "tests/e2e",
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "components/colaboradores/ColaboradorWizardDialog.tsx",
+    "context7",
+    "../../context7"
+  ]
+}

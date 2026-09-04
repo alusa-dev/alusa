@@ -74,6 +74,12 @@ const nextConfig = {
   // Permite que o Playwright use um diretório de desenvolvimento isolado sem
   // disputar o lock do servidor local do workspace.
   distDir: process.env.NEXT_DIST_DIR || '.next',
+  typescript: {
+    // O `next build` deve validar somente o código que vai para produção.
+    // Testes continuam cobertos pelo typecheck completo e pelo Vitest, sem
+    // aumentar desnecessariamente a memória do processo de deploy.
+    tsconfigPath: './tsconfig.build.json',
+  },
   poweredByHeader: false,
   // Sentry no servidor via require() real — evita vendor-chunks webpack desencontrados após mudanças de deps / cache .next
   serverExternalPackages: [
