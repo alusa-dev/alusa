@@ -17,7 +17,9 @@ export async function sendContractSignatureOtpEmail(input: {
     to: input.to,
     category: 'contract_signature_otp',
     idempotencyKey: input.idempotencyKey,
-    from: process.env.EMAIL_FROM_INVITES || process.env.EMAIL_FROM_AUTH,
+    from: process.env.EMAIL_FROM_CONTRACTS
+      || process.env.EMAIL_FROM_AUTH
+      || process.env.EMAIL_FROM_INVITES,
     subject: 'Seu código para assinar o contrato na Alusa',
     template: {
       id: CONTRACT_SIGNATURE_OTP_TEMPLATE_ID,
