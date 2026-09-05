@@ -1788,7 +1788,15 @@ model Aluno {
   isentoTaxaMatricula            Boolean   @default(false)
   consentimentoImagem            Boolean   @default(false)
   dataConsentimentoImagem        DateTime?
-  consentimentoComunicacoes      Boolean   @default(true)
+  consentimentoComunicacoes       Boolean   @default(false)
+  dataConsentimentoComunicacoes   DateTime?
+  versaoConsentimentoComunicacoes String?
+  origemConsentimentoComunicacoes String?
+  dataRevogacaoComunicacoes       DateTime?
+  consentimentoMarketing          Boolean   @default(false)
+  dataConsentimentoMarketing      DateTime?
+  versaoConsentimentoMarketing    String?
+  origemConsentimentoMarketing    String?
   tamanhoCamiseta                String?
   tamanhoCalcado                 String?
   codigoInterno                  String?
@@ -1848,6 +1856,15 @@ model Responsavel {
   enderecoCidade                 String?
   enderecoUf                     String?
   financeiro                     Boolean   @default(false)
+  consentimentoComunicacoes       Boolean   @default(false)
+  dataConsentimentoComunicacoes   DateTime?
+  versaoConsentimentoComunicacoes String?
+  origemConsentimentoComunicacoes String?
+  dataRevogacaoComunicacoes       DateTime?
+  consentimentoMarketing          Boolean   @default(false)
+  dataConsentimentoMarketing      DateTime?
+  versaoConsentimentoMarketing    String?
+  origemConsentimentoMarketing    String?
   asaasId                        String?
   asaasCustomerId                String?
   asaasCustomerExternalReference String?
@@ -5402,6 +5419,11 @@ model ContractWhatsAppNotification {
   lastErrorCode     String?
   lastError         String?
   correlationId     String?
+  consentimentoRegistrado   Boolean   @default(false)
+  consentimentoVersao       String?
+  consentimentoOrigem       String?
+  consentimentoRegistradoEm DateTime?
+  consentimentoRevogadoEm   DateTime?
   whatsappJobId     String?
   processedAt       DateTime?
   createdAt         DateTime                            @default(now())

@@ -112,7 +112,15 @@ describe('createPendingEnrollmentContract', () => {
         cpf: null,
         dataNasc: new Date('2015-01-01'),
         telefone: null,
-        responsaveis: [{ tipoVinculo: 'PRINCIPAL', responsavel: { nome: 'Responsável', cpf: null, telefone: '+55 (97) 98128-3106' } }],
+        responsaveis: [{ tipoVinculo: 'PRINCIPAL', responsavel: {
+          nome: 'Responsável',
+          cpf: null,
+          telefone: '+55 (97) 98128-3106',
+          consentimentoComunicacoes: true,
+          dataConsentimentoComunicacoes: new Date('2026-09-05T12:00:00.000Z'),
+          versaoConsentimentoComunicacoes: '2026-09-05',
+          origemConsentimentoComunicacoes: 'ALUNO_WIZARD',
+        } }],
       },
       responsavelFinanceiro: null,
     });

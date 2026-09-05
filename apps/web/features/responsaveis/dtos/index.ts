@@ -20,6 +20,8 @@ export const responsavelSummaryDTOSchema = z.object({
   email: z.string(),
   telefone: z.string(),
   financeiro: z.boolean(),
+  consentimentoComunicacoes: z.boolean().optional(),
+  consentimentoMarketing: z.boolean().optional(),
   alunosCount: z.number().int().nonnegative().optional().default(0),
 });
 

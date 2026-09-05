@@ -244,6 +244,7 @@ type AlunoExtraFields = Partial<{
   consentimentoImagem: boolean;
   dataConsentimentoImagem: Date;
   consentimentoComunicacoes: boolean;
+  consentimentoMarketing: boolean;
   tamanhoCamiseta: string;
   tamanhoCalcado: string;
   codigoInterno: string;
@@ -486,6 +487,23 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
             enderecoCidade: normalizedData.responsavel.endereco?.cidade || existing.enderecoCidade,
             enderecoUf: normalizedData.responsavel.endereco?.uf || existing.enderecoUf,
             financeiro: normalizedData.responsavel.financeiro ?? existing.financeiro,
+            ...(normalizedData.responsavel.consentimentoComunicacoes !== undefined
+              ? {
+                  consentimentoComunicacoes: normalizedData.responsavel.consentimentoComunicacoes,
+                  dataConsentimentoComunicacoes: normalizedData.responsavel.consentimentoComunicacoes ? new Date() : null,
+                  versaoConsentimentoComunicacoes: normalizedData.responsavel.consentimentoComunicacoes ? '2026-09-05' : null,
+                  origemConsentimentoComunicacoes: normalizedData.responsavel.consentimentoComunicacoes ? 'ALUNO_WIZARD' : null,
+                  dataRevogacaoComunicacoes: normalizedData.responsavel.consentimentoComunicacoes ? null : new Date(),
+                }
+              : {}),
+            ...(normalizedData.responsavel.consentimentoMarketing !== undefined
+              ? {
+                  consentimentoMarketing: normalizedData.responsavel.consentimentoMarketing,
+                  dataConsentimentoMarketing: normalizedData.responsavel.consentimentoMarketing ? new Date() : null,
+                  versaoConsentimentoMarketing: normalizedData.responsavel.consentimentoMarketing ? '2026-09-05' : null,
+                  origemConsentimentoMarketing: 'ALUNO_WIZARD',
+                }
+              : {}),
           },
         });
         responsavelId = existing.id;
@@ -506,6 +524,14 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
             enderecoCidade: normalizedData.responsavel.endereco?.cidade || undefined,
             enderecoUf: normalizedData.responsavel.endereco?.uf || undefined,
             financeiro: normalizedData.responsavel.financeiro ?? true,
+            consentimentoComunicacoes: normalizedData.responsavel.consentimentoComunicacoes ?? false,
+            dataConsentimentoComunicacoes: normalizedData.responsavel.consentimentoComunicacoes ? new Date() : undefined,
+            versaoConsentimentoComunicacoes: normalizedData.responsavel.consentimentoComunicacoes ? '2026-09-05' : undefined,
+            origemConsentimentoComunicacoes: normalizedData.responsavel.consentimentoComunicacoes ? 'ALUNO_WIZARD' : undefined,
+            consentimentoMarketing: normalizedData.responsavel.consentimentoMarketing ?? false,
+            dataConsentimentoMarketing: normalizedData.responsavel.consentimentoMarketing ? new Date() : undefined,
+            versaoConsentimentoMarketing: normalizedData.responsavel.consentimentoMarketing ? '2026-09-05' : undefined,
+            origemConsentimentoMarketing: normalizedData.responsavel.consentimentoMarketing ? 'ALUNO_WIZARD' : undefined,
           },
         });
         responsavelId = resp.id;
@@ -641,7 +667,14 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       dataConsentimentoImagem: normalizedData.consentimentoImagem
         ? normalizedData.dataConsentimentoImagem || new Date()
         : undefined,
-      consentimentoComunicacoes: normalizedData.consentimentoComunicacoes ?? true,
+      consentimentoComunicacoes: normalizedData.consentimentoComunicacoes ?? false,
+      dataConsentimentoComunicacoes: normalizedData.consentimentoComunicacoes ? new Date() : undefined,
+      versaoConsentimentoComunicacoes: normalizedData.consentimentoComunicacoes ? '2026-09-05' : undefined,
+      origemConsentimentoComunicacoes: normalizedData.consentimentoComunicacoes ? 'ALUNO_WIZARD' : undefined,
+      consentimentoMarketing: normalizedData.consentimentoMarketing ?? false,
+      dataConsentimentoMarketing: normalizedData.consentimentoMarketing ? new Date() : undefined,
+      versaoConsentimentoMarketing: normalizedData.consentimentoMarketing ? '2026-09-05' : undefined,
+      origemConsentimentoMarketing: normalizedData.consentimentoMarketing ? 'ALUNO_WIZARD' : undefined,
       tamanhoCamiseta: nullifyEmpty(normalizedData.tamanhoCamiseta ?? undefined),
       tamanhoCalcado: nullifyEmpty(normalizedData.tamanhoCalcado ?? undefined),
       codigoInterno,
@@ -689,6 +722,25 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
         createdAlunoResponsavelId = vinculo.id;
         console.log('🔗 Responsável vinculado ao aluno');
       }
+    }
+
+    if (normalizedData.consentimentoComunicacoes !== undefined || normalizedData.consentimentoMarketing !== undefined) {
+      await tx.auditLog.create({
+        data: {
+          contaId: normalizedData.contaId,
+          actorType: 'SYSTEM',
+          action: 'COMUNICACAO_CONSENTIMENTO_ATUALIZADO',
+          entityType: 'ALUNO',
+          entityId: aluno.id,
+          metadata: {
+            consentimentoComunicacoes: normalizedData.consentimentoComunicacoes ?? false,
+            consentimentoMarketing: normalizedData.consentimentoMarketing ?? false,
+            origem: 'ALUNO_WIZARD',
+            versao: '2026-09-05',
+            responsavelId,
+          },
+        },
+      });
     }
 
     if (alunoExistente) {
@@ -857,6 +909,8 @@ type UpdateAlunoWithResponsavel = AlunoUpdateInput &
       cpf: string;
       email: string;
       telefone: string;
+      consentimentoComunicacoes?: boolean;
+      consentimentoMarketing?: boolean;
       endereco?: Partial<{
         cep: string;
         logradouro: string;
@@ -890,18 +944,35 @@ export async function updateAluno(data: UpdateAlunoWithResponsavel) {
       throw new Error('Aluno não encontrado');
     }
 
-    // Atualiza aluno em si
-    const aluno = await tx.aluno.update({
-      where: { id },
-      data: {
-        ...rest,
-        email: normEmail(rest.email),
-        telefone: digits(rest.telefone),
-        cpf: digits(rest.cpf),
-        contatoEmergenciaTelefone: digits(rest.contatoEmergenciaTelefone),
-        ...enderecoFields,
-      },
-    });
+    // Atualiza aluno em si e registra a versão/origem da preferência.
+    const alunoUpdateData: Record<string, unknown> = {
+      ...rest,
+      email: normEmail(rest.email),
+      telefone: digits(rest.telefone),
+      cpf: digits(rest.cpf),
+      contatoEmergenciaTelefone: digits(rest.contatoEmergenciaTelefone),
+      ...enderecoFields,
+    };
+    if (typeof rest.consentimentoComunicacoes === 'boolean') {
+      alunoUpdateData.consentimentoComunicacoes = rest.consentimentoComunicacoes;
+      if (rest.consentimentoComunicacoes) {
+        alunoUpdateData.dataConsentimentoComunicacoes = new Date();
+        alunoUpdateData.versaoConsentimentoComunicacoes = '2026-09-05';
+        alunoUpdateData.origemConsentimentoComunicacoes = 'ALUNO_EDICAO';
+        alunoUpdateData.dataRevogacaoComunicacoes = null;
+      } else {
+        alunoUpdateData.dataRevogacaoComunicacoes = new Date();
+      }
+    }
+    if (typeof rest.consentimentoMarketing === 'boolean') {
+      alunoUpdateData.consentimentoMarketing = rest.consentimentoMarketing;
+      if (rest.consentimentoMarketing) {
+        alunoUpdateData.dataConsentimentoMarketing = new Date();
+        alunoUpdateData.versaoConsentimentoMarketing = '2026-09-05';
+        alunoUpdateData.origemConsentimentoMarketing = 'ALUNO_EDICAO';
+      }
+    }
+    const aluno = await tx.aluno.update({ where: { id }, data: alunoUpdateData });
 
     // Atualiza/cria responsável se enviado
     if (responsavel && Object.keys(responsavel).length > 0) {
@@ -921,6 +992,25 @@ export async function updateAluno(data: UpdateAlunoWithResponsavel) {
         {
           const v = digits(responsavel.telefone);
           if (v) respUpdateData.telefone = v;
+        }
+        if (typeof responsavel.consentimentoComunicacoes === 'boolean') {
+          respUpdateData.consentimentoComunicacoes = responsavel.consentimentoComunicacoes;
+          if (responsavel.consentimentoComunicacoes) {
+            respUpdateData.dataConsentimentoComunicacoes = new Date();
+            respUpdateData.versaoConsentimentoComunicacoes = '2026-09-05';
+            respUpdateData.origemConsentimentoComunicacoes = 'ALUNO_EDICAO';
+            respUpdateData.dataRevogacaoComunicacoes = null;
+          } else {
+            respUpdateData.dataRevogacaoComunicacoes = new Date();
+          }
+        }
+        if (typeof responsavel.consentimentoMarketing === 'boolean') {
+          respUpdateData.consentimentoMarketing = responsavel.consentimentoMarketing;
+          if (responsavel.consentimentoMarketing) {
+            respUpdateData.dataConsentimentoMarketing = new Date();
+            respUpdateData.versaoConsentimentoMarketing = '2026-09-05';
+            respUpdateData.origemConsentimentoMarketing = 'ALUNO_EDICAO';
+          }
         }
         if (responsavel.endereco)
           Object.assign(
@@ -950,6 +1040,22 @@ export async function updateAluno(data: UpdateAlunoWithResponsavel) {
               telefone,
               ...flattenResponsavelEndereco({ endereco: responsavel.endereco ?? null }),
               financeiro: true,
+              consentimentoComunicacoes: responsavel.consentimentoComunicacoes ?? false,
+              consentimentoMarketing: responsavel.consentimentoMarketing ?? false,
+              ...(responsavel.consentimentoComunicacoes
+                ? {
+                    dataConsentimentoComunicacoes: new Date(),
+                    versaoConsentimentoComunicacoes: '2026-09-05',
+                    origemConsentimentoComunicacoes: 'ALUNO_EDICAO',
+                  }
+                : {}),
+              ...(responsavel.consentimentoMarketing
+                ? {
+                    dataConsentimentoMarketing: new Date(),
+                    versaoConsentimentoMarketing: '2026-09-05',
+                    origemConsentimentoMarketing: 'ALUNO_EDICAO',
+                  }
+                : {}),
             },
           });
           await tx.alunoResponsavel.create({
@@ -957,6 +1063,54 @@ export async function updateAluno(data: UpdateAlunoWithResponsavel) {
           });
         }
       }
+    }
+
+    const alunoConsentTouched =
+      typeof rest.consentimentoComunicacoes === 'boolean' ||
+      typeof rest.consentimentoMarketing === 'boolean';
+    const responsavelConsentTouched =
+      typeof responsavel?.consentimentoComunicacoes === 'boolean' ||
+      typeof responsavel?.consentimentoMarketing === 'boolean';
+    if (alunoConsentTouched || responsavelConsentTouched) {
+      await tx.auditLog.create({
+        data: {
+          contaId,
+          actorType: 'SYSTEM',
+          action: 'COMUNICACAO_CONSENTIMENTO_ATUALIZADO',
+          entityType: 'ALUNO',
+          entityId: id,
+          metadata: {
+            aluno:
+              alunoConsentTouched
+                ? {
+                    consentimentoComunicacoes:
+                      typeof rest.consentimentoComunicacoes === 'boolean'
+                        ? rest.consentimentoComunicacoes
+                        : undefined,
+                    consentimentoMarketing:
+                      typeof rest.consentimentoMarketing === 'boolean'
+                        ? rest.consentimentoMarketing
+                        : undefined,
+                  }
+                : undefined,
+            responsavel:
+              responsavelConsentTouched
+                ? {
+                    consentimentoComunicacoes:
+                      typeof responsavel?.consentimentoComunicacoes === 'boolean'
+                        ? responsavel.consentimentoComunicacoes
+                        : undefined,
+                    consentimentoMarketing:
+                      typeof responsavel?.consentimentoMarketing === 'boolean'
+                        ? responsavel.consentimentoMarketing
+                        : undefined,
+                  }
+                : undefined,
+            origem: 'ALUNO_EDICAO',
+            versao: '2026-09-05',
+          },
+        },
+      });
     }
 
     // Sincronizar atualização com Asaas (fire-and-forget, não bloqueia)
@@ -1302,6 +1456,14 @@ export async function anonimizarAluno(input: AnonimizarAlunoInput) {
         consentimentoImagem: false,
         dataConsentimentoImagem: null,
         consentimentoComunicacoes: false,
+        consentimentoMarketing: false,
+        dataConsentimentoComunicacoes: null,
+        versaoConsentimentoComunicacoes: null,
+        origemConsentimentoComunicacoes: null,
+        dataConsentimentoMarketing: null,
+        versaoConsentimentoMarketing: null,
+        origemConsentimentoMarketing: null,
+        dataRevogacaoComunicacoes: new Date(),
       },
     });
 

@@ -139,15 +139,42 @@ export async function issueEnrollmentContract(
           cpf: true,
           dataNasc: true,
           telefone: true,
+          consentimentoComunicacoes: true,
+          dataConsentimentoComunicacoes: true,
+          versaoConsentimentoComunicacoes: true,
+          origemConsentimentoComunicacoes: true,
           responsaveis: {
             where: { contaId: input.contaId, tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
             orderBy: { id: 'asc' },
             take: 1,
-            select: { tipoVinculo: true, responsavel: { select: { nome: true, cpf: true, telefone: true } } },
+            select: {
+              tipoVinculo: true,
+              responsavel: {
+                select: {
+                  nome: true,
+                  cpf: true,
+                  telefone: true,
+                  consentimentoComunicacoes: true,
+                  dataConsentimentoComunicacoes: true,
+                  versaoConsentimentoComunicacoes: true,
+                  origemConsentimentoComunicacoes: true,
+                },
+              },
+            },
           },
         },
       },
-      responsavelFinanceiro: { select: { nome: true, cpf: true, telefone: true } },
+      responsavelFinanceiro: {
+        select: {
+          nome: true,
+          cpf: true,
+          telefone: true,
+          consentimentoComunicacoes: true,
+          dataConsentimentoComunicacoes: true,
+          versaoConsentimentoComunicacoes: true,
+          origemConsentimentoComunicacoes: true,
+        },
+      },
     },
   });
 
@@ -174,6 +201,46 @@ export async function issueEnrollmentContract(
     if (origem.status !== 'ASSINADO') throw new Error('CONTRATO_ORIGEM_NAO_ASSINADO');
   }
 
+  const alunoMaior = Boolean(matricula.aluno.dataNasc && isMaiorDeIdade(matricula.aluno.dataNasc));
+  const linkedResponsavel = matricula.aluno.responsaveis[0]?.responsavel ?? null;
+  const recipient = alunoMaior
+    ? {
+        phone: matricula.aluno.telefone,
+        type: 'ALUNO',
+        consent: matricula.aluno.consentimentoComunicacoes,
+        consentAt: matricula.aluno.dataConsentimentoComunicacoes,
+        consentVersion: matricula.aluno.versaoConsentimentoComunicacoes,
+        consentSource: matricula.aluno.origemConsentimentoComunicacoes,
+      }
+    : matricula.responsavelFinanceiro
+      ? {
+          phone: matricula.responsavelFinanceiro.telefone,
+          type: 'RESPONSAVEL',
+          consent: matricula.responsavelFinanceiro.consentimentoComunicacoes,
+          consentAt: matricula.responsavelFinanceiro.dataConsentimentoComunicacoes,
+          consentVersion: matricula.responsavelFinanceiro.versaoConsentimentoComunicacoes,
+          consentSource: matricula.responsavelFinanceiro.origemConsentimentoComunicacoes,
+        }
+      : linkedResponsavel
+        ? {
+            phone: linkedResponsavel.telefone,
+            type: 'RESPONSAVEL',
+            consent: linkedResponsavel.consentimentoComunicacoes,
+            consentAt: linkedResponsavel.dataConsentimentoComunicacoes,
+            consentVersion: linkedResponsavel.versaoConsentimentoComunicacoes,
+            consentSource: linkedResponsavel.origemConsentimentoComunicacoes,
+          }
+        : null;
+  const consentDecisionSnapshot = {
+    whatsapp: {
+      granted: Boolean(recipient?.consent),
+      recipientType: recipient?.type ?? null,
+      recipientPhoneSuffix: recipient?.phone ? recipient.phone.replace(/\D/g, '').slice(-4) : null,
+      capturedAt: recipient?.consentAt?.toISOString() ?? null,
+      version: recipient?.consentVersion ?? null,
+      source: recipient?.consentSource ?? null,
+    },
+  } as Prisma.InputJsonValue;
   const signerContext = buildSignerContext(matricula);
   const { token: publicToken, tokenHash: tokenPublicoHash } = createPublicContractToken();
   const expirationDays = Math.max(1, Math.min(90, input.expirationDays ?? 7));
@@ -189,6 +256,7 @@ export async function issueEnrollmentContract(
       hashPdf: modelo.hashSha256,
       camposAssinaturaSnapshot: buildFieldsSnapshot(modelo.campos),
       termosConsentimentoSnapshot: snapshotContractConsentTerms(modelo.consentimentos ?? [], signerContext),
+      decisoesConsentimento: consentDecisionSnapshot,
       status: 'PENDENTE',
       // O valor bruto nunca é persistido; o prefixo mantém compatibilidade com dados legados.
       tokenPublico: `hash:${tokenPublicoHash}`,
@@ -244,15 +312,10 @@ export async function issueEnrollmentContract(
     data: { contratoAtualId: contrato.id, statusContrato: 'AGUARDANDO_ASSINATURA' },
   });
 
-  const alunoMaior = Boolean(matricula.aluno.dataNasc && isMaiorDeIdade(matricula.aluno.dataNasc));
-  const linkedResponsavel = matricula.aluno.responsaveis[0]?.responsavel ?? null;
-  const recipientPhone = alunoMaior
-    ? matricula.aluno.telefone
-    : matricula.responsavelFinanceiro?.telefone ?? linkedResponsavel?.telefone ?? null;
-  if (recipientPhone) {
+  if (recipient?.phone && recipient.consent) {
     let normalizedPhone: string;
     try {
-      normalizedPhone = normalizeBrazilianWhatsAppPhone(recipientPhone);
+      normalizedPhone = normalizeBrazilianWhatsAppPhone(recipient.phone);
     } catch {
       // Telefone ausente ou inválido não pode impedir a criação do contrato.
       normalizedPhone = '';
@@ -267,9 +330,31 @@ export async function issueEnrollmentContract(
           templateName: alunoMaior ? whatsappConfig.contractMajorTemplateName : whatsappConfig.contractMinorTemplateName,
           languageCode: whatsappConfig.contractTemplateLanguage,
           recipientPhone: normalizedPhone,
-          recipientType: alunoMaior ? 'ALUNO' : 'RESPONSAVEL',
+          recipientType: recipient.type,
           tokenCriptografado: encryptSecret(publicToken),
           correlationId: `contract:${contrato.id}`,
+          consentimentoRegistrado: true,
+          consentimentoVersao: recipient.consentVersion ?? '2026-09-05',
+          consentimentoOrigem: recipient.consentSource ?? 'ALUNO_WIZARD',
+          consentimentoRegistradoEm: recipient.consentAt ?? new Date(),
+        },
+      });
+    }
+  } else {
+    if (tx.auditLog?.create) {
+      await tx.auditLog.create({
+        data: {
+          contaId: input.contaId,
+          actorType: 'SYSTEM',
+          action: 'WHATSAPP_CONTRATO_NAO_ENFILEIRADO_SEM_CONSENTIMENTO',
+          entityType: 'CONTRATO',
+          entityId: contrato.id,
+          correlationId: `contract:${contrato.id}`,
+          metadata: {
+            recipientType: recipient?.type ?? null,
+            hasPhone: Boolean(recipient?.phone),
+            consentimentoComunicacoes: Boolean(recipient?.consent),
+          },
         },
       });
     }

@@ -263,7 +263,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       purpose: 'STUDENT_EDIT',
       metadata: {
         fields: Object.keys(body ?? {}).filter((field) =>
-          ['cpf', 'email', 'telefone', 'dataNasc', 'endereco', 'restricoesMedicas', 'alergias'].includes(field),
+          [
+            'cpf',
+            'email',
+            'telefone',
+            'dataNasc',
+            'endereco',
+            'restricoesMedicas',
+            'alergias',
+            'consentimentoComunicacoes',
+            'consentimentoMarketing',
+            'responsavel',
+          ].includes(field),
         ),
       },
     });

@@ -31,6 +31,8 @@ export const responsavelSchema = z.object({
   enderecoUf: z
     .preprocess(emptyToUndefined, z.string().regex(/^[A-Z]{2}$/i, 'UF inválida').optional()),
   financeiro: z.boolean().optional().default(false),
+  consentimentoComunicacoes: z.boolean().optional().default(false),
+  consentimentoMarketing: z.boolean().optional().default(false),
 }).strict();
 
 // Shape base (sem superRefine) para permitir derivar .partial()
@@ -75,7 +77,8 @@ const alunoShape = {
   tamanhoCalcado: z.string().nullable().optional().refine(v => !v || /^[0-9]{2,3}$/.test(v), 'Calçado inválido'),
   consentimentoImagem: z.boolean().optional().default(false),
   dataConsentimentoImagem: z.coerce.date().optional().nullable(),
-  consentimentoComunicacoes: z.boolean().optional().default(true),
+  consentimentoComunicacoes: z.boolean().optional().default(false),
+  consentimentoMarketing: z.boolean().optional().default(false),
   tags: z
     .union([z.array(z.string().min(1).max(30)), z.string()])
     .optional()

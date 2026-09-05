@@ -145,6 +145,8 @@ export const responsavelSchema = z.object({
   telefone: z.preprocess(normalizeTelefone, z.string().regex(telRegex, 'Telefone deve ter 10 ou 11 dígitos')),
   endereco: z.preprocess(parseJsonIfString, enderecoSchemaBase).optional(),
   financeiro: z.boolean().default(true).optional(),
+  consentimentoComunicacoes: z.boolean().optional().default(false),
+  consentimentoMarketing: z.boolean().optional().default(false),
 });
 
 /**
@@ -189,7 +191,8 @@ export const alunoBaseSchema = z.object({
   isentoTaxaMatricula: z.boolean().optional(),
   consentimentoImagem: z.boolean().optional(),
   dataConsentimentoImagem: z.preprocess(emptyOrNullToUndefined, z.coerce.date().optional()),
-  consentimentoComunicacoes: z.boolean().optional(),
+  consentimentoComunicacoes: z.boolean().optional().default(false),
+  consentimentoMarketing: z.boolean().optional().default(false),
   tamanhoCamiseta: z.preprocess(emptyOrNullToUndefined, z.string().optional()),
   tamanhoCalcado: z.preprocess(emptyOrNullToUndefined, z.string().optional()),
   codigoInterno: z.preprocess(emptyOrNullToUndefined, z.string().optional()),

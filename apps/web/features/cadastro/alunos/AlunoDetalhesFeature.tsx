@@ -38,6 +38,8 @@ type ResponsavelResumo = {
   email: Nullable<string>;
   telefone: Nullable<string>;
   financeiro: boolean;
+  consentimentoComunicacoes: boolean;
+  consentimentoMarketing: boolean;
   asaasCustomerId: Nullable<string>;
   endereco: {
     cep: Nullable<string>;
@@ -174,6 +176,7 @@ type AlunoDetalhes = {
   consentimentoImagem: boolean;
   dataConsentimentoImagem: Nullable<string>;
   consentimentoComunicacoes: boolean;
+  consentimentoMarketing: boolean;
   tamanhoCamiseta: Nullable<string>;
   tamanhoCalcado: Nullable<string>;
   codigoInterno: Nullable<string>;
@@ -232,6 +235,7 @@ type AlunoForm = {
   isentoTaxaMatricula: boolean;
   consentimentoImagem: boolean;
   consentimentoComunicacoes: boolean;
+  consentimentoMarketing: boolean;
   tamanhoCamiseta: string;
   tamanhoCalcado: string;
   codigoInterno: string;
@@ -247,6 +251,8 @@ type AlunoForm = {
   responsavelBairro: string;
   responsavelCidade: string;
   responsavelUf: string;
+  responsavelConsentimentoComunicacoes: boolean;
+  responsavelConsentimentoMarketing: boolean;
 };
 
 const emptyForm: AlunoForm = {
@@ -275,7 +281,8 @@ const emptyForm: AlunoForm = {
   bolsaDescontoPercent: '',
   isentoTaxaMatricula: false,
   consentimentoImagem: false,
-  consentimentoComunicacoes: true,
+  consentimentoComunicacoes: false,
+  consentimentoMarketing: false,
   tamanhoCamiseta: '',
   tamanhoCalcado: '',
   codigoInterno: '',
@@ -291,6 +298,8 @@ const emptyForm: AlunoForm = {
   responsavelBairro: '',
   responsavelCidade: '',
   responsavelUf: '',
+  responsavelConsentimentoComunicacoes: false,
+  responsavelConsentimentoMarketing: false,
 };
 
 /** Largura máxima alinhada ao cabeçalho nas páginas de detalhe (cadastro). */
@@ -401,6 +410,7 @@ function toForm(aluno: AlunoDetalhes): AlunoForm {
     isentoTaxaMatricula: Boolean(aluno.isentoTaxaMatricula),
     consentimentoImagem: Boolean(aluno.consentimentoImagem),
     consentimentoComunicacoes: Boolean(aluno.consentimentoComunicacoes),
+    consentimentoMarketing: Boolean(aluno.consentimentoMarketing),
     tamanhoCamiseta: aluno.tamanhoCamiseta ?? '',
     tamanhoCalcado: aluno.tamanhoCalcado ?? '',
     codigoInterno: aluno.codigoInterno ?? '',
@@ -416,6 +426,8 @@ function toForm(aluno: AlunoDetalhes): AlunoForm {
     responsavelBairro: responsavel?.endereco.bairro ?? '',
     responsavelCidade: responsavel?.endereco.cidade ?? '',
     responsavelUf: responsavel?.endereco.uf ?? '',
+    responsavelConsentimentoComunicacoes: Boolean(responsavel?.consentimentoComunicacoes),
+    responsavelConsentimentoMarketing: Boolean(responsavel?.consentimentoMarketing),
   };
 }
 
@@ -467,6 +479,7 @@ function buildUpdatePayload(form: AlunoForm) {
     isentoTaxaMatricula: form.isentoTaxaMatricula,
     consentimentoImagem: form.consentimentoImagem,
     consentimentoComunicacoes: form.consentimentoComunicacoes,
+    consentimentoMarketing: form.consentimentoMarketing,
     tamanhoCamiseta: form.tamanhoCamiseta,
     tamanhoCalcado: form.tamanhoCalcado,
     codigoInterno: form.codigoInterno,
@@ -478,6 +491,8 @@ function buildUpdatePayload(form: AlunoForm) {
           email: form.responsavelEmail,
           telefone: form.responsavelTelefone,
           financeiro: true,
+          consentimentoComunicacoes: form.responsavelConsentimentoComunicacoes,
+          consentimentoMarketing: form.responsavelConsentimentoMarketing,
           endereco: {
             cep: form.responsavelCep,
             logradouro: form.responsavelLogradouro,
@@ -976,6 +991,7 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
               <BooleanField label="Isento da taxa de matrícula" checked={form.isentoTaxaMatricula} editing={editSection === 'aluno'} onChange={(value) => updateField('isentoTaxaMatricula', value)} />
               <BooleanField label="Consentimento de imagem" checked={form.consentimentoImagem} editing={editSection === 'aluno'} onChange={(value) => updateField('consentimentoImagem', value)} />
               <BooleanField label="Comunicações permitidas" checked={form.consentimentoComunicacoes} editing={editSection === 'aluno'} onChange={(value) => updateField('consentimentoComunicacoes', value)} />
+              <BooleanField label="Comunicações promocionais" checked={form.consentimentoMarketing} editing={editSection === 'aluno'} onChange={(value) => updateField('consentimentoMarketing', value)} />
             </div>
             <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
               <TextField label="Alergias" value={form.alergias} editing={editSection === 'aluno'} onChange={(value) => updateField('alergias', value)} />
@@ -998,6 +1014,8 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
               <Field label="CPF" value={form.responsavelCpf} editing={editSection === 'responsavel'} onChange={(value) => updateField('responsavelCpf', value)} />
               <Field label="E-mail" type="email" value={form.responsavelEmail} editing={editSection === 'responsavel'} onChange={(value) => updateField('responsavelEmail', value)} />
               <Field label="Telefone" value={form.responsavelTelefone} editing={editSection === 'responsavel'} onChange={(value) => updateField('responsavelTelefone', value)} />
+              <BooleanField label="Comunicações permitidas" checked={aluno.responsavelPrincipal?.consentimentoComunicacoes ?? false} editing={editSection === 'responsavel'} onChange={(value) => updateField('responsavelConsentimentoComunicacoes', value)} />
+              <BooleanField label="Comunicações promocionais" checked={aluno.responsavelPrincipal?.consentimentoMarketing ?? false} editing={editSection === 'responsavel'} onChange={(value) => updateField('responsavelConsentimentoMarketing', value)} />
               <LockedField label="Vínculo" value={aluno.responsavelPrincipal?.tipoVinculo || 'Não informado'} />
               <LockedField label="Customer Asaas" value={aluno.responsavelPrincipal?.asaasCustomerId || 'Não sincronizado'} />
               <Field label="CEP" value={form.responsavelCep} editing={editSection === 'responsavel'} onChange={(value) => updateField('responsavelCep', value)} />

@@ -48,6 +48,8 @@ type ResponsavelFormState = {
   email: string;
   telefone: string;
   financeiro: boolean;
+  consentimentoComunicacoes: boolean;
+  consentimentoMarketing: boolean;
   endereco: ResponsavelEnderecoValue;
 };
 
@@ -57,6 +59,8 @@ const initialFormState: ResponsavelFormState = {
   email: '',
   telefone: '',
   financeiro: true,
+  consentimentoComunicacoes: false,
+  consentimentoMarketing: false,
   endereco: emptyResponsavelEnderecoValue,
 };
 
@@ -296,6 +300,37 @@ const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
                     </span>
                   </span>
                 </label>
+
+                <div className="sm:col-span-2 space-y-3 rounded-xl bg-white p-4 text-sm text-slate-700 md:p-3">
+                  <label className="flex cursor-pointer items-center gap-3">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 shrink-0 rounded border-slate-300 text-brand-accent"
+                      checked={form.consentimentoComunicacoes}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, consentimentoComunicacoes: event.target.checked }))
+                      }
+                    />
+                    <span>
+                      <span className="block font-medium text-slate-800">Comunicações da Alusa</span>
+                      <span className="block text-xs text-slate-500">Autorizo o envio de comunicações relacionadas à matrícula, contratos, pagamentos e serviços pelos canais disponíveis na plataforma.</span>
+                    </span>
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-3">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 shrink-0 rounded border-slate-300 text-brand-accent"
+                      checked={form.consentimentoMarketing}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, consentimentoMarketing: event.target.checked }))
+                      }
+                    />
+                    <span>
+                      <span className="block font-medium text-slate-800">Comunicações promocionais</span>
+                      <span className="block text-xs text-slate-500">Aceito receber novidades, campanhas e ofertas da Alusa pelos canais disponíveis.</span>
+                    </span>
+                  </label>
+                </div>
 
                 {form.financeiro ? (
                   <div className="sm:col-span-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:shadow-none">

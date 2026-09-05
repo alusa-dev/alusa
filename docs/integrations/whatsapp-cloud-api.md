@@ -34,7 +34,7 @@ O token exposto anteriormente deve ser revogado/regenerado antes de ser usado em
 
 ## Banco e deploy
 
-1. Aplicar `prisma/migrations/20260824100000_add_whatsapp_cloud_integration/migration.sql` e `prisma/migrations/20260905090000_contract_whatsapp_notifications/migration.sql` no banco do ambiente.
+1. Aplicar `prisma/migrations/20260824100000_add_whatsapp_cloud_integration/migration.sql`, `prisma/migrations/20260905090000_contract_whatsapp_notifications/migration.sql`, `prisma/migrations/20260905150000_communication_consent_controls/migration.sql` e `prisma/migrations/20260905153000_communication_consent_revocation/migration.sql` no banco do ambiente.
 2. Rodar `pnpm prisma:generate` durante o build.
 3. Configurar o cron `/api/jobs/whatsapp` com `CRON_SECRET`/`CRON_SECRET_TOKEN`.
 4. Publicar a aplicação em HTTPS. A Meta não consegue chamar `localhost`; para desenvolvimento use um túnel HTTPS.
@@ -51,6 +51,15 @@ O token exposto anteriormente deve ser revogado/regenerado antes de ser usado em
 - `POST /api/comunicacao/whatsapp/tickets/:id` recebe `{ "to": "+55..." }`, valida o `SupportCase` dentro da `contaId` da sessão e envia um resumo operacional.
 - `POST /api/comunicacao/whatsapp/contratos/:id/template` reprocessa uma notificação de contrato já criada, respeitando a mesma chave de deduplicação.
 - Os dois endpoints aceitam `Idempotency-Key`; sem esse header, uma chave aleatória é gerada por solicitação.
+
+## Preferências e consentimento
+
+- O wizard de cadastro do aluno apresenta, na etapa final, duas escolhas independentes: comunicações operacionais (matrícula, contratos, pagamentos e serviços) e comunicações promocionais. Para menores, a decisão é registrada no responsável selecionado; para maiores, no próprio aluno.
+- A preferência operacional é necessária para criar a notificação automática do contrato. Sem telefone válido ou sem consentimento, o contrato continua sendo criado, mas nenhuma notificação é enfileirada.
+- Cada aceite grava data, versão do texto e origem (`ALUNO_WIZARD`, `RESPONSAVEL_CADASTRO` ou `ALUNO_EDICAO`). A decisão operacional também é copiada para `Contrato.decisoesConsentimento` e para o snapshot da notificação, preservando a evidência da emissão.
+- O worker verifica novamente a preferência atual antes de enviar. Uma revogação feita depois da emissão bloqueia o envio pendente e gera auditoria; notificações bloqueadas ficam com status `SKIPPED` e código `CONSENT_NOT_GRANTED`.
+- Mensagens recebidas com `SAIR`, `PARAR`, `STOP`, `CANCELAR`, `CANCELA` ou `REMOVER` revogam a preferência operacional para os registros com aquele telefone e geram auditoria. O opt-out deve ser respeitado por todos os canais operacionais.
+- A revogação e a alteração de preferências podem ser feitas pelas telas administrativas de aluno/responsável. O consentimento promocional nunca autoriza o envio operacional por si só.
 
 ## Critérios de aceite cobertos
 

@@ -1,4 +1,7 @@
 "use client";
+import { Controller, useFormContext } from "react-hook-form";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import type { AlunoInput } from "../../../../../../prisma/zod/aluno";
 
 interface Props {
@@ -17,6 +20,14 @@ interface Props {
 }
 
 export default function ConfirmacaoSection({ all, fotoPreview }: Props) {
+  const { control } = useFormContext<AlunoInput>();
+  const isMinor = Boolean(all.responsavel);
+  const operationalConsentName = isMinor
+    ? ('responsavel.consentimentoComunicacoes' as const)
+    : ('consentimentoComunicacoes' as const);
+  const marketingConsentName = isMinor
+    ? ('responsavel.consentimentoMarketing' as const)
+    : ('consentimentoMarketing' as const);
   const tagsJoined = Array.isArray(all.tags) ? all.tags.join(', ') : '';
   const fmtDate = all.dataNasc ? new Date(all.dataNasc as unknown as Date).toLocaleDateString() : '';
   const grupos: Array<{titulo: string; itens: Array<[string, string | null | undefined]>}> = [
@@ -115,6 +126,64 @@ export default function ConfirmacaoSection({ all, fotoPreview }: Props) {
           </div>
         </div>
       )}
+      <div className="rounded-xl bg-slate-50/70 p-4 alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+        <h5 className="mb-3 text-sm font-semibold text-slate-800 alusa-dark:text-[color:var(--color-text-primary)]">
+          Preferências de comunicação
+        </h5>
+        <div className="space-y-2">
+            <div className="flex items-start gap-3">
+              <Controller
+                control={control}
+                name={operationalConsentName}
+                render={({ field }) => (
+                  <Checkbox
+                    id="aluno-consentimento-comunicacoes"
+                    checked={field.value === true}
+                    onCheckedChange={(checked) => field.onChange(checked === true)}
+                    className="mt-0.5"
+                  />
+                )}
+              />
+              <div className="space-y-1">
+                <Label
+                  htmlFor="aluno-consentimento-comunicacoes"
+                  className="cursor-pointer text-sm font-medium text-slate-800 alusa-dark:text-[color:var(--color-text-primary)]"
+                >
+                  Comunicações da Alusa
+                </Label>
+                <p className="text-xs leading-relaxed text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
+                  Autorizo a Alusa a enviar comunicações relacionadas à matrícula, contratos, pagamentos
+                  e serviços pelos canais disponíveis na plataforma.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 pt-2">
+              <Controller
+                control={control}
+                name={marketingConsentName}
+                render={({ field }) => (
+                  <Checkbox
+                    id="aluno-consentimento-marketing"
+                    checked={field.value === true}
+                    onCheckedChange={(checked) => field.onChange(checked === true)}
+                    className="mt-0.5"
+                  />
+                )}
+              />
+              <div className="space-y-1">
+                <Label
+                  htmlFor="aluno-consentimento-marketing"
+                  className="cursor-pointer text-sm font-medium text-slate-800 alusa-dark:text-[color:var(--color-text-primary)]"
+                >
+                  Comunicações promocionais
+                </Label>
+                <p className="text-xs leading-relaxed text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
+                  Aceito receber novidades, campanhas e ofertas da Alusa pelos canais disponíveis.
+                </p>
+              </div>
+            </div>
+        </div>
+      </div>
       <p className="text-[11px] text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
         Clique em <b>Concluir</b> para salvar o cadastro.
       </p>

@@ -32,6 +32,8 @@ const responsavelDetailSelect = {
   email: true,
   telefone: true,
   financeiro: true,
+  consentimentoComunicacoes: true,
+  consentimentoMarketing: true,
   asaasCustomerId: true,
   usuarioId: true,
   enderecoCep: true,
@@ -277,10 +279,32 @@ export async function PATCH(req: NextRequest, context: { params: IdParams }) {
       purpose: 'RESPONSAVEL_EDIT',
       metadata: {
         fields: Object.keys(raw ?? {}).filter((field) =>
-          ['cpf', 'email', 'telefone', 'endereco'].includes(field),
+          ['cpf', 'email', 'telefone', 'endereco', 'consentimentoComunicacoes', 'consentimentoMarketing'].includes(field),
         ),
       },
     });
+
+    if (
+      typeof validation.data.consentimentoComunicacoes === 'boolean' ||
+      typeof validation.data.consentimentoMarketing === 'boolean'
+    ) {
+      await prisma.auditLog.create({
+        data: {
+          contaId,
+          actorType: user?.id ? 'USER' : 'SYSTEM',
+          actorId: user?.id ?? undefined,
+          action: 'COMUNICACAO_CONSENTIMENTO_ATUALIZADO',
+          entityType: 'RESPONSAVEL',
+          entityId: responsavel.id,
+          metadata: {
+            consentimentoComunicacoes: validation.data.consentimentoComunicacoes,
+            consentimentoMarketing: validation.data.consentimentoMarketing,
+            origem: 'RESPONSAVEL_EDICAO',
+            versao: '2026-09-05',
+          },
+        },
+      });
+    }
 
     return NextResponse.json({ ...dto, asaasSync });
   } catch (error) {

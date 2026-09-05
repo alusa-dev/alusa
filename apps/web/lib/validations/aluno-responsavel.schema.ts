@@ -67,6 +67,8 @@ export const responsavelSchema = z.object({
     .refine((val) => validarTelefone(val), 'Telefone inválido (use 10 ou 11 dígitos)'),
   endereco: z.string().optional(),
   financeiro: z.boolean().default(true),
+  consentimentoComunicacoes: z.boolean().default(false),
+  consentimentoMarketing: z.boolean().default(false),
 });
 
 export type ResponsavelFormData = z.infer<typeof responsavelSchema>;

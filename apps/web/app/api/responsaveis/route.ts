@@ -93,6 +93,8 @@ export async function GET(req: NextRequest) {
         email: true,
         telefone: true,
         financeiro: true,
+        consentimentoComunicacoes: true,
+        consentimentoMarketing: true,
         _count: {
           select: {
             alunos: true,
@@ -162,6 +164,8 @@ export async function POST(req: NextRequest) {
         email: true,
         telefone: true,
         financeiro: true,
+        consentimentoComunicacoes: true,
+        consentimentoMarketing: true,
         _count: { select: { alunos: true } },
       },
     });
@@ -190,6 +194,8 @@ export async function POST(req: NextRequest) {
         email: true,
         telefone: true,
         financeiro: true,
+        consentimentoComunicacoes: true,
+        consentimentoMarketing: true,
         _count: {
           select: {
             alunos: true,
@@ -204,6 +210,25 @@ export async function POST(req: NextRequest) {
         cpf: responsavel.cpf || cpfDigits,
       }),
     );
+
+    if (data.consentimentoComunicacoes || data.consentimentoMarketing) {
+      await prisma.auditLog.create({
+        data: {
+          contaId,
+          actorType: 'USER',
+          actorId: session.user.id,
+          action: 'COMUNICACAO_CONSENTIMENTO_ATUALIZADO',
+          entityType: 'RESPONSAVEL',
+          entityId: responsavel.id,
+          metadata: {
+            consentimentoComunicacoes: data.consentimentoComunicacoes ?? false,
+            consentimentoMarketing: data.consentimentoMarketing ?? false,
+            origem: 'RESPONSAVEL_CADASTRO',
+            versao: '2026-09-05',
+          },
+        },
+      });
+    }
 
     let asaasSync: { status: 'OK' | 'FAILED' | 'SKIPPED'; message?: string } = { status: 'SKIPPED' };
     if (data.financeiro ?? true) {

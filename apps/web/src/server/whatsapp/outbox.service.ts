@@ -150,6 +150,30 @@ export type DrainContractWhatsAppNotificationsResult = {
   skipped: number;
 };
 
+async function hasCurrentContractRecipientConsent(input: {
+  contaId: string;
+  recipientType: string;
+  recipientPhone: string;
+}) {
+  let normalizedPhone = input.recipientPhone;
+  try {
+    normalizedPhone = normalizeBrazilianWhatsAppPhone(input.recipientPhone);
+  } catch {
+    // A malformed stored phone cannot be considered consented for sending.
+    return false;
+  }
+  const phoneVariants = Array.from(new Set([normalizedPhone, normalizedPhone.slice(-11)]));
+  const where = {
+    contaId: input.contaId,
+    consentimentoComunicacoes: true,
+    OR: phoneVariants.map((telefone) => ({ telefone })),
+  };
+  if (input.recipientType === 'ALUNO') {
+    return Boolean(await prisma.aluno.findFirst({ where, select: { id: true } }));
+  }
+  return Boolean(await prisma.responsavel.findFirst({ where, select: { id: true } }));
+}
+
 export async function requeueContractWhatsAppNotification(input: { contaId: string; contratoId: string; actorUserId?: string | null }) {
   const notification = await prisma.contractWhatsAppNotification.findFirst({
     where: { contaId: input.contaId, contratoId: input.contratoId },
@@ -163,9 +187,31 @@ export async function requeueContractWhatsAppNotification(input: { contaId: stri
   } catch {
     // O worker registrará a falha de destinatário sem interromper o reprocessamento.
   }
+  const consentPhoneVariants = Array.from(new Set([recipientPhone, recipientPhone.slice(-11)]));
+  const [alunoConsent, responsavelConsent] = await Promise.all([
+    prisma.aluno.findFirst({
+      where: { contaId: input.contaId, consentimentoComunicacoes: true, OR: consentPhoneVariants.map((telefone) => ({ telefone })) },
+      select: { id: true },
+    }),
+    prisma.responsavel.findFirst({
+      where: { contaId: input.contaId, consentimentoComunicacoes: true, OR: consentPhoneVariants.map((telefone) => ({ telefone })) },
+      select: { id: true },
+    }),
+  ]);
+  if (!alunoConsent && !responsavelConsent) return null;
   const updated = await prisma.contractWhatsAppNotification.updateMany({
     where: { id: notification.id, contaId: input.contaId },
-    data: { status: 'PENDING', recipientPhone, nextAttemptAt: new Date(), lockedAt: null, lockedBy: null, processedAt: null, lastErrorCode: null, lastError: null },
+    data: {
+      status: 'PENDING',
+      recipientPhone,
+      nextAttemptAt: new Date(),
+      lockedAt: null,
+      lockedBy: null,
+      processedAt: null,
+      lastErrorCode: null,
+      lastError: null,
+      consentimentoRevogadoEm: null,
+    },
   });
   if (updated.count !== 1) return null;
   await prisma.auditLog.create({
@@ -265,6 +311,38 @@ export async function drainContractWhatsAppNotifications(input: { limit?: number
     try {
       if (notification.contrato.status !== 'PENDENTE' || (notification.contrato.tokenExpiraEm && notification.contrato.tokenExpiraEm <= now)) {
         await prisma.contractWhatsAppNotification.update({ where: { id: notification.id }, data: { status: 'SKIPPED', processedAt: now, lockedAt: null, lockedBy: null, lastErrorCode: 'CONTRACT_NOT_SENDABLE' } });
+        result.skipped += 1;
+        continue;
+      }
+      const consented = await hasCurrentContractRecipientConsent({
+        contaId: notification.contaId,
+        recipientType: notification.recipientType,
+        recipientPhone: notification.recipientPhone,
+      });
+      if (!consented) {
+        await prisma.contractWhatsAppNotification.update({
+          where: { id: notification.id },
+          data: {
+            status: 'SKIPPED',
+            processedAt: now,
+            lockedAt: null,
+            lockedBy: null,
+            lastErrorCode: 'CONSENT_NOT_GRANTED',
+            lastError: 'Envio bloqueado porque a preferência de comunicação não está ativa.',
+            consentimentoRevogadoEm: now,
+          },
+        });
+        await prisma.auditLog.create({
+          data: {
+            contaId: notification.contaId,
+            actorType: 'SYSTEM',
+            action: 'WHATSAPP_CONTRATO_BLOQUEADO_SEM_CONSENTIMENTO_ATUAL',
+            entityType: 'ContractWhatsAppNotification',
+            entityId: notification.id,
+            correlationId: notification.correlationId ?? `contract:${notification.contratoId}`,
+            metadata: { recipientType: notification.recipientType, recipientSuffix: notification.recipientPhone.slice(-4) },
+          },
+        });
         result.skipped += 1;
         continue;
       }
@@ -613,6 +691,7 @@ async function processWhatsAppWebhookEvent(eventId: string) {
       if (!connection) throw new Error(`Conexão WhatsApp não encontrada para ${record.phoneNumberId}.`);
 
       for (const incoming of record.messages) {
+        const normalizedFromPhone = normalizeWhatsAppPhone(incoming.from);
         const existing = await tx.whatsAppMessage.findFirst({
           where: { connectionId: connection.id, externalMessageId: incoming.id },
           select: { id: true },
@@ -623,7 +702,7 @@ async function processWhatsAppWebhookEvent(eventId: string) {
           direction: WhatsAppMessageDirection.INBOUND,
           status: WhatsAppMessageStatus.DELIVERED,
           externalMessageId: incoming.id,
-          fromPhoneNumber: normalizeWhatsAppPhone(incoming.from),
+          fromPhoneNumber: normalizedFromPhone,
           messageType: incoming.type,
           body: incoming.text?.body ?? incoming.document?.caption ?? incoming.image?.caption ?? null,
           payload: incoming as unknown as Prisma.InputJsonValue,
@@ -632,6 +711,59 @@ async function processWhatsAppWebhookEvent(eventId: string) {
           await tx.whatsAppMessage.update({ where: { id: existing.id }, data });
         } else {
           await tx.whatsAppMessage.create({ data });
+        }
+
+        if (isWhatsAppOptOut(data.body)) {
+          const phoneVariants = Array.from(new Set([normalizedFromPhone, normalizedFromPhone.slice(-11)]));
+          const [alunos, responsaveis] = await Promise.all([
+            tx.aluno.findMany({
+              where: { OR: phoneVariants.map((telefone) => ({ telefone })) },
+              select: { id: true, contaId: true },
+            }),
+            tx.responsavel.findMany({
+              where: { OR: phoneVariants.map((telefone) => ({ telefone })) },
+              select: { id: true, contaId: true },
+            }),
+          ]);
+          const now = new Date();
+          for (const aluno of alunos) {
+            await tx.aluno.updateMany({
+              where: { id: aluno.id, contaId: aluno.contaId },
+              data: {
+                consentimentoComunicacoes: false,
+                dataRevogacaoComunicacoes: now,
+              },
+            });
+            await tx.auditLog.create({
+              data: {
+                contaId: aluno.contaId,
+                actorType: 'SYSTEM',
+                action: 'COMUNICACAO_CONSENTIMENTO_REVOGADO_WHATSAPP',
+                entityType: 'ALUNO',
+                entityId: aluno.id,
+                metadata: { phoneSuffix: normalizedFromPhone.slice(-4), source: 'WHATSAPP_INBOUND' },
+              },
+            });
+          }
+          for (const responsavel of responsaveis) {
+            await tx.responsavel.updateMany({
+              where: { id: responsavel.id, contaId: responsavel.contaId },
+              data: {
+                consentimentoComunicacoes: false,
+                dataRevogacaoComunicacoes: now,
+              },
+            });
+            await tx.auditLog.create({
+              data: {
+                contaId: responsavel.contaId,
+                actorType: 'SYSTEM',
+                action: 'COMUNICACAO_CONSENTIMENTO_REVOGADO_WHATSAPP',
+                entityType: 'RESPONSAVEL',
+                entityId: responsavel.id,
+                metadata: { phoneSuffix: normalizedFromPhone.slice(-4), source: 'WHATSAPP_INBOUND' },
+              },
+            });
+          }
         }
       }
 
@@ -664,4 +796,16 @@ function mapWhatsAppStatus(status: string): WhatsAppMessageStatus {
   if (status === 'read') return WhatsAppMessageStatus.READ;
   if (status === 'failed') return WhatsAppMessageStatus.FAILED;
   return WhatsAppMessageStatus.SENT;
+}
+
+const WHATSAPP_OPT_OUT_WORDS = new Set(['SAIR', 'PARAR', 'STOP', 'CANCELAR', 'CANCELA', 'REMOVER']);
+
+export function isWhatsAppOptOut(body: string | null): boolean {
+  if (!body) return false;
+  const normalized = body
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase();
+  return WHATSAPP_OPT_OUT_WORDS.has(normalized);
 }

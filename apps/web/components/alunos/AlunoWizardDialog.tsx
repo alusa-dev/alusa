@@ -62,6 +62,8 @@ export default function AlunoWizardDialog({
     defaultValues: {
       status: 'ATIVO',
       responsavel: null,
+      consentimentoComunicacoes: false,
+      consentimentoMarketing: false,
       responsavelModo: 'existente',
       responsavelExistenteId: null,
     } as Partial<WizardData>,
@@ -105,6 +107,8 @@ export default function AlunoWizardDialog({
       responsavelModo: 'existente',
       responsavelExistenteId: null,
       responsavel: null,
+      consentimentoComunicacoes: false,
+      consentimentoMarketing: false,
     } as Partial<WizardData>);
     setFoto('');
     setCropSource(null);

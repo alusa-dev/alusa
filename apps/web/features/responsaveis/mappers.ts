@@ -20,6 +20,8 @@ type ResponsavelSummaryRecord = {
   email: string;
   telefone: string;
   financeiro: boolean;
+  consentimentoComunicacoes?: boolean;
+  consentimentoMarketing?: boolean;
   _count?: {
     alunos?: number;
   };
@@ -73,6 +75,9 @@ export function mapListResponsaveisQueryToFilters(
 
 export function mapCreateResponsavelDTOToData(dto: CreateResponsavelInputDTO, contaId: string) {
   const financeiro = dto.financeiro ?? true;
+  const consentimentoComunicacoes = dto.consentimentoComunicacoes ?? false;
+  const consentimentoMarketing = dto.consentimentoMarketing ?? false;
+  const consentAt = new Date();
   const base = {
     contaId,
     nome: dto.nome,
@@ -80,6 +85,22 @@ export function mapCreateResponsavelDTOToData(dto: CreateResponsavelInputDTO, co
     email: dto.email || `temp_${Date.now()}@responsavel.local`,
     telefone: dto.telefone ? onlyDigits(dto.telefone) : '',
     financeiro,
+    ...(consentimentoComunicacoes ? { consentimentoComunicacoes: true } : {}),
+    ...(consentimentoMarketing ? { consentimentoMarketing: true } : {}),
+    ...(consentimentoComunicacoes
+      ? {
+          dataConsentimentoComunicacoes: consentAt,
+          versaoConsentimentoComunicacoes: '2026-09-05',
+          origemConsentimentoComunicacoes: 'RESPONSAVEL_CADASTRO',
+        }
+      : {}),
+    ...(consentimentoMarketing
+      ? {
+          dataConsentimentoMarketing: consentAt,
+          versaoConsentimentoMarketing: '2026-09-05',
+          origemConsentimentoMarketing: 'RESPONSAVEL_CADASTRO',
+        }
+      : {}),
   };
 
   if (!dto.endereco) {
@@ -108,6 +129,25 @@ export function mapUpdateResponsavelDTOToData(dto: UpdateResponsavelInputDTO) {
   if (typeof dto.email === 'string') data.email = dto.email.trim() || undefined;
   if (typeof dto.telefone === 'string') data.telefone = onlyDigits(dto.telefone);
   if (typeof dto.financeiro === 'boolean') data.financeiro = dto.financeiro;
+  if (typeof dto.consentimentoComunicacoes === 'boolean') {
+    data.consentimentoComunicacoes = dto.consentimentoComunicacoes;
+    if (dto.consentimentoComunicacoes) {
+      data.dataConsentimentoComunicacoes = new Date();
+      data.versaoConsentimentoComunicacoes = '2026-09-05';
+      data.origemConsentimentoComunicacoes = 'RESPONSAVEL_CADASTRO';
+      data.dataRevogacaoComunicacoes = null;
+    } else {
+      data.dataRevogacaoComunicacoes = new Date();
+    }
+  }
+  if (typeof dto.consentimentoMarketing === 'boolean') {
+    data.consentimentoMarketing = dto.consentimentoMarketing;
+    if (dto.consentimentoMarketing) {
+      data.dataConsentimentoMarketing = new Date();
+      data.versaoConsentimentoMarketing = '2026-09-05';
+      data.origemConsentimentoMarketing = 'RESPONSAVEL_CADASTRO';
+    }
+  }
   if (dto.endereco && typeof dto.endereco === 'object') {
     const normalized = normalizePayerAddressInput({
       cep: trimOrUndefined(dto.endereco.cep),
@@ -156,6 +196,12 @@ export function mapResponsavelRecordToSummaryDTO(
     emailMasked,
     phoneMasked,
     financeiro: record.financeiro,
+    ...(record.consentimentoComunicacoes !== undefined
+      ? { consentimentoComunicacoes: record.consentimentoComunicacoes }
+      : {}),
+    ...(record.consentimentoMarketing !== undefined
+      ? { consentimentoMarketing: record.consentimentoMarketing }
+      : {}),
     alunosCount: record._count?.alunos ?? 0,
   };
 }

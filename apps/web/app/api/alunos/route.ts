@@ -268,6 +268,7 @@ export async function POST(request: NextRequest) {
         ? new Date(raw.dataConsentimentoImagem)
         : undefined,
       consentimentoComunicacoes: raw.consentimentoComunicacoes ?? undefined,
+      consentimentoMarketing: raw.consentimentoMarketing ?? undefined,
       tamanhoCamiseta: raw.tamanhoCamiseta || undefined,
       tamanhoCalcado: raw.tamanhoCalcado || undefined,
       tags: raw.tags || undefined,

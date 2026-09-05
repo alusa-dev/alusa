@@ -165,7 +165,12 @@ export default function ResponsavelFields() {
         "responsavel",
         {
           nome: item.nome,
+          cpf: item.cpf,
+          email: item.email,
+          telefone: item.telefone,
           financeiro: item.financeiro,
+          consentimentoComunicacoes: item.consentimentoComunicacoes ?? false,
+          consentimentoMarketing: item.consentimentoMarketing ?? false,
         },
         { shouldDirty: true, shouldValidate: true },
       );

@@ -212,6 +212,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       email: vinculo.responsavel.email,
       telefone: vinculo.responsavel.telefone,
       financeiro: vinculo.responsavel.financeiro,
+      consentimentoComunicacoes: vinculo.responsavel.consentimentoComunicacoes,
+      consentimentoMarketing: vinculo.responsavel.consentimentoMarketing,
       asaasCustomerId: vinculo.responsavel.asaasCustomerId,
       endereco: {
         cep: vinculo.responsavel.enderecoCep,
@@ -713,6 +715,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         consentimentoImagem: aluno.consentimentoImagem,
         dataConsentimentoImagem: toIso(aluno.dataConsentimentoImagem),
         consentimentoComunicacoes: aluno.consentimentoComunicacoes,
+        consentimentoMarketing: aluno.consentimentoMarketing,
         tamanhoCamiseta: aluno.tamanhoCamiseta,
         tamanhoCalcado: aluno.tamanhoCalcado,
         codigoInterno: aluno.codigoInterno,
