@@ -382,4 +382,47 @@ describe('POST /api/matriculas', () => {
     });
     expect(json.operationalWarnings).toEqual([]);
   });
+
+  it('retorna 409 quando o commit remoto foi compensado por preview desatualizado', async () => {
+    const { getServerSession } = await import('next-auth');
+    const { createImmediateEnrollment, ImmediateEnrollmentCreationError } = await import(
+      '@/src/server/matriculas/create-immediate-enrollment.use-case'
+    );
+
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'user-1', contaId: 'conta-1', role: 'ADMIN' },
+    } as never);
+    vi.mocked(createImmediateEnrollment).mockRejectedValueOnce(
+      new ImmediateEnrollmentCreationError(
+        'PREVIEW_DESATUALIZADO',
+        'O preview da matrícula mudou. Gere um novo preview antes de confirmar.',
+      ) as never,
+    );
+
+    const response = await POST(
+      buildRequest({
+        contaId: 'conta-1',
+        alunoId: 'aluno-1',
+        responsavelFinanceiroId: 'resp-1',
+        planoId: 'plano-1',
+        modeloId: 'modelo-1',
+        turmaId: 'turma-1',
+        dataInicio: '2099-01-10',
+        dataFimContrato: '2099-12-10',
+        vencimentoDia: 10,
+        taxaMatricula: 120,
+        taxaIsenta: true,
+        criarCobranca: true,
+        formaPagamento: 'PIX',
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: 'PREVIEW_DESATUALIZADO',
+        message: 'O preview da matrícula mudou. Gere um novo preview antes de confirmar.',
+      },
+    });
+  });
 });

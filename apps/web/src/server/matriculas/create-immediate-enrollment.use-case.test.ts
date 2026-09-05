@@ -204,6 +204,31 @@ describe('createImmediateEnrollment', () => {
     );
   });
 
+  it('preserva a causa de preview desatualizado após compensar o provisionamento remoto', async () => {
+    criarMatriculaMock.mockRejectedValueOnce(new Error('PREVIEW_DESATUALIZADO'));
+
+    await expect(createImmediateEnrollment(input())).rejects.toMatchObject({
+      code: 'PREVIEW_DESATUALIZADO',
+      message: 'O preview da matrícula mudou. Gere um novo preview antes de confirmar.',
+      requiresReconciliation: false,
+      reasonCode: 'PREVIEW_DESATUALIZADO',
+    });
+    expect(compensateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        asaasSubscriptionId: 'sub-1',
+        firstSubscriptionPaymentId: 'pay-monthly-1',
+      }),
+    );
+    expect(prismaMock.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'COMPENSATED',
+          lastError: 'PREVIEW_DESATUALIZADO',
+        }),
+      }),
+    );
+  });
+
   it('preserva os recursos se não conseguir adquirir o fencing de compensação', async () => {
     criarMatriculaMock.mockRejectedValueOnce(new Error('DB_COMMIT_FAILED'));
     prismaMock.enrollmentCreationOperation.updateMany

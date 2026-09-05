@@ -102,6 +102,17 @@ function dateOnly(value: Date) {
   return value.toISOString().slice(0, 10);
 }
 
+function isoDateTime(value: unknown) {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function sortedById<T extends { id: string }>(records: T[]) {
+  return [...records].sort((left, right) => left.id.localeCompare(right.id));
+}
+
 function chargeState(charge: LocalChargeSnapshot | null): CurrentCycleChargeState {
   if (!charge) return 'NOT_GENERATED';
   const status = (charge.asaasStatus ?? charge.status).trim().toUpperCase();
@@ -240,31 +251,37 @@ export async function previewInitialEnrollmentBilling(
     alunoIds.length
       ? deps.prisma.aluno.findMany({
           where: { contaId: input.contaId, id: { in: alunoIds } },
-          select: { id: true, nome: true, updatedAt: true },
+          // The preview must be invalidated by changes that affect eligibility,
+          // such as activation or the payer age boundary. Integration metadata
+          // (asaasCustomerId and updatedAt) is deliberately excluded: customer
+          // linking is part of the commit flow itself.
+          select: { id: true, nome: true, status: true, dataNasc: true },
         })
       : [],
     planIds.length
       ? deps.prisma.plano.findMany({
           where: { contaId: input.contaId, id: { in: planIds }, status: 'ATIVO' },
-          select: { id: true, nome: true, valor: true, periodicidade: true, updatedAt: true },
+          select: { id: true, nome: true, valor: true, periodicidade: true, status: true },
         })
       : [],
     comboIds.length
       ? deps.prisma.combo.findMany({
           where: { contaId: input.contaId, id: { in: comboIds }, status: 'ATIVO' },
-          select: { id: true, nome: true, valor: true, periodicidade: true, updatedAt: true },
+          select: { id: true, nome: true, valor: true, periodicidade: true, status: true, vagasLimite: true },
         })
       : [],
     descontoIds.length
       ? deps.prisma.desconto.findMany({
           where: { contaId: input.contaId, id: { in: descontoIds }, status: 'ATIVO' },
-          select: { id: true, tipo: true, valor: true, updatedAt: true },
+          select: { id: true, tipo: true, valor: true, escopo: true, status: true },
         })
       : [],
     input.responsavelFinanceiroId
       ? deps.prisma.responsavel.findFirst({
           where: { contaId: input.contaId, id: input.responsavelFinanceiroId },
-          select: { id: true, nome: true, cpf: true, email: true, telefone: true, asaasCustomerId: true },
+          // Name, contact details and Asaas linkage are not billing terms. CPF
+          // remains part of the source because it determines the payer identity.
+          select: { id: true, cpf: true },
         })
       : null,
     financialGroupTarget?.kind === 'FAMILY_GROUP'
@@ -283,7 +300,6 @@ export async function previewInitialEnrollmentBilling(
             standaloneSubscriptionId: true,
             billingVersion: true,
             status: true,
-            updatedAt: true,
           },
         })
       : null,
@@ -294,7 +310,6 @@ export async function previewInitialEnrollmentBilling(
             id: true,
             asaasSubscriptionId: true,
             status: true,
-            updatedAt: true,
             billingAgreement: {
               select: {
                 status: true,
@@ -348,7 +363,6 @@ export async function previewInitialEnrollmentBilling(
           endDate: true,
           remoteStatus: true,
           version: true,
-          updatedAt: true,
           billingAgreement: {
             select: {
               status: true,
@@ -795,26 +809,54 @@ export async function previewInitialEnrollmentBilling(
   }
 
   const sourceSnapshot = {
-    alunos: alunos.map((aluno) => ({ id: aluno.id, updatedAt: aluno.updatedAt.toISOString() })),
-    planos: planos.map((plano) => ({ id: plano.id, updatedAt: plano.updatedAt.toISOString(), valor: money(plano.valor) })),
-    combos: combos.map((combo) => ({ id: combo.id, updatedAt: combo.updatedAt.toISOString(), valor: money(combo.valor) })),
-    descontos: descontos.map((desconto) => ({ id: desconto.id, updatedAt: desconto.updatedAt.toISOString(), valor: money(desconto.valor) })),
+    // This is a business version, not an ORM row version. Technical writes
+    // performed while ensuring a customer identity must not invalidate a
+    // preview that has the same enrollment terms.
+    alunos: sortedById(alunos).map((aluno) => ({
+      id: aluno.id,
+      status: aluno.status ?? null,
+      dataNasc: isoDateTime(aluno.dataNasc),
+    })),
+    planos: sortedById(planos).map((plano) => ({
+      id: plano.id,
+      status: plano.status ?? null,
+      valor: money(plano.valor),
+      periodicidade: plano.periodicidade,
+    })),
+    combos: sortedById(combos).map((combo) => ({
+      id: combo.id,
+      status: combo.status ?? null,
+      valor: money(combo.valor),
+      periodicidade: combo.periodicidade,
+      vagasLimite: combo.vagasLimite ?? null,
+    })),
+    descontos: sortedById(descontos).map((desconto) => ({
+      id: desconto.id,
+      status: desconto.status ?? null,
+      tipo: desconto.tipo,
+      valor: money(desconto.valor),
+      escopo: desconto.escopo ?? null,
+    })),
     responsavel: responsavel
       ? {
           id: responsavel.id,
-          nome: responsavel.nome,
           cpf: responsavel.cpf,
-          email: responsavel.email,
-          telefone: responsavel.telefone,
-          asaasCustomerId: responsavel.asaasCustomerId,
         }
       : null,
     existingFamilyGroup: existingFamilyGroup
       ? {
           id: existingFamilyGroup.id,
-          updatedAt: existingFamilyGroup.updatedAt.toISOString(),
+          responsavelId: existingFamilyGroup.responsavelId,
+          formaPagamento: existingFamilyGroup.formaPagamento,
+          diaVencimento: existingFamilyGroup.diaVencimento,
+          dataInicio: isoDateTime(existingFamilyGroup.dataInicio),
+          dataFimContrato: isoDateTime(existingFamilyGroup.dataFimContrato),
+          valorMensalidadeTotal: money(existingFamilyGroup.valorMensalidadeTotal),
+          ciclo: existingFamilyGroup.ciclo,
+          billingProvisionStatus: existingFamilyGroup.billingProvisionStatus,
           billingVersion: existingFamilyGroup.billingVersion,
           standaloneSubscriptionId: existingFamilyGroup.standaloneSubscriptionId,
+          status: existingFamilyGroup.status,
           standaloneSubscription: existingFamilySubscription
             ? {
                 id: existingFamilySubscription.id,
@@ -825,7 +867,6 @@ export async function previewInitialEnrollmentBilling(
                 endDate: existingFamilySubscription.endDate?.toISOString() ?? null,
                 remoteStatus: existingFamilySubscription.remoteStatus,
                 version: existingFamilySubscription.version,
-                updatedAt: existingFamilySubscription.updatedAt.toISOString(),
                 agreementStatus: existingFamilySubscription.billingAgreement?.status ?? null,
                 agreementRemoteStatus:
                   existingFamilySubscription.billingAgreement?.remoteStatus ?? null,
@@ -837,7 +878,6 @@ export async function previewInitialEnrollmentBilling(
       ? {
           id: existingSubscription.id,
           asaasSubscriptionId: existingSubscription.asaasSubscriptionId,
-          updatedAt: existingSubscription.updatedAt.toISOString(),
           matriculaId: existingSubscription.matricula.id,
           alunoId: existingSubscription.matricula.alunoId,
           currentMonthlyAmount,
@@ -853,6 +893,8 @@ export async function previewInitialEnrollmentBilling(
           status: currentCharge.status,
           asaasStatus: currentCharge.asaasStatus,
           dueDate: currentCharge.dueDate.toISOString(),
+          competenceStart: isoDateTime(currentCharge.competenceStart),
+          competenceEnd: isoDateTime(currentCharge.competenceEnd),
         }
       : null,
   };

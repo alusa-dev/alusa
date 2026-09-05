@@ -576,8 +576,13 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error('Erro ao criar matrÃ­cula:', error);
     if (error instanceof ImmediateEnrollmentCreationError) {
+      const isPreviewConflict = [
+        'PREVIEW_EXPIRADO',
+        'PREVIEW_DESATUALIZADO',
+        'PREVIEW_INCOMPATIVEL',
+      ].includes(error.code);
       return jsonError(
-        error.requiresReconciliation ? 503 : 422,
+        isPreviewConflict ? 409 : error.requiresReconciliation ? 503 : 422,
         error.code,
         error.message,
         {

@@ -120,6 +120,105 @@ function existingSubscription(options: {
 }
 
 describe('previewInitialEnrollmentBilling', () => {
+  it('não invalida o preview quando a sincronização de identidade altera apenas metadados técnicos', async () => {
+    const aluno = {
+      id: 'aluno-1',
+      nome: 'Ana',
+      status: 'ATIVO',
+      dataNasc: new Date('2010-01-01T00:00:00.000Z'),
+      updatedAt,
+    };
+    const responsavel = {
+      id: 'resp-1',
+      cpf: '12345678909',
+      nome: 'Responsável',
+      email: 'resp@example.com',
+      telefone: '11999999999',
+      asaasCustomerId: null,
+    };
+    const prisma = buildPrisma({
+      aluno: { findMany: vi.fn().mockResolvedValue([aluno]) },
+      responsavel: { findFirst: vi.fn().mockResolvedValue(responsavel) },
+    });
+
+    const first = await previewInitialEnrollmentBilling(baseInput, { prisma: prisma as never });
+    const second = await previewInitialEnrollmentBilling(baseInput, {
+      prisma: {
+        ...prisma,
+        aluno: {
+          findMany: vi.fn().mockResolvedValue([
+            { ...aluno, updatedAt: new Date('2026-01-01T12:01:00.000Z'), asaasCustomerId: 'cus_1' },
+          ]),
+        },
+        responsavel: {
+          findFirst: vi.fn().mockResolvedValue({
+            ...responsavel,
+            nome: 'Responsável atualizado',
+            email: 'novo@example.com',
+            telefone: '11988888888',
+            asaasCustomerId: 'cus_1',
+          }),
+        },
+      } as never,
+    });
+
+    expect(second.sourceVersion).toBe(first.sourceVersion);
+    expect(second.previewHash).toBe(first.previewHash);
+  });
+
+  it('mantém o preview sensível a mudanças de elegibilidade do aluno', async () => {
+    const firstPrisma = buildPrisma({
+      aluno: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'aluno-1', nome: 'Ana', status: 'ATIVO', dataNasc: new Date('2010-01-01T00:00:00.000Z') },
+        ]),
+      },
+    });
+    const secondPrisma = buildPrisma({
+      aluno: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'aluno-1', nome: 'Ana', status: 'INATIVO', dataNasc: new Date('2010-01-01T00:00:00.000Z') },
+        ]),
+      },
+    });
+
+    const first = await previewInitialEnrollmentBilling(baseInput, { prisma: firstPrisma as never });
+    const second = await previewInitialEnrollmentBilling(baseInput, { prisma: secondPrisma as never });
+
+    expect(second.sourceVersion).not.toBe(first.sourceVersion);
+  });
+
+  it('mantém a versão estável quando a consulta retorna os mesmos registros em outra ordem', async () => {
+    const input = {
+      ...baseInput,
+      items: [
+        ...baseInput.items,
+        { alunoId: 'aluno-2', planoId: 'plano-1', turmaId: 'turma-2', taxaMatricula: 100 },
+      ],
+    };
+    const aluno1 = {
+      id: 'aluno-1',
+      nome: 'Ana',
+      status: 'ATIVO',
+      dataNasc: new Date('2010-01-01T00:00:00.000Z'),
+    };
+    const aluno2 = {
+      id: 'aluno-2',
+      nome: 'Bia',
+      status: 'ATIVO',
+      dataNasc: new Date('2011-01-01T00:00:00.000Z'),
+    };
+    const first = await previewInitialEnrollmentBilling(input, {
+      prisma: buildPrisma({ aluno: { findMany: vi.fn().mockResolvedValue([aluno1, aluno2]) } }) as never,
+    });
+    const second = await previewInitialEnrollmentBilling(input, {
+      prisma: buildPrisma({ aluno: { findMany: vi.fn().mockResolvedValue([aluno2, aluno1]) } }) as never,
+    });
+
+    expect(second.sourceVersion).toBe(first.sourceVersion);
+    expect(second.previewHash).toBe(first.previewHash);
+  });
+
   it('gera preview compatível com hash, sourceVersion e allocations por matrícula', async () => {
     const prisma = buildPrisma();
 

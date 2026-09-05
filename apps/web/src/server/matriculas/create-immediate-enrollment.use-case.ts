@@ -150,9 +150,29 @@ function operationErrorMessage(code: string) {
       'A taxa de matrícula não pôde ser confirmada pelo financeiro. Nenhuma matrícula foi concluída.',
     REMOTE_ENROLLMENT_FEE_CONFIRMATION_MISMATCH:
       'A taxa de matrícula não pôde ser confirmada pelo financeiro. Nenhuma matrícula foi concluída.',
+    PREVIEW_EXPIRADO:
+      'O preview da matrícula expirou. Gere um novo preview antes de confirmar.',
+    PREVIEW_DESATUALIZADO:
+      'O preview da matrícula mudou. Gere um novo preview antes de confirmar.',
+    PREVIEW_INCOMPATIVEL:
+      'A composição financeira da matrícula mudou. Gere um novo preview antes de confirmar.',
   };
   if (messages[code]) return messages[code];
   return 'Não foi possível criar e confirmar todo o financeiro. Nenhuma matrícula foi concluída.';
+}
+
+function classifyLocalCommitFailure(error: unknown) {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  if (rawMessage === 'PREVIEW_DESATUALIZADO') {
+    return { code: 'PREVIEW_DESATUALIZADO', message: operationErrorMessage('PREVIEW_DESATUALIZADO') };
+  }
+  if (rawMessage === 'PREVIEW_EXPIRADO') {
+    return { code: 'PREVIEW_EXPIRADO', message: operationErrorMessage('PREVIEW_EXPIRADO') };
+  }
+  if (rawMessage.startsWith('PREVIEW_INCOMPATIVEL:')) {
+    return { code: 'PREVIEW_INCOMPATIVEL', message: operationErrorMessage('PREVIEW_INCOMPATIVEL') };
+  }
+  return { code: 'MATRICULA_COMMIT_FALHOU', message: operationErrorMessage('MATRICULA_COMMIT_FALHOU') };
 }
 
 const ENROLLMENT_OPERATION_LEASE_MS = 5 * 60 * 1000;
@@ -662,6 +682,15 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
     });
     const safelyCompensated = compensationProvesExpectedResourcesRemoved(input, compensation);
     const requiresReconciliation = !safelyCompensated;
+    const localCommitFailure = classifyLocalCommitFailure(error);
+    console.warn('[enrollment-create] Falha no commit local após provisionamento remoto', {
+      contaId: input.contaId,
+      operationId: operation.id,
+      correlationId: uiRequestId,
+      failureCode: localCommitFailure.code,
+      compensated: safelyCompensated,
+      requiresReconciliation,
+    });
     await withEnrollmentOperationTenant(input.contaId, (operations) =>
       operations.updateMany({
         where: { id: operation.id, contaId: input.contaId, version: leaseVersion },
@@ -671,16 +700,17 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
             : EnrollmentCreationOperationStatus.COMPENSATED,
           lastError: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
           compensatedAt: safelyCompensated ? new Date() : null,
-          result: { compensation } as Prisma.InputJsonValue,
+          result: { compensation, failureCode: localCommitFailure.code } as Prisma.InputJsonValue,
           lockedAt: null,
           leaseExpiresAt: null,
         },
       }),
     ).catch(() => ({ count: 0 }));
     throw new ImmediateEnrollmentCreationError(
-      'MATRICULA_COMMIT_FALHOU',
-      operationErrorMessage('MATRICULA_COMMIT_FALHOU'),
+      localCommitFailure.code,
+      localCommitFailure.message,
       requiresReconciliation,
+      localCommitFailure.code === 'MATRICULA_COMMIT_FALHOU' ? undefined : localCommitFailure.code,
     );
     }
   }

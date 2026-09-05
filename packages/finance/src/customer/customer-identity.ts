@@ -24,7 +24,7 @@ const digits = (value: string | null | undefined) => (value ?? '').replace(/\D/g
 
 async function readPayer(db: Prisma.TransactionClient, contaId: string, payerType: CustomerPayerType, payerId: string) {
   const where = { contaId, id: payerId };
-  const select = { id: true, cpf: true, asaasCustomerId: true };
+  const select = { id: true, cpf: true, asaasCustomerId: true, asaasCustomerExternalReference: true };
   return payerType === 'ALUNO'
     ? db.aluno.findFirst({ where, select })
     : db.responsavel.findFirst({ where, select });
@@ -114,9 +114,20 @@ export async function linkCustomerIdentity(input: CustomerIdentityInput) {
       create: { contaId, payerType, payerId, customerId: canonical.id },
       update: { customerId: canonical.id },
     });
-    const data = { asaasCustomerId, asaasCustomerExternalReference: canonical.externalReference };
-    if (payerType === 'ALUNO') await tx.aluno.updateMany({ where: { contaId, id: payerId }, data });
-    else await tx.responsavel.updateMany({ where: { contaId, id: payerId }, data });
+    const data = {
+      asaasCustomerId,
+      asaasCustomerExternalReference: canonical.externalReference,
+    };
+    // Avoid touching the payer row when the identity is already synchronized.
+    // Prisma's @updatedAt would otherwise advance the row version during the
+    // enrollment commit and create unnecessary cache/audit churn.
+    if (
+      payer.asaasCustomerId !== data.asaasCustomerId ||
+      payer.asaasCustomerExternalReference !== data.asaasCustomerExternalReference
+    ) {
+      if (payerType === 'ALUNO') await tx.aluno.updateMany({ where: { contaId, id: payerId }, data });
+      else await tx.responsavel.updateMany({ where: { contaId, id: payerId }, data });
+    }
     return { id: canonical.id, asaasCustomerId, externalReference: canonical.externalReference };
   });
 }
