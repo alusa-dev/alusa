@@ -61,10 +61,7 @@ export default defineConfig({
     command:
       'node -e "require(\'fs\').rmSync(process.env.NEXT_DIST_DIR || \'.next\', { recursive: true, force: true })" && ' +
       'pnpm -C ../.. prisma:generate && ' +
-      'pnpm -C ../.. --filter @alusa/ui build && ' +
-      'pnpm -C ../.. --filter @alusa/database build && ' +
-      'pnpm -C ../.. --filter @alusa/lib build && ' +
-      'pnpm -C ../.. --filter @alusa/finance build && ' +
+      'pnpm -C ../.. exec turbo run build --filter=@alusa/web^... && ' +
       `cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev --webpack -p ${port}`,
     url: baseURL,
     timeout: 120_000,
