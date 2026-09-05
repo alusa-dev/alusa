@@ -15,6 +15,20 @@ import {
 export type Contrato = ContratoDTO;
 export type CreateContratoPayload = CreateContratoInputDTO;
 export type ContratoStatus = ContratoStatusDTO;
+export type ContractWhatsAppNotification = {
+  id: string;
+  status: string;
+  templateName: string;
+  languageCode: string;
+  recipientPhone: string;
+  recipientType: string;
+  attempts: number;
+  lastErrorCode: string | null;
+  lastError: string | null;
+  whatsappJobId: string | null;
+  createdAt: string;
+  processedAt: string | null;
+};
 export type AlunoContratoCard = AlunoContratoCardDTO;
 export type AlunosComContratosPage = ListAlunosComContratosResultDTO;
 
@@ -71,6 +85,25 @@ export async function regenerateContrato(id: string): Promise<Contrato> {
   });
 
   return parseResponse(res, contratoDTOSchema, 'Erro ao regenerar link do contrato');
+}
+
+export async function getContractWhatsAppNotification(id: string): Promise<ContractWhatsAppNotification | null> {
+  const res = await fetch(`/api/comunicacao/whatsapp/contratos/${encodeURIComponent(id)}/template`, { cache: 'no-store' });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(json?.error ?? 'Erro ao consultar comunicação WhatsApp');
+  return (json?.notification ?? null) as ContractWhatsAppNotification | null;
+}
+
+export async function retryContractWhatsAppNotification(id: string) {
+  const res = await fetch(`/api/comunicacao/whatsapp/contratos/${encodeURIComponent(id)}/template`, { method: 'POST' });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(json?.error ?? 'Erro ao reenviar comunicação WhatsApp');
+  return json as {
+    success: true;
+    notificationId: string;
+    notification: { deadLettered: number; retried: number; queued: number };
+    outbox: { deadLettered: number; retried: number; sent: number };
+  };
 }
 
 export async function getContratosByAluno(

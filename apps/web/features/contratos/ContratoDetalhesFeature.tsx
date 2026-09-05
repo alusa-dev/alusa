@@ -13,6 +13,9 @@ import {
   getEventContract,
   type Contrato,
   type EventoContrato,
+  getContractWhatsAppNotification,
+  retryContractWhatsAppNotification,
+  type ContractWhatsAppNotification,
 } from './services/contratos-service';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { CompartilharContratoDialog } from './components/CompartilharContratoDialog';
@@ -89,6 +92,8 @@ export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: Co
   const [loading, setLoading] = useState(true);
   const [shareOpen, setShareOpen] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [whatsappNotification, setWhatsappNotification] = useState<ContractWhatsAppNotification | null>(null);
+  const [whatsappRetrying, setWhatsappRetrying] = useState(false);
   const isEvento = contrato?.origem === 'EVENTO';
 
   useEffect(() => {
@@ -97,7 +102,12 @@ export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: Co
       ? getEventContract(contratoId).then(normalizeEventoContrato)
       : getContrato(contratoId).then(normalizeContrato);
     request
-      .then(setContrato)
+      .then(async (value) => {
+        setContrato(value);
+        if (origem === 'MATRICULA') {
+          setWhatsappNotification(await getContractWhatsAppNotification(value.id).catch(() => null));
+        }
+      })
       .catch((err) => {
         toast.error('Erro ao carregar contrato');
         console.error(err);
@@ -138,12 +148,36 @@ export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: Co
         ? normalizeEventoContrato(await regenerateEventContract(contrato.id))
         : normalizeContrato(await regenerateContrato(contrato.id));
       setContrato(updated);
+      if (!isEvento) {
+        setWhatsappNotification(await getContractWhatsAppNotification(updated.id).catch(() => null));
+      }
       setShareOpen(true);
       toast.success('Link de assinatura gerado.');
     } catch (error) {
       toast.error((error as Error).message || 'Erro ao gerar link de assinatura');
     } finally {
       setSharing(false);
+    }
+  };
+
+  const handleRetryWhatsApp = async () => {
+    if (!contrato || whatsappRetrying) return;
+    try {
+      setWhatsappRetrying(true);
+      const result = await retryContractWhatsAppNotification(contrato.id);
+      const latest = await getContractWhatsAppNotification(contrato.id);
+      setWhatsappNotification(latest);
+      if (result.outbox?.deadLettered) {
+        toast.error(latest?.lastError || 'A Meta recusou o destinatário do WhatsApp.');
+      } else if (result.outbox?.retried) {
+        toast.error('O envio falhou temporariamente e será tentado novamente.');
+      } else {
+        toast.success('Notificação WhatsApp enviada para processamento.');
+      }
+    } catch (error) {
+      toast.error((error as Error).message || 'Erro ao reenviar notificação WhatsApp');
+    } finally {
+      setWhatsappRetrying(false);
     }
   };
 
@@ -164,6 +198,7 @@ export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: Co
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {(contrato.status === 'PENDENTE' || contrato.status === 'EXPIRADO') && <Button variant="outline" size="sm" onClick={handleShareContrato} disabled={sharing}><Share2 className="mr-2 h-4 w-4" />{sharing ? 'Gerando Link...' : 'Compartilhar Link'}</Button>}
+              {!isEvento && contrato.status === 'PENDENTE' && whatsappNotification && <Button variant="outline" size="sm" onClick={handleRetryWhatsApp} disabled={whatsappRetrying}>{whatsappRetrying ? 'Enviando...' : 'Reenviar WhatsApp'}</Button>}
               {contrato.status === 'ASSINADO' && !isEvento && <Button variant="outline" size="sm" onClick={handleGerarAditivo}>Gerar aditivo</Button>}
               <Button variant="outline" size="sm" onClick={() => window.open(pdfUrl, '_blank', 'noopener,noreferrer')}><Eye className="mr-2 h-4 w-4" />Visualizar PDF</Button>
               <Button size="sm" onClick={handleDownload} className="shadow-none"><Download className="mr-2 h-4 w-4" />Baixar</Button>
@@ -176,6 +211,7 @@ export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: Co
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
           <div className="lg:col-span-8 xl:col-span-9"><div className="space-y-4">{pdfUrl ? <PDFViewer url={pdfUrl} title={`Contrato - ${contrato.aluno.nome}`} className="w-full" maxHeight="82vh" showDownload={false} /> : <div className="flex h-[32rem] items-center justify-center rounded-lg border bg-gray-50 font-medium text-gray-400">PDF não disponível</div>}
             {contrato.status === 'ASSINADO' && <div className="px-1 py-2"><p className="mb-1 text-sm font-semibold text-emerald-900">Assinatura Eletrônica Registrada</p><div className="space-y-1 text-sm text-emerald-800"><p><span className="font-medium">Assinado por:</span> {contrato.assinadoPor || 'N/A'}</p><p><span className="font-medium">CPF:</span> {contrato.assinadoCpf || 'N/A'}</p><p><span className="font-medium">Data:</span> {contrato.assinadoEm ? new Date(contrato.assinadoEm).toLocaleString() : 'N/A'}</p>{contrato.hashAssinatura && <p className="mt-2 break-all font-mono text-xs text-emerald-700/80">Hash: {contrato.hashAssinatura}</p>}</div></div>}
+            {whatsappNotification && <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm"><p className="font-semibold text-slate-800">WhatsApp</p><p className="mt-1 text-slate-600">{whatsappNotification.status === 'SENT' ? 'Template enviado para processamento.' : whatsappNotification.status === 'PENDING' ? 'Aguardando envio.' : whatsappNotification.status === 'DLQ' ? 'Falha permanente; use Reenviar WhatsApp após corrigir a configuração.' : whatsappNotification.status}</p>{whatsappNotification.lastError && <p className="mt-1 text-xs text-red-700">{whatsappNotification.lastError}</p>}</div>}
           </div></div>
           <div className="space-y-6 lg:col-span-4 xl:col-span-3"><Card className="border-gray-200/70 shadow-sm ring-1 ring-gray-200/60"><CardHeader className="border-b border-gray-100 pb-3"><CardTitle className="text-base font-medium">Informações do Contrato</CardTitle></CardHeader><CardContent className="space-y-6 pt-6"><div className="space-y-4"><div><p className="text-xs font-medium uppercase tracking-wide text-gray-500">Aluno</p><p className="mt-1 text-sm font-medium text-gray-900">{contrato.aluno.nome}</p></div><div className="grid grid-cols-2 gap-4"><div><p className="text-xs font-medium uppercase tracking-wide text-gray-500">CPF do Aluno</p><p className="mt-1 font-mono text-sm font-medium text-gray-900">{contrato.aluno.cpf || 'Não informado'}</p></div><div><p className="text-xs font-medium uppercase tracking-wide text-gray-500">Status</p><div className="mt-1"><Badge status={contrato.status as StatusType} size="sm" /></div></div></div><div><p className="text-xs font-medium uppercase tracking-wide text-gray-500">Modelo Utilizado</p><p className="mt-1 text-sm font-medium text-gray-900">{contrato.modelo?.nome || 'Modelo Personalizado'}</p></div><div className="grid grid-cols-2 gap-4 border-t border-gray-100 pt-4"><div><p className="mb-1 text-xs font-medium text-gray-500">Criado em</p><p className="text-sm text-gray-700">{new Date(contrato.createdAt).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(contrato.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p></div>{contrato.tokenExpiraEm && <div><p className="mb-1 text-xs font-medium text-gray-500">Expira em</p><p className="text-sm text-gray-700">{new Date(contrato.tokenExpiraEm).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(contrato.tokenExpiraEm).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p></div>}</div></div>{contrato.status === 'PENDENTE' && <div className="rounded-lg border border-amber-100 bg-amber-50 p-4 text-sm"><p className="mb-1 flex items-center gap-2 font-semibold text-amber-800"><span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" /><span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" /></span>Aguardando Assinatura</p><p className="leading-relaxed text-amber-700/80">O link de assinatura está ativo e expira em <span className="font-medium text-amber-900">{contrato.tokenExpiraEm ? new Date(contrato.tokenExpiraEm).toLocaleDateString() : 'N/A'}</span>.</p></div>}</CardContent></Card></div>
         </div>

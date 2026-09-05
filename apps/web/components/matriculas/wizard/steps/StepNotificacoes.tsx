@@ -102,7 +102,7 @@ export function StepNotificacoes({ ctx }: StepNotificacoesProps) {
     <SectionCard>
       <StepHeader
         title="Notificações"
-        hint="Escolha os canais de aviso que serão usados nas cobranças desta matrícula."
+        hint="Os canais escolhidos serão aplicados às cobranças do responsável financeiro nesta instituição, incluindo outras matrículas vinculadas a ele."
       />
 
       <div className="space-y-4" role="group" aria-label="Canais de notificação">
@@ -118,6 +118,8 @@ export function StepNotificacoes({ ctx }: StepNotificacoesProps) {
                   key={option.value}
                   type="button"
                   onClick={() => toggleChannel(option.value)}
+                  disabled={loadingDefaults}
+                  aria-pressed={active}
                   className={cn(
                     'inline-flex items-center justify-center rounded-full border px-4 py-2 text-sm font-medium transition',
                     active

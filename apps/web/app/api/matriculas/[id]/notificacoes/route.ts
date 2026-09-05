@@ -5,7 +5,7 @@ import {
   syncCustomerNotificationsForUserSelection,
 } from '@alusa/finance';
 import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/src/prisma';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import {
   updateMatriculaNotificationChannelsInputDTOSchema,
 } from '@/features/cadastro/matriculas/dtos';
@@ -19,33 +19,28 @@ function jsonError(status: number, code: string, message: string, details?: unkn
   );
 }
 
-type SessionUser = {
-  id?: string | null;
-  contaId?: string | null;
-};
+// Recepção pode configurar os avisos que já seleciona no cadastro da matrícula.
+const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
-async function resolveContaId(explicit?: string | null) {
-  const session = await getServerSession(authOptions).catch(() => null);
-  const sessionUser = (session as { user?: SessionUser } | null)?.user ?? null;
-  const sessionContaId = sessionUser?.contaId || null;
-  const sessionUserId = sessionUser?.id || null;
-  const requested = explicit?.trim() || null;
-  if (requested && sessionContaId && requested !== sessionContaId) {
-    return { contaId: null, mismatch: true, sessionUserId };
+async function authorizeNotifications() {
+  const session = await getServerSession(authOptions);
+  const contaId = session?.user?.contaId?.trim();
+  const actorId = session?.user?.id?.trim();
+  if (!contaId || !actorId) {
+    return { response: jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.') };
   }
-  return {
-    contaId: requested || sessionContaId,
-    mismatch: false,
-    sessionUserId,
-  };
+  if (!allowedRoles.has(String(session?.user?.role ?? '').toUpperCase())) {
+    return { response: jsonError(403, 'SEM_PERMISSAO', 'Usuário sem permissão para configurar notificações.') };
+  }
+  return { contaId, actorId };
 }
 
 async function resolveFinancialCustomer(matriculaId: string, contaId: string) {
-  const context = await resolveMatriculaFinancialContext({
-    db: prisma,
+  const context = await runWithTenant(contaId, (tx) => resolveMatriculaFinancialContext({
+    db: tx,
     matriculaId,
     contaId,
-  });
+  }));
 
   if (!context) return null;
 
@@ -60,14 +55,17 @@ async function resolveFinancialCustomer(matriculaId: string, contaId: string) {
 }
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-    const ctxParams = await ctx.params;
+  const ctxParams = await ctx.params;
   try {
-    const contaCtx = await resolveContaId(null);
-    if (!contaCtx.contaId) {
-      return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await authorizeNotifications();
+    if (auth.response) return auth.response;
+    const { contaId } = auth;
+    const requestedContaId = new URL(_req.url).searchParams.get('contaId')?.trim();
+    if (requestedContaId && requestedContaId !== contaId) {
+      return jsonError(403, 'CONTA_INVALIDA', 'Conta informada não pertence ao usuário.');
     }
 
-    const financialCustomer = await resolveFinancialCustomer(ctxParams.id, contaCtx.contaId);
+    const financialCustomer = await resolveFinancialCustomer(ctxParams.id, contaId);
     if (!financialCustomer) {
       return jsonError(404, 'MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada');
     }
@@ -81,7 +79,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     }
 
     const snapshot = await getCustomerNotificationChannels(
-      contaCtx.contaId,
+      contaId,
       financialCustomer.customerId,
     );
 
@@ -100,13 +98,16 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     );
   } catch (error) {
     console.error('[MATRICULA_NOTIFICACOES][GET]', error);
-    return jsonError(500, 'ERRO_LISTAR_NOTIFICACOES', (error as Error).message);
+    return jsonError(500, 'ERRO_LISTAR_NOTIFICACOES', 'Não foi possível consultar os canais de aviso.');
   }
 }
 
 export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
-    const ctxParams = await ctx.params;
+  const ctxParams = await ctx.params;
   try {
+    const auth = await authorizeNotifications();
+    if (auth.response) return auth.response;
+    const { contaId, actorId } = auth;
     const body = await req.json().catch(() => null);
     const parsed = updateMatriculaNotificationChannelsInputDTOSchema.safeParse(body);
     if (!parsed.success) {
@@ -118,15 +119,12 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       );
     }
 
-    const contaCtx = await resolveContaId(parsed.data.contaId ?? null);
-    if (contaCtx.mismatch) {
+    const requestedContaId = parsed.data.contaId?.trim();
+    if (requestedContaId && requestedContaId !== contaId) {
       return jsonError(403, 'CONTA_INVALIDA', 'Conta informada não pertence ao usuário.');
     }
-    if (!contaCtx.contaId) {
-      return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
-    }
 
-    const financialCustomer = await resolveFinancialCustomer(ctxParams.id, contaCtx.contaId);
+    const financialCustomer = await resolveFinancialCustomer(ctxParams.id, contaId);
     if (!financialCustomer) {
       return jsonError(404, 'MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada');
     }
@@ -140,7 +138,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     }
 
     const current = await getCustomerNotificationChannels(
-      contaCtx.contaId,
+      contaId,
       financialCustomer.customerId,
     );
 
@@ -164,7 +162,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     }
 
     const result = await syncCustomerNotificationsForUserSelection(
-      contaCtx.contaId,
+      contaId,
       financialCustomer.customerId,
       requested,
     );
@@ -183,10 +181,10 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       );
     }
 
-    await prisma.matriculaLog.create({
+    await runWithTenant(contaId, (tx) => tx.matriculaLog.create({
       data: {
         matriculaId: financialCustomer.matriculaId,
-        actorId: contaCtx.sessionUserId ?? 'system',
+        actorId,
         action: 'MATRICULA_NOTIFICATION_CHANNELS_UPDATED',
         metadata: {
           customerId: financialCustomer.customerId,
@@ -217,7 +215,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
           })),
         },
       },
-    });
+    }));
 
     return NextResponse.json(
       mapMatriculaNotificationChannelsResultToDTO({
@@ -238,6 +236,6 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     );
   } catch (error) {
     console.error('[MATRICULA_NOTIFICACOES][PUT]', error);
-    return jsonError(500, 'ERRO_ATUALIZAR_NOTIFICACOES', (error as Error).message);
+    return jsonError(500, 'ERRO_ATUALIZAR_NOTIFICACOES', 'Não foi possível atualizar os canais de aviso.');
   }
 }

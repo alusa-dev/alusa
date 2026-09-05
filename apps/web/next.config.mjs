@@ -111,12 +111,12 @@ const nextConfig = {
       '@alusa/admin-auth/*': packageSourcePath('admin-auth', '*'),
       '@alusa/asaas': packageDistPath('asaas', 'index.js'),
       '@alusa/asaas/*': packageDistPath('asaas', '*.js'),
-      '@alusa/database': useWorkspaceSources
-        ? packageSourcePath('database', 'index.ts')
-        : packageDistPath('database', 'index.js'),
-      '@alusa/database/*': useWorkspaceSources
-        ? packageSourcePath('database', '*')
-        : packageDistPath('database', '*.js'),
+      // The database package emits ESM with explicit `.js` specifiers. Keep
+      // Turbopack on the built package so those specifiers resolve exactly as
+      // they do in Node/production; its TypeScript sources are not valid
+      // Turbopack entrypoints without webpack's `extensionAlias` support.
+      '@alusa/database': packageDistPath('database', 'index.js'),
+      '@alusa/database/*': packageDistPath('database', '*.js'),
       '@alusa/domain': packageDistPath('domain', 'index.js'),
       '@alusa/domain/*': packageDistPath('domain', '*.js'),
       '@alusa/finance': {

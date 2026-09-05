@@ -13,10 +13,13 @@ import {
   WhatsAppCloudClient,
   extractWhatsAppWebhookRecords,
   type WhatsAppMessageRequest,
+  normalizeBrazilianWhatsAppPhone,
   normalizeWhatsAppPhone,
 } from '@alusa/whatsapp';
+import { decryptSecret } from '@alusa/database';
 import { prisma } from '@/prisma/client';
 import { assertWhatsAppConfigured, getWhatsAppRuntimeConfig } from './config';
+import { buildContractTemplateIdempotencyKey } from './contract-idempotency';
 
 type EnqueueWhatsAppMessageInput = {
   contaId?: string | null;
@@ -138,6 +141,200 @@ export type DrainWhatsAppOutboxResult = {
   retried: number;
   deadLettered: number;
 };
+
+export type DrainContractWhatsAppNotificationsResult = {
+  claimed: number;
+  queued: number;
+  retried: number;
+  deadLettered: number;
+  skipped: number;
+};
+
+export async function requeueContractWhatsAppNotification(input: { contaId: string; contratoId: string; actorUserId?: string | null }) {
+  const notification = await prisma.contractWhatsAppNotification.findFirst({
+    where: { contaId: input.contaId, contratoId: input.contratoId },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, status: true, recipientPhone: true },
+  });
+  if (!notification) return null;
+  let recipientPhone = notification.recipientPhone;
+  try {
+    recipientPhone = normalizeBrazilianWhatsAppPhone(recipientPhone);
+  } catch {
+    // O worker registrará a falha de destinatário sem interromper o reprocessamento.
+  }
+  const updated = await prisma.contractWhatsAppNotification.updateMany({
+    where: { id: notification.id, contaId: input.contaId },
+    data: { status: 'PENDING', recipientPhone, nextAttemptAt: new Date(), lockedAt: null, lockedBy: null, processedAt: null, lastErrorCode: null, lastError: null },
+  });
+  if (updated.count !== 1) return null;
+  await prisma.auditLog.create({
+    data: {
+      contaId: input.contaId,
+      actorType: input.actorUserId ? 'USER' : 'SYSTEM',
+      actorId: input.actorUserId ?? null,
+      action: 'contract.whatsapp.notification.requeued',
+      entityType: 'ContractWhatsAppNotification',
+      entityId: notification.id,
+    },
+  });
+  return { id: notification.id, previousStatus: notification.status };
+}
+
+/** Converts committed contract events into approved Meta template messages. */
+export async function drainContractWhatsAppNotifications(input: { limit?: number } = {}): Promise<DrainContractWhatsAppNotificationsResult> {
+  const runtimeConfig = getWhatsAppRuntimeConfig();
+  if (!runtimeConfig.enabled || !runtimeConfig.accessToken || !runtimeConfig.appSecret || !runtimeConfig.phoneNumberId || !runtimeConfig.wabaId) {
+    return { claimed: 0, queued: 0, retried: 0, deadLettered: 0, skipped: 0 };
+  }
+  const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
+  const now = new Date();
+  const workerId = `contract-whatsapp-${process.pid}-${Date.now()}`;
+  const staleAt = new Date(Date.now() - 10 * 60_000);
+
+  await prisma.contractWhatsAppNotification.updateMany({
+    where: { status: 'PROCESSING', lockedAt: { lt: staleAt } },
+    data: { status: 'FAILED', nextAttemptAt: now, lockedAt: null, lockedBy: null, lastErrorCode: 'STALE_LOCK_RECOVERED' },
+  });
+
+  const candidates = await prisma.contractWhatsAppNotification.findMany({
+    where: { status: { in: ['PENDING', 'FAILED'] }, nextAttemptAt: { lte: now } },
+    orderBy: { createdAt: 'asc' },
+    take: limit,
+    select: { id: true, contaId: true },
+  });
+  const result: DrainContractWhatsAppNotificationsResult = { claimed: 0, queued: 0, retried: 0, deadLettered: 0, skipped: 0 };
+
+  for (const candidate of candidates) {
+    const claimed = await prisma.contractWhatsAppNotification.updateMany({
+      where: { id: candidate.id, status: { in: ['PENDING', 'FAILED'] } },
+      data: { status: 'PROCESSING', lockedAt: new Date(), lockedBy: workerId, attempts: { increment: 1 }, lastErrorCode: null, lastError: null },
+    });
+    if (claimed.count !== 1) continue;
+    result.claimed += 1;
+
+    const notification = await prisma.contractWhatsAppNotification.findFirst({
+      where: { id: candidate.id, contaId: candidate.contaId },
+      include: {
+        contrato: {
+          select: {
+            id: true,
+            status: true,
+            tokenExpiraEm: true,
+            tokenPublicoCriptografado: true,
+            matricula: {
+              select: {
+                dataInicio: true,
+                aluno: {
+                  select: {
+                    nome: true,
+                    dataNasc: true,
+                    responsaveis: {
+                      where: { tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
+                      orderBy: { id: 'asc' },
+                      take: 1,
+                      select: { responsavel: { select: { nome: true } } },
+                    },
+                  },
+                },
+                responsavelFinanceiro: { select: { nome: true } },
+                turma: { select: { nome: true } },
+              },
+            },
+          },
+        },
+        conta: { select: { nome: true } },
+      },
+    });
+    if (!notification) {
+      await prisma.contractWhatsAppNotification.updateMany({
+        where: { id: candidate.id, contaId: candidate.contaId, status: 'PROCESSING' },
+        data: {
+          status: 'FAILED',
+          nextAttemptAt: new Date(Date.now() + 60_000),
+          lastErrorCode: 'NOTIFICATION_NOT_FOUND',
+          lastError: 'Registro de notificação não encontrado durante o processamento.',
+          lockedAt: null,
+          lockedBy: null,
+        },
+      });
+      result.retried += 1;
+      continue;
+    }
+
+    try {
+      if (notification.contrato.status !== 'PENDENTE' || (notification.contrato.tokenExpiraEm && notification.contrato.tokenExpiraEm <= now)) {
+        await prisma.contractWhatsAppNotification.update({ where: { id: notification.id }, data: { status: 'SKIPPED', processedAt: now, lockedAt: null, lockedBy: null, lastErrorCode: 'CONTRACT_NOT_SENDABLE' } });
+        result.skipped += 1;
+        continue;
+      }
+      const token = decryptSecret(notification.tokenCriptografado || notification.contrato.tokenPublicoCriptografado);
+      if (!token) throw new Error('CONTRACT_TOKEN_UNAVAILABLE');
+      const baseUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL;
+      if (!baseUrl) throw new Error('CONTRACT_PUBLIC_URL_BASE_UNAVAILABLE');
+      const publicUrl = new URL(`/p/contrato/${encodeURIComponent(token)}`, baseUrl);
+      if (publicUrl.protocol !== 'https:') throw new Error('CONTRACT_PUBLIC_URL_MUST_BE_HTTPS');
+
+      const isMinorTemplate = notification.recipientType === 'RESPONSAVEL';
+      const recipientName = isMinorTemplate
+        ? notification.contrato.matricula.responsavelFinanceiro?.nome ?? notification.contrato.matricula.aluno.responsaveis[0]?.responsavel.nome ?? 'responsável legal'
+        : notification.contrato.matricula.aluno.nome;
+      const bodyValues = isMinorTemplate
+        ? [notification.contrato.matricula.aluno.nome, notification.conta.nome, notification.contrato.matricula.turma?.nome ?? 'não informado', formatDate(notification.contrato.matricula.dataInicio)]
+        : [notification.conta.nome, notification.contrato.matricula.turma?.nome ?? 'não informado', formatDate(notification.contrato.matricula.dataInicio)];
+      const recipientPhone = normalizeBrazilianWhatsAppPhone(notification.recipientPhone);
+      const request: WhatsAppMessageRequest = {
+        kind: 'template',
+        to: recipientPhone,
+        templateName: notification.templateName,
+        languageCode: notification.languageCode,
+        components: [
+          { type: 'header', parameters: [{ type: 'text', text: recipientName }] },
+          { type: 'body', parameters: bodyValues.map((text) => ({ type: 'text' as const, text })) },
+          { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: token }] },
+        ],
+      };
+      const queued = await enqueueWhatsAppMessage({
+        contaId: notification.contaId,
+        request,
+        idempotencyKey: buildContractTemplateIdempotencyKey({
+          phoneNumberId: runtimeConfig.phoneNumberId,
+          notificationId: notification.id,
+          attempt: notification.attempts,
+          contaId: notification.contaId,
+          contratoId: notification.contratoId,
+          recipientPhone,
+          templateName: notification.templateName,
+        }),
+        correlationId: notification.correlationId ?? `contract:${notification.contratoId}`,
+      });
+      await prisma.contractWhatsAppNotification.update({ where: { id: notification.id }, data: { status: 'SENT', whatsappJobId: queued.jobId, processedAt: now, lockedAt: null, lockedBy: null } });
+      result.queued += 1;
+    } catch (error) {
+      const sanitized = sanitizeWhatsAppError(error);
+      const deadLetter = notification.attempts >= notification.maxAttempts || ['CONTRACT_TOKEN_UNAVAILABLE', 'CONTRACT_PUBLIC_URL_BASE_UNAVAILABLE', 'CONTRACT_PUBLIC_URL_MUST_BE_HTTPS'].includes(sanitized.code ?? '');
+      await prisma.contractWhatsAppNotification.update({
+        where: { id: notification.id },
+        data: {
+          status: deadLetter ? 'DLQ' : 'FAILED',
+          nextAttemptAt: new Date(Date.now() + Math.min(60 * 60_000, 15_000 * 2 ** Math.max(notification.attempts - 1, 0))),
+          lastErrorCode: sanitized.code,
+          lastError: sanitized.message,
+          lockedAt: null,
+          lockedBy: null,
+          ...(deadLetter ? { processedAt: now } : {}),
+        },
+      });
+      if (deadLetter) result.deadLettered += 1;
+      else result.retried += 1;
+    }
+  }
+  return result;
+}
+
+function formatDate(value: Date): string {
+  return new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Manaus' }).format(value);
+}
 
 export async function drainWhatsAppOutbox(input: { limit?: number; jobId?: string } = {}): Promise<DrainWhatsAppOutboxResult> {
   const config = assertWhatsAppConfigured();
@@ -271,6 +468,15 @@ async function markWhatsAppJobFailure(
     prisma.whatsAppMessage.update({
       where: { id: job.messageId },
       data: { status: WhatsAppMessageStatus.FAILED, errorCode: sanitized.code, errorMessage: sanitized.message },
+    }),
+    prisma.contractWhatsAppNotification.updateMany({
+      where: { whatsappJobId: job.id },
+      data: {
+        status: deadLetter ? 'DLQ' : 'FAILED',
+        lastErrorCode: sanitized.code,
+        lastError: sanitized.message,
+        ...(deadLetter ? { processedAt: new Date() } : { processedAt: null }),
+      },
     }),
   ]);
 

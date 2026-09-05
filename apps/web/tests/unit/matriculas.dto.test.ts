@@ -19,6 +19,8 @@ describe('matriculas DTO mappers', () => {
         pagarTaxaAgora: 'true',
         formaPagamento: 'cartao',
         formaPagamentoTaxa: 'pix',
+        notificationChannels: ['WHATSAPP', 'EMAIL'],
+        notificationChannelsConfigured: true,
         modeloId: 'modelo_1',
         previewHash: 'a'.repeat(64),
         sourceVersion: 'b'.repeat(64),
@@ -29,6 +31,8 @@ describe('matriculas DTO mappers', () => {
       createdById: 'user_1',
     });
 
+    expect(payload.notificationChannels).toEqual(['WHATSAPP', 'EMAIL']);
+    expect(payload.notificationChannelsConfigured).toBe(true);
     expect(payload.taxaMatricula).toBe(149.9);
     expect(payload.formaPagamento).toBe('CARTAO_CREDITO');
     expect(payload.formaPagamentoTaxa).toBe('PIX');

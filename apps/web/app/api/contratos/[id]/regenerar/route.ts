@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { canRegenerateContractLink } from '@alusa/domain';
 import { createContractEvidence, createPublicContractToken } from '@alusa/lib';
+import { encryptSecret } from '@alusa/database';
+import { normalizeBrazilianWhatsAppPhone } from '@alusa/whatsapp';
+import { getWhatsAppRuntimeConfig } from '@/src/server/whatsapp/config';
 import { prisma } from '@/prisma/client';
 import { getSessionUser } from '@/lib/auth/session';
 import { contratoDTOSchema, contratoRouteParamsDTOSchema } from '@/features/contratos/dtos';
@@ -63,7 +66,22 @@ export async function PATCH(
       },
       include: {
         matricula: {
-          select: { id: true },
+          select: {
+            id: true,
+            aluno: {
+              select: {
+                dataNasc: true,
+                telefone: true,
+                responsaveis: {
+                  where: { contaId: user.contaId, tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
+                  orderBy: { id: 'asc' },
+                  take: 1,
+                  select: { responsavel: { select: { telefone: true } } },
+                },
+              },
+            },
+            responsavelFinanceiro: { select: { telefone: true } },
+          },
         },
       },
     });
@@ -91,6 +109,7 @@ export async function PATCH(
         data: {
           tokenPublico: `hash:${tokenPublicoHash}`,
           tokenPublicoHash,
+          tokenPublicoCriptografado: encryptSecret(tokenPublico),
           tokenExpiraEm: novaExpiracao,
           status: 'PENDENTE',
         },
@@ -114,6 +133,53 @@ export async function PATCH(
         where: { id: contrato.matricula.id, contaId: user.contaId },
         data: { contratoAtualId: contrato.id, statusContrato: 'AGUARDANDO_ASSINATURA' },
       });
+
+      const alunoMaior = isAdult(contrato.matricula.aluno.dataNasc);
+      const recipientPhone = alunoMaior
+        ? contrato.matricula.aluno.telefone
+        : contrato.matricula.responsavelFinanceiro?.telefone ?? contrato.matricula.aluno.responsaveis[0]?.responsavel.telefone ?? null;
+      if (recipientPhone) {
+        let normalized: string;
+        try {
+          normalized = normalizeBrazilianWhatsAppPhone(recipientPhone);
+        } catch {
+          normalized = '';
+        }
+        if (normalized) {
+          const config = getWhatsAppRuntimeConfig();
+          await tx.contractWhatsAppNotification.upsert({
+            where: {
+              uq_contract_whatsapp_notification_dedupe: {
+                contaId: user.contaId,
+                contratoId: contrato.id,
+                recipientPhone: normalized,
+                templateName: alunoMaior ? config.contractMajorTemplateName : config.contractMinorTemplateName,
+              },
+            },
+            update: {
+              tokenCriptografado: encryptSecret(tokenPublico),
+              status: 'PENDING',
+              nextAttemptAt: new Date(),
+              lockedAt: null,
+              lockedBy: null,
+              processedAt: null,
+              lastErrorCode: null,
+              lastError: null,
+            },
+            create: {
+              contaId: user.contaId,
+              contratoId: contrato.id,
+              matriculaId: contrato.matricula.id,
+              templateName: alunoMaior ? config.contractMajorTemplateName : config.contractMinorTemplateName,
+              languageCode: config.contractTemplateLanguage,
+              recipientPhone: normalized,
+              recipientType: alunoMaior ? 'ALUNO' : 'RESPONSAVEL',
+              tokenCriptografado: encryptSecret(tokenPublico),
+              correlationId: `contract:${contrato.id}:regenerated`,
+            },
+          });
+        }
+      }
     });
 
     const hydratedContrato = await getContratoWithRelations(contrato.id, user.contaId);
@@ -135,4 +201,13 @@ export async function PATCH(
       { status: 500 },
     );
   }
+}
+
+function isAdult(value: Date): boolean {
+  const now = new Date();
+  const birth = new Date(value);
+  let age = now.getUTCFullYear() - birth.getUTCFullYear();
+  const beforeBirthday = now.getUTCMonth() < birth.getUTCMonth() || (now.getUTCMonth() === birth.getUTCMonth() && now.getUTCDate() < birth.getUTCDate());
+  if (beforeBirthday) age -= 1;
+  return age >= 18;
 }

@@ -477,6 +477,8 @@ export function mapCreateMatriculaDTOToServiceInput(input: {
     descontoTipo: parsed.descontoTipo ?? 'PERCENTAGE',
     prazoDesconto: toNumber(parsed.prazoDesconto, null),
     descontoIds: parsed.descontoIds ?? [],
+    notificationChannels: parsed.notificationChannels,
+    notificationChannelsConfigured: parsed.notificationChannelsConfigured,
     uiRequestId: input.uiRequestId ?? parsed.uiRequestId ?? undefined,
     billingStrategy: parsed.billingStrategy,
     billingPreview: {

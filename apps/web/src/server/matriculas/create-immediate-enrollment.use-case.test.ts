@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FormaPagamento, PeriodicidadePlano } from '@prisma/client';
 
@@ -295,4 +296,131 @@ describe('createImmediateEnrollment', () => {
     expect(stageMock).not.toHaveBeenCalled();
     expect(criarMatriculaMock).not.toHaveBeenCalled();
   });
+
+  async function persistCommittedAttempt(overrides: Record<string, unknown> = {}) {
+    await createImmediateEnrollment(input(overrides));
+    const { data } = prismaMock.enrollmentCreationOperation.create.mock.calls[0][0];
+    prismaMock.enrollmentCreationOperation.findFirst.mockResolvedValue({
+      ...data,
+      id: 'op-1',
+      version: 0,
+      status: 'COMMITTED',
+      matriculaId: 'matricula-1',
+    });
+    stageMock.mockClear();
+    criarMatriculaMock.mockClear();
+    return data;
+  }
+
+  it.each([
+    { criarCobranca: false },
+    { valorMensalidadeOverride: 125 },
+    { jurosMensal: 1 },
+    { multaPercentual: 2 },
+    { descontoAntecipado: 5 },
+    { descontoTipo: 'FIXED' },
+    { prazoDesconto: 3 },
+    { taxaJustificativa: 'Bolsa institucional' },
+    { pagarTaxaAgora: true },
+    { requiresFinancialProvisioning: true },
+    { billingMode: 'SHARED_PLAN' },
+    { matriculaFamiliarId: 'familia-1' },
+    { familyOrderIndex: 1 },
+    { notificationChannelsConfigured: true, notificationChannels: [] },
+    { modeloId: 'modelo-2' },
+    { dataFimContrato: new Date('2099-11-30T12:00:00Z') },
+    { formaPagamento: FormaPagamento.PIX },
+  ])('rejeita mesma chave com termos diferentes: %j', async (changed) => {
+    await persistCommittedAttempt();
+
+    await expect(createImmediateEnrollment(input(changed))).rejects.toMatchObject({
+      code: 'IDEMPOTENCY_KEY_REUTILIZADA',
+    });
+    expect(stageMock).not.toHaveBeenCalled();
+    expect(criarMatriculaMock).not.toHaveBeenCalled();
+  });
+
+  it('normaliza descontos, canais, datas e campos opcionais sem perder precisão monetária', async () => {
+    await persistCommittedAttempt({
+      descontoIds: ['discount-b', 'discount-a'],
+      notificationChannelsConfigured: true,
+      notificationChannels: ['SMS', 'EMAIL'],
+      valorMensalidadeOverride: 125.001,
+    });
+
+    const result = await createImmediateEnrollment(input({
+      descontoIds: ['discount-a', 'discount-b', 'discount-a'],
+      notificationChannelsConfigured: true,
+      notificationChannels: ['EMAIL', 'SMS', 'EMAIL'],
+      dataInicio: new Date('2099-01-01T08:00:00-04:00'),
+      jurosMensal: null,
+      billingStrategy: null,
+      valorMensalidadeOverride: 125.001,
+    }));
+    expect(result.matricula.id).toBe('matricula-1');
+    expect(stageMock).not.toHaveBeenCalled();
+
+    await expect(createImmediateEnrollment(input({
+      descontoIds: ['discount-a', 'discount-b'],
+      notificationChannelsConfigured: true,
+      notificationChannels: ['EMAIL', 'SMS'],
+      valorMensalidadeOverride: 125.002,
+    }))).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUTILIZADA' });
+  });
+
+  it('permite renovar metadados do preview sem reprovisionar operação confirmada', async () => {
+    await persistCommittedAttempt();
+    const result = await createImmediateEnrollment(input({
+      billingPreview: {
+        previewHash: 'c'.repeat(64),
+        sourceVersion: 'd'.repeat(64),
+        previewExpiresAt: new Date('2099-02-01T00:00:00Z'),
+        billingStrategy: { kind: 'SEPARATE' },
+      },
+    }));
+    expect(result.matricula.id).toBe('matricula-1');
+    expect(stageMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['PROCESSING', 'REMOTE_PROVISIONED', 'COMMITTED', 'REQUIRES_RECONCILIATION'])(
+    'preserva tentativa legada %s sem aceitar igualdade que não pode comprovar',
+    async (status) => {
+      const data = await persistCommittedAttempt();
+      const { fingerprintVersion: _version, ...legacySnapshot } = data.requestSnapshot;
+      prismaMock.enrollmentCreationOperation.findFirst.mockResolvedValue({
+        ...data,
+        status,
+        requestSnapshot: legacySnapshot,
+        requestFingerprint: createHash('sha256').update(JSON.stringify(legacySnapshot)).digest('hex'),
+      });
+      await expect(createImmediateEnrollment(input())).rejects.toMatchObject({
+        code: 'IDEMPOTENCY_LEGACY_REQUIRES_REVIEW',
+        requiresReconciliation: true,
+      });
+      expect(stageMock).not.toHaveBeenCalled();
+      expect(compensateMock).not.toHaveBeenCalled();
+      expect(criarMatriculaMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it('não executa replay de matrícula legada sem snapshot da confirmação', async () => {
+    prismaMock.matricula.findFirst.mockResolvedValue({ id: 'legacy-enrollment' });
+    await expect(createImmediateEnrollment(input())).rejects.toMatchObject({
+      code: 'IDEMPOTENCY_LEGACY_REQUIRES_REVIEW',
+      requiresReconciliation: true,
+    });
+    expect(stageMock).not.toHaveBeenCalled();
+    expect(criarMatriculaMock).not.toHaveBeenCalled();
+  });
+
+  it('escopa leitura e criação da chave à conta e não ao uiRequestId global', async () => {
+    await createImmediateEnrollment(input({ contaId: 'conta-2' }));
+    expect(prismaMock.enrollmentCreationOperation.findFirst).toHaveBeenCalledWith({
+      where: { contaId: 'conta-2', uiRequestId: 'request-1' },
+    });
+    expect(prismaMock.enrollmentCreationOperation.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ contaId: 'conta-2' }) }),
+    );
+  });
+
 });

@@ -105,7 +105,7 @@ async function findExistingMatriculaByUiRequestId(input: {
   });
 }
 
-async function buildCriarMatriculaResultFromExisting(
+export async function buildCriarMatriculaResultFromExisting(
   matricula: NonNullable<Awaited<ReturnType<typeof findExistingMatriculaByUiRequestId>>>,
 ) {
   const planoValor = matricula.combo
@@ -471,6 +471,8 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
 }
 
 export type CriarMatriculaInput = {
+  notificationChannels?: Array<'EMAIL' | 'SMS' | 'WHATSAPP'>;
+  notificationChannelsConfigured?: boolean;
   contaId: string;
   alunoId: string;
   planoId?: string | null;

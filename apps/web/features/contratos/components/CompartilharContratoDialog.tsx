@@ -27,8 +27,9 @@ export function CompartilharContratoDialog({
   alunoNome,
   publicPath = '/p/contrato',
 }: CompartilharContratoDialogProps) {
+  const configuredOrigin = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, '');
   const link = typeof window !== 'undefined' && tokenPublico
-    ? `${window.location.origin}${publicPath}/${tokenPublico}`
+    ? `${configuredOrigin || window.location.origin}${publicPath}/${encodeURIComponent(tokenPublico)}`
     : '';
 
   const handleCopy = () => {

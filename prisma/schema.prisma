@@ -106,6 +106,15 @@ enum WhatsAppOutboundJobStatus {
   DLQ
 }
 
+enum ContractWhatsAppNotificationStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  DLQ
+  SKIPPED
+}
+
 enum PlatformBillingEnvironment {
   TEST
   LIVE
@@ -1358,6 +1367,7 @@ model Conta {
   financeProfile                    FinanceProfile?
   tenantFeatureFlags                TenantFeatureFlags?
   auditLogs                         AuditLog[]
+  contractWhatsAppNotifications    ContractWhatsAppNotification[]
   notifications                     Notification[]
   notificationDigestEvents          NotificationDigestEvent[]
   paymentStateTransitions           FinancePaymentStateTransition[]
@@ -2258,6 +2268,7 @@ model Matricula {
   billingOutboxEvents            MatriculaBillingOutbox[]
   billingAllocations             BillingAllocation[]
   creationOperation              EnrollmentCreationOperation?
+  contractWhatsAppNotifications ContractWhatsAppNotification[]
 
   @@unique([contaId, uiRequestId], name: "uq_matricula_conta_request")
   @@unique([contaId, id], name: "uq_matricula_conta_id")
@@ -5338,6 +5349,8 @@ model Contrato {
   // Link de compartilhamento
   tokenPublico     String    @unique @default(cuid()) // @deprecated: manter somente para fallback legado.
   tokenPublicoHash String?
+  // Token cifrado para permitir entrega assíncrona do link sem persistir o valor em claro.
+  tokenPublicoCriptografado String?
   tokenExpiraEm    DateTime? // Expiração do link (padrão: 7 dias)
 
   createdAt DateTime @default(now())
@@ -5354,6 +5367,7 @@ model Contrato {
   evidencias                ContractEvidence[]
   signatureOtps             ContractSignatureOtp[]
   documentos                ContratoDocumento[]
+  whatsappNotifications     ContractWhatsAppNotification[]
   rematriculaContratoFuturo ContratoFuturo?
 
   @@index([contaId, status], name: "idx_contrato_conta_status")
@@ -5367,6 +5381,39 @@ model Contrato {
   @@index([tokenPublicoHash], name: "idx_contrato_token_hash")
   @@index([tokenExpiraEm], name: "idx_contrato_token_expira")
   @@index([status, matriculaId], name: "idx_contrato_status_matricula")
+}
+
+model ContractWhatsAppNotification {
+  id                String                              @id @default(cuid())
+  contaId           String
+  contratoId        String
+  matriculaId       String
+  status            ContractWhatsAppNotificationStatus @default(PENDING)
+  templateName      String
+  languageCode      String                              @default("pt_BR")
+  recipientPhone    String                              @db.VarChar(32)
+  recipientType     String                              @db.VarChar(32)
+  tokenCriptografado String
+  attempts          Int                                 @default(0)
+  maxAttempts       Int                                 @default(8)
+  nextAttemptAt     DateTime                            @default(now())
+  lockedAt          DateTime?
+  lockedBy          String?
+  lastErrorCode     String?
+  lastError         String?
+  correlationId     String?
+  whatsappJobId     String?
+  processedAt       DateTime?
+  createdAt         DateTime                            @default(now())
+  updatedAt         DateTime                            @updatedAt
+
+  conta    Conta     @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  contrato Contrato  @relation(fields: [contratoId], references: [id], onDelete: Restrict)
+  matricula Matricula @relation(fields: [matriculaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, contratoId, recipientPhone, templateName], name: "uq_contract_whatsapp_notification_dedupe")
+  @@index([contaId, status, nextAttemptAt], name: "idx_contract_whatsapp_notification_status_retry")
+  @@index([contaId, contratoId], name: "idx_contract_whatsapp_notification_contract")
 }
 
 // Contratos operacionais gerados para a participação de um aluno em um evento.

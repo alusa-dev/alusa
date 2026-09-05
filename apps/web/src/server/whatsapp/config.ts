@@ -1,4 +1,4 @@
-import { WhatsAppConfigurationError, normalizeWhatsAppPhone } from '@alusa/whatsapp';
+import { WhatsAppConfigurationError, normalizeBrazilianWhatsAppPhone, normalizeWhatsAppPhone } from '@alusa/whatsapp';
 
 export type WhatsAppRuntimeConfig = {
   enabled: boolean;
@@ -12,6 +12,9 @@ export type WhatsAppRuntimeConfig = {
   testTemplateName: string;
   testTemplateLanguage: string;
   testAllowlist: string[];
+  contractMajorTemplateName: string;
+  contractMinorTemplateName: string;
+  contractTemplateLanguage: string;
 };
 
 export function getWhatsAppRuntimeConfig(): WhatsAppRuntimeConfig {
@@ -19,7 +22,7 @@ export function getWhatsAppRuntimeConfig(): WhatsAppRuntimeConfig {
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean)
-    .map((value) => normalizeWhatsAppPhone(value));
+    .map((value) => normalizeBrazilianWhatsAppPhone(value));
 
   return {
     enabled: process.env.WHATSAPP_ENABLED === 'true',
@@ -33,6 +36,9 @@ export function getWhatsAppRuntimeConfig(): WhatsAppRuntimeConfig {
     testTemplateName: process.env.WHATSAPP_TEST_TEMPLATE_NAME?.trim() || 'hello_world',
     testTemplateLanguage: process.env.WHATSAPP_TEST_TEMPLATE_LANGUAGE?.trim() || 'en_US',
     testAllowlist,
+    contractMajorTemplateName: process.env.WHATSAPP_CONTRACT_MAJOR_TEMPLATE?.trim() || 'contrato_matricula_maior_18',
+    contractMinorTemplateName: process.env.WHATSAPP_CONTRACT_MINOR_TEMPLATE?.trim() || 'contrato_matricula_menor_18',
+    contractTemplateLanguage: process.env.WHATSAPP_CONTRACT_TEMPLATE_LANGUAGE?.trim() || 'pt_BR',
   };
 }
 
@@ -76,7 +82,7 @@ export function getWhatsAppRuntimeStatus() {
 }
 
 export function assertTestRecipient(to: string, config = getWhatsAppRuntimeConfig()): string {
-  const normalized = normalizeWhatsAppPhone(to);
+  const normalized = normalizeBrazilianWhatsAppPhone(to);
   if (!config.testMode) {
     throw new WhatsAppConfigurationError('O modo de teste WhatsApp está desabilitado.');
   }

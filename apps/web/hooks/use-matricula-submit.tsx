@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
@@ -7,85 +7,17 @@ import { prepararPayloadMatricula } from '@/lib/validations/resumo.schema';
 import { showNotificationSyncWarnings } from '@/lib/notifications/show-notification-sync-warnings';
 import { previewInitialEnrollmentBillingRequest } from '@/features/cadastro/matriculas/services/matriculas-service';
 import type { EnrollmentBillingStrategyDTO } from '@/features/cadastro/matriculas/dtos';
+import {
+  clearEnrollmentAttempt,
+  readEnrollmentAttempt,
+  readEnrollmentAttemptStatus,
+  saveEnrollmentAttempt,
+  sendEnrollmentAttempt,
+  EnrollmentSubmissionError,
+  type EnrollmentConfirmationState,
+} from '@/features/cadastro/matriculas/services/enrollment-attempt';
 
-export interface MatriculaResponse {
-  matricula: {
-    id: string;
-    alunoId: string;
-    status: string;
-    statusFinanceiro: string;
-    dataInicio: string;
-    taxaMatricula: number;
-    taxaIsenta: boolean;
-    taxaJustificativa?: string | null;
-    vencimentoDia: number;
-  };
-  cobrancas: {
-    taxa: {
-      id: string;
-      valor: number;
-      vencimento: string;
-      status: string;
-      asaasPaymentId?: string | null;
-    } | null;
-    mensalidade: {
-      id: string;
-      valor: number;
-      vencimento: string;
-      status: string;
-      asaasPaymentId?: string | null;
-    } | null;
-  };
-  preco: {
-    plano: number;
-    taxa: number;
-    desconto: number;
-    total: number;
-  };
-  responsavelFinanceiro: {
-    id: string;
-    nome: string;
-  };
-  primeiroVencimento: string;
-  asaasSync?: {
-    taxa?: {
-      success: boolean;
-      error?: string;
-      asaasPaymentId?: string;
-      invoiceUrl?: string | null;
-      bankSlipUrl?: string | null;
-    } | null;
-    subscription?: {
-      success: boolean;
-      error?: string;
-      asaasSubscriptionId?: string | null;
-      message?: string | null;
-      expectedWebhooks?: string[];
-    } | null;
-  };
-  notificationSync?: {
-    applied: { email: boolean; sms: boolean; whatsapp: boolean };
-    warnings: Array<{
-      notificationId: string;
-      event: string;
-      channel: string;
-      code: string;
-      message: string;
-    }>;
-  } | null;
-  operationalWarnings?: Array<{
-    type:
-      | 'FINANCIAL_PROVISION_PENDING'
-      | 'FINANCIAL_PROVISION_FAILED'
-      | 'RECONCILIATION_REQUIRED'
-      | 'MANUAL_INTERVENTION_REQUIRED';
-    code: string;
-    message: string;
-    severity?: 'INFO' | 'WARNING' | 'BLOCKER';
-    resourceId?: string | null;
-    actionLabel?: string | null;
-  }>;
-}
+export type MatriculaResponse = import('@/features/cadastro/matriculas/dtos').CreateMatriculaResultDTO;
 
 interface UseMatriculaSubmitOptions {
   onSuccess?: (_data: MatriculaResponse) => void;
@@ -97,6 +29,8 @@ type MatriculaApiError = Error & { code?: string };
 
 export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
   const router = useRouter();
+  const inFlight = useRef(false);
+  const [confirmationState, setConfirmationState] = useState<EnrollmentConfirmationState>('IDLE');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [data, setData] = useState<MatriculaResponse | null>(null);
@@ -130,12 +64,32 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
   };
 
   const submit = async (wizardState: WizardState) => {
+    if (inFlight.current) return null;
+    inFlight.current = true;
+    setConfirmationState('CONFIRMING');
     setLoading(true);
     setError(null);
     setData(null);
     const processingToast = toast.message('Criando matrícula e configurando as cobranças...');
 
+    const contaId = wizardState.contaId ?? '';
     try {
+      const execute = async (): Promise<MatriculaResponse> => {
+        const pending = readEnrollmentAttempt(contaId);
+        if (pending) {
+          const outcome = await readEnrollmentAttemptStatus(pending);
+          if (outcome.status === 'COMMITTED') return outcome.result;
+          if (outcome.status === 'COMPENSATED') {
+            clearEnrollmentAttempt(contaId);
+            setConfirmationState('COMPENSATED');
+            throw new Error('A tentativa anterior foi desfeita com segurança. Revise os dados e confirme novamente.');
+          }
+          if (outcome.status === 'NOT_FOUND') return sendEnrollmentAttempt(pending);
+          setConfirmationState(outcome.status === 'REQUIRES_RECONCILIATION' ? 'REQUIRES_RECONCILIATION' : 'UNCERTAIN');
+          throw new Error(outcome.status === 'REQUIRES_RECONCILIATION'
+            ? 'A confirmação precisa de conferência financeira. A tentativa foi preservada; consulte novamente após a reconciliação.'
+            : 'A confirmação ainda está em processamento. Consulte novamente em alguns instantes.');
+        }
       // Validar e preparar payload usando schema do resumo
       const validationResult = prepararPayloadMatricula(
         wizardState as unknown as Record<string, unknown>,
@@ -216,29 +170,13 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
         previewExpiresAt: billingPreview.expiresAt,
       };
 
-      // Enviar para API
-      const response = await fetch('/api/matriculas', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(commitPayload),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const messageParts = [errorData.error?.message || `Erro HTTP ${response.status}`];
-        if (Array.isArray(errorData.error?.details)) {
-          messageParts.push(errorData.error.details.join(', '));
-        } else if (typeof errorData.error?.details === 'string') {
-          messageParts.push(errorData.error.details);
-        }
-        const apiError = new Error(messageParts.filter(Boolean).join(' - ')) as MatriculaApiError;
-        apiError.code = errorData.error?.code;
-        throw apiError;
-      }
-
-      const result: MatriculaResponse = await response.json();
+      const attempt = { contaId, uiRequestId, body: JSON.stringify(commitPayload) };
+      saveEnrollmentAttempt(attempt);
+      return sendEnrollmentAttempt(attempt);
+      };
+      const result = await execute();
+      clearEnrollmentAttempt(contaId);
+      setConfirmationState('IDLE');
       setData(result);
 
       toast.dismiss(processingToast);
@@ -340,6 +278,12 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
       return result;
     } catch (err) {
       const error = (err instanceof Error ? err : new Error('Erro desconhecido')) as MatriculaApiError;
+      if (error instanceof EnrollmentSubmissionError && error.safelyRejected) {
+        clearEnrollmentAttempt(contaId);
+        setConfirmationState('IDLE');
+      } else {
+        setConfirmationState((current) => current === 'CONFIRMING' ? 'UNCERTAIN' : current);
+      }
       setError(error);
 
       const message = error.code === 'CONTRATO_SEM_RECORRENCIA'
@@ -368,6 +312,7 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
       return null;
     } finally {
       toast.dismiss(processingToast);
+      inFlight.current = false;
       setLoading(false);
     }
   };
@@ -380,6 +325,7 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
 
   return {
     submit,
+    confirmationState,
     loading,
     error,
     data,

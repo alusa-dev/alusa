@@ -12,6 +12,8 @@ describe('http method observability', () => {
     expect(getKnownApiMethods('/api/jobs/archive-finance-webhooks')).toEqual(['GET', 'POST']);
     expect(getKnownApiMethods('/api/webhooks/stripe')).toEqual(['POST']);
     expect(getKnownApiMethods('/api/webhooks/whatsapp')).toEqual(['GET', 'POST']);
+    expect(getKnownApiMethods('/api/comunicacao/whatsapp/contratos/contrato-1/template')).toEqual(['GET', 'POST']);
+    expect(getKnownApiMethods('/api/comunicacao/whatsapp/contratos/contrato-1')).toEqual(['POST']);
   });
 
   it('considera HEAD e OPTIONS automáticos quando aplicável', () => {

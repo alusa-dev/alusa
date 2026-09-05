@@ -103,6 +103,40 @@ describe('createPendingEnrollmentContract', () => {
     );
   });
 
+  it('registra notificação de contrato para responsável menor de idade', async () => {
+    const tx = buildTx();
+    tx.matricula.findFirst.mockResolvedValue({
+      id: 'matricula-1',
+      aluno: {
+        nome: 'Aluno Menor',
+        cpf: null,
+        dataNasc: new Date('2015-01-01'),
+        telefone: null,
+        responsaveis: [{ tipoVinculo: 'PRINCIPAL', responsavel: { nome: 'Responsável', cpf: null, telefone: '+55 (97) 98128-3106' } }],
+      },
+      responsavelFinanceiro: null,
+    });
+    const txWithNotification = tx as typeof tx & { contractWhatsAppNotification: { create: ReturnType<typeof vi.fn> } };
+    txWithNotification.contractWhatsAppNotification = { create: vi.fn().mockResolvedValue({ id: 'notification-1' }) };
+
+    await createPendingEnrollmentContract(tx as never, {
+      contaId: 'conta-1',
+      matriculaId: 'matricula-1',
+      modeloId: 'modelo-1',
+      actorId: 'usuario-1',
+    });
+
+    expect(txWithNotification.contractWhatsAppNotification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          recipientType: 'RESPONSAVEL',
+          templateName: 'contrato_matricula_menor_18',
+          languageCode: 'pt_BR',
+        }),
+      }),
+    );
+  });
+
   it('falha antes de escrever quando o modelo não pertence à conta', async () => {
     const tx = buildTx(false);
     await expect(

@@ -6,7 +6,7 @@ import {
   updateSubscription,
 } from '@alusa/finance';
 import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/src/prisma';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import { updateMatriculaBillingTypeInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
 import { mapMatriculaSubscriptionBillingTypeUpdateResultToDTO } from '@/features/cadastro/matriculas/mappers';
 import { classifyAsaasSubscriptionMutationError } from '@/src/server/finance/asaas-subscription-mutation-error';
@@ -26,35 +26,26 @@ function jsonError(status: number, code: string, message: string, details?: unkn
   );
 }
 
-type SessionUser = {
-  id?: string | null;
-  contaId?: string | null;
-};
-
-async function resolveContaId(explicit?: string | null) {
-  const session = await getServerSession(authOptions).catch(() => null);
-  const sessionUser = (session as { user?: SessionUser } | null)?.user ?? null;
-  const sessionContaId = sessionUser?.contaId || null;
-  const requested = explicit?.trim() || null;
-  if (requested && sessionContaId && requested !== sessionContaId) {
-    return { contaId: null, mismatch: true };
-  }
-  return { contaId: requested || sessionContaId, mismatch: false };
-}
-
-async function resolveSessionUser() {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
-}
+// Mesma política das mutações de cobrança: recepção não altera condições financeiras.
+const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 /**
  * PUT /api/matriculas/[id]/forma-pagamento
  * Atualiza a forma de pagamento da assinatura no Asaas
  */
 export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
-    const ctxParams = await ctx.params;
+  const ctxParams = await ctx.params;
   try {
-    const sessionUser = await resolveSessionUser();
+    const session = await getServerSession(authOptions);
+    const sessionUser = session?.user;
+    const contaId = sessionUser?.contaId?.trim();
+    const actorId = sessionUser?.id?.trim();
+    if (!actorId || !contaId) {
+      return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
+    }
+    if (!allowedRoles.has(String(sessionUser?.role ?? '').toUpperCase())) {
+      return jsonError(403, 'SEM_PERMISSAO', 'Usuário sem permissão para alterar condições financeiras.');
+    }
     const json = await req.json().catch(() => null);
     const parsedBody = updateMatriculaBillingTypeInputDTOSchema.safeParse(json);
     if (!parsedBody.success) {
@@ -66,22 +57,19 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       );
     }
 
-    const contaCtx = await resolveContaId(parsedBody.data.contaId ?? null);
-    if (contaCtx.mismatch) {
+    const requestedContaId = parsedBody.data.contaId?.trim();
+    if (requestedContaId && requestedContaId !== contaId) {
       return jsonError(403, 'CONTA_INVALIDA', 'Conta informada não pertence ao usuário.');
-    }
-    if (!contaCtx.contaId) {
-      return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
     }
 
     const matriculaId = ctxParams.id;
     const { billingType } = parsedBody.data;
 
     // Buscar matrícula
-    const matricula = await prisma.matricula.findFirst({
+    const matricula = await runWithTenant(contaId, (tx) => tx.matricula.findFirst({
       where: {
         id: matriculaId,
-        aluno: { contaId: contaCtx.contaId },
+        aluno: { contaId },
       },
       select: {
         id: true,
@@ -102,17 +90,17 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
           },
         },
       },
-    });
+    }));
 
     if (!matricula) {
       return jsonError(404, 'NAO_ENCONTRADO', 'Matrícula não encontrada');
     }
 
-    const financialContext = await resolveMatriculaFinancialContext({
-      db: prisma,
+    const financialContext = await runWithTenant(contaId, (tx) => resolveMatriculaFinancialContext({
+      db: tx,
       matriculaId,
-      contaId: contaCtx.contaId,
-    });
+      contaId,
+    }));
     const targetSubscriptionId =
       financialContext?.asaasSubscriptionId ?? matricula.asaasSubscriptionId;
 
@@ -125,16 +113,16 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
         ? financialContext.localSnapshot
         : deriveLocalAssinaturaSnapshot(
             matricula as unknown as Record<string, unknown>,
-            await prisma.subscription.findFirst({
+            await runWithTenant(contaId, (tx) => tx.subscription.findFirst({
               where: {
-                contaId: contaCtx.contaId,
+                contaId,
                 matriculaId: matricula.id,
               },
               select: {
                 status: true,
                 updatedAt: true,
               },
-            }),
+            })),
           );
 
     if (!isFinancialContextEditable(financialContext)) {
@@ -159,7 +147,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
           updatePendingPayments: true,
         },
         {
-          contaId: contaCtx.contaId,
+          contaId,
         },
       );
     } catch (error) {
@@ -182,15 +170,15 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     }
 
     await projectConfirmedBillingAgreementSnapshot({
-      contaId: contaCtx.contaId,
+      contaId,
       asaasSubscriptionId: targetSubscriptionId,
       billingType,
     });
 
-    await prisma.matriculaLog.create({
+    await runWithTenant(contaId, (tx) => tx.matriculaLog.create({
       data: {
         matriculaId,
-        actorId: sessionUser?.id ?? 'system',
+        actorId,
         action: 'MATRICULA_SUBSCRIPTION_BILLING_TYPE_UPDATED',
         metadata: {
           asaasSubscriptionId: targetSubscriptionId,
@@ -205,32 +193,32 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
           updatePendingPayments: true,
         },
       },
-    });
+    }));
 
     const nextFormaPagamento = mapBillingTypeToFormaPagamento(billingType);
     let localAlignment = null;
     if (financialContext.mode === 'FAMILY') {
-      localAlignment = await updateFamilyFinancialLocalState({
-        db: prisma,
+      localAlignment = await runWithTenant(contaId, (tx) => updateFamilyFinancialLocalState({
+        db: tx,
         context: financialContext,
         billingType,
-      });
+      }));
     } else if (nextFormaPagamento) {
       const affectedMatriculaIds =
         financialContext.sharedAgreement?.affectedMatriculaIds ?? [matriculaId];
-      await prisma.matricula.updateMany({
-        where: { contaId: contaCtx.contaId, id: { in: affectedMatriculaIds } },
+      await runWithTenant(contaId, (tx) => tx.matricula.updateMany({
+        where: { contaId, id: { in: affectedMatriculaIds } },
         data: { formaPagamento: nextFormaPagamento },
-      });
+      }));
       const alignments = await Promise.all(
         affectedMatriculaIds.map((affectedMatriculaId) =>
-          alignLocalPendingEnrollmentCharges({
-            db: prisma,
+          runWithTenant(contaId, (tx) => alignLocalPendingEnrollmentCharges({
+            db: tx,
             matriculaId: affectedMatriculaId,
-            contaId: contaCtx.contaId!,
+            contaId,
             billingType: nextFormaPagamento,
             chargeBillingType: billingType,
-          }),
+          })),
         ),
       );
       localAlignment = {
@@ -259,6 +247,6 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     if (error instanceof KycNotApprovedError) {
       return jsonError(409, 'KYC_NAO_APROVADO', 'Conta não aprovada para operações financeiras');
     }
-    return jsonError(500, 'ERRO_ATUALIZAR_FORMA_PAGAMENTO', (error as Error).message);
+    return jsonError(500, 'ERRO_ATUALIZAR_FORMA_PAGAMENTO', 'Não foi possível atualizar a forma de pagamento.');
   }
 }

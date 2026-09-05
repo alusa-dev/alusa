@@ -1,4 +1,5 @@
-﻿import { NextResponse } from 'next/server';
+﻿import { syncEnrollmentNotifications } from '@/src/server/matriculas/enrollment-notifications.service';
+import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { Prisma, StatusMatricula } from '@prisma/client';
 import { authOptions } from '@/lib/auth-options';
@@ -481,7 +482,14 @@ export async function POST(req: Request) {
       }
     }
 
-    const notificationSync = null;
+    const notificationSync = await syncEnrollmentNotifications({
+      contaId: auth.contaId,
+      matriculaId: result.matricula.id,
+      actorId: auth.user.id,
+      correlationId: payload.uiRequestId,
+      channels: payload.notificationChannels,
+      configured: payload.notificationChannelsConfigured,
+    });
     const operationalWarnings: MatriculaOperationalWarningDTO[] = [];
     const immediateSync =
       'immediateFinancialSync' in result

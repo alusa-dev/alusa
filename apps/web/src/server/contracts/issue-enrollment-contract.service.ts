@@ -1,6 +1,9 @@
 import type { Prisma } from '@prisma/client';
 import { isMaiorDeIdade, snapshotContractConsentTerms, type ContractConsentRenderContext } from '@alusa/domain';
+import { encryptSecret } from '@alusa/database';
 import { createContractEvidence, createPublicContractToken } from '@alusa/lib';
+import { normalizeBrazilianWhatsAppPhone } from '@alusa/whatsapp';
+import { getWhatsAppRuntimeConfig } from '@/src/server/whatsapp/config';
 import {
   getMissingContractSignatureFieldsMessage,
   hasRequiredContractSignatureFields,
@@ -135,15 +138,16 @@ export async function issueEnrollmentContract(
           nome: true,
           cpf: true,
           dataNasc: true,
+          telefone: true,
           responsaveis: {
             where: { contaId: input.contaId, tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
             orderBy: { id: 'asc' },
             take: 1,
-            select: { tipoVinculo: true, responsavel: { select: { nome: true, cpf: true } } },
+            select: { tipoVinculo: true, responsavel: { select: { nome: true, cpf: true, telefone: true } } },
           },
         },
       },
-      responsavelFinanceiro: { select: { nome: true, cpf: true } },
+      responsavelFinanceiro: { select: { nome: true, cpf: true, telefone: true } },
     },
   });
 
@@ -189,6 +193,7 @@ export async function issueEnrollmentContract(
       // O valor bruto nunca é persistido; o prefixo mantém compatibilidade com dados legados.
       tokenPublico: `hash:${tokenPublicoHash}`,
       tokenPublicoHash,
+      tokenPublicoCriptografado: encryptSecret(publicToken),
       tokenExpiraEm,
     },
   });
@@ -238,6 +243,37 @@ export async function issueEnrollmentContract(
     where: { id: input.matriculaId, contaId: input.contaId },
     data: { contratoAtualId: contrato.id, statusContrato: 'AGUARDANDO_ASSINATURA' },
   });
+
+  const alunoMaior = Boolean(matricula.aluno.dataNasc && isMaiorDeIdade(matricula.aluno.dataNasc));
+  const linkedResponsavel = matricula.aluno.responsaveis[0]?.responsavel ?? null;
+  const recipientPhone = alunoMaior
+    ? matricula.aluno.telefone
+    : matricula.responsavelFinanceiro?.telefone ?? linkedResponsavel?.telefone ?? null;
+  if (recipientPhone) {
+    let normalizedPhone: string;
+    try {
+      normalizedPhone = normalizeBrazilianWhatsAppPhone(recipientPhone);
+    } catch {
+      // Telefone ausente ou inválido não pode impedir a criação do contrato.
+      normalizedPhone = '';
+    }
+    if (normalizedPhone) {
+      const whatsappConfig = getWhatsAppRuntimeConfig();
+      await tx.contractWhatsAppNotification.create({
+        data: {
+          contaId: input.contaId,
+          contratoId: contrato.id,
+          matriculaId: input.matriculaId,
+          templateName: alunoMaior ? whatsappConfig.contractMajorTemplateName : whatsappConfig.contractMinorTemplateName,
+          languageCode: whatsappConfig.contractTemplateLanguage,
+          recipientPhone: normalizedPhone,
+          recipientType: alunoMaior ? 'ALUNO' : 'RESPONSAVEL',
+          tokenCriptografado: encryptSecret(publicToken),
+          correlationId: `contract:${contrato.id}`,
+        },
+      });
+    }
+  }
 
   return { contrato, publicToken, tokenExpiraEm, created: true };
 }

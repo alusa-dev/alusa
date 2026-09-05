@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { EnrollmentCreationOperationStatus, PeriodicidadePlano, Prisma } from '@prisma/client';
+import { BillingMode, EnrollmentCreationOperationStatus, PeriodicidadePlano, Prisma } from '@prisma/client';
 import { resolvePayer } from '@alusa/domain';
 import {
   compensateStagedEnrollmentFinancialResources,
@@ -35,7 +35,13 @@ export class ImmediateEnrollmentCreationError extends Error {
 }
 
 function canonicalSnapshot(input: CriarMatriculaInput) {
+  // Version the persisted representation: old snapshots omitted financial terms
+  // and cannot establish payload equality for a mutating replay.
+  // Keep monetary precision: rounding here could make different charges collide.
+  // Dates are normalized to UTC; optional persisted values use their service defaults.
   return {
+    fingerprintVersion: 2,
+    contaId: input.contaId,
     alunoId: input.alunoId,
     turmaId: input.turmaId ?? null,
     comboId: input.comboId ?? null,
@@ -46,18 +52,50 @@ function canonicalSnapshot(input: CriarMatriculaInput) {
     vencimentoDia: input.vencimentoDia,
     taxaMatricula: input.taxaMatricula,
     taxaIsenta: input.taxaIsenta,
+    taxaJustificativa: input.taxaJustificativa ?? null,
+    pagarTaxaAgora: input.pagarTaxaAgora,
     gerarCobrancaTaxa: input.gerarCobrancaTaxa,
     criarCobranca: input.criarCobranca,
+    requiresFinancialProvisioning: input.requiresFinancialProvisioning ?? false,
+    billingMode: input.billingMode ?? BillingMode.INDIVIDUAL,
+    matriculaFamiliarId: input.matriculaFamiliarId ?? null,
+    familyOrderIndex: input.familyOrderIndex ?? null,
+    valorMensalidadeOverride: input.valorMensalidadeOverride ?? null,
+    jurosMensal: input.jurosMensal ?? null,
+    multaPercentual: input.multaPercentual ?? null,
+    descontoAntecipado: input.descontoAntecipado ?? null,
+    descontoTipo: input.descontoTipo ?? null,
+    prazoDesconto: input.prazoDesconto ?? null,
     formaPagamento: input.formaPagamento ?? null,
     formaPagamentoTaxa: input.formaPagamentoTaxa ?? null,
-    descontoIds: [...(input.descontoIds ?? [])].sort(),
-    billingStrategy: input.billingStrategy ?? null,
+    descontoIds: [...new Set((input.descontoIds ?? []).filter(Boolean))].sort(),
+    billingStrategy: input.billingStrategy ?? { kind: 'SEPARATE' },
     modeloId: input.modeloId,
+    notificationChannels: input.notificationChannelsConfigured
+      ? [...new Set(input.notificationChannels ?? [])].sort()
+      : null,
   };
 }
 
+// Audit identity, renewable preview tokens and preprovisioned remote artifacts
+// are deliberately excluded: they do not change the requested enrollment terms.
 function fingerprint(snapshot: ReturnType<typeof canonicalSnapshot>) {
   return createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+}
+
+function assertCurrentFingerprintVersion(snapshot: Prisma.JsonValue | null) {
+  if (
+    !snapshot ||
+    typeof snapshot !== 'object' ||
+    Array.isArray(snapshot) ||
+    snapshot.fingerprintVersion !== 2
+  ) {
+    throw new ImmediateEnrollmentCreationError(
+      'IDEMPOTENCY_LEGACY_REQUIRES_REVIEW',
+      'Esta tentativa usa uma confirmação antiga. Consulte seu resultado antes de iniciar outra matrícula.',
+      true,
+    );
+  }
 }
 
 function expectsEnrollmentFee(input: CriarMatriculaInput) {
@@ -139,7 +177,11 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
     );
   }
 
-  if (!input.criarCobranca) {
+  const existing = await withEnrollmentOperationTenant(input.contaId, (operations) =>
+    operations.findFirst({ where: { contaId: input.contaId, uiRequestId } }),
+  );
+  // A retry cannot escape the ledger comparison by turning off billing.
+  if (!input.criarCobranca && !existing) {
     return criarMatricula(input);
   }
 
@@ -152,9 +194,6 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
 
   const snapshot = canonicalSnapshot(input);
   const requestFingerprint = fingerprint(snapshot);
-  const existing = await withEnrollmentOperationTenant(input.contaId, (operations) =>
-    operations.findFirst({ where: { contaId: input.contaId, uiRequestId } }),
-  );
   if (!existing) {
     const legacyMatricula = await runWithTenant(input.contaId, (tx) =>
       tx.matricula.findFirst({
@@ -162,9 +201,10 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
         select: { id: true },
       }),
     );
-    if (legacyMatricula) return criarMatricula(input);
+    if (legacyMatricula) assertCurrentFingerprintVersion(null);
   }
   if (existing) {
+    assertCurrentFingerprintVersion(existing.requestSnapshot);
     if (existing.requestFingerprint !== requestFingerprint) {
       throw new ImmediateEnrollmentCreationError(
         'IDEMPOTENCY_KEY_REUTILIZADA',

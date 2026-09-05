@@ -182,7 +182,10 @@ describe('POST /api/matriculas', () => {
 
     expect(response.status).toBe(200);
     const json = await response.json();
-    expect(json.notificationSync).toBeNull();
+    expect(json.notificationSync).toEqual(expect.objectContaining({
+      applied: expect.any(Object),
+      warnings: expect.any(Array),
+    }));
     expect(json.operationalWarnings).toEqual([]);
     expect(ensureCustomer).not.toHaveBeenCalled();
     expect(syncCustomerNotificationsForUserSelection).not.toHaveBeenCalled();
@@ -255,7 +258,10 @@ describe('POST /api/matriculas', () => {
 
     expect(response.status).toBe(200);
     const json = await response.json();
-    expect(json.notificationSync).toBeNull();
+    expect(json.notificationSync).toEqual(expect.objectContaining({
+      applied: expect.any(Object),
+      warnings: expect.any(Array),
+    }));
     expect(json.operationalWarnings).toEqual([]);
     expect(ensureCustomer).not.toHaveBeenCalled();
     expect(syncCustomerNotificationsForUserSelection).not.toHaveBeenCalled();
