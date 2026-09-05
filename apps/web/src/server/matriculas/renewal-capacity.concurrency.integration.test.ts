@@ -102,7 +102,7 @@ describeIf('renewal capacity concurrency', () => {
         return enrollment.id;
       }),
     );
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await db.$disconnect();
