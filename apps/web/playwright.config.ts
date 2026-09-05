@@ -44,6 +44,9 @@ export default defineConfig({
   testDir: './',
   // Permite rodar qualquer *.spec.ts dentro de e2e/ ou tests/e2e/
   testMatch: ['e2e/**/*.spec.ts', 'tests/e2e/**/*.spec.ts'],
+  // Os fixtures de integração resetam o banco compartilhado entre os testes;
+  // um único worker evita corridas destrutivas entre suites no CI.
+  workers: process.env.CI ? 1 : undefined,
   timeout: 30_000,
   retries: process.env.CI ? 2 : 1,
   use: {
