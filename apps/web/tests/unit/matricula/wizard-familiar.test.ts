@@ -3,6 +3,42 @@ import { renderHook, act } from '@testing-library/react';
 import { useMatriculaWizard } from '@/components/matriculas/wizard/hooks/useMatriculaWizard';
 import type { WizardState, WizardAlunoFamiliar } from '@/components/matriculas/wizard/types';
 
+vi.mock('@/features/cadastro/matriculas/services/matriculas-service', () => ({
+  previewInitialEnrollmentBillingRequest: vi.fn().mockResolvedValue({
+    previewHash: 'a'.repeat(64),
+    sourceVersion: 'b'.repeat(64),
+    expiresAt: '2026-10-01T00:00:00.000Z',
+    strategy: 'CREATE_SEPARATE',
+    billingStrategy: { kind: 'SEPARATE' },
+    compatibility: { compatible: true, blockers: [], warnings: [] },
+    totals: { monthlyTotal: 0, enrollmentFeeTotal: 0, itemCount: 2 },
+    validityImpact: {
+      existingEndDate: null,
+      addedEndDate: '2026-10-01',
+      resultingEndDate: '2026-10-01',
+      isDifferent: false,
+      rule: 'STANDARD',
+    },
+    billingImpact: {
+      currentMonthlyAmount: 0,
+      addedMonthlyAmount: 0,
+      resultingMonthlyAmount: 0,
+      enrollmentFeeAmount: 0,
+      application: 'SEPARATE',
+      updatesPendingPayments: false,
+      currentCycleAction: 'CREATE_SEPARATE',
+      currentChargeState: 'NOT_GENERATED',
+      currentChargeId: null,
+      currentChargeDueDate: null,
+      nextCycleDate: null,
+      operationalMessage: 'OK',
+      targetLabel: null,
+    },
+    groups: [],
+    snapshot: {},
+  }),
+}));
+
 // ─── useMatriculaWizard — modo steps ─────────────────────────────────────────
 
 describe('useMatriculaWizard — getSteps', () => {
@@ -102,7 +138,7 @@ describe('useMatriculaFamiliarSubmit', async () => {
   ];
 
   beforeEach(() => {
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
     vi.stubGlobal('fetch', vi.fn());
   });
 
@@ -127,9 +163,9 @@ describe('useMatriculaFamiliarSubmit', async () => {
       results = await result.current.submit({ ...stateWithoutModelo, alunosFamiliares: alunos });
     });
 
-    expect(results).toHaveLength(2);
-    expect(results![0].status).toBe('success');
-    expect(results![1].status).toBe('success');
+    expect(results.results).toHaveLength(2);
+    expect(results.results[0].status).toBe('success');
+    expect(results.results[1].status).toBe('success');
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const firstPayload = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
     expect(firstPayload.responsavelId).toBe('resp-1');
@@ -157,15 +193,11 @@ describe('useMatriculaFamiliarSubmit', async () => {
     vi.stubGlobal('fetch', mockFetch);
 
     const { result } = renderHook(() => useMatriculaFamiliarSubmit());
-    let results;
-    await act(async () => {
-      results = await result.current.submit({ ...baseState, alunosFamiliares: alunos });
-    });
-
-    expect(results![0].status).toBe('error');
-    expect(results![0].errorMessage).toContain('Aluno já matriculado');
-    expect(results).toHaveLength(1);
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    await expect(
+      act(async () => {
+        await result.current.submit({ ...baseState, alunosFamiliares: alunos });
+      }),
+    ).rejects.toThrow('Aluno já matriculado');
   });
 
   it('sanitiza menção a Asaas nas mensagens de erro', async () => {
@@ -176,13 +208,11 @@ describe('useMatriculaFamiliarSubmit', async () => {
     vi.stubGlobal('fetch', mockFetch);
 
     const { result } = renderHook(() => useMatriculaFamiliarSubmit());
-    let results;
-    await act(async () => {
-      results = await result.current.submit({ ...baseState, alunosFamiliares: [alunos[0]] });
-    });
-
-    expect(results![0].errorMessage).not.toMatch(/Asaas/i);
-    expect(results![0].errorMessage).toContain('financeiro');
+    await expect(
+      act(async () => {
+        await result.current.submit({ ...baseState, alunosFamiliares: [alunos[0]] });
+      }),
+    ).rejects.toThrow('Erro no financeiro: customer inválido');
   });
 
   it('lança erro se nenhum aluno for fornecido', async () => {

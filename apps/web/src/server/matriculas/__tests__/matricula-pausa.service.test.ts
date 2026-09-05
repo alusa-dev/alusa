@@ -367,16 +367,8 @@ describe('matricula-pausa.service', () => {
         contaId: 'conta-1',
         nextDueDate: '2025-08-01',
       });
-      expect(getPaymentMock).toHaveBeenCalledWith('pay_1', { contaId: 'conta-1' });
-      expect(updatePaymentMock).toHaveBeenCalledWith(
-        'pay_1',
-        expect.objectContaining({
-          billingType: 'BOLETO',
-          value: 150,
-          dueDate: '2025-08-01',
-        }),
-        { contaId: 'conta-1' },
-      );
+      expect(getPaymentMock).not.toHaveBeenCalled();
+      expect(updatePaymentMock).not.toHaveBeenCalled();
       expect(tx.matricula.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ status: 'ATIVA', statusFinanceiro: 'ADIMPLENTE' }),

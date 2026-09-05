@@ -1,6 +1,5 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { Prisma, type PrismaClient } from '@prisma/client';
-import { prisma } from '@alusa/lib';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { resetDb } from '../../../tests/utils/reset-db';
 
 vi.mock('@/src/server/platform-billing/capacity', () => ({
@@ -18,7 +17,7 @@ const hasDb = !!process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith(
 const describeIf = hasDb ? describe : describe.skip;
 
 describeIf('renewal capacity concurrency', () => {
-  const db = prisma as PrismaClient;
+  const db = new PrismaClient();
   const effectiveAt = new Date('2027-02-01T00:00:00.000Z');
 
   let contaId: string;
@@ -103,6 +102,10 @@ describeIf('renewal capacity concurrency', () => {
         return enrollment.id;
       }),
     );
+  });
+
+  afterAll(async () => {
+    await db.$disconnect();
   });
 
   it('permite somente uma confirmação quando duas requisições disputam a última vaga', async () => {

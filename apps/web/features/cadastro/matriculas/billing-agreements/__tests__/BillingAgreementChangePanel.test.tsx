@@ -1,6 +1,6 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BillingAgreementChangePanel } from '../BillingAgreementChangePanel';
 import { useBillingAgreementChange } from '../use-billing-agreement-change';
@@ -85,6 +85,8 @@ const change = {
 };
 
 describe('BillingAgreementChangePanel', () => {
+  afterEach(() => cleanup());
+
   beforeEach(() => {
     mockedUseBillingAgreementChange.mockReturnValue(lifecycle());
   });

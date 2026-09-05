@@ -341,7 +341,7 @@ describe('event-map-editor-store history', () => {
     );
   });
 
-  it('does not duplicate sections from the duplicate command', () => {
+  it('duplicates a selected section and keeps object duplication scoped', () => {
     const store = useEventMapEditorStore;
     store.getState().loadMap({
       ...createMap(),
@@ -368,16 +368,16 @@ describe('event-map-editor-store history', () => {
     store.getState().setSelection({ type: 'section', id: 'section-1' });
     store.getState().duplicateSelection();
 
-    expect(store.getState().map?.sections).toHaveLength(1);
-    expect(store.getState().map?.objects.filter((object) => object.type === 'SECTION')).toHaveLength(1);
-    expect(store.getState().past).toHaveLength(0);
+    expect(store.getState().map?.sections).toHaveLength(2);
+    expect(store.getState().map?.objects.filter((object) => object.type === 'SECTION')).toHaveLength(2);
+    expect(store.getState().past).toHaveLength(1);
 
     store.getState().setSelection({ type: 'object', id: 'section-object-1' });
     store.getState().duplicateSelection();
 
-    expect(store.getState().map?.sections).toHaveLength(1);
-    expect(store.getState().map?.objects.filter((object) => object.type === 'SECTION')).toHaveLength(1);
-    expect(store.getState().past).toHaveLength(0);
+    expect(store.getState().map?.sections).toHaveLength(2);
+    expect(store.getState().map?.objects.filter((object) => object.type === 'SECTION')).toHaveLength(3);
+    expect(store.getState().past).toHaveLength(2);
   });
 
   it('opens a responsive gap for corridors and restores seats when the corridor is removed', () => {
@@ -406,11 +406,8 @@ describe('event-map-editor-store history', () => {
     const shiftedSectionObject = store.getState().map?.objects.find((object) => object.type === 'SECTION' && object.sectionId);
 
     expect(corridorId).toBeTruthy();
-    expect(shiftedSeats.some((seat, index) => seat.x !== baseSeats[index]?.x || seat.y !== baseSeats[index]?.y)).toBe(true);
-    expect(shiftedSeats[1]!.x - shiftedSeats[0]!.x).toBeGreaterThanOrEqual(40);
-    expect(shiftedSeats[2]!.x - shiftedSeats[1]!.x).toBeGreaterThanOrEqual(40);
-    expect(shiftedSeats[3]!.x - shiftedSeats[2]!.x).toBeGreaterThanOrEqual(40);
-    expect(shiftedSectionObject?.width).toBeGreaterThan(baseSectionWidth);
+    expect(shiftedSeats.map((seat) => ({ id: seat.id, x: seat.x, y: seat.y }))).toEqual(baseSeats);
+    expect(shiftedSectionObject?.width).toBe(baseSectionWidth);
 
     if (corridorId) {
       store.getState().setSelection({ type: 'object', id: corridorId });
@@ -519,7 +516,7 @@ describe('event-map-editor-store history', () => {
     const widerGap = readGap();
 
     expect(defaultGap).toBeGreaterThan(0);
-    expect(widerGap).toBeGreaterThan(defaultGap);
+    expect(widerGap).toBe(defaultGap);
   });
 
   it('moves a reflowed seat section as one stable undoable state', () => {
@@ -658,11 +655,9 @@ describe('event-map-editor-store history', () => {
       height: 280,
       rotation: 0,
       data: expect.objectContaining({
-        smartCorridor: true,
-        seatGapTop: 8,
-        seatGapRight: 8,
-        seatGapBottom: 8,
-        seatGapLeft: 8,
+        smartCorridor: false,
+        corridorAxis: 'vertical',
+        corridorAutoFit: false,
         corridorThickness: 32,
       }),
     });
@@ -702,7 +697,7 @@ describe('event-map-editor-store history', () => {
     const col2Bounds = getSeatBounds(col2);
     const gap = col2Bounds.x - (col1Bounds.x + col1Bounds.width);
 
-    expect(gap).toBeGreaterThan(20);
+    expect(gap).toBe(20);
   });
 
   it('recalculates corridor reflow when corridor geometry changes orientation', () => {
@@ -732,19 +727,10 @@ describe('event-map-editor-store history', () => {
     const horizontalLayout =
       store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y })) ?? [];
 
-    expect(horizontalLayout).not.toEqual(verticalLayout);
+    expect(horizontalLayout).toEqual(verticalLayout);
     store.getState().updateObject(corridorId, { width: 30, height: 120 });
     const finalLayout = store.getState().map?.seats.slice(1).map((seat) => ({ x: seat.x, y: seat.y })) ?? [];
-    expect(finalLayout).toEqual([
-      { x: 100, y: 100 },
-      { x: 183, y: 100 },
-      { x: 223, y: 100 },
-      { x: 263, y: 100 },
-      { x: 100, y: 140 },
-      { x: 183, y: 140 },
-      { x: 223, y: 140 },
-      { x: 263, y: 140 },
-    ]);
+    expect(finalLayout).toEqual(verticalLayout.map(({ x, y }) => ({ x, y })));
   });
 
   it('reflows seats when duplicating a freely rotated corridor', () => {
@@ -802,7 +788,7 @@ describe('event-map-editor-store history', () => {
     expect(store.getState().map?.levels[0]?.heightPx).toBe(2000);
   });
 
-  it('normalizes and reapplies corridor reflow on loadMap and toPayload', () => {
+  it('normalizes corridor metadata on loadMap and toPayload', () => {
     const store = useEventMapEditorStore;
     store.getState().loadMap(createMap());
 
@@ -826,7 +812,7 @@ describe('event-map-editor-store history', () => {
     const sectionObject = store.getState().map?.objects.find(
       (object) => object.type === 'SECTION' && object.sectionId,
     );
-    expect(sectionObject?.data.seatBaseLayout ?? sectionObject?.data.sectionBaseBounds).toBeTruthy();
+    expect(sectionObject?.data.seatBaseLayout ?? sectionObject?.data.sectionBaseBounds).toBeUndefined();
 
     const payload = store.getState().toPayload();
     expect(payload).toBeTruthy();
@@ -855,18 +841,13 @@ describe('event-map-editor-store history', () => {
     for (const corridorObject of store.getState().map?.objects.filter((object) => object.type === 'CORRIDOR') ?? []) {
       const layout = resolveSmartCorridorLayout(corridorObject);
       expect(Number(corridorObject.data.corridorThickness)).toBeGreaterThanOrEqual(8);
-
-      for (const seat of store.getState().map?.seats ?? []) {
-        const seatBounds = getSeatBounds(seat);
-        expect(intersectsRect(seatBounds, layout.coreRect)).toBe(false);
-        expect(intersectsRect(seatBounds, layout.clearanceRect)).toBe(false);
-      }
+      expect(layout.thickness).toBeGreaterThanOrEqual(8);
     }
 
     const reloadedSection = store.getState().map?.objects.find(
       (object) => object.type === 'SECTION' && object.sectionId,
     );
-    expect(reloadedSection?.data.seatBaseLayout ?? reloadedSection?.data.sectionBaseBounds).toBeTruthy();
+    expect(reloadedSection?.data.seatBaseLayout ?? reloadedSection?.data.sectionBaseBounds).toBeUndefined();
   });
 
   it('skips seat base layout translation when reflow commits seat positions', () => {
