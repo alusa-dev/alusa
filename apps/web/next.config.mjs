@@ -231,6 +231,10 @@ const nextConfig = {
     };
     config.resolve.alias = config.resolve.alias || {};
     config.resolve.alias['@alusa/asaas'] = resolvePath(__dirname, '../../packages/asaas/dist/index.js');
+    config.resolve.alias['@alusa/database'] = resolvePath(
+      __dirname,
+      dev ? '../../packages/database/src/index.ts' : '../../packages/database/dist/index.js',
+    );
     const libSrc = resolvePath(__dirname, '../../packages/lib/src');
     const libDistSrc = resolvePath(__dirname, '../../packages/lib/dist');
     const libBase = dev ? libSrc : libDistSrc;
