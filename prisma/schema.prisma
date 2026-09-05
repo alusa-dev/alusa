@@ -1441,6 +1441,7 @@ model Conta {
   contratoModeloConsentimentos      ContratoModeloConsentimento[]
   contratos                         Contrato[]
   contratoEvidencias                ContractEvidence[]
+  contractSignatureOtps             ContractSignatureOtp[]
   contratoDocumentos                ContratoDocumento[]
   payerChangeOperacoes              PayerChangeOperacao[]
   matriculaOperacoes                MatriculaOperacao[]
@@ -5351,6 +5352,7 @@ model Contrato {
   subscriptions             Subscription[]
   installmentPlans          InstallmentPlan[]
   evidencias                ContractEvidence[]
+  signatureOtps             ContractSignatureOtp[]
   documentos                ContratoDocumento[]
   rematriculaContratoFuturo ContratoFuturo?
 
@@ -5409,6 +5411,7 @@ model EventoContrato {
   createdBy   Usuario?                  @relation("EventoContratoCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   documentos  EventoContratoDocumento[]
   evidencias  EventoContratoEvidence[]
+  signatureOtps ContractSignatureOtp[]
 
   @@unique([contaId, eventId, alunoId], name: "uq_evento_contrato_conta_evento_aluno")
   @@unique([contaId, participantId], name: "uq_evento_contrato_conta_participante")
@@ -5469,6 +5472,43 @@ enum ContractEvidenceType {
   LINK_EXPIRED
   CONTRACT_CANCELLED
   SIGNED_PDF_GENERATED
+  SIGNATURE_OTP_REQUESTED
+  SIGNATURE_OTP_SENT
+  SIGNATURE_OTP_FAILED
+  SIGNATURE_OTP_VERIFIED
+  SIGNATURE_OTP_EXPIRED
+  SIGNATURE_OTP_CONSUMED
+}
+
+model ContractSignatureOtp {
+  id                    String    @id @default(cuid())
+  contaId               String
+  contratoId            String?
+  eventoContratoId      String?
+  cpf                   String
+  emailSnapshot         String
+  contractHash          String
+  codeHash              String
+  verificationTokenHash String?
+  requestedIp           String?
+  requestedUserAgent    String?
+  attempts              Int       @default(0)
+  maxAttempts           Int       @default(5)
+  expiresAt             DateTime
+  verifiedAt            DateTime?
+  consumedAt            DateTime?
+  emailSentAt           DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  conta          Conta           @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  contrato       Contrato?       @relation(fields: [contratoId], references: [id], onDelete: Restrict)
+  eventoContrato EventoContrato? @relation(fields: [eventoContratoId], references: [id], onDelete: Restrict)
+
+  @@index([contaId, contratoId, createdAt], name: "idx_contract_signature_otp_conta_contrato_created")
+  @@index([contaId, eventoContratoId, createdAt], name: "idx_contract_signature_otp_conta_evento_created")
+  @@index([contaId, cpf, createdAt], name: "idx_contract_signature_otp_conta_cpf_created")
+  @@index([expiresAt], name: "idx_contract_signature_otp_expires")
 }
 
 model ContractEvidence {

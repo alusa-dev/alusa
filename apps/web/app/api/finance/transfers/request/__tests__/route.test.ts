@@ -25,6 +25,10 @@ vi.mock('@/lib/auth-service', () => ({
   verifyCredentialsDetailed: vi.fn(),
 }));
 
+vi.mock('@/lib/finance/financial-account-gate', () => ({
+  guardFinancialAccountOr412: vi.fn(async () => ({ ok: true })),
+}));
+
 vi.mock('@alusa/finance', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@alusa/finance')>();
 

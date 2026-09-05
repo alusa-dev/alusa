@@ -3,8 +3,8 @@
 import React from 'react';
 void React;
 
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LegalPage } from '@/features/site/components/legal/LegalPage';
 import { legalPages } from '@/features/site/content/legal';
 
@@ -17,14 +17,17 @@ vi.mock('next/link', () => ({
 }));
 
 describe('LegalPage', () => {
+  afterEach(() => cleanup());
+
   it('renderiza a lateral nas páginas abertas com o item ativo destacado', () => {
     render(<LegalPage content={legalPages.privacidade} />);
 
-    expect(screen.getByRole('navigation', { name: 'Páginas legais' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Política de Privacidade' })).toHaveAttribute(
+    const navigation = screen.getByRole('navigation', { name: 'Páginas legais' });
+    expect(navigation).toBeInTheDocument();
+    expect(within(navigation).getByRole('link', { name: 'Política de Privacidade' })).toHaveAttribute(
       'aria-current',
       'page'
     );
-    expect(screen.getByRole('link', { name: 'Termos de Uso' })).toHaveAttribute('href', '/termos');
+    expect(within(navigation).getByRole('link', { name: 'Termos de Uso' })).toHaveAttribute('href', '/termos');
   });
 });

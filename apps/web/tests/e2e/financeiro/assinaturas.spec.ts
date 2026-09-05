@@ -16,10 +16,10 @@ test.describe('Cobranças → Assinaturas', () => {
     await waitForPageReady(page, 'Assinaturas');
 
     // A assinatura criada no seed deve aparecer (aluno: João Aluno E2E)
-    await expect(page.getByText('João Aluno E2E')).toBeVisible();
+    await expect(page.getByRole('button', { name: /João Aluno E2E/ }).first()).toBeVisible();
 
-    // Deve ter pelo menos uma linha na tabela
-    const rows = await page.locator('tbody > tr').count();
+    // A listagem atual usa uma linha semântica com role=button (desktop e mobile).
+    const rows = await page.getByRole('button', { name: /João Aluno E2E/ }).count();
     expect(rows).toBeGreaterThanOrEqual(1);
   });
 
@@ -28,7 +28,8 @@ test.describe('Cobranças → Assinaturas', () => {
     await waitForPageReady(page, 'Assinaturas');
 
     // Clicar na assinatura do aluno
-    const row = page.locator('tbody > tr').first();
+    const row = page.getByRole('button', { name: /João Aluno E2E/ }).first();
+    await expect(row).toBeVisible({ timeout: 15_000 });
     await row.click();
 
     // Deve navegar para /cobrancas/assinaturas/[id]
@@ -42,9 +43,9 @@ test.describe('Cobranças → Assinaturas', () => {
     // Deve mostrar seção "Cobranças Geradas"
     await expect(page.getByRole('heading', { name: 'Cobranças Geradas' })).toBeVisible();
 
-    // Deve ter pelo menos 2 cobranças na tabela (atual + futura)
-    const chargeRows = page.locator('tbody > tr');
-    await expect(chargeRows).toHaveCount(2, { timeout: 5_000 });
+    // A tela atual exibe o total e uma linha de ação para cada cobrança.
+    await expect(page.getByText('4', { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Abrir' })).toHaveCount(4, { timeout: 5_000 });
   });
 
   test('botão "Abrir" na cobrança gerada navega para /cobrancas/[chargeId]', async ({ page }) => {
@@ -60,14 +61,14 @@ test.describe('Cobranças → Assinaturas', () => {
     await expect(page).toHaveURL(/\/cobrancas\/[a-z0-9]+$/i, { timeout: 10_000 });
   });
 
-  test('backend valida: dados da API batem com a UI', async ({ page, request }) => {
+  test('backend valida: dados da API batem com a UI', async ({ page }) => {
     await page.goto('/cobrancas/assinaturas');
     await waitForPageReady(page, 'Assinaturas');
 
-    const api = new ApiHelper(request);
+    const api = new ApiHelper(page.request);
     const apiResult = await api.getSubscriptions();
 
-    const uiRows = await page.locator('tbody > tr').count();
+    const uiRows = await page.getByRole('button', { name: /João Aluno E2E/ }).count();
     expect(uiRows).toBe(apiResult.data.length);
   });
 });

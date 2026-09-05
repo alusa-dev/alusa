@@ -1,11 +1,9 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 
-let seedCounter = 0;
-
-function toCpfDigits(value: number): string {
-  const digits = String(Math.abs(value)).replace(/\D/g, '');
-  return digits.padStart(11, '0').slice(-11);
-}
+const TEST_PDF_DATA_URL =
+  'data:application/pdf;base64,JVBERi0xLjcKJYGBgYEKCjEgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFsgNCAwIFIgXQovQ291bnQgMQo+PgplbmRvYmoKCjIgMCBvYmoKPDwKL1R5cGUgL0NhdGFsb2cKL1BhZ2VzIDEgMCBSCj4+CmVuZG9iagoKMyAwIG9iago8PAovUHJvZHVjZXIgPEZFRkYwMDcwMDA2NDAwNjYwMDJEMDA2QzAwNjkwMDYyMDAyMDAwMjgwMDY4MDA3NDAwNzQwMDcwMDA3MzAwM0EwMDJGMDAyRjAwNjcwMDY5MDA3NDAwNjgwMDc1MDA2MjAwMkUwMDYzMDA2RjAwNkQwMDJGMDA0ODAwNkYwMDcwMDA2NDAwMDY5MDA2NTAwNjcwMDJGMDA3MDAwNjQwMDY2MDA2QzAwNjkwMDYyMDAyOT4KL01vZERhdGUgKEQ6MjAyNjA5MDUwMjIxNTVaKQovQ3JlYXRvciA8RkVGRjAwNzAwMDY0MDA2NjAwMkQwMDZDMDA2OTAwNjIwMDIwMDAyODAwNjgwMDc0MDA3NDAwNzAwMDczMDAzQTAwMkYwMDJGMDA2NzAwNjkwMDc0MDA2ODAwNzUwMDYyMDAyRTAwNjMwMDZGMDA2RDAwMkYwMDQ4MDA2RjAwNzAwMDY0MDA2OTAwNkUwMDY3MDAyRjAwNzAwMDY0MDA2NjAwMkQwMDZDMDA2OTAwNjIwMDI5PgovQ3JlYXRpb25EYXRlIChEOjIwMjYwOTA1MDIyMTU1WikKPj4KZW5kb2JqCgo0IDAgb2JqCjw8Ci9UeXBlIC9QYWdlCi9QYXJlbnQgMSAwIFIKL1Jlc291cmNlcyA8PAo+PgovTWVkaWFCb3ggWyAwIDAgNTk1IDg0MiBdCj4+CmVuZG9iagoKeHJlZgowIDUKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDE2IDAwMDAwIG4gCjAwMDAwMDAwNzYgMDAwMDAgbiAKMDAwMDAwMDEyNiAwMDAwMCBuIAowMDAwMDAwNTk2IDAwMDAwIG4gCgp0cmFpbGVyCjw8Ci9TaXplIDUKL1Jvb3QgMiAwIFIKL0luZm8gMyAwIFIKPj4KCnN0YXJ0eHJlZgo2ODcKJSVFT0Y=';
+const DEFAULT_STUDENT_CPF = '52998224725';
+const DEFAULT_RESPONSIBLE_CPF = '11144477735';
 
 export type SeedContratoPublicoResult = {
   contaId: string;
@@ -13,7 +11,9 @@ export type SeedContratoPublicoResult = {
   matriculaId: string;
   contratoId: string;
   alunoCpfDigits: string;
+  alunoEmail: string;
   responsavelCpfDigits?: string;
+  responsavelEmail?: string;
   token: string;
 };
 
@@ -30,13 +30,12 @@ export async function seedContratoPublico(
   },
 ): Promise<SeedContratoPublicoResult> {
   const now = Date.now();
-  const unique = now + seedCounter++;
   const token = input?.token ?? `token-contrato-${now}`;
 
   const withResponsavelFinanceiro = input?.withResponsavelFinanceiro ?? true;
 
-  const alunoCpfDigits = input?.alunoCpfDigits ?? toCpfDigits(unique);
-  const responsavelCpfDigits = input?.responsavelCpfDigits ?? toCpfDigits(unique + 12345);
+  const alunoCpfDigits = input?.alunoCpfDigits ?? DEFAULT_STUDENT_CPF;
+  const responsavelCpfDigits = input?.responsavelCpfDigits ?? DEFAULT_RESPONSIBLE_CPF;
 
   const conta = await prisma.conta.create({
     data: {
@@ -50,8 +49,9 @@ export async function seedContratoPublico(
     data: {
       contaId: conta.id,
       nome: 'Aluno E2E',
-      dataNasc: input?.alunoDataNasc ?? new Date('2000-01-01T00:00:00.000Z'),
+      dataNasc: input?.alunoDataNasc ?? new Date('2010-01-01T00:00:00.000Z'),
       cpf: alunoCpfDigits,
+      email: `aluno-${now}@e2e.local`,
     },
     select: { id: true },
   });
@@ -74,16 +74,17 @@ export async function seedContratoPublico(
     data: {
       contaId: conta.id,
       nome: `Modelo E2E ${now}`,
-      arquivoUrl: 'https://example.com/test.pdf',
-      hashPdf: `hash-${now}`,
+      arquivoPdfUrl: TEST_PDF_DATA_URL,
+      hashSha256: `hash-${now}`,
       versao: 1,
-      ativo: true,
+      status: 'ATIVO',
     },
     select: { id: true },
   });
 
   const matricula = await prisma.matricula.create({
     data: {
+      contaId: conta.id,
       alunoId: aluno.id,
       responsavelFinanceiroId: responsavel?.id ?? null,
       planoId: null,
@@ -101,10 +102,10 @@ export async function seedContratoPublico(
 
   const contrato = await prisma.contrato.create({
     data: {
-      contaId,
+      contaId: conta.id,
       matriculaId: matricula.id,
       modeloId: modelo.id,
-      arquivoPdfUrl: 'https://example.com/contrato.pdf',
+      arquivoPdfUrl: TEST_PDF_DATA_URL,
       hashPdf: `hash-contrato-${now}`,
       status: input?.status ?? 'PENDENTE',
       tokenPublico: token,
@@ -122,7 +123,9 @@ export async function seedContratoPublico(
     matriculaId: matricula.id,
     contratoId: contrato.id,
     alunoCpfDigits,
+    alunoEmail: `aluno-${now}@e2e.local`,
     responsavelCpfDigits: withResponsavelFinanceiro ? responsavelCpfDigits : undefined,
+    responsavelEmail: withResponsavelFinanceiro ? `resp-${now}@e2e.local` : undefined,
     token,
   };
 }

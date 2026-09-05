@@ -11,6 +11,10 @@ import {
   type ContractConsentTermSnapshot,
   validateContractSigner,
 } from '@alusa/domain';
+import {
+  consumePublicContractSignatureOtp,
+  getPublicContractSignatureOtpAuthorization,
+} from './signature-otp';
 import { prisma } from '../../prisma';
 import { createContractEvidence } from '../evidence/create-contract-evidence';
 import { generateSignedContractEvidencePdf } from '../pdf/generate-signed-contract-pdf';
@@ -19,6 +23,7 @@ import { parseBrazilianDateOnlyToUtcDate } from '../../utils/date-only';
 
 type SignPublicContractInput = {
   token: string;
+  verificationToken: string;
   cpf: string;
   nome: string;
   dataNascimento?: string | null;
@@ -118,17 +123,18 @@ export async function findPublicContractByToken(token: string) {
               id: true,
               nome: true,
               cpf: true,
+              email: true,
               dataNasc: true,
               contaId: true,
               responsaveis: {
                 where: {},
                 orderBy: { id: 'asc' },
                 take: 10,
-                select: { contaId: true, responsavel: { select: { nome: true, cpf: true } } },
+                select: { contaId: true, responsavel: { select: { nome: true, cpf: true, email: true } } },
               },
             },
           },
-          responsavelFinanceiro: { select: { id: true, nome: true, cpf: true } },
+          responsavelFinanceiro: { select: { id: true, nome: true, cpf: true, email: true } },
         },
       },
     },
@@ -211,6 +217,14 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
     throw new Error(signer.code);
   }
 
+  const otpAuthorization = await getPublicContractSignatureOtpAuthorization({
+    contaId: contrato.contaId,
+    contratoId: contrato.id,
+    cpf: signer.signer.cpf,
+    contractHash: contrato.hashPdf,
+    verificationToken: input.verificationToken,
+  });
+
   const signaturePayload = buildSignaturePayload({
     contratoId: contrato.id,
     matriculaId: contrato.matriculaId,
@@ -219,7 +233,7 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
     cpf: signer.signer.cpf,
     nome: signer.signer.nome,
     dataNascimento: input.dataNascimento ?? null,
-    email: input.email ?? null,
+    email: otpAuthorization.emailSnapshot,
     assinadoEmIso: now.toISOString(),
     ip: input.ip ?? null,
     userAgent,
@@ -236,7 +250,7 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
     alunoNome: contrato.matricula.aluno.nome,
     signerName: signer.signer.nome,
     signerCpf: signer.signer.cpf,
-    email: input.email ?? null,
+    email: otpAuthorization.emailSnapshot,
     signedAtIso: now.toISOString(),
     ip: input.ip ?? null,
     userAgent,
@@ -260,6 +274,14 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
   const signedPdfUrl = `/api/contratos/${contrato.id}/documentos/assinado`;
 
   await prisma.$transaction(async (tx) => {
+    await consumePublicContractSignatureOtp(tx, {
+      contaId: contrato.contaId,
+      contratoId: contrato.id,
+      cpf: signer.signer.cpf,
+      contractHash: contrato.hashPdf,
+      verificationToken: input.verificationToken,
+    });
+
     await createContractEvidence(tx as never, {
       contaId: contrato.contaId,
       contratoId: contrato.id,
@@ -268,7 +290,7 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
       userAgent,
       payload: {
         signerType: signer.signer.type,
-        emailProvided: Boolean(input.email),
+        emailProvided: true,
       },
     });
 
@@ -317,7 +339,7 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
         assinadoPor: signer.signer.nome,
         assinadoCpf: signer.signer.cpf,
         assinadoDataNascimento: input.dataNascimento ? parseBrazilianDateOnlyToUtcDate(input.dataNascimento) : null,
-        assinadoEmail: input.email || null,
+        assinadoEmail: otpAuthorization.emailSnapshot,
         assinadoIp: input.ip ?? null,
         assinadoUserAgent: userAgent,
         assinadoEm: now,

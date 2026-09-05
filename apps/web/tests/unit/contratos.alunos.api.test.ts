@@ -8,6 +8,7 @@ import { NextRequest } from 'next/server';
 vi.mock('@/prisma/client', () => ({
   prisma: {
     aluno: {
+      count: vi.fn(),
       findMany: vi.fn(),
     },
   },
@@ -46,6 +47,7 @@ describe('GET /api/contratos/alunos', () => {
 
   it('lista alunos com contratos filtrando por conta', async () => {
     vi.mocked(getSessionUser).mockResolvedValue({ contaId: 'conta-1' } as never);
+    vi.mocked(prisma.aluno.count).mockResolvedValueOnce(2);
 
     vi.mocked(prisma.aluno.findMany).mockResolvedValue([
       { id: 'a1', nome: 'Aluno 1', foto: null },
@@ -67,9 +69,19 @@ describe('GET /api/contratos/alunos', () => {
     );
 
     const json = await res.json();
-    expect(json).toEqual([
-      { id: 'a1', nome: 'Aluno 1', foto: null },
-      { id: 'a2', nome: 'Aluno 2', foto: 'https://example.com/f.png' },
-    ]);
+    expect(json).toEqual({
+      data: [
+        { id: 'a1', nome: 'Aluno 1', foto: null },
+        { id: 'a2', nome: 'Aluno 2', foto: 'https://example.com/f.png' },
+      ],
+      pagination: {
+        page: 1,
+        pageSize: 7,
+        total: 2,
+        totalPages: 1,
+        hasNextPage: false,
+        hasPreviousPage: false,
+      },
+    });
   });
 });

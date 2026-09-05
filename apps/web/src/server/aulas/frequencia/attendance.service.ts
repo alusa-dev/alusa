@@ -214,6 +214,7 @@ export async function saveAttendanceForEvent(
   const launchPolicy = evaluateAttendanceLaunchPolicy({
     startAt: details.data.event.startAt,
     status: details.data.event.status,
+    timeZone: details.timeZone,
   });
 
   if (!launchPolicy.allowed) {

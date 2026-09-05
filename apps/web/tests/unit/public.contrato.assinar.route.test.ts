@@ -58,6 +58,7 @@ describe('POST /api/public/contrato/[token]/assinar', () => {
         nome: 'Responsável',
         cpf: '52998224725',
         email: 'resp@example.com',
+        verificationToken: 'a'.repeat(43),
         aceite: true,
         assinatura: { tipo: 'TEXTO', valor: 'Responsável' },
       }),

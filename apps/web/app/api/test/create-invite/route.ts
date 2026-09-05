@@ -42,42 +42,61 @@ export async function POST(req: Request) {
       );
     }
 
-    // criar conta e usuario admin básico se necessário
-    // cria/garante um owner para cumprir o schema (ownerUserId obrigatório)
-    const owner = await prisma.usuario.upsert({
-      where: { email: 'owner+test-invite@example.com' },
-      update: {},
-      create: {
-        id: 'owner-test-invite',
-        contaId: 'conta-default',
-        nome: 'Owner Test Invite',
-        email: 'owner+test-invite@example.com',
-        senhaHash: 'x',
-        role: 'ADMIN',
-        status: 'ATIVO',
-      },
-    });
-    const conta = await prisma.conta.upsert({
-      where: { id: 'conta-default' },
-      update: { ownerUserId: owner.id },
-      create: { id: 'conta-default', nome: 'Alusa Demo', cpfCnpj: '00000000000191', status: 'ATIVO', ownerUserId: owner.id },
-    });
-    const admin = await prisma.usuario.upsert({
-      where: { email: 'admin@example.com' },
-      update: {},
-      create: {
-        contaId: conta.id,
-        nome: 'Admin Test',
-        email: 'admin@example.com',
-        senhaHash: 'test',
-        role: 'ADMIN',
-        status: 'ATIVO',
-      },
-    });
+    // Conta.ownerUserId e Usuario.contaId formam uma referência circular:
+    // criar a conta primeiro (sem owner), depois o usuário e vincular o owner
+    // dentro da mesma transação evita violação de FK em banco limpo.
+    const invite = await prisma.$transaction(async (tx) => {
+      const conta = await tx.conta.upsert({
+        where: { id: contaId },
+        update: {},
+        create: {
+          id: contaId,
+          nome: 'Alusa Demo',
+          cpfCnpj: '00000000000191',
+          status: 'ATIVO',
+          ownerUserId: null,
+        },
+      });
+      const owner = await tx.usuario.upsert({
+        where: { email: 'owner+test-invite@example.com' },
+        update: { contaId: conta.id },
+        create: {
+          id: 'owner-test-invite',
+          contaId: conta.id,
+          nome: 'Owner Test Invite',
+          email: 'owner+test-invite@example.com',
+          senhaHash: 'x',
+          role: 'ADMIN',
+          status: 'ATIVO',
+        },
+      });
+      await tx.conta.update({
+        where: { id: conta.id },
+        data: { ownerUserId: owner.id },
+      });
+      const admin = await tx.usuario.upsert({
+        where: { email: 'admin@example.com' },
+        update: { contaId: conta.id },
+        create: {
+          contaId: conta.id,
+          nome: 'Admin Test',
+          email: 'admin@example.com',
+          senhaHash: 'test',
+          role: 'ADMIN',
+          status: 'ATIVO',
+        },
+      });
 
-    const token = randomUUID();
-    const invite = await prisma.invite.create({
-      data: { email: email.toLowerCase(), role, token, invitedById: admin.id, status: 'PENDING', expiresAt },
+      return tx.invite.create({
+        data: {
+          email: email.toLowerCase(),
+          role,
+          token: randomUUID(),
+          invitedById: admin.id,
+          status: 'PENDING',
+          expiresAt,
+        },
+      });
     });
     return NextResponse.json(
       testCreateInviteResultDTOSchema.parse(

@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { cleanup, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { FinancialOverviewReport } from '../dtos';
 import { ExecutiveFinancialOverview } from '../components/ExecutiveFinancialOverview';
@@ -53,6 +53,8 @@ function buildReport(
 }
 
 describe('ExecutiveFinancialOverview', () => {
+  afterEach(() => cleanup());
+
   it('apresenta diagnóstico saudável quando a inadimplência está controlada', () => {
     render(
       React.createElement(ExecutiveFinancialOverview, { data: buildReport(), loading: false }),

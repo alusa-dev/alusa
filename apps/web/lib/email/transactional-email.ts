@@ -5,7 +5,8 @@ export type EmailCategory =
   | 'verify_email'
   | 'reset_password'
   | 'account_reactivation'
-  | 'platform_billing';
+  | 'platform_billing'
+  | 'contract_signature_otp';
 
 export type SendTransactionalEmailInput = {
   to: string;

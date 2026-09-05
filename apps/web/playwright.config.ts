@@ -44,6 +44,9 @@ export default defineConfig({
   testDir: './',
   // Permite rodar qualquer *.spec.ts dentro de e2e/ ou tests/e2e/
   testMatch: ['e2e/**/*.spec.ts', 'tests/e2e/**/*.spec.ts'],
+  // Os fixtures de integração resetam o banco compartilhado entre os testes;
+  // um único worker evita corridas destrutivas entre suites no CI.
+  workers: process.env.CI ? 1 : undefined,
   timeout: 30_000,
   retries: process.env.CI ? 2 : 1,
   use: {
@@ -58,10 +61,7 @@ export default defineConfig({
     command:
       'node -e "require(\'fs\').rmSync(process.env.NEXT_DIST_DIR || \'.next\', { recursive: true, force: true })" && ' +
       'pnpm -C ../.. prisma:generate && ' +
-      'pnpm -C ../.. --filter @alusa/ui build && ' +
-      'pnpm -C ../.. --filter @alusa/database build && ' +
-      'pnpm -C ../.. --filter @alusa/lib build && ' +
-      'pnpm -C ../.. --filter @alusa/finance build && ' +
+      'pnpm -C ../.. exec turbo run build --filter=@alusa/web^... && ' +
       `cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev --webpack -p ${port}`,
     url: baseURL,
     timeout: 120_000,

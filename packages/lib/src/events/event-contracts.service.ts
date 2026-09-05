@@ -18,6 +18,10 @@ import { createPublicContractToken } from '../contracts/tokens';
 import { generateSignedContractEvidencePdf } from '../contracts/pdf/generate-signed-contract-pdf';
 import { prisma } from '../prisma';
 import { parseBrazilianDateOnlyToUtcDate } from '../utils/date-only';
+import {
+  consumePublicContractSignatureOtp,
+  getPublicContractSignatureOtpAuthorization,
+} from '../contracts/use-cases/signature-otp';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -257,6 +261,7 @@ export async function createEventContractForParticipant(
           id: true,
           nome: true,
           cpf: true,
+          email: true,
           dataNasc: true,
           responsaveis: {
             where: { contaId: input.contaId, tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
@@ -425,11 +430,11 @@ export async function findPublicEventContractByToken(token: string) {
             where: {},
             orderBy: { id: 'asc' },
             take: 10,
-            select: { contaId: true, responsavel: { select: { nome: true, cpf: true } } },
+            select: { contaId: true, responsavel: { select: { nome: true, cpf: true, email: true } } },
           },
         },
       },
-      responsavel: { select: { id: true, nome: true, cpf: true } },
+      responsavel: { select: { id: true, nome: true, cpf: true, email: true } },
       evento: { select: { id: true, name: true, startsAt: true } },
       modelo: { include: { campos: { orderBy: { ordem: 'asc' } }, consentimentos: { orderBy: { ordem: 'asc' } } } },
     },
@@ -479,6 +484,7 @@ async function loadPdfBytes(url: string, baseUrl?: string | null) {
 
 export async function signPublicEventContract(input: {
   token: string;
+  verificationToken: string;
   cpf: string;
   nome: string;
   dataNascimento?: string | null;
@@ -513,6 +519,14 @@ export async function signPublicEventContract(input: {
   });
   if (!signer.ok) throw new Error(signer.code);
 
+  const otpAuthorization = await getPublicContractSignatureOtpAuthorization({
+    contaId: contract.contaId,
+    eventoContratoId: contract.id,
+    cpf: signer.signer.cpf,
+    contractHash: contract.hashPdf,
+    verificationToken: input.verificationToken,
+  });
+
   const signaturePayload = buildSignaturePayload({
     contratoId: contract.id,
     matriculaId: contract.eventId,
@@ -521,7 +535,7 @@ export async function signPublicEventContract(input: {
     cpf: signer.signer.cpf,
     nome: signer.signer.nome,
     dataNascimento: input.dataNascimento ?? null,
-    email: input.email ?? null,
+    email: otpAuthorization.emailSnapshot,
     assinadoEmIso: now.toISOString(),
     ip: input.ip ?? null,
     userAgent: input.userAgent ?? null,
@@ -538,7 +552,7 @@ export async function signPublicEventContract(input: {
     alunoNome: contract.aluno.nome,
     signerName: signer.signer.nome,
     signerCpf: signer.signer.cpf,
-    email: input.email ?? null,
+    email: otpAuthorization.emailSnapshot,
     signedAtIso: now.toISOString(),
     ip: input.ip ?? null,
     userAgent: input.userAgent ?? null,
@@ -561,6 +575,14 @@ export async function signPublicEventContract(input: {
 
   const signedPdfUrl = `/api/event-contracts/${contract.id}/documentos/assinado`;
   await prisma.$transaction(async (tx) => {
+    await consumePublicContractSignatureOtp(tx, {
+      contaId: contract.contaId,
+      eventoContratoId: contract.id,
+      cpf: signer.signer.cpf,
+      contractHash: contract.hashPdf,
+      verificationToken: input.verificationToken,
+    });
+
     await recordEvidence(tx, { contaId: contract.contaId, eventoContratoId: contract.id, type: 'SIGNATURE_ACCEPTED', actorType: 'PUBLIC', payload: { aceite: true, acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1, acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION, payloadHash: signatureHash, consentimentos: consentimentosPayload } });
     if (consentimentosPayload.length) {
       await recordEvidence(tx, { contaId: contract.contaId, eventoContratoId: contract.id, type: 'CONSENT_DECISION_RECORDED', actorType: 'PUBLIC', payload: { consentimentos: consentimentosPayload } });
@@ -584,7 +606,7 @@ export async function signPublicEventContract(input: {
     }
     const updated = await tx.eventoContrato.updateMany({
       where: { id: contract.id, contaId: contract.contaId, status: 'PENDENTE' },
-      data: { status: 'ASSINADO', assinadoPor: signer.signer.nome, assinadoCpf: signer.signer.cpf, assinadoDataNascimento: input.dataNascimento ? parseBrazilianDateOnlyToUtcDate(input.dataNascimento) : null, assinadoEmail: input.email ?? null, assinadoIp: input.ip ?? null, assinadoUserAgent: input.userAgent ?? null, assinadoEm: now, hashAssinatura: signatureHash, arquivoPdfAssinadoUrl: signedPdfUrl, hashPdfAssinado: signedPdf.hashSha256, decisoesConsentimento: consentimentosPayload },
+      data: { status: 'ASSINADO', assinadoPor: signer.signer.nome, assinadoCpf: signer.signer.cpf, assinadoDataNascimento: input.dataNascimento ? parseBrazilianDateOnlyToUtcDate(input.dataNascimento) : null, assinadoEmail: otpAuthorization.emailSnapshot, assinadoIp: input.ip ?? null, assinadoUserAgent: input.userAgent ?? null, assinadoEm: now, hashAssinatura: signatureHash, arquivoPdfAssinadoUrl: signedPdfUrl, hashPdfAssinado: signedPdf.hashSha256, decisoesConsentimento: consentimentosPayload },
     });
     if (updated.count !== 1) throw new Error('CONTRACT_ALREADY_SIGNED');
     await tx.eventoContratoDocumento.create({ data: { contaId: contract.contaId, eventoContratoId: contract.id, tipo: 'ASSINADO', arquivoUrl: signedPdf.dataUrl, hashSha256: signedPdf.hashSha256, tamanhoBytes: signedPdf.tamanhoBytes } });

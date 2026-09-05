@@ -6,10 +6,13 @@ import AuthCard from '@/components/auth/AuthCard';
 // A validade do convite depende do banco e muda por token/tempo.
 export const dynamic = 'force-dynamic';
 
-type Props = { searchParams?: { [key: string]: string | string[] | undefined } };
+type Props = {
+  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
+};
 
 export default async function AcceptInvitePage(props: Props) {
-  const tokenParam = props.searchParams?.token;
+  const searchParams = await props.searchParams;
+  const tokenParam = searchParams?.token;
   const token = Array.isArray(tokenParam) ? tokenParam[0] : tokenParam;
 
   if (!token) {

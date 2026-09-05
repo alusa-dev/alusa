@@ -120,10 +120,10 @@ async function fetchFinanceRealtimeEvents(dedupeWindowMs: number) {
   if (sharedInFlight) return sharedInFlight;
   if (now - sharedLastFetchAt < dedupeWindowMs) return sharedLastEvents;
 
-  sharedInFlight = fetch(
+  sharedInFlight = Promise.resolve(fetch(
     `/api/finance/realtime/events?since=${sharedSince}`,
     { cache: 'no-store', headers: { Accept: 'application/json' } },
-  )
+  ))
     .then(async (response) => {
       if (!response.ok) return [];
 

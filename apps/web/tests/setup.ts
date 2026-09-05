@@ -1,8 +1,29 @@
 import '@testing-library/jest-dom';
+import React from 'react';
+import { vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+
+// Alguns componentes legados ainda são transformados pelo Vitest com o
+// runtime JSX clássico. Disponibilizar React no escopo global mantém esses
+// testes compatíveis sem alterar o runtime de produção.
+(globalThis as typeof globalThis & { React: typeof React }).React = React;
+
+// Rotas unitárias devem testar sua própria regra sem depender do estado de
+// faturamento da conta fictícia usada pelo teste. Os testes da política de
+// faturamento continuam exercitando a implementação real do módulo.
+vi.mock('@/src/server/platform-billing/capacity', async () => {
+  const actual = await vi.importActual<typeof import('@/src/server/platform-billing/capacity')>(
+    '@/src/server/platform-billing/capacity',
+  );
+
+  return {
+    ...actual,
+    assertPlatformAccessForConta: vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 // ⚠️ CRITICAL: Testes DEVEM ser executados com .env.test carregado via dotenv-cli
 // Comando correto: pnpm test:unit (já configurado no package.json)

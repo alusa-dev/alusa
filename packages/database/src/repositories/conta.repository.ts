@@ -1,9 +1,9 @@
-import { prisma } from '../client';
+import { prisma } from '../client.js';
 import {
   decryptSecretWithMetadata,
   encryptSecret,
   type DecryptedSecret,
-} from '../security/encryption';
+} from '../security/encryption.js';
 
 /**
  * Fonte de onde a API key foi carregada.

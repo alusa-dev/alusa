@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import prisma from '../lib/prisma';
+import prisma from './prisma';
 import { resetDb } from './utils/reset-db';
 
 test.describe('Contrato detalhes (layout)', () => {

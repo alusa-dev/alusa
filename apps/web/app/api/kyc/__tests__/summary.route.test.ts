@@ -26,6 +26,23 @@ vi.mock('@/lib/finance/financial-account-gate', () => ({
   })),
 }));
 
+vi.mock('@alusa/finance', () => ({
+  getKycSummary: vi.fn().mockResolvedValue({
+    asaasConnection: { status: 'CONNECTED' },
+    generalStatus: 'PENDING',
+    documentationStatus: 'PENDING',
+    bankAccountStatus: 'PENDING',
+    commercialInfoAreaStatus: 'PENDING',
+    processStatus: 'PENDING_DOCUMENTS',
+    commercialInfoStatus: null,
+    commercialInfoScheduledDate: null,
+    hasBlockingPending: true,
+    nextActions: [],
+    rejectReasons: [],
+    fetchedAt: new Date().toISOString(),
+  }),
+}));
+
 describe('GET /api/kyc/summary', () => {
   it('retorna 401 sem sessão', async () => {
     const { getServerSession } = await import('next-auth');

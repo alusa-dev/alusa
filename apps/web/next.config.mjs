@@ -90,11 +90,11 @@ const nextConfig = {
     '@sentry/opentelemetry',
     '@sentry/react',
     '@sentry/browser',
-    '@alusa/finance',
     'zod',
   ],
   transpilePackages: [
     '@alusa/admin-auth',
+    '@alusa/database',
     '@alusa/lib',
     '@alusa/ui',
     '@alusa/domain',
@@ -111,8 +111,12 @@ const nextConfig = {
       '@alusa/admin-auth/*': packageSourcePath('admin-auth', '*'),
       '@alusa/asaas': packageDistPath('asaas', 'index.js'),
       '@alusa/asaas/*': packageDistPath('asaas', '*.js'),
-      '@alusa/database': packageDistPath('database', 'index.js'),
-      '@alusa/database/*': packageDistPath('database', '*.js'),
+      '@alusa/database': useWorkspaceSources
+        ? packageSourcePath('database', 'index.ts')
+        : packageDistPath('database', 'index.js'),
+      '@alusa/database/*': useWorkspaceSources
+        ? packageSourcePath('database', '*')
+        : packageDistPath('database', '*.js'),
       '@alusa/domain': packageDistPath('domain', 'index.js'),
       '@alusa/domain/*': packageDistPath('domain', '*.js'),
       '@alusa/finance': {
@@ -226,6 +230,12 @@ const nextConfig = {
     };
     config.resolve.alias = config.resolve.alias || {};
     config.resolve.alias['@alusa/asaas'] = resolvePath(__dirname, '../../packages/asaas/dist/index.js');
+    const databaseEntry = resolvePath(
+      __dirname,
+      dev ? '../../packages/database/src/index.ts' : '../../packages/database/dist/index.js',
+    );
+    config.resolve.alias['@alusa/database$'] = databaseEntry;
+    config.resolve.alias['@alusa/database'] = databaseEntry;
     const libSrc = resolvePath(__dirname, '../../packages/lib/src');
     const libDistSrc = resolvePath(__dirname, '../../packages/lib/dist');
     const libBase = dev ? libSrc : libDistSrc;

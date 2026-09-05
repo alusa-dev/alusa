@@ -136,7 +136,8 @@ describe('transform commit scale reset', () => {
     const stage = {
       findOne: (selector: string) => (selector === '#node-seatgroup-group-1' ? node : null),
     };
-    const transformer = { getActiveAnchor: () => 'bottom-right' };
+    let transformerRotation = 0;
+    const transformer = { getActiveAnchor: () => 'bottom-right', rotation: () => transformerRotation };
 
     const session = beginMapTransformSession({
       kind: 'generic',
@@ -150,18 +151,22 @@ describe('transform commit scale reset', () => {
     });
 
     expect(session).not.toBeNull();
+    // Simula a transformação aplicada pelo Konva entre o início da sessão e o commit.
+    transformerRotation = 37;
+    node.scaleX(1.5);
+    node.scaleY(2);
     const commit = buildMapTransformCommit(session!, { stage: stage as never, transformer: transformer as never }, map);
 
     expect(commit.seatGroupUpdates).toEqual([
       {
         id: 'group-1',
         patch: expect.objectContaining({
-          x: 130,
-          y: 150,
+          x: expect.closeTo(106.21808636604884, 6),
+          y: expect.closeTo(50.91396042006593, 6),
           rotation: 37,
-          seatWidth: 30,
+          seatWidth: 40,
           seatHeight: 36,
-          gapX: 12,
+          gapX: 16,
           gapY: 20,
         }),
       },

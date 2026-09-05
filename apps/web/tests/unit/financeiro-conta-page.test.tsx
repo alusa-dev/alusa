@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { ContaPage } from '@/features/financeiro/conta/ContaPage';
@@ -47,6 +47,7 @@ describe('ContaPage', () => {
   });
 
   afterEach(() => {
+    cleanup();
     global.fetch = originalFetch;
   });
 
@@ -272,6 +273,18 @@ describe('ContaPage', () => {
             totalPages: 0,
           },
         }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            ownerName: 'Financeiro Alusa',
+            ownerDocumentMasked: '***.123.456-**',
+            institutionName: 'Instituição de teste',
+            bankName: 'Banco de teste',
+            bankCode: '000',
+          },
+        }),
       } as Response);
 
     renderWithQueryClient(<ContaPage />);
@@ -288,6 +301,8 @@ describe('ContaPage', () => {
     fireEvent.change(screen.getByLabelText('Chave Pix'), {
       target: { value: 'financeiro@alusa.test' },
     });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('wizard-next')).not.toBeDisabled();
@@ -543,6 +558,21 @@ describe('ContaPage', () => {
         return { ok: true, json: async () => recipientsPayload } as Response;
       }
 
+      if (url === '/api/finance/transfers/pix-key') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              ownerName: 'Financeiro Alusa',
+              ownerDocumentMasked: '***.123.456-**',
+              institutionName: 'Instituição de teste',
+              bankName: 'Banco de teste',
+              bankCode: '000',
+            },
+          }),
+        } as Response;
+      }
+
       if (url.startsWith('/api/finance/transfers?')) {
         return { ok: true, json: async () => transfersPayload } as Response;
       }
@@ -566,6 +596,8 @@ describe('ContaPage', () => {
     fireEvent.change(screen.getByLabelText('Chave Pix'), {
       target: { value: 'financeiro@alusa.test' },
     });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('wizard-next')).not.toBeDisabled();

@@ -67,6 +67,7 @@ vi.mock('@alusa/finance', () => ({
   failPaymentCommand: vi.fn(async () => undefined),
   undoCashPayment: vi.fn(async () => undefined),
   syncPaymentStateFromAsaas: vi.fn(async () => undefined),
+  runAsaasPaymentCommand: vi.fn(async () => ({ commandJobId: 'job-1' })),
   auditLogService: { record: vi.fn(async () => undefined) },
 }));
 

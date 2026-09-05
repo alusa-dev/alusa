@@ -3,8 +3,8 @@
 import React from 'react';
 void React;
 
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LegalHubPage } from '@/features/site/components/legal/LegalHubPage';
 
 vi.mock('next/link', () => ({
@@ -16,13 +16,15 @@ vi.mock('next/link', () => ({
 }));
 
 describe('LegalHubPage', () => {
+  afterEach(() => cleanup());
+
   it('renderiza o hub legal com os principais documentos publicados', () => {
     render(<LegalHubPage />);
 
     expect(screen.getByRole('heading', { name: 'Legal', level: 1 })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Política de Privacidade' })).toHaveAttribute('href', '/privacidade');
     expect(screen.getByRole('link', { name: 'Termos de Uso' })).toHaveAttribute('href', '/termos');
-    expect(screen.getByRole('link', { name: 'Direitos LGPD' })).toHaveAttribute('href', '/direitos-lgpd');
+    expect(screen.getByRole('link', { name: 'Direitos LGPD na Alusa' })).toHaveAttribute('href', '/direitos-lgpd');
   });
 
   it('mantém a lista simples sem CTA secundário de cards', () => {

@@ -18,6 +18,10 @@ vi.mock('@/lib/auth-options', () => ({
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     cobranca: mockPrismaCobranca,
+    $executeRaw: vi.fn().mockResolvedValue(1),
+    $transaction: vi.fn(async (callback: (tx: { cobranca: typeof mockPrismaCobranca }) => unknown) =>
+      callback({ cobranca: mockPrismaCobranca, $executeRaw: vi.fn().mockResolvedValue(1) }),
+    ),
   },
 }));
 

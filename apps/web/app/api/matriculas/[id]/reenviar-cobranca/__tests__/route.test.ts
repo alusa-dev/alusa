@@ -34,10 +34,12 @@ vi.mock('@/src/prisma', () => ({
 }));
 
 vi.mock('@alusa/finance', () => ({
+  createCharge: createAsaasPaymentMock,
   createAsaasPayment: createAsaasPaymentMock,
   getAsaasPaymentDetails: getAsaasPaymentDetailsMock,
   formatDate: vi.fn(() => '2026-01-01'),
   mapAsaasPaymentStatusToCobranca: vi.fn(() => 'A_VENCER'),
+  normalizeAsaasPaymentSnapshotStatus: vi.fn((input: { status?: string | null }) => input.status ?? null),
   ensureAsaasCustomerForPayer: vi.fn(),
   KycNotApprovedError: class KycNotApprovedError extends Error {},
 }));

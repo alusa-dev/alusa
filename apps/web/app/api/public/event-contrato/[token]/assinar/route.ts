@@ -22,6 +22,7 @@ function mapError(error: unknown) {
     CONTRACT_CONSENT_DUPLICATE: { status: 400, message: 'Dados de consentimento inválidos' },
     CONTRACT_CONSENT_INVALID_DECISION: { status: 400, message: 'Dados de consentimento inválidos' },
     SIGNED_PDF_SOURCE_UNAVAILABLE: { status: 500, message: 'Não foi possível carregar o PDF original' },
+    SIGNATURE_OTP_NOT_VERIFIED: { status: 403, message: 'Confirme o código enviado por e-mail antes de assinar' },
   };
   return map[code] ?? { status: 500, message: 'Erro ao assinar contrato' };
 }

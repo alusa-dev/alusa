@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 vi.mock('@/src/server/aulas/session', () => ({
+  assertAulasWriteAccess: vi.fn().mockResolvedValue(undefined),
   canAccessAulas: vi.fn(),
   getAulasSessionUser: vi.fn(),
 }));

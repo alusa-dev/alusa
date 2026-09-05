@@ -16,7 +16,7 @@ import {
 describe('attendance-launch', () => {
   it('expõe a janela operacional padrão de 7 dias', () => {
     expect(ATTENDANCE_LAUNCH_WINDOW_DAYS).toBe(7);
-    expect(getAttendanceLaunchDeadline('2026-03-16T23:00:00.000Z').toISOString()).toBe(
+    expect(getAttendanceLaunchDeadline('2026-03-16T23:00:00.000Z', 'America/Manaus').toISOString()).toBe(
       '2026-03-24T03:59:59.999Z',
     );
   });

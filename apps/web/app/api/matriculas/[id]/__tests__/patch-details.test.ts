@@ -144,7 +144,7 @@ describe('PATCH /api/matriculas/[id]', () => {
     expect(prismaMock.cobranca.updateMany).toHaveBeenCalledWith({
       where: {
         matriculaId: 'mat-1',
-        status: { in: ['PENDENTE', 'A_VENCER'] },
+        status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
       },
       data: {
         vencimento: new Date('2026-03-10T12:00:00.000Z'),
@@ -155,7 +155,7 @@ describe('PATCH /api/matriculas/[id]', () => {
         contaId: 'conta-1',
         cobranca: {
           matriculaId: 'mat-1',
-          status: { in: ['PENDENTE', 'A_VENCER'] },
+          status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
         },
       },
       data: {

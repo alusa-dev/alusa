@@ -1,0 +1,67 @@
+name: E2E Full
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 3 * * *'
+
+concurrency:
+  group: e2e-full-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: E2E full (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: alusa_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
+    env:
+      DATABASE_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa_test', 'postgresql') }}
+      DIRECT_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa_test', 'postgresql') }}
+      ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+      NEXTAUTH_SECRET: ci-only-nextauth-secret-not-for-production
+      NODE_OPTIONS: '--max-old-space-size=4096'
+      CI: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.1
+          cache: 'pnpm'
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma migrate deploy
+        run: npx prisma migrate deploy --schema prisma/schema.prisma
+
+      - name: Prisma generate
+        run: npx prisma generate --schema prisma/schema.prisma
+
+      - name: Install Playwright deps
+        run: pnpm --filter @alusa/web exec playwright install --with-deps
+
+      - name: E2E tests
+        run: |
+          pnpm --filter @alusa/web exec node ../../scripts/validate-db-env.mjs test
+          pnpm --filter @alusa/web exec playwright test --shard=${{ matrix.shard }}/4

@@ -26,6 +26,8 @@ function statusForDomainError(error: Error) {
       return { status: 403, message: 'Não foi possível validar a maioridade do aluno' };
     case 'INVALID_CPF':
       return { status: 400, message: 'CPF inválido' };
+    case 'SIGNATURE_OTP_NOT_VERIFIED':
+      return { status: 403, message: 'Confirme o código enviado por e-mail antes de assinar' };
     case 'NOT_AUTHORIZED':
       return {
         status: 403,
@@ -70,6 +72,7 @@ export async function POST(
 
     const result = await signPublicContract({
       token,
+      verificationToken: body.verificationToken,
       cpf: body.cpf,
       nome: body.nome,
       dataNascimento: body.dataNascimento || null,

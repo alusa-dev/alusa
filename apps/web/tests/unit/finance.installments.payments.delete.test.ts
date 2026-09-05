@@ -100,7 +100,11 @@ describe('DELETE /api/finance/installments/[id]/payments', () => {
         id: { in: ['cobranca-1'] },
         status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
       },
-      data: { status: 'CANCELADO' },
+      data: expect.objectContaining({
+        status: 'CANCELADO',
+        asaasStatus: 'DELETED',
+        liquidacaoStatus: 'NAO_APLICAVEL',
+      }),
     });
 
     const json = await response.json();

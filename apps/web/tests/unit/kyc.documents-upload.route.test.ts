@@ -97,9 +97,10 @@ describe('POST /api/kyc/documents/[groupId]/upload', () => {
 
     const formData = new FormData();
     formData.append('type', 'IDENTIFICATION');
-    const documentFile = new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' });
+    const documentBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
+    const documentFile = new File([documentBytes], 'doc.pdf', { type: 'application/pdf' });
     Object.defineProperty(documentFile, 'arrayBuffer', {
-      value: async () => new Uint8Array([1, 2, 3]).buffer,
+      value: async () => documentBytes.buffer,
     });
     formData.append('documentFile', documentFile);
 
@@ -151,9 +152,10 @@ describe('POST /api/kyc/documents/[groupId]/upload', () => {
     vi.mocked(updateKycDocumentFile).mockResolvedValueOnce({ id: 'doc_123', status: 'PENDING' } as never);
 
     const formData = new FormData();
-    const documentFile = new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' });
+    const documentBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
+    const documentFile = new File([documentBytes], 'doc.pdf', { type: 'application/pdf' });
     Object.defineProperty(documentFile, 'arrayBuffer', {
-      value: async () => new Uint8Array([1, 2, 3]).buffer,
+      value: async () => documentBytes.buffer,
     });
     formData.append('documentFile', documentFile);
 
@@ -203,9 +205,10 @@ describe('POST /api/kyc/documents/[groupId]/upload', () => {
     vi.mocked(uploadKycDocumentByGroup).mockResolvedValueOnce(undefined as never);
 
     const formData = new FormData();
-    const documentFile = new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' });
+    const documentBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
+    const documentFile = new File([documentBytes], 'doc.pdf', { type: 'application/pdf' });
     Object.defineProperty(documentFile, 'arrayBuffer', {
-      value: async () => new Uint8Array([1, 2, 3]).buffer,
+      value: async () => documentBytes.buffer,
     });
     formData.append('documentFile', documentFile);
 
@@ -260,9 +263,10 @@ describe('POST /api/kyc/documents/[groupId]/upload', () => {
 
     const formData = new FormData();
     formData.append('slotId', slotId);
-    const documentFile = new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' });
+    const documentBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
+    const documentFile = new File([documentBytes], 'doc.pdf', { type: 'application/pdf' });
     Object.defineProperty(documentFile, 'arrayBuffer', {
-      value: async () => new Uint8Array([1, 2, 3]).buffer,
+      value: async () => documentBytes.buffer,
     });
     formData.append('documentFile', documentFile);
 
