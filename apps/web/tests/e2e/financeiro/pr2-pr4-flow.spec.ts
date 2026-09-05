@@ -193,6 +193,7 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
 
     const matricula = await prisma.matricula.create({
       data: {
+        contaId,
         alunoId: aluno.id,
         dataInicio: new Date('2024-01-01T00:00:00.000Z'),
         dataFimContrato: new Date('2025-01-01T00:00:00.000Z'),

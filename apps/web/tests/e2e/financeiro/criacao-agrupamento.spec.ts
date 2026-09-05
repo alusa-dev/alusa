@@ -109,9 +109,10 @@ async function seedCenario(contaId: string) {
   });
 
   // Matrícula
-  const matricula = await prisma.matricula.create({
-    data: {
-      alunoId: aluno.id,
+    const matricula = await prisma.matricula.create({
+      data: {
+        contaId,
+        alunoId: aluno.id,
       responsavelFinanceiroId: responsavel.id,
       dataInicio: startOfMonth(now),
       dataFimContrato: endOfMonth(addMonths(now, 11)),

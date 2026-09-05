@@ -90,7 +90,6 @@ const nextConfig = {
     '@sentry/opentelemetry',
     '@sentry/react',
     '@sentry/browser',
-    '@alusa/finance',
     'zod',
   ],
   transpilePackages: [

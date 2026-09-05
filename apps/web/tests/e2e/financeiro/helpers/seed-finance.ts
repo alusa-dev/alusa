@@ -110,6 +110,7 @@ export async function seedFinanceData(
 
   const matricula = await prisma.matricula.create({
     data: {
+      contaId,
       alunoId: aluno.id,
       dataInicio: startOfMonth(now),
       dataFimContrato: endOfMonth(addMonths(now, 11)),
@@ -276,6 +277,7 @@ export async function seedFinanceData(
   // Cobrança acadêmica do mês atual (pendente – aparece em "Todas")
   const cobrancaCurrent = await prisma.cobranca.create({
     data: {
+      contaId,
       matriculaId: matricula.id,
       tipo: 'MENSALIDADE',
       descricao: 'Mensalidade vigente',
@@ -303,6 +305,7 @@ export async function seedFinanceData(
   // Cobrança acadêmica futura (NÃO aparece em "Todas")
   const cobrancaFuture = await prisma.cobranca.create({
     data: {
+      contaId,
       matriculaId: matricula.id,
       tipo: 'MENSALIDADE',
       descricao: 'Mensalidade futura',
@@ -348,6 +351,7 @@ export async function seedFinanceData(
   // Parcela acadêmica 1 (mês atual – operacional)
   const acInstCobranca1 = await prisma.cobranca.create({
     data: {
+      contaId,
       matriculaId: matricula.id,
       tipo: 'MENSALIDADE',
       descricao: 'Parcela acad. 1/3',
@@ -375,6 +379,7 @@ export async function seedFinanceData(
   // Parcela acadêmica 2 (mês seguinte – NÃO operacional)
   const acInstCobranca2 = await prisma.cobranca.create({
     data: {
+      contaId,
       matriculaId: matricula.id,
       tipo: 'MENSALIDADE',
       descricao: 'Parcela acad. 2/3',
