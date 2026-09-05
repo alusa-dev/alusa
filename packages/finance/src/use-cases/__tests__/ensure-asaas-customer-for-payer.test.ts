@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, afterEach, afterAll, describe, expect, it, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 
 import { ensureAsaasCustomerForPayer } from '../ensure-asaas-customer-for-payer';
@@ -96,6 +96,9 @@ describe('ensureAsaasCustomerForPayer', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('PAYMENTS_PROVIDER_MODE', 'asaas');
+    vi.stubEnv('PLAYWRIGHT_TEST', 'false');
     const profile = await prisma.financeProfile.findUnique({
       where: { contaId },
       select: { id: true },
@@ -130,7 +133,7 @@ describe('ensureAsaasCustomerForPayer', () => {
       object: 'customer',
       dateCreated: '2026-01-01',
       name: 'Teste',
-      cpfCnpj: '12345678901',
+      cpfCnpj: '39053344705',
       deleted: false,
       notificationDisabled: false,
     });
@@ -139,7 +142,7 @@ describe('ensureAsaasCustomerForPayer', () => {
       object: 'customer',
       dateCreated: '2026-01-01',
       name: 'Teste',
-      cpfCnpj: '12345678901',
+      cpfCnpj: '39053344705',
       deleted: false,
       notificationDisabled: false,
     });
@@ -148,7 +151,7 @@ describe('ensureAsaasCustomerForPayer', () => {
       object: 'customer',
       dateCreated: '2026-01-01',
       name: 'Teste',
-      cpfCnpj: '12345678901',
+      cpfCnpj: '39053344705',
       deleted: false,
       notificationDisabled: false,
     });
@@ -158,17 +161,21 @@ describe('ensureAsaasCustomerForPayer', () => {
       object: 'customer',
       dateCreated: '2026-01-01',
       name: 'Teste',
-      cpfCnpj: '12345678901',
+      cpfCnpj: '39053344705',
       deleted: false,
       notificationDisabled: false,
     });
 
     applyNotificationPreferencesMock.mockResolvedValue({ updated: true, total: 1 });
 
+    await prisma.customerPayer.deleteMany({ where: { contaId } });
+    await prisma.customer.deleteMany({ where: { contaId } });
     await prisma.alunoResponsavel.deleteMany({ where: { aluno: { contaId } } });
     await prisma.aluno.deleteMany({ where: { contaId } });
-    await prisma.responsavel.deleteMany({ where: { cpf: { in: ['11144477735', '52998224725', '15350946056'] } } });
+    await prisma.responsavel.deleteMany({ where: { contaId } });
   });
+
+  afterEach(() => vi.unstubAllEnvs());
 
   afterAll(async () => {
     await prisma.$disconnect();
@@ -314,6 +321,8 @@ describe('ensureAsaasCustomerForPayer', () => {
         asaasCustomerId: 'cust_local_strict',
       },
     });
+
+    getCustomerMock.mockResolvedValueOnce({ id: 'cust_local_strict', cpfCnpj: '15350946056', deleted: false });
 
     updateCustomerMock.mockRejectedValueOnce(
       new AsaasHttpError('Invalid postal code', 400, undefined, {
@@ -683,6 +692,33 @@ describe('ensureAsaasCustomerForPayer', () => {
     );
   });
 
+  it('compartilha a identidade do responsável com aluno adulto sem transferir o histórico', async () => {
+    const responsavel = await prisma.responsavel.create({ data: {
+      contaId, nome: 'Pessoa Compartilhada', cpf: '11144477735',
+      email: 'shared-resp@example.com', telefone: '11999999999', financeiro: true,
+      asaasCustomerId: 'cust_shared',
+    } });
+    const canonical = await prisma.customer.create({ data: {
+      contaId, payerType: 'RESPONSAVEL', payerId: responsavel.id,
+      asaasCustomerId: 'cust_shared', externalReference: 'original-reference',
+    } });
+    const aluno = await prisma.aluno.create({ data: {
+      contaId, nome: responsavel.nome, cpf: responsavel.cpf,
+      dataNasc: new Date('2000-01-01'), email: 'shared-aluno@example.com',
+      telefone: '11999999999', asaasCustomerId: 'cust_shared',
+    } });
+    getCustomerMock.mockResolvedValueOnce({ id: 'cust_shared', cpfCnpj: '11144477735', deleted: false });
+    const result = await ensureAsaasCustomerForPayer({ contaId, payer: {
+      type: 'ALUNO', id: aluno.id, name: aluno.nome, cpfCnpj: aluno.cpf!, asaasCustomerId: 'cust_shared',
+    } });
+    expect(result).toMatchObject({ ok: true, customerId: 'cust_shared', externalReference: 'original-reference' });
+    const links = await prisma.customerPayer.findMany({ where: { contaId, customerId: canonical.id } });
+    expect(links.map((link) => link.payerType).sort()).toEqual(['ALUNO', 'RESPONSAVEL']);
+    const preserved = await prisma.customer.findUnique({ where: { id: canonical.id } });
+    expect(preserved).toMatchObject({ payerType: 'RESPONSAVEL', payerId: responsavel.id, externalReference: 'original-reference' });
+    expect(createCustomerMock).not.toHaveBeenCalled();
+  });
+
   it('retorna MISSING_KEY quando não existe apiKey da subconta', async () => {
     const result = await ensureAsaasCustomerForPayer({
       contaId: 'conta-sem-chave',
@@ -690,7 +726,7 @@ describe('ensureAsaasCustomerForPayer', () => {
         type: 'ALUNO',
         id: 'aluno-x',
         name: 'Aluno X',
-        cpfCnpj: '99999999999',
+        cpfCnpj: '11144477735',
       },
     });
 

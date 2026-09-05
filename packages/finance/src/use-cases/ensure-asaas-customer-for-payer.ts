@@ -10,8 +10,8 @@ import {
 } from '@alusa/asaas';
 
 import { prisma } from '@alusa/database';
-import type { Prisma } from '@prisma/client';
 import { decryptSecret } from '@alusa/database';
+import { linkCustomerIdentity, CustomerIdentityConflictError } from '../customer/customer-identity';
 import { isValidCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
 import { syncCustomerNotificationChannelsFromTenantPreferences } from '../services/customer-notification-bridge';
 import {
@@ -371,39 +371,32 @@ function pickExistingCustomer(list: AsaasCustomer[]): AsaasCustomer | null {
 }
 
 async function persistCustomerId(
+  contaId: string,
   payer: EnsureAsaasCustomerPayer,
   customerId: string,
   externalReference: string,
-) {
+): Promise<string> {
   if (!payer.id) {
     throw new AsaasCustomerEnsureError('PAYER_INVALID', 'Pagador sem identificador interno.');
   }
-  if (payer.type === 'ALUNO') {
-    type AlunoUpdateWithExternalReference = Prisma.AlunoUpdateInput & {
-      asaasCustomerExternalReference?: string | null;
-    };
-    const data: AlunoUpdateWithExternalReference = {
-      asaasCustomerId: customerId,
-      asaasCustomerExternalReference: externalReference,
-    };
-    await prisma.aluno.update({
-      where: { id: payer.id },
-      data,
-    });
-    return;
-  }
-
-  type ResponsavelUpdateWithExternalReference = Prisma.ResponsavelUpdateInput & {
-    asaasCustomerExternalReference?: string | null;
-  };
-  const responsavelData: ResponsavelUpdateWithExternalReference = {
+  const identity = await linkCustomerIdentity({
+    contaId,
+    payerType: payer.type,
+    payerId: payer.id,
     asaasCustomerId: customerId,
-    asaasCustomerExternalReference: externalReference,
-  };
-  await prisma.responsavel.update({
-    where: { id: payer.id },
-    data: responsavelData,
+    cpfCnpj: payer.cpfCnpj,
+    externalReference,
   });
+  return identity.externalReference;
+}
+
+function assertCustomerIdentity(customer: AsaasCustomer, cpfCnpj: string): void {
+  if (digits(customer.cpfCnpj) !== cpfCnpj) {
+    throw new AsaasCustomerEnsureError(
+      'PAYER_INVALID',
+      'O cliente financeiro vinculado possui CPF/CNPJ diferente do pagador.',
+    );
+  }
 }
 
 export async function ensureAsaasCustomerForPayer(
@@ -442,14 +435,14 @@ export async function ensureAsaasCustomerForPayer(
     };
   }
 
-  const externalReference = buildExternalReference(input.contaId, input.payer);
+  let externalReference = buildExternalReference(input.contaId, input.payer);
 
   // O mock de pagamentos precisa ser resolvido antes da leitura das
   // credenciais, pois o ambiente de teste não provisiona subconta real.
   if (isMockPaymentsMode()) {
     const customerId = `mock-customer-${input.payer.type.toLowerCase()}-${input.payer.id}`;
     if (input.persist !== false) {
-      await persistCustomerId(input.payer, customerId, externalReference);
+      externalReference = await persistCustomerId(input.contaId, input.payer, customerId, externalReference);
     }
     return {
       ok: true,
@@ -507,12 +500,20 @@ export async function ensureAsaasCustomerForPayer(
           customerId: localCustomerId,
         });
 
+        if (localCustomer.id) {
+          assertCustomerIdentity(localCustomer, cpfCnpj);
+        }
         if (localCustomer.id && !localCustomer.deleted) {
+          if (input.persist !== false) {
+            externalReference = await persistCustomerId(input.contaId, input.payer, localCustomer.id, externalReference);
+          } else {
+            externalReference = localCustomer.externalReference || externalReference;
+          }
           step = 'UPDATE_EXISTING_BY_ID';
           const updateResult = await pushExistingCustomerUpdate({
             apiKey,
             customerId: localCustomer.id,
-            payload: updatePayload,
+            payload: { ...updatePayload, externalReference },
             strictUpdate: input.strictCustomerUpdate,
             step,
             logContext: {
@@ -523,10 +524,6 @@ export async function ensureAsaasCustomerForPayer(
           });
           if (!updateResult.ok) {
             return updateResult;
-          }
-
-          if (input.persist !== false) {
-            await persistCustomerId(input.payer, localCustomer.id, externalReference);
           }
 
           if (notificationSyncMode === 'blocking') {
@@ -562,6 +559,7 @@ export async function ensureAsaasCustomerForPayer(
         limit: 1,
       });
       existingCustomer = pickExistingCustomer(byExternalReference.data ?? []);
+      if (existingCustomer) assertCustomerIdentity(existingCustomer, cpfCnpj);
     } catch (error) {
       // Se externalReference der 400, é inválido - retornar erro claro
       if (error instanceof AsaasHttpError && error.status === 400) {
@@ -592,11 +590,17 @@ export async function ensureAsaasCustomerForPayer(
         cpfCnpj,
         limit: 5,
       });
-      existingCustomer = pickExistingCustomer(byCpfCnpj.data ?? []);
+      existingCustomer = pickExistingCustomer((byCpfCnpj.data ?? []).filter((customer) => digits(customer.cpfCnpj) === cpfCnpj));
     }
 
     // 3) Se encontrou, atualizar via PUT
     if (existingCustomer?.id) {
+      assertCustomerIdentity(existingCustomer, cpfCnpj);
+      if (input.persist !== false) {
+        externalReference = await persistCustomerId(input.contaId, input.payer, existingCustomer.id, externalReference);
+      } else {
+        externalReference = existingCustomer.externalReference || externalReference;
+      }
       step = 'UPDATE_EXISTING';
 
       if (existingCustomer.deleted) {
@@ -628,7 +632,7 @@ export async function ensureAsaasCustomerForPayer(
       const updateResult = await pushExistingCustomerUpdate({
         apiKey,
         customerId: existingCustomer.id,
-        payload: updatePayload,
+        payload: { ...updatePayload, externalReference },
         strictUpdate: input.strictCustomerUpdate,
         step,
         logContext: {
@@ -639,10 +643,6 @@ export async function ensureAsaasCustomerForPayer(
       });
       if (!updateResult.ok) {
         return updateResult;
-      }
-
-      if (input.persist !== false) {
-        await persistCustomerId(input.payer, existingCustomer.id, externalReference);
       }
 
       if (notificationSyncMode === 'blocking') {
@@ -675,7 +675,7 @@ export async function ensureAsaasCustomerForPayer(
     }
 
     if (input.persist !== false) {
-      await persistCustomerId(input.payer, created.id, externalReference);
+      externalReference = await persistCustomerId(input.contaId, input.payer, created.id, externalReference);
     }
 
     if (notificationSyncMode === 'blocking') {
@@ -691,6 +691,9 @@ export async function ensureAsaasCustomerForPayer(
       reused: false,
     };
   } catch (error) {
+    if (error instanceof CustomerIdentityConflictError || error instanceof AsaasCustomerEnsureError) {
+      return { ok: false, error: 'PAYER_INVALID', message: error.message };
+    }
     if (error instanceof AsaasHttpError && (error.status === 401 || error.status === 403)) {
       await updateApiKeyStatus(keyResult.asaasAccountId ?? null, 'REVOKED', input.contaId);
       return {

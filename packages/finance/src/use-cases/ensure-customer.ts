@@ -2,7 +2,7 @@ import { loadAsaasCredentials, prisma } from '@alusa/database';
 import { isValidCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
-import type { CustomerPayerType, Prisma } from '@prisma/client';
+import type { CustomerPayerType } from '@prisma/client';
 import { AsaasHttpError, getCustomer } from '@alusa/asaas';
 
 import { createAsaasCustomer, syncAsaasCustomerContact } from './create-customer';
@@ -11,6 +11,7 @@ import {
 } from '@alusa/lib';
 import { syncCustomerNotificationChannels } from '../services/customer-notification.service';
 import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
+import { CustomerIdentityConflictError, linkCustomerIdentity } from '../customer/customer-identity';
 
 export type EnsureCustomerPayerRef =
   | { type: 'RESPONSAVEL'; id: string }
@@ -95,83 +96,6 @@ function isMockPaymentsMode() {
     process.env.PLAYWRIGHT_TEST === 'true' ||
     process.env.NODE_ENV === 'test'
   );
-}
-
-/**
- * Atualiza o Customer local com o asaasCustomerId, tratando conflitos de constraint única
- * apenas dentro do mesmo tenant. Se o asaasCustomerId já existir em outro Customer órfão
- * do mesmo tenant (payerId inexistente), limpa o Customer órfão antes de atualizar.
- */
-async function updateCustomerAsaasId(params: {
-  contaId: string;
-  payerType: CustomerPayerType;
-  payerId: string;
-  asaasCustomerId: string;
-}): Promise<boolean> {
-  const { contaId, payerType, payerId, asaasCustomerId } = params;
-
-  try {
-    await prisma.customer.update({
-      where: {
-        contaId_payerType_payerId: { contaId, payerType, payerId },
-      },
-      data: { asaasCustomerId },
-    });
-    return true;
-  } catch (error) {
-    // Trata violação de constraint única em asaasCustomerId
-    if ((error as Prisma.PrismaClientKnownRequestError)?.code === 'P2002') {
-      // Verifica se existe um Customer órfão com esse asaasCustomerId no mesmo tenant.
-      const existingCustomer = await prisma.customer.findFirst({
-        where: { contaId, asaasCustomerId },
-        select: { id: true, payerType: true, payerId: true },
-      });
-
-      if (existingCustomer) {
-        // Verifica se o payer do Customer existente ainda existe
-        const payerExists =
-          existingCustomer.payerType === 'ALUNO'
-            ? await prisma.aluno.findUnique({
-                where: { id: existingCustomer.payerId },
-                select: { id: true },
-              })
-            : await prisma.responsavel.findUnique({
-                where: { id: existingCustomer.payerId },
-                select: { id: true },
-              });
-
-        if (!payerExists) {
-          // Customer órfão encontrado - remove e tenta novamente
-          console.warn('[ensureCustomer] Removendo Customer órfão:', {
-            orphanCustomerId: existingCustomer.id,
-            asaasCustomerId,
-            newPayerId: payerId,
-          });
-
-          await prisma.customer.delete({ where: { id: existingCustomer.id } });
-
-          // Tenta novamente o update
-          await prisma.customer.update({
-            where: {
-              contaId_payerType_payerId: { contaId, payerType, payerId },
-            },
-            data: { asaasCustomerId },
-          });
-          return true;
-        }
-      }
-
-      // Se não é um Customer órfão, loga e propaga o erro
-      console.error('[ensureCustomer] Conflito de asaasCustomerId não resolvido:', {
-        asaasCustomerId,
-        payerType,
-        payerId,
-        existingCustomer,
-      });
-      return false;
-    }
-    throw error;
-  }
 }
 
 export async function ensureCustomer(
@@ -267,13 +191,18 @@ export async function ensureCustomer(
         });
       }
 
-      const linked = await updateCustomerAsaasId({
-        contaId: input.contaId,
-        payerType,
-        payerId: payerData.id,
-        asaasCustomerId: mockId,
-      });
-      if (!linked) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
+      try {
+        await linkCustomerIdentity({
+          contaId: input.contaId,
+          payerType,
+          payerId: payerData.id,
+          asaasCustomerId: mockId,
+          cpfCnpj: payerData.cpf,
+        });
+      } catch (error) {
+        if (error instanceof CustomerIdentityConflictError) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
+        throw error;
+      }
     }
 
     return ok({ customerId: mockId, localCustomerId: internalCustomer.id, externalReference });
@@ -313,7 +242,8 @@ export async function ensureCustomer(
           externalReference: internalCustomer.externalReference,
         });
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof CustomerIdentityConflictError) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
       return err('ASAAS_CUSTOMER_INVALIDO');
     }
 
@@ -332,29 +262,31 @@ export async function ensureCustomer(
       });
 
       if (active) {
-        const linked = await updateCustomerAsaasId({
+        const identity = await linkCustomerIdentity({
           contaId: input.contaId,
           payerType,
           payerId: payerData.id,
           asaasCustomerId: payerData.asaasCustomerId,
+          cpfCnpj: payerData.cpf,
+          externalReference,
         });
-        if (!linked) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
 
         await syncExistingAsaasCustomerContact({
           contaId: input.contaId,
           customerId: payerData.asaasCustomerId,
-          externalReference,
+          externalReference: identity.externalReference,
           payerData,
         });
         await syncCustomerNotificationChannelsFromTenant(input.contaId, payerData.asaasCustomerId);
 
         return ok({
           customerId: payerData.asaasCustomerId,
-          localCustomerId: internalCustomer.id,
-          externalReference,
+          localCustomerId: identity.id,
+          externalReference: identity.externalReference,
         });
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof CustomerIdentityConflictError) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
       return err('ASAAS_CUSTOMER_INVALIDO');
     }
 
@@ -367,6 +299,9 @@ export async function ensureCustomer(
         data: { asaasCustomerId: null },
       });
     }
+    // The in-memory payer snapshot still contains the deleted remote id; the new
+    // identity created below must be allowed to replace that stale reference.
+    payerData.asaasCustomerId = null;
     await prisma.customer.update({
       where: { id: internalCustomer.id },
       data: { asaasCustomerId: null },
@@ -393,25 +328,19 @@ export async function ensureCustomer(
 
   if (!created.data.id) return err('ASAAS_CUSTOMER_INVALIDO');
 
-  const linked = await updateCustomerAsaasId({
-    contaId: input.contaId,
-    payerType,
-    payerId: payerData.id,
-    asaasCustomerId: created.data.id,
-  });
-  if (!linked) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
-
-  // Persistir asaasCustomerId na entidade original
-  if (payerType === 'ALUNO') {
-    await prisma.aluno.update({
-      where: { id: payerData.id },
-      data: { asaasCustomerId: created.data.id },
+  let identity;
+  try {
+    identity = await linkCustomerIdentity({
+      contaId: input.contaId,
+      payerType,
+      payerId: payerData.id,
+      asaasCustomerId: created.data.id,
+      cpfCnpj: payerData.cpf,
+      externalReference,
     });
-  } else {
-    await prisma.responsavel.update({
-      where: { id: payerData.id },
-      data: { asaasCustomerId: created.data.id },
-    });
+  } catch (error) {
+    if (error instanceof CustomerIdentityConflictError) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
+    throw error;
   }
 
   // FASE 6: Sincronizar preferências de notificação do tenant para o novo customer
@@ -419,8 +348,8 @@ export async function ensureCustomer(
 
   return ok({
     customerId: created.data.id,
-    localCustomerId: internalCustomer.id,
-    externalReference,
+    localCustomerId: identity.id,
+    externalReference: identity.externalReference,
   });
 }
 

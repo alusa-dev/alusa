@@ -1,3 +1,4 @@
+import { customerPayerWhere } from '@/src/server/finance/customer-payer-scope';
 import { StatusContrato, StatusMatricula } from '@prisma/client';
 import { prisma } from '@/src/prisma';
 import { validarElegibilidadeRematricula } from '@alusa/domain';
@@ -265,12 +266,13 @@ export async function listarRematriculasElegiveis(input: {
     ? await prisma.customer.findMany({
         where: {
           contaId: input.contaId,
-          OR: payerEntries.map((entry) => ({ payerType: entry.payerType, payerId: entry.payerId })),
+          OR: payerEntries.map((entry) => customerPayerWhere(input.contaId, entry.payerType, entry.payerId)),
         },
         select: {
           id: true,
           payerType: true,
           payerId: true,
+          payerLinks: { where: { contaId: input.contaId }, select: { payerType: true, payerId: true } },
         },
       })
     : [];
@@ -295,6 +297,9 @@ export async function listarRematriculasElegiveis(input: {
   const customerByKey = new Map<string, string>();
   for (const customer of customers) {
     customerByKey.set(`${customer.payerType}:${customer.payerId}`, customer.id);
+    for (const link of customer.payerLinks ?? []) {
+      customerByKey.set(`${link.payerType}:${link.payerId}`, customer.id);
+    }
   }
   
   const standaloneStatusByCustomerId = new Map<string, Array<'A_VENCER' | 'PENDENTE' | 'ATRASADO'>>();

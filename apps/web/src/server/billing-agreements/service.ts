@@ -1,3 +1,4 @@
+import { customerPayerWhere } from '@/src/server/finance/customer-payer-scope';
 import {
   commitBillingAgreementChange,
   getBillingAgreementView,
@@ -127,9 +128,7 @@ async function resolveFinancePayer(contaId: string, payer: WebBillingPayer): Pro
 
     const customer = await tx.customer.findFirst({
       where: {
-        contaId,
-        payerType: payer.type,
-        payerId: payer.id,
+        ...customerPayerWhere(contaId, payer.type, payer.id),
       },
       select: { asaasCustomerId: true },
     });

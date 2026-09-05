@@ -1,3 +1,4 @@
+import { customerPayerWhere } from '@/src/server/finance/customer-payer-scope';
 import {
   BillingMode,
   ChargeStatus,
@@ -1111,7 +1112,11 @@ export async function criarMatricula(input: CriarMatriculaInput) {
         tx.customer.findFirst({
           where: {
             id: stagedBilling.customer.localCustomerId,
-            contaId: input.contaId,
+            ...customerPayerWhere(
+              input.contaId,
+              input.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO',
+              input.responsavelFinanceiroId ?? input.alunoId,
+            ),
           },
           select: { id: true },
         }),

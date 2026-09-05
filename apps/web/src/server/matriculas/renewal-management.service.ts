@@ -1,3 +1,4 @@
+import { customerPayerWhere } from '@/src/server/finance/customer-payer-scope';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { buildSeatOccupancyOverlapWhereClause } from '@alusa/lib';
 import { listarRematriculasElegiveis } from './rematricula.service';
@@ -1276,9 +1277,9 @@ export async function getRenewalProcessDetail(
     const responsavelId = item.matriculaOrigem.responsavelFinanceiroId ?? processo.financeiros[0]?.responsavelId ?? null;
     const alunoId = item.matriculaOrigem.aluno?.id ?? null;
     if (responsavelId) {
-      payerKeys.push({ payerType: 'RESPONSAVEL', payerId: responsavelId });
+      payerKeys.push(customerPayerWhere(input.contaId, 'RESPONSAVEL', responsavelId));
     } else if (alunoId) {
-      payerKeys.push({ payerType: 'ALUNO', payerId: alunoId });
+      payerKeys.push(customerPayerWhere(input.contaId, 'ALUNO', alunoId));
     }
   }
   const customers = payerKeys.length
@@ -1287,10 +1288,15 @@ export async function getRenewalProcessDetail(
           contaId: input.contaId,
           OR: payerKeys,
         },
-        select: { payerType: true, payerId: true, asaasCustomerId: true },
+        select: { payerType: true, payerId: true, asaasCustomerId: true, payerLinks: { where: { contaId: input.contaId }, select: { payerType: true, payerId: true } } },
       })
     : [];
   const customerByPayer = new Map(customers.map((customer) => [`${customer.payerType}:${customer.payerId}`, customer.asaasCustomerId]));
+  for (const customer of customers) {
+    for (const link of customer.payerLinks ?? []) {
+      customerByPayer.set(`${link.payerType}:${link.payerId}`, customer.asaasCustomerId);
+    }
+  }
   const detail = processDTO(processo);
   detail.itens?.forEach((item, index) => {
     const source = processo.itens?.[index];

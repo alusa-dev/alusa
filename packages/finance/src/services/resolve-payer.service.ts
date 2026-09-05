@@ -113,8 +113,8 @@ export async function resolvePayerFromAluno(
     });
     asaasCustomerId = aluno?.asaasCustomerId ?? null;
   } else {
-    const responsavel = await prisma.responsavel.findUnique({
-      where: { id: result.payer.id },
+    const responsavel = await prisma.responsavel.findFirst({
+      where: { id: result.payer.id, contaId: input.contaId },
       select: { asaasCustomerId: true },
     });
     asaasCustomerId = responsavel?.asaasCustomerId ?? null;

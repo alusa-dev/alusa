@@ -21,6 +21,7 @@ import type { InstallmentStatus } from '@prisma/client';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
 import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
 import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
+import { findCustomerForPayer } from '../customer/customer-identity';
 import { getInstallment } from './asaas-ops';
 import {
   markOutboundAwaitingWebhook,
@@ -122,16 +123,7 @@ export async function createStandaloneInstallmentPlan(
     const payerResolved = await resolvePayerFromInput(input);
     if (!payerResolved) return err('PAGADOR_NAO_ENCONTRADO');
 
-    const customer = await prisma.customer.findUnique({
-      where: {
-        contaId_payerType_payerId: {
-          contaId: input.contaId,
-          payerType: payerResolved.payerType,
-          payerId: payerResolved.payerId,
-        },
-      },
-      select: { id: true, asaasCustomerId: true },
-    });
+    const customer = await findCustomerForPayer(input.contaId, payerResolved.payerType, payerResolved.payerId);
 
     if (!customer?.asaasCustomerId) return err('CUSTOMER_SEM_ASAAS_ID');
 

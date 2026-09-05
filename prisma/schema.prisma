@@ -1373,6 +1373,7 @@ model Conta {
   paymentStateTransitions           FinancePaymentStateTransition[]
   notificationRecipients            NotificationRecipient[]
   customers                         Customer[]
+  customerPayers                    CustomerPayer[]
   charges                           Charge[]
   chargeReadModels                  ChargeReadModel[]
   financeSummaryReadModels          FinanceSummaryReadModel[]
@@ -6070,6 +6071,7 @@ model Customer {
   updatedAt DateTime @updatedAt
 
   conta                      Conta                       @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  payerLinks                 CustomerPayer[]
   charges                    Charge[]
   standaloneInstallmentPlans StandaloneInstallmentPlan[]
   standaloneSubscriptions    StandaloneSubscription[]
@@ -6082,6 +6084,24 @@ model Customer {
   @@unique([contaId, asaasCustomerId])
   @@index([contaId])
   @@index([asaasCustomerId])
+}
+
+// A financial identity can be referenced by multiple educational roles.
+// Customer.payerType/payerId retain the original role for historical compatibility.
+model CustomerPayer {
+  id         String            @id @default(cuid())
+  contaId    String
+  customerId String
+  payerType  CustomerPayerType
+  payerId    String
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  conta    Conta    @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  customer Customer @relation(fields: [contaId, customerId], references: [contaId, id], onDelete: Restrict)
+
+  @@unique([contaId, payerType, payerId])
+  @@index([contaId, customerId])
 }
 
 model AsaasCustomerSnapshot {

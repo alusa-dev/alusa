@@ -3,30 +3,35 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ensureCustomer } from '../ensure-customer';
 
 vi.mock('@alusa/database', () => {
+  const customer = {
+    findUnique: vi.fn(),
+    findFirst: vi.fn(),
+    upsert: vi.fn(),
+    create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: 'custRow_new', ...data })),
+    update: vi.fn(),
+    delete: vi.fn(),
+  };
+  const customerPayer = {
+    findUnique: vi.fn(),
+    findMany: vi.fn(async () => []),
+    upsert: vi.fn(),
+  };
+  const aluno = {
+    findUnique: vi.fn(),
+    findFirst: vi.fn(),
+    update: vi.fn(),
+    updateMany: vi.fn(),
+  };
+  const responsavel = {
+    findUnique: vi.fn(),
+    findFirst: vi.fn(),
+    update: vi.fn(),
+    updateMany: vi.fn(),
+  };
+  const prisma = { customer, customerPayer, aluno, responsavel, asaasNotificationPreference: { findMany: vi.fn(async () => []) }, $executeRaw: vi.fn() };
   return {
     loadAsaasCredentials: vi.fn(),
-    prisma: {
-      customer: {
-        findUnique: vi.fn(),
-        findFirst: vi.fn(),
-        upsert: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn(),
-      },
-      aluno: {
-        findUnique: vi.fn(),
-        findFirst: vi.fn(),
-        update: vi.fn(),
-      },
-      responsavel: {
-        findUnique: vi.fn(),
-        findFirst: vi.fn(),
-        update: vi.fn(),
-      },
-      asaasNotificationPreference: {
-        findMany: vi.fn(async () => []),
-      },
-    },
+    prisma: { ...prisma, $transaction: vi.fn(async (callback: (tx: unknown) => unknown) => callback(prisma)) },
   };
 });
 
@@ -124,8 +129,16 @@ describe('ensureCustomer', () => {
       externalReference: 'customer:t1:RESPONSAVEL:r1',
     } as never);
     vi.mocked(prisma.customer.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.customer.findUnique).mockResolvedValue({
+      id: 'custRow_r1',
+      contaId: 't1',
+      payerType: 'RESPONSAVEL',
+      payerId: 'r1',
+      asaasCustomerId: null,
+      externalReference: 'customer:t1:RESPONSAVEL:r1',
+    } as never);
 
-    vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({
+    vi.mocked(prisma.responsavel.findFirst).mockResolvedValue({
       id: 'r1',
       nome: 'Resp',
       cpf: '83750216010',
@@ -153,17 +166,16 @@ describe('ensureCustomer', () => {
       externalReference: 'customer:t1:RESPONSAVEL:r1',
     });
 
-    expect(prisma.responsavel.update).toHaveBeenCalledWith({
-      where: { id: 'r1' },
-      data: { asaasCustomerId: 'cust_1' },
+    expect(prisma.responsavel.updateMany).toHaveBeenCalledWith({
+      where: { contaId: 't1', id: 'r1' },
+      data: expect.objectContaining({ asaasCustomerId: 'cust_1' }),
     });
 
     expect(prisma.customer.update).toHaveBeenCalledWith({
       where: {
-        contaId_payerType_payerId: {
+        uq_customer_conta_id: {
           contaId: 't1',
-          payerType: 'RESPONSAVEL',
-          payerId: 'r1',
+          id: 'custRow_r1',
         },
       },
       data: { asaasCustomerId: 'cust_1' },
