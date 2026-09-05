@@ -317,14 +317,14 @@ describe('POST /api/matriculas', () => {
     expect(createSubscriptionMock).not.toHaveBeenCalled();
   });
 
-  it('rejeita contrato que não comporta recorrência sem criar matrícula', async () => {
+  it('propaga falha de vigência sem criar matrícula', async () => {
     const { ImmediateEnrollmentCreationError } = await import(
       '@/src/server/matriculas/create-immediate-enrollment.use-case'
     );
     createImmediateEnrollmentMock.mockRejectedValueOnce(
       new ImmediateEnrollmentCreationError(
-        'CONTRATO_SEM_RECORRENCIA',
-        'A vigência precisa comportar dois vencimentos.',
+        'DATA_FIM_INVALIDA',
+        'A data final do contrato precisa alcançar o primeiro vencimento.',
       ),
     );
 
@@ -338,7 +338,7 @@ describe('POST /api/matriculas', () => {
 
     expect(response.status).toBe(422);
     expect(createSubscriptionMock).not.toHaveBeenCalled();
-    expect(data.error.code).toBe('CONTRATO_SEM_RECORRENCIA');
+    expect(data.error.code).toBe('DATA_FIM_INVALIDA');
     expect(criarMatriculaMock).not.toHaveBeenCalled();
   });
 

@@ -10,8 +10,8 @@ import {
 import { prisma } from '@/src/prisma';
 import { runWithTenant } from '@/lib/prisma-tenant';
 import {
-  advanceRecurringDueDate,
   formatIsoDate,
+  isDateOnlyBefore,
   mapFormaPagamentoToBillingType,
   mapPeriodicidadeToCycle,
   resolveChargeableFirstDueDate,
@@ -116,8 +116,8 @@ function compensationProvesExpectedResourcesRemoved(
 
 function operationErrorMessage(code: string) {
   const messages: Record<string, string> = {
-    CONTRATO_SEM_RECORRENCIA:
-      'A vigência do contrato precisa comportar ao menos dois vencimentos para criar uma assinatura recorrente.',
+    DATA_FIM_INVALIDA:
+      'A data final do contrato precisa ser igual ou posterior ao primeiro vencimento.',
     KYC_NAO_APROVADO:
       'A conta financeira ainda não está aprovada. Conclua a verificação financeira antes de criar a matrícula.',
     KYC_REJECTED:
@@ -355,11 +355,10 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
   const periodicidade = (combo?.periodicidade ?? plano?.periodicidade ??
     PeriodicidadePlano.MENSAL) as PeriodicidadePlano;
   const firstDueDate = resolveChargeableFirstDueDate(input.dataInicio, input.vencimentoDia);
-  const secondDueDate = advanceRecurringDueDate(firstDueDate, periodicidade);
-  if (input.dataFimContrato.getTime() < secondDueDate.getTime()) {
+  if (isDateOnlyBefore(input.dataFimContrato, firstDueDate)) {
     throw new ImmediateEnrollmentCreationError(
-      'CONTRATO_SEM_RECORRENCIA',
-      operationErrorMessage('CONTRATO_SEM_RECORRENCIA'),
+      'DATA_FIM_INVALIDA',
+      operationErrorMessage('DATA_FIM_INVALIDA'),
     );
   }
 

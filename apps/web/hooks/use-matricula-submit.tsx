@@ -286,11 +286,9 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
       }
       setError(error);
 
-      const message = error.code === 'CONTRATO_SEM_RECORRENCIA'
-        ? 'A data final do contrato precisa incluir pelo menos dois vencimentos. Ajuste a vigência e tente novamente.'
-        : error.code === 'DATA_FIM_INVALIDA'
-          ? 'A data final do contrato precisa ser igual ou posterior ao primeiro vencimento. Ajuste a vigência e tente novamente.'
-          : sanitizeMessage(error.message) || 'Não foi possível concluir a matrícula. Revise os dados e tente novamente.';
+      const message = error.code === 'DATA_FIM_INVALIDA'
+        ? 'A data final do contrato precisa alcançar o primeiro vencimento. Ajuste a vigência e tente novamente.'
+        : sanitizeMessage(error.message) || 'Não foi possível concluir a matrícula. Revise os dados e tente novamente.';
 
       toast.custom(
         (t) => (

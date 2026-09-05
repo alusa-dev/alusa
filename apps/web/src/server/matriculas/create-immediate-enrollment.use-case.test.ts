@@ -258,12 +258,21 @@ describe('createImmediateEnrollment', () => {
     expect(compensateMock).not.toHaveBeenCalled();
   });
 
-  it('bloqueia assinatura cuja vigência não comporta o segundo ciclo', async () => {
+  it('permite assinatura cuja vigência alcança apenas o primeiro vencimento', async () => {
+    const result = await createImmediateEnrollment(
+      input({ dataFimContrato: new Date('2099-01-05T12:00:00.000Z') }),
+    );
+
+    expect(result.matricula.id).toBe('matricula-1');
+    expect(stageMock).toHaveBeenCalled();
+  });
+
+  it('bloqueia assinatura cuja vigência termina antes do primeiro vencimento', async () => {
     await expect(
       createImmediateEnrollment(
-        input({ dataFimContrato: new Date('2099-01-05T12:00:00.000Z') }),
+        input({ dataFimContrato: new Date('2098-12-31T12:00:00.000Z') }),
       ),
-    ).rejects.toMatchObject({ code: 'CONTRATO_SEM_RECORRENCIA' });
+    ).rejects.toMatchObject({ code: 'DATA_FIM_INVALIDA' });
     expect(stageMock).not.toHaveBeenCalled();
     expect(criarMatriculaMock).not.toHaveBeenCalled();
   });

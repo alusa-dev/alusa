@@ -26,6 +26,7 @@ import {
 } from '@/features/cadastro/matriculas/mappers';
 import {
   formatIsoDate,
+  isDateOnlyBefore,
   resolveChargeableFirstDueDate,
 } from '@/src/server/matriculas/recurring-billing';
 import {
@@ -398,7 +399,7 @@ export async function POST(req: Request) {
       const previewNextDueDateIso = formatIsoDate(previewNextDueDate);
       const dataFimContratoIso = formatIsoDate(payload.dataFimContrato);
 
-      if (previewNextDueDateIso > dataFimContratoIso) {
+      if (isDateOnlyBefore(payload.dataFimContrato, previewNextDueDate)) {
         return jsonError(
           422,
           'DATA_FIM_INVALIDA',

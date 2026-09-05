@@ -110,6 +110,13 @@ export function formatIsoDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * Compara datas de negócio sem deixar o fuso horário alterar o dia do contrato.
+ */
+export function isDateOnlyBefore(left: Date, right: Date) {
+  return formatIsoDate(left) < formatIsoDate(right);
+}
+
 export function mapPeriodicidadeToCycle(periodicidade: PeriodicidadePlano): Cycle {
   switch (periodicidade) {
     case PeriodicidadePlano.SEMANAL:
