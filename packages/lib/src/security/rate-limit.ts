@@ -62,6 +62,28 @@ export async function rateLimitAsync(key: string, limit: number, windowMs: numbe
   catch (error) { console.warn('[rate-limit][redis-fallback]', { key, error: error instanceof Error ? error.message : String(error) }); return rateLimit(key, limit, windowMs); }
 }
 
+/**
+ * Limiter for public security-sensitive endpoints.
+ * Production must fail closed when the shared store is unavailable; a
+ * process-local Map is not sufficient across serverless replicas.
+ */
+export async function strictRateLimitAsync(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
+  if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now() };
+  if (!redisConfig()) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[rate-limit][strict-unavailable]', { reason: 'redis_not_configured' });
+      return { ok: false, remaining: 0, resetAt: Date.now() + windowMs };
+    }
+    return rateLimit(key, limit, windowMs);
+  }
+  try {
+    return await distributedRateLimit(key, limit, windowMs);
+  } catch (error) {
+    console.error('[rate-limit][strict-unavailable]', { error: error instanceof Error ? error.message : String(error) });
+    return { ok: false, remaining: 0, resetAt: Date.now() + windowMs };
+  }
+}
+
 export async function authRateLimitAsync(key: string, limit: number, windowMs: number) {
   if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now() };
   if (!redisConfig()) {

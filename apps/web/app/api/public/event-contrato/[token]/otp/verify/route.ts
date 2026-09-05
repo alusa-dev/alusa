@@ -8,7 +8,7 @@ import {
 } from '@alusa/lib';
 import { hashCanonicalPayload } from '@alusa/domain';
 import { jsonSensitive } from '@/lib/http-security';
-import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
+import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
 import { publicVerificarAssinaturaOtpInputDTOSchema } from '@/features/contratos/dtos';
 
 function mapError(error: unknown) {
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const clientIp = ipFromRequest(request);
   try {
     const { token } = await params;
-    const limiter = rateLimit(`public-event-contract-signature-otp-verify:${token}:${clientIp}`, 8, 15 * 60 * 1000);
+    const limiter = await strictRateLimitAsync(`public-event-contract-signature-otp-verify:${token}:${clientIp}`, 8, 15 * 60 * 1000);
     if (!limiter.ok) return jsonSensitive({ error: { message: 'Muitas tentativas. Aguarde alguns minutos.' } }, { status: 429 });
     const body = publicVerificarAssinaturaOtpInputDTOSchema.parse(await request.json());
     const contract = await findPublicEventContractByToken(token);
@@ -43,15 +43,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     let result;
     try {
-      result = await verifyPublicContractSignatureOtp({ contaId: contract.contaId, eventoContratoId: contract.id, cpf: body.cpf, code: body.code, contractHash: contract.hashPdf });
+      result = await prisma.$transaction(async (tx) => {
+        const verified = await verifyPublicContractSignatureOtp({ contaId: contract.contaId, eventoContratoId: contract.id, cpf: body.cpf, code: body.code, contractHash: contract.hashPdf, db: tx });
+        const payload: Prisma.InputJsonValue = { otpId: verified.otpId };
+        await tx.eventoContratoEvidence.create({ data: { contaId: contract.contaId, eventoContratoId: contract.id, type: 'SIGNATURE_OTP_VERIFIED', actorType: 'PUBLIC', ip: clientIp, userAgent: request.headers.get('user-agent'), payload, payloadHash: hashCanonicalPayload(payload) } });
+        return verified;
+      });
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'SIGNATURE_OTP_FAILED';
       const failurePayload: Prisma.InputJsonValue = { reason };
       await prisma.eventoContratoEvidence.create({ data: { contaId: contract.contaId, eventoContratoId: contract.id, type: reason === 'SIGNATURE_OTP_EXPIRED' ? 'SIGNATURE_OTP_EXPIRED' : 'SIGNATURE_OTP_FAILED', actorType: 'PUBLIC', ip: clientIp, userAgent: request.headers.get('user-agent'), payload: failurePayload, payloadHash: hashCanonicalPayload(failurePayload) } }).catch(() => undefined);
       throw error;
     }
-    const payload: Prisma.InputJsonValue = { otpId: result.otpId };
-    await prisma.eventoContratoEvidence.create({ data: { contaId: contract.contaId, eventoContratoId: contract.id, type: 'SIGNATURE_OTP_VERIFIED', actorType: 'PUBLIC', ip: clientIp, userAgent: request.headers.get('user-agent'), payload, payloadHash: hashCanonicalPayload(payload) } });
     return jsonSensitive({ success: true, verificationToken: result.verificationToken });
   } catch (error) {
     if (error instanceof z.ZodError) return jsonSensitive({ error: { message: 'Código inválido' } }, { status: 400 });

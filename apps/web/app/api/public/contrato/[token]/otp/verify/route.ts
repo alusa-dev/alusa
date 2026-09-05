@@ -7,7 +7,7 @@ import {
   verifyPublicContractSignatureOtp,
 } from '@alusa/lib';
 import { jsonSensitive } from '@/lib/http-security';
-import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
+import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
 import { publicVerificarAssinaturaOtpInputDTOSchema } from '@/features/contratos/dtos';
 
 function mapError(error: unknown) {
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const clientIp = ipFromRequest(request);
   try {
     const { token } = await params;
-    const limiter = rateLimit(`public-contract-signature-otp-verify:${token}:${clientIp}`, 8, 15 * 60 * 1000);
+    const limiter = await strictRateLimitAsync(`public-contract-signature-otp-verify:${token}:${clientIp}`, 8, 15 * 60 * 1000);
     if (!limiter.ok) return jsonSensitive({ error: { message: 'Muitas tentativas. Aguarde alguns minutos.' } }, { status: 429 });
 
     const body = publicVerificarAssinaturaOtpInputDTOSchema.parse(await request.json());
@@ -43,12 +43,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     let result;
     try {
-      result = await verifyPublicContractSignatureOtp({
-        contaId: contract.contaId,
-        contratoId: contract.id,
-        cpf: body.cpf,
-        code: body.code,
-        contractHash: contract.hashPdf,
+      result = await prisma.$transaction(async (tx) => {
+        const verified = await verifyPublicContractSignatureOtp({ contaId: contract.contaId, contratoId: contract.id, cpf: body.cpf, code: body.code, contractHash: contract.hashPdf, db: tx });
+        await createContractEvidence(tx as never, { contaId: contract.contaId, contratoId: contract.id, type: 'SIGNATURE_OTP_VERIFIED', actorType: 'PUBLIC', ip: clientIp, userAgent: request.headers.get('user-agent'), payload: { otpId: verified.otpId } });
+        return verified;
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'SIGNATURE_OTP_FAILED';
@@ -63,16 +61,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       }).catch(() => undefined);
       throw error;
     }
-
-    await createContractEvidence(prisma as never, {
-      contaId: contract.contaId,
-      contratoId: contract.id,
-      type: 'SIGNATURE_OTP_VERIFIED',
-      actorType: 'PUBLIC',
-      ip: clientIp,
-      userAgent: request.headers.get('user-agent'),
-      payload: { otpId: result.otpId },
-    });
 
     return jsonSensitive({ success: true, verificationToken: result.verificationToken });
   } catch (error) {

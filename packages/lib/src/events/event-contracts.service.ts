@@ -606,7 +606,7 @@ export async function signPublicEventContract(input: {
     }
     const updated = await tx.eventoContrato.updateMany({
       where: { id: contract.id, contaId: contract.contaId, status: 'PENDENTE' },
-      data: { status: 'ASSINADO', assinadoPor: signer.signer.nome, assinadoCpf: signer.signer.cpf, assinadoDataNascimento: input.dataNascimento ? parseBrazilianDateOnlyToUtcDate(input.dataNascimento) : null, assinadoEmail: input.email ?? null, assinadoIp: input.ip ?? null, assinadoUserAgent: input.userAgent ?? null, assinadoEm: now, hashAssinatura: signatureHash, arquivoPdfAssinadoUrl: signedPdfUrl, hashPdfAssinado: signedPdf.hashSha256, decisoesConsentimento: consentimentosPayload },
+      data: { status: 'ASSINADO', assinadoPor: signer.signer.nome, assinadoCpf: signer.signer.cpf, assinadoDataNascimento: input.dataNascimento ? parseBrazilianDateOnlyToUtcDate(input.dataNascimento) : null, assinadoEmail: otpAuthorization.emailSnapshot, assinadoIp: input.ip ?? null, assinadoUserAgent: input.userAgent ?? null, assinadoEm: now, hashAssinatura: signatureHash, arquivoPdfAssinadoUrl: signedPdfUrl, hashPdfAssinado: signedPdf.hashSha256, decisoesConsentimento: consentimentosPayload },
     });
     if (updated.count !== 1) throw new Error('CONTRACT_ALREADY_SIGNED');
     await tx.eventoContratoDocumento.create({ data: { contaId: contract.contaId, eventoContratoId: contract.id, tipo: 'ASSINADO', arquivoUrl: signedPdf.dataUrl, hashSha256: signedPdf.hashSha256, tamanhoBytes: signedPdf.tamanhoBytes } });

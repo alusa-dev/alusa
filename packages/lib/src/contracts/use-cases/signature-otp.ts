@@ -124,11 +124,13 @@ export async function verifyPublicContractSignatureOtp(input: {
   cpf: string;
   code: string;
   contractHash: string;
+  db?: OtpDb;
 }): Promise<{ verificationToken: string; otpId: string; expiresAt: Date }> {
   const cpf = normalizeCpf(input.cpf);
   const now = new Date();
   const resource = resourceWhere(input);
-  const otp = await prisma.contractSignatureOtp.findFirst({
+  const db = input.db ?? prisma;
+  const otp = await db.contractSignatureOtp.findFirst({
     where: {
       contaId: input.contaId,
       cpf,
@@ -151,7 +153,7 @@ export async function verifyPublicContractSignatureOtp(input: {
   }
 
   const verificationToken = randomBytes(32).toString('base64url');
-  const updated = await prisma.contractSignatureOtp.updateMany({
+  const updated = await db.contractSignatureOtp.updateMany({
     where: {
       id: otp.id,
       contaId: input.contaId,

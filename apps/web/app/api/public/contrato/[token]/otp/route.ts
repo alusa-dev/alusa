@@ -9,7 +9,7 @@ import {
   prisma,
 } from '@alusa/lib';
 import { jsonSensitive } from '@/lib/http-security';
-import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
+import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
 import { publicSolicitarAssinaturaOtpInputDTOSchema } from '@/features/contratos/dtos';
 import { sendContractSignatureOtpEmail } from '@/lib/email/contract-signature-otp-email';
 
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const clientIp = ipFromRequest(request);
   try {
     const { token } = await params;
-    const limiter = rateLimit(`public-contract-signature-otp-request:${token}:${clientIp}`, 3, 15 * 60 * 1000);
+    const limiter = await strictRateLimitAsync(`public-contract-signature-otp-request:${token}:${clientIp}`, 3, 15 * 60 * 1000);
     if (!limiter.ok) return jsonSensitive({ error: { message: 'Aguarde alguns minutos antes de solicitar outro código.' } }, { status: 429 });
 
     const body = publicSolicitarAssinaturaOtpInputDTOSchema.parse(await request.json());
@@ -85,8 +85,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       payload: { otpId: otp.id, emailDomain: signer.email.split('@')[1] ?? null },
     });
 
+    let delivery: Awaited<ReturnType<typeof sendContractSignatureOtpEmail>>;
     try {
-      const delivery = await sendContractSignatureOtpEmail({
+      delivery = await sendContractSignatureOtpEmail({
         to: otp.email,
         recipientName: otp.recipientName,
         code: otp.code,
@@ -94,16 +95,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         schoolName: otp.schoolName,
         contractReference: otp.contractReference,
         idempotencyKey: `contract-signature-otp/${otp.id}`,
-      });
-      await setPublicContractSignatureOtpMetadata({ id: otp.id, emailSent: true });
-      await createContractEvidence(prisma as never, {
-        contaId: contract.contaId,
-        contratoId: contract.id,
-        type: 'SIGNATURE_OTP_SENT',
-        actorType: 'PUBLIC',
-        ip: clientIp,
-        userAgent: request.headers.get('user-agent'),
-        payload: { otpId: otp.id, delivery: delivery.delivery, emailId: delivery.emailId },
       });
     } catch (error) {
       await setPublicContractSignatureOtpMetadata({ id: otp.id }).catch(() => undefined);
@@ -117,6 +108,23 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         payload: { otpId: otp.id, reason: error instanceof Error ? error.message : 'EMAIL_SEND_FAILED' },
       }).catch(() => undefined);
       throw error;
+    }
+
+    // Resend accepted the message. Persistence/audit failures must not tell
+    // the user that delivery failed or invalidate the code they received.
+    try {
+      await setPublicContractSignatureOtpMetadata({ id: otp.id, emailSent: true });
+      await createContractEvidence(prisma as never, {
+        contaId: contract.contaId,
+        contratoId: contract.id,
+        type: 'SIGNATURE_OTP_SENT',
+        actorType: 'PUBLIC',
+        ip: clientIp,
+        userAgent: request.headers.get('user-agent'),
+        payload: { otpId: otp.id, delivery: delivery.delivery, emailId: delivery.emailId },
+      });
+    } catch (error) {
+      console.error('[contract-signature-otp][post-delivery-persistence]', { otpId: otp.id, error: error instanceof Error ? error.message : String(error) });
     }
 
     return jsonSensitive({ success: true, maskedEmail: maskEmail(otp.email), expiresInSeconds: 600 });
