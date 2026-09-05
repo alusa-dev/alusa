@@ -30,6 +30,7 @@ jobs:
       DIRECT_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa_test', 'postgresql') }}
       # Chave descartável e exclusiva do banco efêmero do CI; nunca usada fora dos testes.
       ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+      NEXTAUTH_SECRET: 'ci-only-nextauth-secret-not-for-production'
       NODE_OPTIONS: '--max-old-space-size=4096'
       CI: true
     steps:
