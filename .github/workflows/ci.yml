@@ -121,8 +121,9 @@ jobs:
         run: pnpm --filter @alusa/web exec playwright install --with-deps
 
       - name: E2E tests
-        run: >-
-          pnpm --filter @alusa/web run test:e2e --
-          e2e/smoke.spec.ts
-          e2e/contratos-publico.spec.ts
-          e2e/contratos-publico-avancado.spec.ts
+        run: |
+          pnpm --filter @alusa/web exec node ../../scripts/validate-db-env.mjs test
+          pnpm --filter @alusa/web exec playwright test \
+            e2e/smoke.spec.ts \
+            e2e/contratos-publico.spec.ts \
+            e2e/contratos-publico-avancado.spec.ts

@@ -62,4 +62,6 @@ jobs:
         run: pnpm --filter @alusa/web exec playwright install --with-deps
 
       - name: E2E tests
-        run: pnpm --filter @alusa/web run test:e2e -- --shard=${{ matrix.shard }}/4
+        run: |
+          pnpm --filter @alusa/web exec node ../../scripts/validate-db-env.mjs test
+          pnpm --filter @alusa/web exec playwright test --shard=${{ matrix.shard }}/4
