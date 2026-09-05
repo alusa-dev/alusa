@@ -95,6 +95,7 @@ const nextConfig = {
   ],
   transpilePackages: [
     '@alusa/admin-auth',
+    '@alusa/database',
     '@alusa/lib',
     '@alusa/ui',
     '@alusa/domain',
@@ -111,8 +112,12 @@ const nextConfig = {
       '@alusa/admin-auth/*': packageSourcePath('admin-auth', '*'),
       '@alusa/asaas': packageDistPath('asaas', 'index.js'),
       '@alusa/asaas/*': packageDistPath('asaas', '*.js'),
-      '@alusa/database': packageDistPath('database', 'index.js'),
-      '@alusa/database/*': packageDistPath('database', '*.js'),
+      '@alusa/database': useWorkspaceSources
+        ? packageSourcePath('database', 'index.ts')
+        : packageDistPath('database', 'index.js'),
+      '@alusa/database/*': useWorkspaceSources
+        ? packageSourcePath('database', '*')
+        : packageDistPath('database', '*.js'),
       '@alusa/domain': packageDistPath('domain', 'index.js'),
       '@alusa/domain/*': packageDistPath('domain', '*.js'),
       '@alusa/finance': {
