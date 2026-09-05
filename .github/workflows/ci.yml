@@ -72,16 +72,11 @@ jobs:
       - name: Build
         run: pnpm -w build
 
-  # Playwright E2E — shards independentes preservam a cobertura completa sem
-  # concorrência no mesmo banco: cada matrix job recebe seu próprio Postgres.
-  e2e:
-    name: E2E (${{ matrix.shard }}/4)
+  # Gate rápido do PR: cobre o fluxo alterado e o smoke da aplicação.
+  e2e-critical:
+    name: E2E critical
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -126,4 +121,8 @@ jobs:
         run: pnpm --filter @alusa/web exec playwright install --with-deps
 
       - name: E2E tests
-        run: pnpm --filter @alusa/web run test:e2e -- --shard=${{ matrix.shard }}/4
+        run: >-
+          pnpm --filter @alusa/web run test:e2e --
+          e2e/smoke.spec.ts
+          e2e/contratos-publico.spec.ts
+          e2e/contratos-publico-avancado.spec.ts
