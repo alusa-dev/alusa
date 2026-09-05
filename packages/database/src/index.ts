@@ -1,17 +1,17 @@
 // Client
-export { prisma } from './client';
+export { prisma } from './client.js';
 
 // Repositories
 export {
   inspectAsaasCredentials,
   loadAsaasCredentials,
   isAsaasEnabled,
-} from './repositories/conta.repository';
+} from './repositories/conta.repository.js';
 export type {
   AsaasCredentialHealth,
   AsaasCredentialInspection,
   AsaasCredentialSource,
-} from './repositories/conta.repository';
+} from './repositories/conta.repository.js';
 
 // Security
 export {
@@ -19,5 +19,5 @@ export {
   decryptSecretWithMetadata,
   encryptSecret,
   validateEncryptionConfiguration,
-} from './security/encryption';
-export type { DecryptedSecret } from './security/encryption';
+} from './security/encryption.js';
+export type { DecryptedSecret } from './security/encryption.js';

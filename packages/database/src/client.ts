@@ -1,6 +1,6 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 
-import { assertSafeDatabaseEnv } from './safe-db';
+import { assertSafeDatabaseEnv } from './safe-db.js';
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
