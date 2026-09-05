@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import prisma from '../lib/prisma';
+import prisma from './prisma';
 import { resetDb } from './utils/reset-db';
 import { seedContratoPublico } from './utils/seed-contratos';
 import crypto from 'crypto';
