@@ -74,7 +74,7 @@ jobs:
 
       # Playwright E2E — depende da configuração do webServer em apps/web/playwright.config.ts
       - name: Install Playwright deps
-        run: npx playwright install --with-deps
+        run: pnpm --filter @alusa/web exec playwright install --with-deps
 
       - name: E2E tests
         run: pnpm -w test:e2e
