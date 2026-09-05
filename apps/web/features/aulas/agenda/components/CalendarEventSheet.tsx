@@ -72,6 +72,7 @@ export function CalendarEventSheet({
     ? evaluateAttendanceLaunchPolicy({
         startAt: event.startAt,
         status: event.status,
+        timeZone: eventTimeZone,
       })
     : null;
   const canRegisterAttendance = Boolean(

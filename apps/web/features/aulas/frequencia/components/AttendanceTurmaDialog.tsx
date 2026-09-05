@@ -214,6 +214,7 @@ export function AttendanceTurmaDialog({
     ? evaluateAttendanceLaunchPolicy({
         startAt: selectedOccurrence.startAt,
         status: selectedOccurrence.status,
+        timeZone: accountTz,
       })
     : null;
   const canSave = Boolean(launchPolicy?.allowed);

@@ -1,9 +1,15 @@
 import type { CalendarEventStatus, CalendarEventType, Prisma, PrismaClient } from '@prisma/client';
 
 type AgendaPrismaClient = PrismaClient | Prisma.TransactionClient;
-import { addBusinessDays, endOfDay, startOfDay } from 'date-fns';
+import { TZDateMini } from '@date-fns/tz';
+import { addBusinessDays, endOfDay } from 'date-fns';
 
 import { countEligibleStudentsForEvent } from '@/src/server/aulas/calendar/calendar-core.service';
+import {
+  DEFAULT_ACCOUNT_TIMEZONE,
+  normalizeAccountTimeZone,
+  startOfZonedDay,
+} from '@/src/server/aulas/calendar/account-timezone';
 import { createAulasOperationLog } from '@/src/server/aulas/calendar/operation-log.service';
 import { prisma } from '@/src/prisma';
 
@@ -26,6 +32,11 @@ type AutoCloseCandidate = Prisma.CalendarEventGetPayload<{
     startAt: true;
     endAt: true;
     turmaId: true;
+    conta: {
+      select: {
+        timezone: true;
+      };
+    };
     attendanceRecords: {
       select: {
         id: true;
@@ -40,22 +51,31 @@ export type AgendaEventAutoCloseDecisionReason =
   | 'ATTENDANCE_PENDING'
   | 'ELIGIBLE';
 
-export function getAgendaEventAutoCloseDeadline(endAt: Date) {
-  return endOfDay(
-    addBusinessDays(startOfDay(endAt), AGENDA_EVENT_AUTO_CLOSE_TOLERANCE_BUSINESS_DAYS),
+export function getAgendaEventAutoCloseDeadline(
+  endAt: Date,
+  timeZone: string = DEFAULT_ACCOUNT_TIMEZONE,
+) {
+  const normalizedTimeZone = normalizeAccountTimeZone(timeZone);
+  const zonedStart = new TZDateMini(
+    startOfZonedDay(endAt, normalizedTimeZone).getTime(),
+    normalizedTimeZone,
   );
+  const deadline = addBusinessDays(zonedStart, AGENDA_EVENT_AUTO_CLOSE_TOLERANCE_BUSINESS_DAYS);
+
+  return new Date(endOfDay(deadline).getTime());
 }
 
 export function evaluateAgendaEventAutoClose(params: {
   status: CalendarEventStatus;
   type: CalendarEventType;
   endAt: Date;
+  timeZone?: string;
   eligibleStudents: number;
   recordedAttendance: number;
   referenceDate?: Date;
 }) {
   const referenceDate = params.referenceDate ?? new Date();
-  const deadline = getAgendaEventAutoCloseDeadline(params.endAt);
+  const deadline = getAgendaEventAutoCloseDeadline(params.endAt, params.timeZone);
 
   if (params.status !== 'AGENDADO') {
     return {
@@ -118,6 +138,7 @@ async function processAutoCloseCandidate(
     status: event.status,
     type: event.tipo,
     endAt: event.endAt,
+    timeZone: event.conta.timezone,
     eligibleStudents: 0,
     recordedAttendance: event.attendanceRecords.length,
     referenceDate,
@@ -145,6 +166,7 @@ async function processAutoCloseCandidate(
     status: event.status,
     type: event.tipo,
     endAt: event.endAt,
+    timeZone: event.conta.timezone,
     eligibleStudents,
     recordedAttendance: event.attendanceRecords.length,
     referenceDate,
@@ -226,6 +248,11 @@ async function listAutoCloseCandidates(params: {
       startAt: true,
       endAt: true,
       turmaId: true,
+      conta: {
+        select: {
+          timezone: true,
+        },
+      },
       attendanceRecords: {
         select: {
           id: true,

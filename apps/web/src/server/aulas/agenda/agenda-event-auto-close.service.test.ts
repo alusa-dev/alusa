@@ -9,7 +9,10 @@ import {
 
 describe('agenda-event-auto-close.service', () => {
   it('calcula o prazo de auto-fechamento em 3 dias úteis', () => {
-    const deadline = getAgendaEventAutoCloseDeadline(new Date('2026-03-13T14:00:00.000Z'));
+    const deadline = getAgendaEventAutoCloseDeadline(
+      new Date('2026-03-13T14:00:00.000Z'),
+      'America/Manaus',
+    );
 
     expect(AGENDA_EVENT_AUTO_CLOSE_TOLERANCE_BUSINESS_DAYS).toBe(3);
     expect(AGENDA_EVENT_AUTO_CLOSE_POLICY.toleranceBusinessDays).toBe(3);

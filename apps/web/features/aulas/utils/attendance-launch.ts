@@ -1,7 +1,13 @@
-import { addDays, endOfDay, startOfDay } from 'date-fns';
+import { TZDateMini } from '@date-fns/tz';
+import { addDays } from 'date-fns';
 
 import type { CalendarEventStatusDTO } from '@/features/aulas/dtos';
-import { startOfZonedDayClient } from '@/lib/agenda-timezone';
+import {
+  DEFAULT_ACCOUNT_TIMEZONE,
+  endOfZonedDayClient,
+  normalizeAccountTimeZoneClient,
+  startOfZonedDayClient,
+} from '@/lib/agenda-timezone';
 
 export const ATTENDANCE_LAUNCH_WINDOW_DAYS = 7;
 
@@ -11,16 +17,28 @@ export type AttendanceLaunchDecisionReason =
   | 'WINDOW_EXPIRED'
   | 'ELIGIBLE';
 
-export function getAttendanceLaunchDeadline(startAt: string | Date) {
-  return endOfDay(addDays(startOfDay(new Date(startAt)), ATTENDANCE_LAUNCH_WINDOW_DAYS));
+export function getAttendanceLaunchDeadline(
+  startAt: string | Date,
+  timeZone: string = DEFAULT_ACCOUNT_TIMEZONE,
+) {
+  const normalizedTimeZone = normalizeAccountTimeZoneClient(timeZone);
+  const zonedStart = new TZDateMini(
+    startOfZonedDayClient(new Date(startAt), normalizedTimeZone).getTime(),
+    normalizedTimeZone,
+  );
+  const deadline = addDays(zonedStart, ATTENDANCE_LAUNCH_WINDOW_DAYS);
+
+  return endOfZonedDayClient(new Date(deadline.getTime()), normalizedTimeZone);
 }
 
 export function evaluateAttendanceLaunchPolicy(params: {
   startAt: string | Date;
   status: CalendarEventStatusDTO | string;
+  timeZone?: string;
   referenceDate?: Date;
 }) {
   const referenceDate = params.referenceDate ?? new Date();
+  const timeZone = normalizeAccountTimeZoneClient(params.timeZone);
 
   if (params.status === 'CANCELADO') {
     return {
@@ -30,9 +48,9 @@ export function evaluateAttendanceLaunchPolicy(params: {
     };
   }
 
-  const eventDay = startOfDay(new Date(params.startAt));
-  const referenceDay = startOfDay(referenceDate);
-  const deadline = getAttendanceLaunchDeadline(params.startAt);
+  const eventDay = startOfZonedDayClient(new Date(params.startAt), timeZone);
+  const referenceDay = startOfZonedDayClient(referenceDate, timeZone);
+  const deadline = getAttendanceLaunchDeadline(params.startAt, timeZone);
 
   if (eventDay.getTime() > referenceDay.getTime()) {
     return {
@@ -73,6 +91,7 @@ export function getAttendanceLaunchPolicyMessage(reason: AttendanceLaunchDecisio
 export function canLaunchAttendanceForEvent(params: {
   startAt: string | Date;
   status: CalendarEventStatusDTO | string;
+  timeZone?: string;
   referenceDate?: Date;
 }) {
   return evaluateAttendanceLaunchPolicy(params).allowed;
@@ -84,15 +103,9 @@ export function isAttendanceEventOnSelectedDay(params: {
   timeZone?: string;
 }) {
   const referenceDate = params.referenceDate ?? new Date();
-
-  if (params.timeZone) {
-    const eventDay = startOfZonedDayClient(new Date(params.startAt), params.timeZone).getTime();
-    const referenceDay = startOfZonedDayClient(referenceDate, params.timeZone).getTime();
-    return eventDay === referenceDay;
-  }
-
-  const eventDay = startOfDay(new Date(params.startAt));
-  const referenceDay = startOfDay(referenceDate);
+  const timeZone = normalizeAccountTimeZoneClient(params.timeZone);
+  const eventDay = startOfZonedDayClient(new Date(params.startAt), timeZone);
+  const referenceDay = startOfZonedDayClient(referenceDate, timeZone);
 
   return eventDay.getTime() === referenceDay.getTime();
 }
