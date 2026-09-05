@@ -23,8 +23,14 @@ const nextConfig = {
     },
   },
   webpack(config) {
+    config.resolve.extensionAlias = {
+      ...(config.resolve.extensionAlias ?? {}),
+      '.js': ['.ts', '.tsx', '.js', '.jsx'],
+    };
     config.resolve.alias = {
       ...config.resolve.alias,
+      '@alusa/database$': resolve(workspaceRoot, 'packages/database/src/index.ts'),
+      '@alusa/database': resolve(workspaceRoot, 'packages/database/src/index.ts'),
       '@alusa/finance$': resolve(workspaceRoot, 'packages/finance/dist/index.js'),
     };
     return config;
