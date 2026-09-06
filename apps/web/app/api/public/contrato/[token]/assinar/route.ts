@@ -8,6 +8,7 @@ import {
 import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { createContractSignedNotification, signPublicContract } from '@alusa/lib';
+import { loadPublicContractPdf } from '@/src/server/contracts/load-public-contract-pdf';
 
 function statusForDomainError(error: Error) {
   switch (error.message) {
@@ -81,6 +82,7 @@ export async function POST(
       ip: clientIp,
       userAgent,
       baseUrl: request.nextUrl.origin,
+      loadPdfBytes: loadPublicContractPdf,
       assinatura: body.assinatura,
       consentimentos: body.consentimentos,
     });

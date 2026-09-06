@@ -32,6 +32,12 @@ type SignPublicContractInput = {
   ip?: string | null;
   userAgent?: string | null;
   baseUrl?: string | null;
+  /**
+   * Server-side loader for tenant-scoped storage URLs. Public signing requests
+   * do not carry an authenticated session cookie, so protected storage routes
+   * cannot be used to fetch the source PDF from inside the API request.
+   */
+  loadPdfBytes?: (_url: string) => Promise<Buffer | null>;
   assinatura: { tipo: 'TEXTO' | 'DESENHADA'; valor: string; fonte?: string };
   consentimentos?: ContractConsentAnswer[];
 };
@@ -61,9 +67,25 @@ function decodePdfDataUrl(value: string) {
   return Buffer.from(value.slice(prefix.length), 'base64');
 }
 
-async function loadPresentedPdfBytes(url: string, baseUrl?: string | null) {
+async function loadPresentedPdfBytes(
+  url: string,
+  baseUrl?: string | null,
+  loadPdfBytes?: (url: string) => Promise<Buffer | null>,
+) {
   const dataUrlBytes = decodePdfDataUrl(url);
   if (dataUrlBytes) return dataUrlBytes;
+
+  // A public signer has no Alusa session cookie. When the source is stored in
+  // tenant-scoped R2, load it through the server-side storage adapter instead
+  // of recursively fetching /api/files (which correctly requires a session).
+  if (loadPdfBytes) {
+    try {
+      const bytes = await loadPdfBytes(url);
+      if (bytes && bytes.byteLength > 0) return bytes;
+    } catch {
+      // Normalize storage failures to the public domain error below.
+    }
+  }
 
   const fallbackBaseUrl =
     process.env.NEXT_PUBLIC_APP_URL
@@ -77,21 +99,23 @@ async function loadPresentedPdfBytes(url: string, baseUrl?: string | null) {
       ? new URL(url, baseUrl || fallbackBaseUrl || undefined).toString()
       : null;
 
-  if (!target) {
+  try {
+    if (!target) throw new Error('source unavailable');
+
+    const response = await fetch(target);
+    if (!response.ok) throw new Error('source unavailable');
+
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType && !contentType.toLowerCase().includes('pdf')) {
+      throw new Error('source unavailable');
+    }
+
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!bytes.byteLength) throw new Error('source unavailable');
+    return bytes;
+  } catch {
     throw new Error('SIGNED_PDF_SOURCE_UNAVAILABLE');
   }
-
-  const response = await fetch(target);
-  if (!response.ok) {
-    throw new Error('SIGNED_PDF_SOURCE_UNAVAILABLE');
-  }
-
-  const contentType = response.headers.get('content-type') ?? '';
-  if (contentType && !contentType.toLowerCase().includes('pdf')) {
-    throw new Error('SIGNED_PDF_SOURCE_UNAVAILABLE');
-  }
-
-  return Buffer.from(await response.arrayBuffer());
 }
 
 export async function findPublicContractByToken(token: string) {
@@ -242,7 +266,11 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
   });
   const signatureHash = hashCanonicalPayload(signaturePayload);
 
-  const originalPdfBytes = await loadPresentedPdfBytes(contrato.arquivoPdfUrl, input.baseUrl);
+  const originalPdfBytes = await loadPresentedPdfBytes(
+    contrato.arquivoPdfUrl,
+    input.baseUrl,
+    input.loadPdfBytes,
+  );
   const signedPdf = await generateSignedContractEvidencePdf({
     contratoId: contrato.id,
     matriculaId: contrato.matriculaId,

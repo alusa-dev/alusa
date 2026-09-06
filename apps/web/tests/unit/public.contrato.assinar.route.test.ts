@@ -72,6 +72,7 @@ describe('POST /api/public/contrato/[token]/assinar', () => {
       expect.objectContaining({
         token: 'token-resolvido',
         aceite: true,
+        loadPdfBytes: expect.any(Function),
       }),
     );
   });

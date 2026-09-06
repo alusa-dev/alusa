@@ -4,6 +4,7 @@ import { signPublicEventContract } from '@alusa/lib';
 import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { publicAssinarContratoInputDTOSchema, publicAssinarContratoResultDTOSchema } from '@/features/contratos/dtos';
+import { loadPublicContractPdf } from '@/src/server/contracts/load-public-contract-pdf';
 
 function mapError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const limiter = rateLimit(`public-event-contract-sign:${token}:${ipFromRequest(request)}`, 8, 15 * 60 * 1000);
     if (!limiter.ok) return jsonSensitive({ error: { message: 'Muitas tentativas. Aguarde alguns minutos.' } }, { status: 429 });
     const body = publicAssinarContratoInputDTOSchema.parse(await request.json());
-    const result = await signPublicEventContract({ ...body, token, ip: ipFromRequest(request), baseUrl: request.nextUrl.origin, userAgent: body.userAgent || request.headers.get('user-agent') });
+    const result = await signPublicEventContract({ ...body, token, ip: ipFromRequest(request), baseUrl: request.nextUrl.origin, loadPdfBytes: loadPublicContractPdf, userAgent: body.userAgent || request.headers.get('user-agent') });
     return jsonSensitive(publicAssinarContratoResultDTOSchema.parse(result));
   } catch (error) {
     if (error instanceof z.ZodError) return jsonSensitive({ error: { message: 'Dados inválidos' } }, { status: 400 });

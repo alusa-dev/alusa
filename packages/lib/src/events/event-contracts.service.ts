@@ -471,15 +471,37 @@ function decodePdfDataUrl(value: string) {
   return match ? Buffer.from(match[1], 'base64') : null;
 }
 
-async function loadPdfBytes(url: string, baseUrl?: string | null) {
+async function loadPdfBytes(
+  url: string,
+  baseUrl?: string | null,
+  loadStoredPdfBytes?: (_url: string) => Promise<Buffer | null>,
+) {
   const dataUrlBytes = decodePdfDataUrl(url);
   if (dataUrlBytes) return dataUrlBytes;
+
+  if (loadStoredPdfBytes) {
+    try {
+      const bytes = await loadStoredPdfBytes(url);
+      if (bytes && bytes.byteLength > 0) return bytes;
+    } catch {
+      // Normalize storage failures to the public domain error below.
+    }
+  }
+
   const fallback = process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
   const target = /^https?:\/\//i.test(url) ? url : (baseUrl || fallback) ? new URL(url, baseUrl || fallback || undefined).toString() : null;
-  if (!target) throw new Error('SIGNED_PDF_SOURCE_UNAVAILABLE');
-  const response = await fetch(target);
-  if (!response.ok) throw new Error('SIGNED_PDF_SOURCE_UNAVAILABLE');
-  return Buffer.from(await response.arrayBuffer());
+  try {
+    if (!target) throw new Error('source unavailable');
+    const response = await fetch(target);
+    if (!response.ok) throw new Error('source unavailable');
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType && !contentType.toLowerCase().includes('pdf')) throw new Error('source unavailable');
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!bytes.byteLength) throw new Error('source unavailable');
+    return bytes;
+  } catch {
+    throw new Error('SIGNED_PDF_SOURCE_UNAVAILABLE');
+  }
 }
 
 export async function signPublicEventContract(input: {
@@ -494,6 +516,7 @@ export async function signPublicEventContract(input: {
   ip?: string | null;
   userAgent?: string | null;
   baseUrl?: string | null;
+  loadPdfBytes?: (_url: string) => Promise<Buffer | null>;
   assinatura: { tipo: 'TEXTO' | 'DESENHADA'; valor: string; fonte?: string };
 }) {
   const contract = await findPublicEventContractByToken(input.token);
@@ -559,7 +582,7 @@ export async function signPublicEventContract(input: {
     originalPdfHash: contract.hashPdf,
     presentedPdfHash: contract.hashPdf,
     signatureHash,
-    originalPdfBytes: await loadPdfBytes(contract.arquivoPdfUrl, input.baseUrl),
+    originalPdfBytes: await loadPdfBytes(contract.arquivoPdfUrl, input.baseUrl, input.loadPdfBytes),
     assinatura: input.assinatura,
     camposAssinatura: (Array.isArray(contract.camposAssinaturaSnapshot) ? contract.camposAssinaturaSnapshot : contract.modelo.campos).map((field: any) => ({
       tipo: field.tipo,
