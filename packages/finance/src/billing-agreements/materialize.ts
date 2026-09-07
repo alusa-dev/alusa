@@ -276,7 +276,11 @@ export async function materializeBillingAgreement(
   if (legacy.customer.contaId !== input.contaId) {
     throw new Error('CUSTOMER_LOCAL_NAO_ENCONTRADO');
   }
-  const family = await db.matriculaFamiliar.findFirst({
+  const matriculaFamily = await db.matriculaFamiliar.findFirst({
+    where: { id: input.familyGroupId, contaId: input.contaId },
+    select: { responsavelId: true },
+  });
+  const family = matriculaFamily ?? await db.rematriculaFamiliar.findFirst({
     where: { id: input.familyGroupId, contaId: input.contaId },
     select: { responsavelId: true },
   });

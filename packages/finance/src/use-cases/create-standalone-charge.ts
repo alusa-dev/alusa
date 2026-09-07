@@ -268,6 +268,13 @@ type ResolvedStandaloneChargePayer = {
   financialPayerName: string;
 };
 
+class StandaloneSubscriptionPayerDivergenceError extends Error {
+  constructor() {
+    super('PAGADOR_DIVERGENTE');
+    this.name = 'StandaloneSubscriptionPayerDivergenceError';
+  }
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -1195,11 +1202,21 @@ export async function createStandaloneCharge(
           });
 
           if (existingByIdempotency) {
+            const existingHasPayerContext =
+              existingByIdempotency.payerType != null || existingByIdempotency.payerId != null;
+            const existingPayerIsDifferent =
+              existingByIdempotency.payerType !== payerType || existingByIdempotency.payerId !== payerId;
+            if (existingHasPayerContext && existingPayerIsDifferent) {
+              throw new StandaloneSubscriptionPayerDivergenceError();
+            }
+
             return updateStandaloneSubscriptionRemoteLink(tx as typeof prisma, {
               id: existingByIdempotency.id,
               contaId: input.contaId,
               asaasSubscriptionId: subscription.id,
               status: nextStatus,
+              payerType,
+              payerId,
             });
           }
 
@@ -1303,6 +1320,9 @@ export async function createStandaloneCharge(
 
     return err('ERRO_INTERNO');
   } catch (error) {
+    if (error instanceof StandaloneSubscriptionPayerDivergenceError) {
+      return err('PAGADOR_DIVERGENTE');
+    }
     console.error('[createStandaloneCharge]', error);
     return err('ERRO_INTERNO');
   }

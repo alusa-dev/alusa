@@ -1930,6 +1930,10 @@ async function handlePaymentWebhookCore(
           const chargeStatus = mapAsaasToChargeStatus(normalizedStatus);
           const parsedDueDate = payload.payment.dueDate;
           const vencimento = parsedDueDate ? new Date(parsedDueDate) : new Date();
+          const explicitPayerContext =
+            standalonePlan.payerType && standalonePlan.payerId
+              ? { payerType: standalonePlan.payerType, payerId: standalonePlan.payerId }
+              : {};
 
           const standaloneInstallmentCharge = await prisma.charge.upsert({
             where: {
@@ -1951,8 +1955,7 @@ async function handlePaymentWebhookCore(
               discountValue: standalonePlan.discountValue,
               discountType: standalonePlan.discountType,
               discountDueDateLimitDays: standalonePlan.discountDueDateLimitDays,
-              payerType: standalonePlan.payerType,
-              payerId: standalonePlan.payerId,
+              ...explicitPayerContext,
               ...buildChargeAsaasSnapshotUpdate(payload, { localChargeStatus: chargeStatus }),
             },
             create: {

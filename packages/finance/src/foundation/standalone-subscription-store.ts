@@ -237,6 +237,8 @@ export async function updateStandaloneSubscriptionRemoteLink(
     contaId: string;
     asaasSubscriptionId: string;
     status: SubscriptionStatus;
+    payerType?: CustomerPayerType;
+    payerId?: string;
   },
 ): Promise<StandaloneSubscriptionProjection> {
   const delegate = getStandaloneSubscriptionDelegate(client);
@@ -248,6 +250,9 @@ export async function updateStandaloneSubscriptionRemoteLink(
         asaasSubscriptionId: params.asaasSubscriptionId,
         status: params.status,
         statusUpdatedAt: now,
+        ...(params.payerType && params.payerId
+          ? { payerType: params.payerType, payerId: params.payerId }
+          : {}),
       },
       select: {
         id: true,
@@ -264,12 +269,15 @@ export async function updateStandaloneSubscriptionRemoteLink(
     });
   }
 
+  const payerContext = params.payerType && params.payerId
+    ? Prisma.sql`, "payerType" = ${params.payerType}::"CustomerPayerType", "payerId" = ${params.payerId}`
+    : Prisma.empty;
   const rows = await client.$queryRaw<Array<StandaloneSubscriptionProjection>>(Prisma.sql`
     UPDATE "StandaloneSubscription"
     SET
       "asaasSubscriptionId" = ${params.asaasSubscriptionId},
       status = ${params.status}::"SubscriptionStatus",
-      "statusUpdatedAt" = ${now},
+      "statusUpdatedAt" = ${now}${payerContext},
       "updatedAt" = ${now}
     WHERE id = ${params.id}
       AND "contaId" = ${params.contaId}
