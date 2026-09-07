@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
-import { AsaasHttpError } from '@alusa/finance';
+import { AsaasHttpError, BillingAgreementError } from '@alusa/finance';
 
 const {
   deleteSubscriptionMock,
@@ -54,6 +54,7 @@ function buildPrisma() {
     matriculaOperacao: {
       findFirst: vi.fn(async () => null),
       create: vi.fn(async () => operation),
+      update: vi.fn(async () => operation),
     },
     cobranca: { findMany: vi.fn(async () => []) },
     $transaction: vi.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
@@ -142,5 +143,40 @@ describe('syncMatriculaStatus cancellation', () => {
 
     expect(deleteSubscriptionMock).toHaveBeenCalled();
     expect(root.matriculaOperacao.create).toHaveBeenCalled();
+  });
+
+  it('separa tentativas quando o preview financeiro muda e preserva o erro de idempotência', async () => {
+    const { prisma, root } = buildPrisma();
+    root.billingAllocation.findFirst.mockResolvedValue({
+      id: 'allocation-1',
+      agreementId: 'agreement-1',
+      agreement: { version: 3, nextDueDate: new Date('2026-10-05T00:00:00.000Z') },
+    } as never);
+    previewBillingAgreementChangeMock.mockResolvedValue({
+      previewHash: 'preview-hash-01234567890123456789',
+      expiresAt: '2026-09-07T03:00:00.000Z',
+      plans: [],
+      blockers: [],
+    });
+    commitBillingAgreementChangeMock.mockRejectedValue(
+      new BillingAgreementError('IDEMPOTENCY_CONFLICT', 'Conflito de idempotência financeira.'),
+    );
+
+    await expect(syncMatriculaStatus({
+      prisma,
+      contaId: 'conta-1',
+      matriculaId: 'mat-1',
+      targetStatus: 'CANCELADA',
+      actorId: 'user-1',
+    })).rejects.toMatchObject({
+      code: 'IDEMPOTENCY_CONFLICT',
+      statusCode: 409,
+    });
+
+    expect(commitBillingAgreementChangeMock).toHaveBeenCalledWith(expect.objectContaining({
+      uiRequestId: expect.stringMatching(
+        /^status:mat-1:CANCELADA:\d{4}-\d{2}-\d{2}:preview-hash-0123456$/,
+      ),
+    }));
   });
 });

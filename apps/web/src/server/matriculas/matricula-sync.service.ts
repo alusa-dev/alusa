@@ -10,6 +10,7 @@ import {
   commitBillingAgreementChange,
   previewBillingAgreementChange,
   materializeBillingAgreement,
+  BillingAgreementError,
 } from '@alusa/finance';
 import { AsaasHttpError } from '@alusa/finance';
 import {
@@ -336,6 +337,26 @@ function buildFinancialSyncError(
     );
   }
 
+  if (error instanceof BillingAgreementError) {
+    if (error.code === 'IDEMPOTENCY_CONFLICT') {
+      return new ManualSyncError(
+        409,
+        'IDEMPOTENCY_CONFLICT',
+        `Não foi possível ${actionLabel} a matrícula porque já existe uma tentativa com dados diferentes. Gere uma nova tentativa.`,
+        { subscriptionId, ...error.details },
+      );
+    }
+
+    if (error.code === 'PREVIEW_EXPIRED' || error.code === 'PREVIEW_MISMATCH' || error.code === 'AGREEMENT_VERSION_CONFLICT') {
+      return new ManualSyncError(
+        409,
+        'FINANCEIRO_REQUER_NOVO_PREVIEW',
+        `Não foi possível ${actionLabel} a matrícula porque o cenário financeiro mudou. Tente novamente.`,
+        { subscriptionId, ...error.details },
+      );
+    }
+  }
+
   if (error instanceof AsaasHttpError) {
     const providerMessage = extractFinancialErrorMessage(error);
 
@@ -577,7 +598,10 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
       const preview = await previewBillingAgreementChange(change);
       const result = await commitBillingAgreementChange({
         ...change,
-        uiRequestId: `status:${matricula.id}:${input.targetStatus}:${effectiveDate}`,
+        // O preview faz parte da identidade da tentativa. Se o acordo mudar
+        // entre tentativas, uma nova operação deve ser criada; reenvios do
+        // mesmo preview continuam idempotentes.
+        uiRequestId: `status:${matricula.id}:${input.targetStatus}:${effectiveDate}:${preview.previewHash.slice(0, 20)}`,
         previewHash: preview.previewHash,
         previewExpiresAt: preview.expiresAt,
         expectedAgreementVersion: canonicalAllocation.agreement.version,
