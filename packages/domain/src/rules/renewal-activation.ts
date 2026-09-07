@@ -11,6 +11,12 @@ export type RenewalActivationBlocker =
 export type EvaluateRenewalActivationInput = {
   now: Date;
   effectiveAt: Date;
+  /**
+   * Rematricula dates are civil dates. Callers with tenant context should
+   * provide this result instead of comparing the persisted timestamp with
+   * the process clock.
+   */
+  effectiveDateReached?: boolean;
   sourceOverlapsEffectiveAt: boolean;
   hasFutureEnrollment: boolean;
   hasReservation: boolean;
@@ -26,7 +32,8 @@ export function evaluateRenewalActivation(
 ): { eligible: boolean; blockers: RenewalActivationBlocker[] } {
   const blockers: RenewalActivationBlocker[] = [];
 
-  if (input.now.getTime() < input.effectiveAt.getTime()) blockers.push('EFFECTIVE_DATE_NOT_REACHED');
+  const effectiveDateReached = input.effectiveDateReached ?? input.now.getTime() >= input.effectiveAt.getTime();
+  if (!effectiveDateReached) blockers.push('EFFECTIVE_DATE_NOT_REACHED');
   if (input.sourceOverlapsEffectiveAt) blockers.push('SOURCE_ENROLLMENT_OVERLAP');
   if (!input.hasFutureEnrollment) blockers.push('FUTURE_ENROLLMENT_MISSING');
   if (!input.hasReservation) blockers.push('RESERVATION_MISSING');

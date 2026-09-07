@@ -1,6 +1,19 @@
 import { prisma } from '../prisma';
 import { createContractExpiredNotification } from '../notifications/domain-notifications';
 import { StatusContrato, StatusMatricula } from '@prisma/client';
+import {
+  addAcademicDays,
+  getAcademicDateBoundsForInstant,
+  getAcademicDateBoundsForStoredDate,
+  getAcademicDateDifference,
+} from '../utils/date-only';
+
+export interface AcademicJobOptions {
+  /** Instante único usado pela operação, facilitando consistência e testes. */
+  now?: Date;
+  /** Timezone acadêmico da Conta; quando omitido, é resolvido pela Conta. */
+  timeZone?: string;
+}
 
 export interface EncerrarContratosResult {
   processados: number;
@@ -21,18 +34,29 @@ export interface EncerrarContratosResult {
  */
 export async function encerrarContratosExpirados(
   contaId: string,
+  options: AcademicJobOptions = {},
 ): Promise<EncerrarContratosResult> {
   if (!contaId) {
     throw new Error('contaId é obrigatório para garantir isolamento multi-tenant');
   }
 
-  const hoje = new Date();
-  hoje.setHours(0, 0, 0, 0);
+  const now = options.now ?? new Date();
+  const conta = options.timeZone
+    ? null
+    : await prisma.conta.findUnique({
+        where: { id: contaId },
+        select: { timezone: true },
+      });
+  const timeZone = options.timeZone ?? conta?.timezone;
+  const academicDay = getAcademicDateBoundsForInstant(now, timeZone);
 
   const where = {
     contaId,
     status: { in: [StatusMatricula.ATIVA, StatusMatricula.PAUSADA] },
-    dataFimContrato: { lt: hoje },
+    // dataFimContrato representa uma data civil armazenada em UTC. Um
+    // contrato só expira quando o calendário da Conta já avançou para o dia
+    // seguinte, por isso o limite é o início do dia acadêmico atual.
+    dataFimContrato: { lt: academicDay.start },
     NOT: [
       {
         rematriculaItensOrigem: {
@@ -74,7 +98,7 @@ export async function encerrarContratosExpirados(
     processados: matriculasExpiradas.length,
     atualizados: 0,
     erros: [],
-    dataExecucao: new Date(),
+    dataExecucao: now,
   };
 
   for (const matricula of matriculasExpiradas) {
@@ -131,6 +155,7 @@ export async function encerrarContratosExpirados(
 export async function listarContratosProximosDeExpirar(
   contaId: string,
   diasAntecedencia = 30,
+  options: AcademicJobOptions = {},
 ): Promise<
   Array<{
     id: string;
@@ -139,11 +164,18 @@ export async function listarContratosProximosDeExpirar(
     diasRestantes: number;
   }>
 > {
-  const hoje = new Date();
-  hoje.setHours(0, 0, 0, 0);
-
-  const dataLimite = new Date(hoje);
-  dataLimite.setDate(dataLimite.getDate() + diasAntecedencia);
+  const now = options.now ?? new Date();
+  const conta = options.timeZone
+    ? null
+    : await prisma.conta.findUnique({
+        where: { id: contaId },
+        select: { timezone: true },
+      });
+  const timeZone = options.timeZone ?? conta?.timezone;
+  const academicDay = getAcademicDateBoundsForInstant(now, timeZone);
+  const limitDate = getAcademicDateBoundsForStoredDate(
+    addAcademicDays(academicDay.dateKey, diasAntecedencia),
+  );
 
   const matriculas = await prisma.matricula.findMany({
     where: {
@@ -151,8 +183,8 @@ export async function listarContratosProximosDeExpirar(
       statusContrato: StatusContrato.ATIVO,
       status: { in: [StatusMatricula.ATIVA, StatusMatricula.PAUSADA] },
       dataFimContrato: {
-        gte: hoje,
-        lte: dataLimite,
+        gte: academicDay.start,
+        lte: limitDate.end,
       },
     },
     select: {
@@ -164,9 +196,7 @@ export async function listarContratosProximosDeExpirar(
   });
 
   return matriculas.map((m) => {
-    const diasRestantes = Math.ceil(
-      (m.dataFimContrato.getTime() - hoje.getTime()) / (24 * 60 * 60 * 1000),
-    );
+    const diasRestantes = getAcademicDateDifference(m.dataFimContrato, now, timeZone);
     return {
       id: m.id,
       alunoNome: m.aluno.nome ?? 'Sem nome',

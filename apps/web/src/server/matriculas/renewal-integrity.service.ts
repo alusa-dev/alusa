@@ -6,6 +6,7 @@ import {
   type PrismaClient,
 } from '@prisma/client';
 import { createNotification } from '@alusa/lib';
+import { getAcademicDateKey, isAcademicDateInFuture } from '@alusa/lib/date-only';
 
 import { createRenewalPending } from './renewal-governance.service';
 
@@ -93,6 +94,11 @@ export async function runRenewalIntegrityCheck(
   deps: { prisma: PrismaClient },
 ) {
   const now = input.now ?? new Date();
+  const conta = await deps.prisma.conta.findUnique({
+    where: { id: input.contaId },
+    select: { timezone: true },
+  });
+  const timeZone = conta?.timezone;
   const processes = await deps.prisma.rematriculaProcesso.findMany({
     where: {
       contaId: input.contaId,
@@ -159,7 +165,7 @@ export async function runRenewalIntegrityCheck(
 
       if (
         item.matriculaFutura?.status === 'ATIVA' &&
-        process.effectiveAt.getTime() > now.getTime()
+        isAcademicDateInFuture(process.effectiveAt, now, timeZone)
       ) {
         issues.push({
           processId: process.id,
@@ -176,7 +182,9 @@ export async function runRenewalIntegrityCheck(
         });
       }
 
-      if (item.matriculaOrigem.dataFimContrato >= process.effectiveAt) {
+      const sourceEndDateKey = getAcademicDateKey(item.matriculaOrigem.dataFimContrato);
+      const effectiveDateKey = getAcademicDateKey(process.effectiveAt);
+      if (sourceEndDateKey && effectiveDateKey && sourceEndDateKey >= effectiveDateKey) {
         issues.push({
           processId: process.id,
           itemId: item.id,
@@ -246,7 +254,7 @@ export async function runRenewalIntegrityCheck(
     }
 
     for (const financial of process.financeiros) {
-      if (financial.status === 'ACTIVE' && financial.effectiveAt > now) {
+      if (financial.status === 'ACTIVE' && isAcademicDateInFuture(financial.effectiveAt, now, timeZone)) {
         issues.push({
           processId: process.id,
           code: 'FUTURE_FINANCE_ACTIVE_BEFORE_EFFECTIVE_AT',

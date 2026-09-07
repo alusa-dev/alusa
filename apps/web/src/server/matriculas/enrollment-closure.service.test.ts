@@ -27,6 +27,9 @@ function buildPrisma(candidates: Array<{
   return {
     tx,
     prisma: {
+      conta: {
+        findUnique: vi.fn().mockResolvedValue({ timezone: 'America/Sao_Paulo' }),
+      },
       matricula: {
         findMany: vi.fn().mockResolvedValue(candidates),
       },
@@ -106,6 +109,54 @@ describe('closeExpiredEnrollmentsWithoutSuccessor', () => {
 
     expect(result.closed).toHaveLength(0);
     expect(tx.matriculaLog.create).not.toHaveBeenCalled();
+  });
+
+  it('preserva o último dia do contrato e encerra somente no dia acadêmico seguinte', async () => {
+    const candidate = {
+      id: 'mat-last-day',
+      status: StatusMatricula.ATIVA,
+      dataFimContrato: new Date('2026-09-07T12:00:00.000Z'),
+      contratoAtualId: null,
+    };
+    const { prisma, tx } = buildPrisma([candidate]);
+    vi.mocked(prisma.matricula.findMany)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([candidate]);
+
+    const lastDay = await closeExpiredEnrollmentsWithoutSuccessor(
+      {
+        contaId: 'conta-1',
+        now: new Date('2026-09-08T02:59:00.000Z'),
+      },
+      { prisma: prisma as never },
+    );
+    const nextDay = await closeExpiredEnrollmentsWithoutSuccessor(
+      {
+        contaId: 'conta-1',
+        now: new Date('2026-09-08T03:01:00.000Z'),
+      },
+      { prisma: prisma as never },
+    );
+
+    expect(lastDay.closed).toHaveLength(0);
+    expect(nextDay.closed).toHaveLength(1);
+    expect(prisma.matricula.findMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          dataFimContrato: { lt: new Date('2026-09-07T00:00:00.000Z') },
+        }),
+      }),
+    );
+    expect(prisma.matricula.findMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          dataFimContrato: { lt: new Date('2026-09-08T00:00:00.000Z') },
+        }),
+      }),
+    );
+    expect(tx.matriculaLog.create).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -202,7 +253,57 @@ describe('finalizeExpiredFamilyEnrollments', () => {
         eventType: 'CLOSE_MATRICULA_FAMILIAR_SUBSCRIPTION',
         dedupeKey: 'MATRICULA_FAMILIAR:family-1:CLOSE_SUBSCRIPTION',
         matriculaFamiliarId: 'family-1',
+        payload: expect.objectContaining({ effectiveDate: '2026-07-02' }),
       }),
     }));
+  });
+
+  it('não finaliza o grupo no último dia e usa o dia da Conta para liberar no seguinte', async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const family = {
+      id: 'family-last-day',
+      dataFimContrato: new Date('2026-09-07T12:00:00.000Z'),
+      standaloneSubscriptionId: null,
+      matriculas: [{ id: 'mat-1', status: StatusMatricula.ENCERRADA, rematriculasDerivadas: [] }],
+    };
+    const prisma = {
+      conta: {
+        findUnique: vi.fn().mockResolvedValue({ timezone: 'America/Sao_Paulo' }),
+      },
+      matriculaFamiliar: {
+        findMany: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([family]),
+        updateMany,
+      },
+      familyBillingOutbox: { create: vi.fn() },
+    };
+
+    const lastDay = await finalizeExpiredFamilyEnrollments(
+      { contaId: 'conta-1', now: new Date('2026-09-08T02:59:00.000Z') },
+      { prisma: prisma as never },
+    );
+    const nextDay = await finalizeExpiredFamilyEnrollments(
+      { contaId: 'conta-1', now: new Date('2026-09-08T03:01:00.000Z') },
+      { prisma: prisma as never },
+    );
+
+    expect(lastDay.finalized).toHaveLength(0);
+    expect(nextDay.finalized).toEqual(['family-last-day']);
+    expect(prisma.matriculaFamiliar.findMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          dataFimContrato: { lt: new Date('2026-09-07T00:00:00.000Z') },
+        }),
+      }),
+    );
+    expect(prisma.matriculaFamiliar.findMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          dataFimContrato: { lt: new Date('2026-09-08T00:00:00.000Z') },
+        }),
+      }),
+    );
+    expect(updateMany).toHaveBeenCalledTimes(1);
   });
 });

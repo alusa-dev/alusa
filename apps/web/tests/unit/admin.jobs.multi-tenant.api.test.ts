@@ -29,6 +29,7 @@ vi.mock('@alusa/lib', () => ({
 
 vi.mock('@/src/prisma', () => ({
   prisma: {
+    conta: { findMany: vi.fn() },
     matricula: { findMany: vi.fn() },
     matriculaOperacao: { findMany: vi.fn() },
   },
@@ -105,7 +106,13 @@ describe('admin jobs multi-tenant isolation', () => {
     } as never);
     vi.mocked(archiveProcessedWebhooks).mockResolvedValue({ archived: 1 } as never);
     vi.mocked(syncPaymentStateFromAsaas).mockResolvedValue({ success: true, paymentStatus: 'CONFIRMED', appliedEvent: 'PAYMENT_CONFIRMED' } as never);
-    vi.mocked(encerrarContratosExpirados).mockResolvedValue({ processed: 1, updated: 1 } as never);
+    vi.mocked(encerrarContratosExpirados).mockResolvedValue({
+      processados: 1,
+      atualizados: 1,
+      erros: [],
+      dataExecucao: new Date(),
+    } as never);
+    vi.mocked(prisma.conta.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.matricula.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.matriculaOperacao.findMany).mockResolvedValue([] as never);
     vi.mocked(reconcilePendingMatriculaCancellations).mockResolvedValue({
@@ -246,6 +253,10 @@ describe('admin jobs multi-tenant isolation', () => {
 
   it('percorre contas elegíveis no cron global de encerrar-contratos', async () => {
     vi.mocked(getServerSession).mockResolvedValue(null as never);
+    vi.mocked(prisma.conta.findMany).mockResolvedValue([
+      { id: 'conta-1', timezone: 'America/Sao_Paulo' },
+      { id: 'conta-2', timezone: 'America/Sao_Paulo' },
+    ] as never);
     vi.mocked(prisma.matricula.findMany).mockResolvedValue([
       { contaId: 'conta-1' },
       { contaId: 'conta-2' },
@@ -258,15 +269,35 @@ describe('admin jobs multi-tenant isolation', () => {
     );
 
     expect(response.status).toBe(200);
+    expect(prisma.conta.findMany).toHaveBeenCalledWith({
+      where: { status: 'ATIVO', deletedAt: null },
+      select: { id: true, timezone: true },
+      orderBy: { id: 'asc' },
+    });
     expect(prisma.matricula.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ take: 10, distinct: ['contaId'] }),
     );
-    expect(encerrarContratosExpirados).toHaveBeenNthCalledWith(1, 'conta-1');
-    expect(encerrarContratosExpirados).toHaveBeenNthCalledWith(2, 'conta-2');
+    expect(encerrarContratosExpirados).toHaveBeenNthCalledWith(
+      1,
+      'conta-1',
+      expect.objectContaining({ now: expect.any(Date) }),
+    );
+    expect(encerrarContratosExpirados).toHaveBeenNthCalledWith(
+      2,
+      'conta-2',
+      expect.objectContaining({ now: expect.any(Date) }),
+    );
+    expect(
+      vi.mocked(encerrarContratosExpirados).mock.calls[0]?.[1]?.now,
+    ).toBe(vi.mocked(encerrarContratosExpirados).mock.calls[1]?.[1]?.now);
   });
 
   it('isola falha de uma conta e continua as demais no cron global', async () => {
     vi.mocked(getServerSession).mockResolvedValue(null as never);
+    vi.mocked(prisma.conta.findMany).mockResolvedValue([
+      { id: 'conta-1', timezone: 'America/Sao_Paulo' },
+      { id: 'conta-2', timezone: 'America/Sao_Paulo' },
+    ] as never);
     vi.mocked(prisma.matricula.findMany).mockResolvedValue([
       { contaId: 'conta-1' },
       { contaId: 'conta-2' },
@@ -290,6 +321,42 @@ describe('admin jobs multi-tenant isolation', () => {
       updatedEnrollments: 1,
       errors: [{ contaId: 'conta-1', erro: 'falha tenant 1' }],
     });
+  });
+
+  it('seleciona tenants pelo próprio calendário acadêmico no cron global', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T03:30:00.000Z'));
+    try {
+      vi.mocked(getServerSession).mockResolvedValue(null as never);
+      vi.mocked(prisma.conta.findMany).mockResolvedValue([
+        { id: 'conta-manaus', timezone: 'America/Manaus' },
+        { id: 'conta-sp', timezone: 'America/Sao_Paulo' },
+      ] as never);
+      vi.mocked(prisma.matricula.findMany).mockImplementation(async (args) => {
+        const input = args as { where: { contaId: { in: string[] }; OR: Array<{ dataFimContrato?: { lt: Date } } | { matriculaFamiliar?: { dataFimContrato: { lt: Date } } }> } };
+        const cutoff = input.where.OR[0]?.dataFimContrato?.lt;
+        if (cutoff?.getTime() === new Date('2026-09-08T00:00:00.000Z').getTime()) {
+          return [{ contaId: 'conta-sp' }] as never;
+        }
+        return [] as never;
+      });
+
+      const response = await postEncerrarContratos(
+        makeRequest('http://localhost/api/jobs/encerrar-contratos?maxAccounts=10', {
+          'x-cron-token': 'cron-secret',
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(encerrarContratosExpirados).toHaveBeenCalledTimes(1);
+      expect(encerrarContratosExpirados).toHaveBeenCalledWith(
+        'conta-sp',
+        expect.objectContaining({ now: new Date('2026-09-08T03:30:00.000Z') }),
+      );
+      expect(prisma.matricula.findMany).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reconcilia cancelamentos pendentes por tenant no cron global', async () => {

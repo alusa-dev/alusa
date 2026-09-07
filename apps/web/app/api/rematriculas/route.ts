@@ -30,6 +30,7 @@ import {
   resolveWizardPaymentSelection,
 } from '@/src/server/matriculas/payment-selection';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
+import { getAcademicDateDifference } from '@alusa/lib/date-only';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -91,8 +92,15 @@ async function loadRematriculaDecision(params: {
     return null;
   }
 
-  const diasRestantes = Math.ceil(
-    (matricula.dataFimContrato.getTime() - Date.now()) / (24 * 60 * 60 * 1000),
+  const now = new Date();
+  const conta = await prisma.conta.findUnique({
+    where: { id: params.contaId },
+    select: { timezone: true },
+  });
+  const diasRestantes = getAcademicDateDifference(
+    matricula.dataFimContrato,
+    now,
+    conta?.timezone,
   );
   const contratoExpirado = diasRestantes < 0;
   const academicEligible = validarElegibilidadeRematricula({

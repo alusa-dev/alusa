@@ -35,10 +35,11 @@ async function run(req: Request) {
   }
 
   try {
+    const now = parseNow(url.searchParams.get('now')) ?? new Date();
     const result = await closeExpiredEnrollmentsWithoutSuccessor(
       {
         contaId: scope.contaId,
-        now: parseNow(url.searchParams.get('now')),
+        now,
         limit: clampPositiveInt(url.searchParams.get('limit'), 100, 500),
       },
       { prisma },

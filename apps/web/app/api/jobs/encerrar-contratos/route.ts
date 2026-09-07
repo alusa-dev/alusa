@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { encerrarContratosExpirados } from '@alusa/lib';
+import { getAcademicDateBoundsForInstant, normalizeAcademicTimeZone } from '@alusa/lib/date-only';
 import { prisma } from '@/src/prisma';
 import { finalizeExpiredFamilyEnrollments } from '@/src/server/matriculas/enrollment-closure.service';
 
@@ -16,33 +17,53 @@ function clampPositiveInt(value: string | null, fallback: number, max: number) {
   return Number.isFinite(parsed) ? Math.max(1, Math.min(max, Math.trunc(parsed))) : fallback;
 }
 
-async function listContasWithExpiredEnrollments(maxAccounts: number) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const candidates = await prisma.matricula.findMany({
-    where: {
-      OR: [
-        {
-          status: { in: ['ATIVA', 'PAUSADA'] },
-          dataFimContrato: { lt: today },
-        },
-        {
-          matriculaFamiliar: {
-            status: { in: ['ATIVO', 'PARCIAL'] },
-            dataFimContrato: { lt: today },
-          },
-        },
-      ],
-      conta: { status: 'ATIVO', deletedAt: null },
-    },
-    select: { contaId: true },
-    distinct: ['contaId'],
-    orderBy: { contaId: 'asc' },
-    take: maxAccounts,
+async function listContasWithExpiredEnrollments(maxAccounts: number, now: Date) {
+  // Primeiro carregamos apenas tenants ativos. O dia acadêmico é então
+  // calculado por grupo de timezone, pois um único "hoje" do processo não é
+  // válido para todas as Contas.
+  const contas = await prisma.conta.findMany({
+    where: { status: 'ATIVO', deletedAt: null },
+    select: { id: true, timezone: true },
+    orderBy: { id: 'asc' },
   });
 
-  return candidates.map((candidate) => candidate.contaId);
+  const contasPorTimezone = new Map<string, string[]>();
+  for (const conta of contas) {
+    const timeZone = normalizeAcademicTimeZone(conta.timezone);
+    const contaIds = contasPorTimezone.get(timeZone) ?? [];
+    contaIds.push(conta.id);
+    contasPorTimezone.set(timeZone, contaIds);
+  }
+
+  const contasElegiveis = new Set<string>();
+  for (const [timeZone, contaIds] of contasPorTimezone) {
+    const academicDay = getAcademicDateBoundsForInstant(now, timeZone);
+    const candidates = await prisma.matricula.findMany({
+      where: {
+        contaId: { in: contaIds },
+        OR: [
+          {
+            status: { in: ['ATIVA', 'PAUSADA'] },
+            dataFimContrato: { lt: academicDay.start },
+          },
+          {
+            matriculaFamiliar: {
+              status: { in: ['ATIVO', 'PARCIAL'] },
+              dataFimContrato: { lt: academicDay.start },
+            },
+          },
+        ],
+      },
+      select: { contaId: true },
+      distinct: ['contaId'],
+      orderBy: { contaId: 'asc' },
+      take: maxAccounts,
+    });
+
+    for (const candidate of candidates) contasElegiveis.add(candidate.contaId);
+  }
+
+  return Array.from(contasElegiveis).sort().slice(0, maxAccounts);
 }
 
 /**
@@ -67,17 +88,21 @@ export async function POST(req: Request) {
     }
 
     const maxAccounts = clampPositiveInt(url.searchParams.get('maxAccounts'), 25, 100);
+    const operationNow = new Date();
     const contaIds = tenantScope.contaId
       ? [tenantScope.contaId]
-      : await listContasWithExpiredEnrollments(maxAccounts);
+      : await listContasWithExpiredEnrollments(maxAccounts, operationNow);
 
     const results = [];
     const errors: Array<{ contaId: string; erro: string }> = [];
 
     for (const contaId of contaIds) {
       try {
-        const contractResult = await encerrarContratosExpirados(contaId);
-        const familyResult = await finalizeExpiredFamilyEnrollments({ contaId });
+        const contractResult = await encerrarContratosExpirados(contaId, { now: operationNow });
+        const familyResult = await finalizeExpiredFamilyEnrollments({
+          contaId,
+          now: operationNow,
+        });
         results.push({ contaId, ...contractResult, familyClosure: familyResult });
       } catch (error) {
         errors.push({

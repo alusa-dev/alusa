@@ -13,6 +13,11 @@ import { AsaasHttpError, deletePayment, deleteSubscription, isAsaasEnabled } fro
 import {
   buildSeatOccupancyWhereClauseForAcademicDate,
 } from '@alusa/lib';
+import {
+  getAcademicDateBoundsForInstant,
+  getAcademicDateBoundsForStoredDate,
+  isAcademicDateInFuture,
+} from '@alusa/lib/date-only';
 import { issueEnrollmentContract } from '@/src/server/contracts/issue-enrollment-contract.service';
 import { createRenewalPending } from './renewal-governance.service';
 import { enqueueFutureFinancialProvisioning } from './renewal-outbox.service';
@@ -148,10 +153,6 @@ function addYears(date: Date, years: number) {
   const next = toDateOnly(date);
   next.setUTCFullYear(next.getUTCFullYear() + years);
   return next;
-}
-
-function isSameOrAfterDate(left: Date, right: Date) {
-  return toDateOnly(left).getTime() >= toDateOnly(right).getTime();
 }
 
 function parsePeriodStart(targetPeriodId: string) {
@@ -410,6 +411,17 @@ async function findFutureAgreementCandidates(
 ): Promise<RenewalFutureAgreementCandidate[]> {
   if (input.holderType !== 'RESPONSIBLE') return [];
 
+  const requestedEffectiveAt = input.effectiveAt ?? new Date();
+  const academicStart = input.effectiveAt
+    ? getAcademicDateBoundsForStoredDate(input.effectiveAt).start
+    : getAcademicDateBoundsForInstant(
+        requestedEffectiveAt,
+        (await prisma.conta?.findUnique({
+          where: { id: input.contaId },
+          select: { timezone: true },
+        }))?.timezone,
+      ).start;
+
   const agreements = 'acordoFinanceiroFuturo' in prisma && prisma.acordoFinanceiroFuturo
     ? await prisma.acordoFinanceiroFuturo.findMany({
     where: {
@@ -528,8 +540,7 @@ async function findFutureAgreementCandidates(
     });
 
     for (const agreement of billingAgreements) {
-      const effectiveAt = input.effectiveAt ?? new Date();
-      const isFuture = agreement.validFrom >= effectiveAt || Boolean(agreement.validUntil && agreement.validUntil >= effectiveAt);
+      const isFuture = agreement.validFrom >= requestedEffectiveAt || Boolean(agreement.validUntil && agreement.validUntil >= requestedEffectiveAt);
       if (!isFuture) continue;
 
       const existingPeriodicities = new Set(
@@ -567,7 +578,7 @@ async function findFutureAgreementCandidates(
         contaId: input.contaId,
         responsavelId: input.holderId,
         status: { in: ['PENDENTE', 'PROCESSANDO', 'ATIVO', 'PARCIAL'] },
-        effectiveAt: { not: null, gte: input.effectiveAt ?? new Date() },
+        effectiveAt: { not: null, gte: academicStart },
       },
       select: {
         id: true,
@@ -606,7 +617,7 @@ async function findFutureAgreementCandidates(
         contaId: input.contaId,
         responsavelId: input.holderId,
         status: { in: ['PENDENTE', 'PROCESSANDO', 'ATIVO', 'PARCIAL'] },
-        dataInicio: { not: null, gte: input.effectiveAt ?? new Date() },
+        dataInicio: { not: null, gte: academicStart },
       },
       select: {
         id: true,
@@ -644,7 +655,7 @@ async function findFutureAgreementCandidates(
         contaId: input.contaId,
         responsavelFinanceiroId: input.holderId,
         rematriculadaDeId: null,
-        dataInicio: { gte: input.effectiveAt ?? new Date() },
+        dataInicio: { gte: academicStart },
         OR: [{ asaasSubscriptionId: { not: null } }, { pendingAsaasSubscriptionId: { not: null } }],
         status: { notIn: ['CANCELADA', 'ENCERRADA'] },
       },
@@ -1702,6 +1713,7 @@ export async function confirmRenewalProcess(
     idempotencyKey = `${input.idempotencyKey}:after-cancel:${Date.now()}`;
   }
 
+  const operationNow = new Date();
   try {
     return await deps.prisma.$transaction(async (tx) => {
     await lockRenewalResources(tx, input);
@@ -1721,9 +1733,13 @@ export async function confirmRenewalProcess(
     const firstDueDate = preview.firstDueDate ? new Date(`${preview.firstDueDate}T00:00:00.000Z`) : null;
     const targetContractEndsAt = input.targetContractEndsAt ?? addYears(effectiveAt, 1);
     const notificationSnapshot = notificationPreferencesSnapshot(input.financialTerms);
+    const conta = await tx.conta?.findUnique({
+      where: { id: input.contaId },
+      select: { timezone: true },
+    });
     const processStatus =
       preview.renewCount > 0
-        ? effectiveAt > new Date()
+        ? isAcademicDateInFuture(effectiveAt, operationNow, conta?.timezone)
           ? 'WAITING_FOR_START'
           : 'CONFIRMED'
         : 'COMPLETED';
@@ -2660,15 +2676,23 @@ function extractRemoteCancellationMessage(error: AsaasHttpError): string {
 }
 
 export async function activateDueRenewalProcesses(
-  input: { contaId: string; now?: Date; limit?: number },
+  input: { contaId: string; now?: Date; timeZone?: string; limit?: number },
   deps: { prisma: PrismaClient },
 ) {
   const now = input.now ?? new Date();
+  const conta = input.timeZone
+    ? null
+    : await deps.prisma.conta?.findUnique({
+        where: { id: input.contaId },
+        select: { timezone: true },
+      });
+  const timeZone = input.timeZone ?? conta?.timezone;
+  const academicDay = getAcademicDateBoundsForInstant(now, timeZone);
   const processos = await deps.prisma.rematriculaProcesso.findMany({
     where: {
       contaId: input.contaId,
       status: { in: ['CONFIRMED', 'WAITING_FOR_START', 'REQUIRES_ATTENTION'] },
-      effectiveAt: { lte: now },
+      effectiveAt: { lte: academicDay.end },
     },
     take: input.limit ?? 25,
     orderBy: { effectiveAt: 'asc' },
@@ -2725,6 +2749,7 @@ export async function activateDueRenewalProcesses(
       const activation = evaluateRenewalActivation({
         now,
         effectiveAt: full.effectiveAt,
+        effectiveDateReached: !isAcademicDateInFuture(full.effectiveAt, now, timeZone),
         sourceOverlapsEffectiveAt: hasOverlap,
         hasFutureEnrollment: renewedItems.every((item) => Boolean(item.matriculaFuturaId)),
         hasReservation: !hasMissingReservation,
@@ -2855,6 +2880,7 @@ export async function editRenewalFutureLink(
     throw new Error('JUSTIFICATIVA_OBRIGATORIA');
   }
 
+  const operationNow = new Date();
   return deps.prisma.$transaction(async (tx) => {
     const processo = await tx.rematriculaProcesso.findFirst({
       where: { id: input.processId, contaId: input.contaId },
@@ -2886,13 +2912,14 @@ export async function editRenewalFutureLink(
         },
         financeiros: true,
         contratos: true,
+        conta: { select: { timezone: true } },
       },
     });
     if (!processo) throw new Error('REMATRICULA_NAO_ENCONTRADA');
     if (['CANCELLED', 'EFFECTIVE', 'COMPLETED'].includes(processo.status)) {
       throw new Error('REMATRICULA_NAO_EDITAVEL');
     }
-    if (isSameOrAfterDate(new Date(), processo.effectiveAt)) {
+    if (!isAcademicDateInFuture(processo.effectiveAt, operationNow, processo.conta?.timezone)) {
       throw new Error('REMATRICULA_NAO_EDITAVEL_APOS_INICIO');
     }
 

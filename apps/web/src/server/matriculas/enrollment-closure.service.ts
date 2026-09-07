@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient, StatusMatricula } from '@prisma/client';
 import { prisma as appPrisma } from '@/src/prisma';
+import { getAcademicDateBoundsForInstant } from '@alusa/lib/date-only';
 
 const FAMILY_TERMINAL_STATUSES: readonly StatusMatricula[] = [
   StatusMatricula.ENCERRADA,
@@ -30,12 +31,12 @@ const ACTIVE_SUCCESSOR_STATUSES: readonly StatusMatricula[] = [
 
 function buildExpiredWithoutSuccessorWhere(input: {
   contaId: string;
-  now: Date;
+  academicDateStart: Date;
 }): Prisma.MatriculaWhereInput {
   return {
     contaId: input.contaId,
     status: { in: [...CLOSABLE_STATUSES] },
-    dataFimContrato: { lt: input.now },
+    dataFimContrato: { lt: input.academicDateStart },
     NOT: [
       {
         rematriculaItensOrigem: {
@@ -56,13 +57,33 @@ function buildExpiredWithoutSuccessorWhere(input: {
   };
 }
 
+async function resolveAcademicContext(
+  input: { contaId: string; now?: Date; timeZone?: string },
+  deps: { prisma: PrismaClient },
+) {
+  const now = input.now ?? new Date();
+  const conta = input.timeZone
+    ? null
+    : await deps.prisma.conta?.findUnique({
+        where: { id: input.contaId },
+        select: { timezone: true },
+      });
+  const timeZone = input.timeZone ?? conta?.timezone;
+  const academicDay = getAcademicDateBoundsForInstant(now, timeZone);
+
+  return { now, academicDay };
+}
+
 export async function closeExpiredEnrollmentsWithoutSuccessor(
-  input: { contaId: string; now?: Date; limit?: number },
+  input: { contaId: string; now?: Date; timeZone?: string; limit?: number },
   deps: { prisma: PrismaClient },
 ): Promise<CloseExpiredEnrollmentsResult> {
-  const now = input.now ?? new Date();
+  const { now, academicDay } = await resolveAcademicContext(input, deps);
   const limit = Math.max(1, Math.min(500, input.limit ?? 100));
-  const where = buildExpiredWithoutSuccessorWhere({ contaId: input.contaId, now });
+  const where = buildExpiredWithoutSuccessorWhere({
+    contaId: input.contaId,
+    academicDateStart: academicDay.start,
+  });
 
   const candidates = await deps.prisma.matricula.findMany({
     where,
@@ -83,7 +104,10 @@ export async function closeExpiredEnrollmentsWithoutSuccessor(
       const update = await tx.matricula.updateMany({
         where: {
           id: candidate.id,
-          ...buildExpiredWithoutSuccessorWhere({ contaId: input.contaId, now }),
+          ...buildExpiredWithoutSuccessorWhere({
+            contaId: input.contaId,
+            academicDateStart: academicDay.start,
+          }),
         },
         data: {
           status: StatusMatricula.ENCERRADA,
@@ -145,15 +169,16 @@ export async function closeExpiredEnrollmentsWithoutSuccessor(
 export async function finalizeExpiredFamilyEnrollments(input: {
   contaId: string;
   now?: Date;
+  timeZone?: string;
   limit?: number;
 }, deps: { prisma: PrismaClient } = { prisma: appPrisma }) {
-  const now = input.now ?? new Date();
+  const { academicDay } = await resolveAcademicContext(input, deps);
   const limit = Math.max(1, Math.min(100, input.limit ?? 100));
   const families = await deps.prisma.matriculaFamiliar.findMany({
     where: {
       contaId: input.contaId,
       status: { in: ['ATIVO', 'PARCIAL'] },
-      dataFimContrato: { lt: now },
+      dataFimContrato: { lt: academicDay.start },
     },
     orderBy: { dataFimContrato: 'asc' },
     take: limit,
@@ -199,7 +224,7 @@ export async function finalizeExpiredFamilyEnrollments(input: {
               aggregateId: family.id,
               aggregateType: 'MATRICULA_FAMILIAR',
               sourceFinancialAgreementId: family.standaloneSubscriptionId,
-              effectiveDate: now.toISOString().slice(0, 10),
+              effectiveDate: academicDay.dateKey,
             },
           },
         });

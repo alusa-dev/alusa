@@ -25,6 +25,9 @@ const {
   evaluateCanonicalRematriculaDecisionMock: vi.fn(),
   serializeFinancialSnapshotMock: vi.fn(),
   prismaMock: {
+    conta: {
+      findUnique: vi.fn(),
+    },
     matricula: {
       findFirst: vi.fn(),
     },
@@ -100,6 +103,7 @@ describe('POST /api/rematriculas', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getServerSessionMock.mockResolvedValue(authenticatedSession());
+    prismaMock.conta.findUnique.mockResolvedValue({ timezone: 'America/Sao_Paulo' });
     buildFinancialSnapshotMock.mockReturnValue({
       pendingCharges: 1,
       overdueCharges: 1,
@@ -192,6 +196,45 @@ describe('POST /api/rematriculas', () => {
         }),
       }),
     );
+  });
+
+  it('considera vigente no último dia quando o fim está armazenado ao meio-dia UTC', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-07T04:30:00.000Z'));
+    try {
+      prismaMock.matricula.findFirst.mockResolvedValueOnce({
+        ...makeDecisionMatricula(),
+        dataFimContrato: new Date('2026-09-07T12:00:00.000Z'),
+      });
+      evaluateCanonicalRematriculaDecisionMock.mockReturnValue({
+        actionStatus: 'BLOQUEADA',
+        blockReason: 'OUTRO',
+        message: 'A matrícula não está elegível academicamente para rematrícula.',
+        canCurrentUserOverride: false,
+        requiresOverrideReason: false,
+      });
+
+      const response = await POST(
+        buildRequest({
+          contaId: 'conta-1',
+          matriculaId: 'mat-1',
+          dataFimContrato: '2026-12-31',
+        }),
+      );
+
+      expect(response.status).toBe(409);
+      expect(validarElegibilidadeRematriculaMock).toHaveBeenCalledWith({
+        status: 'ATIVA',
+        contratoExpirado: false,
+        diasContratoExpirado: 0,
+      });
+      expect(prismaMock.conta.findUnique).toHaveBeenCalledWith({
+        where: { id: 'conta-1' },
+        select: { timezone: true },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejeita forma de pagamento indefinida antes de chamar o caso de uso', async () => {

@@ -280,7 +280,7 @@ describe('renewal-process.service', () => {
         findFirst: vi.fn().mockResolvedValue({
           id: 'proc-1',
           contaId: 'conta-1',
-          effectiveAt: new Date('2026-07-02T00:00:00.000Z'),
+          effectiveAt: new Date('2026-07-02T12:00:00.000Z'),
           itens: [
             {
               id: 'item-1',
@@ -321,11 +321,14 @@ describe('renewal-process.service', () => {
       rematriculaProcesso: {
         findMany: vi.fn().mockResolvedValue([{ id: 'proc-1' }]),
       },
+      conta: {
+        findUnique: vi.fn().mockResolvedValue({ timezone: 'America/Sao_Paulo' }),
+      },
       $transaction: vi.fn(async (callback) => callback(tx)),
     };
 
     const result = await activateDueRenewalProcesses(
-      { contaId: 'conta-1', now: new Date('2026-07-02T12:00:00.000Z') },
+      { contaId: 'conta-1', now: new Date('2026-07-02T04:00:00.000Z') },
       { prisma: prisma as never },
     );
 
@@ -369,6 +372,9 @@ describe('renewal-process.service', () => {
     };
     const prisma = {
       rematriculaProcesso: { findMany: vi.fn().mockResolvedValue([{ id: 'proc-1' }]) },
+      conta: {
+        findUnique: vi.fn().mockResolvedValue({ timezone: 'America/Sao_Paulo' }),
+      },
       $transaction: vi.fn(async (callback) => callback(tx)),
     };
 

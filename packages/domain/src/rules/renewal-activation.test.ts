@@ -32,4 +32,15 @@ describe('evaluateRenewalActivation', () => {
       blockers: ['FINANCE_NOT_PROVISIONED'],
     });
   });
+
+  it('permite o mesmo dia civil mesmo quando o timestamp persistido ainda nao chegou', () => {
+    expect(
+      evaluateRenewalActivation({
+        ...base,
+        now: new Date('2027-01-08T01:00:00.000Z'),
+        effectiveAt: new Date('2027-01-08T12:00:00.000Z'),
+        effectiveDateReached: true,
+      }),
+    ).toEqual({ eligible: true, blockers: [] });
+  });
 });

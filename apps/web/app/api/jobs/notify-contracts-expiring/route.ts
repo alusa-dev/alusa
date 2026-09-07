@@ -26,8 +26,9 @@ export async function POST(req: Request) {
       return tenantScope.response;
     }
 
+    const operationNow = new Date();
     if (tenantScope.contaId) {
-      const result = await notifyContractsExpiring(tenantScope.contaId);
+      const result = await notifyContractsExpiring(tenantScope.contaId, { now: operationNow });
       return NextResponse.json({ success: true, tenants: 1, ...result });
     }
 
@@ -40,7 +41,7 @@ export async function POST(req: Request) {
     let evaluated = 0;
     let notified = 0;
     for (const conta of contas) {
-      const result = await notifyContractsExpiring(conta.id);
+      const result = await notifyContractsExpiring(conta.id, { now: operationNow });
       evaluated += result.evaluated;
       notified += result.notified;
     }
