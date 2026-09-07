@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import {
   getAsaasCustomerNotificationPreferences,
+  findCustomerForPayer,
   saveAsaasCustomerNotificationPreferences,
   type CustomerNotificationPreferenceInput,
 } from '@alusa/finance';
@@ -71,20 +72,17 @@ async function resolveResponsavelCustomer(params: {
 
   if (!responsavel) return { status: 'NOT_FOUND' as const };
 
-  const localCustomers = await prisma.customer.findMany({
-    where: {
-      contaId: params.contaId,
-      payerType: 'RESPONSAVEL',
-      payerId: responsavel.id,
-    },
-    select: {
-      asaasCustomerId: true,
-    },
-  });
+  const canonicalCustomer = await findCustomerForPayer(
+    params.contaId,
+    'RESPONSAVEL',
+    responsavel.id,
+  );
 
   const allowedCustomerIds = new Set<string>();
-  addCustomerId(allowedCustomerIds, responsavel.asaasCustomerId);
-  localCustomers.forEach((customer) => addCustomerId(allowedCustomerIds, customer.asaasCustomerId));
+  addCustomerId(
+    allowedCustomerIds,
+    canonicalCustomer?.asaasCustomerId ?? responsavel.asaasCustomerId,
+  );
 
   const requested = params.requestedCustomerId?.trim();
   if (requested) {
@@ -95,8 +93,8 @@ async function resolveResponsavelCustomer(params: {
   }
 
   const customerId =
+    canonicalCustomer?.asaasCustomerId ??
     responsavel.asaasCustomerId ??
-    localCustomers.find((customer) => customer.asaasCustomerId)?.asaasCustomerId ??
     null;
 
   if (!customerId) {

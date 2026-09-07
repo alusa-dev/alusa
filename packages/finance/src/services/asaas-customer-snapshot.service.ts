@@ -7,6 +7,8 @@ type CustomerCandidate = {
   contaId: string;
   asaasCustomerId: string;
   localCustomerId?: string | null;
+  // Snapshot fields are one historical representative for compatibility.
+  // They are never an ownership or authorization source when aliases exist.
   payerType?: string | null;
   payerId?: string | null;
 };
@@ -46,6 +48,9 @@ function mapRemoteCustomer(input: {
   fetchedAt: Date;
 }) {
   const { contaId, candidate, customer, fetchedAt } = input;
+  // There is one snapshot per contaId + asaasCustomerId. A shared financial
+  // identity can have several CustomerPayer aliases, so this pair is metadata
+  // only and must not be interpreted as the current obligation payer.
   return {
     contaId,
     asaasCustomerId: customer.id,

@@ -81,7 +81,8 @@ describe('listFiscalInvoicePersonIndex', () => {
     chargeFindMany.mockResolvedValueOnce([
       {
         id: 'charge-2',
-        customer: { payerType: 'ALUNO', payerId: 'aluno-2' },
+        payerType: 'ALUNO',
+        payerId: 'aluno-2',
       },
     ]);
     alunoFindMany.mockResolvedValueOnce([

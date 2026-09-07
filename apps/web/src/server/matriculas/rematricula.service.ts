@@ -1,5 +1,4 @@
-import { customerPayerWhere } from '@/src/server/finance/customer-payer-scope';
-import { StatusContrato, StatusMatricula } from '@prisma/client';
+import { StatusContrato, StatusMatricula, type Prisma } from '@prisma/client';
 import { prisma } from '@/src/prisma';
 import { validarElegibilidadeRematricula } from '@alusa/domain';
 import {
@@ -113,6 +112,7 @@ export async function listarRematriculasElegiveis(input: {
 
   const matriculas = await prisma.matricula.findMany({
     where: {
+      contaId: input.contaId,
       aluno: { contaId: input.contaId },
       status: { in: [StatusMatricula.ATIVA, StatusMatricula.PAUSADA, StatusMatricula.AGUARDANDO_CONFIRMACAO] },
       dataFimContrato: { lte: limite },
@@ -256,73 +256,55 @@ export async function listarRematriculasElegiveis(input: {
     (a, b) => a.dataFimContrato.getTime() - b.dataFimContrato.getTime(),
   );
   
-  const payerKeys = Array.from(
-    new Set(
-      matriculasElegiveis.map((m) => {
-        const payerType = m.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO';
-        const payerId = m.responsavelFinanceiroId ?? m.aluno.id;
-        return `${payerType}:${payerId}`;
+  const payerEntries: Array<{ payerType: 'ALUNO' | 'RESPONSAVEL'; payerId: string }> = Array.from(
+    new Map(
+      matriculasElegiveis.map((matricula) => {
+        const payerType: 'ALUNO' | 'RESPONSAVEL' = matricula.responsavelFinanceiroId
+          ? 'RESPONSAVEL'
+          : 'ALUNO';
+        const payerId = matricula.responsavelFinanceiroId ?? matricula.aluno.id;
+        return [`${payerType}:${payerId}`, { payerType, payerId }];
       }),
-    ),
+    ).values(),
   );
-  
-  const payerEntries = payerKeys.map((key) => {
-    const [payerType, payerId] = key.split(':');
-    return {
-      key,
-      payerType: payerType as 'ALUNO' | 'RESPONSAVEL',
-      payerId,
-    };
-  });
-  
-  const customers = payerEntries.length
-    ? await prisma.customer.findMany({
-        where: {
-          contaId: input.contaId,
-          OR: payerEntries.map((entry) => customerPayerWhere(input.contaId, entry.payerType, entry.payerId)),
-        },
-        select: {
-          id: true,
-          payerType: true,
-          payerId: true,
-          payerLinks: { where: { contaId: input.contaId }, select: { payerType: true, payerId: true } },
-        },
-      })
-    : [];
-  
-  const customerIds = customers.map((customer) => customer.id);
-  const standaloneCharges = customerIds.length
+  const matriculaIds = matriculasElegiveis.map((matricula) => matricula.id);
+  const familyGroupIds = matriculasElegiveis
+    .map((matricula) => matricula.matriculaFamiliarId)
+    .filter((id): id is string => Boolean(id));
+  const standaloneOwnershipOr: Prisma.ChargeWhereInput[] = [
+    ...payerEntries.map((entry) => ({ payerType: entry.payerType, payerId: entry.payerId })),
+    ...(familyGroupIds.length > 0 ? [{ familyGroupId: { in: familyGroupIds } }] : []),
+    ...(matriculaIds.length > 0
+      ? [{ sale: { contaId: input.contaId, matriculaId: { in: matriculaIds } } }]
+      : []),
+  ];
+  const standaloneCharges = standaloneOwnershipOr.length
     ? await prisma.charge.findMany({
         where: {
           contaId: input.contaId,
           cobrancaId: null,
-          customerId: { in: customerIds },
           status: { in: ['CREATED', 'OPEN', 'OVERDUE'] },
+          OR: standaloneOwnershipOr,
         },
         select: {
-          customerId: true,
+          payerType: true,
+          payerId: true,
+          familyGroupId: true,
           status: true,
           dueDate: true,
+          sale: { select: { matriculaId: true } },
         },
       })
     : [];
-  
-  const customerByKey = new Map<string, string>();
-  for (const customer of customers) {
-    customerByKey.set(`${customer.payerType}:${customer.payerId}`, customer.id);
-    for (const link of customer.payerLinks ?? []) {
-      customerByKey.set(`${link.payerType}:${link.payerId}`, customer.id);
-    }
-  }
-  
-  const standaloneStatusByCustomerId = new Map<string, Array<'A_VENCER' | 'PENDENTE' | 'ATRASADO'>>();
+
+  type StandaloneStatus = 'A_VENCER' | 'PENDENTE' | 'ATRASADO';
+  const standaloneStatusByPayerKey = new Map<string, StandaloneStatus[]>();
+  const standaloneStatusByMatriculaId = new Map<string, StandaloneStatus[]>();
+  const standaloneStatusByFamilyGroupId = new Map<string, StandaloneStatus[]>();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  
   for (const charge of standaloneCharges) {
-    if (!charge.customerId) continue;
-  
-    let mappedStatus: 'A_VENCER' | 'PENDENTE' | 'ATRASADO' = 'PENDENTE';
+    let mappedStatus: StandaloneStatus = 'PENDENTE';
     if (charge.status === 'OVERDUE') {
       mappedStatus = 'ATRASADO';
     } else if (charge.dueDate) {
@@ -331,9 +313,22 @@ export async function listarRematriculasElegiveis(input: {
       mappedStatus = due < today ? 'ATRASADO' : 'A_VENCER';
     }
   
-    const current = standaloneStatusByCustomerId.get(charge.customerId) ?? [];
-    current.push(mappedStatus);
-    standaloneStatusByCustomerId.set(charge.customerId, current);
+    if (charge.payerType && charge.payerId) {
+      const key = `${charge.payerType}:${charge.payerId}`;
+      const current = standaloneStatusByPayerKey.get(key) ?? [];
+      current.push(mappedStatus);
+      standaloneStatusByPayerKey.set(key, current);
+    }
+    if (charge.sale?.matriculaId) {
+      const current = standaloneStatusByMatriculaId.get(charge.sale.matriculaId) ?? [];
+      current.push(mappedStatus);
+      standaloneStatusByMatriculaId.set(charge.sale.matriculaId, current);
+    }
+    if (charge.familyGroupId) {
+      const current = standaloneStatusByFamilyGroupId.get(charge.familyGroupId) ?? [];
+      current.push(mappedStatus);
+      standaloneStatusByFamilyGroupId.set(charge.familyGroupId, current);
+    }
   }
 
   const itens = matriculasElegiveis.map((m) => {
@@ -347,8 +342,13 @@ export async function listarRematriculasElegiveis(input: {
     });
     const podeRenovar = elegibilidade.success;
     const payerKey = `${m.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO'}:${m.responsavelFinanceiroId ?? m.aluno.id}`;
-    const customerId = customerByKey.get(payerKey);
-    const standaloneStatuses = customerId ? (standaloneStatusByCustomerId.get(customerId) ?? []) : [];
+    const standaloneStatuses = [
+      ...(standaloneStatusByPayerKey.get(payerKey) ?? []),
+      ...(standaloneStatusByMatriculaId.get(m.id) ?? []),
+      ...(m.matriculaFamiliarId
+        ? standaloneStatusByFamilyGroupId.get(m.matriculaFamiliarId) ?? []
+        : []),
+    ];
   
     const combinedChargeSnapshot = [
       ...m.cobrancas,

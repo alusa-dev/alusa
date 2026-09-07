@@ -83,7 +83,12 @@ export {
 } from './use-cases/ensure-asaas-customer-for-payer';
 export { deleteAsaasCustomerForTenant } from './use-cases/delete-asaas-customer-for-tenant';
 export { customerPayerWhere } from './customer/customer-payer-scope';
-export { findCustomerForPayer } from './customer/customer-identity';
+export {
+  findCustomerForPayer,
+  findSolePayerForCustomer,
+  linkCustomerIdentity,
+} from './customer/customer-identity';
+export type { ObligationPayer } from './customer/customer-identity';
 export {
   syncAlunoInativacaoToAsaas,
   syncAlunoToAsaasProvider,

@@ -152,10 +152,32 @@ async function getAlunoDeletionDependencies(aluno: {
     prisma.contrato.count({
       where: { matricula: { alunoId: aluno.id, aluno: { contaId: aluno.contaId } } },
     }),
-    prisma.customer.count({ where: { contaId: aluno.contaId, payerType: 'ALUNO', payerId: aluno.id } }),
+    prisma.customer.count({
+      where: {
+        contaId: aluno.contaId,
+        OR: [
+          { payerType: 'ALUNO', payerId: aluno.id },
+          { payerLinks: { some: { contaId: aluno.contaId, payerType: 'ALUNO', payerId: aluno.id } } },
+        ],
+      },
+    }),
     responsavelIds.length
       ? prisma.customer.count({
-        where: { contaId: aluno.contaId, payerType: 'RESPONSAVEL', payerId: { in: responsavelIds } },
+        where: {
+          contaId: aluno.contaId,
+          OR: [
+            { payerType: 'RESPONSAVEL', payerId: { in: responsavelIds } },
+            {
+              payerLinks: {
+                some: {
+                  contaId: aluno.contaId,
+                  payerType: 'RESPONSAVEL',
+                  payerId: { in: responsavelIds },
+                },
+              },
+            },
+          ],
+        },
       })
       : 0,
     countWebhooksByExternalReferences(aluno.contaId, Array.from(refs)),
@@ -1172,12 +1194,21 @@ export async function deleteAluno(
       // Remove vínculos antes do delete do aluno (FK safety)
       await tx.alunoResponsavel.deleteMany({ where: { alunoId: id } });
 
-      // Remove customer local do pagador ALUNO (não remove responsável, pois pode ser compartilhado)
+      // Remove apenas o alias educacional. O Customer canônico e seus aliases
+      // de responsável continuam intactos quando a identidade é compartilhada.
+      await tx.customerPayer.deleteMany({
+        where: { contaId, payerType: 'ALUNO', payerId: id },
+      });
+
+      // Customer legado do aluno sem outros aliases pode ser removido; um
+      // Customer compartilhado é preservado para não apagar a identidade do
+      // responsável nem quebrar o histórico financeiro.
       await tx.customer.deleteMany({
         where: {
           contaId,
           payerType: 'ALUNO',
           payerId: id,
+          payerLinks: { none: {} },
         },
       });
 

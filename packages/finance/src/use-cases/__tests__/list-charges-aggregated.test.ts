@@ -123,7 +123,10 @@ describe('listChargesAggregated', () => {
     expect(prisma.cobranca.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          matricula: { aluno: { contaId: 'tenant-123' } },
+          matricula: {
+            contaId: 'tenant-123',
+            aluno: { contaId: 'tenant-123' },
+          },
         }),
       }),
     );

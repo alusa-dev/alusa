@@ -1,4 +1,5 @@
 import { prisma } from '@alusa/database';
+import type { Prisma } from '@prisma/client';
 
 /**
  * Serviço para gestão segura de customers Asaas.
@@ -36,13 +37,45 @@ export async function canInactivateCustomer(params: {
     return { canInactivate: false, reason: 'NO_CUSTOMER_ID' };
   }
 
+  // The remote customer is a financial identity. Include every educational
+  // alias from CustomerPayer, while keeping the tenant on both sides of the
+  // lookup. Direct entity fields remain a compatibility fallback for legacy
+  // rows that predate CustomerPayer.
+  const identity = await prisma.customer.findFirst({
+    where: { contaId, asaasCustomerId },
+    select: {
+      payerType: true,
+      payerId: true,
+      payerLinks: {
+        where: { contaId },
+        select: { payerType: true, payerId: true },
+      },
+    },
+  });
+  const identityAlunoIds = new Set<string>();
+  const identityResponsavelIds = new Set<string>();
+  if (identity) {
+    (identity.payerType === 'ALUNO' ? identityAlunoIds : identityResponsavelIds).add(identity.payerId);
+    for (const link of identity.payerLinks) {
+      (link.payerType === 'ALUNO' ? identityAlunoIds : identityResponsavelIds).add(link.payerId);
+    }
+  }
+  const alunoIdentityWhere: Prisma.AlunoWhereInput[] = [
+    { asaasCustomerId },
+    ...(identityAlunoIds.size ? [{ id: { in: [...identityAlunoIds] } }] : []),
+  ];
+  const responsavelIdentityWhere: Prisma.ResponsavelWhereInput[] = [
+    { asaasCustomerId },
+    ...(identityResponsavelIds.size ? [{ id: { in: [...identityResponsavelIds] } }] : []),
+  ];
+
   // Buscar alunos ativos que usam este customer (diretamente ou via responsável)
   const [alunosWithSameCustomer, responsaveisWithSameCustomer] = await Promise.all([
     // Alunos maiores de idade que têm este asaasCustomerId
     prisma.aluno.count({
       where: {
         contaId,
-        asaasCustomerId,
+        OR: alunoIdentityWhere,
         status: 'ATIVO',
         ...(excludeAlunoId ? { id: { not: excludeAlunoId } } : {}),
       },
@@ -50,7 +83,8 @@ export async function canInactivateCustomer(params: {
     // Responsáveis com este asaasCustomerId
     prisma.responsavel.count({
       where: {
-        asaasCustomerId,
+        contaId,
+        OR: responsavelIdentityWhere,
         alunos: {
           some: {
             aluno: {
@@ -71,17 +105,18 @@ export async function canInactivateCustomer(params: {
     const [activeMatriculas, activeSubscriptions] = await Promise.all([
       prisma.matricula.count({
         where: {
+          contaId,
           status: { in: ['ATIVA', 'PAUSADA', 'AGUARDANDO_CONFIRMACAO', 'PENDENTE_TAXA'] },
           aluno: {
             contaId,
             status: 'ATIVO',
             ...(excludeAlunoId ? { id: { not: excludeAlunoId } } : {}),
-            OR: [
-              { asaasCustomerId },
+              OR: [
+              ...alunoIdentityWhere,
               {
                 responsaveis: {
                   some: {
-                    responsavel: { asaasCustomerId },
+                    responsavel: { contaId, OR: responsavelIdentityWhere },
                   },
                 },
               },
@@ -91,6 +126,7 @@ export async function canInactivateCustomer(params: {
       }),
       prisma.subscription.count({
         where: {
+          contaId,
           status: 'ACTIVE',
           matricula: {
             aluno: {
@@ -98,11 +134,11 @@ export async function canInactivateCustomer(params: {
               status: 'ATIVO',
               ...(excludeAlunoId ? { id: { not: excludeAlunoId } } : {}),
               OR: [
-                { asaasCustomerId },
+                ...alunoIdentityWhere,
                 {
                   responsaveis: {
                     some: {
-                      responsavel: { asaasCustomerId },
+                      responsavel: { contaId, OR: responsavelIdentityWhere },
                     },
                   },
                 },

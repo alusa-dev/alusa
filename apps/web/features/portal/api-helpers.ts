@@ -66,6 +66,17 @@ export async function resolvePortalAlunoIds(user: PortalSessionUser) {
   return responsavel?.alunos.map((item) => item.alunoId) ?? [];
 }
 
+export async function resolvePortalResponsavelId(user: PortalSessionUser) {
+  if (user.role !== 'RESPONSAVEL') return null;
+
+  const responsavel = await prisma.responsavel.findFirst({
+    where: { usuarioId: user.id, contaId: user.contaId },
+    select: { id: true },
+  });
+
+  return responsavel?.id ?? null;
+}
+
 export async function resolvePortalScopedAlunoIds(
   user: PortalSessionUser,
   requestedAlunoId?: string | null,

@@ -1,11 +1,14 @@
-import type { ChargeStatus } from '@prisma/client';
+import type { ChargeStatus, Prisma } from '@prisma/client';
 
 import prisma from '@/lib/prisma';
 import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 
 type PortalScopedPayerIds = {
+  contaId: string;
   alunoIds: string[];
   responsavelIds: string[];
+  matriculaIds: string[];
+  familyGroupIds: string[];
 };
 
 const FINAL_PORTAL_STATUSES = new Set(['PAGO', 'CANCELADO', 'ESTORNADO']);
@@ -34,42 +37,152 @@ export function isPortalPendingStatus(status: string): boolean {
 export async function resolvePortalScopedPayerIds(
   contaId: string,
   alunoIds: string[],
+  portalResponsavelId?: string | null,
 ): Promise<PortalScopedPayerIds> {
-  if (!alunoIds.length) return { alunoIds: [], responsavelIds: [] };
+  if (!alunoIds.length) {
+    return {
+      contaId,
+      alunoIds: [],
+      responsavelIds: portalResponsavelId ? [portalResponsavelId] : [],
+      matriculaIds: [],
+      familyGroupIds: [],
+    };
+  }
 
-  const responsavelLinks = await prisma.alunoResponsavel.findMany({
-    where: {
-      alunoId: { in: alunoIds },
-      responsavel: { contaId },
-    },
-    select: { responsavelId: true },
+  const matriculas = await prisma.matricula.findMany({
+    where: { contaId, alunoId: { in: alunoIds } },
+    select: { id: true, matriculaFamiliarId: true },
   });
+  const matriculaIds = matriculas.map((matricula) => matricula.id);
+  const familyGroupIds = new Set(
+    matriculas
+      .map((matricula) => matricula.matriculaFamiliarId)
+      .filter((id): id is string => Boolean(id)),
+  );
 
-  const responsavelIds = Array.from(new Set(responsavelLinks.map((item) => item.responsavelId)));
-  return { alunoIds, responsavelIds };
+  if (matriculaIds.length) {
+    const familyItems = await prisma.matriculaFamiliarItem.findMany({
+      where: {
+        matriculaId: { in: matriculaIds },
+        matriculaFamiliar: { contaId },
+      },
+      select: { matriculaFamiliarId: true },
+    });
+    for (const item of familyItems) familyGroupIds.add(item.matriculaFamiliarId);
+  }
+
+  // A student's portal may use a responsible's payment method, but a
+  // responsible-only standalone obligation is visible by direct payer only
+  // in the responsible portal. Student portals are scoped by the obligation's
+  // student/family/sale context, never by a shared Customer alias.
+  return {
+    contaId,
+    alunoIds: [...new Set(alunoIds)],
+    responsavelIds: portalResponsavelId ? [portalResponsavelId] : [],
+    matriculaIds,
+    familyGroupIds: [...familyGroupIds],
+  };
+}
+
+export function buildPortalStandaloneChargeOwnershipWhere(
+  scope: PortalScopedPayerIds,
+): Prisma.ChargeWhereInput {
+  const where: Prisma.ChargeWhereInput[] = [
+    ...(scope.alunoIds.length
+      ? [{ payerType: 'ALUNO' as const, payerId: { in: scope.alunoIds } }]
+      : []),
+    ...(scope.responsavelIds.length
+      ? [{ payerType: 'RESPONSAVEL' as const, payerId: { in: scope.responsavelIds } }]
+      : []),
+    ...(scope.familyGroupIds.length
+      ? [
+          { familyGroupId: { in: scope.familyGroupIds } },
+          {
+            standaloneSubscription: {
+              contaId: scope.contaId,
+              familyGroupId: { in: scope.familyGroupIds },
+            },
+          },
+          {
+            standaloneInstallmentPlan: {
+              contaId: scope.contaId,
+              familyGroupId: { in: scope.familyGroupIds },
+            },
+          },
+        ]
+      : []),
+    ...(scope.alunoIds.length || scope.matriculaIds.length || scope.responsavelIds.length
+      ? [
+          {
+            sale: {
+              contaId: scope.contaId,
+              OR: [
+                ...(scope.alunoIds.length ? [{ alunoId: { in: scope.alunoIds } }] : []),
+                ...(scope.matriculaIds.length ? [{ matriculaId: { in: scope.matriculaIds } }] : []),
+                ...(scope.responsavelIds.length ? [{ responsavelId: { in: scope.responsavelIds } }] : []),
+              ],
+            },
+          },
+        ]
+      : []),
+    ...(scope.alunoIds.length
+      ? [
+          {
+            standaloneSubscription: {
+              contaId: scope.contaId,
+              payerType: 'ALUNO' as const,
+              payerId: { in: scope.alunoIds },
+            },
+          },
+          {
+            standaloneInstallmentPlan: {
+              contaId: scope.contaId,
+              payerType: 'ALUNO' as const,
+              payerId: { in: scope.alunoIds },
+            },
+          },
+        ]
+      : []),
+    ...(scope.responsavelIds.length
+      ? [
+          {
+            standaloneSubscription: {
+              contaId: scope.contaId,
+              payerType: 'RESPONSAVEL' as const,
+              payerId: { in: scope.responsavelIds },
+            },
+          },
+          {
+            standaloneInstallmentPlan: {
+              contaId: scope.contaId,
+              payerType: 'RESPONSAVEL' as const,
+              payerId: { in: scope.responsavelIds },
+            },
+          },
+        ]
+      : []),
+  ];
+
+  return where.length ? { OR: where } : { id: '__no_portal_scope__' };
 }
 
 export async function listPortalStandaloneCharges(params: {
   contaId: string;
   alunoIds: string[];
+  responsavelId?: string | null;
 }) {
-  const payerScope = await resolvePortalScopedPayerIds(params.contaId, params.alunoIds);
-
-  const payerFilters: Array<{ customer: { payerType: 'ALUNO' | 'RESPONSAVEL'; payerId: { in: string[] } } }> = [];
-  if (payerScope.alunoIds.length) {
-    payerFilters.push({ customer: { payerType: 'ALUNO', payerId: { in: payerScope.alunoIds } } });
-  }
-  if (payerScope.responsavelIds.length) {
-    payerFilters.push({ customer: { payerType: 'RESPONSAVEL', payerId: { in: payerScope.responsavelIds } } });
-  }
-
-  if (!payerFilters.length) return [];
+  const payerScope = await resolvePortalScopedPayerIds(
+    params.contaId,
+    params.alunoIds,
+    params.responsavelId,
+  );
+  const ownershipWhere = buildPortalStandaloneChargeOwnershipWhere(payerScope);
 
   const charges = await prisma.charge.findMany({
     where: {
       contaId: params.contaId,
       cobrancaId: null,
-      OR: payerFilters,
+      ...ownershipWhere,
     },
     select: {
       id: true,

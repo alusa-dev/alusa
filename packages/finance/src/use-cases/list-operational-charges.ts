@@ -1,5 +1,5 @@
 import { prisma } from '@alusa/database';
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { CustomerPayerType, Prisma, PrismaClient } from '@prisma/client';
 
 type FinanceDbClient = PrismaClient | Prisma.TransactionClient;
 import type { UnifiedChargeItem, OperationalExposureReason } from '../dtos/unified-billing';
@@ -13,6 +13,11 @@ import { parseExternalReference } from '../core';
 import { resolveChargeDisplayStatus, unifiedChargeStatusToLocal } from '../mappers/asaas-display-status';
 import { isMaterializedGroupedEventEntry } from '../mappers/event-billing-entry';
 import { resolveEventPayerName } from '../mappers/event-payer';
+import {
+  resolveUnambiguousCustomerPayer,
+  type CustomerPayerSnapshot,
+  type ObligationPayer,
+} from '../customer/customer-identity';
 
 // ---------------------------------------------------------------------------
 // Input / Output
@@ -77,6 +82,19 @@ function extractInstallmentPlanId(externalReference: string | null): string | nu
 function isGenericPayerName(value: string | null | undefined): boolean {
   const normalized = value?.trim().toLowerCase() ?? '';
   return !normalized || normalized === 'cliente' || normalized === 'needs_review';
+}
+
+type StandalonePayerRecord = {
+  payerType: CustomerPayerType | null;
+  payerId: string | null;
+  customer?: CustomerPayerSnapshot | null;
+};
+
+function resolveStandalonePayer(record: StandalonePayerRecord): ObligationPayer | null {
+  if (record.payerType && record.payerId) {
+    return { payerType: record.payerType, payerId: record.payerId };
+  }
+  return resolveUnambiguousCustomerPayer(record.customer);
 }
 
 function resolveStandaloneTipo(
@@ -551,13 +569,13 @@ async function buildOperationalChargesCollection(
     (standaloneSubscriptionWhere.AND as unknown[]).push({
       OR: [
         { description: { contains: search, mode: 'insensitive' } },
-        { customer: { is: { payerId: { contains: search, mode: 'insensitive' } } } },
+        { payerId: { contains: search, mode: 'insensitive' } },
       ],
     });
     (standaloneSubscriptionRecentWhere.AND as unknown[]).push({
       OR: [
         { description: { contains: search, mode: 'insensitive' } },
-        { customer: { is: { payerId: { contains: search, mode: 'insensitive' } } } },
+        { payerId: { contains: search, mode: 'insensitive' } },
       ],
     });
   }
@@ -676,10 +694,13 @@ async function buildOperationalChargesCollection(
     createdAt: true, payerName: true,
     description: true, value: true, dueDate: true, billingType: true,
     standaloneInstallmentPlanId: true, standaloneSubscriptionId: true, familyGroupId: true, invoiceUrl: true,
+    payerType: true,
+    payerId: true,
     customer: {
       select: {
         payerType: true,
         payerId: true,
+        payerLinks: { select: { payerType: true, payerId: true } },
       },
     },
   } as const;
@@ -696,7 +717,15 @@ async function buildOperationalChargesCollection(
     description: true,
     familyGroupId: true,
     createdAt: true,
-    customer: { select: { payerType: true, payerId: true } },
+    payerType: true,
+    payerId: true,
+    customer: {
+      select: {
+        payerType: true,
+        payerId: true,
+        payerLinks: { select: { payerType: true, payerId: true } },
+      },
+    },
   } as const;
 
   // =================================================================
@@ -963,16 +992,16 @@ async function buildOperationalChargesCollection(
     new Set(
       [
         ...effectiveStandaloneResult
-          .filter(
-            (charge) =>
-              isGenericPayerName(charge.payerName) &&
-              charge.customer?.payerType === 'ALUNO' &&
-              typeof charge.customer.payerId === 'string',
+        .filter(
+            (charge) => {
+              const payer = resolveStandalonePayer(charge);
+              return isGenericPayerName(charge.payerName) && payer?.payerType === 'ALUNO';
+            },
           )
-          .map((charge) => charge.customer!.payerId),
+          .map((charge) => resolveStandalonePayer(charge)?.payerId as string),
         ...standaloneSubscriptions
-          .filter((subscription) => subscription.customer?.payerType === 'ALUNO')
-          .map((subscription) => subscription.customer.payerId),
+          .filter((subscription) => resolveStandalonePayer(subscription)?.payerType === 'ALUNO')
+          .map((subscription) => resolveStandalonePayer(subscription)?.payerId as string),
       ],
     ),
   );
@@ -981,16 +1010,16 @@ async function buildOperationalChargesCollection(
     new Set(
       [
         ...effectiveStandaloneResult
-          .filter(
-            (charge) =>
-              isGenericPayerName(charge.payerName) &&
-              charge.customer?.payerType === 'RESPONSAVEL' &&
-              typeof charge.customer.payerId === 'string',
+        .filter(
+            (charge) => {
+              const payer = resolveStandalonePayer(charge);
+              return isGenericPayerName(charge.payerName) && payer?.payerType === 'RESPONSAVEL';
+            },
           )
-          .map((charge) => charge.customer!.payerId),
+          .map((charge) => resolveStandalonePayer(charge)?.payerId as string),
         ...standaloneSubscriptions
-          .filter((subscription) => subscription.customer?.payerType === 'RESPONSAVEL')
-          .map((subscription) => subscription.customer.payerId),
+          .filter((subscription) => resolveStandalonePayer(subscription)?.payerType === 'RESPONSAVEL')
+          .map((subscription) => resolveStandalonePayer(subscription)?.payerId as string),
       ],
     ),
   );
@@ -998,13 +1027,13 @@ async function buildOperationalChargesCollection(
   const [standaloneAlunos, standaloneResponsaveis] = await Promise.all([
     standaloneAlunoIds.length
       ? _db.aluno.findMany({
-          where: { id: { in: standaloneAlunoIds } },
+          where: { contaId, id: { in: standaloneAlunoIds } },
           select: { id: true, nome: true },
         })
       : Promise.resolve([]),
     standaloneResponsavelIds.length
       ? _db.responsavel.findMany({
-          where: { id: { in: standaloneResponsavelIds } },
+          where: { contaId, id: { in: standaloneResponsavelIds } },
           select: { id: true, nome: true },
         })
       : Promise.resolve([]),
@@ -1067,8 +1096,9 @@ async function buildOperationalChargesCollection(
       standaloneSubscriptionId: c.standaloneSubscriptionId,
     });
     const resolvedPlanId = c.standaloneInstallmentPlanId ?? extractInstallmentPlanId(c.externalReference);
-    const resolvedPayerName = c.customer
-      ? standalonePayerNameByKey.get(`${c.customer.payerType}:${c.customer.payerId}`) ?? null
+    const payer = resolveStandalonePayer(c);
+    const resolvedPayerName = payer
+      ? standalonePayerNameByKey.get(`${payer.payerType}:${payer.payerId}`) ?? null
       : null;
 
     return {
@@ -1147,8 +1177,9 @@ async function buildOperationalChargesCollection(
         return true;
       })
       .map((subscription) => {
-        const resolvedPayerName = subscription.customer
-          ? standalonePayerNameByKey.get(`${subscription.customer.payerType}:${subscription.customer.payerId}`)
+        const payer = resolveStandalonePayer(subscription);
+        const resolvedPayerName = payer
+          ? standalonePayerNameByKey.get(`${payer.payerType}:${payer.payerId}`)
           : null;
 
         return {
@@ -1172,7 +1203,7 @@ async function buildOperationalChargesCollection(
           tipo: 'RECORRENTE',
           createdAt: subscription.createdAt.toISOString(),
           matriculaId: null,
-          alunoId: subscription.customer?.payerType === 'ALUNO' ? subscription.customer.payerId : null,
+          alunoId: payer?.payerType === 'ALUNO' ? payer.payerId : null,
           isGroup: true,
           groupType: 'SUBSCRIPTION',
           groupId: subscription.id,

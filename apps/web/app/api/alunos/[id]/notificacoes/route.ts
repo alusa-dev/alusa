@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import {
+  findCustomerForPayer,
   getAsaasCustomerNotificationPreferences,
   saveAsaasCustomerNotificationPreferences,
   type CustomerNotificationPreferenceInput,
@@ -87,33 +88,32 @@ async function resolveAlunoCustomer(params: {
 
   if (!aluno) return { status: 'NOT_FOUND' as const };
 
-  const responsavelIds = aluno.responsaveis.map((item) => item.responsavel.id);
-  const localCustomers = await prisma.customer.findMany({
-    where: {
-      contaId: params.contaId,
-      OR: [
-        { payerType: 'ALUNO', payerId: aluno.id },
-        ...(responsavelIds.length
-          ? [{ payerType: 'RESPONSAVEL' as const, payerId: { in: responsavelIds } }]
-          : []),
-      ],
-    },
-    select: {
-      payerType: true,
-      payerId: true,
-      asaasCustomerId: true,
-    },
-  });
+  const payerRefs = [
+    { payerType: 'ALUNO' as const, payerId: aluno.id, fallbackCustomerId: aluno.asaasCustomerId },
+    ...aluno.responsaveis.map((item) => ({
+      payerType: 'RESPONSAVEL' as const,
+      payerId: item.responsavel.id,
+      fallbackCustomerId: item.responsavel.asaasCustomerId,
+    })),
+    ...aluno.matriculas.flatMap((matricula) =>
+      matricula.responsavelFinanceiro
+        ? [{
+            payerType: 'RESPONSAVEL' as const,
+            payerId: matricula.responsavelFinanceiro.id,
+            fallbackCustomerId: matricula.responsavelFinanceiro.asaasCustomerId,
+          }]
+        : [],
+    ),
+  ];
+  const canonicalCustomers = await Promise.all(
+    payerRefs.map((payer) => findCustomerForPayer(params.contaId, payer.payerType, payer.payerId)),
+  );
+  const resolvedCustomerIds = canonicalCustomers.map(
+    (customer, index) => customer?.asaasCustomerId ?? payerRefs[index]?.fallbackCustomerId ?? null,
+  );
 
   const allowedCustomerIds = new Set<string>();
-  addCustomerId(allowedCustomerIds, aluno.asaasCustomerId);
-  aluno.responsaveis.forEach((item) =>
-    addCustomerId(allowedCustomerIds, item.responsavel.asaasCustomerId),
-  );
-  aluno.matriculas.forEach((matricula) =>
-    addCustomerId(allowedCustomerIds, matricula.responsavelFinanceiro?.asaasCustomerId),
-  );
-  localCustomers.forEach((customer) => addCustomerId(allowedCustomerIds, customer.asaasCustomerId));
+  resolvedCustomerIds.forEach((customerId) => addCustomerId(allowedCustomerIds, customerId));
 
   const requested = params.requestedCustomerId?.trim();
   if (requested) {
@@ -123,27 +123,7 @@ async function resolveAlunoCustomer(params: {
     return { status: 'OK' as const, customerId: requested, aluno };
   }
 
-  const localAlunoCustomer = localCustomers.find(
-    (customer) => customer.payerType === 'ALUNO' && customer.payerId === aluno.id,
-  );
-  const localResponsavelCustomer = localCustomers.find(
-    (customer) => customer.payerType === 'RESPONSAVEL' && customer.asaasCustomerId,
-  );
-  const responsavelFinanceiro = aluno.matriculas.find(
-    (matricula) => matricula.responsavelFinanceiro?.asaasCustomerId,
-  )?.responsavelFinanceiro;
-  const responsavelPrincipal =
-    aluno.responsaveis.find((item) => item.responsavel.financeiro)?.responsavel ??
-    aluno.responsaveis[0]?.responsavel ??
-    null;
-
-  const customerId =
-    aluno.asaasCustomerId ??
-    localAlunoCustomer?.asaasCustomerId ??
-    responsavelFinanceiro?.asaasCustomerId ??
-    localResponsavelCustomer?.asaasCustomerId ??
-    responsavelPrincipal?.asaasCustomerId ??
-    null;
+  const customerId = resolvedCustomerIds.find((value): value is string => Boolean(value)) ?? null;
 
   if (!customerId) {
     return { status: 'NO_CUSTOMER' as const, aluno };

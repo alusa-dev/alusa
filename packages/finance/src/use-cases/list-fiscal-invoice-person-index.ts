@@ -164,20 +164,21 @@ export async function listFiscalInvoicePersonIndex(
           where: { contaId: input.contaId, id: { in: chargeIds } },
           select: {
             id: true,
-            customer: { select: { payerType: true, payerId: true } },
+            payerType: true,
+            payerId: true,
           },
         })
       : [],
   ]);
 
   const matriculaToAluno = new Map(matriculas.map((matricula) => [matricula.id, matricula.alunoId]));
-  const chargeCustomerById = new Map(
+  const chargePayerById = new Map(
     charges.map((charge) => [
       charge.id,
-      charge.customer
+      charge.payerType && charge.payerId
         ? {
-            payerType: charge.customer.payerType as FiscalInvoiceClientType,
-            payerId: charge.customer.payerId,
+            payerType: charge.payerType as FiscalInvoiceClientType,
+            payerId: charge.payerId,
           }
         : null,
     ]),
@@ -186,12 +187,14 @@ export async function listFiscalInvoicePersonIndex(
   const bucketMap = new Map<string, PersonBucket>();
 
   for (const invoice of invoices) {
-    const customer = chargeCustomerById.get(invoice.chargeId);
+    const obligationPayer = chargePayerById.get(invoice.chargeId);
     const client = resolveFiscalInvoiceClient({
       responsavelId: invoice.responsavelId,
       matriculaAlunoId: invoice.matriculaId ? matriculaToAluno.get(invoice.matriculaId) ?? null : null,
-      customerPayerType: customer?.payerType ?? null,
-      customerPayerId: customer?.payerId ?? null,
+      obligationPayerType: obligationPayer?.payerType ?? null,
+      obligationPayerId: obligationPayer?.payerId ?? null,
+      customerPayerType: null,
+      customerPayerId: null,
     });
 
     if (!client) continue;

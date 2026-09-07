@@ -2,13 +2,18 @@ import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
 import { AsaasEnvError, getPayment, isAsaasEnabled, syncPaymentStateFromAsaas } from '@alusa/finance';
 import type { AsaasPayment } from '@alusa/finance';
-import { requirePortalUser, resolvePortalAlunoIds } from '@/features/portal/api-helpers';
+import {
+  requirePortalUser,
+  resolvePortalAlunoIds,
+  resolvePortalResponsavelId,
+} from '@/features/portal/api-helpers';
 import {
   portalFinanceiroDetailDTOSchema,
   portalRouteIdParamsDTOSchema,
 } from '@/features/portal/dtos';
 import { mapPortalFinanceiroDetailToDTO } from '@/features/portal/mappers';
 import {
+  buildPortalStandaloneChargeOwnershipWhere,
   mapChargeStatusToPortalStatus,
   resolvePortalScopedPayerIds,
 } from '@/features/portal/finance-standalone';
@@ -120,23 +125,20 @@ export async function GET(
     } | null = null;
 
     if (!cobranca) {
-      const payerScope = await resolvePortalScopedPayerIds(auth.user.contaId, alunoIds);
-      const payerFilters: Array<{ customer: { payerType: 'ALUNO' | 'RESPONSAVEL'; payerId: { in: string[] } } }> = [];
+      const payerScope = await resolvePortalScopedPayerIds(
+        auth.user.contaId,
+        alunoIds,
+        await resolvePortalResponsavelId(auth.user),
+      );
+      const ownershipWhere = buildPortalStandaloneChargeOwnershipWhere(payerScope);
 
-      if (payerScope.alunoIds.length) {
-        payerFilters.push({ customer: { payerType: 'ALUNO', payerId: { in: payerScope.alunoIds } } });
-      }
-      if (payerScope.responsavelIds.length) {
-        payerFilters.push({ customer: { payerType: 'RESPONSAVEL', payerId: { in: payerScope.responsavelIds } } });
-      }
-
-      if (payerFilters.length) {
+      if (ownershipWhere) {
         standaloneCharge = await prisma.charge.findFirst({
           where: {
             id,
             contaId: auth.user.contaId,
             cobrancaId: null,
-            OR: payerFilters,
+            ...ownershipWhere,
           },
           select: {
             id: true,
@@ -386,23 +388,20 @@ export async function POST(
     let paymentId = cobranca?.asaasPaymentId ?? null;
 
     if (!paymentId) {
-      const payerScope = await resolvePortalScopedPayerIds(auth.user.contaId, alunoIds);
-      const payerFilters: Array<{ customer: { payerType: 'ALUNO' | 'RESPONSAVEL'; payerId: { in: string[] } } }> = [];
+      const payerScope = await resolvePortalScopedPayerIds(
+        auth.user.contaId,
+        alunoIds,
+        await resolvePortalResponsavelId(auth.user),
+      );
+      const ownershipWhere = buildPortalStandaloneChargeOwnershipWhere(payerScope);
 
-      if (payerScope.alunoIds.length) {
-        payerFilters.push({ customer: { payerType: 'ALUNO', payerId: { in: payerScope.alunoIds } } });
-      }
-      if (payerScope.responsavelIds.length) {
-        payerFilters.push({ customer: { payerType: 'RESPONSAVEL', payerId: { in: payerScope.responsavelIds } } });
-      }
-
-      const charge = payerFilters.length
+      const charge = ownershipWhere
         ? await prisma.charge.findFirst({
             where: {
               id,
               contaId: auth.user.contaId,
               cobrancaId: null,
-              OR: payerFilters,
+              ...ownershipWhere,
             },
             select: { asaasPaymentId: true },
           })

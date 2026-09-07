@@ -1,4 +1,5 @@
 import { prisma } from '@alusa/database';
+import { findCustomerForPayer } from '../customer/customer-identity';
 
 /**
  * Guards de Regra de Negócio para Cobranças
@@ -99,9 +100,16 @@ export async function canCreateCharge(
   }
 
   // 6. Verificar asaasCustomerId do pagador
-  const asaasCustomerId = input.payerType === 'ALUNO'
-    ? matricula.aluno.asaasCustomerId
-    : matricula.responsavelFinanceiro?.asaasCustomerId;
+  const canonicalCustomer = await findCustomerForPayer(
+    input.contaId,
+    input.payerType,
+    input.payerId,
+  );
+  const asaasCustomerId =
+    canonicalCustomer?.asaasCustomerId ??
+    (input.payerType === 'ALUNO'
+      ? matricula.aluno.asaasCustomerId
+      : matricula.responsavelFinanceiro?.asaasCustomerId);
 
   if (!asaasCustomerId) {
     return {

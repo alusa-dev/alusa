@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(), list: vi.fn(), update: vi.fn(), create: vi.fn(), restore: vi.fn(), link: vi.fn(),
+  find: vi.fn(),
 }));
 vi.mock('@alusa/database', () => ({
   prisma: { financeProfile: { findUnique: vi.fn(async () => ({
@@ -15,6 +16,7 @@ vi.mock('@alusa/asaas', async (original) => ({
   createCustomer: mocks.create, restoreCustomer: mocks.restore,
 }));
 vi.mock('../../customer/customer-identity', () => ({
+  findCustomerForPayer: mocks.find,
   linkCustomerIdentity: mocks.link,
   CustomerIdentityConflictError: class extends Error {},
 }));
@@ -33,6 +35,7 @@ describe('cadastro shared financial identity', () => {
     vi.stubEnv('PAYMENTS_PROVIDER_MODE', 'asaas');
     vi.stubEnv('PLAYWRIGHT_TEST', 'false');
     mocks.list.mockResolvedValue({ data: [] });
+    mocks.find.mockResolvedValue(null);
     mocks.link.mockResolvedValue({ id: 'canonical', asaasCustomerId: 'remote', externalReference: 'original-responsavel-reference' });
     mocks.get.mockResolvedValue({ id: 'remote', cpfCnpj: payer.cpfCnpj });
   });

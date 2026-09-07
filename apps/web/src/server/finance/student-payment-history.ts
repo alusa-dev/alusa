@@ -74,8 +74,6 @@ type StudentPaymentScope = {
   matriculaIds: string[];
   responsavelFinanceiroIds: string[];
   familyGroupIds: string[];
-  customerIds: string[];
-  responsavelCustomerIds: string[];
   matriculaPlanNames: Map<string, string>;
   responsavelNames: Map<string, string>;
 };
@@ -119,16 +117,9 @@ function resolvePlanName(params: {
 }
 
 function resolvePayerRole(params: {
-  payerName: string;
-  alunoNome: string;
-  responsavelNames: Set<string>;
-  customerPayerType?: 'ALUNO' | 'RESPONSAVEL' | null;
+  payerType?: 'ALUNO' | 'RESPONSAVEL' | string | null;
 }): 'ALUNO' | 'RESPONSAVEL' {
-  if (params.customerPayerType === 'RESPONSAVEL') return 'RESPONSAVEL';
-  if (params.responsavelNames.has(params.payerName) && params.payerName !== params.alunoNome) {
-    return 'RESPONSAVEL';
-  }
-  return 'ALUNO';
+  return params.payerType === 'RESPONSAVEL' ? 'RESPONSAVEL' : 'ALUNO';
 }
 
 function buildHistoricoItem(
@@ -187,26 +178,16 @@ async function resolveStudentPaymentScope(contaId: string, alunoId: string): Pro
 
   if (matriculaIds.length > 0) {
     const familiarItems = await prisma.matriculaFamiliarItem.findMany({
-      where: { matriculaId: { in: matriculaIds } },
+      where: {
+        matriculaId: { in: matriculaIds },
+        matriculaFamiliar: { contaId },
+      },
       select: { matriculaFamiliarId: true },
     });
     for (const item of familiarItems) {
       familyGroupIds.add(item.matriculaFamiliarId);
     }
   }
-
-  const customers = await prisma.customer.findMany({
-    where: {
-      contaId,
-      OR: [
-        { payerType: 'ALUNO', payerId: alunoId },
-        ...(responsavelFinanceiroIds.length
-          ? [{ payerType: 'RESPONSAVEL' as const, payerId: { in: responsavelFinanceiroIds } }]
-          : []),
-      ],
-    },
-    select: { id: true, payerType: true, payerId: true },
-  });
 
   const matriculaPlanNames = new Map<string, string>();
   const responsavelNames = new Map<string, string>();
@@ -226,10 +207,6 @@ async function resolveStudentPaymentScope(contaId: string, alunoId: string): Pro
     matriculaIds,
     responsavelFinanceiroIds,
     familyGroupIds: [...familyGroupIds],
-    customerIds: customers.map((customer) => customer.id),
-    responsavelCustomerIds: customers
-      .filter((customer) => customer.payerType === 'RESPONSAVEL')
-      .map((customer) => customer.id),
     matriculaPlanNames,
     responsavelNames,
   };
@@ -237,9 +214,19 @@ async function resolveStudentPaymentScope(contaId: string, alunoId: string): Pro
 
 function chargeBelongsToStudent(params: {
   charge: {
-    customerId: string | null;
+    payerType: string | null;
+    payerId: string | null;
     familyGroupId: string | null;
-    customer?: { payerType: string; payerId: string } | null;
+    standaloneInstallmentPlan?: {
+      payerType: string | null;
+      payerId: string | null;
+      familyGroupId: string | null;
+    } | null;
+    standaloneSubscription?: {
+      payerType: string | null;
+      payerId: string | null;
+      familyGroupId: string | null;
+    } | null;
     sale?: {
       alunoId: string | null;
       matriculaId: string | null;
@@ -251,30 +238,29 @@ function chargeBelongsToStudent(params: {
 }) {
   const { charge, alunoId, scope } = params;
 
-  if (charge.customer?.payerType === 'ALUNO' && charge.customer.payerId === alunoId) {
+  if (charge.payerType === 'ALUNO' && charge.payerId === alunoId) {
     return true;
   }
 
   if (charge.sale?.alunoId === alunoId) return true;
   if (charge.sale?.matriculaId && scope.matriculaIds.includes(charge.sale.matriculaId)) return true;
 
-  if (charge.familyGroupId && scope.familyGroupIds.includes(charge.familyGroupId)) return true;
+  const familyGroupId =
+    charge.familyGroupId ??
+    charge.standaloneSubscription?.familyGroupId ??
+    charge.standaloneInstallmentPlan?.familyGroupId;
+  if (familyGroupId && scope.familyGroupIds.includes(familyGroupId)) return true;
 
-  if (
-    charge.customer?.payerType === 'RESPONSAVEL' &&
-    scope.responsavelFinanceiroIds.includes(charge.customer.payerId)
-  ) {
-    if (charge.sale?.alunoId === alunoId) return true;
-    if (charge.sale?.matriculaId && scope.matriculaIds.includes(charge.sale.matriculaId)) return true;
-    if (charge.familyGroupId && scope.familyGroupIds.includes(charge.familyGroupId)) return true;
-  }
+  const payerType =
+    charge.payerType ??
+    charge.standaloneSubscription?.payerType ??
+    charge.standaloneInstallmentPlan?.payerType;
+  const payerId =
+    charge.payerId ??
+    charge.standaloneSubscription?.payerId ??
+    charge.standaloneInstallmentPlan?.payerId;
 
-  if (charge.customerId && scope.customerIds.includes(charge.customerId)) {
-    if (charge.sale?.alunoId === alunoId) return true;
-    if (charge.sale?.matriculaId && scope.matriculaIds.includes(charge.sale.matriculaId)) return true;
-    if (charge.familyGroupId && scope.familyGroupIds.includes(charge.familyGroupId)) return true;
-    if (charge.customer?.payerType === 'ALUNO' && charge.customer.payerId === alunoId) return true;
-  }
+  if (payerType === 'ALUNO' && payerId === alunoId) return true;
 
   return false;
 }
@@ -344,6 +330,8 @@ async function loadAcademicCobrancas(
             id: true,
             externalReference: true,
             familyGroupId: true,
+            payerType: true,
+            payerId: true,
             standaloneInstallmentPlanId: true,
             standaloneSubscriptionId: true,
           },
@@ -368,7 +356,7 @@ async function loadAcademicCobrancas(
   return cobrancas;
 }
 
-async function enrichInstallmentMetadata(items: HistoricoCobrancaItem[]) {
+async function enrichInstallmentMetadata(contaId: string, items: HistoricoCobrancaItem[]) {
   const standalonePlanIds = [
     ...new Set(
       items
@@ -389,13 +377,13 @@ async function enrichInstallmentMetadata(items: HistoricoCobrancaItem[]) {
   const [standalonePlans, academicPlans, standalonePaidCounts, academicPaidCounts] = await Promise.all([
     standalonePlanIds.length
       ? prisma.standaloneInstallmentPlan.findMany({
-          where: { id: { in: standalonePlanIds } },
+          where: { contaId, id: { in: standalonePlanIds } },
           select: { id: true, installmentCount: true },
         })
       : Promise.resolve([]),
     academicMatriculaIds.length
       ? prisma.installmentPlan.findMany({
-          where: { matriculaId: { in: academicMatriculaIds } },
+          where: { contaId, matriculaId: { in: academicMatriculaIds } },
           select: { id: true, matriculaId: true, installmentCount: true },
         })
       : Promise.resolve([]),
@@ -403,6 +391,7 @@ async function enrichInstallmentMetadata(items: HistoricoCobrancaItem[]) {
       ? prisma.charge.groupBy({
           by: ['standaloneInstallmentPlanId'],
           where: {
+            contaId,
             standaloneInstallmentPlanId: { in: standalonePlanIds },
             status: 'PAID',
           },
@@ -413,6 +402,7 @@ async function enrichInstallmentMetadata(items: HistoricoCobrancaItem[]) {
       ? prisma.cobranca.groupBy({
           by: ['matriculaId'],
           where: {
+            contaId,
             matriculaId: { in: academicMatriculaIds },
             tipo: 'PARCELADA',
             OR: [
@@ -505,7 +495,6 @@ export async function getStudentPaymentHistory(
   }
 
   const scope = await resolveStudentPaymentScope(contaId, alunoId);
-  const responsavelNameSet = new Set(scope.responsavelNames.values());
   const cobrancasAcademicas = await loadAcademicCobrancas(contaId, alunoId, options);
 
   const items: HistoricoCobrancaItem[] = [];
@@ -516,7 +505,21 @@ export async function getStudentPaymentHistory(
     if (!pagamentoHistorico) continue;
 
     const asaasData = buildAcademicAsaasData(cobranca as unknown as Record<string, unknown>);
-    const payerName = cobranca.matricula?.responsavelFinanceiro?.nome ?? alunoNome;
+    const obligationPayerType =
+      cobranca.charge?.payerType ??
+      (cobranca.matricula?.responsavelFinanceiro?.id ? 'RESPONSAVEL' : 'ALUNO');
+    const obligationPayerId =
+      cobranca.charge?.payerId ??
+      (obligationPayerType === 'RESPONSAVEL'
+        ? cobranca.matricula?.responsavelFinanceiro?.id ?? null
+        : alunoId);
+    const payerName =
+      obligationPayerType === 'RESPONSAVEL'
+        ? scope.responsavelNames.get(obligationPayerId ?? '') ??
+          (cobranca.matricula?.responsavelFinanceiro?.id === obligationPayerId
+            ? cobranca.matricula.responsavelFinanceiro.nome
+            : alunoNome)
+        : alunoNome;
     const parsedInstallment = parseInstallmentFromDescription(cobranca.descricao);
     const groupId =
       cobranca.charge?.standaloneInstallmentPlanId ??
@@ -534,9 +537,7 @@ export async function getStudentPaymentHistory(
       description: cobranca.descricao,
       payerName,
       payerRole: resolvePayerRole({
-        payerName,
-        alunoNome,
-        responsavelNames: responsavelNameSet,
+        payerType: obligationPayerType,
       }),
       valor: Number(cobranca.valor),
       vencimento: cobranca.vencimento.toISOString(),
@@ -593,13 +594,34 @@ export async function getStudentPaymentHistory(
       cobrancaId: null,
       status: 'PAID',
       OR: [
-        { customer: { payerType: 'ALUNO', payerId: alunoId } },
-        { sale: { alunoId } },
-        ...(scope.matriculaIds.length ? [{ sale: { matriculaId: { in: scope.matriculaIds } } }] : []),
-        ...(scope.familyGroupIds.length ? [{ familyGroupId: { in: scope.familyGroupIds } }] : []),
-        ...(scope.responsavelCustomerIds.length
-          ? [{ customerId: { in: scope.responsavelCustomerIds } }]
+        { payerType: 'ALUNO', payerId: alunoId },
+        { sale: { contaId, alunoId } },
+        ...(scope.matriculaIds.length
+          ? [{ sale: { contaId, matriculaId: { in: scope.matriculaIds } } }]
           : []),
+        ...(scope.familyGroupIds.length ? [{ familyGroupId: { in: scope.familyGroupIds } }] : []),
+        ...(scope.familyGroupIds.length
+          ? [
+              {
+                standaloneSubscription: {
+                  contaId,
+                  familyGroupId: { in: scope.familyGroupIds },
+                },
+              },
+              {
+                standaloneInstallmentPlan: {
+                  contaId,
+                  familyGroupId: { in: scope.familyGroupIds },
+                },
+              },
+            ]
+          : []),
+        {
+          standaloneSubscription: { contaId, payerType: 'ALUNO', payerId: alunoId },
+        },
+        {
+          standaloneInstallmentPlan: { contaId, payerType: 'ALUNO', payerId: alunoId },
+        },
       ],
     },
     select: {
@@ -621,10 +643,15 @@ export async function getStudentPaymentHistory(
       createdAt: true,
       updatedAt: true,
       customerId: true,
+      payerType: true,
+      payerId: true,
       familyGroupId: true,
-      customer: { select: { payerType: true, payerId: true } },
-      standaloneInstallmentPlan: { select: { id: true, installmentCount: true } },
-      standaloneSubscription: { select: { id: true, description: true } },
+      standaloneInstallmentPlan: {
+        select: { id: true, installmentCount: true, payerType: true, payerId: true, familyGroupId: true },
+      },
+      standaloneSubscription: {
+        select: { id: true, description: true, payerType: true, payerId: true, familyGroupId: true },
+      },
       sale: {
         select: {
           id: true,
@@ -658,7 +685,22 @@ export async function getStudentPaymentHistory(
     });
     const value = Number(charge.value ?? charge.sale?.total ?? 0);
     const paidAt = (charge.statusUpdatedAt ?? charge.updatedAt ?? charge.createdAt).toISOString();
-    const payerName = charge.payerName ?? alunoNome;
+    const obligationPayerType =
+      charge.payerType ??
+      charge.standaloneSubscription?.payerType ??
+      charge.standaloneInstallmentPlan?.payerType;
+    const obligationPayerId =
+      charge.payerId ??
+      charge.standaloneSubscription?.payerId ??
+      charge.standaloneInstallmentPlan?.payerId;
+    const payerName =
+      (obligationPayerType === 'RESPONSAVEL'
+        ? scope.responsavelNames.get(obligationPayerId ?? '')
+        : obligationPayerType === 'ALUNO' && obligationPayerId === alunoId
+          ? alunoNome
+          : null) ??
+      charge.payerName ??
+      alunoNome;
     const groupId =
       charge.standaloneInstallmentPlanId ??
       charge.standaloneSubscriptionId ??
@@ -682,10 +724,7 @@ export async function getStudentPaymentHistory(
             : 'Cobrança avulsa'),
       payerName,
       payerRole: resolvePayerRole({
-        payerName,
-        alunoNome,
-        responsavelNames: responsavelNameSet,
-        customerPayerType: charge.customer?.payerType as 'ALUNO' | 'RESPONSAVEL' | undefined,
+        payerType: obligationPayerType,
       }),
       valor: value,
       vencimento: charge.dueDate?.toISOString() ?? charge.createdAt.toISOString(),
@@ -786,10 +825,7 @@ export async function getStudentPaymentHistory(
       description: `Loja #${String(sale.saleNumber).padStart(4, '0')}`,
       payerName,
       payerRole: resolvePayerRole({
-        payerName,
-        alunoNome,
-        responsavelNames: responsavelNameSet,
-        customerPayerType: sale.responsavelId ? 'RESPONSAVEL' : 'ALUNO',
+        payerType: sale.responsavelId ? 'RESPONSAVEL' : 'ALUNO',
       }),
       valor: value,
       vencimento: sale.createdAt.toISOString(),
@@ -826,7 +862,7 @@ export async function getStudentPaymentHistory(
     items.push(item);
   }
 
-  const enrichedItems = await enrichInstallmentMetadata(items);
+  const enrichedItems = await enrichInstallmentMetadata(contaId, items);
 
   enrichedItems.sort((left, right) => {
     const leftDate = left.vencimento ?? left.createdAt;

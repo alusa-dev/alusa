@@ -16,13 +16,9 @@ type StandaloneSubscriptionFindManyArgs = {
     nextDueDate: true;
     description: true;
     customerId: true;
+    payerType: true;
+    payerId: true;
     createdAt: true;
-    customer: {
-      select: {
-        payerType: true;
-        payerId: true;
-      };
-    };
   };
 };
 
@@ -40,8 +36,9 @@ function getStandaloneSubscriptionDelegate() {
         nextDueDate: Date | null;
         description: string | null;
         customerId: string;
+        payerType: string | null;
+        payerId: string | null;
         createdAt: Date;
-        customer: { payerType: string; payerId: string | null } | null;
       }>>;
     };
   }).standaloneSubscription;
@@ -175,13 +172,9 @@ async function loadFinanceSubscriptionSources(params: {
             nextDueDate: true,
             description: true,
             customerId: true,
+            payerType: true,
+            payerId: true,
             createdAt: true,
-            customer: {
-              select: {
-                payerType: true,
-                payerId: true,
-              },
-            },
           },
         })
       : Promise.resolve([]),
@@ -310,22 +303,22 @@ export async function listSubscriptionsForFinance(
   });
 
   const standaloneResponsavelIds = standaloneSubscriptions
-    .filter((sub) => sub.customer?.payerType === 'RESPONSAVEL' && sub.customer.payerId)
-    .map((sub) => sub.customer!.payerId as string);
+    .filter((sub) => sub.payerType === 'RESPONSAVEL' && sub.payerId)
+    .map((sub) => sub.payerId as string);
   const standaloneAlunoIds = standaloneSubscriptions
-    .filter((sub) => sub.customer?.payerType === 'ALUNO' && sub.customer.payerId)
-    .map((sub) => sub.customer!.payerId as string);
+    .filter((sub) => sub.payerType === 'ALUNO' && sub.payerId)
+    .map((sub) => sub.payerId as string);
 
   const [standaloneResponsaveis, standaloneAlunos] = await Promise.all([
     standaloneResponsavelIds.length > 0
       ? prisma.responsavel.findMany({
-          where: { id: { in: standaloneResponsavelIds } },
+          where: { contaId, id: { in: standaloneResponsavelIds } },
           select: { id: true, nome: true },
         })
       : Promise.resolve([]),
     standaloneAlunoIds.length > 0
       ? prisma.aluno.findMany({
-          where: { id: { in: standaloneAlunoIds } },
+          where: { contaId, id: { in: standaloneAlunoIds } },
           select: { id: true, nome: true },
         })
       : Promise.resolve([]),
@@ -449,9 +442,11 @@ export async function listSubscriptionsForFinance(
   const standaloneIds = new Set(standaloneSubscriptions.map((s) => s.id));
   const standaloneItemsRaw = standaloneSubscriptions.map((sub) => {
     const cycleLabel = CYCLE_LABELS[sub.cycle] ?? sub.cycle;
-    const payerName = sub.customer?.payerType === 'RESPONSAVEL'
-      ? standaloneResponsavelMap.get(sub.customer.payerId ?? '') ?? 'Cliente'
-      : standaloneAlunoMap.get(sub.customer?.payerId ?? '') ?? 'Cliente';
+    const payerName = sub.payerType === 'RESPONSAVEL'
+      ? standaloneResponsavelMap.get(sub.payerId ?? '') ?? 'Cliente'
+      : sub.payerType === 'ALUNO'
+        ? standaloneAlunoMap.get(sub.payerId ?? '') ?? 'Cliente'
+        : 'Cliente';
 
     return {
       id: sub.id,
@@ -461,7 +456,7 @@ export async function listSubscriptionsForFinance(
       statusLabel: STATUS_LABELS[sub.status] ?? sub.status,
       clienteNome: payerName,
       alunoNome: payerName,
-      alunoId: sub.customerId,
+      alunoId: sub.payerType === 'ALUNO' ? sub.payerId ?? '' : '',
       valor: Number(sub.value),
       cycle: sub.cycle,
       cycleLabel,

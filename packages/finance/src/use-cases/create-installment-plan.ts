@@ -399,6 +399,8 @@ export async function createInstallmentPlan(
             billingType: payment.billingType,
             value: payment.value,
             dueDate: vencimento,
+            payerType: payer.type,
+            payerId: payer.id,
             ...chargeSnapshot,
           },
           create: {
@@ -412,6 +414,8 @@ export async function createInstallmentPlan(
             billingType: payment.billingType,
             value: payment.value,
             dueDate: vencimento,
+            payerType: payer.type,
+            payerId: payer.id,
             ...chargeSnapshot,
           },
           select: { id: true },

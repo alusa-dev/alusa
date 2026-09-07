@@ -11,6 +11,7 @@ vi.mock('@alusa/database', () => {
     },
     charge: {
       findMany: vi.fn(),
+      updateMany: vi.fn(),
     },
     matriculaFamiliar: {
       findFirst: vi.fn(),

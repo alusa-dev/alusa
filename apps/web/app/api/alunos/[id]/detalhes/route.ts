@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { getAsaasNotificationPreferences } from '@alusa/finance';
+import { findCustomerForPayer, getAsaasNotificationPreferences } from '@alusa/finance';
 import { prisma } from '@/lib/prisma';
 import { deriveCustomerNotificationChannelDefaults } from '@/features/configuracoes/notificacoes/asaas/customer-channel-defaults';
 import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
@@ -185,21 +185,37 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       return jsonError(404, 'NAO_ENCONTRADO', 'Aluno não encontrado');
     }
 
-    const alunoCustomer = await prisma.customer.findFirst({
-      where: {
-        contaId: user.contaId,
-        payerType: 'ALUNO',
-        payerId: aluno.id,
-      },
-      include: {
-        charges: {
-          where: { cobrancaId: null },
+    const [alunoCustomer, alunoStandaloneCharges, alunoStandalonePlans, alunoStandaloneSubscriptions] =
+      await Promise.all([
+        // Customer is used here only as the canonical financial identity
+        // (e.g. notification target), never to determine obligation ownership.
+        findCustomerForPayer(user.contaId, 'ALUNO', aluno.id),
+        prisma.charge.findMany({
+          where: {
+            contaId: user.contaId,
+            cobrancaId: null,
+            OR: [
+              { payerType: 'ALUNO', payerId: aluno.id },
+              { sale: { contaId: user.contaId, alunoId: aluno.id } },
+            ],
+          },
           orderBy: { dueDate: 'desc' },
-        },
-        standaloneInstallmentPlans: { orderBy: { createdAt: 'desc' } },
-        standaloneSubscriptions: { orderBy: { createdAt: 'desc' } },
-      },
-    });
+        }),
+        prisma.standaloneInstallmentPlan.findMany({
+          where: {
+            contaId: user.contaId,
+            OR: [
+              { payerType: 'ALUNO', payerId: aluno.id },
+              { sales: { some: { contaId: user.contaId, alunoId: aluno.id } } },
+            ],
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+        prisma.standaloneSubscription.findMany({
+          where: { contaId: user.contaId, payerType: 'ALUNO', payerId: aluno.id },
+          orderBy: { createdAt: 'desc' },
+        }),
+      ]);
 
     const preferences = await getAsaasNotificationPreferences(user.contaId);
     const notificationPreferences = preferences.map(sanitizePreference);
@@ -399,7 +415,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       ),
     ];
 
-    const [familyCharges, familySubscriptions, eventEntries] = await Promise.all([
+    const [familyCharges, familySubscriptions, familyInstallmentPlans, eventEntries] = await Promise.all([
       familyGroupIds.length
         ? prisma.charge.findMany({
             where: {
@@ -416,6 +432,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
               familyGroupId: { in: familyGroupIds },
             },
             orderBy: [{ nextDueDate: 'desc' }, { createdAt: 'desc' }],
+          })
+        : Promise.resolve([]),
+      familyGroupIds.length
+        ? prisma.standaloneInstallmentPlan.findMany({
+            where: {
+              contaId: user.contaId,
+              familyGroupId: { in: familyGroupIds },
+            },
+            orderBy: { createdAt: 'desc' },
           })
         : Promise.resolve([]),
       eventRevenueEntryIds.length
@@ -463,7 +488,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       })),
     );
 
-    const cobrancasAvulsas = (alunoCustomer?.charges ?? []).map((charge) => ({
+    const cobrancasAvulsas = alunoStandaloneCharges.map((charge) => ({
       id: charge.id,
       source: 'AVULSA' as const,
       matriculaId: null,
@@ -628,7 +653,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         updatedAt: toIso(matricula.updatedAt),
       }));
 
-    const assinaturasAvulsas = (alunoCustomer?.standaloneSubscriptions ?? []).map((subscription) => ({
+    const assinaturasAvulsas = alunoStandaloneSubscriptions.map((subscription) => ({
       id: subscription.id,
       source: 'AVULSA' as const,
       matriculaId: null,
@@ -658,7 +683,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       })),
     );
 
-    const parcelamentosAvulsos = (alunoCustomer?.standaloneInstallmentPlans ?? []).map((plan) => ({
+    const standalonePlans = [
+      ...alunoStandalonePlans,
+      ...familyInstallmentPlans.filter(
+        (familyPlan) => !alunoStandalonePlans.some((plan) => plan.id === familyPlan.id),
+      ),
+    ];
+    const parcelamentosAvulsos = standalonePlans.map((plan) => ({
       id: plan.id,
       source: 'AVULSO' as const,
       matriculaId: null,
@@ -678,8 +709,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       matriculas.find((matricula) => matricula.responsavelFinanceiro?.asaasCustomerId)
         ?.responsavelFinanceiro?.asaasCustomerId ?? null;
     const notificationCustomerId =
-      aluno.asaasCustomerId ??
       alunoCustomer?.asaasCustomerId ??
+      aluno.asaasCustomerId ??
       responsavelFinanceiroCustomerId ??
       responsavelPrincipal?.asaasCustomerId ??
       null;
@@ -723,9 +754,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         codigoInterno: aluno.codigoInterno,
         tags: aluno.tags,
         asaasId: aluno.asaasId,
-        asaasCustomerId: aluno.asaasCustomerId ?? alunoCustomer?.asaasCustomerId ?? null,
+        asaasCustomerId: alunoCustomer?.asaasCustomerId ?? aluno.asaasCustomerId ?? null,
         asaasCustomerExternalReference:
-          aluno.asaasCustomerExternalReference ?? alunoCustomer?.externalReference ?? null,
+          alunoCustomer?.externalReference ?? aluno.asaasCustomerExternalReference ?? null,
         dataInativacao: toIso(aluno.dataInativacao),
         motivoInativacao: aluno.motivoInativacao,
         createdAt: toIso(aluno.createdAt),

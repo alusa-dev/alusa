@@ -94,13 +94,20 @@ describe('materializeBillingAgreement', () => {
       standaloneSubscription: {
         findFirst: vi.fn().mockResolvedValue({
           id: 'standalone-1', contaId: 'conta-1', familyGroupId: 'family-1',
-          customerId: 'customer-1', customer: { payerType: 'RESPONSAVEL', payerId: 'payer-1' },
+          customerId: 'customer-1',
+          customer: { contaId: 'conta-1', payerType: 'RESPONSAVEL', payerId: 'payer-1' },
           externalReference: 'family:family-1', status: 'ACTIVE', asaasSubscriptionId: 'asaas-family-1',
           billingType: 'PIX', cycle: 'MONTHLY', nextDueDate: competenceStart,
           validFrom: competenceStart, validUntil: null, endDate: competenceEnd,
           value: 150, remoteStatus: 'ACTIVE', createdAt: competenceStart,
         }),
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      customer: {
+        findUnique: vi.fn().mockResolvedValue({ id: 'customer-1', contaId: 'conta-1' }),
+      },
+      matriculaFamiliar: {
+        findFirst: vi.fn().mockResolvedValue({ responsavelId: 'payer-1' }),
       },
       billingAgreement: { upsert: billingAgreementUpsert },
       familyFinancialAllocation: {

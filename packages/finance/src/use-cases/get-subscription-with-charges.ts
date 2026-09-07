@@ -9,7 +9,7 @@
  */
 
 import { prisma } from '@alusa/database';
-import type { SubscriptionStatus } from '@prisma/client';
+import type { CustomerPayerType, SubscriptionStatus } from '@prisma/client';
 import { resolveUnifiedChargeStatus } from '../dtos/unified-billing';
 import { resolveChargeDisplayStatus, type ChargeDisplayStatus } from '../mappers/asaas-display-status';
 
@@ -28,6 +28,8 @@ type StandaloneSubscriptionFindFirstArgs = {
     description: true;
     customerId: true;
     familyGroupId: true;
+    payerType: true;
+    payerId: true;
     createdAt: true;
   };
 };
@@ -48,6 +50,8 @@ function getStandaloneSubscriptionDelegate() {
         description: string | null;
         customerId: string;
         familyGroupId: string | null;
+        payerType: CustomerPayerType | null;
+        payerId: string | null;
         createdAt: Date;
       } | null>;
     };
@@ -274,6 +278,8 @@ export async function getSubscriptionWithCharges(
             description: true,
             customerId: true,
             familyGroupId: true,
+            payerType: true,
+            payerId: true,
             createdAt: true,
           },
         })
@@ -283,16 +289,24 @@ export async function getSubscriptionWithCharges(
       // Reparação idempotente de cobranças recebidas durante a corrida entre
       // PAYMENT_CREATED e a persistência da assinatura local. O external
       // reference pai é determinístico e nunca mistura outra assinatura.
+      const obligationPayerData =
+        standaloneSub.payerType && standaloneSub.payerId
+          ? { payerType: standaloneSub.payerType, payerId: standaloneSub.payerId }
+          : {};
       await prisma.charge.updateMany({
         where: {
           contaId,
           standaloneSubscriptionId: null,
           externalReference: { startsWith: `${standaloneSub.externalReference}:` },
+          ...(Object.keys(obligationPayerData).length === 2
+            ? { payerType: null, payerId: null }
+            : {}),
         },
         data: {
           standaloneSubscriptionId: standaloneSub.id,
           customerId: standaloneSub.customerId,
           familyGroupId: standaloneSub.familyGroupId,
+          ...obligationPayerData,
         },
       });
 
@@ -354,9 +368,8 @@ export async function getSubscriptionWithCharges(
 
       const statusLabel = STATUS_LABELS[standaloneSub.status] ?? standaloneSub.status;
       const cycleLabel = CYCLE_LABELS[standaloneSub.cycle] ?? standaloneSub.cycle;
-      const familyStudents = standaloneSub.familyGroupId
-        ? await prisma.matriculaFamiliar
-            .findFirst({
+      const family = standaloneSub.familyGroupId
+        ? await prisma.matriculaFamiliar.findFirst({
               where: {
                 id: standaloneSub.familyGroupId,
                 contaId,
@@ -379,28 +392,28 @@ export async function getSubscriptionWithCharges(
                     },
                   },
                 },
+                responsavelId: true,
               },
             })
-            .then((family) =>
-              (family?.items ?? []).map((item) => ({
-                id: item.matricula.aluno.id,
-                nome: item.matricula.aluno.nome,
-                matriculaId: item.matriculaId,
-              })),
-            )
-        : [];
-      const localCustomer = await prisma.customer.findFirst({
-        where: { id: standaloneSub.customerId, contaId },
-        select: { payerType: true, payerId: true },
-      });
-      const individualPayer = localCustomer
-        ? localCustomer.payerType === 'ALUNO'
+        : null;
+      const familyStudents = (family?.items ?? []).map((item) => ({
+        id: item.matricula.aluno.id,
+        nome: item.matricula.aluno.nome,
+        matriculaId: item.matriculaId,
+      }));
+      const obligationPayer = standaloneSub.payerType && standaloneSub.payerId
+        ? { payerType: standaloneSub.payerType, payerId: standaloneSub.payerId }
+        : family?.responsavelId
+          ? { payerType: 'RESPONSAVEL' as const, payerId: family.responsavelId }
+          : null;
+      const individualPayer = obligationPayer
+        ? obligationPayer.payerType === 'ALUNO'
           ? await prisma.aluno.findFirst({
-              where: { id: localCustomer.payerId, contaId },
+              where: { id: obligationPayer.payerId, contaId },
               select: { id: true, nome: true, email: true, telefone: true },
             })
           : await prisma.responsavel.findFirst({
-              where: { id: localCustomer.payerId, contaId },
+              where: { id: obligationPayer.payerId, contaId },
               select: { id: true, nome: true, email: true, telefone: true },
             })
         : null;
@@ -419,7 +432,9 @@ export async function getSubscriptionWithCharges(
         clienteEmail: individualPayer?.email ?? null,
         clienteTelefone: individualPayer?.telefone ?? null,
         alunoNome: standaloneAlunoNome,
-        alunoId: familyStudents[0]?.id ?? individualPayer?.id ?? standaloneSub.customerId,
+        alunoId:
+          familyStudents[0]?.id ??
+          (obligationPayer?.payerType === 'ALUNO' ? obligationPayer.payerId : ''),
         familyStudents,
         valor: Number(standaloneSub.value),
         cycle: standaloneSub.cycle,

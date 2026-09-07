@@ -48,6 +48,7 @@ import {
   type NotificationSyncChannel,
 } from '../services/asaas-notification-sync-outbox.service';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
+import { findCustomerForPayer, findSolePayerForCustomer } from '../customer/customer-identity';
 
 async function materializeFirstSubscriptionPayment(params: {
   contaId: string;
@@ -132,7 +133,13 @@ export type CreateStandaloneChargeInput = {
 
   /** Pagador: pode ser por customerId local ou alunoId */
   payer:
-    | { type: 'customer'; customerId: string }
+    | {
+        type: 'customer';
+        customerId: string;
+        /** Required when the financial identity has more than one alias. */
+        payerType?: CustomerPayerType;
+        payerId?: string;
+      }
     | { type: 'aluno'; alunoId: string }
     | { type: 'responsavel'; responsavelId: string };
 
@@ -239,6 +246,8 @@ export type CreateStandaloneChargeError =
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
   | 'CUSTOMER_SEM_ASAAS_ID'
   | 'ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR'
+  | 'PAGADOR_AMBIGUO'
+  | 'PAGADOR_DIVERGENTE'
   | 'MATRICULA_NAO_ENCONTRADA'
   | 'FORMA_PAGAMENTO_INVALIDA'
   | 'VALOR_INVALIDO'
@@ -266,7 +275,11 @@ type ResolvedStandaloneChargePayer = {
 function computeIdempotencyKey(input: CreateStandaloneChargeInput): string {
   const payerKey =
     input.payer.type === 'customer'
-      ? `cust:${input.payer.customerId}`
+      ? [
+          `cust:${input.payer.customerId}`,
+          input.payer.payerType,
+          input.payer.payerId,
+        ].filter((part): part is string => Boolean(part)).join(':')
       : input.payer.type === 'aluno'
         ? `aluno:${input.payer.alunoId}`
         : `resp:${input.payer.responsavelId}`;
@@ -325,38 +338,52 @@ async function resolveStandaloneChargePayer(
   input: CreateStandaloneChargeInput,
 ): Promise<Result<ResolvedStandaloneChargePayer, CreateStandaloneChargeError>> {
   if (input.payer.type === 'customer') {
+    const hasPayerType = input.payer.payerType != null;
+    const hasPayerId = input.payer.payerId != null;
+    if (hasPayerType !== hasPayerId) return err('PAGADOR_AMBIGUO');
+
     const customer = await prisma.customer.findFirst({
       where: { id: input.payer.customerId, contaId: input.contaId },
-      select: { payerType: true, payerId: true, asaasCustomerId: true },
+      select: { asaasCustomerId: true },
     });
 
     if (!customer) return err('PAGADOR_NAO_ENCONTRADO');
     if (!customer.asaasCustomerId) return err('CUSTOMER_SEM_ASAAS_ID');
 
-    if (customer.payerType === 'ALUNO') {
+    const payer = input.payer.payerType && input.payer.payerId
+      ? { payerType: input.payer.payerType, payerId: input.payer.payerId }
+      : await findSolePayerForCustomer(input.contaId, input.payer.customerId);
+    if (!payer) return err('PAGADOR_AMBIGUO');
+
+    const linkedCustomer = await findCustomerForPayer(input.contaId, payer.payerType, payer.payerId);
+    if (!linkedCustomer || linkedCustomer.id !== input.payer.customerId) {
+      return err('PAGADOR_NAO_ENCONTRADO');
+    }
+
+    if (payer.payerType === 'ALUNO') {
       const aluno = await prisma.aluno.findFirst({
-        where: { id: customer.payerId, contaId: input.contaId },
+        where: { id: payer.payerId, contaId: input.contaId },
         select: { nome: true },
       });
 
       const name = aluno?.nome ?? 'Cliente';
       return ok({
-        payerType: customer.payerType,
-        payerId: customer.payerId,
+        payerType: payer.payerType,
+        payerId: payer.payerId,
         displayName: name,
         financialPayerName: name,
       });
     }
 
     const responsavel = await prisma.responsavel.findFirst({
-      where: { id: customer.payerId, contaId: input.contaId },
+      where: { id: payer.payerId, contaId: input.contaId },
       select: { nome: true },
     });
 
     const name = responsavel?.nome ?? 'Cliente';
     return ok({
-      payerType: customer.payerType,
-      payerId: customer.payerId,
+      payerType: payer.payerType,
+      payerId: payer.payerId,
       displayName: name,
       financialPayerName: name,
     });
@@ -487,6 +514,8 @@ export async function createStandaloneCharge(
       asaasPaymentId: string | null;
       externalReference: string;
       status: string;
+      payerType: CustomerPayerType | null;
+      payerId: string | null;
     } | null = null;
 
     if (input.chargeType === 'ONE_TIME') {
@@ -505,19 +534,11 @@ export async function createStandaloneCharge(
           asaasPaymentId: true,
           externalReference: true,
           status: true,
+          payerType: true,
+          payerId: true,
         },
       });
 
-      if (existingOneTimeCharge) {
-        if (existingOneTimeCharge.asaasPaymentId) {
-          return ok({
-            chargeId: existingOneTimeCharge.id,
-            asaasPaymentId: existingOneTimeCharge.asaasPaymentId ?? undefined,
-            externalReference: existingOneTimeCharge.externalReference,
-            status: existingOneTimeCharge.status ?? 'OPEN',
-          });
-        }
-      }
     }
 
     // 5. Resolver pagador financeiro e nome exibido na UI
@@ -544,6 +565,35 @@ export async function createStandaloneCharge(
     }
 
     const asaasCustomerId = customerResult.data.customerId;
+
+    if (existingOneTimeCharge) {
+      const hasExistingPayerContext =
+        existingOneTimeCharge.payerType !== null || existingOneTimeCharge.payerId !== null;
+      const payerMatches =
+        existingOneTimeCharge.payerType === payerType && existingOneTimeCharge.payerId === payerId;
+
+      if (hasExistingPayerContext && !payerMatches) {
+        // A reused UI/idempotency key cannot retarget an existing financial
+        // obligation to another educational payer.
+        return err('PAGADOR_DIVERGENTE');
+      }
+
+      if (!hasExistingPayerContext) {
+        await prisma.charge.updateMany({
+          where: { id: existingOneTimeCharge.id, contaId: input.contaId },
+          data: { payerType, payerId },
+        });
+      }
+
+      if (existingOneTimeCharge.asaasPaymentId) {
+        return ok({
+          chargeId: existingOneTimeCharge.id,
+          asaasPaymentId: existingOneTimeCharge.asaasPaymentId,
+          externalReference: existingOneTimeCharge.externalReference,
+          status: existingOneTimeCharge.status ?? 'OPEN',
+        });
+      }
+    }
 
     let notificationSync:
       | { applied: NotificationChannelPreferences; warnings: NotificationWarning[] }
@@ -725,7 +775,9 @@ export async function createStandaloneCharge(
             externalReference,
             status: 'PENDING_SYNC',
             statusUpdatedAt: new Date(),
-            payerName: displayName,
+            payerName: financialPayerName,
+            payerType,
+            payerId,
             description: input.description ?? 'Cobrança avulsa',
             value: input.value!,
             dueDate: vencimentoDate,
@@ -807,7 +859,7 @@ export async function createStandaloneCharge(
 
       await markOutboundAwaitingWebhook(operation.job.id, remotePayment.id);
 
-      await chargeReadModelService.projectChargeReadModelByChargeId(persistedCharge.id);
+      await chargeReadModelService.projectChargeReadModelByChargeId(persistedCharge.id, input.contaId);
 
       await auditLogService.record({
         contaId: input.contaId,
@@ -846,13 +898,9 @@ export async function createStandaloneCharge(
       const installmentResult = await createStandaloneInstallmentPlan({
         contaId: input.contaId,
         payer:
-          input.payer.type === 'aluno'
-            ? { type: 'aluno', alunoId: input.payer.alunoId }
-            : {
-                type: 'responsavel',
-                responsavelId:
-                  input.payer.type === 'responsavel' ? input.payer.responsavelId : payerId,
-              },
+          payerType === 'ALUNO'
+            ? { type: 'aluno', alunoId: payerId }
+            : { type: 'responsavel', responsavelId: payerId },
         installmentCount: input.installmentCount!,
         billingType: input.billingType,
         value: totalInstallmentValue,
@@ -870,6 +918,7 @@ export async function createStandaloneCharge(
         if (installmentResult.error === 'KYC_NAO_APROVADO') return err('KYC_NAO_APROVADO');
         if (installmentResult.error === 'PAGADOR_NAO_ENCONTRADO')
           return err('PAGADOR_NAO_ENCONTRADO');
+        if (installmentResult.error === 'PAGADOR_DIVERGENTE') return err('PAGADOR_DIVERGENTE');
         if (installmentResult.error === 'CUSTOMER_SEM_ASAAS_ID')
           return err('CUSTOMER_SEM_ASAAS_ID');
         if (installmentResult.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS')
@@ -905,6 +954,21 @@ export async function createStandaloneCharge(
         externalReference: subscriptionExternalReference,
         idempotencyKey,
       });
+
+      if (
+        existingSubscription &&
+        (existingSubscription.payerType != null || existingSubscription.payerId != null) &&
+        (existingSubscription.payerType !== payerType || existingSubscription.payerId !== payerId)
+      ) {
+        return err('PAGADOR_DIVERGENTE');
+      }
+
+      if (existingSubscription && existingSubscription.payerType == null && existingSubscription.payerId == null) {
+        await prisma.standaloneSubscription?.update?.({
+          where: { id: existingSubscription.id },
+          data: { payerType, payerId },
+        });
+      }
 
       if (existingSubscription?.asaasSubscriptionId) {
         return ok({
@@ -947,6 +1011,8 @@ export async function createStandaloneCharge(
           id: subscriptionId,
           contaId: input.contaId,
           customerId: customerResult.data.localCustomerId,
+          payerType,
+          payerId,
           externalReference: subscriptionExternalReference,
           idempotencyKey,
           status: 'REQUESTED',
@@ -1142,6 +1208,8 @@ export async function createStandaloneCharge(
               id: subscriptionId,
               contaId: input.contaId,
               customerId: customerResult.data.localCustomerId,
+              payerType,
+              payerId,
               externalReference: subscriptionExternalReference,
               idempotencyKey,
               status: nextStatus,

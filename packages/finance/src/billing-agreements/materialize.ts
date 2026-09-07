@@ -273,6 +273,34 @@ export async function materializeBillingAgreement(
     include: { customer: true },
   });
   if (!legacy) throw new Error('ASSINATURA_FAMILIAR_LOCAL_NAO_ENCONTRADA');
+  if (legacy.customer.contaId !== input.contaId) {
+    throw new Error('CUSTOMER_LOCAL_NAO_ENCONTRADO');
+  }
+  const family = await db.matriculaFamiliar.findFirst({
+    where: { id: input.familyGroupId, contaId: input.contaId },
+    select: { responsavelId: true },
+  });
+  if (!family) throw new Error('GRUPO_FAMILIAR_LOCAL_NAO_ENCONTRADO');
+  const obligationPayer = {
+    payerType: 'RESPONSAVEL' as const,
+    payerId: family.responsavelId,
+  };
+  const payerCustomer = await findCustomerForPayer(
+    input.contaId,
+    obligationPayer.payerType,
+    obligationPayer.payerId,
+    db,
+  );
+  const legacyCustomerIsObligationPayer =
+    legacy.customer.payerType === obligationPayer.payerType &&
+    legacy.customer.payerId === obligationPayer.payerId;
+  if (!payerCustomer && !legacyCustomerIsObligationPayer) {
+    // A historical Customer from another role is not enough to assign a
+    // family obligation. Keep the operation safe until the responsible's
+    // canonical identity is resolved explicitly.
+    throw new Error('CUSTOMER_LOCAL_NAO_ENCONTRADO');
+  }
+  const obligationCustomerId = payerCustomer?.id ?? legacy.customerId;
   const legacyAgreementValidUntil =
     legacy.validUntil ?? (legacy.endDate ? exclusiveEndOfDay(legacy.endDate) : null);
 
@@ -287,9 +315,9 @@ export async function materializeBillingAgreement(
       },
       create: {
         contaId: input.contaId,
-        customerId: legacy.customerId,
-        payerType: legacy.customer.payerType,
-        payerId: legacy.customer.payerId,
+        customerId: obligationCustomerId,
+        payerType: obligationPayer.payerType,
+        payerId: obligationPayer.payerId,
         source: 'LEGACY_STANDALONE_SUBSCRIPTION',
         status: agreementStatus(legacy.status, Boolean(legacy.asaasSubscriptionId)),
         externalReference,
@@ -309,9 +337,9 @@ export async function materializeBillingAgreement(
         ...termsData(input.terms),
       },
       update: {
-        customerId: legacy.customerId,
-        payerType: legacy.customer.payerType,
-        payerId: legacy.customer.payerId,
+        customerId: obligationCustomerId,
+        payerType: obligationPayer.payerType,
+        payerId: obligationPayer.payerId,
         billingGroupKey: input.familyGroupId,
         billingType: legacy.billingType,
         cycle: legacy.cycle,
@@ -329,7 +357,11 @@ export async function materializeBillingAgreement(
     });
     await tx.standaloneSubscription.updateMany({
       where: { id: legacy.id, contaId: input.contaId },
-      data: { billingAgreementId: agreement.id },
+      data: {
+        billingAgreementId: agreement.id,
+        payerType: obligationPayer.payerType,
+        payerId: obligationPayer.payerId,
+      },
     });
 
     const allocations = await tx.familyFinancialAllocation.findMany({

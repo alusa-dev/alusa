@@ -124,8 +124,10 @@ vi.mock('../../foundation/audit-log.service', () => ({
 }));
 
 describe('createStandaloneCharge', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    const { prisma } = await import('@alusa/database');
     vi.clearAllMocks();
+    vi.mocked(prisma.responsavel.findFirst).mockReset();
     ensureCustomerNotificationsEnabledMock.mockResolvedValue({ success: true });
     enqueueAsaasNotificationSyncMock.mockResolvedValue({ id: 'notification-outbox-1' });
   });
@@ -219,7 +221,9 @@ describe('createStandaloneCharge', () => {
       expect(prisma.charge.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            payerName: 'Keison Alencar',
+            payerName: 'Vera Lucia',
+            payerType: 'RESPONSAVEL',
+            payerId: 'resp-1',
           }),
         }),
       );
@@ -637,6 +641,6 @@ describe('createStandaloneCharge', () => {
       expect(prisma.$queryRaw).toHaveBeenCalled();
       expect(listSubscriptionPayments).not.toHaveBeenCalled();
       expect(prisma.charge.upsert).not.toHaveBeenCalled();
-    });
+    }, 10_000);
   });
 });

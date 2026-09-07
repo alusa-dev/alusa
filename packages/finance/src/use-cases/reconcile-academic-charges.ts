@@ -258,10 +258,10 @@ export async function reconcileAcademicChargesWithAsaas(params: {
           },
         });
 
-        await chargeReadModelService.projectChargeReadModelByChargeId(cobranca.charge.id);
+        await chargeReadModelService.projectChargeReadModelByChargeId(cobranca.charge.id, params.contaId);
       }
 
-      await chargeReadModelService.projectChargeReadModelByCobrancaId(cobranca.id);
+      await chargeReadModelService.projectChargeReadModelByCobrancaId(cobranca.id, params.contaId);
       items.set(cobranca.id, nextCobranca);
     } catch (error) {
       if (process.env.NODE_ENV !== 'test') {

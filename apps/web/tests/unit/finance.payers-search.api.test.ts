@@ -10,15 +10,20 @@ import { NextRequest } from 'next/server';
 const mockGetServerSession = vi.hoisted(() => vi.fn());
 const mockAlunoFindMany = vi.hoisted(() => vi.fn());
 const mockResponsavelFindMany = vi.hoisted(() => vi.fn());
+const mockCustomerFindUnique = vi.hoisted(() => vi.fn());
+const mockCustomerPayerFindUnique = vi.hoisted(() => vi.fn());
 
 vi.mock('next-auth', () => ({
   getServerSession: mockGetServerSession,
 }));
 
 vi.mock('@alusa/database', () => ({
+  loadAsaasCredentials: vi.fn(),
   prisma: {
     aluno: { findMany: mockAlunoFindMany },
     responsavel: { findMany: mockResponsavelFindMany },
+    customer: { findUnique: mockCustomerFindUnique },
+    customerPayer: { findUnique: mockCustomerPayerFindUnique },
   },
 }));
 

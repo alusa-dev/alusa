@@ -70,6 +70,7 @@ export type CreateStandaloneInstallmentError =
   | 'FEATURE_DISABLED'
   | 'KYC_NAO_APROVADO'
   | 'PAGADOR_NAO_ENCONTRADO'
+  | 'PAGADOR_DIVERGENTE'
   | 'CUSTOMER_SEM_ASAAS_ID'
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
   | 'FORMA_PAGAMENTO_INVALIDA'
@@ -85,6 +86,13 @@ type ResolvedStandaloneInstallmentPayer = {
   displayName: string;
   financialPayerName: string;
 };
+
+class StandaloneInstallmentPayerDivergenceError extends Error {
+  constructor() {
+    super('PAGADOR_DIVERGENTE');
+    this.name = 'StandaloneInstallmentPayerDivergenceError';
+  }
+}
 
 function paymentRulesSnapshot(input: Pick<CreateStandaloneInstallmentInput, 'interest' | 'fine' | 'discount'>) {
   return {
@@ -127,7 +135,9 @@ export async function createStandaloneInstallmentPlan(
 
     if (!customer?.asaasCustomerId) return err('CUSTOMER_SEM_ASAAS_ID');
 
-    const idempotencyKey = input.uiRequestId ?? buildIdempotencyKey(input, payerResolved.payerId);
+    const idempotencyKey =
+      input.uiRequestId ??
+      buildIdempotencyKey(input, payerResolved.payerType, payerResolved.payerId);
     const existing = await prisma.standaloneInstallmentPlan.findUnique({
       where: { contaId_idempotencyKey: { contaId: input.contaId, idempotencyKey } },
       select: {
@@ -137,18 +147,37 @@ export async function createStandaloneInstallmentPlan(
         status: true,
         createdAt: true,
         statusUpdatedAt: true,
+        payerType: true,
+        payerId: true,
       },
     });
+
+    if (
+      existing &&
+      (existing.payerType != null || existing.payerId != null) &&
+      (existing.payerType !== payerResolved.payerType || existing.payerId !== payerResolved.payerId)
+    ) {
+      // A retry with the same idempotency key cannot retarget even a local
+      // plan that has not reached the remote provider yet.
+      return err('PAGADOR_DIVERGENTE');
+    }
 
     if (existing?.asaasInstallmentId) {
       await prisma.standaloneInstallmentPlan.update({
         where: { id: existing.id },
-        data: paymentRulesSnapshot(input),
+        data: {
+          ...paymentRulesSnapshot(input),
+          ...(existing.payerType == null && existing.payerId == null
+            ? { payerType: payerResolved.payerType, payerId: payerResolved.payerId }
+            : {}),
+        },
       });
       await syncInstallmentPayments({
         contaId: input.contaId,
         customerId: customer.id,
-        payerName: payerResolved.displayName,
+        payerType: payerResolved.payerType,
+        payerId: payerResolved.payerId,
+        payerName: payerResolved.financialPayerName,
         installmentPlanId: existing.id,
         externalReference: existing.externalReference,
         asaasInstallmentId: existing.asaasInstallmentId,
@@ -276,10 +305,20 @@ export async function createStandaloneInstallmentPlan(
             status: true,
             createdAt: true,
             statusUpdatedAt: true,
+            payerType: true,
+            payerId: true,
           },
         });
 
-        if (current?.asaasInstallmentId) return current;
+        if (current) {
+          const currentHasPayerContext = current.payerType != null || current.payerId != null;
+          const currentPayerIsDifferent =
+            current.payerType !== payerResolved.payerType || current.payerId !== payerResolved.payerId;
+          if (currentHasPayerContext && currentPayerIsDifferent) {
+            throw new StandaloneInstallmentPayerDivergenceError();
+          }
+          if (current.asaasInstallmentId) return current;
+        }
 
         if (current) {
           return tx.standaloneInstallmentPlan.update({
@@ -294,6 +333,8 @@ export async function createStandaloneInstallmentPlan(
               billingType: input.billingType,
               value: input.value,
               firstDueDate,
+              payerType: payerResolved.payerType,
+              payerId: payerResolved.payerId,
               ...paymentRulesSnapshot(input),
             },
             select: {
@@ -312,6 +353,8 @@ export async function createStandaloneInstallmentPlan(
             id: installmentPlanId,
             contaId: input.contaId,
             customerId: customer.id,
+            payerType: payerResolved.payerType,
+            payerId: payerResolved.payerId,
             externalReference,
             idempotencyKey,
             status: 'ACTIVE',
@@ -345,7 +388,9 @@ export async function createStandaloneInstallmentPlan(
     await syncInstallmentPayments({
       contaId: input.contaId,
       customerId: customer.id,
-      payerName: payerResolved.displayName,
+      payerType: payerResolved.payerType,
+      payerId: payerResolved.payerId,
+      payerName: payerResolved.financialPayerName,
       installmentPlanId: updated.id,
       externalReference: updated.externalReference,
       asaasInstallmentId: updated.asaasInstallmentId!,
@@ -382,6 +427,9 @@ export async function createStandaloneInstallmentPlan(
       statusUpdatedAt: updated.statusUpdatedAt.toISOString(),
     });
   } catch (error) {
+    if (error instanceof StandaloneInstallmentPayerDivergenceError) {
+      return err('PAGADOR_DIVERGENTE');
+    }
     console.error('[finance][createStandaloneInstallmentPlan]', error);
     return err('ERRO_INTERNO');
   }
@@ -453,9 +501,14 @@ async function resolvePayerFromInput(input: CreateStandaloneInstallmentInput): P
   };
 }
 
-function buildIdempotencyKey(input: CreateStandaloneInstallmentInput, payerId: string): string {
+function buildIdempotencyKey(
+  input: CreateStandaloneInstallmentInput,
+  payerType: 'ALUNO' | 'RESPONSAVEL',
+  payerId: string,
+): string {
   const hash = hashPayload({
     contaId: input.contaId,
+    payerType,
     payerId,
     billingType: input.billingType,
     installmentCount: input.installmentCount,
@@ -469,6 +522,8 @@ function buildIdempotencyKey(input: CreateStandaloneInstallmentInput, payerId: s
 async function syncInstallmentPayments(params: {
   contaId: string;
   customerId: string;
+  payerType: 'ALUNO' | 'RESPONSAVEL';
+  payerId: string;
   payerName: string | null;
   installmentPlanId: string;
   externalReference: string;
@@ -477,7 +532,7 @@ async function syncInstallmentPayments(params: {
   description: string | null;
   paymentRules: ReturnType<typeof paymentRulesSnapshot>;
 }) {
-  const { contaId, customerId, payerName, installmentPlanId, externalReference, asaasInstallmentId, billingType, description, paymentRules } = params;
+  const { contaId, customerId, payerType, payerId, payerName, installmentPlanId, externalReference, asaasInstallmentId, billingType, description, paymentRules } = params;
   const credentials = await loadAsaasCredentials(contaId);
   if (!credentials) return;
 
@@ -538,6 +593,8 @@ async function syncInstallmentPayments(params: {
         dueDate: vencimento,
         billingType: payment.billingType ?? billingType,
         customerId,
+        payerType,
+        payerId,
         invoiceUrl: payment.invoiceUrl ?? null,
         standaloneInstallmentPlanId: installmentPlanId,
         ...paymentRules,
@@ -555,6 +612,8 @@ async function syncInstallmentPayments(params: {
         dueDate: vencimento,
         billingType: payment.billingType ?? billingType,
         customerId,
+        payerType,
+        payerId,
         invoiceUrl: payment.invoiceUrl ?? null,
         standaloneInstallmentPlanId: installmentPlanId,
         ...paymentRules,
@@ -562,6 +621,6 @@ async function syncInstallmentPayments(params: {
       },
     });
 
-    await chargeReadModelService.projectChargeReadModelByChargeId(syncedCharge.id);
+    await chargeReadModelService.projectChargeReadModelByChargeId(syncedCharge.id, params.contaId);
   }
 }

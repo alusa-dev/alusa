@@ -3,6 +3,7 @@ import type { InstallmentStatus } from '@prisma/client';
 import type { UnifiedInstallmentGroupItem } from '../dtos/unified-billing';
 import { resolveUnifiedChargeStatus } from '../dtos/unified-billing';
 import { buildPaymentReferencePrefix, isPaymentReferenceForParent } from '../core';
+import { resolveUnambiguousCustomerPayer } from '../customer/customer-identity';
 
 // ---------------------------------------------------------------------------
 // Input / Output
@@ -167,8 +168,25 @@ export async function listInstallmentPlansAggregated(
     _db.standaloneInstallmentPlan.findMany({
       where: academicWhere, // contaId + statusFilter (mesmos campos)
       orderBy: { createdAt: 'desc' },
-      include: {
-        customer: { select: { payerType: true, payerId: true } },
+      select: {
+        id: true,
+        externalReference: true,
+        status: true,
+        installmentCount: true,
+        billingType: true,
+        value: true,
+        firstDueDate: true,
+        asaasInstallmentId: true,
+        createdAt: true,
+        payerType: true,
+        payerId: true,
+        customer: {
+          select: {
+            payerType: true,
+            payerId: true,
+            payerLinks: { select: { payerType: true, payerId: true } },
+          },
+        },
       },
     }),
   ]);
@@ -232,11 +250,25 @@ export async function listInstallmentPlansAggregated(
   // =================================================================
   // 3. Resolver nomes dos pagadores standalone
   // =================================================================
-  const respIds = standalonePlans.filter((p) => p.customer.payerType === 'RESPONSAVEL').map((p) => p.customer.payerId);
-  const aluIds = standalonePlans.filter((p) => p.customer.payerType === 'ALUNO').map((p) => p.customer.payerId);
+  const payerByStandalonePlanId = new Map(
+    standalonePlans.flatMap((plan) => {
+      const payer = plan.payerType && plan.payerId
+        ? { payerType: plan.payerType, payerId: plan.payerId }
+        : resolveUnambiguousCustomerPayer(plan.customer);
+      return payer ? [[plan.id, payer] as const] : [];
+    }),
+  );
+  const respIds = standalonePlans
+    .map((p) => payerByStandalonePlanId.get(p.id))
+    .filter((payer) => payer?.payerType === 'RESPONSAVEL')
+    .map((payer) => payer!.payerId);
+  const aluIds = standalonePlans
+    .map((p) => payerByStandalonePlanId.get(p.id))
+    .filter((payer) => payer?.payerType === 'ALUNO')
+    .map((payer) => payer!.payerId);
   const [responsaveis, alunos] = await Promise.all([
-    respIds.length ? _db.responsavel.findMany({ where: { id: { in: respIds } }, select: { id: true, nome: true } }) : Promise.resolve([]),
-    aluIds.length ? _db.aluno.findMany({ where: { id: { in: aluIds } }, select: { id: true, nome: true } }) : Promise.resolve([]),
+    respIds.length ? _db.responsavel.findMany({ where: { contaId, id: { in: respIds } }, select: { id: true, nome: true } }) : Promise.resolve([]),
+    aluIds.length ? _db.aluno.findMany({ where: { contaId, id: { in: aluIds } }, select: { id: true, nome: true } }) : Promise.resolve([]),
   ]);
   const respMap = new Map(responsaveis.map((r) => [r.id, r.nome]));
   const aluMap = new Map(alunos.map((a) => [a.id, a.nome]));
@@ -346,10 +378,12 @@ export async function listInstallmentPlansAggregated(
 
   for (const plan of standalonePlans) {
     const parcelas = standaloneChargesByPlan.get(plan.id) ?? [];
-    const payerName =
-      plan.customer.payerType === 'RESPONSAVEL'
-        ? respMap.get(plan.customer.payerId) ?? 'Cliente'
-        : aluMap.get(plan.customer.payerId) ?? 'Cliente';
+    const payer = payerByStandalonePlanId.get(plan.id) ?? null;
+    const payerName = payer
+      ? payer.payerType === 'RESPONSAVEL'
+        ? respMap.get(payer.payerId) ?? 'Cliente'
+        : aluMap.get(payer.payerId) ?? 'Cliente'
+      : parcelas.find((parcela) => parcela.payerName)?.payerName ?? 'Cliente';
     const studentName = parcelas.find((parcela) => parcela.payerName && parcela.payerName.trim().length > 0)?.payerName ?? payerName;
 
     if (!matchesInstallmentSearch({ search, studentName, payerName })) {

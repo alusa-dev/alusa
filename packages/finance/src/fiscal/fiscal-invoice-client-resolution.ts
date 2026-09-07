@@ -12,6 +12,8 @@ export function buildFiscalInvoiceClientKey(client: FiscalInvoiceClientRef): str
 export function resolveFiscalInvoiceClient(input: {
   responsavelId: string | null;
   matriculaAlunoId: string | null;
+  obligationPayerType?: FiscalInvoiceClientType | null;
+  obligationPayerId?: string | null;
   customerPayerType: FiscalInvoiceClientType | null;
   customerPayerId: string | null;
 }): FiscalInvoiceClientRef | null {
@@ -21,6 +23,10 @@ export function resolveFiscalInvoiceClient(input: {
 
   if (input.matriculaAlunoId) {
     return { tipo: 'ALUNO', id: input.matriculaAlunoId };
+  }
+
+  if (input.obligationPayerType && input.obligationPayerId) {
+    return { tipo: input.obligationPayerType, id: input.obligationPayerId };
   }
 
   if (input.customerPayerType && input.customerPayerId) {

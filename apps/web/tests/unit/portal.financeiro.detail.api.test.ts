@@ -9,6 +9,7 @@ const {
   requirePortalUserMock,
   resolvePortalAlunoIdsMock,
   resolvePortalScopedPayerIdsMock,
+  buildPortalStandaloneChargeOwnershipWhereMock,
   recordAsaasReadDecisionMock,
 } = vi.hoisted(() => ({
   prismaMock: {
@@ -20,6 +21,7 @@ const {
   requirePortalUserMock: vi.fn(),
   resolvePortalAlunoIdsMock: vi.fn(),
   resolvePortalScopedPayerIdsMock: vi.fn(),
+  buildPortalStandaloneChargeOwnershipWhereMock: vi.fn(() => ({ OR: [] })),
   recordAsaasReadDecisionMock: vi.fn(),
 }));
 
@@ -38,11 +40,13 @@ vi.mock('@alusa/finance', () => ({
 vi.mock('@/features/portal/api-helpers', () => ({
   requirePortalUser: requirePortalUserMock,
   resolvePortalAlunoIds: resolvePortalAlunoIdsMock,
+  resolvePortalResponsavelId: vi.fn(),
 }));
 
 vi.mock('@/features/portal/finance-standalone', () => ({
   mapChargeStatusToPortalStatus: vi.fn((status: string) => (status === 'OPEN' ? 'PENDENTE' : status)),
   resolvePortalScopedPayerIds: resolvePortalScopedPayerIdsMock,
+  buildPortalStandaloneChargeOwnershipWhere: buildPortalStandaloneChargeOwnershipWhereMock,
 }));
 
 vi.mock('@/src/server/finance/asaas-read-observability', () => ({
@@ -70,6 +74,9 @@ describe('GET /api/portal/financeiro/[id]', () => {
     resolvePortalScopedPayerIdsMock.mockResolvedValue({
       alunoIds: ['aluno-1'],
       responsavelIds: [],
+      contaId: 'conta-1',
+      matriculaIds: [],
+      familyGroupIds: [],
     });
     prismaMock.charge.findFirst.mockResolvedValue({
       id: 'charge-1',

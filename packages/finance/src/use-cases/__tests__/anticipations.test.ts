@@ -20,19 +20,32 @@ vi.mock('@alusa/database', () => ({
     standaloneInstallmentPlan: {
       findMany: vi.fn(async () => []),
     },
+    eventTicketSale: {
+      findMany: vi.fn(async () => []),
+    },
+    eventMapOrder: {
+      findMany: vi.fn(async () => []),
+    },
   },
 }));
 
 vi.mock('@alusa/asaas', () => ({
   AsaasHttpError: class AsaasHttpError extends Error {
+    public status: number;
+    public response?: unknown;
+    public responseBody?: unknown;
+
     constructor(
       message: string,
-      public status: number,
-      public response?: unknown,
-      public responseBody?: unknown,
+      status: number,
+      response?: unknown,
+      responseBody?: unknown,
     ) {
       super(message);
       this.name = 'AsaasHttpError';
+      this.status = status;
+      this.response = response;
+      this.responseBody = responseBody;
     }
   },
   getAnticipationConfiguration: vi.fn(),
@@ -112,6 +125,7 @@ describe('anticipations use-cases', () => {
 
     vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'sub_key' } as never);
     vi.mocked(prisma.receivableAnticipationSnapshot.count).mockResolvedValueOnce(1);
+    const fetchedAt = new Date();
     vi.mocked(prisma.receivableAnticipationSnapshot.findMany).mockResolvedValueOnce([
       {
         asaasAnticipationId: 'ant_1',
@@ -127,7 +141,7 @@ describe('anticipations use-cases', () => {
         totalValue: { toString: () => '100.00' },
         value: { toString: () => '100.00' },
         denialObservation: null,
-        fetchedAt: new Date('2026-06-17T12:00:00.000Z'),
+        fetchedAt,
       },
     ] as never);
 

@@ -14,6 +14,7 @@ const {
   atualizarDetalhesMatriculaMock,
   buscarMatriculaPorIdMock,
   prismaMock,
+  findCustomerForPayerMock,
 } = vi.hoisted(() => ({
   getServerSessionMock: vi.fn(),
   getSubscriptionMock: vi.fn(),
@@ -42,6 +43,7 @@ const {
       updateMany: vi.fn(),
     },
   },
+  findCustomerForPayerMock: vi.fn(async () => null),
 }));
 
 vi.mock('next-auth', () => ({
@@ -53,6 +55,7 @@ vi.mock('@/lib/auth-options', () => ({
 }));
 
 vi.mock('@alusa/finance', () => ({
+  findCustomerForPayer: findCustomerForPayerMock,
   getSubscription: getSubscriptionMock,
   updateSubscription: updateSubscriptionMock,
   projectConfirmedBillingAgreementSnapshot: projectConfirmedBillingAgreementSnapshotMock,
@@ -93,6 +96,8 @@ describe('PATCH /api/matriculas/[id]', () => {
       asaasSubscriptionId: 'sub_123',
       dataFimContrato: new Date('2026-12-31T00:00:00.000Z'),
       vencimentoDia: 5,
+      aluno: { id: 'aluno-1', nome: 'Aluno', asaasCustomerId: null },
+      responsavelFinanceiro: null,
     });
     prismaMock.subscription.findFirst.mockResolvedValue({
       status: 'ACTIVE',
@@ -172,6 +177,8 @@ describe('PATCH /api/matriculas/[id]', () => {
       asaasSubscriptionId: 'sub_123',
       dataFimContrato: new Date('2026-12-31T00:00:00.000Z'),
       vencimentoDia: 5,
+      aluno: { id: 'aluno-1', nome: 'Aluno', asaasCustomerId: null },
+      responsavelFinanceiro: null,
     });
     prismaMock.subscription.findFirst.mockResolvedValue({
       status: 'ACTIVE',
@@ -232,6 +239,8 @@ describe('PATCH /api/matriculas/[id]', () => {
       asaasSubscriptionId: 'sub_123',
       dataFimContrato: new Date('2026-07-31T00:00:00.000Z'),
       vencimentoDia: 5,
+      aluno: { id: 'aluno-1', nome: 'Aluno', asaasCustomerId: null },
+      responsavelFinanceiro: null,
     });
     prismaMock.subscription.findFirst.mockResolvedValue({
       status: 'ACTIVE',
@@ -283,6 +292,8 @@ describe('PATCH /api/matriculas/[id]', () => {
       dataFimContrato: new Date('2026-12-31T00:00:00.000Z'),
       vencimentoDia: 5,
       subscriptions: [],
+      aluno: { id: 'aluno-1', nome: 'Aluno', asaasCustomerId: null },
+      responsavelFinanceiro: null,
     });
     prismaMock.matricula.findMany.mockResolvedValue([
       { id: 'mat-1', dataFimContrato: new Date('2026-12-31T00:00:00.000Z') },

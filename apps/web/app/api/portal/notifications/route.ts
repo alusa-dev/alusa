@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { requirePortalUser, resolvePortalAlunoIds } from '@/features/portal/api-helpers';
+import {
+  requirePortalUser,
+  resolvePortalAlunoIds,
+  resolvePortalResponsavelId,
+} from '@/features/portal/api-helpers';
 import { portalNotificationsResultDTOSchema } from '@/features/portal/dtos';
 import { mapPortalNotificationsResultToDTO } from '@/features/portal/mappers';
 import { isPortalPendingStatus, listPortalStandaloneCharges } from '@/features/portal/finance-standalone';
@@ -10,6 +14,7 @@ export async function GET() {
     const auth = await requirePortalUser();
     if ('response' in auth) return auth.response;
     const alunoIds = await resolvePortalAlunoIds(auth.user);
+    const responsavelId = await resolvePortalResponsavelId(auth.user);
 
     // 4. Buscar cobranças dos alunos
     const hoje = new Date();
@@ -19,6 +24,7 @@ export async function GET() {
       prisma.cobranca.findMany({
         where: {
           matricula: {
+            contaId: auth.user.contaId,
             alunoId: { in: alunoIds },
           },
           OR: [
@@ -32,7 +38,7 @@ export async function GET() {
           vencimento: true,
         },
       }),
-      listPortalStandaloneCharges({ contaId: auth.user.contaId, alunoIds }),
+      listPortalStandaloneCharges({ contaId: auth.user.contaId, alunoIds, responsavelId }),
     ]);
 
     // 5. Calcular notificações
@@ -102,6 +108,4 @@ export async function GET() {
     );
   }
 }
-
-
 

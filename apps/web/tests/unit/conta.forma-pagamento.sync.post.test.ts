@@ -6,6 +6,7 @@ const {
   prismaMock,
   getSubscriptionMock,
   getPaymentMock,
+  findCustomerForPayerMock,
   recordAsaasReadIntentMock,
   recordAsaasReadDecisionMock,
 } = vi.hoisted(() => ({
@@ -24,6 +25,7 @@ const {
   },
   getSubscriptionMock: vi.fn(),
   getPaymentMock: vi.fn(),
+  findCustomerForPayerMock: vi.fn(async () => null),
   recordAsaasReadIntentMock: vi.fn(),
   recordAsaasReadDecisionMock: vi.fn(),
 }));
@@ -39,6 +41,7 @@ vi.mock('@/lib/prisma', () => ({
 vi.mock('@alusa/finance', () => ({
   getSubscription: getSubscriptionMock,
   getPayment: getPaymentMock,
+  findCustomerForPayer: findCustomerForPayerMock,
   recordAsaasReadIntent: recordAsaasReadIntentMock,
 }));
 

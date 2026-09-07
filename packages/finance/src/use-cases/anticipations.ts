@@ -263,7 +263,8 @@ async function resolvePaymentContexts(contaId: string, paymentIds: string[]) {
         status: true,
         dueDate: true,
         value: true,
-        customer: { select: { payerType: true, payerId: true } },
+        payerType: true,
+        payerId: true,
       },
     }),
     prisma.eventTicketSale.findMany({
@@ -285,16 +286,16 @@ async function resolvePaymentContexts(contaId: string, paymentIds: string[]) {
   const alunoIds = Array.from(
     new Set(
       standaloneCharges
-        .filter((charge) => charge.customer?.payerType === 'ALUNO')
-        .map((charge) => charge.customer?.payerId)
+        .filter((charge) => charge.payerType === 'ALUNO')
+        .map((charge) => charge.payerId)
         .filter((value): value is string => Boolean(value)),
     ),
   );
   const responsavelIds = Array.from(
     new Set(
       standaloneCharges
-        .filter((charge) => charge.customer?.payerType === 'RESPONSAVEL')
-        .map((charge) => charge.customer?.payerId)
+        .filter((charge) => charge.payerType === 'RESPONSAVEL')
+        .map((charge) => charge.payerId)
         .filter((value): value is string => Boolean(value)),
     ),
   );
@@ -317,8 +318,8 @@ async function resolvePaymentContexts(contaId: string, paymentIds: string[]) {
       localId: charge.id,
       description: charge.description,
       payerName:
-        (charge.customer
-          ? payerNameByKey.get(`${charge.customer.payerType}:${charge.customer.payerId}`)
+        (charge.payerType && charge.payerId
+          ? payerNameByKey.get(`${charge.payerType}:${charge.payerId}`)
           : undefined) ?? (charge.payerName === 'NEEDS_REVIEW' ? null : charge.payerName),
       billingType: charge.billingType,
       dueDate: isoDate(charge.dueDate),
