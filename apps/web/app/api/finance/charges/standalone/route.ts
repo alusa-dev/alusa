@@ -20,11 +20,26 @@ async function resolveAuth(): Promise<SessionUser | null> {
   return (session as { user?: SessionUser } | null)?.user ?? null;
 }
 
+const customerPayerSchema = z.object({
+  type: z.literal('customer'),
+  customerId: z.string().min(1),
+  payerType: z.enum(['ALUNO', 'RESPONSAVEL']).optional(),
+  payerId: z.string().min(1).optional(),
+});
+
 const payerSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('customer'), customerId: z.string().min(1) }),
+  customerPayerSchema,
   z.object({ type: z.literal('aluno'), alunoId: z.string().min(1) }),
   z.object({ type: z.literal('responsavel'), responsavelId: z.string().min(1) }),
-]);
+]).superRefine((payer, ctx) => {
+  if (payer.type === 'customer' && ((payer.payerType == null) !== (payer.payerId == null))) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['payerType'],
+      message: 'payerType e payerId devem ser informados juntos',
+    });
+  }
+});
 
 const discountSchema = z.object({
   value: z.number().positive(),
@@ -238,6 +253,8 @@ export async function POST(req: NextRequest) {
         FEATURE_DISABLED: { status: 403, message: 'Funcionalidade financeira desabilitada para esta conta' },
         KYC_NAO_APROVADO: { status: 409, message: 'Conta financeira não aprovada' },
         PAGADOR_NAO_ENCONTRADO: { status: 404, message: 'Pagador não encontrado' },
+        PAGADOR_AMBIGUO: { status: 422, message: 'Informe o papel do pagador para esta identidade financeira compartilhada' },
+        PAGADOR_DIVERGENTE: { status: 409, message: 'A chave de idempotência já está vinculada a outro pagador' },
         PAGADOR_SEM_CPF: { status: 422, message: 'Pagador sem CPF cadastrado' },
         MATRICULA_NAO_ENCONTRADA: { status: 422, message: 'Nenhuma matrícula ativa encontrada para o pagador' },
         CREDENCIAIS_ASAAS_NAO_CONFIGURADAS: { status: 503, message: 'Integração financeira não configurada' },

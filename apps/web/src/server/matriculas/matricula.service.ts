@@ -1204,6 +1204,8 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     await aplicarDescontosMatricula(tx, matricula.id, descontosAplicaveis, planoValor, preco);
 
     if (!input.taxaIsenta && input.gerarCobrancaTaxa && input.taxaMatricula > 0) {
+      const obligationPayerType = input.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO';
+      const obligationPayerId = input.responsavelFinanceiroId ?? matricula.alunoId;
       cobrancas.taxa = await tx.cobranca.create({
         data: {
           contaId: input.contaId,
@@ -1250,6 +1252,8 @@ export async function criarMatricula(input: CriarMatriculaInput) {
             dueDate: new Date(`${stagedFee.dueDate}T12:00:00.000Z`),
             invoiceUrl: stagedFee.invoiceUrl,
             billingType: input.preprovisionedBilling?.enrollmentFeeBillingType ?? null,
+            payerType: obligationPayerType,
+            payerId: obligationPayerId,
           },
         });
       }
@@ -1271,6 +1275,8 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     const staged = stagedBilling;
     if (staged) {
       const firstPayment = staged.subscription.firstPayment;
+      const obligationPayerType = input.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO';
+      const obligationPayerId = input.responsavelFinanceiroId ?? matricula.alunoId;
       cobrancas.mensalidade = await tx.cobranca.create({
         data: {
           contaId: input.contaId,
@@ -1319,6 +1325,8 @@ export async function criarMatricula(input: CriarMatriculaInput) {
           invoiceUrl: firstPayment.invoiceUrl,
           billingType: staged.billingType,
           customerId: staged.customer.localCustomerId,
+          payerType: obligationPayerType,
+          payerId: obligationPayerId,
         },
       });
 

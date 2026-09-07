@@ -80,7 +80,9 @@ function buildInvoiceWhere(
         responsavelId: null,
         matriculaId: null,
         charge: {
-          customer: { payerType: 'ALUNO', payerId: input.personId, contaId: input.contaId },
+          contaId: input.contaId,
+          payerType: 'ALUNO',
+          payerId: input.personId,
         },
       },
     ];
@@ -98,7 +100,9 @@ function buildInvoiceWhere(
       { responsavelId: input.personId },
       {
         charge: {
-          customer: { payerType: 'RESPONSAVEL', payerId: input.personId, contaId: input.contaId },
+          contaId: input.contaId,
+          payerType: 'RESPONSAVEL',
+          payerId: input.personId,
         },
       },
     ];

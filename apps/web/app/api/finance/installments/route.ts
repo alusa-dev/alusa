@@ -69,8 +69,10 @@ export async function POST(req: NextRequest) {
           ? 403
           : result.error === 'KYC_NAO_APROVADO'
             ? 409
-            : result.error === 'PAGADOR_NAO_ENCONTRADO'
+          : result.error === 'PAGADOR_NAO_ENCONTRADO'
               ? 404
+              : result.error === 'PAGADOR_DIVERGENTE'
+                ? 409
               : result.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
                 ? 503
                 : result.error === 'DATA_INVALIDA' || result.error === 'VALOR_INVALIDO' || result.error === 'FORMA_PAGAMENTO_INVALIDA'

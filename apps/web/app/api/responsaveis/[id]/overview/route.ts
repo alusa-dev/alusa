@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import type { Prisma } from '@prisma/client';
 
 import { getSessionUser } from '@/lib/auth/session';
 import { prisma } from '@/prisma/client';
@@ -137,7 +138,7 @@ export async function GET(
       return NextResponse.json({ error: { message: 'Responsável não encontrado.' } }, { status: 404 });
     }
 
-    const [families, reenrollments, customerIds, alunosVinculados] = await Promise.all([
+    const [families, reenrollments, alunosVinculados] = await Promise.all([
       prisma.matriculaFamiliar.findMany({
         where: { contaId: user.contaId, responsavelId },
         orderBy: { createdAt: 'desc' },
@@ -167,14 +168,6 @@ export async function GET(
           standaloneEnrollmentChargeId: true,
           createdAt: true,
         },
-      }),
-      prisma.customer.findMany({
-        where: {
-          contaId: user.contaId,
-          payerType: 'RESPONSAVEL',
-          payerId: responsavelId,
-        },
-        select: { id: true },
       }),
       prisma.aluno.findMany({
         where: {
@@ -240,17 +233,74 @@ export async function GET(
       ...reenrollments.map((family) => family.id),
     ];
 
-    const scopedCustomerIds = customerIds.map((customer) => customer.id);
-    const chargeOr = [
-      ...(scopedCustomerIds.length > 0 ? [{ customerId: { in: scopedCustomerIds } }] : []),
+    const alunoIds = alunosVinculados.map((aluno) => aluno.id);
+    const matriculaIds = alunosVinculados.flatMap((aluno) => aluno.matriculas.map((matricula) => matricula.id));
+    const obligationPayerOr: Prisma.ChargeWhereInput[] = [
+      { payerType: 'RESPONSAVEL', payerId: responsavelId },
+      ...(alunoIds.length > 0 ? [{ payerType: 'ALUNO' as const, payerId: { in: alunoIds } }] : []),
       ...(familyIds.length > 0 ? [{ familyGroupId: { in: familyIds } }] : []),
+      ...(familyIds.length > 0
+        ? [
+            {
+              standaloneSubscription: {
+                contaId: user.contaId,
+                familyGroupId: { in: familyIds },
+              },
+            },
+            {
+              standaloneInstallmentPlan: {
+                contaId: user.contaId,
+                familyGroupId: { in: familyIds },
+              },
+            },
+          ]
+        : []),
+      {
+        sale: {
+          contaId: user.contaId,
+          OR: [
+            { responsavelId },
+            ...(alunoIds.length > 0 ? [{ alunoId: { in: alunoIds } }] : []),
+            ...(matriculaIds.length > 0 ? [{ matriculaId: { in: matriculaIds } }] : []),
+          ],
+        },
+      },
+      ...(matriculaIds.length > 0
+        ? [{ cobranca: { contaId: user.contaId, matriculaId: { in: matriculaIds } } }]
+        : []),
+    ];
+    const standalonePayerOr: Prisma.StandaloneSubscriptionWhereInput[] = [
+      { payerType: 'RESPONSAVEL', payerId: responsavelId },
+      ...(alunoIds.length > 0 ? [{ payerType: 'ALUNO' as const, payerId: { in: alunoIds } }] : []),
+      ...(familyIds.length > 0 ? [{ familyGroupId: { in: familyIds } }] : []),
+    ];
+    const installmentPlanPayerOr: Prisma.StandaloneInstallmentPlanWhereInput[] = [
+      { payerType: 'RESPONSAVEL', payerId: responsavelId },
+      ...(alunoIds.length > 0 ? [{ payerType: 'ALUNO' as const, payerId: { in: alunoIds } }] : []),
+      ...(familyIds.length > 0 ? [{ familyGroupId: { in: familyIds } }] : []),
+      ...(alunoIds.length > 0 || matriculaIds.length > 0
+        ? [
+            {
+              sales: {
+                some: {
+                  contaId: user.contaId,
+                  OR: [
+                    { responsavelId },
+                    ...(alunoIds.length > 0 ? [{ alunoId: { in: alunoIds } }] : []),
+                    ...(matriculaIds.length > 0 ? [{ matriculaId: { in: matriculaIds } }] : []),
+                  ],
+                },
+              },
+            },
+          ]
+        : []),
     ];
 
     const [charges, standaloneSubscriptions, academicSubscriptions, standaloneInstallmentPlans] = await Promise.all([
       prisma.charge.findMany({
         where: {
           contaId: user.contaId,
-          ...(chargeOr.length > 0 ? { OR: chargeOr } : { id: '__none__' }),
+          OR: obligationPayerOr,
         },
         orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
         take: 20,
@@ -271,14 +321,7 @@ export async function GET(
       prisma.standaloneSubscription.findMany({
         where: {
           contaId: user.contaId,
-          ...(chargeOr.length > 0
-            ? {
-                OR: [
-                  ...(scopedCustomerIds.length > 0 ? [{ customerId: { in: scopedCustomerIds } }] : []),
-                  ...(familyIds.length > 0 ? [{ familyGroupId: { in: familyIds } }] : []),
-                ],
-              }
-            : { id: '__none__' }),
+          OR: standalonePayerOr,
         },
         orderBy: [{ nextDueDate: 'asc' }, { createdAt: 'desc' }],
         take: 20,
@@ -337,14 +380,7 @@ export async function GET(
       prisma.standaloneInstallmentPlan.findMany({
         where: {
           contaId: user.contaId,
-          ...(chargeOr.length > 0
-            ? {
-                OR: [
-                  ...(scopedCustomerIds.length > 0 ? [{ customerId: { in: scopedCustomerIds } }] : []),
-                  ...(familyIds.length > 0 ? [{ familyGroupId: { in: familyIds } }] : []),
-                ],
-              }
-            : { id: '__none__' }),
+          OR: installmentPlanPayerOr,
         },
         orderBy: [{ firstDueDate: 'asc' }, { createdAt: 'desc' }],
         take: 20,

@@ -11,7 +11,11 @@ import {
 } from '@alusa/lib';
 import { syncCustomerNotificationChannels } from '../services/customer-notification.service';
 import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
-import { CustomerIdentityConflictError, linkCustomerIdentity } from '../customer/customer-identity';
+import {
+  CustomerIdentityConflictError,
+  findCustomerForPayer,
+  linkCustomerIdentity,
+} from '../customer/customer-identity';
 
 export type EnsureCustomerPayerRef =
   | { type: 'RESPONSAVEL'; id: string }
@@ -103,28 +107,10 @@ export async function ensureCustomer(
 ): Promise<Result<EnsureCustomerOutput, EnsureCustomerError>> {
   const payerType: CustomerPayerType = input.payer.type;
 
-  const externalReference = buildCustomerExternalReference({
+  let externalReference = buildCustomerExternalReference({
     contaId: input.contaId,
     payerType,
     payerId: input.payer.id,
-  });
-
-  const internalCustomer = await prisma.customer.upsert({
-    where: {
-      contaId_payerType_payerId: {
-        contaId: input.contaId,
-        payerType,
-        payerId: input.payer.id,
-      },
-    },
-    update: { externalReference },
-    create: {
-      contaId: input.contaId,
-      payerType,
-      payerId: input.payer.id,
-      externalReference,
-    },
-    select: { id: true, asaasCustomerId: true, externalReference: true },
   });
 
   // Buscar dados do pagador conforme o tipo
@@ -174,35 +160,68 @@ export async function ensureCustomer(
   if (!payerData.cpf) return err('PAGADOR_SEM_CPF');
   if (!isValidCpfCnpjDigits(payerData.cpf)) return err('PAGADOR_CPF_INVALIDO');
 
+  // Resolve the canonical local identity before creating the compatibility
+  // Customer row. A new educational alias must not create a second financial
+  // identity when CustomerPayer already points to an existing Customer.
+  const linkedCustomer = await findCustomerForPayer(input.contaId, payerType, input.payer.id);
+  const customerByRemoteId = !linkedCustomer && payerData.asaasCustomerId
+    ? await prisma.customer.findFirst({
+        where: { contaId: input.contaId, asaasCustomerId: payerData.asaasCustomerId },
+        select: { id: true, asaasCustomerId: true, externalReference: true },
+      })
+    : null;
+  const internalCustomer = linkedCustomer ?? customerByRemoteId ?? await prisma.customer.upsert({
+    where: {
+      contaId_payerType_payerId: {
+        contaId: input.contaId,
+        payerType,
+        payerId: input.payer.id,
+      },
+    },
+    update: { externalReference },
+    create: {
+      contaId: input.contaId,
+      payerType,
+      payerId: input.payer.id,
+      externalReference,
+    },
+    select: { id: true, asaasCustomerId: true, externalReference: true },
+  });
+
   if (isMockPaymentsMode()) {
     const existingMockId = internalCustomer.asaasCustomerId ?? payerData.asaasCustomerId;
     const mockId = existingMockId ?? `mock_${payerType.toLowerCase()}_${payerData.id}`;
 
     if (!existingMockId) {
       if (payerType === 'ALUNO') {
-        await prisma.aluno.update({
-          where: { id: payerData.id },
+        await prisma.aluno.updateMany({
+          where: { id: payerData.id, contaId: input.contaId },
           data: { asaasCustomerId: mockId },
         });
       } else {
-        await prisma.responsavel.update({
-          where: { id: payerData.id },
+        await prisma.responsavel.updateMany({
+          where: { id: payerData.id, contaId: input.contaId },
           data: { asaasCustomerId: mockId },
         });
       }
 
-      try {
-        await linkCustomerIdentity({
-          contaId: input.contaId,
-          payerType,
-          payerId: payerData.id,
-          asaasCustomerId: mockId,
-          cpfCnpj: payerData.cpf,
-        });
-      } catch (error) {
-        if (error instanceof CustomerIdentityConflictError) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
-        throw error;
-      }
+    }
+
+    // Even in mock mode, linking is the operation that records a new
+    // educational alias. Do it for an existing remote id as well; otherwise a
+    // RESPONSAVEL/ALUNO alias would appear to work but never reach
+    // CustomerPayer.
+    try {
+      await linkCustomerIdentity({
+        contaId: input.contaId,
+        payerType,
+        payerId: payerData.id,
+        asaasCustomerId: mockId,
+        cpfCnpj: payerData.cpf,
+      });
+    } catch (error) {
+      if (error instanceof CustomerIdentityConflictError) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
+      throw error;
     }
 
     return ok({ customerId: mockId, localCustomerId: internalCustomer.id, externalReference });
@@ -225,6 +244,28 @@ export async function ensureCustomer(
       });
 
       if (active) {
+        // A lookup by asaasCustomerId can find the canonical Customer whose
+        // historical role belongs to another educational person. Link the
+        // requested role only after the remote CPF was verified; the identity
+        // service rejects a real CPF conflict and preserves the canonical row.
+        if (!linkedCustomer && customerByRemoteId && input.payer.id) {
+          try {
+            const identity = await linkCustomerIdentity({
+              contaId: input.contaId,
+              payerType,
+              payerId: payerData.id,
+              asaasCustomerId: internalCustomer.asaasCustomerId,
+              cpfCnpj: payerData.cpf,
+              externalReference,
+            });
+            externalReference = identity.externalReference;
+          } catch (error) {
+            if (error instanceof CustomerIdentityConflictError) {
+              return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
+            }
+            throw error;
+          }
+        }
         await syncExistingAsaasCustomerContact({
           contaId: input.contaId,
           customerId: internalCustomer.asaasCustomerId,
@@ -248,7 +289,7 @@ export async function ensureCustomer(
     }
 
     await prisma.customer.update({
-      where: { id: internalCustomer.id },
+      where: { uq_customer_conta_id: { contaId: input.contaId, id: internalCustomer.id } },
       data: { asaasCustomerId: null },
     });
   }
@@ -292,10 +333,13 @@ export async function ensureCustomer(
 
     // Customer deletado no Asaas, limpar referência local
     if (payerType === 'ALUNO') {
-      await prisma.aluno.update({ where: { id: payerData.id }, data: { asaasCustomerId: null } });
+      await prisma.aluno.updateMany({
+        where: { id: payerData.id, contaId: input.contaId },
+        data: { asaasCustomerId: null },
+      });
     } else {
-      await prisma.responsavel.update({
-        where: { id: payerData.id },
+      await prisma.responsavel.updateMany({
+        where: { id: payerData.id, contaId: input.contaId },
         data: { asaasCustomerId: null },
       });
     }
@@ -303,7 +347,7 @@ export async function ensureCustomer(
     // identity created below must be allowed to replace that stale reference.
     payerData.asaasCustomerId = null;
     await prisma.customer.update({
-      where: { id: internalCustomer.id },
+      where: { uq_customer_conta_id: { contaId: input.contaId, id: internalCustomer.id } },
       data: { asaasCustomerId: null },
     });
   }

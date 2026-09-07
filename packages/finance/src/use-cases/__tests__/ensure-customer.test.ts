@@ -48,8 +48,22 @@ vi.mock('../create-customer', () => ({
 }));
 
 describe('ensureCustomer', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+  beforeEach(async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.resetAllMocks();
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback) => callback(prisma) as never);
+    vi.mocked(prisma.customer.create).mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: 'custRow_new',
+      ...data,
+    }) as never);
+    vi.mocked(prisma.customerPayer.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.asaasNotificationPreference.findMany).mockResolvedValue([] as never);
+    const { createAsaasCustomer, syncAsaasCustomerContact } = await import('../create-customer');
+    vi.mocked(createAsaasCustomer).mockResolvedValue({
+      success: true,
+      data: { id: 'cust_1', externalReference: 'customer:t1:RESPONSAVEL:r1' },
+    } as never);
+    vi.mocked(syncAsaasCustomerContact).mockResolvedValue({ success: true } as never);
     vi.stubEnv('NODE_ENV', 'development');
     vi.stubEnv('PAYMENTS_PROVIDER_MODE', 'asaas');
     vi.stubEnv('PLAYWRIGHT_TEST', 'false');
@@ -61,12 +75,6 @@ describe('ensureCustomer', () => {
 
   it('deve bloquear quando payer é ALUNO', async () => {
     const { prisma } = await import('@alusa/database');
-
-    vi.mocked(prisma.customer.upsert).mockResolvedValueOnce({
-      id: 'custRow_1',
-      asaasCustomerId: null,
-      externalReference: 'customer:t1:ALUNO:a1',
-    } as never);
 
     const result = await ensureCustomer({ contaId: 't1', payer: { type: 'ALUNO', id: 'a1' } });
 
@@ -216,13 +224,17 @@ describe('ensureCustomer', () => {
       meta: { target: ['asaasCustomerId'] },
     } as never);
 
-    vi.mocked(prisma.customer.findFirst).mockResolvedValueOnce({
+    vi.mocked(prisma.customer.findFirst).mockResolvedValue({
       id: 'custRow_a1',
+      asaasCustomerId: 'cust_conflict',
       payerType: 'ALUNO',
       payerId: 'a1',
     } as never);
 
-    vi.mocked(prisma.aluno.findUnique).mockResolvedValueOnce({ id: 'a1' } as never);
+    vi.mocked(prisma.aluno.findFirst).mockResolvedValue({
+      id: 'a1',
+      cpf: '11144477735',
+    } as never);
 
     const result = await ensureCustomer({
       contaId: 't1',

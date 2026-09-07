@@ -201,7 +201,8 @@ export async function listChargesAggregated(
 
   // ==================== Query 1: Cobranças Acadêmicas ====================
   const academicWhere: Record<string, unknown> = {
-    matricula: { aluno: { contaId } },
+    contaId,
+    matricula: { contaId, aluno: { contaId } },
   };
 
   // Aplicar filtros de status
@@ -369,6 +370,8 @@ export async function listChargesAggregated(
             billingType: true,
             standaloneInstallmentPlanId: true,
             standaloneSubscriptionId: true,
+            payerType: true,
+            payerId: true,
           },
         })
       : Promise.resolve([]),
@@ -409,7 +412,8 @@ export async function listChargesAggregated(
             description: true,
             familyGroupId: true,
             createdAt: true,
-            customer: { select: { payerType: true, payerId: true } },
+            payerType: true,
+            payerId: true,
           },
         })
       : Promise.resolve([]),
@@ -640,23 +644,23 @@ export async function listChargesAggregated(
 
   const subscriptionPayerIdsByType = {
     ALUNO: standaloneSubscriptions
-      .filter((subscription) => subscription.customer?.payerType === 'ALUNO')
-      .map((subscription) => subscription.customer.payerId),
+      .filter((subscription) => subscription.payerType === 'ALUNO' && subscription.payerId)
+      .map((subscription) => subscription.payerId as string),
     RESPONSAVEL: standaloneSubscriptions
-      .filter((subscription) => subscription.customer?.payerType === 'RESPONSAVEL')
-      .map((subscription) => subscription.customer.payerId),
+      .filter((subscription) => subscription.payerType === 'RESPONSAVEL' && subscription.payerId)
+      .map((subscription) => subscription.payerId as string),
   };
 
   const [subscriptionAlunos, subscriptionResponsaveis] = await Promise.all([
     subscriptionPayerIdsByType.ALUNO.length
       ? _db.aluno.findMany({
-          where: { id: { in: subscriptionPayerIdsByType.ALUNO } },
+          where: { contaId, id: { in: subscriptionPayerIdsByType.ALUNO } },
           select: { id: true, nome: true },
         })
       : Promise.resolve([]),
     subscriptionPayerIdsByType.RESPONSAVEL.length
       ? _db.responsavel.findMany({
-          where: { id: { in: subscriptionPayerIdsByType.RESPONSAVEL } },
+          where: { contaId, id: { in: subscriptionPayerIdsByType.RESPONSAVEL } },
           select: { id: true, nome: true },
         })
       : Promise.resolve([]),
@@ -677,8 +681,8 @@ export async function listChargesAggregated(
       id: `group:subscription:${subscription.id}`,
       origin: 'STANDALONE' as const,
       description: subscription.description ?? 'Assinatura recorrente',
-      payerName: subscription.customer
-        ? subscriptionPayerName.get(`${subscription.customer.payerType}:${subscription.customer.payerId}`) ?? 'Cliente'
+      payerName: subscription.payerType && subscription.payerId
+        ? subscriptionPayerName.get(`${subscription.payerType}:${subscription.payerId}`) ?? 'Cliente'
         : 'Cliente',
       value: Number(subscription.value),
       dueDate: subscription.nextDueDate.toISOString(),
@@ -690,7 +694,7 @@ export async function listChargesAggregated(
       createdAt: subscription.createdAt.toISOString(),
       sourceId: subscription.id,
       matriculaId: null,
-      alunoId: subscription.customer?.payerType === 'ALUNO' ? subscription.customer.payerId : null,
+      alunoId: subscription.payerType === 'ALUNO' ? subscription.payerId : null,
       asaasPaymentId: null,
       tipo: 'RECORRENTE',
       isGroup: true,
@@ -920,24 +924,25 @@ export async function listChargesAggregated(
             billingType: true,
             firstDueDate: true,
             createdAt: true,
-            customer: { select: { payerType: true, payerId: true } },
+            payerType: true,
+            payerId: true,
           },
         })
       : [];
 
     const responsavelIds = standalonePlans
-      .filter((p) => p.customer.payerType === 'RESPONSAVEL')
-      .map((p) => p.customer.payerId);
+      .filter((p) => p.payerType === 'RESPONSAVEL' && p.payerId)
+      .map((p) => p.payerId as string);
     const alunoIds = standalonePlans
-      .filter((p) => p.customer.payerType === 'ALUNO')
-      .map((p) => p.customer.payerId);
+      .filter((p) => p.payerType === 'ALUNO' && p.payerId)
+      .map((p) => p.payerId as string);
 
     const [responsaveis, alunos] = await Promise.all([
       responsavelIds.length
-        ? _db.responsavel.findMany({ where: { id: { in: responsavelIds } }, select: { id: true, nome: true } })
+        ? _db.responsavel.findMany({ where: { contaId, id: { in: responsavelIds } }, select: { id: true, nome: true } })
         : Promise.resolve([]),
       alunoIds.length
-        ? _db.aluno.findMany({ where: { id: { in: alunoIds } }, select: { id: true, nome: true } })
+        ? _db.aluno.findMany({ where: { contaId, id: { in: alunoIds } }, select: { id: true, nome: true } })
         : Promise.resolve([]),
     ]);
 
@@ -976,9 +981,11 @@ export async function listChargesAggregated(
       }
 
       const payerName =
-        plan.customer.payerType === 'RESPONSAVEL'
-          ? responsavelMap.get(plan.customer.payerId) ?? parcelas[0]?.payerName ?? 'Cliente'
-          : alunoMap.get(plan.customer.payerId) ?? parcelas[0]?.payerName ?? 'Cliente';
+        plan.payerType === 'RESPONSAVEL'
+          ? responsavelMap.get(plan.payerId ?? '') ?? parcelas[0]?.payerName ?? 'Cliente'
+          : plan.payerType === 'ALUNO'
+            ? alunoMap.get(plan.payerId ?? '') ?? parcelas[0]?.payerName ?? 'Cliente'
+            : parcelas[0]?.payerName ?? 'Cliente';
 
       const baseDescription = parcelas[0]?.description ?? 'Parcelamento';
 

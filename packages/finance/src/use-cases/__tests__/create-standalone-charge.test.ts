@@ -124,8 +124,10 @@ vi.mock('../../foundation/audit-log.service', () => ({
 }));
 
 describe('createStandaloneCharge', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    const { prisma } = await import('@alusa/database');
     vi.clearAllMocks();
+    vi.mocked(prisma.responsavel.findFirst).mockReset();
     ensureCustomerNotificationsEnabledMock.mockResolvedValue({ success: true });
     enqueueAsaasNotificationSyncMock.mockResolvedValue({ id: 'notification-outbox-1' });
   });
@@ -219,7 +221,9 @@ describe('createStandaloneCharge', () => {
       expect(prisma.charge.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            payerName: 'Keison Alencar',
+            payerName: 'Vera Lucia',
+            payerType: 'RESPONSAVEL',
+            payerId: 'resp-1',
           }),
         }),
       );
@@ -637,6 +641,70 @@ describe('createStandaloneCharge', () => {
       expect(prisma.$queryRaw).toHaveBeenCalled();
       expect(listSubscriptionPayments).not.toHaveBeenCalled();
       expect(prisma.charge.upsert).not.toHaveBeenCalled();
+    }, 10_000);
+
+    it('revalida o pagador dentro do lock de idempotência', async () => {
+      const { prisma, loadAsaasCredentials } = await import('@alusa/database');
+      const { ensureCustomer } = await import('../ensure-customer');
+      const { createSubscription } = await import('@alusa/asaas');
+
+      vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({
+        nome: 'Responsável 1',
+      } as never);
+      vi.mocked(ensureCustomer).mockResolvedValueOnce({
+        success: true,
+        data: { customerId: 'cust_shared', localCustomerId: 'cust_local', externalReference: 'ref' },
+      } as never);
+      vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'asaas_key' } as never);
+      vi.mocked(createSubscription).mockResolvedValueOnce({
+        id: 'sub_shared',
+        status: 'ACTIVE',
+        deleted: false,
+      } as never);
+
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([{
+          id: 'sub_local',
+          status: 'REQUESTED',
+          asaasSubscriptionId: null,
+          externalReference: 'alusa:standalone-subscription:sub_local',
+          description: 'Mensalidade manual',
+          billingType: 'PIX',
+          customerId: 'cust_local',
+          familyGroupId: null,
+          payerType: 'RESPONSAVEL',
+          payerId: 'resp-1',
+        }] as never)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([{
+          id: 'sub_local',
+          status: 'REQUESTED',
+          asaasSubscriptionId: 'sub_shared',
+          externalReference: 'alusa:standalone-subscription:sub_local',
+          description: 'Mensalidade manual',
+          billingType: 'PIX',
+          customerId: 'cust_local',
+          familyGroupId: null,
+          payerType: 'ALUNO',
+          payerId: 'aluno-1',
+        }] as never);
+
+      const result = await createStandaloneCharge({
+        contaId: 'conta-1',
+        actor: { type: 'USER', id: 'user-1' },
+        payer: { type: 'responsavel', responsavelId: 'resp-1' },
+        chargeType: 'SUBSCRIPTION',
+        billingType: 'PIX',
+        value: 65,
+        nextDueDate: '2099-12-01',
+        endDate: '2100-12-01',
+        cycle: 'MONTHLY',
+        uiRequestId: 'shared-idempotency-key',
+      });
+
+      expect(result).toEqual({ success: false, error: 'PAGADOR_DIVERGENTE' });
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(4);
     });
   });
 });

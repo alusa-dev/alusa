@@ -650,26 +650,34 @@ export async function applyAsaasNotificationPreferencesToCustomer(
 }
 
 export async function listCustomerIdsWithAsaas(contaId: string): Promise<string[]> {
-  // Busca alunos com asaasCustomerId da conta
-  const alunos = await prisma.aluno.findMany({
-    where: { contaId, asaasCustomerId: { not: null } },
-    select: { asaasCustomerId: true },
-  });
-
-  // Busca responsáveis financeiros das matrículas de alunos da conta
-  const matriculas = await prisma.matricula.findMany({
-    where: {
-      aluno: { contaId },
-      responsavelFinanceiroId: { not: null },
-    },
-    select: {
-      responsavelFinanceiro: {
-        select: { asaasCustomerId: true },
+  const [customers, alunos, matriculas] = await Promise.all([
+    // Customer é a identidade financeira canônica. Isto também inclui
+    // identidades cujo único papel atual está em CustomerPayer.
+    prisma.customer.findMany({
+      where: { contaId, asaasCustomerId: { not: null } },
+      select: { asaasCustomerId: true },
+    }),
+    prisma.aluno.findMany({
+      where: { contaId, asaasCustomerId: { not: null } },
+      select: { asaasCustomerId: true },
+    }),
+    // Compatibilidade com registros legados que ainda só têm a referência na
+    // entidade educacional, sem Customer materializado.
+    prisma.matricula.findMany({
+      where: {
+        contaId,
+        responsavelFinanceiroId: { not: null },
       },
-    },
-  });
+      select: {
+        responsavelFinanceiro: {
+          select: { asaasCustomerId: true },
+        },
+      },
+    }),
+  ]);
 
   const ids = new Set<string>();
+  customers.forEach((customer) => customer.asaasCustomerId && ids.add(customer.asaasCustomerId));
   alunos.forEach((a) => a.asaasCustomerId && ids.add(a.asaasCustomerId));
   matriculas.forEach((m) => m.responsavelFinanceiro?.asaasCustomerId && ids.add(m.responsavelFinanceiro.asaasCustomerId));
   return Array.from(ids);

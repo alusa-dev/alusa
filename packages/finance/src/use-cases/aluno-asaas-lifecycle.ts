@@ -9,6 +9,7 @@ import {
   loadAndValidateSubaccountKey,
   type EnsureAsaasCustomerPayer,
 } from './ensure-asaas-customer-for-payer';
+import { findCustomerForPayer } from '../customer/customer-identity';
 
 export type AlunoAsaasLifecycleResult = {
   success: boolean;
@@ -24,8 +25,8 @@ export async function syncAlunoInativacaoToAsaas(params: {
   const { alunoId, contaId } = params;
 
   try {
-    const aluno = await prisma.aluno.findUnique({
-      where: { id: alunoId },
+    const aluno = await prisma.aluno.findFirst({
+      where: { id: alunoId, contaId },
       include: {
         responsaveis: {
           include: { responsavel: true },
@@ -74,7 +75,12 @@ export async function syncAlunoInativacaoToAsaas(params: {
       return { success: true, action: 'SKIPPED', reason: 'ADULT_CUSTOMER_CREATED' };
     }
 
-    const customerId = isMenor ? responsavel?.asaasCustomerId : aluno.asaasCustomerId;
+    const identity = await findCustomerForPayer(
+      contaId,
+      isMenor ? 'RESPONSAVEL' : 'ALUNO',
+      isMenor ? responsavel?.id ?? '' : aluno.id,
+    );
+    const customerId = identity?.asaasCustomerId ?? (isMenor ? responsavel?.asaasCustomerId : aluno.asaasCustomerId);
     if (!customerId) {
       return { success: true, action: 'SKIPPED', reason: 'NO_CUSTOMER_ID' };
     }
@@ -125,8 +131,8 @@ export async function syncAlunoToAsaasProvider(params: {
   const { alunoId, contaId } = params;
 
   try {
-    const aluno = await prisma.aluno.findUnique({
-      where: { id: alunoId },
+    const aluno = await prisma.aluno.findFirst({
+      where: { id: alunoId, contaId },
       include: {
         responsaveis: {
           include: { responsavel: true },

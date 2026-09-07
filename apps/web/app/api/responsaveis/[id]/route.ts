@@ -360,7 +360,6 @@ export async function DELETE(_req: NextRequest, context: { params: IdParams }) {
     }
 
     const [
-      customers,
       familiasIds,
       rematriculasIds,
       alunosVinculados,
@@ -370,14 +369,6 @@ export async function DELETE(_req: NextRequest, context: { params: IdParams }) {
       rematriculaFamiliarPendente,
       vendasPendentes,
     ] = await Promise.all([
-      prisma.customer.findMany({
-        where: {
-          contaId,
-          payerType: 'RESPONSAVEL',
-          payerId: responsavelId,
-        },
-        select: { id: true },
-      }),
       prisma.matriculaFamiliar.findMany({
         where: { contaId, responsavelId },
         select: { id: true },
@@ -394,6 +385,7 @@ export async function DELETE(_req: NextRequest, context: { params: IdParams }) {
       }),
       prisma.matricula.count({
         where: {
+          contaId,
           responsavelFinanceiroId: responsavelId,
           aluno: { contaId },
           status: { notIn: ['CANCELADA', 'RECUSADA'] },
@@ -427,13 +419,53 @@ export async function DELETE(_req: NextRequest, context: { params: IdParams }) {
       ...rematriculasIds.map((row) => row.id),
     ];
 
+    const [standaloneSubscriptions, standaloneInstallmentPlans, billingAgreements] = await Promise.all([
+      prisma.standaloneSubscription.count({
+        where: {
+          contaId,
+          OR: [
+            { payerType: 'RESPONSAVEL', payerId: responsavelId },
+            ...(familyGroupIds.length ? [{ familyGroupId: { in: familyGroupIds } }] : []),
+          ],
+          status: { in: ['REQUESTED', 'ACTIVE'] },
+        },
+      }),
+      prisma.standaloneInstallmentPlan.count({
+        where: {
+          contaId,
+          OR: [
+            { payerType: 'RESPONSAVEL', payerId: responsavelId },
+            ...(familyGroupIds.length ? [{ familyGroupId: { in: familyGroupIds } }] : []),
+          ],
+          status: 'ACTIVE',
+        },
+      }),
+      prisma.billingAgreement.count({
+        where: {
+          contaId,
+          OR: [
+            { payerType: 'RESPONSAVEL', payerId: responsavelId },
+            ...(familyGroupIds.length ? [{ billingGroupKey: { in: familyGroupIds } }] : []),
+          ],
+          status: { in: ['DRAFT', 'PENDING_PROVISION', 'ACTIVE', 'CANCELLATION_PENDING', 'REQUIRES_RECONCILIATION'] },
+        },
+      }),
+    ]);
+
     const chargeOr: Prisma.ChargeWhereInput[] = [
-      ...(customers.length > 0
-        ? [{ customerId: { in: customers.map((c) => c.id) } } satisfies Prisma.ChargeWhereInput]
-        : []),
+      { payerType: 'RESPONSAVEL', payerId: responsavelId },
       ...(familyGroupIds.length > 0
         ? [{ familyGroupId: { in: familyGroupIds } } satisfies Prisma.ChargeWhereInput]
         : []),
+      {
+        sale: { contaId, responsavelId },
+      },
+      {
+        cobranca: {
+          contaId,
+          matricula: { contaId, responsavelFinanceiroId: responsavelId },
+        },
+      },
     ];
 
     const cobrancasPendentes =
@@ -467,6 +499,9 @@ export async function DELETE(_req: NextRequest, context: { params: IdParams }) {
     if (vendasPendentes > 0) {
       conflitos.push('existem vendas pendentes vinculadas a este responsável');
     }
+    if (standaloneSubscriptions > 0 || standaloneInstallmentPlans > 0 || billingAgreements > 0) {
+      conflitos.push('existem obrigações financeiras standalone ou acordos de cobrança vinculados a este responsável');
+    }
 
     if (conflitos.length > 0) {
       return NextResponse.json(
@@ -479,8 +514,16 @@ export async function DELETE(_req: NextRequest, context: { params: IdParams }) {
       );
     }
 
-    const deleted = await prisma.responsavel.deleteMany({
-      where: { id: responsavelId, contaId },
+    const deleted = await prisma.$transaction(async (tx) => {
+      // CustomerPayer é um alias polimórfico sem FK para Responsavel. Removê-lo
+      // junto com a pessoa evita deixar um papel apontando para um registro
+      // apagado, sem remover o Customer canônico nem o histórico financeiro.
+      await tx.customerPayer.deleteMany({
+        where: { contaId, payerType: 'RESPONSAVEL', payerId: responsavelId },
+      });
+      return tx.responsavel.deleteMany({
+        where: { id: responsavelId, contaId },
+      });
     });
 
     if (deleted.count === 0) {

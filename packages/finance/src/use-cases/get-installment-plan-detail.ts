@@ -1,6 +1,7 @@
 import { prisma } from '@alusa/database';
-import type { InstallmentStatus } from '@prisma/client';
+import type { CustomerPayerType, InstallmentStatus } from '@prisma/client';
 import { buildPaymentReferencePrefix } from '../core';
+import { findSolePayerForCustomer, type ObligationPayer } from '../customer/customer-identity';
 import { resolveUnifiedChargeStatus } from '../dtos/unified-billing';
 import { resolveChargeDisplayStatus, type ChargeDisplayStatus } from '../mappers/asaas-display-status';
 
@@ -438,7 +439,10 @@ async function buildStandaloneDetail(
     firstDueDate: Date;
     createdAt: Date;
     asaasInstallmentId: string | null;
-    customer: { payerType: string; payerId: string };
+    customerId?: string;
+    payerType?: CustomerPayerType | null;
+    payerId?: string | null;
+    customer?: { payerType: CustomerPayerType; payerId: string } | null;
   },
   contaId: string,
   db: typeof prisma,
@@ -511,9 +515,26 @@ async function buildStandaloneDetail(
   );
   const valorTotal = parcelas.reduce((acc, p) => acc + p.valor, 0);
 
-  // Resolver nome do pagador
-  const customerInfo = await resolveCustomerName(plan.customer, contaId, db);
-  const displayName = charges.find((charge) => charge.payerName && charge.payerName.trim().length > 0)?.payerName ?? null;
+  // O pagador pertence ao parcelamento. Customer é apenas um fallback de
+  // compatibilidade para registros legados e só é aceito quando há um único
+  // alias conhecido; nunca é usado para autorizar ou localizar a obrigação.
+  const explicitPayer: ObligationPayer | null =
+    plan.payerType && plan.payerId
+      ? { payerType: plan.payerType, payerId: plan.payerId }
+      : null;
+  const legacyPayer =
+    !explicitPayer && plan.customerId && 'customerPayer' in db
+      ? await findSolePayerForCustomer(contaId, plan.customerId, db)
+      : !explicitPayer
+        ? plan.customer ?? null
+        : null;
+  const customerInfo = await resolvePayerName(explicitPayer ?? legacyPayer, contaId, db);
+  const chargeDisplayName = charges.find((charge) => charge.payerName && charge.payerName.trim().length > 0)?.payerName ?? null;
+  const displayName = explicitPayer
+    ? customerInfo.nome !== 'Cliente'
+      ? customerInfo.nome
+      : chargeDisplayName
+    : chargeDisplayName;
 
   const statusDerived = deriveStatus(
     plan.status,
@@ -554,14 +575,16 @@ async function buildStandaloneDetail(
 // Resolução de nome do pagador
 // ---------------------------------------------------------------------------
 
-async function resolveCustomerName(
-  customer: { payerType: string; payerId: string },
+async function resolvePayerName(
+  payer: ObligationPayer | null,
   contaId: string,
   db: typeof prisma,
 ): Promise<{ nome: string; email?: string; telefone?: string }> {
-  if (customer.payerType === 'RESPONSAVEL') {
+  if (!payer) return { nome: 'Cliente' };
+
+  if (payer.payerType === 'RESPONSAVEL') {
     const resp = await db.responsavel.findFirst({
-      where: { id: customer.payerId, contaId },
+      where: { id: payer.payerId, contaId },
       select: { nome: true, email: true, telefone: true },
     });
     return {
@@ -572,7 +595,7 @@ async function resolveCustomerName(
   }
 
   const aluno = await db.aluno.findFirst({
-    where: { id: customer.payerId, contaId },
+    where: { id: payer.payerId, contaId },
     select: { nome: true, email: true, telefone: true },
   });
   return {

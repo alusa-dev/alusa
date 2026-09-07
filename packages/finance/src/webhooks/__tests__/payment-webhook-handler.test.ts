@@ -632,6 +632,55 @@ describe('handlePaymentWebhook', () => {
     });
   });
 
+  it('preserva o pagador explícito da charge quando o plano legado ainda é ambíguo', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.installmentPlan.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.standaloneInstallmentPlan.findFirst).mockResolvedValueOnce({
+      id: 'plan-ambiguous-1',
+      externalReference: 'alusa:standalone-installment:plan-ambiguous-1',
+      billingType: 'PIX',
+      interestValue: null,
+      fineValue: null,
+      fineType: null,
+      discountValue: null,
+      discountType: null,
+      discountDueDateLimitDays: null,
+      customerId: 'customer-shared-1',
+      familyGroupId: null,
+      payerType: null,
+      payerId: null,
+    } as never);
+    vi.mocked(prisma.charge.upsert).mockResolvedValueOnce({ id: 'charge-ambiguous-1' } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay-ambiguous-1',
+        status: 'CONFIRMED',
+        value: 90,
+        netValue: 88,
+        installment: 'asaas-installment-ambiguous-1',
+        installmentNumber: 1,
+        dueDate: '2026-08-01',
+        billingType: 'PIX',
+      },
+    });
+
+    expect(result).toMatchObject({ success: true, stateChanged: true });
+    const upsert = vi.mocked(prisma.charge.upsert).mock.calls[0]?.[0];
+    expect(upsert?.create).toEqual(expect.objectContaining({
+      payerType: null,
+      payerId: null,
+    }));
+    expect(upsert?.update).not.toHaveProperty('payerType');
+    expect(upsert?.update).not.toHaveProperty('payerId');
+  });
+
   it('deve atualizar charge standalone por asaasPaymentId mesmo sem externalReference', async () => {
     const { prisma } = await import('@alusa/database');
 

@@ -75,6 +75,9 @@ export async function ensureAcademicChargeForCobranca(
       vencimento: true,
       formaPagamento: true,
       asaasStatus: true,
+      matricula: {
+        select: { alunoId: true, responsavelFinanceiroId: true },
+      },
     },
   });
 
@@ -114,6 +117,8 @@ export async function ensureAcademicChargeForCobranca(
     input.payment?.billingType ?? mapFormaPagamentoToBillingType(cobranca.formaPagamento);
   const description = input.payment?.description ?? cobranca.descricao ?? null;
   const invoiceUrl = input.payment?.invoiceUrl ?? undefined;
+  const payerType = cobranca.matricula.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO';
+  const payerId = cobranca.matricula.responsavelFinanceiroId ?? cobranca.matricula.alunoId;
 
   const charge = await prisma.charge.upsert({
     where: { cobrancaId: cobranca.id },
@@ -124,6 +129,8 @@ export async function ensureAcademicChargeForCobranca(
       dueDate,
       value,
       description,
+      payerType,
+      payerId,
       ...(invoiceUrl ? { invoiceUrl } : {}),
       status: chargeStatus,
       statusUpdatedAt: new Date(),
@@ -137,6 +144,8 @@ export async function ensureAcademicChargeForCobranca(
       statusUpdatedAt: new Date(),
       asaasPaymentId: input.asaasPaymentId,
       description,
+      payerType,
+      payerId,
       value,
       dueDate,
       billingType,
@@ -145,7 +154,7 @@ export async function ensureAcademicChargeForCobranca(
     select: { id: true },
   });
 
-  await chargeReadModelService.projectChargeReadModelByCobrancaId(cobranca.id).catch(() => undefined);
+  await chargeReadModelService.projectChargeReadModelByCobrancaId(cobranca.id, input.contaId).catch(() => undefined);
 
   return {
     chargeId: charge.id,

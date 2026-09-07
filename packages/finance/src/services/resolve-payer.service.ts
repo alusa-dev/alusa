@@ -2,6 +2,7 @@ import { prisma } from '@alusa/database';
 import { resolvePayer } from '@alusa/domain';
 import type { PayerResolvedDTO } from '@alusa/domain';
 import { ensureCustomer } from '../use-cases/ensure-customer';
+import { findCustomerForPayer } from '../customer/customer-identity';
 
 /**
  * ResolvePayerService — Serviço único de resolução de pagador
@@ -107,17 +108,19 @@ export async function resolvePayerFromAluno(
   let asaasCustomerId: string | null = null;
 
   if (result.payer.type === 'ALUNO') {
+    const identity = await findCustomerForPayer(input.contaId, 'ALUNO', result.payer.id);
     const aluno = await prisma.aluno.findFirst({
       where: { id: result.payer.id, contaId: input.contaId },
       select: { asaasCustomerId: true },
     });
-    asaasCustomerId = aluno?.asaasCustomerId ?? null;
+    asaasCustomerId = identity?.asaasCustomerId ?? aluno?.asaasCustomerId ?? null;
   } else {
+    const identity = await findCustomerForPayer(input.contaId, 'RESPONSAVEL', result.payer.id);
     const responsavel = await prisma.responsavel.findFirst({
       where: { id: result.payer.id, contaId: input.contaId },
       select: { asaasCustomerId: true },
     });
-    asaasCustomerId = responsavel?.asaasCustomerId ?? null;
+    asaasCustomerId = identity?.asaasCustomerId ?? responsavel?.asaasCustomerId ?? null;
   }
 
   return {
@@ -187,9 +190,16 @@ export async function resolvePayerFromMatricula(
   }
 
   const isMenor = result.payer.type === 'RESPONSAVEL';
-  const asaasCustomerId = result.payer.type === 'ALUNO'
-    ? matricula.aluno.asaasCustomerId
-    : matricula.responsavelFinanceiro?.asaasCustomerId ?? null;
+  const canonicalCustomer = await findCustomerForPayer(
+    input.contaId,
+    result.payer.type,
+    result.payer.id,
+  );
+  const asaasCustomerId = canonicalCustomer?.asaasCustomerId ?? (
+    result.payer.type === 'ALUNO'
+      ? matricula.aluno.asaasCustomerId
+      : matricula.responsavelFinanceiro?.asaasCustomerId ?? null
+  );
 
   return {
     success: true,

@@ -4,6 +4,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@alusa/database';
 import { isMenorDeIdade } from '@alusa/domain';
+import { findCustomerForPayer } from '@alusa/finance';
 import {
   financePayerSearchQueryDTOSchema,
   financePayerSearchResultDTOSchema,
@@ -37,7 +38,8 @@ function alunoMatchesQueryDirectly(
   return false;
 }
 
-function buildResponsavelCandidate(resp: ResponsavelSearchRow) {
+function buildResponsavelCandidate(resp: ResponsavelSearchRow, canonicalCustomerId?: string | null) {
+  const hasAsaasCustomerId = Boolean(canonicalCustomerId ?? resp.asaasCustomerId);
   return {
     id: resp.id,
     name: resp.nome,
@@ -52,9 +54,9 @@ function buildResponsavelCandidate(resp: ResponsavelSearchRow) {
       type: 'responsavel' as const,
       id: resp.id,
       name: resp.nome,
-      hasAsaasCustomerId: !!resp.asaasCustomerId,
+      hasAsaasCustomerId,
     },
-    financialStatus: resp.asaasCustomerId ? ('OK' as const) : ('INCOMPLETE' as const),
+    financialStatus: hasAsaasCustomerId ? ('OK' as const) : ('INCOMPLETE' as const),
   };
 }
 
@@ -156,8 +158,12 @@ export async function GET(request: NextRequest) {
   const results: Array<Record<string, unknown>> = [];
   const responsavelById = new Map<string, ReturnType<typeof buildResponsavelCandidate>>();
 
-  const upsertResponsavel = (resp: ResponsavelSearchRow) => {
-    responsavelById.set(resp.id, buildResponsavelCandidate(resp));
+  const upsertResponsavel = async (resp: ResponsavelSearchRow) => {
+    const canonicalCustomer = await findCustomerForPayer(contaId, 'RESPONSAVEL', resp.id);
+    responsavelById.set(
+      resp.id,
+      buildResponsavelCandidate(resp, canonicalCustomer?.asaasCustomerId),
+    );
   };
 
   // Processar alunos: menores e matches indiretos (via responsável) retornam o responsável financeiro.
@@ -168,12 +174,14 @@ export async function GET(request: NextRequest) {
 
     if (menor || !matchedDirectly) {
       if (respFinanceiro) {
-        upsertResponsavel(respFinanceiro);
+        await upsertResponsavel(respFinanceiro);
       }
       continue;
     }
 
     // Aluno maior de idade encontrado pelo próprio nome/CPF.
+    const canonicalAlunoCustomer = await findCustomerForPayer(contaId, 'ALUNO', aluno.id);
+    const hasAsaasCustomerId = Boolean(canonicalAlunoCustomer?.asaasCustomerId ?? aluno.asaasCustomerId);
     results.push({
       id: aluno.id,
       name: aluno.nome,
@@ -188,14 +196,14 @@ export async function GET(request: NextRequest) {
         type: 'aluno',
         id: aluno.id,
         name: aluno.nome,
-        hasAsaasCustomerId: !!aluno.asaasCustomerId,
+        hasAsaasCustomerId,
       },
-      financialStatus: aluno.asaasCustomerId ? 'OK' : 'INCOMPLETE',
+      financialStatus: hasAsaasCustomerId ? 'OK' : 'INCOMPLETE',
     });
   }
 
   for (const resp of responsaveis) {
-    upsertResponsavel(resp);
+    await upsertResponsavel(resp);
   }
 
   for (const responsavel of responsavelById.values()) {

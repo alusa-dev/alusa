@@ -270,7 +270,7 @@ export function createPrismaBillingAgreementRepository(
       const row = await prisma.billingAgreement.findFirst({
         where: { id: input.agreementId, contaId: input.contaId },
         include: {
-          customer: { select: { asaasCustomerId: true } },
+          customer: { select: { asaasCustomerId: true, payerType: true, payerId: true } },
           allocations: {
             include: {
               sourceCharge: {
@@ -305,6 +305,8 @@ export function createPrismaBillingAgreementRepository(
         row.payerId,
         prisma,
       );
+      const historicalCustomerMatchesPayer =
+        row.customer?.payerType === row.payerType && row.customer.payerId === row.payerId;
       const charges = new Map<string, BillingCharge>();
       let currentCycle: BillingAgreementContext['currentCycle'] = null;
       const effectiveDate = input.effectiveDate ?? new Date().toISOString().slice(0, 10);
@@ -383,7 +385,9 @@ export function createPrismaBillingAgreementRepository(
         payer: {
           type: row.payerType,
           id: row.payerId,
-          customerId: canonicalCustomer?.asaasCustomerId ?? row.customer?.asaasCustomerId ?? '',
+          customerId: canonicalCustomer?.asaasCustomerId ??
+            (historicalCustomerMatchesPayer ? row.customer?.asaasCustomerId : null) ??
+            '',
         },
         status: row.status,
         billingType: parseBillingType(row.billingType),

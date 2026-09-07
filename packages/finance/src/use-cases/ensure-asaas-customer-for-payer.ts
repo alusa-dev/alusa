@@ -11,7 +11,11 @@ import {
 
 import { prisma } from '@alusa/database';
 import { decryptSecret } from '@alusa/database';
-import { linkCustomerIdentity, CustomerIdentityConflictError } from '../customer/customer-identity';
+import {
+  findCustomerForPayer,
+  linkCustomerIdentity,
+  CustomerIdentityConflictError,
+} from '../customer/customer-identity';
 import { isValidCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
 import { syncCustomerNotificationChannelsFromTenantPreferences } from '../services/customer-notification-bridge';
 import {
@@ -440,15 +444,40 @@ export async function ensureAsaasCustomerForPayer(
   // O mock de pagamentos precisa ser resolvido antes da leitura das
   // credenciais, pois o ambiente de teste não provisiona subconta real.
   if (isMockPaymentsMode()) {
-    const customerId = `mock-customer-${input.payer.type.toLowerCase()}-${input.payer.id}`;
+    const existingIdentity = await findCustomerForPayer(
+      input.contaId,
+      input.payer.type,
+      input.payer.id,
+    );
+    const requestedCustomerId = normalizeString(input.payer.asaasCustomerId);
+    if (
+      existingIdentity?.asaasCustomerId &&
+      requestedCustomerId &&
+      existingIdentity.asaasCustomerId !== requestedCustomerId
+    ) {
+      return {
+        ok: false,
+        error: 'PAYER_INVALID',
+        message: 'O pagador está vinculado a duas identidades financeiras diferentes.',
+      };
+    }
+    const customerByRemote = !existingIdentity?.asaasCustomerId && requestedCustomerId
+      ? await prisma.customer.findFirst({
+          where: { contaId: input.contaId, asaasCustomerId: requestedCustomerId },
+          select: { asaasCustomerId: true, externalReference: true },
+        })
+      : null;
+    const existingRemoteId = existingIdentity?.asaasCustomerId ?? customerByRemote?.asaasCustomerId ?? requestedCustomerId;
+    const customerId = existingRemoteId ?? `mock-customer-${input.payer.type.toLowerCase()}-${input.payer.id}`;
+    const reused = Boolean(existingRemoteId);
     if (input.persist !== false) {
       externalReference = await persistCustomerId(input.contaId, input.payer, customerId, externalReference);
     }
     return {
       ok: true,
       customerId,
-      externalReference,
-      reused: false,
+      externalReference: existingIdentity?.externalReference ?? customerByRemote?.externalReference ?? externalReference,
+      reused,
     };
   }
 
@@ -490,7 +519,24 @@ export async function ensureAsaasCustomerForPayer(
   } as CreateCustomerInput;
 
   try {
-    const localCustomerId = normalizeString(input.payer.asaasCustomerId);
+    const knownIdentity = await findCustomerForPayer(
+      input.contaId,
+      input.payer.type,
+      input.payer.id,
+    );
+    const requestedCustomerId = normalizeString(input.payer.asaasCustomerId);
+    if (
+      knownIdentity?.asaasCustomerId &&
+      requestedCustomerId &&
+      knownIdentity.asaasCustomerId !== requestedCustomerId
+    ) {
+      return {
+        ok: false,
+        error: 'PAYER_INVALID',
+        message: 'O pagador está vinculado a duas identidades financeiras diferentes.',
+      };
+    }
+    const localCustomerId = knownIdentity?.asaasCustomerId ?? requestedCustomerId;
 
     if (localCustomerId) {
       step = 'GET_LOCAL_CUSTOMER';

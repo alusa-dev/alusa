@@ -1,5 +1,5 @@
 import { prisma } from '@alusa/database';
-import type { ChargeStatus, StatusCobranca } from '@prisma/client';
+import type { ChargeStatus, CustomerPayerType, StatusCobranca } from '@prisma/client';
 
 import { parseExternalReference } from '../core';
 import { resolveUnifiedChargeStatus } from '../dtos/unified-billing';
@@ -90,35 +90,74 @@ function projectionId(sourceKind: 'CHARGE' | 'COBRANCA', sourceId: string): stri
   return `crm:${sourceKind}:${sourceId}`;
 }
 
-export async function projectChargeReadModelByChargeId(chargeId: string): Promise<void> {
+async function resolveObligationPayerName(params: {
+  contaId: string;
+  payerType: CustomerPayerType | null;
+  payerId: string | null;
+  fallback: string | null | undefined;
+}): Promise<string> {
+  if (params.payerType && params.payerId) {
+    if (params.payerType === 'RESPONSAVEL') {
+      const responsavel = await prisma.responsavel.findFirst({
+        where: { contaId: params.contaId, id: params.payerId },
+        select: { nome: true },
+      });
+      if (responsavel?.nome) return responsavel.nome;
+    } else if (params.payerType === 'ALUNO') {
+      const aluno = await prisma.aluno.findFirst({
+        where: { contaId: params.contaId, id: params.payerId },
+        select: { nome: true },
+      });
+      if (aluno?.nome) return aluno.nome;
+    }
+  }
+
+  return params.fallback ?? 'Cliente';
+}
+
+export async function projectChargeReadModelByChargeId(chargeId: string, contaId: string): Promise<void> {
   if (!readModelEnabled()) return;
 
-  const charge = await prisma.charge.findUnique({
-    where: { id: chargeId },
+  const charge = await prisma.charge.findFirst({
+    where: { id: chargeId, contaId },
     include: {
       cobranca: {
         include: {
           matricula: {
             include: {
               aluno: { select: { id: true, nome: true } },
-              responsavelFinanceiro: { select: { nome: true } },
+              responsavelFinanceiro: { select: { id: true, nome: true } },
             },
           },
         },
       },
-      standaloneInstallmentPlan: { select: { familyGroupId: true } },
-      standaloneSubscription: { select: { familyGroupId: true } },
+      standaloneInstallmentPlan: { select: { familyGroupId: true, payerType: true, payerId: true } },
+      standaloneSubscription: { select: { familyGroupId: true, payerType: true, payerId: true } },
     },
   });
 
   if (!charge) return;
 
   const origin = charge.cobrancaId ? 'ACADEMIC' : 'STANDALONE';
-  const payerName =
-    charge.payerName ??
-    charge.cobranca?.matricula.responsavelFinanceiro?.nome ??
-    charge.cobranca?.matricula.aluno.nome ??
-    'Cliente';
+  const payerType = charge.payerType
+    ?? (charge.cobranca
+      ? charge.cobranca.matricula.responsavelFinanceiro ? 'RESPONSAVEL' : 'ALUNO'
+      : charge.standaloneSubscription?.payerType ?? charge.standaloneInstallmentPlan?.payerType ?? null);
+  const payerId = charge.payerId
+    ?? (charge.cobranca
+      ? charge.cobranca.matricula.responsavelFinanceiro?.id ?? charge.cobranca.matricula.aluno.id
+      : charge.standaloneSubscription?.payerId ?? charge.standaloneInstallmentPlan?.payerId ?? null);
+  const payerName = await resolveObligationPayerName({
+    contaId: charge.contaId,
+    payerType,
+    payerId,
+    fallback: charge.payerName
+      ?? (payerType === 'RESPONSAVEL'
+        ? charge.cobranca?.matricula.responsavelFinanceiro?.nome
+        : payerType === 'ALUNO'
+          ? charge.cobranca?.matricula.aluno.nome
+          : null),
+  });
   const value = charge.value != null ? Number(charge.value) : Number(charge.cobranca?.valor ?? 0);
   const dueDate = charge.dueDate ?? charge.cobranca?.vencimento ?? null;
   const billingType = charge.billingType ?? charge.cobranca?.formaPagamento ?? null;
@@ -151,6 +190,8 @@ export async function projectChargeReadModelByChargeId(chargeId: string): Promis
       groupId,
       description: charge.description ?? charge.cobranca?.descricao ?? null,
       payerName,
+      payerType,
+      payerId,
       value,
       dueDate,
       billingType,
@@ -184,6 +225,8 @@ export async function projectChargeReadModelByChargeId(chargeId: string): Promis
       groupId,
       description: charge.description ?? charge.cobranca?.descricao ?? null,
       payerName,
+      payerType,
+      payerId,
       value,
       dueDate,
       billingType,
@@ -209,16 +252,16 @@ export async function projectChargeReadModelByChargeId(chargeId: string): Promis
   });
 }
 
-export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Promise<void> {
+export async function projectChargeReadModelByCobrancaId(cobrancaId: string, contaId: string): Promise<void> {
   if (!readModelEnabled()) return;
 
-  const cobranca = await prisma.cobranca.findUnique({
-    where: { id: cobrancaId },
+  const cobranca = await prisma.cobranca.findFirst({
+    where: { id: cobrancaId, contaId },
     include: {
       matricula: {
         include: {
           aluno: { select: { id: true, nome: true, contaId: true } },
-          responsavelFinanceiro: { select: { nome: true } },
+          responsavelFinanceiro: { select: { id: true, nome: true } },
         },
       },
     },
@@ -226,8 +269,17 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
   if (!cobranca) return;
 
   const linkedCharge = await prisma.charge.findFirst({
-    where: { cobrancaId: cobranca.id },
-    select: { id: true, externalReference: true, asaasPaymentId: true, familyGroupId: true, asaasStatus: true, liquidacaoStatus: true },
+    where: { contaId, cobrancaId: cobranca.id },
+    select: {
+      id: true,
+      externalReference: true,
+      asaasPaymentId: true,
+      familyGroupId: true,
+      asaasStatus: true,
+      liquidacaoStatus: true,
+      payerType: true,
+      payerId: true,
+    },
   });
 
   const chargeType = inferChargeType({
@@ -235,7 +287,20 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
     cobrancaTipo: cobranca.tipo,
   });
 
-  const contaId = cobranca.matricula.aluno.contaId;
+  const payerType = linkedCharge?.payerType
+    ?? (cobranca.matricula.responsavelFinanceiro ? 'RESPONSAVEL' : 'ALUNO');
+  const payerId = linkedCharge?.payerId
+    ?? (payerType === 'RESPONSAVEL'
+      ? cobranca.matricula.responsavelFinanceiro?.id ?? null
+      : cobranca.matricula.aluno.id);
+  const payerName = await resolveObligationPayerName({
+    contaId,
+    payerType,
+    payerId,
+    fallback: cobranca.matricula.responsavelFinanceiro?.id === payerId
+      ? cobranca.matricula.responsavelFinanceiro.nome
+      : cobranca.matricula.aluno.nome,
+  });
   const groupId = resolveGroupId({
     familyGroupId: linkedCharge?.familyGroupId ?? null,
     matriculaFamiliarId: cobranca.matricula.matriculaFamiliarId ?? null,
@@ -256,7 +321,9 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
       linkStatus: inferLinkStatus(cobranca.asaasPaymentId ?? linkedCharge?.asaasPaymentId ?? null),
       groupId,
       description: cobranca.descricao ?? cobranca.tipo,
-      payerName: cobranca.matricula.responsavelFinanceiro?.nome ?? cobranca.matricula.aluno.nome,
+      payerName,
+      payerType,
+      payerId,
       value: Number(cobranca.valor),
       dueDate: cobranca.vencimento,
       billingType: cobranca.formaPagamento,
@@ -289,7 +356,9 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
       linkStatus: inferLinkStatus(cobranca.asaasPaymentId ?? linkedCharge?.asaasPaymentId ?? null),
       groupId,
       description: cobranca.descricao ?? cobranca.tipo,
-      payerName: cobranca.matricula.responsavelFinanceiro?.nome ?? cobranca.matricula.aluno.nome,
+      payerName,
+      payerType,
+      payerId,
       value: Number(cobranca.valor),
       dueDate: cobranca.vencimento,
       billingType: cobranca.formaPagamento,
@@ -335,21 +404,21 @@ export async function backfillChargeReadModel(params?: {
       where: params?.contaId ? { contaId: params.contaId } : undefined,
       orderBy: { updatedAt: 'desc' },
       take: limit,
-      select: { id: true },
+      select: { id: true, contaId: true },
     }),
     prisma.cobranca.findMany({
       where: params?.contaId ? { contaId: params.contaId } : undefined,
       orderBy: { updatedAt: 'desc' },
       take: limit,
-      select: { id: true },
+      select: { id: true, contaId: true },
     }),
   ]);
 
   for (const charge of charges) {
-    await projectChargeReadModelByChargeId(charge.id);
+    await projectChargeReadModelByChargeId(charge.id, charge.contaId);
   }
   for (const cobranca of cobrancas) {
-    await projectChargeReadModelByCobrancaId(cobranca.id);
+    await projectChargeReadModelByCobrancaId(cobranca.id, cobranca.contaId);
   }
 
   const result = {

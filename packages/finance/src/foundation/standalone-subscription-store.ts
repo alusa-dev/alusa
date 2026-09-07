@@ -1,4 +1,4 @@
-import { Prisma, type SubscriptionStatus } from '@prisma/client';
+import { Prisma, type CustomerPayerType, type SubscriptionStatus } from '@prisma/client';
 
 type StandaloneSubscriptionProjection = {
   id: string;
@@ -9,6 +9,8 @@ type StandaloneSubscriptionProjection = {
   billingType: string;
   customerId: string;
   familyGroupId: string | null;
+  payerType: CustomerPayerType | null;
+  payerId: string | null;
 };
 
 type StandaloneSubscriptionClient = {
@@ -32,6 +34,8 @@ type CreateStandaloneSubscriptionParams = {
   id: string;
   contaId: string;
   customerId: string;
+  payerType: CustomerPayerType;
+  payerId: string;
   externalReference: string;
   idempotencyKey: string;
   status: SubscriptionStatus;
@@ -87,6 +91,8 @@ export async function findStandaloneSubscription(
         billingType: true,
         customerId: true,
         familyGroupId: true,
+        payerType: true,
+        payerId: true,
       },
     });
   }
@@ -107,7 +113,9 @@ export async function findStandaloneSubscription(
       description,
       "billingType",
       "customerId",
-      "familyGroupId"
+      "familyGroupId",
+      "payerType",
+      "payerId"
     FROM "StandaloneSubscription"
     WHERE "contaId" = ${params.contaId}
       AND (${rawConditions})
@@ -130,6 +138,8 @@ export async function createStandaloneSubscriptionRecord(
         id: params.id,
         contaId: params.contaId,
         customerId: params.customerId,
+        payerType: params.payerType,
+        payerId: params.payerId,
         externalReference: params.externalReference,
         idempotencyKey: params.idempotencyKey,
         status: params.status,
@@ -151,6 +161,8 @@ export async function createStandaloneSubscriptionRecord(
         billingType: true,
         customerId: true,
         familyGroupId: true,
+        payerType: true,
+        payerId: true,
       },
     });
   }
@@ -161,6 +173,8 @@ export async function createStandaloneSubscriptionRecord(
       id,
       "contaId",
       "customerId",
+      "payerType",
+      "payerId",
       "externalReference",
       "idempotencyKey",
       status,
@@ -179,6 +193,8 @@ export async function createStandaloneSubscriptionRecord(
       ${params.id},
       ${params.contaId},
       ${params.customerId},
+      ${params.payerType}::"CustomerPayerType",
+      ${params.payerId},
       ${params.externalReference},
       ${params.idempotencyKey},
       ${params.status}::"SubscriptionStatus",
@@ -202,7 +218,9 @@ export async function createStandaloneSubscriptionRecord(
       description,
       "billingType",
       "customerId",
-      "familyGroupId"
+      "familyGroupId",
+      "payerType",
+      "payerId"
   `);
 
   if (!rows[0]) {
@@ -219,6 +237,8 @@ export async function updateStandaloneSubscriptionRemoteLink(
     contaId: string;
     asaasSubscriptionId: string;
     status: SubscriptionStatus;
+    payerType?: CustomerPayerType;
+    payerId?: string;
   },
 ): Promise<StandaloneSubscriptionProjection> {
   const delegate = getStandaloneSubscriptionDelegate(client);
@@ -230,6 +250,9 @@ export async function updateStandaloneSubscriptionRemoteLink(
         asaasSubscriptionId: params.asaasSubscriptionId,
         status: params.status,
         statusUpdatedAt: now,
+        ...(params.payerType && params.payerId
+          ? { payerType: params.payerType, payerId: params.payerId }
+          : {}),
       },
       select: {
         id: true,
@@ -240,16 +263,21 @@ export async function updateStandaloneSubscriptionRemoteLink(
         billingType: true,
         customerId: true,
         familyGroupId: true,
+        payerType: true,
+        payerId: true,
       },
     });
   }
 
+  const payerContext = params.payerType && params.payerId
+    ? Prisma.sql`, "payerType" = ${params.payerType}::"CustomerPayerType", "payerId" = ${params.payerId}`
+    : Prisma.empty;
   const rows = await client.$queryRaw<Array<StandaloneSubscriptionProjection>>(Prisma.sql`
     UPDATE "StandaloneSubscription"
     SET
       "asaasSubscriptionId" = ${params.asaasSubscriptionId},
       status = ${params.status}::"SubscriptionStatus",
-      "statusUpdatedAt" = ${now},
+      "statusUpdatedAt" = ${now}${payerContext},
       "updatedAt" = ${now}
     WHERE id = ${params.id}
       AND "contaId" = ${params.contaId}
@@ -261,7 +289,9 @@ export async function updateStandaloneSubscriptionRemoteLink(
       description,
       "billingType",
       "customerId",
-      "familyGroupId"
+      "familyGroupId",
+      "payerType",
+      "payerId"
   `);
   if (!rows[0]) throw new Error('STANDALONE_SUBSCRIPTION_NOT_FOUND');
   return rows[0];

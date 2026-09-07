@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runWithTenant } from '@/lib/prisma-tenant';
-import { requirePortalUser, resolvePortalScopedAlunoIds } from '@/features/portal/api-helpers';
+import {
+  requirePortalUser,
+  resolvePortalResponsavelId,
+  resolvePortalScopedAlunoIds,
+} from '@/features/portal/api-helpers';
 import {
   portalDashboardQueryDTOSchema,
   portalDashboardResultDTOSchema,
@@ -28,6 +32,7 @@ export async function GET(req: NextRequest) {
     const scope = await resolvePortalScopedAlunoIds(auth.user, query.alunoId);
     if ('response' in scope) return scope.response;
     const alunoIds = scope.alunoIds;
+    const responsavelId = await resolvePortalResponsavelId(portalUser);
 
     async function loadDashboardData() {
       if (!alunoIds.length) {
@@ -38,6 +43,7 @@ export async function GET(req: NextRequest) {
         const [matriculas, cobrancas, standaloneCharges] = await Promise.all([
           tx.matricula.findMany({
             where: {
+              contaId: portalUser.contaId,
               alunoId: { in: alunoIds },
               status: 'ATIVA',
             },
@@ -46,6 +52,7 @@ export async function GET(req: NextRequest) {
           tx.cobranca.findMany({
             where: {
               matricula: {
+                contaId: portalUser.contaId,
                 alunoId: { in: alunoIds },
               },
             },
@@ -58,7 +65,7 @@ export async function GET(req: NextRequest) {
               asaasStatus: true,
             },
           }),
-          listPortalStandaloneCharges({ contaId: portalUser.contaId, alunoIds }),
+          listPortalStandaloneCharges({ contaId: portalUser.contaId, alunoIds, responsavelId }),
         ]);
 
         return { matriculas, cobrancas, standaloneCharges };

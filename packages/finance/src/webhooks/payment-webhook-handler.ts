@@ -47,6 +47,7 @@ import type {
   OrigemLancamento,
   StatusFinanceiro,
   StatusCobranca,
+  CustomerPayerType,
 } from '@prisma/client';
 import { mapAsaasPaymentStatusToCobranca } from '../mappers/charge-status/asaas-to-internal';
 import { resolveMonotonicAsaasPaymentStatus } from '../mappers/asaas-snapshot-monotonicity';
@@ -135,29 +136,23 @@ const SENSITIVE_PAYMENT_EVENTS = new Set([
   'PAYMENT_SPLIT_DIVERGENCE_BLOCK_FINISHED',
 ]);
 
-async function resolveLocalCustomerPayerName(
+async function resolveObligationPayerName(
   contaId: string,
-  customerId: string | null | undefined,
+  payerType: CustomerPayerType | null | undefined,
+  payerId: string | null | undefined,
 ): Promise<string | null> {
-  if (!customerId) return null;
+  if (!payerType || !payerId) return null;
 
-  const customer = await prisma.customer.findFirst({
-    where: { id: customerId, contaId },
-    select: { payerType: true, payerId: true },
-  });
-
-  if (!customer) return null;
-
-  if (customer.payerType === 'ALUNO') {
+  if (payerType === 'ALUNO') {
     const aluno = await prisma.aluno.findFirst({
-      where: { id: customer.payerId, contaId },
+      where: { id: payerId, contaId },
       select: { nome: true },
     });
     return aluno?.nome ?? null;
   }
 
   const responsavel = await prisma.responsavel.findFirst({
-    where: { id: customer.payerId, contaId },
+    where: { id: payerId, contaId },
     select: { nome: true },
   });
   return responsavel?.nome ?? null;
@@ -368,31 +363,17 @@ function resolveMatriculaFinanceStatusForCharge(params: {
 async function refreshReadModel(params: {
   chargeId?: string | null;
   cobrancaId?: string | null;
-  contaId?: string | null;
+  contaId: string;
 }): Promise<void> {
   try {
-    let contaId = params.contaId ?? null;
+    const contaId = params.contaId;
     if (params.chargeId) {
-      await chargeReadModelService.projectChargeReadModelByChargeId(params.chargeId);
-      if (!contaId && process.env.FIN_SUMMARY_READMODEL_ENABLED === 'true') {
-        const charge = await prisma.charge.findUnique({
-          where: { id: params.chargeId },
-          select: { contaId: true },
-        });
-        contaId = charge?.contaId ?? null;
-      }
+      await chargeReadModelService.projectChargeReadModelByChargeId(params.chargeId, contaId);
     }
     if (params.cobrancaId) {
-      await chargeReadModelService.projectChargeReadModelByCobrancaId(params.cobrancaId);
-      if (!contaId && process.env.FIN_SUMMARY_READMODEL_ENABLED === 'true') {
-        const cobranca = await prisma.cobranca.findUnique({
-          where: { id: params.cobrancaId },
-          select: { contaId: true },
-        });
-        contaId = cobranca?.contaId ?? null;
-      }
+      await chargeReadModelService.projectChargeReadModelByCobrancaId(params.cobrancaId, contaId);
     }
-    if (contaId && process.env.FIN_SUMMARY_READMODEL_ENABLED === 'true') {
+    if (process.env.FIN_SUMMARY_READMODEL_ENABLED === 'true') {
       const now = new Date();
       await financeSummaryReadModelService.refreshFinanceSummaryReadModel({
         contaId,
@@ -727,6 +708,12 @@ async function handleStandaloneChargeWebhook(
         ),
         customerId: linkedStandaloneSubscription.customerId,
         familyGroupId: linkedStandaloneSubscription.familyGroupId,
+        ...(linkedStandaloneSubscription.payerType && linkedStandaloneSubscription.payerId
+          ? {
+              payerType: linkedStandaloneSubscription.payerType,
+              payerId: linkedStandaloneSubscription.payerId,
+            }
+          : {}),
       }
     : {};
   const effectiveAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload) ?? p.status;
@@ -778,7 +765,7 @@ async function handleStandaloneChargeWebhook(
         ...(charge.asaasPaymentId ? {} : { asaasPaymentId: p.id }),
       },
     });
-    await refreshReadModel({ chargeId: charge.id });
+    await refreshReadModel({ chargeId: charge.id, contaId });
     await applyChargeInvoicePaymentSideEffect({
       contaId,
       chargeId: charge.id,
@@ -869,7 +856,7 @@ async function handleStandaloneChargeWebhook(
     data: updateData,
   });
 
-  await refreshReadModel({ chargeId: charge.id });
+  await refreshReadModel({ chargeId: charge.id, contaId });
 
   // Cumprir reserva de estoque automaticamente quando pagamento é confirmado
   if (nextStatusCharge === 'PAID') {
@@ -1450,6 +1437,7 @@ async function handlePaymentWebhookCore(
             select: {
               id: true,
               alunoId: true,
+              responsavelFinanceiroId: true,
               planoId: true,
               comboId: true,
               vencimentoDia: true,
@@ -1486,9 +1474,12 @@ async function handlePaymentWebhookCore(
         }
 
         if (standaloneSubRecord) {
-          const payerNameFromCustomer =
-            (await resolveLocalCustomerPayerName(contaId, standaloneSubRecord.customerId)) ??
-            'Cliente';
+          const payerNameFromObligation =
+            (await resolveObligationPayerName(
+              contaId,
+              standaloneSubRecord.payerType,
+              standaloneSubRecord.payerId,
+            )) ?? 'Cliente';
           const externalRef = buildPaymentExternalReference(standaloneSubRecord.externalReference, payload.payment.id);
           const chargeStatus = mapAsaasToChargeStatus(effectiveAsaasStatus);
           const parsedDueDate = payload.payment.dueDate;
@@ -1512,6 +1503,8 @@ async function handlePaymentWebhookCore(
               customerId: standaloneSubRecord.customerId,
               standaloneSubscriptionId: standaloneSubRecord.id,
               familyGroupId: standaloneSubRecord.familyGroupId,
+              payerType: standaloneSubRecord.payerType,
+              payerId: standaloneSubRecord.payerId,
               invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
               ...buildChargeAsaasSnapshotUpdate(payload, { localChargeStatus: chargeStatus }),
             },
@@ -1521,7 +1514,9 @@ async function handlePaymentWebhookCore(
               status: chargeStatus,
               statusUpdatedAt: new Date(),
               asaasPaymentId: payload.payment.id,
-              payerName: payerNameFromCustomer,
+              payerName: payerNameFromObligation,
+              payerType: standaloneSubRecord.payerType,
+              payerId: standaloneSubRecord.payerId,
               description: standaloneSubRecord.description ?? 'Assinatura recorrente',
               value: payload.payment.value,
               dueDate: vencimento,
@@ -1535,7 +1530,7 @@ async function handlePaymentWebhookCore(
             select: { id: true },
           });
 
-          await refreshReadModel({ chargeId: standaloneSubscriptionCharge.id });
+          await refreshReadModel({ chargeId: standaloneSubscriptionCharge.id, contaId });
 
           await auditLogService.record({
             contaId,
@@ -1645,7 +1640,7 @@ async function handlePaymentWebhookCore(
               select: { id: true },
             });
 
-            await refreshReadModel({ chargeId: standaloneSubscriptionCharge.id });
+            await refreshReadModel({ chargeId: standaloneSubscriptionCharge.id, contaId });
 
             await auditLogService.record({
               contaId,
@@ -1802,6 +1797,7 @@ async function handlePaymentWebhookCore(
             select: {
               id: true,
               alunoId: true,
+              responsavelFinanceiroId: true,
               planoId: true,
               comboId: true,
               plano: { select: { id: true, nome: true } },
@@ -1872,6 +1868,8 @@ async function handlePaymentWebhookCore(
             dueDate: resolveChargeDueDateUpdate(payload.payment.dueDate),
             value: payload.payment.value,
             description: payload.payment.description ?? undefined,
+            payerType: matricula.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO',
+            payerId: matricula.responsavelFinanceiroId ?? matricula.alunoId,
             invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
           },
           create: {
@@ -1886,12 +1884,14 @@ async function handlePaymentWebhookCore(
             value: payload.payment.value,
             dueDate: payload.payment.dueDate ? new Date(payload.payment.dueDate) : null,
             billingType: payload.payment.billingType ?? null,
+            payerType: matricula.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO',
+            payerId: matricula.responsavelFinanceiroId ?? matricula.alunoId,
             invoiceUrl: payload.payment.invoiceUrl ?? null,
           },
           select: { id: true },
         });
 
-        await refreshReadModel({ chargeId: installmentCharge.id, cobrancaId: cobranca.id });
+        await refreshReadModel({ chargeId: installmentCharge.id, cobrancaId: cobranca.id, contaId });
       } else {
         const standalonePlan = await prisma.standaloneInstallmentPlan.findFirst({
           where: { contaId, asaasInstallmentId },
@@ -1905,26 +1905,20 @@ async function handlePaymentWebhookCore(
             discountValue: true,
             discountType: true,
             discountDueDateLimitDays: true,
-            customer: { select: { id: true, payerType: true, payerId: true } },
+            customerId: true,
+            familyGroupId: true,
+            payerType: true,
+            payerId: true,
           },
         });
 
         if (standalonePlan) {
-          const payerName = await (async () => {
-            if (standalonePlan.customer.payerType === 'RESPONSAVEL') {
-              const resp = await prisma.responsavel.findFirst({
-                where: { id: standalonePlan.customer.payerId, contaId },
-                select: { nome: true },
-              });
-              return resp?.nome ?? 'Cliente';
-            }
-
-            const aluno = await prisma.aluno.findFirst({
-              where: { id: standalonePlan.customer.payerId, contaId },
-              select: { nome: true },
-            });
-            return aluno?.nome ?? 'Cliente';
-          })();
+          const payerName =
+            (await resolveObligationPayerName(
+              contaId,
+              standalonePlan.payerType,
+              standalonePlan.payerId,
+            )) ?? 'Cliente';
 
           const externalRef = buildPaymentExternalReference(
             standalonePlan.externalReference,
@@ -1936,6 +1930,10 @@ async function handlePaymentWebhookCore(
           const chargeStatus = mapAsaasToChargeStatus(normalizedStatus);
           const parsedDueDate = payload.payment.dueDate;
           const vencimento = parsedDueDate ? new Date(parsedDueDate) : new Date();
+          const explicitPayerContext =
+            standalonePlan.payerType && standalonePlan.payerId
+              ? { payerType: standalonePlan.payerType, payerId: standalonePlan.payerId }
+              : {};
 
           const standaloneInstallmentCharge = await prisma.charge.upsert({
             where: {
@@ -1957,6 +1955,7 @@ async function handlePaymentWebhookCore(
               discountValue: standalonePlan.discountValue,
               discountType: standalonePlan.discountType,
               discountDueDateLimitDays: standalonePlan.discountDueDateLimitDays,
+              ...explicitPayerContext,
               ...buildChargeAsaasSnapshotUpdate(payload, { localChargeStatus: chargeStatus }),
             },
             create: {
@@ -1970,7 +1969,10 @@ async function handlePaymentWebhookCore(
               value: payload.payment.value,
               dueDate: vencimento,
               billingType: payload.payment.billingType ?? standalonePlan.billingType,
-              customerId: standalonePlan.customer.id,
+              customerId: standalonePlan.customerId,
+              payerType: standalonePlan.payerType,
+              payerId: standalonePlan.payerId,
+              familyGroupId: standalonePlan.familyGroupId,
               invoiceUrl: payload.payment.invoiceUrl ?? null,
               standaloneInstallmentPlanId: standalonePlan.id,
               interestValue: standalonePlan.interestValue,
@@ -1984,7 +1986,7 @@ async function handlePaymentWebhookCore(
             select: { id: true },
           });
 
-          await refreshReadModel({ chargeId: standaloneInstallmentCharge.id });
+          await refreshReadModel({ chargeId: standaloneInstallmentCharge.id, contaId });
 
           const planStatusConvergence = await convergeStandaloneInstallmentPlanStatus({
             contaId,
@@ -2350,7 +2352,7 @@ async function handlePaymentWebhookCore(
           where: { id: riskCharge.id },
           data: { statusUpdatedAt: new Date() },
         });
-        await refreshReadModel({ chargeId: riskCharge.id, cobrancaId: cobranca.id });
+        await refreshReadModel({ chargeId: riskCharge.id, cobrancaId: cobranca.id, contaId });
       }
 
       await auditLogService.record({
@@ -2455,6 +2457,7 @@ async function handlePaymentWebhookCore(
         await refreshReadModel({
           chargeId: restoredCharge?.id ?? null,
           cobrancaId: cobranca.id,
+          contaId,
         });
 
         await recordPaymentStateTransition({
@@ -3059,6 +3062,7 @@ async function handlePaymentWebhookCore(
     await refreshReadModel({
       chargeId: charge?.id ?? null,
       cobrancaId: cobranca.id,
+      contaId,
     });
 
     const stateSource = payload.source ?? 'WEBHOOK';

@@ -705,7 +705,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     if (result.canceledChargeIds.length > 0) {
       try {
         const { chargeReadModelService, refreshFinanceSummaryReadModel } = await import('@alusa/finance');
-        await Promise.all(result.canceledChargeIds.map((chargeId) => chargeReadModelService.projectChargeReadModelByChargeId(chargeId)));
+        await Promise.all(result.canceledChargeIds.map((chargeId) => chargeReadModelService.projectChargeReadModelByChargeId(chargeId, ctx.contaId)));
 
         const now = new Date();
         const windowStart = new Date(now.getFullYear(), now.getMonth(), 1);

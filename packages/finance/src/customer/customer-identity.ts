@@ -24,6 +24,20 @@ export type CustomerIdentityInput = {
   externalReference?: string;
 };
 
+export type ObligationPayer = {
+  payerType: CustomerPayerType;
+  payerId: string;
+};
+
+export type CustomerPayerSnapshot = {
+  payerType: CustomerPayerType;
+  payerId: string;
+  payerLinks?: Array<{
+    payerType: CustomerPayerType;
+    payerId: string;
+  }>;
+};
+
 const digits = (value: string | null | undefined) => (value ?? '').replace(/\D/g, '');
 
 async function readPayer(db: Prisma.TransactionClient, contaId: string, payerType: CustomerPayerType, payerId: string) {
@@ -55,6 +69,65 @@ export async function findCustomerForPayer(
   });
 }
 
+/**
+ * Resolves the historical role only when it is unambiguous in the identity.
+ *
+ * This is intentionally a pure helper for batched read models. It is suitable
+ * for a legacy display fallback, never for obligation ownership or portal
+ * authorization. A shared Customer with multiple CustomerPayer aliases is
+ * therefore deliberately unresolved.
+ */
+export function resolveUnambiguousCustomerPayer(
+  customer: CustomerPayerSnapshot | null | undefined,
+): ObligationPayer | null {
+  if (!customer) return null;
+
+  const roles = new Map<string, ObligationPayer>();
+  const add = (payerType: CustomerPayerType, payerId: string) => {
+    roles.set(`${payerType}:${payerId}`, { payerType, payerId });
+  };
+
+  add(customer.payerType, customer.payerId);
+  for (const link of customer.payerLinks ?? []) add(link.payerType, link.payerId);
+
+  return roles.size === 1 ? [...roles.values()][0] : null;
+}
+
+/**
+ * Resolve the historical payer only when it is unambiguous.
+ *
+ * This is a compatibility helper for records created before obligations
+ * persisted their own payer. It must never be used as an ownership/authorization
+ * fallback: a customer with two aliases deliberately returns null.
+ */
+export async function findSolePayerForCustomer(
+  contaId: string,
+  customerId: string,
+  db: CustomerIdentityDb = prisma,
+): Promise<ObligationPayer | null> {
+  const customer = await db.customer.findFirst({
+    where: { contaId, id: customerId },
+    select: { payerType: true, payerId: true },
+  });
+  if (!customer) return null;
+
+  const roles = new Map<string, ObligationPayer>();
+  const add = (payerType: CustomerPayerType, payerId: string) => {
+    roles.set(`${payerType}:${payerId}`, { payerType, payerId });
+  };
+  add(customer.payerType, customer.payerId);
+
+  if (db.customerPayer) {
+    const links = await db.customerPayer.findMany({
+      where: { contaId, customerId },
+      select: { payerType: true, payerId: true },
+    });
+    for (const link of links) add(link.payerType, link.payerId);
+  }
+
+  return roles.size === 1 ? [...roles.values()][0] : null;
+}
+
 /** No remote I/O inside this transaction. Existing financial records are never deleted or moved. */
 export async function linkCustomerIdentity(input: CustomerIdentityInput) {
   const { contaId, payerType, payerId, asaasCustomerId } = input;
@@ -81,7 +154,11 @@ export async function linkCustomerIdentity(input: CustomerIdentityInput) {
     let canonical = await tx.customer.findFirst({ where: { contaId, asaasCustomerId } });
     if (canonical) {
       const owner = await readPayer(tx, contaId, canonical.payerType, canonical.payerId);
-      if (!owner || digits(owner.cpf) !== cpf) throw new CustomerIdentityConflictError();
+      // Customer.payerType/payerId is historical metadata. The referenced
+      // person may have been removed after all of their own obligations were
+      // closed; that must not make the surviving CustomerPayer aliases
+      // unusable. Existing people are still checked for CPF conflicts below.
+      if (owner && digits(owner.cpf) !== cpf) throw new CustomerIdentityConflictError();
       // Keep the legacy owner represented in the additive link table as well. This
       // covers customers created after the backfill migration and makes the relation
       // complete before adding the second educational role.
@@ -105,7 +182,7 @@ export async function linkCustomerIdentity(input: CustomerIdentityInput) {
       const roles = await tx.customerPayer.findMany({ where: { contaId, customerId: canonical.id } });
       for (const role of roles) {
         const person = await readPayer(tx, contaId, role.payerType, role.payerId);
-        if (!person || digits(person.cpf) !== cpf) throw new CustomerIdentityConflictError();
+        if (person && digits(person.cpf) !== cpf) throw new CustomerIdentityConflictError();
       }
     }
     if (prior && canonical?.id !== prior.id) {

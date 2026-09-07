@@ -279,7 +279,8 @@ export async function projectFamilyEnrollmentFeeState(input: {
       id: true,
       status: true,
       familyGroupId: true,
-      customer: { select: { payerType: true, payerId: true } },
+      payerType: true,
+      payerId: true,
     },
   });
   if (!charge?.familyGroupId) {
@@ -304,8 +305,8 @@ export async function projectFamilyEnrollmentFeeState(input: {
   });
   if (
     !family ||
-    charge.customer?.payerType !== 'RESPONSAVEL' ||
-    charge.customer.payerId !== family.responsavelId
+    charge.payerType !== 'RESPONSAVEL' ||
+    charge.payerId !== family.responsavelId
   ) {
     throw new Error('FAMILY_FEE_PAYER_MISMATCH');
   }

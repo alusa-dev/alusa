@@ -118,7 +118,6 @@ type LedgerScope = {
   matriculaIds: string[];
   responsavelIds: string[];
   familyGroupIds: string[];
-  customerIds: string[];
   matriculaPlanNames: Map<string, string>;
   responsavelNames: Map<string, string>;
   alunoNames: Map<string, string>;
@@ -187,14 +186,10 @@ function resolvePlanName(params: {
 }
 
 function resolvePayerRole(params: {
-  personType?: PersonPaymentLedgerType;
-  customerPayerType?: string | null;
+  payerType?: string | null;
   payerId?: string | null;
-  responsavelIds: string[];
 }) {
-  if (params.customerPayerType === 'RESPONSAVEL') return 'RESPONSAVEL';
-  if (params.personType === 'RESPONSAVEL') return 'RESPONSAVEL';
-  if (params.payerId && params.responsavelIds.includes(params.payerId)) return 'RESPONSAVEL';
+  if (params.payerType === 'RESPONSAVEL') return 'RESPONSAVEL';
   return 'ALUNO';
 }
 
@@ -240,6 +235,7 @@ async function resolveLedgerScope(params: {
       alunoIds: [aluno.id],
       extraResponsavelIds: aluno.responsaveis.map((item) => item.responsavel.id),
       extraResponsavelNames: aluno.responsaveis.map((item) => item.responsavel),
+      includeResponsibleMatriculas: false,
     });
   }
 
@@ -279,6 +275,7 @@ async function resolveLedgerScope(params: {
     alunoIds: responsavel.alunos.map((item) => item.aluno.id),
     extraResponsavelIds: [responsavel.id],
     extraResponsavelNames: [{ id: responsavel.id, nome: responsavel.nome }],
+    includeResponsibleMatriculas: true,
   });
 }
 
@@ -288,13 +285,14 @@ async function buildScopeFromAlunoIds(params: {
   alunoIds: string[];
   extraResponsavelIds: string[];
   extraResponsavelNames: Array<{ id: string; nome: string }>;
+  includeResponsibleMatriculas: boolean;
 }): Promise<LedgerScope> {
   const matriculas = await prisma.matricula.findMany({
     where: {
       contaId: params.contaId,
       OR: [
         ...(params.alunoIds.length ? [{ alunoId: { in: params.alunoIds } }] : []),
-        ...(params.extraResponsavelIds.length
+        ...(params.includeResponsibleMatriculas && params.extraResponsavelIds.length
           ? [{ responsavelFinanceiroId: { in: params.extraResponsavelIds } }]
           : []),
       ],
@@ -332,26 +330,16 @@ async function buildScopeFromAlunoIds(params: {
 
   if (matriculas.length > 0) {
     const familiarItems = await prisma.matriculaFamiliarItem.findMany({
-      where: { matriculaId: { in: matriculas.map((matricula) => matricula.id) } },
+      where: {
+        matriculaId: { in: matriculas.map((matricula) => matricula.id) },
+        matriculaFamiliar: { contaId: params.contaId },
+      },
       select: { matriculaFamiliarId: true },
     });
     for (const item of familiarItems) {
       familyGroupIds.add(item.matriculaFamiliarId);
     }
   }
-
-  const customers = await prisma.customer.findMany({
-    where: {
-      contaId: params.contaId,
-      OR: [
-        ...(alunoIds.size ? [{ payerType: 'ALUNO' as const, payerId: { in: [...alunoIds] } }] : []),
-        ...(responsavelIds.size
-          ? [{ payerType: 'RESPONSAVEL' as const, payerId: { in: [...responsavelIds] } }]
-          : []),
-      ],
-    },
-    select: { id: true },
-  });
 
   return {
     pessoa: {
@@ -362,7 +350,6 @@ async function buildScopeFromAlunoIds(params: {
     matriculaIds: matriculas.map((matricula) => matricula.id),
     responsavelIds: [...responsavelIds],
     familyGroupIds: [...familyGroupIds],
-    customerIds: customers.map((customer) => customer.id),
     matriculaPlanNames,
     responsavelNames,
     alunoNames,
@@ -423,6 +410,8 @@ async function loadAcademicItems(contaId: string, scope: LedgerScope): Promise<P
           id: true,
           externalReference: true,
           familyGroupId: true,
+          payerType: true,
+          payerId: true,
           standaloneInstallmentPlanId: true,
           standaloneSubscriptionId: true,
         },
@@ -434,10 +423,21 @@ async function loadAcademicItems(contaId: string, scope: LedgerScope): Promise<P
   return cobrancas.map((cobranca) => {
     const pagamentoHistorico = resolveAcademicHistoricalPayment(cobranca);
     const asaasData = buildAcademicAsaasData(cobranca as unknown as Record<string, unknown>);
+    const obligationPayerType =
+      cobranca.charge?.payerType ??
+      (cobranca.matricula?.responsavelFinanceiro?.id ? 'RESPONSAVEL' : 'ALUNO');
+    const obligationPayerId =
+      cobranca.charge?.payerId ??
+      (obligationPayerType === 'RESPONSAVEL'
+        ? cobranca.matricula?.responsavelFinanceiro?.id ?? null
+        : cobranca.matricula?.aluno?.id ?? null);
     const payerName =
-      cobranca.matricula?.responsavelFinanceiro?.nome ??
-      cobranca.matricula?.aluno?.nome ??
-      scope.pessoa.nome;
+      obligationPayerType === 'RESPONSAVEL'
+        ? scope.responsavelNames.get(obligationPayerId ?? '') ??
+          (cobranca.matricula?.responsavelFinanceiro?.id === obligationPayerId
+            ? cobranca.matricula.responsavelFinanceiro.nome
+            : scope.pessoa.nome)
+        : cobranca.matricula?.aluno?.nome ?? scope.pessoa.nome;
     const parsedInstallment = parseInstallmentFromDescription(cobranca.descricao);
     const groupId =
       cobranca.charge?.standaloneInstallmentPlanId ??
@@ -455,9 +455,8 @@ async function loadAcademicItems(contaId: string, scope: LedgerScope): Promise<P
       description: cobranca.descricao,
       payerName,
       payerRole: resolvePayerRole({
-        personType: scope.pessoa.tipo === 'RESPONSAVEL' ? 'RESPONSAVEL' : undefined,
-        payerId: cobranca.matricula?.responsavelFinanceiro?.id ?? null,
-        responsavelIds: scope.responsavelIds,
+        payerType: obligationPayerType,
+        payerId: obligationPayerId,
       }),
       valor: toNumber(cobranca.valor),
       vencimento: cobranca.vencimento.toISOString(),
@@ -512,9 +511,19 @@ async function loadAcademicItems(contaId: string, scope: LedgerScope): Promise<P
 
 function chargeBelongsToScope(
   charge: {
-    customerId: string | null;
+    payerType: string | null;
+    payerId: string | null;
     familyGroupId: string | null;
-    customer?: { payerType: string; payerId: string } | null;
+    standaloneInstallmentPlan?: {
+      payerType: string | null;
+      payerId: string | null;
+      familyGroupId: string | null;
+    } | null;
+    standaloneSubscription?: {
+      payerType: string | null;
+      payerId: string | null;
+      familyGroupId: string | null;
+    } | null;
     sale?: {
       alunoId: string | null;
       matriculaId: string | null;
@@ -525,17 +534,31 @@ function chargeBelongsToScope(
 ) {
   if (charge.sale?.alunoId && scope.alunoIds.includes(charge.sale.alunoId)) return true;
   if (charge.sale?.matriculaId && scope.matriculaIds.includes(charge.sale.matriculaId)) return true;
-  if (charge.familyGroupId && scope.familyGroupIds.includes(charge.familyGroupId)) return true;
+  const familyGroupId =
+    charge.familyGroupId ??
+    charge.standaloneSubscription?.familyGroupId ??
+    charge.standaloneInstallmentPlan?.familyGroupId;
+  if (familyGroupId && scope.familyGroupIds.includes(familyGroupId)) return true;
 
-  if (scope.pessoa.tipo === 'RESPONSAVEL') {
-    if (charge.sale?.responsavelId && scope.responsavelIds.includes(charge.sale.responsavelId)) return true;
-    if (charge.customer?.payerType === 'RESPONSAVEL' && scope.responsavelIds.includes(charge.customer.payerId)) {
-      return true;
-    }
-    if (charge.customerId && scope.customerIds.includes(charge.customerId)) return true;
+  if (scope.pessoa.tipo === 'RESPONSAVEL' && charge.sale?.responsavelId === scope.pessoa.id) {
+    return true;
   }
 
-  return charge.customer?.payerType === 'ALUNO' && scope.alunoIds.includes(charge.customer.payerId);
+  const payerType =
+    charge.payerType ??
+    charge.standaloneSubscription?.payerType ??
+    charge.standaloneInstallmentPlan?.payerType;
+  const payerId =
+    charge.payerId ??
+    charge.standaloneSubscription?.payerId ??
+    charge.standaloneInstallmentPlan?.payerId;
+
+  if (payerType === 'ALUNO') return Boolean(payerId && scope.alunoIds.includes(payerId));
+  if (payerType === 'RESPONSAVEL') {
+    return scope.pessoa.tipo === 'RESPONSAVEL' && payerId === scope.pessoa.id;
+  }
+
+  return false;
 }
 
 async function loadStandaloneChargeItems(contaId: string, scope: LedgerScope): Promise<PersonPaymentLedgerItem[]> {
@@ -545,14 +568,56 @@ async function loadStandaloneChargeItems(contaId: string, scope: LedgerScope): P
       cobrancaId: null,
       status: { not: 'CANCELED' },
       OR: [
-        ...(scope.alunoIds.length ? [{ customer: { payerType: 'ALUNO' as const, payerId: { in: scope.alunoIds } } }] : []),
-        ...(scope.alunoIds.length ? [{ sale: { alunoId: { in: scope.alunoIds } } }] : []),
-        ...(scope.matriculaIds.length ? [{ sale: { matriculaId: { in: scope.matriculaIds } } }] : []),
+        ...(scope.alunoIds.length
+          ? [{ payerType: 'ALUNO' as const, payerId: { in: scope.alunoIds } }]
+          : []),
+        ...(scope.alunoIds.length
+          ? [{ sale: { contaId, alunoId: { in: scope.alunoIds } } }]
+          : []),
+        ...(scope.matriculaIds.length
+          ? [{ sale: { contaId, matriculaId: { in: scope.matriculaIds } } }]
+          : []),
         ...(scope.familyGroupIds.length ? [{ familyGroupId: { in: scope.familyGroupIds } }] : []),
         ...(scope.pessoa.tipo === 'RESPONSAVEL' && scope.responsavelIds.length
           ? [
-              { customer: { payerType: 'RESPONSAVEL' as const, payerId: { in: scope.responsavelIds } } },
-              { sale: { responsavelId: { in: scope.responsavelIds } } },
+              { payerType: 'RESPONSAVEL' as const, payerId: scope.pessoa.id },
+              { sale: { contaId, responsavelId: scope.pessoa.id } },
+            ]
+          : []),
+        ...(scope.alunoIds.length
+          ? [
+              {
+                standaloneSubscription: {
+                  contaId,
+                  payerType: 'ALUNO' as const,
+                  payerId: { in: scope.alunoIds },
+                },
+              },
+              {
+                standaloneInstallmentPlan: {
+                  contaId,
+                  payerType: 'ALUNO' as const,
+                  payerId: { in: scope.alunoIds },
+                },
+              },
+            ]
+          : []),
+        ...(scope.pessoa.tipo === 'RESPONSAVEL'
+          ? [
+              {
+                standaloneSubscription: {
+                  contaId,
+                  payerType: 'RESPONSAVEL' as const,
+                  payerId: scope.pessoa.id,
+                },
+              },
+              {
+                standaloneInstallmentPlan: {
+                  contaId,
+                  payerType: 'RESPONSAVEL' as const,
+                  payerId: scope.pessoa.id,
+                },
+              },
             ]
           : []),
       ],
@@ -576,10 +641,15 @@ async function loadStandaloneChargeItems(contaId: string, scope: LedgerScope): P
       createdAt: true,
       updatedAt: true,
       customerId: true,
+      payerType: true,
+      payerId: true,
       familyGroupId: true,
-      customer: { select: { payerType: true, payerId: true } },
-      standaloneInstallmentPlan: { select: { id: true, installmentCount: true } },
-      standaloneSubscription: { select: { id: true, description: true } },
+      standaloneInstallmentPlan: {
+        select: { id: true, installmentCount: true, payerType: true, payerId: true, familyGroupId: true },
+      },
+      standaloneSubscription: {
+        select: { id: true, description: true, payerType: true, payerId: true, familyGroupId: true },
+      },
       sale: {
         select: {
           id: true,
@@ -614,13 +684,21 @@ async function loadStandaloneChargeItems(contaId: string, scope: LedgerScope): P
       const value = toNumber(charge.value ?? charge.sale?.total ?? 0);
       const paid = charge.status === 'PAID';
       const paidAt = (charge.statusUpdatedAt ?? charge.updatedAt ?? charge.createdAt).toISOString();
+      const obligationPayerType =
+        charge.payerType ??
+        charge.standaloneSubscription?.payerType ??
+        charge.standaloneInstallmentPlan?.payerType;
+      const obligationPayerId =
+        charge.payerId ??
+        charge.standaloneSubscription?.payerId ??
+        charge.standaloneInstallmentPlan?.payerId;
       const payerName =
-        charge.payerName ??
-        (charge.customer?.payerType === 'RESPONSAVEL'
-          ? scope.responsavelNames.get(charge.customer.payerId)
-          : charge.customer?.payerType === 'ALUNO'
-            ? scope.alunoNames.get(charge.customer.payerId)
+        (obligationPayerType === 'RESPONSAVEL'
+          ? scope.responsavelNames.get(obligationPayerId ?? '')
+          : obligationPayerType === 'ALUNO'
+            ? scope.alunoNames.get(obligationPayerId ?? '')
             : null) ??
+        charge.payerName ??
         scope.pessoa.nome;
       const groupId =
         charge.standaloneInstallmentPlanId ??
@@ -645,10 +723,8 @@ async function loadStandaloneChargeItems(contaId: string, scope: LedgerScope): P
               : 'Cobrança avulsa'),
         payerName,
         payerRole: resolvePayerRole({
-          personType: scope.pessoa.tipo === 'RESPONSAVEL' ? 'RESPONSAVEL' : undefined,
-          customerPayerType: charge.customer?.payerType,
-          payerId: charge.customer?.payerId,
-          responsavelIds: scope.responsavelIds,
+          payerType: obligationPayerType,
+          payerId: obligationPayerId,
         }),
         valor: value,
         vencimento: charge.dueDate?.toISOString() ?? charge.createdAt.toISOString(),
@@ -743,9 +819,8 @@ async function loadDirectStoreSaleItems(contaId: string, scope: LedgerScope): Pr
       description: `Loja #${String(sale.saleNumber).padStart(4, '0')}`,
       payerName,
       payerRole: resolvePayerRole({
-        personType: scope.pessoa.tipo === 'RESPONSAVEL' ? 'RESPONSAVEL' : undefined,
-        payerId: sale.responsavelId,
-        responsavelIds: scope.responsavelIds,
+        payerType: sale.responsavelId ? 'RESPONSAVEL' : 'ALUNO',
+        payerId: sale.responsavelId ?? sale.alunoId,
       }),
       valor: value,
       vencimento: sale.createdAt.toISOString(),
@@ -913,9 +988,8 @@ async function loadEventFinancialEntryItems(
       description,
       payerName,
       payerRole: resolvePayerRole({
-        personType: scope.pessoa.tipo === 'RESPONSAVEL' ? 'RESPONSAVEL' : undefined,
+        payerType: assignment?.alunoId ? 'ALUNO' : undefined,
         payerId: null,
-        responsavelIds: scope.responsavelIds,
       }),
       valor: value,
       vencimento: entry.dueDate?.toISOString() ?? entry.createdAt.toISOString(),
@@ -1024,9 +1098,8 @@ async function loadEventMapOrderItems(contaId: string, scope: LedgerScope): Prom
       description: `${order.event.name} - pedido de ingresso`,
       payerName: order.buyerName || scope.pessoa.nome,
       payerRole: resolvePayerRole({
-        personType: scope.pessoa.tipo === 'RESPONSAVEL' ? 'RESPONSAVEL' : undefined,
+        payerType: 'ALUNO',
         payerId: null,
-        responsavelIds: scope.responsavelIds,
       }),
       valor: value,
       vencimento: order.expiresAt?.toISOString() ?? order.createdAt.toISOString(),
@@ -1144,9 +1217,8 @@ async function loadEventItems(contaId: string, scope: LedgerScope): Promise<Pers
       description: `${sale.event.name} - ${sale.lot.name}`,
       payerName,
       payerRole: resolvePayerRole({
-        personType: scope.pessoa.tipo === 'RESPONSAVEL' ? 'RESPONSAVEL' : undefined,
-        payerId: sale.responsavelId,
-        responsavelIds: scope.responsavelIds,
+        payerType: sale.responsavelId ? 'RESPONSAVEL' : 'ALUNO',
+        payerId: sale.responsavelId ?? sale.alunoId,
       }),
       valor: value,
       vencimento: sale.soldAt.toISOString(),
@@ -1205,9 +1277,8 @@ async function loadEventItems(contaId: string, scope: LedgerScope): Promise<Pers
       description: `${participant.event.name} - taxa de participação`,
       payerName,
       payerRole: resolvePayerRole({
-        personType: scope.pessoa.tipo === 'RESPONSAVEL' ? 'RESPONSAVEL' : undefined,
-        payerId: participant.responsavelId,
-        responsavelIds: scope.responsavelIds,
+        payerType: participant.responsavelId ? 'RESPONSAVEL' : 'ALUNO',
+        payerId: participant.responsavelId ?? participant.alunoId,
       }),
       valor: value,
       vencimento: participant.createdAt.toISOString(),
@@ -1245,7 +1316,7 @@ async function loadEventItems(contaId: string, scope: LedgerScope): Promise<Pers
   return [...saleItems, ...participantItems];
 }
 
-async function enrichInstallmentMetadata(items: PersonPaymentLedgerItem[]) {
+async function enrichInstallmentMetadata(contaId: string, items: PersonPaymentLedgerItem[]) {
   const standalonePlanIds = [
     ...new Set(
       items
@@ -1266,13 +1337,13 @@ async function enrichInstallmentMetadata(items: PersonPaymentLedgerItem[]) {
   const [standalonePlans, academicPlans, standalonePaidCounts, academicPaidCounts] = await Promise.all([
     standalonePlanIds.length
       ? prisma.standaloneInstallmentPlan.findMany({
-          where: { id: { in: standalonePlanIds } },
+          where: { contaId, id: { in: standalonePlanIds } },
           select: { id: true, installmentCount: true },
         })
       : Promise.resolve([]),
     academicMatriculaIds.length
       ? prisma.installmentPlan.findMany({
-          where: { matriculaId: { in: academicMatriculaIds } },
+          where: { contaId, matriculaId: { in: academicMatriculaIds } },
           select: { id: true, matriculaId: true, installmentCount: true },
         })
       : Promise.resolve([]),
@@ -1280,6 +1351,7 @@ async function enrichInstallmentMetadata(items: PersonPaymentLedgerItem[]) {
       ? prisma.charge.groupBy({
           by: ['standaloneInstallmentPlanId'],
           where: {
+            contaId,
             standaloneInstallmentPlanId: { in: standalonePlanIds },
             status: 'PAID',
           },
@@ -1290,6 +1362,7 @@ async function enrichInstallmentMetadata(items: PersonPaymentLedgerItem[]) {
       ? prisma.cobranca.groupBy({
           by: ['matriculaId'],
           where: {
+            contaId,
             matriculaId: { in: academicMatriculaIds },
             tipo: 'PARCELADA',
             OR: [
@@ -1433,7 +1506,7 @@ export async function buildPersonPaymentLedger(params: {
     ...eventMapOrderItems,
   ]);
 
-  const enrichedItems = await enrichInstallmentMetadata(mergedItems);
+  const enrichedItems = await enrichInstallmentMetadata(params.contaId, mergedItems);
   enrichedItems.sort((left, right) => {
     const leftDate = left.pagamento?.dataPagamento ?? left.vencimento ?? left.createdAt;
     const rightDate = right.pagamento?.dataPagamento ?? right.vencimento ?? right.createdAt;
@@ -1552,4 +1625,3 @@ export async function listPersonPaymentLedgerIndex(params: {
     totalPages: Math.ceil(total / params.pageSize),
   };
 }
-

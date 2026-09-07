@@ -6,6 +6,7 @@ import {
 } from '@alusa/asaas';
 import { loadAsaasCredentials, prisma } from '@alusa/database';
 import type { CustomerPayerType, Prisma } from '@prisma/client';
+import { findCustomerForPayer } from '../customer/customer-identity';
 
 type SourceKind =
   | 'ACADEMIC_SUBSCRIPTION'
@@ -120,23 +121,27 @@ function payerKey(ref: LocalCustomerRef): string {
 }
 
 async function loadPayerNameMap(refs: LocalCustomerRef[]): Promise<Map<string, string>> {
-  const alunoIds = refs
+  const alunoRefs = refs
     .filter((ref) => ref.payerType === 'ALUNO')
-    .map((ref) => ref.payerId);
-  const responsavelIds = refs
+    .map((ref) => ({ contaId: ref.contaId, id: ref.payerId }));
+  const responsavelRefs = refs
     .filter((ref) => ref.payerType === 'RESPONSAVEL')
-    .map((ref) => ref.payerId);
+    .map((ref) => ({ contaId: ref.contaId, id: ref.payerId }));
 
   const [alunos, responsaveis] = await Promise.all([
-    alunoIds.length
+    alunoRefs.length
       ? prisma.aluno.findMany({
-          where: { id: { in: Array.from(new Set(alunoIds)) } },
+          where: {
+            OR: Array.from(new Map(alunoRefs.map((ref) => [`${ref.contaId}:${ref.id}`, ref])).values()),
+          },
           select: { id: true, contaId: true, nome: true },
         })
       : Promise.resolve([]),
-    responsavelIds.length
+    responsavelRefs.length
       ? prisma.responsavel.findMany({
-          where: { id: { in: Array.from(new Set(responsavelIds)) } },
+          where: {
+            OR: Array.from(new Map(responsavelRefs.map((ref) => [`${ref.contaId}:${ref.id}`, ref])).values()),
+          },
           select: { id: true, contaId: true, nome: true },
         })
       : Promise.resolve([]),
@@ -176,7 +181,11 @@ async function projectStandaloneSubscriptions(contaId: string, limit: number) {
       },
     },
   });
-  const names = await loadPayerNameMap(rows.map((row) => row.customer));
+  const names = await loadPayerNameMap(
+    rows.flatMap((row) => row.payerType && row.payerId
+      ? [{ contaId: row.contaId, payerType: row.payerType, payerId: row.payerId }]
+      : []),
+  );
   const now = new Date();
 
   for (const row of rows) {
@@ -192,7 +201,11 @@ async function projectStandaloneSubscriptions(contaId: string, limit: number) {
         localCustomerId: row.customerId,
         asaasCustomerId: row.customer.asaasCustomerId,
         asaasSubscriptionId: row.asaasSubscriptionId,
-        payerName: names.get(payerKey(row.customer)) ?? null,
+        payerName: row.payerType && row.payerId
+          ? names.get(payerKey({ contaId: row.contaId, payerType: row.payerType, payerId: row.payerId })) ?? null
+          : null,
+        payerType: row.payerType,
+        payerId: row.payerId,
         status: String(row.status),
         billingType: row.billingType,
         cycle: row.cycle,
@@ -213,7 +226,11 @@ async function projectStandaloneSubscriptions(contaId: string, limit: number) {
         localCustomerId: row.customerId,
         asaasCustomerId: row.customer.asaasCustomerId,
         asaasSubscriptionId: row.asaasSubscriptionId,
-        payerName: names.get(payerKey(row.customer)) ?? null,
+        payerName: row.payerType && row.payerId
+          ? names.get(payerKey({ contaId: row.contaId, payerType: row.payerType, payerId: row.payerId })) ?? null
+          : null,
+        payerType: row.payerType,
+        payerId: row.payerId,
         status: String(row.status),
         billingType: row.billingType,
         cycle: row.cycle,
@@ -262,6 +279,9 @@ async function projectAcademicSubscriptions(contaId: string, limit: number) {
   for (const row of rows) {
     const nextCharge = row.matricula.cobrancas[0] ?? null;
     const payer = row.matricula.responsavelFinanceiro ?? row.matricula.aluno;
+    const payerType = row.matricula.responsavelFinanceiro ? 'RESPONSAVEL' as const : 'ALUNO' as const;
+    const payerId = row.matricula.responsavelFinanceiro?.id ?? row.matricula.aluno.id;
+    const payerIdentity = await findCustomerForPayer(contaId, payerType, payerId);
 
     await prisma.financeSubscriptionReadModel.upsert({
       where: {
@@ -272,9 +292,11 @@ async function projectAcademicSubscriptions(contaId: string, limit: number) {
         },
       },
       update: {
-        asaasCustomerId: payer?.asaasCustomerId ?? null,
+        asaasCustomerId: payerIdentity?.asaasCustomerId ?? payer?.asaasCustomerId ?? null,
         asaasSubscriptionId: row.asaasSubscriptionId,
         payerName: payer?.nome ?? null,
+        payerType,
+        payerId,
         status: String(row.status),
         billingType: nextCharge?.formaPagamento ?? null,
         value: nextCharge?.valor ?? null,
@@ -292,9 +314,11 @@ async function projectAcademicSubscriptions(contaId: string, limit: number) {
         contaId: row.contaId,
         sourceKind: 'ACADEMIC_SUBSCRIPTION',
         sourceId: row.id,
-        asaasCustomerId: payer?.asaasCustomerId ?? null,
+        asaasCustomerId: payerIdentity?.asaasCustomerId ?? payer?.asaasCustomerId ?? null,
         asaasSubscriptionId: row.asaasSubscriptionId,
         payerName: payer?.nome ?? null,
+        payerType,
+        payerId,
         status: String(row.status),
         billingType: nextCharge?.formaPagamento ?? null,
         value: nextCharge?.valor ?? null,
@@ -330,7 +354,11 @@ async function projectStandaloneInstallments(contaId: string, limit: number) {
       },
     },
   });
-  const names = await loadPayerNameMap(rows.map((row) => row.customer));
+  const names = await loadPayerNameMap(
+    rows.flatMap((row) => row.payerType && row.payerId
+      ? [{ contaId: row.contaId, payerType: row.payerType, payerId: row.payerId }]
+      : []),
+  );
   const now = new Date();
 
   for (const row of rows) {
@@ -346,7 +374,11 @@ async function projectStandaloneInstallments(contaId: string, limit: number) {
         localCustomerId: row.customerId,
         asaasCustomerId: row.customer.asaasCustomerId,
         asaasInstallmentId: row.asaasInstallmentId,
-        payerName: names.get(payerKey(row.customer)) ?? null,
+        payerName: row.payerType && row.payerId
+          ? names.get(payerKey({ contaId: row.contaId, payerType: row.payerType, payerId: row.payerId })) ?? null
+          : null,
+        payerType: row.payerType,
+        payerId: row.payerId,
         status: String(row.status),
         billingType: row.billingType,
         value: row.value,
@@ -365,7 +397,11 @@ async function projectStandaloneInstallments(contaId: string, limit: number) {
         localCustomerId: row.customerId,
         asaasCustomerId: row.customer.asaasCustomerId,
         asaasInstallmentId: row.asaasInstallmentId,
-        payerName: names.get(payerKey(row.customer)) ?? null,
+        payerName: row.payerType && row.payerId
+          ? names.get(payerKey({ contaId: row.contaId, payerType: row.payerType, payerId: row.payerId })) ?? null
+          : null,
+        payerType: row.payerType,
+        payerId: row.payerId,
         status: String(row.status),
         billingType: row.billingType,
         value: row.value,
@@ -400,6 +436,9 @@ async function projectAcademicInstallments(contaId: string, limit: number) {
 
   for (const row of rows) {
     const payer = row.matricula.responsavelFinanceiro ?? row.matricula.aluno;
+    const payerType = row.matricula.responsavelFinanceiro ? 'RESPONSAVEL' as const : 'ALUNO' as const;
+    const payerId = row.matricula.responsavelFinanceiro?.id ?? row.matricula.aluno.id;
+    const payerIdentity = await findCustomerForPayer(contaId, payerType, payerId);
     await prisma.financeInstallmentPlanReadModel.upsert({
       where: {
         uq_fin_installment_rm_source: {
@@ -409,9 +448,11 @@ async function projectAcademicInstallments(contaId: string, limit: number) {
         },
       },
       update: {
-        asaasCustomerId: payer?.asaasCustomerId ?? null,
+        asaasCustomerId: payerIdentity?.asaasCustomerId ?? payer?.asaasCustomerId ?? null,
         asaasInstallmentId: row.asaasInstallmentId,
         payerName: payer?.nome ?? null,
+        payerType,
+        payerId,
         status: String(row.status),
         billingType: row.billingType,
         value: row.value,
@@ -429,9 +470,11 @@ async function projectAcademicInstallments(contaId: string, limit: number) {
         contaId: row.contaId,
         sourceKind: 'ACADEMIC_INSTALLMENT',
         sourceId: row.id,
-        asaasCustomerId: payer?.asaasCustomerId ?? null,
+        asaasCustomerId: payerIdentity?.asaasCustomerId ?? payer?.asaasCustomerId ?? null,
         asaasInstallmentId: row.asaasInstallmentId,
         payerName: payer?.nome ?? null,
+        payerType,
+        payerId,
         status: String(row.status),
         billingType: row.billingType,
         value: row.value,

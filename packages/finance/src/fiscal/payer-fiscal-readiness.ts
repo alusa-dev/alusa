@@ -83,12 +83,8 @@ export async function evaluateChargePayerFiscalReadiness(input: {
   const charge = await prisma.charge.findFirst({
     where: { id: input.chargeId, contaId: input.contaId },
     select: {
-      customer: {
-        select: {
-          payerType: true,
-          payerId: true,
-        },
-      },
+      payerType: true,
+      payerId: true,
       cobranca: {
         select: {
           matricula: {
@@ -109,8 +105,8 @@ export async function evaluateChargePayerFiscalReadiness(input: {
   }
 
   const responsavelId =
-    charge.customer?.payerType === 'RESPONSAVEL'
-      ? charge.customer.payerId
+    charge.payerType === 'RESPONSAVEL'
+      ? charge.payerId
       : charge.cobranca?.matricula?.responsavelFinanceiroId ?? null;
 
   if (!responsavelId) {

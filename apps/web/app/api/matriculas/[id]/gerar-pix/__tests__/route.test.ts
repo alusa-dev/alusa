@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const { prismaMock, ensureAsaasCustomerForPayerMock } = vi.hoisted(() => ({
+const { prismaMock, ensureAsaasCustomerForPayerMock, findCustomerForPayerMock } = vi.hoisted(() => ({
   prismaMock: {
     matricula: {
       findFirst: vi.fn(),
@@ -16,6 +16,7 @@ const { prismaMock, ensureAsaasCustomerForPayerMock } = vi.hoisted(() => ({
     },
   },
   ensureAsaasCustomerForPayerMock: vi.fn(async () => ({ ok: true, customerId: 'cust_1' })),
+  findCustomerForPayerMock: vi.fn(async () => null),
 }));
 
 vi.mock('next-auth', () => ({
@@ -40,6 +41,7 @@ vi.mock('@alusa/lib', async () => {
 
 vi.mock('@alusa/finance', () => ({
   ensureAsaasCustomerForPayer: ensureAsaasCustomerForPayerMock,
+  findCustomerForPayer: findCustomerForPayerMock,
   createAsaasCustomer: vi.fn(async () => ({ success: true, data: { id: 'cust_1' } })),
   createAsaasPayment: vi.fn(async () => ({ success: false, error: 'KYC_NAO_APROVADO' })),
   formatDate: vi.fn(() => '2026-01-01'),

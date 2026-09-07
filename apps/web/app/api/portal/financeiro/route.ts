@@ -1,5 +1,9 @@
 import prisma from '@/lib/prisma';
-import { requirePortalUser, resolvePortalAlunoIds } from '@/features/portal/api-helpers';
+import {
+  requirePortalUser,
+  resolvePortalAlunoIds,
+  resolvePortalResponsavelId,
+} from '@/features/portal/api-helpers';
 import { portalFinanceiroListResultDTOSchema } from '@/features/portal/dtos';
 import {
   mapPortalFinanceiroListItemToDTO,
@@ -22,14 +26,16 @@ export async function GET() {
     }
 
     const alunoIds = await resolvePortalAlunoIds(portalUser);
+    const responsavelId = await resolvePortalResponsavelId(portalUser);
 
     async function loadPortalFinanceData() {
       const [cobrancas, standaloneCharges] = await Promise.all([
         prisma.cobranca.findMany({
           where: {
-            matricula: {
-              alunoId: { in: alunoIds },
-            },
+          matricula: {
+            alunoId: { in: alunoIds },
+            aluno: { contaId: portalUser.contaId },
+          },
           },
           include: {
             matricula: {
@@ -74,7 +80,7 @@ export async function GET() {
             vencimento: 'desc',
           },
         }),
-        listPortalStandaloneCharges({ contaId: portalUser.contaId, alunoIds }),
+        listPortalStandaloneCharges({ contaId: portalUser.contaId, alunoIds, responsavelId }),
       ]);
 
       return { cobrancas, standaloneCharges };

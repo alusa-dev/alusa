@@ -94,13 +94,20 @@ describe('materializeBillingAgreement', () => {
       standaloneSubscription: {
         findFirst: vi.fn().mockResolvedValue({
           id: 'standalone-1', contaId: 'conta-1', familyGroupId: 'family-1',
-          customerId: 'customer-1', customer: { payerType: 'RESPONSAVEL', payerId: 'payer-1' },
+          customerId: 'customer-1',
+          customer: { contaId: 'conta-1', payerType: 'RESPONSAVEL', payerId: 'payer-1' },
           externalReference: 'family:family-1', status: 'ACTIVE', asaasSubscriptionId: 'asaas-family-1',
           billingType: 'PIX', cycle: 'MONTHLY', nextDueDate: competenceStart,
           validFrom: competenceStart, validUntil: null, endDate: competenceEnd,
           value: 150, remoteStatus: 'ACTIVE', createdAt: competenceStart,
         }),
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      customer: {
+        findUnique: vi.fn().mockResolvedValue({ id: 'customer-1', contaId: 'conta-1' }),
+      },
+      matriculaFamiliar: {
+        findFirst: vi.fn().mockResolvedValue({ responsavelId: 'payer-1' }),
       },
       billingAgreement: { upsert: billingAgreementUpsert },
       familyFinancialAllocation: {
@@ -124,6 +131,83 @@ describe('materializeBillingAgreement', () => {
     expect(billingAgreementUpsert).toHaveBeenCalledWith(expect.objectContaining({
       create: expect.objectContaining({ validUntil: new Date('2099-12-11T12:00:00.000Z') }),
       update: expect.objectContaining({ validUntil: new Date('2099-12-11T12:00:00.000Z') }),
+    }));
+  });
+
+  it('resolve o responsável de um acordo familiar de rematrícula', async () => {
+    const competenceStart = new Date('2099-01-10T12:00:00.000Z');
+    const competenceEnd = new Date('2099-12-10T12:00:00.000Z');
+    const billingAllocationCreate = vi.fn().mockResolvedValue({ id: 'allocation-remat-1', status: 'ACTIVE' });
+    const billingAgreementUpsert = vi.fn().mockResolvedValue({ id: 'agreement-remat-1' });
+    const tx = {
+      standaloneSubscription: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: 'standalone-remat-1',
+          contaId: 'conta-1',
+          familyGroupId: 'remat-family-1',
+          customerId: 'customer-1',
+          customer: { contaId: 'conta-1', payerType: 'ALUNO', payerId: 'aluno-1' },
+          externalReference: 'rematricula-familiar:remat-family-1',
+          status: 'ACTIVE',
+          asaasSubscriptionId: 'asaas-remat-1',
+          billingType: 'PIX',
+          cycle: 'MONTHLY',
+          nextDueDate: competenceStart,
+          validFrom: competenceStart,
+          validUntil: null,
+          endDate: competenceEnd,
+          value: 150,
+          remoteStatus: 'ACTIVE',
+          createdAt: competenceStart,
+        }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      customer: {
+        findUnique: vi.fn().mockResolvedValue({ id: 'customer-1', contaId: 'conta-1' }),
+      },
+      matriculaFamiliar: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+      rematriculaFamiliar: {
+        findFirst: vi.fn().mockResolvedValue({ responsavelId: 'payer-remat-1' }),
+      },
+      billingAgreement: { upsert: billingAgreementUpsert },
+      familyFinancialAllocation: {
+        findMany: vi.fn().mockResolvedValue([{
+          id: 'legacy-remat-1',
+          alunoId: 'aluno-1',
+          matriculaId: 'matricula-1',
+          chargeKind: 'MENSALIDADE',
+          amount: 150,
+          baseAmount: 150,
+          discountAmount: 0,
+          competenceStart,
+          competenceEnd,
+          sourceChargeId: null,
+          billingAllocationId: null,
+        }]),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      billingAllocation: { findFirst: vi.fn().mockResolvedValue(null), create: billingAllocationCreate },
+    };
+
+    await materializeBillingAgreement({
+      kind: 'FAMILY',
+      contaId: 'conta-1',
+      standaloneSubscriptionId: 'standalone-remat-1',
+      familyGroupId: 'remat-family-1',
+    }, { tx: tx as never });
+
+    expect(tx.rematriculaFamiliar.findFirst).toHaveBeenCalledWith({
+      where: { id: 'remat-family-1', contaId: 'conta-1' },
+      select: { responsavelId: true },
+    });
+    expect(billingAgreementUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        customerId: 'customer-1',
+        payerType: 'RESPONSAVEL',
+        payerId: 'payer-remat-1',
+      }),
     }));
   });
 });

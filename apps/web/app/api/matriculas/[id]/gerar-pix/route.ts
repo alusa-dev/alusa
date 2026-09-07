@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import { createAsaasPayment, formatDate, getAsaasPaymentDetails, KycNotApprovedError } from '@alusa/finance';
+import {
+  createAsaasPayment,
+  findCustomerForPayer,
+  formatDate,
+  getAsaasPaymentDetails,
+  KycNotApprovedError,
+} from '@alusa/finance';
 import { ensureAsaasCustomerForPayer } from '@alusa/finance';
 import { matriculaGerarPixResultDTOSchema, matriculaRouteParamsDTOSchema } from '@/features/cadastro/matriculas/dtos';
 import { mapMatriculaGerarPixResultToDTO } from '@/features/cadastro/matriculas/mappers';
@@ -86,13 +92,15 @@ export async function POST(
       return NextResponse.json({ error: 'Dados do pagador incompletos' }, { status: 400 });
     }
 
-    let customerId = pagador.asaasCustomerId;
+    const payerType = isMaiorDeIdade ? 'ALUNO' as const : 'RESPONSAVEL' as const;
+    const payerIdentity = await findCustomerForPayer(contaId, payerType, pagador.id);
+    let customerId = payerIdentity?.asaasCustomerId ?? pagador.asaasCustomerId;
 
     if (!customerId) {
       const created = await ensureAsaasCustomerForPayer({
         contaId,
         payer: {
-          type: isMaiorDeIdade ? 'ALUNO' : 'RESPONSAVEL',
+          type: payerType,
           id: pagador.id,
           name: pagador.nome,
           cpfCnpj: pagador.cpf,

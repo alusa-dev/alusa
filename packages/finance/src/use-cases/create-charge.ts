@@ -125,7 +125,14 @@ export async function createCharge(
 
     const existingCharge = await prisma.charge.findUnique({
       where: { cobrancaId: cobranca.id },
-      select: { id: true, asaasPaymentId: true, externalReference: true, status: true },
+      select: {
+        id: true,
+        asaasPaymentId: true,
+        externalReference: true,
+        status: true,
+        payerType: true,
+        payerId: true,
+      },
     });
 
     const existingPaymentId = existingCharge?.asaasPaymentId ?? legacyPaymentId;
@@ -151,6 +158,13 @@ export async function createCharge(
     }
 
     const payer = payerResult.payer;
+
+    if (existingCharge && !existingCharge.payerType && !existingCharge.payerId) {
+      await prisma.charge.updateMany({
+        where: { id: existingCharge.id, contaId: input.contaId },
+        data: { payerType: payer.type, payerId: payer.id },
+      });
+    }
 
     const customer = await ensureCustomer({ contaId: input.contaId, payer });
     if (!customer.success) {
@@ -235,6 +249,8 @@ export async function createCharge(
           dueDate: new Date(`${dueDateIso}T00:00:00.000Z`),
           billingType,
           customerId: customer.data.localCustomerId,
+          payerType: payer.type,
+          payerId: payer.id,
         },
       }).catch(async (reserveError) => {
         const concurrent = await prisma.charge.findFirst({

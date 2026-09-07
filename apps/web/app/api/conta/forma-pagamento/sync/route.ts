@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import { getPayment, getSubscription, recordAsaasReadIntent } from '@alusa/finance';
+import { findCustomerForPayer, getPayment, getSubscription, recordAsaasReadIntent } from '@alusa/finance';
 import prisma from '@/lib/prisma';
 import { contaFormaPagamentoSyncResultDTOSchema } from '@/features/conta/dtos';
 import { mapContaFormaPagamentoSyncResultToDTO } from '@/features/conta/mappers';
@@ -58,7 +58,14 @@ export async function POST(_req: NextRequest) {
       return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
     }
 
-    if (!responsavel.asaasCustomerId) {
+    const canonicalCustomer = await findCustomerForPayer(
+      user.contaId,
+      'RESPONSAVEL',
+      responsavel.id,
+    );
+    const asaasCustomerId = canonicalCustomer?.asaasCustomerId ?? responsavel.asaasCustomerId;
+
+    if (!asaasCustomerId) {
       return NextResponse.json(
         contaFormaPagamentoSyncResultDTOSchema.parse(mapContaFormaPagamentoSyncResultToDTO({
           synced: false,

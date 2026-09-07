@@ -13,6 +13,7 @@ export async function GET() {
     // 4. Buscar matrículas dos alunos
     const matriculas = await prisma.matricula.findMany({
       where: {
+        contaId: auth.user.contaId,
         alunoId: { in: alunoIds },
       },
       include: {

@@ -6178,6 +6178,10 @@ model Charge {
   // Campos para listagem de standalone charges (sem vínculo com Cobranca)
   // Preenchidos na criação para evitar consultas externas
   payerName     String? // Nome do pagador (aluno ou responsável)
+  // Pagador desta obrigação. Customer.payerType/payerId são apenas o papel
+  // histórico da identidade financeira e não substituem estes campos.
+  payerType     CustomerPayerType?
+  payerId       String?
   description   String? // Descrição da cobrança
   value         Decimal?  @db.Decimal(12, 2) // Valor da cobrança
   dueDate       DateTime? // Data de vencimento
@@ -6230,6 +6234,7 @@ model Charge {
   @@index([standaloneInstallmentPlanId])
   @@index([standaloneSubscriptionId])
   @@index([familyGroupId])
+  @@index([contaId, payerType, payerId], name: "idx_charge_conta_obligation_payer")
   @@index([contaId, lastProviderCheckAt, status], name: "idx_charge_conta_provider_check")
 }
 
@@ -6279,6 +6284,8 @@ model ChargeReadModel {
 
   description      String?
   payerName        String
+  payerType        CustomerPayerType?
+  payerId          String?
   value            Decimal          @db.Decimal(12, 2)
   dueDate          DateTime?
   billingType      String?
@@ -6316,6 +6323,7 @@ model ChargeReadModel {
   @@index([contaId, groupId], name: "idx_charge_read_model_conta_group")
   @@index([contaId, matriculaId], name: "idx_charge_read_model_conta_matricula")
   @@index([contaId, alunoId], name: "idx_charge_read_model_conta_aluno")
+  @@index([contaId, payerType, payerId], name: "idx_charge_read_model_conta_obligation_payer")
   @@index([contaId, linkStatus], name: "idx_charge_read_model_conta_link_status")
   @@index([contaId, projectedAt], name: "idx_charge_read_model_conta_projected")
   @@index([asaasPaymentId], name: "idx_charge_read_model_asaas_payment")
@@ -6451,6 +6459,8 @@ model FinanceSubscriptionReadModel {
   asaasCustomerId     String?
   asaasSubscriptionId String?
   payerName           String?
+  payerType           CustomerPayerType?
+  payerId             String?
 
   status      String
   billingType String?
@@ -6483,6 +6493,7 @@ model FinanceSubscriptionReadModel {
   @@index([contaId, localCustomerId], name: "idx_fin_subscription_rm_conta_customer")
   @@index([contaId, matriculaId], name: "idx_fin_subscription_rm_conta_matricula")
   @@index([contaId, familyGroupId], name: "idx_fin_subscription_rm_conta_family")
+  @@index([contaId, payerType, payerId], name: "idx_fin_subscription_rm_conta_obligation_payer")
   @@index([contaId, projectedAt], name: "idx_fin_subscription_rm_conta_projected")
 }
 
@@ -6497,6 +6508,8 @@ model FinanceInstallmentPlanReadModel {
   asaasCustomerId    String?
   asaasInstallmentId String?
   payerName          String?
+  payerType          CustomerPayerType?
+  payerId            String?
 
   status           String
   billingType      String?
@@ -6528,6 +6541,7 @@ model FinanceInstallmentPlanReadModel {
   @@index([contaId, localCustomerId], name: "idx_fin_installment_rm_conta_customer")
   @@index([contaId, matriculaId], name: "idx_fin_installment_rm_conta_matricula")
   @@index([contaId, familyGroupId], name: "idx_fin_installment_rm_conta_family")
+  @@index([contaId, payerType, payerId], name: "idx_fin_installment_rm_conta_obligation_payer")
   @@index([contaId, projectedAt], name: "idx_fin_installment_rm_conta_projected")
 }
 
@@ -6722,6 +6736,9 @@ model StandaloneInstallmentPlan {
   value            Decimal  @db.Decimal(12, 2)
   firstDueDate     DateTime
   familyGroupId    String?
+  // Nullable para preservar registros legados cujo contexto seja ambíguo.
+  payerType        CustomerPayerType?
+  payerId          String?
 
   // Snapshot das regras usado por todas as parcelas do plano.
   interestValue            Decimal? @db.Decimal(12, 2)
@@ -6746,6 +6763,7 @@ model StandaloneInstallmentPlan {
   @@index([asaasInstallmentId])
   @@index([customerId])
   @@index([familyGroupId])
+  @@index([contaId, payerType, payerId], name: "idx_standalone_installment_conta_obligation_payer")
   @@index([contaId, lastProviderCheckAt], name: "idx_standalone_installment_conta_provider_check")
 }
 
@@ -6774,6 +6792,9 @@ model StandaloneSubscription {
   endDate               DateTime?
   description           String?
   familyGroupId         String?
+  // Nullable para preservar registros legados cujo contexto seja ambíguo.
+  payerType             CustomerPayerType?
+  payerId               String?
   validFrom             DateTime?
   validUntil            DateTime?
   version               Int       @default(1)
@@ -6803,6 +6824,7 @@ model StandaloneSubscription {
   @@index([asaasSubscriptionId])
   @@index([customerId])
   @@index([familyGroupId])
+  @@index([contaId, payerType, payerId], name: "idx_standalone_subscription_conta_obligation_payer")
   @@index([contaId, billingAgreementId], name: "idx_standalone_subscription_conta_agreement")
 }
 

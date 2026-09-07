@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { ChargeStatus, SubscriptionStatus } from '@prisma/client';
+import { findCustomerForPayer } from '@alusa/finance';
 import type { AssinaturaSnapshot } from './subscription-snapshot';
 import { mapLocalSubscriptionStatus } from './subscription-snapshot';
 
@@ -179,6 +180,12 @@ export async function resolveMatriculaFinancialContext(input: {
 
   const family = matricula.matriculaFamiliar ?? null;
   if (family) {
+    const familyPayerCustomer = await findCustomerForPayer(
+      input.contaId,
+      'RESPONSAVEL',
+      family.responsavel.id,
+      input.db,
+    );
     const standaloneSubscription = await input.db.standaloneSubscription.findFirst({
       where: {
         contaId: input.contaId,
@@ -196,7 +203,6 @@ export async function resolveMatriculaFinancialContext(input: {
         nextDueDate: true,
         endDate: true,
         updatedAt: true,
-        customer: { select: { asaasCustomerId: true } },
       },
       orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
     });
@@ -216,7 +222,7 @@ export async function resolveMatriculaFinancialContext(input: {
       localSubscriptionId: standaloneSubscription?.id ?? null,
       localSubscriptionKind: standaloneSubscription ? 'STANDALONE' : null,
       customerId:
-        standaloneSubscription?.customer?.asaasCustomerId ??
+        familyPayerCustomer?.asaasCustomerId ??
         family.responsavel.asaasCustomerId ??
         null,
       payerName: family.responsavel.nome,
@@ -237,7 +243,11 @@ export async function resolveMatriculaFinancialContext(input: {
   }
 
   const localSubscription = matricula.subscriptions?.[0] ?? null;
+  const payerType = matricula.responsavelFinanceiro ? 'RESPONSAVEL' : 'ALUNO';
+  const payerId = matricula.responsavelFinanceiro?.id ?? matricula.aluno.id;
+  const payerCustomer = await findCustomerForPayer(input.contaId, payerType, payerId, input.db);
   const customerId =
+    payerCustomer?.asaasCustomerId ??
     matricula.responsavelFinanceiro?.asaasCustomerId ?? matricula.aluno?.asaasCustomerId ?? null;
 
   const canonicalAllocation = await input.db.billingAllocation.findFirst({

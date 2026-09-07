@@ -1095,7 +1095,8 @@ type StandaloneRecord = {
   liquidacaoStatus: string;
   liquidadoEm: Date | null;
   asaasCreditDate: Date | null;
-  customer: { contaId: string; payerType: string; payerId: string } | null;
+  payerType: 'ALUNO' | 'RESPONSAVEL' | null;
+  payerId: string | null;
 };
 
 function academicOwnershipIsValid(item: AcademicRecord, contaId: string): boolean {
@@ -1112,7 +1113,7 @@ function academicOwnershipIsValid(item: AcademicRecord, contaId: string): boolea
 }
 
 function standaloneOwnershipIsValid(item: StandaloneRecord, contaId: string): boolean {
-  return item.contaId === contaId && (!item.customer || item.customer.contaId === contaId);
+  return item.contaId === contaId && (!item.payerType || Boolean(item.payerId));
 }
 
 function confirmedPayments(item: AcademicRecord): PaymentRecord[] {
@@ -1611,9 +1612,8 @@ export async function loadFinancialReportProjections(params: {
         liquidacaoStatus: true,
         liquidadoEm: true,
         asaasCreditDate: true,
-        customer: {
-          select: { contaId: true, payerType: true, payerId: true },
-        },
+        payerType: true,
+        payerId: true,
       },
       orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
       take: remainingRows + 1,
@@ -1689,12 +1689,12 @@ export async function loadFinancialReportProjections(params: {
       type: 'AVULSA',
       description: item.description,
       status,
-      payerId: null,
+      payerId: item.payerId,
       payerName: item.payerName ?? 'Pagador não informado',
       payerEmail: null,
       payerPhone: null,
       studentId: null,
-      studentName: item.customer?.payerType === 'ALUNO' ? item.payerName : null,
+      studentName: item.payerType === 'ALUNO' ? item.payerName : null,
       matriculaId: null,
       turmaId: null,
       turmaName: null,
