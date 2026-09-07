@@ -1,5 +1,6 @@
 import { prisma } from '@alusa/database';
 import type { BillingAgreementStatus, Prisma } from '@prisma/client';
+import { findCustomerForPayer } from '../customer/customer-identity';
 
 type BillingTerms = {
   interestValue?: number | null;
@@ -105,11 +106,7 @@ export async function materializeBillingAgreement(
 
     const payerType = legacy.matricula.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO';
     const payerId = legacy.matricula.responsavelFinanceiroId ?? legacy.matricula.alunoId;
-    const customer = await db.customer.findUnique({
-      where: {
-        contaId_payerType_payerId: { contaId: input.contaId, payerType, payerId },
-      },
-    });
+    const customer = await findCustomerForPayer(input.contaId, payerType, payerId, db);
     if (!customer) throw new Error('CUSTOMER_LOCAL_NAO_ENCONTRADO');
 
     const persistIndividual = async (tx: Prisma.TransactionClient) => {

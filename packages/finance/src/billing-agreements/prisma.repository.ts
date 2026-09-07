@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 
+import { findCustomerForPayer } from '../customer/customer-identity';
 import { BillingAgreementError } from './errors';
 import { decimalToCents } from './money';
 import type {
@@ -294,6 +295,16 @@ export function createPrismaBillingAgreementRepository(
         },
       });
       if (!row) return null;
+      // BillingAgreement.customerId is historical and may point to a Customer
+      // row created before payer aliases were introduced. Resolve the current
+      // financial identity from the agreement payer role without rewriting that
+      // historical FK or allowing a customer from another tenant.
+      const canonicalCustomer = await findCustomerForPayer(
+        row.contaId,
+        row.payerType,
+        row.payerId,
+        prisma,
+      );
       const charges = new Map<string, BillingCharge>();
       let currentCycle: BillingAgreementContext['currentCycle'] = null;
       const effectiveDate = input.effectiveDate ?? new Date().toISOString().slice(0, 10);
@@ -372,7 +383,7 @@ export function createPrismaBillingAgreementRepository(
         payer: {
           type: row.payerType,
           id: row.payerId,
-          customerId: row.customer?.asaasCustomerId ?? '',
+          customerId: canonicalCustomer?.asaasCustomerId ?? row.customer?.asaasCustomerId ?? '',
         },
         status: row.status,
         billingType: parseBillingType(row.billingType),

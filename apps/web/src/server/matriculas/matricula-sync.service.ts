@@ -11,6 +11,7 @@ import {
   previewBillingAgreementChange,
   materializeBillingAgreement,
   BillingAgreementError,
+  findCustomerForPayer,
 } from '@alusa/finance';
 import { AsaasHttpError } from '@alusa/finance';
 import { resolvePayer } from '@alusa/domain';
@@ -70,7 +71,8 @@ const DEFAULT_CANCELLATION_REASON = 'Cancelamento manual da matrícula';
 type MatriculaFinancialIdentity = {
   payerType: 'ALUNO' | 'RESPONSAVEL';
   payerId: string;
-  customerId: string | null;
+  localCustomerId: string | null;
+  asaasCustomerId: string | null;
 };
 
 /**
@@ -107,25 +109,14 @@ async function resolveMatriculaFinancialIdentity(
     ? matricula.aluno.asaasCustomerId
     : matricula.responsavelFinanceiro?.asaasCustomerId ?? null;
 
-  const customerDelegate = (prisma as PrismaClient & {
-    customer?: {
-      findFirst: (_args: unknown) => Promise<{ asaasCustomerId: string | null } | null>;
-    };
-  }).customer;
-  const customer = customerDelegate
-    ? await customerDelegate.findFirst({
-        where: {
-          contaId,
-          OR: [
-            { payerType, payerId },
-            { payerLinks: { some: { contaId, payerType, payerId } } },
-          ],
-        },
-        select: { asaasCustomerId: true },
-      })
-    : null;
+  const customer = await findCustomerForPayer(contaId, payerType, payerId, prisma);
 
-  return { payerType, payerId, customerId: customer?.asaasCustomerId ?? directCustomerId ?? null };
+  return {
+    payerType,
+    payerId,
+    localCustomerId: customer?.id ?? null,
+    asaasCustomerId: customer?.asaasCustomerId ?? directCustomerId ?? null,
+  };
 }
 
 const OPEN_CHARGE_STATUSES = new Set<StatusCobranca>([
@@ -542,8 +533,8 @@ function failureMetadata(mapped: ManualSyncError, original: unknown): Prisma.Inp
   } as Prisma.InputJsonValue;
 }
 
-function failureOperationStatus(mapped: ManualSyncError, original: unknown): 'DIVERGENTE' | 'MANUAL_REVIEW' {
-  return isRetryableCancellationFailure(mapped, original) ? 'DIVERGENTE' : 'MANUAL_REVIEW';
+function failureOperationStatus(mapped: ManualSyncError, original: unknown): 'DIVERGENTE' | 'ERRO' {
+  return isRetryableCancellationFailure(mapped, original) ? 'DIVERGENTE' : 'ERRO';
 }
 
 async function getOrCreateCancellationOperation(input: {
@@ -558,7 +549,7 @@ async function getOrCreateCancellationOperation(input: {
     contaId: input.contaId,
     matriculaId: input.matriculaId,
     tipo: 'CANCELAMENTO' as const,
-    status: { in: ['PENDENTE_SINCRONISMO', 'DIVERGENTE', 'ERRO', 'MANUAL_REVIEW'] },
+    status: { in: ['PENDENTE_SINCRONISMO', 'DIVERGENTE', 'ERRO'] },
   };
   const select = { id: true, correlationId: true } as const;
   const existing = await input.prisma.matriculaOperacao.findFirst({
@@ -675,7 +666,6 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
           nextDueDate: true,
           payerType: true,
           payerId: true,
-          customerId: true,
         },
       },
     },
@@ -713,7 +703,6 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
               nextDueDate: true,
               payerType: true,
               payerId: true,
-              customerId: true,
             },
           },
         },
@@ -729,12 +718,24 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
       matricula.id,
     );
     const agreement = canonicalAllocation.agreement;
+    const agreementCustomer = agreement.payerType && agreement.payerId
+      ? await findCustomerForPayer(
+          input.contaId,
+          agreement.payerType,
+          agreement.payerId,
+          input.prisma,
+        )
+      : null;
+    const agreementUsesCurrentPayer =
+      agreement.payerType === identity?.payerType && agreement.payerId === identity?.payerId;
+    const agreementUsesCurrentIdentity = Boolean(
+      identity?.localCustomerId && agreementCustomer?.id === identity.localCustomerId,
+    );
     if (
       identity &&
       agreement.payerType &&
       agreement.payerId &&
-      (agreement.payerType !== identity.payerType || agreement.payerId !== identity.payerId ||
-        (agreement.customerId && identity.customerId && agreement.customerId !== identity.customerId))
+      !(agreementUsesCurrentPayer || agreementUsesCurrentIdentity)
     ) {
       const identityError = buildFinancialSyncError(
         input.targetStatus,
@@ -742,17 +743,17 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
         new BillingAgreementError('PAYER_IDENTITY_CONFLICT', 'O acordo financeiro não corresponde ao pagador canônico da matrícula.', {
           agreementPayerType: agreement.payerType,
           agreementPayerId: agreement.payerId,
-          agreementCustomerId: agreement.customerId,
           expectedPayerType: identity.payerType,
           expectedPayerId: identity.payerId,
-          expectedCustomerId: identity.customerId,
+          expectedLocalCustomerId: identity.localCustomerId,
+          expectedAsaasCustomerId: identity.asaasCustomerId,
         }),
       );
       if (cancellationOperation) {
         await input.prisma.matriculaOperacao.update({
           where: { id: cancellationOperation.id },
           data: {
-            status: 'MANUAL_REVIEW',
+            status: 'ERRO',
             erro: identityError.message,
             metadata: { retryable: false, reasonCode: identityError.code },
             processedAt: new Date(),
@@ -854,20 +855,26 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
             input.contaId,
             matricula.id,
           );
-          if (identity?.customerId) {
+          if (identity?.asaasCustomerId) {
             const remoteSubscription = await getSubscription(matricula.asaasSubscriptionId, {
               contaId: input.contaId,
             });
-            if (remoteSubscription.customer && identity.customerId !== remoteSubscription.customer) {
+            const remoteAsaasCustomerId = remoteSubscription.customer;
+            if (remoteAsaasCustomerId !== identity.asaasCustomerId) {
               throw new BillingAgreementError(
                 'PAYER_IDENTITY_CONFLICT',
                 'A assinatura legada não corresponde ao pagador canônico da matrícula.',
                 {
-                  expectedCustomerId: identity.customerId,
-                  remoteCustomerId: remoteSubscription.customer,
+                  expectedAsaasCustomerId: identity.asaasCustomerId,
+                  remoteAsaasCustomerId,
                 },
               );
             }
+          } else {
+            throw new BillingAgreementError(
+              'PAYER_IDENTITY_CONFLICT',
+              'A assinatura legada não possui um customer Asaas canônico para a matrícula.',
+            );
           }
           asaasResponse = await deleteSubscription(matricula.asaasSubscriptionId, { contaId: input.contaId });
         } catch (error) {
@@ -1041,8 +1048,6 @@ export async function reconcilePendingMatriculaCancellations(input: {
       matriculaId: true,
       actorId: true,
       observacao: true,
-      metadata: true,
-      erro: true,
       matricula: { select: { status: true } },
     },
     orderBy: { createdAt: 'asc' },
@@ -1053,34 +1058,6 @@ export async function reconcilePendingMatriculaCancellations(input: {
   const errors: Array<{ operationId: string; error: string }> = [];
 
   for (const operation of operations) {
-    const metadata = operation.metadata && typeof operation.metadata === 'object' && !Array.isArray(operation.metadata)
-      ? operation.metadata as Record<string, unknown>
-      : null;
-    const retryable = metadata?.retryable;
-    const deterministicError = typeof operation.erro === 'string' && /customer remoto|pagador|justificativa|idempot[eê]ncia|preview financeiro/i.test(operation.erro);
-    if (retryable === false || deterministicError) {
-      await input.prisma.matriculaOperacao.update({
-        where: { id: operation.id },
-        data: {
-          status: 'MANUAL_REVIEW',
-          metadata: {
-            ...(metadata ?? {}),
-            retryable: false,
-            reasonCode: metadata?.reasonCode ?? 'MANUAL_REVIEW_REQUIRED',
-          } as Prisma.InputJsonValue,
-        },
-      }).catch((updateError) => {
-        console.error('[MATRICULA_CANCELAMENTO] Falha ao marcar operação para revisão manual', {
-          operationId: operation.id,
-          error: updateError instanceof Error ? updateError.message : String(updateError),
-        });
-      });
-      errors.push({
-        operationId: operation.id,
-        error: 'Operação requer revisão manual e não será repetida automaticamente.',
-      });
-      continue;
-    }
     try {
       if (!operation.actorId) {
         throw new Error('Operação de cancelamento sem actorId não pode ser reconciliada automaticamente.');

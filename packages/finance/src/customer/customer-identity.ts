@@ -1,7 +1,11 @@
 import { prisma } from '@alusa/database';
 import { isValidCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
-import type { CustomerPayerType, Prisma } from '@prisma/client';
+import type { CustomerPayerType, Prisma, PrismaClient } from '@prisma/client';
 import { advisoryLockKey64 } from '../foundation/advisory-lock.server';
+
+export { customerPayerWhere } from './customer-payer-scope';
+
+type CustomerIdentityDb = Pick<PrismaClient, 'customer' | 'customerPayer'> | Prisma.TransactionClient;
 
 export class CustomerIdentityConflictError extends Error {
   constructor() {
@@ -31,17 +35,22 @@ async function readPayer(db: Prisma.TransactionClient, contaId: string, payerTyp
 }
 
 /** A payer role is a link to a financial identity, never ownership of that identity. */
-export async function findCustomerForPayer(contaId: string, payerType: CustomerPayerType, payerId: string) {
+export async function findCustomerForPayer(
+  contaId: string,
+  payerType: CustomerPayerType,
+  payerId: string,
+  db: CustomerIdentityDb = prisma,
+) {
   // The runtime client always exposes CustomerPayer after the migration. The
   // guard keeps isolated legacy mocks/readers compatible during rollout.
-  const link = prisma.customerPayer
-    ? await prisma.customerPayer.findUnique({
+  const link = db.customerPayer
+    ? await db.customerPayer.findUnique({
         where: { contaId_payerType_payerId: { contaId, payerType, payerId } },
         include: { customer: true },
       })
     : null;
   if (link) return link.customer;
-  return prisma.customer.findUnique({
+  return db.customer.findUnique({
     where: { contaId_payerType_payerId: { contaId, payerType, payerId } },
   });
 }

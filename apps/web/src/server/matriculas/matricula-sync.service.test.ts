@@ -4,12 +4,14 @@ import { AsaasHttpError, BillingAgreementError } from '@alusa/finance';
 
 const {
   deleteSubscriptionMock,
+  getSubscriptionMock,
   getPaymentMock,
   deletePaymentMock,
   previewBillingAgreementChangeMock,
   commitBillingAgreementChangeMock,
 } = vi.hoisted(() => ({
   deleteSubscriptionMock: vi.fn(),
+  getSubscriptionMock: vi.fn(),
   getPaymentMock: vi.fn(),
   deletePaymentMock: vi.fn(),
   previewBillingAgreementChangeMock: vi.fn(),
@@ -21,6 +23,7 @@ vi.mock('@alusa/finance', async () => {
   return {
     ...actual,
     deleteSubscription: deleteSubscriptionMock,
+    getSubscription: getSubscriptionMock,
     getPayment: getPaymentMock,
     deletePayment: deletePaymentMock,
     previewBillingAgreementChange: previewBillingAgreementChangeMock,
@@ -48,8 +51,17 @@ function buildPrisma() {
         id: 'mat-1',
         status: 'ATIVA',
         asaasSubscriptionId: 'sub-1',
+        aluno: {
+          id: 'aluno-1',
+          dataNasc: new Date('1990-01-01T00:00:00.000Z'),
+          asaasCustomerId: 'cus-1',
+        },
+        responsavelFinanceiroId: null,
+        responsavelFinanceiro: null,
       })),
     },
+    customer: { findFirst: vi.fn(async () => null), findUnique: vi.fn(async () => null) },
+    customerPayer: { findUnique: vi.fn(async () => null) },
     billingAllocation: { findFirst: vi.fn(async () => null) },
     matriculaOperacao: {
       findFirst: vi.fn(async () => null),
@@ -57,7 +69,7 @@ function buildPrisma() {
       update: vi.fn(async () => operation),
     },
     cobranca: { findMany: vi.fn(async () => []) },
-    $transaction: vi.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
+    $transaction: vi.fn(async (_callback: (_client: typeof tx) => Promise<unknown>) => _callback(tx)),
   };
   return { prisma: root as unknown as PrismaClient, root, tx, operation };
 }
@@ -66,6 +78,7 @@ describe('syncMatriculaStatus cancellation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     deleteSubscriptionMock.mockResolvedValue({ deleted: true });
+    getSubscriptionMock.mockResolvedValue({ customer: 'cus-1', nextDueDate: '2026-10-05' });
   });
 
   it('persiste operação antes do Asaas e alinha todos os estados no commit local', async () => {
@@ -127,6 +140,38 @@ describe('syncMatriculaStatus cancellation', () => {
     expect(root.matriculaOperacao.create).not.toHaveBeenCalled();
     expect(tx.matricula.update).toHaveBeenCalled();
     expect(result.asaasResponse).toEqual({ deleted: true, alreadyAbsent: true });
+  });
+
+  it('reconcilia operação parcialmente concluída sem repetir a exclusão remota', async () => {
+    const { prisma, root, tx, operation } = buildPrisma();
+    root.matricula.findFirst.mockResolvedValue({
+      id: 'mat-1',
+      status: 'CANCELADA',
+      asaasSubscriptionId: 'sub-1',
+      aluno: {
+        id: 'aluno-1',
+        dataNasc: new Date('1990-01-01T00:00:00.000Z'),
+        asaasCustomerId: 'cus-1',
+      },
+      responsavelFinanceiroId: null,
+      responsavelFinanceiro: null,
+    } as never);
+    root.matriculaOperacao.findFirst.mockResolvedValue(operation as never);
+
+    const result = await syncMatriculaStatus({
+      prisma,
+      contaId: 'conta-1',
+      matriculaId: 'mat-1',
+      targetStatus: 'CANCELADA',
+      actorId: 'user-1',
+    });
+
+    expect(root.matriculaOperacao.create).not.toHaveBeenCalled();
+    expect(deleteSubscriptionMock).not.toHaveBeenCalled();
+    expect(tx.matricula.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { uq_matricula_conta_id: { contaId: 'conta-1', id: 'mat-1' } },
+    }));
+    expect(result.newStatus).toBe('CANCELADA');
   });
 
   it('mantém a operação pendente quando o remoto foi alterado mas o commit local falha', async () => {
@@ -214,5 +259,138 @@ describe('syncMatriculaStatus cancellation', () => {
         observacao: 'Cancelamento manual da matrícula',
       }),
     }));
+  });
+
+  it('aceita aluno e responsável como aliases da identidade financeira canônica', async () => {
+    const { prisma, root, tx } = buildPrisma();
+    root.matricula.findFirst.mockResolvedValue({
+      id: 'mat-1',
+      status: 'ATIVA',
+      asaasSubscriptionId: 'sub-shared',
+      aluno: {
+        id: 'aluno-1',
+        dataNasc: new Date('1990-01-01T00:00:00.000Z'),
+        asaasCustomerId: 'cus-shared',
+      },
+      responsavelFinanceiroId: null,
+      responsavelFinanceiro: null,
+    } as never);
+    root.customerPayer.findUnique
+      .mockResolvedValueOnce({ customer: { id: 'customer-canonical', asaasCustomerId: 'cus-shared' } } as never)
+      .mockResolvedValueOnce({ customer: { id: 'customer-canonical' } } as never);
+    root.billingAllocation.findFirst.mockResolvedValue({
+      id: 'allocation-1',
+      agreementId: 'agreement-historical',
+      agreement: {
+        version: 4,
+        nextDueDate: new Date('2026-10-05T00:00:00.000Z'),
+        payerType: 'RESPONSAVEL',
+        payerId: 'responsavel-1',
+      },
+    } as never);
+    previewBillingAgreementChangeMock.mockResolvedValue({
+      previewHash: 'preview-shared',
+      expiresAt: '2026-09-07T03:00:00.000Z',
+      plans: [],
+      blockers: [],
+    });
+    commitBillingAgreementChangeMock.mockResolvedValue({
+      operationId: 'billing-op-shared',
+      status: 'COMPLETED',
+    });
+
+    const result = await syncMatriculaStatus({
+      prisma,
+      contaId: 'conta-1',
+      matriculaId: 'mat-1',
+      targetStatus: 'CANCELADA',
+      actorId: 'user-1',
+    });
+
+    expect(commitBillingAgreementChangeMock).toHaveBeenCalledWith(expect.objectContaining({
+      agreementId: 'agreement-historical',
+      allocationIds: ['allocation-1'],
+    }));
+    expect(deleteSubscriptionMock).not.toHaveBeenCalled();
+    expect(tx.matricula.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'CANCELADA', integrationStatus: 'SINCRONIZADO' }),
+    }));
+    expect(tx.matriculaOperacao.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'SINCRONIZADO' }),
+    }));
+    expect(result.newStatus).toBe('CANCELADA');
+  });
+
+  it('bloqueia customer remoto de outra identidade antes de remover assinatura legada', async () => {
+    const { prisma, root } = buildPrisma();
+    root.matricula.findFirst.mockResolvedValue({
+      id: 'mat-1',
+      status: 'ATIVA',
+      asaasSubscriptionId: 'sub-wrong-customer',
+      aluno: {
+        id: 'aluno-1',
+        dataNasc: new Date('1990-01-01T00:00:00.000Z'),
+        asaasCustomerId: 'cus-expected',
+      },
+      responsavelFinanceiroId: null,
+      responsavelFinanceiro: null,
+    } as never);
+    root.customerPayer.findUnique.mockResolvedValue({
+      customer: { id: 'customer-student', asaasCustomerId: 'cus-expected' },
+    } as never);
+    getSubscriptionMock.mockResolvedValue({ customer: 'cus-other', nextDueDate: '2026-10-05' });
+
+    await expect(syncMatriculaStatus({
+      prisma,
+      contaId: 'conta-1',
+      matriculaId: 'mat-1',
+      targetStatus: 'CANCELADA',
+      actorId: 'user-1',
+    })).rejects.toMatchObject({ code: 'FINANCE_IDENTITY_CONFLICT' });
+
+    expect(deleteSubscriptionMock).not.toHaveBeenCalled();
+    expect(root.matriculaOperacao.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'ERRO' }),
+    }));
+  });
+
+  it('bloqueia acordo de outro papel quando não existe alias legítimo', async () => {
+    const { prisma, root } = buildPrisma();
+    root.matricula.findFirst.mockResolvedValue({
+      id: 'mat-1',
+      status: 'ATIVA',
+      asaasSubscriptionId: 'sub-no-alias',
+      aluno: {
+        id: 'aluno-1',
+        dataNasc: new Date('1990-01-01T00:00:00.000Z'),
+        asaasCustomerId: 'cus-student',
+      },
+      responsavelFinanceiroId: null,
+      responsavelFinanceiro: null,
+    } as never);
+    root.customerPayer.findUnique
+      .mockResolvedValueOnce({ customer: { id: 'customer-student', asaasCustomerId: 'cus-student' } } as never)
+      .mockResolvedValueOnce(null);
+    root.billingAllocation.findFirst.mockResolvedValue({
+      id: 'allocation-1',
+      agreementId: 'agreement-other-payer',
+      agreement: {
+        version: 1,
+        nextDueDate: new Date('2026-10-05T00:00:00.000Z'),
+        payerType: 'RESPONSAVEL',
+        payerId: 'responsavel-other',
+      },
+    } as never);
+
+    await expect(syncMatriculaStatus({
+      prisma,
+      contaId: 'conta-1',
+      matriculaId: 'mat-1',
+      targetStatus: 'CANCELADA',
+      actorId: 'user-1',
+    })).rejects.toMatchObject({ code: 'FINANCE_IDENTITY_CONFLICT' });
+
+    expect(commitBillingAgreementChangeMock).not.toHaveBeenCalled();
+    expect(deleteSubscriptionMock).not.toHaveBeenCalled();
   });
 });
