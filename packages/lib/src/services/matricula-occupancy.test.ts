@@ -3,6 +3,7 @@ import {
   doesMatriculaOccupySeat,
   getSeatOccupyingStatuses,
   buildSeatOccupancyWhereClause,
+  buildSeatOccupancyWhereClauseForAcademicDate,
   buildSeatOccupancyOverlapWhereClause,
   calcularVagasDisponiveis,
   SEAT_OCCUPYING_STATUSES,
@@ -66,7 +67,7 @@ describe('matricula-occupancy', () => {
   });
 
   describe('buildSeatOccupancyWhereClause', () => {
-    const referenceDate = new Date('2026-07-03T12:00:00.000Z');
+    const referenceDate = new Date('2026-07-03T04:30:00.000Z');
 
     it('inclui status base e pausa com retencao de vaga', () => {
       const where = buildSeatOccupancyWhereClause(referenceDate);
@@ -93,8 +94,27 @@ describe('matricula-occupancy', () => {
     it('exclui matriculas futuras e vencidas da ocupacao atual', () => {
       const where = buildSeatOccupancyWhereClause(referenceDate);
 
-      expect(where.AND[1]).toEqual({ dataInicio: { lte: referenceDate } });
-      expect(where.AND[2]).toEqual({ dataFimContrato: { gte: referenceDate } });
+      expect(where.AND[1]).toEqual({ dataInicio: { lte: new Date('2026-07-03T23:59:59.999Z') } });
+      expect(where.AND[2]).toEqual({ dataFimContrato: { gte: new Date('2026-07-03T00:00:00.000Z') } });
+    });
+
+    it('inclui uma matrícula que começa hoje antes do meio-dia UTC', () => {
+      const where = buildSeatOccupancyWhereClause(
+        new Date('2026-09-07T04:30:00.000Z'),
+        'America/Sao_Paulo',
+      );
+
+      expect(where.AND[1]).toEqual({ dataInicio: { lte: new Date('2026-09-07T23:59:59.999Z') } });
+      expect(where.AND[2]).toEqual({ dataFimContrato: { gte: new Date('2026-09-07T00:00:00.000Z') } });
+    });
+
+    it('usa o dia civil da data de início para validação de capacidade', () => {
+      const where = buildSeatOccupancyWhereClauseForAcademicDate(
+        new Date('2026-09-07T12:00:00.000Z'),
+      );
+
+      expect(where.AND[1]).toEqual({ dataInicio: { lte: new Date('2026-09-07T23:59:59.999Z') } });
+      expect(where.AND[2]).toEqual({ dataFimContrato: { gte: new Date('2026-09-07T00:00:00.000Z') } });
     });
   });
 

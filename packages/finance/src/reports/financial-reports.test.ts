@@ -173,12 +173,16 @@ describe('financial reports', () => {
         status: 'ATIVA',
         createdAt: new Date('2026-07-10T12:00:00.000Z'),
         updatedAt: new Date('2026-07-10T12:00:00.000Z'),
+        turma: null,
+        matriculaTurmas: [],
       },
       {
         id: 'm-canceled',
         status: 'CANCELADA',
         createdAt: new Date('2026-06-10T12:00:00.000Z'),
         updatedAt: new Date('2026-07-15T12:00:00.000Z'),
+        turma: null,
+        matriculaTurmas: [],
       },
     ]);
 

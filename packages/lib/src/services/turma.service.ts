@@ -3,6 +3,10 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../prisma';
 import { turmaSchema } from '../schemas/turma.schema';
 import type { TurmaCreateInput, TurmaUpdateInput } from '../schemas/turma.schema';
+import {
+  DEFAULT_ACADEMIC_TIMEZONE,
+  getAcademicDateBoundsForInstant,
+} from '../utils/date-only';
 import { buildSeatOccupancyWhereClause } from './matricula-occupancy';
 
 function parseHora(h: string): number {
@@ -326,10 +330,12 @@ export type TurmaListItem = Turma & {
 export function buildTurmaOccupancyMatriculaWhere(
   contaId: string,
   turmaIds: string[],
+  timeZone: string = DEFAULT_ACADEMIC_TIMEZONE,
+  referenceDate: Date = new Date(),
 ): Prisma.MatriculaWhereInput {
   return {
     AND: [
-      buildSeatOccupancyWhereClause() as Prisma.MatriculaWhereInput,
+      buildSeatOccupancyWhereClause(referenceDate, timeZone) as Prisma.MatriculaWhereInput,
       { aluno: { contaId } },
       {
         OR: [
@@ -373,8 +379,14 @@ export async function listTurmas(
   const referenceDate = new Date();
 
   if (turmaIds.length) {
+    const conta = await prisma.conta.findUnique({
+      where: { id: contaId },
+      select: { timezone: true },
+    });
+    const timeZone = conta?.timezone ?? DEFAULT_ACADEMIC_TIMEZONE;
+    const academicDay = getAcademicDateBoundsForInstant(referenceDate, timeZone);
     const matriculasQueOcupamVaga = await prisma.matricula.findMany({
-      where: buildTurmaOccupancyMatriculaWhere(contaId, turmaIds),
+      where: buildTurmaOccupancyMatriculaWhere(contaId, turmaIds, timeZone, referenceDate),
       select: {
         id: true,
         turmaId: true,
@@ -398,8 +410,8 @@ export async function listTurmas(
       where: {
         aluno: { contaId },
         status: { notIn: ['ENCERRADA', 'CANCELADA', 'RECUSADA'] },
-        dataInicio: { lte: referenceDate },
-        dataFimContrato: { gte: referenceDate },
+        dataInicio: { lte: academicDay.end },
+        dataFimContrato: { gte: academicDay.start },
         OR: [
           { turmaId: { in: turmaIds } },
           { matriculaTurmas: { some: { turmaId: { in: turmaIds } } } },

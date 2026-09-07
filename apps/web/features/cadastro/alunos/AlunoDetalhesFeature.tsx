@@ -16,6 +16,11 @@ import ReasonField from '@/components/shared/ReasonField';
 import { pushToast } from '@/components/ui/toast';
 import { CustomerNotificationsEditor } from '@/features/cadastro/shared/CustomerNotificationsEditor';
 import {
+  getEnrollmentHistoryStatusLabel,
+  getEnrollmentHistoryStatusVariant,
+} from '@/features/cadastro/shared/enrollment-history-status';
+import { getAcademicDateKey } from '@alusa/lib/date-only';
+import {
   ChevronDown,
   ChevronLeft as ArrowLeft,
   ChevronUp,
@@ -147,6 +152,7 @@ type ParcelamentoResumo = {
 
 type AlunoDetalhes = {
   id: string;
+  timezone: string;
   nome: string;
   nomeSocial: Nullable<string>;
   dataNasc: Nullable<string>;
@@ -352,6 +358,13 @@ function formatDate(value: string | null | undefined) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
   return date.toLocaleDateString('pt-BR');
+}
+
+function formatAcademicDate(value: string | null | undefined) {
+  const key = value ? getAcademicDateKey(value) : null;
+  if (!key) return '—';
+  const [year, month, day] = key.split('-');
+  return `${day}/${month}/${year}`;
 }
 
 function onlyDate(value: string | null | undefined) {
@@ -1028,7 +1041,7 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
             </div>
           </EditableSection>
 
-          <HistoricoMatriculasSection matriculas={aluno.matriculas} />
+          <HistoricoMatriculasSection matriculas={aluno.matriculas} timeZone={aluno.timezone} />
 
           {notificationResponsavel ? (
             <CustomerNotificationsResponsavelNotice
@@ -1324,7 +1337,13 @@ function TextField({
   );
 }
 
-function HistoricoMatriculasSection({ matriculas }: { matriculas: MatriculaResumo[] }) {
+function HistoricoMatriculasSection({
+  matriculas,
+  timeZone,
+}: {
+  matriculas: MatriculaResumo[];
+  timeZone: string;
+}) {
   const sorted = [...matriculas].sort((a, b) => {
     const aTime = new Date(a.dataInicio ?? a.createdAt ?? 0).getTime();
     const bTime = new Date(b.dataInicio ?? b.createdAt ?? 0).getTime();
@@ -1358,7 +1377,11 @@ function HistoricoMatriculasSection({ matriculas }: { matriculas: MatriculaResum
             </thead>
             <tbody>
               {sorted.map((matricula) => (
-                <HistoricoMatriculaRow key={matricula.id} matricula={matricula} />
+                <HistoricoMatriculaRow
+                  key={matricula.id}
+                  matricula={matricula}
+                  timeZone={timeZone}
+                />
               ))}
             </tbody>
           </table>
@@ -1370,7 +1393,13 @@ function HistoricoMatriculasSection({ matriculas }: { matriculas: MatriculaResum
   );
 }
 
-function HistoricoMatriculaRow({ matricula }: { matricula: MatriculaResumo }) {
+function HistoricoMatriculaRow({
+  matricula,
+  timeZone,
+}: {
+  matricula: MatriculaResumo;
+  timeZone: string;
+}) {
   const router = useRouter();
   const isRenewal = Boolean(matricula.rematriculaFutura);
   const turma =
@@ -1378,7 +1407,11 @@ function HistoricoMatriculaRow({ matricula }: { matricula: MatriculaResumo }) {
     (matricula.turmas.map((item) => item.nome).join(', ') ||
       'Turma não informada');
   const href = `/matriculas/${matricula.id}`;
-  const statusLabel = getHistoryStatusLabel(matricula.status, matricula.dataInicio);
+  const statusLabel = getEnrollmentHistoryStatusLabel(
+    matricula.status,
+    matricula.dataInicio,
+    timeZone,
+  );
 
   return (
     <tr
@@ -1400,10 +1433,17 @@ function HistoricoMatriculaRow({ matricula }: { matricula: MatriculaResumo }) {
       <td className="max-w-[280px] px-4 py-3">
         <span className="block truncate font-medium text-slate-900">{turma}</span>
       </td>
-      <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(matricula.dataInicio)}</td>
-      <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(matricula.dataFimContrato)}</td>
+      <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatAcademicDate(matricula.dataInicio)}</td>
+      <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatAcademicDate(matricula.dataFimContrato)}</td>
       <td className="whitespace-nowrap px-4 py-3">
-        <Badge variant={getHistoryStatusVariant(matricula.status, matricula.dataInicio)} size="sm">
+        <Badge
+          variant={getEnrollmentHistoryStatusVariant(
+            matricula.status,
+            matricula.dataInicio,
+            timeZone,
+          )}
+          size="sm"
+        >
           {statusLabel}
         </Badge>
       </td>
@@ -1419,35 +1459,6 @@ function HistoricoMatriculaRow({ matricula }: { matricula: MatriculaResumo }) {
       </td>
     </tr>
   );
-}
-
-function getHistoryStatusLabel(status: string, dataInicio: string | null | undefined) {
-  const startsInFuture = dataInicio ? new Date(dataInicio).getTime() > Date.now() : false;
-  if (startsInFuture && ['ATIVA', 'AGUARDANDO_CONFIRMACAO', 'PENDENTE_TAXA'].includes(status)) {
-    return 'Próxima';
-  }
-  const labels: Record<string, string> = {
-    ATIVA: 'Ativa',
-    PAUSADA: 'Pausada',
-    AGUARDANDO_CONFIRMACAO: 'Pendente',
-    PENDENTE_TAXA: 'Taxa',
-    ENCERRADA: 'Encerrada',
-    CANCELADA: 'Cancelada',
-  };
-  return labels[status] ?? status;
-}
-
-function getHistoryStatusVariant(
-  status: string,
-  dataInicio: string | null | undefined,
-): 'default' | 'destructive' | 'outline' | 'warning' | 'info' | 'success' | 'neutral' {
-  const startsInFuture = dataInicio ? new Date(dataInicio).getTime() > Date.now() : false;
-  if (startsInFuture) return 'info';
-  if (status === 'ATIVA') return 'success';
-  if (status === 'CANCELADA' || status === 'RECUSADA') return 'destructive';
-  if (status === 'PAUSADA' || status === 'PENDENTE_TAXA') return 'warning';
-  if (status === 'ENCERRADA') return 'neutral';
-  return 'info';
 }
 
 function CustomerNotificationsResponsavelNotice({

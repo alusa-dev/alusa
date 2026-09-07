@@ -10,6 +10,7 @@ import {
   buildFinancialSnapshot,
   evaluateCanonicalRematriculaDecision,
 } from '@/src/server/matriculas/rematricula-financial-policy.service';
+import { getAcademicDateDifference } from '@alusa/lib/date-only';
 import { resolveResponsavelRouteId } from '../../_lib/resolve-responsavel-route-id';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
@@ -62,6 +63,7 @@ function mapEventChargeStatus(status: string) {
 async function loadRematriculaDecision(params: {
   contaId: string;
   matriculaId: string;
+  timeZone?: string;
 }) {
   const matricula = await prisma.matricula.findFirst({
     where: { id: params.matriculaId, aluno: { contaId: params.contaId } },
@@ -84,9 +86,7 @@ async function loadRematriculaDecision(params: {
 
   if (!matricula) return null;
 
-  const diasRestantes = Math.ceil(
-    (matricula.dataFimContrato.getTime() - Date.now()) / (24 * 60 * 60 * 1000),
-  );
+  const diasRestantes = getAcademicDateDifference(matricula.dataFimContrato, new Date(), params.timeZone);
   const contratoExpirado = diasRestantes < 0;
   const academicEligible = validarElegibilidadeRematricula({
     status: matricula.status,
@@ -130,7 +130,7 @@ export async function GET(
 
     const responsavel = await prisma.responsavel.findFirst({
       where: { id: responsavelId, contaId: user.contaId },
-      select: { id: true, nome: true },
+      select: { id: true, nome: true, conta: { select: { timezone: true } } },
     });
 
     if (!responsavel) {
@@ -462,6 +462,7 @@ export async function GET(
         const decision = await loadRematriculaDecision({
           contaId: user.contaId,
           matriculaId: matricula.id,
+          timeZone: responsavel.conta.timezone,
         });
 
         rematriculaCandidates.push({
@@ -530,6 +531,7 @@ export async function GET(
 
     return NextResponse.json(
       {
+        timezone: responsavel.conta.timezone,
         summary: {
           familyEnrollments: families.length,
           familyReenrollments: reenrollments.length,

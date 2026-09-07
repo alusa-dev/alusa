@@ -199,6 +199,7 @@ export const responsavelEnrollmentHistoryDTOSchema = z.object({
 });
 
 export const responsavelOverviewDTOSchema = z.object({
+  timezone: z.string().min(1),
   summary: responsavelOverviewSummaryDTOSchema,
   families: z.array(responsavelFamilyAggregateDTOSchema),
   reenrollments: z.array(responsavelFamilyAggregateDTOSchema),

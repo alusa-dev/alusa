@@ -25,8 +25,9 @@ import {
 } from '@alusa/domain';
 import {
   buildSeatOccupancyOverlapWhereClause,
-  buildSeatOccupancyWhereClause,
+  buildSeatOccupancyWhereClauseForAcademicDate,
 } from '@alusa/lib';
+import { getAcademicDateBoundsForInstant } from '@alusa/lib/date-only';
 import {
   materializeBillingAgreement,
   mapAsaasPaymentStatusToCharge,
@@ -347,6 +348,11 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
 
   if (input.turmaId) {
     const referenceDate = new Date();
+    const conta = await prisma.conta.findUnique({
+      where: { id: input.contaId },
+      select: { timezone: true },
+    });
+    const academicDay = getAcademicDateBoundsForInstant(referenceDate, conta?.timezone);
     andFilters.push(
       {
         OR: [
@@ -355,8 +361,8 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
         ],
       },
       { status: { notIn: [StatusMatricula.ENCERRADA, StatusMatricula.CANCELADA, StatusMatricula.RECUSADA] } },
-      { dataInicio: { lte: referenceDate } },
-      { dataFimContrato: { gte: referenceDate } },
+      { dataInicio: { lte: academicDay.end } },
+      { dataFimContrato: { gte: academicDay.start } },
     );
   }
 
@@ -1628,7 +1634,7 @@ export async function editarMatricula(input: {
         where: {
           contaId: input.contaId,
           turmaId: turma.id,
-          ...buildSeatOccupancyWhereClause(verify.dataInicio),
+          ...buildSeatOccupancyWhereClauseForAcademicDate(verify.dataInicio),
           NOT: { id: input.matriculaId },
         },
       });
@@ -1652,7 +1658,7 @@ export async function editarMatricula(input: {
       const matriculasExistentes = await tx.matricula.findMany({
         where: {
           alunoId: verify.alunoId,
-          ...buildSeatOccupancyWhereClause(verify.dataInicio),
+          ...buildSeatOccupancyWhereClauseForAcademicDate(verify.dataInicio),
           NOT: { id: input.matriculaId },
         },
         include: {
@@ -1696,7 +1702,7 @@ export async function editarMatricula(input: {
           where: {
             contaId: input.contaId,
             comboId: combo.id,
-            ...buildSeatOccupancyWhereClause(verify.dataInicio),
+            ...buildSeatOccupancyWhereClauseForAcademicDate(verify.dataInicio),
             NOT: { id: input.matriculaId },
           },
         });

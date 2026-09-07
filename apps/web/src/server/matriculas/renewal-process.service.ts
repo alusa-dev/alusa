@@ -11,7 +11,7 @@ import {
 } from '@alusa/domain';
 import { AsaasHttpError, deletePayment, deleteSubscription, isAsaasEnabled } from '@alusa/finance';
 import {
-  buildSeatOccupancyWhereClause,
+  buildSeatOccupancyWhereClauseForAcademicDate,
 } from '@alusa/lib';
 import { issueEnrollmentContract } from '@/src/server/contracts/issue-enrollment-contract.service';
 import { createRenewalPending } from './renewal-governance.service';
@@ -814,8 +814,7 @@ async function validateRenewalPreconditions(
           alunoId: { in: sourceRows.map((source) => source.alunoId) },
           id: { notIn: sourceIds },
           status: { in: [StatusMatricula.ATIVA, StatusMatricula.PAUSADA, StatusMatricula.AGUARDANDO_CONFIRMACAO] },
-          dataInicio: { lte: effectiveAt },
-          dataFimContrato: { gte: effectiveAt },
+          ...buildSeatOccupancyWhereClauseForAcademicDate(effectiveAt),
           turmaId: { not: null },
         },
         select: {
@@ -1252,8 +1251,7 @@ async function validateRenewalCapacity(
       where: {
         contaId: input.contaId,
         turmaId: classId,
-        dataFimContrato: { gte: effectiveAt },
-        ...buildSeatOccupancyWhereClause(effectiveAt),
+        ...buildSeatOccupancyWhereClauseForAcademicDate(effectiveAt),
         id: { notIn: [...sourceIds, ...reservedFutureEnrollmentIds] },
       },
     });
@@ -1291,8 +1289,7 @@ async function validateRenewalCapacity(
           where: {
             contaId: input.contaId,
             OR: [{ turmaId: comboClass.turma.id }, { comboId }],
-            dataFimContrato: { gte: effectiveAt },
-            ...buildSeatOccupancyWhereClause(effectiveAt),
+            ...buildSeatOccupancyWhereClauseForAcademicDate(effectiveAt),
             id: { notIn: sourceIds },
           },
         });
@@ -1328,8 +1325,7 @@ async function validateRenewalCapacity(
       where: {
         contaId: input.contaId,
         comboId,
-        dataFimContrato: { gte: effectiveAt },
-        ...buildSeatOccupancyWhereClause(effectiveAt),
+        ...buildSeatOccupancyWhereClauseForAcademicDate(effectiveAt),
         id: { notIn: [...sourceIds, ...reservedFutureEnrollmentIds] },
       },
     });

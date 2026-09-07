@@ -1,4 +1,9 @@
 import { StatusMatricula } from '@prisma/client';
+import {
+  DEFAULT_ACADEMIC_TIMEZONE,
+  getAcademicDateBoundsForInstant,
+  getAcademicDateBoundsForStoredDate,
+} from '../utils/date-only';
 
 /**
  * Status de matrícula que ocupam vaga na turma.
@@ -74,7 +79,10 @@ export function getSeatOccupyingStatuses(): StatusMatricula[] {
  * - PENDENTE_TAXA, AGUARDANDO_CONFIRMACAO e ATIVA sempre ocupam vaga.
  * - PAUSADA só ocupa vaga quando manterVaga=true.
  */
-export function buildSeatOccupancyWhereClause(referenceDate: Date = new Date()) {
+function buildSeatOccupancyWhereClauseForBounds(bounds: {
+  start: Date;
+  end: Date;
+}) {
   return {
     AND: [
       {
@@ -83,10 +91,31 @@ export function buildSeatOccupancyWhereClause(referenceDate: Date = new Date()) 
           { status: StatusMatricula.PAUSADA, manterVaga: true },
         ],
       },
-      { dataInicio: { lte: referenceDate } },
-      { dataFimContrato: { gte: referenceDate } },
+      { dataInicio: { lte: bounds.end } },
+      { dataFimContrato: { gte: bounds.start } },
     ],
   };
+}
+
+/**
+ * Cláusula canônica para o dia civil atual da Conta.
+ * `referenceDate` é um instante real; `timeZone` define qual dia acadêmico
+ * esse instante representa para o tenant.
+ */
+export function buildSeatOccupancyWhereClause(
+  referenceDate: Date = new Date(),
+  timeZone: string = DEFAULT_ACADEMIC_TIMEZONE,
+) {
+  return buildSeatOccupancyWhereClauseForBounds(
+    getAcademicDateBoundsForInstant(referenceDate, timeZone),
+  );
+}
+
+/** Cláusula para uma data acadêmica já persistida, como dataInicio. */
+export function buildSeatOccupancyWhereClauseForAcademicDate(academicDate: Date | string) {
+  return buildSeatOccupancyWhereClauseForBounds(
+    getAcademicDateBoundsForStoredDate(academicDate),
+  );
 }
 
 /**

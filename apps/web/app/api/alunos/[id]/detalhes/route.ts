@@ -120,6 +120,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const aluno = await prisma.aluno.findFirst({
       where: { id: rawParams.id, contaId: user.contaId },
       include: {
+        conta: { select: { timezone: true } },
         responsaveis: {
           include: { responsavel: true },
           orderBy: { id: 'asc' },
@@ -686,6 +687,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const response = {
       aluno: {
         id: aluno.id,
+        timezone: aluno.conta.timezone,
         nome: aluno.nome,
         nomeSocial: aluno.nomeSocial,
         dataNasc: toIso(aluno.dataNasc),

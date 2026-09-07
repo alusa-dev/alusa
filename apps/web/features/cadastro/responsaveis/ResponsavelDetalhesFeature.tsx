@@ -29,7 +29,9 @@ import {
 } from '@/components/icons/icons';
 import { pushToast } from '@/components/ui/toast';
 import { CustomerNotificationsEditor } from '@/features/cadastro/shared/CustomerNotificationsEditor';
+import { getEnrollmentHistoryStatusLabel } from '@/features/cadastro/shared/enrollment-history-status';
 import { formatInitials, maskCpf } from '@alusa/lib/client';
+import { getAcademicDateKey } from '@alusa/lib/date-only';
 import { cn } from '@/lib/utils';
 
 import { deleteResponsavel, getResponsavel, updateResponsavel, type ResponsavelDetail, type ResponsavelOverview } from './services/responsaveis-service';
@@ -72,6 +74,13 @@ type ResponsavelEnrollmentHistory = ResponsavelOverview['enrollmentHistory'][num
 function formatDate(value: string | null | undefined) {
   if (!value) return '-';
   return new Date(value).toLocaleDateString('pt-BR');
+}
+
+function formatAcademicDate(value: string | null | undefined) {
+  const key = value ? getAcademicDateKey(value) : null;
+  if (!key) return '-';
+  const [year, month, day] = key.split('-');
+  return `${day}/${month}/${year}`;
 }
 
 function formatShortPersonName(value: string) {
@@ -442,7 +451,10 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
             />
           </div>
 
-          <HistoricoMatriculasResponsavelSection historico={overview?.enrollmentHistory ?? []} />
+          <HistoricoMatriculasResponsavelSection
+            historico={overview?.enrollmentHistory ?? []}
+            timeZone={overview?.timezone}
+          />
 
           <div className={DETAIL_SECTION_MAX}>
             <FinancialAccordion
@@ -632,8 +644,10 @@ function EditableSection({
 
 function HistoricoMatriculasResponsavelSection({
   historico,
+  timeZone,
 }: {
   historico: ResponsavelEnrollmentHistory[];
+  timeZone?: string;
 }) {
   const router = useRouter();
   const sorted = [...historico].sort((a, b) => {
@@ -693,10 +707,14 @@ function HistoricoMatriculasResponsavelSection({
                       {item.turmaNome ?? 'Turma não informada'}
                     </span>
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(item.dataInicio)}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(item.dataFimContrato)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatAcademicDate(item.dataInicio)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatAcademicDate(item.dataFimContrato)}</td>
                   <td className="whitespace-nowrap px-4 py-3">
-                    <HistoryStatusBadge status={item.status} dataInicio={item.dataInicio} />
+                    <HistoryStatusBadge
+                      status={item.status}
+                      dataInicio={item.dataInicio}
+                      timeZone={timeZone}
+                    />
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <Link
@@ -720,30 +738,16 @@ function HistoricoMatriculasResponsavelSection({
   );
 }
 
-function getHistoryStatusLabel(status: string, dataInicio: string | null | undefined) {
-  const startsInFuture = dataInicio ? new Date(dataInicio).getTime() > Date.now() : false;
-  if (startsInFuture && ['ATIVA', 'AGUARDANDO_CONFIRMACAO', 'PENDENTE_TAXA'].includes(status)) {
-    return 'Próxima';
-  }
-  const labels: Record<string, string> = {
-    ATIVA: 'Ativa',
-    PAUSADA: 'Pausada',
-    AGUARDANDO_CONFIRMACAO: 'Pendente',
-    PENDENTE_TAXA: 'Taxa',
-    ENCERRADA: 'Encerrada',
-    CANCELADA: 'Cancelada',
-  };
-  return labels[status] ?? status;
-}
-
 function HistoryStatusBadge({
   status,
   dataInicio,
+  timeZone,
 }: {
   status: string;
   dataInicio: string | null | undefined;
+  timeZone?: string;
 }) {
-  const label = getHistoryStatusLabel(status, dataInicio);
+  const label = getEnrollmentHistoryStatusLabel(status, dataInicio, timeZone);
   if (label === 'Próxima') {
     return (
       <Badge variant="info" size="sm">

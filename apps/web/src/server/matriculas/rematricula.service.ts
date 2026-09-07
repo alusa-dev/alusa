@@ -11,6 +11,12 @@ import {
   type EnrollmentChainRow,
   resolveEnrollmentRootId,
 } from './rematricula-chain';
+import {
+  addAcademicDays,
+  getAcademicDateBoundsForStoredDate,
+  getAcademicDateDifference,
+  getCurrentAcademicDateKey,
+} from '@alusa/lib/date-only';
 
 function toNullableNumber(value: unknown): number | null {
   if (value == null) return null;
@@ -95,8 +101,15 @@ export async function listarRematriculasElegiveis(input: {
 }): Promise<{ referencia: Date; ate: Date; total: number; itens: RematriculaElegivelItem[] }> {
   const diasAntecedencia = Math.max(0, Math.min(365, input.diasAntecedencia ?? 60));
   const referencia = input.referencia ?? new Date();
-  const limite = new Date(referencia);
-  limite.setDate(limite.getDate() + diasAntecedencia);
+  const conta = await prisma.conta?.findUnique({
+    where: { id: input.contaId },
+    select: { timezone: true },
+  });
+  const timeZone = conta?.timezone;
+  const limiteAcademicDate = getAcademicDateBoundsForStoredDate(
+    addAcademicDays(getCurrentAcademicDateKey(referencia, timeZone), diasAntecedencia),
+  );
+  const limite = limiteAcademicDate.end;
 
   const matriculas = await prisma.matricula.findMany({
     where: {
@@ -324,9 +337,7 @@ export async function listarRematriculasElegiveis(input: {
   }
 
   const itens = matriculasElegiveis.map((m) => {
-    const diasRestantes = Math.ceil(
-      (m.dataFimContrato.getTime() - referencia.getTime()) / (24 * 60 * 60 * 1000),
-    );
+    const diasRestantes = getAcademicDateDifference(m.dataFimContrato, referencia, timeZone);
     const contratoExpirado = diasRestantes < 0;
     // Usar regra canônica de elegibilidade do domínio
     const elegibilidade = validarElegibilidadeRematricula({

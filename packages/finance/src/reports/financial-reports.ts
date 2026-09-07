@@ -1,5 +1,5 @@
 import type { FormaPagamento, Prisma, TipoCobranca } from '@prisma/client';
-import { buildSeatOccupancyWhereClause } from '@alusa/lib';
+import { buildSeatOccupancyWhereClause, getAcademicDateBoundsForInstant } from '@alusa/lib';
 import { z } from 'zod';
 
 export const financialReportViewSchema = z.enum(['overview', 'delinquency', 'receipts']);
@@ -561,13 +561,15 @@ export async function getCurrentAverageTicket(params: {
   contaId: string;
   db: ReportDb;
   referenceDate?: Date;
+  timeZone?: string;
 }): Promise<number> {
   const referenceDate = params.referenceDate ?? new Date();
+  const academicDay = getAcademicDateBoundsForInstant(referenceDate, params.timeZone);
   const enrollments = await params.db.matricula.findMany({
     where: {
       contaId: params.contaId,
-      dataInicio: { lte: referenceDate },
-      dataFimContrato: { gt: referenceDate },
+      dataInicio: { lte: academicDay.end },
+      dataFimContrato: { gte: academicDay.start },
       OR: [{ status: 'ATIVA' }, { status: 'PAUSADA', cobrarDurantePausa: true }],
     },
     select: {
@@ -756,6 +758,7 @@ async function loadClassOccupancy(params: {
   turmaId?: string;
   db: ReportDb;
   referenceDate: Date;
+  timeZone: string;
 }): Promise<FinancialClassOccupancyItem[]> {
   const classes = await params.db.turma.findMany({
     where: {
@@ -772,7 +775,7 @@ async function loadClassOccupancy(params: {
   const enrollments = await params.db.matricula.findMany({
     where: {
       contaId: params.contaId,
-      ...buildSeatOccupancyWhereClause(params.referenceDate),
+      ...buildSeatOccupancyWhereClause(params.referenceDate, params.timeZone),
       OR: [
         { turmaId: { in: classIds } },
         { matriculaTurmas: { some: { turmaId: { in: classIds } } } },
@@ -1745,6 +1748,7 @@ export async function getFinancialOverviewReport(params: {
     turmaId: params.query.turmaId,
     db: params.db,
     referenceDate: params.now ?? new Date(),
+    timeZone: loaded.timeZone,
   });
   const enrollment = await loadEnrollmentSeries({
     contaId: params.contaId,
@@ -1756,6 +1760,7 @@ export async function getFinancialOverviewReport(params: {
     contaId: params.contaId,
     db: params.db,
     referenceDate: params.now ?? new Date(),
+    timeZone: loaded.timeZone,
   });
   const summary = calculateSummary(sorted, loaded.nowStart);
   return {

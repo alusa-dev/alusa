@@ -84,6 +84,7 @@ export {
   doesMatriculaOccupySeat,
   getSeatOccupyingStatuses,
   buildSeatOccupancyWhereClause,
+  buildSeatOccupancyWhereClauseForAcademicDate,
   buildSeatOccupancyOverlapWhereClause,
   calcularVagasDisponiveis,
   SEAT_OCCUPYING_STATUSES,
