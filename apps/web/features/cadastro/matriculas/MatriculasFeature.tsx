@@ -733,7 +733,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                         setPauseTarget(m);
                       }}
                       data-testid={`matricula-action-pausar-${m.id}`}
-                      disabled={actionLoading || !canWrite}
+                      disabled={actionLoading}
                     >
                       <PauseIcon className="mr-2 h-4 w-4" />
                       Pausar matrícula
@@ -746,7 +746,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                         setReactivateTarget(m);
                       }}
                       data-testid={`matricula-action-retomar-${m.id}`}
-                      disabled={actionLoading || !canWrite}
+                      disabled={actionLoading}
                     >
                       <PlayIcon className="mr-2 h-4 w-4" />
                       Retomar matrícula
@@ -759,7 +759,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                         setCancelTarget(m);
                       }}
                       data-testid={`matricula-action-cancelar-${m.id}`}
-                      disabled={actionLoading || !canWrite}
+                      disabled={actionLoading}
                     >
                       <XMarkIcon className="mr-2 h-4 w-4 text-orange-600" />
                       Cancelar matrícula
@@ -773,7 +773,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                         setDeleteTarget(m);
                       }}
                       data-testid={`matricula-action-excluir-${m.id}`}
-                      disabled={actionLoading || !canWrite}
+                      disabled={actionLoading}
                       className="text-red-600 focus:text-red-700"
                       title={deleteHint}
                     >

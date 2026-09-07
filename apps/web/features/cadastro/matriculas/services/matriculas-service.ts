@@ -136,11 +136,19 @@ async function parseResponse<T>(
 ) {
   const json = await res.json().catch(() => null);
   if (!res.ok) {
+    const payload = json as {
+      message?: string;
+      error?: string | { message?: string };
+    } | null;
+    const message = typeof payload?.message === 'string'
+      ? payload.message
+      : typeof payload?.error === 'object' && payload.error && typeof payload.error.message === 'string'
+        ? payload.error.message
+        : typeof payload?.error === 'string'
+          ? payload.error
+          : fallback;
     throw new Error(
-      (json as { error?: { message?: string } } | { error?: string } | null)?.error &&
-        typeof (json as { error?: unknown }).error === 'string'
-        ? String((json as { error?: string }).error)
-        : (json as { error?: { message?: string } } | null)?.error?.message || fallback,
+      message,
     );
   }
   return parser.parse(json);
@@ -250,6 +258,7 @@ export async function cancelarMatriculaRequest(input: { id: string; contaId: str
 export async function updateMatriculaStatusRequest(input: {
   id: string;
   status: 'ATIVA' | 'PAUSADA' | 'CANCELADA';
+  motivo?: string;
 }): Promise<MatriculaStatusSyncResponse> {
   if (input.status !== 'CANCELADA') {
     throw new Error('Pausa e reativação devem usar os endpoints específicos da matrícula.');
@@ -258,7 +267,7 @@ export async function updateMatriculaStatusRequest(input: {
   const res = await fetch(`/api/matriculas/${input.id}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ status: input.status }),
+    body: JSON.stringify({ status: input.status, ...(input.motivo?.trim() ? { motivo: input.motivo.trim() } : {}) }),
   });
 
   return parseResponse(

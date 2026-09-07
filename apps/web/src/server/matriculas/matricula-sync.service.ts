@@ -13,6 +13,7 @@ import {
   BillingAgreementError,
 } from '@alusa/finance';
 import { AsaasHttpError } from '@alusa/finance';
+import { resolvePayer } from '@alusa/domain';
 import {
   assertStudentCapacity,
   countAdditionalActiveStudentsForEnrollment,
@@ -63,6 +64,69 @@ export type SyncMatriculaStatusResult = {
   nextDueDate?: string | null;
   familyImpact?: FamilyLifecycleImpact | null;
 };
+
+const DEFAULT_CANCELLATION_REASON = 'Cancelamento manual da matrícula';
+
+type MatriculaFinancialIdentity = {
+  payerType: 'ALUNO' | 'RESPONSAVEL';
+  payerId: string;
+  customerId: string | null;
+};
+
+/**
+ * Resolve a matrícula's financial identity from the same domain rule used by
+ * enrollment and renewal flows. This is intentionally read-only and optional
+ * during rollout so legacy test fixtures/records without the canonical link
+ * can still be reconciled without inventing a customer.
+ */
+async function resolveMatriculaFinancialIdentity(
+  prisma: PrismaClient,
+  contaId: string,
+  matriculaId: string,
+): Promise<MatriculaFinancialIdentity | null> {
+  const matricula = await prisma.matricula.findFirst({
+    where: { id: matriculaId, contaId },
+    select: {
+      aluno: { select: { id: true, dataNasc: true, asaasCustomerId: true } },
+      responsavelFinanceiroId: true,
+      responsavelFinanceiro: { select: { id: true, asaasCustomerId: true } },
+    },
+  });
+
+  if (!matricula?.aluno) return null;
+  const resolved = resolvePayer({
+    alunoId: matricula.aluno.id,
+    alunoDataNasc: matricula.aluno.dataNasc,
+    responsavelFinanceiroId: matricula.responsavelFinanceiroId,
+  });
+  if (!resolved.success) return null;
+
+  const payerType = resolved.payer.type;
+  const payerId = resolved.payer.id;
+  const directCustomerId = payerType === 'ALUNO'
+    ? matricula.aluno.asaasCustomerId
+    : matricula.responsavelFinanceiro?.asaasCustomerId ?? null;
+
+  const customerDelegate = (prisma as PrismaClient & {
+    customer?: {
+      findFirst: (_args: unknown) => Promise<{ asaasCustomerId: string | null } | null>;
+    };
+  }).customer;
+  const customer = customerDelegate
+    ? await customerDelegate.findFirst({
+        where: {
+          contaId,
+          OR: [
+            { payerType, payerId },
+            { payerLinks: { some: { contaId, payerType, payerId } } },
+          ],
+        },
+        select: { asaasCustomerId: true },
+      })
+    : null;
+
+  return { payerType, payerId, customerId: customer?.asaasCustomerId ?? directCustomerId ?? null };
+}
 
 const OPEN_CHARGE_STATUSES = new Set<StatusCobranca>([
   StatusCobranca.PENDENTE,
@@ -338,6 +402,33 @@ function buildFinancialSyncError(
   }
 
   if (error instanceof BillingAgreementError) {
+    if (error.code === 'PAYER_IDENTITY_CONFLICT') {
+      return new ManualSyncError(
+        409,
+        'FINANCE_IDENTITY_CONFLICT',
+        `Não foi possível ${actionLabel} a matrícula porque o pagador da matrícula não corresponde à assinatura financeira. Corrija o vínculo financeiro e tente novamente.`,
+        { subscriptionId, ...error.details },
+      );
+    }
+
+    if (error.code === 'REMOTE_STATE_DIVERGED' && /customer|pagador/i.test(error.message)) {
+      return new ManualSyncError(
+        409,
+        'FINANCE_IDENTITY_CONFLICT',
+        `Não foi possível ${actionLabel} a matrícula porque o customer da assinatura não corresponde ao pagador esperado.`,
+        { subscriptionId, ...error.details },
+      );
+    }
+
+    if (error.code === 'INVALID_INPUT' && /justificativa|motivo/i.test(error.message)) {
+      return new ManualSyncError(
+        422,
+        'FINANCEIRO_REQUER_JUSTIFICATIVA',
+        `Não foi possível ${actionLabel} a matrícula porque é necessário informar uma justificativa financeira válida.`,
+        { subscriptionId },
+      );
+    }
+
     if (error.code === 'IDEMPOTENCY_CONFLICT') {
       return new ManualSyncError(
         409,
@@ -426,6 +517,35 @@ function buildFinancialSyncError(
   );
 }
 
+const NON_RETRYABLE_CANCELLATION_CODES = new Set([
+  'FINANCE_IDENTITY_CONFLICT',
+  'FINANCEIRO_REQUER_JUSTIFICATIVA',
+  'FINANCEIRO_REQUER_NOVO_PREVIEW',
+  'IDEMPOTENCY_CONFLICT',
+  'INCONSISTENCIA_FINANCEIRA',
+  'MATRICULA_NOT_FOUND',
+]);
+
+function isRetryableCancellationFailure(mapped: ManualSyncError, original: unknown): boolean {
+  if (NON_RETRYABLE_CANCELLATION_CODES.has(mapped.code)) return false;
+  if (original instanceof BillingAgreementError) {
+    return original.code === 'REMOTE_OPERATION_UNCERTAIN' || original.code === 'OPERATION_BUSY';
+  }
+  if (original instanceof AsaasHttpError) return original.status === 429 || original.status >= 500;
+  return true;
+}
+
+function failureMetadata(mapped: ManualSyncError, original: unknown): Prisma.InputJsonValue {
+  return {
+    retryable: isRetryableCancellationFailure(mapped, original),
+    reasonCode: mapped.code,
+  } as Prisma.InputJsonValue;
+}
+
+function failureOperationStatus(mapped: ManualSyncError, original: unknown): 'DIVERGENTE' | 'MANUAL_REVIEW' {
+  return isRetryableCancellationFailure(mapped, original) ? 'DIVERGENTE' : 'MANUAL_REVIEW';
+}
+
 async function getOrCreateCancellationOperation(input: {
   prisma: PrismaClient;
   contaId: string;
@@ -433,11 +553,12 @@ async function getOrCreateCancellationOperation(input: {
   actorId: string;
   motivo?: string;
 }) {
+  const motivo = input.motivo?.trim() || DEFAULT_CANCELLATION_REASON;
   const where: Prisma.MatriculaOperacaoWhereInput = {
     contaId: input.contaId,
     matriculaId: input.matriculaId,
     tipo: 'CANCELAMENTO' as const,
-    status: { in: ['PENDENTE_SINCRONISMO', 'DIVERGENTE', 'ERRO'] },
+    status: { in: ['PENDENTE_SINCRONISMO', 'DIVERGENTE', 'ERRO', 'MANUAL_REVIEW'] },
   };
   const select = { id: true, correlationId: true } as const;
   const existing = await input.prisma.matriculaOperacao.findFirst({
@@ -456,10 +577,10 @@ async function getOrCreateCancellationOperation(input: {
         origem: 'USER',
         status: 'PENDENTE_SINCRONISMO',
         actorId: input.actorId,
-        observacao: input.motivo,
+        observacao: motivo,
         payloadEnviado: {
           targetStatus: 'CANCELADA',
-          motivo: input.motivo ?? null,
+          motivo,
         } as Prisma.InputJsonValue,
       },
       select,
@@ -491,6 +612,13 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
   const previousStatus = matricula.status;
   const newStatus = input.targetStatus as StatusMatricula;
   const wasAlreadyCanceled = matricula.status === StatusMatricula.CANCELADA;
+  const effectiveMotivo = input.motivo?.trim() || (
+    input.targetStatus === 'CANCELADA'
+      ? DEFAULT_CANCELLATION_REASON
+      : input.targetStatus === 'PAUSADA'
+        ? 'Pausa manual da matrícula'
+        : 'Ativação manual da matrícula'
+  );
 
   let cancellationOperation: { id: string; correlationId: string } | null = null;
   if (input.targetStatus === 'CANCELADA') {
@@ -514,7 +642,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
         contaId: input.contaId,
         matriculaId: matricula.id,
         actorId: input.actorId,
-        motivo: input.motivo,
+        motivo: effectiveMotivo,
       });
     }
   }
@@ -538,7 +666,19 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
       status: input.targetStatus === 'ATIVA' ? 'PAUSED' : { in: ['ACTIVE', 'SCHEDULED'] },
     },
     orderBy: input.targetStatus === 'ATIVA' ? { validUntil: 'desc' } : { validFrom: 'desc' },
-    select: { id: true, agreementId: true, agreement: { select: { version: true, nextDueDate: true } } },
+    select: {
+      id: true,
+      agreementId: true,
+      agreement: {
+        select: {
+          version: true,
+          nextDueDate: true,
+          payerType: true,
+          payerId: true,
+          customerId: true,
+        },
+      },
+    },
   });
   // Garante paridade para grupos familiares criados antes da camada canônica:
   // cancelar uma matrícula deve remover sua alocação da assinatura compartilhada.
@@ -564,13 +704,63 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
           status: input.targetStatus === 'ATIVA' ? 'PAUSED' : { in: ['ACTIVE', 'SCHEDULED'] },
         },
         orderBy: input.targetStatus === 'ATIVA' ? { validUntil: 'desc' } : { validFrom: 'desc' },
-        select: { id: true, agreementId: true, agreement: { select: { version: true, nextDueDate: true } } },
+        select: {
+          id: true,
+          agreementId: true,
+          agreement: {
+            select: {
+              version: true,
+              nextDueDate: true,
+              payerType: true,
+              payerId: true,
+              customerId: true,
+            },
+          },
+        },
       });
     }
   }
   let canonicalHandled = false;
 
   if (canonicalAllocation) {
+    const identity = await resolveMatriculaFinancialIdentity(
+      input.prisma,
+      input.contaId,
+      matricula.id,
+    );
+    const agreement = canonicalAllocation.agreement;
+    if (
+      identity &&
+      agreement.payerType &&
+      agreement.payerId &&
+      (agreement.payerType !== identity.payerType || agreement.payerId !== identity.payerId ||
+        (agreement.customerId && identity.customerId && agreement.customerId !== identity.customerId))
+    ) {
+      const identityError = buildFinancialSyncError(
+        input.targetStatus,
+        matricula.asaasSubscriptionId ?? canonicalAllocation.agreementId,
+        new BillingAgreementError('PAYER_IDENTITY_CONFLICT', 'O acordo financeiro não corresponde ao pagador canônico da matrícula.', {
+          agreementPayerType: agreement.payerType,
+          agreementPayerId: agreement.payerId,
+          agreementCustomerId: agreement.customerId,
+          expectedPayerType: identity.payerType,
+          expectedPayerId: identity.payerId,
+          expectedCustomerId: identity.customerId,
+        }),
+      );
+      if (cancellationOperation) {
+        await input.prisma.matriculaOperacao.update({
+          where: { id: cancellationOperation.id },
+          data: {
+            status: 'MANUAL_REVIEW',
+            erro: identityError.message,
+            metadata: { retryable: false, reasonCode: identityError.code },
+            processedAt: new Date(),
+          },
+        });
+      }
+      throw identityError;
+    }
     const effectiveDate = new Date().toISOString().slice(0, 10);
     const change = input.targetStatus === 'ATIVA'
       ? {
@@ -578,7 +768,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
           contaId: input.contaId,
           agreementId: canonicalAllocation.agreementId,
           actorId: input.actorId,
-          reason: input.motivo?.trim() || 'Ativação manual da matrícula',
+          reason: effectiveMotivo,
           effectivePolicy: 'CURRENT_CYCLE_FULL' as const,
           effectiveDate,
           allocationIds: [canonicalAllocation.id],
@@ -589,7 +779,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
           contaId: input.contaId,
           agreementId: canonicalAllocation.agreementId,
           actorId: input.actorId,
-          reason: input.motivo?.trim() || `${input.targetStatus === 'PAUSADA' ? 'Pausa' : 'Cancelamento'} manual da matrícula`,
+          reason: effectiveMotivo,
           effectivePolicy: 'CURRENT_CYCLE_FULL' as const,
           effectiveDate,
           allocationIds: [canonicalAllocation.id],
@@ -611,12 +801,18 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
       expectedWebhooks = result.status === 'COMPLETED' ? [] : ['RECONCILIATION_REQUIRED'];
       asaasResponse = { operationId: result.operationId, status: result.status };
     } catch (error) {
+      const mappedError = buildFinancialSyncError(
+        input.targetStatus,
+        matricula.asaasSubscriptionId ?? canonicalAllocation.agreementId,
+        error,
+      );
       if (input.targetStatus === 'CANCELADA' && cancellationOperation) {
         await input.prisma.matriculaOperacao.update({
           where: { id: cancellationOperation.id },
           data: {
-            status: 'DIVERGENTE',
+            status: failureOperationStatus(mappedError, error),
             erro: error instanceof Error ? error.message : String(error),
+            metadata: failureMetadata(mappedError, error),
             processedAt: new Date(),
           },
         }).catch((operationError) => {
@@ -626,7 +822,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
           });
         });
       }
-      throw buildFinancialSyncError(input.targetStatus, matricula.asaasSubscriptionId ?? canonicalAllocation.agreementId, error);
+      throw mappedError;
     }
   }
 
@@ -653,6 +849,26 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
         asaasAction = 'DELETE';
         expectedWebhooks = ['SUBSCRIPTION_DELETED'];
         try {
+          const identity = await resolveMatriculaFinancialIdentity(
+            input.prisma,
+            input.contaId,
+            matricula.id,
+          );
+          if (identity?.customerId) {
+            const remoteSubscription = await getSubscription(matricula.asaasSubscriptionId, {
+              contaId: input.contaId,
+            });
+            if (remoteSubscription.customer && identity.customerId !== remoteSubscription.customer) {
+              throw new BillingAgreementError(
+                'PAYER_IDENTITY_CONFLICT',
+                'A assinatura legada não corresponde ao pagador canônico da matrícula.',
+                {
+                  expectedCustomerId: identity.customerId,
+                  remoteCustomerId: remoteSubscription.customer,
+                },
+              );
+            }
+          }
           asaasResponse = await deleteSubscription(matricula.asaasSubscriptionId, { contaId: input.contaId });
         } catch (error) {
           if (error instanceof AsaasHttpError && error.status === 404) {
@@ -663,12 +879,14 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
         }
       }
     } catch (error) {
+      const mappedError = buildFinancialSyncError(input.targetStatus, matricula.asaasSubscriptionId, error);
       if (input.targetStatus === 'CANCELADA' && cancellationOperation) {
         await input.prisma.matriculaOperacao.update({
           where: { id: cancellationOperation.id },
           data: {
-            status: 'DIVERGENTE',
+            status: failureOperationStatus(mappedError, error),
             erro: error instanceof Error ? error.message : String(error),
+            metadata: failureMetadata(mappedError, error),
             processedAt: new Date(),
           },
         }).catch((operationError) => {
@@ -678,7 +896,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
           });
         });
       }
-      throw buildFinancialSyncError(input.targetStatus, matricula.asaasSubscriptionId, error);
+      throw mappedError;
     }
   }
 
@@ -688,7 +906,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
       matriculaId: matricula.id,
       contaId: input.contaId,
       actorId: input.actorId,
-      motivo: input.motivo,
+      motivo: effectiveMotivo,
     });
   }
 
@@ -773,7 +991,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
         metadata: {
           previousStatus,
           newStatus,
-          motivo: input.motivo ?? null,
+          motivo: effectiveMotivo,
           asaasAction,
           cobrancasAtualizadas: paymentSync.updated,
           paymentWarnings: paymentSync.warnings,
@@ -823,6 +1041,8 @@ export async function reconcilePendingMatriculaCancellations(input: {
       matriculaId: true,
       actorId: true,
       observacao: true,
+      metadata: true,
+      erro: true,
       matricula: { select: { status: true } },
     },
     orderBy: { createdAt: 'asc' },
@@ -833,6 +1053,34 @@ export async function reconcilePendingMatriculaCancellations(input: {
   const errors: Array<{ operationId: string; error: string }> = [];
 
   for (const operation of operations) {
+    const metadata = operation.metadata && typeof operation.metadata === 'object' && !Array.isArray(operation.metadata)
+      ? operation.metadata as Record<string, unknown>
+      : null;
+    const retryable = metadata?.retryable;
+    const deterministicError = typeof operation.erro === 'string' && /customer remoto|pagador|justificativa|idempot[eê]ncia|preview financeiro/i.test(operation.erro);
+    if (retryable === false || deterministicError) {
+      await input.prisma.matriculaOperacao.update({
+        where: { id: operation.id },
+        data: {
+          status: 'MANUAL_REVIEW',
+          metadata: {
+            ...(metadata ?? {}),
+            retryable: false,
+            reasonCode: metadata?.reasonCode ?? 'MANUAL_REVIEW_REQUIRED',
+          } as Prisma.InputJsonValue,
+        },
+      }).catch((updateError) => {
+        console.error('[MATRICULA_CANCELAMENTO] Falha ao marcar operação para revisão manual', {
+          operationId: operation.id,
+          error: updateError instanceof Error ? updateError.message : String(updateError),
+        });
+      });
+      errors.push({
+        operationId: operation.id,
+        error: 'Operação requer revisão manual e não será repetida automaticamente.',
+      });
+      continue;
+    }
     try {
       if (!operation.actorId) {
         throw new Error('Operação de cancelamento sem actorId não pode ser reconciliada automaticamente.');

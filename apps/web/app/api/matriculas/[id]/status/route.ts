@@ -87,7 +87,7 @@ export async function PATCH(
       matriculaId,
       contaId: user.contaId,
       action: 'CANCELADA',
-      motivo: motivo || undefined,
+      motivo: motivo || 'Cancelamento manual da matrícula',
       actorUserId: user.id,
     });
 
@@ -132,11 +132,7 @@ export async function PATCH(
     return NextResponse.json(
       {
         error: 'INTERNAL_ERROR',
-        message: err.message || 'Erro interno do servidor',
-        details: {
-          name: err.name,
-          originalMessage: err.message,
-        },
+        message: 'Não foi possível atualizar o status da matrícula. Tente novamente ou solicite uma reconciliação.',
       },
       { status: 500 },
     );

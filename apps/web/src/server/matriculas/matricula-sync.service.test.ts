@@ -179,4 +179,40 @@ describe('syncMatriculaStatus cancellation', () => {
       ),
     }));
   });
+
+  it('usa uma justificativa determinística quando o cancelamento não informa motivo', async () => {
+    const { prisma, root } = buildPrisma();
+    root.billingAllocation.findFirst.mockResolvedValue({
+      id: 'allocation-1',
+      agreementId: 'agreement-1',
+      agreement: { version: 1, nextDueDate: new Date('2026-10-05T00:00:00.000Z') },
+    } as never);
+    previewBillingAgreementChangeMock.mockResolvedValue({
+      previewHash: 'preview-hash-default-reason',
+      expiresAt: '2026-09-07T03:00:00.000Z',
+      plans: [],
+      blockers: [],
+    });
+    commitBillingAgreementChangeMock.mockResolvedValue({
+      operationId: 'billing-op-1',
+      status: 'COMPLETED',
+    });
+
+    await syncMatriculaStatus({
+      prisma,
+      contaId: 'conta-1',
+      matriculaId: 'mat-1',
+      targetStatus: 'CANCELADA',
+      actorId: 'user-1',
+    });
+
+    expect(previewBillingAgreementChangeMock).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'Cancelamento manual da matrícula',
+    }));
+    expect(root.matriculaOperacao.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        observacao: 'Cancelamento manual da matrícula',
+      }),
+    }));
+  });
 });

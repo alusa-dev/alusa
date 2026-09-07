@@ -1076,6 +1076,7 @@ enum StatusOperacao {
   SINCRONIZADO
   ERRO
   DIVERGENTE
+  MANUAL_REVIEW
 }
 
 // Status de operação de troca de pagador
