@@ -12,6 +12,8 @@ import { prisma } from '@/prisma/client';
 import {
   confirmRenewalProcess,
   previewRenewalProcess,
+  RENEWAL_IDEMPOTENCY_CONFLICT,
+  RENEWAL_IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT,
 } from '@/src/server/matriculas/renewal-process.service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
@@ -268,6 +270,23 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof Error && error.message === 'Data inválida.') {
       return jsonError(400, 'DATA_INVALIDA', 'Informe uma data de rematrícula válida.');
+    }
+    if (error instanceof Error && error.message === RENEWAL_IDEMPOTENCY_CONFLICT) {
+      return jsonError(
+        409,
+        'IDEMPOTENCY_CONFLICT',
+        'A mesma chave de idempotência foi usada com dados diferentes.',
+      );
+    }
+    if (
+      error instanceof Error &&
+      error.message === RENEWAL_IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT
+    ) {
+      return jsonError(
+        409,
+        'NOVA_TENTATIVA_NECESSARIA',
+        'Esta tentativa foi cancelada. Inicie novamente a rematrícula para gerar uma nova intenção.',
+      );
     }
     if (error instanceof ZodError) {
       return jsonError(

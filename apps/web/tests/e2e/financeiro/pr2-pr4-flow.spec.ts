@@ -335,7 +335,7 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
     mutableEnv.PAYMENTS_PROVIDER_MODE = 'mock';
     mutableEnv.PLAYWRIGHT_TEST = 'true';
 
-    const retried = await retryPayerChange(operacao.id, { type: 'USER', id: 'tester' });
+    const retried = await retryPayerChange(operacao.id, { type: 'USER', id: 'tester' }, contaId);
     expect(retried.success).toBe(true);
 
     const updated = await prisma.matricula.findUnique({

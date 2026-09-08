@@ -17,10 +17,10 @@ import {
 type AsyncState = 'idle' | 'loading' | 'success' | 'error';
 
 function createIdempotencyKey() {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
   }
-  return `billing-change-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  throw new Error('Este navegador não consegue criar uma chave segura para a alteração.');
 }
 
 export function useBillingAgreementChange(agreementId: string) {
@@ -35,6 +35,7 @@ export function useBillingAgreementChange(agreementId: string) {
   const previewAbortRef = useRef<AbortController | null>(null);
   const agreementAbortRef = useRef<AbortController | null>(null);
   const pollingAttemptsRef = useRef(0);
+  const commitIdempotencyKeyRef = useRef<string | null>(null);
 
   const resetPreview = useCallback(() => {
     previewAbortRef.current?.abort();
@@ -44,6 +45,7 @@ export function useBillingAgreementChange(agreementId: string) {
     setPreviewState('idle');
     setCommitState('idle');
     setError(null);
+    commitIdempotencyKeyRef.current = null;
   }, []);
 
   const requestPreview = useCallback(async (request: BillingAgreementPreviewRequest) => {
@@ -56,6 +58,7 @@ export function useBillingAgreementChange(agreementId: string) {
     setPreviewedRequest(null);
     setCommitResult(null);
     setError(null);
+    commitIdempotencyKeyRef.current = null;
 
     try {
       const response = await previewBillingAgreementRequest(request, controller.signal);
@@ -99,9 +102,12 @@ export function useBillingAgreementChange(agreementId: string) {
     setCommitState('loading');
     setError(null);
     try {
+      const idempotencyKey =
+        commitIdempotencyKeyRef.current ??
+        (commitIdempotencyKeyRef.current = createIdempotencyKey());
       const response = await commitBillingAgreementRequest({
         ...previewedRequest,
-        idempotencyKey: createIdempotencyKey(),
+        idempotencyKey,
         previewHash: preview.previewHash,
         previewExpiresAt: preview.expiresAt,
         expectedVersion: preview.sourceVersion,

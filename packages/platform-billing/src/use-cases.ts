@@ -31,7 +31,7 @@ const createPortalInputSchema = z.object({
   contaId: nonEmptyString,
   returnUrl: urlSchema,
   actorUserId: nonEmptyString.optional(),
-  idempotencyKey: nonEmptyString.optional(),
+  idempotencyKey: nonEmptyString,
   correlationId: nonEmptyString.optional(),
 });
 
@@ -75,7 +75,7 @@ export interface CreatePlatformBillingPortalSessionInput {
   contaId: string;
   returnUrl: string;
   actorUserId?: string;
-  idempotencyKey?: string;
+  idempotencyKey: string;
   correlationId?: string;
   envSource?: StripeEnvSource;
 }
@@ -135,6 +135,19 @@ export async function createPlatformBillingCheckoutSession(
   });
 
   if (existingSession) {
+    if (existingSession.planCode !== planCode) {
+      throw new PlatformBillingError(
+        'Checkout idempotency key was already used for a different plan.',
+        'PLATFORM_BILLING_IDEMPOTENCY_CONFLICT',
+        {
+          contaId: parsed.contaId,
+          environment: config.environment,
+          idempotencyKey: parsed.idempotencyKey,
+          existingPlanCode: existingSession.planCode,
+          requestedPlanCode: planCode,
+        },
+      );
+    }
     return {
       billingAccountId: existingSession.billingAccountId,
       checkoutSessionId: existingSession.stripeCheckoutSessionId,
@@ -469,9 +482,14 @@ function parsePortalInput(input: CreatePlatformBillingPortalSessionInput) {
   const parsed = createPortalInputSchema.safeParse(input);
 
   if (!parsed.success) {
-    throw new PlatformBillingError('Platform billing input is invalid.', 'PLATFORM_BILLING_INPUT_INVALID', {
+    const missingIdempotency = parsed.error.issues.some((issue) => issue.path.includes('idempotencyKey'));
+    throw new PlatformBillingError(
+      missingIdempotency ? 'Portal idempotency key is required.' : 'Platform billing input is invalid.',
+      missingIdempotency ? 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED' : 'PLATFORM_BILLING_INPUT_INVALID',
+      {
       fields: parsed.error.issues.map((issue) => issue.path.join('.')).filter(Boolean),
-    });
+      },
+    );
   }
 
   return parsed.data;

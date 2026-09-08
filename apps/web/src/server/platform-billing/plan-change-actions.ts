@@ -1,4 +1,3 @@
-﻿import { randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   PLATFORM_PLANS,
@@ -17,13 +16,7 @@ const PLAN_RANK: Record<PublicPlatformPlanCode, number> = {
   PRO: 3,
 };
 
-export async function requestPlatformPlanChange(input: {
-  prisma: PrismaClient;
-  contaId: string;
-  actorUserId: string;
-  targetPlanCode: PublicPlatformPlanCode;
-  idempotencyKey?: string;
-}): Promise<{
+type PlatformPlanChangeResponse = {
   planChangeId: string;
   type: 'UPGRADE' | 'DOWNGRADE';
   status: 'PENDING_PAYMENT' | 'PENDING_EFFECTIVE_DATE' | 'APPLIED';
@@ -31,9 +24,26 @@ export async function requestPlatformPlanChange(input: {
   message?: string;
   detail?: string | null;
   preview?: { amountDue: number; amountRemaining: number; currency: string };
-}> {
+};
+
+type PlatformPlanChangeReplayRecord = {
+  id: string;
+  type: string;
+  status: string;
+  toPlanCode: string | null;
+  effectiveAt: Date | null;
+  metadata: Prisma.JsonValue;
+};
+
+export async function requestPlatformPlanChange(input: {
+  prisma: PrismaClient;
+  contaId: string;
+  actorUserId: string;
+  targetPlanCode: PublicPlatformPlanCode;
+  idempotencyKey: string;
+}): Promise<PlatformPlanChangeResponse> {
   const environment = resolvePlatformBillingEnvironment();
-  const idempotencyKey = input.idempotencyKey?.trim() || randomUUID();
+  const idempotencyKey = requirePlatformBillingIdempotencyKey(input.idempotencyKey);
   const existing = await input.prisma.platformBillingPlanChange.findUnique({
     where: {
       uq_platform_billing_plan_change_idempotency: {
@@ -44,14 +54,7 @@ export async function requestPlatformPlanChange(input: {
     },
   });
   if (existing) {
-    return {
-      planChangeId: existing.id,
-      type: existing.type as 'UPGRADE' | 'DOWNGRADE',
-      status: existing.status as 'PENDING_PAYMENT' | 'PENDING_EFFECTIVE_DATE' | 'APPLIED',
-      effectiveAt: existing.effectiveAt?.toISOString() ?? null,
-      message: getPlanChangeSuccessMessage(existing.status),
-      detail: getPlanChangeDetail(existing.status, existing.effectiveAt, accountTrialEndsAt(existing.metadata)),
-    };
+    return replayPlatformPlanChange(existing, input.targetPlanCode, idempotencyKey);
   }
 
   const account = await input.prisma.platformBillingAccount.findUnique({
@@ -104,7 +107,7 @@ export async function requestPlatformPlanChange(input: {
       );
     }
 
-    const planChange = await input.prisma.platformBillingPlanChange.create({
+    const createdPlanChange = await createPlatformPlanChangeWithIdempotency(input.prisma, {
       data: {
         contaId: input.contaId,
         billingAccountId: account.id,
@@ -126,7 +129,14 @@ export async function requestPlatformPlanChange(input: {
           targetPlanMaxActiveStudents: PLATFORM_PLANS[input.targetPlanCode].maxActiveStudents,
         },
       },
+      contaId: input.contaId,
+      environment,
+      idempotencyKey,
     });
+    if (createdPlanChange.replayed) {
+      return replayPlatformPlanChange(createdPlanChange.record, input.targetPlanCode, idempotencyKey);
+    }
+    const planChange = createdPlanChange.record;
 
     const gateway = createDefaultPlatformBillingStripeGateway(process.env);
     try {
@@ -225,7 +235,7 @@ export async function requestPlatformPlanChange(input: {
       );
     }
 
-    const planChange = await input.prisma.platformBillingPlanChange.create({
+    const createdPlanChange = await createPlatformPlanChangeWithIdempotency(input.prisma, {
       data: {
         contaId: input.contaId,
         billingAccountId: account.id,
@@ -245,7 +255,14 @@ export async function requestPlatformPlanChange(input: {
           targetPlanMaxActiveStudents: PLATFORM_PLANS[input.targetPlanCode].maxActiveStudents,
         },
       },
+      contaId: input.contaId,
+      environment,
+      idempotencyKey,
     });
+    if (createdPlanChange.replayed) {
+      return replayPlatformPlanChange(createdPlanChange.record, input.targetPlanCode, idempotencyKey);
+    }
+    const planChange = createdPlanChange.record;
 
     await input.prisma.platformBillingAccount.update({
       where: { id: account.id },
@@ -276,7 +293,7 @@ export async function requestPlatformPlanChange(input: {
     };
   }
 
-  const planChange = await input.prisma.platformBillingPlanChange.create({
+  const createdPlanChange = await createPlatformPlanChangeWithIdempotency(input.prisma, {
     data: {
       contaId: input.contaId,
       billingAccountId: account.id,
@@ -291,7 +308,14 @@ export async function requestPlatformPlanChange(input: {
       createdByUserId: input.actorUserId,
       correlationId: idempotencyKey,
     },
+    contaId: input.contaId,
+    environment,
+    idempotencyKey,
   });
+  if (createdPlanChange.replayed) {
+    return replayPlatformPlanChange(createdPlanChange.record, input.targetPlanCode, idempotencyKey);
+  }
+  const planChange = createdPlanChange.record;
 
   const gateway = createDefaultPlatformBillingStripeGateway(process.env);
   try {
@@ -383,10 +407,39 @@ export async function requestPlatformSubscriptionCancellation(input: {
   prisma: PrismaClient;
   contaId: string;
   actorUserId: string;
-  idempotencyKey?: string;
+  idempotencyKey: string;
 }): Promise<{ cancelAtPeriodEnd: true; effectiveAt: string | null }> {
   const environment = resolvePlatformBillingEnvironment();
-  const idempotencyKey = input.idempotencyKey?.trim() || randomUUID();
+  const idempotencyKey = requirePlatformBillingIdempotencyKey(input.idempotencyKey);
+  const existing = await input.prisma.platformBillingPlanChange.findUnique({
+    where: {
+      uq_platform_billing_plan_change_idempotency: {
+        contaId: input.contaId,
+        environment,
+        idempotencyKey,
+      },
+    },
+  });
+  if (existing) {
+    if (existing.type !== 'CANCEL_AT_PERIOD_END') {
+      throw new PlatformBillingError(
+        'The idempotency key was already used for another platform billing operation.',
+        'PLATFORM_BILLING_IDEMPOTENCY_CONFLICT',
+        { idempotencyKey, existingOperationType: existing.type },
+      );
+    }
+    if (existing.status === 'FAILED' || existing.status === 'CANCELED' || existing.status === 'SUPERSEDED') {
+      throw new PlatformBillingError(
+        'The previous cancellation request did not complete. Start a new request to try again.',
+        'PLATFORM_BILLING_REPLAY_INVALID',
+        { idempotencyKey, planChangeId: existing.id, status: existing.status },
+      );
+    }
+    return {
+      cancelAtPeriodEnd: true,
+      effectiveAt: existing.effectiveAt?.toISOString() ?? null,
+    };
+  }
   const account = await input.prisma.platformBillingAccount.findUnique({
     where: { uq_platform_billing_account_conta_env: { contaId: input.contaId, environment } },
   });
@@ -419,24 +472,57 @@ export async function requestPlatformSubscriptionCancellation(input: {
     },
   });
 
-  await input.prisma.platformBillingPlanChange.create({
-    data: {
-      contaId: input.contaId,
-      billingAccountId: account.id,
-      environment,
-      type: 'CANCEL_AT_PERIOD_END',
-      status: 'PENDING_EFFECTIVE_DATE',
-      fromPlanCode: account.planCode,
-      effectiveAt: account.currentPeriodEnd,
-      stripeSubscriptionId: account.stripeSubscriptionId,
-      idempotencyKey,
-      createdByUserId: input.actorUserId,
-      correlationId: idempotencyKey,
-    },
-  }).catch((error) => {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return null;
-    throw error;
-  });
+  try {
+    await input.prisma.platformBillingPlanChange.create({
+      data: {
+        contaId: input.contaId,
+        billingAccountId: account.id,
+        environment,
+        type: 'CANCEL_AT_PERIOD_END',
+        status: 'PENDING_EFFECTIVE_DATE',
+        fromPlanCode: account.planCode,
+        effectiveAt: account.currentPeriodEnd,
+        stripeSubscriptionId: account.stripeSubscriptionId,
+        idempotencyKey,
+        createdByUserId: input.actorUserId,
+        correlationId: idempotencyKey,
+      },
+    });
+  } catch (error) {
+    if (!isPlanChangeIdempotencyViolation(error)) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        console.error('[platform-billing][cancel][unique-conflict]', {
+          contaId: input.contaId,
+          operation: 'cancel_at_period_end',
+          idempotencyKey,
+          constraint: error.meta?.target,
+        });
+      }
+      throw error;
+    }
+
+    const concurrent = await input.prisma.platformBillingPlanChange.findUnique({
+      where: {
+        uq_platform_billing_plan_change_idempotency: {
+          contaId: input.contaId,
+          environment,
+          idempotencyKey,
+        },
+      },
+    });
+    if (!concurrent) throw error;
+    if (concurrent.type !== 'CANCEL_AT_PERIOD_END') {
+      throw new PlatformBillingError(
+        'The idempotency key was already used for another platform billing operation.',
+        'PLATFORM_BILLING_IDEMPOTENCY_CONFLICT',
+        { idempotencyKey, existingOperationType: concurrent.type },
+      );
+    }
+    return {
+      cancelAtPeriodEnd: true,
+      effectiveAt: concurrent.effectiveAt?.toISOString() ?? null,
+    };
+  }
 
   await auditPlanChange(input.prisma, {
     contaId: input.contaId,
@@ -457,10 +543,36 @@ export async function undoPlatformSubscriptionCancellation(input: {
   prisma: PrismaClient;
   contaId: string;
   actorUserId: string;
-  idempotencyKey?: string;
+  idempotencyKey: string;
 }): Promise<{ cancelAtPeriodEnd: false }> {
   const environment = resolvePlatformBillingEnvironment();
-  const idempotencyKey = input.idempotencyKey?.trim() || randomUUID();
+  const idempotencyKey = requirePlatformBillingIdempotencyKey(input.idempotencyKey);
+  const existing = await input.prisma.platformBillingPlanChange.findUnique({
+    where: {
+      uq_platform_billing_plan_change_idempotency: {
+        contaId: input.contaId,
+        environment,
+        idempotencyKey,
+      },
+    },
+  });
+  if (existing) {
+    if (existing.type !== 'UNDO_CANCEL') {
+      throw new PlatformBillingError(
+        'The idempotency key was already used for another platform billing operation.',
+        'PLATFORM_BILLING_IDEMPOTENCY_CONFLICT',
+        { idempotencyKey, existingOperationType: existing.type },
+      );
+    }
+    if (existing.status !== 'APPLIED') {
+      throw new PlatformBillingError(
+        'The previous cancellation reversal did not complete. Start a new request to try again.',
+        'PLATFORM_BILLING_REPLAY_INVALID',
+        { idempotencyKey, planChangeId: existing.id, status: existing.status },
+      );
+    }
+    return { cancelAtPeriodEnd: false };
+  }
   const account = await input.prisma.platformBillingAccount.findUnique({
     where: { uq_platform_billing_account_conta_env: { contaId: input.contaId, environment } },
   });
@@ -484,27 +596,69 @@ export async function undoPlatformSubscriptionCancellation(input: {
     idempotencyKey: `${idempotencyKey}:stripe-undo-cancel`,
   });
 
-  await input.prisma.$transaction(async (tx) => {
-    await tx.platformBillingAccount.update({
-      where: { id: account.id },
-      data: {
-        cancelAtPeriodEnd: false,
-        pendingChangeType: null,
-        pendingChangeEffectiveAt: null,
-      },
+  try {
+    await input.prisma.$transaction(async (tx) => {
+      await tx.platformBillingAccount.update({
+        where: { id: account.id },
+        data: {
+          cancelAtPeriodEnd: false,
+          pendingChangeType: null,
+          pendingChangeEffectiveAt: null,
+        },
+      });
+      await tx.platformBillingPlanChange.updateMany({
+        where: {
+          billingAccountId: account.id,
+          type: 'CANCEL_AT_PERIOD_END',
+          status: 'PENDING_EFFECTIVE_DATE',
+        },
+        data: {
+          status: 'CANCELED',
+          canceledAt: new Date(),
+        },
+      });
+      await tx.platformBillingPlanChange.create({
+        data: {
+          contaId: input.contaId,
+          billingAccountId: account.id,
+          environment,
+          type: 'UNDO_CANCEL',
+          status: 'APPLIED',
+          fromPlanCode: account.planCode,
+          effectiveAt: new Date(),
+          stripeSubscriptionId: account.stripeSubscriptionId,
+          idempotencyKey,
+          createdByUserId: input.actorUserId,
+          correlationId: idempotencyKey,
+          appliedAt: new Date(),
+        },
+      });
     });
-    await tx.platformBillingPlanChange.updateMany({
+  } catch (error) {
+    if (!isPlanChangeIdempotencyViolation(error)) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        console.error('[platform-billing][undo-cancel][unique-conflict]', {
+          contaId: input.contaId,
+          operation: 'undo_cancel',
+          idempotencyKey,
+          constraint: error.meta?.target,
+        });
+      }
+      throw error;
+    }
+
+    const concurrent = await input.prisma.platformBillingPlanChange.findUnique({
       where: {
-        billingAccountId: account.id,
-        type: 'CANCEL_AT_PERIOD_END',
-        status: 'PENDING_EFFECTIVE_DATE',
-      },
-      data: {
-        status: 'CANCELED',
-        canceledAt: new Date(),
+        uq_platform_billing_plan_change_idempotency: {
+          contaId: input.contaId,
+          environment,
+          idempotencyKey,
+        },
       },
     });
-  });
+    if (!concurrent || concurrent.type !== 'UNDO_CANCEL') throw error;
+    return { cancelAtPeriodEnd: false };
+  }
 
   await auditPlanChange(input.prisma, {
     contaId: input.contaId,
@@ -558,23 +712,39 @@ export async function applyDuePlatformPlanChanges(input: {
     });
     if (!capacity.allowed) {
       await markPlanChangeFailed(input.prisma, change.id, 'Account is no longer eligible for the requested plan change.');
-      await input.prisma.platformBillingIssue.create({
-        data: {
-          contaId: change.contaId,
-          billingAccountId: account.id,
-          environment,
-          severity: 'WARNING',
-          status: 'OPEN',
-          code: 'DOWNGRADE_NOT_ELIGIBLE',
-          title: 'Alteração de plano perdeu elegibilidade',
-          message: 'A Conta possui alunos ativos acima do limite do plano escolhido.',
-          fingerprint: `${change.id}:downgrade-not-eligible`,
-          details: { ...capacity } as Prisma.InputJsonValue,
-          correlationId: change.correlationId,
+      const issueData = {
+        contaId: change.contaId,
+        billingAccountId: account.id,
+        environment,
+        severity: 'WARNING' as const,
+        status: 'OPEN' as const,
+        code: 'DOWNGRADE_NOT_ELIGIBLE',
+        title: 'Alteração de plano perdeu elegibilidade',
+        message: 'A Conta possui alunos ativos acima do limite do plano escolhido.',
+        fingerprint: `${change.id}:downgrade-not-eligible`,
+        details: { ...capacity } as Prisma.InputJsonValue,
+        correlationId: change.correlationId,
+      };
+      await input.prisma.platformBillingIssue.upsert({
+        where: {
+          uq_platform_billing_issue_env_fingerprint: {
+            environment,
+            fingerprint: issueData.fingerprint,
+          },
         },
-      }).catch((error) => {
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return null;
-        throw error;
+        create: issueData,
+        update: {
+          contaId: issueData.contaId,
+          billingAccountId: issueData.billingAccountId,
+          severity: issueData.severity,
+          status: issueData.status,
+          title: issueData.title,
+          message: issueData.message,
+          details: issueData.details,
+          correlationId: issueData.correlationId,
+          resolvedAt: null,
+          ignoredAt: null,
+        },
       });
       failed += 1;
       continue;
@@ -630,6 +800,94 @@ async function markPlanChangeFailed(prisma: PrismaClient, id: string, message: s
       lastError: message,
     },
   });
+}
+
+async function createPlatformPlanChangeWithIdempotency(
+  prisma: PrismaClient,
+  input: {
+    data: Prisma.PlatformBillingPlanChangeUncheckedCreateInput;
+    contaId: string;
+    environment: 'TEST' | 'LIVE';
+    idempotencyKey: string;
+  },
+): Promise<{
+  record: PlatformPlanChangeReplayRecord;
+  replayed: boolean;
+}> {
+  try {
+    const record = await prisma.platformBillingPlanChange.create({ data: input.data });
+    return { record, replayed: false };
+  } catch (error) {
+    if (!isPlanChangeIdempotencyViolation(error)) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        console.error('[platform-billing][plan-change][unique-conflict]', {
+          contaId: input.contaId,
+          operation: 'request_plan_change',
+          idempotencyKey: input.idempotencyKey,
+          constraint: error.meta?.target,
+        });
+      }
+      throw error;
+    }
+
+    const concurrent = await prisma.platformBillingPlanChange.findUnique({
+      where: {
+        uq_platform_billing_plan_change_idempotency: {
+          contaId: input.contaId,
+          environment: input.environment,
+          idempotencyKey: input.idempotencyKey,
+        },
+      },
+    });
+    if (!concurrent) throw error;
+    return { record: concurrent, replayed: true };
+  }
+}
+
+function replayPlatformPlanChange(
+  existing: PlatformPlanChangeReplayRecord,
+  targetPlanCode: PublicPlatformPlanCode,
+  idempotencyKey: string,
+): PlatformPlanChangeResponse {
+  if (existing.toPlanCode !== targetPlanCode) {
+    throw new PlatformBillingError(
+      'The idempotency key was already used for another target plan.',
+      'PLATFORM_BILLING_IDEMPOTENCY_CONFLICT',
+      { idempotencyKey, existingPlanCode: existing.toPlanCode, requestedPlanCode: targetPlanCode },
+    );
+  }
+  if (existing.status === 'FAILED' || existing.status === 'CANCELED' || existing.status === 'SUPERSEDED') {
+    throw new PlatformBillingError(
+      'The previous plan change did not complete. Start a new request to try again.',
+      'PLATFORM_BILLING_REPLAY_INVALID',
+      { idempotencyKey, planChangeId: existing.id, status: existing.status },
+    );
+  }
+  return {
+    planChangeId: existing.id,
+    type: existing.type as 'UPGRADE' | 'DOWNGRADE',
+    status: existing.status as 'PENDING_PAYMENT' | 'PENDING_EFFECTIVE_DATE' | 'APPLIED',
+    effectiveAt: existing.effectiveAt?.toISOString() ?? null,
+    message: getPlanChangeSuccessMessage(existing.status),
+    detail: getPlanChangeDetail(existing.status, existing.effectiveAt, accountTrialEndsAt(existing.metadata)),
+  };
+}
+
+function requirePlatformBillingIdempotencyKey(value: string | null | undefined): string {
+  const normalized = value?.trim();
+  if (!normalized) {
+    throw new PlatformBillingError(
+      'A platform billing idempotency key is required.',
+      'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED',
+    );
+  }
+  return normalized;
+}
+
+function isPlanChangeIdempotencyViolation(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') return false;
+  const target = error.meta?.target;
+  return Array.isArray(target) && target.some((field) => field === 'idempotencyKey');
 }
 
 function getPlanChangeSuccessMessage(status: string): string {

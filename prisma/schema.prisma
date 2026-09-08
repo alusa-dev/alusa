@@ -4126,7 +4126,9 @@ model PlatformBillingPlanChange {
 
 model PlatformBillingIssue {
   id               String                       @id @default(cuid())
-  contaId          String
+  // Issues without a valid tenant are platform-scoped. They must not be
+  // assigned to an arbitrary Conta during global webhook reconciliation.
+  contaId          String?
   billingAccountId String?
   environment      PlatformBillingEnvironment
   severity         PlatformBillingIssueSeverity @default(WARNING)
@@ -4143,7 +4145,7 @@ model PlatformBillingIssue {
   createdAt        DateTime                     @default(now())
   updatedAt        DateTime                     @updatedAt
 
-  conta          Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta          Conta?                  @relation(fields: [contaId], references: [id], onDelete: Cascade)
   billingAccount PlatformBillingAccount? @relation(fields: [billingAccountId], references: [id], onDelete: SetNull)
 
   @@unique([environment, fingerprint], name: "uq_platform_billing_issue_env_fingerprint")
@@ -7620,7 +7622,7 @@ model PayerChangeOperacao {
   newCustomerId     String?
 
   // Idempotência
-  idempotencyKey String? @unique
+  idempotencyKey String?
 
   // Erro (se houver)
   errorCode    String?
@@ -7644,6 +7646,7 @@ model PayerChangeOperacao {
   @@index([contaId, status], name: "idx_payer_change_operacao_conta_status")
   @@index([contaId, createdAt], name: "idx_payer_change_operacao_conta_created")
   @@index([contaId, matriculaId], name: "idx_payer_change_operacao_conta_matricula")
+  @@unique([contaId, idempotencyKey], name: "uq_payer_change_operacao_conta_idempotency")
   @@index([contaId, correlationId], name: "idx_payer_change_operacao_conta_correlation")
   @@index([matriculaId])
   @@index([status])

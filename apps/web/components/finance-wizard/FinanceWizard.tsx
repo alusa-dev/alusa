@@ -224,6 +224,13 @@ function extractError(error: unknown, fallback: string) {
   return error instanceof WizardApiError ? error.message : fallback;
 }
 
+function createWizardIdempotencyKey(prefix: string, planCode: PlanCode) {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return `${prefix}:${planCode}:${globalThis.crypto.randomUUID()}`;
+  }
+  throw new Error('Este navegador não consegue criar uma chave segura para a operação.');
+}
+
 function formatPersonType(type: Draft['personType']) {
   if (type === 'PF') return 'Pessoa fisica';
   if (type === 'PJ') return 'Pessoa juridica';
@@ -326,6 +333,25 @@ export function FinanceWizard() {
   const [planCode, setPlanCode] = useState<PlanCode>('PREMIUM');
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
   const lastCepLookupRef = useRef('');
+  const checkoutIdempotencyKeyRef = useRef<{ planCode: PlanCode; key: string } | null>(null);
+  const portalIdempotencyKeyRef = useRef<{ planCode: PlanCode; key: string } | null>(null);
+  const trialIdempotencyKeyRef = useRef<{ planCode: PlanCode; key: string } | null>(null);
+
+  const getWizardIdempotencyKey = useCallback(
+    (
+      keyRef: React.MutableRefObject<{ planCode: PlanCode; key: string } | null>,
+      prefix: string,
+    ) => {
+      if (!keyRef.current || keyRef.current.planCode !== planCode) {
+        keyRef.current = {
+          planCode,
+          key: createWizardIdempotencyKey(prefix, planCode),
+        };
+      }
+      return keyRef.current.key;
+    },
+    [planCode],
+  );
 
   const financeIntegrationMode =
     (session?.user as { financeIntegrationMode?: string | null } | undefined)
@@ -565,11 +591,15 @@ export function FinanceWizard() {
       setCheckoutLoading(true);
       setCheckoutFailed(false);
       if (trialDeferred) {
+        const idempotencyKey = getWizardIdempotencyKey(
+          portalIdempotencyKeyRef,
+          'finance-wizard-portal',
+        );
         const response = await fetch('/api/platform-billing/portal', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Idempotency-Key': `finance-wizard-portal:${planCode}:${Date.now()}`,
+            'Idempotency-Key': idempotencyKey,
           },
           body: JSON.stringify({ returnPath: '/finance/wizard' }),
         });
@@ -588,11 +618,15 @@ export function FinanceWizard() {
         return;
       }
 
+      const idempotencyKey = getWizardIdempotencyKey(
+        checkoutIdempotencyKeyRef,
+        'finance-wizard',
+      );
       const response = await fetch('/api/platform-billing/checkout', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Idempotency-Key': `finance-wizard:${planCode}:${Date.now()}`,
+          'Idempotency-Key': idempotencyKey,
         },
         body: JSON.stringify({ planCode }),
       });
@@ -617,12 +651,15 @@ export function FinanceWizard() {
     } finally {
       setCheckoutLoading(false);
     }
-  }, [planCode, trialDeferred]);
+  }, [getWizardIdempotencyKey, planCode, trialDeferred]);
 
   const handleRegisterLater = useCallback(async () => {
     try {
       setRegisterLaterLoading(true);
-      const idempotencyKey = `finance-wizard-register-later:${planCode}:${Date.now()}`;
+      const idempotencyKey = getWizardIdempotencyKey(
+        trialIdempotencyKeyRef,
+        'finance-wizard-register-later',
+      );
       const response = await fetch('/api/platform-billing/trial', {
         method: 'POST',
         headers: {
@@ -647,7 +684,7 @@ export function FinanceWizard() {
     } finally {
       setRegisterLaterLoading(false);
     }
-  }, [planCode]);
+  }, [getWizardIdempotencyKey, planCode]);
 
   const handleCompleteWizard = useCallback(async () => {
     setCompleting(true);

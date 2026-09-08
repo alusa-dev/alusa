@@ -36,6 +36,7 @@ import type {
 } from '@/features/cadastro/rematriculas/services/rematriculas-service';
 import {
   createRematriculaFamiliarRequest,
+  createRematriculaRequestId,
   previewRematriculaFamiliarRequest,
   type CreateRematriculaFamiliarInput,
   type RematriculaFamiliarPreviewResponse,
@@ -167,10 +168,12 @@ export function RematriculaFamiliarDialog({
   const [submitting, setSubmitting] = useState(false);
   const [closeAlertOpen, setCloseAlertOpen] = useState(false);
   const allowCloseRef = useRef(false);
+  const renewalRequestIdRef = useRef<string | null>(null);
 
   function closeDialog() {
     allowCloseRef.current = true;
     setCloseAlertOpen(false);
+    renewalRequestIdRef.current = null;
     onOpenChange(false);
   }
 
@@ -466,7 +469,9 @@ export function RematriculaFamiliarDialog({
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!contaId || !titular || titular.tipo !== 'RESPONSAVEL' || disabled) return;
-    const uiRequestId = `${titular.id}:${Date.now()}`;
+    const uiRequestId =
+      renewalRequestIdRef.current ??
+      (renewalRequestIdRef.current = createRematriculaRequestId());
 
     const payload: CreateRematriculaFamiliarInput = {
       contaId,

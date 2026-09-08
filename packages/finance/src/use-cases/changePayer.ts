@@ -28,7 +28,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import type { CustomerPayerType, PayerChangeOperacaoStatus } from '@prisma/client';
+import { Prisma, type CustomerPayerType, type PayerChangeOperacaoStatus } from '@prisma/client';
 import { prisma } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
@@ -47,7 +47,7 @@ export interface ChangePayerInput {
   newResponsavelId: string;
   reason?: string;
   actor: { type: 'USER' | 'SYSTEM'; id: string };
-  idempotencyKey?: string;
+  idempotencyKey: string;
 }
 
 export interface ChangePayerOutput {
@@ -62,6 +62,8 @@ export interface ChangePayerOutput {
 export type ChangePayerError =
   | 'MATRICULA_NAO_ENCONTRADA'
   | 'MATRICULA_PERTENCE_OUTRA_CONTA'
+  | 'IDEMPOTENCY_KEY_REQUIRED'
+  | 'IDEMPOTENCY_CONFLICT'
   | 'STATUS_INVALIDO'
   | 'OPERACAO_EM_ANDAMENTO'
   | 'NOVO_RESPONSAVEL_NAO_ENCONTRADO'
@@ -84,6 +86,7 @@ async function finalizePayerChange(params: {
   newResponsavel: { id: string; nome: string };
   operacao: {
     id: string;
+    contaId: string;
     matriculaId: string;
     oldPayerType: CustomerPayerType;
     oldPayerId: string;
@@ -99,8 +102,8 @@ async function finalizePayerChange(params: {
   });
 
   if (!customerResult.success) {
-    await prisma.payerChangeOperacao.update({
-      where: { id: params.operacao.id },
+    await prisma.payerChangeOperacao.updateMany({
+      where: { id: params.operacao.id, contaId: params.operacao.contaId },
       data: {
         status: 'FAILED',
         errorCode: customerResult.error,
@@ -110,20 +113,23 @@ async function finalizePayerChange(params: {
     return err(customerResult.error as ChangePayerError);
   }
 
-  await prisma.payerChangeOperacao.update({
-    where: { id: params.operacao.id },
+  await prisma.payerChangeOperacao.updateMany({
+    where: { id: params.operacao.id, contaId: params.operacao.contaId },
     data: { newCustomerId: customerResult.data.customerId },
   });
 
-  await prisma.matricula.update({
-    where: { id: params.matricula.id },
+  const matriculaUpdate = await prisma.matricula.updateMany({
+    where: { id: params.matricula.id, contaId: params.contaId },
     data: {
       responsavelFinanceiroId: params.newResponsavel.id,
     },
   });
+  if (matriculaUpdate.count !== 1) {
+    throw new Error('Matrícula não encontrada no tenant informado.');
+  }
 
-  await prisma.payerChangeOperacao.update({
-    where: { id: params.operacao.id },
+  await prisma.payerChangeOperacao.updateMany({
+    where: { id: params.operacao.id, contaId: params.operacao.contaId },
     data: { status: 'COMMITTED' },
   });
 
@@ -161,14 +167,18 @@ export async function changePayer(
   input: ChangePayerInput
 ): Promise<Result<ChangePayerOutput, ChangePayerError>> {
   const correlationId = randomUUID();
-  const idempotencyKey = input.idempotencyKey ?? randomUUID();
+  const idempotencyKey = input.idempotencyKey?.trim() ?? '';
+  if (!idempotencyKey) return err('IDEMPOTENCY_KEY_REQUIRED');
 
   // Idempotência: verificar se já existe operação com mesma key
-  const existingOp = await prisma.payerChangeOperacao.findUnique({
-    where: { idempotencyKey },
+  const existingOp = await prisma.payerChangeOperacao.findFirst({
+    where: { contaId: input.contaId, idempotencyKey },
   });
 
   if (existingOp) {
+    if (existingOp.matriculaId !== input.matriculaId || existingOp.newPayerId !== input.newResponsavelId) {
+      return err('IDEMPOTENCY_CONFLICT');
+    }
     if (existingOp.status === 'COMMITTED') {
       return ok({
         operationId: existingOp.id,
@@ -181,14 +191,14 @@ export async function changePayer(
     }
     if (existingOp.status === 'PENDING' || existingOp.status === 'FAILED') {
       // Permite retry
-      return retryPayerChange(existingOp.id, input.actor);
+      return retryPayerChange(existingOp.id, input.actor, input.contaId);
     }
     return err('OPERACAO_EM_ANDAMENTO');
   }
 
   // 1. Buscar matrícula
-  const matricula = await prisma.matricula.findUnique({
-    where: { id: input.matriculaId },
+  const matricula = await prisma.matricula.findFirst({
+    where: { id: input.matriculaId, contaId: input.contaId },
     include: {
       aluno: {
         select: {
@@ -212,10 +222,6 @@ export async function changePayer(
     return err('MATRICULA_NAO_ENCONTRADA');
   }
 
-  if (matricula.aluno.contaId !== input.contaId) {
-    return err('MATRICULA_PERTENCE_OUTRA_CONTA');
-  }
-
   if (matricula.status !== 'ATIVA') {
     return err('STATUS_INVALIDO');
   }
@@ -223,6 +229,7 @@ export async function changePayer(
   // Verificar se já existe operação em andamento para esta matrícula
   const pendingOp = await prisma.payerChangeOperacao.findFirst({
     where: {
+      contaId: input.contaId,
       matriculaId: input.matriculaId,
       status: { in: ['PENDING', 'OLD_SUB_CANCELLED', 'NEW_SUB_CREATED'] },
     },
@@ -233,8 +240,8 @@ export async function changePayer(
   }
 
   // 2. Buscar novo responsável
-  const newResponsavel = await prisma.responsavel.findUnique({
-    where: { id: input.newResponsavelId },
+  const newResponsavel = await prisma.responsavel.findFirst({
+    where: { id: input.newResponsavelId, contaId: input.contaId },
     select: {
       id: true,
       nome: true,
@@ -267,22 +274,56 @@ export async function changePayer(
   // Se aluno é menor, DEVE ter responsável
 
   // 5. Criar operação
-  const operacao = await prisma.payerChangeOperacao.create({
-    data: {
-      correlationId,
-      contaId: input.contaId,
-      matriculaId: input.matriculaId,
-      status: 'PENDING',
-      oldPayerType,
-      oldPayerId,
-      oldSubscriptionId: matricula.asaasSubscriptionId,
-      newPayerType: 'RESPONSAVEL',
-      newPayerId: input.newResponsavelId,
-      idempotencyKey,
-      reason: input.reason,
-      createdById: input.actor.id,
-    },
-  });
+  let operacao: Awaited<ReturnType<typeof prisma.payerChangeOperacao.create>>;
+  try {
+    operacao = await prisma.payerChangeOperacao.create({
+      data: {
+        correlationId,
+        contaId: input.contaId,
+        matriculaId: input.matriculaId,
+        status: 'PENDING',
+        oldPayerType,
+        oldPayerId,
+        oldSubscriptionId: matricula.asaasSubscriptionId,
+        newPayerType: 'RESPONSAVEL',
+        newPayerId: input.newResponsavelId,
+        idempotencyKey,
+        reason: input.reason,
+        createdById: input.actor.id,
+      },
+    });
+  } catch (error) {
+    if (!isPayerChangeIdempotencyViolation(error)) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        console.error('[finance][change-payer][unique-conflict]', {
+          contaId: input.contaId,
+          operation: 'change_payer',
+          matriculaId: input.matriculaId,
+          idempotencyKey,
+          constraint: error.meta?.target,
+        });
+      }
+      throw error;
+    }
+    const concurrent = await prisma.payerChangeOperacao.findFirst({
+      where: { contaId: input.contaId, idempotencyKey },
+    });
+    if (!concurrent) throw error;
+    if (concurrent.matriculaId !== input.matriculaId || concurrent.newPayerId !== input.newResponsavelId) {
+      return err('IDEMPOTENCY_CONFLICT');
+    }
+    if (concurrent.status === 'COMMITTED') {
+      return ok({
+        operationId: concurrent.id,
+        status: concurrent.status,
+        matriculaId: concurrent.matriculaId,
+        oldPayerId: concurrent.oldPayerId,
+        newPayerId: concurrent.newPayerId,
+        uiMessage: 'Troca de pagador já realizada.',
+      });
+    }
+    return retryPayerChange(concurrent.id, input.actor, input.contaId);
+  }
 
   return finalizePayerChange({
     contaId: input.contaId,
@@ -296,6 +337,7 @@ export async function changePayer(
     newResponsavel: { id: newResponsavel.id, nome: newResponsavel.nome },
     operacao: {
       id: operacao.id,
+      contaId: input.contaId,
       matriculaId: operacao.matriculaId,
       oldPayerType,
       oldPayerId,
@@ -313,10 +355,11 @@ export async function changePayer(
 
 export async function retryPayerChange(
   operationId: string,
-  actor: { type: 'USER' | 'SYSTEM'; id: string }
+  actor: { type: 'USER' | 'SYSTEM'; id: string },
+  contaId: string,
 ): Promise<Result<ChangePayerOutput, ChangePayerError>> {
-  const operacao = await prisma.payerChangeOperacao.findUnique({
-    where: { id: operationId },
+  const operacao = await prisma.payerChangeOperacao.findFirst({
+    where: { id: operationId, contaId },
   });
 
   if (!operacao) {
@@ -338,8 +381,8 @@ export async function retryPayerChange(
     return err('OPERACAO_EM_ANDAMENTO');
   }
 
-  const matricula = await prisma.matricula.findUnique({
-    where: { id: operacao.matriculaId },
+  const matricula = await prisma.matricula.findFirst({
+    where: { id: operacao.matriculaId, contaId: operacao.contaId },
     include: {
       aluno: { select: { id: true, contaId: true, nome: true } },
       responsavelFinanceiro: { select: { id: true, nome: true } },
@@ -350,16 +393,12 @@ export async function retryPayerChange(
     return err('MATRICULA_NAO_ENCONTRADA');
   }
 
-  if (matricula.aluno.contaId !== operacao.contaId) {
-    return err('MATRICULA_PERTENCE_OUTRA_CONTA');
-  }
-
   if (matricula.status !== 'ATIVA') {
     return err('STATUS_INVALIDO');
   }
 
-  const newResponsavel = await prisma.responsavel.findUnique({
-    where: { id: operacao.newPayerId },
+  const newResponsavel = await prisma.responsavel.findFirst({
+    where: { id: operacao.newPayerId, contaId: operacao.contaId },
     select: { id: true, nome: true, cpf: true },
   });
 
@@ -372,8 +411,8 @@ export async function retryPayerChange(
   }
 
   // Incrementar retry count
-  await prisma.payerChangeOperacao.update({
-    where: { id: operationId },
+  await prisma.payerChangeOperacao.updateMany({
+    where: { id: operationId, contaId: operacao.contaId },
     data: {
       retryCount: { increment: 1 },
       lastRetryAt: new Date(),
@@ -405,6 +444,7 @@ export async function retryPayerChange(
     newResponsavel: { id: newResponsavel.id, nome: newResponsavel.nome },
     operacao: {
       id: operacao.id,
+      contaId: operacao.contaId,
       matriculaId: operacao.matriculaId,
       oldPayerType: operacao.oldPayerType,
       oldPayerId: operacao.oldPayerId,
@@ -414,4 +454,10 @@ export async function retryPayerChange(
     actor,
     reason: operacao.reason ?? undefined,
   });
+}
+
+function isPayerChangeIdempotencyViolation(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') return false;
+  const target = error.meta?.target;
+  return Array.isArray(target) && target.some((field) => field === 'idempotencyKey');
 }

@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { StripeIntegrationError } from '@alusa/stripe';
 import {
@@ -34,6 +33,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'PAYLOAD_INVALIDO' }, { status: 400 });
   }
 
+  const idempotencyKey = req.headers.get('idempotency-key')?.trim() || parsed.data.idempotencyKey;
+  if (!idempotencyKey) {
+    return NextResponse.json(
+      { error: 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED', message: 'A chave de idempotência é obrigatória.' },
+      { status: 400 },
+    );
+  }
+
   return withTenantSession(async ({ contaId, userId, tx }) => {
     const rate = await rateLimitAsync(`platform-billing:checkout:${contaId}:${userId}:${requestIp}`, 20, 10 * 60_000);
     if (!rate.ok) {
@@ -55,9 +62,6 @@ export async function POST(req: NextRequest) {
     if (capacityError) return capacityError;
 
     const origin = new URL(req.url).origin;
-    const idempotencyKey =
-      req.headers.get('idempotency-key')?.trim() || parsed.data.idempotencyKey || randomUUID();
-
     let result: Awaited<ReturnType<typeof createPlatformBillingCheckoutSession>>;
     try {
       result = await createPlatformBillingCheckoutSession(

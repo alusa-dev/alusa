@@ -53,8 +53,8 @@ type ReconciliationAccount = {
 };
 
 type ReconciliationIssueInput = {
-  contaId: string;
-  billingAccountId?: string;
+  contaId?: string | null;
+  billingAccountId?: string | null;
   environment: PlatformBillingEnvironment;
   severity: 'INFO' | 'WARNING' | 'CRITICAL';
   code: string;
@@ -64,6 +64,38 @@ type ReconciliationIssueInput = {
   details?: Record<string, unknown>;
   correlationId?: string;
 };
+
+export type StuckWebhookEventGroup = {
+  contaId: string | null;
+  count: number;
+};
+
+export type ClassifiedStuckWebhookEvents = {
+  tenantCounts: Record<string, number>;
+  platformCount: number;
+};
+
+/**
+ * Eventos sem tenant válido são problemas da plataforma. Nunca os atribua ao
+ * primeiro tenant retornado pela consulta de contas.
+ */
+export function classifyStuckWebhookEventGroups(
+  groups: readonly StuckWebhookEventGroup[],
+  validTenantIds: ReadonlySet<string>,
+): ClassifiedStuckWebhookEvents {
+  const tenantCounts: Record<string, number> = {};
+  let platformCount = 0;
+
+  for (const group of groups) {
+    if (group.contaId && validTenantIds.has(group.contaId)) {
+      tenantCounts[group.contaId] = (tenantCounts[group.contaId] ?? 0) + group.count;
+    } else {
+      platformCount += group.count;
+    }
+  }
+
+  return { tenantCounts, platformCount };
+}
 
 export async function reconcilePlatformBilling(input: {
   prisma: PrismaClient;
@@ -229,25 +261,64 @@ export async function reconcilePlatformBilling(input: {
     }
   }
 
-  const stuckEvents = await input.prisma.platformBillingWebhookEvent.count({
+  const stuckEventGroups = await input.prisma.platformBillingWebhookEvent.groupBy({
+    by: ['contaId'],
     where: {
       environment,
+      ...(input.contaId ? { contaId: input.contaId } : {}),
       status: 'PROCESSING',
       processingTimeoutAt: { lte: new Date() },
     },
+    _count: { _all: true },
   });
-  if (stuckEvents > 0 && accounts[0]) {
-    await upsertIssue(input.prisma, {
-      contaId: accounts[0].contaId,
-      environment,
-      severity: 'WARNING',
-      code: 'WEBHOOK_EVENTS_STUCK',
-      title: 'Eventos Stripe presos em processamento',
-      message: 'Há eventos Stripe com timeout de processamento expirado.',
-      fingerprint: `${environment}:webhook-stuck`,
-      details: { count: stuckEvents },
-    });
-    issues += 1;
+  if (stuckEventGroups.length > 0) {
+    const candidateTenantIds = stuckEventGroups
+      .map((group) => group.contaId)
+      .filter((contaId): contaId is string => Boolean(contaId));
+    const validTenants = candidateTenantIds.length
+      ? await input.prisma.conta.findMany({
+          where: { id: { in: candidateTenantIds } },
+          select: { id: true },
+        })
+      : [];
+    const classified = classifyStuckWebhookEventGroups(
+      stuckEventGroups.map((group) => ({
+        contaId: group.contaId,
+        count: group._count._all,
+      })),
+      new Set(validTenants.map((tenant) => tenant.id)),
+    );
+
+    for (const [contaId, count] of Object.entries(classified.tenantCounts)) {
+      await upsertIssue(input.prisma, {
+        contaId,
+        environment,
+        severity: 'WARNING',
+        code: 'WEBHOOK_EVENTS_STUCK',
+        title: 'Eventos Stripe presos em processamento',
+        message: 'Há eventos Stripe com timeout de processamento expirado.',
+        fingerprint: `${environment}:webhook-stuck:tenant:${contaId}`,
+        details: { scope: 'TENANT', contaId, count },
+      });
+      issues += 1;
+    }
+
+    if (classified.platformCount > 0) {
+      await upsertIssue(input.prisma, {
+        contaId: null,
+        billingAccountId: null,
+        environment,
+        severity: 'WARNING',
+        code: 'WEBHOOK_EVENTS_STUCK',
+        title: 'Eventos Stripe presos em processamento',
+        message: 'Há eventos Stripe sem tenant válido com timeout de processamento expirado.',
+        // Mantém o fingerprint legado para que a correção também recupere a
+        // issue global que versões antigas associaram arbitrariamente a uma conta.
+        fingerprint: `${environment}:webhook-stuck`,
+        details: { scope: 'PLATFORM', count: classified.platformCount },
+      });
+      issues += 1;
+    }
   }
 
   return {
@@ -641,8 +712,8 @@ async function upsertIssue(prisma: PrismaClient, input: ReconciliationIssueInput
       },
     },
     create: {
-      contaId: input.contaId,
-      billingAccountId: input.billingAccountId,
+      contaId: input.contaId ?? null,
+      billingAccountId: input.billingAccountId ?? null,
       environment: input.environment,
       severity: input.severity,
       status: 'OPEN',
@@ -654,6 +725,8 @@ async function upsertIssue(prisma: PrismaClient, input: ReconciliationIssueInput
       correlationId: input.correlationId,
     },
     update: {
+      contaId: input.contaId ?? null,
+      billingAccountId: input.billingAccountId ?? null,
       severity: input.severity,
       status: 'OPEN',
       title: input.title,

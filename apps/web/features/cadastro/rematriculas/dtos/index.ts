@@ -177,6 +177,9 @@ export const createRematriculaInputDTOSchema = z.object({
   campaignId: z.string().trim().nullable().optional(),
   targetPeriodId: z.string().trim().min(1).optional(),
   matriculaId: z.string().trim().min(1),
+  // Identifica a intenção do cliente. Retries devem reenviar exatamente esta
+  // chave; uma nova tentativa após cancelamento deve gerar outra no client.
+  uiRequestId: z.string().trim().min(1).max(120).optional(),
   dataInicio: z.union([z.string(), z.date()]).optional(),
   dataFimContrato: z.union([z.string(), z.date()]),
   planoId: z.string().trim().optional(),

@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -114,6 +114,13 @@ type PendingPlanAction = {
   description: string;
 } | null;
 
+function createPlatformBillingRequestKey(prefix: string): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return `${prefix}:${globalThis.crypto.randomUUID()}`;
+  }
+  throw new Error('Este navegador não consegue criar uma chave segura para a operação.');
+}
+
 export function PlatformBillingFeature({ checkoutState }: { checkoutState?: CheckoutState }) {
   const { summary, loading, refresh } = usePlatformBilling();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -123,6 +130,19 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
   const [noticeDialog, setNoticeDialog] = useState<NoticeDialogState>(null);
   const [pendingPlanAction, setPendingPlanAction] = useState<PendingPlanAction>(null);
   const [pendingCancellationAction, setPendingCancellationAction] = useState<'cancel_at_period_end' | 'undo_cancel' | null>(null);
+  const actionIdempotencyKeysRef = useRef<Record<string, string>>({});
+
+  function getActionIdempotencyKey(scope: string): string {
+    const existing = actionIdempotencyKeysRef.current[scope];
+    if (existing) return existing;
+    const key = createPlatformBillingRequestKey(`platform-billing:${scope}`);
+    actionIdempotencyKeysRef.current[scope] = key;
+    return key;
+  }
+
+  function clearActionIdempotencyKey(scope: string): void {
+    delete actionIdempotencyKeysRef.current[scope];
+  }
 
   useEffect(() => {
     if (checkoutState === 'cancel') {
@@ -191,7 +211,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
     setActionLoading(`checkout:${planCode}`);
     setError(null);
     try {
-      const idempotencyKey = crypto.randomUUID();
+      const idempotencyKey = getActionIdempotencyKey(`checkout:${planCode}`);
       const response = await fetch('/api/platform-billing/checkout', {
         method: 'POST',
         headers: {
@@ -230,9 +250,11 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
     setActionLoading('portal');
     setError(null);
     try {
+      const portalScope = 'portal';
+      const idempotencyKey = getActionIdempotencyKey(portalScope);
       const response = await fetch('/api/platform-billing/portal', {
         method: 'POST',
-        headers: { 'idempotency-key': crypto.randomUUID() },
+        headers: { 'idempotency-key': idempotencyKey },
       });
       const payload = (await response.json()) as { portalUrl?: string; error?: string };
       if (!response.ok || !payload.portalUrl) {
@@ -242,6 +264,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
       }
       if (options?.newTab) {
         window.open(payload.portalUrl, '_blank', 'noopener,noreferrer');
+        clearActionIdempotencyKey(portalScope);
         setActionLoading(null);
         return;
       }
@@ -292,7 +315,8 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
     setActionLoading(`plan-change:${planCode}`);
     setError(null);
     try {
-      const idempotencyKey = crypto.randomUUID();
+      const scope = `plan-change:${planCode}`;
+      const idempotencyKey = getActionIdempotencyKey(scope);
       const response = await fetch('/api/platform-billing/plan-change', {
         method: 'POST',
         headers: {
@@ -324,6 +348,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         description: payload.detail ?? 'A alteração foi registrada.',
       });
       await refresh(true);
+      clearActionIdempotencyKey(scope);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Falha ao solicitar mudança de plano.';
       setError(message);
@@ -341,7 +366,8 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
     setActionLoading(action);
     setError(null);
     try {
-      const idempotencyKey = crypto.randomUUID();
+      const scope = `cancellation:${action}`;
+      const idempotencyKey = getActionIdempotencyKey(scope);
       const response = await fetch('/api/platform-billing/cancel', {
         method: 'POST',
         headers: {
@@ -360,6 +386,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
           : 'A conta mantém acesso até o fim do período atual.',
       });
       await refresh(true);
+      clearActionIdempotencyKey(scope);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Falha ao atualizar cancelamento.';
       setError(message);

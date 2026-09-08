@@ -5,6 +5,8 @@ import { type RematriculaElegivelItem } from '@/src/server/matriculas/rematricul
 import {
   confirmRenewalProcess,
   previewRenewalProcess,
+  RENEWAL_IDEMPOTENCY_CONFLICT,
+  RENEWAL_IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT,
 } from '@/src/server/matriculas/renewal-process.service';
 import { listRenewalManagement } from '@/src/server/matriculas/renewal-management.service';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
@@ -594,14 +596,16 @@ export async function POST(req: Request) {
         ...renewalInput,
         previewHash: preview.previewHash,
         sourceVersion: preview.sourceVersion,
-        idempotencyKey: buildLegacyRenewalIdempotencyKey({
-          contaId: auth.contaId,
-          matriculaId,
-          targetPeriodId,
-          effectiveAt: dataInicioValue,
-          planId: targetPlanId,
-          targetId: targetComboId ?? targetClassId,
-        }),
+        idempotencyKey:
+          body.uiRequestId?.trim() ||
+          buildLegacyRenewalIdempotencyKey({
+            contaId: auth.contaId,
+            matriculaId,
+            targetPeriodId,
+            effectiveAt: dataInicioValue,
+            planId: targetPlanId,
+            targetId: targetComboId ?? targetClassId,
+          }),
       },
       { prisma },
     );
@@ -691,6 +695,23 @@ export async function POST(req: Request) {
     );
   } catch (error) {
     console.error('[API Rematrículas] Erro ao criar:', error);
+    if (error instanceof Error && error.message === RENEWAL_IDEMPOTENCY_CONFLICT) {
+      return jsonError(
+        409,
+        'IDEMPOTENCY_CONFLICT',
+        'A mesma chave de idempotência foi usada com dados diferentes.',
+      );
+    }
+    if (
+      error instanceof Error &&
+      error.message === RENEWAL_IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT
+    ) {
+      return jsonError(
+        409,
+        'NOVA_TENTATIVA_NECESSARIA',
+        'Esta tentativa foi cancelada. Inicie novamente a rematrícula para gerar uma nova intenção.',
+      );
+    }
     if ((error as { name?: string }).name === 'ZodError') {
       const zodError = error as { issues?: Array<{ path: string[]; message: string }> };
       const issues = zodError.issues || [];

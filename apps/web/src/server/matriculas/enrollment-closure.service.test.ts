@@ -306,4 +306,63 @@ describe('finalizeExpiredFamilyEnrollments', () => {
     );
     expect(updateMany).toHaveBeenCalledTimes(1);
   });
+
+  it('reaproveita o outbox em uma corrida pela mesma chave de deduplicação', async () => {
+    const uniqueError = { code: 'P2002', meta: { target: ['contaId', 'dedupeKey'] } };
+    const create = vi.fn().mockRejectedValue(uniqueError);
+    const findFirst = vi.fn().mockResolvedValue({ id: 'outbox-existing' });
+    const prisma = {
+      conta: { findUnique: vi.fn().mockResolvedValue({ timezone: 'America/Sao_Paulo' }) },
+      matriculaFamiliar: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'family-race',
+            dataFimContrato: new Date('2026-07-01T00:00:00.000Z'),
+            standaloneSubscriptionId: 'sub-local-1',
+            matriculas: [{ id: 'mat-1', status: StatusMatricula.ENCERRADA, rematriculasDerivadas: [] }],
+          },
+        ]),
+        updateMany: vi.fn(),
+      },
+      familyBillingOutbox: { create, findFirst },
+    };
+
+    const result = await finalizeExpiredFamilyEnrollments(
+      { contaId: 'conta-1', now: new Date('2026-07-02T12:00:00.000Z') },
+      { prisma: prisma as never },
+    );
+
+    expect(result.pendingFinancialClosure).toEqual(['family-race']);
+    expect(findFirst).toHaveBeenCalledWith({
+      where: { contaId: 'conta-1', dedupeKey: 'MATRICULA_FAMILIAR:family-race:CLOSE_SUBSCRIPTION' },
+      select: { id: true },
+    });
+  });
+
+  it('não mascara P2002 de uma constraint diferente do outbox', async () => {
+    const uniqueError = { code: 'P2002', meta: { target: ['contaId', 'matriculaFamiliarId'] } };
+    const create = vi.fn().mockRejectedValue(uniqueError);
+    const prisma = {
+      conta: { findUnique: vi.fn().mockResolvedValue({ timezone: 'America/Sao_Paulo' }) },
+      matriculaFamiliar: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'family-unknown-conflict',
+            dataFimContrato: new Date('2026-07-01T00:00:00.000Z'),
+            standaloneSubscriptionId: 'sub-local-1',
+            matriculas: [{ id: 'mat-1', status: StatusMatricula.ENCERRADA, rematriculasDerivadas: [] }],
+          },
+        ]),
+        updateMany: vi.fn(),
+      },
+      familyBillingOutbox: { create },
+    };
+
+    await expect(
+      finalizeExpiredFamilyEnrollments(
+        { contaId: 'conta-1', now: new Date('2026-07-02T12:00:00.000Z') },
+        { prisma: prisma as never },
+      ),
+    ).rejects.toBe(uniqueError);
+  });
 });

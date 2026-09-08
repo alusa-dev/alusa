@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { activateDueRenewalProcesses, previewRenewalProcess } from './renewal-process.service';
+import {
+  activateDueRenewalProcesses,
+  classifyRenewalIdempotency,
+  previewRenewalProcess,
+} from './renewal-process.service';
 
 vi.mock('@/src/server/platform-billing/capacity', () => ({
   assertStudentCapacity: vi.fn().mockResolvedValue(undefined),
@@ -137,6 +141,46 @@ function chainEnrollment(overrides: Record<string, unknown> = {}) {
 }
 
 describe('renewal-process.service', () => {
+  it('cria uma nova intenção quando não existe processo para a chave', () => {
+    expect(
+      classifyRenewalIdempotency({
+        existing: null,
+        previewHash: 'preview-1',
+        sourceVersion: 'version-1',
+      }),
+    ).toBe('CREATE');
+  });
+
+  it('faz replay com a mesma chave e o mesmo preview', () => {
+    expect(
+      classifyRenewalIdempotency({
+        existing: { status: 'CONFIRMED', previewHash: 'preview-1', sourceVersion: 'version-1' },
+        previewHash: 'preview-1',
+        sourceVersion: 'version-1',
+      }),
+    ).toBe('REPLAY');
+  });
+
+  it('rejeita a mesma chave com payload/preview diferente', () => {
+    expect(
+      classifyRenewalIdempotency({
+        existing: { status: 'CONFIRMED', previewHash: 'preview-1', sourceVersion: 'version-1' },
+        previewHash: 'preview-2',
+        sourceVersion: 'version-1',
+      }),
+    ).toBe('CONFLICT');
+  });
+
+  it('não deriva uma chave nova ao reutilizar processo cancelado', () => {
+    expect(
+      classifyRenewalIdempotency({
+        existing: { status: 'CANCELLED', previewHash: 'preview-1', sourceVersion: 'version-1' },
+        previewHash: 'preview-1',
+        sourceVersion: 'version-1',
+      }),
+    ).toBe('REQUIRES_NEW_INTENT');
+  });
+
   it('permite campanha ativa sem participante previo para inclusao sob demanda', async () => {
     const prisma = basePrisma({
       rematriculaCampanha: {

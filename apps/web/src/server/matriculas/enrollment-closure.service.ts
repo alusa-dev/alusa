@@ -57,6 +57,21 @@ function buildExpiredWithoutSuccessorWhere(input: {
   };
 }
 
+function isP2002(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: unknown }).code === 'P2002',
+  );
+}
+
+function hasUniqueTarget(error: unknown, field: string): boolean {
+  if (!error || typeof error !== 'object' || !('meta' in error)) return false;
+  const target = (error as { meta?: { target?: unknown } }).meta?.target;
+  return Array.isArray(target) && target.some((value) => value === field);
+}
+
 async function resolveAcademicContext(
   input: { contaId: string; now?: Date; timeZone?: string },
   deps: { prisma: PrismaClient },
@@ -229,9 +244,14 @@ export async function finalizeExpiredFamilyEnrollments(input: {
           },
         });
       } catch (error) {
-        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+        if (!isP2002(error) || !hasUniqueTarget(error, 'dedupeKey')) {
           throw error;
         }
+        const existingOutbox = await deps.prisma.familyBillingOutbox.findFirst({
+          where: { contaId: input.contaId, dedupeKey },
+          select: { id: true },
+        });
+        if (!existingOutbox) throw error;
       }
       pendingFinancialClosure.push(family.id);
       continue;

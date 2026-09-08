@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { StripeIntegrationError } from '@alusa/stripe';
 import {
@@ -17,6 +16,13 @@ export async function POST(req: NextRequest) {
   const requestIp = ipFromRequest(req);
   const body = await readBody(req);
   const returnPath = readSafeReturnPath(body);
+  const idempotencyKey = req.headers.get('idempotency-key')?.trim();
+  if (!idempotencyKey) {
+    return NextResponse.json(
+      { error: 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED', message: 'A chave de idempotência é obrigatória.' },
+      { status: 400 },
+    );
+  }
 
   return withTenantSession(async ({ contaId, userId, tx }) => {
     const rate = await rateLimitAsync(`platform-billing:portal:${contaId}:${userId}:${requestIp}`, 30, 10 * 60_000);
@@ -32,7 +38,6 @@ export async function POST(req: NextRequest) {
     if (forbidden) return forbidden;
 
     const origin = new URL(req.url).origin;
-    const idempotencyKey = req.headers.get('idempotency-key')?.trim() || randomUUID();
     let result: Awaited<ReturnType<typeof createPlatformBillingPortalSession>>;
     try {
       result = await createPlatformBillingPortalSession(

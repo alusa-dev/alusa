@@ -372,14 +372,23 @@ describe('createImmediateEnrollment', () => {
   it('permite nova chave para a mesma intenção depois de uma matrícula anterior cancelada', async () => {
     await createImmediateEnrollment(input({ uiRequestId: 'old-request' }));
     const { data: oldData } = prismaMock.enrollmentCreationOperation.create.mock.calls[0][0];
+    const cancelledEnrollment = {
+      id: 'matricula-cancelada',
+      status: 'CANCELADA' as const,
+    };
     const oldOperation = {
       ...oldData,
       id: 'op-old',
       version: 0,
       status: 'COMMITTED',
-      matriculaId: 'matricula-cancelada',
+      matriculaId: cancelledEnrollment.id,
       asaasSubscriptionId: 'sub-old',
     };
+
+    // Regression fixture: a completed operation may point to a matrícula that
+    // was later cancelled. Its historical COMMITTED row must not reserve the
+    // same enrollment fingerprint forever.
+    expect(cancelledEnrollment.status).toBe('CANCELADA');
     prismaMock.enrollmentCreationOperation.findFirst.mockImplementation(async ({ where }) =>
       where.uiRequestId === 'old-request' ? oldOperation : null,
     );

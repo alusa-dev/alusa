@@ -117,6 +117,22 @@ describe('@alusa/platform-billing use cases', () => {
     expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
   });
 
+  it('rejeita a mesma chave de checkout quando o plano muda', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+
+    await expect(
+      createPlatformBillingCheckoutSession(
+        { ...buildCheckoutInput(), planCode: 'PREMIUM' },
+        { store, stripeGateway },
+      ),
+    ).rejects.toMatchObject({ code: 'PLATFORM_BILLING_IDEMPOTENCY_CONFLICT' });
+
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+  });
+
   it('cria trial sem forma de pagamento e persiste assinatura local', async () => {
     const store = createMemoryStore();
     const stripeGateway = createStripeGatewayMock();
@@ -250,6 +266,7 @@ describe('@alusa/platform-billing use cases', () => {
         contaId: 'conta_1',
         returnUrl: 'https://app.alusa.test/billing',
         actorUserId: 'user_1',
+        idempotencyKey: 'idem_portal_1',
         envSource,
       },
       { store, stripeGateway },
@@ -294,6 +311,7 @@ describe('@alusa/platform-billing use cases', () => {
         {
           contaId: 'conta_1',
           returnUrl: 'https://app.alusa.test/billing',
+          idempotencyKey: 'idem_portal_2',
           envSource,
         },
         { store, stripeGateway: createStripeGatewayMock() },

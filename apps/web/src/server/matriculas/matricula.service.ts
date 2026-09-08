@@ -107,6 +107,14 @@ async function findExistingMatriculaByUiRequestId(input: {
   });
 }
 
+function isP2002ForTarget(error: unknown, field: string): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+    return false;
+  }
+  const target = error.meta?.target;
+  return Array.isArray(target) && target.some((value) => value === field);
+}
+
 export async function buildCriarMatriculaResultFromExisting(
   matricula: NonNullable<Awaited<ReturnType<typeof findExistingMatriculaByUiRequestId>>>,
 ) {
@@ -1374,8 +1382,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
   } catch (error) {
     if (
       input.uiRequestId &&
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === 'P2002'
+      isP2002ForTarget(error, 'uiRequestId')
     ) {
       const existing = await findExistingMatriculaByUiRequestId({
         contaId: input.contaId,
@@ -1384,6 +1391,14 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       if (existing) {
         return buildCriarMatriculaResultFromExisting(existing);
       }
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      console.error('[matricula][unique-conflict]', {
+        contaId: input.contaId,
+        operation: 'create_enrollment',
+        uiRequestId: input.uiRequestId ?? undefined,
+        constraint: error.meta?.target,
+      });
     }
     throw error;
   }

@@ -32,6 +32,7 @@ import type {
 } from '@/features/cadastro/rematriculas/services/rematriculas-service';
 import {
   createRematriculaRequest,
+  createRematriculaRequestId,
   editRematriculaFutureLinkRequest,
   previewIndividualRematriculaRequest,
   type CreateRematriculaInput,
@@ -199,10 +200,12 @@ export function RematriculaDialog({
   const [submitting, setSubmitting] = useState(false);
   const [closeAlertOpen, setCloseAlertOpen] = useState(false);
   const allowCloseRef = useRef(false);
+  const renewalRequestIdRef = useRef<string | null>(null);
 
   function closeDialog() {
     allowCloseRef.current = true;
     setCloseAlertOpen(false);
+    renewalRequestIdRef.current = null;
     onOpenChange(false);
   }
 
@@ -561,6 +564,7 @@ export function RematriculaDialog({
       return;
     }
 
+    const uiRequestId = renewalRequestIdRef.current ?? (renewalRequestIdRef.current = createRematriculaRequestId());
     const payload: CreateRematriculaInput = {
       contaId,
       campaignId: effectiveCampaignId,
@@ -575,6 +579,7 @@ export function RematriculaDialog({
       contractModelId: contratoModeloId,
       billingMode: 'INDIVIDUAL',
       futureBillingStrategy,
+      uiRequestId,
     };
 
     if (vencimentoDia && typeof vencimentoDia === 'number') {

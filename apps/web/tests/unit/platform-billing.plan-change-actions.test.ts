@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
 
 const { gatewayMock } = vi.hoisted(() => ({
   gatewayMock: {
@@ -104,6 +105,58 @@ describe('requestPlatformPlanChange', () => {
         pendingChangeEffectiveAt: null,
       }),
     }));
+  });
+
+  it('faz replay quando a criação local perde uma corrida pela mesma chave', async () => {
+    const trialEndsAt = new Date('2026-07-15T00:00:00.000Z');
+    const prisma = createPrismaMock({
+      account: {
+        id: 'billing_account_1',
+        contaId: 'conta_1',
+        environment: 'TEST',
+        status: 'TRIALING',
+        planCode: 'STARTER',
+        stripeSubscriptionId: 'sub_1',
+        stripePriceId: 'price_starter',
+        currentPeriodEnd: trialEndsAt,
+        trialEndsAt,
+      },
+      activeStudents: 12,
+    });
+    const concurrent = {
+      id: 'plan_change_race',
+      type: 'UPGRADE',
+      status: 'APPLIED',
+      toPlanCode: 'PREMIUM',
+      effectiveAt: trialEndsAt,
+      metadata: null,
+    };
+    prisma.platformBillingPlanChange.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(concurrent);
+    prisma.platformBillingPlanChange.create.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '5.18.0',
+        meta: { target: ['contaId', 'environment', 'idempotencyKey'] },
+      }),
+    );
+
+    const result = await requestPlatformPlanChange({
+      prisma: prisma as never,
+      contaId: 'conta_1',
+      actorUserId: 'user_1',
+      targetPlanCode: 'PREMIUM',
+      idempotencyKey: 'idem_trial_plan_change_race',
+    });
+
+    expect(result).toMatchObject({
+      planChangeId: 'plan_change_race',
+      type: 'UPGRADE',
+      status: 'APPLIED',
+    });
+    expect(gatewayMock.updateSubscriptionPlan).not.toHaveBeenCalled();
+    expect(prisma.platformBillingPlanChange.create).toHaveBeenCalledTimes(1);
   });
 });
 

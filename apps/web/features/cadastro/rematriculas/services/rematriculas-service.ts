@@ -905,10 +905,23 @@ export interface CreateRematriculaInput {
   notificationChannels?: Array<'EMAIL' | 'SMS' | 'WHATSAPP'>;
   notificationChannelsConfigured?: boolean;
   overrideReason?: string;
+  uiRequestId?: string;
   futureBillingStrategy?: {
     mode: 'SEPARATE' | 'UNIFY_EXISTING';
     agreementId?: string | null;
   };
+}
+
+/**
+ * Gera a chave uma única vez no início de uma intenção no client. O serviço
+ * não usa relógio nem gera uma chave nova para cada retry.
+ */
+export function createRematriculaRequestId(): string {
+  const cryptoApi = globalThis.crypto;
+  if (!cryptoApi || typeof cryptoApi.randomUUID !== 'function') {
+    throw new Error('O navegador não oferece um gerador seguro de idempotência.');
+  }
+  return cryptoApi.randomUUID();
 }
 
 export interface IndividualRematriculaPreviewResponse {
@@ -1251,7 +1264,7 @@ function buildRematriculaFamiliarRequestBody(input: CreateRematriculaFamiliarInp
     notificationChannels: input.notificationChannels ?? [],
     notificationChannelsConfigured: input.notificationChannelsConfigured ?? false,
     contratoModeloId: normalizeOptionalId(input.contratoModeloId),
-    uiRequestId: input.uiRequestId ?? `${input.responsavelId}:${Date.now()}`,
+    uiRequestId: input.uiRequestId ?? createRematriculaRequestId(),
   };
 
   if (input.taxaJustificativa?.trim()) {

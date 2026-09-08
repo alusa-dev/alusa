@@ -52,6 +52,234 @@ function jsonError(status: number, code: string, message: string, details?: unkn
   );
 }
 
+const FAMILY_ENROLLMENT_ACTIVE_OPERATION_STATUSES = [
+  'PENDING',
+  'PROCESSING',
+  'REQUIRES_RECONCILIATION',
+] as const;
+
+export type FamilyEnrollmentOperationCollisionRecord = {
+  id: string;
+  familyGroupId: string;
+  status: string;
+  previewHash: string | null;
+  sourceVersion: string | null;
+  strategy: string;
+  requestFingerprint: string;
+  result: unknown;
+};
+
+function familyEnrollmentOperationMatchesIntent(
+  operation: FamilyEnrollmentOperationCollisionRecord,
+  input: { requestFingerprint: string; previewHash: string; sourceVersion: string; strategy: string },
+) {
+  return (
+    operation.previewHash === input.previewHash &&
+    operation.sourceVersion === input.sourceVersion &&
+    operation.strategy === input.strategy &&
+    operation.requestFingerprint === input.requestFingerprint
+  );
+}
+
+export type FamilyEnrollmentOperationCollisionResolution =
+  | { kind: 'REPLAY'; operation: FamilyEnrollmentOperationCollisionRecord }
+  | { kind: 'IN_PROGRESS'; operation: FamilyEnrollmentOperationCollisionRecord }
+  | { kind: 'REQUIRES_RECONCILIATION'; operation: FamilyEnrollmentOperationCollisionRecord }
+  | { kind: 'NEW_INTENT_REQUIRED'; operation: FamilyEnrollmentOperationCollisionRecord }
+  | { kind: 'IDEMPOTENCY_CONFLICT' }
+  | { kind: 'UNKNOWN' };
+
+/**
+ * Classifica uma colisão de operação sem confundir replay de idempotência com
+ * lock de concorrência. FAILED é uma falha terminal conhecida; somente a
+ * reconciliação de efeitos remotos continua reservando o agrupamento.
+ */
+export function classifyFamilyEnrollmentOperationCollision(input: {
+  sameRequest: FamilyEnrollmentOperationCollisionRecord | null;
+  activeFamilyOperation: FamilyEnrollmentOperationCollisionRecord | null;
+  requestFingerprint: string;
+  previewHash: string;
+  sourceVersion: string;
+  strategy: string;
+}): FamilyEnrollmentOperationCollisionResolution {
+  const classifyKnownOperation = (
+    operation: FamilyEnrollmentOperationCollisionRecord,
+    compareIntent = true,
+  ): FamilyEnrollmentOperationCollisionResolution => {
+    if (compareIntent && !familyEnrollmentOperationMatchesIntent(operation, input)) {
+      return { kind: 'IDEMPOTENCY_CONFLICT' };
+    }
+    if (operation.status === 'REQUIRES_RECONCILIATION') {
+      return { kind: 'REQUIRES_RECONCILIATION', operation };
+    }
+    if (
+      FAMILY_ENROLLMENT_ACTIVE_OPERATION_STATUSES.includes(
+        operation.status as (typeof FAMILY_ENROLLMENT_ACTIVE_OPERATION_STATUSES)[number],
+      ) &&
+      (!compareIntent || !operation.result)
+    ) {
+      return { kind: 'IN_PROGRESS', operation };
+    }
+    if (operation.status === 'FAILED' || operation.status === 'CANCELLED') {
+      return { kind: 'NEW_INTENT_REQUIRED', operation };
+    }
+    if (operation.result || operation.status === 'COMPLETED' || operation.status === 'PARTIAL') {
+      return { kind: 'REPLAY', operation };
+    }
+    return { kind: 'UNKNOWN' };
+  };
+
+  if (input.sameRequest) return classifyKnownOperation(input.sameRequest);
+  // A family-level collision belongs to a different request: it is a
+  // concurrency lock, not an idempotency-payload mismatch. The request key
+  // was already checked independently above.
+  if (input.activeFamilyOperation) return classifyKnownOperation(input.activeFamilyOperation, false);
+  return { kind: 'UNKNOWN' };
+}
+
+function isPrismaP2002(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: unknown }).code === 'P2002',
+  );
+}
+
+function hasUniqueTarget(error: unknown, field: string): boolean | null {
+  if (!error || typeof error !== 'object' || !('meta' in error)) return null;
+  const target = (error as { meta?: { target?: unknown } }).meta?.target;
+  if (!Array.isArray(target)) return null;
+  return target.some((value) => value === field);
+}
+
+function familyGroupIdForOperationCollision(
+  body: CreateMatriculaFamiliarBody,
+  familyId: string | null,
+) {
+  if (body.billingStrategy.kind === 'JOIN_EXISTING_CURRENT_CYCLE') {
+    return body.billingStrategy.financialGroupId.replace(/^family:/, '');
+  }
+  return familyId;
+}
+
+function operationResultObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+async function resolveFamilyEnrollmentOperationCollision(input: {
+  error: unknown;
+  body: CreateMatriculaFamiliarBody;
+  contaId: string;
+  familyGroupId: string | null;
+  requestFingerprint: string;
+}): Promise<NextResponse | null> {
+  if (!isPrismaP2002(input.error)) return null;
+
+  const requestTarget = hasUniqueTarget(input.error, 'uiRequestId');
+  const familyTarget = hasUniqueTarget(input.error, 'familyGroupId');
+  // Sem a lista de campos atingidos não há evidência suficiente para
+  // transformar um P2002 em replay/conflito de idempotência. Propague a
+  // colisão desconhecida para não mascarar uma constraint diferente.
+  if (requestTarget !== true && familyTarget !== true) return null;
+
+  const operationSelect = {
+    id: true,
+    familyGroupId: true,
+    status: true,
+    previewHash: true,
+    sourceVersion: true,
+    strategy: true,
+    requestFingerprint: true,
+    result: true,
+  } as const;
+  const [sameRequest, activeFamilyOperation] = await Promise.all([
+    requestTarget === false
+      ? Promise.resolve(null)
+      : prisma.familyEnrollmentOperation.findFirst({
+          where: { contaId: input.contaId, uiRequestId: input.body.uiRequestId },
+          select: operationSelect,
+        }),
+    familyTarget === false || !input.familyGroupId
+      ? Promise.resolve(null)
+      : prisma.familyEnrollmentOperation.findFirst({
+          where: {
+            contaId: input.contaId,
+            familyGroupId: input.familyGroupId,
+            status: { in: [...FAMILY_ENROLLMENT_ACTIVE_OPERATION_STATUSES] },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: operationSelect,
+        }),
+  ]);
+
+  const resolution = classifyFamilyEnrollmentOperationCollision({
+    sameRequest,
+    activeFamilyOperation,
+    requestFingerprint: input.requestFingerprint,
+    previewHash: input.body.previewHash,
+    sourceVersion: input.body.sourceVersion,
+    strategy: input.body.billingStrategy.kind,
+  });
+
+  if (resolution.kind === 'IDEMPOTENCY_CONFLICT') {
+    return jsonError(
+      409,
+      'IDEMPOTENCY_CONFLICT',
+      'A mesma solicitação já foi iniciada com outros dados financeiros.',
+    );
+  }
+  if (resolution.kind === 'IN_PROGRESS') {
+    return jsonError(
+      202,
+      'OPERACAO_FAMILIAR_EM_ANDAMENTO',
+      'Esta matrícula familiar já está sendo processada. Aguarde a confirmação antes de tentar novamente.',
+      {
+        operationId: resolution.operation.id,
+        familyId: resolution.operation.familyGroupId,
+        operationStatus: resolution.operation.status,
+      },
+    );
+  }
+  if (resolution.kind === 'REQUIRES_RECONCILIATION') {
+    return jsonError(
+      409,
+      'NOVA_TENTATIVA_NECESSARIA',
+      'A tentativa anterior exige reconciliação técnica antes de uma nova matrícula familiar.',
+      {
+        operationId: resolution.operation.id,
+        familyId: resolution.operation.familyGroupId,
+        operationStatus: resolution.operation.status,
+      },
+    );
+  }
+  if (resolution.kind === 'NEW_INTENT_REQUIRED') {
+    return jsonError(
+      409,
+      'NOVA_TENTATIVA_NECESSARIA',
+      'A tentativa anterior não foi concluída. Gere uma nova confirmação para tentar novamente.',
+      {
+        operationId: resolution.operation.id,
+        familyId: resolution.operation.familyGroupId,
+        operationStatus: resolution.operation.status,
+      },
+    );
+  }
+  if (resolution.kind === 'REPLAY') {
+    return NextResponse.json(
+      {
+        ...operationResultObject(resolution.operation.result),
+        familyId: resolution.operation.familyGroupId,
+        operationStatus: resolution.operation.status,
+      },
+      { status: 200, headers: { 'cache-control': 'no-store' } },
+    );
+  }
+  return null;
+}
+
 function parseDate(value: string) {
   const normalized = value.trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
@@ -409,16 +637,14 @@ export async function executeCreateFamilyEnrollment(params: {
   const existingOperation = await prisma.familyEnrollmentOperation.findFirst({
     where: { contaId, uiRequestId: body.uiRequestId },
   });
-  const resumableOperation =
-    existingOperation?.status === 'PROCESSING' && !existingOperation.result
-      ? existingOperation
-      : null;
   if (
-    resumableOperation &&
-    (resumableOperation.previewHash !== body.previewHash ||
-      resumableOperation.sourceVersion !== body.sourceVersion ||
-      resumableOperation.strategy !== body.billingStrategy.kind ||
-      resumableOperation.requestFingerprint !== requestFingerprint)
+    existingOperation &&
+    !familyEnrollmentOperationMatchesIntent(existingOperation, {
+      requestFingerprint,
+      previewHash: body.previewHash,
+      sourceVersion: body.sourceVersion,
+      strategy: body.billingStrategy.kind,
+    })
   ) {
     return jsonError(
       409,
@@ -426,28 +652,53 @@ export async function executeCreateFamilyEnrollment(params: {
       'A mesma solicitação já foi iniciada com outros dados financeiros.',
     );
   }
-  if (resumableOperation) {
+  const existingOperationResolution = existingOperation
+    ? classifyFamilyEnrollmentOperationCollision({
+        sameRequest: existingOperation,
+        activeFamilyOperation: null,
+        requestFingerprint,
+        previewHash: body.previewHash,
+        sourceVersion: body.sourceVersion,
+        strategy: body.billingStrategy.kind,
+      })
+    : null;
+  if (existingOperationResolution?.kind === 'IN_PROGRESS') {
     return jsonError(
       202,
       'OPERACAO_FAMILIAR_EM_ANDAMENTO',
       'Esta matrícula familiar já está sendo processada. Aguarde a confirmação antes de tentar novamente.',
-      { operationId: resumableOperation.id, familyId: resumableOperation.familyGroupId },
+      {
+        operationId: existingOperationResolution.operation.id,
+        familyId: existingOperationResolution.operation.familyGroupId,
+        operationStatus: existingOperationResolution.operation.status,
+      },
     );
   }
-  if (
-    existingOperation &&
-    ['FAILED', 'REQUIRES_RECONCILIATION', 'CANCELLED'].includes(existingOperation.status)
-  ) {
+  if (existingOperationResolution?.kind === 'REQUIRES_RECONCILIATION') {
     return jsonError(
       409,
       'NOVA_TENTATIVA_NECESSARIA',
-      existingOperation.status === 'REQUIRES_RECONCILIATION'
-        ? 'A tentativa anterior exige reconciliação técnica antes de uma nova matrícula familiar.'
-        : 'A tentativa anterior não foi concluída. Gere uma nova confirmação para tentar novamente.',
-      { operationId: existingOperation.id, familyId: existingOperation.familyGroupId },
+      'A tentativa anterior exige reconciliação técnica antes de uma nova matrícula familiar.',
+      {
+        operationId: existingOperationResolution.operation.id,
+        familyId: existingOperationResolution.operation.familyGroupId,
+        operationStatus: existingOperationResolution.operation.status,
+      },
     );
   }
-  if (existingOperation && !resumableOperation) {
+  if (existingOperationResolution?.kind === 'NEW_INTENT_REQUIRED') {
+    return jsonError(
+      409,
+      'NOVA_TENTATIVA_NECESSARIA',
+      'A tentativa anterior não foi concluída. Gere uma nova confirmação para tentar novamente.',
+      {
+        operationId: existingOperationResolution.operation.id,
+        familyId: existingOperationResolution.operation.familyGroupId,
+        operationStatus: existingOperationResolution.operation.status,
+      },
+    );
+  }
+  if (existingOperationResolution?.kind === 'REPLAY' && existingOperation) {
     const stored =
       existingOperation.result && typeof existingOperation.result === 'object'
         ? (existingOperation.result as Record<string, unknown>)
@@ -459,6 +710,14 @@ export async function executeCreateFamilyEnrollment(params: {
         operationStatus: existingOperation.status,
       },
       { status: 200, headers: { 'cache-control': 'no-store' } },
+    );
+  }
+  if (existingOperationResolution?.kind === 'UNKNOWN' && existingOperation) {
+    return jsonError(
+      409,
+      'OPERACAO_FAMILIAR_EM_ESTADO_INESPERADO',
+      'A tentativa anterior está em um estado que exige análise antes de uma nova confirmação.',
+      { operationId: existingOperation.id, familyId: existingOperation.familyGroupId },
     );
   }
 
@@ -720,7 +979,10 @@ export async function executeCreateFamilyEnrollment(params: {
         });
       }
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      if (
+        isPrismaP2002(error) &&
+        hasUniqueTarget(error, 'uiRequestId') === true
+      ) {
         const concurrent = await prisma.matriculaFamiliar.findFirst({
           where: { contaId, uiRequestId: body.uiRequestId },
         });
@@ -735,9 +997,9 @@ export async function executeCreateFamilyEnrollment(params: {
     }
     const reservedPreviousMonthlyAmount = Number(family.valorMensalidadeTotal);
     const reservedAddedMonthlyAmount = body.criarCobranca ? pricing.totalMensalidade : 0;
-    const operation = resumableOperation
-      ? resumableOperation
-      : await prisma.familyEnrollmentOperation.create({
+    let operation: Awaited<ReturnType<typeof prisma.familyEnrollmentOperation.create>>;
+    try {
+      operation = await prisma.familyEnrollmentOperation.create({
           data: {
             contaId,
             familyGroupId: family.id,
@@ -759,7 +1021,28 @@ export async function executeCreateFamilyEnrollment(params: {
                 : 0,
             actorId: user.id,
           },
+      });
+    } catch (error) {
+      const collisionResponse = await resolveFamilyEnrollmentOperationCollision({
+        error,
+        body,
+        contaId,
+        familyGroupId: familyGroupIdForOperationCollision(body, family.id),
+        requestFingerprint,
+      });
+      if (collisionResponse) return collisionResponse;
+      if (isPrismaP2002(error)) {
+        const target = (error as { meta?: { target?: unknown } }).meta?.target;
+        console.error('[POST /api/matriculas/familiar][unique-conflict]', {
+          contaId,
+          operation: 'create_family_enrollment_operation',
+          uiRequestId: body.uiRequestId,
+          familyGroupId: family.id,
+          constraint: Array.isArray(target) ? target : undefined,
         });
+      }
+      throw error;
+    }
     rollbackContext = { familyId: family.id, operationId: operation.id };
 
     // 4) Criar matrículas individuais (sem cobrança/taxa em cada uma — a cobrança
@@ -1289,28 +1572,20 @@ export async function executeCreateFamilyEnrollment(params: {
         });
       });
     }
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      const concurrentOperation = await prisma.familyEnrollmentOperation.findFirst({
-        where: { contaId, uiRequestId: body.uiRequestId },
-        select: { familyGroupId: true, status: true, result: true },
+    if (isPrismaP2002(error)) {
+      const target = (error as { meta?: { target?: unknown } }).meta?.target;
+      console.error('[POST /api/matriculas/familiar][unique-conflict]', {
+        contaId,
+        operation: 'create_family_enrollment',
+        uiRequestId: body.uiRequestId,
+        operationId: rollbackContext?.operationId,
+        status: rollbackContext ? 'PROCESSING_OR_COMPENSATING' : 'PRE_OPERATION',
+        constraint: Array.isArray(target) ? target : undefined,
       });
-      if (concurrentOperation) {
-        return NextResponse.json(
-          {
-            ...(concurrentOperation.result && typeof concurrentOperation.result === 'object'
-              ? (concurrentOperation.result as Record<string, unknown>)
-              : {}),
-            familyId: concurrentOperation.familyGroupId,
-            operationStatus: concurrentOperation.status,
-          },
-          { status: 200, headers: { 'cache-control': 'no-store' } },
-        );
-      }
-      return jsonError(
-        409,
-        'OPERACAO_FAMILIAR_EM_ANDAMENTO',
-        'Já existe uma alteração financeira em andamento para este agrupamento familiar.',
-      );
+      // A colisão da operação é tratada no ponto exato da criação, onde a
+      // constraint pode ser relacionada ao request ou ao agrupamento. Um
+      // P2002 posterior (por exemplo, em allocation) não pode virar replay.
+      throw error;
     }
     return jsonError(
       error instanceof MatriculaConflictError ? 409 : 500,

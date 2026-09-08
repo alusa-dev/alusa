@@ -125,6 +125,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
   const [searchOpen, setSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const idempotencyKeyRef = useRef<string | null>(null);
 
   const [selectedPayer, setSelectedPayer] = useState<PayerSearchResult | null>(null);
 
@@ -243,6 +244,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
   };
 
   const handleClose = useCallback(() => {
+    idempotencyKeyRef.current = null;
     reset({ chargeType: defaultChargeType ?? 'ONE_TIME' });
     setStep(1);
     setSelectedPayer(null);
@@ -362,9 +364,13 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
         ? Number((normalizedValue / installments).toFixed(2))
         : undefined;
       const uiRequestId =
-        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        idempotencyKeyRef.current ??
+        (idempotencyKeyRef.current = (() => {
+          if (typeof globalThis.crypto?.randomUUID === 'function') {
+            return globalThis.crypto.randomUUID();
+          }
+          throw new Error('Este navegador não consegue criar uma chave segura para a cobrança.');
+        })());
 
       const payload: Record<string, unknown> = {
         payer: { type: data.payerType, [`${data.payerType}Id`]: data.payerId },

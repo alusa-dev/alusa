@@ -99,6 +99,48 @@ export type ConfirmRenewalProcessInput = RenewalProcessInput & {
   idempotencyKey: string;
 };
 
+export const RENEWAL_IDEMPOTENCY_CONFLICT = 'IDEMPOTENCY_CONFLICT';
+export const RENEWAL_IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT =
+  'IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT';
+
+export type RenewalIdempotencyRecord = {
+  status: string;
+  previewHash: string | null;
+  sourceVersion: string | null;
+};
+
+export type RenewalIdempotencyDecision =
+  | 'CREATE'
+  | 'REPLAY'
+  | 'CONFLICT'
+  | 'REQUIRES_NEW_INTENT';
+
+/**
+ * Uma chave cancelada continua identificando a tentativa cancelada. A nova
+ * intenção precisa chegar com outra chave criada pelo cliente no início do
+ * novo fluxo; o servidor não deriva uma chave variável durante o retry.
+ */
+export function classifyRenewalIdempotency(input: {
+  existing: RenewalIdempotencyRecord | null;
+  previewHash: string;
+  sourceVersion: string;
+}): RenewalIdempotencyDecision {
+  if (!input.existing) return 'CREATE';
+  if (
+    input.existing.previewHash !== input.previewHash ||
+    input.existing.sourceVersion !== input.sourceVersion
+  ) {
+    return 'CONFLICT';
+  }
+  return input.existing.status === 'CANCELLED' ? 'REQUIRES_NEW_INTENT' : 'REPLAY';
+}
+
+function isRenewalProcessIdempotencyViolation(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') return false;
+  const target = error.meta?.target;
+  return Array.isArray(target) && target.some((field) => field === 'idempotencyKey');
+}
+
 export type EditRenewalFutureLinkInput = {
   contaId: string;
   processId: string;
@@ -1693,12 +1735,26 @@ export async function confirmRenewalProcess(
   input: ConfirmRenewalProcessInput,
   deps: { prisma: PrismaClient },
 ) {
-  let idempotencyKey = input.idempotencyKey;
+  const idempotencyKey = input.idempotencyKey?.trim() ?? '';
+  if (!idempotencyKey) {
+    throw new Error(RENEWAL_IDEMPOTENCY_CONFLICT);
+  }
   const existing = await deps.prisma.rematriculaProcesso.findFirst({
     where: { contaId: input.contaId, idempotencyKey },
     include: { itens: true },
   });
-  if (existing && existing.status !== 'CANCELLED') {
+  const idempotencyDecision = classifyRenewalIdempotency({
+    existing,
+    previewHash: input.previewHash,
+    sourceVersion: input.sourceVersion,
+  });
+  if (idempotencyDecision === 'CONFLICT') {
+    throw new Error(RENEWAL_IDEMPOTENCY_CONFLICT);
+  }
+  if (idempotencyDecision === 'REQUIRES_NEW_INTENT') {
+    throw new Error(RENEWAL_IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT);
+  }
+  if (idempotencyDecision === 'REPLAY' && existing) {
     return {
       processId: existing.id,
       status: existing.status,
@@ -1708,9 +1764,6 @@ export async function confirmRenewalProcess(
       nonRenewalCount: existing.nonRenewalCount,
       idempotent: true,
     };
-  }
-  if (existing?.status === 'CANCELLED') {
-    idempotencyKey = `${input.idempotencyKey}:after-cancel:${Date.now()}`;
   }
 
   const operationNow = new Date();
@@ -2287,7 +2340,7 @@ export async function confirmRenewalProcess(
         action: preview.renewCount > 0 ? 'RENEWAL_CONFIRMED' : 'RENEWAL_DECISIONS_SAVED',
         afterState: preview.snapshot as Prisma.InputJsonValue,
         metadata: {
-          idempotencyKey: input.idempotencyKey,
+          idempotencyKey,
           previewHash: preview.previewHash,
           includedOnDemandEnrollmentIds: includedOnDemandIds,
         } as Prisma.InputJsonValue,
@@ -2305,11 +2358,22 @@ export async function confirmRenewalProcess(
     };
     });
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+    if (isRenewalProcessIdempotencyViolation(error)) {
       const concurrent = await deps.prisma.rematriculaProcesso.findFirst({
         where: { contaId: input.contaId, idempotencyKey },
       });
-      if (concurrent && concurrent.status !== 'CANCELLED') {
+      const concurrentDecision = classifyRenewalIdempotency({
+        existing: concurrent,
+        previewHash: input.previewHash,
+        sourceVersion: input.sourceVersion,
+      });
+      if (concurrentDecision === 'CONFLICT') {
+        throw new Error(RENEWAL_IDEMPOTENCY_CONFLICT);
+      }
+      if (concurrentDecision === 'REQUIRES_NEW_INTENT') {
+        throw new Error(RENEWAL_IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT);
+      }
+      if (concurrentDecision === 'REPLAY' && concurrent) {
         return {
           processId: concurrent.id,
           status: concurrent.status,
@@ -2320,6 +2384,14 @@ export async function confirmRenewalProcess(
           idempotent: true,
         };
       }
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      console.error('[renewal][unique-conflict]', {
+        contaId: input.contaId,
+        operation: 'confirm_renewal_process',
+        idempotencyKey,
+        constraint: error.meta?.target,
+      });
     }
     throw error;
   }
