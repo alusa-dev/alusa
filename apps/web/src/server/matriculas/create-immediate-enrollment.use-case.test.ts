@@ -8,6 +8,8 @@ const {
   compensateMock,
   previewMock,
   criarMatriculaMock,
+  assertMatriculaCreationPreflightMock,
+  MatriculaConflictErrorMock,
 } = vi.hoisted(() => ({
   prismaMock: {
     aluno: { findFirst: vi.fn() },
@@ -24,6 +26,16 @@ const {
   compensateMock: vi.fn(),
   previewMock: vi.fn(),
   criarMatriculaMock: vi.fn(),
+  assertMatriculaCreationPreflightMock: vi.fn(),
+  MatriculaConflictErrorMock: class MatriculaConflictErrorMock extends Error {
+    readonly code: string;
+
+    constructor(code: string, message: string) {
+      super(message);
+      this.name = 'MatriculaConflictError';
+      this.code = code;
+    }
+  },
 }));
 
 vi.mock('@/src/prisma', () => ({ prisma: prismaMock }));
@@ -43,13 +55,12 @@ vi.mock('./initial-enrollment-billing-preview.service', () => ({
   previewInitialEnrollmentBilling: previewMock,
 }));
 vi.mock('./matricula.service', () => ({
+  assertMatriculaCreationPreflight: assertMatriculaCreationPreflightMock,
   criarMatricula: criarMatriculaMock,
+  MatriculaConflictError: MatriculaConflictErrorMock,
 }));
 
-import {
-  createImmediateEnrollment,
-  ImmediateEnrollmentCreationError,
-} from './create-immediate-enrollment.use-case';
+import { createImmediateEnrollment } from './create-immediate-enrollment.use-case';
 
 function input(overrides: Record<string, unknown> = {}) {
   return {
@@ -120,6 +131,14 @@ describe('createImmediateEnrollment', () => {
       periodicidade: PeriodicidadePlano.MENSAL,
     });
     prismaMock.combo.findFirst.mockResolvedValue(null);
+    assertMatriculaCreationPreflightMock.mockResolvedValue({
+      aluno: { id: 'aluno-1', status: 'ATIVO', dataNasc: new Date('2010-01-01T00:00:00.000Z') },
+      plano: { id: 'plano-1', nome: 'Plano mensal', periodicidade: PeriodicidadePlano.MENSAL },
+      combo: null,
+      turma: null,
+      targetTurmas: [],
+      payer: { type: 'RESPONSAVEL', id: 'resp-1' },
+    });
     prismaMock.enrollmentCreationOperation.create.mockResolvedValue({ id: 'op-1' });
     prismaMock.enrollmentCreationOperation.updateMany.mockResolvedValue({ count: 1 });
     previewMock.mockResolvedValue({
@@ -318,7 +337,14 @@ describe('createImmediateEnrollment', () => {
     let concurrentFingerprint = '';
     prismaMock.enrollmentCreationOperation.findFirst
       .mockResolvedValueOnce(null)
-      .mockImplementationOnce(async () => ({ requestFingerprint: concurrentFingerprint }));
+      .mockImplementationOnce(async () => ({
+        id: 'op-concurrent',
+        status: 'PROCESSING',
+        requestFingerprint: concurrentFingerprint,
+        requestSnapshot: { fingerprintVersion: 2 },
+        matriculaId: null,
+        asaasSubscriptionId: null,
+      }));
     prismaMock.enrollmentCreationOperation.create.mockImplementationOnce(async (args) => {
       concurrentFingerprint = args.data.requestFingerprint;
       throw { code: 'P2002' };
@@ -329,6 +355,80 @@ describe('createImmediateEnrollment', () => {
     });
     expect(stageMock).not.toHaveBeenCalled();
     expect(criarMatriculaMock).not.toHaveBeenCalled();
+  });
+
+  it('não provisiona recursos remotos quando a matrícula já conflita localmente', async () => {
+    assertMatriculaCreationPreflightMock.mockRejectedValueOnce(
+      new MatriculaConflictErrorMock('MATRICULA_DUPLICADA_TURMA', 'Este aluno já está matriculado nesta turma.'),
+    );
+
+    await expect(createImmediateEnrollment(input())).rejects.toMatchObject({
+      code: 'MATRICULA_DUPLICADA_TURMA',
+    });
+    expect(stageMock).not.toHaveBeenCalled();
+    expect(prismaMock.enrollmentCreationOperation.create).not.toHaveBeenCalled();
+  });
+
+  it('permite nova chave para a mesma intenção depois de uma matrícula anterior cancelada', async () => {
+    await createImmediateEnrollment(input({ uiRequestId: 'old-request' }));
+    const { data: oldData } = prismaMock.enrollmentCreationOperation.create.mock.calls[0][0];
+    const oldOperation = {
+      ...oldData,
+      id: 'op-old',
+      version: 0,
+      status: 'COMMITTED',
+      matriculaId: 'matricula-cancelada',
+      asaasSubscriptionId: 'sub-old',
+    };
+    prismaMock.enrollmentCreationOperation.findFirst.mockImplementation(async ({ where }) =>
+      where.uiRequestId === 'old-request' ? oldOperation : null,
+    );
+    stageMock.mockClear();
+    criarMatriculaMock.mockClear();
+    prismaMock.enrollmentCreationOperation.create.mockResolvedValueOnce({ id: 'op-new' });
+
+    const result = await createImmediateEnrollment(input({ uiRequestId: 'new-request' }));
+
+    expect(result.matricula.id).toBe('matricula-1');
+    expect(stageMock).toHaveBeenCalledWith(expect.objectContaining({ operationId: 'op-new' }));
+    expect(prismaMock.enrollmentCreationOperation.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ uiRequestId: 'new-request' }),
+      }),
+    );
+  });
+
+  it('classifica como criação equivalente em processamento a colisão de fingerprint de outra chave', async () => {
+    let requestFingerprint = '';
+    prismaMock.enrollmentCreationOperation.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockImplementationOnce(async () => ({
+        id: 'op-equivalent',
+        uiRequestId: 'other-request',
+      }));
+    prismaMock.enrollmentCreationOperation.create.mockImplementationOnce(async (args) => {
+      requestFingerprint = args.data.requestFingerprint;
+      throw { code: 'P2002', meta: { target: ['contaId', 'requestFingerprint'] } };
+    });
+
+    await expect(createImmediateEnrollment(input())).rejects.toMatchObject({
+      code: 'CRIACAO_EQUIVALENTE_EM_PROCESSAMENTO',
+    });
+    expect(requestFingerprint).toHaveLength(64);
+    expect(stageMock).not.toHaveBeenCalled();
+  });
+
+  it('não transforma uma colisão P2002 sem operação identificável em erro de idempotência', async () => {
+    prismaMock.enrollmentCreationOperation.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    const uniqueError = { code: 'P2002', meta: { target: ['contaId', 'externalReference'] } };
+    prismaMock.enrollmentCreationOperation.create.mockRejectedValueOnce(uniqueError);
+
+    await expect(createImmediateEnrollment(input())).rejects.toBe(uniqueError);
+    expect(stageMock).not.toHaveBeenCalled();
   });
 
   async function persistCommittedAttempt(overrides: Record<string, unknown> = {}) {

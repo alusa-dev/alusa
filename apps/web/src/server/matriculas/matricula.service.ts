@@ -536,6 +536,156 @@ export type CriarMatriculaInput = {
   }) | null;
 };
 
+type MatriculaCreationDb = PrismaClient | Prisma.TransactionClient;
+
+async function loadMatriculaCreationReferences(
+  db: MatriculaCreationDb,
+  input: CriarMatriculaInput,
+) {
+  const [aluno, plano, combo, turma] = await Promise.all([
+    db.aluno.findFirst({
+      where: { id: input.alunoId, contaId: input.contaId },
+      select: { id: true, status: true, dataNasc: true },
+    }),
+    input.planoId
+      ? db.plano.findFirst({
+          where: { id: input.planoId, contaId: input.contaId },
+          select: { id: true, nome: true, valor: true, periodicidade: true },
+        })
+      : Promise.resolve(null),
+    input.comboId
+      ? db.combo.findFirst({
+          where: { id: input.comboId, contaId: input.contaId },
+          select: {
+            id: true,
+            nome: true,
+            valor: true,
+            periodicidade: true,
+            vagasLimite: true,
+            turmas: {
+              select: {
+                turmaId: true,
+                turma: {
+                  select: {
+                    id: true,
+                    nome: true,
+                    capacidade: true,
+                    diasSemana: true,
+                    horaInicio: true,
+                    horaFim: true,
+                  },
+                },
+              },
+            },
+          },
+        })
+      : Promise.resolve(null),
+    input.turmaId
+      ? db.turma.findFirst({
+          where: { id: input.turmaId, contaId: input.contaId },
+          select: {
+            id: true,
+            nome: true,
+            capacidade: true,
+            diasSemana: true,
+            horaInicio: true,
+            horaFim: true,
+          },
+        })
+      : Promise.resolve(null),
+  ]);
+
+  return { aluno, plano, combo, turma };
+}
+
+/**
+ * Valida as invariantes locais antes de qualquer provisionamento remoto.
+ *
+ * Esta função é compartilhada pelo fluxo normal e pela saga imediata. A saga
+ * ainda repete as validações dentro da transação final para proteger contra
+ * mudanças concorrentes depois do preflight.
+ */
+export async function assertMatriculaCreationPreflight(
+  input: CriarMatriculaInput,
+  db: MatriculaCreationDb = prisma,
+) {
+  const { aluno, plano, combo, turma } = await loadMatriculaCreationReferences(db, input);
+  if (!aluno) throw new Error('Aluno não encontrado');
+  if (aluno.status !== 'ATIVO') {
+    throw new Error('Aluno inativo não pode receber nova matrícula');
+  }
+
+  if (!input.turmaId && !input.comboId) {
+    throw new Error('É necessário selecionar uma turma ou um combo.');
+  }
+
+  await assertNoDuplicateEnrollment(db, {
+    contaId: input.contaId,
+    alunoId: input.alunoId,
+    turmaId: input.turmaId,
+    turmaIds: combo?.turmas.map((item) => item.turmaId) ?? [],
+    comboId: input.comboId,
+    dataInicio: input.dataInicio,
+    dataFimContrato: input.dataFimContrato,
+  });
+
+  const datasResult = validarDatasContrato(input.dataInicio, input.dataFimContrato, {
+    permitirInicioPassado: true,
+  });
+  if (!datasResult.success) {
+    throw new Error(
+      datasResult.error === 'DATA_FIM_ANTES_INICIO'
+        ? 'Data de fim do contrato deve ser posterior à data de início.'
+        : 'Data de início não pode ser no passado.',
+    );
+  }
+
+  const requiresPayer = input.criarCobranca || input.gerarCobrancaTaxa || input.pagarTaxaAgora;
+  const payerResult = resolvePayer({
+    alunoId: aluno.id,
+    alunoDataNasc: aluno.dataNasc,
+    responsavelFinanceiroId: input.responsavelFinanceiroId,
+  });
+  if (requiresPayer && !payerResult.success) {
+    throw new Error('Responsável financeiro é obrigatório para alunos menores de 18 anos.');
+  }
+
+  const targetTurmas = turma ? [turma] : combo?.turmas.map((item) => item.turma) ?? [];
+  await assertTargetTurmasAvailable(db, {
+    contaId: input.contaId,
+    alunoId: input.alunoId,
+    targetTurmas,
+    dataInicio: input.dataInicio,
+    dataFimContrato: input.dataFimContrato,
+  });
+
+  if (combo?.vagasLimite != null) {
+    const comboOcupadas = await db.matricula.count({
+      where: {
+        contaId: input.contaId,
+        comboId: combo.id,
+        ...buildSeatOccupancyOverlapWhereClause(input.dataInicio, input.dataFimContrato),
+      },
+    });
+    const capResult = validarCapacidade([], {
+      vagasLimite: combo.vagasLimite,
+      matriculasOcupantes: comboOcupadas,
+    });
+    if (!capResult.success) {
+      throw new MatriculaConflictError('COMBO_SEM_VAGAS', 'Combo não possui vagas disponíveis.');
+    }
+  }
+
+  return {
+    aluno,
+    plano,
+    combo,
+    turma,
+    targetTurmas,
+    payer: payerResult.success ? payerResult.payer : null,
+  };
+}
+
 type DescontoMatriculaAplicavel = {
   id: string;
   nome: string;
@@ -783,197 +933,8 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     }
   }
 
-  const aluno = await prisma.aluno.findFirst({
-    where: { id: input.alunoId, contaId: input.contaId },
-    select: { id: true, status: true, dataNasc: true },
-  });
-  if (!aluno) throw new Error('Aluno não encontrado');
-  if (aluno.status !== 'ATIVO') {
-    throw new Error('Aluno inativo não pode receber nova matrícula');
-  }
-
-  if (!input.turmaId && !input.comboId) {
-    throw new Error('É necessário selecionar uma turma ou um combo.');
-  }
-
-  await assertNoDuplicateEnrollment(prisma, {
-    contaId: input.contaId,
-    alunoId: input.alunoId,
-    turmaId: input.turmaId,
-    comboId: input.comboId,
-    dataInicio: input.dataInicio,
-    dataFimContrato: input.dataFimContrato,
-  });
-
-  // Validar datas de contrato
-  const datasResult = validarDatasContrato(input.dataInicio, input.dataFimContrato, {
-    permitirInicioPassado: true,
-  });
-  if (!datasResult.success) {
-    throw new Error(
-      datasResult.error === 'DATA_FIM_ANTES_INICIO'
-        ? 'Data de fim do contrato deve ser posterior à data de início.'
-        : 'Data de início não pode ser no passado.',
-    );
-  }
-
-  const requiresPayer = input.criarCobranca || input.gerarCobrancaTaxa || input.pagarTaxaAgora;
-
-  // Validar pagador usando função canônica do domínio
-  if (requiresPayer) {
-    const payerResult = resolvePayer({
-      alunoId: aluno.id,
-      alunoDataNasc: aluno.dataNasc,
-      responsavelFinanceiroId: input.responsavelFinanceiroId,
-    });
-
-    if (!payerResult.success) {
-      throw new Error('Responsável financeiro é obrigatório para alunos menores de 18 anos.');
-    }
-  }
-
-  // Buscar turma com capacidade para validação
-  const [plano, combo, turma] = await Promise.all([
-    input.planoId
-      ? prisma.plano.findFirst({
-          where: { id: input.planoId, contaId: input.contaId },
-          select: { id: true, valor: true, periodicidade: true },
-        })
-      : Promise.resolve(null),
-    input.comboId
-      ? prisma.combo.findFirst({
-          where: { id: input.comboId, contaId: input.contaId },
-          select: {
-            id: true,
-            valor: true,
-            periodicidade: true,
-            vagasLimite: true,
-            turmas: {
-              select: {
-                turmaId: true,
-                turma: {
-                  select: {
-                    id: true,
-                    nome: true,
-                    capacidade: true,
-                    diasSemana: true,
-                    horaInicio: true,
-                    horaFim: true,
-                  },
-                },
-              },
-            },
-          },
-        })
-      : Promise.resolve(null),
-    input.turmaId
-      ? prisma.turma.findFirst({
-          where: { id: input.turmaId, contaId: input.contaId },
-          select: {
-            id: true,
-            nome: true,
-            capacidade: true,
-            diasSemana: true,
-            horaInicio: true,
-            horaFim: true,
-          },
-        })
-      : Promise.resolve(null),
-  ]);
-
-  const targetTurmas = turma ? [turma] : combo?.turmas.map((item) => item.turma) ?? [];
-
-  // Validar capacidade de cada turma, inclusive as turmas internas de combos.
-  for (const targetTurma of targetTurmas) {
-    const ocupadas = await prisma.matricula.count({
-      where: {
-        contaId: input.contaId,
-        OR: [
-          { turmaId: targetTurma.id },
-          { matriculaTurmas: { some: { turmaId: targetTurma.id } } },
-        ],
-        ...buildSeatOccupancyOverlapWhereClause(input.dataInicio, input.dataFimContrato),
-      },
-    });
-    const capResult = validarCapacidade([
-      {
-        id: targetTurma.id,
-        nome: targetTurma.nome,
-        capacidade: targetTurma.capacidade,
-        matriculasOcupantes: ocupadas,
-      },
-    ]);
-    if (!capResult.success) {
-      throw new MatriculaConflictError(
-        'TURMA_SEM_VAGAS',
-        `Turma "${targetTurma.nome}" não possui vagas disponíveis.`,
-      );
-    }
-  }
-
-  if (combo) {
-    if ((combo as { vagasLimite?: number | null }).vagasLimite != null) {
-      const comboOcupadas = await prisma.matricula.count({
-        where: {
-          contaId: input.contaId,
-          comboId: combo.id,
-          ...buildSeatOccupancyOverlapWhereClause(input.dataInicio, input.dataFimContrato),
-        },
-      });
-      const capResult = validarCapacidade([], {
-        vagasLimite: (combo as { vagasLimite?: number | null }).vagasLimite,
-        matriculasOcupantes: comboOcupadas,
-      });
-      if (!capResult.success) {
-        throw new MatriculaConflictError('COMBO_SEM_VAGAS', 'Combo não possui vagas disponíveis.');
-      }
-    }
-  }
-
-  // Validar conflitos de horário para turma individual e todas as turmas do combo.
-  if (targetTurmas.length > 0) {
-    const matriculasExistentes = await prisma.matricula.findMany({
-      where: {
-        contaId: input.contaId,
-        alunoId: input.alunoId,
-        ...buildSeatOccupancyOverlapWhereClause(input.dataInicio, input.dataFimContrato),
-      },
-      include: {
-        turma: {
-          select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
-        },
-        matriculaTurmas: {
-          include: {
-            turma: {
-              select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
-            },
-          },
-        },
-      },
-    });
-    const turmasExistentes = Array.from(
-      new Map(
-        matriculasExistentes
-          .flatMap((matriculaExistente) => [
-            matriculaExistente.turma,
-            ...matriculaExistente.matriculaTurmas.map((item) => item.turma),
-          ])
-          .filter((item): item is NonNullable<typeof item> => item !== null)
-          .map((item) => [item.id, item]),
-      ).values(),
-    );
-
-    const conflitosResult = validarConflitosHorario(
-      targetTurmas,
-      [...turmasExistentes, ...targetTurmas],
-    );
-    if (!conflitosResult.success) {
-      throw new MatriculaConflictError(
-        'CONFLITO_HORARIO',
-        `Conflito de horário entre "${conflitosResult.turma1}" e "${conflitosResult.turma2}".`,
-      );
-    }
-  }
+  const { plano, combo, targetTurmas } =
+    await assertMatriculaCreationPreflight(input);
 
   const valorOverride = Number(input.valorMensalidadeOverride ?? 0);
   const planoValor =

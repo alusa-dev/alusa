@@ -5,6 +5,15 @@ const prismaMock = vi.hoisted(() => ({
   aluno: {
     findFirst: vi.fn(),
   },
+  plano: {
+    findFirst: vi.fn(),
+  },
+  combo: {
+    findFirst: vi.fn(),
+  },
+  turma: {
+    findFirst: vi.fn(),
+  },
   matricula: {
     findFirst: vi.fn(),
   },
@@ -26,6 +35,19 @@ describe('criarMatricula conflicts', () => {
       id: 'aluno-1',
       status: 'ATIVO',
       dataNasc: new Date('2000-01-01'),
+    });
+    prismaMock.plano.findFirst.mockResolvedValueOnce({
+      id: 'plano-1',
+      valor: 150,
+      periodicidade: 'MENSAL',
+    });
+    prismaMock.turma.findFirst.mockResolvedValueOnce({
+      id: 'turma-1',
+      nome: 'Turma teste',
+      capacidade: 10,
+      diasSemana: ['SEG'],
+      horaInicio: '09:00',
+      horaFim: '10:00',
     });
     prismaMock.matricula.findFirst.mockResolvedValueOnce({ id: 'mat-existente' });
 

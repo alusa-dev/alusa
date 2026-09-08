@@ -1,10 +1,8 @@
 import { createHash } from 'crypto';
 import { BillingMode, EnrollmentCreationOperationStatus, PeriodicidadePlano, Prisma } from '@prisma/client';
-import { resolvePayer } from '@alusa/domain';
 import {
   compensateStagedEnrollmentFinancialResources,
   stageEnrollmentFinancialResources,
-  type StagedEnrollmentFinancialResources,
 } from '@alusa/finance';
 
 import { prisma } from '@/src/prisma';
@@ -20,7 +18,12 @@ import {
 import {
   previewInitialEnrollmentBilling,
 } from './initial-enrollment-billing-preview.service';
-import { criarMatricula, type CriarMatriculaInput } from './matricula.service';
+import {
+  assertMatriculaCreationPreflight,
+  criarMatricula,
+  MatriculaConflictError,
+  type CriarMatriculaInput,
+} from './matricula.service';
 
 export class ImmediateEnrollmentCreationError extends Error {
   constructor(
@@ -176,6 +179,17 @@ function classifyLocalCommitFailure(error: unknown) {
 }
 
 const ENROLLMENT_OPERATION_LEASE_MS = 5 * 60 * 1000;
+const IN_FLIGHT_ENROLLMENT_OPERATION_STATUSES = [
+  EnrollmentCreationOperationStatus.PENDING,
+  EnrollmentCreationOperationStatus.PROCESSING,
+  EnrollmentCreationOperationStatus.REMOTE_PROVISIONED,
+  EnrollmentCreationOperationStatus.COMPENSATING,
+  EnrollmentCreationOperationStatus.REQUIRES_RECONCILIATION,
+] as const;
+
+function isInFlightEnrollmentOperationStatus(status: EnrollmentCreationOperationStatus) {
+  return (IN_FLIGHT_ENROLLMENT_OPERATION_STATUSES as readonly string[]).includes(status);
+}
 
 class EnrollmentOperationLeaseLostError extends Error {}
 
@@ -186,6 +200,149 @@ function withEnrollmentOperationTenant<T>(
   ) => Promise<T>,
 ) {
   return runWithTenant(contaId, (tx) => callback(tx.enrollmentCreationOperation));
+}
+
+async function replayCommittedEnrollment(
+  input: CriarMatriculaInput,
+  operation: { id: string; asaasSubscriptionId: string | null },
+) {
+  const idempotentResult = await criarMatricula(input);
+  const monthly = idempotentResult.cobrancas.mensalidade;
+  if (monthly?.asaasPaymentId && operation.asaasSubscriptionId) {
+    const fee = idempotentResult.cobrancas.taxa;
+    return {
+      ...idempotentResult,
+      immediateFinancialSync: {
+        subscription: {
+          asaasSubscriptionId: operation.asaasSubscriptionId,
+          externalReference: `enrollment-op:${operation.id}:subscription`,
+          firstPayment: {
+            asaasPaymentId: monthly.asaasPaymentId,
+            externalReference: `enrollment-op:${operation.id}:subscription`,
+            value: Number(monthly.valor),
+            dueDate: formatIsoDate(monthly.vencimento),
+            status: monthly.asaasStatus ?? 'PENDING',
+            invoiceUrl: null,
+            bankSlipUrl: null,
+          },
+        },
+        enrollmentFee:
+          fee?.asaasPaymentId
+            ? {
+                asaasPaymentId: fee.asaasPaymentId,
+                externalReference: `enrollment-op:${operation.id}:fee`,
+                value: Number(fee.valor),
+                dueDate: formatIsoDate(fee.vencimento),
+                status: fee.asaasStatus ?? 'PENDING',
+                invoiceUrl: null,
+                bankSlipUrl: null,
+              }
+            : null,
+      },
+    };
+  }
+  return idempotentResult;
+}
+
+function uniqueConstraintTarget(error: unknown) {
+  if (!error || typeof error !== 'object' || !('meta' in error)) return undefined;
+  const meta = error.meta;
+  if (!meta || typeof meta !== 'object' || !('target' in meta)) return undefined;
+  return meta.target;
+}
+
+function logUnexpectedEnrollmentOperationCollision(params: {
+  contaId: string;
+  uiRequestId: string;
+  requestFingerprint: string;
+  error: unknown;
+  existingOperationId?: string;
+}) {
+  console.error('[enrollment-create] Colisão inesperada ao reservar operação', {
+    contaId: params.contaId,
+    operation: 'create-immediate-enrollment',
+    correlationId: params.uiRequestId,
+    uiRequestId: params.uiRequestId,
+    requestFingerprint: params.requestFingerprint,
+    existingOperationId: params.existingOperationId ?? null,
+    uniqueConstraintTarget: uniqueConstraintTarget(params.error),
+  });
+}
+
+async function classifyEnrollmentOperationCreateCollision(params: {
+  input: CriarMatriculaInput;
+  uiRequestId: string;
+  requestFingerprint: string;
+  error: unknown;
+}) {
+  const { input, uiRequestId, requestFingerprint, error } = params;
+  const sameRequest = await withEnrollmentOperationTenant(input.contaId, (operations) =>
+    operations.findFirst({
+      where: { contaId: input.contaId, uiRequestId },
+      select: {
+        id: true,
+        status: true,
+        requestFingerprint: true,
+        requestSnapshot: true,
+        matriculaId: true,
+        asaasSubscriptionId: true,
+      },
+    }),
+  );
+
+  if (sameRequest) {
+    assertCurrentFingerprintVersion(sameRequest.requestSnapshot);
+    if (sameRequest.requestFingerprint !== requestFingerprint) {
+      throw new ImmediateEnrollmentCreationError(
+        'IDEMPOTENCY_KEY_REUTILIZADA',
+        'Esta confirmação já foi usada com outros dados. Gere um novo preview.',
+      );
+    }
+    if (
+      sameRequest.status === EnrollmentCreationOperationStatus.COMMITTED &&
+      sameRequest.matriculaId
+    ) {
+      return replayCommittedEnrollment(input, {
+        id: sameRequest.id,
+        asaasSubscriptionId: sameRequest.asaasSubscriptionId,
+      });
+    }
+    if (isInFlightEnrollmentOperationStatus(sameRequest.status)) {
+      throw new ImmediateEnrollmentCreationError(
+        'CRIACAO_EM_PROCESSAMENTO',
+        'Esta matrícula já está sendo confirmada. Aguarde a conclusão antes de tentar novamente.',
+      );
+    }
+    throw new ImmediateEnrollmentCreationError(
+      'CRIACAO_JA_PROCESSADA',
+      'Esta tentativa já foi processada. Gere uma nova confirmação para tentar novamente.',
+    );
+  }
+
+  const equivalentRequest = await withEnrollmentOperationTenant(input.contaId, (operations) =>
+    operations.findFirst({
+      where: {
+        contaId: input.contaId,
+        requestFingerprint,
+        status: { in: [...IN_FLIGHT_ENROLLMENT_OPERATION_STATUSES] },
+      },
+      select: { id: true, uiRequestId: true },
+    }),
+  );
+  if (equivalentRequest) {
+    throw new ImmediateEnrollmentCreationError(
+      'CRIACAO_EQUIVALENTE_EM_PROCESSAMENTO',
+      'Uma matrícula equivalente já está sendo confirmada. Aguarde a conclusão antes de tentar novamente.',
+    );
+  }
+
+  logUnexpectedEnrollmentOperationCollision({
+    contaId: input.contaId,
+    uiRequestId,
+    requestFingerprint,
+    error,
+  });
+  throw error;
 }
 
 export async function createImmediateEnrollment(input: CriarMatriculaInput) {
@@ -232,42 +389,10 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
       );
     }
     if (existing.status === EnrollmentCreationOperationStatus.COMMITTED && existing.matriculaId) {
-      const idempotentResult = await criarMatricula(input);
-      const monthly = idempotentResult.cobrancas.mensalidade;
-      if (monthly?.asaasPaymentId && existing.asaasSubscriptionId) {
-        const fee = idempotentResult.cobrancas.taxa;
-        return {
-          ...idempotentResult,
-          immediateFinancialSync: {
-            subscription: {
-              asaasSubscriptionId: existing.asaasSubscriptionId,
-              externalReference: `enrollment-op:${existing.id}:subscription`,
-              firstPayment: {
-                asaasPaymentId: monthly.asaasPaymentId,
-                externalReference: `enrollment-op:${existing.id}:subscription`,
-                value: Number(monthly.valor),
-                dueDate: formatIsoDate(monthly.vencimento),
-                status: monthly.asaasStatus ?? 'PENDING',
-                invoiceUrl: null,
-                bankSlipUrl: null,
-              },
-            },
-            enrollmentFee:
-              fee?.asaasPaymentId
-                ? {
-                    asaasPaymentId: fee.asaasPaymentId,
-                    externalReference: `enrollment-op:${existing.id}:fee`,
-                    value: Number(fee.valor),
-                    dueDate: formatIsoDate(fee.vencimento),
-                    status: fee.asaasStatus ?? 'PENDING',
-                    invoiceUrl: null,
-                    bankSlipUrl: null,
-                  }
-                : null,
-          },
-        };
-      }
-      return idempotentResult;
+      return replayCommittedEnrollment(input, {
+        id: existing.id,
+        asaasSubscriptionId: existing.asaasSubscriptionId,
+      });
     }
     if (
       existing.status === EnrollmentCreationOperationStatus.COMPENSATING ||
@@ -339,33 +464,33 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
     }
   }
 
-  const [aluno, plano, combo] = await Promise.all([
-    prisma.aluno.findFirst({
-      where: { id: input.alunoId, contaId: input.contaId, status: 'ATIVO' },
-      select: { id: true, dataNasc: true },
-    }),
-    input.planoId
-      ? prisma.plano.findFirst({
-          where: { id: input.planoId, contaId: input.contaId },
-          select: { id: true, nome: true, periodicidade: true },
-        })
-      : null,
-    input.comboId
-      ? prisma.combo.findFirst({
-          where: { id: input.comboId, contaId: input.contaId },
-          select: { id: true, nome: true, periodicidade: true },
-        })
-      : null,
-  ]);
-  if (!aluno) {
-    throw new ImmediateEnrollmentCreationError('ALUNO_NAO_ENCONTRADO', 'Aluno ativo não encontrado.');
+  let preflight: Awaited<ReturnType<typeof assertMatriculaCreationPreflight>>;
+  try {
+    preflight = await assertMatriculaCreationPreflight(input);
+  } catch (error) {
+    if (error instanceof MatriculaConflictError) throw error;
+    if (
+      error instanceof Error &&
+      (error.message === 'Aluno não encontrado' || error.message === 'Aluno inativo não pode receber nova matrícula')
+    ) {
+      throw new ImmediateEnrollmentCreationError(
+        'ALUNO_NAO_ENCONTRADO',
+        'Aluno ativo não encontrado.',
+      );
+    }
+    if (
+      error instanceof Error &&
+      error.message === 'Responsável financeiro é obrigatório para alunos menores de 18 anos.'
+    ) {
+      throw new ImmediateEnrollmentCreationError(
+        'PAGADOR_NAO_ENCONTRADO',
+        'Responsável financeiro obrigatório para concluir a matrícula.',
+      );
+    }
+    throw error;
   }
-  const payer = resolvePayer({
-    alunoId: aluno.id,
-    alunoDataNasc: aluno.dataNasc,
-    responsavelFinanceiroId: input.responsavelFinanceiroId,
-  });
-  if (!payer.success) {
+  const { plano, combo, payer } = preflight;
+  if (!payer) {
     throw new ImmediateEnrollmentCreationError(
       'PAGADOR_NAO_ENCONTRADO',
       'Responsável financeiro obrigatório para concluir a matrícula.',
@@ -483,27 +608,19 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
     leaseVersion = 0;
   } catch (error) {
     if ((error as { code?: string }).code !== 'P2002') throw error;
-
-    const concurrent = await withEnrollmentOperationTenant(input.contaId, (operations) =>
-      operations.findFirst({ where: { contaId: input.contaId, uiRequestId } }),
-    );
-    if (concurrent?.requestFingerprint !== requestFingerprint) {
-      throw new ImmediateEnrollmentCreationError(
-        'IDEMPOTENCY_KEY_REUTILIZADA',
-        'Esta confirmação já foi usada com outros dados. Gere um novo preview.',
-      );
-    }
-    throw new ImmediateEnrollmentCreationError(
-      'CRIACAO_EM_PROCESSAMENTO',
-      'Esta matrícula já está sendo confirmada. Aguarde a conclusão antes de tentar novamente.',
-    );
+    return classifyEnrollmentOperationCreateCollision({
+      input,
+      uiRequestId,
+      requestFingerprint,
+      error,
+    });
   }
 
   const staged = await stageEnrollmentFinancialResources({
     contaId: input.contaId,
     operationId: operation.id,
     idempotencyKey: uiRequestId,
-    payer: payer.payer,
+    payer,
     subscription: {
       value: preview.totals.monthlyTotal,
       nextDueDate: formatIsoDate(firstDueDate),
