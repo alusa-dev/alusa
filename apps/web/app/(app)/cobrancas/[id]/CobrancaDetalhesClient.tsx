@@ -235,7 +235,7 @@ function openOfficialChargeLink(links: OfficialChargeLinks): boolean {
   return true;
 }
 
-const REMOTE_PAID_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED']);
+const REMOTE_PAID_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH']);
 
 function readAsaasString(cobranca: CobrancaDetalhes | null, key: string): string | null {
   const value = cobranca?.asaasData?.[key];

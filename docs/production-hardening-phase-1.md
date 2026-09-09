@@ -26,6 +26,7 @@ O guard de boot exige:
 - `ASAAS_WEBHOOK_AUTH_TOKEN_SECRET`;
 - `ASAAS_WEBHOOK_PUBLIC_BASE_URL`;
 - `ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS=true`;
+- `ASAAS_WEBHOOK_IP_CHECK=strict`;
 - `CRON_SECRET` ou `CRON_SECRET_TOKEN`;
 - `CACHE_LAYER_ENABLED=true` e `REDIS_CACHE_ENABLED=true`.
 
@@ -34,6 +35,10 @@ Também são rejeitados em produção:
 - `FIN_WEBHOOK_SYNC_OVERRIDE=true`;
 - `FIN_WEBHOOK_INLINE_DRAIN=true`;
 - `ASAAS_DISTRIBUTED_GET_LIMIT_ENABLED=false`.
+
+O modo estrito de IP deve ser habilitado somente quando a camada de proxy/CDN
+preservar o IP real do Asaas. A allowlist usa os IPs oficiais documentados pelo
+Asaas e deve ser revisada quando o provedor atualizar sua documentação.
 
 ## Operação
 

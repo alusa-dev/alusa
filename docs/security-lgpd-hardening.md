@@ -31,6 +31,7 @@ Este documento registra a primeira entrega de hardening LGPD e segurança da Alu
 
 - `RLS_RUNTIME_ENABLED=true`
 - `DATABASE_RLS_URL`
+- `ASAAS_WEBHOOK_IP_CHECK=strict`
 - `CRON_SECRET` ou `CRON_SECRET_TOKEN` para jobs internos
 - Segredos Asaas, NextAuth, Sentry e e-mail devem permanecer apenas no servidor.
 

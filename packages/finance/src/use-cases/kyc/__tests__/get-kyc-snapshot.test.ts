@@ -181,11 +181,8 @@ describe('getKycSnapshot', () => {
     expect(snapshot).not.toBeNull();
     expect(snapshot!.nextActions).toHaveLength(1);
     expect(snapshot!.nextActions[0]).toMatchObject({
-      kind: 'EXTERNAL_ONBOARDING',
+      kind: 'WAITING_PROVIDER',
       groupId: 'grp_ext_exp',
-      onboardingUrl: 'https://asaas.com/onboarding/expired',
-      onboardingUrlExpirationDate: exp,
-      isOnboardingUrlExpired: true,
     });
   });
 
@@ -233,7 +230,7 @@ describe('getKycSnapshot', () => {
     expect(snapshot).not.toBeNull();
     expect(snapshot!.nextActions).toHaveLength(1);
     expect(snapshot!.nextActions[0]).toMatchObject({
-      kind: 'UPLOAD_DOCUMENT',
+      kind: 'PROVIDER_PORTAL_REQUIRED',
       groupId: 'grp_portal',
       type: 'IDENTIFICATION',
     });

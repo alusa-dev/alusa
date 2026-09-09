@@ -163,6 +163,11 @@ export const portalFinanceiroDetailDTOSchema = z.object({
   asaasPaymentId: nullableStringDTOSchema.default(null),
   asaasId: nullableStringDTOSchema.default(null),
   invoiceUrl: nullableStringDTOSchema.default(null),
+  bankSlipUrl: nullableStringDTOSchema.default(null).optional(),
+  bankSlipCancelledAt: isoDateStringDTOSchema.nullable().default(null).optional(),
+  identificationField: nullableStringDTOSchema.default(null).optional(),
+  barCode: nullableStringDTOSchema.default(null).optional(),
+  nossoNumero: nullableStringDTOSchema.default(null).optional(),
   transactionReceiptUrl: nullableStringDTOSchema.default(null).optional(),
   descricao: nullableStringDTOSchema.default(null),
   valorJuros: nullableNumberDTOSchema.default(null),
@@ -171,6 +176,10 @@ export const portalFinanceiroDetailDTOSchema = z.object({
   asaasData: z
     .object({
       invoiceUrl: nullableStringDTOSchema.default(null).optional(),
+      bankSlipUrl: nullableStringDTOSchema.default(null).optional(),
+      identificationField: nullableStringDTOSchema.default(null).optional(),
+      barCode: nullableStringDTOSchema.default(null).optional(),
+      nossoNumero: nullableStringDTOSchema.default(null).optional(),
       transactionReceiptUrl: nullableStringDTOSchema.default(null).optional(),
       status: nullableStringDTOSchema.default(null).optional(),
       value: z.number().nullable().optional(),

@@ -225,7 +225,7 @@ const LEGACY_STATUS_LABELS: Record<string, string> = {
   CHARGEBACK_DISPUTE: 'Chargeback em disputa',
   AWAITING_CHARGEBACK_REVERSAL: 'Aguardando reversão',
   DUNNING_REQUESTED: 'Negativação solicitada',
-  DUNNING_RECEIVED: 'Recebida',
+  DUNNING_RECEIVED: 'Negativação recebida',
   AWAITING_RISK_ANALYSIS: 'Em análise',
   FAILED: 'Falha no pagamento',
   EXPIRED: 'Expirado',

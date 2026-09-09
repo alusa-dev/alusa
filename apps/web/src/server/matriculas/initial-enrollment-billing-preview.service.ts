@@ -116,7 +116,7 @@ function sortedById<T extends { id: string }>(records: T[]) {
 function chargeState(charge: LocalChargeSnapshot | null): CurrentCycleChargeState {
   if (!charge) return 'NOT_GENERATED';
   const status = (charge.asaasStatus ?? charge.status).trim().toUpperCase();
-  if (['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED', 'PAGO', 'PAID'].includes(status)) {
+  if (['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'PAGO', 'PAID'].includes(status)) {
     return 'PAID';
   }
   if (['OVERDUE', 'ATRASADO', 'VENCIDO', 'DUNNING_REQUESTED'].includes(status)) return 'OVERDUE';

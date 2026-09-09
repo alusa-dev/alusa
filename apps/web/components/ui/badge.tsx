@@ -49,7 +49,7 @@ const statusConfig = {
   CHARGEBACK_DISPUTE: { text: 'Chargeback em disputa', className: 'alusa-badge alusa-badge-tone-danger' },
   AWAITING_CHARGEBACK_REVERSAL: { text: 'Aguardando reversão', className: 'alusa-badge alusa-badge-tone-warning' },
   DUNNING_REQUESTED: { text: 'Negativação solicitada', className: 'alusa-badge alusa-badge-tone-danger' },
-  DUNNING_RECEIVED: { text: 'Recebida', className: 'alusa-badge alusa-badge-tone-success' },
+  DUNNING_RECEIVED: { text: 'Negativação recebida', className: 'alusa-badge alusa-badge-tone-danger' },
   AWAITING_RISK_ANALYSIS: { text: 'Em análise', className: 'alusa-badge alusa-badge-tone-info' },
   CANCELED: { text: 'Cancelada', className: 'alusa-badge alusa-badge-tone-neutral' },
   CANCELADO: { text: 'Cancelada', className: 'alusa-badge alusa-badge-tone-neutral' },
@@ -171,7 +171,6 @@ export function isStatusPaid(status: StatusType): boolean {
   return [
     'CONFIRMED',
     'RECEIVED',
-    'DUNNING_RECEIVED',
     'RECEIVED_IN_CASH',
     'PAGO',
     'PAID',

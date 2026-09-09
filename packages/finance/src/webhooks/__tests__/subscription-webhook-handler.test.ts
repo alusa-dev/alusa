@@ -16,6 +16,9 @@ vi.mock('@alusa/database', () => {
       billingAgreement: {
         updateMany: vi.fn(async () => ({ count: 0 })),
       },
+      asaasIntegrationJob: {
+        findMany: vi.fn(async () => []),
+      },
       rematriculaFamiliar: {
         updateMany: vi.fn(async () => ({ count: 0 })),
       },

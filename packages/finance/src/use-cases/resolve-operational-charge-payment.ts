@@ -332,7 +332,9 @@ export async function resolveOperationalChargePayment(
     if (!sale) return null;
 
     const dueDate = sale.soldAt;
-    const localStatus = applyOverdueIfNeeded(mapEventTicketSaleStatus(sale.status), dueDate);
+    // `soldAt` is the sale timestamp, not a payment due date. A pending sale
+    // must not become overdue merely because it was created in the past.
+    const localStatus = mapEventTicketSaleStatus(sale.status);
 
     return {
       operationalId,

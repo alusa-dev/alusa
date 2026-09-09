@@ -52,7 +52,6 @@ const CONFIRMATION_EVENTS = new Set([
   'PAYMENT_CONFIRMED',
   'PAYMENT_RECEIVED',
   'PAYMENT_RECEIVED_IN_CASH',
-  'PAYMENT_DUNNING_RECEIVED',
 ]);
 const OPEN_EVENTS = new Set(['PAYMENT_CREATED', 'PAYMENT_UPDATED', 'PAYMENT_OVERDUE', 'PAYMENT_DUNNING_REQUESTED']);
 
@@ -106,7 +105,11 @@ function isAllowedCobrancaTransition(params: {
     return isRegularActiveStatus(current) && next === 'PROCESSANDO';
   }
 
-  if (eventName === 'PAYMENT_OVERDUE' || eventName === 'PAYMENT_DUNNING_REQUESTED') {
+  if (
+    eventName === 'PAYMENT_OVERDUE' ||
+    eventName === 'PAYMENT_DUNNING_REQUESTED' ||
+    eventName === 'PAYMENT_DUNNING_RECEIVED'
+  ) {
     return isRegularActiveStatus(current) && next === 'ATRASADO';
   }
 

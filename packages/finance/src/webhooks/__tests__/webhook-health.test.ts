@@ -91,7 +91,7 @@ describe('checkWebhookHealth', () => {
       interrupted: false,
     });
 
-    const result = await checkWebhookHealth();
+    const result = await checkWebhookHealth({ autoRecover: true });
 
     expect(result.interruptedFound).toBe(1);
     expect(result.recoveredSuccessfully).toBe(1);
@@ -128,7 +128,7 @@ describe('checkWebhookHealth', () => {
       interrupted: true,
     });
 
-    const result = await checkWebhookHealth();
+    const result = await checkWebhookHealth({ autoRecover: true });
 
     expect(result.interruptedFound).toBe(1);
     expect(result.recoveryFailed).toBe(1);

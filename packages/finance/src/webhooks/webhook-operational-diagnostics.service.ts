@@ -256,7 +256,7 @@ export async function getWebhookOperationalDiagnostics(
       code: 'WEBHOOK_IP_STRICT_NOT_ENABLED',
       severity: 'info',
       message:
-        'Em produção, avalie ASAAS_WEBHOOK_IP_CHECK=strict após validar que o proxy repassa IPs oficiais do Asaas corretamente.',
+        'Em produção, ASAAS_WEBHOOK_IP_CHECK=strict é obrigatório; confirme também se o proxy repassa IPs oficiais do Asaas corretamente.',
     }),
   );
   pushRecommendation(

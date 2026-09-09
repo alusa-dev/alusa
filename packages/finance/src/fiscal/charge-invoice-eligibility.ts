@@ -59,7 +59,6 @@ const PAID_PROVIDER_STATUSES = new Set([
   'RECEIVED',
   'CONFIRMED',
   'RECEIVED_IN_CASH',
-  'DUNNING_RECEIVED',
 ]);
 
 const PENDING_PROVIDER_STATUSES = new Set(['PENDING']);
@@ -278,7 +277,7 @@ export function evaluateChargeInvoiceEligibility(input: EligibilityInput): Charg
   if (providerStatus && PAID_PROVIDER_STATUSES.has(providerStatus)) {
     return eligibility({
       canEmit: true,
-      reason: providerStatus === 'DUNNING_RECEIVED' ? 'READY_AFTER_OVERDUE_PAYMENT' : 'READY',
+      reason: 'READY',
       severity: 'success',
       message: 'Cobrança confirmada. A NFS-e pode ser emitida.',
     });
@@ -323,7 +322,6 @@ export function isInvoicePaymentPaidEvent(event: string, providerStatus?: string
     normalizedEvent === 'PAYMENT_CONFIRMED' ||
       normalizedEvent === 'PAYMENT_RECEIVED' ||
       normalizedEvent === 'PAYMENT_RECEIVED_IN_CASH' ||
-      normalizedEvent === 'PAYMENT_DUNNING_RECEIVED' ||
       (normalizedStatus != null && PAID_PROVIDER_STATUSES.has(normalizedStatus)),
   );
 }

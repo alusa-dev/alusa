@@ -34,10 +34,16 @@ describe('asaas-webhook-auth', () => {
     delete process.env.ASAAS_WEBHOOK_PREVIOUS_TOKEN_WINDOW_MS;
   });
 
-  it.each(ASAAS_WEBHOOK_TOKEN_HEADERS)('resolve token do header %s', (header) => {
+  it.each(ASAAS_WEBHOOK_TOKEN_HEADERS)('resolve token do header oficial %s', (header) => {
     const headers = new Headers({ [header]: 'valid-token-with-enough-length' });
 
     expect(resolveAsaasWebhookAccessToken(headers)).toBe('valid-token-with-enough-length');
+  });
+
+  it('ignora aliases de header não oficiais', () => {
+    const headers = new Headers({ 'x-asaas-access-token': 'valid-token-with-enough-length' });
+
+    expect(resolveAsaasWebhookAccessToken(headers)).toBeNull();
   });
 
   it('rejeita formato inválido antes de consultar banco', async () => {

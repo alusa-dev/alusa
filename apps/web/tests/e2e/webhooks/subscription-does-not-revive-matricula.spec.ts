@@ -38,7 +38,7 @@ test.describe('Webhook não ressuscita matrícula cancelada', () => {
     const res = await request.post('/api/webhooks/asaas', {
       headers: {
         'content-type': 'application/json',
-        'access_token': WEBHOOK_TOKEN,
+        'asaas-access-token': WEBHOOK_TOKEN,
       },
       data: payload,
     });

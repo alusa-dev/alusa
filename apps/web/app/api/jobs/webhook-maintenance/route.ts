@@ -10,7 +10,8 @@ export const maxDuration = 60;
  * POST /api/jobs/webhook-maintenance
  *
  * Job de baixa frequência separado do drain da fila.
- * Executa health check remoto, drift check e auto-repair seguro.
+ * Executa health check remoto e drift check. A reativação de fila penalizada
+ * exige o opt-in administrativo explícito `autoRepair=true`.
  */
 async function run(req: Request) {
   try {
@@ -24,7 +25,7 @@ async function run(req: Request) {
       return tenantScope.response;
     }
 
-    const autoRepair = url.searchParams.get('autoRepair') !== 'false';
+    const autoRepair = url.searchParams.get('autoRepair') === 'true';
     const result = await runWebhookHealthAndDriftMaintenance({
       contaId: tenantScope.contaId,
       autoRepair,

@@ -22,8 +22,8 @@ describe('mapAsaasStatusToInternal', () => {
       expect(mapAsaasStatusToInternal('CONFIRMED')).toBe(PAYMENT_STATUSES.CONFIRMED);
     });
 
-    it('mapeia DUNNING_RECEIVED para CONFIRMED', () => {
-      expect(mapAsaasStatusToInternal('DUNNING_RECEIVED')).toBe(PAYMENT_STATUSES.CONFIRMED);
+    it('mapeia DUNNING_RECEIVED para OVERDUE', () => {
+      expect(mapAsaasStatusToInternal('DUNNING_RECEIVED')).toBe(PAYMENT_STATUSES.OVERDUE);
     });
   });
 

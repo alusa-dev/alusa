@@ -20,7 +20,7 @@ import { mapCobrancaUpdateFormaPagamentoResultToDTO } from '@/features/financeir
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 const ASAAS_EDITABLE_PAYMENT_STATUSES = new Set(['PENDING', 'OVERDUE']);
-const ASAAS_PAID_PAYMENT_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED']);
+const ASAAS_PAID_PAYMENT_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH']);
 const LOCAL_EDITABLE_COBRANCA_STATUSES = new Set(['PENDENTE', 'A_VENCER', 'ATRASADO']);
 const LOCAL_EDITABLE_CHARGE_STATUSES = new Set(['CREATED', 'OPEN', 'OVERDUE']);
 

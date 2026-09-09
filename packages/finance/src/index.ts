@@ -48,6 +48,7 @@ export {
   isAsaasFailedStatus,
   isAsaasPendingStatus,
 } from './mappers/asaas-status-groups';
+export { parseDiscountDueDateLimitDays } from './use-cases/discount-rules';
 export {
   ASAAS_SUBSCRIPTION_STATUS,
   isAsaasSubscriptionActive,
@@ -58,12 +59,17 @@ export {
   sanitizeRejectedWebhookPayload,
 } from './privacy/webhook-payload-sanitizer';
 export {
+  asaasWebhookPayloadSchema,
+  parseAsaasWebhookPayload,
+  type ParsedAsaasWebhookPayload,
+} from './webhooks/asaas-webhook-schema';
+export {
   PaymentResolutionPolicies,
   isPaymentResolutionPolicyEnabled,
   getPaymentResolutionPolicies,
   type PaymentResolutionPolicyName,
 } from './foundation/payment-resolution-policy';
-export { AsaasApiKeyError, AsaasHttpError, AsaasBaseUrlError } from '@alusa/asaas';
+export { AsaasApiKeyError, AsaasHttpError, AsaasBaseUrlError, isValidAsaasApiKey } from '@alusa/asaas';
 export {
   getAsaasBaseUrlFromEnvOrThrow,
   getAsaasBaseUrlForApiKeyOrThrow,

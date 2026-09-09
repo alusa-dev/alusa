@@ -2,7 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Hoisted mocks ────────────────────────────────────────────────────────
 
-const { mockKycProcessUpsert, mockKycRequirementUpsert, mockKycSlotUpsert } = vi.hoisted(() => ({
+const {
+  mockKycProcessFindUnique,
+  mockKycProcessUpsert,
+  mockKycRequirementUpsert,
+  mockKycSlotUpsert,
+} = vi.hoisted(() => ({
+  mockKycProcessFindUnique: vi.fn().mockResolvedValue(null),
   mockKycProcessUpsert: vi.fn().mockResolvedValue({ id: 'proc-1' }),
   mockKycRequirementUpsert: vi.fn().mockResolvedValue({ id: 'req-1' }),
   mockKycSlotUpsert: vi.fn().mockResolvedValue({ id: 'slot-1' }),
@@ -10,7 +16,10 @@ const { mockKycProcessUpsert, mockKycRequirementUpsert, mockKycSlotUpsert } = vi
 
 vi.mock('@alusa/database', () => ({
   prisma: {
-    kycProcess: { upsert: mockKycProcessUpsert },
+    kycProcess: {
+      findUnique: mockKycProcessFindUnique,
+      upsert: mockKycProcessUpsert,
+    },
     kycRequirement: { upsert: mockKycRequirementUpsert },
     kycSlot: { upsert: mockKycSlotUpsert },
   },

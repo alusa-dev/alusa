@@ -24,6 +24,7 @@ import {
   type PaymentActionDecision,
   type PaymentOrigin,
   resolveStandaloneChargeTipo,
+  parseDiscountDueDateLimitDays as parseDiscountDueDateLimitDaysCanonical,
 } from '@alusa/finance';
 import type { LiquidacaoStatus, StatusCobranca } from '@prisma/client';
 import type { AsaasCreatePaymentInput } from '@alusa/finance';
@@ -51,7 +52,7 @@ import { isCacheLayerEnabled } from '@/lib/cache/tenant-cache';
 import { privateJson } from '@/lib/private-cache';
 
 const ASAAS_EDITABLE_PAYMENT_STATUSES = new Set(['PENDING', 'OVERDUE']);
-const ASAAS_PAID_PAYMENT_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED']);
+const ASAAS_PAID_PAYMENT_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH']);
 const CHARGE_DETAIL_CACHE_SECONDS = 20;
 const CHARGE_DETAIL_STALE_SECONDS = 40;
 
@@ -309,7 +310,6 @@ function policyBlockedError(params: {
     params.status === 'RECEIVED' ||
     params.status === 'CONFIRMED' ||
     params.status === 'RECEIVED_IN_CASH' ||
-    params.status === 'DUNNING_RECEIVED' ||
     params.status === 'PAGO' ||
     params.status === 'PAID';
 
@@ -461,7 +461,9 @@ function buildAsaasPaymentUpdatePayload(params: {
     };
   }
 
-  const dueDateLimitDays = parseDiscountDueDateLimitDays(descontoPrazoMaximo);
+  const dueDateLimitDays = parseDiscountDueDateLimitDaysCanonical(
+    typeof descontoPrazoMaximo === 'string' ? descontoPrazoMaximo : null,
+  );
 
   if (descontoPercentual !== undefined && normalizedDescontoTipo !== 'VALOR_FIXO') {
     const discountValue = Math.max(0, Number(descontoPercentual) || 0);
@@ -489,15 +491,6 @@ function buildAsaasPaymentUpdatePayload(params: {
   return payload;
 }
 
-function parseDiscountDueDateLimitDays(descontoPrazoMaximo?: unknown): number {
-  if (!descontoPrazoMaximo || descontoPrazoMaximo === 'ATE_VENCIMENTO') {
-    return 0;
-  }
-
-  const match = String(descontoPrazoMaximo).match(/(\d+)_DIAS/);
-  return match ? parseInt(match[1], 10) : 0;
-}
-
 function resolveCanonicalDiscountDueDateLimit(params: {
   descontoPrazoMaximo?: unknown;
   normalizedDescontoTipo?: string;
@@ -518,9 +511,16 @@ function resolveCanonicalDiscountDueDateLimit(params: {
     return 'ATE_VENCIMENTO';
   }
 
-  return parseDiscountDueDateLimitDays(params.descontoPrazoMaximo) === 0
+  return parseDiscountDueDateLimitDaysCanonical(
+    typeof params.descontoPrazoMaximo === 'string' ? params.descontoPrazoMaximo : null,
+  ) === 0
     ? 'ATE_VENCIMENTO'
-    : `${parseDiscountDueDateLimitDays(params.descontoPrazoMaximo)}_DIAS`;
+    : (() => {
+        const days = parseDiscountDueDateLimitDaysCanonical(
+          typeof params.descontoPrazoMaximo === 'string' ? params.descontoPrazoMaximo : null,
+        );
+        return `${days}_${days === 1 ? 'DIA' : 'DIAS'}`;
+      })();
 }
 
 function buildDeletedPaymentWebhookPayload(
@@ -655,6 +655,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
             asaasStatus: true,
             invoiceUrl: true,
             billingType: true,
+            bankSlipUrl: true,
+            identificationField: true,
+            barCode: true,
+            nossoNumero: true,
           },
         },
       },
@@ -782,6 +786,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
                   typeof charge.invoiceUrl === 'string'
                     ? charge.invoiceUrl
                     : (remoteAsaasData?.invoiceUrl ?? null),
+                bankSlipUrl: charge.bankSlipUrl ?? remoteAsaasData?.bankSlipUrl ?? null,
+                identificationField: charge.identificationField ?? null,
+                barCode: charge.barCode ?? null,
+                nossoNumero: charge.nossoNumero ?? null,
                 matricula: {
                   id: charge.id,
                   codigo: 'AVULSA',
@@ -1032,7 +1040,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     });
     const shouldPreferComputedLiquidacao =
       Boolean(remoteAsaasData) ||
-      ['RECEIVED_IN_CASH', 'CONFIRMED', 'RECEIVED', 'DUNNING_RECEIVED'].includes(
+      ['RECEIVED_IN_CASH', 'CONFIRMED', 'RECEIVED'].includes(
         String(remotePaymentStatus ?? '').toUpperCase(),
       );
     const effectiveLiquidacaoStatus: LiquidacaoStatus =

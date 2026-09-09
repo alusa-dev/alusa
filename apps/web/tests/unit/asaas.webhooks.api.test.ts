@@ -19,8 +19,12 @@ vi.mock('@alusa/finance', () => ({
     warnings: [],
   })),
   processAsaasWebhookQueue: vi.fn(),
+  parseAsaasWebhookPayload: vi.fn((rawBody: string) => ({
+    success: true,
+    payload: JSON.parse(rawBody),
+  })),
   resolveAsaasWebhookAccessToken: vi.fn((headers: Pick<Headers, 'get'>) =>
-    headers.get('asaas-access-token') ?? headers.get('x-asaas-access-token')
+    headers.get('asaas-access-token')
   ),
   getAsaasWebhookTokenHashPrefix: vi.fn(() => 'hashprefix'),
   extractClientIp: vi.fn(() => '127.0.0.1'),
@@ -184,7 +188,7 @@ describe('POST /api/webhooks/asaas', () => {
     expect(json).toMatchObject({ success: true, message: 'ok' });
   });
 
-  it('aceita header alternativo x-asaas-access-token', async () => {
+  it('aceita o header oficial asaas-access-token', async () => {
     vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
       success: true,
       status: 200,
@@ -194,14 +198,14 @@ describe('POST /api/webhooks/asaas', () => {
 
     const req = createRequest({
       body: { event: 'PAYMENT_RECEIVED', payment: { id: 'pay_123' } },
-      signatureHeader: { name: 'x-asaas-access-token', value: 'token-alt' },
+      signatureHeader: { name: 'asaas-access-token', value: 'token-official' },
     });
 
     const res = await POST(req);
     expect(res.status).toBe(200);
 
     expect(vi.mocked(handleAsaasWebhookEvent)).toHaveBeenCalledWith(
-      expect.objectContaining({ accessToken: 'token-alt' }),
+      expect.objectContaining({ accessToken: 'token-official' }),
     );
   });
 

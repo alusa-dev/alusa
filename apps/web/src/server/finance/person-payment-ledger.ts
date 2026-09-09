@@ -1431,7 +1431,7 @@ async function enrichInstallmentMetadata(contaId: string, items: PersonPaymentLe
 
 function isPaidItem(item: PersonPaymentLedgerItem) {
   const status = item.pagamento?.status ?? item.status;
-  return ['PAGO', 'CONFIRMADO', 'CONFIRMED', 'RECEIVED', 'PAID', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'].includes(status);
+  return ['PAGO', 'CONFIRMADO', 'CONFIRMED', 'RECEIVED', 'PAID', 'RECEIVED_IN_CASH'].includes(status);
 }
 
 function isOpenItem(item: PersonPaymentLedgerItem) {

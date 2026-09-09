@@ -19,6 +19,8 @@ export default [
       '**/.next-playwright/**',
       '**/node_modules/**',
       '**/coverage/**',
+      '**/.vercel/**',
+      '**/storybook-static/**',
       '**/next-env.d.ts',
     ],
   },

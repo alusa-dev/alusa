@@ -53,6 +53,11 @@ vi.mock('@alusa/finance', () => {
     KycNotApprovedError,
     AsaasEnvError,
     evaluatePaymentActionPolicy,
+    parseDiscountDueDateLimitDays: vi.fn((value: string | null | undefined) => {
+      if (!value || value === 'ATE_VENCIMENTO') return 0;
+      const match = value.match(/(\d+)/);
+      return match ? Number(match[1]) : 0;
+    }),
     isAsaasEnabled: vi.fn(() => true),
     readPaymentFullPreflight: vi.fn(async () => ({
       id: 'pay_1',

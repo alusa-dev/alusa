@@ -11,6 +11,7 @@ vi.mock('@alusa/database', () => {
       cobranca: {
         findFirst: vi.fn(),
         update: vi.fn(),
+        updateMany: vi.fn(),
       },
       charge: {
         findUnique: vi.fn(),

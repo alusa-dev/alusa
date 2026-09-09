@@ -34,7 +34,7 @@ vi.mock('@alusa/finance', () => ({
   },
   evaluatePaymentActionPolicy: vi.fn((input: { asaasStatus?: string | null }) => {
     const status = String(input.asaasStatus ?? '').toUpperCase();
-    const canRefund = ['RECEIVED', 'CONFIRMED', 'DUNNING_RECEIVED'].includes(status);
+      const canRefund = ['RECEIVED', 'CONFIRMED'].includes(status);
     const cash = status === 'RECEIVED_IN_CASH';
     return {
       canRefund: canRefund && !cash,

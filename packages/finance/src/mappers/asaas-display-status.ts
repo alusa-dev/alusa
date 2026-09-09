@@ -126,8 +126,8 @@ const ASAAS_DISPLAY_STATUS_MAP: Record<AsaasPaymentStatus, Omit<ChargeDisplaySta
   },
   DUNNING_RECEIVED: {
     label: 'Recebida por negativação',
-    hint: 'Recebida via negativação.',
-    variant: 'success',
+    hint: 'Negativação recebida; o boleto não foi pago.',
+    variant: 'danger',
   },
   DELETED: {
     label: 'Cancelada',
@@ -192,7 +192,7 @@ const LOCAL_STATUS_PRECEDENCE: Record<string, number> = {
   CONFIRMED: 40,
   RECEIVED: 45,
   RECEIVED_IN_CASH: 45,
-  DUNNING_RECEIVED: 45,
+  DUNNING_RECEIVED: 30,
   CANCELAMENTO_PENDENTE: 80,
   REFUND_REQUESTED: 82,
   REFUND_IN_PROGRESS: 84,
@@ -217,7 +217,7 @@ const ASAAS_TO_LOCAL_DISPLAY_STATUS: Record<AsaasPaymentStatus, string> = {
   CONFIRMED: 'PAGO',
   RECEIVED: 'PAGO',
   RECEIVED_IN_CASH: 'PAGO',
-  DUNNING_RECEIVED: 'PAGO',
+  DUNNING_RECEIVED: 'ATRASADO',
   REFUND_REQUESTED: 'ESTORNADO',
   REFUND_IN_PROGRESS: 'ESTORNADO',
   REFUNDED: 'ESTORNADO',

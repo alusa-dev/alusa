@@ -65,7 +65,7 @@ const ASAAS_TO_INTERNAL_STATUS: Record<AsaasPaymentStatus, InternalPaymentStatus
   // Pagos/Confirmados
   RECEIVED: 'CONFIRMED',
   CONFIRMED: 'CONFIRMED',
-  DUNNING_RECEIVED: 'CONFIRMED', // Recuperado via régua
+  DUNNING_RECEIVED: 'OVERDUE', // Negativação recebida não significa pagamento
   
   // Recebido em dinheiro (fora do Asaas)
   RECEIVED_IN_CASH: 'RECEIVED_IN_CASH',

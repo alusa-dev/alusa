@@ -277,7 +277,6 @@ function computeLiquidacaoStatus(snapshot: AsaasPaymentSnapshot): LiquidacaoStat
     'CHARGEBACK_DISPUTE',
     'AWAITING_CHARGEBACK_REVERSAL',
     'DUNNING_REQUESTED',
-    'DUNNING_RECEIVED',
     'AWAITING_RISK_ANALYSIS',
     'DELETED',
   ];

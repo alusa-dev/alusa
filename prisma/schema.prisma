@@ -3362,6 +3362,14 @@ model Cobranca {
   asaasId           String?        @unique
   asaasPaymentId    String?        @unique
 
+  // Dados documentais do boleto retornados pelo Asaas.
+  // Nullable para preservar cobranças históricas e meios não boleto.
+  bankSlipUrl          String?
+  identificationField  String?
+  barCode              String?
+  nossoNumero          String?
+  bankSlipCancelledAt  DateTime?
+
   // Campos financeiros adicionais - Juros
   jurosPercentual Decimal? @default(0) @db.Decimal(5, 2) // Percentual de juros ao mês (%)
   jurosValorFixo  Decimal? @default(0) @db.Decimal(12, 2) // Valor fixo de juros ao mês (R$)
@@ -6190,6 +6198,11 @@ model Charge {
   billingType   String? // PIX, BOLETO, CREDIT_CARD, etc.
   customerId    String? // ID do Customer local (para referência)
   invoiceUrl    String? // Link de pagamento (invoiceUrl do Asaas)
+  bankSlipUrl   String?
+  identificationField String?
+  barCode       String?
+  nossoNumero   String?
+  bankSlipCancelledAt DateTime?
   familyGroupId String?
 
   // Snapshot das regras aplicadas no momento da emissão.

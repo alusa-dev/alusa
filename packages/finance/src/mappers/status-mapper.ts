@@ -22,7 +22,7 @@ export function mapAsaasStatusToInternal(asaasStatus: AsaasPaymentStatus | strin
     // Pagos/Confirmados
     RECEIVED: 'CONFIRMED',
     CONFIRMED: 'CONFIRMED',
-    DUNNING_RECEIVED: 'CONFIRMED',
+    DUNNING_RECEIVED: 'OVERDUE',
     
     // Recebido em dinheiro (fora do Asaas)
     RECEIVED_IN_CASH: 'RECEIVED_IN_CASH',

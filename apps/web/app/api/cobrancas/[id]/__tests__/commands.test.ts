@@ -108,7 +108,7 @@ describe('undo-receive-in-cash command', () => {
 describe('refund command', () => {
   describe('validações de negócio', () => {
     it('deve permitir estorno apenas para status pagos', () => {
-      const refundableStatuses = ['RECEIVED', 'CONFIRMED', 'DUNNING_RECEIVED'];
+      const refundableStatuses = ['RECEIVED', 'CONFIRMED'];
       const nonRefundableStatuses = ['PENDING', 'OVERDUE', 'REFUNDED', 'DELETED'];
 
       for (const status of refundableStatuses) {

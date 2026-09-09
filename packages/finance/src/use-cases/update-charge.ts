@@ -14,6 +14,7 @@ import { auditLogService } from '../foundation/audit-log.service';
 import type { CreatePaymentInput } from '@alusa/asaas';
 import { randomUUID } from 'crypto';
 import { readPaymentStatusPreflight } from './payment-command-preflight';
+import { parseDiscountDueDateLimitDays } from './discount-rules';
 
 // Status que permitem edição
 const EDITABLE_STATUSES = new Set<StatusCobranca>([
@@ -153,14 +154,14 @@ function buildAsaasUpdatePayload(changes: UpdateChargeInput['changes']): Partial
 
   // Desconto
   if (changes.descontoPercentual !== undefined) {
-    const dueDateLimitDays = parseDueDateLimitDays(changes.descontoPrazoMaximo);
+    const dueDateLimitDays = parseDiscountDueDateLimitDays(changes.descontoPrazoMaximo);
     payload.discount = {
       value: Math.max(0, changes.descontoPercentual),
       type: 'PERCENTAGE',
       dueDateLimitDays,
     };
   } else if (changes.descontoValorFixo !== undefined) {
-    const dueDateLimitDays = parseDueDateLimitDays(changes.descontoPrazoMaximo);
+    const dueDateLimitDays = parseDiscountDueDateLimitDays(changes.descontoPrazoMaximo);
     payload.discount = {
       value: Math.max(0, changes.descontoValorFixo),
       type: 'FIXED',
@@ -185,10 +186,4 @@ function buildLocalUpdate(changes: UpdateChargeInput['changes']): Prisma.Cobranc
   if (changes.descontoValorFixo !== undefined) update.descontoValorFixo = changes.descontoValorFixo;
 
   return update;
-}
-
-function parseDueDateLimitDays(prazoMaximo?: string): number {
-  if (!prazoMaximo || prazoMaximo === 'ATE_VENCIMENTO') return 0;
-  const match = prazoMaximo.match(/(\d+)_DIAS/);
-  return match ? parseInt(match[1], 10) : 0;
 }

@@ -30,6 +30,7 @@ vi.mock('@alusa/database', () => ({
   prisma: {
     asaasAccount: {
       findMany: mockFindManyAccounts,
+      findUnique: vi.fn().mockResolvedValue({ provisionedAt: null }),
       update: mockAsaasAccountUpdate,
     },
     kycProcess: {

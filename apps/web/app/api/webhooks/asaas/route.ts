@@ -13,6 +13,7 @@ import {
   buildWebhookRateLimitKey,
   getAsaasWebhookTokenHashPrefix,
   redactWebhookLogObject,
+  parseAsaasWebhookPayload,
 } from '@alusa/finance';
 import type { AsaasWebhookPayload } from '@alusa/finance';
 import { emitBillingNotificationCandidate } from '@/lib/notifications/emit-billing-notifications';
@@ -23,14 +24,6 @@ const MAX_BODY_BYTES = 512 * 1024;
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
-
-function parseWebhookPayload(rawBody: string): AsaasWebhookPayload | null {
-  try {
-    return JSON.parse(rawBody) as AsaasWebhookPayload;
-  } catch {
-    return null;
-  }
-}
 
 function isJsonContentType(value: string | null): boolean {
   if (!value) return false;
@@ -157,7 +150,8 @@ export async function POST(req: NextRequest) {
       result = await handleAsaasWebhookEvent({ rawBody, accessToken });
       processedContaId = (result as { contaId?: string | null }).contaId ?? null;
 
-      const payload = parseWebhookPayload(rawBody);
+      const parsedPayload = parseAsaasWebhookPayload(rawBody);
+      const payload: AsaasWebhookPayload | null = parsedPayload.success ? parsedPayload.payload : null;
       const notificationContaId = processedContaId ?? result.contaId ?? null;
       if (result.success && notificationContaId && payload?.payment?.id) {
         try {

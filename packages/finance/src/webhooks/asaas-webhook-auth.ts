@@ -4,9 +4,6 @@ import { prisma } from '@alusa/database';
 
 export const ASAAS_WEBHOOK_TOKEN_HEADERS = [
   'asaas-access-token',
-  'x-asaas-access-token',
-  'access_token',
-  'access-token',
 ] as const;
 
 function sha256Hex(input: string): string {

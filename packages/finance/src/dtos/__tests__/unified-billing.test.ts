@@ -58,7 +58,7 @@ describe('resolveUnifiedChargeStatus', () => {
     ['CONFIRMED', 'PAID'],
     ['RECEIVED', 'PAID'],
     ['RECEIVED_IN_CASH', 'PAID'],
-    ['DUNNING_RECEIVED', 'PAID'],
+    ['DUNNING_RECEIVED', 'OVERDUE'],
     ['DELETED', 'CANCELED'],
     ['REFUND_IN_PROGRESS', 'REFUNDED'],
     ['CHARGEBACK_DISPUTE', 'REFUNDED'],

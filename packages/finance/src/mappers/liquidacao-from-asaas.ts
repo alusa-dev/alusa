@@ -29,13 +29,13 @@ function normalizeCreditDateDay(creditDate?: Date | string | null): string | nul
   return creditDate.toISOString().slice(0, 10);
 }
 
-const PAID_ASAAS_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'DUNNING_RECEIVED']);
+const PAID_ASAAS_STATUSES = new Set(['RECEIVED', 'CONFIRMED']);
 
 /**
  * Calcula liquidacaoStatus com base no payment Asaas.
  *
  * RECEIVED_IN_CASH → DISPONIVEL (quitado operacionalmente; saldo Asaas exclui via asaasStatus).
- * RECEIVED / CONFIRMED / DUNNING_RECEIVED → PENDENTE ou DISPONIVEL conforme creditDate vs hoje.
+ * RECEIVED / CONFIRMED → PENDENTE ou DISPONIVEL conforme creditDate vs hoje.
  */
 export function resolveLiquidacaoFromAsaasPayment(
   input: ResolveLiquidacaoFromAsaasInput,

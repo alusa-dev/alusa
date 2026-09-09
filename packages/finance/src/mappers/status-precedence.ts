@@ -215,7 +215,6 @@ export function computeNextCobrancaStatus(params: {
     switch (eventName) {
       case 'PAYMENT_CONFIRMED':
       case 'PAYMENT_RECEIVED':
-      case 'PAYMENT_DUNNING_RECEIVED':
         internalStatus = 'CONFIRMED';
         break;
       case 'PAYMENT_RECEIVED_IN_CASH':
@@ -237,6 +236,7 @@ export function computeNextCobrancaStatus(params: {
         break;
       case 'PAYMENT_OVERDUE':
       case 'PAYMENT_DUNNING_REQUESTED':
+      case 'PAYMENT_DUNNING_RECEIVED':
         internalStatus = 'OVERDUE';
         break;
       case 'PAYMENT_RESTORED':
@@ -478,7 +478,6 @@ export function resolveInternalPaymentStatus(params: {
     switch (eventName) {
       case 'PAYMENT_CONFIRMED':
       case 'PAYMENT_RECEIVED':
-      case 'PAYMENT_DUNNING_RECEIVED':
         internalStatus = 'CONFIRMED';
         break;
       case 'PAYMENT_RECEIVED_IN_CASH':
@@ -500,6 +499,7 @@ export function resolveInternalPaymentStatus(params: {
         break;
       case 'PAYMENT_OVERDUE':
       case 'PAYMENT_DUNNING_REQUESTED':
+      case 'PAYMENT_DUNNING_RECEIVED':
         internalStatus = 'OVERDUE';
         break;
       case 'PAYMENT_RESTORED':

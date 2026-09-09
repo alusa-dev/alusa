@@ -131,7 +131,6 @@ const ASAAS_PAID_PAYMENT_STATUSES = new Set([
   'RECEIVED',
   'CONFIRMED',
   'RECEIVED_IN_CASH',
-  'DUNNING_RECEIVED',
 ]);
 
 function getChargeWarningPrefix(cobrancaId: string) {

@@ -7,7 +7,7 @@ import crypto from 'crypto';
 
 import { createAsaasPayment } from './create-payment';
 import { ensureCustomer } from './ensure-customer';
-import { getPayment, getSubscription, listPayments, listSubscriptions } from './asaas-ops';
+import { getBillingInfo, getPayment, getSubscription, listPayments, listSubscriptions } from './asaas-ops';
 import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
 import { createStandaloneInstallmentPlan } from './create-standalone-installment-plan';
 import { syncSubscriptionFiscalSettings } from './sync-subscription-fiscal-settings';
@@ -853,11 +853,24 @@ export async function createStandaloneCharge(
       }
       await markOutboundRemoteConfirmed(operation.job.id, remotePayment.id, { providerStatus: remotePayment.status });
 
+      const boletoInfo = input.billingType === 'BOLETO'
+        ? await getBillingInfo(remotePayment.id, { contaId: input.contaId }).catch(() => null)
+        : null;
+      const boletoData = input.billingType === 'BOLETO'
+        ? {
+            bankSlipUrl: remotePayment.bankSlipUrl ?? boletoInfo?.bankSlip?.bankSlipUrl ?? null,
+            identificationField: boletoInfo?.bankSlip?.identificationField ?? null,
+            barCode: boletoInfo?.bankSlip?.barCode ?? null,
+            nossoNumero: boletoInfo?.bankSlip?.nossoNumero ?? null,
+          }
+        : {};
+
       await prisma.charge.updateMany({
         where: { id: chargeId, contaId: input.contaId, externalReference },
         data: {
           asaasPaymentId: remotePayment.id,
           invoiceUrl: remotePayment.invoiceUrl ?? null,
+          ...boletoData,
           status: 'OPEN',
           statusUpdatedAt: new Date(),
         },

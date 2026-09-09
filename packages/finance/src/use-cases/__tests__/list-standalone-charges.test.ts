@@ -191,7 +191,6 @@ describe('listStandaloneCharges', () => {
                 'CONFIRMED',
                 'RECEIVED',
                 'RECEIVED_IN_CASH',
-                'DUNNING_RECEIVED',
                 'REFUND_REQUESTED',
                 'REFUND_IN_PROGRESS',
                 'REFUNDED',
@@ -214,7 +213,7 @@ describe('listStandaloneCharges', () => {
     const where = db.charge.findMany.mock.calls[0][0].where;
     expect(where.OR).toEqual([
       { status: 'PAID' },
-      { asaasStatus: { in: ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'] } },
+      { asaasStatus: { in: ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'] } },
     ]);
   });
 

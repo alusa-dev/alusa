@@ -7,6 +7,9 @@ vi.mock('@alusa/asaas', () => ({
 
 vi.mock('@alusa/database', () => ({
   loadAsaasCredentials: vi.fn(),
+  prisma: {
+    asaasAccount: { findFirst: vi.fn().mockResolvedValue({ provisionedAt: null }) },
+  },
 }));
 
 import { getMyAccountDocumentFile, getMyAccountDocuments } from '@alusa/asaas';

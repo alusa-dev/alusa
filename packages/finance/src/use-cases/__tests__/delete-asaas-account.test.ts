@@ -129,7 +129,7 @@ describe('excluirContaAlusaEAsaas', () => {
         contaId: conta.id,
         confirmText: 'DELETAR',
         removeReason: 'pedido do cliente',
-        actor: { type: 'ADMIN', id: 'u1' },
+        actor: { type: 'ADMIN', id: `u_${unique}` },
       });
 
       expect(result.success).toBe(false);
@@ -186,7 +186,7 @@ describe('excluirContaAlusaEAsaas', () => {
       contaId: conta.id,
       confirmText: 'DELETAR',
       removeReason: 'encerramento',
-      actor: { type: 'ADMIN', id: 'u1' },
+      actor: { type: 'ADMIN', id: `u_${unique}` },
     });
 
     expect(result.success).toBe(true);
@@ -252,7 +252,7 @@ describe('excluirContaAlusaEAsaas', () => {
         contaId: conta.id,
         confirmText: 'DELETAR',
         removeReason: 'encerramento',
-        actor: { type: 'ADMIN', id: 'u1' },
+        actor: { type: 'ADMIN', id: `u_${unique}` },
       });
 
       expect(result.success).toBe(true);
@@ -301,7 +301,7 @@ describe('excluirContaAlusaEAsaas', () => {
         contaId: conta.id,
         confirmText: 'DELETAR',
         removeReason: 'encerramento',
-        actor: { type: 'ADMIN', id: 'u1' },
+        actor: { type: 'ADMIN', id: `u_${unique}` },
       });
 
       expect(result.success).toBe(false);
@@ -405,7 +405,7 @@ describe('excluirContaAlusaEAsaas', () => {
         contaId: conta.id,
         confirmText: 'DELETAR',
         removeReason: 'encerramento',
-        actor: { type: 'ADMIN', id: 'u1' },
+        actor: { type: 'ADMIN', id: `u_${unique}` },
       });
 
       expect(result.success).toBe(true);
@@ -484,7 +484,7 @@ describe('excluirContaAlusaEAsaas', () => {
         contaId: conta.id,
         confirmText: 'DELETAR',
         removeReason: 'teste rate limit',
-        actor: { type: 'ADMIN', id: 'u1' },
+        actor: { type: 'ADMIN', id: `u_${unique}` },
       });
 
       expect(vi.mocked(deleteMyAccount)).toHaveBeenCalledTimes(3);
@@ -546,7 +546,7 @@ describe('excluirContaAlusaEAsaas', () => {
         contaId: conta.id,
         confirmText: 'DELETAR',
         removeReason: 'idempotente',
-        actor: { type: 'ADMIN', id: 'u1' },
+        actor: { type: 'ADMIN', id: `u_${unique}` },
       });
 
       expect(result.success).toBe(true);
@@ -607,7 +607,7 @@ describe('excluirContaAlusaEAsaas', () => {
         contaId: conta.id,
         confirmText: 'DELETAR',
         removeReason: 'concorrência',
-        actor: { type: 'ADMIN', id: 'u1' },
+        actor: { type: 'ADMIN', id: `u_${unique}` },
       });
 
       // Garantir que a primeira chamada entrou no fluxo antes da segunda tentar
@@ -617,7 +617,7 @@ describe('excluirContaAlusaEAsaas', () => {
         contaId: conta.id,
         confirmText: 'DELETAR',
         removeReason: 'concorrência',
-        actor: { type: 'ADMIN', id: 'u1' },
+        actor: { type: 'ADMIN', id: `u_${unique}` },
       });
 
       const second = await p2;

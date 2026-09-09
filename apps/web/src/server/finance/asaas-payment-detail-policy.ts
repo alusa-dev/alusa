@@ -17,6 +17,12 @@ export function toDateOnlyString(value?: Date | string | null): string | null {
   return parsed.toISOString().slice(0, 10);
 }
 
+function toDateTimeISOString(value?: Date | string | null): string | null {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 export function mapFormaPagamentoToBillingType(value?: string | null): string | null {
   switch (value) {
     case 'PIX':
@@ -68,6 +74,18 @@ function getAcademicInvoiceUrl(cobranca: Record<string, unknown>): string | null
   }
 
   return charge.invoiceUrl;
+}
+
+function getAcademicDocumentField(cobranca: Record<string, unknown>, field: string): string | null {
+  const charge = getAcademicChargeRecord(cobranca);
+  const value = charge?.[field] ?? cobranca[field];
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function getAcademicDocumentDateField(cobranca: Record<string, unknown>, field: string): string | null {
+  const charge = getAcademicChargeRecord(cobranca);
+  const value = charge?.[field] ?? cobranca[field];
+  return toDateTimeISOString(value as Date | string | null | undefined);
 }
 
 function hasOfficialAccessLink(value: unknown): boolean {
@@ -160,13 +178,17 @@ export function buildAcademicAsaasData(cobranca: Record<string, unknown>) {
       cobranca.asaasEstimatedCreditDate as Date | string | null | undefined,
     ),
     invoiceUrl: getAcademicInvoiceUrl(cobranca),
-    bankSlipUrl: null,
+    bankSlipUrl: getAcademicDocumentField(cobranca, 'bankSlipUrl'),
+    bankSlipCancelledAt: getAcademicDocumentDateField(cobranca, 'bankSlipCancelledAt'),
+    identificationField: getAcademicDocumentField(cobranca, 'identificationField'),
+    barCode: getAcademicDocumentField(cobranca, 'barCode'),
+    nossoNumero: getAcademicDocumentField(cobranca, 'nossoNumero'),
     billingType: getAcademicBillingType(cobranca),
   };
 }
 
 export function buildStandaloneAsaasData(charge: Record<string, unknown>) {
-  if (!charge.asaasPaymentId && !charge.invoiceUrl) {
+  if (!charge.asaasPaymentId && !charge.invoiceUrl && !charge.bankSlipUrl && !charge.identificationField) {
     return null;
   }
 
@@ -185,7 +207,11 @@ export function buildStandaloneAsaasData(charge: Record<string, unknown>) {
     creditDate: toDateOnlyString(charge.asaasCreditDate as Date | string | null | undefined),
     estimatedCreditDate: toDateOnlyString(charge.asaasEstimatedCreditDate as Date | string | null | undefined),
     invoiceUrl: hasOfficialAccessLink(charge.invoiceUrl) ? String(charge.invoiceUrl) : null,
-    bankSlipUrl: null,
+    bankSlipUrl: hasOfficialAccessLink(charge.bankSlipUrl) ? String(charge.bankSlipUrl) : null,
+    bankSlipCancelledAt: getAcademicDocumentDateField(charge, 'bankSlipCancelledAt'),
+    identificationField: getAcademicDocumentField(charge, 'identificationField'),
+    barCode: getAcademicDocumentField(charge, 'barCode'),
+    nossoNumero: getAcademicDocumentField(charge, 'nossoNumero'),
     billingType: mapFormaPagamentoToBillingType(charge.billingType as string | null | undefined),
   };
 }

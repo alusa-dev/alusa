@@ -40,7 +40,7 @@ describe('resolve-operational-charge-payment', () => {
   });
 
   it('resolve lançamento legado de grupo para a parcela real do Asaas', async () => {
-    const dueDate = new Date('2026-09-01T00:00:00.000Z');
+    const dueDate = new Date('2099-09-01T00:00:00.000Z');
     vi.mocked(prisma.eventFinancialEntry.findFirst).mockResolvedValue({
       id: 'entry_group_1',
       eventId: 'event-1',

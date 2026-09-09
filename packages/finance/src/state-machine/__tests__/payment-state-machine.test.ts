@@ -38,6 +38,22 @@ describe('payment-state-machine', () => {
     expect(result.reason).toBe('REGRESSION_BLOCKED');
   });
 
+  it('trata negativação recebida como inadimplência, nunca como pagamento', () => {
+    const result = decideCobrancaPaymentTransition({
+      currentLocalStatus: 'PENDENTE',
+      currentProviderStatus: 'OVERDUE',
+      incomingProviderStatus: 'DUNNING_RECEIVED',
+      eventName: 'PAYMENT_DUNNING_RECEIVED',
+      source: 'WEBHOOK',
+    });
+
+    expect(result).toMatchObject({
+      kind: 'APPLY',
+      nextLocalStatus: 'ATRASADO',
+      nextProviderStatus: 'DUNNING_RECEIVED',
+    });
+  });
+
   it('permite somente a reversão explícita de recebimento em dinheiro', () => {
     const result = decideCobrancaPaymentTransition({
       currentLocalStatus: 'PAGO',

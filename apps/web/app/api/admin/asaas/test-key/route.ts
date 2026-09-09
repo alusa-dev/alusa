@@ -3,8 +3,10 @@ import { getServerSession } from 'next-auth';
 import {
   asaasGetMyAccountCommercialInfo,
   asaasGetMyAccountStatus,
+  AsaasApiKeyError,
+  AsaasHttpError,
+  isValidAsaasApiKey,
 } from '@alusa/finance';
-import { AsaasApiKeyError, AsaasHttpError, isValidAsaasApiKey } from '@alusa/asaas';
 
 import { authOptions } from '@/lib/auth-options';
 

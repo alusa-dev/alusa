@@ -38,7 +38,7 @@ const PAYABLE_CHARGE_STATUSES = new Set<ChargeStatus>([
 
 // Status Asaas que permitem recebimento em dinheiro
 const ASAAS_RECEIVABLE_STATUSES = new Set(['PENDING', 'OVERDUE']);
-const ASAAS_ALREADY_PAID_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED']);
+const ASAAS_ALREADY_PAID_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH']);
 
 function resolvePaymentDateString(dataPagamento: Date | string | undefined): string | null {
   if (!dataPagamento) return getCurrentBrasiliaDate().dateStr;

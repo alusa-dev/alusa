@@ -120,6 +120,11 @@ export async function GET(
       asaasStatus: string | null;
       liquidacaoStatus: import('@prisma/client').LiquidacaoStatus;
       invoiceUrl: string | null;
+      bankSlipUrl: string | null;
+      bankSlipCancelledAt: Date | null;
+      identificationField: string | null;
+      barCode: string | null;
+      nossoNumero: string | null;
       payerName: string | null;
       description: string | null;
     } | null = null;
@@ -153,6 +158,11 @@ export async function GET(
             asaasStatus: true,
             liquidacaoStatus: true,
             invoiceUrl: true,
+            bankSlipUrl: true,
+            bankSlipCancelledAt: true,
+            identificationField: true,
+            barCode: true,
+            nossoNumero: true,
             payerName: true,
             description: true,
           },
@@ -251,6 +261,17 @@ export async function GET(
           asaasId: cobranca.asaasId,
           asaasPaymentId: cobranca.asaasPaymentId,
           invoiceUrl,
+          bankSlipUrl:
+            asaasData?.bankSlipUrl ??
+            (cobranca as unknown as { bankSlipUrl?: string | null }).bankSlipUrl ??
+            null,
+          bankSlipCancelledAt:
+            (cobranca as unknown as { bankSlipCancelledAt?: Date | null }).bankSlipCancelledAt?.toISOString() ??
+            null,
+          identificationField:
+            (cobranca as unknown as { identificationField?: string | null }).identificationField ?? null,
+          barCode: (cobranca as unknown as { barCode?: string | null }).barCode ?? null,
+          nossoNumero: (cobranca as unknown as { nossoNumero?: string | null }).nossoNumero ?? null,
           transactionReceiptUrl,
           descricao: cobranca.descricao,
           valorJuros: cobranca.juros ? Number(cobranca.juros) : null,
@@ -330,6 +351,11 @@ export async function GET(
           asaasId: standaloneCharge!.asaasPaymentId,
           asaasPaymentId: standaloneCharge!.asaasPaymentId,
           invoiceUrl: invoiceUrl ?? standaloneCharge!.invoiceUrl,
+          bankSlipUrl: asaasData?.bankSlipUrl ?? standaloneCharge!.bankSlipUrl,
+          bankSlipCancelledAt: standaloneCharge!.bankSlipCancelledAt?.toISOString() ?? null,
+          identificationField: standaloneCharge!.identificationField,
+          barCode: standaloneCharge!.barCode,
+          nossoNumero: standaloneCharge!.nossoNumero,
           transactionReceiptUrl,
           descricao: standaloneCharge!.description,
           valorJuros: null,

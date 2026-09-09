@@ -32,7 +32,7 @@ function translateMethod(billingType: string | null | undefined) {
 
 function translateStatus(status: string | null | undefined) {
   if (!status) return 'PENDENTE';
-  const paidStatuses = ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED', 'PAID'];
+  const paidStatuses = ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'PAID'];
   if (paidStatuses.includes(status)) return 'PAGO';
   if (status === 'CANCELED') return 'CANCELADO';
   if (status === 'OVERDUE') return 'ATRASADO';

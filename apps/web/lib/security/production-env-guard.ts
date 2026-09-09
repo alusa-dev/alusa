@@ -9,6 +9,7 @@ type ProductionSecurityEnv = {
   FIN_WEBHOOK_SYNC_OVERRIDE?: string;
   FIN_WEBHOOK_INLINE_DRAIN?: string;
   ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS?: string;
+  ASAAS_WEBHOOK_IP_CHECK?: string;
   ASAAS_WEBHOOK_AUTH_TOKEN_SECRET?: string;
   ASAAS_WEBHOOK_PUBLIC_BASE_URL?: string;
   CRON_SECRET?: string;
@@ -54,6 +55,9 @@ export function assertProductionSecurityEnv(env: ProductionSecurityEnv = process
   }
   if (!isEnabled(env.ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS)) {
     missing.push('ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS=true');
+  }
+  if (env.ASAAS_WEBHOOK_IP_CHECK !== 'strict') {
+    missing.push('ASAAS_WEBHOOK_IP_CHECK=strict');
   }
   if (!env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET?.trim()) {
     missing.push('ASAAS_WEBHOOK_AUTH_TOKEN_SECRET');

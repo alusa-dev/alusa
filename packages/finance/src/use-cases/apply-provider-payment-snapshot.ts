@@ -27,6 +27,9 @@ export type ProviderPaymentSnapshot = {
   invoiceUrl?: string | null;
   bankSlipUrl?: string | null;
   transactionReceiptUrl?: string | null;
+  identificationField?: string | null;
+  barCode?: string | null;
+  nossoNumero?: string | null;
   deleted?: boolean | null;
 };
 
@@ -134,6 +137,9 @@ export async function applyProviderPaymentSnapshot(
       invoiceUrl: payment.invoiceUrl ?? null,
       bankSlipUrl: payment.bankSlipUrl ?? null,
       transactionReceiptUrl: payment.transactionReceiptUrl ?? null,
+      identificationField: payment.identificationField ?? null,
+      barCode: payment.barCode ?? null,
+      nossoNumero: payment.nossoNumero ?? null,
       deleted: payment.deleted ?? false,
     },
   };

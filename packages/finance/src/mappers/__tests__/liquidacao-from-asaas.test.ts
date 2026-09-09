@@ -68,13 +68,13 @@ describe('resolveLiquidacaoFromAsaasPayment', () => {
     ).toBe('DISPONIVEL');
   });
 
-  it('retorna DISPONIVEL para DUNNING_RECEIVED com creditDate', () => {
+  it('não liquida DUNNING_RECEIVED, pois é negativação', () => {
     expect(
       resolveLiquidacaoFromAsaasPayment({
         asaasStatus: 'DUNNING_RECEIVED',
         creditDate: today,
         referenceDate: today,
       }),
-    ).toBe('DISPONIVEL');
+    ).toBe('NAO_APLICAVEL');
   });
 });

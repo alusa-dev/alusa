@@ -93,7 +93,7 @@ export function getReceivableStatusPresentation(status: string): { variant: Badg
     AWAITING_RISK_ANALYSIS: 'Em análise de risco',
     RECEIVED: 'Confirmado',
     CONFIRMED: 'Confirmado',
-    DUNNING_RECEIVED: 'Confirmado',
+    DUNNING_RECEIVED: 'Negativação recebida',
     RECEIVED_IN_CASH: 'Recebido em dinheiro',
     OVERDUE: 'Atrasado',
     DUNNING_REQUESTED: 'Em régua de cobrança',
@@ -117,7 +117,7 @@ export function getReceivableStatusPresentation(status: string): { variant: Badg
       : '—');
 
   let variant: BadgeVariant = 'neutral';
-  if (['CONFIRMED', 'RECEIVED', 'DUNNING_RECEIVED', 'RECEIVED_IN_CASH'].includes(normalized)) {
+  if (['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(normalized)) {
     variant = 'success';
   } else if (['PENDING', 'AWAITING_RISK_ANALYSIS'].includes(normalized)) {
     variant = 'warning';

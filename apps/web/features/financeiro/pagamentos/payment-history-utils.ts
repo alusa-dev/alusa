@@ -141,7 +141,7 @@ export function getCategoryLabel(category: PaymentHistoryCategory) {
 }
 
 export function isPaidStatus(status: string | null | undefined) {
-  return ['PAGO', 'CONFIRMADO', 'CONFIRMED', 'RECEIVED', 'PAID', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'].includes(
+  return ['PAGO', 'CONFIRMADO', 'CONFIRMED', 'RECEIVED', 'PAID', 'RECEIVED_IN_CASH'].includes(
     status ?? '',
   );
 }

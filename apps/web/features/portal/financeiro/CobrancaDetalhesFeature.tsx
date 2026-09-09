@@ -105,6 +105,9 @@ const buildReceiptUrl = (cobranca: CobrancaDetalhes) => {
   );
 };
 
+const buildBankSlipUrl = (cobranca: CobrancaDetalhes) =>
+  cobranca.bankSlipUrl || cobranca.asaasData?.bankSlipUrl || null;
+
 type CobrancaDetalhes = PortalFinanceiroDetailDTO;
 
 export function CobrancaDetalhesFeature({ cobrancaId }: { cobrancaId: string }) {
@@ -187,6 +190,11 @@ export function CobrancaDetalhesFeature({ cobrancaId }: { cobrancaId: string }) 
   const vencimentoFormatado = formatDate(cobranca.vencimento);
   const diasAtraso = getDiasAtraso(cobranca.vencimento);
   const invoiceLink = buildInvoiceUrl(cobranca);
+  const bankSlipLink = buildBankSlipUrl(cobranca);
+  const bankSlipCancelledAt = cobranca.bankSlipCancelledAt ?? null;
+  const identificationField = cobranca.identificationField || cobranca.asaasData?.identificationField || null;
+  const barCode = cobranca.barCode || cobranca.asaasData?.barCode || null;
+  const nossoNumero = cobranca.nossoNumero || cobranca.asaasData?.nossoNumero || null;
   const receiptLink = buildReceiptUrl(cobranca);
   const valorDisplay = formatCurrencyInput(cobranca.valor);
   const formaPagamento = getPaymentLabel(cobranca.formaPagamento);
@@ -258,6 +266,20 @@ export function CobrancaDetalhesFeature({ cobrancaId }: { cobrancaId: string }) 
     });
   };
 
+  const handleVerBoleto = () => {
+    if (!bankSlipLink) return;
+    window.open(bankSlipLink, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleCopyBoletoData = async (label: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      pushToast({ title: `${label} copiado`, description: 'O dado está disponível na área de transferência.', variant: 'success' });
+    } catch {
+      pushToast({ title: 'Não foi possível copiar', description: 'Selecione o conteúdo manualmente.', variant: 'warning' });
+    }
+  };
+
   return (
     <div className="container mx-auto max-w-5xl px-4 py-6 pb-12 space-y-6">
       <button
@@ -281,6 +303,12 @@ export function CobrancaDetalhesFeature({ cobrancaId }: { cobrancaId: string }) 
               className="h-11 bg-violet-600 text-white hover:bg-violet-700"
             >
               Ver cobrança
+            </Button>
+          ) : null}
+
+          {bankSlipLink && !bankSlipCancelledAt ? (
+            <Button onClick={handleVerBoleto} variant="outline" className="h-11">
+              Abrir boleto PDF
             </Button>
           ) : null}
 
@@ -334,7 +362,29 @@ export function CobrancaDetalhesFeature({ cobrancaId }: { cobrancaId: string }) 
             <ReadonlyField label="Turma" value={turmaDisplay} />
           </div>
 
+          {bankSlipCancelledAt ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              Este boleto foi cancelado para registro após o vencimento. Solicite à secretaria a emissão de uma nova cobrança.
+            </div>
+          ) : null}
+
           <ReadonlyTextarea label="Descrição" value={descricaoDisplay} />
+
+          {(identificationField || barCode || nossoNumero) && (
+            <div className="rounded-xl border border-violet-100 bg-violet-50 p-5 space-y-3">
+              <div>
+                <p className="text-sm font-semibold text-violet-950">Dados para pagamento do boleto</p>
+                <p className="mt-1 text-xs text-violet-800">Confira os dados antes de pagar pelo aplicativo do seu banco.</p>
+              </div>
+              {identificationField ? (
+                <CopyablePaymentValue label="Linha digitável" value={identificationField} onCopy={handleCopyBoletoData} />
+              ) : null}
+              {barCode ? (
+                <CopyablePaymentValue label="Código de barras" value={barCode} onCopy={handleCopyBoletoData} />
+              ) : null}
+              {nossoNumero ? <ReadonlyField label="Nosso número" value={nossoNumero} /> : null}
+            </div>
+          )}
 
           {ajustes.length > 0 && (
             <div className="grid gap-4 sm:grid-cols-3">
@@ -435,6 +485,33 @@ function ReadonlyField({ label, value, prefix }: { label: string; value: string;
             prefix ? 'pl-9' : ''
           }`}
         />
+      </div>
+    </div>
+  );
+}
+
+function CopyablePaymentValue({
+  label,
+  value,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  onCopy: (label: string, value: string) => Promise<void>;
+}) {
+  return (
+    <div>
+      <label className="block text-xs font-semibold uppercase tracking-wide text-violet-700 mb-1.5">{label}</label>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={value}
+          readOnly
+          className="min-w-0 flex-1 rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-mono text-gray-900"
+        />
+        <Button type="button" variant="outline" onClick={() => void onCopy(label, value)}>
+          Copiar
+        </Button>
       </div>
     </div>
   );

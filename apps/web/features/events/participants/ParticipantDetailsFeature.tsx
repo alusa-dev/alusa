@@ -1527,7 +1527,7 @@ export function ParticipantDetailsFeature({
                           RECEIVED: 'success',
                           CONFIRMED: 'success',
                           RECEIVED_IN_CASH: 'success',
-                          DUNNING_RECEIVED: 'success',
+                          DUNNING_RECEIVED: 'danger',
                           PAID: 'success',
                           OVERDUE: 'danger',
                           REFUNDED: 'neutral',
@@ -1543,7 +1543,7 @@ export function ParticipantDetailsFeature({
                           RECEIVED: 'Pago',
                           CONFIRMED: 'Confirmado',
                           RECEIVED_IN_CASH: 'Pago em Dinheiro',
-                          DUNNING_RECEIVED: 'Pago',
+                          DUNNING_RECEIVED: 'Negativação recebida',
                           PAID: 'Pago',
                           OVERDUE: 'Atrasado',
                           REFUNDED: 'Estornado',
@@ -1562,7 +1562,7 @@ export function ParticipantDetailsFeature({
                       align: 'right',
                       width: 'w-[15%]',
                       render: (c: any) => {
-                        const isPaid = ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED', 'PAID'].includes(c.status);
+                        const isPaid = ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'PAID'].includes(c.status);
                         const isUnpaid = ['CREATED', 'PENDING_SYNC', 'OPEN', 'PENDING', 'OVERDUE'].includes(c.status);
                         return (
                           <div onClick={(e) => e.stopPropagation()}>

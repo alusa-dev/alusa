@@ -9,7 +9,6 @@ export const ASAAS_PAID_STATUSES: PaymentStatus[] = [
   'RECEIVED',
   'CONFIRMED',
   'RECEIVED_IN_CASH',
-  'DUNNING_RECEIVED',
 ];
 
 export const ASAAS_FAILED_STATUSES: PaymentStatus[] = [
@@ -27,6 +26,7 @@ export const ASAAS_PENDING_STATUSES: PaymentStatus[] = [
   'OVERDUE',
   'AWAITING_RISK_ANALYSIS',
   'DUNNING_REQUESTED',
+  'DUNNING_RECEIVED',
 ];
 
 export function isAsaasPaidStatus(status: string | null | undefined): boolean {

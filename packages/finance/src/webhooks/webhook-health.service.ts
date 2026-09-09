@@ -1,12 +1,12 @@
 /**
  * Webhook Health Check Service
  *
- * Detecta webhooks com `interrupted=true` no Asaas e tenta
- * remover a penalização automaticamente (removeBackoff).
+ * Detecta webhooks com `interrupted=true` no Asaas e, somente quando
+ * explicitamente solicitado, remove a penalização (removeBackoff).
  *
  * Regras:
  * - Consulta GET /webhooks para cada subconta ativa
- * - Se `interrupted=true`, chama POST /webhooks/{id}/removeBackoff
+ * - Se `interrupted=true` e autoRecover=true, chama POST /webhooks/{id}/removeBackoff
  * - Confirma via GET /webhooks/{id} que `interrupted=false`
  * - Registra auditoria com correlação
  * - Fail-safe: erros não bloqueiam a verificação de outras contas
@@ -57,7 +57,10 @@ export async function checkWebhookHealth(opts?: {
   contaId?: string;
   autoRecover?: boolean;
 }): Promise<WebhookHealthCheckResult> {
-  const autoRecover = opts?.autoRecover ?? true;
+  // O Asaas recomenda corrigir a causa antes de reativar uma fila penalizada.
+  // Recovery automático só pode ocorrer por opt-in explícito de uma rotina
+  // administrativa/operacional.
+  const autoRecover = opts?.autoRecover ?? false;
 
   const result: WebhookHealthCheckResult = {
     checkedAccounts: 0,

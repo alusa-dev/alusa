@@ -40,6 +40,10 @@ describe('ensureAcademicChargeForCobranca', () => {
       vencimento: new Date('2026-06-10'),
       formaPagamento: 'PIX',
       asaasStatus: 'CONFIRMED',
+      matricula: {
+        alunoId: 'aluno-1',
+        responsavelFinanceiroId: 'responsavel-1',
+      },
     });
     mocks.chargeFindFirst.mockResolvedValueOnce(null);
     mocks.chargeUpsert.mockResolvedValueOnce({ id: 'cobranca-1' });

@@ -27,7 +27,7 @@ export function buildChargeDisplayStatusDTO(
 
 export function isPaidDisplayStatus(displayStatus: Pick<ChargeDisplayStatusDTO, 'status'> | null | undefined) {
   const status = displayStatus?.status ?? '';
-  return ['PAGO', 'PAID', 'CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'].includes(status);
+  return ['PAGO', 'PAID', 'CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(status);
 }
 
 export function isPendingDisplayStatus(displayStatus: Pick<ChargeDisplayStatusDTO, 'status'> | null | undefined) {

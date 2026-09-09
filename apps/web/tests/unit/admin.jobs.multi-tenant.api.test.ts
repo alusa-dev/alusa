@@ -229,7 +229,7 @@ describe('admin jobs multi-tenant isolation', () => {
     expect(response.status).toBe(200);
     expect(runWebhookHealthAndDriftMaintenance).toHaveBeenCalledWith({
       contaId: undefined,
-      autoRepair: true,
+      autoRepair: false,
     });
   });
 

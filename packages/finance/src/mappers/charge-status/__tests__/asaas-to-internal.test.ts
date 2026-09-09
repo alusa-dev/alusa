@@ -15,8 +15,8 @@ describe('mapAsaasPaymentStatusToCobranca', () => {
       expect(mapAsaasPaymentStatusToCobranca('CONFIRMED')).toBe('PAGO');
     });
 
-    it('DUNNING_RECEIVED → PAGO', () => {
-      expect(mapAsaasPaymentStatusToCobranca('DUNNING_RECEIVED')).toBe('PAGO');
+    it('DUNNING_RECEIVED não é pagamento → ATRASADO', () => {
+      expect(mapAsaasPaymentStatusToCobranca('DUNNING_RECEIVED')).toBe('ATRASADO');
     });
 
     it('RECEIVED_IN_CASH → PAGO', () => {

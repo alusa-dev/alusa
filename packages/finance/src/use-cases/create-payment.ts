@@ -43,7 +43,12 @@ export type CreateAsaasPaymentFailure = {
 
 export async function createAsaasPaymentDetailed(
   input: CreatePaymentInput,
-): Promise<Result<{ id: string; externalReference: string; invoiceUrl?: string }, CreateAsaasPaymentFailure>> {
+): Promise<Result<{
+  id: string;
+  externalReference: string;
+  invoiceUrl?: string;
+  bankSlipUrl?: string;
+}, CreateAsaasPaymentFailure>> {
   try {
     const kyc = await requireKycApproved(input.contaId, { allowPendingBankAccount: true });
     if (!kyc.success) {
@@ -85,6 +90,7 @@ export async function createAsaasPaymentDetailed(
       id: payment.id,
       externalReference: payment.externalReference!,
       invoiceUrl: payment.invoiceUrl,
+      bankSlipUrl: payment.bankSlipUrl,
     });
   } catch (error) {
     if (error instanceof AsaasHttpError) {
@@ -124,7 +130,12 @@ export async function createAsaasPaymentDetailed(
 
 export async function createAsaasPayment(
   input: CreatePaymentInput,
-): Promise<Result<{ id: string; externalReference: string; invoiceUrl?: string }, string>> {
+): Promise<Result<{
+  id: string;
+  externalReference: string;
+  invoiceUrl?: string;
+  bankSlipUrl?: string;
+}, string>> {
   const result = await createAsaasPaymentDetailed(input);
   return result.success ? result : err(result.error.message);
 }

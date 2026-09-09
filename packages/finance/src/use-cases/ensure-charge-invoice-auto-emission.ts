@@ -5,7 +5,6 @@ const PAID_PROVIDER_STATUSES = new Set([
   'CONFIRMED',
   'RECEIVED',
   'RECEIVED_IN_CASH',
-  'DUNNING_RECEIVED',
 ]);
 
 function normalize(value: string | null | undefined): string | null {

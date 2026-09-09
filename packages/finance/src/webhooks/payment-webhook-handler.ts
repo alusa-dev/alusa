@@ -28,7 +28,7 @@ import { chargeReadModelService } from '../read-model/charge-read-model.service'
 import { financeSummaryReadModelService } from '../read-model/finance-summary-read-model.service';
 import { updateFinanceStatusFromPayment } from '../guards/finance-status-guard';
 import { withSessionAdvisoryLock } from '../core/idempotency.service';
-import { getPayment, isAsaasEnabled } from '../use-cases/asaas-ops';
+import { getBillingInfo, getPayment, isAsaasEnabled } from '../use-cases/asaas-ops';
 import { confirmPaymentCommandsByProviderEvent } from '../use-cases/payment-command-ledger';
 import {
   fulfillReservedSaleOnPayment,
@@ -102,6 +102,12 @@ export type PaymentWebhookPayload = {
     bankSlipUrl?: string | null;
     /** Link oficial do comprovante/transação */
     transactionReceiptUrl?: string | null;
+    /** Linha digitável do boleto */
+    identificationField?: string | null;
+    /** Código de barras do boleto */
+    barCode?: string | null;
+    /** Nosso número do boleto */
+    nossoNumero?: string | null;
     /** Indica remoção lógica do payment no Asaas */
     deleted?: boolean | null;
   };
@@ -310,22 +316,48 @@ function hasOfficialAccessLink(payment: PaymentWebhookPayload['payment']): boole
   );
 }
 
+function buildPaymentDocumentUpdate(payload: PaymentWebhookPayload): Record<string, unknown> {
+  const p = payload.payment;
+  const update: Record<string, unknown> = {};
+
+  if (p.bankSlipUrl?.trim()) update.bankSlipUrl = p.bankSlipUrl.trim();
+  if (p.identificationField?.trim()) update.identificationField = p.identificationField.trim();
+  if (p.barCode?.trim()) update.barCode = p.barCode.trim();
+  if (p.nossoNumero?.trim()) update.nossoNumero = p.nossoNumero.trim();
+  if (payload.event === 'PAYMENT_CREATED' && (p.bankSlipUrl || p.identificationField || p.barCode)) {
+    update.bankSlipCancelledAt = null;
+  }
+  if (payload.event === 'PAYMENT_BANK_SLIP_CANCELLED') {
+    update.bankSlipCancelledAt = payload.providerOccurredAt ?? new Date();
+  }
+
+  return update;
+}
+
 async function enrichPaymentWithOfficialLinks(
   contaId: string,
   payment: PaymentWebhookPayload['payment'],
 ): Promise<PaymentWebhookPayload['payment']> {
-  if (!isAsaasEnabled() || hasOfficialAccessLink(payment)) {
+  const needsBoletoData = payment.billingType === 'BOLETO' && !payment.identificationField;
+  if (!isAsaasEnabled() || (hasOfficialAccessLink(payment) && !needsBoletoData)) {
     return payment;
   }
 
   try {
     const officialPayment = await getPayment(payment.id, { contaId });
+    const billingType = payment.billingType ?? officialPayment.billingType ?? null;
+    const billingInfo = billingType === 'BOLETO'
+      ? await getBillingInfo(payment.id, { contaId }).catch(() => null)
+      : null;
     return {
       ...payment,
       invoiceUrl: payment.invoiceUrl ?? officialPayment.invoiceUrl ?? null,
       bankSlipUrl: payment.bankSlipUrl ?? officialPayment.bankSlipUrl ?? null,
       transactionReceiptUrl: payment.transactionReceiptUrl ?? officialPayment.transactionReceiptUrl ?? null,
-      billingType: payment.billingType ?? officialPayment.billingType ?? null,
+      billingType,
+      identificationField: payment.identificationField ?? billingInfo?.bankSlip?.identificationField ?? null,
+      barCode: payment.barCode ?? billingInfo?.bankSlip?.barCode ?? null,
+      nossoNumero: payment.nossoNumero ?? billingInfo?.bankSlip?.nossoNumero ?? null,
       description: payment.description ?? officialPayment.description ?? null,
       dueDate: payment.dueDate ?? officialPayment.dueDate ?? null,
       creditDate: payment.creditDate ?? officialPayment.creditDate ?? null,
@@ -480,6 +512,7 @@ function buildChargeAsaasSnapshotUpdate(
       liquidacaoStatus === 'DISPONIVEL'
         ? new Date(p.creditDate ?? p.paymentDate ?? p.clientPaymentDate ?? Date.now())
         : null,
+    ...buildPaymentDocumentUpdate(payload),
   };
 }
 
@@ -1013,7 +1046,7 @@ async function updateEventFinancialEntryFromWebhook(
     }];
   }
 
-  const paidStatus = ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED', 'PAID'];
+  const paidStatus = ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'PAID'];
   const refundedStatus = ['REFUNDED', 'REFUND_IN_PROGRESS', 'CHARGEBACK_REQUESTED', 'CHARGEBACK_DEPOSITED'];
   const cancelledStatus = ['CANCELED', 'DELETED'];
 
@@ -1149,8 +1182,8 @@ async function handlePaymentWebhookCore(
         payload.payment.creditDate ??
         new Date().toISOString();
       if (
-        ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH', 'PAYMENT_DUNNING_RECEIVED'].includes(payload.event) ||
-        ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'].includes(effectiveAsaasStatus)
+        ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH'].includes(payload.event) ||
+        ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(effectiveAsaasStatus)
       ) {
         const eventPaymentParams = {
           contaId,
@@ -2567,6 +2600,7 @@ async function handlePaymentWebhookCore(
           // Liquidação: para RECEIVED_IN_CASH, usar paymentDate como data de liquidação
           liquidacaoStatus,
           liquidadoEm: liquidacaoStatus === 'DISPONIVEL' ? paymentDate : null,
+          ...buildPaymentDocumentUpdate(payload),
           ...cobrancaSensitiveUpdate,
           ...cobrancaPaymentUpdate,
           ...cobrancaStateDimensionUpdate,
@@ -2590,6 +2624,7 @@ async function handlePaymentWebhookCore(
           // Liquidação: para RECEIVED_IN_CASH, usar paymentDate como data de liquidação
           liquidacaoStatus,
           liquidadoEm: liquidacaoStatus === 'DISPONIVEL' ? paymentDate : null,
+          ...buildPaymentDocumentUpdate(payload),
           ...cobrancaSensitiveUpdate,
           ...cobrancaPaymentUpdate,
           ...cobrancaStateDimensionUpdate,

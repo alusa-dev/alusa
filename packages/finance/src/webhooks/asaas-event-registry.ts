@@ -297,7 +297,7 @@ export const ASAAS_EVENT_REGISTRY: Record<string, AsaasEventDefinition> = {
     category: 'PAYMENT',
     handled: true,
     handler: 'handlePaymentWebhook',
-    description: 'Boleto cancelado',
+    description: 'Registro do boleto cancelado; a cobrança financeira permanece existente',
     impactLevel: 'high',
     requiresSync: true,
   },

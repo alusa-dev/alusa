@@ -5,7 +5,7 @@
  * 1. Recuperação de webhooks stuck
  * 2. Processamento da fila (drain) com tenant-fair distribution
  * 3. Marcação de webhooks exauridos (DLQ)
- * 4. Health check remoto + auto-recovery
+ * 4. Health check remoto (recovery exige opt-in explícito)
  * 5. Drift detection + auto-repair
  * 6. Archiving de webhooks processados antigos
  *
@@ -75,6 +75,8 @@ export interface WebhookSchedulerOptions {
   reconciliationWindowHours?: number;
   /** TTL do lock de job em milissegundos */
   lockTtlMs?: number;
+  /** Reativa filas penalizadas somente quando explicitamente autorizado. */
+  recoverInterruptedWebhooks?: boolean;
 }
 
 export interface WebhookMaintenanceResult {
@@ -134,6 +136,7 @@ export async function runWebhookScheduler(
       metadata: {
         contaId: options.contaId ?? null,
         drainLimit: options.drainLimit ?? null,
+        recoverInterruptedWebhooks: options.recoverInterruptedWebhooks === true,
       },
     },
   );
@@ -219,7 +222,7 @@ async function runWebhookSchedulerUnlocked(
     const { step: healthStep } = await timed('health_check', () =>
       checkWebhookHealth({
         contaId: options.contaId,
-        autoRecover: true,
+        autoRecover: options.recoverInterruptedWebhooks === true,
       }),
     );
     steps.push(healthStep);
@@ -373,7 +376,7 @@ export async function runWebhookHealthAndDriftMaintenance(options: {
       ttlMs: 10 * 60 * 1000,
       metadata: {
         contaId: options.contaId ?? null,
-        autoRepair: options.autoRepair ?? true,
+        autoRepair: options.autoRepair === true,
       },
     },
   );
@@ -407,7 +410,7 @@ async function runWebhookHealthAndDriftMaintenanceUnlocked(options: {
   autoRepair?: boolean;
 } = {}): Promise<WebhookMaintenanceResult> {
   const executedAt = new Date();
-  const autoRepair = options.autoRepair ?? true;
+  const autoRepair = options.autoRepair === true;
   const errors: Array<{ contaId: string; error: string }> = [];
 
   const health = await checkWebhookHealth({

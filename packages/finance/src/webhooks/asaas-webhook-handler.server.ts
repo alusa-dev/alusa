@@ -40,6 +40,7 @@ import {
 } from '../privacy/webhook-payload-sanitizer';
 import { upsertReceivableAnticipationSnapshot } from '../services/receivable-anticipation-snapshot.service';
 import type { AsaasAnticipation, AsaasAnticipationStatus } from '@alusa/asaas';
+import { parseAsaasWebhookPayload } from './asaas-webhook-schema';
 
 type AttemptLogEntry = {
   at: string;
@@ -97,6 +98,12 @@ type AsaasWebhookBody = {
     installmentNumber?: number;
     deleted?: unknown;
     billingType?: string;
+    invoiceUrl?: string;
+    bankSlipUrl?: string;
+    transactionReceiptUrl?: string;
+    identificationField?: string;
+    barCode?: string;
+    nossoNumero?: string;
     creditDate?: string;
     estimatedCreditDate?: string;
   };
@@ -313,6 +320,12 @@ async function processAsaasWebhookForRecord(params: {
           installment: payload.payment.installment ?? null,
           installmentNumber: payload.payment.installmentNumber ?? null,
           billingType: payload.payment.billingType ?? null,
+          invoiceUrl: payload.payment.invoiceUrl ?? null,
+          bankSlipUrl: payload.payment.bankSlipUrl ?? null,
+          transactionReceiptUrl: payload.payment.transactionReceiptUrl ?? null,
+          identificationField: payload.payment.identificationField ?? null,
+          barCode: payload.payment.barCode ?? null,
+          nossoNumero: payload.payment.nossoNumero ?? null,
           dueDate: payload.payment.dueDate ?? null,
           paymentDate: payload.payment.paymentDate ?? null,
           clientPaymentDate: payload.payment.clientPaymentDate ?? null,
@@ -752,14 +765,12 @@ async function processAsaasWebhookForRecord(params: {
 export async function enqueueAsaasWebhookEvent(
   params: HandleAsaasWebhookEventParams
 ): Promise<QueueWebhookResult> {
-  let payload: AsaasWebhookBody;
-
-  try {
-    payload = JSON.parse(params.rawBody) as AsaasWebhookBody;
-  } catch {
-    await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: 'JSON inválido', event: null, eventId: null });
-    return { success: false, status: 400, persisted: false, error: 'JSON inválido' };
+  const parsedPayload = parseAsaasWebhookPayload(params.rawBody);
+  if (!parsedPayload.success) {
+    await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: parsedPayload.reason, event: null, eventId: null });
+    return { success: false, status: 400, persisted: false, error: parsedPayload.reason };
   }
+  const payload = parsedPayload.payload as AsaasWebhookBody;
 
   const event = payload.event;
   if (!event) {
@@ -1140,14 +1151,12 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
   event?: string;
   eventId?: string | null;
 }> {
-  let payload: AsaasWebhookBody;
-
-  try {
-    payload = JSON.parse(params.rawBody) as AsaasWebhookBody;
-  } catch {
-    await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: 'JSON inválido', event: null, eventId: null });
-    return { success: false, status: 400, persisted: false, error: 'JSON inválido' };
+  const parsedPayload = parseAsaasWebhookPayload(params.rawBody);
+  if (!parsedPayload.success) {
+    await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: parsedPayload.reason, event: null, eventId: null });
+    return { success: false, status: 400, persisted: false, error: parsedPayload.reason };
   }
+  const payload = parsedPayload.payload as AsaasWebhookBody;
 
   const event = payload.event;
   if (!event) {

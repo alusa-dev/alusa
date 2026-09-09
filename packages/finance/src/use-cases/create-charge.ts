@@ -11,7 +11,7 @@ import { auditLogService } from '../foundation/audit-log.service';
 import { requireKycApproved } from '../foundation/kyc-guard';
 import { isPastDate } from '../foundation/date-guard';
 import { deriveDeterministicId, hashPayload } from '../core';
-import { getPayment, listPayments } from './asaas-ops';
+import { getBillingInfo, getPayment, listPayments } from './asaas-ops';
 import {
   markOutboundAwaitingWebhook,
   markOutboundRemoteConfirmed,
@@ -19,6 +19,7 @@ import {
   markOutboundResultUnknown,
   reserveOutboundFinancialOperation,
 } from './outbound-financial-operation';
+import { parseDiscountDueDateLimitDays } from './discount-rules';
 
 export type CreateChargeInput = {
   contaId: string;
@@ -201,15 +202,10 @@ export async function createCharge(
       : Number(cobranca.descontoPercentual);
 
     if (discountValue > 0) {
-      // dueDateLimitDays default 0 = até vencimento
-      // O campo descontoPrazoMaximo no schema é String Enum? "ATE_VENCIMENTO" etc.
-      // Precisamos converter string para number dias.
-      // Assumindo 0 por segurança se não conseguir parsear.
-      // TODO: Melhorar parse de descontoPrazoMaximo se necessário.
       discount = {
         value: discountValue,
         type: cobranca.descontoTipo === 'VALOR_FIXO' ? 'FIXED' : 'PERCENTAGE',
-        dueDateLimitDays: 0 
+        dueDateLimitDays: parseDiscountDueDateLimitDays(cobranca.descontoPrazoMaximo),
       };
     }
 
@@ -338,9 +334,28 @@ export async function createCharge(
       return err('ERRO_AO_CRIAR_PAGAMENTO');
     }
     await markOutboundRemoteConfirmed(operation.job.id, remotePayment.id, { providerStatus: remotePayment.status });
+    const boletoInfo = billingType === 'BOLETO'
+      ? await getBillingInfo(remotePayment.id, { contaId: input.contaId }).catch(() => null)
+      : null;
+    const boletoData = billingType === 'BOLETO'
+      ? {
+          bankSlipUrl: remotePayment.bankSlipUrl ?? boletoInfo?.bankSlip?.bankSlipUrl ?? null,
+          identificationField: boletoInfo?.bankSlip?.identificationField ?? null,
+          barCode: boletoInfo?.bankSlip?.barCode ?? null,
+          nossoNumero: boletoInfo?.bankSlip?.nossoNumero ?? null,
+        }
+      : {};
     await prisma.charge.updateMany({
       where: { id: chargeId, contaId: input.contaId },
-      data: { asaasPaymentId: remotePayment.id, invoiceUrl: remotePayment.invoiceUrl ?? null },
+      data: {
+        asaasPaymentId: remotePayment.id,
+        invoiceUrl: remotePayment.invoiceUrl ?? null,
+        ...boletoData,
+      },
+    });
+    await prisma.cobranca.updateMany({
+      where: { id: cobranca.id, matricula: { aluno: { contaId: input.contaId } } },
+      data: boletoData,
     });
     await markOutboundAwaitingWebhook(operation.job.id, remotePayment.id);
 

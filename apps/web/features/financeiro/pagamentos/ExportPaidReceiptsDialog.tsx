@@ -46,7 +46,6 @@ const PAID_STATUSES = new Set([
   'CONFIRMED',
   'RECEIVED',
   'RECEIVED_IN_CASH',
-  'DUNNING_RECEIVED',
   'PAID',
 ]);
 
