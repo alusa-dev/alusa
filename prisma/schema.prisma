@@ -24,6 +24,11 @@ enum AuthActionTokenType {
   ACCOUNT_REACTIVATION
 }
 
+enum PasswordChangeOtpChannel {
+  EMAIL
+  WHATSAPP
+}
+
 enum SupportRole {
   SUPPORT_VIEWER
   SUPPORT_AGENT
@@ -1332,6 +1337,8 @@ model Conta {
   deletedByUserId                   String?
   deletedByUser                     Usuario?                            @relation("ContaDeletedBy", fields: [deletedByUserId], references: [id])
   deleteReason                      String?
+  deactivationReasons               Json?
+  deactivationComment               String?
   createdAt                         DateTime                            @default(now())
   updatedAt                         DateTime                            @updatedAt
   // Dono (owner) da conta — imutável na lógica de negócio
@@ -1372,6 +1379,7 @@ model Conta {
   notificationDigestEvents          NotificationDigestEvent[]
   paymentStateTransitions           FinancePaymentStateTransition[]
   notificationRecipients            NotificationRecipient[]
+  passwordChangeOtps                PasswordChangeOtp[]
   customers                         Customer[]
   customerPayers                    CustomerPayer[]
   charges                           Charge[]
@@ -1700,6 +1708,7 @@ model Usuario {
   attendanceRecorded              AttendanceRecord[]               @relation("AttendanceRecordedBy")
   makeupClassesCreated            MakeupClass[]                    @relation("MakeupClassCreatedBy")
   authActionTokens                AuthActionToken[]
+  passwordChangeOtps              PasswordChangeOtp[]
   legalAcceptances                LegalAcceptance[]
   cookieConsents                  CookieConsent[]
   privacyRequests                 PrivacyRequest[]
@@ -4323,6 +4332,35 @@ model AuthActionToken {
   @@index([userId, type], name: "idx_auth_action_token_user_type")
   @@index([email, type], name: "idx_auth_action_token_email_type")
   @@index([expiresAt], name: "idx_auth_action_token_expires")
+}
+
+model PasswordChangeOtp {
+  id                    String                   @id @default(cuid())
+  userId                String
+  contaId               String
+  channel               PasswordChangeOtpChannel
+  codeHash              String
+  verificationTokenHash String?
+  attempts              Int                      @default(0)
+  maxAttempts           Int                      @default(5)
+  expiresAt             DateTime
+  resendAvailableAt     DateTime
+  verifiedAt            DateTime?
+  verificationExpiresAt DateTime?
+  usedAt                DateTime?
+  invalidatedAt         DateTime?
+  requestedByIp         String?
+  requestedByUserAgent  String?
+  emailSentAt           DateTime?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  user  Usuario @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conta Conta   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt], name: "idx_password_change_otp_user_created")
+  @@index([contaId, userId, createdAt], name: "idx_password_change_otp_conta_user_created")
+  @@index([expiresAt], name: "idx_password_change_otp_expires")
 }
 
 model PortalEvento {

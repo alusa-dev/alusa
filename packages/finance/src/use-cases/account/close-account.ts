@@ -39,15 +39,18 @@ function resultMessage(): string {
 
 export async function encerrarContaAlusa(input: {
   contaId: string;
-  confirmText: string;
+  confirmText?: string;
   reason: string;
+  reasonCodes?: string[];
+  comment?: string | null;
   actor: { type: AuditActorType; id?: string; role?: string };
   requestId?: string;
   ip?: string | null;
 }): Promise<CloseAccountResult> {
   const reason = toTrimmed(input.reason);
+  const comment = toTrimmed(input.comment);
 
-  if (input.confirmText !== 'DESATIVAR') {
+  if (input.confirmText && input.confirmText !== 'DESATIVAR') {
     return {
       success: false,
       errorCode: 'CONFIRM_TEXT_INVALID',
@@ -106,6 +109,8 @@ export async function encerrarContaAlusa(input: {
             deletedAt: now,
             deletedByUserId: input.actor.id,
             deleteReason: reason,
+            deactivationReasons: input.reasonCodes?.length ? input.reasonCodes : undefined,
+            deactivationComment: comment,
           },
         });
 
@@ -119,6 +124,8 @@ export async function encerrarContaAlusa(input: {
             deactivatedIp: input.ip ?? null,
             preservedFinancialHistory: true,
             preservedExternalAccount: true,
+            reasonCodes: input.reasonCodes ?? [],
+            comment,
           },
           actor: { type: input.actor.type, id: input.actor.id },
         });

@@ -3,6 +3,11 @@ import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
 import { encerrarContaAlusa, type CloseAccountErrorCode } from '@alusa/finance';
+import { PlatformBillingError } from '@alusa/platform-billing';
+import {
+  requestPlatformSubscriptionCancellation,
+} from '@/src/server/platform-billing/plan-change-actions';
+import prisma from '@/lib/prisma';
 import {
   closeContaErrorResultDTOSchema,
   closeContaInputDTOSchema,
@@ -52,17 +57,57 @@ export async function POST(req: NextRequest) {
       return json(422, closeContaErrorResultDTOSchema.parse({ message: 'Payload inválido.' }));
     }
 
+    const requestId =
+      req.headers.get('x-request-id') ?? req.headers.get('x-correlation-id') ?? crypto.randomUUID();
+
+    const isAdmin = user.role?.toUpperCase() === 'ADMIN';
+    if (!isAdmin) {
+      const conta = await prisma.conta.findUnique({
+        where: { id: user.contaId },
+        select: { ownerUserId: true },
+      });
+      if (!conta || conta.ownerUserId !== user.id) {
+        return json(403, { message: 'Acesso negado.' });
+      }
+    }
+
+    let renewalCancellationScheduled = false;
+    try {
+      await requestPlatformSubscriptionCancellation({
+        prisma,
+        contaId: user.contaId,
+        actorUserId: user.id,
+        idempotencyKey: `account-deactivation:${user.contaId}:${requestId}`,
+      });
+      renewalCancellationScheduled = true;
+    } catch (error) {
+      if (!(error instanceof PlatformBillingError && error.code === 'PLATFORM_BILLING_SUBSCRIPTION_MISSING')) {
+        console.error('[API conta/excluir][POST] Falha ao cancelar renovação do plano', {
+          contaId: user.contaId,
+          actorId: user.id,
+          requestId,
+          error,
+        });
+        return json(503, closeContaErrorResultDTOSchema.parse({
+          message: 'Não foi possível concluir a desativação agora. Tente novamente.',
+        }));
+      }
+    }
+
     const result = await encerrarContaAlusa({
       contaId: user.contaId,
-      confirmText: parsed.data.confirmText,
-      reason: parsed.data.reason,
+      confirmText: parsed.data.confirmText?.trim(),
+      reason:
+        parsed.data.reason ??
+        (parsed.data.reasonCodes?.join(', ') || 'Desativação solicitada pelo responsável'),
+      reasonCodes: parsed.data.reasonCodes,
+      comment: parsed.data.comment,
       actor: {
         type: user.role?.toUpperCase() === 'ADMIN' ? 'ADMIN' : 'USER',
         id: user.id,
         role: user.role,
       },
-      requestId:
-        req.headers.get('x-request-id') ?? req.headers.get('x-correlation-id') ?? undefined,
+      requestId,
       ip: getClientIp(req),
     });
 
@@ -71,7 +116,9 @@ export async function POST(req: NextRequest) {
         200,
         closeContaSuccessResultDTOSchema.parse({
           result: result.result,
-          message: result.message,
+          message: renewalCancellationScheduled
+            ? 'Conta desativada. A renovação do plano foi cancelada.'
+            : result.message,
         }),
       );
     }

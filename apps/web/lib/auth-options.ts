@@ -17,7 +17,6 @@ declare module 'next-auth/jwt' {
     asaasApiKeyStatus?: string;
     emailVerified?: boolean;
     accountActive?: boolean;
-    passwordChangedAt?: number;
     sessionVersion?: number;
   }
 }
@@ -150,23 +149,6 @@ export const authOptions: NextAuthOptions = {
             sessionVersion: tokenSessionVersion,
           });
           (token as any).accountActive = access.ok;
-
-          const passwordState = await prisma.usuario.findUnique({
-            where: { id: tokenUserId },
-            select: { passwordChangedAt: true },
-          });
-          const passwordChangedAt = passwordState?.passwordChangedAt?.getTime() ?? 0;
-          const issuedAt = typeof (token as any).iat === 'number' ? (token as any).iat * 1000 : 0;
-          (token as any).passwordChangedAt = passwordChangedAt || undefined;
-
-          // `iat` do JWT tem precisão de segundos. Comparar diretamente com
-          // Date.getTime() poderia invalidar um novo login feito no mesmo
-          // segundo da troca de senha; a revogação canônica é sessionVersion.
-          const passwordChangedAtSecond = Math.floor(passwordChangedAt / 1000);
-          if (passwordChangedAtSecond > 0 && issuedAt > 0 && passwordChangedAtSecond > Math.floor(issuedAt / 1000)) {
-            delete (token as any).id;
-            (token as any).accountActive = false;
-          }
 
           // Sempre refletir o estado real do banco para emailVerified
           if (access.ok && (token as any).accountActive !== false) {

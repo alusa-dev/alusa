@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { ACCOUNT_DEACTIVATION_REASON_CODES } from '@/features/account/deactivation-reasons';
+
+export { ACCOUNT_DEACTIVATION_REASON_CODES } from '@/features/account/deactivation-reasons';
 
 const dateLikeDTOSchema = z.union([z.string(), z.date()]);
 
@@ -151,8 +154,19 @@ export const contaBlockedActionResultDTOSchema = z.object({
 export type ContaBlockedActionResultDTO = z.infer<typeof contaBlockedActionResultDTOSchema>;
 
 export const closeContaInputDTOSchema = z.object({
-  reason: z.string(),
-  confirmText: z.string(),
+  // `reason` is retained for backwards compatibility with existing clients.
+  reason: z.string().trim().optional(),
+  reasonCodes: z.array(z.enum(ACCOUNT_DEACTIVATION_REASON_CODES)).min(1).max(3).optional(),
+  comment: z.string().trim().max(1000).optional(),
+  // A confirmação explícita no modal substitui a confirmação por texto.
+  confirmText: z.string().optional(),
+}).superRefine((value, ctx) => {
+  if (!value.reason?.trim() && !value.reasonCodes?.length) {
+    ctx.addIssue({ code: 'custom', path: ['reason'], message: 'Informe ao menos um motivo.' });
+  }
+  if (value.reasonCodes?.includes('OTHER') && !value.comment) {
+    ctx.addIssue({ code: 'custom', path: ['comment'], message: 'Descreva o outro motivo.' });
+  }
 });
 
 export type CloseContaInputDTO = z.input<typeof closeContaInputDTOSchema>;

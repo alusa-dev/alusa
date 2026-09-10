@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
 export type SecureStorage = {
   getItem(_key: string): Promise<string | null>;
@@ -7,10 +8,24 @@ export type SecureStorage = {
 };
 
 export const secureStorage: SecureStorage = {
-  getItem: (key) => SecureStore.getItemAsync(key),
-  setItem: (key, value) =>
-    SecureStore.setItemAsync(key, value, {
+  getItem: async (key) => {
+    if (Platform.OS === 'web') return globalThis.localStorage?.getItem(key) ?? null;
+    return SecureStore.getItemAsync(key);
+  },
+  setItem: async (key, value) => {
+    if (Platform.OS === 'web') {
+      globalThis.localStorage?.setItem(key, value);
+      return;
+    }
+    await SecureStore.setItemAsync(key, value, {
       keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY,
-    }),
-  deleteItem: (key) => SecureStore.deleteItemAsync(key),
+    });
+  },
+  deleteItem: async (key) => {
+    if (Platform.OS === 'web') {
+      globalThis.localStorage?.removeItem(key);
+      return;
+    }
+    await SecureStore.deleteItemAsync(key);
+  },
 };

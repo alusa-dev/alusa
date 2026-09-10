@@ -451,6 +451,14 @@ export async function requestPlatformSubscriptionCancellation(input: {
     );
   }
 
+  // Repetições da desativação não devem criar novos registros de cancelamento.
+  if (account.cancelAtPeriodEnd) {
+    return {
+      cancelAtPeriodEnd: true,
+      effectiveAt: account.currentPeriodEnd?.toISOString() ?? null,
+    };
+  }
+
   const gateway = createDefaultPlatformBillingStripeGateway(process.env);
   await gateway.updateSubscriptionCancelAtPeriodEnd({
     subscriptionId: account.stripeSubscriptionId,

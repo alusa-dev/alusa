@@ -1,6 +1,6 @@
 /**
  * Rotas em que o tema escuro da conta não deve refletir (auth e onboarding financeiro).
- * Usado pelo ThemeProvider e pelo script `theme-init` no layout raiz.
+ * Usado pelo ThemeProvider para manter as rotas públicas de autenticação em tema claro.
  */
 export const AUTH_LIGHT_THEME_PATH_PREFIXES = [
   '/auth',

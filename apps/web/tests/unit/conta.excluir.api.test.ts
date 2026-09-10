@@ -55,6 +55,20 @@ describe('POST /api/conta/excluir', () => {
     expect(res.status).toBe(422);
   });
 
+  it('retorna 422 quando o motivo "Outro" não é descrito', async () => {
+    const req = {
+      json: async () => ({
+        reasonCodes: ['OTHER'],
+        confirmText: 'DESATIVAR',
+      }),
+      headers: new Headers(),
+    } as any;
+
+    const res = await POST(req);
+    expect(res.status).toBe(422);
+    expect(encerrarContaAlusa).not.toHaveBeenCalled();
+  });
+
   it('retorna 401 quando não autenticado', async () => {
     (getServerSession as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
 

@@ -6,12 +6,19 @@ import { cn } from '@/lib/utils';
 
 type OtpCodeInputProps = {
   value: string;
-  onChange: (value: string) => void;
+  onChange: (_value: string) => void;
   disabled?: boolean;
   autoFocus?: boolean;
+  inputClassName?: string;
 };
 
-export function OtpCodeInput({ value, onChange: handleChange, disabled = false, autoFocus = false }: OtpCodeInputProps) {
+export function OtpCodeInput({
+  value,
+  onChange: handleChange,
+  disabled = false,
+  autoFocus = false,
+  inputClassName,
+}: OtpCodeInputProps) {
   const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const digits = value.padEnd(6, ' ').slice(0, 6).split('');
 
@@ -65,6 +72,7 @@ export function OtpCodeInput({ value, onChange: handleChange, disabled = false, 
           }}
           className={cn(
             'h-12 w-11 rounded-xl border-slate-200 bg-white text-center text-lg font-bold tracking-wide shadow-sm focus-visible:border-brand-accent focus-visible:ring-brand-accent/25 sm:h-14 sm:w-12',
+            inputClassName,
           )}
         />
       ))}

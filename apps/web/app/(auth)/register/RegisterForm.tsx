@@ -1,6 +1,6 @@
 // Página de registro: componente client isolado para permitir wrapper SSR em page.tsx
 "use client";
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -20,10 +20,9 @@ import {
 } from '@/components/ui/select';
 import { LegalAcceptanceModal } from '@/components/legal/LegalAcceptanceModal';
 import { requiredRegisterLegalDocuments } from '@/lib/privacy/legal-versions';
+import { isPasswordPolicyValid, passwordMinLength, passwordPolicyMessage, passwordPolicyRegex } from '@/lib/password-policy';
 
 export const REQUIRES_SCHOOL_DATA = false;
-
-const strongPassword = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*]).{8,}$/;
 
 // Schema condicional por modo
 const baseSchema = z.object({
@@ -31,7 +30,7 @@ const baseSchema = z.object({
   lastName: z.string().min(2, 'Informe o sobrenome'),
   email: z.string().email('E-mail inválido'),
   financeIntegrationMode: z.enum(['WHITELABEL_BAAS', 'EXTERNAL_ASAAS_ACCOUNT']).default('WHITELABEL_BAAS'),
-  senha: z.string().regex(strongPassword, 'Senha fraca'),
+  senha: z.string().regex(passwordPolicyRegex, 'Senha fraca'),
   confirmarSenha: z.string(),
   termos: z.boolean().refine((val) => val === true, { message: 'Você deve aceitar os termos' }),
 });
@@ -41,6 +40,54 @@ function schemaFor() {
     path: ['confirmarSenha'],
     message: 'Senhas não coincidem'
   });
+}
+
+function getPasswordStrength(password: string) {
+  const requirements = [
+    password.length >= passwordMinLength,
+    /[A-Z]/.test(password),
+    /[a-z]/.test(password),
+    /\d/.test(password),
+    /[!@#$%^&*]/.test(password),
+  ];
+  const score = requirements.filter(Boolean).length;
+  return {
+    score,
+    strength: score <= 1
+    ? { label: 'Muito fraca', tone: 'bg-red-500', text: 'text-red-600' }
+    : score === 2
+      ? { label: 'Fraca', tone: 'bg-red-500', text: 'text-red-600' }
+      : score === 3
+        ? { label: 'Média', tone: 'bg-amber-400', text: 'text-amber-600' }
+        : score === 4
+        ? { label: 'Forte', tone: 'bg-emerald-500', text: 'text-emerald-600' }
+          : { label: 'Muito forte', tone: 'bg-emerald-500', text: 'text-emerald-600' },
+  };
+}
+
+function PasswordStrength({ password }: { password: string }) {
+  const { score, strength } = getPasswordStrength(password);
+
+  if (!password) return null;
+
+  return (
+    <div className="mt-2 space-y-1.5" aria-label={`Força da senha: ${strength.label}`}>
+      <span className="sr-only">{strength.label}. {passwordPolicyMessage}</span>
+      <div className="flex gap-1" aria-hidden="true">
+        {[0, 1, 2].map((bar) => (
+          <span
+            key={bar}
+            className={`h-1.5 flex-1 rounded-full transition-colors ${bar < Math.max(1, Math.ceil(score / 2)) ? strength.tone : 'bg-slate-200'}`}
+          />
+        ))}
+      </div>
+      <p className="text-xs leading-4 text-slate-500">
+        {isPasswordPolicyValid(password)
+          ? 'Sua senha atende aos requisitos de segurança.'
+          : passwordPolicyMessage}
+      </p>
+    </div>
+  );
 }
 
 // Tipos do formulário (superset para todos os modos)
@@ -86,10 +133,14 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
     defaultValues: {
       email: inviteData?.email || '',
       financeIntegrationMode: 'WHITELABEL_BAAS',
+      senha: '',
+      confirmarSenha: '',
       termos: false,
     }
   });
   const termsAccepted = watch('termos');
+  const password = watch('senha');
+  const passwordStrength = password ? getPasswordStrength(password).strength : null;
 
   // Convites dão acesso a uma conta já configurada; somente o primeiro cadastro
   // deve iniciar o onboarding financeiro da nova escola.
@@ -391,9 +442,14 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
                 placeholder="Senha"
                 data-testid="register-senha"
                 autoComplete="new-password"
-                className="h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-4 pr-11 text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 lg:h-12 lg:pl-5 lg:pr-11 lg:text-[14px]"
+                className={`h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-4 ${passwordStrength ? 'pr-28 lg:pr-28' : 'pr-11 lg:pr-11'} text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 lg:h-12 lg:pl-5 lg:text-[14px]`}
                 {...register('senha')}
               />
+              {passwordStrength ? (
+                <span className={`pointer-events-none absolute right-11 top-1/2 -translate-y-1/2 text-xs font-medium ${passwordStrength.text}`}>
+                  {passwordStrength.label}
+                </span>
+              ) : null}
               <button
                 type="button"
                 onClick={() => { setShowPassword(s => !s); }}
@@ -403,6 +459,7 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
                 {showPassword ? <EyeOff className="h-4 w-4 lg:h-4 lg:w-4" /> : <Eye className="h-4 w-4 lg:h-4 lg:w-4" />}
               </button>
             </div>
+            <PasswordStrength password={password} />
           </div>
           <div className="w-full">
             <div className="relative h-12 w-full lg:h-12">

@@ -45,6 +45,8 @@ describe('encerrarContaAlusa', () => {
       contaId: 'conta_1',
       confirmText: 'DESATIVAR',
       reason: 'Encerramento solicitado pelo cliente',
+      reasonCodes: ['TOO_EXPENSIVE', 'MISSING_FEATURES'],
+      comment: 'O custo e os recursos atuais não atendem à instituição.',
       actor: { type: 'ADMIN', id: 'user_1', role: 'ADMIN' },
       requestId: 'req_1',
       ip: '127.0.0.1',
@@ -62,6 +64,8 @@ describe('encerrarContaAlusa', () => {
         status: 'INATIVO',
         deletedByUserId: 'user_1',
         deleteReason: 'Encerramento solicitado pelo cliente',
+        deactivationReasons: ['TOO_EXPENSIVE', 'MISSING_FEATURES'],
+        deactivationComment: 'O custo e os recursos atuais não atendem à instituição.',
         deletedAt: expect.any(Date),
       }),
     });
