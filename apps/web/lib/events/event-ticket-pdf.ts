@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { jsPDF } from 'jspdf';
+import QRCode from 'qrcode';
 
 const CODE_128_PATTERNS = [
   '212222', '222122', '222221', '121223', '121322', '131222', '122213', '122312', '132212', '221213',
@@ -106,21 +107,6 @@ function getVerticalTextY(doc: jsPDF, text: string, centerY: number, bottomY: nu
   return Math.min(bottomY, Math.max(options.topY + textWidth, y));
 }
 
-function fnv1a32(value: string): number {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
-}
-
-function toCheckInCode(ticketCode: string): string {
-  const digits = ticketCode.replace(/\D/g, '');
-  if (digits.length >= 8) return digits.slice(-8);
-  return String(fnv1a32(ticketCode) % 100000000).padStart(8, '0');
-}
-
 function buildCode128BModules(value: string): boolean[] {
   const codes = [104, ...Array.from(value, (char) => {
     const code = char.charCodeAt(0) - 32;
@@ -148,6 +134,30 @@ function drawRotatedCode128(doc: jsPDF, value: string, x: number, y: number, wid
     if (!filled) return;
     doc.rect(x, y + index * moduleHeight, width, Math.max(moduleHeight, 0.35), 'F');
   });
+}
+
+function drawQrCode(doc: jsPDF, value: string, x: number, y: number, size: number) {
+  const qr = QRCode.create(value, { errorCorrectionLevel: 'M' });
+  const quietZone = 4;
+  const moduleCount = qr.modules.size + quietZone * 2;
+  const moduleSize = size / moduleCount;
+
+  doc.setFillColor(255, 255, 255);
+  doc.rect(x, y, size, size, 'F');
+  doc.setFillColor(15, 23, 42);
+
+  for (let row = 0; row < qr.modules.size; row += 1) {
+    for (let column = 0; column < qr.modules.size; column += 1) {
+      if (!qr.modules.data[row * qr.modules.size + column]) continue;
+      doc.rect(
+        x + (column + quietZone) * moduleSize,
+        y + (row + quietZone) * moduleSize,
+        moduleSize,
+        moduleSize,
+        'F',
+      );
+    }
+  }
 }
 
 function drawTicketImage(doc: jsPDF, x: number, y: number, size: number, radius: number) {
@@ -214,7 +224,9 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
       y = marginY;
     }
 
-    const checkInCode = toCheckInCode(item.ticketCode);
+    // Novos ingressos levam o código completo para que o scanner identifique
+    // o evento sem depender de uma seleção manual.
+    const checkInCode = item.ticketCode.trim().toUpperCase();
 
     doc.setDrawColor(226, 232, 240);
     doc.setFillColor(255, 255, 255);
@@ -268,10 +280,8 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
     doc.setFontSize(6.2);
     doc.setTextColor(100, 116, 139); // slate-500
     doc.text('CÓDIGO DE CHECK-IN', bodyCol2X, y + 93);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8.7);
-    doc.setTextColor(15, 23, 42); // slate-900
-    doc.text(checkInCode, bodyCol2X, y + 104, { maxWidth: bodyColWidth });
+    const qrSize = Math.min(48, bodyColWidth);
+    drawQrCode(doc, checkInCode, bodyCol2X + (bodyColWidth - qrSize) / 2, y + 98, qrSize);
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.2);
@@ -288,7 +298,7 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
     const stubEventX = stubX + stubWidth * 0.2;
     const stubDetailsX = stubX + stubWidth * 0.34;
     const barcodeWidth = 28;
-    const barcodeHeight = 90;
+    const barcodeHeight = 132;
     const barcodeX = stubX + stubWidth * 0.62 - barcodeWidth / 2;
     const barcodeY = y + (ticketHeight - barcodeHeight) / 2;
     const checkInX = stubX + stubWidth * 0.87;

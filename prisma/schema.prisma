@@ -1734,6 +1734,7 @@ model Usuario {
   platformBillingPlanChanges      PlatformBillingPlanChange[]      @relation("PlatformBillingPlanChangeCreatedBy")
   acessosConta                    UsuarioConta[]                   @relation("UsuarioContaUsuario")
   acessosConvidados               UsuarioConta[]                   @relation("UsuarioContaInvitedBy")
+  mobileAuthSessions               MobileAuthSession[]
 
   @@index([contaId])
 }
@@ -1760,6 +1761,26 @@ model UsuarioConta {
   @@unique([usuarioId, contaId])
   @@index([contaId, role, status], name: "idx_usuario_conta_conta_role_status")
   @@index([usuarioId, status], name: "idx_usuario_conta_usuario_status")
+}
+
+model MobileAuthSession {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  deviceId   String?
+  deviceName String?
+  ipHash     String?
+  userAgent  String?
+  expiresAt  DateTime
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  user Usuario @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt, expiresAt], name: "idx_mobile_auth_session_user_active")
+  @@index([expiresAt], name: "idx_mobile_auth_session_expires")
 }
 
 // --- Modelos de domínio Escola ---

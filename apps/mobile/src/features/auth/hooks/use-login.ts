@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
-import { establishSession } from '@/features/session/services/session-service';
+import { enableBiometrics, establishSession } from '@/features/session/services/session-service';
 import { authService } from '../services/auth-service';
 import type { LoginInput } from '../types/auth';
 
@@ -13,6 +13,7 @@ export function useLogin() {
     onSuccess: async (session) => {
       queryClient.clear();
       await establishSession(session);
+      await enableBiometrics(session).catch(() => false);
     },
   });
 }

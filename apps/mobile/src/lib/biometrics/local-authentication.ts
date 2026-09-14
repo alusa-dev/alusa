@@ -12,3 +12,16 @@ export async function getBiometricAvailability() {
     isEnrolled,
   };
 }
+
+export async function authenticateWithBiometrics() {
+  const availability = await getBiometricAvailability();
+  if (!availability.available) return false;
+
+  const result = await LocalAuthentication.authenticateAsync({
+    promptMessage: 'Use a biometria para proteger seu acesso à Alusa',
+    cancelLabel: 'Usar senha',
+    disableDeviceFallback: false,
+  });
+
+  return result.success;
+}

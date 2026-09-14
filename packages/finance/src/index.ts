@@ -408,6 +408,19 @@ export type {
   GetFinanceiroKpisLocalInput,
   GetFinanceiroKpisLocalOutput,
 } from './use-cases/get-financeiro-kpis-local';
+export { getMobileBillingSummary } from './use-cases/get-mobile-billing-summary';
+export type {
+  MobileBillingMetric,
+  MobileBillingPeriod,
+  MobileBillingSummary,
+  MobileBillingSummaryInput,
+} from './use-cases/get-mobile-billing-summary';
+export {
+  numberFromFinanceDecimal,
+  resolveMobileBillingCategory,
+  roundFinanceCurrency,
+} from './billing-status';
+export type { MobileBillingCategory, BillingStatusInput } from './billing-status';
 export { reconcileAcademicChargesWithAsaas } from './use-cases/reconcile-academic-charges';
 export type { ReconcileAcademicChargesResult } from './use-cases/reconcile-academic-charges';
 export {

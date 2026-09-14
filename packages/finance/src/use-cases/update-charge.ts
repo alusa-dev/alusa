@@ -38,6 +38,7 @@ export interface UpdateChargeInput {
     multaPercentual?: number;
     descontoPercentual?: number;
     descontoValorFixo?: number;
+    descontoTipo?: 'VALOR_FIXO' | 'PERCENTUAL';
     descontoPrazoMaximo?: string;
   };
 }
@@ -153,18 +154,18 @@ function buildAsaasUpdatePayload(changes: UpdateChargeInput['changes']): Partial
   }
 
   // Desconto
-  if (changes.descontoPercentual !== undefined) {
+  if (changes.descontoTipo === 'VALOR_FIXO' || (changes.descontoTipo === undefined && changes.descontoValorFixo !== undefined && changes.descontoPercentual === undefined)) {
+    const dueDateLimitDays = parseDiscountDueDateLimitDays(changes.descontoPrazoMaximo);
+    payload.discount = {
+      value: Math.max(0, changes.descontoValorFixo ?? 0),
+      type: 'FIXED',
+      dueDateLimitDays,
+    };
+  } else if (changes.descontoPercentual !== undefined) {
     const dueDateLimitDays = parseDiscountDueDateLimitDays(changes.descontoPrazoMaximo);
     payload.discount = {
       value: Math.max(0, changes.descontoPercentual),
       type: 'PERCENTAGE',
-      dueDateLimitDays,
-    };
-  } else if (changes.descontoValorFixo !== undefined) {
-    const dueDateLimitDays = parseDiscountDueDateLimitDays(changes.descontoPrazoMaximo);
-    payload.discount = {
-      value: Math.max(0, changes.descontoValorFixo),
-      type: 'FIXED',
       dueDateLimitDays,
     };
   }
@@ -184,6 +185,8 @@ function buildLocalUpdate(changes: UpdateChargeInput['changes']): Prisma.Cobranc
   if (changes.multaPercentual !== undefined) update.multaPercentual = changes.multaPercentual;
   if (changes.descontoPercentual !== undefined) update.descontoPercentual = changes.descontoPercentual;
   if (changes.descontoValorFixo !== undefined) update.descontoValorFixo = changes.descontoValorFixo;
+  if (changes.descontoTipo !== undefined) update.descontoTipo = changes.descontoTipo;
+  if (changes.descontoPrazoMaximo !== undefined) update.descontoPrazoMaximo = changes.descontoPrazoMaximo;
 
   return update;
 }

@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const paymentSimulationInputDTOSchema = z.object({
   value: z.number().finite().positive().max(1_000_000),
   installmentCount: z.number().int().min(1).max(21),
+  passFees: z.boolean().default(false),
 });
 
 export type PaymentSimulationInputDTO = z.infer<typeof paymentSimulationInputDTOSchema>;

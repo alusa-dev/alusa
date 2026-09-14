@@ -97,7 +97,7 @@ export function FinancialEntryEditDialog({
                 name="category"
                 defaultValue={entry.category}
                 required
-                options={(entry.type === 'COST' ? EVENT_COST_CATEGORIES : EVENT_REVENUE_CATEGORIES).map((category) => ({ value: category, label: category }))}
+                options={(entry.type === 'COST' ? EVENT_COST_CATEGORIES : EVENT_REVENUE_CATEGORIES.filter((category) => category !== 'Venda de ingresso')).map((category) => ({ value: category, label: category }))}
               />
             </Field>
             <Field label="Status">

@@ -118,6 +118,7 @@ export const financePayerCandidateDTOSchema = z.object({
   id: z.string(),
   name: z.string(),
   type: z.enum(['aluno', 'responsavel']),
+  photo: nullableStringDTOSchema.optional(),
   cpf: z.string().optional(),
   cpfMasked: z.string().nullable().optional(),
   isMinor: z.boolean(),

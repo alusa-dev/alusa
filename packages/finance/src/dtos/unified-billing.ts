@@ -78,6 +78,8 @@ export type UnifiedChargeItem = {
   description: string | null;
   /** Nome do pagador (aluno ou responsável financeiro). */
   payerName: string;
+  /** Nome do aluno relacionado à cobrança, quando houver. Usado na listagem operacional. */
+  studentName?: string | null;
   /** Valor da cobrança (sempre valor unitário da parcela/cobrança). */
   value: number;
   /** Data de vencimento ISO. */

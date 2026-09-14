@@ -3,6 +3,7 @@ node_modules/
 
 .next/
 **/.next/
+**/.next-participants-verify*/
 
 dist/
 **/dist/

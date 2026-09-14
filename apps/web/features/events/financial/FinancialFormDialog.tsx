@@ -104,7 +104,7 @@ export function FinancialFormDialog({ eventId, type, trigger }: { eventId: strin
     });
   }
 
-  const categories = type === 'COST' ? EVENT_COST_CATEGORIES : EVENT_REVENUE_CATEGORIES;
+  const categories = type === 'COST' ? EVENT_COST_CATEGORIES : EVENT_REVENUE_CATEGORIES.filter((category) => category !== 'Venda de ingresso');
   const isRealized = selectedStatus === 'PAID' || selectedStatus === 'RECEIVED';
 
   return (

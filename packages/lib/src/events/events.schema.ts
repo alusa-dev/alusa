@@ -254,6 +254,17 @@ export const updateCostumeAssignmentSchema = z.object({
 
 export const listFinancialEntriesQuerySchema = listByEventQuerySchema.extend({
   type: z.enum(EVENT_FINANCIAL_ENTRY_TYPES).optional(),
+  status: z.enum(EVENT_FINANCIAL_ENTRY_STATUSES).optional(),
+  search: z.string().trim().max(160).optional(),
+});
+
+export const EVENT_PARTICIPANT_LIST_STATUSES = ['ACTIVE', 'CANCELLED'] as const;
+
+export const listEventParticipantsQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).default(25),
+  search: z.string().trim().max(160).optional(),
+  status: z.enum(EVENT_PARTICIPANT_LIST_STATUSES).optional(),
 });
 
 export const createEventFinancialEntrySchema = z.object({
@@ -428,6 +439,8 @@ export const manualEventParticipantPaymentSchema = z.object({
 });
 
 export type ListSchoolEventsQuery = z.infer<typeof listSchoolEventsQuerySchema>;
+export type ListFinancialEntriesQuery = z.infer<typeof listFinancialEntriesQuerySchema>;
+export type ListEventParticipantsQuery = z.infer<typeof listEventParticipantsQuerySchema>;
 export type CreateSchoolEventInput = z.infer<typeof createSchoolEventSchema>;
 export type UpdateSchoolEventInput = z.infer<typeof updateSchoolEventSchema>;
 export type CreateTicketLotInput = z.infer<typeof createTicketLotSchema>;

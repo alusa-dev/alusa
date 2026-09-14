@@ -13,7 +13,7 @@ import {
   buildPublicEventTicketSalePath,
   enqueueEventTicketEmail,
 } from '../ticket-email-outbox';
-import { EventsError, type EventsContext } from '../events.service';
+import { assertEventTicketSalesOpen, EventsError, type EventsContext } from '../events.service';
 import type { CreateTicketSaleInput } from '../events.schema';
 
 type DbClient = Prisma.TransactionClient | typeof prisma;
@@ -175,6 +175,7 @@ async function getPublishedStaffMapOrThrow(db: DbClient, contaId: string, eventI
           endsAt: true,
           status: true,
           ticketMode: true,
+          finishedAt: true,
         },
       },
     },
@@ -304,6 +305,7 @@ export async function reserveStaffEventMapSeats(
 ) {
   return prisma.$transaction(async (tx) => {
     const map = await getPublishedStaffMapOrThrow(tx, ctx.contaId, eventId, mapId);
+    assertEventTicketSalesOpen(map.event);
     await expireStaffReservations(tx, ctx.contaId);
     const versionId = map.publishedVersionId!;
 
@@ -463,7 +465,7 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
       },
       include: {
         seats: { include: { publicSeat: true } },
-        event: { select: { id: true, status: true, ticketMode: true } },
+        event: { select: { id: true, status: true, ticketMode: true, finishedAt: true } },
       },
     });
 
@@ -479,9 +481,7 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
     if (reservation.event.ticketMode !== 'NUMBERED_SEATS') {
       throw new EventsError('EVENTO_SEM_ASSENTOS_NUMERADOS', 'Este evento não usa assentos numerados.', 409);
     }
-    if (['CANCELLED', 'ARCHIVED', 'FINISHED'].includes(reservation.event.status)) {
-      throw new EventsError('EVENTO_BLOQUEADO', 'Este evento não aceita novas alterações operacionais.', 409);
-    }
+    assertEventTicketSalesOpen(reservation.event);
 
     const publicSeats = reservation.seats.map((entry) => entry.publicSeat);
     if (publicSeats.length === 0) {

@@ -36,7 +36,7 @@ describe('simulatePaymentFees', () => {
 
     const result = await simulatePaymentFees({
       contaId: 'conta-a',
-      input: { value: 300, installmentCount: 1 },
+      input: { value: 300, installmentCount: 1, passFees: false },
     });
 
     expect(result).toEqual({
@@ -75,7 +75,7 @@ describe('simulatePaymentFees', () => {
 
     const result = await simulatePaymentFees({
       contaId: 'conta-a',
-      input: { value: 350, installmentCount: 12 },
+      input: { value: 350, installmentCount: 12, passFees: false },
     });
 
     expect(result.success).toBe(true);
@@ -94,11 +94,41 @@ describe('simulatePaymentFees', () => {
 
     const result = await simulatePaymentFees({
       contaId: 'conta-sem-asaas',
-      input: { value: 300, installmentCount: 1 },
+      input: { value: 300, installmentCount: 1, passFees: false },
     });
 
     expect(result).toEqual({ success: false, error: 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' });
     expect(mockedSimulatePayment).not.toHaveBeenCalled();
+  });
+
+  it('recalcula o valor da cobrança quando as taxas serão repassadas', async () => {
+    mockedLoadCredentials.mockResolvedValue({ apiKey: '$aact_hmlg_test' } as never);
+    mockedSimulatePayment
+      .mockResolvedValueOnce({
+        value: 300,
+        creditCard: { netValue: 290.54, feePercentage: 2.99, operationFee: 0.49, installment: { paymentValue: 300, paymentNetValue: 290.54 } },
+      })
+      .mockResolvedValueOnce({
+        value: 309.75,
+        creditCard: { netValue: 300.00, feePercentage: 2.99, operationFee: 0.49, installment: { paymentValue: 309.73, paymentNetValue: 300.00 } },
+      });
+
+    const result = await simulatePaymentFees({
+      contaId: 'conta-a',
+      input: { value: 300, installmentCount: 1, passFees: true },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      data: { requestedValue: 300, chargeValue: 309.75, netValue: 300, feeValue: 9.75 },
+    });
+    expect(mockedSimulatePayment).toHaveBeenCalledTimes(2);
+    expect(mockedSimulatePayment).toHaveBeenLastCalledWith({
+      apiKey: '$aact_hmlg_test',
+      value: 309.75,
+      installmentCount: undefined,
+      billingTypes: ['CREDIT_CARD'],
+    });
   });
 
 });

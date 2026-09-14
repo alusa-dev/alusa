@@ -8,6 +8,9 @@ export type SessionUser = {
   id: string;
   email: string;
   name?: string | null;
+  foto?: string | null;
+  telefone?: string | null;
+  birthDate?: string | null;
   role?: string | null;
   contaId?: string | null;
   emailVerified?: boolean;
@@ -24,4 +27,13 @@ export type PersistedSession = {
   activeContaId?: string | null;
 };
 
-export type SessionStatus = 'bootstrapping' | 'anonymous' | 'authenticated' | 'expired' | 'error';
+export type SavedAccessProfile = {
+  user: SessionUser;
+  activeContaId?: string | null;
+  biometricEnabled: boolean;
+  favorite?: boolean;
+};
+
+export type BiometricProfile = SavedAccessProfile & { biometricEnabled: true };
+
+export type SessionStatus = 'bootstrapping' | 'anonymous' | 'locked' | 'authenticated' | 'expired' | 'error';

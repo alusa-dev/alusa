@@ -3,14 +3,16 @@ import { StyleSheet, View } from 'react-native';
 import { AppText } from '@/components/primitives/AppText';
 import { colors, radius, spacing } from '@/theme/tokens';
 
-export function BrandMark({ compact = false, centered = false }: { compact?: boolean; centered?: boolean }) {
+export function BrandMark({ compact = false, centered = false, showSymbol = true }: { compact?: boolean; centered?: boolean; showSymbol?: boolean }) {
   return (
     <View style={[styles.row, centered ? styles.centered : null]}>
-      <View style={styles.symbol}>
-        <AppText weight="bold" tone="inverse" variant="subheading">
-          A
-        </AppText>
-      </View>
+      {showSymbol ? (
+        <View style={styles.symbol}>
+          <AppText weight="bold" tone="inverse" variant="subheading">
+            A
+          </AppText>
+        </View>
+      ) : null}
       {!compact ? (
         <View>
           <AppText weight="bold" variant="subheading" style={centered ? styles.centerText : null}>

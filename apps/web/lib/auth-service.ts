@@ -19,6 +19,9 @@ export type AuthUser = {
   id: string;
   email: string;
   nome: string;
+  foto?: string | null;
+  telefone?: string | null;
+  birthDate?: Date | null;
   role: string;
   contaId?: string;
   emailVerifiedAt: Date | null;
@@ -215,10 +218,10 @@ export async function verifyCredentialsDetailed(
   }
 
   try {
-    type SelectedUser = Pick<Usuario, 'id' | 'email' | 'nome' | 'role' | 'senhaHash' | 'status' | 'contaId' | 'emailVerifiedAt' | 'sessionVersion'>;
+    type SelectedUser = Pick<Usuario, 'id' | 'email' | 'nome' | 'foto' | 'telefone' | 'birthDate' | 'role' | 'senhaHash' | 'status' | 'contaId' | 'emailVerifiedAt' | 'sessionVersion'>;
     const user: SelectedUser | null = await prisma.usuario.findFirst({
       where: { email: { equals: inputEmail, mode: 'insensitive' } },
-      select: { id: true, email: true, nome: true, role: true, senhaHash: true, status: true, contaId: true, emailVerifiedAt: true, sessionVersion: true }
+      select: { id: true, email: true, nome: true, foto: true, telefone: true, birthDate: true, role: true, senhaHash: true, status: true, contaId: true, emailVerifiedAt: true, sessionVersion: true }
     });
     if (!user) {
       // Equaliza o custo do caminho "usuário inexistente" para reduzir enumeração por timing.
@@ -266,6 +269,9 @@ export async function verifyCredentialsDetailed(
         id: user.id,
         email: user.email,
         nome: user.nome,
+        foto: user.foto,
+        telefone: user.telefone,
+        birthDate: user.birthDate,
         role: access.role,
         contaId: access.contaId,
         emailVerifiedAt: user.emailVerifiedAt,

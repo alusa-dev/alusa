@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { registerEventParticipantRequestSchema } from './events.schema';
+import { listEventParticipantsQuerySchema, listFinancialEntriesQuerySchema, registerEventParticipantRequestSchema } from './events.schema';
 
 describe('event participant billing schema', () => {
   const base = {
@@ -171,5 +171,43 @@ describe('event participant billing schema', () => {
       entryAmount: 180,
       entryPaymentMethod: 'CASH',
     })).toThrow('responsável financeiro');
+  });
+});
+
+describe('financial entries list schema', () => {
+  it('accepts pagination, search, type and status filters', () => {
+    const result = listFinancialEntriesQuerySchema.parse({
+      page: '2',
+      pageSize: '10',
+      search: ' Figurino ',
+      type: 'COST',
+      status: 'PENDING',
+    });
+
+    expect(result).toMatchObject({
+      page: 2,
+      pageSize: 10,
+      search: 'Figurino',
+      type: 'COST',
+      status: 'PENDING',
+    });
+  });
+});
+
+describe('event participants list schema', () => {
+  it('accepts pagination, search and participant status filters', () => {
+    const result = listEventParticipantsQuerySchema.parse({
+      page: '2',
+      pageSize: '10',
+      search: '  Maria  ',
+      status: 'ACTIVE',
+    });
+
+    expect(result).toMatchObject({
+      page: 2,
+      pageSize: 10,
+      search: 'Maria',
+      status: 'ACTIVE',
+    });
   });
 });

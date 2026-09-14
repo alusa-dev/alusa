@@ -1056,6 +1056,7 @@ async function buildOperationalChargesCollection(
       origin: 'ACADEMIC' as const,
       description: c.descricao || c.tipo,
       payerName: c.matricula.responsavelFinanceiro?.nome ?? c.matricula.aluno.nome,
+      studentName: c.matricula.aluno.nome,
       value: Number(c.valor),
       dueDate: c.vencimento?.toISOString() ?? null,
       billingType: mapBillingType(c.formaPagamento),
@@ -1115,6 +1116,10 @@ async function buildOperationalChargesCollection(
         !isGenericPayerName(c.payerName)
           ? (c.payerName as string)
           : (resolvedPayerName ?? c.payerName ?? 'Cliente'),
+      studentName:
+        payer?.payerType === 'ALUNO'
+          ? resolvedPayerName ?? (!isGenericPayerName(c.payerName) ? c.payerName : null)
+          : null,
       value: c.value != null ? Number(c.value) : 0,
       dueDate: c.dueDate?.toISOString() ?? null,
       billingType: c.billingType,
@@ -1187,6 +1192,7 @@ async function buildOperationalChargesCollection(
           origin: 'STANDALONE' as const,
           description: subscription.description ?? 'Assinatura recorrente',
           payerName: resolvedPayerName ?? 'Cliente',
+          studentName: payer?.payerType === 'ALUNO' ? resolvedPayerName : null,
           value: Number(subscription.value),
           dueDate: subscription.nextDueDate.toISOString(),
           billingType: subscription.billingType,
@@ -1222,6 +1228,7 @@ async function buildOperationalChargesCollection(
       origin: 'EVENT' as const,
       description: `${entry.event.name} · ${entry.description || entry.category}`,
       payerName: resolveEventPayerName(eventPayerCandidatesByEntry.get(entry.id) ?? []) ?? entry.event.name,
+      studentName: eventPayerCandidatesByEntry.get(entry.id)?.[0]?.studentName ?? null,
       value: Number(entry.expectedAmount),
       dueDate: entry.dueDate?.toISOString() ?? null,
       billingType: entry.paymentMethod,
@@ -1256,6 +1263,7 @@ async function buildOperationalChargesCollection(
       origin: 'EVENT' as const,
       description: `${sale.event.name} · ${sale.quantity} ingresso(s)`,
       payerName: sale.buyerName,
+      studentName: null,
       value: Number(sale.totalAmount),
       dueDate: sale.soldAt.toISOString(),
       billingType: sale.paymentMethod,
@@ -1290,6 +1298,7 @@ async function buildOperationalChargesCollection(
       origin: 'EVENT' as const,
       description: `${order.event.name} · Pedido de ingresso`,
       payerName: order.buyerName,
+      studentName: null,
       value: Number(order.totalAmount),
       dueDate: order.expiresAt?.toISOString() ?? null,
       billingType: order.paymentMethod ?? order.paymentProvider,

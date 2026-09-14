@@ -26,6 +26,31 @@ function resolveCardSimulation(response: AsaasPaymentSimulationResponse): CardSi
   return response.creditCard ?? null;
 }
 
+function simulationRequest(value: number, installmentCount: number) {
+  return {
+    value,
+    installmentCount: installmentCount > 1 ? installmentCount : undefined,
+    billingTypes: ['CREDIT_CARD'] as Array<'CREDIT_CARD'>,
+  };
+}
+
+function valueWithFeesIncluded(input: {
+  requestedValue: number;
+  feePercentage: number | null;
+  operationFee: number | null;
+  feeValue: number;
+}) {
+  const feePercentage = input.feePercentage ?? 0;
+  const operationFee = input.operationFee ?? 0;
+  const percentageFactor = 1 - feePercentage / 100;
+
+  if (percentageFactor > 0 && feePercentage > 0) {
+    return roundMoney((input.requestedValue + operationFee) / percentageFactor);
+  }
+
+  return roundMoney(input.requestedValue + input.feeValue);
+}
+
 function mapSimulation(params: {
   requestedValue: number;
   installmentCount: number;
@@ -61,19 +86,40 @@ export async function simulatePaymentFees(params: {
   if (!credentials) return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
 
   try {
-    const response = await asaasSimulatePayment({
+    const firstResponse = await asaasSimulatePayment({
       apiKey: credentials.apiKey,
-      value: params.input.value,
-      installmentCount: params.input.installmentCount > 1 ? params.input.installmentCount : undefined,
-      billingTypes: ['CREDIT_CARD'],
+      ...simulationRequest(params.input.value, params.input.installmentCount),
     });
-    const card = resolveCardSimulation(response);
-    const result = card
+    const firstCard = resolveCardSimulation(firstResponse);
+    const firstResult = firstCard
       ? mapSimulation({
           requestedValue: params.input.value,
           installmentCount: params.input.installmentCount,
-          response,
-          card,
+          response: firstResponse,
+          card: firstCard,
+        })
+      : null;
+
+    if (!firstResult) return err('RESULTADO_ASAAS_INVALIDO');
+    if (!(params.input.passFees ?? false)) return ok(firstResult);
+
+    const adjustedValue = valueWithFeesIncluded({
+      requestedValue: params.input.value,
+      feePercentage: firstResult.feePercentage,
+      operationFee: firstResult.operationFee,
+      feeValue: firstResult.feeValue,
+    });
+    const adjustedResponse = await asaasSimulatePayment({
+      apiKey: credentials.apiKey,
+      ...simulationRequest(adjustedValue, params.input.installmentCount),
+    });
+    const adjustedCard = resolveCardSimulation(adjustedResponse);
+    const result = adjustedCard
+      ? mapSimulation({
+          requestedValue: params.input.value,
+          installmentCount: params.input.installmentCount,
+          response: adjustedResponse,
+          card: adjustedCard,
         })
       : null;
 

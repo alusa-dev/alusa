@@ -36,7 +36,29 @@
           }
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "A Alusa precisa acessar suas fotos para atualizar sua foto de perfil.",
+          "cameraPermission": "A Alusa precisa acessar a câmera para tirar sua foto de perfil."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "A Alusa precisa acessar a câmera para ler QR Codes de pagamentos, ingressos e fluxos da escola."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "A Alusa usa o Face ID para proteger seu acesso."
+        }
+      ],
+      "expo-font",
+      "expo-web-browser",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,

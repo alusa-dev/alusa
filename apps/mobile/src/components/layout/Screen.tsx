@@ -1,4 +1,5 @@
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View, type ViewProps } from 'react-native';
+import { KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, View, type NativeScrollEvent, type NativeSyntheticEvent, type ViewProps } from 'react-native';
+import type { ReactNode } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, spacing } from '@/theme/tokens';
@@ -7,11 +8,21 @@ type ScreenProps = ViewProps & {
   scroll?: boolean;
   keyboard?: boolean;
   backgroundColor?: string;
+  onScroll?: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  scrollEventThrottle?: number;
+  refreshing?: boolean;
+  onRefresh?: () => void;
+  overlay?: ReactNode;
 };
 
-export function Screen({ children, style, scroll = false, keyboard = false, backgroundColor = colors.surfaceSoft, ...props }: ScreenProps) {
+export function Screen({ children, style, scroll = false, keyboard = false, backgroundColor = colors.surfaceSoft, refreshing = false, onRefresh, overlay, ...props }: ScreenProps) {
   const content = scroll ? (
-    <ScrollView contentContainerStyle={[styles.scrollContent, style]} keyboardShouldPersistTaps="handled" {...props}>
+    <ScrollView
+      contentContainerStyle={[styles.scrollContent, style]}
+      keyboardShouldPersistTaps="handled"
+      refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} colors={[colors.brand]} /> : undefined}
+      {...props}
+    >
       {children}
     </ScrollView>
   ) : (
@@ -31,6 +42,7 @@ export function Screen({ children, style, scroll = false, keyboard = false, back
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor }]} edges={['top', 'left', 'right']}>
       {wrapped}
+      {overlay}
     </SafeAreaView>
   );
 }

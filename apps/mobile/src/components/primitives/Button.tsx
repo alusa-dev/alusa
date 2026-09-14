@@ -27,7 +27,7 @@ export function Button({ title, variant = 'primary', loading = false, disabled, 
     >
       <View style={styles.content}>
         {loading ? <ActivityIndicator color={variant === 'accent' ? colors.brand : colors.white} /> : null}
-        <AppText tone={variant === 'accent' ? 'primary' : 'inverse'} weight="bold" style={styles.text}>
+        <AppText tone={variant === 'accent' || variant === 'ghost' ? 'primary' : 'inverse'} weight="bold" style={styles.text}>
           {title}
         </AppText>
       </View>

@@ -68,6 +68,7 @@ type Cobranca = {
   vencimento?: string;
   createdAt?: string | null;
   payerName?: string;
+  studentName?: string | null;
   asaasPaymentId?: string | null;
   invoiceUrl?: string | null;
   matriculaId?: string | null;
@@ -149,6 +150,7 @@ export default function CobrancasTodasPage() {
             vencimento: item.dueDate as string | undefined,
             createdAt: typeof item.createdAt === 'string' ? item.createdAt : null,
             payerName: item.payerName as string | undefined,
+            studentName: item.studentName as string | null | undefined,
             asaasPaymentId: item.asaasPaymentId as string | null,
             invoiceUrl: item.invoiceUrl as string | null,
             matriculaId: item.matriculaId as string | null,
@@ -177,6 +179,9 @@ export default function CobrancasTodasPage() {
             ?? ((item as Record<string, unknown>).matricula as Record<string, unknown>)?.aluno
               ? (((item as Record<string, unknown>).matricula as Record<string, unknown>)?.aluno as Record<string, unknown>)?.nome as string
               : undefined,
+          studentName: ((item as Record<string, unknown>).aluno as Record<string, unknown>)?.nome as string
+            ?? (((item as Record<string, unknown>).matricula as Record<string, unknown>)?.aluno as Record<string, unknown>)?.nome as string
+            ?? null,
           asaasPaymentId: item.asaasPaymentId as string | null,
           invoiceUrl: null,
           matriculaId: item.matriculaId as string | null,
@@ -422,7 +427,7 @@ export default function CobrancasTodasPage() {
                         <div className="flex min-w-0 w-full max-w-full gap-2 px-4 py-3 box-border sm:gap-3 sm:px-5 lg:hidden">
                           <div className="min-w-0 flex-1 overflow-hidden">
                             <div className="truncate text-[13px] font-medium text-gray-900">
-                              {cobranca.payerName ?? '—'}
+                              {cobranca.studentName ?? cobranca.payerName ?? '—'}
                             </div>
                             {cobranca.description ? (
                               <div className="mt-0.5 line-clamp-2 break-words text-[11px] text-gray-500">
@@ -488,7 +493,7 @@ export default function CobrancasTodasPage() {
                             <div className="col-span-4 flex min-w-0 items-center gap-2">
                               <div className="min-w-0">
                                 <div className="truncate text-[13px] font-medium text-gray-900">
-                                  {cobranca.payerName ?? '-'}
+                                  {cobranca.studentName ?? cobranca.payerName ?? '-'}
                                 </div>
                                 {cobranca.description ? (
                                   <div className="truncate text-[11px] text-gray-500">

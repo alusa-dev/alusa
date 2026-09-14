@@ -17,8 +17,9 @@ import {
 import { prisma } from '../../prisma';
 import { loadDecryptedAsaasCredentials } from '../../services/integracoes/asaas-credentials-service';
 import { getEventAsaasPaymentProvider, type EventAsaasPayment } from '../event-asaas-payment-provider';
-import { EventsError, type EventsContext } from '../events.service';
+import { assertEventTicketSalesOpen, EventsError, type EventsContext } from '../events.service';
 import { enqueueEventTicketEmail } from '../ticket-email-outbox';
+import { markEventTicketUsed, verifyEventTicketForCheckIn } from '../ticket-checkin.service';
 import type {
   CreateEventMapInput,
   DuplicateEventMapInput,
@@ -1156,6 +1157,7 @@ async function getPublicMapShellOrThrow(db: DbClient, publicSlug: string) {
           locationName: true,
           locationAddress: true,
           status: true,
+          finishedAt: true,
         },
       },
     },
@@ -1437,6 +1439,7 @@ export type PublicEventMapDTO = Awaited<ReturnType<typeof getPublicEventMap>>;
 export async function reservePublicEventMapSeats(publicSlug: string, input: PublicSeatReservationInput) {
   return prisma.$transaction(async (tx) => {
     const map = await getPublicMapShellOrThrow(tx, publicSlug);
+    assertEventTicketSalesOpen(map.event);
     await expirePublicReservations(tx, map.contaId);
 
     const versionId = map.publishedVersionId!;
@@ -1583,6 +1586,12 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
     const publicSeats = reservation.seats.map((entry) => entry.publicSeat);
     if (publicSeats.length === 0 || publicSeats.some((seat) => seat.status !== 'HELD')) {
       throw new EventsError('RESERVA_INVALIDA', 'A reserva possui assentos indisponíveis.', 409);
+    }
+
+    // Um pedido criado antes da finalização pode concluir o pagamento; uma nova
+    // reserva sem pedido não pode transformar-se em venda após o encerramento.
+    if (!reservation.order) {
+      assertEventTicketSalesOpen(map.event);
     }
 
     const totalAmount = publicSeats.reduce((sum, seat) => sum + toMoney(seat.unitPrice), 0);
@@ -2771,73 +2780,9 @@ export async function listEventPublicMapOrdersForAdmin(contaId: string, eventId:
 export type EventPublicMapOrderListItemDTO = Awaited<ReturnType<typeof listEventPublicMapOrdersForAdmin>>[number];
 
 export async function verifyEventMapTicketForCheckIn(contaId: string, eventId: string, ticketCode: string) {
-  const normalized = ticketCode.trim().toUpperCase();
-  if (!normalized) {
-    throw new EventsError('CODIGO_INVALIDO', 'Informe o código do ingresso.', 422);
-  }
-
-  const ticket = await prisma.eventTicket.findFirst({
-    where: { contaId, eventId, ticketCode: normalized },
-    include: {
-      order: {
-        select: {
-          id: true,
-          buyerName: true,
-          buyerEmail: true,
-          status: true,
-        },
-      },
-      orderItem: {
-        select: {
-          sectionName: true,
-          seatLabel: true,
-          technicalCode: true,
-        },
-      },
-      sale: {
-        select: {
-          id: true,
-          buyerName: true,
-          status: true,
-        },
-      },
-      saleSeat: {
-        select: {
-          sectionName: true,
-          seatLabel: true,
-          technicalCode: true,
-        },
-      },
-    },
-  });
-
-  if (!ticket) throw new EventsError('INGRESSO_NAO_ENCONTRADO', 'Ingresso não encontrado para este evento.', 404);
-
-  const seat = ticket.orderItem
-    ? {
-        sectionName: ticket.orderItem.sectionName,
-        seatLabel: ticket.orderItem.seatLabel,
-        technicalCode: ticket.orderItem.technicalCode,
-      }
-    : ticket.saleSeat
-      ? {
-          sectionName: ticket.saleSeat.sectionName,
-          seatLabel: ticket.saleSeat.seatLabel,
-          technicalCode: ticket.saleSeat.technicalCode,
-        }
-      : null;
-
-  if (!seat) throw new EventsError('INGRESSO_INVALIDO', 'Ingresso sem assento vinculado.', 409);
-
-  return {
-    ticketId: ticket.id,
-    ticketCode: ticket.ticketCode,
-    status: ticket.status,
-    usedAt: ticket.usedAt?.toISOString() ?? null,
-    order: ticket.order,
-    sale: ticket.sale,
-    seat,
-  };
+  const ticket = await verifyEventTicketForCheckIn(contaId, eventId, ticketCode);
+  if (!ticket.seat) throw new EventsError('INGRESSO_INVALIDO', 'Ingresso sem assento vinculado.', 409);
+  return ticket;
 }
 
 export async function markEventMapTicketUsed(
@@ -2846,71 +2791,8 @@ export async function markEventMapTicketUsed(
   ticketCode: string,
   actorUserId: string,
 ) {
-  const verified = await verifyEventMapTicketForCheckIn(contaId, eventId, ticketCode);
-
-  if (verified.status === 'USED') {
-    return { ok: true as const, alreadyUsed: true, ticket: verified };
-  }
-
-  if (verified.status !== 'VALID') {
-    throw new EventsError('INGRESSO_INVALIDO', 'Ingresso não pode ser utilizado.', 409);
-  }
-
-  if (verified.order && verified.order.status !== 'CONFIRMED') {
-    throw new EventsError('PEDIDO_NAO_CONFIRMADO', 'Pedido do ingresso não está confirmado.', 409);
-  }
-
-  if (verified.sale && !['PAID', 'COMPLIMENTARY'].includes(verified.sale.status)) {
-    throw new EventsError('VENDA_NAO_CONFIRMADA', 'Venda do ingresso não está confirmada.', 409);
-  }
-
-  const now = new Date();
-  await prisma.$transaction(async (tx) => {
-    await tx.eventTicket.update({
-      where: { id: verified.ticketId },
-      data: { status: 'USED', usedAt: now },
-    });
-
-    await tx.auditLog.create({
-      data: {
-        contaId,
-        actorType: 'USER',
-        actorId: actorUserId,
-        action: 'events.map.ticket.check_in',
-        entityType: 'EventTicket',
-        entityId: verified.ticketId,
-        metadata: toAuditJson({
-          eventId,
-          orderId: verified.order?.id ?? verified.sale?.id ?? null,
-          ticketCode: verified.ticketCode,
-        }),
-      },
-    });
-
-    await tx.eventAudit.create({
-      data: {
-        contaId,
-        eventId,
-        actorUserId,
-        action: 'events.map.ticket.check_in',
-        entityType: 'EventTicket',
-        entityId: verified.ticketId,
-        metadata: toAuditJson({
-          orderId: verified.order?.id ?? verified.sale?.id ?? null,
-          ticketCode: verified.ticketCode,
-          seatLabel: verified.seat.seatLabel,
-        }),
-      },
-    });
+  return markEventTicketUsed(contaId, eventId, ticketCode, actorUserId, {
+    requireSeat: true,
+    auditAction: 'events.map.ticket.check_in',
   });
-
-  return {
-    ok: true as const,
-    alreadyUsed: false,
-    ticket: {
-      ...verified,
-      status: 'USED' as const,
-      usedAt: now.toISOString(),
-    },
-  };
 }

@@ -5,6 +5,7 @@ export const colors = {
   surface: '#FFFFFF',
   surfaceSoft: '#F7F3FB',
   surfaceRaised: '#FCFAFF',
+  surfaceNeutral: '#F5F5F5',
   border: '#E7DFF0',
   brand: '#3E1F63',
   brandPressed: '#2B1249',
@@ -13,6 +14,7 @@ export const colors = {
   accentPressed: '#9BD200',
   accentSoft: '#F1FFD2',
   success: '#1F7A4D',
+  info: '#123FE5',
   warning: '#B86800',
   danger: '#B42318',
   dangerSoft: '#FFE7E5',
@@ -48,18 +50,25 @@ export const typography = {
 } as const;
 
 export const shadows = {
-  card: {
-    shadowColor: colors.brand,
-    shadowOffset: { width: 0, height: 18 },
-    shadowOpacity: 0.12,
-    shadowRadius: 30,
-    elevation: 8,
-  },
-  soft: {
-    shadowColor: colors.brand,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
-    elevation: 4,
-  },
+  card: Platform.select({
+    web: { boxShadow: `0px 18px 30px ${colors.shadow}` },
+    default: {
+      shadowColor: colors.brand,
+      shadowOffset: { width: 0, height: 18 },
+      shadowOpacity: 0.12,
+      shadowRadius: 30,
+      elevation: 8,
+    },
+  }),
+  soft: Platform.select({
+    web: { boxShadow: `0px 8px 18px ${colors.shadow}` },
+    default: {
+      shadowColor: colors.brand,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.08,
+      shadowRadius: 18,
+      elevation: 4,
+    },
+  }),
 } as const;
+import { Platform } from 'react-native';

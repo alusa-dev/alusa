@@ -68,4 +68,27 @@ describe('createApiClient', () => {
     await expect(api.request({ path: '/me' })).rejects.toBeInstanceOf(ApiError);
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
   });
+
+  it('renova o token uma única vez antes de repetir uma requisição protegida', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(response({}, { status: 401 }))
+      .mockResolvedValueOnce(response({ ok: true }));
+    const refreshAccessToken = jest.fn().mockResolvedValue('new_token');
+    const api = createApiClient({
+      baseUrl: 'https://api.alusa.test',
+      fetchImpl,
+      getAccessToken: () => 'expired_token',
+      refreshAccessToken,
+    });
+
+    await expect(api.request({ path: '/me' })).resolves.toEqual({ ok: true });
+    expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenLastCalledWith(
+      'https://api.alusa.test/me',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer new_token' }),
+      }),
+    );
+  });
 });

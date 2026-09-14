@@ -24,7 +24,11 @@ export function createApiClient(options: ApiClientOptions) {
   const fetchImpl = options.fetchImpl ?? fetch;
   const defaultTimeoutMs = options.defaultTimeoutMs ?? 12000;
 
-  async function request<TResponse, TBody = unknown>({
+  async function request<TResponse, TBody = unknown>(
+    requestOptions: ApiRequestOptions<TBody>,
+    canRefresh = true,
+  ): Promise<TResponse> {
+    const {
     method = 'GET',
     path,
     body,
@@ -32,7 +36,7 @@ export function createApiClient(options: ApiClientOptions) {
     headers,
     timeoutMs = defaultTimeoutMs,
     accessToken,
-  }: ApiRequestOptions<TBody>): Promise<TResponse> {
+    } = requestOptions;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort('timeout'), timeoutMs);
 
@@ -43,16 +47,19 @@ export function createApiClient(options: ApiClientOptions) {
     }
 
     try {
+      const resolvedAccessToken =
+        accessToken !== undefined ? accessToken : await options.getAccessToken?.();
+      const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
       const response = await fetchImpl(joinUrl(options.baseUrl, path), {
         method,
         signal: controller.signal,
         headers: {
           Accept: 'application/json',
-          ...(body == null ? null : { 'Content-Type': 'application/json' }),
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : null),
+          ...(body == null || isFormData ? null : { 'Content-Type': 'application/json' }),
+          ...(resolvedAccessToken ? { Authorization: `Bearer ${resolvedAccessToken}` } : null),
           ...headers,
         },
-        body: body == null ? undefined : JSON.stringify(body),
+        body: body == null ? undefined : isFormData ? body : JSON.stringify(body),
       });
 
       const requestId = response.headers.get('x-request-id') ?? undefined;
@@ -63,6 +70,12 @@ export function createApiClient(options: ApiClientOptions) {
       if (!response.ok) {
         const errorPayload = parseErrorPayload(payload);
         const code = mapStatusToCode(response.status);
+        if (code === 'UNAUTHORIZED' && canRefresh && options.refreshAccessToken) {
+          const refreshedAccessToken = await options.refreshAccessToken();
+          if (refreshedAccessToken) {
+            return request({ ...requestOptions, accessToken: refreshedAccessToken }, false);
+          }
+        }
         if (code === 'UNAUTHORIZED') {
           await options.onUnauthorized?.();
         }

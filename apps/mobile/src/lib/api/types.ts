@@ -14,5 +14,7 @@ export type ApiClientOptions = {
   baseUrl: string;
   defaultTimeoutMs?: number;
   onUnauthorized?: () => void | Promise<void>;
+  getAccessToken?: () => string | null | Promise<string | null>;
+  refreshAccessToken?: () => Promise<string | null>;
   fetchImpl?: typeof fetch;
 };

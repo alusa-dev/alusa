@@ -1,4 +1,4 @@
-import { Prisma, PrismaClient, EventPaymentMethod } from '@prisma/client';
+import { Prisma, PrismaClient, EventFinancialEntryStatus, EventPaymentMethod } from '@prisma/client';
 
 const mapToEventPaymentMethod = (method?: string | null): EventPaymentMethod => {
   if (!method) return 'OTHER';
@@ -58,6 +58,7 @@ import type {
   UpdateSchoolEventInput,
   UpdateTicketLotInput,
   CreateEventParticipantInput,
+  ListEventParticipantsQuery,
   ReactivateEventParticipantInput,
   QuitarParticipantFeeInput,
   ManualEventParticipantPaymentInput,
@@ -488,6 +489,21 @@ function assertOperationalEvent(status: string) {
   }
 }
 
+/**
+ * Finalizar um evento encerra novas vendas de ingressos. O finishedAt é
+ * preservado quando o evento é reativado para que essa regra não seja perdida.
+ */
+export function assertEventTicketSalesOpen(event: { status: string; finishedAt: Date | null }) {
+  assertOperationalEvent(event.status);
+  if (event.finishedAt) {
+    throw new EventsError(
+      'VENDAS_INGRESSOS_ENCERRADAS',
+      'As vendas de ingressos foram encerradas para este evento.',
+      409,
+    );
+  }
+}
+
 function assertFinancialAdjustmentEvent(status: string) {
   if (status === 'CANCELLED' || status === 'ARCHIVED') {
     throw new EventsError(
@@ -913,6 +929,7 @@ export async function updateSchoolEventStatus(ctx: EventsContext, eventId: strin
       data: {
         status: nextStatus,
         cancelledAt: nextStatus === 'CANCELLED' ? now : current.cancelledAt,
+        // Mantém o marco de finalização ao reativar, fechando novas vendas de ingressos.
         finishedAt: nextStatus === 'FINISHED' ? now : current.finishedAt,
         archivedAt: nextStatus === 'ARCHIVED' ? now : current.archivedAt,
       },
@@ -1042,7 +1059,7 @@ export async function createTicketLot(ctx: EventsContext, input: CreateTicketLot
   return prisma.$transaction(async (tx) => {
     const event = await tx.schoolEvent.findFirst({ where: { id: input.eventId, contaId: ctx.contaId } });
     if (!event) throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
-    assertOperationalEvent(event.status);
+    assertEventTicketSalesOpen(event);
 
     const existing = await tx.eventTicketLot.findFirst({
       where: { contaId: ctx.contaId, eventId: input.eventId, name: input.name },
@@ -1421,6 +1438,13 @@ async function syncLotQuantity(tx: Prisma.TransactionClient, contaId: string, lo
 }
 
 export async function createTicketSale(ctx: EventsContext, input: CreateTicketSaleInput) {
+  const event = await prisma.schoolEvent.findFirst({
+    where: { id: input.eventId, contaId: ctx.contaId },
+    select: { ticketMode: true, status: true, finishedAt: true },
+  });
+  if (!event) throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
+  assertEventTicketSalesOpen(event);
+
   if (input.holdToken) {
     const { createSeatedTicketSale } = await import('./map/staff-map-sales.service');
     const result = await createSeatedTicketSale(ctx, { ...input, holdToken: input.holdToken });
@@ -1432,11 +1456,7 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
     throw new EventsError('DADOS_VENDA_INVALIDOS', 'Informe lote e quantidade para venda simples.', 422);
   }
 
-  const event = await prisma.schoolEvent.findFirst({
-    where: { id: input.eventId, contaId: ctx.contaId },
-    select: { ticketMode: true },
-  });
-  if (event?.ticketMode === 'NUMBERED_SEATS') {
+  if (event.ticketMode === 'NUMBERED_SEATS') {
     throw new EventsError(
       'VENDA_ASSENTO_OBRIGATORIA',
       'Este evento usa assentos numerados. Selecione os assentos no mapa antes de registrar a venda.',
@@ -1455,7 +1475,7 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
       include: { event: true },
     });
     if (!lot) throw new EventsError('LOTE_NAO_ENCONTRADO', 'Lote não encontrado.', 404);
-    assertOperationalEvent(lot.event.status);
+    assertEventTicketSalesOpen(lot.event);
 
     if (lot.status !== 'ACTIVE') {
       throw new EventsError('LOTE_INATIVO', 'Somente lotes ativos podem receber vendas.', 409);
@@ -2407,6 +2427,55 @@ export async function listFinancialEntries(
   return entries.map(mapFinancialEntry);
 }
 
+export async function listFinancialEntriesPage(
+  ctx: Pick<EventsContext, 'contaId'>,
+  input: {
+    eventId?: string;
+    type?: 'COST' | 'REVENUE';
+    status?: EventFinancialEntryStatus;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+  } = {},
+) {
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 10;
+  const search = input.search?.trim();
+  const where = {
+    contaId: ctx.contaId,
+    ...(input.eventId ? { eventId: input.eventId } : {}),
+    ...(input.type ? { type: input.type } : {}),
+    ...(input.status ? { status: input.status } : {}),
+    ...(search
+      ? {
+          OR: [
+            { description: { contains: search, mode: 'insensitive' as const } },
+            { category: { contains: search, mode: 'insensitive' as const } },
+            { supplier: { contains: search, mode: 'insensitive' as const } },
+          ],
+        }
+      : {}),
+  };
+  const [total, entries] = await Promise.all([
+    prisma.eventFinancialEntry.count({ where }),
+    prisma.eventFinancialEntry.findMany({
+      where,
+      include: {
+        event: { select: { id: true, name: true, startsAt: true } },
+        createdBy: { select: { id: true, nome: true } },
+      },
+      orderBy: [{ realizedAt: 'desc' }, { dueDate: 'desc' }, { createdAt: 'desc' }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+  ]);
+
+  return {
+    entries: entries.map(mapFinancialEntry),
+    meta: pageMeta(total, page, pageSize),
+  };
+}
+
 async function getFinancialEntryDto(db: DbClient, contaId: string, entryId: string) {
   const entry = await db.eventFinancialEntry.findFirst({
     where: { id: entryId, contaId },
@@ -2440,6 +2509,7 @@ export async function createFinancialEntry(ctx: EventsContext, input: CreateEven
       throw new EventsError('VALOR_RECEBIDO_INVALIDO', 'O valor recebido não pode ser maior que o valor líquido esperado.', 422);
     }
     assertFinancialEntryState(input.type, input.status, payment.actualAmount);
+    const isRealized = input.type === 'COST' ? input.status === 'PAID' : input.status === 'RECEIVED';
     const entry = await tx.eventFinancialEntry.create({
       data: {
         contaId: ctx.contaId,
@@ -2456,8 +2526,8 @@ export async function createFinancialEntry(ctx: EventsContext, input: CreateEven
         actualAmount: payment.actualAmount == null ? null : decimal(payment.actualAmount),
         refundedAmount: decimal(payment.refundedAmount),
         netAmount: payment.netAmount == null ? null : decimal(payment.netAmount),
-        dueDate: input.dueDate,
-        realizedAt: input.realizedAt,
+        dueDate: isRealized ? null : input.dueDate,
+        realizedAt: isRealized ? (input.realizedAt ?? new Date()) : null,
         status: input.status,
         paymentMethod: input.paymentMethod,
         proofUrl: input.proofUrl,
@@ -2480,10 +2550,19 @@ export async function createFinancialEntry(ctx: EventsContext, input: CreateEven
   });
 }
 
-export async function updateFinancialEntry(ctx: EventsContext, entryId: string, input: UpdateEventFinancialEntryInput) {
+export async function updateFinancialEntry(
+  ctx: EventsContext,
+  entryId: string,
+  input: UpdateEventFinancialEntryInput,
+  expectedEventId?: string,
+) {
   return prisma.$transaction(async (tx) => {
     const current = await tx.eventFinancialEntry.findFirst({
-      where: { id: entryId, contaId: ctx.contaId },
+      where: {
+        id: entryId,
+        contaId: ctx.contaId,
+        ...(expectedEventId ? { eventId: expectedEventId } : {}),
+      },
       include: { event: true },
     });
     if (!current) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
@@ -2515,6 +2594,8 @@ export async function updateFinancialEntry(ctx: EventsContext, entryId: string, 
     }
     assertFinancialEntryState(nextType, input.status ?? current.status, payment.actualAmount);
 
+    const nextStatus = input.status ?? current.status;
+    const isRealized = nextType === 'COST' ? nextStatus === 'PAID' : nextStatus === 'RECEIVED';
     const updated = await tx.eventFinancialEntry.update({
       where: { id: entryId },
       data: {
@@ -2529,8 +2610,8 @@ export async function updateFinancialEntry(ctx: EventsContext, entryId: string, 
         actualAmount: payment.actualAmount == null ? null : decimal(payment.actualAmount),
         refundedAmount: decimal(payment.refundedAmount),
         netAmount: payment.netAmount == null ? null : decimal(payment.netAmount),
-        dueDate: input.dueDate,
-        realizedAt: input.realizedAt,
+        dueDate: isRealized ? null : input.dueDate,
+        realizedAt: isRealized ? (input.realizedAt ?? current.realizedAt ?? new Date()) : null,
         status: input.status,
         paymentMethod: input.paymentMethod,
         proofUrl: input.proofUrl,
@@ -3884,7 +3965,7 @@ export async function quitarEventParticipantFee(ctx: EventsContext, eventId: str
       select: { ...eventParticipantScalarSelect, event: true },
     });
     if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
-    assertOperationalEvent(participant.event.status);
+    assertFinancialAdjustmentEvent(participant.event.status);
 
     if (participant.isFeePaid) {
       throw new EventsError('TAXA_JA_PAGA', 'A taxa de inscrição deste aluno já está paga.', 409);
@@ -4028,7 +4109,7 @@ export async function createManualEventParticipantPayment(
       select: { ...eventParticipantScalarSelect, event: true },
     });
     if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
-    assertOperationalEvent(participant.event.status);
+    assertFinancialAdjustmentEvent(participant.event.status);
     if (participant.billingMode !== 'FULL' || participant.asaasPaymentId || participant.asaasInstallmentId) {
       throw new EventsError('BAIXA_MANUAL_BLOQUEADA', 'A baixa manual está disponível apenas para inscrições manuais.', 409);
     }
@@ -4167,7 +4248,7 @@ export async function refundManualEventParticipantFee(ctx: EventsContext, eventI
       select: { ...eventParticipantScalarSelect, event: true },
     });
     if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
-    assertOperationalEvent(participant.event.status);
+    assertFinancialAdjustmentEvent(participant.event.status);
     if (!participant.revenueEntryId) {
       throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'A inscrição não possui lançamento financeiro vinculado.', 404);
     }
@@ -4231,7 +4312,7 @@ export async function deleteManualEventParticipantFee(ctx: EventsContext, eventI
       select: { ...eventParticipantScalarSelect, event: true },
     });
     if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
-    assertOperationalEvent(participant.event.status);
+    assertFinancialAdjustmentEvent(participant.event.status);
     if (!participant.revenueEntryId) {
       throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'A inscrição não possui lançamento financeiro vinculado.', 404);
     }
@@ -4716,6 +4797,92 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
 
     return (bSort?.createdAt.getTime() ?? 0) - (aSort?.createdAt.getTime() ?? 0);
   });
+}
+
+export async function listEventParticipantsPage(
+  ctx: Pick<EventsContext, 'contaId'>,
+  eventId: string,
+  input: Partial<Pick<ListEventParticipantsQuery, 'page' | 'pageSize' | 'search' | 'status'>> = {},
+) {
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 10;
+  const search = input.search?.trim();
+  const where: Prisma.EventParticipantWhereInput = {
+    contaId: ctx.contaId,
+    eventId,
+    ...(input.status === 'ACTIVE' ? { cancelledAt: null } : {}),
+    ...(input.status === 'CANCELLED' ? { cancelledAt: { not: null } } : {}),
+    ...(search
+      ? {
+          OR: [
+            { displayName: { contains: search, mode: 'insensitive' } },
+            { aluno: { nome: { contains: search, mode: 'insensitive' } } },
+          ],
+        }
+      : {}),
+  };
+
+  const [total, participants] = await Promise.all([
+    prisma.eventParticipant.count({ where }),
+    prisma.eventParticipant.findMany({
+      where,
+      select: {
+        id: true,
+        eventId: true,
+        alunoId: true,
+        displayName: true,
+        registrationFeeCharged: true,
+        isFeePaid: true,
+        isFeeExempt: true,
+        feePaymentMethod: true,
+        financialStatusSnapshot: true,
+        feePaidAmount: true,
+        cancelledAt: true,
+        createdAt: true,
+        aluno: { select: { id: true, nome: true, foto: true } },
+        turma: { select: { id: true, nome: true } },
+      },
+      orderBy: [{ cancelledAt: 'asc' }, { createdAt: 'desc' }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+  ]);
+
+  return {
+    participants: participants.map((participant) => {
+      const registrationFee = toMoney(participant.registrationFeeCharged);
+      const feePaidAmount = toMoney(participant.feePaidAmount);
+      const percentPaid = participant.isFeeExempt || registrationFee <= 0
+        ? 100
+        : Math.min(100, Math.max(0, Math.round((feePaidAmount / registrationFee) * 100)));
+      const financialStatus = participant.cancelledAt
+        ? 'CANCELADO'
+        : participant.isFeeExempt || registrationFee <= 0
+          ? 'ISENTO'
+          : participant.isFeePaid || percentPaid >= 100
+            ? 'QUITADO'
+            : participant.financialStatusSnapshot && participant.financialStatusSnapshot !== 'QUITADO'
+              ? participant.financialStatusSnapshot
+              : percentPaid > 0 ? 'PARCIAL' : 'PENDENTE';
+
+      return {
+        id: participant.id,
+        eventId: participant.eventId,
+        alunoId: participant.alunoId,
+        displayName: participant.displayName ?? participant.aluno?.nome ?? 'Aluno não identificado',
+        aluno: participant.aluno,
+        turma: participant.turma,
+        registrationFeeCharged: registrationFee,
+        feePaidAmount,
+        percentPaid,
+        financialStatus,
+        feePaymentMethod: participant.feePaymentMethod,
+        cancelledAt: toIso(participant.cancelledAt),
+        createdAt: participant.createdAt.toISOString(),
+      };
+    }),
+    meta: pageMeta(total, page, pageSize),
+  };
 }
 
 export async function deleteSchoolEvent(ctx: EventsContext, eventId: string) {
