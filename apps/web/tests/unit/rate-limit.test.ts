@@ -53,4 +53,18 @@ describe('rateLimitAsync', () => {
       '60000',
     ]);
   });
+
+  it('mantém o timeout do rate limiter dentro da faixa operacional segura', async () => {
+    process.env.RATE_LIMIT_DISABLE_IN_DEV = 'false';
+    const { rateLimitRedisTimeoutMs } = await import('@/lib/rate-limit');
+
+    process.env.RATE_LIMIT_REDIS_TIMEOUT_MS = '100';
+    expect(rateLimitRedisTimeoutMs()).toBe(250);
+
+    process.env.RATE_LIMIT_REDIS_TIMEOUT_MS = '1500';
+    expect(rateLimitRedisTimeoutMs()).toBe(1500);
+
+    process.env.RATE_LIMIT_REDIS_TIMEOUT_MS = '5000';
+    expect(rateLimitRedisTimeoutMs()).toBe(2000);
+  });
 });

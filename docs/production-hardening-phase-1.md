@@ -12,6 +12,9 @@ cobrança, pagamento, estorno, recebimento em dinheiro ou emissão fiscal.
 - PostgreSQL continua sendo a fonte de verdade dos eventos e estados
   financeiros.
 - Redis é usado para rate limit distribuído do webhook, quota e semáforo
+- O rate limit geral da API usa `RATE_LIMIT_REDIS_TIMEOUT_MS` (1500 ms em
+  produção); o valor é limitado pelo código a uma janela segura de 250–2000 ms
+- Fallback do rate limit registra duração e timeout para diagnóstico de latência
   distribuído do cliente Asaas, além do cache compartilhado.
 - Se Redis ficar indisponível, os controles entram em fallback local e o
   ambiente fica explicitamente degradado; a saúde não é mascarada.

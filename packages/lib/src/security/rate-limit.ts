@@ -42,10 +42,14 @@ function redisConfig() {
   return { url: url.replace(/\/$/, ''), token };
 }
 
+export function rateLimitRedisTimeoutMs() {
+  return Math.min(Math.max(Number(process.env.RATE_LIMIT_REDIS_TIMEOUT_MS ?? 1_500), 250), 2_000);
+}
+
 async function redisCommand<T>(command: unknown[]): Promise<T> {
   const config = redisConfig();
   if (!config) throw new Error('Redis REST rate limit is not configured');
-  const timeoutMs = Math.min(Math.max(Number(process.env.RATE_LIMIT_REDIS_TIMEOUT_MS ?? 250), 50), 2_000);
+  const timeoutMs = rateLimitRedisTimeoutMs();
   const response = await fetch(config.url, {
     method: 'POST',
     headers: { authorization: `Bearer ${config.token}`, 'content-type': 'application/json' },
@@ -93,9 +97,14 @@ export function rateLimit(key: string, limit: number, windowMs: number): RateLim
 export async function rateLimitAsync(key: string, limit: number, windowMs: number) {
   if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now(), source: 'bypassed' as const, degraded: false };
   if (!redisConfig()) return rateLimit(key, limit, windowMs);
+  const startedAt = Date.now();
   try { return await distributedRateLimit(key, limit, windowMs); }
   catch (error) {
-    console.warn('[rate-limit][redis-fallback]', { error: error instanceof Error ? error.message : String(error) });
+    console.warn('[rate-limit][redis-fallback]', {
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: Date.now() - startedAt,
+      timeoutMs: rateLimitRedisTimeoutMs(),
+    });
     return { ...rateLimit(key, limit, windowMs), degraded: true };
   }
 }
@@ -114,10 +123,15 @@ export async function strictRateLimitAsync(key: string, limit: number, windowMs:
     }
     return rateLimit(key, limit, windowMs);
   }
+  const startedAt = Date.now();
   try {
     return await distributedRateLimit(key, limit, windowMs);
   } catch (error) {
-    console.error('[rate-limit][strict-unavailable]', { error: error instanceof Error ? error.message : String(error) });
+    console.error('[rate-limit][strict-unavailable]', {
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: Date.now() - startedAt,
+      timeoutMs: rateLimitRedisTimeoutMs(),
+    });
     return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, source: 'unavailable', degraded: true };
   }
 }
@@ -128,8 +142,16 @@ export async function authRateLimitAsync(key: string, limit: number, windowMs: n
     if (process.env.NODE_ENV === 'production') { console.error('[rate-limit][auth-unavailable]', { reason: 'redis_not_configured' }); return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, source: 'unavailable' as const, degraded: true }; }
     return rateLimit(key, limit, windowMs);
   }
+  const startedAt = Date.now();
   try { return await distributedRateLimit(key, limit, windowMs); }
-  catch (error) { console.error('[rate-limit][auth-unavailable]', { error: error instanceof Error ? error.message : String(error) }); return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, source: 'unavailable' as const, degraded: true }; }
+  catch (error) {
+    console.error('[rate-limit][auth-unavailable]', {
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: Date.now() - startedAt,
+      timeoutMs: rateLimitRedisTimeoutMs(),
+    });
+    return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, source: 'unavailable' as const, degraded: true };
+  }
 }
 
 export async function rateLimitSubject(value: string) {
