@@ -93,12 +93,23 @@ function fetchUnreadNotificationCount() {
 export function useNotificationUnreadCount(params?: {
   enabled?: boolean;
   minRefreshIntervalMs?: number;
+  identityKey?: string | null;
 }) {
   const enabled = params?.enabled ?? true;
   const minRefreshIntervalMs = params?.minRefreshIntervalMs ?? 30_000;
+  const identityKey = params?.identityKey ?? null;
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const lastLoadedAtRef = useRef(0);
+  const identityKeyRef = useRef(identityKey);
+
+  useEffect(() => {
+    if (identityKeyRef.current === identityKey) return;
+    identityKeyRef.current = identityKey;
+    lastLoadedAtRef.current = 0;
+    setCount(0);
+    setLoading(Boolean(enabled));
+  }, [enabled, identityKey]);
 
   const load = useCallback(async (force = false) => {
     if (!enabled) {
@@ -114,6 +125,7 @@ export function useNotificationUnreadCount(params?: {
     setLoading(true);
     try {
       const data = await fetchUnreadNotificationCount();
+      if (identityKeyRef.current !== identityKey) return;
       lastLoadedAtRef.current = Date.now();
       setCount(data.count);
     } catch (error) {
@@ -122,7 +134,7 @@ export function useNotificationUnreadCount(params?: {
     } finally {
       setLoading(false);
     }
-  }, [enabled, minRefreshIntervalMs]);
+  }, [enabled, identityKey, minRefreshIntervalMs]);
 
   useEffect(() => {
     void load();
@@ -158,6 +170,7 @@ export function useNotificationsFeed(params?: {
   enabled?: boolean;
   /** Controls the panel visibility without discarding the loaded feed. */
   isOpen?: boolean;
+  identityKey?: string | null;
 }) {
   const view = params?.view ?? 'active';
   const limit = params?.limit ?? 20;
@@ -165,6 +178,7 @@ export function useNotificationsFeed(params?: {
   const autoRefreshMs = params?.autoRefreshMs ?? 0;
   const enabled = params?.enabled ?? true;
   const isOpen = params?.isOpen ?? true;
+  const identityKey = params?.identityKey ?? null;
 
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -173,6 +187,18 @@ export function useNotificationsFeed(params?: {
   const [submitting, setSubmitting] = useState(false);
   const lastLoadedAtRef = useRef(0);
   const wasOpenRef = useRef(false);
+  const identityKeyRef = useRef(identityKey);
+
+  useEffect(() => {
+    if (identityKeyRef.current === identityKey) return;
+    identityKeyRef.current = identityKey;
+    lastLoadedAtRef.current = 0;
+    wasOpenRef.current = false;
+    setItems([]);
+    setUnreadCount(0);
+    setTotalCount(0);
+    setLoading(Boolean(enabled));
+  }, [enabled, identityKey]);
 
   const applyLocalAction = useCallback((notificationId: string, action: NotificationAction) => {
     setItems((currentItems) => {
@@ -249,6 +275,7 @@ export function useNotificationsFeed(params?: {
         page: String(page),
       });
       const data = await fetchNotificationList(`/api/notifications?${searchParams.toString()}`);
+      if (identityKeyRef.current !== identityKey) return;
       lastLoadedAtRef.current = Date.now();
       setItems(data.items);
       setUnreadCount(data.unreadCount);
@@ -268,7 +295,7 @@ export function useNotificationsFeed(params?: {
     } finally {
       setLoading(false);
     }
-  }, [enabled, isOpen, limit, page, view]);
+  }, [enabled, identityKey, isOpen, limit, page, view]);
 
   useEffect(() => {
     if (!enabled) {

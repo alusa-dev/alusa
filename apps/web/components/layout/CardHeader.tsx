@@ -38,7 +38,10 @@ export default function CardHeader(): JSX.Element {
     count: unreadCount,
     loading: unreadCountLoading,
     reload: reloadUnreadCount,
-  } = useNotificationUnreadCount({ enabled: inboxNotificationsEnabled });
+  } = useNotificationUnreadCount({
+    enabled: inboxNotificationsEnabled,
+    identityKey: user?.id && user?.contaId ? `${user.contaId}:${user.id}` : null,
+  });
   const {
     items: inboxItems,
     loading: inboxLoading,
@@ -48,6 +51,7 @@ export default function CardHeader(): JSX.Element {
     limit: 5,
     enabled: inboxNotificationsEnabled,
     isOpen: notificationsOpen,
+    identityKey: user?.id && user?.contaId ? `${user.contaId}:${user.id}` : null,
   });
 
   const initials = useMemo(() => {

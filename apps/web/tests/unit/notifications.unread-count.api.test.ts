@@ -37,6 +37,7 @@ describe('/api/notifications/unread-count', () => {
     const response = await GET(new NextRequest('http://localhost/api/notifications/unread-count'));
 
     expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
     expect(await response.json()).toEqual({ count: 3 });
     expect(getUnreadNotificationCount).toHaveBeenCalledWith({
       contaId: 'conta-1',

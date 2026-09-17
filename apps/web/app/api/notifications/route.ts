@@ -6,7 +6,6 @@ import {
   type NotificationFeedView,
 } from '@alusa/lib/services/notifications.service';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
-import { privateJson } from '@/lib/private-cache';
 import {
   buildNotificationFeedCacheKey,
   clearNotificationCaches,
@@ -78,11 +77,7 @@ export async function GET(req: NextRequest) {
     const cached = await getNotificationCache<ReturnType<typeof serialize>>(cacheKey);
     if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
       timer.end('GET /notifications (cache hit)', { cacheState: cached.state });
-      return privateJson(cached.body, {
-        maxAgeSeconds: 30,
-        staleWhileRevalidateSeconds: 90,
-        cacheState: cached.state,
-      });
+      return json(200, cached.body);
     }
 
     const result = await withPerfTimer(
@@ -104,11 +99,7 @@ export async function GET(req: NextRequest) {
       staleWhileRevalidateSeconds: 90,
     });
     timer.end('GET /notifications (cache miss)');
-    return privateJson(body, {
-      maxAgeSeconds: 30,
-      staleWhileRevalidateSeconds: 90,
-      cacheState: 'MISS',
-    });
+    return json(200, body);
   } catch (error) {
     console.error('[Notifications][GET]', error);
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível carregar as notificações.' });

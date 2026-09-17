@@ -56,4 +56,23 @@ describe('useNotificationsFeed', () => {
     expect(result.current.items).toEqual([]);
     expect(result.current.unreadCount).toBe(0);
   });
+
+  it('limpa itens antigos quando a identidade do tenant muda', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response([{ id: 'notification-a', readAt: null }]))
+      .mockResolvedValueOnce(response([{ id: 'notification-b', readAt: null }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result, rerender } = renderHook(
+      ({ identityKey }: { identityKey: string }) => useNotificationsFeed({ enabled: true, isOpen: true, identityKey }),
+      { initialProps: { identityKey: 'conta-a:user-a' } },
+    );
+
+    await waitFor(() => expect(result.current.items[0]?.id).toBe('notification-a'));
+    rerender({ identityKey: 'conta-b:user-b' });
+
+    expect(result.current.items).toEqual([]);
+    await waitFor(() => expect(result.current.items[0]?.id).toBe('notification-b'));
+  });
 });

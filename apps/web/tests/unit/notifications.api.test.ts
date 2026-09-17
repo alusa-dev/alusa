@@ -75,6 +75,7 @@ describe('/api/notifications', () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
     expect(json).toEqual({
       items: [
         {

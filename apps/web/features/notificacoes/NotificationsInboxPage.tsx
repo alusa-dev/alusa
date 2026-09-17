@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import { Bell, CheckCircle, ExternalLink, EyeOff, Mail, Trash } from '@/components/icons/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -156,6 +157,8 @@ function NotificationEmptyState({ archived }: { archived: boolean }) {
 
 export function NotificationsInboxPage() {
   const router = useRouter();
+  const { data: session } = useSession();
+  const sessionUser = session?.user as { id?: string; contaId?: string } | undefined;
   const [view, setView] = useState<NotificationView>('active');
   const {
     items,
@@ -167,7 +170,13 @@ export function NotificationsInboxPage() {
     deleteNotification,
     markAllAsRead,
   } =
-    useNotificationsFeed({ view, limit: 50 });
+    useNotificationsFeed({
+      view,
+      limit: 50,
+      identityKey: sessionUser?.id && sessionUser?.contaId
+        ? `${sessionUser.contaId}:${sessionUser.id}`
+        : null,
+    });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [openingContext, setOpeningContext] = useState(false);
 

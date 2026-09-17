@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUnreadNotificationCount } from '@alusa/lib/services/notifications.service';
-import { privateJson } from '@/lib/private-cache';
 import {
   buildNotificationUnreadCountCacheKey,
   getNotificationCache,
@@ -31,11 +30,7 @@ export async function GET(_req: NextRequest) {
     const cached = await getNotificationCache<{ count: number }>(cacheKey);
     if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
       timer.end('GET /notifications/unread-count (cache hit)', { cacheState: cached.state });
-      return privateJson(cached.body, {
-        maxAgeSeconds: 60,
-        staleWhileRevalidateSeconds: 240,
-        cacheState: cached.state,
-      });
+      return json(200, cached.body);
     }
 
     const body = {
@@ -52,11 +47,7 @@ export async function GET(_req: NextRequest) {
     });
     timer.end('GET /notifications/unread-count (cache miss)');
 
-    return privateJson(body, {
-      maxAgeSeconds: 60,
-      staleWhileRevalidateSeconds: 240,
-      cacheState: 'MISS',
-    });
+    return json(200, body);
   } catch (error) {
     console.error('[Notifications][UnreadCount][GET]', error);
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível carregar o contador de notificações.' });
