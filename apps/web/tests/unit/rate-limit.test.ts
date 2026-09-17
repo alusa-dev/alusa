@@ -30,16 +30,14 @@ describe('rateLimitAsync', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ result: 1 }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ result: 1 }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ result: 5_000 }) });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ result: [1, 5_000] }) });
     vi.stubGlobal('fetch', fetchMock);
 
     const { rateLimitAsync } = await import('@/lib/rate-limit');
     const result = await rateLimitAsync('tenant:conta-1', 3, 60_000);
 
     expect(result).toMatchObject({ ok: true, remaining: 2 });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
       method: 'POST',
       headers: expect.objectContaining({
@@ -47,8 +45,12 @@ describe('rateLimitAsync', () => {
       }),
     });
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual([
-      'INCR',
+      'EVAL',
+      expect.stringContaining('redis.call("INCR", KEYS[1])'),
+      1,
       'alusa:test:rate-limit:tenant:conta-1',
+      '3',
+      '60000',
     ]);
   });
 });

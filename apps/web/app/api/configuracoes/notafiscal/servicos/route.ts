@@ -1,14 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { fiscalServiceInputSchema } from '@/features/configuracoes/notafiscal/dtos';
 import { createFiscalService, listFiscalServices } from '@alusa/finance';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
-
-type SessionUser = { id?: string; role?: string; contaId?: string };
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -32,12 +29,11 @@ function fiscalServiceErrorMessage(error: string): string | undefined {
 
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const user = (session as { user?: SessionUser } | null)?.user;
-    if (!user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const services = await listFiscalServices(user.contaId);
+    const services = await listFiscalServices(auth.contaId);
     return json(200, {
       data: services.map((s) => ({
         id: s.id,
@@ -73,18 +69,17 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const user = (session as { user?: SessionUser } | null)?.user;
-    if (!user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const gate = await guardFinancialAccountOr412(user.contaId);
+    const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
     const parsed = fiscalServiceInputSchema.safeParse(await request.json());
     if (!parsed.success) return json(422, { error: 'PAYLOAD_INVALIDO', details: parsed.error.flatten() });
 
-    const result = await createFiscalService(user.contaId, parsed.data);
+    const result = await createFiscalService(auth.contaId, parsed.data);
     if (!result.success) {
       const status =
         result.error === 'FISCAL_CORE_NOT_SYNCED'

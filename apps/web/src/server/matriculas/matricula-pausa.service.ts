@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { StatusMatricula } from '@prisma/client';
+import { prisma as defaultPrisma } from '@/src/prisma';
 import {
   pauseAssinatura,
   ativarAssinatura,
@@ -1136,9 +1137,9 @@ export type PausaResumoResult = {
 };
 
 export async function getPausaResumo(
-  prisma: PrismaClient,
   matriculaId: string,
   contaId: string,
+  prisma: PrismaClient = defaultPrisma,
 ): Promise<PausaResumoResult> {
   const matricula = await prisma.matricula.findFirst({
     where: { id: matriculaId, aluno: { contaId } },

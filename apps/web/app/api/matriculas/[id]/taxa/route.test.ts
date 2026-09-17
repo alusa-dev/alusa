@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  getSessionUser: vi.fn(),
+  resolveTenantSession: vi.fn(),
   getPayment: vi.fn(),
   updatePayment: vi.fn(),
   allocationFindFirst: vi.fn(),
@@ -14,7 +14,9 @@ const mocks = vi.hoisted(() => ({
   logCreate: vi.fn(),
 }));
 
-vi.mock('@/lib/auth/session', () => ({ getSessionUser: mocks.getSessionUser }));
+vi.mock('@/lib/api/with-tenant-session', () => ({
+  resolveTenantSession: mocks.resolveTenantSession,
+}));
 vi.mock('@alusa/finance', () => ({
   getPayment: mocks.getPayment,
   updatePayment: mocks.updatePayment,
@@ -58,7 +60,12 @@ const allocation = {
 describe('PUT /api/matriculas/[id]/taxa', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getSessionUser.mockResolvedValue({ id: 'user-1', contaId: 'conta-1', role: 'FINANCEIRO' });
+    mocks.resolveTenantSession.mockResolvedValue({
+      ok: true,
+      userId: 'user-1',
+      contaId: 'conta-1',
+      role: 'FINANCEIRO',
+    });
     mocks.allocationFindFirst.mockResolvedValue(allocation);
     mocks.allocationFindMany.mockResolvedValue([
       { id: 'allocation-1', matriculaId: 'matricula-1', netAmount: 100 },

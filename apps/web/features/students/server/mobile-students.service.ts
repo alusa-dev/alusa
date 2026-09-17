@@ -397,7 +397,7 @@ export async function updateMobileStudent(input: { userId: string; contaId: stri
   await assertMobileStudentAccess(input);
   const existing = await prisma.aluno.findFirst({ where: { id: input.studentId, contaId: input.contaId }, select: { foto: true } });
   if (!existing) throw new MobileStudentNotFoundError();
-  const { updateAluno } = await import('@alusa/lib');
+  const { updateAluno } = await import('@alusa/lib/alunos/aluno.service');
   const normalizedFoto = await normalizeAvatarUpload({ entity: 'aluno', entityId: input.studentId, contaId: input.contaId, foto: input.data.foto as string | null | undefined, previousFoto: existing.foto });
   await updateAluno({ ...(input.data as Parameters<typeof updateAluno>[0]), id: input.studentId, contaId: input.contaId, ...(normalizedFoto !== undefined ? { foto: normalizedFoto } : {}) });
 }

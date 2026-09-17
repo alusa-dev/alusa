@@ -4,14 +4,6 @@ vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
 }));
 
-vi.mock('@/src/prisma', () => ({
-  prisma: {
-    asaasAccount: {
-      findFirst: vi.fn(),
-    },
-  },
-}));
-
 vi.mock('@alusa/database', () => ({
   loadAsaasCredentials: vi.fn(),
 }));
@@ -22,17 +14,17 @@ vi.mock('@alusa/finance', () => ({
   getWebhookQueueMetrics: vi.fn(),
   getWebhookHealthStatus: vi.fn(),
   getKycAsaasReadCacheStats: vi.fn(),
+  hasStoredAsaasWebhookAuthTokenHash: vi.fn(),
   getPaymentCommandPreflightStats: vi.fn(),
-  recordAsaasReadIntent: vi.fn(),
 }));
 
 import { getServerSession } from 'next-auth';
-import { prisma } from '@/src/prisma';
 import { getAsaasBaseUrlFromEnvOrThrow } from '@alusa/finance';
 import { loadAsaasCredentials } from '@alusa/database';
 import {
   getAsaasReadIntentStats,
   getKycAsaasReadCacheStats,
+  hasStoredAsaasWebhookAuthTokenHash,
   getPaymentCommandPreflightStats,
   getWebhookHealthStatus,
   getWebhookQueueMetrics,
@@ -98,7 +90,7 @@ describe('GET /api/admin/financial/health', () => {
       MANUAL_REPAIR: 1,
       AUTHORITATIVE_DOCUMENT: 1,
     });
-    vi.mocked(prisma.asaasAccount.findFirst).mockResolvedValue({ webhookAuthTokenHash: 'hash' } as never);
+    vi.mocked(hasStoredAsaasWebhookAuthTokenHash).mockResolvedValue(true);
 
     process.env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET = 'secret';
   });

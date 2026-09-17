@@ -72,9 +72,9 @@ export async function POST(req: Request) {
       { success: true, data: result },
       { headers: { 'cache-control': 'no-store' } },
     );
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Erro ao reparar integração Asaas' },
+      { success: false, error: 'Erro ao reparar integração Asaas' },
       { status: 400, headers: { 'cache-control': 'no-store' } },
     );
   }

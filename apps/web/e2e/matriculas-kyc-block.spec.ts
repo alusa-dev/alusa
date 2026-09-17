@@ -98,6 +98,7 @@ test.describe('Matrículas: hard-block KYC (409)', () => {
 
     const matricula = await prisma.matricula.create({
       data: {
+        contaId,
         alunoId: aluno.id,
         dataInicio: new Date('2026-01-01'),
         dataFimContrato: new Date('2026-12-31'),
@@ -109,6 +110,7 @@ test.describe('Matrículas: hard-block KYC (409)', () => {
 
     await prisma.cobranca.create({
       data: {
+        contaId,
         matriculaId: matricula.id,
         tipo: 'TAXA_MATRICULA',
         status: 'PENDENTE',

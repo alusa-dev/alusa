@@ -20,9 +20,9 @@ export async function POST(req: Request) {
       requestMeta: requestAuditMetadata(req),
     });
     return NextResponse.json({ success: true, data }, { headers: { 'cache-control': 'no-store' } });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Erro ao abrir caso' },
+      { success: false, error: 'Erro ao abrir caso' },
       { status: 400, headers: { 'cache-control': 'no-store' } },
     );
   }

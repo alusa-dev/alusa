@@ -6,6 +6,7 @@ type ProductionSecurityEnv = {
   ASAAS_REDIS_ENABLED?: string;
   UPSTASH_REDIS_REST_URL?: string;
   UPSTASH_REDIS_REST_TOKEN?: string;
+  TRUST_PROXY_HEADERS?: string;
   FIN_WEBHOOK_SYNC_OVERRIDE?: string;
   FIN_WEBHOOK_INLINE_DRAIN?: string;
   ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS?: string;
@@ -46,6 +47,9 @@ export function assertProductionSecurityEnv(env: ProductionSecurityEnv = process
   }
   if (!env.UPSTASH_REDIS_REST_TOKEN?.trim()) {
     missing.push('UPSTASH_REDIS_REST_TOKEN');
+  }
+  if (!isEnabled(env.TRUST_PROXY_HEADERS)) {
+    missing.push('TRUST_PROXY_HEADERS=true');
   }
   if (isEnabled(env.FIN_WEBHOOK_SYNC_OVERRIDE)) {
     missing.push('FIN_WEBHOOK_SYNC_OVERRIDE=false ou ausente');

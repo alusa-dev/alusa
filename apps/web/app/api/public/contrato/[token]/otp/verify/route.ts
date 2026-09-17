@@ -1,14 +1,10 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
-import {
-  createContractEvidence,
-  findPublicContractByToken,
-  prisma,
-  verifyPublicContractSignatureOtp,
-} from '@alusa/lib';
+import { findPublicContractByToken } from '@alusa/lib/contracts/use-cases/sign-contract';
 import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
 import { publicVerificarAssinaturaOtpInputDTOSchema } from '@/features/contratos/dtos';
+import { verifyPublicContractOtpWithEvidence } from '@/src/server/contracts/public-contract-evidence.service';
 
 function mapError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
@@ -41,26 +37,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (contract.status === 'EXPIRADO') throw new Error('CONTRACT_EXPIRED');
     if (contract.tokenExpiraEm && new Date() > contract.tokenExpiraEm) throw new Error('CONTRACT_LINK_EXPIRED');
 
-    let result;
-    try {
-      result = await prisma.$transaction(async (tx) => {
-        const verified = await verifyPublicContractSignatureOtp({ contaId: contract.contaId, contratoId: contract.id, cpf: body.cpf, code: body.code, contractHash: contract.hashPdf, db: tx });
-        await createContractEvidence(tx as never, { contaId: contract.contaId, contratoId: contract.id, type: 'SIGNATURE_OTP_VERIFIED', actorType: 'PUBLIC', ip: clientIp, userAgent: request.headers.get('user-agent'), payload: { otpId: verified.otpId } });
-        return verified;
-      });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'SIGNATURE_OTP_FAILED';
-      await createContractEvidence(prisma as never, {
-        contaId: contract.contaId,
-        contratoId: contract.id,
-        type: reason === 'SIGNATURE_OTP_EXPIRED' ? 'SIGNATURE_OTP_EXPIRED' : 'SIGNATURE_OTP_FAILED',
-        actorType: 'PUBLIC',
-        ip: clientIp,
-        userAgent: request.headers.get('user-agent'),
-        payload: { reason },
-      }).catch(() => undefined);
-      throw error;
-    }
+    const result = await verifyPublicContractOtpWithEvidence({
+      contaId: contract.contaId,
+      contratoId: contract.id,
+      cpf: body.cpf,
+      code: body.code,
+      contractHash: contract.hashPdf,
+      ip: clientIp,
+      userAgent: request.headers.get('user-agent'),
+    });
 
     return jsonSensitive({ success: true, verificationToken: result.verificationToken });
   } catch (error) {

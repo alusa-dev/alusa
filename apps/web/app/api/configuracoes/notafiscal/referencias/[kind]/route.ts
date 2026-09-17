@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { listFiscalReferenceCodes } from '@alusa/finance';
 
@@ -20,7 +19,6 @@ const querySchema = z.object({
   description: z.string().optional(),
 });
 
-type SessionUser = { id?: string; role?: string; contaId?: string };
 type RouteContext = { params: Promise<{ kind: string }> };
 
 function json(status: number, body: unknown) {
@@ -33,14 +31,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const kind = kindSchema.safeParse(rawKind);
     if (!kind.success) return json(404, { error: 'REFERENCIA_FISCAL_INVALIDA' });
 
-    const session = await getServerSession(authOptions).catch(() => null);
-    const user = (session as { user?: SessionUser } | null)?.user;
-    if (!user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
 
-    const gate = await guardFinancialAccountOr412(user.contaId);
+    const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
     const parsed = querySchema.safeParse({
@@ -54,7 +51,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     }
 
     const result = await listFiscalReferenceCodes({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       kind: kind.data,
       ...parsed.data,
     });

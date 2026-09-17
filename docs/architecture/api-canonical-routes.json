@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "policy": "aliases remain compatible until internal consumers, telemetry and contract tests prove zero usage",
+  "families": [
+    {
+      "context": "finance",
+      "canonical": "/api/finance",
+      "aliases": ["/api/financeiro", "/api/cobrancas"],
+      "aliasLifecycle": {
+        "/api/financeiro": "active-migration",
+        "/api/cobrancas": "active-migration"
+      },
+      "status": "migration",
+      "owner": "packages/finance"
+    },
+    {
+      "context": "students",
+      "canonical": "/api/alunos",
+      "aliases": ["/api/students"],
+      "aliasLifecycle": {
+        "/api/students": "retired"
+      },
+      "status": "migration",
+      "owner": "apps/web/src/server/alunos"
+    },
+    {
+      "context": "responsibles",
+      "canonical": "/api/responsaveis",
+      "aliases": ["/api/responsibles"],
+      "aliasLifecycle": {
+        "/api/responsibles": "retired"
+      },
+      "status": "migration",
+      "owner": "apps/web/src/server/alunos"
+    },
+    {
+      "context": "enrollments",
+      "canonical": "/api/matriculas",
+      "aliases": ["/api/enrollments"],
+      "aliasLifecycle": {
+        "/api/enrollments": "retired"
+      },
+      "status": "migration",
+      "owner": "apps/web/src/server/matriculas"
+    },
+    {
+      "context": "contracts",
+      "canonical": "/api/contratos",
+      "aliases": [],
+      "status": "canonical",
+      "owner": "apps/web/src/server/contracts"
+    }
+  ]
+}

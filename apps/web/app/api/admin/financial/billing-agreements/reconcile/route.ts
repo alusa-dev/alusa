@@ -3,11 +3,7 @@ import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 
 import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/src/prisma';
-import {
-  createPrismaBillingIntegrityRepository,
-  reconcileBillingAgreementIntegrity,
-} from '@alusa/finance';
+import { reconcileBillingAgreementsForTenant } from '@/src/server/billing-agreements/reconciliation-http.service';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -32,10 +28,8 @@ export async function GET() {
   try {
     const auth = await requireAdmin();
     if ('error' in auth) return json(auth.status ?? 403, { error: auth.error });
-    const repository = createPrismaBillingIntegrityRepository(prisma);
-    const audit = await reconcileBillingAgreementIntegrity({
+    const audit = await reconcileBillingAgreementsForTenant({
       contaId: auth.user.contaId,
-      repository,
       dryRun: true,
     });
     return json(200, audit);
@@ -52,10 +46,8 @@ export async function POST(request: Request) {
     if ('error' in auth) return json(auth.status ?? 403, { error: auth.error });
     const parsed = executeSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return json(400, { error: 'PAYLOAD_INVALIDO', issues: parsed.error.issues });
-    const repository = createPrismaBillingIntegrityRepository(prisma);
-    const result = await reconcileBillingAgreementIntegrity({
+    const result = await reconcileBillingAgreementsForTenant({
       contaId: auth.user.contaId,
-      repository,
       dryRun: false,
       actionIds: parsed.data.actionIds,
     });

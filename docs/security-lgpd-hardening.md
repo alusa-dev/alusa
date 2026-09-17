@@ -1,6 +1,6 @@
 # LGPD e hardening de segurança da Alusa
 
-Última atualização: 27 de maio de 2026
+Última atualização: 15 de setembro de 2026
 
 Este documento registra a primeira entrega de hardening LGPD e segurança da Alusa como ERP Educacional multi-tenant com integração financeira white label via Asaas.
 
@@ -51,6 +51,7 @@ pnpm security:check
 
 - Implementar job assíncrono de exportação LGPD com storage temporário e expiração.
 - Ampliar logs de `SensitiveAccessLog` em telas de suporte, developer, exportações, rotação de chaves e alterações financeiras críticas.
-- Expandir testes cross-tenant com RLS real em banco de teste.
+- Repetir em staging/produção a validação cross-tenant usando a role configurada
+  em `DATABASE_RLS_URL`; o teste local já cobre uma role `NOBYPASSRLS` efêmera.
 - Formalizar runbooks de incidente, vazamento entre tenants, rotação de chaves, falha Asaas e restore.
 - Exigir MFA para admin, financeiro, suporte, developer/global-admin, transferências, exportações e rotação de API key.

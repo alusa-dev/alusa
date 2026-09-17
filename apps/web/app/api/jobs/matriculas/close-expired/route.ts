@@ -1,16 +1,11 @@
 import { NextResponse } from 'next/server';
 
+import { closeExpiredEnrollmentsJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { prisma } from '@/prisma/client';
 import { closeExpiredEnrollmentsWithoutSuccessor } from '@/src/server/matriculas/enrollment-closure.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
-
-function clampPositiveInt(value: string | null, fallback: number, max: number) {
-  const parsed = Number(value ?? fallback);
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(max, Math.trunc(parsed))) : fallback;
-}
 
 function parseNow(value: string | null) {
   if (!value) return undefined;
@@ -21,9 +16,14 @@ function parseNow(value: string | null) {
 
 async function run(req: Request) {
   const url = new URL(req.url);
+  const query = closeExpiredEnrollmentsJobQueryDTOSchema.parse({
+    contaId: url.searchParams.get('contaId'),
+    limit: url.searchParams.get('limit'),
+    now: url.searchParams.get('now'),
+  });
   const scope = await resolveTenantScope(req, {
     allowCron: true,
-    requestedContaId: url.searchParams.get('contaId'),
+    requestedContaId: query.contaId,
     requireContaIdForCron: true,
   });
   if (!scope.ok) return scope.response;
@@ -35,14 +35,13 @@ async function run(req: Request) {
   }
 
   try {
-    const now = parseNow(url.searchParams.get('now')) ?? new Date();
+    const now = parseNow(query.now ?? null) ?? new Date();
     const result = await closeExpiredEnrollmentsWithoutSuccessor(
       {
         contaId: scope.contaId,
         now,
-        limit: clampPositiveInt(url.searchParams.get('limit'), 100, 500),
+        limit: query.limit,
       },
-      { prisma },
     );
 
     return NextResponse.json({
@@ -55,8 +54,7 @@ async function run(req: Request) {
       {
         error: {
           code: 'ERRO_ENCERRAR_MATRICULAS_EXPIRADAS',
-          message:
-            error instanceof Error ? error.message : 'Erro ao encerrar matriculas expiradas.',
+          message: 'Não foi possível encerrar matrículas expiradas.',
         },
       },
       { status: 500 },

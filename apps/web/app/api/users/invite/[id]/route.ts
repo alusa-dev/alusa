@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { InviteUserService } from '@alusa/lib';
+import * as InviteUserService from '@alusa/lib/server/services/invite-user-service';
 import { deleteInviteResultDTOSchema } from '@/features/users/dtos';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 const ParamsSchema = z.object({ id: z.string().min(1) });
 type RouteContext = { params: Promise<{ id: string }> };
@@ -19,20 +18,20 @@ export async function DELETE(_req: Request, ctx: RouteContext) {
     const isTest =
       process.env.NODE_ENV === 'test' ||
       (process.env.NODE_ENV !== 'production' && process.env.TEST_ROUTES_ENABLED === 'true');
-    const session = await getServerSession(authOptions);
-    if (!session?.user && !isTest) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok && !isTest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const inviterRole = isTest
       ? 'ADMIN'
-      : session && typeof session.user === 'object'
-        ? (session.user as { role?: string }).role
+      : auth.ok
+        ? auth.role
         : undefined;
     const inviterContaId = isTest
       ? 'conta-default'
-      : session && typeof session.user === 'object'
-        ? (session.user as { contaId?: string }).contaId
+      : auth.ok
+        ? auth.contaId
         : undefined;
 
     if (String(inviterRole || '').toUpperCase() !== 'ADMIN') {

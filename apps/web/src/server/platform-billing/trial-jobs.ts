@@ -1,5 +1,6 @@
 import { Prisma, NotificationCategory, NotificationSeverity, NotificationType, Role, type PrismaClient } from '@prisma/client';
-import { createNotification } from '@alusa/lib';
+import { prisma as defaultPrisma } from '@/lib/prisma';
+import { createNotification } from '@alusa/lib/services/notifications.service';
 import type { PlatformBillingEnvironment } from '@alusa/platform-billing';
 import { resolvePlatformBillingEnvironment } from './platform-billing-server';
 
@@ -15,15 +16,16 @@ export type ExpirePlatformBillingTrialsResult = {
  * policy also derives RESTRICTED as soon as trialEndsAt is reached.
  */
 export async function expirePlatformBillingTrials(input: {
-  prisma: PrismaClient;
+  prisma?: PrismaClient;
   limit?: number;
   now?: Date;
   environment?: PlatformBillingEnvironment;
 }): Promise<ExpirePlatformBillingTrialsResult> {
+  const db = input.prisma ?? defaultPrisma;
   const environment = input.environment ?? resolvePlatformBillingEnvironment();
   const now = input.now ?? new Date();
   const limit = Math.max(1, Math.min(input.limit ?? 100, 200));
-  const accounts = await input.prisma.platformBillingAccount.findMany({
+  const accounts = await db.platformBillingAccount.findMany({
     where: {
       environment,
       status: 'TRIALING',
@@ -48,7 +50,7 @@ export async function expirePlatformBillingTrials(input: {
   let notified = 0;
 
   for (const account of accounts) {
-    const changed = await input.prisma.$transaction(async (tx) => {
+    const changed = await db.$transaction(async (tx) => {
       const update = await tx.platformBillingAccount.updateMany({
         where: {
           id: account.id,

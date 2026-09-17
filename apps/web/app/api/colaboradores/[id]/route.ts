@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { prisma } from '@/src/prisma';
 import { z } from 'zod';
 import {
   generoEnum,
@@ -12,6 +10,7 @@ import {
   remove as removeColab,
 } from '../../../../../../packages/lib/src/server/services/colaborador-service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
+import { getColaborador } from '@/src/server/colaboradores/colaborador-read.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -33,8 +32,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   }
   const { contaId } = user;
 
-  const db = prisma as unknown as { colaborador: any };
-  const colab = await db.colaborador.findFirst({ where: { id: ctxParams.id, contaId } });
+  const colab = await getColaborador({ id: ctxParams.id, contaId });
   if (!colab) return jsonError(404, 'NAO_ENCONTRADO', 'Colaborador não encontrado');
   return NextResponse.json({ data: colab }, { headers: { 'cache-control': 'no-store' } });
 }

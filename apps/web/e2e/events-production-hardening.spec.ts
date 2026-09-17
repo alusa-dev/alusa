@@ -89,7 +89,7 @@ async function seedEventMapBase(page: import('@playwright/test').Page) {
 }
 
 test.describe('events production hardening jobs', () => {
-  test('protects and idempotently expires stale public reservations without external payment', async ({ page }) => {
+  test('protects and idempotently expires stale public reservations without external payment', async ({ page, request }) => {
     const { contaId, event, map, version, seat } = await seedEventMapBase(page);
 
     const reservation = await prisma.eventMapReservation.create({
@@ -130,7 +130,7 @@ test.describe('events production hardening jobs', () => {
       },
     });
 
-    const unauthorized = await page.request.get(`/api/jobs/events-expire-reservations?contaId=${contaId}`);
+    const unauthorized = await request.get(`/api/jobs/events-expire-reservations?contaId=${contaId}`);
     expect(unauthorized.status()).toBe(401);
 
     const first = await page.request.get(`/api/jobs/events-expire-reservations?contaId=${contaId}&limit=10`, {

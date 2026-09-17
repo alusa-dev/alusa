@@ -320,6 +320,12 @@ export const deleteManagedUserResultDTOSchema = z.object({
 
 export type DeleteManagedUserResultDTO = z.infer<typeof deleteManagedUserResultDTOSchema>;
 
+export const deleteManagedUserInputDTOSchema = z.object({
+  reason: z.string().trim().max(500).optional(),
+}).strict();
+
+export type DeleteManagedUserInputDTO = z.input<typeof deleteManagedUserInputDTOSchema>;
+
 export const deleteInviteResultDTOSchema = z.object({
   ok: z.literal(true),
 });

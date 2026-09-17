@@ -2,11 +2,10 @@ import { NextResponse } from 'next/server';
 import { z, ZodError } from 'zod';
 
 import { getSessionUser } from '@/lib/auth/session';
-import { prisma } from '@/prisma/client';
 import {
-  deleteRenewalCampaign,
-  updateRenewalCampaign,
-} from '@/src/server/matriculas/renewal-management.service';
+  deleteRenewalCampaignFromHttp,
+  updateRenewalCampaignFromHttp,
+} from '@/src/server/matriculas/renewal-http-commands.service';
 import { hasRenewalPermission } from '@/src/server/matriculas/renewal-permissions.service';
 
 const updateSchema = z.object({
@@ -53,17 +52,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       );
     }
 
-    const campaign = await updateRenewalCampaign(
-      {
-        contaId: user.contaId,
-        actorId: user.id,
-        campaignId: id,
-        ...body,
-        campaignStartsAt,
-        campaignEndsAt,
-      },
-      { prisma },
-    );
+    const campaign = await updateRenewalCampaignFromHttp({
+      contaId: user.contaId,
+      actorId: user.id,
+      campaignId: id,
+      ...body,
+      campaignStartsAt,
+      campaignEndsAt,
+    });
     return NextResponse.json({ campaign }, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     if (error instanceof ZodError) {
@@ -75,7 +71,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return jsonError(
       500,
       'ERRO_ATUALIZAR_CAMPANHA',
-      error instanceof Error ? error.message : 'Erro ao atualizar campanha.',
+      'Erro ao atualizar campanha.',
     );
   }
 }
@@ -89,14 +85,11 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
 
   try {
     const { id } = await context.params;
-    const result = await deleteRenewalCampaign(
-      {
-        contaId: user.contaId,
-        actorId: user.id,
-        campaignId: id,
-      },
-      { prisma },
-    );
+    const result = await deleteRenewalCampaignFromHttp({
+      contaId: user.contaId,
+      actorId: user.id,
+      campaignId: id,
+    });
     return NextResponse.json(result, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     if (error instanceof Error && error.message === 'CAMPANHA_NAO_ENCONTRADA') {
@@ -105,7 +98,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
     return jsonError(
       500,
       'ERRO_EXCLUIR_CAMPANHA',
-      error instanceof Error ? error.message : 'Erro ao excluir campanha.',
+      'Erro ao excluir campanha.',
     );
   }
 }

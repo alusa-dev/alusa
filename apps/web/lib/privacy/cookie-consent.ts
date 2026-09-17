@@ -20,8 +20,12 @@ export const cookieConsentInputSchema = z
   })
   .strict();
 
+// Canonical HTTP DTO name. Keep the legacy export for existing consumers.
+export const cookieConsentInputDTOSchema = cookieConsentInputSchema;
+
 export type CookieCategories = z.infer<typeof cookieCategoriesSchema>;
 export type CookieConsentInput = z.infer<typeof cookieConsentInputSchema>;
+export type CookieConsentInputDTO = z.infer<typeof cookieConsentInputDTOSchema>;
 
 export const defaultCookieCategories: CookieCategories = {
   essential: true,

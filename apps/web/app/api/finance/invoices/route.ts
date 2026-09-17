@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { assertPlatformAccessForConta, platformBillingAccessResponse } from '@/src/server/platform-billing/capacity';
 import {
@@ -14,33 +13,26 @@ import {
   mapListInvoicesOutputToDTO,
 } from '@alusa/finance';
 
-type SessionUser = { id?: string; role?: string; contaId?: string };
-
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
-}
-
 export async function POST(req: NextRequest) {
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
     try {
-      await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'CHARGE_CREATE' });
+      await assertPlatformAccessForConta({ contaId: auth.contaId, capability: 'CHARGE_CREATE' });
     } catch (error) {
       const blocked = platformBillingAccessResponse(error);
       if (blocked) return json(blocked.status, blocked.body);
       throw error;
     }
 
-    const gate = await guardFinancialAccountOr412(user.contaId);
+    const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
     const raw = await req.json().catch(() => null);
@@ -56,13 +48,13 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await scheduleChargeInvoice({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       chargeId: parsed.data.chargeId,
       serviceDescription: parsed.data.serviceDescription,
       observations: parsed.data.observations,
       deductions: parsed.data.deductions,
       effectiveDate: parsed.data.effectiveDate,
-      actor: { type: 'USER', id: user.id },
+      actor: { type: 'USER', id: auth.userId },
     });
 
     if (!result.success) {
@@ -96,11 +88,11 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const gate = await guardFinancialAccountOr412(user.contaId);
+    const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
     const { searchParams } = new URL(req.url);
@@ -121,7 +113,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const input = mapListInvoicesQueryToInput(parsed.data, user.contaId);
+    const input = mapListInvoicesQueryToInput(parsed.data, auth.contaId);
     const data = await listInvoices(input);
     const dto = mapListInvoicesOutputToDTO(data, parsed.data);
 

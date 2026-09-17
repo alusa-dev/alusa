@@ -12,7 +12,5 @@
     "**/*.spec.ts",
     "**/*.spec.tsx",
     "components/colaboradores/ColaboradorWizardDialog.tsx",
-    "context7",
-    "../../context7"
   ]
 }

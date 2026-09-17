@@ -1,6 +1,6 @@
 import type { BillingType } from '@alusa/asaas';
 import { prisma } from '@alusa/database';
-import { isValidCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
+import { isValidCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
 import {
   Prisma,
   ChargeStatus,
@@ -12,7 +12,10 @@ import {
   SaleStatus,
   StatusMatricula,
 } from '@prisma/client';
-import { formatProductVariantTitle, resolveProductSalePrice } from '@alusa/lib';
+import {
+  formatProductVariantTitle,
+  resolveProductSalePrice,
+} from '@alusa/lib/services/product-variant-rules';
 
 import { hashPayload, isPrismaUniqueViolation } from '../core';
 import { auditLogService } from '../foundation/audit-log.service';

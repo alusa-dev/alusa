@@ -2,12 +2,11 @@ import { NextResponse } from 'next/server';
 import { z, ZodError } from 'zod';
 
 import { getSessionUser } from '@/lib/auth/session';
-import { prisma } from '@/prisma/client';
-import { resolveRenewalPending } from '@/src/server/matriculas/renewal-governance.service';
 import {
   RenewalPermissionError,
   requireRenewalPermission,
 } from '@/src/server/matriculas/renewal-permissions.service';
+import { resolveRenewalPendingFromHttp } from '@/src/server/matriculas/renewal-http-commands.service';
 
 const bodySchema = z.object({
   resolution: z.string().trim().min(5),
@@ -32,16 +31,13 @@ export async function POST(
     requireRenewalPermission({ role: user.role, permission: 'renewal.pending.resolve' });
     const params = await context.params;
     const body = bodySchema.parse(await request.json().catch(() => null));
-    const pending = await resolveRenewalPending(
-      {
-        contaId: user.contaId,
-        pendingId: params.id,
-        actorId: user.id,
-        resolution: body.resolution,
-        status: body.status,
-      },
-      { prisma },
-    );
+    const pending = await resolveRenewalPendingFromHttp({
+      contaId: user.contaId,
+      pendingId: params.id,
+      actorId: user.id,
+      resolution: body.resolution,
+      status: body.status,
+    });
     return NextResponse.json({ pending }, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     if (error instanceof RenewalPermissionError) {
@@ -59,8 +55,7 @@ export async function POST(
     return jsonError(
       500,
       'ERRO_RESOLVER_PENDENCIA',
-      error instanceof Error ? error.message : 'Erro ao resolver pendência.',
+      'Erro ao resolver pendência.',
     );
   }
 }
-

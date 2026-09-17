@@ -1,11 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { z } from 'zod';
 
 import { GET } from '@/app/api/financeiro/extrato/route';
 
-vi.mock('@/lib/safe-server-session', () => ({
-  safeGetServerSession: vi.fn(),
+vi.mock('@/lib/api/with-tenant-session', () => ({
+  resolveTenantSession: vi.fn(),
 }));
 
 vi.mock('@/lib/finance/financial-account-gate', () => ({
@@ -37,9 +36,16 @@ vi.mock('@alusa/finance', async () => {
 });
 
 async function mockSession(user: Record<string, string> | null) {
-  const mod = await import('@/lib/safe-server-session');
-  vi.mocked(mod.safeGetServerSession).mockResolvedValue(
-    user ? ({ user } as any) : null,
+  const mod = await import('@/lib/api/with-tenant-session');
+  vi.mocked(mod.resolveTenantSession).mockResolvedValue(
+    user
+      ? ({
+          ok: true,
+          contaId: user.contaId,
+          userId: user.id,
+          role: user.role,
+        } as never)
+      : { ok: false, reason: 'UNAUTHENTICATED' },
   );
 }
 
@@ -110,7 +116,7 @@ describe('GET /api/financeiro/extrato', () => {
           maxWindowPages: 50,
         },
       },
-    } as any);
+    } as never);
 
     const req = new NextRequest('http://localhost:3000/api/financeiro/extrato');
     const res = await GET(req);
@@ -130,7 +136,7 @@ describe('GET /api/financeiro/extrato', () => {
     vi.mocked(getExtrato).mockResolvedValue({
       success: true,
       data: EMPTY_RESPONSE,
-    } as any);
+    } as never);
 
     const req = new NextRequest(
       'http://localhost:3000/api/financeiro/extrato?startDate=2025-01-01&endDate=2025-01-31&direction=asc&pageSize=50&page=2&type=RECEITA&search=teste',
@@ -160,7 +166,7 @@ describe('GET /api/financeiro/extrato', () => {
     vi.mocked(getExtrato).mockResolvedValue({
       success: false,
       error: 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS',
-    } as any);
+    } as never);
 
     const req = new NextRequest('http://localhost:3000/api/financeiro/extrato');
     const res = await GET(req);

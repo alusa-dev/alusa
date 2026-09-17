@@ -1,12 +1,26 @@
 type Bucket = { count: number; expiresAt: number };
-export type RateLimitResult = { ok: boolean; remaining: number; resetAt: number };
+export type RateLimitSource = 'redis' | 'memory' | 'bypassed' | 'unavailable';
+export type RateLimitResult = {
+  ok: boolean;
+  remaining: number;
+  resetAt: number;
+  source?: RateLimitSource;
+  degraded?: boolean;
+};
 
 const globalState = globalThis as unknown as { __alusaRateLimit?: Map<string, Bucket> };
 const store = globalState.__alusaRateLimit ?? new Map<string, Bucket>();
 globalState.__alusaRateLimit = store;
 
-function isRateLimitBypassedInDev() { return process.env.NODE_ENV !== 'production' && process.env.RATE_LIMIT_DISABLE_IN_DEV !== 'false'; }
-function shouldTrustProxyHeaders() { return process.env.TRUST_PROXY_HEADERS === 'true' || process.env.VERCEL === '1'; }
+function isRateLimitBypassedInDev() {
+  return process.env.NODE_ENV !== 'production' && process.env.RATE_LIMIT_DISABLE_IN_DEV !== 'false';
+}
+
+function shouldTrustProxyHeaders() {
+  // Proxy headers are only authoritative when the deployment explicitly opts
+  // in. Authenticated tenant/user keys remain available even when this is off.
+  return process.env.TRUST_PROXY_HEADERS === 'true';
+}
 
 function localRateLimit(key: string, limit: number, windowMs: number): RateLimitResult {
   const now = Date.now();
@@ -14,11 +28,11 @@ function localRateLimit(key: string, limit: number, windowMs: number): RateLimit
   if (!bucket || bucket.expiresAt <= now) {
     const expiresAt = now + windowMs;
     store.set(key, { count: 1, expiresAt });
-    return { ok: true, remaining: Math.max(0, limit - 1), resetAt: expiresAt };
+    return { ok: true, remaining: Math.max(0, limit - 1), resetAt: expiresAt, source: 'memory', degraded: true };
   }
-  if (bucket.count >= limit) return { ok: false, remaining: 0, resetAt: bucket.expiresAt };
+  if (bucket.count >= limit) return { ok: false, remaining: 0, resetAt: bucket.expiresAt, source: 'memory', degraded: true };
   bucket.count += 1;
-  return { ok: true, remaining: Math.max(0, limit - bucket.count), resetAt: bucket.expiresAt };
+  return { ok: true, remaining: Math.max(0, limit - bucket.count), resetAt: bucket.expiresAt, source: 'memory', degraded: true };
 }
 
 function redisConfig() {
@@ -31,7 +45,13 @@ function redisConfig() {
 async function redisCommand<T>(command: unknown[]): Promise<T> {
   const config = redisConfig();
   if (!config) throw new Error('Redis REST rate limit is not configured');
-  const response = await fetch(config.url, { method: 'POST', headers: { authorization: `Bearer ${config.token}`, 'content-type': 'application/json' }, body: JSON.stringify(command) });
+  const timeoutMs = Math.min(Math.max(Number(process.env.RATE_LIMIT_REDIS_TIMEOUT_MS ?? 250), 50), 2_000);
+  const response = await fetch(config.url, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${config.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify(command),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (!response.ok) throw new Error(`Redis REST rate limit failed with HTTP ${response.status}`);
   const payload = (await response.json()) as { result?: T; error?: string };
   if (payload.error) throw new Error(payload.error);
@@ -44,22 +64,40 @@ function redisKey(key: string) {
 }
 
 async function distributedRateLimit(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
-  const count = Number(await redisCommand<number>(['INCR', redisKey(key)]));
-  if (count === 1) await redisCommand(['PEXPIRE', redisKey(key), windowMs]);
-  const ttlMs = Number(await redisCommand<number>(['PTTL', redisKey(key)]));
-  return { ok: count <= limit, remaining: Math.max(0, limit - count), resetAt: Date.now() + Math.max(ttlMs, 0) };
+  // One atomic EVAL avoids the race between INCR and PEXPIRE and reduces the
+  // limiter from three network round trips to one.
+  const script = [
+    'local count = redis.call("INCR", KEYS[1])',
+    'if count == 1 then redis.call("PEXPIRE", KEYS[1], ARGV[2]) end',
+    'local ttl = redis.call("PTTL", KEYS[1])',
+    'return {count, ttl}',
+  ].join('\n');
+  const result = await redisCommand<unknown>(['EVAL', script, 1, redisKey(key), String(limit), String(windowMs)]);
+  const values = Array.isArray(result) ? result : [];
+  const count = Number(values[0] ?? 0);
+  const ttlMs = Number(values[1] ?? windowMs);
+  return {
+    ok: count <= limit,
+    remaining: Math.max(0, limit - count),
+    resetAt: Date.now() + Math.max(ttlMs, 0),
+    source: 'redis',
+    degraded: false,
+  };
 }
 
 export function rateLimit(key: string, limit: number, windowMs: number): RateLimitResult {
-  if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now() };
+  if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now(), source: 'bypassed', degraded: false };
   return localRateLimit(key, limit, windowMs);
 }
 
 export async function rateLimitAsync(key: string, limit: number, windowMs: number) {
-  if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now() };
+  if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now(), source: 'bypassed' as const, degraded: false };
   if (!redisConfig()) return rateLimit(key, limit, windowMs);
   try { return await distributedRateLimit(key, limit, windowMs); }
-  catch (error) { console.warn('[rate-limit][redis-fallback]', { key, error: error instanceof Error ? error.message : String(error) }); return rateLimit(key, limit, windowMs); }
+  catch (error) {
+    console.warn('[rate-limit][redis-fallback]', { error: error instanceof Error ? error.message : String(error) });
+    return { ...rateLimit(key, limit, windowMs), degraded: true };
+  }
 }
 
 /**
@@ -68,11 +106,11 @@ export async function rateLimitAsync(key: string, limit: number, windowMs: numbe
  * process-local Map is not sufficient across serverless replicas.
  */
 export async function strictRateLimitAsync(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
-  if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now() };
+  if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now(), source: 'bypassed', degraded: false };
   if (!redisConfig()) {
     if (process.env.NODE_ENV === 'production') {
       console.error('[rate-limit][strict-unavailable]', { reason: 'redis_not_configured' });
-      return { ok: false, remaining: 0, resetAt: Date.now() + windowMs };
+      return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, source: 'unavailable', degraded: true };
     }
     return rateLimit(key, limit, windowMs);
   }
@@ -80,18 +118,18 @@ export async function strictRateLimitAsync(key: string, limit: number, windowMs:
     return await distributedRateLimit(key, limit, windowMs);
   } catch (error) {
     console.error('[rate-limit][strict-unavailable]', { error: error instanceof Error ? error.message : String(error) });
-    return { ok: false, remaining: 0, resetAt: Date.now() + windowMs };
+    return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, source: 'unavailable', degraded: true };
   }
 }
 
 export async function authRateLimitAsync(key: string, limit: number, windowMs: number) {
-  if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now() };
+  if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now(), source: 'bypassed' as const, degraded: false };
   if (!redisConfig()) {
-    if (process.env.NODE_ENV === 'production') { console.error('[rate-limit][auth-unavailable]', { reason: 'redis_not_configured' }); return { ok: false, remaining: 0, resetAt: Date.now() + windowMs }; }
+    if (process.env.NODE_ENV === 'production') { console.error('[rate-limit][auth-unavailable]', { reason: 'redis_not_configured' }); return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, source: 'unavailable' as const, degraded: true }; }
     return rateLimit(key, limit, windowMs);
   }
   try { return await distributedRateLimit(key, limit, windowMs); }
-  catch (error) { console.error('[rate-limit][auth-unavailable]', { error: error instanceof Error ? error.message : String(error) }); return { ok: false, remaining: 0, resetAt: Date.now() + windowMs }; }
+  catch (error) { console.error('[rate-limit][auth-unavailable]', { error: error instanceof Error ? error.message : String(error) }); return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, source: 'unavailable' as const, degraded: true }; }
 }
 
 export async function rateLimitSubject(value: string) {

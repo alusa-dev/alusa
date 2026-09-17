@@ -82,7 +82,7 @@ describe('GET /api/matriculas/[id]/pausa-resumo', () => {
     expect(data.operacoes).toHaveLength(1);
     expect(data.operacoes[0].cobrancasFuturasRemovidas).toBe(2);
 
-    expect(getPausaResumo).toHaveBeenCalledWith(expect.anything(), 'mat-1', 'conta-1');
+    expect(getPausaResumo).toHaveBeenCalledWith('mat-1', 'conta-1');
   });
 
   it('deve retornar resumo quando matrícula não está pausada', async () => {

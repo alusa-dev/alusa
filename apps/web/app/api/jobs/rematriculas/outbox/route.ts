@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { prisma } from '@/prisma/client';
-import { processRenewalOutbox } from '@/src/server/matriculas/renewal-outbox.service';
+import { processRenewalOutboxFromJob } from '@/src/server/matriculas/renewal-job-commands.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -35,26 +34,23 @@ async function run(req: Request) {
   }
 
   try {
-    const results = await processRenewalOutbox(
-      {
-        contaId: scope.contaId,
-        now: parseNow(url.searchParams.get('now')),
-        limit: clampPositiveInt(url.searchParams.get('limit'), 25, 100),
-      },
-      { prisma },
-    );
+    const results = await processRenewalOutboxFromJob({
+      contaId: scope.contaId,
+      now: parseNow(url.searchParams.get('now')),
+      limit: clampPositiveInt(url.searchParams.get('limit'), 25, 100),
+    });
 
     return NextResponse.json({
       success: results.every((item) => item.status !== 'FAILED'),
       processed: results.length,
       results,
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
         error: {
           code: 'ERRO_PROCESSAR_OUTBOX_REMATRICULA',
-          message: error instanceof Error ? error.message : 'Erro ao processar outbox.',
+          message: 'Erro ao processar outbox.',
         },
       },
       { status: 500 },
@@ -69,4 +65,3 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   return run(req);
 }
-

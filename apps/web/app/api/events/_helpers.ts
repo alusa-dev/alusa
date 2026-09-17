@@ -3,7 +3,7 @@ import { ZodError } from 'zod';
 
 import { EventsError, type EventsContext } from '@alusa/lib/events/events.service';
 
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { assertPlatformAccessForConta, platformBillingAccessResponse } from '@/src/server/platform-billing/capacity';
 import { logApiError, logApiResponse } from '@/lib/observability/api-logger';
 
@@ -111,15 +111,17 @@ export function jsonError(status: number, code: string, message: string, details
 }
 
 export async function getEventsContext(permission: EventsPermission): Promise<EventsContext & { role: string }> {
-  const session = await safeGetServerSession();
-  const user = session?.user as { contaId?: string | null; id?: string | null; role?: string | null } | undefined;
-  const contaId = user?.contaId?.trim();
-  const userId = user?.id?.trim();
-  const role = user?.role?.trim() || 'ANONYMOUS';
-
-  if (!contaId || !userId) {
-    throw new EventsError('NAO_AUTENTICADO', 'Usuário não autenticado.', 401);
+  const auth = await resolveTenantSession();
+  if (!auth.ok) {
+    throw new EventsError(
+      auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
+      auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida.' : 'Usuário não autenticado.',
+      auth.reason === 'CONTA_MISMATCH' ? 403 : 401,
+    );
   }
+
+  const { contaId, userId } = auth;
+  const role = auth.role || 'ANONYMOUS';
 
   const permissions = ROLE_PERMISSIONS[role] ?? [];
   if (!permissions.includes(permission)) {
@@ -171,7 +173,7 @@ export function handleEventsRouteError(
   } else {
     console.error('[api/events][error]', error);
   }
-  return jsonError(500, fallbackCode, (error as Error).message || 'Erro interno.');
+  return jsonError(500, fallbackCode, 'Não foi possível concluir a operação agora.');
 }
 
 export function queryObject(request: Request) {

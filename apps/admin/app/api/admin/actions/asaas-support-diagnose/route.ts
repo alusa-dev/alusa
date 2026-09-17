@@ -15,9 +15,9 @@ export async function POST(req: Request) {
     const body = supportAsaasDiagnoseSchema.parse(await req.json());
     const diagnosis = await diagnoseAsaasSupportRepair(body.contaId);
     return NextResponse.json({ success: true, data: diagnosis }, { headers: { 'cache-control': 'no-store' } });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Erro ao diagnosticar integração Asaas' },
+      { success: false, error: 'Erro ao diagnosticar integração Asaas' },
       { status: 400, headers: { 'cache-control': 'no-store' } },
     );
   }

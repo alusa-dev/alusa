@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   enqueueAsaasNotificationPreferenceSyncForTenant,
   getAsaasNotificationPreferences,
@@ -20,20 +19,14 @@ function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-type SessionUser = { id?: string; role?: string; contaId?: string };
-async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
-}
-
 export async function GET() {
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return json(403, { error: 'SEM_PERMISSAO' });
 
-    const preferences = await getAsaasNotificationPreferences(user.contaId);
+    const preferences = await getAsaasNotificationPreferences(auth.contaId);
     return json(
       200,
       asaasNotificationPreferencesResultDTOSchema.parse({
@@ -43,15 +36,15 @@ export async function GET() {
     );
   } catch (error) {
     console.error('[Config Notificacoes Asaas][GET]', error);
-    return json(500, { error: 'ERRO_INTERNO', message: (error as Error).message });
+    return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível carregar as preferências Asaas.' });
   }
 }
 
 export async function PUT(request: Request) {
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return json(403, { error: 'SEM_PERMISSAO' });
 
     const parsed = updateAsaasNotificationPreferencesInputDTOSchema.safeParse(await request.json());
@@ -60,7 +53,7 @@ export async function PUT(request: Request) {
     }
 
     const preferencesPayload = parsed.data.preferences as NotificationPreferenceInput[];
-    const preferences = await saveAsaasNotificationPreferences(user.contaId, preferencesPayload);
+    const preferences = await saveAsaasNotificationPreferences(auth.contaId, preferencesPayload);
 
     return json(
       200,
@@ -68,20 +61,20 @@ export async function PUT(request: Request) {
     );
   } catch (error) {
     console.error('[Config Notificacoes Asaas][PUT]', error);
-    return json(500, { error: 'ERRO_INTERNO', message: (error as Error).message });
+    return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível salvar as preferências Asaas.' });
   }
 }
 
 export async function POST() {
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
 
     const result = await enqueueAsaasNotificationPreferenceSyncForTenant({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       reason: 'CONFIGURACAO_GLOBAL_ATUALIZADA',
       limit: 5_000,
     });
@@ -93,7 +86,7 @@ export async function POST() {
     });
   } catch (error) {
     console.error('[Config Notificacoes Asaas][POST]', error);
-    return json(500, { error: 'ERRO_INTERNO', message: (error as Error).message });
+    return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível restaurar as preferências Asaas.' });
   }
 }
 

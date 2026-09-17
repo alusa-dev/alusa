@@ -3,12 +3,12 @@ import { randomUUID } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { asaasGetMyAccount, asaasListSubaccounts } from '@alusa/finance';
-import { isValidCpfCnpjDigits, normalizeCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
+import { isValidCpfCnpjDigits, normalizeCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
 import {
   isAtLeastAgeYears,
   isValidDateOnly,
   parseDateOnlyToUtcDate,
-} from '@alusa/lib/date-only';
+} from '@alusa/shared/date-only';
 import { hashPassword, passwordPolicyMessage, passwordPolicyRegex } from '@/lib/auth-password';
 import prisma from '@/lib/prisma';
 import type { LegalDocumentType } from '@/lib/privacy/legal-versions';
@@ -39,11 +39,16 @@ export interface FirstUserInput {
 
 export class EmailInUseError extends Error { constructor() { super('E-mail já está em uso.'); } }
 export class InactiveAccountEmailError extends Error {
+  readonly userId: string;
+  readonly email: string;
+
   constructor(
-    public readonly userId: string,
-    public readonly email: string,
+    userId: string,
+    email: string,
   ) {
     super('Já existe uma conta desativada vinculada a este e-mail.');
+    this.userId = userId;
+    this.email = email;
   }
 }
 export class CpfCnpjInUseError extends Error { constructor() { super('Já existe uma escola registrada com este CPF/CNPJ.'); } }
@@ -140,6 +145,17 @@ export async function checkFirstUserRegistrationAvailability(input: {
   }
 
   if (financeIntegrationMode === FinanceIntegrationMode.EXTERNAL_ASAAS_ACCOUNT) {
+    return { available: true };
+  }
+
+  // E2E/unit environments using the explicit mock provider do not have a
+  // real Asaas account to reconcile against. PLAYWRIGHT_TEST is explicit so
+  // a production-like `next start` can stay offline without changing the
+  // production behavior for real deployments.
+  if (
+    process.env.PAYMENTS_PROVIDER_MODE === 'mock' &&
+    (process.env.NODE_ENV !== 'production' || process.env.PLAYWRIGHT_TEST === 'true')
+  ) {
     return { available: true };
   }
 

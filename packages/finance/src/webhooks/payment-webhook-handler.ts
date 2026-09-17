@@ -3,7 +3,7 @@ import { convergeStandaloneInstallmentPlanStatus } from '@alusa/lib/services/sta
 import type { PaymentStatus } from '@alusa/asaas';
 import {
   refundTicketSalesByAsaasPayment,
-} from '@alusa/lib';
+} from '@alusa/lib/events/events.service';
 import {
   cancelPublicEventMapOrderByPayment,
   confirmPublicEventMapOrderPayment,

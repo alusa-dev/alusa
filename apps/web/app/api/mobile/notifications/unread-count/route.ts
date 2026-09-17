@@ -1,4 +1,4 @@
-import { getUnreadNotificationCount } from '@alusa/lib';
+import { getUnreadNotificationCount } from '@alusa/lib/services/notifications.service';
 import { NextResponse } from 'next/server';
 
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';

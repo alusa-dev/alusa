@@ -54,7 +54,7 @@ function getDefaultFrom(category: EmailCategory): string {
 }
 
 function canFallbackToLog(): boolean {
-  if (process.env.NODE_ENV === 'production') {
+  if (process.env.NODE_ENV === 'production' && process.env.PLAYWRIGHT_TEST !== 'true') {
     return false;
   }
 
@@ -82,7 +82,7 @@ export async function sendTransactionalEmail(
   const resend = getResendClient();
 
   if (!resend) {
-    if (process.env.NODE_ENV === 'production') {
+    if (process.env.NODE_ENV === 'production' && process.env.PLAYWRIGHT_TEST !== 'true') {
       throw new Error('RESEND_API_KEY ausente em produção.');
     }
 

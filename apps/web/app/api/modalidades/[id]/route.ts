@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { updateModalidade, deleteModalidade, modalidadeSchema } from '@alusa/lib';
+import { modalidadeSchema } from '@alusa/lib/schemas/modalidade.schema';
+import { updateModalidade, deleteModalidade } from '@alusa/lib/services/modalidade.service';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
@@ -12,18 +12,19 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     const ctxParams = await ctx.params;
   try {
     const body = await req.json();
-    const contaId = typeof body.contaId === 'string' ? body.contaId.trim() : '';
-    if (!contaId) return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
-    const session = await getServerSession(authOptions).catch(() => null);
-    const sessionContaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (sessionContaId && contaId !== sessionContaId) {
+    const tenant = await resolveTenantSession(
+      typeof body.contaId === 'string' ? body.contaId : null,
+    );
+    if (!tenant.ok) {
       return jsonError(
-        403,
-        'CONTA_INVALIDA',
-        'A conta informada não pertence ao usuário autenticado.',
+        tenant.reason === 'UNAUTHENTICATED' ? 401 : 403,
+        tenant.reason === 'UNAUTHENTICATED' ? 'NAO_AUTENTICADO' : 'CONTA_INVALIDA',
+        tenant.reason === 'UNAUTHENTICATED'
+          ? 'Usuário não autenticado.'
+          : 'A conta informada não pertence ao usuário autenticado.',
       );
     }
+    const contaId = tenant.contaId;
     await assertPlatformAccessForConta({ contaId, capability: 'MODALITY_WRITE' });
     if (body.nome !== undefined || body.descricao !== undefined) {
       const parsed = modalidadeSchema.pick({ nome: true, descricao: true }).safeParse({
@@ -54,18 +55,17 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
     const ctxParams = await ctx.params;
   try {
     const url = new URL(req.url);
-    const contaId = url.searchParams.get('contaId')?.trim() || null;
-    if (!contaId) return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
-    const session = await getServerSession(authOptions).catch(() => null);
-    const sessionContaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (sessionContaId && contaId !== sessionContaId) {
+    const tenant = await resolveTenantSession(url.searchParams.get('contaId'));
+    if (!tenant.ok) {
       return jsonError(
-        403,
-        'CONTA_INVALIDA',
-        'A conta informada não pertence ao usuário autenticado.',
+        tenant.reason === 'UNAUTHENTICATED' ? 401 : 403,
+        tenant.reason === 'UNAUTHENTICATED' ? 'NAO_AUTENTICADO' : 'CONTA_INVALIDA',
+        tenant.reason === 'UNAUTHENTICATED'
+          ? 'Usuário não autenticado.'
+          : 'A conta informada não pertence ao usuário autenticado.',
       );
     }
+    const contaId = tenant.contaId;
     await assertPlatformAccessForConta({ contaId, capability: 'MODALITY_WRITE' });
     try {
       const modalidade = await deleteModalidade(ctxParams.id, contaId);

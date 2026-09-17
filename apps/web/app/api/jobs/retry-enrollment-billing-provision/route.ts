@@ -3,12 +3,13 @@ import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { processFamilyBillingOutboxBatch } from '@/src/server/family-billing/processor';
 import { processEnrollmentBillingOutboxBatch } from '@/src/server/matriculas/enrollment-billing-outbox.service';
 import { retryEnrollmentBillingProvisionJob } from '@/src/server/matriculas/retry-enrollment-billing-provision';
+import { apiJsonError } from '@/lib/api/standard-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 function jsonError(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status });
+  return apiJsonError(status, code, message);
 }
 
 /**
@@ -69,7 +70,7 @@ async function run(req: Request) {
     });
   } catch (error) {
     console.error('[jobs/retry-enrollment-billing-provision]', error);
-    return jsonError(500, 'JOB_FAILED', (error as Error).message);
+    return jsonError(500, 'JOB_FAILED', 'Não foi possível processar o job de provisionamento.');
   }
 }
 

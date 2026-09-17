@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { comboCreateSchema, comboFilterSchema, listCombos, createCombo } from '@alusa/lib';
+import {
+  comboCreateSchema,
+  comboFilterSchema,
+} from '@alusa/lib/combos/combo.schema';
+import { listCombos, createCombo } from '@alusa/lib/combos/combo.service';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
@@ -11,29 +14,22 @@ function jsonError(status: number, code: string, message: string, details?: unkn
   return NextResponse.json({ error: { code, message, details } }, { status });
 }
 
-async function resolveContaId(explicit?: string | null) {
-  const session = await getServerSession(authOptions).catch(() => null);
-  const sessionContaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId || null;
-  const requested = explicit?.trim() || null;
-  if (requested && sessionContaId && requested !== sessionContaId) {
-    return { contaId: null, mismatch: true, sessionContaId };
-  }
-  return { contaId: requested || sessionContaId, mismatch: false, sessionContaId };
-}
-
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const contaCtx = await resolveContaId(url.searchParams.get('contaId'));
-    if (contaCtx.mismatch) {
-      return jsonError(403, 'CONTA_INVALIDA', 'Conta não pertence ao usuário.');
+    const tenant = await resolveTenantSession(url.searchParams.get('contaId'));
+    if (!tenant.ok) {
+      return jsonError(
+        tenant.reason === 'UNAUTHENTICATED' ? 401 : 403,
+        tenant.reason === 'UNAUTHENTICATED' ? 'NAO_AUTENTICADO' : 'CONTA_INVALIDA',
+        tenant.reason === 'UNAUTHENTICATED' ? 'Usuário não autenticado.' : 'Conta não pertence ao usuário.',
+      );
     }
-    if (!contaCtx.contaId) return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
 
     const statusParam = url.searchParams.get('status');
     const searchParam = url.searchParams.get('q') ?? undefined;
     const parsed = comboFilterSchema.safeParse({
-      contaId: contaCtx.contaId,
+      contaId: tenant.contaId,
       status: statusParam === 'ATIVO' || statusParam === 'INATIVO' ? statusParam : undefined,
       search: searchParam,
     });
@@ -43,7 +39,7 @@ export async function GET(req: Request) {
     const combos = await listCombos(parsed.data);
     return NextResponse.json({ data: combos });
   } catch (e) {
-    return jsonError(500, 'ERRO_LISTAR_COMBOS', (e as Error).message);
+    return jsonError(500, 'ERRO_LISTAR_COMBOS', 'Não foi possível carregar os combos.');
   }
 }
 
@@ -52,17 +48,22 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== 'object')
       return jsonError(400, 'REQUISICAO_INVALIDA', 'Payload inválido');
-    const contaCtx = await resolveContaId((body as { contaId?: string }).contaId ?? null);
-    if (contaCtx.mismatch) return jsonError(403, 'CONTA_INVALIDA', 'Conta inválida');
-    if (!contaCtx.contaId) return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
+    const tenant = await resolveTenantSession((body as { contaId?: string }).contaId ?? null);
+    if (!tenant.ok) {
+      return jsonError(
+        tenant.reason === 'UNAUTHENTICATED' ? 401 : 403,
+        tenant.reason === 'UNAUTHENTICATED' ? 'NAO_AUTENTICADO' : 'CONTA_INVALIDA',
+        tenant.reason === 'UNAUTHENTICATED' ? 'Usuário não autenticado.' : 'Conta inválida',
+      );
+    }
     try {
-      await assertPlatformAccessForConta({ contaId: contaCtx.contaId, capability: 'ADMIN_WRITE' });
+      await assertPlatformAccessForConta({ contaId: tenant.contaId, capability: 'ADMIN_WRITE' });
     } catch (error) {
       const blocked = platformBillingAccessResponse(error);
       if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
       throw error;
     }
-    const parsed = comboCreateSchema.safeParse({ ...body, contaId: contaCtx.contaId });
+    const parsed = comboCreateSchema.safeParse({ ...body, contaId: tenant.contaId });
     if (!parsed.success) {
       return jsonError(422, 'ERRO_VALIDACAO', 'Falha de validação', parsed.error.flatten());
     }
@@ -73,6 +74,6 @@ export async function POST(req: Request) {
       return jsonError(400, 'ERRO_CRIAR_COMBO', (err as Error).message);
     }
   } catch (e) {
-    return jsonError(500, 'ERRO_CRIAR_COMBO', (e as Error).message);
+    return jsonError(500, 'ERRO_CRIAR_COMBO', 'Não foi possível criar o combo.');
   }
 }

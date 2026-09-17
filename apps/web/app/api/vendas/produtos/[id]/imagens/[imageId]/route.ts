@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
 import { deleteProductImage, setPrimaryProductImage } from '@alusa/lib/server';
+
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -13,9 +13,9 @@ interface RouteContext {
 
 export async function DELETE(_req: Request, context: RouteContext) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id: productId, imageId } = await Promise.resolve(context.params);
     await deleteProductImage(imageId, productId, contaId);
@@ -27,9 +27,9 @@ export async function DELETE(_req: Request, context: RouteContext) {
 
 export async function PATCH(_req: Request, context: RouteContext) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id: productId, imageId } = await Promise.resolve(context.params);
     const image = await setPrimaryProductImage(imageId, productId, contaId);

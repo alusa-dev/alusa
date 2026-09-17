@@ -44,6 +44,6 @@ export async function POST(
       return jsonError(authError.status, authError.code, authError.message ?? 'Erro');
     }
 
-    return jsonError(500, 'ERRO_CANCELAR_REPOSICAO', (error as Error).message);
+    return jsonError(500, 'ERRO_CANCELAR_REPOSICAO', 'Não foi possível cancelar a reposição.');
   }
 }

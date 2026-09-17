@@ -1,56 +1,57 @@
 import { NextResponse } from 'next/server';
-import { getSessionUser } from '@/lib/auth/session';
+import { contratoRouteParamsDTOSchema } from '@/features/contratos/dtos';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   drainContractWhatsAppNotifications,
   drainWhatsAppOutbox,
   requeueContractWhatsAppNotification,
 } from '@/src/server/whatsapp/outbox.service';
-import { prisma } from '@/prisma/client';
+import {
+  getContractWhatsAppJobId,
+  getContractWhatsAppNotificationView,
+} from '@/src/server/whatsapp/whatsapp-resource.service';
 
 export const dynamic = 'force-dynamic';
+
+const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
+
+function requireStaff(requestedRole?: string) {
+  return Boolean(requestedRole && allowedRoles.has(requestedRole.toUpperCase()));
+}
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await getSessionUser();
-  if (!user) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 });
-  const { id } = await params;
-  const notification = await prisma.contractWhatsAppNotification.findFirst({
-    where: { contaId: user.contaId, contratoId: id },
-    orderBy: { createdAt: 'desc' },
-    select: {
-      id: true, status: true, templateName: true, languageCode: true,
-      recipientPhone: true, recipientType: true, attempts: true,
-      lastErrorCode: true, lastError: true, whatsappJobId: true,
-      createdAt: true, processedAt: true,
-    },
-  });
+  const auth = await resolveTenantSession();
+  if (!auth.ok) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 });
+  if (!requireStaff(auth.role)) return NextResponse.json({ error: 'Acesso negado.' }, { status: 403 });
+  const { id } = contratoRouteParamsDTOSchema.parse(await params);
+  const notification = await getContractWhatsAppNotificationView({ contratoId: id, contaId: auth.contaId });
   if (!notification) return NextResponse.json({ notification: null });
-  const job = notification.whatsappJobId
-    ? await prisma.whatsAppOutboundJob.findFirst({
-        where: { id: notification.whatsappJobId, contaId: user.contaId },
-        select: { status: true, lastErrorCode: true, lastError: true },
-      })
-    : null;
-  const effectiveNotification = job && (job.status === 'FAILED' || job.status === 'DLQ')
-    ? { ...notification, status: job.status, lastErrorCode: job.lastErrorCode, lastError: job.lastError }
-    : notification;
-  return NextResponse.json({ notification: { ...effectiveNotification, recipientPhone: `***${notification.recipientPhone.slice(-4)}` } });
+  return NextResponse.json({ notification: { ...notification, recipientPhone: `***${notification.recipientPhone.slice(-4)}` } });
 }
 
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await getSessionUser();
-  if (!user) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 });
+  const auth = await resolveTenantSession();
+  if (!auth.ok) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 });
+  if (!requireStaff(auth.role)) return NextResponse.json({ error: 'Acesso negado.' }, { status: 403 });
 
-  const { id } = await params;
-  const queued = await requeueContractWhatsAppNotification({ contaId: user.contaId, contratoId: id, actorUserId: user.id });
+  const { id } = contratoRouteParamsDTOSchema.parse(await params);
+  const queued = await requeueContractWhatsAppNotification({ contaId: auth.contaId, contratoId: id, actorUserId: auth.userId });
   if (!queued) return NextResponse.json({ error: 'Notificação de contrato não encontrada.' }, { status: 404 });
 
-  const notification = await drainContractWhatsAppNotifications({ limit: 1 });
-  const outbox = await drainWhatsAppOutbox({ limit: 1 });
+  const notification = await drainContractWhatsAppNotifications({
+    limit: 1,
+    contaId: auth.contaId,
+    notificationId: queued.id,
+  });
+  const whatsappJobId = await getContractWhatsAppJobId({ notificationId: queued.id, contaId: auth.contaId });
+  const outbox = whatsappJobId
+    ? await drainWhatsAppOutbox({ jobId: whatsappJobId })
+    : { claimed: 0, sent: 0, retried: 0, deadLettered: 0 };
   return NextResponse.json({ success: true, notification, outbox, notificationId: queued.id });
 }

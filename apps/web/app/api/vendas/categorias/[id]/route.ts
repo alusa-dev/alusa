@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { deleteCategory } from '@alusa/lib';
+import { deleteCategory } from '@alusa/lib/services/category.service';
+
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -12,9 +12,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id } = await params;
     if (!id) return jsonError(400, 'ID_INVALIDO', 'ID da categoria é obrigatório');
@@ -26,6 +26,6 @@ export async function DELETE(
       return jsonError(400, 'ERRO_DELETAR_CATEGORIA', (err as Error).message);
     }
   } catch (e) {
-    return jsonError(500, 'ERRO_INTERNO', (e as Error).message);
+    return jsonError(500, 'ERRO_INTERNO', 'Não foi possível atualizar a categoria.');
   }
 }

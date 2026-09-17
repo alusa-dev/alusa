@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { listEventContractsByStudent } from '@alusa/lib';
+import { listEventContractsByStudent } from '@alusa/lib/events/event-contracts.service';
 import { getEventsContext, handleEventsRouteError } from '../events/_helpers';
 
 const querySchema = z.object({

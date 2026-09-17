@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { prisma } from '@alusa/database';
 import { ticketSaleActionSchema } from '@alusa/lib/events/events.schema';
 
+import { eventPublicOrderRouteParamsDTOSchema } from '@/features/events/dtos';
 import { getEventsContext, handleEventsRouteError } from '../../../_helpers';
+import { getEventOrderRefundContext } from '@/src/server/events/event-route-read.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -12,22 +13,11 @@ type RouteParams = { params: Promise<{ orderId: string }> };
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
-    const { orderId } = await params;
+    const { orderId } = eventPublicOrderRouteParamsDTOSchema.parse(await params);
     const ctx = await getEventsContext('eventTickets.cancelSale');
     const body = ticketSaleActionSchema.parse(await request.json().catch(() => ({})));
 
-    const order = await prisma.eventMapOrder.findFirst({
-      where: { id: orderId, contaId: ctx.contaId },
-      select: {
-        id: true,
-        eventId: true,
-        asaasPaymentId: true,
-        buyerName: true,
-        buyerEmail: true,
-        status: true,
-        paymentStatus: true,
-      },
-    });
+    const order = await getEventOrderRefundContext({ orderId, contaId: ctx.contaId });
 
     if (!order) {
       return NextResponse.json({ error: { code: 'PEDIDO_NAO_ENCONTRADO', message: 'Pedido público não encontrado.' } }, { status: 404 });

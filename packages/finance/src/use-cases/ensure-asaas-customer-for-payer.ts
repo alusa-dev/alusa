@@ -16,7 +16,7 @@ import {
   linkCustomerIdentity,
   CustomerIdentityConflictError,
 } from '../customer/customer-identity';
-import { isValidCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
+import { isValidCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
 import { syncCustomerNotificationChannelsFromTenantPreferences } from '../services/customer-notification-bridge';
 import {
   AsaasCustomerEnsureError,

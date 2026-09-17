@@ -10,11 +10,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/src/prisma';
-import { ManualSyncError, syncMatriculaStatus } from '@/src/server/matriculas/matricula-sync.service';
-import { notifyMatriculaAction } from '@alusa/lib';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { ManualSyncError } from '@/src/server/matriculas/matricula-sync.service';
+import { syncMatriculaStatusFromHttp } from '@/src/server/matriculas/matricula-http-commands.service';
+import { notifyMatriculaAction } from '@alusa/lib/notifications/matricula-notifications';
 import { updateMatriculaStatusSyncInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
 import { mapMatriculaStatusSyncResultToDTO } from '@/features/cadastro/matriculas/mappers';
 import {
@@ -34,16 +33,14 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
-    const session = await getServerSession(authOptions);
-    const user = (session as { user?: { id?: string; contaId?: string } })?.user;
-
-    if (!user?.id || !user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       console.warn('[MATRICULA_STATUS] Usuário não autenticado');
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
 
     try {
-      await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'ENROLLMENT_WRITE' });
+      await assertPlatformAccessForConta({ contaId: auth.contaId, capability: 'ENROLLMENT_WRITE' });
     } catch (error) {
       const blocked = platformBillingAccessResponse(error);
       if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
@@ -69,12 +66,11 @@ export async function PATCH(
     }
 
     // Encapsulamos toda a sincronização em um serviço compartilhado para manter a paridade com o estado financeiro oficial.
-    const result = await syncMatriculaStatus({
-      prisma,
+    const result = await syncMatriculaStatusFromHttp({
       matriculaId,
-      contaId: user.contaId,
+      contaId: auth.contaId,
       targetStatus: status,
-      actorId: user.id,
+      actorId: auth.userId,
       motivo: motivo || undefined,
     });
 
@@ -85,10 +81,10 @@ export async function PATCH(
 
     void notifyMatriculaAction({
       matriculaId,
-      contaId: user.contaId,
+      contaId: auth.contaId,
       action: 'CANCELADA',
       motivo: motivo || 'Cancelamento manual da matrícula',
-      actorUserId: user.id,
+      actorUserId: auth.userId,
     });
 
     const payload = mapMatriculaStatusSyncResultToDTO(

@@ -1,4 +1,3 @@
-import prisma from '@/lib/prisma';
 import {
   requirePortalUser,
   resolvePortalAlunoIds,
@@ -15,6 +14,7 @@ import {
 } from '@/src/server/finance/academic-payment-history';
 import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { jsonNoStore } from '@/lib/http-security';
+import { listPortalAcademicCobrancas } from '@/src/server/portal/portal-read.service';
 
 export async function GET() {
   try {
@@ -30,56 +30,7 @@ export async function GET() {
 
     async function loadPortalFinanceData() {
       const [cobrancas, standaloneCharges] = await Promise.all([
-        prisma.cobranca.findMany({
-          where: {
-          matricula: {
-            alunoId: { in: alunoIds },
-            aluno: { contaId: portalUser.contaId },
-          },
-          },
-          include: {
-            matricula: {
-              include: {
-                aluno: {
-                  select: {
-                    nome: true,
-                  },
-                },
-                turma: {
-                  select: {
-                    nome: true,
-                    modalidade: {
-                      select: {
-                        nome: true,
-                      },
-                    },
-                  },
-                },
-                responsavelFinanceiro: {
-                  select: {
-                    creditCardBrand: true,
-                    creditCardLast4: true,
-                  },
-                },
-              },
-            },
-            pagamentos: {
-              select: {
-                id: true,
-                dataPagamento: true,
-                valorPago: true,
-                status: true,
-              },
-              orderBy: {
-                dataPagamento: 'desc',
-              },
-              take: 1,
-            },
-          },
-          orderBy: {
-            vencimento: 'desc',
-          },
-        }),
+        listPortalAcademicCobrancas({ contaId: portalUser.contaId, alunoIds }),
         listPortalStandaloneCharges({ contaId: portalUser.contaId, alunoIds, responsavelId }),
       ]);
 

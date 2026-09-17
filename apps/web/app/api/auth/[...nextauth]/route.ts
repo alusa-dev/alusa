@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-limit';
 import { clearAuthCookies } from '@/lib/auth-cookies';
+import { rateLimitResponse } from '@/lib/security/rate-limit-response';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -30,18 +31,16 @@ async function withRateLimit(
     // leitura de sessão nunca podem ser bloqueados, pois precisam recuperar o usuário.
     if (action === 'callback' && req.nextUrl.pathname.endsWith('/credentials')) {
       const ip = ipFromRequest(req as unknown as Request);
+      const ipSubject = await rateLimitSubject(ip);
       const form = await req.clone().formData().catch(() => null);
       const email = form?.get('email');
-      const callbackIpLimit = await authRateLimitAsync(`nextauth-credentials:ip:${ip}`, 10, 15 * 60 * 1000);
+      const callbackIpLimit = await authRateLimitAsync(`nextauth-credentials:ip:${ipSubject}`, 10, 15 * 60 * 1000);
       const emailLimit = typeof email === 'string'
         ? await authRateLimitAsync(`nextauth-credentials:email:${await rateLimitSubject(email)}`, 5, 15 * 60 * 1000)
         : callbackIpLimit;
 
       if (!callbackIpLimit.ok || !emailLimit.ok) {
-        return NextResponse.json(
-          { error: 'Muitas tentativas. Tente novamente mais tarde.' },
-          { status: 429, headers: { 'Retry-After': '900', 'Cache-Control': 'no-store' } },
-        );
+        return rateLimitResponse(!callbackIpLimit.ok ? callbackIpLimit : emailLimit, !callbackIpLimit.ok ? 10 : 5);
       }
     }
 

@@ -1,49 +1,39 @@
 import { NextResponse } from 'next/server';
+import { expireContractLinksJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { prisma } from '@/src/prisma';
-import { expireContractSignatureLinks } from '@/src/server/contracts/expire-contract-signature-links.service';
+import {
+  expireContractSignatureLinks,
+  listContasWithExpiredContractLinks,
+} from '@/src/server/contracts/expire-contract-signature-links.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
-function clampPositiveInt(value: string | null, fallback: number, max: number) {
-  const parsed = Number(value ?? fallback);
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(max, Math.trunc(parsed))) : fallback;
-}
-
-async function listContasWithExpiredLinks(maxAccounts: number) {
-  const candidates = await prisma.contrato.findMany({
-    where: {
-      status: 'PENDENTE',
-      tokenExpiraEm: { not: null, lt: new Date() },
-      conta: { status: 'ATIVO', deletedAt: null },
-    },
-    select: { contaId: true },
-    distinct: ['contaId'],
-    orderBy: { contaId: 'asc' },
-    take: maxAccounts,
-  });
-  return candidates.map((candidate) => candidate.contaId);
-}
-
 export async function POST(req: Request) {
   try {
     const url = new URL(req.url);
+    const query = expireContractLinksJobQueryDTOSchema.parse({
+      contaId: url.searchParams.get('contaId'),
+      maxAccounts: url.searchParams.get('maxAccounts'),
+      limit: url.searchParams.get('limit'),
+    });
     const scope = await resolveTenantScope(req, {
       allowCron: true,
-      requestedContaId: url.searchParams.get('contaId'),
+      requestedContaId: query.contaId,
     });
     if (!scope.ok) return scope.response;
 
-    const maxAccounts = clampPositiveInt(url.searchParams.get('maxAccounts'), 100, 100);
-    const limit = clampPositiveInt(url.searchParams.get('limit'), 500, 500);
-    const contaIds = scope.contaId ? [scope.contaId] : await listContasWithExpiredLinks(maxAccounts);
+    const maxAccounts = query.maxAccounts;
+    const limit = query.limit;
+    const contaIds = scope.contaId
+      ? [scope.contaId]
+      : await listContasWithExpiredContractLinks({ maxAccounts });
     const results: Array<{ contaId: string; atualizados: number; contratoIds: string[] }> = [];
     const errors: Array<{ contaId: string; erro: string }> = [];
 
     for (const contaId of contaIds) {
       try {
-        results.push({ contaId, ...(await expireContractSignatureLinks({ contaId, limit }, { prisma })) });
+        results.push({ contaId, ...(await expireContractSignatureLinks({ contaId, limit })) });
       } catch (error) {
         errors.push({ contaId, erro: error instanceof Error ? error.message : 'Erro desconhecido' });
       }

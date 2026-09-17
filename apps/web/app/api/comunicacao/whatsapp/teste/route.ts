@@ -1,26 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
+import { ZodError } from 'zod';
 import { WhatsAppConfigurationError } from '@alusa/whatsapp';
-import { getSessionUser } from '@/lib/auth/session';
+import { whatsappTestMessageInputDTOSchema } from '@/features/comunicacao/dtos';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { assertTestRecipient, assertWhatsAppConfigured, getWhatsAppRuntimeConfig } from '@/src/server/whatsapp/config';
 import { drainWhatsAppOutbox, enqueueWhatsAppMessage } from '@/src/server/whatsapp/outbox.service';
 
 export const dynamic = 'force-dynamic';
 
-const testMessageSchema = z.object({
-  to: z.string().min(8).max(32),
-  mode: z.enum(['template', 'text']).default('template'),
-  body: z.string().trim().max(4096).optional(),
-});
-
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!user) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 });
+  const auth = await resolveTenantSession();
+  if (!auth.ok) return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 });
 
   try {
     const config = assertWhatsAppConfigured();
-    const body = testMessageSchema.parse(await request.json());
+    const body = whatsappTestMessageInputDTOSchema.parse(await request.json());
     const to = assertTestRecipient(body.to, config);
     const requestId = request.headers.get('idempotency-key')?.trim() || randomUUID();
     const outbound = body.mode === 'text'
@@ -37,10 +32,10 @@ export async function POST(request: Request) {
         };
 
     const queued = await enqueueWhatsAppMessage({
-      contaId: user.contaId,
-      actorUserId: user.id,
+      contaId: auth.contaId,
+      actorUserId: auth.userId,
       request: outbound,
-      idempotencyKey: `whatsapp-test:${user.contaId}:${requestId}`,
+      idempotencyKey: `whatsapp-test:${auth.contaId}:${requestId}`,
       correlationId: requestId,
     });
     const drained = await drainWhatsAppOutbox({ limit: 1, jobId: queued.jobId });
@@ -60,7 +55,7 @@ export async function POST(request: Request) {
       deduplicated: queued.deduplicated,
     });
   } catch (error) {
-    if (error instanceof z.ZodError || error instanceof WhatsAppConfigurationError) {
+    if (error instanceof ZodError || error instanceof WhatsAppConfigurationError) {
       return NextResponse.json({ error: getErrorMessage(error) }, { status: 400 });
     }
 
@@ -72,6 +67,6 @@ export async function POST(request: Request) {
   }
 }
 
-function getErrorMessage(error: z.ZodError | WhatsAppConfigurationError): string {
-  return error instanceof z.ZodError ? error.issues[0]?.message ?? 'Dados inválidos.' : error.message;
+function getErrorMessage(error: ZodError | WhatsAppConfigurationError): string {
+  return error instanceof ZodError ? error.issues[0]?.message ?? 'Dados inválidos.' : error.message;
 }

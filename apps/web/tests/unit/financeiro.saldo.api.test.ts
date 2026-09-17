@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mocks need to be hoisted
 const mockGetServerSession = vi.hoisted(() => vi.fn());
 const mockGetBalance = vi.hoisted(() => vi.fn());
-const mockPrismaAggregate = vi.hoisted(() => vi.fn());
+const mockLocalAvailableBalance = vi.hoisted(() => vi.fn());
 
 vi.mock('next-auth', () => ({
   getServerSession: () => mockGetServerSession(),
@@ -15,12 +15,13 @@ vi.mock('@/lib/auth-options', () => ({
 
 vi.mock('@alusa/finance', () => ({
   getBalance: (params: { contaId: string }) => mockGetBalance(params),
+  getLocalAvailableBalance: (params: { contaId: string }) => mockLocalAvailableBalance(params),
 }));
 
 vi.mock('@/src/prisma', () => ({
   prisma: {
     cobranca: {
-      aggregate: () => mockPrismaAggregate(),
+      aggregate: vi.fn(),
     },
   },
 }));
@@ -46,7 +47,7 @@ describe('GET /api/financeiro/saldo', () => {
     vi.clearAllMocks();
     mockGetServerSession.mockResolvedValue({ user: mockUser });
     mockGetBalance.mockResolvedValue({ success: true, data: { balance: 0 } });
-    mockPrismaAggregate.mockResolvedValue({ _sum: { asaasNetValue: null } });
+    mockLocalAvailableBalance.mockResolvedValue(0);
   });
 
   it('deve retornar 401 se usuário não autenticado', async () => {
@@ -93,7 +94,7 @@ describe('GET /api/financeiro/saldo', () => {
 
   it('deve usar fallback local se Asaas indisponível', async () => {
     mockGetBalance.mockResolvedValue({ success: false, error: 'ERRO_AO_OBTER_SALDO' });
-    mockPrismaAggregate.mockResolvedValue({ _sum: { asaasNetValue: { toNumber: () => 500 } } });
+    mockLocalAvailableBalance.mockResolvedValue(500);
 
     const response = await GET(createRequest());
     const json = await response.json();
@@ -104,7 +105,7 @@ describe('GET /api/financeiro/saldo', () => {
   });
 
   it('deve retornar saldo local quando fonte=local', async () => {
-    mockPrismaAggregate.mockResolvedValue({ _sum: { asaasNetValue: { toNumber: () => 750 } } });
+    mockLocalAvailableBalance.mockResolvedValue(750);
 
     const response = await GET(createRequest({ fonte: 'local' }));
     const json = await response.json();
@@ -130,7 +131,7 @@ describe('GET /api/financeiro/saldo', () => {
   });
 
   it('deve retornar 0 quando não há cobranças disponíveis (local)', async () => {
-    mockPrismaAggregate.mockResolvedValue({ _sum: { asaasNetValue: null } });
+    mockLocalAvailableBalance.mockResolvedValue(0);
 
     const response = await GET(createRequest({ fonte: 'local' }));
     const json = await response.json();

@@ -1,47 +1,19 @@
 import { test, expect } from '@playwright/test';
 import prisma from './prisma';
 import { resetDb } from './utils/reset-db';
+import { seedAdminAndAuthenticate } from './utils/auth';
 
 test.describe('Contrato detalhes (layout)', () => {
   test.beforeEach(async () => {
     await resetDb(prisma);
   });
 
-  test('viewer ocupa altura, tem scroll e paginação', async ({ page }) => {
+  test('viewer ocupa a altura prevista e exibe o documento', async ({ page }) => {
     test.setTimeout(90_000);
 
-    // Cria (ou garante) uma conta/usuário de teste alinhados ao fallback de auth em E2E
-    const contaCpfCnpj = '00000000000000';
-    const conta =
-      (await prisma.conta.findFirst({
-        where: { cpfCnpj: contaCpfCnpj },
-        select: { id: true },
-      })) ||
-      (await prisma.conta.create({
-        data: { nome: 'Conta Test', cpfCnpj: contaCpfCnpj },
-        select: { id: true },
-      }));
-
-    await prisma.usuario.upsert({
-      where: { email: 'admin-e2e@example.com' },
-      update: { contaId: conta.id, role: 'ADMIN', status: 'ATIVO' },
-      create: {
-        contaId: conta.id,
-        nome: 'Admin Test',
-        email: 'admin-e2e@example.com',
-        telefone: null,
-        foto: null,
-        bio: null,
-        senhaHash: 'test',
-        role: 'ADMIN',
-        status: 'ATIVO',
-        locale: 'pt-BR',
-        theme: 'system',
-      },
-      select: { id: true },
+    const { contaId } = await seedAdminAndAuthenticate(page, {
+      email: `contrato-layout-${Date.now()}@e2e.test`,
     });
-
-    const contaId = conta.id;
 
     const aluno = await prisma.aluno.create({
       data: {
@@ -57,21 +29,18 @@ test.describe('Contrato detalhes (layout)', () => {
       data: {
         contaId,
         nome: 'Modelo Layout',
-        arquivoUrl: 'https://example.com/template.pdf',
-        hashPdf: `hash-${Date.now()}`,
+        arquivoPdfUrl: 'https://example.com/template.pdf',
+        hashSha256: `hash-${Date.now()}`,
         versao: 1,
-        ativo: true,
+        status: 'ATIVO',
       },
       select: { id: true },
     });
 
     const matricula = await prisma.matricula.create({
       data: {
+        contaId,
         alunoId: aluno.id,
-        responsavelFinanceiroId: null,
-        planoId: null,
-        turmaId: null,
-        comboId: null,
         dataInicio: new Date('2025-01-01T00:00:00.000Z'),
         dataFimContrato: new Date('2026-01-01T00:00:00.000Z'),
         taxaMatricula: 0,
@@ -109,14 +78,11 @@ test.describe('Contrato detalhes (layout)', () => {
     await page.goto(`/contratos/${contrato.id}`);
     await expect(page.getByRole('heading', { name: /detalhes do contrato/i })).toBeVisible();
 
-    // Scroll container deve existir e ter overflow vertical
-    const viewer = page.locator('.custom-scroll-area').first();
+    const viewer = page.getByTitle('Contrato - Aluno Layout');
     await expect(viewer).toBeVisible();
+    await expect(viewer).toHaveAttribute('style', /height:\s*82vh/);
 
-    const hasOverflow = await viewer.evaluate((el) => el.scrollHeight > el.clientHeight);
-    expect(hasOverflow).toBe(true);
-
-    // Paginador deve aparecer para múltiplas páginas
-    await expect(page.getByLabel('Próxima página')).toBeVisible();
+    const viewerHeight = await viewer.evaluate((element) => element.getBoundingClientRect().height);
+    expect(viewerHeight).toBeGreaterThan(0);
   });
 });

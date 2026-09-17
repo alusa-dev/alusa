@@ -2,9 +2,10 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth-options';
-import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
+import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-limit';
 import { sendEmailVerificationForUser } from '@/lib/auth-email-flow';
 import { resolvePostVerificationRedirect } from '@/lib/safe-redirect';
+import { rateLimitResponse } from '@/lib/security/rate-limit-response';
 
 const bodySchema = z.object({
   callbackUrl: z.string().trim().optional().nullable(),
@@ -12,10 +13,6 @@ const bodySchema = z.object({
 
 export async function POST(req: Request) {
   const ip = ipFromRequest(req);
-  const rl = rateLimit(`auth-verify-email-resend:${ip}`, 5, 15 * 60 * 1000);
-  if (!rl.ok) {
-    return NextResponse.json({ error: 'Muitas tentativas. Tente novamente mais tarde.' }, { status: 429 });
-  }
 
   try {
     const body: unknown = await req.json().catch(() => ({}));
@@ -24,6 +21,13 @@ export async function POST(req: Request) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 });
     }
+
+    const limiter = await authRateLimitAsync(
+      `auth-verify-email-resend:user:${await rateLimitSubject(`${session.user.id}:${ip}`)}`,
+      5,
+      15 * 60 * 1000,
+    );
+    if (!limiter.ok) return rateLimitResponse(limiter, 5);
 
     if (session.user.emailVerified) {
       return NextResponse.json({ ok: true, alreadyVerified: true });

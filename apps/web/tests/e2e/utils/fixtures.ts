@@ -19,12 +19,73 @@ export async function registerAndLogin(page: Page) {
   await page.getByTestId('legal-acceptance-inner-checkbox').click();
   await page.getByTestId('legal-acceptance-confirm').click();
   await page.getByTestId('register-submit').click();
+  let contaId: string | null = null;
   await expect.poll(async () => {
     const response = await page.request.get('/api/auth/session');
     if (!response.ok()) return null;
     const session = (await response.json()) as { user?: { contaId?: string } };
     return session.user?.contaId ?? null;
   }, { timeout: 15000 }).not.toBeNull();
+
+  const sessionResponse = await page.request.get('/api/auth/session');
+  if (sessionResponse.ok()) {
+    const session = (await sessionResponse.json()) as { user?: { contaId?: string } };
+    contaId = session.user?.contaId ?? null;
+  }
+  if (!contaId) throw new Error('Conta não encontrada após cadastro E2E');
+
+  await prisma.platformBillingAccount.upsert({
+    where: {
+      uq_platform_billing_account_conta_env: {
+        contaId,
+        environment: 'TEST',
+      },
+    },
+    create: {
+      contaId,
+      environment: 'TEST',
+      status: 'TRIALING',
+      planCode: 'STARTER',
+      accessStatus: 'ACTIVE',
+      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      paymentMethodStatus: 'UNKNOWN',
+    },
+    update: {
+      status: 'TRIALING',
+      accessStatus: 'ACTIVE',
+      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+    },
+  });
+
+  const asaasAccountId = `acc_e2e_${randomUUID()}`;
+  const financeProfile = await prisma.financeProfile.create({
+    data: {
+      contaId,
+      asaasAccountId,
+      status: 'APPROVED',
+      isOnboardingCompleted: true,
+      onboardingCompletedAt: new Date(),
+      wizardStep: 6,
+      wizardCompletedAt: new Date(),
+    },
+    select: { id: true },
+  });
+  await prisma.asaasAccount.create({
+    data: {
+      financeProfileId: financeProfile.id,
+      asaasAccountId,
+      externalReference: `acc-ref-${randomUUID()}`,
+      status: 'APPROVED',
+      apiKeyEncrypted: `v1:${Buffer.from('$aact_hmlg_e2e_key', 'utf8').toString('base64')}`,
+      apiKeyStatus: 'CONNECTED',
+      operationalStatus: 'OPERATIONAL',
+      webhookStatus: 'ACTIVE',
+      provisionedAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    },
+  });
+  await prisma.conta.update({ where: { id: contaId }, data: { financeStatus: 'FINANCE_APPROVED' } });
+
+  return { contaId };
 }
 
 export async function getContaId() {

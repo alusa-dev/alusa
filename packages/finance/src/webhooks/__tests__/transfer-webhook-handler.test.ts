@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { handleTransferWebhook } from '../transfer-webhook-handler';
 
+const { createNotificationMock } = vi.hoisted(() => ({
+  createNotificationMock: vi.fn(async () => {}),
+}));
+
 vi.mock('@alusa/database', () => {
   return {
     loadAsaasCredentials: vi.fn(),
@@ -26,7 +30,11 @@ vi.mock('../../foundation/audit-log.service', () => ({
 }));
 
 vi.mock('@alusa/lib', () => ({
-  createNotification: vi.fn(async () => {}),
+  createNotification: createNotificationMock,
+}));
+
+vi.mock('@alusa/lib/services/notifications.service', () => ({
+  createNotification: createNotificationMock,
 }));
 
 describe('handleTransferWebhook', () => {
@@ -399,7 +407,7 @@ describe('handleTransferWebhook', () => {
   it('deve emitir notificação TRANSFER_CANCELLED ao receber TRANSFER_CANCELLED', async () => {
     const { prisma, loadAsaasCredentials } = await import('@alusa/database');
     const { getTransfer } = await import('@alusa/asaas');
-    const { createNotification } = await import('@alusa/lib');
+    const { createNotification } = await import('@alusa/lib/services/notifications.service');
 
     vi.mocked(prisma.transferRequest.findFirst).mockResolvedValueOnce({
       id: 'tr1',

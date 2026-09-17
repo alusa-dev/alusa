@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getAsaasPaymentDetails } from '@alusa/finance';
-import { prisma } from '@/lib/prisma';
 import {
   cobrancaNotifyInputDTOSchema,
   cobrancaNotifyResultDTOSchema,
   cobrancaRouteParamsDTOSchema,
 } from '@/features/financeiro/cobrancas/dtos';
 import { mapCobrancaNotifyResultToDTO } from '@/features/financeiro/cobrancas/mappers';
-import { resolveCobrancaPaymentLookup } from '@/src/server/finance/resolve-cobranca-payment-lookup';
+import { resolveCobrancaPaymentLookupForTenant } from '@/src/server/finance/resolve-cobranca-payment-lookup';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -28,14 +26,12 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    const user = session?.user as { id?: string; contaId?: string; role?: string } | undefined;
-
-    if (!user?.id || !user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
 
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return NextResponse.json({ error: 'Sem permissão' }, { status: 403 });
     }
 
@@ -50,7 +46,7 @@ export async function POST(
       );
     }
 
-    const paymentLookup = await resolveCobrancaPaymentLookup(prisma, user.contaId, cobrancaId);
+    const paymentLookup = await resolveCobrancaPaymentLookupForTenant(auth.contaId, cobrancaId);
     const paymentId = paymentLookup?.asaasPaymentId ?? null;
 
     if (!paymentId) {
@@ -65,7 +61,7 @@ export async function POST(
     console.log(`[Asaas Notify] Obtendo links oficiais para payment: ${paymentId}`);
 
     const result = await getAsaasPaymentDetails({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       paymentId,
       includePixQrCode: true,
     });
@@ -90,10 +86,9 @@ export async function POST(
     return NextResponse.json(
       { 
         success: false, 
-        error: error instanceof Error ? error.message : 'Erro ao enviar notificação' 
+        error: 'Erro ao enviar notificação'
       },
       { status: 500 },
     );
   }
 }
-

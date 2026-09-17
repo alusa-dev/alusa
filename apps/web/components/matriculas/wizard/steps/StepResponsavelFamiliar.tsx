@@ -32,9 +32,12 @@ interface ResponsavelOption {
 
 const novoResponsavelSchema = z.object({
   nome: z.string().min(2, 'Nome obrigatório'),
-  cpf: z.string().optional(),
+  cpf: z.string().min(1, 'CPF obrigatório').refine((value) => unmask(value).length === 11, 'CPF inválido'),
   email: z.string().email('E-mail inválido').optional().or(z.literal('')),
-  telefone: z.string().optional(),
+  telefone: z
+    .string()
+    .min(1, 'Telefone obrigatório')
+    .refine((value) => [10, 11].includes(unmask(value).length), 'Telefone inválido'),
 });
 type NovoResponsavelFormData = z.infer<typeof novoResponsavelSchema>;
 
@@ -334,11 +337,11 @@ export function StepResponsavelFamiliar({ ctx }: StepResponsavelFamiliarProps) {
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-600">CPF</label>
+              <label className="text-xs font-medium text-slate-600">CPF *</label>
               <Input {...register('cpf')} placeholder="000.000.000-00" maxLength={14} />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-600">Telefone</label>
+              <label className="text-xs font-medium text-slate-600">Telefone *</label>
               <Input {...register('telefone')} placeholder="(00) 00000-0000" maxLength={15} />
             </div>
           </div>

@@ -1,7 +1,4 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-
-import { authOptions } from '@/lib/auth-options';
 import { getAccountVerificationStatus } from '@alusa/finance/use-cases/kyc/get-account-verification-status';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
 import {
@@ -9,6 +6,7 @@ import {
   getAccountVerificationCache,
   setAccountVerificationCache,
 } from '@/src/server/kyc/account-verification-cache';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -22,8 +20,8 @@ function json(status: number, body: unknown, headers?: Record<string, string>) {
 }
 
 async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
+  const auth = await resolveTenantSession();
+  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role } : null;
 }
 
 /**

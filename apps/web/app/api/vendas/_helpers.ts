@@ -1,23 +1,18 @@
-import { NextResponse } from 'next/server';
-
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { apiJsonError } from '@/lib/api/standard-response';
 
 export function jsonError(status: number, code: string, message: string, details?: unknown) {
-  return NextResponse.json({ error: { code, message, details } }, { status });
+  return apiJsonError(status, code, message, details);
 }
 
 export async function getStoreRequestContext() {
-  const session = await safeGetServerSession();
-  const user = session?.user as { contaId?: string | null; id?: string | null } | undefined;
-  const contaId = user?.contaId?.trim() || null;
-  const operatorId = user?.id?.trim() || null;
-
-  if (!contaId || !operatorId) {
+  const auth = await resolveTenantSession();
+  if (!auth.ok) {
     throw Object.assign(new Error('Usuário não autenticado.'), {
-      code: 'NAO_AUTENTICADO',
-      status: 401,
+      code: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
+      status: auth.reason === 'CONTA_MISMATCH' ? 403 : 401,
     });
   }
 
-  return { contaId, operatorId };
+  return { contaId: auth.contaId, operatorId: auth.userId };
 }

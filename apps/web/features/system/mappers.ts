@@ -1,5 +1,6 @@
 import {
   adminFinancialHealthResultDTOSchema,
+  adminFinancialOperationalHealthResultDTOSchema,
   adminTestCustomerResultDTOSchema,
   appHealthResultDTOSchema,
   devSetPasswordResultDTOSchema,
@@ -31,6 +32,33 @@ export function mapAdminFinancialHealthResultToDTO(record: Record<string, unknow
             toIsoString(queue.generatedAt as Date | string | undefined) ?? new Date(0).toISOString(),
         }
       : undefined,
+  });
+}
+
+export function mapAdminFinancialOperationalHealthResultToDTO(record: Record<string, unknown>) {
+  const result = record.result as {
+    generatedAt?: Date | string;
+    accounts?: unknown;
+  } | undefined;
+  const alerts = Array.isArray(record.alerts) ? record.alerts : [];
+
+  return adminFinancialOperationalHealthResultDTOSchema.parse({
+    ...record,
+    result: {
+      ...result,
+      generatedAt: toIsoString(result?.generatedAt) ?? new Date(0).toISOString(),
+    },
+    alerts: alerts.map((alert) => {
+      const item = alert as Record<string, unknown>;
+      return {
+        ...item,
+        firstSeenAt: toIsoString(item.firstSeenAt as Date | string | undefined),
+        lastSeenAt: toIsoString(item.lastSeenAt as Date | string | undefined),
+        resolvedAt: toIsoString(item.resolvedAt as Date | string | null | undefined),
+        createdAt: toIsoString(item.createdAt as Date | string | undefined),
+        updatedAt: toIsoString(item.updatedAt as Date | string | undefined),
+      };
+    }),
   });
 }
 

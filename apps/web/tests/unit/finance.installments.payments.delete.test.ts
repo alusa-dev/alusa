@@ -97,6 +97,7 @@ describe('DELETE /api/finance/installments/[id]/payments', () => {
     expect(cancelInstallmentPayments).toHaveBeenCalledWith('inst_asaas_1', { contaId: 'conta-1' });
     expect(prisma.cobranca.updateMany).toHaveBeenCalledWith({
       where: {
+        contaId: 'conta-1',
         id: { in: ['cobranca-1'] },
         status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
       },

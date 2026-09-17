@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { deleteProductOption, addOptionValue } from '@alusa/lib';
+import {
+  deleteProductOption,
+  addOptionValue,
+} from '@alusa/lib/services/product-option.service';
+import { productOptionValueCreateInputDTOSchema } from '@/features/vendas/dtos';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -25,9 +28,9 @@ interface RouteContext {
 
 export async function DELETE(_req: Request, context: RouteContext) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id: productId, optionId } = await Promise.resolve(context.params);
     await deleteProductOption(optionId, productId, contaId);
@@ -40,19 +43,18 @@ export async function DELETE(_req: Request, context: RouteContext) {
 export async function POST(req: Request, context: RouteContext) {
   let submittedValue: string | undefined;
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id: productId, optionId } = await Promise.resolve(context.params);
-    const body = await req.json();
-
-    submittedValue = typeof body.value === 'string' ? body.value : undefined;
-    if (!body.value?.trim()) {
+    const parsed = productOptionValueCreateInputDTOSchema.safeParse(await req.json());
+    submittedValue = parsed.success ? parsed.data.value : undefined;
+    if (!parsed.success) {
       return jsonError(422, 'DADOS_INVALIDOS', '"value" é obrigatório');
     }
 
-    const value = await addOptionValue({ optionId, productId, contaId, value: body.value });
+    const value = await addOptionValue({ optionId, productId, contaId, value: parsed.data.value });
     return NextResponse.json({ data: value }, { status: 201 });
   } catch (e) {
     console.error('[vendas/produtos/opcoes/valores] Falha ao adicionar valor', e);

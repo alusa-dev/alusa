@@ -1,7 +1,6 @@
-import { getServerSession } from 'next-auth';
-import { authOptions } from '../auth-options';
 import { prisma } from '@/prisma/client';
 import { isTestRouteEnabled } from '@/lib/security/runtime-guards';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 export type SessionUser = {
   id: string;
@@ -67,22 +66,21 @@ async function ensureTestSessionUser(): Promise<SessionUser> {
 }
 
 export async function getSessionUser(): Promise<SessionUser | null> {
-  const session = (await getServerSession(authOptions)) as unknown as { user?: { id?: string; role?: string; contaId?: string } };
-  const user = session?.user;
-  if (!user?.id || !user?.role) {
+  const auth = await resolveTenantSession();
+  if (!auth.ok) {
     if (isTestRouteEnabled()) {
       return ensureTestSessionUser();
     }
     return null;
   }
 
-  if (!user.contaId) {
+  if (!auth.role) {
     return null;
   }
 
   return {
-    id: String(user.id),
-    role: user.role as 'ADMIN' | 'RECEPCAO' | string,
-    contaId: String(user.contaId),
+    id: auth.userId,
+    role: auth.role as 'ADMIN' | 'RECEPCAO' | string,
+    contaId: auth.contaId,
   };
 }

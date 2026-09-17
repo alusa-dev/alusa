@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { updateProductVariant, deleteProductVariant } from '@alusa/lib';
+import {
+  updateProductVariant,
+  deleteProductVariant,
+} from '@alusa/lib/services/product-variant.service';
+import { productVariantUpdateInputDTOSchema } from '@/features/vendas/dtos';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -13,15 +16,13 @@ interface RouteContext {
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id: productId, variantId } = await Promise.resolve(context.params);
-    const actorUserId =
-      (session as { user?: { id?: string } } | null)?.user?.id?.trim() || null;
-    const body = await req.json();
+    const actorUserId = auth.userId;
+    const body = productVariantUpdateInputDTOSchema.parse(await req.json());
 
     const variant = await updateProductVariant({
       variantId,
@@ -29,11 +30,9 @@ export async function PATCH(req: Request, context: RouteContext) {
       contaId,
       actorUserId,
       sku: body.sku,
-      price:
-        body.price !== undefined ? (body.price === null ? null : Number(body.price)) : undefined,
-      averageCost: body.averageCost !== undefined ? Number(body.averageCost) : undefined,
-      lowStockThreshold:
-        body.lowStockThreshold !== undefined ? Number(body.lowStockThreshold) : undefined,
+      price: body.price,
+      averageCost: body.averageCost,
+      lowStockThreshold: body.lowStockThreshold,
       imageUrl: body.imageUrl,
       isActive: body.isActive,
     });
@@ -46,10 +45,9 @@ export async function PATCH(req: Request, context: RouteContext) {
 
 export async function DELETE(_req: Request, context: RouteContext) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id: productId, variantId } = await Promise.resolve(context.params);
     await deleteProductVariant(variantId, productId, contaId);

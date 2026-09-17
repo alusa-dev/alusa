@@ -1,15 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { z } from 'zod';
-import { authOptions } from '@/lib/auth-options';
-import { deleteNotificationRecipient, updateNotificationRecipientState } from '@alusa/lib';
+import {
+  deleteNotificationRecipient,
+  updateNotificationRecipientState,
+} from '@alusa/lib/services/notifications.service';
 import { clearNotificationCaches } from '@/lib/notifications/notification-cache';
-
-type SessionUser = {
-  id?: string;
-  role?: string;
-  contaId?: string;
-};
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 const paramsSchema = z.object({ id: z.string().min(1) });
@@ -21,20 +17,16 @@ function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
-}
-
 export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return json(401, { error: 'NAO_AUTENTICADO', message: 'Usuário não autenticado.' });
     }
+    const user = { id: auth.userId, contaId: auth.contaId, role: auth.role };
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO', message: 'Usuário sem permissão para atualizar notificações.' });
     }
@@ -81,10 +73,11 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return json(401, { error: 'NAO_AUTENTICADO', message: 'Usuário não autenticado.' });
     }
+    const user = { id: auth.userId, contaId: auth.contaId, role: auth.role };
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO', message: 'Usuário sem permissão para excluir notificações.' });
     }

@@ -1,4 +1,4 @@
-import { isAcademicDateInFuture } from '@alusa/lib/date-only';
+import { isAcademicDateInFuture } from '@alusa/shared/date-only';
 
 const UPCOMING_ENROLLMENT_STATUSES = new Set([
   'ATIVA',

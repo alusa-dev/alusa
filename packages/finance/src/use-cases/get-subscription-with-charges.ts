@@ -711,23 +711,26 @@ export async function getSubscriptionWithCharges(
 
   // 2. Buscar Cobranças MENSALIDADE diretamente na matrícula da assinatura
   // (Para assinaturas que geraram cobranças antes da tabela Charge existir)
-  const cobrancasMensalidade = await prisma.cobranca.findMany({
-    where: {
-      matriculaId: sub.matriculaId,
-      tipo: 'MENSALIDADE',
-    },
-    orderBy: { vencimento: 'desc' },
-    select: {
-      id: true,
-      status: true,
-      asaasStatus: true,
-      liquidacaoStatus: true,
-      valor: true,
-      vencimento: true,
-      dataPagamento: true,
-      asaasPaymentId: true,
-    },
-  });
+  const cobrancasMensalidade = charges.length === 0
+    ? await prisma.cobranca.findMany({
+        where: {
+          contaId,
+          matriculaId: sub.matriculaId,
+          tipo: 'MENSALIDADE',
+        },
+        orderBy: { vencimento: 'desc' },
+        select: {
+          id: true,
+          status: true,
+          asaasStatus: true,
+          liquidacaoStatus: true,
+          valor: true,
+          vencimento: true,
+          dataPagamento: true,
+          asaasPaymentId: true,
+        },
+      })
+    : [];
 
   // Coletar IDs de cobranças já incluídas via Charge para evitar duplicatas
   const includedCobrancaIds = new Set<string>();

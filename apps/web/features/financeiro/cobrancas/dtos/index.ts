@@ -4,6 +4,29 @@ const dateLikeDTOSchema = z.union([z.string(), z.date()]);
 const notifyTypeDTOSchema = z.enum(['EMAIL', 'SMS', 'WHATSAPP']);
 const manualPaymentMethodDTOSchema = z.enum(['DINHEIRO', 'PIX', 'TRANSFERENCIA']);
 
+function isValidCobrancaUpdateDueDate(value: string): boolean {
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (dateOnlyMatch) {
+    const year = Number(dateOnlyMatch[1]);
+    const month = Number(dateOnlyMatch[2]);
+    const day = Number(dateOnlyMatch[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return (
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+    );
+  }
+
+  return Number.isFinite(new Date(value).getTime());
+}
+
+const cobrancaUpdateDueDateDTOSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(isValidCobrancaUpdateDueDate, 'Informe uma data de vencimento válida');
+
 export const financeiroCobrancasQueryDTOSchema = z.object({
   page: z.number().int().positive().default(1),
   pageSize: z.number().int().positive().default(20),
@@ -143,8 +166,22 @@ export type DeleteCobrancaArquivoResultDTO = z.infer<typeof deleteCobrancaArquiv
 
 export const listLegacyCobrancasQueryDTOSchema = z.object({
   matriculaId: z.string().trim().optional(),
-  status: z.string().trim().optional(),
-  tipo: z.string().trim().optional(),
+  status: z
+    .enum([
+      'A_VENCER',
+      'PENDENTE',
+      'PROCESSANDO',
+      'PAGO',
+      'ATRASADO',
+      'CANCELAMENTO_PENDENTE',
+      'CANCELADO',
+      'ESTORNADO',
+      'ESTORNADO_PARCIAL',
+    ])
+    .optional(),
+  tipo: z
+    .enum(['TAXA_MATRICULA', 'MENSALIDADE', 'EXTRA', 'AVULSA', 'PARCELADA', 'RECORRENTE'])
+    .optional(),
   dataInicio: z.string().trim().optional(),
   dataFim: z.string().trim().optional(),
   limit: z.number().int().positive().default(50),
@@ -188,9 +225,11 @@ export const createLegacyCobrancaInputDTOSchema = z.object({
   vencimento: z.union([z.string(), z.date()]),
   competenciaInicio: z.union([z.string(), z.date()]),
   competenciaFim: z.union([z.string(), z.date()]),
-  tipo: z.string().optional(),
+  tipo: z
+    .enum(['TAXA_MATRICULA', 'MENSALIDADE', 'EXTRA', 'AVULSA', 'PARCELADA', 'RECORRENTE'])
+    .optional(),
   descricao: z.string().optional(),
-  formaPagamento: z.string().optional(),
+  formaPagamento: z.enum(['BOLETO', 'PIX', 'CARTAO_CREDITO', 'INDEFINIDO']).optional(),
 });
 
 export type CreateLegacyCobrancaInputDTO = z.input<typeof createLegacyCobrancaInputDTOSchema>;
@@ -243,6 +282,51 @@ export const cobrancaMutationResultDTOSchema = z.object({
 });
 
 export type CobrancaMutationResultDTO = z.infer<typeof cobrancaMutationResultDTOSchema>;
+
+/**
+ * Mantém compatibilidade com clientes legados que enviam valores monetários
+ * como string, mas garante que a camada de aplicação receba apenas números
+ * finitos antes de iniciar uma mutação financeira.
+ */
+const numberLikeCobrancaUpdateDTOSchema = z
+  .union([z.number(), z.string().trim().min(1)])
+  .transform((value) => Number(value))
+  .refine(Number.isFinite, 'Informe um número válido');
+
+const optionalNumberLikeCobrancaUpdateDTOSchema = numberLikeCobrancaUpdateDTOSchema.optional();
+
+/**
+ * Payload do endpoint legado PUT /api/cobrancas/[id].
+ *
+ * O schema é permissivo para os aliases e campos históricos que ainda são
+ * enviados pelas telas, mas não deixa valores inválidos chegarem ao Prisma ou
+ * ao comando financeiro externo. Campos desconhecidos são preservados para
+ * que a validação seja uma migração compatível: a rota continua ignorando-os
+ * como fazia antes.
+ */
+export const cobrancaUpdateInputDTOSchema = z
+  .object({
+    valor: optionalNumberLikeCobrancaUpdateDTOSchema,
+    vencimento: cobrancaUpdateDueDateDTOSchema.optional(),
+    descricao: z.string().nullable().optional(),
+    formaPagamento: z.unknown().optional(),
+    jurosPercentual: optionalNumberLikeCobrancaUpdateDTOSchema,
+    jurosValorFixo: optionalNumberLikeCobrancaUpdateDTOSchema,
+    juros: optionalNumberLikeCobrancaUpdateDTOSchema,
+    multaTipo: z.string().nullable().optional(),
+    multaPercentual: optionalNumberLikeCobrancaUpdateDTOSchema,
+    multaValorFixo: optionalNumberLikeCobrancaUpdateDTOSchema,
+    multa: optionalNumberLikeCobrancaUpdateDTOSchema,
+    descontoTipo: z.string().nullable().optional(),
+    descontoPercentual: optionalNumberLikeCobrancaUpdateDTOSchema,
+    descontoValorFixo: optionalNumberLikeCobrancaUpdateDTOSchema,
+    descontoPrazoMaximo: z.string().nullable().optional(),
+    desconto: optionalNumberLikeCobrancaUpdateDTOSchema,
+    valorFinal: optionalNumberLikeCobrancaUpdateDTOSchema,
+  })
+  .passthrough();
+
+export type CobrancaUpdateInputDTO = z.infer<typeof cobrancaUpdateInputDTOSchema>;
 
 export const cobrancaNotifyInputDTOSchema = z.object({
   tipo: notifyTypeDTOSchema,

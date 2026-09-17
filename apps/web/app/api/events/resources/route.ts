@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { listEventResources } from '@alusa/lib';
+import { listEventResources } from '@alusa/lib/events/events.service';
 
 import { getEventsContext, handleEventsRouteError } from '../_helpers';
 

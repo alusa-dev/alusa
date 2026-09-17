@@ -4,11 +4,11 @@ import * as React from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { useForm, FormProvider } from 'react-hook-form';
+import { useForm, FormProvider, type FieldPath } from 'react-hook-form';
 import { AnimatePresence, motion } from 'framer-motion';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ImageCropDialog } from '../image/ImageCropDialog';
-import { alunoSchema, type AlunoInput } from '../../../../prisma/zod/aluno';
+import { alunoSchema, alunoWizardStepSchema, type AlunoInput } from '../../../../prisma/zod/aluno';
 import { StepHeader, SectionCard } from './wizard/ui';
 import IdentificacaoFields from './wizard/steps/IdentificacaoFields';
 import EnderecoFields from './wizard/steps/EnderecoFields';
@@ -183,12 +183,28 @@ export default function AlunoWizardDialog({
   }
   async function goNext() {
     const fields = stepFields[activeStep] as unknown as (keyof WizardData)[];
-    if (fields.length) {
-      const ok = await methods.trigger(fields);
-      if (!ok) {
-        focusFirstError(methods.formState.errors);
-        return;
+    const fieldsAsStrings = fields as readonly string[];
+    const ok = fields.length ? await methods.trigger(fields) : true;
+
+    // O resolver do RHF pode validar somente os campos solicitados e não
+    // materializar issues produzidos pelo superRefine do schema completo.
+    // Revalidamos o mesmo contrato canônico e projetamos apenas os erros da
+    // etapa atual, sem duplicar regras condicionais no wizard.
+    const schemaResult = alunoWizardStepSchema.safeParse(methods.getValues());
+    const currentStepIssues = schemaResult.success
+      ? []
+      : schemaResult.error.issues.filter((issue) => {
+          const path = issue.path.join('.');
+          return fieldsAsStrings.includes(path) || fieldsAsStrings.includes(String(issue.path[0]));
+        });
+
+    if (!ok || currentStepIssues.length > 0) {
+      for (const issue of currentStepIssues) {
+        const fieldPath = issue.path.join('.') as FieldPath<WizardData>;
+        methods.setError(fieldPath, { type: 'schema', message: issue.message });
       }
+      focusFirstError(methods.formState.errors);
+      return;
     }
     setActiveIndex((i) => Math.min(i + 1, steps.length - 1));
   }

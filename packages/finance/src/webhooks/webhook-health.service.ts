@@ -15,7 +15,7 @@
 import { listWebhooks, removeWebhookBackoff } from '@alusa/asaas';
 import type { AsaasWebhookConfig } from '@alusa/asaas';
 import { loadAsaasCredentials, prisma } from '@alusa/database';
-import { createNotification } from '@alusa/lib';
+import { createNotification } from '@alusa/lib/services/notifications.service';
 import { NotificationType, NotificationCategory, NotificationSeverity, Role } from '@prisma/client';
 import { createHash } from 'node:crypto';
 

@@ -1,40 +1,39 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { anonimizarAluno } from '@alusa/lib';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { anonimizarAluno } from '@alusa/lib/alunos/aluno.service';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
 } from '@/src/server/platform-billing/capacity';
+import { anonymizeStudentInputDTOSchema } from '@/features/system/dtos';
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
     const rawParams = await params;
   try {
-    const session = await getServerSession(authOptions);
-    const user = (session as { user?: { id?: string; contaId?: string; role?: string } })?.user;
-    if (!user?.id || !user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
-    if (String(user.role || '').toUpperCase() !== 'ADMIN') {
+    if (String(auth.role || '').toUpperCase() !== 'ADMIN') {
       return NextResponse.json({ error: 'Sem permissão' }, { status: 403 });
     }
 
     try {
-      await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'ADMIN_WRITE' });
+      await assertPlatformAccessForConta({ contaId: auth.contaId, capability: 'ADMIN_WRITE' });
     } catch (error) {
       const blocked = platformBillingAccessResponse(error);
       if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
       throw error;
     }
 
-    const body = await req.json().catch(() => ({}));
-    const motivo = typeof body?.motivo === 'string' ? body.motivo : undefined;
+    const body = anonymizeStudentInputDTOSchema.parse(await req.json().catch(() => ({})));
+    const motivo = body.motivo;
 
     const aluno = await anonimizarAluno({
       id: rawParams.id,
-      contaId: user.contaId,
+      contaId: auth.contaId,
       motivo,
-      actorId: user.id,
+      actorId: auth.userId,
     });
 
     return NextResponse.json({ success: true, aluno });

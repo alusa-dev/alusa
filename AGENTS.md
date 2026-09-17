@@ -94,6 +94,7 @@ Este arquivo (**`AGENTS.md`**) espelha as **regras universais** do agente **core
 ### Next.js, APIs e validação
 
 - Route Handlers e APIs internas devem validar entrada com Zod quando aplicável.
+- Seguir as convenções HTTP em [docs/architecture/api-http-conventions.md](docs/architecture/api-http-conventions.md): método compatível com a operação, status coerente com o estado real e código de erro estável.
 - Não confiar em payload recebido do client sem validação.
 - Separar DTOs, schemas de entrada, casos de uso e resposta HTTP.
 - Route Handlers não devem conter regra de negócio pesada.

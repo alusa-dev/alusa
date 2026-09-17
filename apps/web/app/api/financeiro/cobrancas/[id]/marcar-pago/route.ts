@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getRequestId, logApiError, logApiResponse } from '@/lib/observability/api-logger';
 import {
   AsaasEnvError,
@@ -78,16 +77,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   };
 
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    type SessUser = { id?: string; contaId?: string; role?: string };
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return complete(err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado'), 'NAO_AUTENTICADO');
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return complete(err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuário não autenticado'), auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO');
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return complete(err(403, 'SEM_PERMISSAO', 'Acesso negado'), 'SEM_PERMISSAO');
 
     const { id } = await params;
     chargeId = id;
-    tenantId = user.contaId;
+    tenantId = auth.contaId;
     const parsedBody = marcarPagoBodySchema.safeParse(await req.json().catch(() => ({})));
     if (!parsedBody.success) {
       return complete(err(422, 'ERRO_VALIDACAO', 'Dados de baixa manual inválidos.'), 'ERRO_VALIDACAO');
@@ -96,8 +93,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const result = await markChargeAsPaid({
       chargeId: id,
-      contaId: user.contaId,
-      userId: user.id,
+      contaId: auth.contaId,
+      userId: auth.userId,
       dataPagamento: body.dataPagamento,
       formaPagamentoManual: body.formaPagamentoManual,
       observacao: body.observacao,

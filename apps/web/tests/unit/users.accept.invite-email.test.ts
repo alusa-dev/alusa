@@ -17,10 +17,8 @@ const { prismaMock } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@alusa/lib', () => ({
-  InviteUserService: {
-    acceptInvite: acceptInviteMock,
-  },
+vi.mock('@alusa/lib/server/services/invite-user-service', () => ({
+  acceptInvite: acceptInviteMock,
 }));
 
 vi.mock('@/lib/rate-limit', () => ({

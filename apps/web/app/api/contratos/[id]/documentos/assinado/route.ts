@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/prisma/client';
 import { getSessionUser } from '@/lib/auth/session';
 import { contratoRouteParamsDTOSchema } from '@/features/contratos/dtos';
+import { getSignedContractDocument } from '@/src/server/contracts/contract-read.service';
 
 export async function GET(
   _request: NextRequest,
@@ -15,15 +15,7 @@ export async function GET(
   const rawParams = await params;
   const { id } = contratoRouteParamsDTOSchema.parse(rawParams);
 
-  const documento = await prisma.contratoDocumento.findFirst({
-    where: {
-      contaId: user.contaId,
-      contratoId: id,
-      tipo: 'ASSINADO',
-      contrato: { contaId: user.contaId },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+  const documento = await getSignedContractDocument({ contaId: user.contaId, contratoId: id });
 
   if (!documento) {
     return NextResponse.json(

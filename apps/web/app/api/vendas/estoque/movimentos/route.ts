@@ -1,6 +1,4 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
-import { InventoryMovementType } from '@prisma/client';
 
 import {
   listInventoryMovements,
@@ -8,24 +6,13 @@ import {
 } from '@alusa/finance';
 
 import { getStoreRequestContext, jsonError } from '../../_helpers';
-
-const querySchema = z.object({
-  productId: z.string().trim().optional(),
-  variantId: z.string().trim().optional(),
-  movementType: z.nativeEnum(InventoryMovementType).optional(),
-  search: z.string().trim().optional(),
-  fromDate: z.string().trim().optional(),
-  toDate: z.string().trim().optional(),
-  actorUserId: z.string().trim().optional(),
-  originType: z.string().trim().optional(),
-  limit: z.coerce.number().int().positive().max(200).optional(),
-});
+import { listInventoryMovementsQueryDTOSchema } from '@/features/vendas/dtos';
 
 export async function GET(request: Request) {
   try {
     const { contaId } = await getStoreRequestContext();
     const url = new URL(request.url);
-    const parsed = querySchema.safeParse(Object.fromEntries(url.searchParams.entries()));
+    const parsed = listInventoryMovementsQueryDTOSchema.safeParse(Object.fromEntries(url.searchParams.entries()));
 
     if (!parsed.success) {
       return jsonError(422, 'ERRO_VALIDACAO', 'Parâmetros inválidos.', parsed.error.flatten());
@@ -47,6 +34,6 @@ export async function GET(request: Request) {
       return jsonError(authError.status, authError.code, authError.message ?? 'Erro');
     }
 
-    return jsonError(500, 'ERRO_LISTAR_MOVIMENTOS', (error as Error).message);
+    return jsonError(500, 'ERRO_LISTAR_MOVIMENTOS', 'Não foi possível carregar os movimentos.');
   }
 }

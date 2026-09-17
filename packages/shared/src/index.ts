@@ -2,7 +2,16 @@
 export { isValidCpf, formatCpf, cleanCpf } from './validators/cpf';
 export { isValidCnpj } from './validators/cnpj';
 export { detectPersonType, normalizeCpfCnpjDigits, onlyDigits } from './validators/cpf-cnpj';
+export {
+  isValidCpfDigits,
+  isValidCnpjDigits,
+  isValidCpfCnpjDigits,
+  maskCpfCnpj,
+} from './validators/cpf-cnpj';
 export type { PersonType } from './validators/cpf-cnpj';
+
+// Datas civis e calendário acadêmico da Conta
+export * from './date-only';
 
 // Formatters
 export { formatCurrency, parseCurrency } from './formatters/currency';

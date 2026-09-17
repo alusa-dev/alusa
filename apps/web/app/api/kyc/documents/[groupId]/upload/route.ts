@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { isValidKycGroupId } from '@/features/kyc/utils/group-id';
 import { DocumentsNotReadyError } from '@alusa/finance/errors/documents-not-ready-error';
 import { getKycSnapshotByContaId } from '@alusa/finance/use-cases/kyc/get-kyc-snapshot';
@@ -29,8 +27,8 @@ function json(status: number, body: unknown, headers?: Record<string, string>) {
 }
 
 async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
+  const auth = await resolveTenantSession();
+  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role } : null;
 }
 
 function isValidOpaqueId(value: unknown): value is string {
@@ -246,7 +244,7 @@ export async function POST(req: Request, context: RouteContext) {
       groupId,
       contaId: user.contaId,
     });
-    return json(500, { error: 'ERRO_INTERNO', message: error instanceof Error ? error.message : undefined });
+    return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível enviar o documento KYC.' });
   }
 }
 

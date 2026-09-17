@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { regenerateEventContractToken } from '@alusa/lib';
+import { regenerateEventContractToken } from '@alusa/lib/events/event-contracts.service';
 import { getEventsContext, handleEventsRouteError } from '../../../events/_helpers';
 
 export async function PATCH(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {

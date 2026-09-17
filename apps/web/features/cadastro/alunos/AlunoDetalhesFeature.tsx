@@ -19,7 +19,7 @@ import {
   getEnrollmentHistoryStatusLabel,
   getEnrollmentHistoryStatusVariant,
 } from '@/features/cadastro/shared/enrollment-history-status';
-import { getAcademicDateKey } from '@alusa/lib/date-only';
+import { getAcademicDateKey } from '@alusa/shared/date-only';
 import {
   ChevronDown,
   ChevronLeft as ArrowLeft,

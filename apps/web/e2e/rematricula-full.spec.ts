@@ -155,6 +155,18 @@ async function seedSchool(options: { role?: string } = {}) {
     select: { id: true },
   });
 
+  await prisma.platformBillingAccount.create({
+    data: {
+      contaId: conta.id,
+      environment: 'TEST',
+      status: 'TRIALING',
+      planCode: 'STARTER',
+      accessStatus: 'ACTIVE',
+      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      paymentMethodStatus: 'UNKNOWN',
+    },
+  });
+
   const user = await prisma.usuario.create({
     data: {
       contaId: conta.id,

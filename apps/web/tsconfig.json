@@ -55,7 +55,5 @@
     "tests/e2e",
     // TODO(refactor): reativar verificação após estabilizar RHF wizard
     "components/colaboradores/ColaboradorWizardDialog.tsx",
-    "context7",
-    "../../context7"
   ]
 }

@@ -54,6 +54,6 @@ export async function GET(request: Request) {
       return jsonError(authError.status, authError.code, authError.message ?? 'Erro');
     }
 
-    return jsonError(500, 'ERRO_LISTAR_ESTOQUE', (error as Error).message);
+    return jsonError(500, 'ERRO_LISTAR_ESTOQUE', 'Não foi possível carregar o estoque.');
   }
 }

@@ -1,8 +1,8 @@
-import prisma from '@/lib/prisma';
 import { updateSchoolInputDTOSchema, userSchoolSummaryDTOSchema } from '@/features/users/dtos';
 import { jsonNoStore } from '@/lib/http-security';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { normalizeAccountTimeZone } from '@/src/server/aulas/calendar/account-timezone';
+import { updateSchool } from '@/src/server/users/user-account.service';
 
 export async function PATCH(req: Request) {
   try {
@@ -11,6 +11,9 @@ export async function PATCH(req: Request) {
       return tenantScope.response;
     }
     const contaId = tenantScope.contaId;
+    if (!contaId) {
+      return jsonNoStore({ error: 'Conta não encontrada' }, { status: 404 });
+    }
 
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== 'object') {
@@ -35,17 +38,11 @@ export async function PATCH(req: Request) {
       );
     }
 
-    const updated = await prisma.conta.update({
-      where: { id: contaId },
-      data: data as any,
-      select: {
-        id: true,
-        nome: true,
-        cpfCnpj: true,
-        status: true,
-        ownerUserId: true,
-        timezone: true,
-      },
+    const updated = await updateSchool({
+      contaId,
+      name: typeof input.name === 'string' ? input.name : undefined,
+      cpfCnpj: typeof input.cpfCnpj === 'string' ? input.cpfCnpj : undefined,
+      timezone: typeof input.timezone === 'string' ? normalizeAccountTimeZone(input.timezone) : undefined,
     });
 
     return jsonNoStore(

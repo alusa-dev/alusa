@@ -1,63 +1,46 @@
-import type { InvoiceStatus } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 
+import {
+  notaFiscalPersonDetailQueryDTOSchema,
+  notaFiscalResponsavelRouteParamsDTOSchema,
+} from '@/features/financeiro/notafiscal/dtos';
 import { mapNotaFiscalPessoaDetalheResultToDTO } from '@/features/financeiro/notafiscal/mappers';
 import { financeInternalError, financeJsonError } from '@/lib/api/finance-api-response';
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getFiscalInvoicePersonDetail } from '@alusa/finance';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
-const allowedStatuses = new Set<InvoiceStatus>([
-  'SCHEDULED',
-  'SYNCHRONIZED',
-  'AUTHORIZED',
-  'PROCESSING_CANCELLATION',
-  'CANCELED',
-  'CANCELLATION_DENIED',
-  'ERROR',
-]);
 
 function err(status: number, code: string, message: string) {
   return financeJsonError(status, code, message);
-}
-
-function parseStatusFilters(values: string[]): InvoiceStatus[] {
-  return values
-    .map((value) => value.trim().toUpperCase())
-    .filter((value): value is InvoiceStatus => allowedStatuses.has(value as InvoiceStatus));
-}
-
-function parseDetailQuery(req: NextRequest) {
-  const url = new URL(req.url);
-  return {
-    statusFilters: parseStatusFilters(url.searchParams.getAll('status')),
-    effectiveDateFrom: url.searchParams.get('effectiveDateFrom')?.trim() || undefined,
-    effectiveDateTo: url.searchParams.get('effectiveDateTo')?.trim() || undefined,
-  };
 }
 
 type RouteContext = { params: Promise<{ responsavelId: string }> };
 
 export async function GET(req: NextRequest, context: RouteContext) {
   try {
-    const { responsavelId } = await context.params;
-    const session = await safeGetServerSession();
-    type SessUser = { id?: string; contaId?: string; role?: string };
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    const parsedParams = notaFiscalResponsavelRouteParamsDTOSchema.safeParse(await context.params);
+    if (!parsedParams.success) return err(400, 'PARAMETROS_INVALIDOS', 'Responsável inválido');
+    const url = new URL(req.url);
+    const query = notaFiscalPersonDetailQueryDTOSchema.parse({
+      status: url.searchParams.getAll('status'),
+      effectiveDateFrom: url.searchParams.get('effectiveDateFrom'),
+      effectiveDateTo: url.searchParams.get('effectiveDateTo'),
+    });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuário não autenticado');
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
     }
 
-    const query = parseDetailQuery(req);
     const result = await getFiscalInvoicePersonDetail({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       personType: 'RESPONSAVEL',
-      personId: responsavelId,
-      statusFilters: query.statusFilters.length ? query.statusFilters : undefined,
+      personId: parsedParams.data.responsavelId,
+      statusFilters: query.status.length ? query.status : undefined,
       effectiveDateFrom: query.effectiveDateFrom,
       effectiveDateTo: query.effectiveDateTo,
     });

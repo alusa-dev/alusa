@@ -1,13 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   StripeIntegrationError,
-  constructStripeWebhookEvent,
-  parseStripeRuntimeConfig,
 } from '@alusa/stripe';
-import { createPrismaPlatformBillingStore, enqueuePlatformBillingWebhookEvent } from '@alusa/platform-billing';
-import prisma from '@/lib/prisma';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
-import { drainStripeWebhookWorker } from '@/src/server/platform-billing/webhook-worker';
+import { processStripePlatformWebhook } from '@/src/server/platform-billing/stripe-webhook.service';
 
 export const runtime = 'nodejs';
 
@@ -34,20 +30,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'WEBHOOK_BODY_TOO_LARGE' }, { status: 413 });
     }
 
-    const event = constructStripeWebhookEvent({
+    const { config, result, drainResult } = await processStripePlatformWebhook({
       rawBody,
       signature: req.headers.get('stripe-signature'),
-      source: process.env,
     });
-    const config = parseStripeRuntimeConfig(process.env);
-    const result = await enqueuePlatformBillingWebhookEvent(
-      {
-        event,
-        environment: config.environment,
-        envSource: process.env,
-      },
-      createPrismaPlatformBillingStore(prisma),
-    );
 
     console.info('[platform-billing][stripe-webhook]', {
       event: result.status === 'duplicate' ? 'webhook_duplicate' : 'webhook_received',
@@ -57,13 +43,7 @@ export async function POST(req: NextRequest) {
       environment: config.environment,
     });
 
-    if (shouldDrainStripeWebhooksInline()) {
-      const drainResult = await drainStripeWebhookWorker({
-        prisma,
-        limit: 10,
-        environment: config.environment,
-        workerId: 'stripe-webhook-inline-drain',
-      });
+    if (drainResult) {
       console.info('[platform-billing][stripe-webhook]', {
         event: 'webhook_inline_drain_completed',
         eventId: result.eventId,
@@ -93,11 +73,4 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ error: 'PLATFORM_BILLING_WEBHOOK_FAILED' }, { status: 500 });
   }
-}
-
-function shouldDrainStripeWebhooksInline(): boolean {
-  const configured = process.env.PLATFORM_BILLING_INLINE_DRAIN?.trim().toLowerCase();
-  if (configured === 'true') return true;
-  if (configured === 'false') return false;
-  return process.env.NODE_ENV !== 'production';
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { requireSupportApi } from '@/features/support/api/support-api.server';
+import { supportWebhookRejectionRouteParamsSchema } from '@/features/support/actions/schemas';
 import { getSupportWebhookRejectionDetail } from '@/features/support/queries/support-account';
 
 export async function GET(
@@ -13,7 +14,7 @@ export async function GET(
   });
   if (!auth.ok) return auth.response;
 
-  const { rejectionId } = await params;
+  const { rejectionId } = supportWebhookRejectionRouteParamsSchema.parse(await params);
   const rejection = await getSupportWebhookRejectionDetail(rejectionId);
   if (!rejection) {
     return NextResponse.json(

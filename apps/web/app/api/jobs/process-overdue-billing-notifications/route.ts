@@ -1,12 +1,16 @@
 import { NextResponse } from 'next/server';
+import { processOverdueBillingNotificationsJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { processLocalOverdueBillingNotifications } from '@alusa/lib';
-import { prisma } from '@/src/prisma';
+import {
+  listContasForOverdueBillingNotifications,
+  processLocalOverdueBillingNotifications,
+} from '@alusa/lib/notifications/process-overdue-billing';
+import { apiJsonError } from '@/lib/api/standard-response';
 
 export const dynamic = 'force-dynamic';
 
 function jsonError(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status });
+  return apiJsonError(status, code, message);
 }
 
 /**
@@ -17,16 +21,19 @@ function jsonError(status: number, code: string, message: string) {
 export async function POST(req: Request) {
   try {
     const url = new URL(req.url);
+    const query = processOverdueBillingNotificationsJobQueryDTOSchema.parse({
+      contaId: url.searchParams.get('contaId'),
+      limit: url.searchParams.get('limit'),
+    });
     const tenantScope = await resolveTenantScope(req, {
       allowCron: true,
-      requestedContaId: url.searchParams.get('contaId'),
+      requestedContaId: query.contaId,
     });
     if (!tenantScope.ok) {
       return tenantScope.response;
     }
 
-    const limitRaw = Number(url.searchParams.get('limit') ?? '200');
-    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, limitRaw)) : 200;
+    const limit = query.limit;
 
     if (tenantScope.contaId) {
       const result = await processLocalOverdueBillingNotifications({
@@ -36,17 +43,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, tenants: 1, ...result });
     }
 
-    const contas = await prisma.conta.findMany({
-      where: { deletedAt: null },
-      select: { id: true },
-      take: 500,
-    });
+    const contaIds = await listContasForOverdueBillingNotifications();
 
     let emitted = 0;
     let skipped = 0;
-    for (const conta of contas) {
+    for (const contaId of contaIds) {
       const result = await processLocalOverdueBillingNotifications({
-        contaId: conta.id,
+        contaId,
         limit,
       });
       emitted += result.emitted;
@@ -55,13 +58,13 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      tenants: contas.length,
+      tenants: contaIds.length,
       emitted,
       skipped,
     });
   } catch (error) {
     console.error('[Job Process Overdue Billing] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', (error as Error).message);
+    return jsonError(500, 'ERRO_JOB', 'Não foi possível processar as notificações de cobrança vencida.');
   }
 }
 

@@ -1,7 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-
-import { authOptions } from '@/lib/auth-options';
 import {
   isDataImageUrl,
   isExternalImageUrl,
@@ -12,6 +9,7 @@ import {
   loadAvatarRecord,
   parseDataImagePayload,
 } from '@/src/server/media/avatar-loader.service';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,11 +23,11 @@ export async function GET(
   req: NextRequest,
   context: { params: Promise<{ entity: string; id: string }> },
 ) {
-  const session = await getServerSession(authOptions);
-  const contaId = (session?.user as { contaId?: string | null } | undefined)?.contaId;
-  if (!contaId) {
+  const auth = await resolveTenantSession();
+  if (!auth.ok) {
     return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
   }
+  const { contaId } = auth;
 
   const routeParams = await context.params;
   const entity = routeParams.entity;

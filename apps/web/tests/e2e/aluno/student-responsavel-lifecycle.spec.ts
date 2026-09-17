@@ -2,27 +2,8 @@ import { expect, test } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { prisma } from '../utils/fixtures';
-
-async function registerAndLoginForLifecycle(page: Page) {
-  await page.goto('/auth/register');
-  await expect(page.getByTestId('register-form')).toBeVisible({ timeout: 15000 });
-  await page.getByTestId('register-nome-first').fill('Admin');
-  await page.getByTestId('register-nome-last').fill(`E2E ${randomUUID().slice(0, 8)}`);
-  await page.getByTestId('register-email').fill(`aluno-lifecycle-${randomUUID()}@example.com`);
-  await page.getByTestId('register-senha').fill('SenhaFort3!');
-  await page.getByTestId('register-senha-confirmar').fill('SenhaFort3!');
-  await page.getByTestId('register-termos-checkbox').click();
-  await page.getByTestId('legal-acceptance-inner-checkbox').click();
-  await page.getByTestId('legal-acceptance-confirm').click();
-  await expect(page.getByTestId('register-termos-checkbox')).toHaveAttribute('data-state', 'checked');
-  await page.getByTestId('register-submit').click();
-  await expect.poll(async () => {
-    const response = await page.request.get('/api/auth/session');
-    if (!response.ok()) return null;
-    const session = (await response.json()) as { user?: { contaId?: string } };
-    return session.user?.contaId ?? null;
-  }, { timeout: 15000 }).not.toBeNull();
-}
+import { resetDb } from '../utils/reset-db';
+import { seedAdminAndAuthenticate } from '../../../e2e/utils/auth';
 
 async function getContaId(page: Page) {
   const response = await page.request.get('/api/auth/session');
@@ -76,6 +57,10 @@ function minorPayload(seed: number) {
 }
 
 test.describe('ciclo de vida de aluno e responsável', () => {
+  test.beforeEach(async () => {
+    await resetDb();
+  });
+
   test.afterEach(async () => {
     // Os testes usam identificadores únicos; a limpeza remove somente seus
     // vínculos e registros, sem depender de DELETE em cascata do responsável.
@@ -87,6 +72,7 @@ test.describe('ciclo de vida de aluno e responsável', () => {
     if (alunoIds.length > 0) {
       await prisma.matricula.deleteMany({ where: { alunoId: { in: alunoIds } } });
       await prisma.alunoResponsavel.deleteMany({ where: { alunoId: { in: alunoIds } } });
+      await prisma.customerPayer.deleteMany({ where: { payerType: 'ALUNO', payerId: { in: alunoIds } } });
       await prisma.customer.deleteMany({ where: { payerType: 'ALUNO', payerId: { in: alunoIds } } });
       await prisma.aluno.deleteMany({ where: { id: { in: alunoIds } } });
     }
@@ -94,7 +80,7 @@ test.describe('ciclo de vida de aluno e responsável', () => {
   });
 
   test('recadastra maior de idade inativo usando o mesmo aluno', async ({ page }) => {
-    await registerAndLoginForLifecycle(page);
+    await seedAdminAndAuthenticate(page, { email: `aluno-lifecycle-${randomUUID()}@example.com` });
     const payload = adultPayload(Date.now() % 900000000);
     const firstResponse = await page.request.post('/api/alunos', { data: payload });
     expect(firstResponse.status()).toBe(201);
@@ -121,7 +107,7 @@ test.describe('ciclo de vida de aluno e responsável', () => {
   });
 
   test('recadastra menor sem CPF, reutiliza responsável e não duplica vínculo', async ({ page }) => {
-    await registerAndLoginForLifecycle(page);
+    await seedAdminAndAuthenticate(page, { email: `aluno-lifecycle-${randomUUID()}@example.com` });
     const payload = minorPayload((Date.now() + 1) % 900000000);
     const firstResponse = await page.request.post('/api/alunos', { data: payload });
     expect(firstResponse.status()).toBe(201);
@@ -156,7 +142,7 @@ test.describe('ciclo de vida de aluno e responsável', () => {
   });
 
   test('bloqueia exclusão de responsável com aluno ativo', async ({ page }) => {
-    await registerAndLoginForLifecycle(page);
+    await seedAdminAndAuthenticate(page, { email: `aluno-lifecycle-${randomUUID()}@example.com` });
     const payload = minorPayload((Date.now() + 2) % 900000000);
     const alunoResponse = await page.request.post('/api/alunos', { data: payload });
     expect(alunoResponse.status()).toBe(201);
@@ -180,7 +166,7 @@ test.describe('ciclo de vida de aluno e responsável', () => {
   });
 
   test('remove definitivamente aluno sem histórico e mantém operação idempotente', async ({ page }) => {
-    await registerAndLoginForLifecycle(page);
+    await seedAdminAndAuthenticate(page, { email: `aluno-lifecycle-${randomUUID()}@example.com` });
     const payload = adultPayload((Date.now() + 3) % 900000000);
     const createResponse = await page.request.post('/api/alunos', { data: payload });
     expect(createResponse.status()).toBe(201);
@@ -201,7 +187,7 @@ test.describe('ciclo de vida de aluno e responsável', () => {
   });
 
   test('bloqueia arquivamento com matrícula pendente e preserva o vínculo', async ({ page }) => {
-    await registerAndLoginForLifecycle(page);
+    await seedAdminAndAuthenticate(page, { email: `aluno-lifecycle-${randomUUID()}@example.com` });
     const payload = adultPayload((Date.now() + 4) % 900000000);
     const createResponse = await page.request.post('/api/alunos', { data: payload });
     expect(createResponse.status()).toBe(201);

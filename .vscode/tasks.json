@@ -2,84 +2,36 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "vitest:unit:web",
+			"label": "workspace:check",
 			"type": "shell",
-			"command": "pnpm",
-			"args": [
-				"--filter",
-				"@alusa/web",
-				"test:unit"
-			]
+			"command": "pnpm workspace:check",
+			"problemMatcher": []
 		},
 		{
-			"label": "typecheck:web+lib",
+			"label": "typecheck:workspace",
 			"type": "shell",
-			"command": "pnpm",
-			"args": [
-				"-w",
-				"-s",
-				"-C",
-				"apps/web",
-				"typecheck",
-				"&&",
-				"pnpm",
-				"-w",
-				"-s",
-				"-C",
-				"packages/lib",
-				"typecheck"
-			],
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": {
-				"kind": "test",
-				"isDefault": true
-			}
+			"command": "pnpm typecheck",
+			"problemMatcher": ["$tsc"],
+			"group": { "kind": "test", "isDefault": true }
 		},
 		{
-			"label": "vitest:unit:web",
+			"label": "lint:workspace",
 			"type": "shell",
-			"command": "pnpm",
-			"args": [
-				"--filter",
-				"@alusa/web",
-				"test:unit"
-			],
+			"command": "pnpm lint:check",
+			"problemMatcher": []
+		},
+		{
+			"label": "test:unit:web",
+			"type": "shell",
+			"command": "pnpm test:unit",
 			"problemMatcher": [],
 			"group": "test"
 		},
 		{
-			"label": "vitest:unit:web",
+			"label": "test:critical-gates",
 			"type": "shell",
-			"command": "pnpm",
-			"args": [
-				"--filter",
-				"@alusa/web",
-				"test:unit"
-			],
-			"group": "test"
-		},
-		{
-			"label": "vitest:unit:web",
-			"type": "shell",
-			"command": "pnpm",
-			"args": [
-				"--filter",
-				"@alusa/web",
-				"test:unit"
-			],
-			"group": "test"
-		},
-		{
-			"label": "vitest:unit:web",
-			"type": "shell",
-			"command": "pnpm",
-			"args": [
-				"--filter",
-				"@alusa/web",
-				"test:unit"
-			],
+			"command": "pnpm security:check && pnpm audit:dtos && pnpm audit:route-boundaries && pnpm audit:route-sizes && pnpm audit:route-inventory && pnpm audit:api-canonicalization && pnpm audit:package-graph",
+			"problemMatcher": [],
 			"group": "test"
 		}
 	]

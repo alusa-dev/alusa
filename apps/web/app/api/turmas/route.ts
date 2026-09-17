@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { createTurma, listTurmas, turmaSchema } from '@alusa/lib';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { turmaSchema } from '@alusa/lib/schemas/turma.schema';
+import { createTurma, listTurmas } from '@alusa/lib/services/turma.service';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
+import { apiErrorResponse } from '@/lib/api/report-api-error';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -18,21 +19,17 @@ function apiError(status: number, code: string, detail: string, issues?: unknown
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const contaIdFromQuery = url.searchParams.get('contaId')?.trim() || null;
-    const session = await getServerSession(authOptions).catch(() => null);
-    const sessionContaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    const contaId = contaIdFromQuery ?? sessionContaId;
-    if (!contaId) {
-      return apiError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
-    }
-    if (sessionContaId && contaId !== sessionContaId) {
+    const tenant = await resolveTenantSession(url.searchParams.get('contaId'));
+    if (!tenant.ok) {
       return apiError(
-        403,
-        'CONTA_INVALIDA',
-        'A conta informada não pertence ao usuário autenticado.',
+        tenant.reason === 'UNAUTHENTICATED' ? 401 : 403,
+        tenant.reason === 'UNAUTHENTICATED' ? 'NAO_AUTENTICADO' : 'CONTA_INVALIDA',
+        tenant.reason === 'UNAUTHENTICATED'
+          ? 'Usuário não autenticado.'
+          : 'A conta informada não pertence ao usuário autenticado.',
       );
     }
+    const contaId = tenant.contaId;
     const page = Number(url.searchParams.get('page') || '1');
     const pageSize = Number(url.searchParams.get('pageSize') || '20');
     const q = url.searchParams.get('q') || undefined;
@@ -46,7 +43,10 @@ export async function GET(req: Request) {
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (e: unknown) {
-    return apiError(500, 'ERRO_LISTAR_TURMAS', (e as Error).message);
+    return apiErrorResponse(e, {
+      route: 'GET /api/turmas',
+      fallbackMessage: 'Não foi possível carregar as turmas.',
+    });
   }
 }
 
@@ -55,30 +55,26 @@ export async function POST(req: Request) {
     const json = await req.json();
     console.log('[API /turmas] Payload recebido:', JSON.stringify(json, null, 2));
 
-    const parsed = turmaSchema.safeParse(json);
+    const tenant = await resolveTenantSession(
+      typeof json?.contaId === 'string' ? json.contaId : null,
+    );
+    if (!tenant.ok) {
+      return apiError(
+        tenant.reason === 'UNAUTHENTICATED' ? 401 : 403,
+        tenant.reason === 'UNAUTHENTICATED' ? 'NAO_AUTENTICADO' : 'CONTA_INVALIDA',
+        tenant.reason === 'UNAUTHENTICATED'
+          ? 'Usuário não autenticado.'
+          : 'A conta informada não pertence ao usuário autenticado.',
+      );
+    }
+    const contaId = tenant.contaId;
+    const parsed = turmaSchema.safeParse({ ...json, contaId });
     if (!parsed.success) {
       console.error('[API /turmas] Erro de validação schema:', parsed.error.flatten());
       // Normaliza issues: array de { path, message }
       const issues = parsed.error.issues.map((i) => ({ path: i.path, message: i.message }));
       return apiError(422, 'VALIDACAO', 'Falha de validação', issues);
     }
-    const contaIdFromBody = typeof json.contaId === 'string' ? json.contaId.trim() : null;
-    const session = await getServerSession(authOptions).catch(() => null);
-    const sessionContaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    const contaId = contaIdFromBody ?? sessionContaId;
-    if (!contaId) {
-      console.error('[API /turmas] Faltou contaId (payload e sessão)');
-      return apiError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
-    }
-    if (sessionContaId && contaId !== sessionContaId) {
-      return apiError(
-        403,
-        'CONTA_INVALIDA',
-        'A conta informada não pertence ao usuário autenticado.',
-      );
-    }
-
     await assertPlatformAccessForConta({ contaId, capability: 'CLASS_WRITE' });
 
     console.log('[API /turmas] Dados validados, tentando criar turma...');
@@ -104,7 +100,6 @@ export async function POST(req: Request) {
       else if (/Idade mínima não pode ser maior/i.test(msg)) code = 'IDADE_INVALIDA';
       else if (/Já existe uma turma/i.test(msg)) code = 'DUPLICIDADE_NOME';
       else status = 400; // Erro genérico inesperado
-      // eslint-disable-next-line no-console
       console.error('[API /turmas] Falha ao criar turma:', { code, msg, raw: err });
       return apiError(status, code, msg);
     }

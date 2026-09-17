@@ -1,33 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
 
-import { prisma } from '@alusa/database';
-import { isValidCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
-
-import { safeGetServerSession } from '@/lib/safe-server-session';
-
-const querySchema = z.object({
-  document: z
-    .string()
-    .transform((value) => value.replace(/\D/g, ''))
-    .refine((value) => isValidCpfCnpjDigits(value), 'CPF/CNPJ inválido.'),
-  uiRequestId: z.string().trim().min(1).optional().nullable(),
-});
+import { vendasClienteDocumentoQueryDTOSchema } from '@/features/vendas/dtos';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { findCustomerByDocument } from '@/src/server/vendas/customer-document.service';
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
 export async function GET(request: NextRequest) {
-  const session = await safeGetServerSession();
-  const user = session?.user as { contaId?: string | null } | undefined;
-  const contaId = user?.contaId?.trim();
-
-  if (!contaId) {
+  const auth = await resolveTenantSession();
+  if (!auth.ok) {
     return json(401, { error: 'NAO_AUTENTICADO', message: 'Usuário não autenticado.' });
   }
 
-  const parsed = querySchema.safeParse({
+  const parsed = vendasClienteDocumentoQueryDTOSchema.safeParse({
     document: request.nextUrl.searchParams.get('document') ?? '',
     uiRequestId: request.nextUrl.searchParams.get('uiRequestId'),
   });
@@ -39,39 +26,13 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  const { contaId } = auth;
   const document = parsed.data.document;
-  const currentSale = parsed.data.uiRequestId
-    ? await prisma.sale.findFirst({
-        where: {
-          contaId,
-          uiRequestId: parsed.data.uiRequestId,
-          customerType: 'AVULSO',
-        },
-        select: { responsavelId: true },
-      })
-    : null;
-  const allowedResponsavelId = currentSale?.responsavelId ?? null;
-
-  const [aluno, responsavel] = await Promise.all([
-    prisma.aluno.findFirst({
-      where: { contaId, cpf: document },
-      select: { id: true, nome: true },
-    }),
-    prisma.responsavel.findFirst({
-      where: {
-        contaId,
-        cpf: document,
-        ...(allowedResponsavelId ? { id: { not: allowedResponsavelId } } : {}),
-      },
-      select: { id: true, nome: true },
-    }),
-  ]);
-
-  const match = responsavel
-    ? { type: 'RESPONSAVEL' as const, id: responsavel.id, name: responsavel.nome }
-    : aluno
-      ? { type: 'ALUNO' as const, id: aluno.id, name: aluno.nome }
-      : null;
+  const match = await findCustomerByDocument({
+    contaId,
+    document,
+    uiRequestId: parsed.data.uiRequestId,
+  });
 
   return json(200, {
     exists: Boolean(match),

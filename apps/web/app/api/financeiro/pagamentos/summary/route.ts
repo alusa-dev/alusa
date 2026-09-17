@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   listFinanceiroPagamentoPessoaIndexResultDTOSchema,
 } from '@/features/financeiro/dtos';
@@ -51,12 +51,10 @@ export async function GET(req: NextRequest) {
   let contaId: string | undefined;
 
   try {
-    const session = await safeGetServerSession();
-    type SessUser = { id?: string; contaId?: string; role?: string };
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
-    contaId = user.contaId;
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    contaId = auth.contaId;
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const url = new URL(req.url);
@@ -67,7 +65,7 @@ export async function GET(req: NextRequest) {
 
     const loadBody = async () => {
       const result = await listPersonPaymentLedgerIndex({
-        contaId: user.contaId!,
+        contaId: auth.contaId,
         search,
         statusFilters,
         page,
@@ -86,7 +84,7 @@ export async function GET(req: NextRequest) {
 
     const cached = await withTenantCache({
       adapter: getTenantCacheAdapter(),
-      key: buildPagamentosSummaryCacheKey(user.contaId, { search, statusFilters, page, pageSize }),
+      key: buildPagamentosSummaryCacheKey(auth.contaId, { search, statusFilters, page, pageSize }),
       ttlSeconds: PAGAMENTOS_SUMMARY_CACHE_SECONDS,
       staleWhileRevalidateSeconds: PAGAMENTOS_SUMMARY_STALE_SECONDS,
       lockTtlSeconds: 10,

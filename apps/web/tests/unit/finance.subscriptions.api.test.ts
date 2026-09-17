@@ -20,6 +20,23 @@ vi.mock('@/lib/finance/financial-account-gate', () => ({
   guardFinancialAccountOr412: vi.fn(async () => ({ ok: true })),
 }));
 
+vi.mock('@/src/server/platform-billing/capacity', () => ({
+  assertPlatformAccessForConta: vi.fn(async () => undefined),
+  platformBillingAccessResponse: vi.fn((error: unknown) => {
+    const candidate = error as { code?: string; details?: unknown };
+    return candidate.code === 'PLATFORM_BILLING_ACCESS_RESTRICTED'
+      ? {
+          status: 402,
+          body: {
+            error: candidate.code,
+            message: 'A conta está restrita. Regularize o plano e faturamento para realizar esta operação.',
+            details: candidate.details,
+          },
+        }
+      : null;
+  }),
+}));
+
 vi.mock('@alusa/finance', async () => {
   const actual = await vi.importActual<typeof import('@alusa/finance')>('@alusa/finance');
   return {

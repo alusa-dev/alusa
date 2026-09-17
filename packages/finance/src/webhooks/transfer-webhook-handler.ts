@@ -3,7 +3,7 @@ import { getTransfer as asaasGetTransfer } from '@alusa/asaas';
 import type { AsaasTransfer } from '@alusa/asaas';
 import type { TransferStatus } from '@prisma/client';
 import { NotificationCategory, NotificationSeverity, NotificationType } from '@prisma/client';
-import { createNotification } from '@alusa/lib';
+import { createNotification } from '@alusa/lib/services/notifications.service';
 
 import { auditLogService } from '../foundation/audit-log.service';
 import type { WithdrawDestination } from '../use-cases/request-withdraw';

@@ -1,66 +1,23 @@
 import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 
 import { prepareAvatarFile, replaceCurrentAvatar } from '@/features/account/server/avatar-service';
+import {
+  mobileLegacyProfileUpdateInputDTOSchema,
+  mobileProfileUpdateInputDTOSchema,
+} from '@/features/mobile/dtos';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
-import prisma from '@/lib/prisma';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { normalizeAccountTimeZone } from '@/src/server/aulas/calendar/account-timezone';
-import { isValidIanaTimeZone } from '@/lib/brazil-iana-timezones';
+import {
+  getActiveMobileMembership,
+  getMobileProfile,
+  updateLegacyMobileProfile,
+  updateMobileProfile,
+  type MobileActor,
+} from '@/src/server/mobile/profile.service';
 
 export const runtime = 'nodejs';
-
-const profileSchema = z.object({
-  name: z.string().trim().min(2).max(120),
-}).strict();
-
-const mobileProfileUpdateSchema = z
-  .object({
-    personal: z
-      .object({
-        name: z.string().trim().min(2).max(120).optional(),
-        telefone: z.string().trim().max(20).nullable().optional(),
-        bio: z.string().trim().max(280).nullable().optional(),
-      })
-      .strict()
-      .optional(),
-    school: z
-      .object({
-        name: z.string().trim().min(2).max(120).optional(),
-        // CPF/CNPJ is intentionally accepted by the contract so the API can
-        // return a clear policy error instead of silently ignoring the field.
-        cpfCnpj: z.string().trim().optional(),
-        timezone: z
-          .string()
-          .trim()
-          .min(1)
-          .max(80)
-          .refine(isValidIanaTimeZone, 'Fuso horário inválido')
-          .optional(),
-        address: z
-          .object({
-            street: z.string().trim().max(120).optional(),
-            number: z.string().trim().max(20).optional(),
-            neighborhood: z.string().trim().max(80).optional(),
-            city: z.string().trim().max(80).optional(),
-            state: z.string().trim().max(2).optional(),
-            cep: z
-              .string()
-              .trim()
-              .refine((value) => !value || /^\d{5}-?\d{3}$/.test(value), 'CEP inválido')
-              .optional(),
-          })
-          .strict()
-          .optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict()
-  .refine((value) => value.personal !== undefined || value.school !== undefined, {
-    message: 'Nenhuma alteração fornecida.',
-  });
 
 function bearerToken(request: Request) {
   const value = request.headers.get('authorization')?.trim();
@@ -71,97 +28,6 @@ function bearerToken(request: Request) {
 async function getMobileActor(request: Request) {
   const token = bearerToken(request);
   return token ? verifyMobileAccessToken(token) : null;
-}
-
-type MobileActor = { userId: string; contaId: string };
-
-async function readMobileProfile(actor: MobileActor) {
-  const membership = await prisma.usuarioConta.findFirst({
-    where: {
-      usuarioId: actor.userId,
-      contaId: actor.contaId,
-      status: 'ATIVO',
-      usuario: { status: 'ATIVO' },
-      conta: { status: 'ATIVO', deletedAt: null },
-    },
-    select: {
-      role: true,
-      usuario: {
-        select: {
-          nome: true,
-          email: true,
-          telefone: true,
-          birthDate: true,
-          bio: true,
-          locale: true,
-          theme: true,
-        },
-      },
-      conta: {
-        select: {
-          id: true,
-          nome: true,
-          cpfCnpj: true,
-          status: true,
-          timezone: true,
-          enderecoCep: true,
-          enderecoLogradouro: true,
-          enderecoNumero: true,
-          enderecoBairro: true,
-          enderecoCidade: true,
-          enderecoUf: true,
-        },
-      },
-    },
-  });
-
-  if (!membership) return null;
-
-  return {
-    personal: {
-      name: membership.usuario.nome,
-      email: membership.usuario.email,
-      telefone: membership.usuario.telefone ?? null,
-      birthDate: membership.usuario.birthDate?.toISOString() ?? null,
-      bio: membership.usuario.bio ?? null,
-      locale: membership.usuario.locale,
-      theme: membership.usuario.theme,
-    },
-    school: {
-      id: membership.conta.id,
-      name: membership.conta.nome,
-      cpfCnpj: membership.conta.cpfCnpj ?? null,
-      status: membership.conta.status,
-      timezone: membership.conta.timezone,
-      role: membership.role,
-      address: {
-        cep: membership.conta.enderecoCep ?? null,
-        street: membership.conta.enderecoLogradouro ?? null,
-        number: membership.conta.enderecoNumero ?? null,
-        neighborhood: membership.conta.enderecoBairro ?? null,
-        city: membership.conta.enderecoCidade ?? null,
-        state: membership.conta.enderecoUf ?? null,
-      },
-    },
-    permissions: {
-      canEditPersonal: true,
-      canEditSchool: membership.role === 'ADMIN',
-      canEditSchoolLegalIdentity: false,
-    },
-  };
-}
-
-async function hasActiveMembership(userId: string, contaId: string) {
-  return prisma.usuarioConta.findFirst({
-    where: {
-      usuarioId: userId,
-      contaId,
-      status: 'ATIVO',
-      usuario: { status: 'ATIVO' },
-      conta: { status: 'ATIVO', deletedAt: null },
-    },
-    select: { id: true, role: true },
-  });
 }
 
 function unauthorized() {
@@ -183,32 +49,29 @@ export async function PATCH(request: Request) {
     );
   }
 
-  const membership = await hasActiveMembership(actor.userId, actor.contaId);
+  const membership = await getActiveMobileMembership(actor);
   if (!membership) return unauthorized();
 
   const body = await request.json().catch(() => null);
 
   // Keep the original small contract used by the session/profile bootstrap.
-  const legacyParsed = profileSchema.safeParse(body);
+  const legacyParsed = mobileLegacyProfileUpdateInputDTOSchema.safeParse(body);
   if (legacyParsed.success) {
-    const updated = await prisma.usuario.updateMany({
-      where: { id: actor.userId, acessosConta: { some: { contaId: actor.contaId, status: 'ATIVO' } } },
-      data: { nome: legacyParsed.data.name },
-    });
-    if (updated.count !== 1) return unauthorized();
+    const legacyProfile = await updateLegacyMobileProfile(actor, legacyParsed.data.name);
+    if (!legacyProfile) return unauthorized();
 
     return NextResponse.json(
       {
         user: {
           name: legacyParsed.data.name,
-          foto: (await prisma.usuario.findUnique({ where: { id: actor.userId }, select: { foto: true } }))?.foto ?? null,
+          foto: legacyProfile.foto,
         },
       },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );
   }
 
-  const parsed = mobileProfileUpdateSchema.safeParse(body);
+  const parsed = mobileProfileUpdateInputDTOSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: { code: 'VALIDATION_ERROR', message: 'Revise os dados informados.' } },
@@ -284,21 +147,8 @@ export async function PATCH(request: Request) {
     );
   }
 
-  await prisma.$transaction(async (transaction) => {
-    if (Object.keys(userData).length > 0) {
-      const result = await transaction.usuario.updateMany({
-        where: { id: actor.userId, acessosConta: { some: { contaId: actor.contaId, status: 'ATIVO' } } },
-        data: userData,
-      });
-      if (result.count !== 1) throw new Error('PROFILE_MEMBERSHIP_NOT_FOUND');
-    }
+  const updatedProfile = await updateMobileProfile({ actor, userData, schoolData });
 
-    if (Object.keys(schoolData).length > 0) {
-      await transaction.conta.update({ where: { id: actor.contaId }, data: schoolData });
-    }
-  });
-
-  const updatedProfile = await readMobileProfile(actor);
   if (!updatedProfile) return unauthorized();
 
   return NextResponse.json(
@@ -332,7 +182,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const profile = await readMobileProfile(actor);
+  const profile = await getMobileProfile(actor);
   if (!profile) return unauthorized();
 
   return NextResponse.json(
@@ -362,7 +212,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const membership = await hasActiveMembership(actor.userId, actor.contaId);
+  const membership = await getActiveMobileMembership(actor);
   if (!membership) return unauthorized();
 
   const correlationId = request.headers.get('x-correlation-id')?.trim() || randomUUID();

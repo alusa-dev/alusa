@@ -1,6 +1,6 @@
 import { customerPayerWhere } from '@/src/server/finance/customer-payer-scope';
 import { Prisma, type PrismaClient } from '@prisma/client';
-import { buildSeatOccupancyOverlapWhereClause } from '@alusa/lib';
+import { buildSeatOccupancyOverlapWhereClause } from '@alusa/lib/services/matricula-occupancy';
 import { listarRematriculasElegiveis } from './rematricula.service';
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;

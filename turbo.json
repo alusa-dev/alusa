@@ -24,7 +24,14 @@
     },
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**", "build/**"],
+      "outputs": [
+        "dist/**",
+        ".next/**",
+        "!.next/cache/**",
+        ".next-playwright/**",
+        "!.next-playwright/cache/**",
+        "build/**"
+      ],
       "cache": true
     },
     "test": {

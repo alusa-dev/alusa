@@ -3,6 +3,12 @@ import { alunoCreateSchema, alunoUpdateSchema } from '@alusa/lib/client';
 
 const dateLikeDTOSchema = z.union([z.string(), z.date()]);
 
+export const alunoRouteParamsDTOSchema = z.object({
+  id: z.string().trim().min(1),
+});
+
+export type AlunoRouteParamsDTO = z.infer<typeof alunoRouteParamsDTOSchema>;
+
 export const createAlunoInputDTOSchema = alunoCreateSchema;
 export type CreateAlunoInputDTO = z.input<typeof createAlunoInputDTOSchema>;
 

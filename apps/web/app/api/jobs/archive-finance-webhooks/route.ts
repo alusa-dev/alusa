@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { archiveProcessedWebhooks } from '@alusa/finance';
+import { apiJsonError } from '@/lib/api/standard-response';
 
 export const dynamic = 'force-dynamic';
 
 function jsonError(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status });
+  return apiJsonError(status, code, message);
 }
 
 /**
@@ -48,7 +49,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true, result });
   } catch (error) {
     console.error('[Job Archive Finance Webhooks] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', (error as Error).message);
+    return jsonError(500, 'ERRO_JOB', 'Não foi possível arquivar os webhooks agora.');
   }
 }
 

@@ -1,42 +1,15 @@
 import { NextResponse } from 'next/server';
-import { TransferStatus } from '@prisma/client';
-import { prisma } from '@alusa/database';
-import { reconcileOpenTransfers } from '@alusa/finance';
+import { listAccountsWithOpenTransfers, reconcileOpenTransfers } from '@alusa/finance';
 
+import { reconcileOpenTransfersJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
+import { apiJsonError } from '@/lib/api/standard-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
-const OPEN_TRANSFER_STATUSES: TransferStatus[] = [
-  TransferStatus.REQUESTED,
-  TransferStatus.PENDING,
-  TransferStatus.BLOCKED,
-  TransferStatus.PROCESSING,
-];
-
 function jsonError(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status });
-}
-
-function clampPositiveInt(value: string | null, fallback: number, max: number) {
-  const parsed = Number(value ?? fallback);
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(max, Math.trunc(parsed))) : fallback;
-}
-
-async function listAccountsWithOpenTransfers(maxAccounts: number): Promise<string[]> {
-  const rows = await prisma.transferRequest.findMany({
-    where: {
-      status: { in: OPEN_TRANSFER_STATUSES },
-      asaasTransferId: { not: null },
-    },
-    distinct: ['contaId'],
-    orderBy: { statusUpdatedAt: 'asc' },
-    take: maxAccounts,
-    select: { contaId: true },
-  });
-
-  return rows.map((row) => row.contaId);
+  return apiJsonError(status, code, message);
 }
 
 /**
@@ -47,15 +20,21 @@ async function listAccountsWithOpenTransfers(maxAccounts: number): Promise<strin
 async function run(req: Request) {
   try {
     const url = new URL(req.url);
+    const query = reconcileOpenTransfersJobQueryDTOSchema.parse({
+      contaId: url.searchParams.get('contaId'),
+      limit: url.searchParams.get('limit'),
+      maxAccounts: url.searchParams.get('maxAccounts'),
+      minAgeSeconds: url.searchParams.get('minAgeSeconds'),
+    });
     const tenantScope = await resolveTenantScope(req, {
       allowCron: true,
-      requestedContaId: url.searchParams.get('contaId'),
+      requestedContaId: query.contaId,
     });
     if (!tenantScope.ok) return tenantScope.response;
 
-    const limit = clampPositiveInt(url.searchParams.get('limit'), 20, 100);
-    const maxAccounts = clampPositiveInt(url.searchParams.get('maxAccounts'), 30, 200);
-    const minAgeMs = clampPositiveInt(url.searchParams.get('minAgeSeconds'), 30, 24 * 60 * 60) * 1000;
+    const limit = query.limit;
+    const maxAccounts = query.maxAccounts;
+    const minAgeMs = query.minAgeSeconds * 1000;
     const contaIds = tenantScope.contaId
       ? [tenantScope.contaId]
       : await listAccountsWithOpenTransfers(maxAccounts);
@@ -82,7 +61,7 @@ async function run(req: Request) {
     });
   } catch (error) {
     console.error('[Job Reconcile Open Transfers] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', error instanceof Error ? error.message : String(error));
+    return jsonError(500, 'ERRO_JOB', 'Não foi possível reconciliar as transferências abertas.');
   }
 }
 

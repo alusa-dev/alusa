@@ -1,8 +1,8 @@
 import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import path from 'path';
-import prisma from '@/lib/prisma';
-import { getSessionUser } from '@/lib/auth/session';
+import { deleteUploadInputDTOSchema } from '@/features/storage/dtos';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { jsonNoStore } from '@/lib/http-security';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { validateUploadBuffer } from '@/lib/upload-security';
@@ -13,6 +13,7 @@ import {
   storageKeyFromUrl,
   storageUrlForKey,
 } from '@/lib/r2-storage';
+import { userOwnsLegacyAvatar } from '@/src/server/media/storage-access.service';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
 const DEFAULT_MAX_MB = 15;
@@ -47,10 +48,11 @@ function validateFile(file: File): { valid: boolean; error?: string } {
 
 export async function POST(req: Request) {
   try {
-    const user = await getSessionUser();
-    if (!user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return jsonNoStore({ error: 'Nao autorizado.' }, { status: 401 });
     }
+    const user = { id: auth.userId, contaId: auth.contaId };
 
     const ip = ipFromRequest(req);
     const limiter = rateLimit(`upload:post:${user.id}:${ip}`, 30, 10 * 60 * 1000);
@@ -122,10 +124,11 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
-    const user = await getSessionUser();
-    if (!user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return jsonNoStore({ error: 'Nao autorizado.' }, { status: 401 });
     }
+    const user = { id: auth.userId, contaId: auth.contaId };
 
     const ip = ipFromRequest(req);
     const limiter = rateLimit(`upload:delete:${user.id}:${ip}`, 60, 10 * 60 * 1000);
@@ -133,14 +136,21 @@ export async function DELETE(req: Request) {
       return jsonNoStore({ error: 'Muitas tentativas. Aguarde alguns minutos.' }, { status: 429 });
     }
 
-    const { url } = await req.json();
-
-    if (!url || typeof url !== 'string') {
+    const payload = deleteUploadInputDTOSchema.safeParse(await req.json().catch(() => null));
+    if (!payload.success) {
       return jsonNoStore({ error: 'URL inválida.' }, { status: 400 });
     }
+    const { url } = payload.data;
 
     const r2Key = storageKeyFromUrl(url);
     if (!r2Key && !/^\/uploads\/[^/]+$/.test(url)) {
+      return jsonNoStore({ error: 'Caminho não permitido.' }, { status: 400 });
+    }
+
+    // Este endpoint só cria avatars. Mesmo que o nome do arquivo contenha o
+    // prefixo da sessão, não permita que ele seja usado para excluir objetos
+    // de produtos, cobranças ou contratos.
+    if (r2Key && !r2Key.startsWith('uploads/avatars/')) {
       return jsonNoStore({ error: 'Caminho não permitido.' }, { status: 400 });
     }
 
@@ -158,15 +168,7 @@ export async function DELETE(req: Request) {
     let canDelete = filename.startsWith(scopedPrefix);
 
     if (!canDelete) {
-      const ownsLegacyAvatar = await prisma.usuario.findFirst({
-        where: {
-          id: user.id,
-          contaId: user.contaId,
-          foto: url,
-        },
-        select: { id: true },
-      });
-      canDelete = Boolean(ownsLegacyAvatar);
+      canDelete = await userOwnsLegacyAvatar({ userId: user.id, contaId: user.contaId, url });
     }
 
     if (!canDelete) {

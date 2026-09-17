@@ -1,21 +1,13 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 
-import { authOptions } from '@/lib/auth-options';
-import { getKycSummary, getKycSummaryFresh } from '@alusa/finance';
-import { prisma } from '@alusa/database';
-
-type SessionUser = { id?: string; role?: string; contaId?: string };
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { financeAccountStatusQueryDTOSchema } from '@/features/finance/dtos';
+import { getKycCommercialInfo, getKycSummary, getKycSummaryFresh } from '@alusa/finance';
 
 const allowedRoles = new Set(['ADMIN']);
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
-}
-
-async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
 }
 
 type AccountStatusItem = {
@@ -83,16 +75,20 @@ function buildStatusItem(key: string, label: string, value: string | null | unde
  */
 export async function GET(req: Request) {
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
     const url = new URL(req.url);
-    const fresh = url.searchParams.get('fresh') === '1';
+    const query = financeAccountStatusQueryDTOSchema.safeParse(
+      Object.fromEntries(url.searchParams.entries()),
+    );
+    if (!query.success) return json(400, { error: 'PARAMETROS_INVALIDOS' });
+    const fresh = query.data.fresh === '1';
 
     const summary = fresh
-      ? await getKycSummaryFresh(user.contaId)
-      : await getKycSummary(user.contaId);
+      ? await getKycSummaryFresh(auth.contaId)
+      : await getKycSummary(auth.contaId);
 
     const myAccountStatus = summary.myAccountStatus ?? {};
     const commercialInfoExpiration = (() => {
@@ -105,10 +101,7 @@ export async function GET(req: Request) {
     })();
 
     // Buscar commercialInfoStatus do banco (track independente via webhook)
-    const asaasAccount = await prisma.asaasAccount.findFirst({
-      where: { financeProfile: { contaId: user.contaId } },
-      select: { commercialInfoStatus: true, commercialInfoScheduledDate: true },
-    });
+    const asaasAccount = await getKycCommercialInfo(auth.contaId);
 
     const derivedCommercialInfoStatus = commercialInfoExpiration?.isExpired === true
       ? 'EXPIRED'

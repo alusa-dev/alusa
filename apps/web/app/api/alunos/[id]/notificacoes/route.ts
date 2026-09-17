@@ -1,16 +1,15 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import {
-  findCustomerForPayer,
   getAsaasCustomerNotificationPreferences,
   saveAsaasCustomerNotificationPreferences,
   type CustomerNotificationPreferenceInput,
 } from '@alusa/finance';
-import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/lib/prisma';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { asaasNotificationPreferenceDTOSchema } from '@/features/configuracoes/notificacoes/asaas/dtos';
 import { deriveCustomerNotificationChannelDefaults } from '@/features/configuracoes/notificacoes/asaas/customer-channel-defaults';
+import { apiJsonError } from '@/lib/api/standard-response';
+import { resolveAlunoNotificationCustomer } from '@/src/server/finance/customer-notification-scope.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -24,126 +23,30 @@ const updateCustomerNotificationsSchema = z.object({
     .min(1),
 });
 
-type SessionUser = {
-  id?: string | null;
-  role?: string | null;
-  contaId?: string | null;
-};
-
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
-  return json(status, { error: { code, message, details } });
-}
-
-function addCustomerId(ids: Set<string>, customerId?: string | null) {
-  const trimmed = customerId?.trim();
-  if (trimmed) ids.add(trimmed);
+  return apiJsonError(status, code, message, details);
 }
 
 async function resolveAuth() {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
-}
-
-async function resolveAlunoCustomer(params: {
-  alunoId: string;
-  contaId: string;
-  requestedCustomerId?: string | null;
-}) {
-  const aluno = await prisma.aluno.findFirst({
-    where: { id: params.alunoId, contaId: params.contaId },
-    select: {
-      id: true,
-      nome: true,
-      asaasCustomerId: true,
-      responsaveis: {
-        select: {
-          responsavel: {
-            select: {
-              id: true,
-              nome: true,
-              financeiro: true,
-              asaasCustomerId: true,
-            },
-          },
-        },
-      },
-      matriculas: {
-        orderBy: { createdAt: 'desc' },
-        select: {
-          responsavelFinanceiro: {
-            select: {
-              id: true,
-              nome: true,
-              asaasCustomerId: true,
-            },
-          },
-        },
-      },
-    },
-  });
-
-  if (!aluno) return { status: 'NOT_FOUND' as const };
-
-  const payerRefs = [
-    { payerType: 'ALUNO' as const, payerId: aluno.id, fallbackCustomerId: aluno.asaasCustomerId },
-    ...aluno.responsaveis.map((item) => ({
-      payerType: 'RESPONSAVEL' as const,
-      payerId: item.responsavel.id,
-      fallbackCustomerId: item.responsavel.asaasCustomerId,
-    })),
-    ...aluno.matriculas.flatMap((matricula) =>
-      matricula.responsavelFinanceiro
-        ? [{
-            payerType: 'RESPONSAVEL' as const,
-            payerId: matricula.responsavelFinanceiro.id,
-            fallbackCustomerId: matricula.responsavelFinanceiro.asaasCustomerId,
-          }]
-        : [],
-    ),
-  ];
-  const canonicalCustomers = await Promise.all(
-    payerRefs.map((payer) => findCustomerForPayer(params.contaId, payer.payerType, payer.payerId)),
-  );
-  const resolvedCustomerIds = canonicalCustomers.map(
-    (customer, index) => customer?.asaasCustomerId ?? payerRefs[index]?.fallbackCustomerId ?? null,
-  );
-
-  const allowedCustomerIds = new Set<string>();
-  resolvedCustomerIds.forEach((customerId) => addCustomerId(allowedCustomerIds, customerId));
-
-  const requested = params.requestedCustomerId?.trim();
-  if (requested) {
-    if (!allowedCustomerIds.has(requested)) {
-      return { status: 'FORBIDDEN_CUSTOMER' as const };
-    }
-    return { status: 'OK' as const, customerId: requested, aluno };
-  }
-
-  const customerId = resolvedCustomerIds.find((value): value is string => Boolean(value)) ?? null;
-
-  if (!customerId) {
-    return { status: 'NO_CUSTOMER' as const, aluno };
-  }
-
-  return { status: 'OK' as const, customerId, aluno };
+  return resolveTenantSession();
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const rawParams = await params;
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user?.contaId) {
+    const auth = await resolveAuth();
+    if (!auth.ok) {
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     }
 
     const url = new URL(request.url);
-    const context = await resolveAlunoCustomer({
+    const context = await resolveAlunoNotificationCustomer({
       alunoId: rawParams.id,
-      contaId: user.contaId,
+      contaId: auth.contaId,
       requestedCustomerId: url.searchParams.get('customerId'),
     });
 
@@ -162,7 +65,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     }
 
     const preferences = await getAsaasCustomerNotificationPreferences(
-      user.contaId,
+      auth.contaId,
       context.customerId,
     );
 
@@ -173,18 +76,18 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     });
   } catch (error) {
     console.error('[alunos/notificacoes][GET]', error);
-    return jsonError(500, 'ERRO_INTERNO', (error as Error).message);
+    return jsonError(500, 'ERRO_INTERNO', 'Não foi possível carregar as preferências de notificação.');
   }
 }
 
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const rawParams = await params;
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user?.contaId) {
+    const auth = await resolveAuth();
+    if (!auth.ok) {
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     }
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return jsonError(
         403,
         'SEM_PERMISSAO',
@@ -197,9 +100,9 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       return jsonError(422, 'PAYLOAD_INVALIDO', 'Payload inválido', parsed.error.flatten());
     }
 
-    const context = await resolveAlunoCustomer({
+    const context = await resolveAlunoNotificationCustomer({
       alunoId: rawParams.id,
-      contaId: user.contaId,
+      contaId: auth.contaId,
       requestedCustomerId: parsed.data.customerId,
     });
 
@@ -218,7 +121,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     }
 
     const preferences = await saveAsaasCustomerNotificationPreferences(
-      user.contaId,
+      auth.contaId,
       context.customerId,
       parsed.data.preferences as CustomerNotificationPreferenceInput[],
     );
@@ -230,6 +133,6 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     });
   } catch (error) {
     console.error('[alunos/notificacoes][PUT]', error);
-    return jsonError(500, 'ERRO_INTERNO', (error as Error).message);
+    return jsonError(500, 'ERRO_INTERNO', 'Não foi possível salvar as preferências de notificação.');
   }
 }

@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { z } from 'zod';
-import { authOptions } from '@/lib/auth-options';
-import prisma from '@/lib/prisma';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import {
+  createDesconto,
+  listActiveDescontos,
+} from '@/src/server/finance/desconto.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -28,27 +30,13 @@ const createDescontoInputDTOSchema = z.object({
 
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId;
-    if (!contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
     }
+    const { contaId } = auth;
 
-    const descontos = await prisma.desconto.findMany({
-      where: {
-        contaId,
-        status: 'ATIVO',
-      },
-      orderBy: { nome: 'asc' },
-      select: {
-        id: true,
-        nome: true,
-        tipo: true,
-        valor: true,
-        escopo: true,
-        status: true,
-      },
-    });
+    const descontos = await listActiveDescontos(contaId);
 
     return NextResponse.json(
       descontoListResultDTOSchema.parse({
@@ -73,11 +61,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId;
-    if (!contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
     }
+    const { contaId } = auth;
 
     const raw = await request.json().catch(() => null);
     const parsed = createDescontoInputDTOSchema.safeParse(raw);
@@ -96,24 +84,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const created = await prisma.desconto.create({
-      data: {
-        contaId,
-        nome: parsed.data.nome,
-        tipo: parsed.data.tipo,
-        valor: parsed.data.valor,
-        escopo: 'MATRICULA',
-        status: 'ATIVO',
-      },
-      select: {
-        id: true,
-        nome: true,
-        tipo: true,
-        valor: true,
-        escopo: true,
-        status: true,
-      },
-    });
+    const created = await createDesconto({ contaId, ...parsed.data });
 
     return NextResponse.json({
       item: descontoListItemDTOSchema.parse({

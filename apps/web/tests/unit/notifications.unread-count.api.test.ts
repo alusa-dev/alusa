@@ -13,12 +13,14 @@ vi.mock('@/lib/auth-options', () => ({
   authOptions: {},
 }));
 
-vi.mock('@alusa/lib', () => ({
+vi.mock('@alusa/lib/services/notifications.service', () => ({
   getUnreadNotificationCount: vi.fn(),
 }));
 
 const { getServerSession } = await import('next-auth');
-const { getUnreadNotificationCount } = await import('@alusa/lib');
+const { getUnreadNotificationCount } = await import(
+  '@alusa/lib/services/notifications.service'
+);
 const { GET } = await import('@/app/api/notifications/unread-count/route');
 
 describe('/api/notifications/unread-count', () => {

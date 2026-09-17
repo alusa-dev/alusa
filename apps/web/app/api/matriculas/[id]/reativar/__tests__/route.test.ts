@@ -6,6 +6,12 @@ vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
 }));
 
+vi.mock('@/src/server/platform-billing/capacity', () => ({
+  assertPlatformAccessForConta: vi.fn(),
+  platformBillingAccessResponse: vi.fn(() => null),
+  isPlatformBillingCapacityError: vi.fn(() => false),
+}));
+
 vi.mock('@/src/server/matriculas/matricula-pausa.service', async () => {
   const actual = await vi.importActual<
     typeof import('@/src/server/matriculas/matricula-pausa.service')

@@ -1,12 +1,16 @@
 import { NextResponse } from 'next/server';
+import { notifyContractsExpiringJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { notifyContractsExpiring } from '@alusa/lib';
-import { prisma } from '@/src/prisma';
+import {
+  listContasForContractExpiration,
+  notifyContractsExpiring,
+} from '@alusa/lib/jobs/notify-contracts-expiring';
+import { apiJsonError } from '@/lib/api/standard-response';
 
 export const dynamic = 'force-dynamic';
 
 function jsonError(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status });
+  return apiJsonError(status, code, message);
 }
 
 /**
@@ -17,9 +21,12 @@ function jsonError(status: number, code: string, message: string) {
 export async function POST(req: Request) {
   try {
     const url = new URL(req.url);
+    const query = notifyContractsExpiringJobQueryDTOSchema.parse({
+      contaId: url.searchParams.get('contaId'),
+    });
     const tenantScope = await resolveTenantScope(req, {
       allowCron: true,
-      requestedContaId: url.searchParams.get('contaId'),
+      requestedContaId: query.contaId,
       requireContaIdForCron: false,
     });
     if (!tenantScope.ok) {
@@ -32,29 +39,25 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, tenants: 1, ...result });
     }
 
-    const contas = await prisma.conta.findMany({
-      where: { deletedAt: null },
-      select: { id: true },
-      take: 500,
-    });
+    const contaIds = await listContasForContractExpiration();
 
     let evaluated = 0;
     let notified = 0;
-    for (const conta of contas) {
-      const result = await notifyContractsExpiring(conta.id, { now: operationNow });
+    for (const contaId of contaIds) {
+      const result = await notifyContractsExpiring(contaId, { now: operationNow });
       evaluated += result.evaluated;
       notified += result.notified;
     }
 
     return NextResponse.json({
       success: true,
-      tenants: contas.length,
+      tenants: contaIds.length,
       evaluated,
       notified,
     });
   } catch (error) {
     console.error('[Job Notify Contracts Expiring] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', (error as Error).message);
+    return jsonError(500, 'ERRO_JOB', 'Não foi possível notificar contratos próximos do vencimento.');
   }
 }
 

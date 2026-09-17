@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { financeiroPagamentoAlunoParamsDTOSchema } from '@/features/financeiro/dtos';
 import { mapFinanceiroPagamentoPessoaHistoricoResultToDTO } from '@/features/financeiro/mappers';
 import { getStudentPaymentHistory } from '@/src/server/finance/student-payment-history';
 import { buildPersonPaymentLedger } from '@/src/server/finance/person-payment-ledger';
+import { getStudentPaymentPerson } from '@/src/server/finance/student-payment-person.service';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -19,17 +19,14 @@ export async function GET(
   try {
     const rawParams = await params;
     const reconcile = req.nextUrl.searchParams.get('reconcile') === '1';
-    const session = await safeGetServerSession();
-    const user = (
-      session as { user?: { id?: string; contaId?: string; role?: string } } | null
-    )?.user;
-    if (!user?.id || !user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json(
         { success: false, error: { message: 'Usuário não autenticado' } },
         { status: 401 },
       );
     }
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return NextResponse.json(
         { success: false, error: { message: 'Acesso negado' } },
         { status: 403 },
@@ -44,12 +41,9 @@ export async function GET(
       );
     }
     const { alunoId } = parsedParams.data;
-    const contaId = user.contaId;
+    const contaId = auth.contaId;
 
-    const aluno = await prisma.aluno.findFirst({
-      where: { id: alunoId, contaId },
-      select: { id: true, nome: true, email: true, telefone: true, cpf: true, foto: true },
-    });
+    const aluno = await getStudentPaymentPerson({ contaId, alunoId });
 
     if (!aluno) {
       return NextResponse.json(
@@ -96,7 +90,7 @@ export async function GET(
     return NextResponse.json(
       {
         success: false,
-        error: { message: error instanceof Error ? error.message : 'Erro ao buscar dados' },
+        error: { message: 'Erro ao buscar dados' },
       },
       { status: 500 },
     );

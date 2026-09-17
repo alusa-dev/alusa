@@ -1,7 +1,8 @@
 import type { Prisma } from '@prisma/client';
 import { isMaiorDeIdade, snapshotContractConsentTerms, type ContractConsentRenderContext } from '@alusa/domain';
 import { encryptSecret } from '@alusa/database';
-import { createContractEvidence, createPublicContractToken } from '@alusa/lib';
+import { createContractEvidence } from '@alusa/lib/contracts/evidence/create-contract-evidence';
+import { createPublicContractToken } from '@alusa/lib/contracts/tokens';
 import { normalizeBrazilianWhatsAppPhone } from '@alusa/whatsapp';
 import { getWhatsAppRuntimeConfig } from '@/src/server/whatsapp/config';
 import {

@@ -1,9 +1,16 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
-import { sendEmailVerificationForUser } from '../lib/auth-email-flow';
+import { createAuthActionToken } from '../lib/auth-action-tokens';
+import { buildAppUrl } from '../lib/app-url';
 import { resetDb } from './utils/reset-db';
 
 const prisma = new PrismaClient();
+
+async function acceptLegalTerms(page: Page) {
+  await page.getByTestId('register-termos-checkbox').click();
+  await page.getByTestId('legal-acceptance-inner-checkbox').click();
+  await page.getByTestId('legal-acceptance-confirm').click();
+}
 
 async function issueVerificationLink(email: string) {
   const user = await prisma.usuario.findFirst({
@@ -15,17 +22,20 @@ async function issueVerificationLink(email: string) {
     throw new Error(`Usuário não encontrado para o e-mail ${email}`);
   }
 
-  const verification = await sendEmailVerificationForUser(
-    user.id,
-    { ip: '127.0.0.1', userAgent: 'playwright' },
-    { callbackUrl: '/finance/wizard' },
+  // O objetivo deste E2E é validar a emissão/consumo do token e o redirect
+  // do onboarding. A entrega SMTP/Resend é coberta pelo adapter e seus testes;
+  // gerar o token diretamente mantém a suíte offline e determinística.
+  const { token } = await createAuthActionToken({
+    userId: user.id,
+    email,
+    type: 'VERIFY_EMAIL',
+    requestedByIp: '127.0.0.1',
+    requestedByUserAgent: 'playwright',
+  });
+
+  return buildAppUrl(
+    `/auth/verify-email?token=${encodeURIComponent(token)}&callbackUrl=${encodeURIComponent('/finance/wizard')}`,
   );
-
-  if (!verification.actionUrl) {
-    throw new Error('Link de verificação não foi gerado.');
-  }
-
-  return verification.actionUrl;
 }
 
 test.describe('Primeira conta -> confirmar e-mail -> onboarding', () => {
@@ -47,7 +57,7 @@ test.describe('Primeira conta -> confirmar e-mail -> onboarding', () => {
     await page.getByTestId('register-email').fill(email);
     await page.getByTestId('register-senha').fill('SenhaFort3!');
     await page.getByTestId('register-senha-confirmar').fill('SenhaFort3!');
-    await page.locator('input[type="checkbox"]').check();
+    await acceptLegalTerms(page);
 
     await page.getByTestId('register-submit').click();
 
@@ -67,7 +77,7 @@ test.describe('Primeira conta -> confirmar e-mail -> onboarding', () => {
 
     await page.waitForURL('**/finance/wizard', { timeout: 15_000 });
 
-    await expect(page.getByText('Passo 1 de 6')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Tipo de Conta' })).toBeVisible();
+    await expect(page.locator('[aria-label="17% concluido"]')).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Tipo de conta' })).toBeVisible();
   });
 });

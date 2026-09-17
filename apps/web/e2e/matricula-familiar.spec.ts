@@ -64,6 +64,50 @@ async function seedFamiliarData(): Promise<SeedResult> {
     data: { id: contaId, nome: 'Escola Familiar E2E', cpfCnpj: uniqueCnpj() },
   });
 
+  await prisma.platformBillingAccount.create({
+    data: {
+      contaId,
+      environment: 'TEST',
+      status: 'TRIALING',
+      planCode: 'STARTER',
+      accessStatus: 'ACTIVE',
+      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      paymentMethodStatus: 'UNKNOWN',
+    },
+  });
+
+  const financeProfile = await prisma.financeProfile.create({
+    data: {
+      contaId,
+      asaasAccountId: `acc_e2e_${uid()}`,
+      status: 'APPROVED',
+      isOnboardingCompleted: true,
+      onboardingCompletedAt: new Date(),
+      wizardStep: 6,
+      wizardCompletedAt: new Date(),
+    },
+    select: { id: true, asaasAccountId: true },
+  });
+
+  await prisma.asaasAccount.create({
+    data: {
+      financeProfileId: financeProfile.id,
+      asaasAccountId: financeProfile.asaasAccountId!,
+      externalReference: `acc-ref-${uid()}`,
+      status: 'APPROVED',
+      apiKeyEncrypted: `v1:${Buffer.from('$aact_hmlg_e2e_key', 'utf8').toString('base64')}`,
+      apiKeyStatus: 'CONNECTED',
+      operationalStatus: 'OPERATIONAL',
+      webhookStatus: 'ACTIVE',
+      provisionedAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    },
+  });
+
+  await prisma.conta.update({
+    where: { id: contaId },
+    data: { financeStatus: 'FINANCE_APPROVED' },
+  });
+
   const user = await prisma.usuario.create({
     data: {
       id: userId,
@@ -77,6 +121,16 @@ async function seedFamiliarData(): Promise<SeedResult> {
     select: { id: true },
   });
 
+  await prisma.usuarioConta.create({
+    data: {
+      usuarioId: user.id,
+      contaId,
+      role: 'ADMIN',
+      status: 'ATIVO',
+      lastAccessedAt: new Date(),
+    },
+  });
+
   await prisma.conta.update({ where: { id: contaId }, data: { ownerUserId: user.id } });
 
   const responsavel = await prisma.responsavel.create({
@@ -87,6 +141,12 @@ async function seedFamiliarData(): Promise<SeedResult> {
       cpf: uniqueCpf(),
       email: `resp-${Date.now()}@e2e.test`,
       telefone: '11988887777',
+      enderecoCep: '69000000',
+      enderecoLogradouro: 'Rua E2E',
+      enderecoNumero: '100',
+      enderecoBairro: 'Centro',
+      enderecoCidade: 'Manaus',
+      enderecoUf: 'AM',
       financeiro: true,
     },
     select: { id: true, nome: true },
@@ -103,6 +163,15 @@ async function seedFamiliarData(): Promise<SeedResult> {
   const aluno3 = await prisma.aluno.create({
     data: { id: uid(), contaId, nome: 'Pedro Familiar', dataNasc: new Date('2014-01-10'), status: 'ATIVO' },
     select: { id: true, nome: true },
+  });
+
+  await prisma.alunoResponsavel.createMany({
+    data: [aluno1, aluno2, aluno3].map((aluno) => ({
+      contaId,
+      alunoId: aluno.id,
+      responsavelId: responsavel.id,
+      tipoVinculo: 'RESPONSAVEL',
+    })),
   });
 
   const modalidade = await prisma.modalidade.create({
@@ -161,6 +230,39 @@ async function seedFamiliarData(): Promise<SeedResult> {
       status: 'ATIVO',
     },
     select: { id: true, nome: true },
+  });
+
+  await prisma.contratoModeloCampo.createMany({
+    data: [
+      {
+        id: uid(),
+        contaId,
+        modeloId: modelo.id,
+        tipo: 'ASSINATURA',
+        papel: 'ESCOLA',
+        pagina: 1,
+        x: 10,
+        y: 10,
+        largura: 20,
+        altura: 10,
+        obrigatorio: true,
+        ordem: 0,
+      },
+      {
+        id: uid(),
+        contaId,
+        modeloId: modelo.id,
+        tipo: 'ASSINATURA',
+        papel: 'RESPONSAVEL_OU_ALUNO',
+        pagina: 1,
+        x: 40,
+        y: 10,
+        largura: 20,
+        altura: 10,
+        obrigatorio: true,
+        ordem: 1,
+      },
+    ],
   });
 
   return {
@@ -231,7 +333,6 @@ async function clickBack(page: Page) {
 async function navigateToAlunosStep(page: Page, seed: SeedResult) {
   // modo: FAMILIAR
   await page.getByTestId('modo-familiar').click();
-  await clickNext(page);
 
   // responsavelFamiliar: buscar e selecionar
   await page.getByTestId('responsavel-search').fill(seed.responsavelNome.slice(0, 5));
@@ -353,19 +454,17 @@ test.describe('Wizard — Modo Familiar', () => {
 
   test('deve selecionar FAMILIAR e avançar para o step de responsável', async ({ page }) => {
     await page.getByTestId('modo-familiar').click();
-    await clickNext(page);
 
     await expect(page.getByText('Responsável financeiro')).toBeVisible();
   });
 
   test('deve selecionar INDIVIDUAL e avançar para o step de aluno', async ({ page }) => {
     await page.getByTestId('modo-individual').click();
-    await clickNext(page);
 
     // Step responsavelFamiliar NÃO deve aparecer
     await expect(page.getByText('Responsável financeiro')).not.toBeVisible();
     // Step de aluno aparece
-    await expect(page.getByText(/Selecionar aluno/i)).toBeVisible();
+    await expect(page.getByText(/Selecione ou Cadastre o Aluno/i)).toBeVisible();
   });
 
   test('deve ocultar o botão Voltar no step inicial (modo)', async ({ page }) => {
@@ -374,7 +473,6 @@ test.describe('Wizard — Modo Familiar', () => {
 
   test('deve exibir Voltar a partir do segundo step', async ({ page }) => {
     await page.getByTestId('modo-familiar').click();
-    await clickNext(page);
 
     await expect(page.getByTestId('wizard-back')).toBeVisible();
   });
@@ -383,13 +481,11 @@ test.describe('Wizard — Modo Familiar', () => {
 
   test('deve trocar de FAMILIAR para INDIVIDUAL ao voltar e clicar em Individual', async ({ page }) => {
     await page.getByTestId('modo-familiar').click();
-    await clickNext(page);
     await expect(page.getByText('Responsável financeiro')).toBeVisible();
 
     await clickBack(page);
 
     await page.getByTestId('modo-individual').click();
-    await clickNext(page);
 
     await expect(page.getByText('Responsável financeiro')).not.toBeVisible();
   });
@@ -398,14 +494,12 @@ test.describe('Wizard — Modo Familiar', () => {
 
   test('deve bloquear Avançar sem responsável selecionado', async ({ page }) => {
     await page.getByTestId('modo-familiar').click();
-    await clickNext(page);
 
     await expect(page.getByTestId('wizard-next')).toBeDisabled();
   });
 
   test('deve buscar e selecionar responsável existente', async ({ page }) => {
     await page.getByTestId('modo-familiar').click();
-    await clickNext(page);
 
     await page.getByTestId('responsavel-search').fill(seed.responsavelNome.slice(0, 5));
     await page.waitForTimeout(400);
@@ -419,7 +513,6 @@ test.describe('Wizard — Modo Familiar', () => {
 
   test('deve limpar seleção ao clicar em Trocar', async ({ page }) => {
     await page.getByTestId('modo-familiar').click();
-    await clickNext(page);
 
     await page.getByTestId('responsavel-search').fill(seed.responsavelNome.slice(0, 5));
     await page.waitForTimeout(400);
@@ -434,14 +527,23 @@ test.describe('Wizard — Modo Familiar', () => {
 
   test('deve cadastrar novo responsável via formulário inline', async ({ page }) => {
     await page.getByTestId('modo-familiar').click();
-    await clickNext(page);
 
     await page.getByTestId('responsavel-novo-btn').click();
     await expect(page.getByTestId('responsavel-form')).toBeVisible();
 
     const novoNome = `Novo Resp ${Date.now()}`;
     await page.getByPlaceholder('Nome completo').fill(novoNome);
+    await page.getByPlaceholder('000.000.000-00').fill('529.982.247-25');
+    await page.getByPlaceholder('(00) 00000-0000').fill('11988887777');
     await page.getByPlaceholder('email@exemplo.com').fill(`novo-resp-${Date.now()}@e2e.test`);
+
+    // O responsável financeiro precisa estar fiscalmente apto para cobrança.
+    await page.getByRole('textbox', { name: 'CEP *', exact: true }).fill('69000000');
+    await page.getByPlaceholder('Rua/Av.').fill('Rua E2E');
+    await page.getByPlaceholder('Nº').fill('100');
+    await page.getByPlaceholder('Bairro').fill('Centro');
+    await page.getByPlaceholder('Cidade').fill('Manaus');
+    await page.getByPlaceholder('UF').fill('AM');
 
     await page.getByRole('button', { name: 'Cadastrar' }).click();
 
@@ -452,19 +554,19 @@ test.describe('Wizard — Modo Familiar', () => {
 
   // ── 4. Step: Alunos da família ─────────────────────────────────────────────
 
-  test('deve exibir aviso ao ter menos de 2 alunos', async ({ page }) => {
+  test('deve exibir aviso quando nenhum aluno foi adicionado', async ({ page }) => {
     await navigateToAlunosStep(page, seed);
 
-    // Sem alunos: aviso "pelo menos 2"
+    // Sem alunos: o agrupamento ainda não possui itens.
     await expect(page.getByTestId('alunos-aviso-minimo')).toBeVisible();
-    await expect(page.getByText(/Adicione pelo menos 2 alunos/)).toBeVisible();
+    await expect(page.getByText(/Adicione ao menos uma matrícula ao agrupamento financeiro/)).toBeVisible();
 
     // Com 1 aluno: aviso "mais 1"
     await page.getByTestId('alunos-search').fill(seed.aluno1Nome.slice(0, 5));
     await page.waitForTimeout(400);
     await page.getByRole('button', { name: seed.aluno1Nome }).click();
 
-    await expect(page.getByText(/Adicione mais 1 aluno para continuar/)).toBeVisible();
+    await expect(page.getByTestId('alunos-aviso-minimo')).not.toBeVisible();
   });
 
   test('deve bloquear Avançar sem turma selecionada (2 alunos adicionados)', async ({ page }) => {
@@ -503,8 +605,8 @@ test.describe('Wizard — Modo Familiar', () => {
     // remover primeiro aluno
     await page.getByRole('button', { name: 'Remover aluno' }).first().click();
 
-    // aviso "mais 1" deve voltar (apenas 1 aluno na lista)
-    await expect(page.getByText(/Adicione mais 1 aluno para continuar/)).toBeVisible();
+    // O aviso de lista vazia não deve voltar enquanto ainda há um aluno.
+    await expect(page.getByTestId('alunos-aviso-minimo')).not.toBeVisible();
   });
 
   test('deve trocar para modo COMBO e mostrar select de combo', async ({ page }) => {
@@ -531,37 +633,38 @@ test.describe('Wizard — Modo Familiar', () => {
     await fillFinanceiro(page, seed);
 
     // resumo
-    await expect(page.getByText('Cadastrar matrícula')).toBeVisible();
+    await expect(
+      page.getByTestId('matricula-wizard-flow').getByText('Cadastrar matrícula'),
+    ).toBeVisible();
     await page.locator('#confirmacao-revisao-familiar').check();
     await expect(page.getByTestId('wizard-next')).toBeEnabled();
 
     await page.getByTestId('wizard-next').click();
 
     // painel de resultados
-    await expect(page.getByText('Matrículas processadas')).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText(/2 criadas com sucesso/)).toBeVisible();
+    await page.waitForTimeout(1_000);
+    await expect(page.getByText('Matrícula familiar criada com sucesso')).toBeVisible({ timeout: 20_000 });
 
     // verificar no banco
     const count = await prisma.matricula.count({ where: { aluno: { contaId: seed.contaId } } });
     expect(count).toBe(2);
   });
 
-  test('deve exibir falha parcial (1 sucesso, 1 erro) via mock de rota', async ({ page }) => {
-    let callCount = 0;
+  test('deve exibir erro e preservar o rollback atômico do lote', async ({ page }) => {
 
     await page.route('**/api/matriculas', async (route) => {
-      callCount++;
-      if (callCount === 1) {
-        // primeira chamada: falhar
-        await route.fulfill({
-          status: 422,
-          contentType: 'application/json',
-          body: JSON.stringify({ error: 'Erro simulado de teste' }),
-        });
-      } else {
-        // demais: passar para o servidor real
-        await route.continue();
-      }
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          operationStatus: 'FAILED',
+          error: { code: 'FALHA_CRIACAO_MATRICULAS_FAMILIARES', message: 'Erro simulado de teste' },
+          results: [
+            { alunoId: seed.aluno1Id, alunoNome: seed.aluno1Nome, status: 'success', matriculaId: 'mat-rollback' },
+            { alunoId: seed.aluno2Id, alunoNome: seed.aluno2Nome, status: 'error', errorMessage: 'Erro simulado de teste' },
+          ],
+        }),
+      });
     });
 
     await navigateToAlunosStep(page, seed);
@@ -574,10 +677,9 @@ test.describe('Wizard — Modo Familiar', () => {
     await page.locator('#confirmacao-revisao-familiar').check();
     await page.getByTestId('wizard-next').click();
 
-    await expect(page.getByText('Matrículas processadas')).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText(/1 criada com sucesso/)).toBeVisible();
-    await expect(page.getByText(/1 com erro/)).toBeVisible();
-    await expect(page.getByText(/Erro simulado de teste/)).toBeVisible();
+    await expect(page.getByText('Matrícula familiar não concluída')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText('Erro simulado de teste')).toBeVisible();
+    await expect(page.getByText('Matrícula familiar criada com sucesso')).not.toBeVisible();
   });
 
   test('deve fechar o painel de resultados e reiniciar o wizard', async ({ page }) => {
@@ -591,7 +693,7 @@ test.describe('Wizard — Modo Familiar', () => {
     await page.locator('#confirmacao-revisao-familiar').check();
     await page.getByTestId('wizard-next').click();
 
-    await expect(page.getByText('Matrículas processadas')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText('Matrícula familiar criada com sucesso')).toBeVisible({ timeout: 20_000 });
 
     await page.getByRole('button', { name: 'Fechar' }).click();
 

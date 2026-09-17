@@ -132,8 +132,12 @@ const nextConfig = {
         : packageDistPath('lib', '*.js'),
       '@alusa/platform-billing': packageDistPath('platform-billing', 'index.js'),
       '@alusa/platform-billing/*': packageDistPath('platform-billing', '*.js'),
-      '@alusa/shared': packageDistPath('shared', 'index.js'),
-      '@alusa/shared/*': packageDistPath('shared', '*.js'),
+      '@alusa/shared': useWorkspaceSources
+        ? packageSourcePath('shared', 'index.ts')
+        : packageDistPath('shared', 'index.js'),
+      '@alusa/shared/*': useWorkspaceSources
+        ? packageSourcePath('shared', '*')
+        : packageDistPath('shared', '*.js'),
       '@alusa/stripe': packageDistPath('stripe', 'index.js'),
       '@alusa/stripe/*': packageDistPath('stripe', '*.js'),
       // O build do pacote UI produz artefatos aninhados por causa dos paths

@@ -1,12 +1,14 @@
 import { test, expect } from '@playwright/test';
+import { seedAdminAndAuthenticate } from './utils/auth';
 
 test.describe('Wizard Colaborador', () => {
   test('fluxo completo de criação de colaborador', async ({ page }) => {
+    await seedAdminAndAuthenticate(page, { email: `colaborador-${Date.now()}@e2e.test` });
     // Navegar para a página de colaboradores
     await page.goto('/colaboradores');
     
     // Clicar no botão de adicionar colaborador
-    await page.click('button:has-text("Adicionar Colaborador")');
+    await page.getByRole('button', { name: 'Cadastrar colaborador' }).click();
     
     // Verificar se o wizard abriu
     await expect(page.getByTestId('colaborador-wizard')).toBeVisible();
@@ -50,6 +52,7 @@ test.describe('Wizard Colaborador', () => {
   });
 
   test('abre a página de novo colaborador', async ({ page }) => {
+    await seedAdminAndAuthenticate(page, { email: `colaborador-new-${Date.now()}@e2e.test` });
     await page.goto('/colaboradores/new');
     await expect(page.getByTestId('colaborador-wizard')).toBeVisible();
   });

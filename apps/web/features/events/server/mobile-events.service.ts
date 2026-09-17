@@ -8,20 +8,24 @@ import {
   listFinancialEntriesPage,
   listEventParticipantsPage,
   listSchoolEvents,
-  markEventTicketUsed,
-  markEventTicketUsedAcrossEvents,
   updateFinancialEntry,
   updateSchoolEventStatus,
+} from '@alusa/lib/events/events.service';
+import {
+  markEventTicketUsed,
+  markEventTicketUsedAcrossEvents,
   verifyEventTicketForCheckIn,
   verifyEventTicketForCheckInAcrossEvents,
-  type CreateCostumeAssignmentInput,
-  type CreateEventFinancialEntryInput,
-  type ListFinancialEntriesQuery,
-  type ListEventParticipantsQuery,
-  type UpdateEventFinancialEntryInput,
-  type ListSchoolEventsQuery,
-  type SchoolEventDTO,
-} from '@alusa/lib';
+} from '@alusa/lib/events/ticket-checkin.service';
+import type {
+  CreateCostumeAssignmentInput,
+  CreateEventFinancialEntryInput,
+  ListFinancialEntriesQuery,
+  ListEventParticipantsQuery,
+  UpdateEventFinancialEntryInput,
+  ListSchoolEventsQuery,
+} from '@alusa/lib/events/events.schema';
+import type { SchoolEventDTO } from '@alusa/lib/events/events.service';
 
 export type MobileEventsActor = {
   userId: string;

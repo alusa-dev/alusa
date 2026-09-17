@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { ZodError } from 'zod';
 import { authOptions } from '@/lib/auth-options';
 import { reconnectAsaasAccount, type ReconnectAsaasResult } from '@alusa/finance';
+import { adminAsaasApiKeyInputDTOSchema } from '@/features/system/dtos';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -25,11 +27,7 @@ export async function POST(request: Request) {
       return json(403, { success: false, summary: 'Acesso negado.' });
     }
 
-    const payload = (await request.json().catch(() => null)) as { apiKey?: string } | null;
-    const apiKey = payload?.apiKey?.trim() ?? '';
-    if (!apiKey) {
-      return json(400, { success: false, summary: 'API key é obrigatória.' });
-    }
+    const { apiKey } = adminAsaasApiKeyInputDTOSchema.parse(await request.json().catch(() => null));
 
     const result: ReconnectAsaasResult = await reconnectAsaasAccount({
       contaId: user.contaId,
@@ -39,6 +37,9 @@ export async function POST(request: Request) {
 
     return json(result.success ? 200 : 400, result);
   } catch (e) {
+    if (e instanceof ZodError) {
+      return json(400, { success: false, summary: 'API key é obrigatória.' });
+    }
     console.error('[API admin/asaas/reconnect][POST] Erro', e);
     return json(500, {
       success: false,

@@ -1,5 +1,5 @@
 import { NotificationCategory, NotificationSeverity, NotificationType, Role, Status } from '@prisma/client';
-import { createNotification } from '@alusa/lib';
+import { createNotification } from '@alusa/lib/services/notifications.service';
 import { buildAppUrl } from '@/lib/app-url';
 import { sendTransactionalEmail } from '@/lib/email/transactional-email';
 import prisma from '@/lib/prisma';

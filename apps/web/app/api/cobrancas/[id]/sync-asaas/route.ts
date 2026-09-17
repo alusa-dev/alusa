@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 
-import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/lib/prisma';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { cobrancaRouteParamsDTOSchema } from '@/features/financeiro/cobrancas/dtos';
 import { syncPaymentStateFromAsaas } from '@alusa/finance';
-import { resolveCobrancaPaymentLookup } from '@/src/server/finance/resolve-cobranca-payment-lookup';
+import { resolveCobrancaPaymentLookupForTenant } from '@/src/server/finance/resolve-cobranca-payment-lookup';
 import { rateLimitAsync } from '@/lib/rate-limit';
 import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { invalidateChargeResourceCache } from '@/lib/cache/invalidation';
@@ -50,14 +48,12 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    const user = session?.user as { id?: string; contaId?: string; role?: string } | undefined;
-
-    if (!user?.id || !user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ success: false, error: 'Não autenticado' }, { status: 401 });
     }
 
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return NextResponse.json({ success: false, error: 'Sem permissão' }, { status: 403 });
     }
 
@@ -65,7 +61,7 @@ export async function POST(
     const limits = resolveSyncLimits();
 
     const tenantLimit = await rateLimitAsync(
-      `finance-ui-sync:tenant:${user.contaId}`,
+      `finance-ui-sync:tenant:${auth.contaId}`,
       limits.tenantPerMinute,
       60_000,
     );
@@ -74,7 +70,7 @@ export async function POST(
     }
 
     const userLimit = await rateLimitAsync(
-      `finance-ui-sync:user:${user.contaId}:${user.id}`,
+      `finance-ui-sync:user:${auth.contaId}:${auth.userId}`,
       limits.userPerMinute,
       60_000,
     );
@@ -83,7 +79,7 @@ export async function POST(
     }
 
     const chargeLimit = await rateLimitAsync(
-      `finance-ui-sync:charge:${user.contaId}:${cobrancaId}`,
+      `finance-ui-sync:charge:${auth.contaId}:${cobrancaId}`,
       1,
       limits.chargeWindowMs,
     );
@@ -91,7 +87,7 @@ export async function POST(
       return jsonSkipped('CHARGE_THROTTLED', chargeLimit.resetAt);
     }
 
-    const paymentLookup = await resolveCobrancaPaymentLookup(prisma, user.contaId, cobrancaId);
+    const paymentLookup = await resolveCobrancaPaymentLookupForTenant(auth.contaId, cobrancaId);
     const paymentId = paymentLookup?.asaasPaymentId ?? null;
 
     if (!paymentId) {
@@ -102,7 +98,7 @@ export async function POST(
     }
 
     const syncResult = await syncPaymentStateFromAsaas({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       asaasPaymentId: paymentId,
       intent: 'UI_FALLBACK_SYNC',
     });
@@ -115,7 +111,7 @@ export async function POST(
     }
 
     await invalidateChargeResourceCache({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       cobrancaId,
       reason: 'charge-sync-asaas',
     });

@@ -20,7 +20,7 @@ substitui validação de banco, webhooks ou reconciliação.
 ```bash
 pnpm install --frozen-lockfile
 pnpm prisma:generate
-pnpm -w lint
+pnpm lint:check
 pnpm -w typecheck
 pnpm -w test:unit
 pnpm -w build

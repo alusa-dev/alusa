@@ -1,18 +1,19 @@
 import { NextResponse } from 'next/server';
 
 import { requireSupportApi } from '@/features/support/api/support-api.server';
+import { supportAccountWebhookRouteParamsSchema } from '@/features/support/actions/schemas';
 import { getSupportWebhookDetail } from '@/features/support/queries/support-entities';
 
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ contaId: string; webhookId: string }> },
 ) {
-  const { contaId, webhookId } = await params;
   const auth = await requireSupportApi(req, {
     roles: ['SUPPORT_VIEWER', 'SUPPORT_FINANCE', 'SUPPORT_DEVELOPER', 'SUPPORT_ADMIN', 'BREAK_GLASS'],
     scope: 'admin-webhooks',
   });
   if (!auth.ok) return auth.response;
+  const { contaId, webhookId } = supportAccountWebhookRouteParamsSchema.parse(await params);
 
   const webhook = await getSupportWebhookDetail(contaId, webhookId);
   if (!webhook) {

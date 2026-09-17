@@ -5,7 +5,19 @@ export function isProductionRuntime(): boolean {
 }
 
 export function isTestRouteEnabled(): boolean {
-  return !isProductionRuntime() && process.env.TEST_ROUTES_ENABLED === 'true';
+  const explicitlyIsolatedProductionE2E =
+    process.env.NODE_ENV === 'production' &&
+    process.env.E2E_SERVER_MODE === 'production' &&
+    process.env.PLAYWRIGHT_TEST === 'true' &&
+    process.env.TEST_ROUTES_ENABLED === 'true';
+
+  // Production-like E2E runs the real production server and therefore needs
+  // its deterministic fixture routes. The four explicit flags above are
+  // server-side test configuration; real production never enables them.
+  return (
+    (!isProductionRuntime() || explicitlyIsolatedProductionE2E) &&
+    process.env.TEST_ROUTES_ENABLED === 'true'
+  );
 }
 
 export function isDiagnosticsRouteEnabled(): boolean {

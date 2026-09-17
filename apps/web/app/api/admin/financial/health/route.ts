@@ -2,19 +2,19 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/src/prisma';
 import { getAsaasBaseUrlFromEnvOrThrow } from '@alusa/finance';
 import {
   getAsaasReadIntentStats,
   getKycAsaasReadCacheStats,
+  hasStoredAsaasWebhookAuthTokenHash,
   getPaymentCommandPreflightStats,
   getWebhookHealthStatus,
   getWebhookQueueMetrics,
 } from '@alusa/finance';
-import { loadAsaasCredentials } from '@alusa/database';
 import { adminFinancialHealthResultDTOSchema } from '@/features/system/dtos';
 import { mapAdminFinancialHealthResultToDTO } from '@/features/system/mappers';
 import { getAsaasReadObservability } from '@/src/server/finance/asaas-read-observability';
+import { hasAsaasCredentials } from '@/src/server/finance/admin-integration.service';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -60,17 +60,11 @@ export async function GET() {
 
     checks.push({ name: 'base_url', ok: baseUrlOk, message: baseUrlOk ? undefined : 'INVALID_OR_MISSING' });
 
-    const creds = await loadAsaasCredentials(user.contaId);
-    const credentialsOk = Boolean(creds?.apiKey);
+    const credentialsOk = await hasAsaasCredentials(user.contaId);
     checks.push({ name: 'credentials', ok: credentialsOk, message: credentialsOk ? undefined : 'MISSING' });
 
     const webhookSecretOk = Boolean(process.env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET);
-    const asaasAccount = await prisma.asaasAccount.findFirst({
-      where: { financeProfile: { contaId: user.contaId } },
-      select: { webhookAuthTokenHash: true },
-    });
-
-    const webhookHashOk = Boolean(asaasAccount?.webhookAuthTokenHash);
+    const webhookHashOk = await hasStoredAsaasWebhookAuthTokenHash(user.contaId);
     const hasEnabledRemoteWebhook = remoteWebhookStatus?.webhooks.some((webhook) => webhook.enabled) ?? false;
     const hasInterruptedRemoteWebhook = remoteWebhookStatus?.hasInterrupted ?? false;
     const webhookOk = webhookSecretOk && webhookHashOk && hasEnabledRemoteWebhook && !hasInterruptedRemoteWebhook;

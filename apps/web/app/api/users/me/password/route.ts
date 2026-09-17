@@ -2,14 +2,12 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
-import { revokeUserSessions } from '@/lib/auth-service';
-import prisma from '@/lib/prisma';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
-import { resolveUserId } from '../helpers';
+import { resolveUserId } from '@/src/server/identity/user-profile-http.helpers';
 import { simpleSuccessResultDTOSchema } from '@/features/users/dtos/index';
 import { changePasswordInputDTOSchema } from '@/features/users/dtos/password';
 import { auditLogService } from '@alusa/finance';
-import { comparePassword, hashPassword } from '@/lib/auth-password';
+import { changeUserPassword } from '@/src/server/users/user-account.service';
 
 function isSameOriginRequest(req: Request): boolean {
   const origin = req.headers.get('origin');
@@ -76,19 +74,17 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
     }
 
-    const user = await prisma.usuario.findUnique({
-      where: { id: userId },
-      select: { senhaHash: true, contaId: true },
+    const result = await changeUserPassword({
+      userId,
+      currentPassword: parsed.data.currentPassword,
+      newPassword: parsed.data.newPassword,
     });
-
-    if (!user?.senhaHash) {
+    if (result.status === 'NOT_FOUND') {
       return NextResponse.json({ error: 'Usuario nao encontrado' }, { status: 404 });
     }
-
-    const isValid = await comparePassword(parsed.data.currentPassword, user.senhaHash);
-    if (!isValid) {
+    if (result.status === 'INVALID_PASSWORD') {
       await recordPasswordAudit({
-        contaId: user.contaId,
+        contaId: result.contaId,
         userId,
         action: 'auth.password_change_failed',
         ip,
@@ -101,18 +97,8 @@ export async function PATCH(req: Request) {
       );
     }
 
-    const newHash = await hashPassword(parsed.data.newPassword);
-
-    await prisma.$transaction(async (tx) => {
-      await tx.usuario.update({
-        where: { id: userId },
-        data: { senhaHash: newHash, passwordChangedAt: new Date() },
-      });
-      await revokeUserSessions(userId, tx);
-    });
-
     await recordPasswordAudit({
-      contaId: user.contaId,
+      contaId: result.contaId,
       userId,
       action: 'auth.password_changed',
       ip,

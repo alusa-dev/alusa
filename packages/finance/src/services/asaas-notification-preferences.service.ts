@@ -4,7 +4,7 @@ import type {
 } from '@prisma/client';
 import { getAsaasBaseUrlForApiKeyOrThrow } from '@alusa/asaas';
 import { decryptSecret, prisma } from '@alusa/database';
-import { loadTenantNotificationEventPreferences } from '@alusa/lib';
+import { loadTenantNotificationEventPreferences } from '@alusa/lib/notifications/tenant-notification-preferences';
 
 async function loadDecryptedAsaasCredentials(contaId: string) {
   const [profile, conta] = await Promise.all([

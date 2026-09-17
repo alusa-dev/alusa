@@ -82,6 +82,6 @@ persistido consegue acessar todos os módulos que já utilizava.
 - lint dos arquivos alterados: aprovado;
 - testes administrativos e de segurança direcionados: aprovados;
 - registry de proteção de rotas: aprovado;
-- `pnpm security:check`: ainda reporta tabelas tenant-scoped sem RLS detectável
-  em migrations existentes fora do escopo desta fase; esse baseline fica
-  registrado para a trilha de segurança/migrations e não foi mascarado.
+- `pnpm security:check`: aprovado; 166 modelos tenant-scoped possuem RLS
+  detectável nas migrations atuais. A validação da role real de produção
+  (`DATABASE_RLS_URL`) continua sendo um gate operacional separado.

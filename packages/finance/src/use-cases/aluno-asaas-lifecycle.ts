@@ -1,6 +1,6 @@
 import { prisma } from '@alusa/database';
 import { deleteCustomer } from '@alusa/asaas';
-import { calcIdade } from '@alusa/lib';
+import { calcIdade } from '@alusa/lib/alunos/aluno.schema';
 import {
   inactivateCustomerIfSafe,
 } from '../customer/asaas-customer.service';

@@ -41,7 +41,7 @@ describe('/api/users/[id]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getServerSession).mockResolvedValue({
-      user: { id: 'admin-1', role: 'ADMIN' },
+      user: { id: 'admin-1', role: 'ADMIN', contaId: 'conta-1' },
     } as never);
     prismaMock.usuario.findUnique.mockResolvedValue({ contaId: 'conta-1', id: 'admin-1' });
   });

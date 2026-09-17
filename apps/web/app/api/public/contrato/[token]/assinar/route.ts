@@ -7,7 +7,8 @@ import {
 } from '@/features/contratos/dtos';
 import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
-import { createContractSignedNotification, signPublicContract } from '@alusa/lib';
+import { signPublicContract } from '@alusa/lib/contracts/use-cases/sign-contract';
+import { createContractSignedNotification } from '@alusa/lib/notifications/domain-notifications';
 import { loadPublicContractPdf } from '@/src/server/contracts/load-public-contract-pdf';
 
 function statusForDomainError(error: Error) {

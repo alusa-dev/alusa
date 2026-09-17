@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation';
 import { AgendaPage } from '@/features/aulas/agenda/AgendaPage';
 import { canAccessAulas, getAulasSessionUser } from '@/src/server/aulas/session';
 
+export const dynamic = 'force-dynamic';
+
 type AgendaRoutePageProps = {
   searchParams: Promise<{
     turmaId?: string | string[];

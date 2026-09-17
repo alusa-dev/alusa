@@ -25,15 +25,17 @@ async function authenticate(context: import('@playwright/test').BrowserContext, 
     },
   });
 
-  await context.addCookies({
-    name: 'next-auth.session-token',
-    value: token,
-    domain: 'localhost',
-    path: '/',
-    httpOnly: true,
-    secure: false,
-    sameSite: 'Lax',
-  });
+  await context.addCookies([
+    {
+      name: 'next-auth.session-token',
+      value: token,
+      domain: 'localhost',
+      path: '/',
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Lax',
+    },
+  ]);
 }
 
 test('separa logout individual de revogação global entre dois dispositivos', async ({ browser }) => {
@@ -77,9 +79,10 @@ test('separa logout individual de revogação global entre dois dispositivos', a
     await authenticate(contextB, user);
     await authenticate(contextC, user);
 
+    const baseUrl = `http://localhost:${process.env.PLAYWRIGHT_PORT ?? '3001'}`;
     const originHeaders = {
-      origin: 'http://localhost:3000',
-      referer: 'http://localhost:3000/dashboard',
+      origin: baseUrl,
+      referer: `${baseUrl}/dashboard`,
     };
 
     const logoutResponse = await contextA.request.post('/api/auth/logout', { headers: originHeaders });

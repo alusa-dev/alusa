@@ -3,6 +3,10 @@ import { NextResponse } from 'next/server';
 
 import { DELETE, GET } from '@/app/api/finance/transfers/recipients/route';
 
+vi.mock('@/lib/api/with-tenant-session', () => ({
+  resolveTenantSession: vi.fn(),
+}));
+
 vi.mock('@/lib/safe-server-session', () => ({
   safeGetServerSession: vi.fn(),
 }));
@@ -17,8 +21,18 @@ vi.mock('@alusa/finance', () => ({
 }));
 
 async function mockSession(user: Record<string, string> | null) {
-  const mod = await import('@/lib/safe-server-session');
-  vi.mocked(mod.safeGetServerSession).mockResolvedValue(user ? ({ user } as never) : null);
+  const mod = await import('@/lib/api/with-tenant-session');
+  vi.mocked(mod.resolveTenantSession).mockResolvedValue(
+    user
+      ? {
+          ok: true,
+          userId: user.id,
+          contaId: user.contaId,
+          role: user.role,
+          financeIntegrationMode: user.financeIntegrationMode ?? null,
+        }
+      : { ok: false, reason: 'UNAUTHENTICATED' },
+  );
 }
 
 describe('GET /api/finance/transfers/recipients', () => {

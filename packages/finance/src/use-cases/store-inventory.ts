@@ -1,9 +1,9 @@
 import { prisma } from '@alusa/database';
+import { calculateInventoryCostBasis } from '@alusa/lib/services/inventory-balance.service';
 import {
-  calculateInventoryCostBasis,
   formatProductVariantTitle,
   resolveProductSalePrice,
-} from '@alusa/lib';
+} from '@alusa/lib/services/product-variant-rules';
 import {
   ChargeStatus,
   InventoryMovementType,

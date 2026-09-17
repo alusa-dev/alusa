@@ -38,6 +38,33 @@ vi.mock('@alusa/finance', () => ({
   handlePaymentWebhook: vi.fn(),
   isAsaasEnabled: vi.fn(() => false),
   recordAsaasReadIntent: vi.fn(),
+  mapChargeStatusToCobrancaDisplayStatus: vi.fn((status?: string | null) => ({
+    CREATED: 'PENDENTE',
+    PENDING_SYNC: 'PENDENTE',
+    OPEN: 'PENDENTE',
+    OVERDUE: 'ATRASADO',
+    PAID: 'PAGO',
+    REFUNDED: 'ESTORNADO',
+    CANCELED: 'CANCELADO',
+  } as Record<string, string>)[status ?? ''] ?? null),
+  chooseHighestPrecedenceCobrancaDisplayStatus: vi.fn((statuses: Array<string | null | undefined>) => {
+    const precedence: Record<string, number> = {
+      PENDENTE: 5,
+      A_VENCER: 10,
+      PROCESSANDO: 15,
+      ATRASADO: 30,
+      PAGO: 40,
+      CANCELAMENTO_PENDENTE: 80,
+      ESTORNADO_PARCIAL: 90,
+      ESTORNADO: 92,
+      CANCELADO: 95,
+    };
+    return statuses.reduce<string | null>((selected, candidate) => {
+      if (!candidate) return selected;
+      if (!selected) return candidate;
+      return (precedence[candidate] ?? 0) >= (precedence[selected] ?? 0) ? candidate : selected;
+    }, null);
+  }),
   mapAsaasPaymentStatusToCobranca: vi.fn((status: string) => {
     if (status === 'PENDING') return 'A_VENCER';
     if (status === 'OVERDUE') return 'ATRASADO';

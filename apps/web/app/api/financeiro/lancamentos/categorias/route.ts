@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/src/prisma';
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { apiErrorResponse } from '@/lib/api/report-api-error';
 import {
   financeiroLancamentoCategoriaInputDTOSchema,
   financeiroLancamentoCategoriaMutationResultDTOSchema,
@@ -11,11 +11,11 @@ import {
   mapFinanceiroLancamentoCategoriaToDTO,
   mapListFinanceiroLancamentoCategoriasResultToDTO,
 } from '@/features/financeiro/mappers';
+import { createLancamentoCategoria, listLancamentoCategorias } from '@/src/server/finance/lancamento-categoria.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-type SessUser = { id?: string; contaId?: string; role?: string };
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function err(status: number, code: string, message: string) {
@@ -24,10 +24,9 @@ function err(status: number, code: string, message: string) {
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await safeGetServerSession();
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuario nao autenticado');
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return err(403, 'SEM_PERMISSAO', 'Acesso negado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(401, 'NAO_AUTENTICADO', 'Usuario nao autenticado');
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const url = new URL(req.url);
     const parsedQuery = financeiroLancamentoCategoriaQueryDTOSchema.safeParse({
@@ -39,10 +38,7 @@ export async function GET(req: NextRequest) {
     }
     const { tipo } = parsedQuery.data;
 
-    const categorias = await prisma.categoriaLancamento.findMany({
-      where: { contaId: user.contaId, ...(tipo ? { tipo } : {}) },
-      orderBy: [{ parentId: 'asc' }, { nome: 'asc' }],
-    });
+    const categorias = await listLancamentoCategorias({ contaId: auth.contaId, tipo });
 
     return NextResponse.json(
       listFinanceiroLancamentoCategoriasResultDTOSchema.parse(
@@ -56,17 +52,18 @@ export async function GET(req: NextRequest) {
       ),
     );
   } catch (e) {
-    console.error('[API lancamento categorias][GET]', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return apiErrorResponse(e, {
+      route: 'GET /api/financeiro/lancamentos/categorias',
+      fallbackMessage: 'Não foi possível carregar as categorias.',
+    });
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await safeGetServerSession();
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuario nao autenticado');
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return err(403, 'SEM_PERMISSAO', 'Acesso negado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(401, 'NAO_AUTENTICADO', 'Usuario nao autenticado');
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const parsed = financeiroLancamentoCategoriaInputDTOSchema.safeParse(await req.json());
     if (!parsed.success) {
@@ -75,26 +72,10 @@ export async function POST(req: NextRequest) {
     }
     const body = parsed.data;
 
-    if (body.parentId) {
-      const parent = await prisma.categoriaLancamento.findFirst({
-        where: { id: body.parentId, contaId: user.contaId, tipo: body.tipo },
-      });
-      if (!parent) return err(400, 'DADOS_INVALIDOS', 'Subcategoria precisa referenciar uma categoria valida');
-    }
-
-    const existing = await prisma.categoriaLancamento.findFirst({
-      where: { contaId: user.contaId, tipo: body.tipo, nome: body.nome.trim(), parentId: body.parentId ?? null },
-    });
-    if (existing) return err(409, 'JA_EXISTE', 'Categoria ja existe');
-
-    const created = await prisma.categoriaLancamento.create({
-      data: {
-        contaId: user.contaId,
-        nome: body.nome.trim(),
-        tipo: body.tipo,
-        parentId: body.parentId ?? null,
-      },
-    });
+    const result = await createLancamentoCategoria({ contaId: auth.contaId, ...body });
+    if (result.kind === 'INVALID_PARENT') return err(400, 'DADOS_INVALIDOS', 'Subcategoria precisa referenciar uma categoria valida');
+    if (result.kind === 'DUPLICATE') return err(409, 'JA_EXISTE', 'Categoria ja existe');
+    const created = result.value;
     return NextResponse.json(
       financeiroLancamentoCategoriaMutationResultDTOSchema.parse({
         data: mapFinanceiroLancamentoCategoriaToDTO(
@@ -104,7 +85,9 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (e) {
-    console.error('[API lancamento categorias][POST]', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return apiErrorResponse(e, {
+      route: 'POST /api/financeiro/lancamentos/categorias',
+      fallbackMessage: 'Não foi possível criar a categoria.',
+    });
   }
 }

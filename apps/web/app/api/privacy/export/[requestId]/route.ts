@@ -1,37 +1,27 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 
-import prisma from '@/lib/prisma';
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { privacyRequestRouteParamsDTOSchema } from '@/features/privacy/dtos';
+import { getPrivacyRequest } from '@/src/server/privacy/privacy-request.service';
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ requestId: string }> },
 ) {
-  const session = await getServerSession(authOptions).catch(() => null);
-  const user = session?.user;
-  if (!user?.id || !user.contaId) {
+  const auth = await resolveTenantSession();
+  if (!auth.ok) {
     return NextResponse.json({ error: 'Nao autenticado.' }, { status: 401 });
   }
 
-  const { requestId } = await params;
-  const request = await prisma.privacyRequest.findFirst({
-    where: {
-      id: requestId,
-      contaId: user.contaId,
-      OR: [{ userId: user.id }, { userId: null }],
-    },
-    select: {
-      id: true,
-      requestType: true,
-      status: true,
-      action: true,
-      resultUrl: true,
-      rejectedReason: true,
-      createdAt: true,
-      updatedAt: true,
-      completedAt: true,
-    },
+  const parsedParams = privacyRequestRouteParamsDTOSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return NextResponse.json({ error: 'Solicitacao invalida.' }, { status: 400 });
+  }
+  const { requestId } = parsedParams.data;
+  const request = await getPrivacyRequest({
+    requestId,
+    contaId: auth.contaId,
+    userId: auth.userId,
   });
 
   if (!request) {

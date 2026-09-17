@@ -1,14 +1,12 @@
 import { loadAsaasCredentials, prisma } from '@alusa/database';
-import { isValidCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
+import { isValidCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
 import type { CustomerPayerType } from '@prisma/client';
 import { AsaasHttpError, getCustomer } from '@alusa/asaas';
 
 import { createAsaasCustomer, syncAsaasCustomerContact } from './create-customer';
-import {
-  loadTenantNotificationEventPreferences,
-} from '@alusa/lib';
+import { loadTenantNotificationEventPreferences } from '@alusa/lib/notifications/tenant-notification-preferences';
 import { syncCustomerNotificationChannels } from '../services/customer-notification.service';
 import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 import {

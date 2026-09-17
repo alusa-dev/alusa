@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { deleteOptionValue } from '@alusa/lib';
+import { deleteOptionValue } from '@alusa/lib/services/product-option.service';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -13,9 +12,9 @@ interface RouteContext {
 
 export async function DELETE(_req: Request, context: RouteContext) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id: productId, optionId, valueId } = await Promise.resolve(context.params);
     await deleteOptionValue(valueId, optionId, productId, contaId);

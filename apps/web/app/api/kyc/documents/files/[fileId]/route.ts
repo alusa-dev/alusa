@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-
-import { authOptions } from '@/lib/auth-options';
 import { deleteKycDocumentFile, updateKycDocumentFile, viewKycDocumentFile } from '@alusa/finance';
 import { validateUploadBuffer } from '@/lib/upload-security';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -19,8 +17,8 @@ function json(status: number, body: unknown) {
 }
 
 async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
+  const auth = await resolveTenantSession();
+  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role } : null;
 }
 
 function isValidOpaqueId(value: unknown): value is string {
@@ -157,7 +155,7 @@ export async function POST(req: Request, context: RouteContext) {
       return json(409, { code: 'DOCUMENT_APPROVED', message });
     }
     console.error('[Finance KYC Document File][POST]', error);
-    return json(500, { error: 'ERRO_INTERNO', message });
+    return json(500, { error: 'ERRO_INTERNO' });
   }
 }
 

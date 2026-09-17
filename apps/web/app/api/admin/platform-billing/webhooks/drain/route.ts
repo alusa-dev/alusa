@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth-options';
-import prisma from '@/lib/prisma';
 import { drainStripeWebhookWorker } from '@/src/server/platform-billing/webhook-worker';
 
 export const runtime = 'nodejs';
@@ -22,7 +21,6 @@ export async function POST(req: NextRequest) {
   }
 
   const result = await drainStripeWebhookWorker({
-    prisma,
     limit: parsed.data.limit,
   });
 

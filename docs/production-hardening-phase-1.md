@@ -23,6 +23,8 @@ O guard de boot exige:
 - `RLS_RUNTIME_ENABLED=true` e `DATABASE_RLS_URL`;
 - `ASAAS_REDIS_ENABLED=true`;
 - `UPSTASH_REDIS_REST_URL` e `UPSTASH_REDIS_REST_TOKEN`;
+- `TRUST_PROXY_HEADERS=true`, somente quando a Vercel/CDN estiver configurada
+  para fornecer headers de origem confiáveis;
 - `ASAAS_WEBHOOK_AUTH_TOKEN_SECRET`;
 - `ASAAS_WEBHOOK_PUBLIC_BASE_URL`;
 - `ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS=true`;
@@ -56,4 +58,6 @@ Asaas e deve ser revisada quando o provedor atualizar sua documentação.
 - [Asaas — recebimento de eventos](https://docs.asaas.com/docs/receba-eventos-do-asaas-no-seu-endpoint-de-webhook)
 - [Asaas — penalização de filas](https://docs.asaas.com/docs/penalização-de-filas)
 - [Asaas — polling vs. webhooks](https://docs.asaas.com/docs/polling-vs-webhooks)
+- [Asaas — API Limits](https://docs.asaas.com/docs/api-limits-1)
+- [Next.js — Route Handlers](https://nextjs.org/docs/app/api-reference/file-conventions/route)
 - [Next.js — Route Handlers](https://nextjs.org/docs/app/api-reference/file-conventions/route)

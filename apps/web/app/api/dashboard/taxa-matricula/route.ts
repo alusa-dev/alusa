@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
 import { dashboardPeriodoDTOSchema } from '@/features/dashboard/dtos';
 import { mapDashboardSerieResultToDTO } from '@/features/dashboard/mappers';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
 import { runWithTenant } from '@/lib/prisma-tenant';
 import { PrivateMemoryCache, privateJson } from '@/lib/private-cache';
@@ -15,19 +14,18 @@ const taxaMatriculaCache = new PrivateMemoryCache<unknown>({
 export async function GET(request: NextRequest) {
   const timer = createPerfTimer('api/dashboard/taxa-matricula');
   try {
-    const session = await getServerSession(authOptions);
     const { searchParams } = new URL(request.url);
     const periodo = dashboardPeriodoDTOSchema.parse(searchParams.get('periodo') || '30d');
     
     // MULTI-TENANT: usar apenas contaId da sessão
-    const contaId = (session?.user as { contaId?: string | null } | undefined)?.contaId;
-
-    if (!contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json(
         { success: false, error: 'Não autenticado' },
         { status: 401 },
       );
     }
+    const { contaId } = auth;
 
     const cacheKey = `${contaId}:${periodo}`;
     const cached = taxaMatriculaCache.get(cacheKey);
@@ -174,7 +172,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('[GET /api/dashboard/taxa-matricula] Erro:', error);
     return NextResponse.json(
-      { success: false, error: (error as Error).message },
+      { success: false, error: 'Não foi possível carregar a taxa de matrícula agora.' },
       { status: 500 },
     );
   }

@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { ZodError } from 'zod';
 
 import { authOptions } from '@/lib/auth-options';
 import { getWebhookConfigDriftStatus, recordFinanceAdminAction, repairWebhookConfigDrift } from '@alusa/finance';
+import { adminWebhookConfigRepairInputDTOSchema } from '@/features/system/dtos';
 
 async function requireAdminSession() {
   const session = await getServerSession(authOptions);
@@ -55,11 +57,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Não autorizado' }, { status: 401 });
     }
 
-    const body = (await req.json().catch(() => ({}))) as { reason?: string };
-    const reason = body.reason?.trim();
-    if (!reason || reason.length < 8) {
-      return NextResponse.json({ success: false, error: 'Justificativa obrigatória' }, { status: 400 });
-    }
+    const { reason } = adminWebhookConfigRepairInputDTOSchema.parse(await req.json().catch(() => ({})));
 
     await recordFinanceAdminAction({
       contaId,
@@ -78,6 +76,9 @@ export async function POST(req: Request) {
       data: result,
     });
   } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json({ success: false, error: 'Justificativa obrigatória' }, { status: 400 });
+    }
     console.error('[admin/webhooks/config] Erro ao reparar drift:', error);
     return NextResponse.json({ success: false, error: 'Erro interno' }, { status: 500 });
   }

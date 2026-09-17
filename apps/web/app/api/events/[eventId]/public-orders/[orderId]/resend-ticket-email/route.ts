@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 
 import { drainFinanceWebhookSideEffectOutbox } from '@alusa/finance';
-import { prisma } from '@alusa/database';
 import { EventsError } from '@alusa/lib/events/events.service';
 import { requestPublicOrderTicketEmailResend } from '@alusa/lib/events/map/event-map.service';
 
+import { eventPublicOrderNestedRouteParamsDTOSchema } from '@/features/events/dtos';
 import { getEventsContext, handleEventsRouteError } from '../../../../_helpers';
+import { getConfirmedEventOrderAccess } from '@/src/server/events/event-route-read.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -14,13 +15,10 @@ type RouteParams = { params: Promise<{ eventId: string; orderId: string }> };
 
 export async function POST(_request: Request, { params }: RouteParams) {
   try {
-    const { eventId, orderId } = await params;
+    const { eventId, orderId } = eventPublicOrderNestedRouteParamsDTOSchema.parse(await params);
     const ctx = await getEventsContext('eventTickets.markPaid');
 
-    const order = await prisma.eventMapOrder.findFirst({
-      where: { id: orderId, contaId: ctx.contaId, eventId, status: 'CONFIRMED' },
-      select: { accessToken: true },
-    });
+    const order = await getConfirmedEventOrderAccess({ eventId, orderId, contaId: ctx.contaId });
     if (!order) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido confirmado não encontrado.', 404);
 
     const result = await requestPublicOrderTicketEmailResend(orderId, order.accessToken);

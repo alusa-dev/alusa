@@ -37,7 +37,7 @@ async function run(req: Request) {
   } catch (error) {
     console.error('[jobs/process-billing-agreement-lifecycle]', error);
     return NextResponse.json(
-      { error: { code: 'BILLING_LIFECYCLE_JOB_FAILED', message: error instanceof Error ? error.message : String(error) } },
+      { error: { code: 'BILLING_LIFECYCLE_JOB_FAILED', message: 'Não foi possível processar o ciclo de vida das cobranças.' } },
       { status: 500 },
     );
   }

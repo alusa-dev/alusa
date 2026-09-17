@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { prisma as defaultPrisma } from '@/lib/prisma';
 import type { StripeWebhookEvent } from '@alusa/stripe';
 import {
   PlatformBillingError,
@@ -31,23 +32,46 @@ export type DrainStripeWebhookWorkerResult = {
   ignored: number;
 };
 
+export type ListStripeWebhookEventsInput = {
+  contaId: string;
+  environment: PlatformBillingEnvironment;
+  status: Array<'FAILED' | 'EXHAUSTED' | 'PENDING' | 'PROCESSING'>;
+  limit: number;
+};
+
+export type ListedStripeWebhookEvent = {
+  id: string;
+  eventId: string;
+  eventType: string;
+  status: string;
+  attempts: number;
+  receivedAt: Date;
+  lastAttemptAt: Date | null;
+  nextAttemptAt: Date | null;
+  lastError: string | null;
+  lastErrorCode: string | null;
+  exhaustedAt: Date | null;
+  correlationId: string | null;
+};
+
 const DEFAULT_BATCH_LIMIT = 25;
 const PROCESSING_TIMEOUT_MS = 2 * 60_000;
 
 export async function drainStripeWebhookWorker(input: {
-  prisma: PrismaClient;
+  prisma?: PrismaClient;
   limit?: number;
   workerId?: string;
   environment?: PlatformBillingEnvironment;
 }): Promise<DrainStripeWebhookWorkerResult> {
+  const db = input.prisma ?? defaultPrisma;
   const workerId = input.workerId ?? `stripe-worker-${randomUUID()}`;
   const environment = input.environment ?? resolvePlatformBillingEnvironment();
   const limit = Math.max(1, Math.min(input.limit ?? DEFAULT_BATCH_LIMIT, 100));
-  await recoverTimedOutStripeWebhookEvents(input.prisma, {
+  await recoverTimedOutStripeWebhookEvents(db, {
     environment,
   });
 
-  const claimed = await claimStripeWebhookEvents(input.prisma, {
+  const claimed = await claimStripeWebhookEvents(db, {
     environment,
     limit,
     workerId,
@@ -62,7 +86,7 @@ export async function drainStripeWebhookWorker(input: {
     ignored: 0,
   };
 
-  const store = createPrismaPlatformBillingStore(input.prisma);
+  const store = createPrismaPlatformBillingStore(db);
 
   for (const event of orderStripeWebhookEventsForProcessing(claimed)) {
     try {
@@ -143,6 +167,35 @@ export async function drainStripeWebhookWorker(input: {
   return result;
 }
 
+export async function listStripeWebhookEvents(
+  input: ListStripeWebhookEventsInput,
+): Promise<ListedStripeWebhookEvent[]> {
+  const db = defaultPrisma;
+  return db.platformBillingWebhookEvent.findMany({
+    where: {
+      contaId: input.contaId,
+      environment: input.environment,
+      status: { in: input.status },
+    },
+    orderBy: [{ receivedAt: 'desc' }],
+    take: Math.max(1, Math.min(input.limit, 100)),
+    select: {
+      id: true,
+      eventId: true,
+      eventType: true,
+      status: true,
+      attempts: true,
+      receivedAt: true,
+      lastAttemptAt: true,
+      nextAttemptAt: true,
+      lastError: true,
+      lastErrorCode: true,
+      exhaustedAt: true,
+      correlationId: true,
+    },
+  });
+}
+
 function orderStripeWebhookEventsForProcessing(events: ClaimedStripeWebhookEvent[]): ClaimedStripeWebhookEvent[] {
   return [...events].sort((left, right) => {
     const priorityDiff = getStripeWebhookEventPriority(left.eventType) - getStripeWebhookEventPriority(right.eventType);
@@ -159,19 +212,22 @@ function getStripeWebhookEventPriority(eventType: string): number {
 }
 
 export async function replayStripeWebhookEvents(input: {
-  prisma: PrismaClient;
+  prisma?: PrismaClient;
   ids: string[];
+  contaId?: string;
   actorUserId: string;
   reason: string;
   environment?: PlatformBillingEnvironment;
 }): Promise<{ replayed: number }> {
+  const db = input.prisma ?? defaultPrisma;
   const environment = input.environment ?? resolvePlatformBillingEnvironment();
   const ids = [...new Set(input.ids.map((id) => id.trim()).filter(Boolean))].slice(0, 100);
   if (ids.length === 0) return { replayed: 0 };
 
-  const updated = await input.prisma.platformBillingWebhookEvent.updateMany({
+  const updated = await db.platformBillingWebhookEvent.updateMany({
     where: {
       id: { in: ids },
+      ...(input.contaId ? { contaId: input.contaId } : {}),
       environment,
       status: { in: ['FAILED', 'EXHAUSTED'] },
     },
@@ -187,7 +243,7 @@ export async function replayStripeWebhookEvents(input: {
   });
 
   if (updated.count > 0) {
-    await input.prisma.$executeRaw`
+    await db.$executeRaw`
       UPDATE "PlatformBillingWebhookEvent"
       SET
         "nextAttemptAt" = LOCALTIMESTAMP,
@@ -197,14 +253,14 @@ export async function replayStripeWebhookEvents(input: {
     `;
   }
 
-  const events = await input.prisma.platformBillingWebhookEvent.findMany({
-    where: { id: { in: ids }, environment },
+  const events = await db.platformBillingWebhookEvent.findMany({
+    where: { id: { in: ids }, ...(input.contaId ? { contaId: input.contaId } : {}), environment },
     select: { id: true, contaId: true, eventId: true, eventType: true },
   });
 
   for (const event of events) {
     if (!event.contaId) continue;
-    await input.prisma.platformBillingAuditLog.create({
+    await db.platformBillingAuditLog.create({
       data: {
         contaId: event.contaId,
         actorUserId: input.actorUserId,

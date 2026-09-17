@@ -5,6 +5,7 @@ import {
   mobileAuthErrorStatus,
   refreshMobileSession,
   MobileAuthError,
+  mobileRefreshSchema,
 } from '@/lib/mobile-auth-service';
 
 export const runtime = 'nodejs';
@@ -25,9 +26,15 @@ export async function POST(request: Request) {
     );
   }
 
-  const body = await request.json().catch(() => null);
+  const bodyResult = mobileRefreshSchema.safeParse(await request.json().catch(() => null));
+  if (!bodyResult.success) {
+    return NextResponse.json(
+      { error: { code: 'VALIDATION_ERROR', message: 'Refresh token inválido.' } },
+      { status: 400, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
   try {
-    const session = await refreshMobileSession(body, {
+    const session = await refreshMobileSession(bodyResult.data, {
       ip: ipFromRequest(request),
       userAgent: request.headers.get('user-agent'),
     });

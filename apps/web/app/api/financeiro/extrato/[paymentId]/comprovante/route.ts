@@ -3,9 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getPayment, recordAsaasReadIntent } from '@alusa/finance';
 
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
-import { safeGetServerSession } from '@/lib/safe-server-session';
-
-type SessUser = { id?: string; contaId?: string; role?: string };
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -18,20 +16,18 @@ export async function GET(
   ctx: { params: Promise<{ paymentId: string }> },
 ) {
   try {
-    const session = await safeGetServerSession();
-    const user = (session as { user?: SessUser } | null)?.user;
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(401, { error: 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
-
-    const gate = await guardFinancialAccountOr412(user.contaId);
+    const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
     const { paymentId } = await ctx.params;
     if (!paymentId?.trim()) return json(400, { error: 'PAYMENT_ID_INVALIDO' });
 
     recordAsaasReadIntent('AUTHORITATIVE_DOCUMENT');
-    const payment = await getPayment(paymentId, { contaId: user.contaId });
+    const payment = await getPayment(paymentId, { contaId: auth.contaId });
     const receiptUrl = payment.transactionReceiptUrl ?? payment.invoiceUrl ?? null;
 
     if (!receiptUrl) {

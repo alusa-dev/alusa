@@ -1,7 +1,4 @@
 import { NextRequest } from 'next/server';
-import prisma from '@/lib/prisma';
-import { AsaasEnvError, getPayment, isAsaasEnabled, syncPaymentStateFromAsaas } from '@alusa/finance';
-import type { AsaasPayment } from '@alusa/finance';
 import {
   requirePortalUser,
   resolvePortalAlunoIds,
@@ -12,379 +9,37 @@ import {
   portalRouteIdParamsDTOSchema,
 } from '@/features/portal/dtos';
 import { mapPortalFinanceiroDetailToDTO } from '@/features/portal/mappers';
-import {
-  buildPortalStandaloneChargeOwnershipWhere,
-  mapChargeStatusToPortalStatus,
-  resolvePortalScopedPayerIds,
-} from '@/features/portal/finance-standalone';
-import {
-  buildAcademicAsaasData,
-  buildStandaloneAsaasData,
-  shouldFetchAcademicAsaasDetail,
-  shouldFetchStandaloneAsaasDetail,
-} from '@/src/server/finance/asaas-payment-detail-policy';
-import { recordAsaasReadDecision } from '@/src/server/finance/asaas-read-observability';
-import {
-  resolveAcademicDisplayedStatus,
-} from '@/src/server/finance/academic-payment-history';
-import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { jsonNoStore } from '@/lib/http-security';
-
-function resolveInvoiceUrl(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null;
-}
-
-function resolveAsaasStatus(...values: unknown[]): string | null {
-  for (const value of values) {
-    if (typeof value === 'string' && value.trim().length > 0) {
-      return value;
-    }
-  }
-  return null;
-}
+import {
+  getPortalFinanceDetail,
+  syncPortalFinanceDetail,
+} from '@/src/server/portal/portal-finance-detail.service';
 
 export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
 ) {
-    const rawParams = await params;
   try {
     const auth = await requirePortalUser();
     if ('response' in auth) return auth.response;
-    const { id } = portalRouteIdParamsDTOSchema.parse(rawParams);
+
+    const { id } = portalRouteIdParamsDTOSchema.parse(await params);
     const alunoIds = await resolvePortalAlunoIds(auth.user);
-
-    const forceRefresh = req.nextUrl.searchParams.get('fresh') === '1';
-    const asaasActive = isAsaasEnabled();
-
-    // 3. Buscar cobrança com todos os detalhes já dentro do escopo do portal
-    const cobranca = await prisma.cobranca.findFirst({
-      where: {
-        id,
-        matricula: {
-          alunoId: { in: alunoIds },
-          aluno: { contaId: auth.user.contaId },
-        },
-      },
-      include: {
-        matricula: {
-          include: {
-            aluno: {
-              select: { 
-                id: true,
-                usuarioId: true,
-                nome: true,
-                cpf: true,
-                email: true,
-                telefone: true,
-              }
-            },
-            turma: {
-              include: {
-                modalidade: {
-                  select: {
-                    nome: true,
-                  }
-                }
-              }
-            },
-            responsavelFinanceiro: {
-              select: {
-                id: true,
-                creditCardBrand: true,
-                creditCardLast4: true,
-                creditCardExpiryMonth: true,
-                creditCardExpiryYear: true,
-              }
-            }
-          }
-        },
-        pagamentos: {
-          orderBy: {
-            dataPagamento: 'desc'
-          }
-        }
-      }
+    const detail = await getPortalFinanceDetail({
+      id,
+      contaId: auth.user.contaId,
+      alunoIds,
+      responsavelId: await resolvePortalResponsavelId(auth.user),
+      forceRefresh: _req.nextUrl.searchParams.get('fresh') === '1',
     });
 
-    let standaloneCharge: {
-      id: string;
-      status: import('@prisma/client').ChargeStatus;
-      value: import('@prisma/client').Prisma.Decimal | null;
-      dueDate: Date | null;
-      createdAt: Date;
-      updatedAt: Date;
-      statusUpdatedAt: Date;
-      billingType: string | null;
-      asaasPaymentId: string | null;
-      asaasStatus: string | null;
-      liquidacaoStatus: import('@prisma/client').LiquidacaoStatus;
-      invoiceUrl: string | null;
-      bankSlipUrl: string | null;
-      bankSlipCancelledAt: Date | null;
-      identificationField: string | null;
-      barCode: string | null;
-      nossoNumero: string | null;
-      payerName: string | null;
-      description: string | null;
-    } | null = null;
-
-    if (!cobranca) {
-      const payerScope = await resolvePortalScopedPayerIds(
-        auth.user.contaId,
-        alunoIds,
-        await resolvePortalResponsavelId(auth.user),
-      );
-      const ownershipWhere = buildPortalStandaloneChargeOwnershipWhere(payerScope);
-
-      if (ownershipWhere) {
-        standaloneCharge = await prisma.charge.findFirst({
-          where: {
-            id,
-            contaId: auth.user.contaId,
-            cobrancaId: null,
-            ...ownershipWhere,
-          },
-          select: {
-            id: true,
-            status: true,
-            value: true,
-            dueDate: true,
-            createdAt: true,
-            updatedAt: true,
-            statusUpdatedAt: true,
-            billingType: true,
-            asaasPaymentId: true,
-            asaasStatus: true,
-            liquidacaoStatus: true,
-            invoiceUrl: true,
-            bankSlipUrl: true,
-            bankSlipCancelledAt: true,
-            identificationField: true,
-            barCode: true,
-            nossoNumero: true,
-            payerName: true,
-            description: true,
-          },
-        });
-      }
-    }
-
-    if (!cobranca && !standaloneCharge) {
-      return jsonNoStore({ error: 'Cobrança não encontrada' }, { status: 404 });
-    }
-
-    // 5. Usar snapshot local por padrão; remoto só com fresh=1 ou estado incerto
-    let asaasData: AsaasPayment | null = null;
-    const asaasPaymentId = cobranca?.asaasPaymentId ?? standaloneCharge?.asaasPaymentId ?? null;
-    const shouldFetchRemote = forceRefresh && (
-      cobranca
-        ? shouldFetchAcademicAsaasDetail({
-            forceRefresh,
-            isAsaasActive: asaasActive,
-            cobranca: cobranca as unknown as Record<string, unknown>,
-          })
-        : standaloneCharge
-          ? shouldFetchStandaloneAsaasDetail({
-              forceRefresh,
-              isAsaasActive: asaasActive,
-              charge: standaloneCharge as unknown as Record<string, unknown>,
-            })
-          : false
-    );
-
-    if (asaasActive && asaasPaymentId && shouldFetchRemote) {
-      recordAsaasReadDecision('portal_financeiro_detail', forceRefresh ? 'fresh_remote' : 'remote');
-      try {
-        asaasData = await getPayment(asaasPaymentId, { contaId: auth.user.contaId });
-      } catch (asaasError: unknown) {
-        if (asaasError instanceof AsaasEnvError) {
-          console.warn('[Portal Financeiro] Integração Asaas indisponível:', asaasError.message);
-        } else if (asaasError instanceof Error) {
-          console.error('[Portal Financeiro] Erro ao consultar Asaas:', asaasError);
-        } else {
-          console.error('[Portal Financeiro] Erro ao consultar Asaas:', asaasError);
-        }
-      }
-    } else {
-      recordAsaasReadDecision('portal_financeiro_detail', 'local');
-    }
-
-    const localAsaasData = cobranca
-      ? buildAcademicAsaasData(cobranca as unknown as Record<string, unknown>)
-      : standaloneCharge
-        ? buildStandaloneAsaasData(standaloneCharge as unknown as Record<string, unknown>)
-        : null;
-    const effectiveAsaasData = asaasData ?? localAsaasData;
-    const invoiceUrl =
-      resolveInvoiceUrl(asaasData?.invoiceUrl) ??
-      resolveInvoiceUrl(standaloneCharge?.invoiceUrl) ??
-      resolveInvoiceUrl(
-        effectiveAsaasData && 'invoiceUrl' in effectiveAsaasData
-          ? effectiveAsaasData.invoiceUrl
-          : null,
-      );
-    const transactionReceiptUrl = asaasData?.transactionReceiptUrl ?? null;
-
-    // 6. Formatar e retornar
-    const response = cobranca
-      ? (() => {
-          const remoteStatus = resolveAsaasStatus(
-            asaasData?.status,
-            effectiveAsaasData && 'status' in effectiveAsaasData
-              ? effectiveAsaasData.status
-              : null,
-            cobranca.asaasStatus,
-          );
-          const localStatus = resolveAcademicDisplayedStatus({
-            localCobrancaStatus: cobranca.status,
-            remotePaymentStatus: remoteStatus,
-            dueDate: cobranca.vencimento,
-          });
-          const displayStatus = buildChargeDisplayStatusDTO({
-            localStatus,
-            asaasStatus: remoteStatus,
-            liquidacaoStatus: cobranca.liquidacaoStatus,
-            hasAsaasLink: Boolean(cobranca.asaasPaymentId || cobranca.asaasStatus || cobranca.liquidacaoStatus),
-          });
-
-          return {
-          id: cobranca.id,
-          tipo: cobranca.tipo,
-          valor: Number(cobranca.valor),
-          vencimento: cobranca.vencimento.toISOString(),
-          status: localStatus,
-          displayStatus,
-          asaasStatus: remoteStatus,
-          liquidacaoStatus: cobranca.liquidacaoStatus,
-          formaPagamento: cobranca.formaPagamento,
-          asaasId: cobranca.asaasId,
-          asaasPaymentId: cobranca.asaasPaymentId,
-          invoiceUrl,
-          bankSlipUrl:
-            asaasData?.bankSlipUrl ??
-            (cobranca as unknown as { bankSlipUrl?: string | null }).bankSlipUrl ??
-            null,
-          bankSlipCancelledAt:
-            (cobranca as unknown as { bankSlipCancelledAt?: Date | null }).bankSlipCancelledAt?.toISOString() ??
-            null,
-          identificationField:
-            (cobranca as unknown as { identificationField?: string | null }).identificationField ?? null,
-          barCode: (cobranca as unknown as { barCode?: string | null }).barCode ?? null,
-          nossoNumero: (cobranca as unknown as { nossoNumero?: string | null }).nossoNumero ?? null,
-          transactionReceiptUrl,
-          descricao: cobranca.descricao,
-          valorJuros: cobranca.juros ? Number(cobranca.juros) : null,
-          valorMulta: cobranca.multa ? Number(cobranca.multa) : null,
-          valorDesconto: cobranca.desconto ? Number(cobranca.desconto) : null,
-          asaasData: effectiveAsaasData,
-          matricula: {
-            aluno: {
-              nome: cobranca.matricula.aluno.nome,
-              cpf: cobranca.matricula.aluno.cpf,
-              email: cobranca.matricula.aluno.email,
-              telefone: cobranca.matricula.aluno.telefone,
-            },
-            turma: cobranca.matricula.turma
-              ? {
-                  nome: cobranca.matricula.turma.nome,
-                  modalidade: {
-                    nome: cobranca.matricula.turma.modalidade.nome,
-                  },
-                }
-              : null,
-            responsavelFinanceiro: cobranca.matricula.responsavelFinanceiro ? {
-              hasSavedCard: Boolean(
-                cobranca.matricula.responsavelFinanceiro.creditCardBrand &&
-                cobranca.matricula.responsavelFinanceiro.creditCardLast4,
-              ),
-              creditCardBrand: cobranca.matricula.responsavelFinanceiro.creditCardBrand,
-              creditCardLast4: cobranca.matricula.responsavelFinanceiro.creditCardLast4,
-              creditCardExpiryMonth: cobranca.matricula.responsavelFinanceiro.creditCardExpiryMonth,
-              creditCardExpiryYear: cobranca.matricula.responsavelFinanceiro.creditCardExpiryYear,
-            } : null,
-          },
-          pagamentos: cobranca.pagamentos.map(p => ({
-            id: p.id,
-            dataPagamento: p.dataPagamento ? p.dataPagamento.toISOString() : null,
-            valorPago: Number(p.valorPago),
-            status: p.status,
-            formaPagamento: p.formaPagamento,
-          })),
-        };
-        })()
-      : (() => {
-          const remoteStatus = resolveAsaasStatus(
-            asaasData?.status,
-            effectiveAsaasData && 'status' in effectiveAsaasData
-              ? effectiveAsaasData.status
-              : null,
-            standaloneCharge!.asaasStatus,
-          );
-          const localStatus = remoteStatus
-            ? resolveAcademicDisplayedStatus({
-                localCobrancaStatus: mapChargeStatusToPortalStatus(
-                  standaloneCharge!.status,
-                  standaloneCharge!.dueDate,
-                ),
-                remotePaymentStatus: remoteStatus,
-                dueDate: standaloneCharge!.dueDate ?? new Date(),
-              })
-            : mapChargeStatusToPortalStatus(standaloneCharge!.status, standaloneCharge!.dueDate);
-          const displayStatus = buildChargeDisplayStatusDTO({
-            localStatus,
-            asaasStatus: remoteStatus,
-            liquidacaoStatus: standaloneCharge!.liquidacaoStatus,
-            hasAsaasLink: Boolean(standaloneCharge!.asaasPaymentId),
-          });
-
-          return {
-          id: standaloneCharge!.id,
-          tipo: 'AVULSA',
-          valor: Number(standaloneCharge!.value ?? 0),
-          vencimento: (standaloneCharge!.dueDate ?? new Date()).toISOString(),
-          status: localStatus,
-          displayStatus,
-          asaasStatus: remoteStatus,
-          liquidacaoStatus: standaloneCharge!.liquidacaoStatus,
-          formaPagamento: standaloneCharge!.billingType,
-          asaasId: standaloneCharge!.asaasPaymentId,
-          asaasPaymentId: standaloneCharge!.asaasPaymentId,
-          invoiceUrl: invoiceUrl ?? standaloneCharge!.invoiceUrl,
-          bankSlipUrl: asaasData?.bankSlipUrl ?? standaloneCharge!.bankSlipUrl,
-          bankSlipCancelledAt: standaloneCharge!.bankSlipCancelledAt?.toISOString() ?? null,
-          identificationField: standaloneCharge!.identificationField,
-          barCode: standaloneCharge!.barCode,
-          nossoNumero: standaloneCharge!.nossoNumero,
-          transactionReceiptUrl,
-          descricao: standaloneCharge!.description,
-          valorJuros: null,
-          valorMulta: null,
-          valorDesconto: null,
-          asaasData: effectiveAsaasData,
-          matricula: {
-            aluno: {
-              nome: standaloneCharge!.payerName ?? 'Pagador não identificado',
-              cpf: null,
-              email: null,
-              telefone: null,
-            },
-            turma: null,
-            responsavelFinanceiro: null,
-          },
-          pagamentos: [],
-        };
-        })();
-
+    if (!detail) return jsonNoStore({ error: 'Cobrança não encontrada' }, { status: 404 });
     return jsonNoStore(
-      portalFinanceiroDetailDTOSchema.parse(mapPortalFinanceiroDetailToDTO(response)),
+      portalFinanceiroDetailDTOSchema.parse(mapPortalFinanceiroDetailToDTO(detail)),
     );
   } catch (error) {
     console.error('Erro ao buscar cobrança:', error);
-    return jsonNoStore(
-      { error: 'Erro ao buscar cobrança' }, 
-      { status: 500 }
-    );
+    return jsonNoStore({ error: 'Erro ao buscar cobrança' }, { status: 500 });
   }
 }
 
@@ -392,65 +47,26 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const rawParams = await params;
   try {
     const auth = await requirePortalUser();
     if ('response' in auth) return auth.response;
 
-    const { id } = portalRouteIdParamsDTOSchema.parse(rawParams);
+    const { id } = portalRouteIdParamsDTOSchema.parse(await params);
     const alunoIds = await resolvePortalAlunoIds(auth.user);
-
-    const cobranca = await prisma.cobranca.findFirst({
-      where: {
-        id,
-        matricula: {
-          alunoId: { in: alunoIds },
-          aluno: { contaId: auth.user.contaId },
-        },
-      },
-      select: { asaasPaymentId: true },
-    });
-
-    let paymentId = cobranca?.asaasPaymentId ?? null;
-
-    if (!paymentId) {
-      const payerScope = await resolvePortalScopedPayerIds(
-        auth.user.contaId,
-        alunoIds,
-        await resolvePortalResponsavelId(auth.user),
-      );
-      const ownershipWhere = buildPortalStandaloneChargeOwnershipWhere(payerScope);
-
-      const charge = ownershipWhere
-        ? await prisma.charge.findFirst({
-            where: {
-              id,
-              contaId: auth.user.contaId,
-              cobrancaId: null,
-              ...ownershipWhere,
-            },
-            select: { asaasPaymentId: true },
-          })
-        : null;
-
-      paymentId = charge?.asaasPaymentId ?? null;
-    }
-
-    if (!paymentId) {
-      return jsonNoStore(
-        { success: false, error: 'Cobrança não encontrada ou sem integração Asaas' },
-        { status: 404 },
-      );
-    }
-
-    const result = await syncPaymentStateFromAsaas({
+    const result = await syncPortalFinanceDetail({
+      id,
       contaId: auth.user.contaId,
-      asaasPaymentId: paymentId,
-      intent: 'UI_FALLBACK_SYNC',
+      alunoIds,
+      responsavelId: await resolvePortalResponsavelId(auth.user),
     });
 
-    if (!result.success) {
-      return jsonNoStore({ success: false, error: result.error }, { status: 502 });
+    if (!result.ok) {
+      return result.kind === 'NOT_FOUND'
+        ? jsonNoStore(
+            { success: false, error: 'Cobrança não encontrada ou sem integração Asaas' },
+            { status: 404 },
+          )
+        : jsonNoStore({ success: false, error: result.error }, { status: 502 });
     }
 
     return jsonNoStore({
@@ -461,12 +77,6 @@ export async function POST(
     });
   } catch (error) {
     console.error('[Portal Financeiro][sync-asaas] Erro:', error);
-    return jsonNoStore(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Erro ao sincronizar cobrança',
-      },
-      { status: 500 },
-    );
+    return jsonNoStore({ success: false, error: 'Erro ao sincronizar cobrança' }, { status: 500 });
   }
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { getAccountBalanceSummary, getAccountOverview } from '@alusa/finance';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
@@ -11,8 +11,6 @@ import {
 } from '@/lib/cache/tenant-cache';
 import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
 import { logRuntimeEnvironmentOnce } from '@/lib/runtime-environment';
-
-type SessUser = { id?: string; contaId?: string; role?: string };
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 const SUMMARY_CACHE_MAX_AGE_SECONDS = 30;
@@ -32,21 +30,20 @@ export async function GET(req?: NextRequest) {
     logRuntimeEnvironmentOnce('api/financeiro/conta');
     const mode = req?.nextUrl.searchParams.get('mode') ?? 'overview';
     const bypassCache = req?.nextUrl.searchParams.get('bypassCache') === '1';
-    const session = await withPerfTimer(
+    const auth = await withPerfTimer(
       'api/financeiro/conta',
       'auth',
-      () => safeGetServerSession(),
+      () => resolveTenantSession(),
     );
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    if (!auth.ok) return json(401, { error: 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
 
     if (mode === 'summary') {
       if (isCacheLayerEnabled()) {
         const cacheKey = buildTenantCacheKey({
-          contaId: user.contaId,
+          contaId: auth.contaId,
           area: 'finance',
           resource: 'account-summary',
           version: 1,
@@ -56,7 +53,7 @@ export async function GET(req?: NextRequest) {
           : await getTenantCacheAdapter().get(cacheKey);
         if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
           timer.end('GET /conta summary (tenant cache hit before gate)', {
-            contaId: user.contaId,
+            contaId: auth.contaId,
             cacheState: cached.state,
           });
           return privateJson(cached.body, {
@@ -69,16 +66,16 @@ export async function GET(req?: NextRequest) {
         const gate = await withPerfTimer(
           'api/financeiro/conta',
           'guardFinancialAccountOr412',
-          () => guardFinancialAccountOr412(user.contaId!),
-          { contaId: user.contaId, mode },
+          () => guardFinancialAccountOr412(auth.contaId),
+          { contaId: auth.contaId, mode },
         );
         if (!gate.ok) return gate.response;
 
         const summary = await withPerfTimer(
           'financeiro/conta',
           'getAccountBalanceSummary',
-          () => getAccountBalanceSummary({ contaId: user.contaId!, kycSummary: gate.summary }),
-          { contaId: user.contaId },
+          () => getAccountBalanceSummary({ contaId: auth.contaId, kycSummary: gate.summary }),
+          { contaId: auth.contaId },
         );
         if (!summary.success) {
           const status = summary.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' ? 503 : 500;
@@ -91,7 +88,7 @@ export async function GET(req?: NextRequest) {
           staleWhileRevalidateSeconds: SUMMARY_CACHE_STALE_SECONDS,
         });
 
-        timer.end('GET /conta summary', { contaId: user.contaId, cacheState: cached.state });
+        timer.end('GET /conta summary', { contaId: auth.contaId, cacheState: cached.state });
         return privateJson(body, {
           maxAgeSeconds: SUMMARY_CACHE_MAX_AGE_SECONDS,
           staleWhileRevalidateSeconds: SUMMARY_CACHE_STALE_SECONDS,
@@ -99,7 +96,7 @@ export async function GET(req?: NextRequest) {
         });
       }
 
-      const cacheKey = [user.contaId, user.id, 'summary'].join(':');
+      const cacheKey = [auth.contaId, auth.userId, 'summary'].join(':');
       const cached: { state: CacheState; body?: unknown } = bypassCache
         ? { state: 'BYPASS' }
         : summaryCache.get(cacheKey);
@@ -115,16 +112,16 @@ export async function GET(req?: NextRequest) {
       const gate = await withPerfTimer(
         'api/financeiro/conta',
         'guardFinancialAccountOr412',
-        () => guardFinancialAccountOr412(user.contaId!),
-        { contaId: user.contaId, mode },
+        () => guardFinancialAccountOr412(auth.contaId),
+        { contaId: auth.contaId, mode },
       );
       if (!gate.ok) return gate.response;
 
       const summary = await withPerfTimer(
         'financeiro/conta',
         'getAccountBalanceSummary',
-        () => getAccountBalanceSummary({ contaId: user.contaId!, kycSummary: gate.summary }),
-        { contaId: user.contaId },
+        () => getAccountBalanceSummary({ contaId: auth.contaId, kycSummary: gate.summary }),
+        { contaId: auth.contaId },
       );
       if (!summary.success) {
         const status = summary.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' ? 503 : 500;
@@ -144,16 +141,16 @@ export async function GET(req?: NextRequest) {
     const gate = await withPerfTimer(
       'api/financeiro/conta',
       'guardFinancialAccountOr412',
-      () => guardFinancialAccountOr412(user.contaId!),
-      { contaId: user.contaId, mode },
+      () => guardFinancialAccountOr412(auth.contaId),
+      { contaId: auth.contaId, mode },
     );
     if (!gate.ok) return gate.response;
 
     const result = await withPerfTimer(
       'financeiro/conta',
       'getAccountOverview',
-      () => getAccountOverview({ contaId: user.contaId! }),
-      { contaId: user.contaId },
+      () => getAccountOverview({ contaId: auth.contaId }),
+      { contaId: auth.contaId },
     );
     if (!result.success) {
       const status = result.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' ? 503 : 500;

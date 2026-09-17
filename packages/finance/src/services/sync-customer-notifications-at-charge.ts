@@ -2,7 +2,7 @@ import {
   channelsFromSelection,
   deriveEventPreferencesForChannelSelection,
   loadTenantNotificationEventPreferences,
-} from '@alusa/lib';
+} from '@alusa/lib/notifications/tenant-notification-preferences';
 
 import {
   syncCustomerNotificationChannels,

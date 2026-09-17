@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const mockSafeGetServerSession = vi.hoisted(() => vi.fn());
+const mockResolveTenantSession = vi.hoisted(() => vi.fn());
 const mockAlunoFindFirst = vi.hoisted(() => vi.fn());
 const mockGetStudentPaymentHistory = vi.hoisted(() => vi.fn());
 const mockBuildPersonPaymentLedger = vi.hoisted(() => vi.fn());
 
-vi.mock('@/lib/safe-server-session', () => ({
-  safeGetServerSession: mockSafeGetServerSession,
+vi.mock('@/lib/api/with-tenant-session', () => ({
+  resolveTenantSession: mockResolveTenantSession,
 }));
 
 vi.mock('@/src/server/finance/student-payment-history', () => ({
@@ -31,8 +31,11 @@ import { GET } from '@/app/api/financeiro/pagamentos/aluno/[alunoId]/route';
 describe('GET /api/financeiro/pagamentos/aluno/[alunoId]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSafeGetServerSession.mockResolvedValue({
-      user: { id: 'u1', contaId: 'conta-1', role: 'ADMIN' },
+    mockResolveTenantSession.mockResolvedValue({
+      ok: true,
+      userId: 'u1',
+      contaId: 'conta-1',
+      role: 'ADMIN',
     });
     mockAlunoFindFirst.mockResolvedValue({
       id: 'aluno-1',

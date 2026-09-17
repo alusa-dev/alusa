@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { processAsaasProvisioningJobs } from '@alusa/finance';
+import { apiJsonError } from '@/lib/api/standard-response';
 
 export const dynamic = 'force-dynamic';
 
 function jsonError(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status });
+  return apiJsonError(status, code, message);
 }
 
 async function run(req: Request) {
@@ -30,7 +31,7 @@ async function run(req: Request) {
     return NextResponse.json({ success: true, processed: result });
   } catch (error) {
     console.error('[Job Provision Asaas Subaccounts] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', error instanceof Error ? error.message : String(error));
+    return jsonError(500, 'ERRO_JOB', 'Não foi possível provisionar as subcontas financeiras.');
   }
 }
 

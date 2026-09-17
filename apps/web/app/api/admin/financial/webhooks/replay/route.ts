@@ -1,21 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { ZodError } from 'zod';
 
 import { authOptions } from '@/lib/auth-options';
 import { replayWebhookByEventId, replayWebhooksByDateRange } from '@alusa/finance';
+import { adminWebhookReplayInputDTOSchema } from '@/features/system/dtos';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
-
-type ReplayBody = {
-  eventId?: string;
-  force?: boolean;
-  from?: string;
-  to?: string;
-  limit?: number;
-  offset?: number;
-  status?: 'PROCESSADO' | 'ERRO' | 'PENDENTE';
-  category?: string;
-};
 
 const allowedRoles = new Set(['ADMIN']);
 
@@ -41,7 +32,7 @@ export async function POST(req: NextRequest) {
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const body = (await req.json().catch(() => ({}))) as ReplayBody;
+    const body = adminWebhookReplayInputDTOSchema.parse(await req.json().catch(() => ({})));
 
     if (body.eventId) {
       const result = await replayWebhookByEventId({
@@ -70,6 +61,7 @@ export async function POST(req: NextRequest) {
 
     return json(200, { ok: true, result });
   } catch (error) {
+    if (error instanceof ZodError) return json(400, { error: 'PARAMETROS_INVALIDOS' });
     console.error('[Admin Financial Webhooks Replay][POST]', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }

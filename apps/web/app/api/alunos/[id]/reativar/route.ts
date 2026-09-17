@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '@/lib/auth-options';
-import { reativarAlunoCompleto } from '@alusa/lib';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { reativarAlunoCompleto } from '@alusa/lib/alunos/aluno.service';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
@@ -11,13 +10,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const rawParams = await params;
   try {
     // 1. Autenticação
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
     // 2. Autorização (apenas ADMIN ou GESTOR)
-    if (!['ADMIN', 'GESTOR'].includes(session.user.role)) {
+    if (!['ADMIN', 'GESTOR'].includes(String(auth.role ?? '').toUpperCase())) {
       return NextResponse.json(
         { error: 'Apenas ADMIN ou GESTOR podem reativar alunos' },
         { status: 403 },
@@ -26,12 +25,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // A rota reativa somente o cadastro do aluno. Matrículas e financeiro têm
     // fluxos próprios e não podem ser alterados por esta operação.
-    if (!session.user.contaId) {
-      return NextResponse.json({ error: 'Conta não encontrada' }, { status: 400 });
-    }
-
     try {
-      await assertPlatformAccessForConta({ contaId: session.user.contaId, capability: 'STUDENT_WRITE' });
+      await assertPlatformAccessForConta({ contaId: auth.contaId, capability: 'STUDENT_WRITE' });
     } catch (error) {
       const blocked = platformBillingAccessResponse(error);
       if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
@@ -41,8 +36,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // 5. Reativar aluno
     const result = await reativarAlunoCompleto({
       id: rawParams.id,
-      contaId: session.user.contaId,
-      actorId: session.user.id,
+      contaId: auth.contaId,
+      actorId: auth.userId,
     });
 
     return NextResponse.json(result);
@@ -50,7 +45,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     console.error('[API] Erro ao reativar aluno:', error);
 
     if (error instanceof Error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      return NextResponse.json({ error: 'Não foi possível reativar o aluno.' }, { status: 400 });
     }
 
     return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 });

@@ -11,15 +11,21 @@ describe('Colaborador Service', () => {
   const digits = (v?: string | null) => (typeof v === 'string' ? v.replace(/\D/g, '') : v ?? undefined);
 
   beforeAll(async () => {
+    // A Conta precisa existir antes do usuário por causa da FK Usuario_contaId.
+    await prisma.conta.upsert({
+      where: { id: contaId },
+      update: {},
+      create: { id: contaId, nome: 'Conta Teste', cpfCnpj: '99999999999999' },
+    });
+
     const owner = await prisma.usuario.upsert({
       where: { email: 'owner+colab.test@example.com' },
       update: {},
       create: { id: 'owner-colab-test', contaId, nome: 'Owner Colab', email: 'owner+colab.test@example.com', senhaHash: 'x', role: 'ADMIN', status: 'ATIVO' }
     });
-    await prisma.conta.upsert({
+    await prisma.conta.update({
       where: { id: contaId },
-      update: { ownerUserId: owner.id, nome: 'Conta Teste' },
-      create: { id: contaId, nome: 'Conta Teste', cpfCnpj: '99999999999999', ownerUserId: owner.id },
+      data: { ownerUserId: owner.id, nome: 'Conta Teste' },
     });
     // Cleanup defensivo em execuções repetidas
   await prisma.colaborador.deleteMany({ where: { OR: [ { cpf: digits(cpf) }, { email } ] } } as unknown as Parameters<typeof prisma.colaborador.deleteMany>[0]);

@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-
-import { authOptions } from '@/lib/auth-options';
 import { getKycViewModel, getKycViewModelFresh } from '@alusa/finance';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -13,8 +11,8 @@ function json(status: number, body: unknown) {
 }
 
 async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
+  const auth = await resolveTenantSession();
+  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role } : null;
 }
 
 /**

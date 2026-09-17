@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server';
 import { z, ZodError } from 'zod';
 
 import { getSessionUser } from '@/lib/auth/session';
-import { prisma } from '@/prisma/client';
-import { previewRenewalProcess } from '@/src/server/matriculas/renewal-process.service';
+import { previewRenewalProcessFromHttp } from '@/src/server/matriculas/renewal-http-commands.service';
 import { hasRenewalPermission } from '@/src/server/matriculas/renewal-permissions.service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
@@ -96,8 +95,7 @@ export async function POST(request: Request) {
   try {
     const raw = await request.json().catch(() => null);
     const body = previewSchema.parse(raw);
-    const preview = await previewRenewalProcess(
-      {
+    const preview = await previewRenewalProcessFromHttp({
         contaId: user.contaId,
         actorId: user.id,
         origin: body.origin,
@@ -114,9 +112,7 @@ export async function POST(request: Request) {
         firstDueDate: parseDate(body.firstDueDate),
         contractModelId: body.contractModelId,
         financialTerms: body.financialTerms,
-      },
-      { prisma },
-    );
+      });
 
     return NextResponse.json(preview, { status: 200, headers: { 'cache-control': 'no-store' } });
   } catch (error) {
@@ -127,7 +123,7 @@ export async function POST(request: Request) {
     return jsonError(
       500,
       'ERRO_PREVIEW_REMATRICULA',
-      error instanceof Error ? error.message : 'Erro ao gerar preview.',
+      'Erro ao gerar preview.',
     );
   }
 }

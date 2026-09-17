@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { salaSchema, createSala, listSalas } from '@alusa/lib';
+import { salaSchema } from '@alusa/lib/schemas/sala.schema';
+import { createSala, listSalas } from '@alusa/lib/services/sala.service';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
@@ -11,15 +11,17 @@ function jsonError(status: number, code: string, message: string, details?: unkn
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const contaIdFromQuery = url.searchParams.get('contaId')?.trim() || null;
-    let contaId = contaIdFromQuery;
-    if (!contaId) {
-      const session = await getServerSession(authOptions).catch(() => null);
-      contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
+    const tenant = await resolveTenantSession(url.searchParams.get('contaId'));
+    if (!tenant.ok) {
+      return jsonError(
+        tenant.reason === 'UNAUTHENTICATED' ? 401 : 403,
+        tenant.reason === 'UNAUTHENTICATED' ? 'NAO_AUTENTICADO' : 'CONTA_INVALIDA',
+        tenant.reason === 'UNAUTHENTICATED'
+          ? 'Usuário não autenticado.'
+          : 'A conta informada não pertence ao usuário autenticado.',
+      );
     }
-    if (!contaId) {
-      return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
-    }
+    const contaId = tenant.contaId;
     await assertPlatformAccessForConta({ contaId, capability: 'ROOM_WRITE' });
     const page = Number(url.searchParams.get('page') || '1');
     const pageSize = Number(url.searchParams.get('pageSize') || '50');
@@ -32,22 +34,26 @@ export async function GET(req: Request) {
       meta: { page: result.page, pageSize: result.pageSize, total: result.total },
     });
   } catch (e) {
-    return jsonError(500, 'ERRO_LISTAR_SALAS', (e as Error).message);
+    return jsonError(500, 'ERRO_LISTAR_SALAS', 'Não foi possível carregar as salas.');
   }
 }
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const contaIdFromBody = typeof body.contaId === 'string' ? body.contaId.trim() : '';
-    let contaId = contaIdFromBody || null;
-    if (!contaId) {
-      const session = await getServerSession(authOptions).catch(() => null);
-      contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
+    const tenant = await resolveTenantSession(
+      typeof body.contaId === 'string' ? body.contaId : null,
+    );
+    if (!tenant.ok) {
+      return jsonError(
+        tenant.reason === 'UNAUTHENTICATED' ? 401 : 403,
+        tenant.reason === 'UNAUTHENTICATED' ? 'NAO_AUTENTICADO' : 'CONTA_INVALIDA',
+        tenant.reason === 'UNAUTHENTICATED'
+          ? 'Usuário não autenticado.'
+          : 'A conta informada não pertence ao usuário autenticado.',
+      );
     }
-    if (!contaId) {
-      return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
-    }
+    const contaId = tenant.contaId;
     // Normaliza capacidade para número se vier como string
     const capacidadeValue =
       typeof body.capacidade === 'string' && body.capacidade.trim() !== ''

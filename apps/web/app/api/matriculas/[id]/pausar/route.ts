@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/src/prisma';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { z } from 'zod';
 import {
-  pausarMatricula,
   PausaBusinessError,
 } from '@/src/server/matriculas/matricula-pausa.service';
-import { notifyMatriculaAction } from '@alusa/lib';
+import { pauseMatriculaFromHttp } from '@/src/server/matriculas/matricula-http-commands.service';
+import { notifyMatriculaAction } from '@alusa/lib/notifications/matricula-notifications';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
@@ -37,15 +35,13 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
-    const session = await getServerSession(authOptions);
-    const user = (session as { user?: { id?: string; contaId?: string } })?.user;
-
-    if (!user?.id || !user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
 
     try {
-      await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'ENROLLMENT_WRITE' });
+      await assertPlatformAccessForConta({ contaId: auth.contaId, capability: 'ENROLLMENT_WRITE' });
     } catch (error) {
       const blocked = platformBillingAccessResponse(error);
       if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
@@ -63,20 +59,19 @@ export async function POST(
       );
     }
 
-    const result = await pausarMatricula({
-      prisma,
+    const result = await pauseMatriculaFromHttp({
       matriculaId: rawParams.id,
-      contaId: user.contaId,
-      actorId: user.id,
+      contaId: auth.contaId,
+      actorId: auth.userId,
       ...parsed.data,
     });
 
     void notifyMatriculaAction({
       matriculaId: rawParams.id,
-      contaId: user.contaId,
+      contaId: auth.contaId,
       action: 'PAUSADA',
       motivo: parsed.data.motivoPausa,
-      actorUserId: user.id,
+      actorUserId: auth.userId,
     });
 
     return NextResponse.json(result);

@@ -30,6 +30,14 @@
       "types": "./dist/events/map/event-map.service.d.ts",
       "default": "./dist/events/map/event-map.service.js"
     },
+    "./events/events.service": {
+      "types": "./dist/events/events.service.d.ts",
+      "default": "./dist/events/events.service.js"
+    },
+    "./events/event-asaas-payment-provider": {
+      "types": "./dist/events/event-asaas-payment-provider.d.ts",
+      "default": "./dist/events/event-asaas-payment-provider.js"
+    },
     "./services/standalone-installment-plan-status.service": {
       "types": "./dist/services/standalone-installment-plan-status.service.d.ts",
       "default": "./dist/services/standalone-installment-plan-status.service.js"
@@ -45,17 +53,188 @@
     "./security/rate-limit": {
       "types": "./dist/security/rate-limit.d.ts",
       "default": "./dist/security/rate-limit.js"
+    },
+    "./alunos/aluno.schema": {
+      "types": "./dist/alunos/aluno.schema.d.ts",
+      "default": "./dist/alunos/aluno.schema.js"
+    },
+    "./alunos/aluno.service": {
+      "types": "./dist/alunos/aluno.service.d.ts",
+      "default": "./dist/alunos/aluno.service.js"
+    },
+    "./alunos/policies": {
+      "types": "./dist/alunos/policies/index.d.ts",
+      "default": "./dist/alunos/policies/index.js"
+    },
+    "./notifications/emit-billing-notifications": {
+      "types": "./dist/notifications/emit-billing-notifications.d.ts",
+      "default": "./dist/notifications/emit-billing-notifications.js"
+    },
+    "./notifications/tenant-notification-preferences": {
+      "types": "./dist/notifications/tenant-notification-preferences.d.ts",
+      "default": "./dist/notifications/tenant-notification-preferences.js"
+    },
+    "./responsaveis/payer-address": {
+      "types": "./dist/responsaveis/payer-address.d.ts",
+      "default": "./dist/responsaveis/payer-address.js"
+    },
+    "./services/inventory-balance.service": {
+      "types": "./dist/services/inventory-balance.service.d.ts",
+      "default": "./dist/services/inventory-balance.service.js"
+    },
+    "./services/matricula-occupancy": {
+      "types": "./dist/services/matricula-occupancy.d.ts",
+      "default": "./dist/services/matricula-occupancy.js"
+    },
+    "./services/notifications.service": {
+      "types": "./dist/services/notifications.service.d.ts",
+      "default": "./dist/services/notifications.service.js"
+    },
+    "./services/product-variant-rules": {
+      "types": "./dist/services/product-variant-rules.d.ts",
+      "default": "./dist/services/product-variant-rules.js"
+    },
+    "./services/integracoes/asaas-credentials-service": {
+      "types": "./dist/services/integracoes/asaas-credentials-service.d.ts",
+      "default": "./dist/services/integracoes/asaas-credentials-service.js"
+    },
+    "./schemas/modalidade.schema": {
+      "types": "./dist/schemas/modalidade.schema.d.ts",
+      "default": "./dist/schemas/modalidade.schema.js"
+    },
+    "./services/modalidade.service": {
+      "types": "./dist/services/modalidade.service.d.ts",
+      "default": "./dist/services/modalidade.service.js"
+    },
+    "./schemas/sala.schema": {
+      "types": "./dist/schemas/sala.schema.d.ts",
+      "default": "./dist/schemas/sala.schema.js"
+    },
+    "./services/sala.service": {
+      "types": "./dist/services/sala.service.d.ts",
+      "default": "./dist/services/sala.service.js"
+    },
+    "./schemas/turma.schema": {
+      "types": "./dist/schemas/turma.schema.d.ts",
+      "default": "./dist/schemas/turma.schema.js"
+    },
+    "./services/turma.service": {
+      "types": "./dist/services/turma.service.d.ts",
+      "default": "./dist/services/turma.service.js"
+    },
+    "./combos/combo.schema": {
+      "types": "./dist/combos/combo.schema.d.ts",
+      "default": "./dist/combos/combo.schema.js"
+    },
+    "./combos/combo.service": {
+      "types": "./dist/combos/combo.service.d.ts",
+      "default": "./dist/combos/combo.service.js"
+    },
+    "./schemas/product.schema": {
+      "types": "./dist/schemas/product.schema.d.ts",
+      "default": "./dist/schemas/product.schema.js"
+    },
+    "./services/product.service": {
+      "types": "./dist/services/product.service.d.ts",
+      "default": "./dist/services/product.service.js"
+    },
+    "./services/product-option.service": {
+      "types": "./dist/services/product-option.service.d.ts",
+      "default": "./dist/services/product-option.service.js"
+    },
+    "./services/product-variant.service": {
+      "types": "./dist/services/product-variant.service.d.ts",
+      "default": "./dist/services/product-variant.service.js"
+    },
+    "./schemas/category.schema": {
+      "types": "./dist/schemas/category.schema.d.ts",
+      "default": "./dist/schemas/category.schema.js"
+    },
+    "./services/category.service": {
+      "types": "./dist/services/category.service.d.ts",
+      "default": "./dist/services/category.service.js"
+    },
+    "./contracts/tokens": {
+      "types": "./dist/contracts/tokens.d.ts",
+      "default": "./dist/contracts/tokens.js"
+    },
+    "./contracts/evidence/create-contract-evidence": {
+      "types": "./dist/contracts/evidence/create-contract-evidence.d.ts",
+      "default": "./dist/contracts/evidence/create-contract-evidence.js"
+    },
+    "./contracts/use-cases/sign-contract": {
+      "types": "./dist/contracts/use-cases/sign-contract.d.ts",
+      "default": "./dist/contracts/use-cases/sign-contract.js"
+    },
+    "./contracts/use-cases/signature-otp": {
+      "types": "./dist/contracts/use-cases/signature-otp.d.ts",
+      "default": "./dist/contracts/use-cases/signature-otp.js"
+    },
+    "./contracts/use-cases/resolve-public-signer": {
+      "types": "./dist/contracts/use-cases/resolve-public-signer.d.ts",
+      "default": "./dist/contracts/use-cases/resolve-public-signer.js"
+    },
+    "./events/event-contracts.service": {
+      "types": "./dist/events/event-contracts.service.d.ts",
+      "default": "./dist/events/event-contracts.service.js"
+    },
+    "./events/events.schema": {
+      "types": "./dist/events/events.schema.d.ts",
+      "default": "./dist/events/events.schema.js"
+    },
+    "./events/ticket-checkin.service": {
+      "types": "./dist/events/ticket-checkin.service.d.ts",
+      "default": "./dist/events/ticket-checkin.service.js"
+    },
+    "./notifications/domain-notifications": {
+      "types": "./dist/notifications/domain-notifications.d.ts",
+      "default": "./dist/notifications/domain-notifications.js"
+    },
+    "./notifications/pending-inbox-notifications": {
+      "types": "./dist/notifications/pending-inbox-notifications.d.ts",
+      "default": "./dist/notifications/pending-inbox-notifications.js"
+    },
+    "./notifications/process-overdue-billing": {
+      "types": "./dist/notifications/process-overdue-billing.d.ts",
+      "default": "./dist/notifications/process-overdue-billing.js"
+    },
+    "./notifications/retention": {
+      "types": "./dist/notifications/retention.d.ts",
+      "default": "./dist/notifications/retention.js"
+    },
+    "./notifications/matricula-notifications": {
+      "types": "./dist/notifications/matricula-notifications.d.ts",
+      "default": "./dist/notifications/matricula-notifications.js"
+    },
+    "./server/services/invite-user-service": {
+      "types": "./dist/server/services/invite-user-service.d.ts",
+      "default": "./dist/server/services/invite-user-service.js"
+    },
+    "./planos/planos-schema": {
+      "types": "./dist/planos/planos-schema.d.ts",
+      "default": "./dist/planos/planos-schema.js"
+    },
+    "./planos/planos-service": {
+      "types": "./dist/planos/planos-service.d.ts",
+      "default": "./dist/planos/planos-service.js"
+    },
+    "./jobs/encerrar-contratos-expirados": {
+      "types": "./dist/jobs/encerrar-contratos-expirados.d.ts",
+      "default": "./dist/jobs/encerrar-contratos-expirados.js"
+    },
+    "./jobs/notify-contracts-expiring": {
+      "types": "./dist/jobs/notify-contracts-expiring.d.ts",
+      "default": "./dist/jobs/notify-contracts-expiring.js"
     }
   },
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
-    "test": "vitest run"
+    "test": "dotenv -e ../../.env.test -- env ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 node ../../scripts/validate-db-env.mjs test && dotenv -e ../../.env.test -- env ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 vitest run"
   },
   "dependencies": {
     "@alusa/database": "workspace:*",
-    "@alusa/asaas": "workspace:*",
     "@alusa/domain": "workspace:*",
     "@alusa/shared": "workspace:*",
     "@aws-sdk/client-s3": "^3.1107.0",

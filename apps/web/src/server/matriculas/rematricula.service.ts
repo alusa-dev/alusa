@@ -15,7 +15,7 @@ import {
   getAcademicDateBoundsForStoredDate,
   getAcademicDateDifference,
   getCurrentAcademicDateKey,
-} from '@alusa/lib/date-only';
+} from '@alusa/shared/date-only';
 
 function toNullableNumber(value: unknown): number | null {
   if (value == null) return null;

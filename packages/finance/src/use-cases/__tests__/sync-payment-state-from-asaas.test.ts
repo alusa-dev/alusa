@@ -10,6 +10,10 @@ vi.mock('@alusa/lib', () => ({
   emitBillingNotificationCandidate,
 }));
 
+vi.mock('@alusa/lib/notifications/emit-billing-notifications', () => ({
+  emitBillingNotificationCandidate,
+}));
+
 vi.mock('../asaas-ops', () => ({
   isAsaasEnabled: vi.fn(() => true),
   getPayment: vi.fn(),

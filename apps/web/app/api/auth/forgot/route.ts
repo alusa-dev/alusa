@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
+import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-limit';
 import { sendPasswordResetForEmail } from '@/lib/auth-email-flow';
+import { rateLimitResponse } from '@/lib/security/rate-limit-response';
 
 const bodySchema = z.object({
   email: z.string().email(),
@@ -9,10 +10,6 @@ const bodySchema = z.object({
 
 export async function POST(req: Request) {
   const ip = ipFromRequest(req);
-  const rl = rateLimit(`auth-forgot:${ip}`, 10, 15 * 60 * 1000);
-  if (!rl.ok) {
-    return NextResponse.json({ error: 'Muitas tentativas. Tente novamente mais tarde.' }, { status: 429 });
-  }
 
   try {
     const body: unknown = await req.json();
@@ -21,6 +18,12 @@ export async function POST(req: Request) {
     if (!parsed.success) {
       return NextResponse.json({ error: 'Dados inválidos.' }, { status: 400 });
     }
+
+    const [ipLimit, emailLimit] = await Promise.all([
+      authRateLimitAsync(`auth-forgot:ip:${await rateLimitSubject(ip)}`, 20, 15 * 60 * 1000),
+      authRateLimitAsync(`auth-forgot:email:${await rateLimitSubject(parsed.data.email)}`, 5, 15 * 60 * 1000),
+    ]);
+    if (!ipLimit.ok || !emailLimit.ok) return rateLimitResponse(!ipLimit.ok ? ipLimit : emailLimit, 5);
 
     try {
       await sendPasswordResetForEmail(parsed.data.email, {

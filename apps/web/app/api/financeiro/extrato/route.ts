@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { getExtrato, extratoQueryInputSchema } from '@alusa/finance';
 
-type SessUser = { id?: string; contaId?: string; role?: string };
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function json(status: number, body: unknown) {
@@ -14,12 +13,11 @@ function json(status: number, body: unknown) {
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await safeGetServerSession();
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(401, { error: 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const gate = await guardFinancialAccountOr412(user.contaId);
+    const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
     const { searchParams } = new URL(req.url);
@@ -36,7 +34,7 @@ export async function GET(req: NextRequest) {
     });
 
     const result = await getExtrato({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       query,
     });
 

@@ -1,4 +1,8 @@
-import { listNotifications, markAllNotificationsAsRead, type NotificationFeedView } from '@alusa/lib';
+import {
+  listNotifications,
+  markAllNotificationsAsRead,
+  type NotificationFeedView,
+} from '@alusa/lib/services/notifications.service';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 

@@ -13,7 +13,7 @@ vi.mock('@/lib/auth-options', () => ({
   authOptions: {},
 }));
 
-vi.mock('@alusa/lib', () => ({
+vi.mock('@alusa/lib/services/notifications.service', () => ({
   updateNotificationRecipientState: vi.fn(),
   deleteNotificationRecipient: vi.fn(),
 }));
@@ -22,7 +22,7 @@ const { getServerSession } = await import('next-auth');
 const {
   updateNotificationRecipientState,
   deleteNotificationRecipient,
-} = await import('@alusa/lib');
+} = await import('@alusa/lib/services/notifications.service');
 const { PATCH, DELETE } = await import('@/app/api/notifications/[id]/route');
 
 describe('/api/notifications/[id]', () => {

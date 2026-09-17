@@ -2,7 +2,7 @@
 
 import type { Prisma } from '@prisma/client';
 
-import prisma from '@/lib/prisma';
+import { prisma } from '@/lib/prisma';
 import {
   PROFILE_LOCALE_VALUES,
   PROFILE_THEME_VALUES,

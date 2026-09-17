@@ -4,8 +4,8 @@ import type { AsaasPayment } from '@alusa/finance';
 
 import { GET } from '@/app/api/financeiro/extrato/[paymentId]/comprovante/route';
 
-vi.mock('@/lib/safe-server-session', () => ({
-  safeGetServerSession: vi.fn(),
+vi.mock('@/lib/api/with-tenant-session', () => ({
+  resolveTenantSession: vi.fn(),
 }));
 
 vi.mock('@/lib/finance/financial-account-gate', () => ({
@@ -18,8 +18,12 @@ vi.mock('@alusa/finance', () => ({
 }));
 
 async function mockSession(user: Record<string, string> | null) {
-  const mod = await import('@/lib/safe-server-session');
-  vi.mocked(mod.safeGetServerSession).mockResolvedValue(user ? ({ user } as { user: Record<string, string> }) : null);
+  const mod = await import('@/lib/api/with-tenant-session');
+  vi.mocked(mod.resolveTenantSession).mockResolvedValue(
+    user
+      ? ({ ok: true, contaId: user.contaId, userId: user.id, role: user.role } as never)
+      : { ok: false, reason: 'UNAUTHENTICATED' },
+  );
 }
 
 function buildPayment(overrides: Partial<AsaasPayment>): AsaasPayment {

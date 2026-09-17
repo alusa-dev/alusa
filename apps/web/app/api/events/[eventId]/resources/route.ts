@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getEventScopedResources } from '@alusa/lib';
+import { getEventScopedResources } from '@alusa/lib/events/events.service';
 
 import { getEventsContext, handleEventsRouteError } from '../../_helpers';
 

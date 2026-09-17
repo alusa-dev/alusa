@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getEventContract } from '@alusa/lib';
+import { getEventContract } from '@alusa/lib/events/event-contracts.service';
 import { getEventsContext, handleEventsRouteError } from '../../events/_helpers';
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {

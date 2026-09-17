@@ -38,7 +38,7 @@ describe('GET /api/users/list', () => {
 
   it('retorna 403 para usuário não admin', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce({
-      user: { id: 'user-1', role: 'RECEPCAO' },
+      user: { id: 'user-1', role: 'RECEPCAO', contaId: 'conta-1' },
     } as never);
 
     const response = await GET();
@@ -48,7 +48,7 @@ describe('GET /api/users/list', () => {
 
   it('retorna usuários da conta para admin autenticado', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce({
-      user: { id: 'user-1', role: 'ADMIN' },
+      user: { id: 'user-1', role: 'ADMIN', contaId: 'conta-1' },
     } as never);
     prismaMock.usuario.findUnique.mockResolvedValueOnce({ contaId: 'conta-1' });
     prismaMock.conta.findUnique.mockResolvedValueOnce({ ownerUserId: 'owner-1' });

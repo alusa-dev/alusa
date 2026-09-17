@@ -1,68 +1,50 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import prisma from './prisma';
 import { resetDb } from './utils/reset-db';
 
+async function acceptLegalTerms(page: Page) {
+  await page.getByTestId('register-termos-checkbox').click();
+  await page.getByTestId('legal-acceptance-inner-checkbox').click();
+  await page.getByTestId('legal-acceptance-confirm').click();
+}
+
+async function register(page: Page, email: string, firstName: string, lastName: string) {
+  await page.goto('/register');
+  await page.getByTestId('register-nome-first').fill(firstName);
+  await page.getByTestId('register-nome-last').fill(lastName);
+  await page.getByTestId('register-email').fill(email);
+  await page.getByTestId('register-senha').fill('SenhaFort3!');
+  await page.getByTestId('register-senha-confirmar').fill('SenhaFort3!');
+  await acceptLegalTerms(page);
+  await page.getByTestId('register-submit').click();
+  await page.waitForURL('**/auth/confirm-email?callbackUrl=%2Ffinance%2Fwizard');
+}
+
 test.describe('First User', () => {
-  test.beforeEach(async () => {
-    await resetDb(prisma);
+  test.beforeEach(async () => { await resetDb(prisma); });
+
+  test.afterAll(async () => { await prisma.$disconnect(); });
+
+  test('Registro inicial cria ADMIN e inicia confirmação de e-mail', async ({ page }) => {
+    await register(page, 'admin-first@example.com', 'Admin', 'Root');
+    await expect(page.getByRole('heading', { name: 'Confirme seu e-mail' })).toBeVisible();
+    await expect(prisma.usuario.findFirst({
+      where: { email: 'admin-first@example.com' },
+      select: { nome: true, role: true },
+    })).resolves.toEqual({ nome: 'Admin Root', role: 'ADMIN' });
   });
 
-  test('Registro inicial cria ADMIN e loga', async ({ page }) => {
-    await page.goto('/register');
-    await page.fill('[data-testid="register-escolaNome"]', 'Escola Primeira');
-    await page.fill('[data-testid="register-cpfCnpj"]', '12345678901');
-    await page.fill('[data-testid="register-nome"]', 'Admin Root');
-    await page.fill('[data-testid="register-email"]', 'admin@example.com');
-    await page.fill('[data-testid="register-senha"]', 'SenhaFort3!');
-    await page.click('[data-testid="register-submit"]');
-    await page.waitForURL('**/dashboard');
-    await expect(page.locator('[data-testid="dashboard-header"]')).toContainText('Admin Root');
-  });
-
-  test('Erro de email duplicado', async ({ page }) => {
-    // cria primeiro
-    await page.goto('/register');
-    await page.fill('[data-testid="register-escolaNome"]', 'Escola Primeira');
-    await page.fill('[data-testid="register-cpfCnpj"]', '12345678901');
-    await page.fill('[data-testid="register-nome"]', 'Admin Root');
-    await page.fill('[data-testid="register-email"]', 'admin@example.com');
-    await page.fill('[data-testid="register-senha"]', 'SenhaFort3!');
-    await page.click('[data-testid="register-submit"]');
-    await page.waitForURL('**/dashboard');
-    // tenta de novo com mesmo email diferente conta
+  test('Erro de e-mail duplicado preserva a mensagem do contrato atual', async ({ page }) => {
+    await register(page, 'admin-duplicate@example.com', 'Admin', 'Root');
     await page.context().clearCookies();
     await page.goto('/register');
-    await page.fill('[data-testid="register-escolaNome"]', 'Outra Escola');
-    await page.fill('[data-testid="register-cpfCnpj"]', '98765432100');
-    await page.fill('[data-testid="register-nome"]', 'Outro Admin');
-    await page.fill('[data-testid="register-email"]', 'admin@example.com');
-    await page.fill('[data-testid="register-senha"]', 'SenhaFort3!');
-    await page.click('[data-testid="register-submit"]');
-    await expect(
-      page.locator('[data-testid="register-email-error"], [data-testid="register-error"]'),
-    ).toContainText('E-mail já está em uso.');
-  });
-
-  test('Erro de CPF/CNPJ duplicado', async ({ page }) => {
-    await page.goto('/register');
-    await page.fill('[data-testid="register-escolaNome"]', 'Escola Primeira');
-    await page.fill('[data-testid="register-cpfCnpj"]', '12345678901');
-    await page.fill('[data-testid="register-nome"]', 'Admin Root');
-    await page.fill('[data-testid="register-email"]', 'admin@example.com');
-    await page.fill('[data-testid="register-senha"]', 'SenhaFort3!');
-    await page.click('[data-testid="register-submit"]');
-    await page.waitForURL('**/dashboard');
-    await page.context().clearCookies();
-    // tenta mesmo cpfCnpj com outro email
-    await page.goto('/register');
-    await page.fill('[data-testid="register-escolaNome"]', 'Outra Escola');
-    await page.fill('[data-testid="register-cpfCnpj"]', '12345678901');
-    await page.fill('[data-testid="register-nome"]', 'Outro Admin');
-    await page.fill('[data-testid="register-email"]', 'admin2@example.com');
-    await page.fill('[data-testid="register-senha"]', 'SenhaFort3!');
-    await page.click('[data-testid="register-submit"]');
-    await expect(
-      page.locator('[data-testid="register-cpfCnpj-error"], [data-testid="register-error"]'),
-    ).toContainText('Já existe uma escola registrada com este CPF/CNPJ.');
+    await page.getByTestId('register-nome-first').fill('Outro');
+    await page.getByTestId('register-nome-last').fill('Admin');
+    await page.getByTestId('register-email').fill('admin-duplicate@example.com');
+    await page.getByTestId('register-senha').fill('SenhaFort3!');
+    await page.getByTestId('register-senha-confirmar').fill('SenhaFort3!');
+    await acceptLegalTerms(page);
+    await page.getByTestId('register-submit').click();
+    await expect(page.getByTestId('register-error')).toContainText('E-mail já está em uso.');
   });
 });

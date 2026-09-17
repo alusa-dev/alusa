@@ -4,18 +4,6 @@
 			"type": "http",
 			"url": "https://api.githubcopilot.com/mcp/"
 		},
-		"alusadb": {
-			"command": "npx",
-			"args": [
-				"dotenv",
-				"-e",
-				".env",
-				"--",
-				"tsx",
-				"mcp/alusadb/src/index.ts"
-			],
-			"type": "stdio"
-		},
 		"shadcn": {
 			"command": "npx",
 			"args": [

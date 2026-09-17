@@ -9,6 +9,12 @@ const required = [
   "'/api/internal/rls-health'",
   "'CRON_SECRET'",
   "'WEBHOOK_TOKEN'",
+  "'/api/admin/'",
+  "'/api/financeiro/'",
+  "'/api/finance/'",
+  "'/api/cobrancas/'",
+  "'TENANT_ADMIN'",
+  "'TENANT_FINANCE'",
 ];
 
 const missing = required.filter((token) => !source.includes(token));

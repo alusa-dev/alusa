@@ -23,23 +23,33 @@ vi.mock('@alusa/finance', async () => {
 const prisma = new PrismaClient();
 
 describe('Aluno Service', () => {
-  const contaId = 'conta-default';
+  // Nunca reutilizar a conta seed do banco de testes: RLS pode ocultá-la da
+  // sessão do teste e fazer um upsert tentar recriá-la com o mesmo id.
+  const testRunId = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const contaId = `conta-aluno-service-${testRunId}`;
+  const ownerId = `owner-aluno-service-${testRunId}`;
+  const ownerEmail = `owner+aluno.service.${testRunId}@example.com`;
 
   beforeAll(async () => {
     if (!process.env.ENCRYPTION_KEY) {
       process.env.ENCRYPTION_KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
     }
-    // garante conta existente
-    // Garante conta com owner (obrigatório)
-    const owner = await prisma.usuario.upsert({
-      where: { email: 'owner+aluno.test@example.com' },
-      update: {},
-      create: { id: 'owner-aluno-test', contaId: contaId, nome: 'Owner Test', email: 'owner+aluno.test@example.com', senhaHash: 'x', role: 'ADMIN', status: 'ATIVO' }
-    });
+    // A Conta precisa existir antes do usuário por causa da FK Usuario_contaId.
     await prisma.conta.upsert({
       where: { id: contaId },
-      update: { ownerUserId: owner.id },
-      create: { id: contaId, nome: 'Conta Teste', cpfCnpj: '99999999999999', ownerUserId: owner.id }
+      update: {},
+      create: { id: contaId, nome: 'Conta Teste', cpfCnpj: '99999999999999' },
+    });
+
+    const owner = await prisma.usuario.upsert({
+      where: { email: ownerEmail },
+      update: {},
+      create: { id: ownerId, contaId: contaId, nome: 'Owner Test', email: ownerEmail, senhaHash: 'x', role: 'ADMIN', status: 'ATIVO' }
+    });
+
+    await prisma.conta.update({
+      where: { id: contaId },
+      data: { ownerUserId: owner.id },
     });
 
     const financeProfile = await prisma.financeProfile.upsert({

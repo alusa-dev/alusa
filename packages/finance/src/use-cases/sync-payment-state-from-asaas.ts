@@ -1,4 +1,4 @@
-import { emitBillingNotificationCandidate } from '@alusa/lib';
+import { emitBillingNotificationCandidate } from '@alusa/lib/notifications/emit-billing-notifications';
 import { getPayment, isAsaasEnabled } from './asaas-ops';
 import { recordAsaasReadIntent, type AsaasReadIntent } from '../foundation/asaas-read-intent';
 import { confirmPaymentCommandsByProviderEvent } from './payment-command-ledger';

@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server';
 
 const mockGetServerSession = vi.hoisted(() => vi.fn());
 const mockRateLimit = vi.hoisted(() => vi.fn());
-const mockResolveCobrancaPaymentLookup = vi.hoisted(() => vi.fn());
+const mockResolveCobrancaPaymentLookupForTenant = vi.hoisted(() => vi.fn());
 const mockSyncPaymentStateFromAsaas = vi.hoisted(() => vi.fn());
 
 vi.mock('next-auth', () => ({
@@ -23,7 +23,7 @@ vi.mock('@/lib/rate-limit', () => ({
 }));
 
 vi.mock('@/src/server/finance/resolve-cobranca-payment-lookup', () => ({
-  resolveCobrancaPaymentLookup: mockResolveCobrancaPaymentLookup,
+  resolveCobrancaPaymentLookupForTenant: mockResolveCobrancaPaymentLookupForTenant,
 }));
 
 vi.mock('@alusa/finance', () => ({
@@ -38,7 +38,7 @@ describe('POST /api/cobrancas/[id]/sync-asaas', () => {
     mockGetServerSession.mockResolvedValue({
       user: { id: 'user-1', contaId: 'conta-1', role: 'FINANCEIRO' },
     });
-    mockResolveCobrancaPaymentLookup.mockResolvedValue({ asaasPaymentId: 'pay_1' });
+    mockResolveCobrancaPaymentLookupForTenant.mockResolvedValue({ asaasPaymentId: 'pay_1' });
     mockSyncPaymentStateFromAsaas.mockResolvedValue({
       success: true,
       asaasPaymentId: 'pay_1',
@@ -71,7 +71,7 @@ describe('POST /api/cobrancas/[id]/sync-asaas', () => {
       skipped: true,
       reason: 'CHARGE_THROTTLED',
     });
-    expect(mockResolveCobrancaPaymentLookup).not.toHaveBeenCalled();
+    expect(mockResolveCobrancaPaymentLookupForTenant).not.toHaveBeenCalled();
     expect(mockSyncPaymentStateFromAsaas).not.toHaveBeenCalled();
   });
 

@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { prisma } from '@/prisma/client';
-import { runRenewalIntegrityCheck } from '@/src/server/matriculas/renewal-integrity.service';
+import { checkRenewalIntegrityFromJob } from '@/src/server/matriculas/renewal-job-commands.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -35,22 +34,19 @@ async function run(req: Request) {
   }
 
   try {
-    const result = await runRenewalIntegrityCheck(
-      {
-        contaId: scope.contaId,
-        now: parseNow(url.searchParams.get('now')),
-        limit: clampPositiveInt(url.searchParams.get('limit'), 200, 500),
-      },
-      { prisma },
-    );
+    const result = await checkRenewalIntegrityFromJob({
+      contaId: scope.contaId,
+      now: parseNow(url.searchParams.get('now')),
+      limit: clampPositiveInt(url.searchParams.get('limit'), 200, 500),
+    });
 
     return NextResponse.json({ success: result.issues === 0, ...result });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
         error: {
           code: 'ERRO_INTEGRIDADE_REMATRICULA',
-          message: error instanceof Error ? error.message : 'Erro ao verificar integridade.',
+          message: 'Erro ao verificar integridade.',
         },
       },
       { status: 500 },
@@ -65,4 +61,3 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   return run(req);
 }
-

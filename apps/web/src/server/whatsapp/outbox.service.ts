@@ -228,7 +228,9 @@ export async function requeueContractWhatsAppNotification(input: { contaId: stri
 }
 
 /** Converts committed contract events into approved Meta template messages. */
-export async function drainContractWhatsAppNotifications(input: { limit?: number } = {}): Promise<DrainContractWhatsAppNotificationsResult> {
+export async function drainContractWhatsAppNotifications(
+  input: { limit?: number; contaId?: string; notificationId?: string } = {},
+): Promise<DrainContractWhatsAppNotificationsResult> {
   const runtimeConfig = getWhatsAppRuntimeConfig();
   if (!runtimeConfig.enabled || !runtimeConfig.accessToken || !runtimeConfig.appSecret || !runtimeConfig.phoneNumberId || !runtimeConfig.wabaId) {
     return { claimed: 0, queued: 0, retried: 0, deadLettered: 0, skipped: 0 };
@@ -239,12 +241,21 @@ export async function drainContractWhatsAppNotifications(input: { limit?: number
   const staleAt = new Date(Date.now() - 10 * 60_000);
 
   await prisma.contractWhatsAppNotification.updateMany({
-    where: { status: 'PROCESSING', lockedAt: { lt: staleAt } },
+    where: {
+      status: 'PROCESSING',
+      lockedAt: { lt: staleAt },
+      ...(input.contaId ? { contaId: input.contaId } : {}),
+    },
     data: { status: 'FAILED', nextAttemptAt: now, lockedAt: null, lockedBy: null, lastErrorCode: 'STALE_LOCK_RECOVERED' },
   });
 
   const candidates = await prisma.contractWhatsAppNotification.findMany({
-    where: { status: { in: ['PENDING', 'FAILED'] }, nextAttemptAt: { lte: now } },
+    where: {
+      status: { in: ['PENDING', 'FAILED'] },
+      nextAttemptAt: { lte: now },
+      ...(input.contaId ? { contaId: input.contaId } : {}),
+      ...(input.notificationId ? { id: input.notificationId } : {}),
+    },
     orderBy: { createdAt: 'asc' },
     take: limit,
     select: { id: true, contaId: true },

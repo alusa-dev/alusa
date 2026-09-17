@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { encerrarContaAlusa, type CloseAccountErrorCode } from '@alusa/finance';
 import { PlatformBillingError } from '@alusa/platform-billing';
 import {
-  requestPlatformSubscriptionCancellation,
-} from '@/src/server/platform-billing/plan-change-actions';
-import prisma from '@/lib/prisma';
+  isContaOwner,
+  requestContaPlanCancellation,
+} from '@/src/server/tenant/conta-close.service';
 import {
   closeContaErrorResultDTOSchema,
   closeContaInputDTOSchema,
@@ -44,13 +43,11 @@ function getClientIp(req: NextRequest): string | null {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    type SessUser = { id?: string; role?: string; contaId?: string };
-    const user = (session as { user?: SessUser } | null)?.user;
-
-    if (!user?.contaId || !user?.id) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return json(401, { message: 'Acesso negado.' });
     }
+    const user = { id: auth.userId, role: auth.role, contaId: auth.contaId };
 
     const parsed = closeContaInputDTOSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) {
@@ -62,19 +59,14 @@ export async function POST(req: NextRequest) {
 
     const isAdmin = user.role?.toUpperCase() === 'ADMIN';
     if (!isAdmin) {
-      const conta = await prisma.conta.findUnique({
-        where: { id: user.contaId },
-        select: { ownerUserId: true },
-      });
-      if (!conta || conta.ownerUserId !== user.id) {
+      if (!(await isContaOwner({ contaId: user.contaId, userId: user.id }))) {
         return json(403, { message: 'Acesso negado.' });
       }
     }
 
     let renewalCancellationScheduled = false;
     try {
-      await requestPlatformSubscriptionCancellation({
-        prisma,
+      await requestContaPlanCancellation({
         contaId: user.contaId,
         actorUserId: user.id,
         idempotencyKey: `account-deactivation:${user.contaId}:${requestId}`,

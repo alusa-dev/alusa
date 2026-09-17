@@ -1,78 +1,66 @@
-import { test, expect } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+import { PrismaClient } from '@prisma/client';
 import { resetDb } from './utils/reset-db';
 
-async function waitSession(page: Page) {
-  await expect.poll(async () => {
-    const resp = await page.request.get('/api/auth/session');
-    if (!resp.ok()) return false;
-    const json = await resp.json();
-    return Boolean(json?.user?.email);
-  }, { timeout: 10_000 }).toBe(true);
+const prisma = new PrismaClient();
+
+async function acceptLegalTerms(page: Page) {
+  await page.getByTestId('register-termos-checkbox').click();
+  await page.getByTestId('legal-acceptance-inner-checkbox').click();
+  await page.getByTestId('legal-acceptance-confirm').click();
+}
+
+async function registerAccount(page: Page, input: { email: string; firstName: string; lastName: string }) {
+  await page.goto('/register');
+  await page.getByTestId('register-nome-first').fill(input.firstName);
+  await page.getByTestId('register-nome-last').fill(input.lastName);
+  await page.getByTestId('register-email').fill(input.email);
+  await page.getByTestId('register-senha').fill('SenhaFort3!');
+  await page.getByTestId('register-senha-confirmar').fill('SenhaFort3!');
+  await acceptLegalTerms(page);
+  await page.getByTestId('register-submit').click();
+  await page.waitForURL('**/auth/confirm-email?callbackUrl=%2Ffinance%2Fwizard');
 }
 
 test.describe('First Register', () => {
-  test.beforeEach(async () => {
-    resetDb();
+  test.beforeEach(async () => { await resetDb(prisma); });
+
+  test.afterAll(async () => { await prisma.$disconnect(); });
+
+  test('Primeiro registro cria um ADMIN e inicia a confirmação de e-mail', async ({ page }) => {
+    const email = 'primeiro-e2e@example.com';
+    await registerAccount(page, { email, firstName: 'Primeiro', lastName: 'Admin' });
+    await expect(page.getByRole('heading', { name: 'Confirme seu e-mail' })).toBeVisible();
+
+    await expect(prisma.usuario.findFirst({
+      where: { email },
+      select: { nome: true, role: true },
+    })).resolves.toEqual({ nome: 'Primeiro Admin', role: 'ADMIN' });
   });
 
-  test('Primeiro registro cria Admin', async ({ page }) => {
-  await page.goto('/register');
-    await page.fill('[data-testid="register-escolaNome"]', 'Escola First');
-    await page.fill('[data-testid="register-cpfCnpj"]', '12345678901');
-    await page.fill('[data-testid="register-nome"]', 'Primeiro Admin');
-    await page.fill('[data-testid="register-email"]', 'primeiro@example.com');
-    await page.fill('[data-testid="register-senha"]', 'SenhaFort3!');
-    await page.click('[data-testid="register-submit"]');
-    await page.waitForURL('**/dashboard');
-    await waitSession(page);
-    const header = page.locator('[data-testid="dashboard-header"]');
-    await expect(header).toContainText('Primeiro Admin');
-    await expect(header).toContainText('ADMIN');
-  });
-
-  test('Login subsequente com mesmo Admin', async ({ page }) => {
-    // seed via registro
-  await page.goto('/register');
-    await page.fill('[data-testid="register-escolaNome"]', 'Escola First');
-    await page.fill('[data-testid="register-cpfCnpj"]', '12345678901');
-    await page.fill('[data-testid="register-nome"]', 'Primeiro Admin');
-    await page.fill('[data-testid="register-email"]', 'primeiro@example.com');
-    await page.fill('[data-testid="register-senha"]', 'SenhaFort3!');
-    await page.click('[data-testid="register-submit"]');
-    await page.waitForURL('**/dashboard');
-    // signOut limpando cookies
+  test('Login subsequente exige confirmação de e-mail', async ({ page }) => {
+    await registerAccount(page, { email: 'login-e2e@example.com', firstName: 'Primeiro', lastName: 'Admin' });
     await page.context().clearCookies();
-  await page.goto('/login');
-    await page.fill('[data-testid="login-email"]', 'primeiro@example.com');
-    await page.fill('[data-testid="login-password"]', 'SenhaFort3!');
-    await page.click('[data-testid="login-submit"]');
-    await page.waitForURL('**/dashboard');
-    await waitSession(page);
-    await expect(page.locator('[data-testid="dashboard-header"]')).toContainText('Primeiro Admin');
+    await page.goto('/auth/login');
+    await page.getByTestId('email').fill('login-e2e@example.com');
+    await page.getByTestId('password').fill('SenhaFort3!');
+    await page.getByTestId('login-button').click();
+    await expect(page).toHaveURL(/\/auth\/login/);
   });
 
-  test('Tentativa de segundo registro bloqueada', async ({ page }) => {
-    // criar primeiro admin
-  await page.goto('/register');
-    await page.fill('[data-testid="register-escolaNome"]', 'Escola First');
-    await page.fill('[data-testid="register-cpfCnpj"]', '12345678901');
-    await page.fill('[data-testid="register-nome"]', 'Primeiro Admin');
-    await page.fill('[data-testid="register-email"]', 'primeiro@example.com');
-    await page.fill('[data-testid="register-senha"]', 'SenhaFort3!');
-    await page.click('[data-testid="register-submit"]');
-    await page.waitForURL('**/dashboard');
-    await waitSession(page);
-    // tentar segundo
+  test('Novo cadastro usa o fluxo público atual e cria outra conta', async ({ page }) => {
+    await registerAccount(page, { email: 'primeiro-2-e2e@example.com', firstName: 'Primeiro', lastName: 'Admin' });
     await page.context().clearCookies();
-  await page.goto('/register');
-    await page.fill('[data-testid="register-escolaNome"]', 'Outra Escola');
-    await page.fill('[data-testid="register-cpfCnpj"]', '98765432100');
-    await page.fill('[data-testid="register-nome"]', 'Segundo');
-    await page.fill('[data-testid="register-email"]', 'segundo@example.com');
-    await page.fill('[data-testid="register-senha"]', 'SenhaFort3!');
-    await page.click('[data-testid="register-submit"]');
-    // Como backend redireciona para login (409) tratamos exibindo erro - precisamos de mensagem; fallback: redireciono
-  await page.waitForURL('**/login');
+    await registerAccount(page, { email: 'segundo-2-e2e@example.com', firstName: 'Segundo', lastName: 'Admin' });
+
+    const users = await prisma.usuario.findMany({
+      where: { email: { in: ['primeiro-2-e2e@example.com', 'segundo-2-e2e@example.com'] } },
+      select: { email: true, role: true },
+      orderBy: { email: 'asc' },
+    });
+    expect(users).toEqual([
+      { email: 'primeiro-2-e2e@example.com', role: 'ADMIN' },
+      { email: 'segundo-2-e2e@example.com', role: 'ADMIN' },
+    ]);
   });
 });

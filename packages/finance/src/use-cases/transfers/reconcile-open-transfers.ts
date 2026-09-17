@@ -31,6 +31,24 @@ export type ReconcileResult = {
   officialTransfersById: Map<string, AsaasTransfer>;
 };
 
+export async function listAccountsWithOpenTransfers(
+  maxAccounts: number,
+  db: typeof prisma = prisma,
+): Promise<string[]> {
+  const rows = await db.transferRequest.findMany({
+    where: {
+      status: { in: ['REQUESTED', 'PENDING', 'BLOCKED', 'PROCESSING'] },
+      asaasTransferId: { not: null },
+    },
+    distinct: ['contaId'],
+    orderBy: { statusUpdatedAt: 'asc' },
+    take: maxAccounts,
+    select: { contaId: true },
+  });
+
+  return rows.map((row) => row.contaId);
+}
+
 function toNumber(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const numericValue = Number(value);

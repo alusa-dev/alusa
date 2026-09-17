@@ -2,6 +2,7 @@ import {
   listarContratosProximosDeExpirar,
   type AcademicJobOptions,
 } from './encerrar-contratos-expirados';
+import { prisma } from '../prisma';
 import { createContractExpiringNotification } from '../notifications/domain-notifications';
 
 const EXPIRING_ALERT_DAYS = [7, 3, 1] as const;
@@ -35,4 +36,13 @@ export async function notifyContractsExpiring(
   }
 
   return { evaluated: contracts.length, notified };
+}
+
+export async function listContasForContractExpiration(maxAccounts = 500) {
+  const contas = await prisma.conta.findMany({
+    where: { deletedAt: null },
+    select: { id: true },
+    take: maxAccounts,
+  });
+  return contas.map((conta) => conta.id);
 }

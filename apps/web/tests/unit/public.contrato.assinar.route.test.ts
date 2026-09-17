@@ -6,8 +6,11 @@ const { signPublicContractMock, createNotificationMock } = vi.hoisted(() => ({
   createNotificationMock: vi.fn(),
 }));
 
-vi.mock('@alusa/lib', () => ({
+vi.mock('@alusa/lib/contracts/use-cases/sign-contract', () => ({
   signPublicContract: signPublicContractMock,
+}));
+
+vi.mock('@alusa/lib/notifications/domain-notifications', () => ({
   createContractSignedNotification: createNotificationMock,
 }));
 

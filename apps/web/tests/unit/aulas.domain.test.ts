@@ -73,7 +73,7 @@ describe('handleAulasRouteError', () => {
     expect(response.status).toBe(500);
     const body = await response.json();
     expect(body.error).toBe('ERRO_INTERNO_CUSTOM');
-    expect(body.detail).toBe('something broke');
+    expect(body.detail).toBe('Não foi possível concluir a operação.');
   });
 });
 

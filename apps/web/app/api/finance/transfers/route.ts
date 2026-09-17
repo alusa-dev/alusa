@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import {
@@ -11,29 +10,22 @@ import {
   mapListTransfersOutputToDTO,
 } from '@alusa/finance';
 
-type SessionUser = { id?: string; role?: string; contaId?: string; financeIntegrationMode?: string | null };
-
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
-}
-
 export async function GET(req: NextRequest) {
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'transfers');
+    const capabilityBlock = blockUnavailableFinanceCapability(auth.financeIntegrationMode, 'transfers');
     if (capabilityBlock) return capabilityBlock;
 
-    const gate = await guardFinancialAccountOr412(user.contaId);
+    const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
     const { searchParams } = new URL(req.url);
@@ -59,7 +51,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const input = mapListTransfersQueryToInput(parsed.data, user.contaId);
+    const input = mapListTransfersQueryToInput(parsed.data, auth.contaId);
     const data = await listTransfers(input);
     const dto = mapListTransfersOutputToDTO(data, parsed.data);
 

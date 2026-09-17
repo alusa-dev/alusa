@@ -1,163 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import type { Status } from '@prisma/client';
-import { withTenantSession } from '@/lib/api/with-tenant-session';
-import { createAluno, updateAluno, formatZodErrors, type AlunoCreateInput } from '@alusa/lib';
-import {
-  assertPayerAddressFiscalReady,
-  buildResponsavelEnderecoFromFlat,
-} from '@alusa/lib';
+import { ZodError } from 'zod';
+import { resolveTenantSession, withTenantSession } from '@/lib/api/with-tenant-session';
 import { AsaasCustomerEnsureError } from '@alusa/finance';
-import {
-  createAlunoInputDTOSchema,
-  alunoDetailDTOSchema,
-  listAlunosResultDTOSchema,
-} from '@/features/cadastro/alunos/dtos';
+import { alunoDetailDTOSchema, listAlunosResultDTOSchema } from '@/features/cadastro/alunos/dtos';
 import { mapAlunoDetailToDTO, mapAlunoListItemToDTO } from '@/features/cadastro/alunos/mappers';
-import { normalizeAvatarUpload } from '@/src/server/media/avatar-storage.service';
-import { isMenorDeIdade } from '@alusa/domain';
-import { maskCpf as privacyMaskCpf } from '@alusa/shared';
+import {
+  createAlunoForTenant,
+  formatZodErrors,
+  listAlunosForTenant,
+  parseAlunoListQuery,
+} from '@/src/server/alunos/alunos-route.service';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
 } from '@/src/server/platform-billing/capacity';
-
-
-// Util simples para limpar dígitos
-const digits = (v: unknown) => (typeof v === 'string' ? v.replace(/\D/g, '') : v);
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const q = (searchParams.get('q') || '').trim().toLowerCase();
-    const includeFullCpf = searchParams.get('includeFullCpf') === 'true';
-    // A listagem sem filtro explícito mostra somente alunos ativos. O histórico
-    // continua disponível quando o cliente solicita TODOS ou INATIVO.
-    const status = (searchParams.get('status') || 'ATIVO').trim().toUpperCase();
-    const pageParam = searchParams.get('page');
-    const page = pageParam ? Math.max(1, Number(pageParam) || 1) : 1;
-    const pageSize = Math.min(
-      100,
-      Math.max(1, Number(searchParams.get('pageSize') || (pageParam ? '6' : '100')) || 6),
+    const query = parseAlunoListQuery(new URL(request.url).searchParams);
+    const result = await withTenantSession(async ({ contaId, tx }) =>
+      listAlunosForTenant({ tx, contaId, query }),
     );
-    const sortOrder = searchParams.get('sortOrder') === 'DESC' ? 'desc' : 'asc';
-
-    const result = await withTenantSession(async ({ contaId, tx }) => {
-      const where = {
-        contaId,
-        ...(status && status !== 'TODOS' ? { status: status as Status } : {}),
-        ...(q
-          ? {
-              OR: [
-                { nome: { contains: q, mode: 'insensitive' as const } },
-                ...(q.replace(/\D/g, '')
-                  ? [{ cpf: { contains: q.replace(/\D/g, '') } }]
-                  : []),
-              ],
-            }
-          : {}),
-      };
-
-      const [total, alunos] = await Promise.all([
-        tx.aluno.count({ where }),
-        tx.aluno.findMany({
-        where,
-        orderBy: { nome: sortOrder },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        select: {
-          id: true,
-          nome: true,
-          email: true,
-          telefone: true,
-          status: true,
-          foto: true,
-          updatedAt: true,
-          cpf: true,
-          dataNasc: true,
-          consentimentoImagem: true,
-          dataConsentimentoImagem: true,
-          isentoTaxaMatricula: true,
-          bolsaDescontoPercent: true,
-          tags: true,
-          dataInativacao: true,
-          motivoInativacao: true,
-          responsaveis: {
-            select: {
-              tipoVinculo: true,
-              responsavel: {
-                select: {
-                  cpf: true,
-                  email: true,
-                  telefone: true,
-                  financeiro: true,
-                },
-              },
-            },
-          },
-        },
-      }),
-      ]);
-
-      return {
-        total,
-        page,
-        pageSize,
-        items: alunos.map((aluno) => {
-          const bolsaRaw = aluno.bolsaDescontoPercent;
-          const bolsaDescontoPercent =
-            bolsaRaw === null || bolsaRaw === undefined ? null : Number(bolsaRaw);
-
-          const menor = isMenorDeIdade(aluno.dataNasc);
-          let cpfOriginal = aluno.cpf;
-          let emailOriginal = aluno.email;
-          let phoneOriginal = aluno.telefone;
-
-          if (menor && aluno.responsaveis && aluno.responsaveis.length > 0) {
-            const resp = aluno.responsaveis.find(
-              (r) =>
-                r.responsavel.financeiro ||
-                r.tipoVinculo === 'FINANCEIRO' ||
-                r.tipoVinculo === 'PRINCIPAL'
-            ) || aluno.responsaveis[0];
-            cpfOriginal = resp.responsavel.cpf ?? aluno.cpf;
-            emailOriginal = resp.responsavel.email ?? aluno.email;
-            phoneOriginal = resp.responsavel.telefone ?? aluno.telefone;
-          }
-
-          const cpfMasked = cpfOriginal ? privacyMaskCpf(cpfOriginal) : null;
-          return {
-            id: aluno.id,
-            nome: aluno.nome ?? '',
-            // A listagem é acessada por usuários autorizados da própria Conta.
-            // O CPF continua protegido; contatos são necessários para a rotina
-            // operacional da secretaria.
-            email: emailOriginal,
-            telefone: phoneOriginal,
-            cpfMasked,
-            status: aluno.status ?? 'ATIVO',
-            foto: aluno.foto ?? null,
-            updatedAt: aluno.updatedAt,
-            cpf: includeFullCpf ? cpfOriginal : cpfMasked,
-            consentimentoImagem: aluno.consentimentoImagem ?? null,
-            dataConsentimentoImagem: aluno.dataConsentimentoImagem
-              ? aluno.dataConsentimentoImagem.toISOString()
-              : null,
-            isentoTaxaMatricula: aluno.isentoTaxaMatricula ?? null,
-            bolsaDescontoPercent,
-            tags: Array.isArray(aluno.tags) ? aluno.tags : null,
-          };
-        }),
-      };
-    });
-
-    if (result instanceof NextResponse) {
-      return result;
-    }
+    if (result instanceof NextResponse) return result;
 
     return NextResponse.json(
       listAlunosResultDTOSchema.parse({
@@ -166,11 +33,7 @@ export async function GET(request: NextRequest) {
         page: result.page,
         pageSize: result.pageSize,
       }),
-      {
-        headers: {
-          'cache-control': 'private, max-age=20, stale-while-revalidate=60',
-        },
-      },
+      { headers: { 'cache-control': 'private, max-age=20, stale-while-revalidate=60' } },
     );
   } catch (error) {
     console.error('Erro ao listar alunos:', error);
@@ -180,187 +43,66 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    // MULTI-TENANT: validar sessão e usar contaId da sessão
-    const session = await getServerSession(authOptions);
-    const contaId = (session as { user?: { contaId?: string } })?.user?.contaId;
-    if (!contaId) {
-      return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
-    }
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
 
     try {
-      await assertPlatformAccessForConta({ contaId, capability: 'STUDENT_WRITE' });
+      await assertPlatformAccessForConta({ contaId: auth.contaId, capability: 'STUDENT_WRITE' });
     } catch (error) {
       const blocked = platformBillingAccessResponse(error);
       if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
       throw error;
     }
 
-    const raw = await request.json();
-
-    // Só monta endereço se o usuário realmente informou dados mínimos (CEP + número)
-    const hasCep = Boolean(digits(raw.enderecoCep));
-    const hasNumero = Boolean(String(raw.enderecoNumero || '').trim());
-
-    const endereco = (hasCep && hasNumero)
-      ? {
-          cep: String(digits(raw.enderecoCep)),
-          logradouro: raw.enderecoLogradouro?.trim() || undefined,
-          numero: String(raw.enderecoNumero).trim(),
-          complemento: raw.enderecoComplemento?.trim() || undefined,
-          bairro: raw.enderecoBairro?.trim() || undefined,
-          cidade: raw.enderecoCidade?.trim() || undefined,
-          uf: raw.enderecoUf ? String(raw.enderecoUf).slice(0, 2).toUpperCase() : undefined,
-        }
-      : undefined;
-
-    // Normalizar responsavel (sem placeholders)
-    let responsavel = raw.responsavel;
-    if (responsavel) {
-      const nestedEndereco = buildResponsavelEnderecoFromFlat({
-        enderecoCep: responsavel.enderecoCep,
-        enderecoLogradouro: responsavel.enderecoLogradouro,
-        enderecoNumero: responsavel.enderecoNumero,
-        enderecoComplemento: responsavel.enderecoComplemento,
-        enderecoBairro: responsavel.enderecoBairro,
-        enderecoCidade: responsavel.enderecoCidade,
-        enderecoUf: responsavel.enderecoUf,
-      });
-
-      responsavel = {
-        ...responsavel,
-        cpf: digits(responsavel.cpf),
-        telefone: digits(responsavel.telefone),
-        endereco:
-          nestedEndereco && (responsavel.financeiro ?? true)
-            ? assertPayerAddressFiscalReady(nestedEndereco)
-            : nestedEndereco ?? undefined,
-      };
-    }
-
-    const transformed = {
-      contaId,
-      nome: raw.nome,
-      nomeSocial: raw.nomeSocial || undefined,
-      dataNasc: raw.dataNasc
-        ? typeof raw.dataNasc === 'string'
-          ? new Date(raw.dataNasc)
-          : raw.dataNasc
-        : undefined,
-      cpf: digits(raw.cpf),
-      email: raw.email,
-      telefone: digits(raw.telefone),
-      endereco,
-      observacao: raw.observacao || undefined,
-      genero: raw.genero || undefined,
-      modalidadePrincipal: raw.modalidadePrincipal || undefined,
-      nivel: raw.nivel || undefined,
-      alergias: raw.alergias || undefined,
-      restricoesMedicas: raw.restricoesMedicas || undefined,
-      contatoEmergenciaNome: raw.contatoEmergenciaNome || undefined,
-      contatoEmergenciaTelefone: raw.contatoEmergenciaTelefone
-        ? digits(raw.contatoEmergenciaTelefone)
-        : undefined,
-      origemCadastro: raw.origemCadastro || undefined,
-      bolsaDescontoPercent: raw.bolsaDescontoPercent ?? undefined,
-      isentoTaxaMatricula: raw.isentoTaxaMatricula ?? undefined,
-      consentimentoImagem: raw.consentimentoImagem ?? undefined,
-      dataConsentimentoImagem: raw.dataConsentimentoImagem
-        ? new Date(raw.dataConsentimentoImagem)
-        : undefined,
-      consentimentoComunicacoes: raw.consentimentoComunicacoes ?? undefined,
-      consentimentoMarketing: raw.consentimentoMarketing ?? undefined,
-      tamanhoCamiseta: raw.tamanhoCamiseta || undefined,
-      tamanhoCalcado: raw.tamanhoCalcado || undefined,
-      tags: raw.tags || undefined,
-      status: raw.status || 'ATIVO',
-      responsavelExistenteId:
-        typeof raw.responsavelExistenteId === 'string' && raw.responsavelExistenteId.trim()
-          ? raw.responsavelExistenteId.trim()
-          : undefined,
-      responsavel: responsavel || undefined,
-      foto: raw.foto || undefined,
-    };
-
-    let parsed: AlunoCreateInput;
-    try {
-      parsed = createAlunoInputDTOSchema.parse(transformed);
-    } catch (e) {
-      const issues = (e as { issues?: Array<{ path: (string | number)[]; message: string }> })
-        .issues;
-      if (issues?.length) {
-        // Retorna todos os erros formatados (field + message)
-        const errors = formatZodErrors(issues);
-        return NextResponse.json(
-          {
-            error: errors[0].message,
-            field: errors[0].field,
-            errors, // Array completo para o frontend
-          },
-          { status: 400 },
-        );
-      }
-      return NextResponse.json({ error: 'Payload inválido' }, { status: 400 });
-    }
-
-    let aluno = await createAluno(parsed);
-
-    if (parsed.foto?.startsWith('data:image/')) {
-      const normalizedFoto = await normalizeAvatarUpload({
-        entity: 'aluno',
-        entityId: aluno.id,
-        contaId,
-        foto: parsed.foto,
-        previousFoto: null,
-      });
-
-      if (normalizedFoto && normalizedFoto !== parsed.foto) {
-        aluno = await updateAluno({ id: aluno.id, contaId, foto: normalizedFoto });
-      }
-    }
-
-    // NOTA: syncAlunoWithAsaas já é chamado dentro de createAluno()
-    // Não é necessário chamar createAsaasCustomerForAluno aqui para evitar duplicação
-
+    const aluno = await createAlunoForTenant({
+      rawInput: await request.json(),
+      contaId: auth.contaId,
+    });
     return NextResponse.json(alunoDetailDTOSchema.parse(mapAlunoDetailToDTO(aluno)), { status: 201 });
   } catch (error) {
+    if (error instanceof ZodError) {
+      const errors = formatZodErrors(error.issues);
+      return NextResponse.json(
+        errors.length
+          ? { error: errors[0].message, field: errors[0].field, errors }
+          : { error: 'Payload inválido' },
+        { status: 400 },
+      );
+    }
     console.error('Erro ao criar aluno:', error);
     if (error instanceof AsaasCustomerEnsureError) {
       const isConfigError = ['MISSING_KEY', 'DECRYPT_FAILED', 'INVALID_KEY'].includes(error.code);
       const providerStatus = error.providerStatus;
-      const status =
-        error.code === 'PAYER_INVALID'
-          ? 400
-          : error.code === 'ASAAS_ERROR' && providerStatus
-            ? providerStatus
-            : isConfigError
-              ? 412
-              : 503;
-      const message =
-        error.code === 'PAYER_INVALID'
+      const status = error.code === 'PAYER_INVALID'
+        ? 400
+        : error.code === 'ASAAS_ERROR' && providerStatus
+          ? providerStatus
+          : isConfigError
+            ? 412
+            : 503;
+      const message = error.code === 'PAYER_INVALID'
+        ? error.message
+        : error.code === 'ASAAS_ERROR' && providerStatus && [400, 422].includes(providerStatus)
           ? error.message
-          : error.code === 'ASAAS_ERROR' && providerStatus && [400, 422].includes(providerStatus)
-            ? error.message
-            : isConfigError
-              ? 'Conta de pagamentos não configurada.'
-              : 'Serviço de pagamentos indisponível. Tente novamente.';
+          : isConfigError
+            ? 'Conta de pagamentos não configurada.'
+            : 'Serviço de pagamentos indisponível. Tente novamente.';
       return NextResponse.json({ error: message }, { status });
     }
-    const msg: string = (error as Error).message || '';
+
+    const message = error instanceof Error ? error.message : '';
     const code = (error as { code?: string }).code;
     if (code === 'P2002') {
-      return NextResponse.json(
-        { error: 'Já existe um cadastro com os mesmos dados nesta conta.' },
-        { status: 409 },
-      );
+      return NextResponse.json({ error: 'Já existe um cadastro com os mesmos dados nesta conta.' }, { status: 409 });
     }
     if (
       code === 'ALUNO_DUPLICADO' ||
       code === 'ALUNO_IDENTIDADE_AMBIGUA' ||
       code === 'RESPONSAVEL_DUPLICADO' ||
-      msg.includes('já existe') ||
-      msg.includes('já está em uso')
+      message.includes('já existe') ||
+      message.includes('já está em uso')
     ) {
-      return NextResponse.json({ error: msg }, { status: 409 });
+      return NextResponse.json({ error: message }, { status: 409 });
     }
     return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 });
   }

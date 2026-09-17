@@ -58,8 +58,8 @@ test.describe('Cadastro de aluno menor de idade', () => {
     const respTelefone = '11966665555';
 
     // Abrir wizard
-    const openWizard = page.getByTestId('abrir-wizard-aluno');
-    await expect(openWizard).toBeEnabled();
+    const openWizard = page.getByTestId('abrir-wizard-aluno').first();
+    await expect(openWizard).toBeEnabled({ timeout: 20_000 });
     await openWizard.click();
     const wizard = page.getByTestId('aluno-wizard');
     await expect(wizard).toBeVisible();
@@ -102,12 +102,17 @@ test.describe('Cadastro de aluno menor de idade', () => {
     await expect(page.getByRole('heading', { name: 'Responsável' })).toBeVisible();
 
     // Step 6: Responsável (obrigatório para menor de idade)
+    await page.getByRole('tab', { name: 'Criar responsável' }).click();
     await page.getByLabel('Nome do responsável').fill('Responsável Teste');
     await fillCpf(page.getByTestId('resp-cpf'), respCpf);
     await page.getByLabel('E-mail').first().fill(`responsavel+${suffix}@example.com`);
     await fillTelefone(page.getByTestId('resp-telefone'), respTelefone);
     await fillCep(page.getByTestId('resp-cep'), '01001000');
-    await page.waitForTimeout(500);
+    await expect(page.locator('#resp-logradouro')).toHaveValue('Praça da Sé', { timeout: 5_000 });
+    const responsibleNumber = page.getByTestId('resp-numero');
+    await expect(responsibleNumber).toBeEnabled({ timeout: 5_000 });
+    await responsibleNumber.fill('77');
+    await expect(responsibleNumber).toHaveValue('77');
     
     await page.getByTestId('wizard-next').click();
     await expect(page.getByRole('heading', { name: 'Confirmar dados' })).toBeVisible();
@@ -123,9 +128,7 @@ test.describe('Cadastro de aluno menor de idade', () => {
     expect(resp.status()).toBe(201);
 
     // Verifica mensagem de sucesso ou nome na lista
-    await expect(
-      page.getByText('Aluno Menor Teste')
-    ).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTitle('Aluno Menor Teste')).toBeVisible({ timeout: 15000 });
   });
 
   test('deve exibir erro quando menor de idade não tiver responsável', async ({ page }) => {
@@ -152,7 +155,9 @@ test.describe('Cadastro de aluno menor de idade', () => {
     }
 
     // Abrir wizard
-    await page.getByTestId('abrir-wizard-aluno').click();
+    const openWizard = page.getByTestId('abrir-wizard-aluno').first();
+    await expect(openWizard).toBeEnabled({ timeout: 20_000 });
+    await openWizard.click();
     await expect(page.getByTestId('aluno-wizard')).toBeVisible();
 
     // Preencher dados do aluno menor
@@ -223,7 +228,9 @@ test.describe('Cadastro de aluno menor de idade', () => {
     }
 
     // Abrir wizard
-    await page.getByTestId('abrir-wizard-aluno').click();
+    const openWizard = page.getByTestId('abrir-wizard-aluno').first();
+    await expect(openWizard).toBeEnabled({ timeout: 20_000 });
+    await openWizard.click();
     await expect(page.getByTestId('aluno-wizard')).toBeVisible();
 
     // Preencher dados do aluno menor

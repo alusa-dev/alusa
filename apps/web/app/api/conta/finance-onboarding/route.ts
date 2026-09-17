@@ -1,15 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 
-import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/src/prisma';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { asaasGetMyAccountCommercialInfo } from '@alusa/finance';
 import { getKycSummary } from '@alusa/finance';
-import { loadAsaasCredentials } from '@alusa/database';
 import { contaFinanceOnboardingResultDTOSchema } from '@/features/conta/dtos';
 import { mapContaFinanceOnboardingResultToDTO } from '@/features/conta/mappers';
-
-type SessionUser = { id?: string; role?: string; contaId?: string };
+import { getFinanceOnboardingContext } from '@/src/server/finance/admin-integration.service';
 
 const allowedRoles = new Set(['ADMIN']);
 
@@ -17,51 +13,15 @@ function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
-}
-
 export async function GET() {
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(401, { error: 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const contaId = user.contaId;
+    const contaId = auth.contaId;
 
-    const financeProfile = await prisma.financeProfile.findUnique({
-      where: { contaId },
-      select: {
-        id: true,
-        asaasAccountId: true,
-        status: true,
-        isOnboardingCompleted: true,
-        onboardingCompletedAt: true,
-        lastAsaasSyncAt: true,
-        mobilePhone: true,
-        incomeValue: true,
-        address: true,
-        addressNumber: true,
-        province: true,
-        postalCode: true,
-        complement: true,
-        asaasOwnerName: true,
-        asaasCompanyName: true,
-        asaasLoginEmail: true,
-        asaasPhone: true,
-        asaasSite: true,
-        asaasName: true,
-        updatedAt: true,
-        createdAt: true,
-        asaasAccount: {
-          select: {
-            commercialInfoStatus: true,
-            commercialInfoScheduledDate: true,
-          },
-        },
-      },
-    });
+    const { financeProfile, credentials } = await getFinanceOnboardingContext(contaId);
 
     const kycSummary = await (async () => {
       try {
@@ -72,11 +32,10 @@ export async function GET() {
       }
     })();
 
-    const creds = await loadAsaasCredentials(contaId);
     const commercialInfo = await (async () => {
-      if (!creds?.apiKey) return null;
+      if (!credentials?.apiKey) return null;
       try {
-        return await asaasGetMyAccountCommercialInfo({ apiKey: creds.apiKey });
+        return await asaasGetMyAccountCommercialInfo({ apiKey: credentials.apiKey });
       } catch {
         return null;
       }
@@ -91,9 +50,7 @@ export async function GET() {
     const derivedCommercialInfoScheduledDate =
       commercialInfoExpiration?.scheduledDate ?? financeProfile?.asaasAccount?.commercialInfoScheduledDate ?? null;
 
-    return json(
-      200,
-      mapContaFinanceOnboardingResultToDTO({
+    const responseBody = mapContaFinanceOnboardingResultToDTO({
       data: {
         financeProfile,
         financialAccount: {
@@ -107,8 +64,9 @@ export async function GET() {
           retryAfterMs: kycSummary?.retryAfterMs ?? null,
         },
       },
-      }),
-    );
+    });
+
+    return json(200, contaFinanceOnboardingResultDTOSchema.parse(responseBody));
   } catch (error) {
     console.error('[Conta Finance Onboarding][GET]', error);
     return json(500, { error: 'ERRO_INTERNO' });

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { ZodError, z } from 'zod';
 
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { createCharge, listCharges, syncPaymentStateFromAsaas } from '@alusa/finance';
 import {
@@ -19,8 +18,10 @@ function json(status: number, body: unknown) {
 }
 
 async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
+  const auth = await resolveTenantSession();
+  return auth.ok
+    ? { id: auth.userId, role: auth.role, contaId: auth.contaId }
+    : null;
 }
 
 const postSchema = z.object({
@@ -102,11 +103,11 @@ export async function POST(req: NextRequest) {
 
         sync = syncResult.success
           ? { success: true, appliedEvent: syncResult.appliedEvent }
-          : { success: false, error: syncResult.error };
+          : { success: false, error: 'ERRO_SINCRONIZAR_PAGAMENTO' };
       } catch (error) {
         sync = {
           success: false,
-          error: error instanceof Error ? error.message : 'ERRO_SINCRONIZAR_PAGAMENTO',
+          error: 'ERRO_SINCRONIZAR_PAGAMENTO',
         };
       }
     }
@@ -118,7 +119,7 @@ export async function POST(req: NextRequest) {
     }
 
     console.error('[Finance Charges][POST]', error);
-    return json(500, { error: 'ERRO_INTERNO', message: error instanceof Error ? error.message : undefined });
+    return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível criar a cobrança.' });
   }
 }
 

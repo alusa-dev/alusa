@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { getSessionUser } from '@/lib/auth/session';
-import { prisma } from '@/prisma/client';
-import { getRenewalProcessDetail } from '@/src/server/matriculas/renewal-management.service';
+import { getRenewalProcessDetailFromHttp } from '@/src/server/matriculas/renewal-http-commands.service';
 import { hasRenewalPermission } from '@/src/server/matriculas/renewal-permissions.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
@@ -21,7 +20,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 
   try {
     const { id } = await context.params;
-    const process = await getRenewalProcessDetail({ contaId: user.contaId, processId: id }, { prisma });
+    const process = await getRenewalProcessDetailFromHttp({ contaId: user.contaId, processId: id });
     return NextResponse.json({ process }, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     if (error instanceof Error && error.message === 'REMATRICULA_NAO_ENCONTRADA') {
@@ -30,7 +29,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     return jsonError(
       500,
       'ERRO_DETALHAR_REMATRICULA',
-      error instanceof Error ? error.message : 'Erro ao carregar processo.',
+      'Erro ao carregar processo.',
     );
   }
 }

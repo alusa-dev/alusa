@@ -1,15 +1,14 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { productSchema } from '@alusa/lib/schemas/product.schema';
 import {
-  productSchema,
   updateProduct,
   archiveProduct,
   deleteProduct,
   unarchiveProduct,
   toggleProductActive,
   getProduct,
-} from '@alusa/lib';
+} from '@alusa/lib/services/product.service';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json({ error: { code, message, details } }, { status });
@@ -18,27 +17,25 @@ function jsonError(status: number, code: string, message: string, details?: unkn
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
     const ctxParams = await ctx.params;
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const product = await getProduct(ctxParams.id, contaId);
     if (!product) return jsonError(404, 'PRODUTO_NAO_ENCONTRADO', 'Produto não encontrado');
 
     return NextResponse.json({ data: product });
   } catch (e) {
-    return jsonError(500, 'ERRO_BUSCAR_PRODUTO', (e as Error).message);
+    return jsonError(500, 'ERRO_BUSCAR_PRODUTO', 'Não foi possível carregar o produto.');
   }
 }
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
     const ctxParams = await ctx.params;
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const body = await req.json();
 
@@ -89,8 +86,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       const product = await updateProduct({
         id: ctxParams.id,
         contaId,
-        actorUserId:
-          (session as { user?: { id?: string } } | null)?.user?.id?.trim() || null,
+        actorUserId: auth.userId,
         ...updateData,
         averageCost,
       });
@@ -106,10 +102,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
     const ctxParams = await ctx.params;
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const url = new URL(req.url);
     const permanent = url.searchParams.get('permanent') === 'true';

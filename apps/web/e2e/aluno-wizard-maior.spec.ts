@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { seedAdminAndAuthenticate } from './utils/auth';
+import { waitForAlunoCreateResponse } from './helpers/aluno-wizard';
 import { fillCpf, fillTelefone, fillCep, mockViaCep, waitForAddressAutoFill } from './utils/masked-input-helpers';
 
 // Fluxo: aluno >= 18 anos (sem responsável)
@@ -57,8 +58,8 @@ test.describe('Cadastro de aluno maior de idade', () => {
     const telefoneDigits = '11988887777';
 
     // Abrir wizard
-    const openWizard = page.getByTestId('abrir-wizard-aluno');
-    await expect(openWizard).toBeEnabled();
+    const openWizard = page.getByTestId('abrir-wizard-aluno').first();
+    await expect(openWizard).toBeEnabled({ timeout: 20_000 });
     await openWizard.click();
     const wizard = page.getByTestId('aluno-wizard');
     await expect(wizard).toBeVisible();
@@ -109,11 +110,8 @@ test.describe('Cadastro de aluno maior de idade', () => {
     await page.getByTestId('aluno-concluir').click();
 
     // Aguarda resposta da API de criação
-    const resp = await page.waitForResponse(
-      (r) => r.url().includes('/api/alunos') && r.request().method() === 'POST',
-      { timeout: 15000 }
-    );
-    expect(resp.status()).toBe(201);
+    const { status } = await waitForAlunoCreateResponse(page);
+    expect(status).toBe(201);
 
     // Aguarda nome aparecer na tabela
     await expect(
@@ -145,7 +143,9 @@ test.describe('Cadastro de aluno maior de idade', () => {
     }
 
     // Abrir wizard
-    await page.getByTestId('abrir-wizard-aluno').click();
+    const openWizard = page.getByTestId('abrir-wizard-aluno').first();
+    await expect(openWizard).toBeEnabled({ timeout: 20_000 });
+    await openWizard.click();
     await expect(page.getByTestId('aluno-wizard')).toBeVisible();
 
     // Preencher apenas dados obrigatórios SEM CPF

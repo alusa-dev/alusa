@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
 import {
   enqueueAsaasWebhookEvent,
   handleAsaasWebhookEvent,
@@ -20,6 +21,7 @@ import { emitBillingNotificationCandidate } from '@/lib/notifications/emit-billi
 import { invalidateChargesCache } from '@/lib/cache/invalidation';
 
 const MAX_BODY_BYTES = 512 * 1024;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,6 +30,21 @@ export const revalidate = 0;
 function isJsonContentType(value: string | null): boolean {
   if (!value) return false;
   return value.toLowerCase().startsWith('application/json');
+}
+
+function resolveRequestId(headers: Headers): string {
+  const candidate = headers.get('x-request-id')?.trim();
+  return candidate && REQUEST_ID_PATTERN.test(candidate) ? candidate : randomUUID();
+}
+
+function jsonWithRequestId(
+  body: unknown,
+  requestId: string,
+  init: ResponseInit = {},
+): NextResponse {
+  const response = NextResponse.json(body, init);
+  response.headers.set('x-request-id', requestId);
+  return response;
 }
 
 function isStrictHttpRejectionsEnabled(): boolean {
@@ -48,6 +65,8 @@ function resolveWebhookResponseStatus(result: { status?: number; persisted?: boo
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = resolveRequestId(req.headers);
+
   try {
     // IP allowlist é diagnóstica por padrão. O authToken do webhook é a
     // barreira primária; bloquear por IP em serverless pode pausar filas se
@@ -59,6 +78,7 @@ export async function POST(req: NextRequest) {
     const ipAllowed = isAsaasWebhookIpAllowed(clientIps.length > 0 ? clientIps : null);
     if (!ipAllowed) {
       console.warn('[Asaas Webhook] IP fora da allowlist diagnóstica', redactWebhookLogObject({
+        requestId,
         clientIp,
         candidateCount: clientIps.length,
         strict: process.env.ASAAS_WEBHOOK_IP_CHECK === 'strict',
@@ -66,8 +86,9 @@ export async function POST(req: NextRequest) {
     }
 
     if (shouldBlockAsaasWebhookByIp(clientIps.length > 0 ? clientIps : null)) {
-      return NextResponse.json(
+      return jsonWithRequestId(
         { success: false, error: 'FORBIDDEN' },
+        requestId,
         { status: 403 },
       );
     }
@@ -77,41 +98,47 @@ export async function POST(req: NextRequest) {
     const rateCheck = await globalWebhookRateLimiter.checkAsync(rateLimitKey);
     if (rateCheck.degraded) {
       console.error('[Asaas Webhook] Rate limit distribuído indisponível; fallback local', redactWebhookLogObject({
+        requestId,
         clientIp,
         tokenHashPrefix,
       }));
     }
     if (!rateCheck.allowed) {
       console.warn('[Asaas Webhook] Rate limit aplicado', redactWebhookLogObject({
+        requestId,
         clientIp,
         tokenHashPrefix,
         scoped: process.env.ASAAS_WEBHOOK_AUTH_SCOPED_RATE_LIMIT === 'true',
       }));
-      return NextResponse.json(
+      return jsonWithRequestId(
         { success: false, error: 'RATE_LIMITED' },
+        requestId,
         { status: 429, headers: { 'Retry-After': String(Math.ceil(rateCheck.resetMs / 1000)) } },
       );
     }
 
     if (!isJsonContentType(req.headers.get('content-type'))) {
-      return NextResponse.json(
+      return jsonWithRequestId(
         { success: false, error: 'UNSUPPORTED_MEDIA_TYPE', message: 'Content-Type deve ser application/json' },
+        requestId,
         { status: 415 },
       );
     }
 
     const contentLength = Number(req.headers.get('content-length') ?? '0');
     if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
-      return NextResponse.json(
+      return jsonWithRequestId(
         { success: false, error: 'PAYLOAD_TOO_LARGE', message: 'Payload excede o tamanho máximo permitido.' },
+        requestId,
         { status: 413 },
       );
     }
 
     const rawBody = await req.text();
     if (rawBody.length > MAX_BODY_BYTES) {
-      return NextResponse.json(
+      return jsonWithRequestId(
         { success: false, error: 'PAYLOAD_TOO_LARGE', message: 'Payload excede o tamanho máximo permitido.' },
+        requestId,
         { status: 413 },
       );
     }
@@ -124,7 +151,7 @@ export async function POST(req: NextRequest) {
     let processedContaId: string | null = null;
 
     if (useAsyncQueue) {
-      const queued = await enqueueAsaasWebhookEvent({ rawBody, accessToken });
+      const queued = await enqueueAsaasWebhookEvent({ rawBody, accessToken, correlationId: requestId });
       result = queued;
       processedContaId = queued.success ? queued.contaId ?? null : null;
 
@@ -141,13 +168,14 @@ export async function POST(req: NextRequest) {
           });
         } catch (drainError) {
           console.warn('[Asaas Webhook][inline-drain] Falha no processamento imediato da fila', redactWebhookLogObject({
+            requestId,
             contaId: queued.contaId,
             error: drainError instanceof Error ? drainError.message : String(drainError),
           }));
         }
       }
     } else {
-      result = await handleAsaasWebhookEvent({ rawBody, accessToken });
+      result = await handleAsaasWebhookEvent({ rawBody, accessToken, correlationId: requestId });
       processedContaId = (result as { contaId?: string | null }).contaId ?? null;
 
       const parsedPayload = parseAsaasWebhookPayload(rawBody);
@@ -171,6 +199,7 @@ export async function POST(req: NextRequest) {
           );
         } catch (notificationError) {
           console.warn('[Asaas Webhook][notification-candidate] Falha ao emitir notificação', redactWebhookLogObject({
+            requestId,
             asaasPaymentId: payload.payment.id,
             event: payload.event,
             error: notificationError instanceof Error ? notificationError.message : String(notificationError),
@@ -184,6 +213,7 @@ export async function POST(req: NextRequest) {
       if (result.success && processedContaId) {
         await drainFinanceWebhookSideEffectOutbox({ contaId: processedContaId, limit: 10 }).catch((drainError) => {
           console.warn('[Asaas Webhook][inline-side-effects] Falha não crítica ao drenar outbox', redactWebhookLogObject({
+            requestId,
             contaId: processedContaId,
             error: drainError instanceof Error ? drainError.message : String(drainError),
           }));
@@ -193,6 +223,7 @@ export async function POST(req: NextRequest) {
     if (result.success && processedContaId) {
       void invalidateChargesCache(processedContaId, 'asaas-webhook').catch((cacheError) => {
         console.warn('[Asaas Webhook][cache-invalidate] Falha não bloqueante', redactWebhookLogObject({
+          requestId,
           contaId: processedContaId,
           error: cacheError instanceof Error ? cacheError.message : String(cacheError),
         }));
@@ -200,7 +231,7 @@ export async function POST(req: NextRequest) {
     }
     // Depois de persistido, falhas de processamento viram retry/DLQ interno.
     // Antes da persistência, falhas técnicas precisam retornar 5xx para o Asaas reenviar.
-    return NextResponse.json(
+    return jsonWithRequestId(
       {
         success: result.success,
         message: result.message,
@@ -208,28 +239,32 @@ export async function POST(req: NextRequest) {
         persisted: result.persisted,
         mode: useAsyncQueue ? 'QUEUE' : 'SYNC',
       },
+      requestId,
       { status: resolveWebhookResponseStatus(result) },
     );
   } catch (error) {
     if (error instanceof Error && error.message.includes('ASAAS_WEBHOOK_AUTH_TOKEN_SECRET')) {
-      return NextResponse.json(
+      return jsonWithRequestId(
         {
           success: false,
           error: 'ENV_NOT_CONFIGURED',
           message: error.message,
         },
+        requestId,
         { status: 503 },
       );
     }
 
     console.error('[Asaas Webhook][POST]', redactWebhookLogObject({
+      requestId,
       error: error instanceof Error ? error : String(error),
     }));
-    return NextResponse.json(
+    return jsonWithRequestId(
       {
         success: false,
         error: 'ERRO_INTERNO',
       },
+      requestId,
       { status: 500 },
     );
   }

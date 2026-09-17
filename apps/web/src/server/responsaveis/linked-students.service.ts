@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { prisma as defaultPrisma } from '@/lib/prisma';
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
 
@@ -28,6 +29,14 @@ export async function listStudentsLinkedToResponsible(
       },
     },
   });
+}
+
+export async function listStudentsLinkedToResponsibleForTenant(input: {
+  contaId: string;
+  responsavelId: string;
+  alunoIds?: string[];
+}) {
+  return listStudentsLinkedToResponsible(defaultPrisma, input);
 }
 
 export async function findUnlinkedStudentIds(

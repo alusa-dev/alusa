@@ -65,6 +65,11 @@ export { resolveLiquidacaoFromAsaasPayment } from './liquidacao-from-asaas';
 export type { ResolveLiquidacaoFromAsaasInput } from './liquidacao-from-asaas';
 export { resolveCobrancaDisplayStatus, isCobrancaStatusTerminal } from './cobranca-display-status';
 export type { CobrancaDisplayStatus } from './cobranca-display-status';
+export {
+  chooseHighestPrecedenceCobrancaDisplayStatus,
+  getCobrancaDisplayStatusPrecedence,
+  mapChargeStatusToCobrancaDisplayStatus,
+} from './cobranca-display-precedence';
 
 // Domain mappers
 export * from './installments.mapper';

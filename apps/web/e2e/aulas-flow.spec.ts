@@ -90,7 +90,8 @@ async function seedAulasScenario(page: import('@playwright/test').Page) {
       horaFim: '11:00',
       professores: {
         create: {
-          professorId: professor.id,
+          conta: { connect: { id: contaId } },
+          professor: { connect: { id: professor.id } },
         },
       },
     },
@@ -113,10 +114,10 @@ async function seedAulasScenario(page: import('@playwright/test').Page) {
   const matricula = await prisma.matricula.create({
     data: {
       id: randomUUID(),
-      alunoId: aluno.id,
-      planoId: plano.id,
-      turmaId: turma.id,
-      responsavelFinanceiroId: null,
+      conta: { connect: { id: contaId } },
+      aluno: { connect: { id: aluno.id } },
+      plano: { connect: { id: plano.id } },
+      turma: { connect: { id: turma.id } },
       dataInicio,
       dataFimContrato,
       status: 'ATIVA',
@@ -148,7 +149,8 @@ async function seedAulasScenario(page: import('@playwright/test').Page) {
       salaId: sala.id,
       professores: {
         create: {
-          professorId: professor.id,
+          conta: { connect: { id: contaId } },
+          professor: { connect: { id: professor.id } },
         },
       },
     },
@@ -168,7 +170,8 @@ async function seedAulasScenario(page: import('@playwright/test').Page) {
       salaId: sala.id,
       professores: {
         create: {
-          professorId: professor.id,
+          conta: { connect: { id: contaId } },
+          professor: { connect: { id: professor.id } },
         },
       },
     },
@@ -240,7 +243,6 @@ test.describe('Aulas', () => {
     await expect(page.getByText(data.turma.nome)).toBeVisible({ timeout: 15000 });
     await page.getByRole('button', { name: new RegExp(data.turma.nome) }).first().click();
     await expect(page.getByText(eventTitle)).toBeVisible({ timeout: 15000 });
-    await page.getByRole('button', { name: 'Visualizar' }).first().click();
     await expect(page.getByText(data.aluno.nome)).toBeVisible({ timeout: 15000 });
   });
 
@@ -263,7 +265,6 @@ test.describe('Aulas', () => {
     await selectOption(page, 'makeup-aluno', data.aluno.nome);
     await selectOption(page, 'makeup-destination-mode', 'Usar evento já existente');
     await selectOption(page, 'makeup-evento-origem', data.origemEvento.titulo);
-    await selectOption(page, 'makeup-turma-origem', data.turma.nome);
     await selectOption(page, 'makeup-turma-destino', data.turma.nome);
     await selectOption(page, 'makeup-evento-destino', data.destinoEvento.titulo);
     const createMakeupResponse = page.waitForResponse(

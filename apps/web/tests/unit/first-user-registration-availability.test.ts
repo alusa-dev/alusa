@@ -25,10 +25,12 @@ vi.mock('@alusa/finance', () => ({
 
 describe('checkFirstUserRegistrationAvailability', () => {
   const originalAsaasApiKey = process.env.ASAAS_API_KEY;
+  const originalPaymentsProviderMode = process.env.PAYMENTS_PROVIDER_MODE;
 
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.ASAAS_API_KEY = '$aact_test_master_key';
+    delete process.env.PAYMENTS_PROVIDER_MODE;
     usuarioFindFirstMock.mockResolvedValue(null);
     asaasGetMyAccountMock.mockResolvedValue({ email: 'master@example.com' });
     asaasListSubaccountsMock.mockResolvedValue({ data: [] });
@@ -39,6 +41,11 @@ describe('checkFirstUserRegistrationAvailability', () => {
       delete process.env.ASAAS_API_KEY;
     } else {
       process.env.ASAAS_API_KEY = originalAsaasApiKey;
+    }
+    if (typeof originalPaymentsProviderMode === 'undefined') {
+      delete process.env.PAYMENTS_PROVIDER_MODE;
+    } else {
+      process.env.PAYMENTS_PROVIDER_MODE = originalPaymentsProviderMode;
     }
   });
 
@@ -98,5 +105,38 @@ describe('checkFirstUserRegistrationAvailability', () => {
 
     expect(asaasGetMyAccountMock).not.toHaveBeenCalled();
     expect(asaasListSubaccountsMock).not.toHaveBeenCalled();
+  });
+
+  it('não chama o Asaas no provider mock de ambientes não produtivos', async () => {
+    process.env.PAYMENTS_PROVIDER_MODE = 'mock';
+    const { checkFirstUserRegistrationAvailability } = await import('@/lib/first-user-service');
+
+    await expect(
+      checkFirstUserRegistrationAvailability({
+        email: 'offline@example.com',
+        financeIntegrationMode: 'WHITELABEL_BAAS',
+      }),
+    ).resolves.toEqual({ available: true });
+
+    expect(asaasGetMyAccountMock).not.toHaveBeenCalled();
+    expect(asaasListSubaccountsMock).not.toHaveBeenCalled();
+  });
+
+  it('mantém o cadastro E2E production-like offline quando o mock é explícito', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('PLAYWRIGHT_TEST', 'true');
+    process.env.PAYMENTS_PROVIDER_MODE = 'mock';
+    const { checkFirstUserRegistrationAvailability } = await import('@/lib/first-user-service');
+
+    await expect(
+      checkFirstUserRegistrationAvailability({
+        email: 'offline-production-like@example.com',
+        financeIntegrationMode: 'WHITELABEL_BAAS',
+      }),
+    ).resolves.toEqual({ available: true });
+
+    expect(asaasGetMyAccountMock).not.toHaveBeenCalled();
+    expect(asaasListSubaccountsMock).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
   });
 });

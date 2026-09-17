@@ -1,6 +1,4 @@
 import { NextResponse } from 'next/server';
-import { AsaasNotificationEvent } from '@prisma/client';
-import { z } from 'zod';
 
 import {
   getMobileStudentNotifications,
@@ -8,20 +6,10 @@ import {
   MobileStudentUnauthorizedError,
   saveMobileStudentNotifications,
 } from '@/features/students/server/mobile-students.service';
+import { saveMobileAsaasNotificationPreferencesInputDTOSchema } from '@/features/configuracoes/notificacoes/asaas/dtos';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 
 export const runtime = 'nodejs';
-
-const notificationInputSchema = z.object({
-  id: z.string().trim().optional(),
-  event: z.nativeEnum(AsaasNotificationEvent),
-  scheduleOffset: z.number().int().min(0).max(60),
-  enabled: z.boolean(),
-  emailEnabledForCustomer: z.boolean(),
-  smsEnabledForCustomer: z.boolean(),
-  whatsappEnabledForCustomer: z.boolean(),
-  phoneCallEnabledForCustomer: z.boolean(),
-});
 
 function bearerToken(request: Request) {
   const value = request.headers.get('authorization')?.trim();
@@ -60,7 +48,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ stud
   }
   try {
     const { studentId } = await params;
-    const parsed = z.object({ preferences: z.array(notificationInputSchema).min(1) }).safeParse(await request.json());
+    const parsed = saveMobileAsaasNotificationPreferencesInputDTOSchema.safeParse(await request.json());
     if (!parsed.success) return result({ error: { code: 'INVALID_INPUT', message: 'Confira as configurações informadas.' } }, 422);
     return result(await saveMobileStudentNotifications({ userId: actor.userId, contaId: actor.contaId, studentId, preferences: parsed.data.preferences }));
   } catch (error) {

@@ -293,6 +293,26 @@ export async function autoCloseAgendaEventsInRange(params: {
   return { closed };
 }
 
+export async function listContasWithAgendaEventsToAutoClose(params: {
+  start: Date;
+  end: Date;
+  prismaClient?: AgendaPrismaClient;
+}) {
+  const prismaClient = params.prismaClient ?? prisma;
+  const rows = await prismaClient.calendarEvent.findMany({
+    where: {
+      startAt: { lt: params.end },
+      endAt: { gt: params.start },
+      tipo: { in: ['AULA', 'REPOSICAO'] },
+      status: 'AGENDADO',
+    },
+    distinct: ['contaId'],
+    select: { contaId: true },
+  });
+
+  return rows.map((row) => row.contaId);
+}
+
 export async function autoCloseAgendaEventIfDue(params: {
   contaId: string;
   eventId: string;

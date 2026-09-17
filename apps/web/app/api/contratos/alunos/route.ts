@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/prisma/client';
 import { getSessionUser } from '@/lib/auth/session';
 import {
   listAlunosComContratosQueryDTOSchema,
   listAlunosComContratosResultDTOSchema,
 } from '@/features/contratos/dtos';
 import { mapAlunoContratoCardToDTO } from '@/features/contratos/mappers';
+import { listStudentsWithContracts } from '@/src/server/contracts/contract-read.service';
 
 const PAGE_SIZE = 7;
 
@@ -31,65 +31,26 @@ export async function GET(request: NextRequest) {
   }
 
   const { q, status, turmaId, page: requestedPage } = parsed.data;
-  const qTerm = q?.toLowerCase() ?? '';
-  const qDigits = (q ?? '').replace(/\D/g, '');
-
   try {
-    const where = {
+    const result = await listStudentsWithContracts({
       contaId: user.contaId,
-      ...(qTerm || qDigits
-        ? {
-            OR: [
-              { nome: { contains: qTerm, mode: 'insensitive' as const } },
-              { nomeSocial: { contains: qTerm, mode: 'insensitive' as const } },
-              { email: { contains: qTerm, mode: 'insensitive' as const } },
-              ...(qDigits ? [{ cpf: { contains: qDigits } }] : []),
-            ],
-          }
-        : {}),
-      ...(turmaId
-        ? {
-            matriculas: {
-              some: {
-                turmaId,
-                contratos: { some: { ...(status ? { status } : {}) } },
-              },
-            },
-          }
-        : {
-            AND: [{
-              OR: [
-                { matriculas: { some: { contratos: { some: { ...(status ? { status } : {}) } } } } },
-                { contratosEvento: { some: { ...(status ? { status } : {}) } } },
-              ],
-            }],
-          }),
-    };
-    const total = await prisma.aluno.count({ where });
-    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-    const page = Math.min(requestedPage, totalPages);
-    const alunos = await prisma.aluno.findMany({
-      where,
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-      select: {
-        id: true,
-        nome: true,
-        foto: true,
-      },
-      orderBy: { nome: 'asc' },
+      query: q,
+      status,
+      turmaId,
+      page: requestedPage,
+      pageSize: PAGE_SIZE,
     });
 
     return NextResponse.json(
       listAlunosComContratosResultDTOSchema.parse({
-        data: alunos.map((aluno) => mapAlunoContratoCardToDTO(aluno)),
+        data: result.alunos.map((aluno) => mapAlunoContratoCardToDTO(aluno)),
         pagination: {
-          page,
+          page: result.page,
           pageSize: PAGE_SIZE,
-          total,
-          totalPages,
-          hasNextPage: page < totalPages,
-          hasPreviousPage: page > 1,
+          total: result.total,
+          totalPages: result.totalPages,
+          hasNextPage: result.page < result.totalPages,
+          hasPreviousPage: result.page > 1,
         },
       }),
     );

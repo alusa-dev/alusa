@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getChargeReadModelLag, getFinanceSummaryLag } from '@alusa/finance';
 
 import { requireSupportApi } from '@/features/support/api/support-api.server';
+import { supportReadModelHealthQuerySchema } from '@/features/support/actions/schemas';
 
 export async function GET(req: Request) {
   const auth = await requireSupportApi(req, {
@@ -11,10 +12,13 @@ export async function GET(req: Request) {
   if (!auth.ok) return auth.response;
 
   const url = new URL(req.url);
-  const contaId = url.searchParams.get('contaId');
-  if (!contaId) {
+  const query = supportReadModelHealthQuerySchema.safeParse({
+    contaId: url.searchParams.get('contaId'),
+  });
+  if (!query.success) {
     return NextResponse.json({ success: false, error: 'CONTA_ID_OBRIGATORIO' }, { status: 422 });
   }
+  const { contaId } = query.data;
 
   const [chargeReadModel, financeSummary] = await Promise.all([
     getChargeReadModelLag({ contaId }),

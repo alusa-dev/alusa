@@ -570,6 +570,7 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       await dragOnCanvas(page, box, 0.55, 0.15, 0.62, 0.80);
 
       await expect(page.getByText(/corredor visual/i)).toBeVisible({ timeout: 8_000 });
+      await saveMap(page);
 
       const snap = await getMapSnapshot(page, scenario);
       const corridors = (snap.objects as Array<{ type: string }> ?? []).filter((o) => o.type === 'CORRIDOR');

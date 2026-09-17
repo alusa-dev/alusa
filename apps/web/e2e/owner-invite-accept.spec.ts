@@ -1,44 +1,20 @@
 import { test, expect } from '@playwright/test';
-import type { Page } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { resetDb } from './utils/reset-db';
+import { seedAdminAndAuthenticate } from './utils/auth';
+import { randomUUID } from 'node:crypto';
 
 const prisma = new PrismaClient();
-
-async function waitSession(page: Page) {
-  await expect.poll(async () => {
-    const ok = await page.evaluate(async () => {
-      const r = await fetch('/api/auth/session');
-      if (!r.ok) return false;
-      const j = (await r.json()) as { user?: { email?: string } };
-      return Boolean(j.user?.email);
-    });
-    return ok;
-  }, { timeout: 10_000 }).toBe(true);
-}
 
 test.describe('Owner + Invite + Accept — fluxo ponta-a-ponta', () => {
   test.beforeEach(async () => {
     await resetDb(prisma);
   });
 
-  test('Cria Owner via first-register, valida bloqueios, convida e aceita', async ({ page, browser }) => {
-    // 1) Primeiro registro cria ADMIN (Owner)
-    await page.goto('/register');
-  await page.fill('[data-testid="register-nome-first"]', 'Owner');
-  await page.fill('[data-testid="register-nome-last"]', 'E2E');
-  await page.fill('[data-testid="register-cpfCnpj"]', '11144477735');
-  await page.fill('[data-testid="register-birthDate"]', '1990-01-01');
-    await page.fill('[data-testid="register-email"]', 'owner+e2e@example.com');
-    await page.fill('[data-testid="register-senha"]', 'SenhaFort3!');
-  await page.fill('[data-testid="register-senha-confirmar"]', 'SenhaFort3!');
-  // aceitar termos
-  await page.getByTestId('register-termos-checkbox').click();
-  await page.getByTestId('legal-acceptance-inner-checkbox').click();
-  await page.getByRole('button', { name: /Aceitar e continuar/i }).click();
-    await page.click('[data-testid="register-submit"]');
-    await page.waitForURL('**/dashboard');
-    await waitSession(page);
+  test('Owner válido preserva bloqueios, convida e aceita usuário', async ({ page, browser }) => {
+    // 1) Usa a fixture canônica para o usuário owner; o cadastro público e a
+    // confirmação de e-mail são cobertos pelos E2Es de autenticação.
+    await seedAdminAndAuthenticate(page, { email: `owner-${randomUUID()}@e2e.test` });
 
     // 2) Obter ID do usuário atual (Owner)
     const me = await page.evaluate(async () => {
@@ -48,17 +24,17 @@ test.describe('Owner + Invite + Accept — fluxo ponta-a-ponta', () => {
     });
     expect(me.role).toBe('ADMIN');
 
-    // 3) Bloqueio: não pode alterar status do Owner
+    // 3) A própria conta não pode alterar o próprio status.
     const patchOwner = await page.request.patch(`/api/users/${me.id}`, { data: { status: 'INATIVO' } });
-    expect(patchOwner.status()).toBe(403);
+    expect(patchOwner.status()).toBe(400);
     const patchErr = await patchOwner.json();
-    expect(String(patchErr.error || '')).toMatch(/Owner/);
+    expect(String(patchErr.error || '')).toMatch(/próprio status/i);
 
-    // 4) Bloqueio: não pode excluir Owner (nem soft e nem hard)
+    // 4) A própria conta não pode remover o próprio acesso.
     const delOwner = await page.request.delete(`/api/users/${me.id}`);
-    expect(delOwner.status()).toBe(403);
+    expect(delOwner.status()).toBe(400);
     const delErr = await delOwner.json();
-    expect(String(delErr.error || '')).toMatch(/Owner/);
+    expect(String(delErr.error || '')).toMatch(/próprio acesso/i);
 
     // 5) Bloqueio: convite ADMIN não permitido
     const adminInviteEmail = `admin.invite+${Date.now()}@example.com`;
@@ -102,8 +78,8 @@ test.describe('Owner + Invite + Accept — fluxo ponta-a-ponta', () => {
       await p2.getByTestId('legal-acceptance-inner-checkbox').click();
       await p2.getByRole('button', { name: /Aceitar e continuar/i }).click();
       await p2.getByTestId('register-submit').click();
-      await p2.waitForURL('**/dashboard');
-      await expect(p2.locator('[data-testid="dashboard-header"]')).toBeVisible();
+      await p2.waitForURL('**/auth/confirm-email?callbackUrl=%2Fdashboard');
+      await expect(p2.getByRole('heading', { name: 'Confirme seu e-mail' })).toBeVisible();
     } finally {
       await ctx.close();
     }

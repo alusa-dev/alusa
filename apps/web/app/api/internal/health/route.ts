@@ -7,10 +7,10 @@ import {
   checkAsaasRedisHealth,
 } from '@alusa/finance';
 
-import { prisma } from '@/src/prisma';
 import { internalHealthResultDTOSchema } from '@/features/system/dtos';
 import { mapInternalHealthResultToDTO } from '@/features/system/mappers';
 import { authOptions } from '@/lib/auth-options';
+import { checkDatabaseConnectivity } from '@/src/server/system/health.service';
 
 type HealthCheckStatus = 'OK' | 'WARNING' | 'ERROR';
 
@@ -53,7 +53,7 @@ export async function GET(req: Request) {
 
   // DB (somente conectividade)
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await checkDatabaseConnectivity();
     checks.push({ name: 'database', status: 'OK' });
   } catch {
     checks.push({ name: 'database', status: 'ERROR', message: 'Falha ao conectar no banco' });

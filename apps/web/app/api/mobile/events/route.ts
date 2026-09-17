@@ -1,4 +1,4 @@
-import { listSchoolEventsQuerySchema } from '@alusa/lib';
+import { listSchoolEventsQuerySchema } from '@alusa/lib/events/events.schema';
 
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { listMobileEvents } from '@/features/events/server/mobile-events.service';

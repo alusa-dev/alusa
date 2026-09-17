@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const mockSafeGetServerSession = vi.hoisted(() => vi.fn());
+const mockResolveTenantSession = vi.hoisted(() => vi.fn());
 const mockListPersonPaymentLedgerIndex = vi.hoisted(() => vi.fn());
 
-vi.mock('@/lib/safe-server-session', () => ({
-  safeGetServerSession: mockSafeGetServerSession,
+vi.mock('@/lib/api/with-tenant-session', () => ({
+  resolveTenantSession: mockResolveTenantSession,
 }));
 
 vi.mock('@/src/server/finance/person-payment-ledger', () => ({
@@ -17,8 +17,11 @@ import { GET } from '@/app/api/financeiro/pagamentos/summary/route';
 describe('GET /api/financeiro/pagamentos/summary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSafeGetServerSession.mockResolvedValue({
-      user: { id: 'u1', contaId: 'conta-1', role: 'FINANCEIRO' },
+    mockResolveTenantSession.mockResolvedValue({
+      ok: true,
+      userId: 'u1',
+      contaId: 'conta-1',
+      role: 'FINANCEIRO',
     });
     mockListPersonPaymentLedgerIndex.mockResolvedValue({
       data: [
@@ -45,7 +48,7 @@ describe('GET /api/financeiro/pagamentos/summary', () => {
   });
 
   it('retorna 401 quando nao autenticado', async () => {
-    mockSafeGetServerSession.mockResolvedValue(null);
+    mockResolveTenantSession.mockResolvedValue({ ok: false, reason: 'UNAUTHENTICATED' });
 
     const response = await GET(new NextRequest('http://localhost/api/financeiro/pagamentos/summary'));
     expect(response.status).toBe(401);

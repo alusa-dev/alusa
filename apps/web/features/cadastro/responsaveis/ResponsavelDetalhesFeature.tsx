@@ -31,7 +31,7 @@ import { pushToast } from '@/components/ui/toast';
 import { CustomerNotificationsEditor } from '@/features/cadastro/shared/CustomerNotificationsEditor';
 import { getEnrollmentHistoryStatusLabel } from '@/features/cadastro/shared/enrollment-history-status';
 import { formatInitials, maskCpf } from '@alusa/lib/client';
-import { getAcademicDateKey } from '@alusa/lib/date-only';
+import { getAcademicDateKey } from '@alusa/shared/date-only';
 import { cn } from '@/lib/utils';
 
 import { deleteResponsavel, getResponsavel, updateResponsavel, type ResponsavelDetail, type ResponsavelOverview } from './services/responsaveis-service';

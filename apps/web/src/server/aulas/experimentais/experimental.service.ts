@@ -9,7 +9,7 @@ import {
 import { AulasError } from '@/src/server/aulas/aulas-error';
 import { createAulasOperationLog } from '@/src/server/aulas/calendar/operation-log.service';
 import { prisma } from '@/src/prisma';
-import { createExperimentalClassNotification } from '@alusa/lib';
+import { createExperimentalClassNotification } from '@alusa/lib/notifications/domain-notifications';
 
 async function resolveTurmaDefaults(contaId: string, turmaId: string) {
   return prisma.turma.findFirst({

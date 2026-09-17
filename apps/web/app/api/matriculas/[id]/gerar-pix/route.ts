@@ -1,181 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
-  createAsaasPayment,
-  findCustomerForPayer,
-  formatDate,
-  getAsaasPaymentDetails,
   KycNotApprovedError,
 } from '@alusa/finance';
-import { ensureAsaasCustomerForPayer } from '@alusa/finance';
 import { matriculaGerarPixResultDTOSchema, matriculaRouteParamsDTOSchema } from '@/features/cadastro/matriculas/dtos';
 import { mapMatriculaGerarPixResultToDTO } from '@/features/cadastro/matriculas/mappers';
+import { generateMatriculaPix } from '@/src/server/matriculas/matricula-pix.service';
 
 export async function POST(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
-    const session = await getServerSession(authOptions);
-
-    if (!session?.user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
 
     const { id: matriculaId } = matriculaRouteParamsDTOSchema.parse(await params);
-    const { contaId } = session.user;
+    const { contaId } = auth;
 
-    // Buscar matrícula com cobrança de taxa - MULTI-TENANT
-    const matricula = await prisma.matricula.findFirst({
-      where: { id: matriculaId, aluno: { contaId } },
-      include: {
-        aluno: {
-          include: {
-            responsaveis: {
-              include: {
-                responsavel: true,
-              },
-            },
-          },
-        },
-        responsavelFinanceiro: true,
-        cobrancas: {
-          where: {
-            tipo: 'TAXA_MATRICULA',
-            status: 'PENDENTE',
-          },
-        },
-      },
-    });
-
-    if (!matricula) {
-      return NextResponse.json({ error: 'Matrícula não encontrada' }, { status: 404 });
-    }
-
-    if (matricula.taxaIsenta) {
-      return NextResponse.json({ error: 'Taxa de matrícula isenta' }, { status: 400 });
-    }
-
-    const taxaCobranca = matricula.cobrancas[0];
-
-    if (!taxaCobranca) {
-      return NextResponse.json({ error: 'Nenhuma cobrança pendente' }, { status: 400 });
-    }
-
-    const aluno = matricula.aluno;
-
-    // Calcular idade do aluno
-    const hoje = new Date();
-    const dataNasc = new Date(aluno.dataNasc);
-    const idade = hoje.getFullYear() - dataNasc.getFullYear();
-    const isMaiorDeIdade = idade >= 18;
-
-    // Definir pagador
-    const responsavel = isMaiorDeIdade
-      ? null
-      : matricula.responsavelFinanceiro || aluno.responsaveis[0]?.responsavel;
-
-    const pagador = isMaiorDeIdade
-      ? {
-          id: aluno.id,
-          nome: aluno.nome,
-          cpf: aluno.cpf!,
-          email: aluno.email!,
-          telefone: aluno.telefone!,
-          asaasCustomerId: aluno.asaasCustomerId,
-        }
-      : responsavel!;
-
-    if (!pagador || !pagador.cpf || !pagador.email) {
-      return NextResponse.json({ error: 'Dados do pagador incompletos' }, { status: 400 });
-    }
-
-    const payerType = isMaiorDeIdade ? 'ALUNO' as const : 'RESPONSAVEL' as const;
-    const payerIdentity = await findCustomerForPayer(contaId, payerType, pagador.id);
-    let customerId = payerIdentity?.asaasCustomerId ?? pagador.asaasCustomerId;
-
-    if (!customerId) {
-      const created = await ensureAsaasCustomerForPayer({
-        contaId,
-        payer: {
-          type: payerType,
-          id: pagador.id,
-          name: pagador.nome,
-          cpfCnpj: pagador.cpf,
-          email: pagador.email,
-          phone: pagador.telefone,
-          mobilePhone: pagador.telefone,
-        },
-        persist: true,
-      });
-
-      if (!created.ok) {
-        return NextResponse.json({ error: created.message }, { status: 500 });
-      }
-
-      customerId = created.customerId;
-    }
-
-    // Verificar se já tem cobrança no Asaas
-    let asaasPaymentId = taxaCobranca.asaasPaymentId;
-
-    if (!asaasPaymentId) {
-      const createdPayment = await createAsaasPayment({
-        contaId,
-        customer: customerId,
-        billingType: 'PIX',
-        value: Number(taxaCobranca.valor),
-        dueDate: formatDate(taxaCobranca.vencimento),
-        description: 'Taxa de Matrícula',
-        externalReference: taxaCobranca.id,
-      });
-
-      if (!createdPayment.success) {
-        if (createdPayment.error === 'KYC_NAO_APROVADO') {
-          return NextResponse.json(
-            { error: 'KYC_NAO_APROVADO', message: 'Conta não aprovada para operações financeiras' },
-            { status: 409 },
-          );
-        }
-
-        return NextResponse.json({ error: createdPayment.error }, { status: 500 });
-      }
-
-      asaasPaymentId = createdPayment.data.id;
-
-      // Atualizar cobrança no banco
-      await prisma.cobranca.update({
-        where: { id: taxaCobranca.id },
-        data: {
-          asaasPaymentId,
-          formaPagamento: 'PIX',
-        },
-      });
-    }
-
-    const { pixQrCode } = await getAsaasPaymentDetails({
-      contaId,
-      paymentId: asaasPaymentId,
-      includePixQrCode: true,
-    });
-
-    if (!pixQrCode) {
-      return NextResponse.json({ error: 'QR Code PIX indisponível' }, { status: 502 });
-    }
+    const result = await generateMatriculaPix({ matriculaId, contaId });
+    if (!result.ok) return NextResponse.json({ error: result.error, ...(result.message ? { message: result.message } : {}) }, { status: result.status });
 
     return NextResponse.json(
       matriculaGerarPixResultDTOSchema.parse(
         mapMatriculaGerarPixResultToDTO({
           success: true,
-          pixId: asaasPaymentId,
-          cobrancaId: taxaCobranca.id,
-          matriculaId: matricula.id,
-          qrCode: pixQrCode.encodedImage,
-          payload: pixQrCode.payload,
-          valor: Number(taxaCobranca.valor),
-          vencimento: taxaCobranca.vencimento,
+          pixId: result.pixId,
+          cobrancaId: result.cobrancaId,
+          matriculaId: result.matriculaId,
+          qrCode: result.qrCode,
+          payload: result.payload,
+          valor: result.valor,
+          vencimento: result.vencimento,
         }),
       ),
     );
@@ -189,7 +47,7 @@ export async function POST(
 
     console.error('[Gerar PIX] Erro:', error);
     return NextResponse.json(
-      { error: 'Erro ao gerar PIX', details: (error as Error).message },
+      { error: 'Erro ao gerar PIX' },
       { status: 500 },
     );
   }

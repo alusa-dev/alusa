@@ -1,20 +1,23 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 
-import { getSessionUser } from '@/lib/auth/session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   formatRematriculaFamiliarValidationMessage,
   parseRematriculaFamiliarDate,
-  rematriculaFamiliarCommitInputSchema,
+  rematriculaFamiliarCommitInputDTOSchema,
 } from '@/lib/api/rematricula-familiar-input';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
-import { prisma } from '@/prisma/client';
 import {
-  confirmRenewalProcess,
-  previewRenewalProcess,
   RENEWAL_IDEMPOTENCY_CONFLICT,
   RENEWAL_IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT,
 } from '@/src/server/matriculas/renewal-process.service';
+import {
+  confirmRenewalProcessFromHttp,
+  listConfirmedRenewalItems,
+  previewRenewalProcessFromHttp,
+  validateFamilyRenewalReferences,
+} from '@/src/server/matriculas/renewal-http-commands.service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
@@ -28,13 +31,6 @@ function jsonError(status: number, code: string, message: string, details?: unkn
 
 function parseDate(value: string) {
   return parseRematriculaFamiliarDate(value);
-}
-
-function sanitizeMessage(message: string) {
-  return message
-    .replace(/Asaas/gi, 'serviço financeiro')
-    .replace(/webhooks?/gi, 'confirmações automáticas')
-    .replace(/provedor/gi, 'serviço financeiro');
 }
 
 function mapDecision(item: {
@@ -74,11 +70,18 @@ function mapDecision(item: {
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!user) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
-  if (!allowedRoles.has(String(user.role).toUpperCase())) {
+  const auth = await resolveTenantSession();
+  if (!auth.ok) {
+    return jsonError(
+      auth.reason === 'CONTA_MISMATCH' ? 403 : 401,
+      auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
+      auth.reason === 'CONTA_MISMATCH' ? 'Conta informada não pertence ao usuário.' : 'Usuário não autenticado.',
+    );
+  }
+  if (!allowedRoles.has(String(auth.role).toUpperCase())) {
     return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para rematrícula familiar.');
   }
+  const user = { id: auth.userId, contaId: auth.contaId, role: auth.role };
   try {
     await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'ENROLLMENT_WRITE' });
   } catch {
@@ -87,28 +90,28 @@ export async function POST(request: Request) {
 
   try {
     const raw = await request.json().catch(() => null);
-    const body = rematriculaFamiliarCommitInputSchema.parse(raw);
+    const body = rematriculaFamiliarCommitInputDTOSchema.parse(raw);
     const contaId = body.contaId?.trim() || user.contaId;
 
     if (contaId !== user.contaId) {
       return jsonError(403, 'CONTA_INVALIDA', 'Conta informada não pertence ao usuário.');
     }
 
-    const responsavel = await prisma.responsavel.findFirst({
-      where: { id: body.responsavelId, contaId },
-      select: { id: true },
+    const references = await validateFamilyRenewalReferences({
+      contaId,
+      responsavelId: body.responsavelId,
+      novoResponsavelId: body.novoResponsavelId,
+      contratoModeloId: body.contratoModeloId,
+      campaignId: body.campaignId,
+      targetPeriodId: body.targetPeriodId ?? String(parseDate(body.dataInicio).getUTCFullYear()),
     });
-    if (!responsavel) {
+    if (!references.responsavel) {
       return jsonError(404, 'RESPONSAVEL_NAO_ENCONTRADO', 'Responsável não encontrado.');
     }
 
     const holderId = body.novoResponsavelId ?? body.responsavelId;
     if (body.novoResponsavelId) {
-      const novoResponsavel = await prisma.responsavel.findFirst({
-        where: { id: body.novoResponsavelId, contaId },
-        select: { id: true },
-      });
-      if (!novoResponsavel) {
+      if (!references.novoResponsavel) {
         return jsonError(404, 'NOVO_RESPONSAVEL_NAO_ENCONTRADO', 'Novo responsável não encontrado.');
       }
     }
@@ -133,11 +136,7 @@ export async function POST(request: Request) {
     }
 
     if (body.contratoModeloId) {
-      const modelo = await prisma.contratoModelo.findFirst({
-        where: { id: body.contratoModeloId, contaId, status: 'ATIVO' },
-        select: { id: true },
-      });
-      if (!modelo) {
+      if (!references.modelo) {
         return jsonError(422, 'CONTRATO_MODELO_INVALIDO', 'Modelo de contrato não encontrado.');
       }
     }
@@ -149,14 +148,8 @@ export async function POST(request: Request) {
     const dataFimContrato = parseDate(body.dataFimContrato);
     const targetPeriodId = body.targetPeriodId ?? String(dataInicio.getUTCFullYear());
     const campaignId = body.campaignId ?? null;
-    if (campaignId) {
-      const campaign = await prisma.rematriculaCampanha.findFirst({
-        where: { id: campaignId, contaId, targetPeriodId },
-        select: { id: true },
-      });
-      if (!campaign) {
+    if (campaignId && !references.campaign) {
         return jsonError(404, 'CAMPANHA_NAO_ENCONTRADA', 'Campanha não encontrada para este período.');
-      }
     }
     const renewalInput = {
       contaId,
@@ -193,7 +186,7 @@ export async function POST(request: Request) {
         notificationChannelsConfigured: body.notificationChannelsConfigured,
       },
     };
-    const preview = await previewRenewalProcess(renewalInput, { prisma });
+    const preview = await previewRenewalProcessFromHttp(renewalInput);
     if (preview.blockers.length > 0) {
       return jsonError(422, 'PREVIEW_BLOQUEADO', preview.blockers[0]?.message ?? 'Preview bloqueado.', {
         blockers: preview.blockers,
@@ -217,23 +210,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await confirmRenewalProcess(
-      {
+    const result = await confirmRenewalProcessFromHttp({
         ...renewalInput,
         previewHash: preview.previewHash,
         sourceVersion: preview.sourceVersion,
         idempotencyKey: body.uiRequestId,
-      },
-      { prisma },
-    );
+      });
 
-    const confirmedItems = await prisma.rematriculaItem.findMany({
-      where: { contaId, processoId: result.processId },
-      include: {
-        matriculaOrigem: { select: { alunoId: true, aluno: { select: { nome: true } } } },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+    const confirmedItems = await listConfirmedRenewalItems({ contaId, processId: result.processId });
     const requestedDecisionByEnrollmentId = new Map(
       body.itens.map((item) => [item.matriculaId, item.decision]),
     );
@@ -309,7 +293,7 @@ export async function POST(request: Request) {
     return jsonError(
       500,
       'ERRO_REMATRICULA_FAMILIAR',
-      sanitizeMessage(error instanceof Error ? error.message : 'Erro ao criar rematrícula familiar.'),
+      'Erro ao criar rematrícula familiar.',
     );
   }
 }

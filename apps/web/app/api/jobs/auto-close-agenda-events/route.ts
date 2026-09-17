@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
 
+import { autoCloseAgendaEventsJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { prisma } from '@/src/prisma';
-import { autoCloseAgendaEventsInRange } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
+import {
+  autoCloseAgendaEventsInRange,
+  listContasWithAgendaEventsToAutoClose,
+} from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,9 +24,12 @@ function dayBounds(reference = new Date()) {
 export async function POST(req: Request) {
   try {
     const url = new URL(req.url);
+    const query = autoCloseAgendaEventsJobQueryDTOSchema.parse({
+      contaId: url.searchParams.get('contaId'),
+    });
     const tenantScope = await resolveTenantScope(req, {
       allowCron: true,
-      requestedContaId: url.searchParams.get('contaId'),
+      requestedContaId: query.contaId,
     });
     if (!tenantScope.ok) {
       return tenantScope.response;
@@ -37,21 +43,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, processedContas: 1, closed: result.closed });
     }
 
-    const contas = await prisma.calendarEvent.findMany({
-      where: {
-        startAt: { lt: end },
-        endAt: { gt: start },
-        tipo: { in: ['AULA', 'REPOSICAO'] },
-        status: 'AGENDADO',
-      },
-      distinct: ['contaId'],
-      select: { contaId: true },
-    });
+    const contaIds = await listContasWithAgendaEventsToAutoClose({ start, end });
 
     let closed = 0;
-    for (const row of contas) {
+    for (const contaId of contaIds) {
       const result = await autoCloseAgendaEventsInRange({
-        contaId: row.contaId,
+        contaId,
         start,
         end,
       });
@@ -60,13 +57,13 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      processedContas: contas.length,
+      processedContas: contaIds.length,
       closed,
     });
   } catch (error) {
     console.error('[jobs/auto-close-agenda-events]', error);
     return NextResponse.json(
-      { success: false, error: (error as Error).message },
+      { success: false, error: 'Não foi possível fechar automaticamente os eventos da agenda.' },
       { status: 500 },
     );
   }

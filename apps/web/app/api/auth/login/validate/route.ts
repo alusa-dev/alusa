@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { verifyCredentialsDetailed } from '@/lib/auth-service';
 import { sendAccountReactivationForEmail } from '@/lib/auth-email-flow';
 import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-limit';
+import { rateLimitResponse } from '@/lib/security/rate-limit-response';
 
 const bodySchema = z.object({
   email: z.string().email().max(320),
@@ -21,16 +22,14 @@ export async function POST(req: Request) {
     }
 
     const ip = ipFromRequest(req);
+    const ipSubject = await rateLimitSubject(ip);
     const emailSubject = await rateLimitSubject(parsed.data.email);
     const [ipLimit, emailLimit] = await Promise.all([
-      authRateLimitAsync(`auth-login-validate:ip:${ip}`, 10, 15 * 60 * 1000),
+      authRateLimitAsync(`auth-login-validate:ip:${ipSubject}`, 10, 15 * 60 * 1000),
       authRateLimitAsync(`auth-login-validate:email:${emailSubject}`, 5, 15 * 60 * 1000),
     ]);
     if (!ipLimit.ok || !emailLimit.ok) {
-      return NextResponse.json(
-        { ok: false, reason: 'RATE_LIMITED' },
-        { status: 429, headers: { 'Retry-After': '900', 'Cache-Control': 'no-store' } },
-      );
+      return rateLimitResponse(!ipLimit.ok ? ipLimit : emailLimit, !ipLimit.ok ? 10 : 5);
     }
 
     const result = await verifyCredentialsDetailed(parsed.data.email, parsed.data.password);

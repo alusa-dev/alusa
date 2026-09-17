@@ -1,43 +1,7 @@
 {
   "mcpServers": {
-    "alusadb": {
-      "command": "npx",
-      "args": [
-        "dotenv",
-        "-e",
-        ".env",
-        "--",
-        "tsx",
-        "mcp/alusadb/src/index.ts"
-      ],
-      "cwd": "${workspaceFolder}"
-    },
     "asaas": {
       "url": "https://docs.asaas.com/mcp"
-    },
-    "tiptap": {
-      "command": "npx",
-      "args": [
-        "dotenv",
-        "-e",
-        ".env",
-        "--",
-        "tsx",
-        "mcp/tiptap/server.ts"
-      ],
-      "cwd": "${workspaceFolder}"
-    },
-    "prosemirror": {
-      "command": "npx",
-      "args": [
-        "dotenv",
-        "-e",
-        ".env",
-        "--",
-        "tsx",
-        "mcp/prosemirror/server.ts"
-      ],
-      "cwd": "${workspaceFolder}"
     },
     "cloudflare-api": {
       "url": "https://mcp.cloudflare.com/mcp"
@@ -58,19 +22,6 @@
       "env": {
         "DEBUG": "false"
       }
-    },
-    "context7": {
-      "command": "npx",
-      "args": [
-        "dotenv",
-        "-e",
-        ".env.local",
-        "--",
-        "npx",
-        "-y",
-        "@upstash/context7-mcp"
-      ],
-      "cwd": "${workspaceFolder}"
     }
   }
 }

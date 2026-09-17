@@ -24,11 +24,11 @@ export async function POST() {
       },
       { headers: { 'cache-control': 'no-store' } },
     );
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Falha ao drenar outbox familiar.',
+        error: 'Falha ao drenar outbox familiar.',
       },
       { status: 500 },
     );

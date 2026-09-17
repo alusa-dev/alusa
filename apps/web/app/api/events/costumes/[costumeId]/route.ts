@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { deleteCostume, updateCostume, updateCostumeSchema } from '@alusa/lib';
+import { updateCostumeSchema } from '@alusa/lib/events/events.schema';
+import { deleteCostume, updateCostume } from '@alusa/lib/events/events.service';
 
 import { getEventsContext, handleEventsRouteError } from '../../_helpers';
 
@@ -27,4 +28,3 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     return handleEventsRouteError(error, 'ERRO_EXCLUIR_FIGURINO_EVENTO');
   }
 }
-

@@ -1,18 +1,17 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import {
   getAsaasCustomerNotificationPreferences,
-  findCustomerForPayer,
   saveAsaasCustomerNotificationPreferences,
   type CustomerNotificationPreferenceInput,
 } from '@alusa/finance';
 
-import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/lib/prisma';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { asaasNotificationPreferenceDTOSchema } from '@/features/configuracoes/notificacoes/asaas/dtos';
 import { deriveCustomerNotificationChannelDefaults } from '@/features/configuracoes/notificacoes/asaas/customer-channel-defaults';
-import { resolveResponsavelRouteId } from '../../_lib/resolve-responsavel-route-id';
+import { resolveResponsavelRouteId } from '@/src/server/responsaveis/resolve-responsavel-route-id.service';
+import { apiJsonError } from '@/lib/api/standard-response';
+import { resolveResponsavelNotificationCustomer } from '@/src/server/finance/customer-notification-scope.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -26,98 +25,35 @@ const updateCustomerNotificationsSchema = z.object({
     .min(1),
 });
 
-type SessionUser = {
-  id?: string | null;
-  role?: string | null;
-  contaId?: string | null;
-};
-
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
-  return json(status, { error: { code, message, details } });
-}
-
-function addCustomerId(ids: Set<string>, customerId?: string | null) {
-  const trimmed = customerId?.trim();
-  if (trimmed) ids.add(trimmed);
+  return apiJsonError(status, code, message, details);
 }
 
 async function resolveAuth() {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
-}
-
-async function resolveResponsavelCustomer(params: {
-  responsavelIdOrRouteId: string;
-  contaId: string;
-  requestedCustomerId?: string | null;
-}) {
-  const responsavelId = await resolveResponsavelRouteId(
-    params.responsavelIdOrRouteId,
-    params.contaId,
-  );
-  if (!responsavelId) return { status: 'NOT_FOUND' as const };
-
-  const responsavel = await prisma.responsavel.findFirst({
-    where: { id: responsavelId, contaId: params.contaId },
-    select: {
-      id: true,
-      nome: true,
-      asaasCustomerId: true,
-    },
-  });
-
-  if (!responsavel) return { status: 'NOT_FOUND' as const };
-
-  const canonicalCustomer = await findCustomerForPayer(
-    params.contaId,
-    'RESPONSAVEL',
-    responsavel.id,
-  );
-
-  const allowedCustomerIds = new Set<string>();
-  addCustomerId(
-    allowedCustomerIds,
-    canonicalCustomer?.asaasCustomerId ?? responsavel.asaasCustomerId,
-  );
-
-  const requested = params.requestedCustomerId?.trim();
-  if (requested) {
-    if (!allowedCustomerIds.has(requested)) {
-      return { status: 'FORBIDDEN_CUSTOMER' as const };
-    }
-    return { status: 'OK' as const, customerId: requested, responsavel };
-  }
-
-  const customerId =
-    canonicalCustomer?.asaasCustomerId ??
-    responsavel.asaasCustomerId ??
-    null;
-
-  if (!customerId) {
-    return { status: 'NO_CUSTOMER' as const, responsavel };
-  }
-
-  return { status: 'OK' as const, customerId, responsavel };
+  return resolveTenantSession();
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const rawParams = await params;
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user?.contaId) {
+    const auth = await resolveAuth();
+    if (!auth.ok) {
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     }
 
     const url = new URL(request.url);
-    const context = await resolveResponsavelCustomer({
-      responsavelIdOrRouteId: rawParams.id,
-      contaId: user.contaId,
-      requestedCustomerId: url.searchParams.get('customerId'),
-    });
+    const responsavelId = await resolveResponsavelRouteId(rawParams.id, auth.contaId);
+    const context = responsavelId
+      ? await resolveResponsavelNotificationCustomer({
+          responsavelId,
+          contaId: auth.contaId,
+          requestedCustomerId: url.searchParams.get('customerId'),
+        })
+      : { status: 'NOT_FOUND' as const };
 
     if (context.status === 'NOT_FOUND') {
       return jsonError(404, 'RESPONSAVEL_NAO_ENCONTRADO', 'Responsável não encontrado');
@@ -134,7 +70,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     }
 
     const preferences = await getAsaasCustomerNotificationPreferences(
-      user.contaId,
+      auth.contaId,
       context.customerId,
     );
 
@@ -145,18 +81,18 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     });
   } catch (error) {
     console.error('[responsaveis/notificacoes][GET]', error);
-    return jsonError(500, 'ERRO_INTERNO', (error as Error).message);
+    return jsonError(500, 'ERRO_INTERNO', 'Não foi possível carregar as preferências de notificação.');
   }
 }
 
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const rawParams = await params;
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user?.contaId) {
+    const auth = await resolveAuth();
+    if (!auth.ok) {
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     }
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return jsonError(
         403,
         'SEM_PERMISSAO',
@@ -169,11 +105,14 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       return jsonError(422, 'PAYLOAD_INVALIDO', 'Payload inválido', parsed.error.flatten());
     }
 
-    const context = await resolveResponsavelCustomer({
-      responsavelIdOrRouteId: rawParams.id,
-      contaId: user.contaId,
-      requestedCustomerId: parsed.data.customerId,
-    });
+    const responsavelId = await resolveResponsavelRouteId(rawParams.id, auth.contaId);
+    const context = responsavelId
+      ? await resolveResponsavelNotificationCustomer({
+          responsavelId,
+          contaId: auth.contaId,
+          requestedCustomerId: parsed.data.customerId,
+        })
+      : { status: 'NOT_FOUND' as const };
 
     if (context.status === 'NOT_FOUND') {
       return jsonError(404, 'RESPONSAVEL_NAO_ENCONTRADO', 'Responsável não encontrado');
@@ -190,7 +129,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     }
 
     const preferences = await saveAsaasCustomerNotificationPreferences(
-      user.contaId,
+      auth.contaId,
       context.customerId,
       parsed.data.preferences as CustomerNotificationPreferenceInput[],
     );
@@ -202,6 +141,6 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     });
   } catch (error) {
     console.error('[responsaveis/notificacoes][PUT]', error);
-    return jsonError(500, 'ERRO_INTERNO', (error as Error).message);
+    return jsonError(500, 'ERRO_INTERNO', 'Não foi possível salvar as preferências de notificação.');
   }
 }

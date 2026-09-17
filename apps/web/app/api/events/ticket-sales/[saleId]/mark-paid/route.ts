@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { drainFinanceWebhookSideEffectOutbox } from '@alusa/finance';
-import { markTicketSalePaid } from '@alusa/lib';
+import { markTicketSalePaid } from '@alusa/lib/events/events.service';
 
 import { getEventsContext, handleEventsRouteError } from '../../../_helpers';
 

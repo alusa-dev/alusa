@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { getStoreSaleById, StoreSaleError } from '@alusa/finance';
 
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -13,13 +13,11 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await safeGetServerSession();
-    const user = session?.user as { contaId?: string | null } | undefined;
-    const contaId = user?.contaId?.trim() || null;
-
-    if (!contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
     }
+    const { contaId } = auth;
 
     const { id } = await context.params;
     const sale = await getStoreSaleById({ contaId, saleId: id });

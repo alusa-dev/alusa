@@ -4,7 +4,7 @@ import { loadAsaasCredentials } from '@alusa/database';
 import {
   evaluatePayerAddressFiscalReadiness,
   payerAddressFromRecord,
-} from '@alusa/lib';
+} from '@alusa/lib/responsaveis/payer-address';
 import { syncResponsavelAsaasCustomer } from '../fiscal/payer-fiscal-readiness';
 
 export type ReconcileResponsavelCustomerAddressesInput = {

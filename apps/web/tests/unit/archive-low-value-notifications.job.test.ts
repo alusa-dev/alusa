@@ -12,12 +12,12 @@ vi.mock('@/lib/auth-options', () => ({
   authOptions: {},
 }));
 
-vi.mock('@alusa/lib', () => ({
+vi.mock('@alusa/lib/notifications/retention', () => ({
   archiveLowValueNotifications: vi.fn(),
 }));
 
 const { getServerSession } = await import('next-auth');
-const { archiveLowValueNotifications } = await import('@alusa/lib');
+const { archiveLowValueNotifications } = await import('@alusa/lib/notifications/retention');
 const { POST } = await import('@/app/api/jobs/archive-low-value-notifications/route');
 
 describe('archive-low-value-notifications job', () => {

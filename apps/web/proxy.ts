@@ -12,6 +12,7 @@ import {
   isKnownApiMethodAllowed,
   methodNotAllowedResponse,
 } from '@/lib/security/http-method-observability';
+import { enforceApiRateLimit } from '@/lib/security/api-rate-limit';
 
 type WizardSnapshot = { completedAt?: string | null; step?: number | null };
 type WizardResponse = { data?: { wizard?: WizardSnapshot } };
@@ -20,6 +21,7 @@ type AccountAccessResponse = { ok?: boolean; reason?: string };
 const isTest = isTestRouteEnabled();
 const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const financeiroPageRoles = new Set(['ADMIN', 'FINANCEIRO']);
+const tenantAdminRoles = new Set(['ADMIN']);
 const originCheckExemptApiPrefixes = [
   '/api/auth/',
   '/api/webhooks/',
@@ -114,6 +116,18 @@ function isFinanceiroPagePath(pathname: string): boolean {
 
 function canAccessFinanceiroPages(role: unknown): boolean {
   return typeof role === 'string' && financeiroPageRoles.has(role.toUpperCase());
+}
+
+function hasRouteRole(protection: ReturnType<typeof resolveRouteProtection>, role: unknown): boolean {
+  if (protection === 'TENANT_ADMIN') {
+    return typeof role === 'string' && tenantAdminRoles.has(role.toUpperCase());
+  }
+
+  if (protection === 'TENANT_FINANCE') {
+    return canAccessFinanceiroPages(role);
+  }
+
+  return true;
 }
 
 function redirectToSignIn(req: NextRequest, params: Record<string, string>) {
@@ -229,8 +243,38 @@ async function handleApiRequest(req: NextRequest): Promise<NextResponse | null> 
   }
 
   if (isPublicApiPath(pathname)) {
+    const rateLimitResponse = await enforceApiRateLimit(req, pathname);
+    if (rateLimitResponse) return rateLimitResponse;
     return NextResponse.next();
   }
+
+  // Mobile valida o Bearer token no próprio Route Handler, com a chave e a
+  // revogação específicas desse protocolo. Não tente convertê-lo em sessão
+  // NextAuth no proxy.
+  if (protection === 'MOBILE_ACCESS_TOKEN') {
+    return NextResponse.next();
+  }
+
+  let token: Record<string, unknown> | null = null;
+  if (protection === 'AUTH_USER' || protection === 'TENANT_ADMIN' || protection === 'TENANT_FINANCE') {
+    token = (await getToken({ req, secret: process.env.NEXTAUTH_SECRET })) as Record<string, unknown> | null;
+    if (!token) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401, headers: { 'cache-control': 'no-store' } },
+      );
+    }
+
+    if (!hasRouteRole(protection, (token as { role?: unknown }).role)) {
+      return NextResponse.json(
+        { error: 'Forbidden' },
+        { status: 403, headers: { 'cache-control': 'no-store' } },
+      );
+    }
+  }
+
+  const rateLimitResponse = await enforceApiRateLimit(req, pathname, token);
+  if (rateLimitResponse) return rateLimitResponse;
 
   const capability = platformBillingCapabilityForMutation(pathname, req.method);
   if (capability) {

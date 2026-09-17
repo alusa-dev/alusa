@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import { authOptions } from '@/lib/auth-options';
 import { authRateLimitAsync, ipFromRequest } from '@/lib/rate-limit';
-import { resolveUserId } from '../../helpers';
+import { resolveUserId } from '@/src/server/identity/user-profile-http.helpers';
 import {
   PasswordChangeOtpError,
   verifyPasswordChangeOtp,

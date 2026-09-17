@@ -17,6 +17,7 @@ import type { StatusMatricula } from '@prisma/client';
 
 import { AUDIT_ACTIONS } from '../foundation/audit-actions';
 import { auditLogService } from '../foundation/audit-log.service';
+import type { PaymentsProviderPort } from '../ports/PaymentsProviderPort';
 
 /**
  * Prazo padrão para timeout (em dias)
@@ -43,6 +44,10 @@ export interface ApplyMatriculaTimeoutInput {
   actor?: { type: 'SYSTEM' | 'USER'; id: string };
 }
 
+export interface ApplyMatriculaTimeoutDeps {
+  paymentsProvider?: PaymentsProviderPort;
+}
+
 export interface ApplyMatriculaTimeoutResult {
   processadas: number;
   canceladas: number;
@@ -52,7 +57,8 @@ export interface ApplyMatriculaTimeoutResult {
 }
 
 export async function applyMatriculaTimeoutJob(
-  input: ApplyMatriculaTimeoutInput = {}
+  input: ApplyMatriculaTimeoutInput = {},
+  deps: ApplyMatriculaTimeoutDeps = {},
 ): Promise<ApplyMatriculaTimeoutResult> {
   const {
     contaId,
@@ -78,7 +84,7 @@ export async function applyMatriculaTimeoutJob(
       status: { in: TIMEOUT_ELIGIBLE_STATUSES },
       timeoutAppliedAt: null, // Idempotência: não reaplicar timeout
       createdAt: { lt: threshold },
-      ...(contaId ? { aluno: { contaId } } : {}),
+      ...(contaId ? { contaId } : {}),
     },
     select: {
       id: true,
@@ -112,7 +118,21 @@ export async function applyMatriculaTimeoutJob(
         continue;
       }
 
-      // Atualizar matrícula
+      // A confirmação externa deve acontecer antes da escrita local. Caso a
+      // escrita local falhe, uma nova execução pode repetir o cancelamento de
+      // forma idempotente sem deixar o ERP em estado financeiro falso.
+      if (matricula.asaasSubscriptionId) {
+        if (!deps.paymentsProvider) {
+          throw new Error('MATRICULA_TIMEOUT_PROVIDER_UNAVAILABLE');
+        }
+
+        await deps.paymentsProvider.cancelSubscription({
+          contaId: matricula.aluno.contaId,
+          subscriptionId: matricula.asaasSubscriptionId,
+        });
+      }
+
+      // Atualizar matrícula somente após o provedor confirmar o cancelamento.
       await prisma.matricula.update({
         where: { id: matricula.id },
         data: {
@@ -135,15 +155,6 @@ export async function applyMatriculaTimeoutJob(
           asaasSubscriptionId: matricula.asaasSubscriptionId,
         },
       });
-
-      // TODO: Cancelar subscription no gateway se existir
-      // Por ora, apenas registrar que precisa ser cancelada manualmente
-      if (matricula.asaasSubscriptionId) {
-        console.warn('[timeout-job] Subscription pendente de cancelamento no gateway:', {
-          matriculaId: matricula.id,
-          asaasSubscriptionId: matricula.asaasSubscriptionId,
-        });
-      }
 
       result.canceladas++;
     } catch (error) {

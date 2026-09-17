@@ -2,12 +2,13 @@ import { NextResponse } from 'next/server';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { checkAccountHealth } from '@alusa/finance';
+import { apiJsonError } from '@/lib/api/standard-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 function jsonError(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status });
+  return apiJsonError(status, code, message);
 }
 
 async function run(req: Request) {
@@ -24,7 +25,7 @@ async function run(req: Request) {
     return NextResponse.json({ success: true, result });
   } catch (error) {
     console.error('[Job Asaas Health Check] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', error instanceof Error ? error.message : String(error));
+    return jsonError(500, 'ERRO_JOB', 'Não foi possível verificar a saúde do provedor financeiro.');
   }
 }
 

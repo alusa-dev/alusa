@@ -1,42 +1,33 @@
 import { NextResponse } from 'next/server';
 
+import { reconcileMatriculaCancellationsJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { prisma } from '@/src/prisma';
-import { reconcilePendingMatriculaCancellations } from '@/src/server/matriculas/matricula-sync.service';
+import {
+  listContasWithPendingMatriculaCancellations,
+  reconcilePendingMatriculaCancellations,
+} from '@/src/server/matriculas/matricula-sync.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
-function clampPositiveInt(value: string | null, fallback: number, max: number) {
-  const parsed = Number(value ?? fallback);
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(max, Math.trunc(parsed))) : fallback;
-}
-
 export async function POST(req: Request) {
   const url = new URL(req.url);
+  const query = reconcileMatriculaCancellationsJobQueryDTOSchema.parse({
+    contaId: url.searchParams.get('contaId'),
+    maxAccounts: url.searchParams.get('maxAccounts'),
+    limit: url.searchParams.get('limit'),
+  });
   const scope = await resolveTenantScope(req, {
     allowCron: true,
-    requestedContaId: url.searchParams.get('contaId'),
+    requestedContaId: query.contaId,
   });
   if (!scope.ok) return scope.response;
 
-  const maxAccounts = clampPositiveInt(url.searchParams.get('maxAccounts'), 25, 100);
-  const limit = clampPositiveInt(url.searchParams.get('limit'), 50, 200);
+  const maxAccounts = query.maxAccounts;
+  const limit = query.limit;
   const contaIds = scope.contaId
     ? [scope.contaId]
-    : (
-        await prisma.matriculaOperacao.findMany({
-          where: {
-            tipo: 'CANCELAMENTO',
-            status: { in: ['PENDENTE_SINCRONISMO', 'DIVERGENTE', 'ERRO'] },
-            conta: { status: 'ATIVO', deletedAt: null },
-          },
-          select: { contaId: true },
-          distinct: ['contaId'],
-          orderBy: { contaId: 'asc' },
-          take: maxAccounts,
-        })
-      ).map((item) => item.contaId);
+    : await listContasWithPendingMatriculaCancellations({ maxAccounts });
 
   const results = [];
   const errors: Array<{ contaId: string; error: string }> = [];
@@ -45,12 +36,12 @@ export async function POST(req: Request) {
     try {
       results.push({
         contaId,
-        ...(await reconcilePendingMatriculaCancellations({ prisma, contaId, limit })),
+        ...(await reconcilePendingMatriculaCancellations({ contaId, limit })),
       });
-    } catch (error) {
+    } catch {
       errors.push({
         contaId,
-        error: error instanceof Error ? error.message : String(error),
+        error: 'Não foi possível reconciliar os cancelamentos desta conta.',
       });
     }
   }

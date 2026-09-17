@@ -1,4 +1,4 @@
-import { listEventParticipantsQuerySchema } from '@alusa/lib';
+import { listEventParticipantsQuerySchema } from '@alusa/lib/events/events.schema';
 
 import { listMobileEventParticipants } from '@/features/events/server/mobile-events.service';
 import {

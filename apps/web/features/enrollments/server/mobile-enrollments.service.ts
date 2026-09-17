@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { buildSeatOccupancyWhereClause } from '@alusa/lib';
+import { buildSeatOccupancyWhereClause } from '@alusa/lib/services/matricula-occupancy';
 
 import { runWithTenant, type TenantTransactionClient } from '@/lib/prisma-tenant';
 import { PrismaClient } from '@prisma/client';

@@ -89,6 +89,7 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
 
     await prisma.cobranca.create({
       data: {
+        contaId,
         matriculaId: matriculaA.id,
         tipo: 'MENSALIDADE',
         descricao: 'Mensalidade',

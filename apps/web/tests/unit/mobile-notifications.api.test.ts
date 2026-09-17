@@ -14,7 +14,7 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimit: vi.fn(() => ({ ok: true })),
 }));
 
-vi.mock('@alusa/lib', () => ({
+vi.mock('@alusa/lib/services/notifications.service', () => ({
   listNotifications: vi.fn(),
   getUnreadNotificationCount: vi.fn(),
   markAllNotificationsAsRead: vi.fn(),
@@ -29,7 +29,7 @@ const {
   markAllNotificationsAsRead,
   updateNotificationRecipientState,
   deleteNotificationRecipient,
-} = await import('@alusa/lib');
+} = await import('@alusa/lib/services/notifications.service');
 const feedRoute = await import('@/app/api/mobile/notifications/route');
 const countRoute = await import('@/app/api/mobile/notifications/unread-count/route');
 const itemRoute = await import('@/app/api/mobile/notifications/[id]/route');

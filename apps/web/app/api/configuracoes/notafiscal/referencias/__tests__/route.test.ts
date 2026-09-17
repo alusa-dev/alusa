@@ -1,8 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('next-auth', () => ({
-  getServerSession: vi.fn().mockResolvedValue(null),
+const mocks = vi.hoisted(() => ({
+  resolveTenantSession: vi.fn(),
 }));
+
+vi.mock('@/lib/api/with-tenant-session', () => ({
+  resolveTenantSession: mocks.resolveTenantSession,
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.resolveTenantSession.mockResolvedValue({ ok: false, reason: 'UNAUTHENTICATED' });
+});
 
 describe('GET /api/configuracoes/notafiscal/referencias/[kind]', () => {
   it('retorna 401 sem sessão', async () => {
@@ -14,11 +23,6 @@ describe('GET /api/configuracoes/notafiscal/referencias/[kind]', () => {
   });
 
   it('retorna 404 para kind inválido', async () => {
-    vi.doMock('next-auth', () => ({
-      getServerSession: vi.fn().mockResolvedValue({
-        user: { id: 'u1', contaId: 'c1', role: 'ADMIN' },
-      }),
-    }));
     const { GET } = await import('@/app/api/configuracoes/notafiscal/referencias/[kind]/route');
     const res = await GET({} as never, {
       params: Promise.resolve({ kind: 'invalidKind' }),

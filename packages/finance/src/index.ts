@@ -49,6 +49,13 @@ export {
   isAsaasPendingStatus,
 } from './mappers/asaas-status-groups';
 export { parseDiscountDueDateLimitDays } from './use-cases/discount-rules';
+export { getTenantInstallmentPaymentBook } from './use-cases/get-installment-payment-book';
+export {
+  buildCobrancaAsaasPaymentUpdatePayload,
+  normalizeCobrancaPaymentAdjustmentType,
+  resolveCanonicalDiscountDueDateLimit,
+} from './use-cases/cobranca-payment-update-payload';
+export type { CobrancaPaymentUpdateChanges } from './use-cases/cobranca-payment-update-payload';
 export {
   ASAAS_SUBSCRIPTION_STATUS,
   isAsaasSubscriptionActive,
@@ -199,6 +206,15 @@ export { resolveLiquidacaoFromAsaasPayment } from './mappers/liquidacao-from-asa
 export type { ResolveLiquidacaoFromAsaasInput } from './mappers/liquidacao-from-asaas';
 export { resolveCobrancaDisplayStatus, isCobrancaStatusTerminal, calculateCobrancaDynamicStatus, calculateDynamicStatus } from './mappers/cobranca-display-status';
 export type { CobrancaDisplayStatus } from './mappers/cobranca-display-status';
+export {
+  chooseHighestPrecedenceCobrancaDisplayStatus,
+  getCobrancaDisplayStatusPrecedence,
+  mapChargeStatusToCobrancaDisplayStatus,
+} from './mappers/cobranca-display-precedence';
+
+export {
+  financeProfileOnboardingDataSchema,
+} from './foundation/schemas';
 
 export {
   mapRequestWithdrawDTOToInput,
@@ -671,12 +687,17 @@ export type {
   RebuildFinanceAggregatesInput,
   RebuildFinanceAggregatesResult,
 } from './read-model/finance-aggregate.service';
-export { evaluateFinancialOperationalHealth } from './operational/financial-operational-health.service';
+export {
+  evaluateFinancialOperationalHealth,
+  hasStoredAsaasWebhookAuthTokenHash,
+  listOpenFinancialOperationalAlerts,
+} from './operational/financial-operational-health.service';
 export type {
   EvaluateFinancialOperationalHealthInput,
   EvaluateFinancialOperationalHealthResult,
   FinancialOperationalAccountHealth,
   FinancialOperationalMetric,
+  FinancialOperationalAlertRecord,
 } from './operational/financial-operational-health.service';
 export {
   syncCustomerNotificationsForUserSelection,
@@ -900,7 +921,10 @@ export {
 export type { PixKeyType } from './use-cases/transfers/asaas-transfer-payload';
 
 export { listTransfers } from './use-cases/list-transfers';
-export { reconcileOpenTransfers } from './use-cases/transfers/reconcile-open-transfers';
+export {
+  listAccountsWithOpenTransfers,
+  reconcileOpenTransfers,
+} from './use-cases/transfers/reconcile-open-transfers';
 export type {
   ReconcileOpenTransfersInput,
   ReconcileResult,
@@ -1036,6 +1060,7 @@ export {
 export {
   getFiscalInvoiceSettings,
   getFiscalMunicipalOptions,
+  listFiscalAccountsForReconciliation,
   syncFiscalSettingsFromProvider,
   configureFiscalNationalPortal,
 } from './use-cases/get-fiscal-invoice-settings';
@@ -1411,6 +1436,8 @@ export type { SubmitKycDataResult } from './use-cases/submit-kyc-data';
 
 // KYC (Etapa 3)
 export { getKycSummary, getKycSummaryFresh } from './use-cases/kyc/get-kyc-summary';
+export { getKycCommercialInfo } from './use-cases/kyc/get-kyc-commercial-info';
+export { getLocalAvailableBalance } from './use-cases/get-local-available-balance';
 export type { GetKycSummaryResult } from './use-cases/kyc/get-kyc-summary';
 export { getKycAsaasReadCacheStats } from './use-cases/kyc/kyc-asaas-read-cache';
 export type {
@@ -1819,6 +1846,7 @@ export type {
 export { applyMatriculaTimeoutJob } from './jobs/apply-matricula-timeout';
 export { cleanupOrphanChargesJob } from './jobs/cleanup-orphan-charges';
 export type {
+  ApplyMatriculaTimeoutDeps,
   ApplyMatriculaTimeoutInput,
   ApplyMatriculaTimeoutResult,
 } from './jobs/apply-matricula-timeout';

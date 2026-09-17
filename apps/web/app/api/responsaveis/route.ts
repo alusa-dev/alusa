@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/lib/prisma';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { syncResponsavelAsaasCustomer } from '@alusa/finance';
 import {
   createResponsavelInputDTOSchema,
@@ -19,6 +17,11 @@ import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
 } from '@/src/server/platform-billing/capacity';
+import {
+  createResponsavelForTenant,
+  findResponsavelByTenantIdentity,
+  listResponsaveisForTenant,
+} from '@/src/server/responsaveis/responsavel.service';
 
 /**
  * GET /api/responsaveis
@@ -26,12 +29,12 @@ import {
  */
 export async function GET(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id || !session?.user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
-    const contaId = session.user.contaId;
+    const contaId = auth.contaId;
     const { searchParams } = new URL(req.url);
     const parsedQuery = listResponsaveisQueryDTOSchema.safeParse({
       q: searchParams.get('q') ?? undefined,
@@ -48,62 +51,7 @@ export async function GET(req: NextRequest) {
     }
     const filters = mapListResponsaveisQueryToFilters(parsedQuery.data, contaId);
 
-    // Multi-tenant: sempre filtrar por contaId
-    const responsaveis = await prisma.responsavel.findMany({
-      where: {
-        contaId: filters.contaId,
-        ...(filters.status === 'ATIVO'
-          ? {
-              alunos: {
-                some: {
-                  contaId,
-                  aluno: { contaId, status: 'ATIVO' },
-                },
-              },
-            }
-          : filters.status === 'INATIVO'
-            ? {
-                alunos: {
-                  some: {
-                    contaId,
-                    aluno: { contaId, status: 'INATIVO' },
-                  },
-                  none: {
-                    contaId,
-                    aluno: { contaId, status: 'ATIVO' },
-                  },
-                },
-              }
-            : {}),
-        ...(filters.search
-          ? {
-              OR: [
-                { nome: { contains: filters.search, mode: 'insensitive' as const } },
-                ...(filters.cpfDigits
-                  ? [{ cpf: { contains: filters.cpfDigits, mode: 'insensitive' as const } }]
-                  : []),
-              ],
-            }
-          : {}),
-      },
-      select: {
-        id: true,
-        nome: true,
-        cpf: true,
-        email: true,
-        telefone: true,
-        financeiro: true,
-        consentimentoComunicacoes: true,
-        consentimentoMarketing: true,
-        _count: {
-          select: {
-            alunos: true,
-          },
-        },
-      },
-      orderBy: { nome: 'asc' },
-      take: filters.take,
-    });
+    const responsaveis = await listResponsaveisForTenant(filters);
 
     const dto = listResponsaveisResultDTOSchema.parse({
       items: responsaveis.map(mapResponsavelRecordToMaskedSummaryDTO),
@@ -122,12 +70,12 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id || !session?.user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
-    const contaId = session.user.contaId;
+    const contaId = auth.contaId;
     try {
       await assertPlatformAccessForConta({ contaId, capability: 'STUDENT_WRITE' });
     } catch (error) {
@@ -152,22 +100,10 @@ export async function POST(req: NextRequest) {
 
     // Multi-tenant: verificar se CPF ou email já existe NESTA CONTA
     const cpfDigits = data.cpf.replace(/\D/g, '');
-    const existente = await prisma.responsavel.findFirst({
-      where: {
-        contaId,
-        OR: [{ cpf: cpfDigits }, ...(data.email ? [{ email: data.email.trim().toLowerCase() }] : [])],
-      },
-      select: {
-        id: true,
-        nome: true,
-        cpf: true,
-        email: true,
-        telefone: true,
-        financeiro: true,
-        consentimentoComunicacoes: true,
-        consentimentoMarketing: true,
-        _count: { select: { alunos: true } },
-      },
+    const existente = await findResponsavelByTenantIdentity({
+      contaId,
+      cpf: cpfDigits,
+      email: data.email ? data.email.trim().toLowerCase() : undefined,
     });
 
     if (existente) {
@@ -185,23 +121,12 @@ export async function POST(req: NextRequest) {
     }
 
     // Criar responsável com contaId
-    const responsavel = await prisma.responsavel.create({
+    const responsavel = await createResponsavelForTenant({
       data: mapCreateResponsavelDTOToData(data, contaId),
-      select: {
-        id: true,
-        nome: true,
-        cpf: true,
-        email: true,
-        telefone: true,
-        financeiro: true,
-        consentimentoComunicacoes: true,
-        consentimentoMarketing: true,
-        _count: {
-          select: {
-            alunos: true,
-          },
-        },
-      },
+      contaId,
+      actorId: auth.userId,
+      consentimentoComunicacoes: data.consentimentoComunicacoes ?? false,
+      consentimentoMarketing: data.consentimentoMarketing ?? false,
     });
 
     const dto = createResponsavelResultDTOSchema.parse(
@@ -210,25 +135,6 @@ export async function POST(req: NextRequest) {
         cpf: responsavel.cpf || cpfDigits,
       }),
     );
-
-    if (data.consentimentoComunicacoes || data.consentimentoMarketing) {
-      await prisma.auditLog.create({
-        data: {
-          contaId,
-          actorType: 'USER',
-          actorId: session.user.id,
-          action: 'COMUNICACAO_CONSENTIMENTO_ATUALIZADO',
-          entityType: 'RESPONSAVEL',
-          entityId: responsavel.id,
-          metadata: {
-            consentimentoComunicacoes: data.consentimentoComunicacoes ?? false,
-            consentimentoMarketing: data.consentimentoMarketing ?? false,
-            origem: 'RESPONSAVEL_CADASTRO',
-            versao: '2026-09-05',
-          },
-        },
-      });
-    }
 
     let asaasSync: { status: 'OK' | 'FAILED' | 'SKIPPED'; message?: string } = { status: 'SKIPPED' };
     if (data.financeiro ?? true) {

@@ -1,0 +1,1171 @@
+{
+  "generatedAt": "deterministic",
+  "policy": "aliases remain compatible until internal consumers, telemetry and contract tests prove zero usage",
+  "families": [
+    {
+      "context": "finance",
+      "canonical": {
+        "path": "/api/finance",
+        "owner": "packages/finance",
+        "consumers": {
+          "total": 145,
+          "bySurface": {
+            "scripts": 2,
+            "web": 143
+          },
+          "files": [
+            {
+              "file": "apps/web/app/(app)/cobrancas/assinaturas/[id]/AssinaturaDetalheClient.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/(app)/cobrancas/assinaturas/page.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/(app)/cobrancas/page.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/(app)/cobrancas/parcelamentos/[id]/ParcelamentoDetalheClient.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/(app)/cobrancas/parcelamentos/page.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/finance/account-status/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/finance/balance/__tests__/route.test.ts",
+              "occurrences": 5
+            },
+            {
+              "file": "apps/web/app/api/finance/charges/__tests__/route.test.ts",
+              "occurrences": 7
+            },
+            {
+              "file": "apps/web/app/api/finance/charges/operational/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/finance/charges/standalone/__tests__/route.test.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/finance/charges/standalone/route.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/finance/installments/[id]/payments/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/finance/installments/[id]/route.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/finance/installments/aggregated/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/finance/realtime/events/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/finance/subscriptions/[id]/route.ts",
+              "occurrences": 3
+            },
+            {
+              "file": "apps/web/app/api/finance/subscriptions/enriched/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/finance/transfers/__tests__/route.test.ts",
+              "occurrences": 4
+            },
+            {
+              "file": "apps/web/app/api/finance/transfers/request/__tests__/route.test.ts",
+              "occurrences": 7
+            },
+            {
+              "file": "apps/web/components/external-asaas-onboarding/ExternalAsaasOnboarding.tsx",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/components/financeiro/CreateChargeModal.tsx",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/components/financeiro/InstallmentActionsMenu.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/components/financeiro/SubscriptionActionsMenu.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/features/financeiro/conta/ContaPage.tsx",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/features/financeiro/conta/ContaTransferDetailPage.tsx",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/features/financeiro/conta/transfer-wizards.tsx",
+              "occurrences": 3
+            },
+            {
+              "file": "apps/web/hooks/use-finance-realtime.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/hooks/usePayerSearch.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/lib/security/api-rate-limit.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/lib/security/route-protection-registry.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/proxy.ts",
+              "occurrences": 8
+            },
+            {
+              "file": "apps/web/tests/e2e/financeiro/transfer-withdraw-flow.spec.ts",
+              "occurrences": 4
+            },
+            {
+              "file": "apps/web/tests/unit/finance-external-onboarding-route.test.ts",
+              "occurrences": 5
+            },
+            {
+              "file": "apps/web/tests/unit/finance-transfer-cancel-route.test.ts",
+              "occurrences": 5
+            },
+            {
+              "file": "apps/web/tests/unit/finance-transfer-request-route.test.ts",
+              "occurrences": 5
+            },
+            {
+              "file": "apps/web/tests/unit/finance-transfers-recipients-route.test.ts",
+              "occurrences": 4
+            },
+            {
+              "file": "apps/web/tests/unit/finance.charges.api.test.ts",
+              "occurrences": 3
+            },
+            {
+              "file": "apps/web/tests/unit/finance.gate-412.api.test.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/tests/unit/finance.installments.api.test.ts",
+              "occurrences": 7
+            },
+            {
+              "file": "apps/web/tests/unit/finance.installments.payments.delete.test.ts",
+              "occurrences": 3
+            },
+            {
+              "file": "apps/web/tests/unit/finance.invoices.api.test.ts",
+              "occurrences": 13
+            },
+            {
+              "file": "apps/web/tests/unit/finance.payers-search.api.test.ts",
+              "occurrences": 8
+            },
+            {
+              "file": "apps/web/tests/unit/finance.subscriptions.api.test.ts",
+              "occurrences": 7
+            },
+            {
+              "file": "apps/web/tests/unit/financeiro-conta-page.test.tsx",
+              "occurrences": 7
+            },
+            {
+              "file": "apps/web/tests/unit/financeiro-conta-transfer-detail-page.test.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/tests/unit/route-protection-registry.test.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "scripts/audit-route-inventory.mjs",
+              "occurrences": 1
+            },
+            {
+              "file": "scripts/security/check-route-protection.ts",
+              "occurrences": 1
+            }
+          ]
+        }
+      },
+      "aliases": [
+        {
+          "path": "/api/financeiro",
+          "lifecycle": "active-migration",
+          "implemented": true,
+          "consumers": {
+            "total": 144,
+            "bySurface": {
+              "packages": 1,
+              "scripts": 2,
+              "web": 141
+            },
+            "files": [
+              {
+                "file": "apps/web/app/(app)/cobrancas/[id]/CobrancaDetalhesClient.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/(app)/cobrancas/avulsas/page.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/(app)/cobrancas/page.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/(app)/dashboard/components/SaldoCard.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/(app)/financeiro/centros-custo/page.tsx",
+                "occurrences": 5
+              },
+              {
+                "file": "apps/web/app/(app)/financeiro/pagamentos/page.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/antecipacoes/configuracao/__tests__/route.test.ts",
+                "occurrences": 3
+              },
+              {
+                "file": "apps/web/app/api/financeiro/antecipacoes/visibilidade/__tests__/route.test.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/cobrancas/[id]/marcar-pago/route.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/app/api/financeiro/cobrancas/[id]/route.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/app/api/financeiro/cobrancas/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/indicadores/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/kpis/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/lancamentos/[id]/recibo/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/lancamentos/categorias/route.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/app/api/financeiro/nota-fiscal/summary/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/pagamentos/aluno/[alunoId]/route.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/app/api/financeiro/pagamentos/responsavel/[responsavelId]/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/pagamentos/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/pagamentos/summary/route.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/app/api/financeiro/saldo/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/simulador-vendas/__tests__/route.test.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/components/financeiro/cobranca-actions-menu.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/components/financeiro/CobrancaActionsMenu.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/components/layout/use-sidebar-nav-access.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/events/participants/ParticipantDetailsFeature.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/financeiro/antecipacoes/AntecipacaoAutomaticaPage.tsx",
+                "occurrences": 3
+              },
+              {
+                "file": "apps/web/features/financeiro/antecipacoes/AnteciparRecebimentoPage.tsx",
+                "occurrences": 4
+              },
+              {
+                "file": "apps/web/features/financeiro/antecipacoes/MinhasAntecipacoesPage.tsx",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/features/financeiro/cobrancas/ChargesTable.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/financeiro/components/FinanceSummary.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/financeiro/conta/ContaPage.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/financeiro/extrato/components/ExtratoDetailsDrawer.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/financeiro/extrato/services/get-extrato.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/financeiro/notafiscal/NotaFiscalIndexFeature.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/financeiro/notafiscal/NotaFiscalPessoaDetalheClient.tsx",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/features/financeiro/pagamentos/components/PagamentoDetalhesDialog.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/financeiro/pagamentos/PagamentoAlunoDetalhesClient.tsx",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/features/financeiro/relatorios/hooks/useReportsQuery.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/financeiro/relatorios/RelatoriosPage.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/financeiro/simulador-vendas/services/simulate-venda.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/hooks/use-financeiro-kpis.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/lib/security/api-rate-limit.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/lib/security/route-protection-registry.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/proxy.ts",
+                "occurrences": 8
+              },
+              {
+                "file": "apps/web/tests/e2e/financeiro/transfer-withdraw-flow.spec.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/tests/unit/api-rate-limit.test.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/tests/unit/auth.middleware.test.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/tests/unit/centro-custo-schema.spec.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/tests/unit/finance-api-response.test.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/tests/unit/financeiro-conta-page.test.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/tests/unit/financeiro-conta-route.test.ts",
+                "occurrences": 4
+              },
+              {
+                "file": "apps/web/tests/unit/financeiro-extrato-comprovante-route.test.ts",
+                "occurrences": 6
+              },
+              {
+                "file": "apps/web/tests/unit/financeiro-extrato-route.test.ts",
+                "occurrences": 7
+              },
+              {
+                "file": "apps/web/tests/unit/financeiro-extrato-service.test.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/tests/unit/financeiro.cobrancas.api.test.ts",
+                "occurrences": 6
+              },
+              {
+                "file": "apps/web/tests/unit/financeiro.cobrancas.formapagamento.api.test.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/tests/unit/financeiro.cobrancas.marcar-pago.post.test.ts",
+                "occurrences": 3
+              },
+              {
+                "file": "apps/web/tests/unit/financeiro.indicadores.api.test.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/tests/unit/financeiro.kpis.api.test.ts",
+                "occurrences": 6
+              },
+              {
+                "file": "apps/web/tests/unit/financeiro.pagamentos.aluno.api.test.ts",
+                "occurrences": 6
+              },
+              {
+                "file": "apps/web/tests/unit/financeiro.pagamentos.summary.api.test.ts",
+                "occurrences": 4
+              },
+              {
+                "file": "apps/web/tests/unit/financeiro.saldo.api.test.ts",
+                "occurrences": 3
+              },
+              {
+                "file": "apps/web/tests/unit/financial-reports.api.test.ts",
+                "occurrences": 10
+              },
+              {
+                "file": "apps/web/tests/unit/route-protection-registry.test.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "packages/finance/src/__tests__/architecture-boundaries.test.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "scripts/audit-route-inventory.mjs",
+                "occurrences": 1
+              },
+              {
+                "file": "scripts/security/check-route-protection.ts",
+                "occurrences": 1
+              }
+            ]
+          }
+        },
+        {
+          "path": "/api/cobrancas",
+          "lifecycle": "active-migration",
+          "implemented": true,
+          "consumers": {
+            "total": 164,
+            "bySurface": {
+              "packages": 1,
+              "scripts": 3,
+              "web": 160
+            },
+            "files": [
+              {
+                "file": "apps/web/app/(app)/cobrancas/[id]/CobrancaDetalhesClient.tsx",
+                "occurrences": 10
+              },
+              {
+                "file": "apps/web/app/api/cobrancas/[id]/asaas-notify/route.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/app/api/cobrancas/[id]/forma-pagamento/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/cobrancas/[id]/resend/__tests__/route.test.ts",
+                "occurrences": 11
+              },
+              {
+                "file": "apps/web/app/api/cobrancas/[id]/resend/route.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/app/api/cobrancas/[id]/sync-asaas/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/cobrancas/route.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/app/api/configuracoes/notafiscal/__tests__/route.test.ts",
+                "occurrences": 5
+              },
+              {
+                "file": "apps/web/app/api/events/public-orders/[orderId]/refund/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/components/financeiro/cobranca-actions-menu.tsx",
+                "occurrences": 3
+              },
+              {
+                "file": "apps/web/components/financeiro/CobrancaActionsMenu.tsx",
+                "occurrences": 6
+              },
+              {
+                "file": "apps/web/components/financeiro/CobrancaArquivos.tsx",
+                "occurrences": 3
+              },
+              {
+                "file": "apps/web/components/financeiro/CobrancaCompartilharButton.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/components/financeiro/CobrancaEditarDialog.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/components/financeiro/CobrancaNotaFiscal.tsx",
+                "occurrences": 6
+              },
+              {
+                "file": "apps/web/components/rematriculas/TaxaMatriculaSection.tsx",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/e2e/matriculas-sync.spec.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/cadastro/matriculas/components/MatriculaDetalhesDialog.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/cadastro/matriculas/MatriculasFeature.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/cadastro/matriculas/services/matriculas-service.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/events/events-service.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/events/participants/ParticipantDetailsFeature.tsx",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/features/financeiro/cobrancas/dtos/index.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/financeiro/hooks/use-visible-charge-convergence.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/financeiro/notafiscal/components/NotaFiscalTable.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/features/notificacoes/NotificationsInboxPage.tsx",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/hooks/use-cobranca-detail-query.ts",
+                "occurrences": 3
+              },
+              {
+                "file": "apps/web/lib/security/api-rate-limit.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/lib/security/route-protection-registry.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/proxy.ts",
+                "occurrences": 3
+              },
+              {
+                "file": "apps/web/src/server/finance/cobranca-command-http.service.ts",
+                "occurrences": 22
+              },
+              {
+                "file": "apps/web/src/server/finance/cobranca-detail-http-route.service.ts",
+                "occurrences": 7
+              },
+              {
+                "file": "apps/web/src/server/finance/refund-cobranca.service.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/src/server/finance/undo-cash-payment.service.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/tests/unit/auth.middleware.test.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/tests/unit/cobrancas.arquivos.api.test.ts",
+                "occurrences": 6
+              },
+              {
+                "file": "apps/web/tests/unit/cobrancas.forma-pagamento.put.test.ts",
+                "occurrences": 5
+              },
+              {
+                "file": "apps/web/tests/unit/cobrancas.id.delete.test.ts",
+                "occurrences": 8
+              },
+              {
+                "file": "apps/web/tests/unit/cobrancas.id.get.test.ts",
+                "occurrences": 12
+              },
+              {
+                "file": "apps/web/tests/unit/cobrancas.id.put.test.ts",
+                "occurrences": 9
+              },
+              {
+                "file": "apps/web/tests/unit/cobrancas.refund.post.test.ts",
+                "occurrences": 4
+              },
+              {
+                "file": "apps/web/tests/unit/cobrancas.sync-asaas.post.test.ts",
+                "occurrences": 3
+              },
+              {
+                "file": "apps/web/tests/unit/cobrancas.undo-receive-in-cash.post.test.ts",
+                "occurrences": 3
+              },
+              {
+                "file": "apps/web/tests/unit/route-protection-registry.test.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "packages/finance/src/__tests__/architecture-boundaries.test.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "scripts/audit-route-inventory.mjs",
+                "occurrences": 2
+              },
+              {
+                "file": "scripts/security/check-route-protection.ts",
+                "occurrences": 1
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "context": "students",
+      "canonical": {
+        "path": "/api/alunos",
+        "owner": "apps/web/src/server/alunos",
+        "consumers": {
+          "total": 60,
+          "bySurface": {
+            "packages": 1,
+            "web": 59
+          },
+          "files": [
+            {
+              "file": "apps/web/app/(app)/admin/configuracoes/usuarios/page.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/components/alunos/AlunoDeleteDialog.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/components/alunos/AlunoEditDialog.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/components/alunos/AlunoWizardDialog.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/components/alunos/InativarAlunoDialog.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/components/alunos/ReativarAlunoDialog.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/components/matriculas/wizard/steps/StepAluno.tsx",
+              "occurrences": 4
+            },
+            {
+              "file": "apps/web/e2e/aluno-wizard-maior.spec.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/e2e/aluno-wizard-menor.spec.ts",
+              "occurrences": 3
+            },
+            {
+              "file": "apps/web/e2e/helpers/aluno-wizard.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/e2e/wizard-aluno-simples.spec.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/e2e/wizard-aluno.spec.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/features/aulas/experimentais/services/experimental-service.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/features/cadastro/alunos/AlunoDetalhesFeature.tsx",
+              "occurrences": 5
+            },
+            {
+              "file": "apps/web/features/cadastro/alunos/AlunosFeature.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/features/cadastro/alunos/services/alunos-service.ts",
+              "occurrences": 3
+            },
+            {
+              "file": "apps/web/features/events/participants/useStudentAutocomplete.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/proxy.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/tests/e2e/aluno/student-responsavel-lifecycle.spec.ts",
+              "occurrences": 10
+            },
+            {
+              "file": "apps/web/tests/unit/alunos.list.api.test.ts",
+              "occurrences": 6
+            },
+            {
+              "file": "apps/web/tests/unit/alunos.responsaveis.api.test.ts",
+              "occurrences": 8
+            },
+            {
+              "file": "apps/web/tests/unit/api-rate-limit.test.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/tests/unit/middleware.public-api-paths.test.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/tests/unit/route-protection-registry.test.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "packages/lib/src/alunos/aluno.service.ts",
+              "occurrences": 1
+            }
+          ]
+        }
+      },
+      "aliases": [
+        {
+          "path": "/api/students",
+          "lifecycle": "retired",
+          "implemented": false,
+          "consumers": {
+            "total": 0,
+            "bySurface": {},
+            "files": []
+          }
+        }
+      ]
+    },
+    {
+      "context": "responsibles",
+      "canonical": {
+        "path": "/api/responsaveis",
+        "owner": "apps/web/src/server/alunos",
+        "consumers": {
+          "total": 33,
+          "bySurface": {
+            "web": 33
+          },
+          "files": [
+            {
+              "file": "apps/web/app/api/responsaveis/[id]/alunos/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/responsaveis/route.ts",
+              "occurrences": 4
+            },
+            {
+              "file": "apps/web/components/matriculas/wizard/steps/StepAluno.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/components/matriculas/wizard/steps/StepAlunosFamiliares.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/components/matriculas/wizard/steps/StepResponsavelFamiliar.tsx",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/features/cadastro/responsaveis/ResponsavelDetalhesFeature.tsx",
+              "occurrences": 3
+            },
+            {
+              "file": "apps/web/features/cadastro/responsaveis/services/responsaveis-service.ts",
+              "occurrences": 6
+            },
+            {
+              "file": "apps/web/proxy.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/src/server/responsaveis/responsavel-http-route.service.ts",
+              "occurrences": 3
+            },
+            {
+              "file": "apps/web/src/server/responsaveis/responsavel-overview-http-route.service.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/tests/e2e/aluno/student-responsavel-lifecycle.spec.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/tests/unit/responsaveis.api.test.ts",
+              "occurrences": 8
+            }
+          ]
+        }
+      },
+      "aliases": [
+        {
+          "path": "/api/responsibles",
+          "lifecycle": "retired",
+          "implemented": false,
+          "consumers": {
+            "total": 0,
+            "bySurface": {},
+            "files": []
+          }
+        }
+      ]
+    },
+    {
+      "context": "enrollments",
+      "canonical": {
+        "path": "/api/matriculas",
+        "owner": "apps/web/src/server/matriculas",
+        "consumers": {
+          "total": 99,
+          "bySurface": {
+            "packages": 1,
+            "web": 98
+          },
+          "files": [
+            {
+              "file": "apps/web/app/(app)/matriculas/[id]/MatriculaDetalhesClient.tsx",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/matriculas/__tests__/route.test.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/__tests__/patch-details.test.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/__tests__/route.test.ts",
+              "occurrences": 4
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/editar/__tests__/route.test.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/forma-pagamento/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/gerar-pix/__tests__/route.test.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/juros-multa/__tests__/route.test.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/pausa-resumo/__tests__/route.test.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/pausar/__tests__/route.test.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/reativar/__tests__/route.test.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/reenviar-cobranca/__tests__/route.test.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/status/__tests__/route.test.ts",
+              "occurrences": 4
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/status/route.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/taxa/route.test.ts",
+              "occurrences": 3
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/valor/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/matriculas/operacoes/[uiRequestId]/route.test.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/components/matriculas/wizard/steps/StepFinanceiro.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/components/rematriculas/AcoesMatricula.tsx",
+              "occurrences": 4
+            },
+            {
+              "file": "apps/web/components/rematriculas/ConfiguracoesPagamento.tsx",
+              "occurrences": 4
+            },
+            {
+              "file": "apps/web/components/rematriculas/DadosMatricula.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/components/rematriculas/DadosPlano.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/components/rematriculas/EditarMatriculaDialog.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/components/rematriculas/TaxaMatriculaSection.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/e2e/matricula-domain-rules.spec.ts",
+              "occurrences": 4
+            },
+            {
+              "file": "apps/web/e2e/matricula-familiar.spec.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/e2e/matriculas-kyc-block.spec.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/e2e/matriculas-sync.spec.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/features/cadastro/matriculas/components/MatriculaDetalhesDialog.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/features/cadastro/matriculas/MatriculasFeature.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/features/cadastro/matriculas/services/enrollment-attempt.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/features/cadastro/matriculas/services/matriculas-actions-service.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/features/cadastro/matriculas/services/matriculas-service.ts",
+              "occurrences": 9
+            },
+            {
+              "file": "apps/web/hooks/use-matricula-familiar-submit.tsx",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/proxy.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/scripts/test-asaas-integration.mjs",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/src/server/matriculas/create-family-enrollment.use-case.ts",
+              "occurrences": 6
+            },
+            {
+              "file": "apps/web/src/server/matriculas/enrollment-billing.orchestrator.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/tests/unit/catalog-tenant-authority.api.test.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/tests/unit/matriculas.create.api.test.ts",
+              "occurrences": 3
+            },
+            {
+              "file": "apps/web/tests/unit/matriculas.financial-permissions.test.ts",
+              "occurrences": 5
+            },
+            {
+              "file": "apps/web/tests/unit/matriculas.id.get.test.ts",
+              "occurrences": 4
+            },
+            {
+              "file": "packages/finance/src/family-billing/processor.ts",
+              "occurrences": 1
+            }
+          ]
+        }
+      },
+      "aliases": [
+        {
+          "path": "/api/enrollments",
+          "lifecycle": "retired",
+          "implemented": false,
+          "consumers": {
+            "total": 0,
+            "bySurface": {},
+            "files": []
+          }
+        }
+      ]
+    },
+    {
+      "context": "contracts",
+      "canonical": {
+        "path": "/api/contratos",
+        "owner": "apps/web/src/server/contracts",
+        "consumers": {
+          "total": 32,
+          "bySurface": {
+            "packages": 1,
+            "scripts": 1,
+            "web": 30
+          },
+          "files": [
+            {
+              "file": "apps/web/app/api/contratos/__tests__/route.test.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/contratos/modelos/__tests__/route.test.ts",
+              "occurrences": 3
+            },
+            {
+              "file": "apps/web/e2e/contrato-detalhes-layout.spec.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/features/contratos/services/contratos-service.ts",
+              "occurrences": 7
+            },
+            {
+              "file": "apps/web/features/contratos/services/modelos-service.ts",
+              "occurrences": 8
+            },
+            {
+              "file": "apps/web/proxy.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/tests/contratos/route.spec.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/tests/unit/contratos.alunos.api.test.ts",
+              "occurrences": 5
+            },
+            {
+              "file": "apps/web/tests/unit/public.contrato.assinar.route.test.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "packages/lib/src/contracts/use-cases/sign-contract.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "scripts/reconcile-shared-plan-subscriptions.ts",
+              "occurrences": 1
+            }
+          ]
+        }
+      },
+      "aliases": []
+    }
+  ]
+}

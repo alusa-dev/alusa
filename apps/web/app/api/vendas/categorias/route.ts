@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { categorySchema, createCategory, listCategories } from '@alusa/lib';
+import { categorySchema } from '@alusa/lib/schemas/category.schema';
+import { createCategory, listCategories } from '@alusa/lib/services/category.service';
+
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json({ error: { code, message, details } }, { status });
@@ -9,22 +10,22 @@ function jsonError(status: number, code: string, message: string, details?: unkn
 
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const data = await listCategories(contaId);
     return NextResponse.json({ data });
   } catch (e) {
-    return jsonError(500, 'ERRO_LISTAR_CATEGORIAS', (e as Error).message);
+    return jsonError(500, 'ERRO_LISTAR_CATEGORIAS', 'Não foi possível carregar as categorias.');
   }
 }
 
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const body = await req.json();
     const parsed = categorySchema.safeParse({ name: body.name });

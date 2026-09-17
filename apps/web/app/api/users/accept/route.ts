@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { InviteUserService } from '@alusa/lib';
+import * as InviteUserService from '@alusa/lib/server/services/invite-user-service';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { hashPassword, passwordPolicyMessage } from '@/lib/auth-password';
 import { sendEmailVerificationForUser } from '@/lib/auth-email-flow';
@@ -10,6 +9,7 @@ import {
   validateInviteQueryDTOSchema,
   validateInviteResultDTOSchema,
 } from '@/features/users/dtos';
+import { findPendingInviteForAcceptance } from '@/src/server/users/invite-acceptance.service';
 
 export async function GET(req: Request) {
   try {
@@ -24,7 +24,12 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Token ausente' }, { status: 400 });
     }
 
-    const invite = await prisma.invite.findUnique({ where: { token } });
+    const invite = await findPendingInviteForAcceptance(token, {
+      email: true,
+      role: true,
+      status: true,
+      expiresAt: true,
+    });
     if (!invite || invite.status !== 'PENDING') {
       return NextResponse.json({ error: 'Convite inválido' }, { status: 404 });
     }
@@ -60,10 +65,7 @@ export async function POST(req: Request) {
     const { token, password, name, senha, nome } = parsed.data;
     const finalPassword = senha || password;
     const finalName = nome || name;
-    const invite = await prisma.invite.findUnique({
-      where: { token },
-      select: { email: true, status: true, expiresAt: true },
-    });
+    const invite = await findPendingInviteForAcceptance(token);
     if (!invite || invite.status !== 'PENDING') {
       return NextResponse.json({ error: 'Convite inválido' }, { status: 404 });
     }

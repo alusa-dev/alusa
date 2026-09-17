@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { safeGetServerSession } from '@/lib/safe-server-session';
-import { prisma } from '@/src/prisma';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { listFinanceiroPagamentosResultDTOSchema } from '@/features/financeiro/dtos';
 import { mapFinanceiroPagamentoRecordToDTO } from '@/features/financeiro/mappers';
 import { financeInternalError, financeJsonError, stableQueryFingerprint } from '@/lib/api/finance-api-response';
@@ -10,8 +9,8 @@ import {
   isCacheLayerEnabled,
   withTenantCache,
 } from '@/lib/cache/tenant-cache';
-import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { privateJson } from '@/lib/private-cache';
+import { listFinanceiroPagamentos } from '@/src/server/finance/payment-list.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -55,11 +54,9 @@ function buildPagamentosCacheKey(
 // Filtros: status, formaPagamento, q (aluno ou descricao da cobrança), cobrancaId
 export async function GET(req: NextRequest) {
   try {
-    const session = await safeGetServerSession();
-    type SessUser = { id?: string; contaId?: string; role?: string };
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const url = new URL(req.url);
@@ -70,77 +67,23 @@ export async function GET(req: NextRequest) {
     const cobrancaId = url.searchParams.get('cobrancaId') || undefined;
     const search = url.searchParams.get('q')?.trim();
 
-    const where: Record<string, unknown> = {
-      cobranca: { matricula: { aluno: { contaId: user.contaId } } },
-    };
-    if (status.length) where.status = { in: status };
-    if (formaPagamento.length) where.formaPagamento = { in: formaPagamento } as { in: string[] };
-    if (cobrancaId) where.cobrancaId = cobrancaId;
-    if (search) {
-      where.OR = [
-        { cobranca: { matricula: { aluno: { nome: { contains: search, mode: 'insensitive' } } } } },
-        { cobranca: { descricao: { contains: search, mode: 'insensitive' } } },
-      ];
-    }
-
-    async function loadPagamentos() {
-      return Promise.all([
-        prisma.pagamento.count({ where }),
-        prisma.pagamento.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        include: {
-          cobranca: {
-            include: {
-              matricula: { select: { aluno: { select: { id: true, nome: true } }, id: true } },
-            },
-          },
-        },
-        }),
-      ]);
-    }
-
     const loadBody = async () => {
-      const [total, pagamentos] = await loadPagamentos();
-
-      const items = pagamentos.map((p) => ({
-        id: p.id,
-        status: p.status,
-        valorPago: Number(p.valorPago),
-        dataPagamento: p.dataPagamento?.toISOString() || null,
-        formaPagamento: p.formaPagamento,
-        cobrancaId: p.cobrancaId,
-        cobranca: {
-          id: p.cobranca.id,
-          tipo: p.cobranca.tipo,
-          status: p.cobranca.status,
-          valor: Number(p.cobranca.valor),
-          vencimento: p.cobranca.vencimento.toISOString(),
-          aluno: {
-            id: p.cobranca.matricula.aluno.id,
-            nome: p.cobranca.matricula.aluno.nome,
-          },
-          displayStatus: buildChargeDisplayStatusDTO({
-            localStatus: p.cobranca.status,
-            asaasStatus: p.cobranca.asaasStatus,
-            liquidacaoStatus: p.cobranca.liquidacaoStatus,
-            hasAsaasLink: Boolean(
-              p.cobranca.asaasPaymentId || p.cobranca.asaasStatus || p.cobranca.liquidacaoStatus,
-            ),
-          }),
-        },
-        asaasPaymentId: p.asaasPaymentId,
-        createdAt: p.createdAt.toISOString(),
-      }));
-
-      return listFinanceiroPagamentosResultDTOSchema.parse({
-        data: items.map((item) => mapFinanceiroPagamentoRecordToDTO(item)),
-        total,
+      const result = await listFinanceiroPagamentos({
+        contaId: auth.contaId,
         page,
         pageSize,
-        totalPages: Math.ceil(total / pageSize),
+        status,
+        formaPagamento,
+        cobrancaId,
+        search,
+      });
+
+      return listFinanceiroPagamentosResultDTOSchema.parse({
+        data: result.data.map((item) => mapFinanceiroPagamentoRecordToDTO(item)),
+        total: result.total,
+        page,
+        pageSize,
+        totalPages: Math.ceil(result.total / pageSize),
       });
     };
 
@@ -150,7 +93,7 @@ export async function GET(req: NextRequest) {
 
     const cached = await withTenantCache({
       adapter: getTenantCacheAdapter(),
-      key: buildPagamentosCacheKey(user.contaId, {
+      key: buildPagamentosCacheKey(auth.contaId, {
         page,
         pageSize,
         status,

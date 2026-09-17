@@ -9,7 +9,7 @@ import {
   updateCustomer,
   type BillingType,
 } from '@alusa/asaas';
-import type { EventAsaasPaymentProvider } from '@alusa/lib';
+import type { EventAsaasPaymentProvider } from '@alusa/lib/events/event-asaas-payment-provider';
 
 export const eventAsaasPaymentProvider: EventAsaasPaymentProvider = {
   listCustomers: (params) => listCustomers(params),

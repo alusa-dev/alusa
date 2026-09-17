@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   buildChargeInvoiceCacheKey,
   invalidateChargeResourceCache,
@@ -12,6 +10,7 @@ import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate
 import { resolveChargeFromRouteRef } from '@/lib/finance/resolve-charge-route-ref';
 import { privateJson } from '@/lib/private-cache';
 import { financeInternalError } from '@/lib/api/finance-api-response';
+import { publicInvoiceProviderErrorMessage } from '@/lib/api/finance-invoice-errors';
 import {
   chargeInvoiceResponseSchema,
   scheduleChargeInvoiceInputSchema,
@@ -24,8 +23,6 @@ import {
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 const CHARGE_INVOICE_CACHE_SECONDS = 45;
 const CHARGE_INVOICE_STALE_SECONDS = 45;
-
-type SessionUser = { id?: string; role?: string; contaId?: string };
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -46,7 +43,10 @@ function scheduleInvoiceErrorStatus(error: string | { kind: string; message: str
 
 function scheduleInvoiceErrorBody(error: string | { kind: string; message: string }) {
   if (typeof error === 'object' && error !== null && 'message' in error) {
-    return { error: 'ERRO_AO_AGENDAR_INVOICE', message: error.message };
+    return {
+      error: 'ERRO_AO_AGENDAR_INVOICE',
+      message: publicInvoiceProviderErrorMessage(error, 'agendar'),
+    };
   }
   return { error };
 }
@@ -61,13 +61,12 @@ type ChargeInvoiceRouteBody = {
 export async function GET(_req: NextRequest, context: RouteContext) {
   try {
     const { id: routeRef } = await context.params;
-    const session = await getServerSession(authOptions).catch(() => null);
-    const user = (session as { user?: SessionUser } | null)?.user;
-    if (!user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(401, { error: 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
     const loadBody = async (): Promise<ChargeInvoiceRouteBody> => {
-      const result = await getChargeInvoiceDetail({ contaId: user.contaId!, routeRef });
+      const result = await getChargeInvoiceDetail({ contaId: auth.contaId, routeRef });
       if (!result.success) {
         if (result.error === 'CHARGE_NAO_ENCONTRADO') {
           return { status: 404, body: { error: 'CHARGE_NAO_ENCONTRADA' } };
@@ -88,7 +87,7 @@ export async function GET(_req: NextRequest, context: RouteContext) {
 
     const cached = await withTenantCache({
       adapter: getTenantCacheAdapter(),
-      key: buildChargeInvoiceCacheKey(user.contaId, routeRef),
+      key: buildChargeInvoiceCacheKey(auth.contaId, routeRef),
       ttlSeconds: CHARGE_INVOICE_CACHE_SECONDS,
       staleWhileRevalidateSeconds: CHARGE_INVOICE_STALE_SECONDS,
       lockTtlSeconds: 6,
@@ -113,15 +112,14 @@ export async function GET(_req: NextRequest, context: RouteContext) {
 export async function POST(req: NextRequest, context: RouteContext) {
   try {
     const { id: routeRef } = await context.params;
-    const session = await getServerSession(authOptions).catch(() => null);
-    const user = (session as { user?: SessionUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(401, { error: 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const gate = await guardFinancialAccountOr412(user.contaId);
+    const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
-    const resolved = await resolveChargeFromRouteRef(user.contaId, routeRef);
+    const resolved = await resolveChargeFromRouteRef(auth.contaId, routeRef);
     if (!resolved) return json(404, { error: 'CHARGE_NAO_ENCONTRADA' });
 
     const raw = await req.json().catch(() => ({}));
@@ -129,9 +127,9 @@ export async function POST(req: NextRequest, context: RouteContext) {
     if (!parsed.success) return json(422, { error: 'PAYLOAD_INVALIDO', details: parsed.error.flatten() });
 
     const result = await emitChargeInvoice({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       chargeId: resolved.chargeId,
-      actor: { type: 'USER', id: user.id },
+      actor: { type: 'USER', id: auth.userId },
       ...parsed.data,
     });
 
@@ -140,7 +138,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
     }
 
     await invalidateChargeResourceCache({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       cobrancaId: routeRef,
       reason: 'charge-invoice-emit',
     });

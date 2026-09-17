@@ -1,15 +1,10 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
-import type { Prisma } from '@prisma/client';
-import {
-  findPublicEventContractByToken,
-  prisma,
-  verifyPublicContractSignatureOtp,
-} from '@alusa/lib';
-import { hashCanonicalPayload } from '@alusa/domain';
+import { findPublicEventContractByToken } from '@alusa/lib/events/event-contracts.service';
 import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
 import { publicVerificarAssinaturaOtpInputDTOSchema } from '@/features/contratos/dtos';
+import { verifyPublicEventContractOtpWithEvidence } from '@/src/server/contracts/public-contract-evidence.service';
 
 function mapError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
@@ -41,20 +36,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (contract.status === 'EXPIRADO') throw new Error('CONTRACT_EXPIRED');
     if (contract.tokenExpiraEm && new Date() > contract.tokenExpiraEm) throw new Error('CONTRACT_LINK_EXPIRED');
 
-    let result;
-    try {
-      result = await prisma.$transaction(async (tx) => {
-        const verified = await verifyPublicContractSignatureOtp({ contaId: contract.contaId, eventoContratoId: contract.id, cpf: body.cpf, code: body.code, contractHash: contract.hashPdf, db: tx });
-        const payload: Prisma.InputJsonValue = { otpId: verified.otpId };
-        await tx.eventoContratoEvidence.create({ data: { contaId: contract.contaId, eventoContratoId: contract.id, type: 'SIGNATURE_OTP_VERIFIED', actorType: 'PUBLIC', ip: clientIp, userAgent: request.headers.get('user-agent'), payload, payloadHash: hashCanonicalPayload(payload) } });
-        return verified;
-      });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'SIGNATURE_OTP_FAILED';
-      const failurePayload: Prisma.InputJsonValue = { reason };
-      await prisma.eventoContratoEvidence.create({ data: { contaId: contract.contaId, eventoContratoId: contract.id, type: reason === 'SIGNATURE_OTP_EXPIRED' ? 'SIGNATURE_OTP_EXPIRED' : 'SIGNATURE_OTP_FAILED', actorType: 'PUBLIC', ip: clientIp, userAgent: request.headers.get('user-agent'), payload: failurePayload, payloadHash: hashCanonicalPayload(failurePayload) } }).catch(() => undefined);
-      throw error;
-    }
+    const result = await verifyPublicEventContractOtpWithEvidence({
+      contaId: contract.contaId,
+      eventoContratoId: contract.id,
+      cpf: body.cpf,
+      code: body.code,
+      contractHash: contract.hashPdf,
+      ip: clientIp,
+      userAgent: request.headers.get('user-agent'),
+    });
     return jsonSensitive({ success: true, verificationToken: result.verificationToken });
   } catch (error) {
     if (error instanceof z.ZodError) return jsonSensitive({ error: { message: 'Código inválido' } }, { status: 400 });

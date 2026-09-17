@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { EventsError } from '@alusa/lib';
+import { EventsError } from '@alusa/lib/events/events.service';
 
 import {
   MobileEventsForbiddenError,

@@ -10,14 +10,12 @@ import {
   type RenewalHolderType,
 } from '@alusa/domain';
 import { AsaasHttpError, deletePayment, deleteSubscription, isAsaasEnabled } from '@alusa/finance';
-import {
-  buildSeatOccupancyWhereClauseForAcademicDate,
-} from '@alusa/lib';
+import { buildSeatOccupancyWhereClauseForAcademicDate } from '@alusa/lib/services/matricula-occupancy';
 import {
   getAcademicDateBoundsForInstant,
   getAcademicDateBoundsForStoredDate,
   isAcademicDateInFuture,
-} from '@alusa/lib/date-only';
+} from '@alusa/shared/date-only';
 import { issueEnrollmentContract } from '@/src/server/contracts/issue-enrollment-contract.service';
 import { createRenewalPending } from './renewal-governance.service';
 import { enqueueFutureFinancialProvisioning } from './renewal-outbox.service';

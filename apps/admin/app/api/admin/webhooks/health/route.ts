@@ -20,9 +20,9 @@ export async function POST(req: Request) {
       { success: true, message, data: result },
       { headers: { 'cache-control': 'no-store' } },
     );
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Falha ao verificar a saúde dos webhooks.' },
+      { success: false, error: 'Falha ao verificar a saúde dos webhooks.' },
       { status: 502, headers: { 'cache-control': 'no-store' } },
     );
   }

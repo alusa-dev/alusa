@@ -1,23 +1,37 @@
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import {
+  advanceThroughOptionalSteps,
+  clickConcluir,
+  clickWizardNext,
+  expectAlunoInList,
+  fillEnderecoAluno,
+  fillIdentificacao,
+  openAlunoWizard,
+  setupAlunoWizardTest,
+  VALID_CPF,
+  waitForAlunoCreateResponse,
+} from './helpers/aluno-wizard';
 
-test('CRUD de Alunos', async ({ page }) => {
-  await page.goto('/admin/alunos');
+test('cadastro de alunos pelo fluxo canônico', async ({ page }) => {
+  const suffix = Date.now().toString().slice(-6);
+  await setupAlunoWizardTest(page);
+  await openAlunoWizard(page);
 
-  await page.getByRole('button', { name: 'Novo Aluno' }).click();
-  await page.getByPlaceholder('Nome').fill('Aluno E2E');
-  await page.getByPlaceholder('E-mail').fill('alunoe2e@example.com');
-  await page.getByPlaceholder('Telefone').fill('(11) 99999-8888');
-  await page.getByPlaceholder('Data de Nascimento').fill('2000-01-01');
-  await page.getByRole('button', { name: 'Salvar' }).click();
+  await fillIdentificacao(page, {
+    nome: 'Aluno E2E',
+    dataNasc: '01/01/2000',
+    cpf: VALID_CPF,
+    email: `alunoe2e+${suffix}@e2e.test`,
+    telefone: '11999998888',
+  });
+  await clickWizardNext(page);
+  await expect(page.getByRole('heading', { name: 'Endereço' })).toBeVisible();
+  await fillEnderecoAluno(page, { numero: '10' });
+  await advanceThroughOptionalSteps(page);
+  await expect(page.getByRole('heading', { name: 'Confirmar dados' })).toBeVisible();
 
-  await expect(page.getByText('Aluno E2E')).toBeVisible();
-
-  await page.getByRole('button', { name: 'Editar' }).first().click();
-  await page.getByPlaceholder('Nome').fill('Aluno E2E Editado');
-  await page.getByRole('button', { name: 'Salvar' }).click();
-
-  await expect(page.getByText('Aluno E2E Editado')).toBeVisible();
-
-  page.on('dialog', d => d.accept());
-  await page.getByRole('button', { name: 'Excluir' }).first().click();
+  await clickConcluir(page);
+  const { status } = await waitForAlunoCreateResponse(page);
+  expect(status).toBe(201);
+  await expectAlunoInList(page, 'Aluno E2E');
 });

@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
 import { requirePortalUser, resolvePortalAlunoIds } from '@/features/portal/api-helpers';
 import { portalMatriculasResultDTOSchema } from '@/features/portal/dtos';
 import { mapPortalMatriculaToDTO, mapPortalMatriculasResultToDTO } from '@/features/portal/mappers';
+import { listPortalMatriculas } from '@/src/server/portal/portal-read.service';
 
 export async function GET() {
   try {
@@ -11,70 +11,7 @@ export async function GET() {
     const alunoIds = await resolvePortalAlunoIds(auth.user);
 
     // 4. Buscar matrículas dos alunos
-    const matriculas = await prisma.matricula.findMany({
-      where: {
-        contaId: auth.user.contaId,
-        alunoId: { in: alunoIds },
-      },
-      include: {
-        aluno: {
-          select: {
-            nome: true,
-            foto: true,
-          },
-        },
-        turma: {
-          select: {
-            nome: true,
-            diasSemana: true,
-            horaInicio: true,
-            horaFim: true,
-            modalidade: {
-              select: {
-                nome: true,
-              },
-            },
-          },
-        },
-        matriculaTurmas: {
-          include: {
-            turma: {
-              select: {
-                nome: true,
-                diasSemana: true,
-                horaInicio: true,
-                horaFim: true,
-                modalidade: {
-                  select: {
-                    nome: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        plano: {
-          select: {
-            nome: true,
-            valor: true,
-            periodicidade: true,
-          },
-        },
-        cobrancas: {
-          where: {
-            OR: [{ status: 'PENDENTE' }, { status: 'ATRASADO' }],
-          },
-          select: {
-            id: true,
-            status: true,
-            valor: true,
-          },
-        },
-      },
-      orderBy: {
-        dataInicio: 'desc',
-      },
-    });
+    const matriculas = await listPortalMatriculas({ contaId: auth.user.contaId, alunoIds });
 
     // 5. Formatar dados
     const matriculasFormatadas = matriculas.map((m) => {

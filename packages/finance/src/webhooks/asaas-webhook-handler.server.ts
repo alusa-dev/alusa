@@ -1,6 +1,6 @@
 import { prisma } from '@alusa/database';
 import { Prisma, NotificationType, NotificationCategory, NotificationSeverity, Role } from '@prisma/client';
-import { createNotification } from '@alusa/lib';
+import { createNotification } from '@alusa/lib/services/notifications.service';
 import { handlePaymentWebhook } from './payment-webhook-handler';
 import { handleTransferWebhook } from './transfer-webhook-handler';
 import { handleSubscriptionWebhook } from './subscription-webhook-handler';
@@ -208,6 +208,7 @@ function getPayloadAsaasTransferId(payload: AsaasWebhookBody): string | null {
 export type HandleAsaasWebhookEventParams = {
   rawBody: string;
   accessToken?: string | null;
+  correlationId?: string | null;
 };
 
 export type QueueWebhookResult = {
@@ -763,6 +764,15 @@ async function processAsaasWebhookForRecord(params: {
  * Usado quando FIN_WEBHOOK_ASYNC_ENABLED=true.
  */
 export async function enqueueAsaasWebhookEvent(
+  params: HandleAsaasWebhookEventParams,
+): Promise<QueueWebhookResult> {
+  return withCorrelationId(
+    () => enqueueAsaasWebhookEventInternal(params),
+    params.correlationId ?? undefined,
+  );
+}
+
+async function enqueueAsaasWebhookEventInternal(
   params: HandleAsaasWebhookEventParams
 ): Promise<QueueWebhookResult> {
   const parsedPayload = parseAsaasWebhookPayload(params.rawBody);
@@ -1141,6 +1151,23 @@ export async function reprocessErroredAsaasWebhooks(params: {
  * - roteamento por tipo de evento (payment/subscription/etc)
  */
 export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventParams): Promise<{
+  success: boolean;
+  status: number;
+  persisted: boolean;
+  message?: string;
+  error?: string;
+  webhookId?: string;
+  contaId?: string;
+  event?: string;
+  eventId?: string | null;
+}> {
+  return withCorrelationId(
+    () => handleAsaasWebhookEventInternal(params),
+    params.correlationId ?? undefined,
+  );
+}
+
+async function handleAsaasWebhookEventInternal(params: HandleAsaasWebhookEventParams): Promise<{
   success: boolean;
   status: number;
   persisted: boolean;

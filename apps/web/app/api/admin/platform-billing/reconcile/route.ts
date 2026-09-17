@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth-options';
-import prisma from '@/lib/prisma';
 import { reconcilePlatformBilling } from '@/src/server/platform-billing/reconciliation';
 
 export const runtime = 'nodejs';
@@ -23,7 +22,6 @@ export async function POST(req: NextRequest) {
   }
 
   const result = await reconcilePlatformBilling({
-    prisma,
     contaId: parsed.data.scope === 'current_account' ? sessionUser.contaId : undefined,
     limit: parsed.data.limit,
   });

@@ -22,6 +22,15 @@ vi.mock('@alusa/lib', () => ({
   buildBillingNotificationDedupeKey: (event: string, paymentId: string) => `payment:confirmed:${paymentId}`,
 }));
 
+vi.mock('@alusa/lib/notifications/emit-billing-notifications', () => ({
+  emitBillingNotifications: emitBillingNotificationsMock,
+}));
+
+vi.mock('@alusa/lib/services/notifications.service', () => ({
+  normalizeBillingNotificationEvent: (event: string) => event,
+  buildBillingNotificationDedupeKey: (event: string, paymentId: string) => `payment:confirmed:${paymentId}`,
+}));
+
 import { FinanceWebhookSideEffectStatus } from '@prisma/client';
 import {
   enqueueBillingNotificationSideEffects,

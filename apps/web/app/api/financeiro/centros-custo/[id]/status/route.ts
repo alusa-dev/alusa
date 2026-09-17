@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { safeGetServerSession } from '@/lib/safe-server-session';
-import { prisma } from '@/src/prisma';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   centroCustoMutationResultDTOSchema,
   centroCustoRouteParamsDTOSchema,
   centroCustoStatusInputDTOSchema,
 } from '@/features/financeiro/centros-custo/dtos';
 import { mapCentroCustoToDTO } from '@/features/financeiro/centros-custo/mappers';
+import { getCentroCusto, updateCentroCustoStatus } from '@/src/server/finance/centro-custo.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-type SessUser = { id?: string; contaId?: string; role?: string };
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 const statusSchema = centroCustoStatusInputDTOSchema;
@@ -21,21 +20,19 @@ function err(status: number, code: string, message: string) {
 }
 
 async function ensureAuth() {
-  const session = await safeGetServerSession();
-  const user = (session as { user?: SessUser } | null)?.user;
-  if (!user?.id || !user?.contaId) return { error: err(401, 'NAO_AUTENTICADO', 'Usuario nao autenticado') };
-  if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+  const auth = await resolveTenantSession();
+  if (!auth.ok) return { error: err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuario nao autenticado') };
+  if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
     return { error: err(403, 'SEM_PERMISSAO', 'Acesso negado') };
-  return { user };
+  return { user: { id: auth.userId, contaId: auth.contaId, role: auth.role } };
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const rawParams = await params;
   try {
     const auth = await ensureAuth();
     if ('error' in auth) return auth.error;
     const user = auth.user!;
-    const { id } = centroCustoRouteParamsDTOSchema.parse(params);
+    const { id } = centroCustoRouteParamsDTOSchema.parse(await params);
 
     const parsed = statusSchema.safeParse(await req.json());
     if (!parsed.success) {
@@ -43,17 +40,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return err(400, 'DADOS_INVALIDOS', issue.message);
     }
 
-    const centro = await prisma.centroCusto.findFirst({
-      where: { id, contaId: user.contaId },
-      include: { _count: { select: { lancamentos: true } } },
-    });
+    const centro = await getCentroCusto(user.contaId, id);
     if (!centro) return err(404, 'NAO_ENCONTRADO', 'Centro de custo nao encontrado');
 
-    const updated = await prisma.centroCusto.update({
-      where: { id },
-      data: { status: parsed.data.status },
-      include: { _count: { select: { lancamentos: true } } },
-    });
+    const updateResult = await updateCentroCustoStatus(user.contaId, id, parsed.data);
+    if (updateResult.count === 0) return err(404, 'NAO_ENCONTRADO', 'Centro de custo nao encontrado');
+
+    const updated = await getCentroCusto(user.contaId, id);
+    if (!updated) return err(404, 'NAO_ENCONTRADO', 'Centro de custo nao encontrado');
 
     return NextResponse.json(
       centroCustoMutationResultDTOSchema.parse({
@@ -62,6 +56,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     );
   } catch (e) {
     console.error('[API centro de custo][PATCH status]', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return err(500, 'ERRO_INTERNO', 'Não foi possível atualizar o status do centro de custo');
   }
 }

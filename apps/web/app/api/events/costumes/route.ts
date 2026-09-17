@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import {
-  createCostume,
-  createCostumeSchema,
-  listByEventQuerySchema,
-  listCostumes,
-} from '@alusa/lib';
+import { createCostumeSchema, listByEventQuerySchema } from '@alusa/lib/events/events.schema';
+import { createCostume, listCostumes } from '@alusa/lib/events/events.service';
 
 import { getEventsContext, handleEventsRouteError, queryObject } from '../_helpers';
 

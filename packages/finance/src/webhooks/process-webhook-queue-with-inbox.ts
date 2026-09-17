@@ -1,4 +1,4 @@
-import type { BillingNotificationCandidate } from '@alusa/lib';
+import type { BillingNotificationCandidate } from '@alusa/lib/notifications/emit-billing-notifications';
 
 import {
   drainFinanceWebhookSideEffectOutbox,

@@ -1,31 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
 import { dashboardPeriodoDTOSchema } from '@/features/dashboard/dtos';
 import { mapDashboardSerieResultToDTO } from '@/features/dashboard/mappers';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { runWithTenant } from '@/lib/prisma-tenant';
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
     const { searchParams } = new URL(request.url);
     const periodo = dashboardPeriodoDTOSchema.parse(searchParams.get('periodo') || '30d');
 
-    const contaId = (session?.user as { contaId?: string | null } | undefined)?.contaId;
-
-    if (!session?.user) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json(
         { success: false, error: 'Não autenticado' },
         { status: 401 },
       );
     }
-
-    if (!contaId) {
-      return NextResponse.json(
-        { success: false, error: 'contaId não informado' },
-        { status: 400 },
-      );
-    }
+    const { contaId } = auth;
 
     const body = await runWithTenant(contaId, async (tx) => {
       const cobrancaFilter = { matricula: { aluno: { contaId } } };
@@ -146,7 +137,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('[GET /api/dashboard/receita] Erro:', error);
     return NextResponse.json(
-      { success: false, error: (error as Error).message },
+      { success: false, error: 'Não foi possível carregar a receita agora.' },
       { status: 500 },
     );
   }

@@ -18,7 +18,7 @@
     "dev:clean": "dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev && rimraf .next && pnpm -C ../.. prisma:generate && pnpm -C ../.. exec turbo run build --filter=@alusa/web^... && dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev --webpack",
     "dev:webpack": "dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev && dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev --webpack",
     "dev:turbo": "dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev && dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev --turbo",
-    "build": "next build",
+    "build": "next build --webpack",
     "build:webpack": "next build --webpack",
     "build:clean": "rimraf .next && pnpm -C ../.. exec turbo run build --filter=@alusa/web",
     "start": "next start",
@@ -41,8 +41,6 @@
   },
   "dependencies": {
     "@alusa/admin-auth": "workspace:*",
-    "@alusa/asaas": "workspace:*",
-    "@alusa/asaas-gateway": "workspace:*",
     "@alusa/database": "workspace:*",
     "@alusa/domain": "workspace:*",
     "@alusa/finance": "workspace:*",

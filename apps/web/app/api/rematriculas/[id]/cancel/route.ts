@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 
 import { getSessionUser } from '@/lib/auth/session';
-import { prisma } from '@/prisma/client';
-import { cancelRenewalProcess } from '@/src/server/matriculas/renewal-process.service';
+import { cancelRenewalProcessFromHttp } from '@/src/server/matriculas/renewal-http-commands.service';
 import { hasRenewalPermission } from '@/src/server/matriculas/renewal-permissions.service';
+import { cancelRenewalInputDTOSchema } from '@/features/cadastro/rematriculas/dtos';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -23,29 +23,23 @@ export async function POST(
   }
 
   const params = await context.params;
-  const raw = await request.json().catch(() => null);
-  const reason =
-    raw && typeof raw === 'object' && typeof (raw as { reason?: unknown }).reason === 'string'
-      ? (raw as { reason: string }).reason.trim()
-      : null;
-  if (!reason) {
+  const parsed = cancelRenewalInputDTOSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) {
     return jsonError(
       422,
       'MOTIVO_CANCELAMENTO_OBRIGATORIO',
       'Informe o motivo do cancelamento do próximo ciclo.',
     );
   }
+  const { reason } = parsed.data;
 
   try {
-    const result = await cancelRenewalProcess(
-      {
+    const result = await cancelRenewalProcessFromHttp({
         contaId: user.contaId,
         processId: params.id,
         actorId: user.id,
         reason,
-      },
-      { prisma },
-    );
+      });
 
     return NextResponse.json(result, { status: 200, headers: { 'cache-control': 'no-store' } });
   } catch (error) {
@@ -59,7 +53,7 @@ export async function POST(
     return jsonError(
       500,
       'ERRO_CANCELAR_REMATRICULA',
-      error instanceof Error ? error.message : 'Erro ao cancelar rematrícula.',
+      'Erro ao cancelar rematrícula.',
     );
   }
 }

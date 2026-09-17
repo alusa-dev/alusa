@@ -18,6 +18,11 @@ vi.mock('@/lib/finance/financial-account-gate', () => ({
   guardFinancialAccountOr412: vi.fn(async () => ({ ok: true })),
 }));
 
+vi.mock('@/src/server/platform-billing/capacity', () => ({
+  assertPlatformAccessForConta: vi.fn(async () => undefined),
+  platformBillingAccessResponse: vi.fn(() => null),
+}));
+
 vi.mock('@alusa/finance', async () => {
   const actual = await vi.importActual<typeof import('@alusa/finance')>('@alusa/finance');
   return {

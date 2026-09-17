@@ -20,6 +20,22 @@ export async function seedAdminAndAuthenticate(page: Page, params: { email: stri
     select: { id: true },
   });
 
+  // The application enforces platform-billing access for write capabilities.
+  // Keep the generic tenant fixture in a valid, non-expired trial state so
+  // business-flow tests exercise their own behavior instead of being stopped
+  // by the commercial access gate.
+  await prisma.platformBillingAccount.create({
+    data: {
+      contaId: conta.id,
+      environment: 'TEST',
+      status: 'TRIALING',
+      planCode: 'STARTER',
+      accessStatus: 'ACTIVE',
+      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      paymentMethodStatus: 'UNKNOWN',
+    },
+  });
+
   const user = await prisma.usuario.create({
     data: {
       contaId: conta.id,
@@ -72,6 +88,14 @@ export async function seedAdminAndAuthenticate(page: Page, params: { email: stri
   ]);
 
   await page.goto('/api/auth/session');
+
+  // Warm the billing policy endpoint before navigating to a feature page. This
+  // keeps the fixture's commercial access state explicit and avoids making
+  // feature assertions depend on the first read-model request.
+  const billingResponse = await page.request.get('/api/platform-billing/summary');
+  if (!billingResponse.ok()) {
+    throw new Error(`Falha ao preparar billing E2E: HTTP ${billingResponse.status()}`);
+  }
 
   return { contaId: conta.id };
 }

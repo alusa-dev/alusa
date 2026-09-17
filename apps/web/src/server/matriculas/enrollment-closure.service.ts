@@ -1,6 +1,6 @@
 import { Prisma, type PrismaClient, StatusMatricula } from '@prisma/client';
 import { prisma as appPrisma } from '@/src/prisma';
-import { getAcademicDateBoundsForInstant } from '@alusa/lib/date-only';
+import { getAcademicDateBoundsForInstant, normalizeAcademicTimeZone } from '@alusa/shared/date-only';
 
 const FAMILY_TERMINAL_STATUSES: readonly StatusMatricula[] = [
   StatusMatricula.ENCERRADA,
@@ -89,9 +89,60 @@ async function resolveAcademicContext(
   return { now, academicDay };
 }
 
+export async function listContasWithExpiredEnrollments(input: {
+  prisma?: PrismaClient;
+  maxAccounts: number;
+  now: Date;
+}) {
+  const db = input.prisma ?? appPrisma;
+  const contas = await db.conta.findMany({
+    where: { status: 'ATIVO', deletedAt: null },
+    select: { id: true, timezone: true },
+    orderBy: { id: 'asc' },
+  });
+
+  const contasPorTimezone = new Map<string, string[]>();
+  for (const conta of contas) {
+    const timeZone = normalizeAcademicTimeZone(conta.timezone);
+    const contaIds = contasPorTimezone.get(timeZone) ?? [];
+    contaIds.push(conta.id);
+    contasPorTimezone.set(timeZone, contaIds);
+  }
+
+  const contasElegiveis = new Set<string>();
+  for (const [timeZone, contaIds] of contasPorTimezone) {
+    const academicDay = getAcademicDateBoundsForInstant(input.now, timeZone);
+    const candidates = await db.matricula.findMany({
+      where: {
+        contaId: { in: contaIds },
+        OR: [
+          {
+            status: { in: ['ATIVA', 'PAUSADA'] },
+            dataFimContrato: { lt: academicDay.start },
+          },
+          {
+            matriculaFamiliar: {
+              status: { in: ['ATIVO', 'PARCIAL'] },
+              dataFimContrato: { lt: academicDay.start },
+            },
+          },
+        ],
+      },
+      select: { contaId: true },
+      distinct: ['contaId'],
+      orderBy: { contaId: 'asc' },
+      take: input.maxAccounts,
+    });
+
+    for (const candidate of candidates) contasElegiveis.add(candidate.contaId);
+  }
+
+  return Array.from(contasElegiveis).sort().slice(0, input.maxAccounts);
+}
+
 export async function closeExpiredEnrollmentsWithoutSuccessor(
   input: { contaId: string; now?: Date; timeZone?: string; limit?: number },
-  deps: { prisma: PrismaClient },
+  deps: { prisma: PrismaClient } = { prisma: appPrisma },
 ): Promise<CloseExpiredEnrollmentsResult> {
   const { now, academicDay } = await resolveAcademicContext(input, deps);
   const limit = Math.max(1, Math.min(500, input.limit ?? 100));

@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import prisma from '@/lib/prisma';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import { auditLogService } from '@alusa/finance';
 import { hashPassword, assertPasswordPolicy } from '@/lib/auth-password';
 import { revokeUserSessions } from '@/lib/auth-service';
@@ -118,53 +119,66 @@ export async function requestPasswordChangeOtp(input: {
     throw new PasswordChangeOtpError('Usuário indisponível.', 'USER_UNAVAILABLE', 404);
   }
 
-  const now = new Date();
-  const activeChallenge = await prisma.passwordChangeOtp.findFirst({
-    where: {
-      userId: user.id,
-      usedAt: null,
-      invalidatedAt: null,
-      expiresAt: { gt: now },
+  const { challengeId, code, expiresAt, resendAvailableAt } = await runWithTenant(
+    user.contaId,
+    async (tx) => {
+      const now = new Date();
+      const activeChallenge = await tx.passwordChangeOtp.findFirst({
+        where: {
+          userId: user.id,
+          contaId: user.contaId,
+          usedAt: null,
+          invalidatedAt: null,
+          expiresAt: { gt: now },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { resendAvailableAt: true },
+      });
+
+      if (activeChallenge && activeChallenge.resendAvailableAt > now) {
+        throw new PasswordChangeOtpError(
+          'Você tentou muitas vezes, aguarde alguns minutos.',
+          'COOLDOWN_ACTIVE',
+          429,
+        );
+      }
+
+      const challengeId = randomBytes(18).toString('base64url');
+      const code = generateOtpCode();
+      const expiresAt = new Date(now.getTime() + PASSWORD_CHANGE_OTP_TTL_MINUTES * 60_000);
+      const resendAvailableAt = new Date(
+        now.getTime() + PASSWORD_CHANGE_OTP_COOLDOWN_SECONDS * 1000,
+      );
+
+      await tx.passwordChangeOtp.updateMany({
+        where: {
+          userId: user.id,
+          contaId: user.contaId,
+          usedAt: null,
+          invalidatedAt: null,
+        },
+        data: { invalidatedAt: now },
+      });
+
+      await tx.passwordChangeOtp.create({
+        data: {
+          id: challengeId,
+          userId: user.id,
+          contaId: user.contaId,
+          channel: 'EMAIL',
+          codeHash: hashCode(challengeId, code),
+          attempts: 0,
+          maxAttempts: PASSWORD_CHANGE_OTP_MAX_ATTEMPTS,
+          expiresAt,
+          resendAvailableAt,
+          requestedByIp: input.requestedByIp ?? null,
+          requestedByUserAgent: input.requestedByUserAgent ?? null,
+        },
+      });
+
+      return { challengeId, code, expiresAt, resendAvailableAt };
     },
-    orderBy: { createdAt: 'desc' },
-    select: { resendAvailableAt: true },
-  });
-
-  if (activeChallenge && activeChallenge.resendAvailableAt > now) {
-    throw new PasswordChangeOtpError(
-      'Você tentou muitas vezes, aguarde alguns minutos.',
-      'COOLDOWN_ACTIVE',
-      429,
-    );
-  }
-
-  const challengeId = randomBytes(18).toString('base64url');
-  const code = generateOtpCode();
-  const expiresAt = new Date(now.getTime() + PASSWORD_CHANGE_OTP_TTL_MINUTES * 60_000);
-  const resendAvailableAt = new Date(now.getTime() + PASSWORD_CHANGE_OTP_COOLDOWN_SECONDS * 1000);
-
-  await prisma.$transaction(async (tx) => {
-    await tx.passwordChangeOtp.updateMany({
-      where: { userId: user.id, usedAt: null, invalidatedAt: null },
-      data: { invalidatedAt: now },
-    });
-
-    await tx.passwordChangeOtp.create({
-      data: {
-        id: challengeId,
-        userId: user.id,
-        contaId: user.contaId,
-        channel: 'EMAIL',
-        codeHash: hashCode(challengeId, code),
-        attempts: 0,
-        maxAttempts: PASSWORD_CHANGE_OTP_MAX_ATTEMPTS,
-        expiresAt,
-        resendAvailableAt,
-        requestedByIp: input.requestedByIp ?? null,
-        requestedByUserAgent: input.requestedByUserAgent ?? null,
-      },
-    });
-  });
+  );
 
   try {
     const delivery = await sendPasswordChangeOtpEmail({
@@ -175,9 +189,11 @@ export async function requestPasswordChangeOtp(input: {
       expiresInLabel: `${PASSWORD_CHANGE_OTP_TTL_MINUTES} minutos`,
     });
 
-    await prisma.passwordChangeOtp.update({
-      where: { id: challengeId },
-      data: { emailSentAt: new Date() },
+    await runWithTenant(user.contaId, async (tx) => {
+      await tx.passwordChangeOtp.updateMany({
+        where: { id: challengeId, userId: user.id, contaId: user.contaId },
+        data: { emailSentAt: new Date() },
+      });
     });
 
     return {
@@ -191,97 +207,122 @@ export async function requestPasswordChangeOtp(input: {
       delivery: delivery.delivery,
     };
   } catch (error) {
-    await prisma.passwordChangeOtp.updateMany({
-      where: { id: challengeId, usedAt: null },
-      data: { invalidatedAt: new Date() },
+    await runWithTenant(user.contaId, async (tx) => {
+      await tx.passwordChangeOtp.updateMany({
+        where: { id: challengeId, userId: user.id, contaId: user.contaId, usedAt: null },
+        data: { invalidatedAt: new Date() },
+      });
     });
     throw error;
   }
 }
 
+/**
+ * OTP challenge reads and state transitions run inside the tenant transaction.
+ * The authenticated user identifies the tenant; RLS remains the final database
+ * boundary for challenge reads and writes.
+ */
 export async function verifyPasswordChangeOtp(input: {
   userId: string;
   challengeId: string;
   code: string;
 }) {
-  const challenge = await prisma.passwordChangeOtp.findUnique({
-    where: { id: input.challengeId },
-    select: {
-      id: true,
-      userId: true,
-      codeHash: true,
-      attempts: true,
-      maxAttempts: true,
-      expiresAt: true,
-      verifiedAt: true,
-      usedAt: true,
-      invalidatedAt: true,
-    },
+  const user = await prisma.usuario.findUnique({
+    where: { id: input.userId },
+    select: { id: true, contaId: true },
   });
 
-  if (!challenge || challenge.userId !== input.userId || challenge.invalidatedAt || challenge.usedAt) {
+  if (!user?.contaId) {
     throw new PasswordChangeOtpError('Código inválido ou expirado.', 'CHALLENGE_NOT_FOUND');
   }
 
-  const now = new Date();
-  if (challenge.expiresAt <= now) {
-    await prisma.passwordChangeOtp.updateMany({
-      where: { id: challenge.id, invalidatedAt: null },
-      data: { invalidatedAt: now },
+  return runWithTenant(user.contaId, async (tx) => {
+    const challenge = await tx.passwordChangeOtp.findUnique({
+      where: { id: input.challengeId },
+      select: {
+        id: true,
+        userId: true,
+        codeHash: true,
+        attempts: true,
+        maxAttempts: true,
+        expiresAt: true,
+        verifiedAt: true,
+        usedAt: true,
+        invalidatedAt: true,
+      },
     });
-    throw new PasswordChangeOtpError('Código expirado. Solicite um novo código.', 'CHALLENGE_EXPIRED');
-  }
 
-  if (challenge.attempts >= challenge.maxAttempts) {
-    throw new PasswordChangeOtpError(
-      'Limite de tentativas atingido. Solicite um novo código.',
-      'MAX_ATTEMPTS',
+    if (!challenge || challenge.userId !== input.userId || challenge.invalidatedAt || challenge.usedAt) {
+      throw new PasswordChangeOtpError('Código inválido ou expirado.', 'CHALLENGE_NOT_FOUND');
+    }
+
+    const now = new Date();
+    if (challenge.expiresAt <= now) {
+      await tx.passwordChangeOtp.updateMany({
+        where: {
+          id: challenge.id,
+          userId: input.userId,
+          contaId: user.contaId,
+          invalidatedAt: null,
+        },
+        data: { invalidatedAt: now },
+      });
+      throw new PasswordChangeOtpError('Código expirado. Solicite um novo código.', 'CHALLENGE_EXPIRED');
+    }
+
+    if (challenge.attempts >= challenge.maxAttempts) {
+      throw new PasswordChangeOtpError(
+        'Limite de tentativas atingido. Solicite um novo código.',
+        'MAX_ATTEMPTS',
+      );
+    }
+
+    const isValid = secureEqual(challenge.codeHash, hashCode(challenge.id, input.code));
+    if (!isValid) {
+      await tx.passwordChangeOtp.updateMany({
+        where: {
+          id: challenge.id,
+          userId: input.userId,
+          contaId: user.contaId,
+          usedAt: null,
+          invalidatedAt: null,
+          attempts: { lt: challenge.maxAttempts },
+        },
+        data: { attempts: { increment: 1 } },
+      });
+      throw new PasswordChangeOtpError('Código incorreto. Confira os dígitos e tente novamente.', 'INVALID_CODE');
+    }
+
+    const verificationToken = generateVerificationToken();
+    const verificationExpiresAt = new Date(
+      now.getTime() + PASSWORD_CHANGE_VERIFICATION_TTL_MINUTES * 60_000,
     );
-  }
-
-  const isValid = secureEqual(challenge.codeHash, hashCode(challenge.id, input.code));
-  if (!isValid) {
-    await prisma.passwordChangeOtp.updateMany({
+    const claimed = await tx.passwordChangeOtp.updateMany({
       where: {
         id: challenge.id,
         userId: input.userId,
+        contaId: user.contaId,
+        verifiedAt: null,
         usedAt: null,
         invalidatedAt: null,
         attempts: { lt: challenge.maxAttempts },
       },
-      data: { attempts: { increment: 1 } },
+      data: {
+        verifiedAt: now,
+        verificationExpiresAt,
+        verificationTokenHash: hashVerificationToken(challenge.id, verificationToken),
+      },
     });
-    throw new PasswordChangeOtpError('Código incorreto. Confira os dígitos e tente novamente.', 'INVALID_CODE');
-  }
 
-  const verificationToken = generateVerificationToken();
-  const verificationExpiresAt = new Date(
-    now.getTime() + PASSWORD_CHANGE_VERIFICATION_TTL_MINUTES * 60_000,
-  );
-  const claimed = await prisma.passwordChangeOtp.updateMany({
-    where: {
-      id: challenge.id,
-      userId: input.userId,
-      verifiedAt: null,
-      usedAt: null,
-      invalidatedAt: null,
-      attempts: { lt: challenge.maxAttempts },
-    },
-    data: {
-      verifiedAt: now,
-      verificationExpiresAt,
-      verificationTokenHash: hashVerificationToken(challenge.id, verificationToken),
-    },
+    if (claimed.count !== 1) {
+      throw new PasswordChangeOtpError('Código inválido ou expirado.', 'CHALLENGE_NOT_FOUND');
+    }
+
+    return {
+      verificationToken,
+      verificationExpiresAt: verificationExpiresAt.toISOString(),
+    };
   });
-
-  if (claimed.count !== 1) {
-    throw new PasswordChangeOtpError('Código inválido ou expirado.', 'CHALLENGE_NOT_FOUND');
-  }
-
-  return {
-    verificationToken,
-    verificationExpiresAt: verificationExpiresAt.toISOString(),
-  };
 }
 
 export async function completePasswordChange(input: {
@@ -295,19 +336,29 @@ export async function completePasswordChange(input: {
 }) {
   assertPasswordPolicy(input.newPassword);
 
-  const challenge = await prisma.passwordChangeOtp.findUnique({
-    where: { id: input.challengeId },
-    select: {
-      id: true,
-      userId: true,
-      verificationTokenHash: true,
-      verifiedAt: true,
-      verificationExpiresAt: true,
-      expiresAt: true,
-      usedAt: true,
-      invalidatedAt: true,
-    },
+  const user = await prisma.usuario.findUnique({
+    where: { id: input.userId },
+    select: { id: true, contaId: true, status: true },
   });
+  if (!user || user.status !== 'ATIVO' || !user.contaId) {
+    throw new PasswordChangeOtpError('Usuário indisponível.', 'USER_UNAVAILABLE', 404);
+  }
+
+  const challenge = await runWithTenant(user.contaId, (tx) =>
+    tx.passwordChangeOtp.findUnique({
+      where: { id: input.challengeId },
+      select: {
+        id: true,
+        userId: true,
+        verificationTokenHash: true,
+        verifiedAt: true,
+        verificationExpiresAt: true,
+        expiresAt: true,
+        usedAt: true,
+        invalidatedAt: true,
+      },
+    }),
+  );
 
   const now = new Date();
   if (
@@ -331,21 +382,14 @@ export async function completePasswordChange(input: {
     );
   }
 
-  const user = await prisma.usuario.findUnique({
-    where: { id: input.userId },
-    select: { id: true, contaId: true, status: true },
-  });
-  if (!user || user.status !== 'ATIVO') {
-    throw new PasswordChangeOtpError('Usuário indisponível.', 'USER_UNAVAILABLE', 404);
-  }
-
   const senhaHash = await hashPassword(input.newPassword);
 
-  await prisma.$transaction(async (tx) => {
+  await runWithTenant(user.contaId, async (tx) => {
     const claimed = await tx.passwordChangeOtp.updateMany({
       where: {
         id: challenge.id,
         userId: input.userId,
+        contaId: user.contaId,
         verifiedAt: { not: null },
         usedAt: null,
         invalidatedAt: null,
@@ -362,10 +406,13 @@ export async function completePasswordChange(input: {
       );
     }
 
-    await tx.usuario.update({
-      where: { id: user.id },
+    const updatedUser = await tx.usuario.updateMany({
+      where: { id: user.id, contaId: user.contaId },
       data: { senhaHash, passwordChangedAt: now },
     });
+    if (updatedUser.count !== 1) {
+      throw new PasswordChangeOtpError('Usuário indisponível.', 'USER_UNAVAILABLE', 404);
+    }
 
     if (input.revokeAllSessions) {
       await revokeUserSessions(user.id, tx);

@@ -1,4 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({ getServerSession: vi.fn() }));
+
+vi.mock('next-auth', () => ({ getServerSession: mocks.getServerSession }));
+
 import { POST } from '@/app/api/salas/route';
 
 interface SalaBody {
@@ -15,6 +20,10 @@ function makeReq(body: SalaBody) {
 }
 
 describe('salas.api capacidade string', () => {
+  beforeEach(() => {
+    mocks.getServerSession.mockResolvedValue({ user: { id: 'user-default', contaId: 'conta-default' } });
+  });
+
   it('aceita capacidade enviada como string numerica', async () => {
     const req = makeReq({
       nome: `Sala Cap String ${Date.now()}`,

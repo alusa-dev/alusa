@@ -87,7 +87,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ en
     if (error instanceof MobileEnrollmentUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
     if (error instanceof MobileEnrollmentNotFoundError) return response({ error: { code: 'NOT_FOUND', message: 'Matrícula não encontrada.' } }, 404);
     console.error('[mobile-enrollments][update]', { error: error instanceof Error ? error.message : String(error) });
-    return response({ error: { code: 'UPDATE_FAILED', message: error instanceof Error ? error.message : 'Não foi possível salvar as alterações.' } }, 409);
+    return response({ error: { code: 'UPDATE_FAILED', message: 'Não foi possível salvar as alterações.' } }, 409);
   }
 }
 
@@ -106,7 +106,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ enr
     if (error instanceof MobileEnrollmentUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
     if (error instanceof MobileEnrollmentNotFoundError) return response({ error: { code: 'NOT_FOUND', message: 'Matrícula não encontrada.' } }, 404);
     console.error('[mobile-enrollments][action]', { error: error instanceof Error ? error.message : String(error) });
-    return response({ error: { code: 'ACTION_FAILED', message: error instanceof Error ? error.message : 'Não foi possível concluir a ação.' } }, 409);
+    return response({ error: { code: 'ACTION_FAILED', message: 'Não foi possível concluir a ação.' } }, 409);
   }
 }
 
@@ -121,6 +121,6 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ e
   } catch (error) {
     if (error instanceof MobileEnrollmentUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
     if (error instanceof MobileEnrollmentNotFoundError) return response({ error: { code: 'NOT_FOUND', message: 'Matrícula não encontrada.' } }, 404);
-    return response({ error: { code: 'DELETE_BLOCKED', message: error instanceof Error ? error.message : 'Não foi possível excluir a matrícula.' } }, 409);
+    return response({ error: { code: 'DELETE_BLOCKED', message: 'Não foi possível excluir a matrícula.' } }, 409);
   }
 }

@@ -5,12 +5,13 @@ import {
 } from '@alusa/finance';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
+import { apiJsonError } from '@/lib/api/standard-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 function jsonError(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status });
+  return apiJsonError(status, code, message);
 }
 
 function clampPositiveInt(value: string | null, fallback: number, max: number) {
@@ -58,7 +59,7 @@ async function run(req: Request) {
     });
   } catch (error) {
     console.error('[Job Apply Asaas Notification Preferences] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', error instanceof Error ? error.message : String(error));
+    return jsonError(500, 'ERRO_JOB', 'Não foi possível aplicar as preferências de notificação.');
   }
 }
 

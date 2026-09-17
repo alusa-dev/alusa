@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { calcularIdade } from './aluno-responsavel.schema';
-import { calcularVagasDisponiveis } from '@alusa/lib';
+import { calcularVagasDisponiveis } from '@alusa/lib/services/matricula-occupancy';
 
 /**
  * Valida se o aluno está na faixa etária da turma
@@ -49,7 +49,7 @@ export type TurmaSelecaoValidation = z.infer<typeof turmaSelecaoSchema>;
 
 /**
  * Valida se a turma tem capacidade disponível.
- * @deprecated Use `calcularVagasDisponiveis` de @alusa/lib diretamente.
+ * @deprecated Use `calcularVagasDisponiveis` de @alusa/lib/services/matricula-occupancy diretamente.
  */
 export function validarCapacidadeTurma(
   capacidade: number,

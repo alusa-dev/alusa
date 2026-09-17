@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import {
-  createTicketLot,
-  createTicketLotSchema,
-  listByEventQuerySchema,
-  listTicketLots,
-} from '@alusa/lib';
+import { createTicketLotSchema, listByEventQuerySchema } from '@alusa/lib/events/events.schema';
+import { createTicketLot, listTicketLots } from '@alusa/lib/events/events.service';
 
 import { getEventsContext, handleEventsRouteError, queryObject } from '../_helpers';
 

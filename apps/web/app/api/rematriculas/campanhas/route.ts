@@ -2,11 +2,10 @@ import { NextResponse } from 'next/server';
 import { z, ZodError } from 'zod';
 
 import { getSessionUser } from '@/lib/auth/session';
-import { prisma } from '@/prisma/client';
 import {
-  createRenewalCampaign,
-  listRenewalManagement,
-} from '@/src/server/matriculas/renewal-management.service';
+  createRenewalCampaignFromHttp,
+  listRenewalManagementFromHttp,
+} from '@/src/server/matriculas/renewal-http-commands.service';
 import { hasRenewalPermission } from '@/src/server/matriculas/renewal-permissions.service';
 
 const campaignSchema = z.object({
@@ -45,7 +44,7 @@ export async function GET() {
   const auth = await requireUser('renewal.portal.view');
   if ('error' in auth) return auth.error;
 
-  const result = await listRenewalManagement({ contaId: auth.user.contaId }, { prisma });
+  const result = await listRenewalManagementFromHttp({ contaId: auth.user.contaId });
   return NextResponse.json(
     { campaigns: result.campaigns, participants: result.participants },
     { headers: { 'cache-control': 'no-store' } },
@@ -68,20 +67,17 @@ export async function POST(request: Request) {
       );
     }
 
-    const campaign = await createRenewalCampaign(
-      {
-        contaId: auth.user.contaId,
-        actorId: auth.user.id,
-        nome: body.nome,
-        descricao: body.descricao,
-        targetPeriodId: body.targetPeriodId,
-        campaignStartsAt,
-        campaignEndsAt,
-        audienceDefinition: body.audienceDefinition,
-        status: body.status,
-      },
-      { prisma },
-    );
+    const campaign = await createRenewalCampaignFromHttp({
+      contaId: auth.user.contaId,
+      actorId: auth.user.id,
+      nome: body.nome,
+      descricao: body.descricao,
+      targetPeriodId: body.targetPeriodId,
+      campaignStartsAt,
+      campaignEndsAt,
+      audienceDefinition: body.audienceDefinition,
+      status: body.status,
+    });
     return NextResponse.json({ campaign }, { status: 201, headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     if (error instanceof ZodError) {
@@ -90,7 +86,7 @@ export async function POST(request: Request) {
     return jsonError(
       500,
       'ERRO_CRIAR_CAMPANHA',
-      error instanceof Error ? error.message : 'Erro ao criar campanha.',
+      'Erro ao criar campanha.',
     );
   }
 }

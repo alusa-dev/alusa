@@ -1,59 +1,51 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
 import {
   planoCreateSchema,
   planoUpdateSchema,
   planoFilterSchema,
+} from '@alusa/lib/planos/planos-schema';
+import {
   listPlanos,
   createPlano,
   updatePlano,
   deletePlano,
-} from '@alusa/lib';
+} from '@alusa/lib/planos/planos-service';
+import { resolveTenantSession, type TenantSessionResolution } from '@/lib/api/with-tenant-session';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
 } from '@/src/server/platform-billing/capacity';
+import { apiJsonError } from '@/lib/api/standard-response';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
-  return NextResponse.json({ error: { code, message, details } }, { status });
+  return apiJsonError(status, code, message, details);
 }
 
-interface ContaContext {
-  contaId: string | null;
-  sessionContaId: string | null;
-  mismatch: boolean;
+function tenantErrorResponse(tenant: Extract<TenantSessionResolution, { ok: false }>) {
+  return jsonError(
+    tenant.reason === 'CONTA_MISMATCH' ? 403 : 401,
+    tenant.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
+    tenant.reason === 'CONTA_MISMATCH'
+      ? 'A conta informada não pertence ao usuário autenticado.'
+      : 'É necessário estar autenticado.',
+  );
 }
 
-async function resolveContaContext(requestContaId: string | null): Promise<ContaContext> {
-  const requested = requestContaId?.trim() || null;
-  const session = await getServerSession(authOptions).catch(() => null);
-  const sessionContaId =
-    (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-
-  if (sessionContaId && requested && sessionContaId !== requested) {
-    return { contaId: null, sessionContaId, mismatch: true };
+function planoOperationMessage(error: unknown, fallback: string) {
+  if (!(error instanceof Error)) return fallback;
+  if (error.message === 'Já existe um plano com este nome nesta conta.') {
+    return 'Já existe um plano com este nome nesta conta.';
   }
-
-  return { contaId: requested ?? sessionContaId, sessionContaId, mismatch: false };
+  if (error.message === 'Plano não encontrado.') return 'Plano não encontrado.';
+  return fallback;
 }
 
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const contaContext = await resolveContaContext(url.searchParams.get('contaId'));
-    if (contaContext.mismatch) {
-      return jsonError(
-        403,
-        'CONTA_INVALIDA',
-        'A conta informada não pertence ao usuário autenticado.',
-      );
-    }
-
-    const contaId = contaContext.contaId;
-    if (!contaId) {
-      return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
-    }
+    const tenant = await resolveTenantSession(url.searchParams.get('contaId'));
+    if (!tenant.ok) return tenantErrorResponse(tenant);
+    const contaId = tenant.contaId;
 
     const statusParam = url.searchParams.get('status');
     const searchParam = url.searchParams.get('q') ?? undefined;
@@ -72,7 +64,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ data: planos });
   } catch (error) {
     console.error('[planos][GET] erro ao listar planos', error);
-    return jsonError(500, 'ERRO_LISTAR_PLANOS', (error as Error).message);
+    return jsonError(500, 'ERRO_LISTAR_PLANOS', 'Não foi possível carregar os planos.');
   }
 }
 
@@ -83,19 +75,9 @@ export async function POST(req: Request) {
       return jsonError(400, 'REQUISICAO_INVALIDA', 'Payload inválido');
     }
 
-    const contaContext = await resolveContaContext((body as { contaId?: string }).contaId ?? null);
-    if (contaContext.mismatch) {
-      return jsonError(
-        403,
-        'CONTA_INVALIDA',
-        'A conta informada não pertence ao usuário autenticado.',
-      );
-    }
-
-    const contaId = contaContext.contaId;
-    if (!contaId) {
-      return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
-    }
+    const tenant = await resolveTenantSession((body as { contaId?: string }).contaId ?? null);
+    if (!tenant.ok) return tenantErrorResponse(tenant);
+    const contaId = tenant.contaId;
 
     try {
       await assertPlatformAccessForConta({ contaId, capability: 'ADMIN_WRITE' });
@@ -114,11 +96,11 @@ export async function POST(req: Request) {
       const plano = await createPlano(parsed.data);
       return NextResponse.json({ data: plano }, { status: 201 });
     } catch (error) {
-      return jsonError(400, 'ERRO_CRIAR_PLANO', (error as Error).message);
+      return jsonError(400, 'ERRO_CRIAR_PLANO', planoOperationMessage(error, 'Não foi possível criar o plano.'));
     }
   } catch (error) {
     console.error('[planos][POST] erro inesperado', error);
-    return jsonError(500, 'ERRO_CRIAR_PLANO', (error as Error).message);
+    return jsonError(500, 'ERRO_CRIAR_PLANO', 'Não foi possível criar o plano.');
   }
 }
 
@@ -134,19 +116,9 @@ export async function PATCH(req: Request) {
       return jsonError(400, 'ID_OBRIGATORIO', 'id é obrigatório');
     }
 
-    const contaContext = await resolveContaContext((body as { contaId?: string }).contaId ?? null);
-    if (contaContext.mismatch) {
-      return jsonError(
-        403,
-        'CONTA_INVALIDA',
-        'A conta informada não pertence ao usuário autenticado.',
-      );
-    }
-
-    const contaId = contaContext.contaId;
-    if (!contaId) {
-      return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
-    }
+    const tenant = await resolveTenantSession((body as { contaId?: string }).contaId ?? null);
+    if (!tenant.ok) return tenantErrorResponse(tenant);
+    const contaId = tenant.contaId;
 
     try {
       await assertPlatformAccessForConta({ contaId, capability: 'ADMIN_WRITE' });
@@ -165,11 +137,11 @@ export async function PATCH(req: Request) {
       const plano = await updatePlano(parsed.data);
       return NextResponse.json({ data: plano });
     } catch (error) {
-      return jsonError(400, 'ERRO_ATUALIZAR_PLANO', (error as Error).message);
+      return jsonError(400, 'ERRO_ATUALIZAR_PLANO', planoOperationMessage(error, 'Não foi possível atualizar o plano.'));
     }
   } catch (error) {
     console.error('[planos][PATCH] erro inesperado', error);
-    return jsonError(500, 'ERRO_ATUALIZAR_PLANO', (error as Error).message);
+    return jsonError(500, 'ERRO_ATUALIZAR_PLANO', 'Não foi possível atualizar o plano.');
   }
 }
 
@@ -185,19 +157,9 @@ export async function DELETE(req: Request) {
       return jsonError(400, 'ID_OBRIGATORIO', 'id é obrigatório');
     }
 
-    const contaContext = await resolveContaContext((body as { contaId?: string }).contaId ?? null);
-    if (contaContext.mismatch) {
-      return jsonError(
-        403,
-        'CONTA_INVALIDA',
-        'A conta informada não pertence ao usuário autenticado.',
-      );
-    }
-
-    const contaId = contaContext.contaId;
-    if (!contaId) {
-      return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
-    }
+    const tenant = await resolveTenantSession((body as { contaId?: string }).contaId ?? null);
+    if (!tenant.ok) return tenantErrorResponse(tenant);
+    const contaId = tenant.contaId;
 
     try {
       await assertPlatformAccessForConta({ contaId, capability: 'ADMIN_WRITE' });
@@ -211,10 +173,10 @@ export async function DELETE(req: Request) {
       const plano = await deletePlano(id, contaId);
       return NextResponse.json({ data: plano });
     } catch (error) {
-      return jsonError(400, 'ERRO_EXCLUIR_PLANO', (error as Error).message);
+      return jsonError(400, 'ERRO_EXCLUIR_PLANO', planoOperationMessage(error, 'Não foi possível excluir o plano.'));
     }
   } catch (error) {
     console.error('[planos][DELETE] erro inesperado', error);
-    return jsonError(500, 'ERRO_EXCLUIR_PLANO', (error as Error).message);
+    return jsonError(500, 'ERRO_EXCLUIR_PLANO', 'Não foi possível excluir o plano.');
   }
 }

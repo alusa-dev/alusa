@@ -14,6 +14,15 @@ const OVERDUE_STATUSES: StatusCobranca[] = [
 
 const OVERDUE_CHARGE_STATUSES: ChargeStatus[] = [ChargeStatus.OPEN, ChargeStatus.OVERDUE];
 
+export async function listContasForOverdueBillingNotifications(maxAccounts = 500) {
+  const contas = await prisma.conta.findMany({
+    where: { deletedAt: null },
+    select: { id: true },
+    take: maxAccounts,
+  });
+  return contas.map((conta) => conta.id);
+}
+
 function startOfDayInTimezone(date: Date, timeZone: string): Date {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone,

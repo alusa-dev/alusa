@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/lib/prisma';
-import { resolveResponsavelRouteId } from '../../_lib/resolve-responsavel-route-id';
-import { listStudentsLinkedToResponsible } from '@/src/server/responsaveis/linked-students.service';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { resolveResponsavelRouteId } from '@/src/server/responsaveis/resolve-responsavel-route-id.service';
+import { listStudentsLinkedToResponsibleForTenant } from '@/src/server/responsaveis/linked-students.service';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,18 +14,18 @@ export async function GET(_req: NextRequest, context: { params: IdParams }) {
       return NextResponse.json({ error: 'Identificador inválido' }, { status: 400 });
     }
 
-    const session = await getServerSession(authOptions);
-    const contaId = (session as { user?: { contaId?: string } })?.user?.contaId;
-    if (!contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
+    const contaId = auth.contaId;
 
     const responsavelId = await resolveResponsavelRouteId(id, contaId);
     if (!responsavelId) {
       return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
     }
 
-    const vinculos = await listStudentsLinkedToResponsible(prisma, { contaId, responsavelId });
+    const vinculos = await listStudentsLinkedToResponsibleForTenant({ contaId, responsavelId });
 
     const items = vinculos.map(({ aluno }) => ({
       id: aluno.id,

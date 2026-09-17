@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { prisma } from '@/src/prisma';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 // Import direto do source até a lib ser rebuildada
 import {
   colaboradorSchema,
@@ -12,14 +9,15 @@ import {
 } from '../../../../../packages/lib/src/schemas/colaborador';
 import { create as createColab } from '../../../../../packages/lib/src/server/services/colaborador-service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
+import { listColaboradores } from '@/src/server/colaboradores/colaborador-read.service';
 
 export async function GET(req: NextRequest) {
   // MULTI-TENANT: validar sessão e usar contaId da sessão
-  const session = await getServerSession(authOptions);
-  const contaId = (session as { user?: { contaId?: string } })?.user?.contaId;
-  if (!contaId) {
+  const auth = await resolveTenantSession();
+  if (!auth.ok) {
     return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
   }
+  const { contaId } = auth;
 
   const { searchParams } = new URL(req.url);
   const q = (searchParams.get('q') || '').trim();
@@ -28,45 +26,25 @@ export async function GET(req: NextRequest) {
   const page = Math.max(1, Number(searchParams.get('page') || '1'));
   const pageSize = Math.min(100, Math.max(1, Number(searchParams.get('pageSize') || '10')));
 
-  const where: Record<string, any> = { contaId };
-  const and: any[] = [];
-  if (q) {
-    and.push({
-      OR: [
-        { nome: { contains: q, mode: 'insensitive' } },
-        { email: { contains: q, mode: 'insensitive' } },
-      ],
-    });
-  }
-  if (status && statusColabEnum.options.includes(status as any)) {
-    and.push({ status });
-  }
-  if (cargo && cargoEnum.options.includes(cargo as any)) {
-    and.push({ cargo });
-  }
-  if (and.length > 0) (where as any).AND = and;
-
-  const db = prisma as unknown as { colaborador: any };
-  const [total, items] = await Promise.all([
-    db.colaborador.count({ where }),
-    db.colaborador.findMany({
-      where,
-      orderBy: { nome: 'asc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-    }),
-  ]);
-  return NextResponse.json({ items, total, page, pageSize });
+  const result = await listColaboradores({
+    contaId,
+    search: q || undefined,
+    status: status && statusColabEnum.options.includes(status as any) ? status : undefined,
+    cargo: cargo && cargoEnum.options.includes(cargo as any) ? cargo : undefined,
+    page,
+    pageSize,
+  });
+  return NextResponse.json({ ...result, page, pageSize });
 }
 
 export async function POST(req: NextRequest) {
   try {
     // MULTI-TENANT: validar sessão e usar contaId da sessão
-    const session = await getServerSession(authOptions);
-    const contaId = (session as { user?: { contaId?: string } })?.user?.contaId;
-    if (!contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
+    const { contaId } = auth;
     await assertPlatformAccessForConta({ contaId, capability: 'STAFF_WRITE' });
 
     const body = (await req.json()) as Record<string, unknown>;

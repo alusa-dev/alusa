@@ -1,0 +1,538 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { ChargeStatus, type Prisma } from '@prisma/client';
+
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { prisma } from '@/lib/prisma';
+import { syncResponsavelAsaasCustomer } from '@alusa/finance';
+import {
+  responsavelDetailDTOSchema,
+  updateResponsavelInputDTOSchema,
+} from '@/features/responsaveis/dtos';
+import {
+  mapResponsavelRecordToDetailDTO,
+  mapUpdateResponsavelDTOToData,
+} from '@/features/responsaveis/mappers';
+import { resolveResponsavelRouteId } from './resolve-responsavel-route-id.service';
+import {
+  auditSensitiveAccess,
+  canViewSensitivePersonData,
+} from '@/lib/privacy/sensitive-access';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
+
+export const dynamic = 'force-dynamic';
+
+const responsavelDetailSelect = {
+  id: true,
+  nome: true,
+  cpf: true,
+  email: true,
+  telefone: true,
+  financeiro: true,
+  consentimentoComunicacoes: true,
+  consentimentoMarketing: true,
+  asaasCustomerId: true,
+  usuarioId: true,
+  enderecoCep: true,
+  enderecoLogradouro: true,
+  enderecoNumero: true,
+  enderecoComplemento: true,
+  enderecoBairro: true,
+  enderecoCidade: true,
+  enderecoUf: true,
+} as const;
+
+type ResponsavelDetailRecord = Prisma.ResponsavelGetPayload<{
+  select: typeof responsavelDetailSelect;
+}>;
+
+type IdParams = Promise<{ id: string }> | { id: string };
+
+async function resolveResponsavelId(params: IdParams) {
+  const { id } = await Promise.resolve(params);
+  return typeof id === 'string' ? id : '';
+}
+
+async function getResponsavelMetrics(id: string, contaId: string) {
+  const [alunos, matriculasFinanceiras, vendas] = await Promise.all([
+    prisma.alunoResponsavel.count({ where: { responsavelId: id, aluno: { contaId } } }),
+    prisma.matricula.count({
+      where: {
+        responsavelFinanceiroId: id,
+        aluno: { contaId },
+      },
+    }),
+    prisma.sale.count({ where: { responsavelId: id, contaId } }),
+  ]);
+
+  return { alunos, matriculasFinanceiras, sales: vendas };
+}
+
+async function buildResponsavelDetailDTO(
+  responsavel: ResponsavelDetailRecord | null,
+  contaId: string,
+) {
+  if (!responsavel) return null;
+  const metrics = await getResponsavelMetrics(responsavel.id, contaId);
+  return responsavelDetailDTOSchema.parse(
+    mapResponsavelRecordToDetailDTO({
+      ...responsavel,
+      createdAt: null,
+      updatedAt: null,
+      _count: metrics,
+    }),
+  );
+}
+
+export async function getResponsavelRoute(_req: NextRequest, context: { params: IdParams }) {
+  try {
+    const id = await resolveResponsavelId(context.params);
+    if (!id) {
+      return NextResponse.json({ error: 'Identificador inválido' }, { status: 400 });
+    }
+
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+    }
+    const user = { id: auth.userId, role: auth.role };
+    const contaId = auth.contaId;
+
+    if (!canViewSensitivePersonData({ user: user ?? {}, contaId, purpose: 'RESPONSAVEL_DETAIL' })) {
+      return NextResponse.json(
+        { error: 'Acesso negado a dados sensíveis do responsável' },
+        { status: 403 },
+      );
+    }
+
+    const responsavelId = await resolveResponsavelRouteId(id, contaId);
+    if (!responsavelId) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
+    const responsavel = await prisma.responsavel.findFirst({
+      where: { id: responsavelId, contaId },
+      select: responsavelDetailSelect,
+    });
+
+    if (!responsavel) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
+    const dto = await buildResponsavelDetailDTO(responsavel, contaId);
+    if (!dto) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
+    await auditSensitiveAccess({
+      prisma,
+      req: _req,
+      contaId,
+      actorUserId: user?.id,
+      action: 'responsavel.sensitive.view',
+      entityType: 'Responsavel',
+      entityId: responsavel.id,
+      purpose: 'RESPONSAVEL_DETAIL',
+      metadata: { fields: ['cpf', 'email', 'telefone', 'endereco'] },
+    });
+
+    return NextResponse.json(dto);
+  } catch (error) {
+    console.error('[GET /api/responsaveis/[id]]', error);
+    return NextResponse.json({ error: 'Erro ao buscar responsável' }, { status: 500 });
+  }
+}
+
+export async function patchResponsavelRoute(req: NextRequest, context: { params: IdParams }) {
+  try {
+    const id = await resolveResponsavelId(context.params);
+    if (!id) {
+      return NextResponse.json({ error: 'Identificador inválido' }, { status: 400 });
+    }
+
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+    }
+    const user = { id: auth.userId, role: auth.role };
+    const contaId = auth.contaId;
+
+    try {
+      await assertPlatformAccessForConta({ contaId, capability: 'STUDENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
+      throw error;
+    }
+
+    if (!canViewSensitivePersonData({ user: user ?? {}, contaId, purpose: 'RESPONSAVEL_EDIT' })) {
+      return NextResponse.json(
+        { error: 'Acesso negado para alterar dados sensíveis do responsável' },
+        { status: 403 },
+      );
+    }
+
+    const raw = await req.json().catch(() => null);
+    const validation = updateResponsavelInputDTOSchema.safeParse(raw);
+
+    if (!validation.success) {
+      return NextResponse.json(
+        {
+          error: 'Dados inválidos',
+          details: validation.error.flatten().fieldErrors,
+        },
+        { status: 400 },
+      );
+    }
+
+    const responsavelId = await resolveResponsavelRouteId(id, contaId);
+    if (!responsavelId) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
+    const atual = await prisma.responsavel.findFirst({
+      where: { id: responsavelId, contaId },
+      select: { id: true },
+    });
+
+    if (!atual) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
+    const data = mapUpdateResponsavelDTOToData(validation.data);
+    const cpf = typeof data.cpf === 'string' ? data.cpf : undefined;
+    const email = typeof data.email === 'string' ? data.email : undefined;
+
+    if (Object.keys(data).length === 0) {
+      return NextResponse.json(
+        { error: 'Informe ao menos um campo válido para atualizar.' },
+        { status: 400 },
+      );
+    }
+
+    if (cpf || email) {
+      const existente = await prisma.responsavel.findFirst({
+        where: {
+          contaId,
+          id: { not: responsavelId },
+          OR: [...(cpf ? [{ cpf }] : []), ...(email ? [{ email }] : [])],
+        },
+        select: { cpf: true, email: true },
+      });
+
+      if (existente) {
+        if (cpf && existente.cpf === cpf) {
+          return NextResponse.json({ error: 'CPF já cadastrado nesta conta' }, { status: 409 });
+        }
+        return NextResponse.json({ error: 'Email já cadastrado nesta conta' }, { status: 409 });
+      }
+    }
+
+    const responsavel = await prisma.responsavel.update({
+      where: { id: responsavelId },
+      data: data as Prisma.ResponsavelUpdateInput,
+      select: responsavelDetailSelect,
+    });
+
+    const touchedAddress =
+      validation.data.endereco != null ||
+      ['enderecoCep', 'enderecoLogradouro', 'enderecoNumero', 'enderecoBairro', 'enderecoCidade', 'enderecoUf'].some(
+        (field) => field in data,
+      );
+    const touchedContact = ['nome', 'cpf', 'email', 'telefone'].some((field) => field in data);
+
+    let asaasSync: { status: 'OK' | 'FAILED' | 'SKIPPED'; message?: string } = { status: 'SKIPPED' };
+    if ((touchedAddress || touchedContact) && responsavel.financeiro) {
+      const synced = await syncResponsavelAsaasCustomer({
+        contaId,
+        responsavelId: responsavel.id,
+        requireFiscalAddress: touchedAddress,
+        notificationSyncMode: 'deferred',
+      });
+      asaasSync = synced.ok
+        ? { status: 'OK', message: synced.warnings?.[0] }
+        : { status: 'FAILED', message: synced.message };
+    }
+
+    const dto = await buildResponsavelDetailDTO(responsavel, contaId);
+    if (!dto) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
+    await auditSensitiveAccess({
+      prisma,
+      req,
+      contaId,
+      actorUserId: user?.id,
+      action: 'responsavel.sensitive.update',
+      entityType: 'Responsavel',
+      entityId: responsavel.id,
+      purpose: 'RESPONSAVEL_EDIT',
+      metadata: {
+        fields: Object.keys(raw ?? {}).filter((field) =>
+          ['cpf', 'email', 'telefone', 'endereco', 'consentimentoComunicacoes', 'consentimentoMarketing'].includes(field),
+        ),
+      },
+    });
+
+    if (
+      typeof validation.data.consentimentoComunicacoes === 'boolean' ||
+      typeof validation.data.consentimentoMarketing === 'boolean'
+    ) {
+      await prisma.auditLog.create({
+        data: {
+          contaId,
+          actorType: user?.id ? 'USER' : 'SYSTEM',
+          actorId: user?.id ?? undefined,
+          action: 'COMUNICACAO_CONSENTIMENTO_ATUALIZADO',
+          entityType: 'RESPONSAVEL',
+          entityId: responsavel.id,
+          metadata: {
+            consentimentoComunicacoes: validation.data.consentimentoComunicacoes,
+            consentimentoMarketing: validation.data.consentimentoMarketing,
+            origem: 'RESPONSAVEL_EDICAO',
+            versao: '2026-09-05',
+          },
+        },
+      });
+    }
+
+    return NextResponse.json({ ...dto, asaasSync });
+  } catch (error) {
+    console.error('[PATCH /api/responsaveis/[id]]', error);
+    return NextResponse.json({ error: 'Erro ao atualizar responsável' }, { status: 500 });
+  }
+}
+
+const PENDING_CHARGE_STATUSES: ChargeStatus[] = [
+  ChargeStatus.CREATED,
+  ChargeStatus.PENDING_SYNC,
+  ChargeStatus.OPEN,
+  ChargeStatus.OVERDUE,
+];
+
+const FAMILY_BILLING_IN_FLIGHT = ['PENDENTE', 'PROCESSANDO', 'ATIVO', 'PARCIAL'] as const;
+
+export async function deleteResponsavelRoute(_req: NextRequest, context: { params: IdParams }) {
+  try {
+    const id = await resolveResponsavelId(context.params);
+    if (!id) {
+      return NextResponse.json({ error: 'Identificador inválido' }, { status: 400 });
+    }
+
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+    }
+    const contaId = auth.contaId;
+
+    try {
+      await assertPlatformAccessForConta({ contaId, capability: 'STUDENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
+      throw error;
+    }
+
+    const responsavelId = await resolveResponsavelRouteId(id, contaId);
+    if (!responsavelId) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
+    const existente = await prisma.responsavel.findFirst({
+      where: { id: responsavelId, contaId },
+      select: { id: true },
+    });
+
+    if (!existente) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
+    const [
+      familiasIds,
+      rematriculasIds,
+      alunosVinculados,
+      alunosAtivos,
+      matriculasFinanceirasAtivas,
+      matriculaFamiliarPendente,
+      rematriculaFamiliarPendente,
+      vendasPendentes,
+    ] = await Promise.all([
+      prisma.matriculaFamiliar.findMany({
+        where: { contaId, responsavelId },
+        select: { id: true },
+      }),
+      prisma.rematriculaFamiliar.findMany({
+        where: { contaId, responsavelId },
+        select: { id: true },
+      }),
+      prisma.alunoResponsavel.count({
+        where: { responsavelId, aluno: { contaId } },
+      }),
+      prisma.alunoResponsavel.count({
+        where: { responsavelId, aluno: { contaId, status: 'ATIVO' } },
+      }),
+      prisma.matricula.count({
+        where: {
+          contaId,
+          responsavelFinanceiroId: responsavelId,
+          aluno: { contaId },
+          status: { notIn: ['CANCELADA', 'RECUSADA'] },
+        },
+      }),
+      prisma.matriculaFamiliar.count({
+        where: {
+          contaId,
+          responsavelId,
+          status: { in: [...FAMILY_BILLING_IN_FLIGHT] },
+        },
+      }),
+      prisma.rematriculaFamiliar.count({
+        where: {
+          contaId,
+          responsavelId,
+          status: { in: [...FAMILY_BILLING_IN_FLIGHT] },
+        },
+      }),
+      prisma.sale.count({
+        where: {
+          contaId,
+          responsavelId,
+          status: { in: ['PENDENTE', 'VINCULADA_MENSALIDADE'] },
+        },
+      }),
+    ]);
+
+    const familyGroupIds = [
+      ...familiasIds.map((row) => row.id),
+      ...rematriculasIds.map((row) => row.id),
+    ];
+
+    const [standaloneSubscriptions, standaloneInstallmentPlans, billingAgreements] = await Promise.all([
+      prisma.standaloneSubscription.count({
+        where: {
+          contaId,
+          OR: [
+            { payerType: 'RESPONSAVEL', payerId: responsavelId },
+            ...(familyGroupIds.length ? [{ familyGroupId: { in: familyGroupIds } }] : []),
+          ],
+          status: { in: ['REQUESTED', 'ACTIVE'] },
+        },
+      }),
+      prisma.standaloneInstallmentPlan.count({
+        where: {
+          contaId,
+          OR: [
+            { payerType: 'RESPONSAVEL', payerId: responsavelId },
+            ...(familyGroupIds.length ? [{ familyGroupId: { in: familyGroupIds } }] : []),
+          ],
+          status: 'ACTIVE',
+        },
+      }),
+      prisma.billingAgreement.count({
+        where: {
+          contaId,
+          OR: [
+            { payerType: 'RESPONSAVEL', payerId: responsavelId },
+            ...(familyGroupIds.length ? [{ billingGroupKey: { in: familyGroupIds } }] : []),
+          ],
+          status: { in: ['DRAFT', 'PENDING_PROVISION', 'ACTIVE', 'CANCELLATION_PENDING', 'REQUIRES_RECONCILIATION'] },
+        },
+      }),
+    ]);
+
+    const chargeOr: Prisma.ChargeWhereInput[] = [
+      { payerType: 'RESPONSAVEL', payerId: responsavelId },
+      ...(familyGroupIds.length > 0
+        ? [{ familyGroupId: { in: familyGroupIds } } satisfies Prisma.ChargeWhereInput]
+        : []),
+      {
+        sale: { contaId, responsavelId },
+      },
+      {
+        cobranca: {
+          contaId,
+          matricula: { contaId, responsavelFinanceiroId: responsavelId },
+        },
+      },
+    ];
+
+    const cobrancasPendentes =
+      chargeOr.length === 0
+        ? 0
+        : await prisma.charge.count({
+            where: {
+              contaId,
+              OR: chargeOr,
+              status: { in: PENDING_CHARGE_STATUSES },
+            },
+          });
+
+    const conflitos: string[] = [];
+    if (alunosAtivos > 0) {
+      conflitos.push('existem alunos ativos vinculados a este responsável');
+    } else if (alunosVinculados > 0) {
+      conflitos.push('existem vínculos históricos com alunos inativos');
+    }
+    if (cobrancasPendentes > 0) {
+      conflitos.push('existem cobranças em aberto ou pendentes vinculadas a este responsável');
+    }
+    if (matriculasFinanceirasAtivas > 0) {
+      conflitos.push(
+        'este responsável é o financeiro de matrículas que ainda não estão canceladas ou recusadas',
+      );
+    }
+    if (matriculaFamiliarPendente > 0 || rematriculaFamiliarPendente > 0) {
+      conflitos.push('existem lotes de matrícula ou rematrícula familiar em andamento');
+    }
+    if (vendasPendentes > 0) {
+      conflitos.push('existem vendas pendentes vinculadas a este responsável');
+    }
+    if (standaloneSubscriptions > 0 || standaloneInstallmentPlans > 0 || billingAgreements > 0) {
+      conflitos.push('existem obrigações financeiras standalone ou acordos de cobrança vinculados a este responsável');
+    }
+
+    if (conflitos.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Não é possível excluir: ${conflitos.join('; ')}.`,
+          code: 'EXCLUSAO_RESPONSAVEL_CONFLITO',
+          conflitos,
+        },
+        { status: 409 },
+      );
+    }
+
+    const deleted = await prisma.$transaction(async (tx) => {
+      // CustomerPayer é um alias polimórfico sem FK para Responsavel. Removê-lo
+      // junto com a pessoa evita deixar um papel apontando para um registro
+      // apagado, sem remover o Customer canônico nem o histórico financeiro.
+      await tx.customerPayer.deleteMany({
+        where: { contaId, payerType: 'RESPONSAVEL', payerId: responsavelId },
+      });
+      return tx.responsavel.deleteMany({
+        where: { id: responsavelId, contaId },
+      });
+    });
+
+    if (deleted.count === 0) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2003') {
+      return NextResponse.json(
+        {
+          error: 'Não é possível excluir: existem vínculos dependentes deste responsável.',
+          code: 'EXCLUSAO_RESPONSAVEL_CONFLITO',
+        },
+        { status: 409 },
+      );
+    }
+    console.error('[DELETE /api/responsaveis/[id]]', error);
+    return NextResponse.json({ error: 'Erro ao excluir responsável' }, { status: 500 });
+  }
+}

@@ -1,4 +1,33 @@
 import { z } from 'zod';
+import {
+  FinanceReconciliationIssueSeverity,
+  FinanceReconciliationIssueStatus,
+  FinanceReconciliationIssueType,
+} from '@prisma/client';
+
+export const financeInstallmentRouteParamsDTOSchema = z.object({
+  id: z.string().trim().min(1).max(128),
+});
+
+export const financeSubscriptionRouteParamsDTOSchema = z.object({
+  id: z.string().trim().min(1).max(128),
+});
+
+export const financeTransferRecipientDeleteInputDTOSchema = z.object({
+  recipientId: z.string().trim().min(1).max(191),
+});
+
+export const financeAccountStatusQueryDTOSchema = z.object({
+  fresh: z.enum(['0', '1']).optional(),
+});
+
+export const financeReconciliationQueryDTOSchema = z.object({
+  status: z.nativeEnum(FinanceReconciliationIssueStatus).default(FinanceReconciliationIssueStatus.OPEN),
+  severity: z.nativeEnum(FinanceReconciliationIssueSeverity).optional(),
+  issueType: z.nativeEnum(FinanceReconciliationIssueType).optional(),
+  page: z.coerce.number().int().min(1).max(1000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+});
 
 const nullableStringDTOSchema = z.string().nullable();
 const isoDateStringDTOSchema = z

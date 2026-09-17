@@ -63,10 +63,25 @@ function buildRequest(url: string, body?: Record<string, unknown>) {
 describe('DELETE /api/matriculas/[id]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getServerSession).mockResolvedValue(null);
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'user-1', contaId: 'conta-1' },
+    } as never);
     prismaMock.$transaction.mockImplementation(async (callback: (_tx: typeof prismaMock) => Promise<unknown>) =>
       callback(prismaMock as never),
     );
+  });
+
+  it('rejeita exclusão quando não existe sessão, mesmo com contaId na query', async () => {
+    vi.mocked(getServerSession).mockResolvedValueOnce(null);
+
+    const response = await DELETE(
+      buildRequest('http://localhost:3000/api/matriculas/matricula-1?contaId=conta-1'),
+      { params: Promise.resolve({ id: 'matricula-1' }) },
+    );
+
+    expect(response.status).toBe(401);
+    expect((await response.json()).error.code).toBe('NAO_AUTENTICADO');
+    expect(syncMatriculaStatusMock).not.toHaveBeenCalled();
   });
 
   it('cancela a matrícula quando hard delete não foi solicitado', async () => {

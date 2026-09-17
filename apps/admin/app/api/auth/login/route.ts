@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { authenticateAdminUser, createAdminSession, supportRoleFromAdminRole } from '@alusa/admin-auth';
 import { ipFromRequest, authRateLimitAsync, rateLimitSubject } from '@alusa/lib/security/rate-limit';
-import { prisma } from '@alusa/database';
 import { ADMIN_SESSION_COOKIE } from '@/lib/session';
+import { recordAdminAudit } from '@/lib/admin-session';
 import { z } from 'zod';
 
 const loginSchema = z.object({
@@ -24,7 +24,15 @@ export async function POST(request: Request) {
     const user = await authenticateAdminUser({ username: body.username, password: body.password });
     if (!user) return NextResponse.json({ error: 'Credenciais inválidas' }, { status: 401, headers: { 'cache-control': 'no-store' } });
     const session = await createAdminSession({ adminUserId: user.id, ip, userAgent: request.headers.get('user-agent') });
-    await prisma.supportAuditLog.create({ data: { actorId: user.id, actorUsername: user.username, actorRole: supportRoleFromAdminRole(user.role), action: 'admin.auth.login', ip, userAgent: request.headers.get('user-agent'), metadata: { authSource: 'admin_user' } } });
+    await recordAdminAudit({
+      actorId: user.id,
+      actorUsername: user.username,
+      actorRole: supportRoleFromAdminRole(user.role),
+      action: 'admin.auth.login',
+      ip,
+      userAgent: request.headers.get('user-agent'),
+      metadata: { authSource: 'admin_user' },
+    });
     const response = NextResponse.json({ success: true, user: { id: user.id, username: user.username, role: user.role, expiresAt: session.expiresAt.toISOString() } }, { headers: { 'cache-control': 'no-store' } });
     response.cookies.set(ADMIN_SESSION_COOKIE, session.token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 8 * 60 * 60 });
     return response;

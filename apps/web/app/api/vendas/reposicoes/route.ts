@@ -1,6 +1,4 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
-import { RestockOrderStatus } from '@prisma/client';
 
 import {
   createRestockOrder,
@@ -9,34 +7,16 @@ import {
 } from '@alusa/finance';
 
 import { getStoreRequestContext, jsonError } from '../_helpers';
-
-const querySchema = z.object({
-  status: z.union([z.literal('TODOS'), z.nativeEnum(RestockOrderStatus)]).optional(),
-  search: z.string().trim().optional(),
-});
-
-const requestSchema = z.object({
-  requestId: z.string().trim().optional(),
-  supplierName: z.string().trim().optional().nullable(),
-  expectedAt: z.string().trim().optional().nullable(),
-  notes: z.string().trim().optional().nullable(),
-  items: z
-    .array(
-      z.object({
-        productId: z.string().trim().min(1),
-        variantId: z.string().trim().optional().nullable(),
-        quantity: z.number().int().positive(),
-        unitCost: z.number().min(0),
-      }),
-    )
-    .min(1),
-});
+import {
+  createRestockOrderInputDTOSchema,
+  listRestockOrdersQueryDTOSchema,
+} from '@/features/vendas/dtos';
 
 export async function GET(request: Request) {
   try {
     const { contaId } = await getStoreRequestContext();
     const url = new URL(request.url);
-    const parsed = querySchema.safeParse(Object.fromEntries(url.searchParams.entries()));
+    const parsed = listRestockOrdersQueryDTOSchema.safeParse(Object.fromEntries(url.searchParams.entries()));
 
     if (!parsed.success) {
       return jsonError(422, 'ERRO_VALIDACAO', 'Parâmetros inválidos.', parsed.error.flatten());
@@ -59,7 +39,7 @@ export async function GET(request: Request) {
       return jsonError(authError.status, authError.code, authError.message ?? 'Erro');
     }
 
-    return jsonError(500, 'ERRO_LISTAR_REPOSICOES', (error as Error).message);
+    return jsonError(500, 'ERRO_LISTAR_REPOSICOES', 'Não foi possível carregar as reposições.');
   }
 }
 
@@ -67,7 +47,7 @@ export async function POST(request: Request) {
   try {
     const { contaId, operatorId } = await getStoreRequestContext();
     const body = await request.json();
-    const parsed = requestSchema.safeParse(body);
+    const parsed = createRestockOrderInputDTOSchema.safeParse(body);
 
     if (!parsed.success) {
       return jsonError(422, 'ERRO_VALIDACAO', 'Falha de validação.', parsed.error.flatten());
@@ -94,6 +74,6 @@ export async function POST(request: Request) {
       return jsonError(authError.status, authError.code, authError.message ?? 'Erro');
     }
 
-    return jsonError(500, 'ERRO_CRIAR_REPOSICAO', (error as Error).message);
+    return jsonError(500, 'ERRO_CRIAR_REPOSICAO', 'Não foi possível criar a reposição.');
   }
 }

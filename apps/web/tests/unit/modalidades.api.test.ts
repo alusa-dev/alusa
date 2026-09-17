@@ -1,4 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({ getServerSession: vi.fn() }));
+
+vi.mock('next-auth', () => ({ getServerSession: mocks.getServerSession }));
+
 import { POST as createModalidade, GET as listModalidades } from '@/app/api/modalidades/route';
 import {
   PATCH as patchModalidade,
@@ -14,6 +19,10 @@ function makeReq(body?: Record<string, unknown>, method: string = 'POST') {
 }
 
 describe('API Modalidades', () => {
+  beforeEach(() => {
+    mocks.getServerSession.mockResolvedValue({ user: { id: 'user-default', contaId: 'conta-default' } });
+  });
+
   it('rejeita nome curto', async () => {
     const res = await createModalidade(makeReq({ nome: 'A' }) as unknown as Request);
     expect(res.status).toBe(422);

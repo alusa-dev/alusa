@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   connectExternalAsaasAccount,
   getExternalAsaasOnboardingState,
@@ -11,13 +10,6 @@ import {
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
-
-type SessionUser = {
-  id?: string;
-  role?: string;
-  contaId?: string;
-  financeIntegrationMode?: string;
-};
 
 const externalOnboardingSchema = z.object({
   schoolName: z.string().min(2),
@@ -30,11 +22,6 @@ function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
-}
-
 function isAllowedRole(role: string | undefined): boolean {
   const normalized = role?.toUpperCase() ?? '';
   return normalized === 'ADMIN' || normalized === 'FINANCEIRO';
@@ -42,14 +29,14 @@ function isAllowedRole(role: string | undefined): boolean {
 
 export async function GET() {
   try {
-    const user = await resolveAuth();
-    if (!user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!isAllowedRole(user.role)) return json(403, { error: 'SEM_PERMISSAO' });
-    if (user.financeIntegrationMode !== 'EXTERNAL_ASAAS_ACCOUNT') {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(401, { error: 'NAO_AUTENTICADO' });
+    if (!isAllowedRole(auth.role)) return json(403, { error: 'SEM_PERMISSAO' });
+    if (auth.financeIntegrationMode !== 'EXTERNAL_ASAAS_ACCOUNT') {
       return json(409, { error: 'FLUXO_NAO_DISPONIVEL' });
     }
 
-    const state = await getExternalAsaasOnboardingState(user.contaId);
+    const state = await getExternalAsaasOnboardingState(auth.contaId);
     return json(200, { data: state });
   } catch (error) {
     console.error('[External Asaas Onboarding][GET]', error);
@@ -59,10 +46,10 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const user = await resolveAuth();
-    if (!user?.contaId) return json(401, { success: false, summary: 'Acesso negado.' });
-    if (!isAllowedRole(user.role)) return json(403, { success: false, summary: 'Acesso negado.' });
-    if (user.financeIntegrationMode !== 'EXTERNAL_ASAAS_ACCOUNT') {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(401, { success: false, summary: 'Acesso negado.' });
+    if (!isAllowedRole(auth.role)) return json(403, { success: false, summary: 'Acesso negado.' });
+    if (auth.financeIntegrationMode !== 'EXTERNAL_ASAAS_ACCOUNT') {
       return json(409, { success: false, summary: 'Fluxo externo indisponível para esta conta.' });
     }
 
@@ -72,17 +59,17 @@ export async function POST(request: Request) {
     }
 
     const result: ConnectExternalAsaasAccountResult = await connectExternalAsaasAccount({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       schoolName: parsed.data.schoolName,
       cpfCnpj: parsed.data.cpfCnpj,
       phone: parsed.data.phone,
       apiKey: parsed.data.apiKey,
-      actor: { id: user.id ?? null, type: 'ADMIN' },
+      actor: { id: auth.userId, type: 'ADMIN' },
     });
 
     if (!result.success) {
       console.warn('[External Asaas Onboarding][RESULT]', {
-        contaId: user.contaId,
+        contaId: auth.contaId,
         errorCode: result.errorCode,
         retryable: result.retryable ?? false,
       });

@@ -11,12 +11,9 @@
  * - Separa por liquidacaoStatus para visibilidade do fluxo de caixa
  */
 
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { ok } from '@alusa/shared';
-
-// Instanciar prisma localmente para evitar dependência circular
-const prisma = new PrismaClient();
 
 export interface GetErpRevenueInput {
   contaId: string;
@@ -82,12 +79,10 @@ export async function getErpRevenue(
     endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
   }
 
-  const contaWhere = { matricula: { aluno: { contaId } } };
-
   // Buscar cobranças pagas no período de competência
   const cobrancas = await prisma.cobranca.findMany({
     where: {
-      ...contaWhere,
+      contaId,
       status: 'PAGO',
       competenciaInicio: {
         gte: startDate,

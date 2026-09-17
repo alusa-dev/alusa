@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth-options';
-import prisma from '@/lib/prisma';
-import { applyDuePlatformPlanChanges } from '@/src/server/platform-billing/plan-change-actions';
+import { applyDuePlatformPlanChangesFromHttp } from '@/src/server/platform-billing/http-commands';
 
 export const runtime = 'nodejs';
 
@@ -21,8 +20,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'PAYLOAD_INVALIDO', details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const result = await applyDuePlatformPlanChanges({
-    prisma,
+  const result = await applyDuePlatformPlanChangesFromHttp({
     limit: parsed.data.limit,
   });
 

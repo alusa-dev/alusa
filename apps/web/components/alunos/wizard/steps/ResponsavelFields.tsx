@@ -120,7 +120,11 @@ export default function ResponsavelFields() {
       setLoadingResponsaveis(true);
       setResponsaveisError(null);
       try {
-        const items = await listResponsaveis({ signal: controller.signal, query });
+        // Para vincular um responsável ao primeiro aluno, também precisamos
+        // encontrar cadastros ainda sem alunos ativos. A API continua usando
+        // o filtro padrão nas listas gerais; este contexto solicita
+        // explicitamente todos os responsáveis da mesma conta.
+        const items = await listResponsaveis({ signal: controller.signal, query, status: 'TODOS' });
         setResponsaveis(items);
         setOpen(true);
       } catch (error) {
@@ -161,19 +165,10 @@ export default function ResponsavelFields() {
     (item: ResponsavelListItem) => {
       setValue("responsavelModo", "existente", { shouldDirty: true, shouldValidate: true });
       setValue("responsavelExistenteId", item.id, { shouldDirty: true, shouldValidate: true });
-      setValue(
-        "responsavel",
-        {
-          nome: item.nome,
-          cpf: item.cpf,
-          email: item.email,
-          telefone: item.telefone,
-          financeiro: item.financeiro,
-          consentimentoComunicacoes: item.consentimentoComunicacoes ?? false,
-          consentimentoMarketing: item.consentimentoMarketing ?? false,
-        },
-        { shouldDirty: true, shouldValidate: true },
-      );
+      // O DTO de listagem pode conter CPF/e-mail mascarados. Não copie esses
+      // valores para o objeto de criação: a seleção é representada pelo ID e
+      // o backend resolve os dados completos dentro da mesma conta.
+      setValue("responsavel", null, { shouldDirty: true, shouldValidate: true });
       setSelectedResponsavelDetails(item);
       setQuery(item.nome);
       setOpen(false);
@@ -200,7 +195,7 @@ export default function ResponsavelFields() {
     responsavelModo === "existente" && responsavelExistenteId
       ? {
           id: responsavelExistenteId,
-          nome: responsavel?.nome || "Responsável selecionado",
+          nome: responsavel?.nome || selectedResponsavelDetails?.nome || "Responsável selecionado",
           cpf: selectedResponsavelDetails?.cpf || "",
           email: selectedResponsavelDetails?.email || "",
           telefone: selectedResponsavelDetails?.telefone || "",
@@ -413,7 +408,10 @@ export default function ResponsavelFields() {
               mask="00000-000"
               placeholder="00000-000"
               ariaLabel="CEP do responsável"
-              onBlur={(event) => runCepLookup(event.currentTarget.value)}
+              onBlur={(event) => {
+                const rawCep = event.currentTarget.value.replace(/\D/g, '');
+                if (rawCep !== lastCepRef.current) runCepLookup(event.currentTarget.value);
+              }}
               unmask
             />
             <FieldError name="responsavel.enderecoCep" />

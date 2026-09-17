@@ -13,7 +13,7 @@ import type {
   SchoolEventStatus,
   SchoolEventType,
 } from '@alusa/shared';
-import type { SchoolEventDTO } from '@alusa/lib';
+import type { SchoolEventDTO } from '@alusa/lib/events/events.service';
 
 export type { SchoolEventDTO };
 

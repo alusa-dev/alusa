@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { createStandaloneCharge } from '@alusa/finance';
-import { prisma } from '@alusa/database';
 import { reactivateEventParticipantRequestSchema, reactivateEventParticipantSchema } from '@alusa/lib/events/events.schema';
 import {
   EventsError,
@@ -15,7 +14,9 @@ import {
   validateEventPaymentRulesForCharge,
 } from '@alusa/lib/events/events-payment-rules';
 
+import { eventParticipantRouteParamsDTOSchema } from '@/features/events/dtos';
 import { getEventsContext, handleEventsRouteError } from '../../../../_helpers';
+import { getEventParticipantForReactivation } from '@/src/server/events/event-route-read.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -45,14 +46,11 @@ function parseDueDate(value: string | undefined) {
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
-    const { eventId, participantId } = await params;
+    const { eventId, participantId } = eventParticipantRouteParamsDTOSchema.parse(await params);
     const ctx = await getEventsContext('events.update');
     const body = reactivateEventParticipantRequestSchema.parse(await request.json());
 
-    const participant = await prisma.eventParticipant.findFirst({
-      where: { id: participantId, eventId, contaId: ctx.contaId },
-      select: { ...eventParticipantScalarSelect, event: true },
-    });
+    const participant = await getEventParticipantForReactivation({ eventId, participantId, contaId: ctx.contaId });
     if (!participant) {
       throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
     }

@@ -1,5 +1,44 @@
 import { z } from 'zod';
 
+const optionalQueryStringDTOSchema = z.preprocess(
+  (value) => (typeof value === 'string' ? value.trim() || undefined : undefined),
+  z.string().optional(),
+);
+
+export const matriculaBillingGroupsQueryDTOSchema = z.object({
+  contaId: optionalQueryStringDTOSchema,
+  responsavelId: optionalQueryStringDTOSchema,
+  payerType: z.preprocess(
+    (value) => {
+      if (typeof value !== 'string') return undefined;
+      const normalized = value.trim().toUpperCase();
+      return normalized === 'ALUNO' || normalized === 'RESPONSAVEL' ? normalized : undefined;
+    },
+    z.enum(['ALUNO', 'RESPONSAVEL']).optional(),
+  ),
+  payerId: optionalQueryStringDTOSchema,
+  formaPagamento: z.preprocess(
+    (value) => {
+      if (typeof value !== 'string') return null;
+      const normalized = value.trim().toUpperCase();
+      if (normalized === 'CARTAO') return 'CARTAO_CREDITO';
+      return normalized === 'PIX' || normalized === 'BOLETO' || normalized === 'CARTAO_CREDITO'
+        ? normalized
+        : null;
+    },
+    z.enum(['PIX', 'BOLETO', 'CARTAO_CREDITO']).nullable(),
+  ),
+  vencimentoDia: z.preprocess(
+    (value) => {
+      const parsed = Number(value ?? 0);
+      return Number.isInteger(parsed) && parsed >= 1 && parsed <= 28 ? parsed : null;
+    },
+    z.number().int().min(1).max(28).nullable(),
+  ),
+});
+
+export type MatriculaBillingGroupsQueryDTO = z.infer<typeof matriculaBillingGroupsQueryDTOSchema>;
+
 const dateStringDTOSchema = z
   .string()
   .min(1)
@@ -73,6 +112,22 @@ export type MatriculaFormaPagamentoDTO = z.infer<typeof matriculaFormaPagamentoD
 
 export const matriculaTaxaStatusDTOSchema = z.enum(['PENDENTE', 'PAGO', 'EXPIRADO', 'ISENTO']);
 export type MatriculaTaxaStatusDTO = z.infer<typeof matriculaTaxaStatusDTOSchema>;
+
+export const matriculaTaxaUpdateInputDTOSchema = z
+  .object({
+    value: z.number().positive().max(10_000),
+  })
+  .strict();
+export type MatriculaTaxaUpdateInputDTO = z.infer<typeof matriculaTaxaUpdateInputDTOSchema>;
+
+export const matriculaProvisionamentoActionDTOSchema = z
+  .object({
+    action: z.enum(['RETRY_FAILED', 'RECONCILE_LOCAL_CHARGES']).default('RETRY_FAILED'),
+  })
+  .passthrough();
+export type MatriculaProvisionamentoActionDTO = z.infer<
+  typeof matriculaProvisionamentoActionDTOSchema
+>;
 
 export const matriculaIntegrationStatusDTOSchema = z.enum([
   'PENDENTE_SINCRONISMO',

@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { bulkUpdateProductVariants, listProductVariants, generateProductVariants } from '@alusa/lib';
+import {
+  bulkUpdateProductVariants,
+  listProductVariants,
+  generateProductVariants,
+} from '@alusa/lib/services/product-variant.service';
 import { z } from 'zod';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -27,23 +30,23 @@ interface RouteContext {
 
 export async function GET(_req: Request, context: RouteContext) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id: productId } = await Promise.resolve(context.params);
     const variants = await listProductVariants(productId, contaId);
     return NextResponse.json({ data: variants });
   } catch (e) {
-    return jsonError(500, 'ERRO_LISTAR_VARIANTES', (e as Error).message);
+    return jsonError(500, 'ERRO_LISTAR_VARIANTES', 'Não foi possível carregar as variantes.');
   }
 }
 
 export async function POST(req: Request, context: RouteContext) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id: productId } = await Promise.resolve(context.params);
     const body = await req.json().catch(() => ({}));
@@ -62,13 +65,12 @@ export async function POST(req: Request, context: RouteContext) {
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id: productId } = await Promise.resolve(context.params);
-    const actorUserId =
-      (session as { user?: { id?: string } } | null)?.user?.id?.trim() || null;
+    const actorUserId = auth.userId;
     const body = await req.json();
     const parsed = z.object({
       action: z.literal('precificar-massa'),

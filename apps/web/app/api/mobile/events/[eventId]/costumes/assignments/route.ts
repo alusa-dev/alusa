@@ -1,4 +1,4 @@
-import { createCostumeAssignmentSchema } from '@alusa/lib';
+import { createCostumeAssignmentSchema } from '@alusa/lib/events/events.schema';
 
 import { createMobileCostumeAssignment } from '@/features/events/server/mobile-events.service';
 import {

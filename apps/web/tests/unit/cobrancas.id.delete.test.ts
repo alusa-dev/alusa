@@ -128,6 +128,24 @@ describe('DELETE /api/cobrancas/[id]', () => {
     expect(prisma.cobranca.update).not.toHaveBeenCalled();
   });
 
+  it('rejeita papel não financeiro antes de consultar ou cancelar uma cobrança', async () => {
+    mockGetSessionUser.mockResolvedValue({
+      id: 'u-recepcao', role: 'RECEPCAO', contaId: 'conta-1',
+    });
+
+    const res = await DELETE(new NextRequest('http://localhost/api/cobrancas/cob-1'), {
+      params: { id: 'cob-1' },
+    });
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      success: false,
+      error: 'Sem permissão',
+    });
+    expect(prisma.cobranca.findFirst).not.toHaveBeenCalled();
+    expect(prisma.charge.findFirst).not.toHaveBeenCalled();
+  });
+
   it('converge imediatamente a charge standalone após delete no Asaas', async () => {
     mockGetSessionUser.mockResolvedValue({
       id: 'u1', role: 'FINANCEIRO', contaId: 'conta-1',

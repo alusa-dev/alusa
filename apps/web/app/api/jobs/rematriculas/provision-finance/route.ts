@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { z, ZodError } from 'zod';
 
-import { prisma } from '@/prisma/client';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { provisionFutureFinancialAgreements } from '@/src/server/matriculas/renewal-process.service';
-import { processRenewalOutbox } from '@/src/server/matriculas/renewal-outbox.service';
+import {
+  processRenewalOutboxFromJob,
+  provisionFutureFinancialAgreementsFromJob,
+} from '@/src/server/matriculas/renewal-job-commands.service';
 
 const bodySchema = z.object({
   contaId: z.string().trim().min(1).optional(),
@@ -39,22 +40,16 @@ export async function POST(request: Request) {
       return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório.');
     }
 
-    const results = await provisionFutureFinancialAgreements(
-      {
-        contaId: scope.contaId,
-        now: parseDate(body.now),
-        limit: body.limit,
-      },
-      { prisma },
-    );
-    const outboxResults = await processRenewalOutbox(
-      {
-        contaId: scope.contaId,
-        now: parseDate(body.now),
-        limit: body.limit,
-      },
-      { prisma },
-    );
+    const results = await provisionFutureFinancialAgreementsFromJob({
+      contaId: scope.contaId,
+      now: parseDate(body.now),
+      limit: body.limit,
+    });
+    const outboxResults = await processRenewalOutboxFromJob({
+      contaId: scope.contaId,
+      now: parseDate(body.now),
+      limit: body.limit,
+    });
 
     return NextResponse.json(
       {
@@ -72,7 +67,7 @@ export async function POST(request: Request) {
     return jsonError(
       500,
       'ERRO_PROVISIONAR_FINANCEIRO_FUTURO',
-      error instanceof Error ? error.message : 'Erro ao provisionar financeiro futuro.',
+      'Erro ao provisionar financeiro futuro.',
     );
   }
 }

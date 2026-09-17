@@ -12,6 +12,34 @@ const invoiceStatusSchema = z.enum([
 
 export const notaFiscalPersonTypeSchema = z.enum(['ALUNO', 'RESPONSAVEL']);
 
+export const notaFiscalAlunoRouteParamsDTOSchema = z.object({
+  alunoId: z.string().trim().min(1).max(128),
+});
+
+export const notaFiscalResponsavelRouteParamsDTOSchema = z.object({
+  responsavelId: z.string().trim().min(1).max(128),
+});
+
+export const notaFiscalPersonDetailQueryDTOSchema = z.object({
+  status: z.preprocess(
+    (value) => {
+      if (!Array.isArray(value)) return [];
+      return value
+        .map((item) => String(item).trim().toUpperCase())
+        .filter((item) => invoiceStatusSchema.safeParse(item).success);
+    },
+    z.array(invoiceStatusSchema).default([]),
+  ),
+  effectiveDateFrom: z.preprocess(
+    (value) => (typeof value === 'string' ? value.trim() || undefined : undefined),
+    z.string().optional(),
+  ),
+  effectiveDateTo: z.preprocess(
+    (value) => (typeof value === 'string' ? value.trim() || undefined : undefined),
+    z.string().optional(),
+  ),
+});
+
 export const notaFiscalReadinessDTOSchema = z.object({
   ready: z.boolean(),
   issues: z.array(

@@ -5,9 +5,11 @@ import { FinanceWebhookSideEffectStatus, Prisma } from '@prisma/client';
 import {
   buildBillingNotificationDedupeKey,
   normalizeBillingNotificationEvent,
+} from '@alusa/lib/services/notifications.service';
+import {
+  emitBillingNotifications,
   type BillingNotificationCandidate,
-} from '@alusa/lib';
-import { emitBillingNotifications } from '@alusa/lib';
+} from '@alusa/lib/notifications/emit-billing-notifications';
 
 const MAX_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 60_000;

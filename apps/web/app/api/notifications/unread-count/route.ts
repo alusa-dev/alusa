@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { getUnreadNotificationCount } from '@alusa/lib';
-import { authOptions } from '@/lib/auth-options';
+import { getUnreadNotificationCount } from '@alusa/lib/services/notifications.service';
 import { privateJson } from '@/lib/private-cache';
 import {
   buildNotificationUnreadCountCacheKey,
@@ -9,12 +7,7 @@ import {
   setNotificationCache,
 } from '@/lib/notifications/notification-cache';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
-
-type SessionUser = {
-  id?: string;
-  role?: string;
-  contaId?: string;
-};
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
@@ -22,18 +15,14 @@ function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
-}
-
 export async function GET(_req: NextRequest) {
   const timer = createPerfTimer('api/notifications/unread-count');
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return json(401, { error: 'NAO_AUTENTICADO', message: 'Usuário não autenticado.' });
     }
+    const user = { id: auth.userId, contaId: auth.contaId, role: auth.role };
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO', message: 'Usuário sem permissão para acessar notificações.' });
     }

@@ -25,6 +25,10 @@ export type EvaluateFinancialOperationalHealthResult = {
   accounts: FinancialOperationalAccountHealth[];
 };
 
+export type FinancialOperationalAlertRecord = Awaited<
+  ReturnType<typeof listOpenFinancialOperationalAlerts>
+>[number];
+
 type AlertCandidate = {
   key: string;
   severity: 'WARNING' | 'CRITICAL';
@@ -49,6 +53,44 @@ const MANAGED_ALERT_KEYS = [
   'billing_read_model_lag',
   'finance_aggregate_missing',
 ];
+
+/**
+ * Reads the local webhook credential state without exposing the stored hash.
+ * Keeping this query in the finance package prevents admin route handlers from
+ * reaching directly into the persistence model.
+ */
+export async function hasStoredAsaasWebhookAuthTokenHash(
+  contaId: string,
+  db: typeof prisma = prisma,
+): Promise<boolean> {
+  const account = await db.asaasAccount.findFirst({
+    where: { financeProfile: { contaId } },
+    select: { webhookAuthTokenHash: true },
+  });
+
+  return Boolean(account?.webhookAuthTokenHash);
+}
+
+/**
+ * Returns only open operational alerts for one tenant. The tenant predicate is
+ * intentionally part of the package boundary so callers cannot omit it.
+ */
+export async function listOpenFinancialOperationalAlerts(
+  contaId: string,
+  limit = 100,
+  db: typeof prisma = prisma,
+) {
+  const safeLimit = clampInt(limit, 100, 1, 100);
+
+  return db.financialOperationalAlert.findMany({
+    where: {
+      contaId,
+      status: 'OPEN',
+    },
+    orderBy: [{ severity: 'asc' }, { lastSeenAt: 'desc' }],
+    take: safeLimit,
+  });
+}
 
 function clampInt(value: number | undefined, fallback: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return fallback;

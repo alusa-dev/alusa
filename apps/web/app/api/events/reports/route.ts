@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { eventReportQuerySchema, getEventReports } from '@alusa/lib';
+import { eventReportQuerySchema } from '@alusa/lib/events/events.schema';
+import { getEventReports } from '@alusa/lib/events/events.service';
 
 import { getEventsContext, handleEventsRouteError, queryObject } from '../_helpers';
 

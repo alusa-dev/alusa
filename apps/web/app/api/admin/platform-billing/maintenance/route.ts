@@ -2,11 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth-options';
-import prisma from '@/lib/prisma';
-import { expirePlatformBillingGracePeriods } from '@/src/server/platform-billing/grace-period-jobs';
-import { applyDuePlatformPlanChanges } from '@/src/server/platform-billing/plan-change-actions';
-import { reconcilePlatformBilling } from '@/src/server/platform-billing/reconciliation';
-import { drainStripeWebhookWorker } from '@/src/server/platform-billing/webhook-worker';
+import { runPlatformBillingMaintenanceFromHttp } from '@/src/server/platform-billing/http-commands';
 
 export const runtime = 'nodejs';
 
@@ -28,31 +24,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'PAYLOAD_INVALIDO', details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const webhooks = await drainStripeWebhookWorker({
-    prisma,
-    limit: parsed.data.webhookLimit,
-  });
-  const planChanges = await applyDuePlatformPlanChanges({
-    prisma,
-    limit: parsed.data.planChangeLimit,
-  });
-  const gracePeriods = await expirePlatformBillingGracePeriods({
-    prisma,
-    limit: parsed.data.graceLimit,
-  });
-  const reconciliation = parsed.data.reconcile === false
-    ? null
-    : await reconcilePlatformBilling({
-      prisma,
-      limit: parsed.data.reconciliationLimit,
-    });
-
-  return NextResponse.json({
-    webhooks,
-    planChanges,
-    gracePeriods,
-    reconciliation,
-  });
+  const result = await runPlatformBillingMaintenanceFromHttp(parsed.data);
+  return NextResponse.json(result);
 }
 
 async function isAuthorizedWorkerRequest(req: NextRequest): Promise<boolean> {

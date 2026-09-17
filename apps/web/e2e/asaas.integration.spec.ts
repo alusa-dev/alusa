@@ -9,9 +9,13 @@ import { test, expect } from '@playwright/test';
 const hasSandboxCredentials =
   Boolean(process.env.ASAAS_API_KEY) &&
   (process.env.ASAAS_BASE_URL ?? '').includes('sandbox.asaas.com');
+const runLegacySandboxApiSuite = process.env.E2E_ASAAS_LEGACY_API === 'true';
 
 test.describe('Integração Asaas', () => {
-  test.skip(!hasSandboxCredentials, 'Credenciais do Asaas Sandbox não configuradas');
+  test.skip(
+    !hasSandboxCredentials || !runLegacySandboxApiSuite,
+    'A suíte legada de API Asaas requer sandbox explícito e E2E_ASAAS_LEGACY_API=true',
+  );
 
   let customerId: string;
 
@@ -22,8 +26,8 @@ test.describe('Integração Asaas', () => {
     }
   });
 
-  test('deve criar customer via API', async ({ request }) => {
-    const response = await request.post('http://localhost:3001/api/asaas/customers', {
+  test('deve criar customer via API', async ({ request, baseURL }) => {
+    const response = await request.post(`${baseURL}/api/asaas/customers`, {
       data: {
         customData: {
           name: 'E2E Test Customer',
@@ -44,10 +48,10 @@ test.describe('Integração Asaas', () => {
     customerId = data.customer.id;
   });
 
-  test('deve buscar customer criado', async ({ request }) => {
+  test('deve buscar customer criado', async ({ request, baseURL }) => {
     test.skip(!customerId, 'Customer não foi criado');
 
-    const response = await request.get(`http://localhost:3001/api/asaas/customers/${customerId}`);
+    const response = await request.get(`${baseURL}/api/asaas/customers/${customerId}`);
 
     expect(response.status()).toBe(200);
 
@@ -56,10 +60,10 @@ test.describe('Integração Asaas', () => {
     expect(data.customer.id).toBe(customerId);
   });
 
-  test('deve criar payment para customer', async ({ request }) => {
+  test('deve criar payment para customer', async ({ request, baseURL }) => {
     test.skip(!customerId, 'Customer não foi criado');
 
-    const response = await request.post('http://localhost:3001/api/asaas/payments', {
+    const response = await request.post(`${baseURL}/api/asaas/payments`, {
       data: {
         customData: {
           customer: customerId,
@@ -79,11 +83,11 @@ test.describe('Integração Asaas', () => {
     expect(data.payment.value).toBe(199.9);
   });
 
-  test('deve listar payments do customer', async ({ request }) => {
+  test('deve listar payments do customer', async ({ request, baseURL }) => {
     test.skip(!customerId, 'Customer não foi criado');
 
     const response = await request.get(
-      `http://localhost:3001/api/asaas/payments?customer=${customerId}`,
+      `${baseURL}/api/asaas/payments?customer=${customerId}`,
     );
 
     expect(response.status()).toBe(200);
@@ -94,13 +98,13 @@ test.describe('Integração Asaas', () => {
     expect(Array.isArray(data.data)).toBe(true);
   });
 
-  test.skip('deve deletar customer', async ({ request }) => {
+  test.skip('deve deletar customer', async ({ request, baseURL }) => {
     // SKIP: Só deletar se não houver assinaturas ativas
     // Implementar lógica de cleanup após todos os testes
     test.skip(!customerId, 'Customer não foi criado');
 
     const response = await request.delete(
-      `http://localhost:3001/api/asaas/customers/${customerId}`,
+      `${baseURL}/api/asaas/customers/${customerId}`,
     );
 
     expect(response.status()).toBe(200);
@@ -111,8 +115,11 @@ test.describe('Integração Asaas', () => {
 });
 
 test.describe('Webhook Asaas', () => {
-  test('deve ignorar webhook sem assinatura sem penalizar a fila', async ({ request }) => {
-    const response = await request.post('http://localhost:3001/api/webhooks/asaas', {
+  test('deve rejeitar webhook sem assinatura sem processar a fila', async ({ request, baseURL }) => {
+    const response = await request.post(`${baseURL}/api/webhooks/asaas`, {
+      // O runtime production-like aplica a allowlist de IP antes da
+      // assinatura. Simula uma origem oficial para testar a rejeição de auth.
+      headers: { 'x-forwarded-for': '52.67.12.206' },
       data: {
         event: 'PAYMENT_RECEIVED',
         payment: {
@@ -123,7 +130,9 @@ test.describe('Webhook Asaas', () => {
       },
     });
 
-    expect(response.status()).toBe(200);
+    // O runtime production-like usa rejeições HTTP estritas; em dev a rota
+    // mantém 200 para evitar retries do provedor durante testes locais.
+    expect(response.status()).toBe(process.env.E2E_SERVER_MODE === 'production' ? 401 : 200);
 
     const data = await response.json();
     expect(data.error).toBe('Assinatura inválida');

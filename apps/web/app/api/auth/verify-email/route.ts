@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
+import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-limit';
 import { verifyEmailByToken } from '@/lib/auth-email-flow';
+import { rateLimitResponse } from '@/lib/security/rate-limit-response';
 
 const bodySchema = z.object({
   token: z.string().min(20),
@@ -9,10 +10,6 @@ const bodySchema = z.object({
 
 export async function POST(req: Request) {
   const ip = ipFromRequest(req);
-  const rl = rateLimit(`auth-verify-email:${ip}`, 20, 15 * 60 * 1000);
-  if (!rl.ok) {
-    return NextResponse.json({ error: 'Muitas tentativas. Tente novamente mais tarde.' }, { status: 429 });
-  }
 
   try {
     const rawBody = await req.text().catch(() => '');
@@ -30,6 +27,12 @@ export async function POST(req: Request) {
     if (!parsed.success) {
       return NextResponse.json({ error: 'Token inválido.' }, { status: 400 });
     }
+
+    const [ipLimit, tokenLimit] = await Promise.all([
+      authRateLimitAsync(`auth-verify-email:ip:${await rateLimitSubject(ip)}`, 30, 15 * 60 * 1000),
+      authRateLimitAsync(`auth-verify-email:token:${await rateLimitSubject(parsed.data.token)}`, 10, 15 * 60 * 1000),
+    ]);
+    if (!ipLimit.ok || !tokenLimit.ok) return rateLimitResponse(!ipLimit.ok ? ipLimit : tokenLimit, 10);
 
     const verified = await verifyEmailByToken(parsed.data.token);
     if (!verified) {

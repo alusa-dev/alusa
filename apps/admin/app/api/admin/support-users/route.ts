@@ -43,9 +43,9 @@ export async function POST(req: Request) {
       after: { ...data, password: '[mascarado]' },
     });
     return NextResponse.json({ success: true, data }, { headers: { 'cache-control': 'no-store' } });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Erro ao criar usuário interno' },
+      { success: false, error: 'Erro ao criar usuário interno' },
       { status: 400, headers: { 'cache-control': 'no-store' } },
     );
   }

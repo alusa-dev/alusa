@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import {
-  createSchoolEvent,
   createSchoolEventSchema,
-  listSchoolEvents,
   listSchoolEventsQuerySchema,
-} from '@alusa/lib';
+} from '@alusa/lib/events/events.schema';
+import { createSchoolEvent, listSchoolEvents } from '@alusa/lib/events/events.service';
 
 import { getEventsContext, handleEventsRouteError, queryObject } from './_helpers';
 

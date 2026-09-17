@@ -1,4 +1,4 @@
-import { prisma } from '@alusa/lib';
+import { prisma } from '@alusa/lib/prisma';
 
 (async () => {
   const data = await prisma.professor.findMany({

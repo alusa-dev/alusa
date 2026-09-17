@@ -51,6 +51,6 @@ export async function POST(request: Request) {
       return jsonError(authError.status, authError.code, authError.message ?? 'Erro');
     }
 
-    return jsonError(500, 'ERRO_REGISTRAR_ENTRADA', (error as Error).message);
+    return jsonError(500, 'ERRO_REGISTRAR_ENTRADA', 'Não foi possível registrar a entrada.');
   }
 }

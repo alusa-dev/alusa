@@ -2,10 +2,8 @@ import { NextResponse } from 'next/server';
 import { z, ZodError } from 'zod';
 
 import { getSessionUser } from '@/lib/auth/session';
-import { prisma } from '@/prisma/client';
-import { previewInitialEnrollmentBilling } from '@/src/server/matriculas/initial-enrollment-billing-preview.service';
+import { previewInitialEnrollmentBillingForTenant } from '@/src/server/matriculas/initial-enrollment-billing-http.service';
 import { enrollmentBillingStrategyDTOSchema } from '@/features/cadastro/matriculas/dtos';
-import { getSubscription } from '@alusa/finance';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
@@ -73,7 +71,7 @@ export async function POST(request: Request) {
       return jsonError(403, 'CONTA_INVALIDA', 'Conta informada não pertence ao usuário.');
     }
 
-    const preview = await previewInitialEnrollmentBilling(
+    const preview = await previewInitialEnrollmentBillingForTenant(
       {
         contaId,
         enrollmentMode: body.enrollmentMode,
@@ -91,13 +89,6 @@ export async function POST(request: Request) {
         descontoIds: body.descontoIds,
         items: body.items,
       },
-      {
-        prisma,
-        getRemoteSubscription: async ({ contaId: targetContaId, subscriptionId }) => {
-          const subscription = await getSubscription(subscriptionId, { contaId: targetContaId });
-          return { status: subscription.status, deleted: subscription.deleted };
-        },
-      },
     );
 
     return NextResponse.json(preview, { status: 200, headers: { 'cache-control': 'no-store' } });
@@ -108,7 +99,7 @@ export async function POST(request: Request) {
     return jsonError(
       500,
       'ERRO_PREVIEW_COBRANCA_MATRICULA',
-      error instanceof Error ? error.message : 'Erro ao gerar preview de cobrança.',
+      'Erro ao gerar preview de cobrança.',
     );
   }
 }

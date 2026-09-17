@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import prisma from '@/lib/prisma';
+import { platformBillingWebhookListQueryDTOSchema } from '@/features/platform-billing/dtos';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { resolvePlatformBillingEnvironment } from '@/src/server/platform-billing/platform-billing-server';
+import { listStripeWebhookEvents } from '@/src/server/platform-billing/webhook-worker';
 
 export const runtime = 'nodejs';
 
@@ -11,35 +11,19 @@ export async function GET(req: NextRequest) {
   if (!sessionUser) return NextResponse.json({ error: 'SEM_PERMISSAO' }, { status: 403 });
 
   const url = new URL(req.url);
+  const query = platformBillingWebhookListQueryDTOSchema.parse({
+    status: url.searchParams.getAll('status').length
+      ? url.searchParams.getAll('status')
+      : undefined,
+    limit: url.searchParams.get('limit'),
+  });
   const environment = resolvePlatformBillingEnvironment();
-  const statuses = url.searchParams.getAll('status');
-  const normalizedStatuses = statuses.length > 0
-    ? statuses.map((status) => status.toUpperCase()).filter((status) => ['FAILED', 'EXHAUSTED', 'PENDING', 'PROCESSING'].includes(status))
-    : ['FAILED', 'EXHAUSTED'];
-  const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 100));
 
-  const events = await prisma.platformBillingWebhookEvent.findMany({
-    where: {
-      contaId: sessionUser.contaId,
-      environment,
-      status: { in: normalizedStatuses as Array<'FAILED' | 'EXHAUSTED' | 'PENDING' | 'PROCESSING'> },
-    },
-    orderBy: [{ receivedAt: 'desc' }],
-    take: limit,
-    select: {
-      id: true,
-      eventId: true,
-      eventType: true,
-      status: true,
-      attempts: true,
-      receivedAt: true,
-      lastAttemptAt: true,
-      nextAttemptAt: true,
-      lastError: true,
-      lastErrorCode: true,
-      exhaustedAt: true,
-      correlationId: true,
-    },
+  const events = await listStripeWebhookEvents({
+    contaId: sessionUser.contaId,
+    environment,
+    status: query.status,
+    limit: query.limit,
   });
 
   return NextResponse.json({
@@ -56,8 +40,7 @@ export async function GET(req: NextRequest) {
 }
 
 async function requireAdminSession(): Promise<{ id: string; contaId: string } | null> {
-  const session = await getServerSession(authOptions);
-  const user = (session as { user?: { id?: string; contaId?: string; role?: string } } | null)?.user;
-  if (!user?.id || !user.contaId || String(user.role).toUpperCase() !== 'ADMIN') return null;
-  return { id: user.id, contaId: user.contaId };
+  const auth = await resolveTenantSession();
+  if (!auth.ok || auth.role?.toUpperCase() !== 'ADMIN') return null;
+  return { id: auth.userId, contaId: auth.contaId };
 }

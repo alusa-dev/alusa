@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { productSchema, createProduct, listProducts } from '@alusa/lib';
+import { productSchema } from '@alusa/lib/schemas/product.schema';
+import { createProduct, listProducts } from '@alusa/lib/services/product.service';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json({ error: { code, message, details } }, { status });
@@ -9,10 +9,9 @@ function jsonError(status: number, code: string, message: string, details?: unkn
 
 export async function GET(req: Request) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const url = new URL(req.url);
     const page = Number(url.searchParams.get('page') || '1');
@@ -35,16 +34,15 @@ export async function GET(req: Request) {
       meta: { page: result.page, pageSize: result.pageSize, total: result.total },
     });
   } catch (e) {
-    return jsonError(500, 'ERRO_LISTAR_PRODUTOS', (e as Error).message);
+    return jsonError(500, 'ERRO_LISTAR_PRODUTOS', 'Não foi possível carregar os produtos.');
   }
 }
 
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const body = await req.json();
     const priceValue = typeof body.price === 'string' ? Number(body.price) : body.price;

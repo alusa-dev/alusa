@@ -1,10 +1,10 @@
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
-import prisma from '@/lib/prisma';
 import { welcomeWizardStatusDTOSchema } from '@/features/users/dtos';
-import { resolveUserId } from '@/app/api/users/me/helpers';
+import { resolveUserId } from '@/src/server/identity/user-profile-http.helpers';
 import { jsonNoStore } from '@/lib/http-security';
+import { getWelcomeWizardStatus, markWelcomeWizardSeen } from '@/src/server/users/user-account.service';
 
 export async function GET() {
   try {
@@ -15,10 +15,7 @@ export async function GET() {
       return jsonNoStore({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const user = await prisma.usuario.findUnique({
-      where: { id: userId },
-      select: { welcomeWizardSeenAt: true },
-    });
+    const user = await getWelcomeWizardStatus(userId);
 
     if (!user) {
       return jsonNoStore({ error: 'Usuario nao encontrado' }, { status: 404 });
@@ -45,11 +42,7 @@ export async function PATCH() {
       return jsonNoStore({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const updated = await prisma.usuario.update({
-      where: { id: userId },
-      data: { welcomeWizardSeenAt: new Date() },
-      select: { welcomeWizardSeenAt: true },
-    });
+    const updated = await markWelcomeWizardSeen(userId);
 
     return jsonNoStore(
       welcomeWizardStatusDTOSchema.parse({

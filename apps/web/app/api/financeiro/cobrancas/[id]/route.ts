@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/src/prisma';
-import { deletePayment, handlePaymentWebhook, readPaymentFullPreflight, syncPaymentStateFromAsaas } from '@alusa/finance';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { apiErrorResponse } from '@/lib/api/report-api-error';
 import { financeiroCobrancaCancelResultDTOSchema } from '@/features/financeiro/cobrancas/dtos';
 import { mapFinanceiroCobrancaCancelResultToDTO } from '@/features/financeiro/cobrancas/mappers';
+import { cancelAcademicCobranca } from '@/src/server/finance/cobranca-cancellation.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -18,99 +17,28 @@ function err(status: number, code: string, message: string) {
   );
 }
 
-function buildDeletedPaymentWebhookPayload(
-  payment: Awaited<ReturnType<typeof deletePayment>>,
-) {
-  return {
-    event: 'PAYMENT_DELETED',
-    payment: {
-      id: payment.id,
-      status: 'DELETED',
-      value: Number(payment.value ?? 0),
-      netValue: Number(payment.netValue ?? payment.value ?? 0),
-      originalValue: payment.originalValue ?? null,
-      externalReference: payment.externalReference ?? undefined,
-      subscription: payment.subscription ?? null,
-      installment: payment.installment ?? null,
-      installmentNumber: null,
-      dueDate: payment.dueDate ?? null,
-      paymentDate: payment.paymentDate ?? null,
-      clientPaymentDate: payment.clientPaymentDate ?? null,
-      creditDate: payment.creditDate ?? null,
-      estimatedCreditDate: payment.estimatedCreditDate ?? null,
-      billingType: payment.billingType ?? null,
-      deleted: payment.deleted ?? true,
-    },
-  } as const;
-}
-
-async function convergeLocalCanceledAcademicCharge(params: {
-  contaId: string;
-  cobrancaId: string;
-  asaasPaymentId?: string | null;
-  actorId: string;
-}) {
-  const now = new Date();
-  await prisma.$transaction(async (tx) => {
-    await tx.cobranca.updateMany({
-      where: {
-        id: params.cobrancaId,
-        contaId: params.contaId,
-        status: { notIn: ['CANCELADO', 'PAGO', 'ESTORNADO', 'ESTORNADO_PARCIAL'] },
-      },
-      data: {
-        status: 'CANCELADO',
-        asaasStatus: 'DELETED',
-        canceladoEm: now,
-        canceladoMotivo: 'Cancelada no Asaas',
-        canceladoPor: params.actorId,
-        liquidacaoStatus: 'NAO_APLICAVEL',
-      },
-    });
-
-    await tx.charge.updateMany({
-      where: {
-        contaId: params.contaId,
-        OR: [
-          { cobrancaId: params.cobrancaId },
-          ...(params.asaasPaymentId ? [{ asaasPaymentId: params.asaasPaymentId }] : []),
-        ],
-        status: { notIn: ['CANCELED', 'PAID', 'REFUNDED'] },
-      },
-      data: {
-        status: 'CANCELED',
-        statusUpdatedAt: now,
-        asaasStatus: 'DELETED',
-        liquidacaoStatus: 'NAO_APLICAVEL',
-      },
-    });
-  });
-}
-
 /**
  * DELETE /api/financeiro/cobrancas/[id]
  * Cancela uma cobrança e, se tiver asaasPaymentId, também cancela no Asaas
  */
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    type SessUser = { id?: string; contaId?: string; role?: string };
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuário não autenticado');
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const { id } = await params;
 
-    // Buscar cobrança
-    const cobranca = await prisma.cobranca.findFirst({
-      where: { id, matricula: { aluno: { contaId: user.contaId } } },
-      include: { matricula: { include: { aluno: { include: { conta: true } } } } },
+    const result = await cancelAcademicCobranca({
+      contaId: auth.contaId,
+      cobrancaId: id,
+      actorId: auth.userId,
     });
 
-    if (!cobranca) return err(404, 'COBRANCA_NAO_ENCONTRADA', 'Cobrança não encontrada');
+    if (result.status === 'NOT_FOUND') return err(404, 'COBRANCA_NAO_ENCONTRADA', 'Cobrança não encontrada');
 
-    if (cobranca.status === 'CANCELADO') {
+    if (result.status === 'ALREADY_CANCELED') {
       return NextResponse.json(
         financeiroCobrancaCancelResultDTOSchema.parse(mapFinanceiroCobrancaCancelResultToDTO({
           success: true,
@@ -120,94 +48,27 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
       );
     }
 
-    const statusBloqueados = ['PAGO', 'ESTORNADO', 'ESTORNADO_PARCIAL'];
-    if (statusBloqueados.includes(cobranca.status)) {
+    if (result.status === 'STATUS_BLOCKED') {
       return err(
         400,
         'STATUS_BLOQUEADO',
-        `Não é possível cancelar cobrança com status ${cobranca.status}.`,
+        `Não é possível cancelar cobrança com status ${result.cobrancaStatus}.`,
       );
     }
-
-    let localStateConverged = false;
-
-    // Se tiver asaasPaymentId, tentar cancelar no Asaas
-    if (cobranca.asaasPaymentId) {
-      try {
-        const currentPayment = await readPaymentFullPreflight(cobranca.asaasPaymentId, {
-          contaId: user.contaId,
-        }).catch(() => null);
-
-        if (currentPayment?.deleted === true || currentPayment?.status === 'DELETED') {
-          const webhookResult = await handlePaymentWebhook(
-            user.contaId,
-            buildDeletedPaymentWebhookPayload(currentPayment as Awaited<ReturnType<typeof deletePayment>>),
-          );
-          localStateConverged = webhookResult.success;
-        } else {
-          const deletedPayment = await deletePayment(cobranca.asaasPaymentId, { contaId: user.contaId });
-          const webhookResult = await handlePaymentWebhook(
-            user.contaId,
-            buildDeletedPaymentWebhookPayload(deletedPayment),
-          );
-          localStateConverged = webhookResult.success;
-        }
-        await convergeLocalCanceledAcademicCharge({
-          contaId: user.contaId,
-          cobrancaId: cobranca.id,
-          asaasPaymentId: cobranca.asaasPaymentId,
-          actorId: user.id,
-        });
-        localStateConverged = true;
-      } catch (asaasError) {
-        console.warn('[CANCEL Cobrança] Erro ao cancelar no Asaas:', asaasError);
-        await syncPaymentStateFromAsaas({
-          contaId: user.contaId,
-          asaasPaymentId: cobranca.asaasPaymentId,
-          eventName: 'PAYMENT_DELETED',
-        }).catch((syncError) => {
-          console.warn('[CANCEL Cobrança] Falha ao sincronizar estado local:', syncError);
-        });
-      }
-    }
-
-    if (!localStateConverged) {
-      await prisma.cobranca.update({
-        where: { id },
-        data: {
-          status: 'CANCELAMENTO_PENDENTE',
-          canceladoEm: new Date(),
-          canceladoMotivo: 'Cancelada via API financeiro',
-          canceladoPor: user.id,
-        },
-      });
-    }
-
-    await prisma.logFinanceiro.create({
-      data: {
-        contaId: user.contaId,
-        usuarioId: user.id,
-        cobrancaId: id,
-        acao: 'CANCELAR',
-        detalhes: {
-          asaasPaymentId: cobranca.asaasPaymentId,
-          valor: cobranca.valor.toString(),
-          statusAnterior: cobranca.status,
-        },
-      },
-    });
 
     return NextResponse.json(
       financeiroCobrancaCancelResultDTOSchema.parse(mapFinanceiroCobrancaCancelResultToDTO({
         success: true,
-        message: localStateConverged
+        message: result.status === 'CANCELED'
           ? 'Cobrança cancelada com sucesso'
           : 'Solicitação enviada. O status será atualizado automaticamente.',
       })),
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (e) {
-    console.error('[API DELETE Cobrança] Erro', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return apiErrorResponse(e, {
+      route: 'DELETE /api/financeiro/cobrancas/[id]',
+      fallbackMessage: 'Não foi possível cancelar a cobrança.',
+    });
   }
 }

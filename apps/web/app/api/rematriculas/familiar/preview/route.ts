@@ -1,14 +1,17 @@
 import { NextResponse } from 'next/server';
 
-import { getSessionUser } from '@/lib/auth/session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   formatRematriculaFamiliarValidationMessage,
   isRematriculaFamiliarPreviewBusinessError,
   parseRematriculaFamiliarDate,
-  rematriculaFamiliarPreviewInputSchema,
+  rematriculaFamiliarPreviewInputDTOSchema,
 } from '@/lib/api/rematricula-familiar-input';
-import { prisma } from '@/prisma/client';
-import { previewRenewalProcess } from '@/src/server/matriculas/renewal-process.service';
+import {
+  getRenewalPreviewStudentNames,
+  previewRenewalProcessForTenant,
+  validateRenewalPreviewReferences,
+} from '@/src/server/matriculas/renewal-preview-http.service';
 import { ZodError } from 'zod';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
@@ -57,38 +60,30 @@ function mapDecision(item: {
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!user) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
-  if (!allowedRoles.has(String(user.role).toUpperCase())) {
+  const auth = await resolveTenantSession();
+  if (!auth.ok) {
+    return jsonError(
+      auth.reason === 'CONTA_MISMATCH' ? 403 : 401,
+      auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
+      auth.reason === 'CONTA_MISMATCH' ? 'Conta informada não pertence ao usuário.' : 'Usuário não autenticado.',
+    );
+  }
+  if (!allowedRoles.has(String(auth.role).toUpperCase())) {
     return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para rematrícula familiar.');
   }
 
+  const user = { id: auth.userId, contaId: auth.contaId, role: auth.role };
+
   try {
     const raw = await request.json().catch(() => null);
-    const body = rematriculaFamiliarPreviewInputSchema.parse(raw);
+    const body = rematriculaFamiliarPreviewInputDTOSchema.parse(raw);
     const contaId = body.contaId?.trim() || user.contaId;
 
     if (contaId !== user.contaId) {
       return jsonError(403, 'CONTA_INVALIDA', 'Conta informada não pertence ao usuário.');
     }
 
-    const responsavel = await prisma.responsavel.findFirst({
-      where: { id: body.responsavelId, contaId },
-      select: { id: true },
-    });
-    if (!responsavel) {
-      return jsonError(404, 'RESPONSAVEL_NAO_ENCONTRADO', 'Responsável não encontrado.');
-    }
     const holderId = body.novoResponsavelId ?? body.responsavelId;
-    if (body.novoResponsavelId) {
-      const novoResponsavel = await prisma.responsavel.findFirst({
-        where: { id: body.novoResponsavelId, contaId },
-        select: { id: true },
-      });
-      if (!novoResponsavel) {
-        return jsonError(404, 'NOVO_RESPONSAVEL_NAO_ENCONTRADO', 'Novo responsável não encontrado.');
-      }
-    }
 
     const hasPayerChangeDecision = body.itens.some((item) => item.decision === 'ALTERAR_PAGADOR');
     if (hasPayerChangeDecision !== Boolean(body.novoResponsavelId)) {
@@ -112,17 +107,10 @@ export async function POST(request: Request) {
     const dataInicio = parseRematriculaFamiliarDate(body.dataInicio);
     const targetPeriodId = body.targetPeriodId ?? String(dataInicio.getUTCFullYear());
     const campaignId = body.campaignId ?? null;
-    if (campaignId) {
-      const campaign = await prisma.rematriculaCampanha.findFirst({
-        where: { id: campaignId, contaId, targetPeriodId },
-        select: { id: true },
-      });
-      if (!campaign) {
-        return jsonError(404, 'CAMPANHA_NAO_ENCONTRADA', 'Campanha não encontrada para este período.');
-      }
-    }
+    const references = await validateRenewalPreviewReferences({ contaId, responsavelId: body.responsavelId, novoResponsavelId: body.novoResponsavelId, campaignId, targetPeriodId });
+    if (!references.ok) return jsonError(404, references.code, references.message);
 
-    const preview = await previewRenewalProcess(
+    const preview = await previewRenewalProcessForTenant(
       {
         contaId,
         actorId: user.id,
@@ -157,19 +145,9 @@ export async function POST(request: Request) {
           notificationChannelsConfigured: body.notificationChannelsConfigured,
         },
       },
-      { prisma },
     );
 
-    const sourceStudents = await prisma.matricula.findMany({
-      where: {
-        contaId,
-        id: { in: body.itens.map((item) => item.matriculaId) },
-      },
-      select: { id: true, aluno: { select: { nome: true } } },
-    });
-    const studentNameByEnrollmentId = new Map(
-      sourceStudents.map((item) => [item.id, item.aluno.nome]),
-    );
+    const studentNameByEnrollmentId = await getRenewalPreviewStudentNames({ contaId, matriculaIds: body.itens.map((item) => item.matriculaId) });
     const financialGroupsByKey = new Map<string, {
       totalAmount: number;
       items: Array<{ sourceEnrollmentId: string; alunoNome: string; amount: number }>;
@@ -224,13 +202,13 @@ export async function POST(request: Request) {
     }
 
     if (error instanceof Error && isRematriculaFamiliarPreviewBusinessError(error.message)) {
-      return jsonError(422, 'PREVIEW_BLOQUEADO', error.message);
+      return jsonError(422, 'PREVIEW_BLOQUEADO', 'O preview não pode ser gerado para esta composição.');
     }
 
     return jsonError(
       500,
       'ERRO_PREVIEW_REMATRICULA_FAMILIAR',
-      error instanceof Error ? error.message : 'Erro ao gerar preview.',
+      'Erro ao gerar preview.',
     );
   }
 }

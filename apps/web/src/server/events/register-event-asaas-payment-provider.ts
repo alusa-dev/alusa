@@ -1,4 +1,4 @@
-import { registerEventAsaasPaymentProvider } from '@alusa/lib';
+import { registerEventAsaasPaymentProvider } from '@alusa/lib/events/event-asaas-payment-provider';
 import { eventAsaasPaymentProvider } from '@alusa/finance';
 
 let registered = false;

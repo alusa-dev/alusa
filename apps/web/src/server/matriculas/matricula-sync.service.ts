@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { Prisma, StatusCobranca, StatusMatricula } from '@prisma/client';
+import { prisma as defaultPrisma } from '@/src/prisma';
 import {
   ativarAssinatura,
   deletePayment,
@@ -1032,11 +1033,12 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
 }
 
 export async function reconcilePendingMatriculaCancellations(input: {
-  prisma: PrismaClient;
+  prisma?: PrismaClient;
   contaId: string;
   limit?: number;
 }) {
-  const operations = await input.prisma.matriculaOperacao.findMany({
+  const db = input.prisma ?? defaultPrisma;
+  const operations = await db.matriculaOperacao.findMany({
     where: {
       contaId: input.contaId,
       tipo: 'CANCELAMENTO',
@@ -1062,7 +1064,7 @@ export async function reconcilePendingMatriculaCancellations(input: {
         throw new Error('Operação de cancelamento sem actorId não pode ser reconciliada automaticamente.');
       }
       await syncMatriculaStatus({
-        prisma: input.prisma,
+        prisma: db,
         contaId: input.contaId,
         matriculaId: operation.matriculaId,
         targetStatus: 'CANCELADA',
@@ -1079,4 +1081,24 @@ export async function reconcilePendingMatriculaCancellations(input: {
   }
 
   return { processed: operations.length, reconciled, errors };
+}
+
+export async function listContasWithPendingMatriculaCancellations(input: {
+  prisma?: PrismaClient;
+  maxAccounts: number;
+}) {
+  const db = input.prisma ?? defaultPrisma;
+  const candidates = await db.matriculaOperacao.findMany({
+    where: {
+      tipo: 'CANCELAMENTO',
+      status: { in: ['PENDENTE_SINCRONISMO', 'DIVERGENTE', 'ERRO'] },
+      conta: { status: 'ATIVO', deletedAt: null },
+    },
+    select: { contaId: true },
+    distinct: ['contaId'],
+    orderBy: { contaId: 'asc' },
+    take: input.maxAccounts,
+  });
+
+  return candidates.map((item) => item.contaId);
 }

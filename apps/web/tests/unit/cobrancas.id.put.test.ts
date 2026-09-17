@@ -35,6 +35,14 @@ vi.mock('@/lib/prisma', () => ({
 vi.mock('@alusa/finance', () => {
   class KycNotApprovedError extends Error {}
   class AsaasEnvError extends Error {}
+  const normalizeCobrancaPaymentAdjustmentType = vi.fn((tipo?: string | null) => tipo || undefined);
+  const resolveCanonicalDiscountDueDateLimit = vi.fn(() => 'ATE_VENCIMENTO');
+  const buildCobrancaAsaasPaymentUpdatePayload = vi.fn(() => ({
+    billingType: 'BOLETO',
+    value: 100,
+    dueDate: '2026-01-05',
+    discount: { value: 0, type: 'PERCENTAGE', dueDateLimitDays: 0 },
+  }));
   const evaluatePaymentActionPolicy = (input: { localStatus?: string | null; asaasStatus?: string | null }) => {
     const status = String(input.asaasStatus ?? input.localStatus ?? '').toUpperCase();
     const editable = ['PENDING', 'OVERDUE', 'PENDENTE', 'A_VENCER', 'ATRASADO', 'OPEN', 'CREATED'].includes(status);
@@ -53,11 +61,9 @@ vi.mock('@alusa/finance', () => {
     KycNotApprovedError,
     AsaasEnvError,
     evaluatePaymentActionPolicy,
-    parseDiscountDueDateLimitDays: vi.fn((value: string | null | undefined) => {
-      if (!value || value === 'ATE_VENCIMENTO') return 0;
-      const match = value.match(/(\d+)/);
-      return match ? Number(match[1]) : 0;
-    }),
+    normalizeCobrancaPaymentAdjustmentType,
+    resolveCanonicalDiscountDueDateLimit,
+    buildCobrancaAsaasPaymentUpdatePayload,
     isAsaasEnabled: vi.fn(() => true),
     readPaymentFullPreflight: vi.fn(async () => ({
       id: 'pay_1',
@@ -133,6 +139,88 @@ describe('PUT /api/cobrancas/[id]', () => {
     expect(json).toMatchObject({ success: false, error: 'KYC_NAO_APROVADO' });
 
     expect(prisma.cobranca.update).not.toHaveBeenCalled();
+  });
+
+  it('rejeita JSON inválido antes de consultar ou alterar uma cobrança', async () => {
+    mockGetSessionUser.mockResolvedValue({
+      id: 'u1', role: 'FINANCEIRO', contaId: 'conta-1',
+    });
+
+    const request = new Request('http://localhost/api/cobrancas/cob-1', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{',
+    }) as unknown as NextRequest;
+
+    const res = await PUT(request, { params: { id: 'cob-1' } });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      success: false,
+      error: 'Dados da cobrança inválidos',
+    });
+    expect(prisma.cobranca.findFirst).not.toHaveBeenCalled();
+    expect(prisma.charge.findFirst).not.toHaveBeenCalled();
+    expect(prisma.cobranca.update).not.toHaveBeenCalled();
+  });
+
+  it('rejeita papel não financeiro antes de consultar ou alterar uma cobrança', async () => {
+    mockGetSessionUser.mockResolvedValue({
+      id: 'u-recepcao', role: 'RECEPCAO', contaId: 'conta-1',
+    });
+
+    const res = await PUT(
+      buildPutRequest('http://localhost/api/cobrancas/cob-1', { valor: 200 }),
+      { params: { id: 'cob-1' } },
+    );
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      success: false,
+      error: 'Sem permissão',
+    });
+    expect(prisma.cobranca.findFirst).not.toHaveBeenCalled();
+    expect(prisma.charge.findFirst).not.toHaveBeenCalled();
+    expect(updatePayment).not.toHaveBeenCalled();
+  });
+
+  it('rejeita valor não numérico antes de efeitos financeiros', async () => {
+    mockGetSessionUser.mockResolvedValue({
+      id: 'u1', role: 'FINANCEIRO', contaId: 'conta-1',
+    });
+
+    const res = await PUT(
+      buildPutRequest('http://localhost/api/cobrancas/cob-1', { valor: 'não-numérico' }),
+      { params: { id: 'cob-1' } },
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      success: false,
+      error: 'Dados da cobrança inválidos',
+    });
+    expect(prisma.cobranca.findFirst).not.toHaveBeenCalled();
+    expect(updatePayment).not.toHaveBeenCalled();
+  });
+
+  it('rejeita data de vencimento impossível antes de efeitos financeiros', async () => {
+    mockGetSessionUser.mockResolvedValue({
+      id: 'u1', role: 'FINANCEIRO', contaId: 'conta-1',
+    });
+
+    const res = await PUT(
+      buildPutRequest('http://localhost/api/cobrancas/cob-1', { vencimento: '2026-02-30' }),
+      { params: { id: 'cob-1' } },
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      success: false,
+      error: 'Dados da cobrança inválidos',
+    });
+    expect(prisma.cobranca.findFirst).not.toHaveBeenCalled();
+    expect(readPaymentFullPreflight).not.toHaveBeenCalled();
+    expect(updatePayment).not.toHaveBeenCalled();
   });
 
   it('retorna 409 com código de domínio ao editar cobrança recebida em dinheiro no Asaas', async () => {

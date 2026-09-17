@@ -1,34 +1,31 @@
 import { NextResponse } from 'next/server';
+import { ZodError } from 'zod';
 
 import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { deleteTransferRecipient, listTransferRecipients } from '@alusa/finance';
-
-type SessUser = { id?: string; contaId?: string; role?: string; financeIntegrationMode?: string | null };
-
+import { financeTransferRecipientDeleteInputDTOSchema } from '@/features/finance/dtos';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
-
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
 export async function GET() {
   try {
-    const session = await safeGetServerSession();
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
 
-    const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'transfers');
+    const capabilityBlock = blockUnavailableFinanceCapability(auth.financeIntegrationMode, 'transfers');
     if (capabilityBlock) return capabilityBlock;
 
-    const gate = await guardFinancialAccountOr412(user.contaId);
+    const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
-    const result = await listTransferRecipients({ contaId: user.contaId, limit: 8 });
+    const result = await listTransferRecipients({ contaId: auth.contaId, limit: 8 });
     return json(200, { data: result });
   } catch (error) {
     console.error('[Finance transfer recipients][GET]', error);
@@ -38,33 +35,28 @@ export async function GET() {
 
 export async function DELETE(request: Request) {
   try {
-    const session = await safeGetServerSession();
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
 
-    const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'transfers');
+    const capabilityBlock = blockUnavailableFinanceCapability(auth.financeIntegrationMode, 'transfers');
     if (capabilityBlock) return capabilityBlock;
 
-    const gate = await guardFinancialAccountOr412(user.contaId);
+    const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
-    const body = (await request.json().catch(() => null)) as { recipientId?: string } | null;
-    const recipientId = body?.recipientId?.trim();
+    const { recipientId } = financeTransferRecipientDeleteInputDTOSchema.parse(await request.json().catch(() => null));
 
-    if (!recipientId) {
-      return json(400, { error: 'RECIPIENT_ID_OBRIGATORIO' });
-    }
-
-    const result = await deleteTransferRecipient({ contaId: user.contaId, recipientId });
+    const result = await deleteTransferRecipient({ contaId: auth.contaId, recipientId });
     if (result.removedCount === 0) {
       return json(404, { error: 'DESTINATARIO_NAO_ENCONTRADO' });
     }
 
     return json(200, { data: result });
   } catch (error) {
+    if (error instanceof ZodError) return json(400, { error: 'RECIPIENT_ID_OBRIGATORIO' });
     console.error('[Finance transfer recipients][DELETE]', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }

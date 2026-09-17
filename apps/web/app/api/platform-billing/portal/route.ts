@@ -11,11 +11,13 @@ import {
   assertCanManagePlatformBilling,
   resolvePlatformBillingActor,
 } from '@/src/server/platform-billing/platform-billing-server';
+import { platformBillingPortalInputDTOSchema } from '@/features/platform-billing/dtos';
 
 export async function POST(req: NextRequest) {
   const requestIp = ipFromRequest(req);
   const body = await readBody(req);
-  const returnPath = readSafeReturnPath(body);
+  const parsedBody = platformBillingPortalInputDTOSchema.safeParse(body);
+  const returnPath = readSafeReturnPath(parsedBody.success ? parsedBody.data : null);
   const idempotencyKey = req.headers.get('idempotency-key')?.trim();
   if (!idempotencyKey) {
     return NextResponse.json(

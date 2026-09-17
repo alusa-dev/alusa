@@ -1,14 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  getServerSession: vi.fn(),
+  resolveTenantSession: vi.fn(),
   getChargeInvoiceDetail: vi.fn(),
   ensureChargeInvoiceAutoEmission: vi.fn(),
   ensureChargeInvoiceAutoCancel: vi.fn(),
 }));
 
-vi.mock('next-auth', () => ({
-  getServerSession: mocks.getServerSession,
+vi.mock('@/lib/api/with-tenant-session', () => ({
+  resolveTenantSession: mocks.resolveTenantSession,
 }));
 
 vi.mock('@alusa/finance', async () => {
@@ -23,12 +23,11 @@ vi.mock('@alusa/finance', async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.resolveTenantSession.mockResolvedValue({ ok: false, reason: 'UNAUTHENTICATED' });
 });
 
 describe('GET /api/configuracoes/notafiscal', () => {
   it('retorna 401 sem sessão', async () => {
-    mocks.getServerSession.mockResolvedValueOnce(null);
-
     const { GET } = await import('@/app/api/configuracoes/notafiscal/route');
     const res = await GET();
 
@@ -38,8 +37,6 @@ describe('GET /api/configuracoes/notafiscal', () => {
 
 describe('GET /api/cobrancas/[id]/nota-fiscal', () => {
   it('retorna 401 sem sessão', async () => {
-    mocks.getServerSession.mockResolvedValueOnce(null);
-
     const { GET } = await import('@/app/api/cobrancas/[id]/nota-fiscal/route');
     const res = await GET({} as never, { params: Promise.resolve({ id: 'c1' }) });
 
@@ -47,8 +44,11 @@ describe('GET /api/cobrancas/[id]/nota-fiscal', () => {
   });
 
   it('é somente leitura e não dispara emissão nem cancelamento automático', async () => {
-    mocks.getServerSession.mockResolvedValueOnce({
-      user: { id: 'u1', contaId: 'conta-1', role: 'FINANCEIRO' },
+    mocks.resolveTenantSession.mockResolvedValueOnce({
+      ok: true,
+      userId: 'u1',
+      contaId: 'conta-1',
+      role: 'FINANCEIRO',
     });
     mocks.getChargeInvoiceDetail.mockResolvedValueOnce({
       success: true,
@@ -82,8 +82,11 @@ describe('GET /api/cobrancas/[id]/nota-fiscal', () => {
   });
 
   it('retorna detalhe com prontidão fiscal quando a cobrança existe sem charge vinculada', async () => {
-    mocks.getServerSession.mockResolvedValueOnce({
-      user: { id: 'u1', contaId: 'conta-1', role: 'FINANCEIRO' },
+    mocks.resolveTenantSession.mockResolvedValueOnce({
+      ok: true,
+      userId: 'u1',
+      contaId: 'conta-1',
+      role: 'FINANCEIRO',
     });
     mocks.getChargeInvoiceDetail.mockResolvedValueOnce({
       success: true,
@@ -117,8 +120,11 @@ describe('GET /api/cobrancas/[id]/nota-fiscal', () => {
   });
 
   it('mapeia CHARGE_NAO_ENCONTRADO do use-case para CHARGE_NAO_ENCONTRADA', async () => {
-    mocks.getServerSession.mockResolvedValueOnce({
-      user: { id: 'u1', contaId: 'conta-1', role: 'FINANCEIRO' },
+    mocks.resolveTenantSession.mockResolvedValueOnce({
+      ok: true,
+      userId: 'u1',
+      contaId: 'conta-1',
+      role: 'FINANCEIRO',
     });
     mocks.getChargeInvoiceDetail.mockResolvedValueOnce({
       success: false,

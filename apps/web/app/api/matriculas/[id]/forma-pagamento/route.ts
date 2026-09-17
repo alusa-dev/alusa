@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import {
   KycNotApprovedError,
   projectConfirmedBillingAgreementSnapshot,
   updateSubscription,
 } from '@alusa/finance';
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { runWithTenant } from '@/lib/prisma-tenant';
 import { updateMatriculaBillingTypeInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
 import { mapMatriculaSubscriptionBillingTypeUpdateResultToDTO } from '@/features/cadastro/matriculas/mappers';
@@ -36,14 +35,13 @@ const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const ctxParams = await ctx.params;
   try {
-    const session = await getServerSession(authOptions);
-    const sessionUser = session?.user;
-    const contaId = sessionUser?.contaId?.trim();
-    const actorId = sessionUser?.id?.trim();
-    if (!actorId || !contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
     }
-    if (!allowedRoles.has(String(sessionUser?.role ?? '').toUpperCase())) {
+    const contaId = auth.contaId;
+    const actorId = auth.userId;
+    if (!allowedRoles.has(String(auth.role ?? '').toUpperCase())) {
       return jsonError(403, 'SEM_PERMISSAO', 'Usuário sem permissão para alterar condições financeiras.');
     }
     const json = await req.json().catch(() => null);

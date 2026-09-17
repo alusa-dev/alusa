@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getFinanceiroKpisLocal } from '@alusa/finance';
 import {
   buildTenantCacheKey,
@@ -42,12 +41,10 @@ export async function GET(request: Request) {
   let contaId: string | undefined;
 
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    type SessUser = { id?: string; contaId?: string; role?: string };
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
-    contaId = user.contaId;
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuário não autenticado');
+    contaId = auth.contaId;
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const { searchParams } = new URL(request.url);
@@ -68,7 +65,7 @@ export async function GET(request: Request) {
     const proximoMes = new Date(mesAtual.getFullYear(), mesAtual.getMonth() + 1, 1);
     const loadBody = async () => {
       const localSnapshot = await getFinanceiroKpisLocal({
-        contaId: user.contaId!,
+        contaId: auth.contaId,
         mesAtual,
         proximoMes,
         startOfToday,
@@ -87,7 +84,7 @@ export async function GET(request: Request) {
 
     const cached = await withTenantCache({
       adapter: getTenantCacheAdapter(),
-      key: buildFinanceiroKpisCacheKey(user.contaId, mesParam),
+      key: buildFinanceiroKpisCacheKey(auth.contaId, mesParam),
       ttlSeconds: FINANCEIRO_KPIS_CACHE_SECONDS,
       staleWhileRevalidateSeconds: FINANCEIRO_KPIS_STALE_SECONDS,
       lockTtlSeconds: 8,

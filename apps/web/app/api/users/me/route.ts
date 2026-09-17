@@ -1,8 +1,6 @@
 import { getServerSession } from 'next-auth';
-import type { Prisma } from '@prisma/client';
 
 import { authOptions } from '@/lib/auth-options';
-import prisma from '@/lib/prisma';
 import {
   updateCurrentProfileInputDTOSchema,
   userProfileDTOSchema,
@@ -10,12 +8,14 @@ import {
 } from '@/features/users/dtos';
 import {
   mapUserWithConta,
-  profileWithContaSelect,
-  profileSelect,
   mapUser,
   resolveUserId,
-} from './helpers';
+} from '@/src/server/identity/user-profile-http.helpers';
 import { jsonNoStore } from '@/lib/http-security';
+import {
+  getCurrentUserProfile,
+  updateCurrentUserProfile,
+} from '@/src/server/users/user-account.service';
 
 export async function GET() {
   try {
@@ -25,10 +25,7 @@ export async function GET() {
       return jsonNoStore({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const user = await prisma.usuario.findUnique({
-      where: { id: userId },
-      select: profileWithContaSelect as any,
-    });
+    const user = await getCurrentUserProfile(userId);
 
     if (!user) {
       return jsonNoStore({ error: 'Usuario nao encontrado' }, { status: 404 });
@@ -66,10 +63,10 @@ export async function PATCH(req: Request) {
     }
 
     const data = parsed.data;
-    const updateInput: Prisma.UsuarioUpdateInput = {};
+    const updateInput: Parameters<typeof updateCurrentUserProfile>[0] = { userId };
 
     if (typeof data.name !== 'undefined') {
-      updateInput.nome = data.name;
+      updateInput.name = data.name;
     }
 
     if (typeof data.telefone !== 'undefined') {
@@ -110,11 +107,7 @@ export async function PATCH(req: Request) {
     }
 
     try {
-      const updated = await prisma.usuario.update({
-        where: { id: userId },
-        data: updateInput,
-        select: profileSelect,
-      });
+      const updated = await updateCurrentUserProfile(updateInput);
       const response = userProfileDTOSchema.parse(mapUser(updated));
       return jsonNoStore(response);
     } catch (error: unknown) {

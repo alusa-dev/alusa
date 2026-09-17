@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import {
   getCustomerNotificationChannels,
   syncCustomerNotificationsForUserSelection,
 } from '@alusa/finance';
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { runWithTenant } from '@/lib/prisma-tenant';
 import {
   updateMatriculaNotificationChannelsInputDTOSchema,
@@ -23,16 +22,14 @@ function jsonError(status: number, code: string, message: string, details?: unkn
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
 async function authorizeNotifications() {
-  const session = await getServerSession(authOptions);
-  const contaId = session?.user?.contaId?.trim();
-  const actorId = session?.user?.id?.trim();
-  if (!contaId || !actorId) {
+  const auth = await resolveTenantSession();
+  if (!auth.ok) {
     return { response: jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.') };
   }
-  if (!allowedRoles.has(String(session?.user?.role ?? '').toUpperCase())) {
+  if (!allowedRoles.has(String(auth.role ?? '').toUpperCase())) {
     return { response: jsonError(403, 'SEM_PERMISSAO', 'Usuário sem permissão para configurar notificações.') };
   }
-  return { contaId, actorId };
+  return { contaId: auth.contaId, actorId: auth.userId };
 }
 
 async function resolveFinancialCustomer(matriculaId: string, contaId: string) {

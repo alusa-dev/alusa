@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { prisma } from '@alusa/database';
-
+import { eligibleEventStudentsQueryDTOSchema } from '@/features/events/dtos';
 import { getEventsContext, handleEventsRouteError } from '../../../_helpers';
+import { listEligibleEventStudents } from '@/src/server/events/event-route-read.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -14,62 +14,33 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const { eventId } = await params;
     const ctx = await getEventsContext('events.update');
     const searchParams = new URL(request.url).searchParams;
-    const anchorAlunoId = searchParams.get('anchorAlunoId')?.trim();
-    const responsavelId = searchParams.get('responsavelId')?.trim() || undefined;
-    const query = searchParams.get('q')?.trim() || '';
+    const query = eligibleEventStudentsQueryDTOSchema.parse({
+      anchorAlunoId: searchParams.get('anchorAlunoId') ?? undefined,
+      responsavelId: searchParams.get('responsavelId') ?? undefined,
+      q: searchParams.get('q') ?? undefined,
+    });
+    const anchorAlunoId = query.anchorAlunoId;
+    const responsavelId = query.responsavelId || undefined;
+    const search = query.q || '';
 
     if (!anchorAlunoId) {
       return NextResponse.json({ error: { code: 'ALUNO_BASE_OBRIGATORIO', message: 'Selecione o primeiro aluno.' } }, { status: 422 });
     }
 
-    const anchor = await prisma.aluno.findFirst({
-      where: { id: anchorAlunoId, contaId: ctx.contaId },
-      select: {
-        id: true,
-        responsaveis: {
-          where: { contaId: ctx.contaId, responsavel: { financeiro: true } },
-          select: { responsavel: { select: { id: true, nome: true } } },
-          orderBy: { id: 'asc' },
-        },
-      },
-    });
-
-    if (!anchor) {
+    const result = await listEligibleEventStudents({ eventId, contaId: ctx.contaId, anchorAlunoId, responsavelId, search });
+    if (!result) {
       return NextResponse.json({ error: { code: 'ALUNO_NAO_ENCONTRADO', message: 'Aluno não encontrado.' } }, { status: 404 });
     }
 
-    const responsaveis = anchor.responsaveis.map(({ responsavel }) => responsavel);
-    const selectedResponsavelId = responsavelId ?? (responsaveis.length === 1 ? responsaveis[0]?.id : undefined);
-
-    if (selectedResponsavelId && !responsaveis.some((responsavel) => responsavel.id === selectedResponsavelId)) {
+    if ('invalidResponsavel' in result && result.invalidResponsavel) {
       return NextResponse.json({ error: { code: 'RESPONSAVEL_FINANCEIRO_INVALIDO', message: 'O responsável financeiro não está vinculado ao aluno.' } }, { status: 422 });
     }
 
-    if (!selectedResponsavelId) {
-      return NextResponse.json({ data: { responsaveis, items: [] } });
-    }
-
-    const items = await prisma.aluno.findMany({
-      where: {
-        contaId: ctx.contaId,
-        status: 'ATIVO',
-        id: { not: anchorAlunoId },
-        ...(query ? { nome: { contains: query, mode: 'insensitive' } } : {}),
-        responsaveis: {
-          some: { contaId: ctx.contaId, responsavelId: selectedResponsavelId },
-        },
-        eventParticipants: { none: { contaId: ctx.contaId, eventId } },
-      },
-      select: { id: true, nome: true, email: true },
-      orderBy: { nome: 'asc' },
-      take: 20,
-    });
-
     return NextResponse.json({
       data: {
-        responsaveis,
-        selectedResponsavelId,
-        items,
+        responsaveis: result.responsaveis,
+        selectedResponsavelId: result.selectedResponsavelId,
+        items: result.items,
       },
     });
   } catch (error) {

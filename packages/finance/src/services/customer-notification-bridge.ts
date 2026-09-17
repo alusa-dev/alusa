@@ -1,4 +1,4 @@
-import { loadTenantNotificationEventPreferences } from '@alusa/lib';
+import { loadTenantNotificationEventPreferences } from '@alusa/lib/notifications/tenant-notification-preferences';
 import { syncCustomerNotificationChannels } from './customer-notification.service';
 
 /**

@@ -1,4 +1,4 @@
-import { updateEventFinancialEntrySchema } from '@alusa/lib';
+import { updateEventFinancialEntrySchema } from '@alusa/lib/events/events.schema';
 
 import { updateMobileEventFinancialEntry } from '@/features/events/server/mobile-events.service';
 import {

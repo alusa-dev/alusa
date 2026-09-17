@@ -2,144 +2,31 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "build-and-test-colab",
+			"label": "web:typecheck",
 			"type": "shell",
-			"command": "pnpm -w -C .. build && pnpm -w -C web typecheck && pnpm -w -C web test:unit --silent && pnpm -w -C .. -r test --silent",
-			"problemMatcher": [
-				"$tsc"
-			],
+			"command": "pnpm --filter @alusa/web typecheck",
+			"problemMatcher": ["$tsc"],
 			"group": "build"
 		},
 		{
-			"label": "typecheck-and-test-web",
+			"label": "web:test:unit",
 			"type": "shell",
-			"command": "pnpm -w -C web typecheck && pnpm -w -C web test:unit --silent",
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "typecheck-and-test-web-2",
-			"type": "shell",
-			"command": "pnpm -w -C .. build && pnpm -w -C web typecheck && pnpm -w -C web test:unit --silent",
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "typecheck-web-only",
-			"type": "shell",
-			"command": "pnpm -w -C web typecheck",
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "typecheck-web-local-no-pnpm",
-			"type": "shell",
-			"command": "cd web && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "typecheck-web-local-no-pnpm",
-			"type": "shell",
-			"command": "cd web && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "typecheck-web-local-no-pnpm",
-			"type": "shell",
-			"command": "cd web && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "typecheck-web-local-no-pnpm",
-			"type": "shell",
-			"command": "cd web && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "typecheck-web-local-no-pnpm",
-			"type": "shell",
-			"command": "cd web && rm -f tsconfig.tsbuildinfo 2>/dev/null || del /Q tsconfig.tsbuildinfo 2>nul && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "typecheck-web-local-no-pnpm",
-			"type": "shell",
-			"command": "cd web && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "typecheck-web-local-no-pnpm",
-			"type": "shell",
-			"command": "cd web && del /Q tsconfig.tsbuildinfo 2>nul && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "typecheck-web-local-no-pnpm",
-			"type": "shell",
-			"command": "cd web && node -e \"try{require('fs').readFileSync('./components/alunos/AlunoWizardDialog.tsx'); console.log('read ok');}catch(e){console.error(e)}\" && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "typecheck-web-local-no-pnpm",
-			"type": "shell",
-			"command": "cd web && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "e2e-colaborador-wizard",
-			"type": "shell",
-			"command": "pnpm -C web test:e2e -g \"Wizard Colaborador - fluxo completo\"",
-			"isBackground": false,
+			"command": "pnpm --filter @alusa/web test:unit",
 			"problemMatcher": [],
-			"group": "build"
+			"group": "test"
 		},
 		{
-			"label": "dev-server",
+			"label": "web:dev",
 			"type": "shell",
-			"command": "cd web && pnpm dev",
+			"command": "pnpm --filter @alusa/web dev:raw",
 			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "mobile:typecheck",
+			"type": "shell",
+			"command": "pnpm --filter @alusa/mobile typecheck",
+			"problemMatcher": ["$tsc"],
 			"group": "build"
 		}
 	]

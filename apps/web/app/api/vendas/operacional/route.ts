@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { listStoreSaleOperationalIssues } from '@alusa/finance';
 
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 const querySchema = z.object({
   staleAfterMinutes: z.coerce.number().int().min(1).max(24 * 60).optional(),
@@ -16,13 +16,11 @@ function jsonError(status: number, code: string, message: string, details?: unkn
 
 export async function GET(request: Request) {
   try {
-    const session = await safeGetServerSession();
-    const user = session?.user as { contaId?: string | null } | undefined;
-    const contaId = user?.contaId?.trim() || null;
-
-    if (!contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
     }
+    const { contaId } = auth;
 
     const url = new URL(request.url);
     const parsed = querySchema.safeParse(Object.fromEntries(url.searchParams.entries()));

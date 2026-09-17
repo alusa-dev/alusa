@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { loadDashboardMetricsBody } from '@/lib/dashboard/load-dashboard-metrics';
 import {
   buildTenantCacheKey,
@@ -32,17 +31,16 @@ export async function GET(_request: NextRequest) {
 
   try {
     logRuntimeEnvironmentOnce('api/dashboard/metrics');
-    const session = await getServerSession(authOptions);
-    const contaId = (session?.user as { contaId?: string | null } | undefined)?.contaId;
-    contaIdForLog = contaId ?? null;
-
-    if (!contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       statusCodeForLog = 401;
       return NextResponse.json(
         { success: false, error: 'Não autenticado' },
         { status: 401 },
       );
     }
+    const { contaId } = auth;
+    contaIdForLog = contaId;
 
     const cacheLayerEnabled = isCacheLayerEnabled();
     const tenantCacheKey = cacheLayerEnabled
@@ -97,7 +95,7 @@ export async function GET(_request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        error: (error as Error).message,
+        error: 'Não foi possível carregar as métricas agora.',
       },
       { status: 500 },
     );

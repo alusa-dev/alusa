@@ -4,67 +4,53 @@ import { resetDb } from './utils/reset-db';
 import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
-async function waitSession(page: Page) {
-  await expect.poll(async () => {
-    const resp = await page.request.get('/api/auth/session');
-    if (!resp.ok()) return false;
-    const json = (await resp.json()) as { user?: { email?: string } };
-    return Boolean(json.user?.email);
-  }, { timeout: 10_000 }).toBe(true);
+async function acceptLegalTerms(page: Page) {
+  await page.getByTestId('register-termos-checkbox').click();
+  await page.getByTestId('legal-acceptance-inner-checkbox').click();
+  await page.getByTestId('legal-acceptance-confirm').click();
 }
 
 test.describe('Fluxo de Primeiro Cadastro', () => {
   test.beforeEach(async () => { await resetDb(prisma); });
 
-  test('Homepage redireciona para register quando não há usuários', async ({ page }) => {
+  test('Homepage pública oferece o cadastro quando não há usuários', async ({ page }) => {
     await page.goto('/');
-    await page.waitForURL('**/register');
-    await expect(page.getByText('Primeiro Cadastro')).toBeVisible();
-    await expect(page.getByText('Crie a primeira conta de administrador')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Teste grátis por 14 dias' }).first()).toHaveAttribute('href', '/register');
   });
 
-  test('Login redireciona para register quando não há usuários', async ({ page }) => {
+  test('Login público permanece disponível quando não há usuários', async ({ page }) => {
     await page.goto('/auth/login');
-    await page.waitForURL('**/register');
-    await expect(page.getByText('Primeiro Cadastro')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Bem-vindo de volta!' })).toBeVisible();
   });
 
   test('Fluxo completo: homepage → register → login', async ({ page }) => {
-    // 1. Acessa homepage, é redirecionado para register
+    // 1. Acessa a homepage pública e segue para o cadastro
     await page.goto('/');
+    await page.getByRole('link', { name: 'Teste grátis por 14 dias' }).first().click();
     await page.waitForURL('**/register');
     
     // 2. Faz o primeiro cadastro
     await page.fill('[data-testid="register-nome-first"]', 'Admin');
     await page.fill('[data-testid="register-nome-last"]', 'Sistema');
-    await page.fill('[data-testid="register-cpfCnpj"]', '12345678901');
     await page.fill('[data-testid="register-email"]', 'admin@sistema.com');
     await page.fill('[data-testid="register-senha"]', 'MinhaSenh@123');
     await page.fill('[data-testid="register-senha-confirmar"]', 'MinhaSenh@123');
-    await page.check('input[type="checkbox"]'); // aceitar termos
+    await acceptLegalTerms(page);
     await page.click('[data-testid="register-submit"]');
     
-    // 3. Deve ser redirecionado para dashboard após criação
-    await page.waitForURL('**/dashboard');
-    await waitSession(page);
+    // 3. O cadastro cria a conta e pede confirmação de e-mail
+    await page.waitForURL('**/auth/confirm-email?callbackUrl=%2Ffinance%2Fwizard');
+    await expect(page.getByRole('heading', { name: 'Confirme seu e-mail' })).toBeVisible();
     
-    // 4. Logout e tenta acessar homepage novamente
+    // 4. Logout e acessa a homepage pública novamente
     await page.context().clearCookies();
     await page.goto('/');
+    await expect(page.getByRole('link', { name: 'Entrar' }).first()).toHaveAttribute('href', '/auth/login');
     
-    // 5. Agora deve ir para login (não register), pois já há usuários
-    await page.waitForURL('**/auth/login');
-    await expect(page.getByText('Bem-vindo de volta!')).toBeVisible();
-    await expect(page.getByText('Solicite um convite ao administrador')).toBeVisible();
-    
-    // 6. Faz login com o usuário criado
-    await page.fill('[data-testid="email"]', 'admin@sistema.com');
-    await page.fill('[data-testid="password"]', 'MinhaSenh@123');
-    await page.click('[data-testid="login-button"]');
-    
-    // 7. Deve ir para dashboard
-    await page.waitForURL('**/dashboard');
-    await waitSession(page);
+    // 5. O cadastro exige confirmação de e-mail antes do primeiro login.
+    await page.getByRole('link', { name: 'Entrar' }).first().click();
+    await expect(page).toHaveURL(/\/auth\/login/);
+    await expect(page.getByRole('heading', { name: 'Bem-vindo de volta!' })).toBeVisible();
   });
 
   test('Tentativa de acesso direto ao register após ter usuários', async ({ page }) => {
@@ -72,20 +58,17 @@ test.describe('Fluxo de Primeiro Cadastro', () => {
     await page.goto('/register');
     await page.fill('[data-testid="register-nome-first"]', 'Admin');
     await page.fill('[data-testid="register-nome-last"]', 'Sistema');
-    await page.fill('[data-testid="register-cpfCnpj"]', '12345678901');
     await page.fill('[data-testid="register-email"]', 'admin@sistema.com');
     await page.fill('[data-testid="register-senha"]', 'MinhaSenh@123');
     await page.fill('[data-testid="register-senha-confirmar"]', 'MinhaSenh@123');
-    await page.check('input[type="checkbox"]');
+    await acceptLegalTerms(page);
     await page.click('[data-testid="register-submit"]');
-    await page.waitForURL('**/dashboard');
+    await page.waitForURL('**/auth/confirm-email?callbackUrl=%2Ffinance%2Fwizard');
     
     // Limpa cookies e tenta acessar register novamente
     await page.context().clearCookies();
     await page.goto('/register');
     
-    // Deve ser redirecionado para login
-    await page.waitForURL('**/auth/login');
-    await expect(page.getByText('Bem-vindo de volta!')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Crie sua conta Alusa' })).toBeVisible();
   });
 });

@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { getFinanceiroKpisLocal } from '@alusa/finance';
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   buildTenantCacheKey,
   isCacheLayerEnabled,
@@ -39,12 +38,10 @@ export async function GET() {
   let contaId: string | undefined;
 
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    type SessUser = { id?: string; contaId?: string; role?: string };
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
-    contaId = user.contaId;
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuário não autenticado');
+    contaId = auth.contaId;
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const agora = new Date();
@@ -57,7 +54,7 @@ export async function GET() {
 
     const loadBody = async () => {
       const localSnapshot = await getFinanceiroKpisLocal({
-        contaId: user.contaId!,
+        contaId: auth.contaId,
         mesAtual,
         proximoMes,
         startOfToday,
@@ -98,7 +95,7 @@ export async function GET() {
 
     const cached = await withTenantCache({
       adapter: getTenantCacheAdapter(),
-      key: buildFinanceiroIndicadoresCacheKey(user.contaId),
+      key: buildFinanceiroIndicadoresCacheKey(auth.contaId),
       ttlSeconds: FINANCEIRO_INDICADORES_CACHE_SECONDS,
       staleWhileRevalidateSeconds: FINANCEIRO_INDICADORES_STALE_SECONDS,
       lockTtlSeconds: 8,

@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { anonimizarResponsavel } from '@alusa/lib';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { anonimizarResponsavel } from '@alusa/lib/alunos/aluno.service';
 import {
   anonymizeResponsavelInputDTOSchema,
   anonymizeResponsavelResultDTOSchema,
 } from '@/features/responsaveis/dtos';
-import { resolveResponsavelRouteId } from '../../_lib/resolve-responsavel-route-id';
+import { resolveResponsavelRouteId } from '@/src/server/responsaveis/resolve-responsavel-route-id.service';
 
 type IdParams = Promise<{ id: string }> | { id: string };
 
@@ -17,12 +16,11 @@ export async function POST(req: Request, context: { params: IdParams }) {
       return NextResponse.json({ error: 'Identificador inválido' }, { status: 400 });
     }
 
-    const session = await getServerSession(authOptions);
-    const user = (session as { user?: { id?: string; contaId?: string; role?: string } })?.user;
-    if (!user?.id || !user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
-    if (String(user.role || '').toUpperCase() !== 'ADMIN') {
+    if (String(auth.role || '').toUpperCase() !== 'ADMIN') {
       return NextResponse.json({ error: 'Sem permissão' }, { status: 403 });
     }
 
@@ -36,16 +34,16 @@ export async function POST(req: Request, context: { params: IdParams }) {
       );
     }
 
-    const responsavelId = await resolveResponsavelRouteId(id, user.contaId);
+    const responsavelId = await resolveResponsavelRouteId(id, auth.contaId);
     if (!responsavelId) {
       return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
     }
 
     const responsavel = await anonimizarResponsavel({
       id: responsavelId,
-      contaId: user.contaId,
+      contaId: auth.contaId,
       motivo: parsed.data.motivo,
-      actorId: user.id,
+      actorId: auth.userId,
     });
 
     return NextResponse.json(

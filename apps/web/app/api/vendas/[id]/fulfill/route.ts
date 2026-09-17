@@ -38,6 +38,6 @@ export async function POST(
       return jsonError(authError.status, authError.code, authError.message ?? 'Erro');
     }
 
-    return jsonError(500, 'ERRO_CUMPRIR_VENDA', (error as Error).message);
+    return jsonError(500, 'ERRO_CUMPRIR_VENDA', 'Não foi possível concluir a venda.');
   }
 }

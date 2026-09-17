@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { ZodError } from 'zod';
-import { AsaasHttpError } from '@alusa/finance';
+import { AsaasHttpError, financeProfileOnboardingDataSchema } from '@alusa/finance';
 
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   AsaasSandboxSubaccountDailyLimitError,
   MissingAsaasAccountIdError,
@@ -36,13 +35,6 @@ function extractAsaasErrors(response: unknown): AsaasErrorItem[] {
   return result;
 }
 
-function asaasErrorText(value: AsaasErrorItem): string {
-  const code = value.code?.trim();
-  const description = value.description?.trim();
-  if (code && description) return `[${code}] ${description}`;
-  return description ?? code ?? 'Erro do Asaas';
-}
-
 function isLikelyConfigurationError(item: AsaasErrorItem): boolean {
   const code = (item.code ?? '').toLowerCase();
   const desc = (item.description ?? '').toLowerCase();
@@ -56,8 +48,8 @@ function json(status: number, body: unknown) {
 }
 
 async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
+  const auth = await resolveTenantSession();
+  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role } : null;
 }
 
 export async function POST(req: Request) {
@@ -66,11 +58,11 @@ export async function POST(req: Request) {
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const payload = (await req.json()) as unknown;
+    const payload = financeProfileOnboardingDataSchema.parse(await req.json());
 
     const result = await submitKycData({
       contaId: user.contaId,
-      payload: payload as never,
+      payload,
       actor: { type: 'USER', id: user.id },
     });
 
@@ -124,8 +116,6 @@ export async function POST(req: Request) {
       for (const item of errors) {
         const code = (item.code ?? '').toLowerCase();
         const desc = (item.description ?? '').toLowerCase();
-        const text = asaasErrorText(item);
-
         if (isLikelyConfigurationError(item)) {
           formErrors.push('Não foi possível continuar por um problema de configuração. Tente novamente em instantes.');
           mappedStatus = 400;
@@ -175,14 +165,17 @@ export async function POST(req: Request) {
         });
       }
 
-      return json(typeof error.status === 'number' ? error.status : 502, {
+      return json(error.status >= 400 && error.status < 500 ? error.status : 502, {
         code: 'FINANCIAL_PROVIDER_ERROR',
-        message: error.message || 'Erro no provedor financeiro',
+        message:
+          error.status >= 400 && error.status < 500
+            ? 'O provedor financeiro recusou os dados enviados.'
+            : 'Não foi possível concluir o onboarding no provedor financeiro.',
       });
     }
 
     console.error('[Finance Onboarding][POST]', error);
-    return json(500, { error: 'ERRO_INTERNO', message: error instanceof Error ? error.message : undefined });
+    return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível concluir o onboarding KYC.' });
   }
 }
 

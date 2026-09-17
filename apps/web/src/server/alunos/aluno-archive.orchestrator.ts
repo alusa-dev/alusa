@@ -1,6 +1,6 @@
-import { prisma } from '@alusa/database';
+import { prisma } from '@/lib/prisma';
 import type { PaymentsProviderPort } from '@alusa/finance';
-import type { AlunoArchivePlan, MatriculaArchiveAction } from '@alusa/lib';
+import type { AlunoArchivePlan, MatriculaArchiveAction } from '@alusa/lib/alunos/policies';
 
 /**
  * Resultado da execução de uma ação de matrícula

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { ZodError } from 'zod';
 
 import { authOptions } from '@/lib/auth-options';
 import {
@@ -7,6 +8,7 @@ import {
   recordFinanceAdminAction,
   syncPaymentStateFromAsaas,
 } from '@alusa/finance';
+import { adminWebhookReprocessInputDTOSchema } from '@/features/system/dtos';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -27,16 +29,8 @@ export async function POST(req: NextRequest) {
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const body = (await req.json().catch(() => ({}))) as {
-      limit?: number;
-      asaasPaymentId?: string;
-      eventName?: string;
-      reason?: string;
-    };
-    const reason = body.reason?.trim();
-    if (!reason || reason.length < 8) {
-      return json(400, { error: 'JUSTIFICATIVA_OBRIGATORIA' });
-    }
+    const body = adminWebhookReprocessInputDTOSchema.parse(await req.json().catch(() => ({})));
+    const { reason } = body;
 
     if (body.asaasPaymentId) {
       await recordFinanceAdminAction({
@@ -78,6 +72,7 @@ export async function POST(req: NextRequest) {
 
     return json(200, { ok: true, mode: 'queue', result });
   } catch (error) {
+    if (error instanceof ZodError) return json(400, { error: 'JUSTIFICATIVA_OBRIGATORIA' });
     console.error('[Admin Financial Webhooks Reprocess][POST]', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }

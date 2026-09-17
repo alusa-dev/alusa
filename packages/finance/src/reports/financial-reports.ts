@@ -1,5 +1,6 @@
 import type { FormaPagamento, Prisma, TipoCobranca } from '@prisma/client';
-import { buildSeatOccupancyWhereClause, getAcademicDateBoundsForInstant } from '@alusa/lib';
+import { buildSeatOccupancyWhereClause } from '@alusa/lib/services/matricula-occupancy';
+import { getAcademicDateBoundsForInstant } from '@alusa/shared/date-only';
 import { z } from 'zod';
 
 export const financialReportViewSchema = z.enum(['overview', 'delinquency', 'receipts']);

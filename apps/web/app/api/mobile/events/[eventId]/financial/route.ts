@@ -1,4 +1,7 @@
-import { createEventFinancialEntrySchema, listFinancialEntriesQuerySchema } from '@alusa/lib';
+import {
+  createEventFinancialEntrySchema,
+  listFinancialEntriesQuerySchema,
+} from '@alusa/lib/events/events.schema';
 
 import {
   createMobileEventFinancialEntry,

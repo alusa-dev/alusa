@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import {
   createEventFinancialEntrySchema,
-  createFinancialEntry,
-  listFinancialEntries,
   listFinancialEntriesQuerySchema,
-} from '@alusa/lib';
+} from '@alusa/lib/events/events.schema';
+import { createFinancialEntry, listFinancialEntries } from '@alusa/lib/events/events.service';
 
 import { getEventsContext, handleEventsRouteError, queryObject } from '../_helpers';
 

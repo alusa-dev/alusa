@@ -1,23 +1,16 @@
 import { NextResponse } from 'next/server';
-import { z, ZodError } from 'zod';
+import { ZodError } from 'zod';
 
-import { getSessionUser } from '@/lib/auth/session';
-import { prisma } from '@/prisma/client';
-import { createRenewalCommunication } from '@/src/server/matriculas/renewal-governance.service';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import {
+  rematriculaProcessCommunicationInputDTOSchema,
+  rematriculaProcessRouteParamsDTOSchema,
+} from '@/features/cadastro/rematriculas/dtos';
+import { createRenewalCommunicationForTenant } from '@/src/server/matriculas/renewal-http.service';
 import {
   RenewalPermissionError,
   requireRenewalPermission,
 } from '@/src/server/matriculas/renewal-permissions.service';
-
-const bodySchema = z.object({
-  participanteId: z.string().trim().nullable().optional(),
-  channel: z.enum(['EMAIL', 'WHATSAPP', 'SMS', 'PORTAL']),
-  audience: z.string().trim().min(2),
-  subject: z.string().trim().nullable().optional(),
-  message: z.string().trim().min(3),
-  scheduledAt: z.string().datetime().or(z.string().date()).nullable().optional(),
-  payload: z.record(z.unknown()).nullable().optional(),
-});
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -34,27 +27,19 @@ function parseDate(value?: string | null) {
 }
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
-  const user = await getSessionUser();
-  if (!user) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
+  const auth = await resolveTenantSession();
+  if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
+  if (!auth.role) return jsonError(403, 'SEM_PERMISSAO', 'Usuário não tem permissão para comunicação de rematrícula.');
 
   try {
-    requireRenewalPermission({ role: user.role, permission: 'renewal.campaign.manage' });
-    const { id } = await context.params;
-    const process = await prisma.rematriculaProcesso.findFirst({
-      where: { id, contaId: user.contaId },
-      select: { id: true, campanhaId: true },
-    });
-    if (!process) {
-      return jsonError(404, 'REMATRICULA_NAO_ENCONTRADA', 'Processo de rematrícula não encontrado.');
-    }
-
-    const body = bodySchema.parse(await request.json().catch(() => null));
-    const communication = await createRenewalCommunication(
+    requireRenewalPermission({ role: auth.role, permission: 'renewal.campaign.manage' });
+    const { id } = rematriculaProcessRouteParamsDTOSchema.parse(await context.params);
+    const body = rematriculaProcessCommunicationInputDTOSchema.parse(await request.json().catch(() => null));
+    const result = await createRenewalCommunicationForTenant(
       {
-        contaId: user.contaId,
-        actorId: user.id,
-        processoId: process.id,
-        campanhaId: process.campanhaId,
+        contaId: auth.contaId,
+        actorId: auth.userId,
+        processoId: id,
         participanteId: body.participanteId,
         channel: body.channel,
         audience: body.audience,
@@ -63,11 +48,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         scheduledAt: parseDate(body.scheduledAt),
         payload: body.payload,
       },
-      { prisma },
     );
+    if (!result) return jsonError(404, 'REMATRICULA_NAO_ENCONTRADA', 'Processo de rematrícula não encontrado.');
 
     return NextResponse.json(
-      { communication },
+      { communication: result.communication },
       { status: 201, headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
@@ -83,8 +68,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return jsonError(
       500,
       'ERRO_CRIAR_COMUNICACAO',
-      error instanceof Error ? error.message : 'Erro ao criar comunicação.',
+      'Erro ao criar comunicação.',
     );
   }
 }
-

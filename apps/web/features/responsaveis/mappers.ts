@@ -10,7 +10,7 @@ import {
   mapNormalizedAddressToResponsavelColumns,
   normalizePayerAddressInput,
   trimOrUndefined,
-} from '@alusa/lib';
+} from '@alusa/lib/responsaveis/payer-address';
 import { maskCpf, maskEmail, maskPhone } from '@alusa/shared';
 
 type ResponsavelSummaryRecord = {

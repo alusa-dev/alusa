@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { mapFinanceiroPagamentoPessoaHistoricoResultToDTO } from '@/features/financeiro/mappers';
 import { buildPersonPaymentLedger } from '@/src/server/finance/person-payment-ledger';
 
@@ -10,17 +10,14 @@ export async function GET(
   { params }: { params: Promise<{ responsavelId: string }> },
 ) {
   try {
-    const session = await safeGetServerSession();
-    const user = (
-      session as { user?: { id?: string; contaId?: string; role?: string } } | null
-    )?.user;
-    if (!user?.id || !user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json(
         { success: false, error: { message: 'Usuário não autenticado' } },
         { status: 401 },
       );
     }
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return NextResponse.json(
         { success: false, error: { message: 'Acesso negado' } },
         { status: 403 },
@@ -36,7 +33,7 @@ export async function GET(
     }
 
     const ledger = await buildPersonPaymentLedger({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       personType: 'RESPONSAVEL',
       personId: responsavelId,
     });
@@ -63,7 +60,7 @@ export async function GET(
     return NextResponse.json(
       {
         success: false,
-        error: { message: error instanceof Error ? error.message : 'Erro ao buscar dados' },
+        error: { message: 'Erro ao buscar dados' },
       },
       { status: 500 },
     );

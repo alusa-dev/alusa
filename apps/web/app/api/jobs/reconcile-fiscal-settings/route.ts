@@ -1,35 +1,18 @@
-import { FiscalSyncStatus } from '@prisma/client';
 import { NextResponse } from 'next/server';
 
+import { reconcileFiscalSettingsJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { prisma } from '@alusa/database';
-import { syncFiscalSettingsFromProvider } from '@alusa/finance';
+import {
+  listFiscalAccountsForReconciliation,
+  syncFiscalSettingsFromProvider,
+} from '@alusa/finance';
+import { apiJsonError } from '@/lib/api/standard-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 function jsonError(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status });
-}
-
-function clampPositiveInt(value: string | null, fallback: number, max: number) {
-  const parsed = Number(value ?? fallback);
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(max, parsed)) : fallback;
-}
-
-async function resolveFiscalAccountsForCron(maxAccounts: number) {
-  const rows = await prisma.contaFiscalSettings.findMany({
-    where: {
-      syncStatus: {
-        in: [FiscalSyncStatus.PENDING, FiscalSyncStatus.DIVERGED],
-      },
-    },
-    select: { contaId: true, syncStatus: true, updatedAt: true },
-    orderBy: [{ syncStatus: 'desc' }, { updatedAt: 'asc' }],
-    take: maxAccounts,
-  });
-
-  return rows.map((row) => row.contaId);
+  return apiJsonError(status, code, message);
 }
 
 /**
@@ -44,18 +27,22 @@ async function resolveFiscalAccountsForCron(maxAccounts: number) {
 async function run(req: Request) {
   try {
     const url = new URL(req.url);
+    const query = reconcileFiscalSettingsJobQueryDTOSchema.parse({
+      contaId: url.searchParams.get('contaId'),
+      maxAccounts: url.searchParams.get('maxAccounts'),
+    });
     const tenantScope = await resolveTenantScope(req, {
       allowCron: true,
-      requestedContaId: url.searchParams.get('contaId'),
+      requestedContaId: query.contaId,
     });
     if (!tenantScope.ok) {
       return tenantScope.response;
     }
 
-    const maxAccounts = clampPositiveInt(url.searchParams.get('maxAccounts'), 20, 50);
+    const maxAccounts = query.maxAccounts;
     const contaIds = tenantScope.contaId
       ? [tenantScope.contaId]
-      : await resolveFiscalAccountsForCron(maxAccounts);
+      : await listFiscalAccountsForReconciliation(maxAccounts);
 
     const results = await Promise.allSettled(
       contaIds.map(async (contaId) => ({
@@ -90,7 +77,7 @@ async function run(req: Request) {
     });
   } catch (error) {
     console.error('[Job Reconcile Fiscal Settings] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', (error as Error).message);
+    return jsonError(500, 'ERRO_JOB', 'Não foi possível reconciliar as configurações fiscais.');
   }
 }
 

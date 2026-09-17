@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { isValidCpfCnpjDigits, normalizeCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
-import { isAtLeastAgeYears, isValidDateOnly } from '@alusa/lib/date-only';
+import { isValidCpfCnpjDigits, normalizeCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
+import { isAtLeastAgeYears, isValidDateOnly } from '@alusa/shared/date-only';
 import { LEGAL_DOCUMENTS } from '@/lib/privacy/legal-versions';
 
 const passwordMinLength = Number(process.env.PASSWORD_MIN_LENGTH || 8);

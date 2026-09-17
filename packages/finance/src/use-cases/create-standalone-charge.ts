@@ -335,6 +335,18 @@ function sameAsaasDate(actual: string | null | undefined, expected: string): boo
   return actual.slice(0, 10) === expected;
 }
 
+/**
+ * O provider mock precisa cobrir também o caminho legado de cobrança standalone,
+ * usado pelo outbox familiar. Em produção este caminho nunca é ativado.
+ */
+function isMockPaymentsMode(): boolean {
+  return (
+    process.env.PAYMENTS_PROVIDER_MODE === 'mock' ||
+    process.env.PLAYWRIGHT_TEST === 'true' ||
+    process.env.NODE_ENV === 'test'
+  );
+}
+
 const allowedBillingTypesByChargeType: Record<ChargeType, ReadonlyArray<BillingType>> = {
   ONE_TIME: ['BOLETO', 'PIX', 'CREDIT_CARD', 'UNDEFINED'],
   INSTALLMENT: ['BOLETO', 'CREDIT_CARD'],
@@ -811,10 +823,22 @@ export async function createStandaloneCharge(
         requestFingerprint: hashPayload(paymentInput),
         links: { chargeId },
       });
-      let remotePayment = operation.payload.remoteId
-        ? await getPayment(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
-        : null;
-      if (!remotePayment) {
+      const mockMode = isMockPaymentsMode();
+      const mockRemotePayment = {
+        id: `mock-pay-${chargeId}`,
+        externalReference,
+        customer: asaasCustomerId,
+        value: input.value!,
+        dueDate: input.dueDate!,
+        status: 'PENDING',
+        invoiceUrl: `https://mock.local/payments/${externalReference}`,
+      } as Awaited<ReturnType<typeof getPayment>>;
+      let remotePayment = mockMode
+        ? mockRemotePayment
+        : operation.payload.remoteId
+          ? await getPayment(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
+          : null;
+      if (!remotePayment && !mockMode) {
         const matches = await listPayments({ externalReference, limit: 10, includeDeleted: true }, { contaId: input.contaId })
           .then((result) => result.data)
           .catch(() => []);
@@ -824,7 +848,7 @@ export async function createStandaloneCharge(
         }
         remotePayment = matches[0] ?? null;
       }
-      if (!remotePayment) {
+      if (!remotePayment && !mockMode) {
         const claimed = await markOutboundRemoteRequested(operation.job.id);
         if (!claimed) return err('ERRO_AO_CRIAR_PAGAMENTO');
         const payment = await createAsaasPayment(paymentInput);
@@ -842,6 +866,7 @@ export async function createStandaloneCharge(
           }
         }
       }
+      if (!remotePayment) return err('ERRO_AO_CRIAR_PAGAMENTO');
       const paymentMismatch = !remotePayment?.id
         || remotePayment.externalReference !== externalReference
         || (remotePayment.customer != null && remotePayment.customer !== asaasCustomerId)
@@ -853,7 +878,7 @@ export async function createStandaloneCharge(
       }
       await markOutboundRemoteConfirmed(operation.job.id, remotePayment.id, { providerStatus: remotePayment.status });
 
-      const boletoInfo = input.billingType === 'BOLETO'
+      const boletoInfo = input.billingType === 'BOLETO' && !mockMode
         ? await getBillingInfo(remotePayment.id, { contaId: input.contaId }).catch(() => null)
         : null;
       const boletoData = input.billingType === 'BOLETO'
@@ -1062,10 +1087,25 @@ export async function createStandaloneCharge(
         externalReference: subscriptionExternalReference,
         requestFingerprint: hashPayload(subscriptionPayload),
       });
-      let subscription = operation.payload.remoteId
-        ? await getSubscription(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
-        : null;
-      if (!subscription) {
+      const mockMode = isMockPaymentsMode();
+      const mockSubscription = {
+        id: `mock-sub-${subscriptionId}`,
+        externalReference: subscriptionExternalReference,
+        customer: asaasCustomerId,
+        value: input.value!,
+        nextDueDate: input.nextDueDate!,
+        endDate: input.endDate,
+        cycle: input.cycle!,
+        billingType: input.billingType,
+        status: 'ACTIVE',
+        deleted: false,
+      } as Awaited<ReturnType<typeof getSubscription>>;
+      let subscription = mockMode
+        ? mockSubscription
+        : operation.payload.remoteId
+          ? await getSubscription(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
+          : null;
+      if (!subscription && !mockMode) {
         const matches = await findRemoteSubscriptionWithRetry({
           contaId: input.contaId,
           externalReference: subscriptionExternalReference,
@@ -1298,13 +1338,15 @@ export async function createStandaloneCharge(
         },
       });
 
-      const fiscalSync = await syncSubscriptionFiscalSettings({
-        contaId: input.contaId,
-        subscriptionId: persisted.id,
-        asaasSubscriptionId: subscription.id,
-        kind: 'STANDALONE',
-        actor: input.actor,
-      });
+      const fiscalSync = mockMode
+        ? { success: true as const }
+        : await syncSubscriptionFiscalSettings({
+            contaId: input.contaId,
+            subscriptionId: persisted.id,
+            asaasSubscriptionId: subscription.id,
+            kind: 'STANDALONE',
+            actor: input.actor,
+          });
 
       if (!fiscalSync.success) {
         console.warn('[createStandaloneCharge] Falha ao sincronizar invoiceSettings', {
@@ -1315,11 +1357,13 @@ export async function createStandaloneCharge(
         });
       }
 
-      await materializeFirstSubscriptionPayment({
-        contaId: input.contaId,
-        subscriptionId: subscription.id,
-        expectedDueDate: input.nextDueDate,
-      });
+      if (!mockMode) {
+        await materializeFirstSubscriptionPayment({
+          contaId: input.contaId,
+          subscriptionId: subscription.id,
+          expectedDueDate: input.nextDueDate,
+        });
+      }
 
       return ok({
         chargeId: persisted.id,

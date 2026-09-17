@@ -3,6 +3,43 @@ import { Role } from '@prisma/client';
 
 const nullableStringDTOSchema = z.string().nullable();
 
+export const adminAsaasApiKeyInputDTOSchema = z.object({
+  apiKey: z.string().trim().min(10).max(512),
+});
+
+export const adminWebhookReplayInputDTOSchema = z.object({
+  eventId: z.string().trim().min(1).max(191).optional(),
+  force: z.boolean().optional(),
+  from: z.string().trim().min(1).max(64).optional(),
+  to: z.string().trim().min(1).max(64).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+  offset: z.number().int().min(0).max(100_000).optional(),
+  status: z.enum(['PROCESSADO', 'ERRO', 'PENDENTE']).optional(),
+  category: z.string().trim().min(1).max(80).optional(),
+});
+
+export const adminWebhookReprocessInputDTOSchema = z.object({
+  limit: z.number().int().min(1).max(200).optional(),
+  asaasPaymentId: z.string().trim().min(1).max(191).optional(),
+  eventName: z.string().trim().min(1).max(120).optional(),
+  reason: z.string().trim().min(8).max(500),
+});
+
+export const adminWebhookConfigRepairInputDTOSchema = z.object({
+  reason: z.string().trim().min(8).max(500),
+});
+
+export const adminWebhookDlqInputDTOSchema = z.object({
+  ids: z.array(z.string().trim().min(1).max(191)).min(1).max(100).optional(),
+  all: z.boolean().optional(),
+}).refine((value) => value.all === true || Boolean(value.ids?.length), {
+  message: 'Envie "ids" ou "all: true"',
+});
+
+export const anonymizeStudentInputDTOSchema = z.object({
+  motivo: z.string().trim().max(500).optional(),
+});
+
 export const adminTestCustomerQueryDTOSchema = z.object({
   contaId: z.string().trim().optional(),
 });
@@ -103,6 +140,51 @@ export const adminFinancialHealthResultDTOSchema = z.object({
 });
 
 export type AdminFinancialHealthResultDTO = z.infer<typeof adminFinancialHealthResultDTOSchema>;
+
+const financialOperationalMetricDTOSchema = z.object({
+  key: z.string().min(1),
+  value: z.number().int().nonnegative(),
+  threshold: z.number().int().nonnegative(),
+  severity: z.enum(['INFO', 'WARNING', 'CRITICAL']),
+});
+
+const financialOperationalAccountHealthDTOSchema = z.object({
+  contaId: z.string().min(1),
+  metrics: z.array(financialOperationalMetricDTOSchema),
+  openedAlerts: z.number().int().nonnegative(),
+  resolvedAlerts: z.number().int().nonnegative(),
+});
+
+export const adminFinancialOperationalHealthResultDTOSchema = z.object({
+  success: z.literal(true),
+  result: z.object({
+    generatedAt: z.string().datetime(),
+    accounts: z.array(financialOperationalAccountHealthDTOSchema),
+  }),
+  alerts: z.array(
+    z.object({
+      id: z.string().min(1),
+      contaId: z.string().min(1),
+      alertKey: z.string().min(1),
+      severity: z.string().min(1),
+      status: z.string().min(1),
+      title: z.string().min(1),
+      description: z.string().nullable(),
+      metricValue: z.number().int().nullable(),
+      threshold: z.number().int().nullable(),
+      metadata: z.unknown().nullable(),
+      firstSeenAt: z.string().datetime(),
+      lastSeenAt: z.string().datetime(),
+      resolvedAt: z.string().datetime().nullable(),
+      createdAt: z.string().datetime(),
+      updatedAt: z.string().datetime(),
+    }),
+  ),
+});
+
+export type AdminFinancialOperationalHealthResultDTO = z.infer<
+  typeof adminFinancialOperationalHealthResultDTOSchema
+>;
 
 export const internalHealthCheckDTOSchema = z.object({
   name: z.string(),

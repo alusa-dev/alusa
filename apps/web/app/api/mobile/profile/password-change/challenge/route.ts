@@ -7,7 +7,7 @@ import {
   getMobilePasswordChangeActor,
   otpErrorResponse,
   unauthorized,
-} from '../_shared';
+} from '@/src/server/mobile/mobile-password-change-http.service';
 
 export const runtime = 'nodejs';
 

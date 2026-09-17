@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
 import {
   calculatePortalAge,
   requirePortalUser,
@@ -9,6 +8,7 @@ import {
   mapPortalResponsavelAlunoToDTO,
   mapPortalResponsavelAlunosResultToDTO,
 } from '@/features/portal/mappers';
+import { findPortalResponsibleWithStudents } from '@/src/server/portal/portal-read.service';
 
 export async function GET() {
   try {
@@ -17,26 +17,7 @@ export async function GET() {
     const { user } = auth;
 
     // 3. Buscar alunos vinculados ao responsável - Multi-tenant: filtrar por contaId
-    const responsavel = await prisma.responsavel.findFirst({
-      where: {
-        usuarioId: user.id,
-        contaId: user.contaId,
-      },
-      include: {
-        alunos: {
-          include: {
-            aluno: {
-              select: {
-                id: true,
-                nome: true,
-                foto: true,
-                dataNasc: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    const responsavel = await findPortalResponsibleWithStudents({ userId: user.id, contaId: user.contaId });
 
     if (!responsavel) {
       return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
@@ -66,5 +47,4 @@ export async function GET() {
     );
   }
 }
-
 

@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
 import {
   professorMutationResultDTOSchema,
   updateProfessorInputDTOSchema,
 } from '@/features/cadastro/professores/dtos';
 import { mapProfessorRecordToDTO } from '@/features/cadastro/professores/mappers';
 import { logMethodNotAllowed } from '@/lib/security/http-method-observability';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { getProfessor, updateProfessor } from '@/src/server/professores/professor.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -18,15 +17,12 @@ function jsonError(status: number, code: string, message: string, details?: unkn
     { status, headers: { 'cache-control': 'no-store' } },
   );
 }
-const prisma = new PrismaClient();
-
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
     const ctxParams = await ctx.params;
-  const session = await getServerSession(authOptions).catch(() => null);
-  const contaId =
-    (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-  if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'É necessário estar autenticado.');
-  const prof = await prisma.professor.findFirst({ where: { id: ctxParams.id, contaId } });
+  const auth = await resolveTenantSession();
+  if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'É necessário estar autenticado.');
+  const { contaId } = auth;
+  const prof = await getProfessor(contaId, ctxParams.id);
   if (!prof) return jsonError(404, 'NAO_ENCONTRADO', 'Professor não encontrado');
   return NextResponse.json(
     professorMutationResultDTOSchema.parse({
@@ -56,26 +52,18 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       delete (data as Record<string, unknown>).contaId;
     }
 
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'É necessário estar autenticado.');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'É necessário estar autenticado.');
+    const { contaId } = auth;
 
-    const existing = await prisma.professor.findFirst({ where: { id: ctxParams.id, contaId } });
+    const existing = await getProfessor(contaId, ctxParams.id);
     if (!existing) return jsonError(404, 'NAO_ENCONTRADO', 'Professor não encontrado');
 
     try {
-      // Multi-tenant: usar updateMany para garantir atomicidade com contaId
-      const result = await prisma.professor.updateMany({ 
-        where: { id: ctxParams.id, contaId }, 
-        data 
-      });
-      if (result.count === 0) {
+      const updated = await updateProfessor({ contaId, professorId: ctxParams.id, data });
+      if (!updated) {
         return jsonError(404, 'NAO_ENCONTRADO', 'Professor não encontrado');
       }
-      // Buscar o registro atualizado
-      const updated = await prisma.professor.findFirst({ where: { id: ctxParams.id, contaId } });
-      if (!updated) return jsonError(404, 'NAO_ENCONTRADO', 'Professor não encontrado');
       return NextResponse.json(
         professorMutationResultDTOSchema.parse({
           data: mapProfessorRecordToDTO(updated as Record<string, unknown>),

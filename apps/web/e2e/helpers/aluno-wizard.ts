@@ -37,6 +37,7 @@ export type NovoResponsavelData = {
   email: string;
   telefone: string;
   cep?: string;
+  numero?: string;
 };
 
 export async function mockKycRefresh(page: Page) {
@@ -77,8 +78,9 @@ export async function setupAlunoWizardTest(page: Page, adminEmail?: string) {
   await mockKycRefresh(page);
   await mockViaCep(page, DEFAULT_CEP, DEFAULT_ADDRESS);
   await page.goto('/alunos');
-  await expect(page.getByText('Gestão de Alunos')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Gestão de Alunos' }).first()).toBeVisible();
   await dismissWelcomeWizard(page);
+  await expect(page.getByTestId('abrir-wizard-aluno').first()).toBeEnabled({ timeout: 20_000 });
   return { adminEmail: email };
 }
 
@@ -97,7 +99,7 @@ export async function waitForSessionContaId(page: Page, timeout = 20_000) {
 
 export async function openAlunoWizard(page: Page) {
   await waitForSessionContaId(page);
-  const openWizard = page.getByTestId('abrir-wizard-aluno');
+  const openWizard = page.getByTestId('abrir-wizard-aluno').first();
   await expect(openWizard).toBeEnabled({ timeout: 20_000 });
   await openWizard.click();
   await expect(page.getByTestId('aluno-wizard')).toBeVisible();
@@ -112,7 +114,12 @@ export async function expectWizardProgress(page: Page, current: number, total: n
 
 export async function fillIdentificacao(page: Page, data: IdentificacaoData) {
   await page.locator('#aluno-nome').fill(data.nome);
-  await page.locator('#aluno-data-nasc').fill(data.dataNasc);
+  const birthDate = page.locator('#aluno-data-nasc');
+  // DateMaskControlled é um campo IMask; pressSequentially dispara o
+  // onAccept real e evita que o formulário mantenha a idade como indefinida.
+  await birthDate.fill('');
+  await birthDate.pressSequentially(data.dataNasc, { delay: 10 });
+  await expect(birthDate).toHaveValue(data.dataNasc);
 
   if (data.cpf) {
     await fillCpf(page.getByTestId('aluno-cpf'), data.cpf);
@@ -174,6 +181,9 @@ export async function fillNovoResponsavel(page: Page, data: NovoResponsavelData)
   await page.locator('#resp-email').fill(data.email);
   await fillTelefone(page.getByTestId('resp-telefone'), data.telefone);
   await fillCep(page.getByTestId('resp-cep'), data.cep ?? DEFAULT_CEP);
+  await page.getByRole('button', { name: 'Buscar CEP automaticamente' }).click();
+  await expect(page.locator('#resp-logradouro')).toHaveValue(DEFAULT_ADDRESS.logradouro);
+  await page.locator('#resp-numero').fill(data.numero ?? '10');
 }
 
 export async function selectResponsavelExistente(page: Page, query: string, nome: string) {
@@ -189,9 +199,10 @@ export async function waitForAlunoCreateResponse(page: Page, timeout = 15_000) {
     (r) => r.url().includes('/api/alunos') && r.request().method() === 'POST',
     { timeout },
   );
+  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   return {
     status: response.status(),
-    body: (await response.json().catch(() => ({}))) as Record<string, unknown>,
+    body,
   };
 }
 
@@ -216,6 +227,12 @@ export async function seedResponsavelForConta(
       email: overrides?.email ?? `resp.seed+${suffix}@e2e.test`,
       telefone: overrides?.telefone ?? '11966665555',
       financeiro: true,
+      enderecoCep: DEFAULT_CEP,
+      enderecoLogradouro: DEFAULT_ADDRESS.logradouro,
+      enderecoNumero: '123',
+      enderecoBairro: DEFAULT_ADDRESS.bairro,
+      enderecoCidade: DEFAULT_ADDRESS.localidade,
+      enderecoUf: DEFAULT_ADDRESS.uf,
     },
     select: { id: true, nome: true, cpf: true, email: true },
   });

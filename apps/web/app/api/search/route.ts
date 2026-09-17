@@ -1,19 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-
-import { authOptions } from '@/lib/auth-options';
 import { GLOBAL_SEARCH_MIN_QUERY_LENGTH } from '@/features/global-search/constants';
 import { globalSearchResultDTOSchema } from '@/features/global-search/dtos';
 import { searchGlobalApp } from '@/features/global-search/queries';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
-  const session = await getServerSession(authOptions).catch(() => null);
-  const user = session?.user;
-
-  if (!user?.id || !user.contaId) {
+  const auth = await resolveTenantSession();
+  if (!auth.ok) {
     return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
   }
 
@@ -27,8 +23,8 @@ export async function GET(request: NextRequest) {
   }
 
   const result = await searchGlobalApp(query, {
-    contaId: user.contaId,
-    role: user.role ?? null,
+    contaId: auth.contaId,
+    role: auth.role ?? null,
   });
 
   return NextResponse.json(result, {

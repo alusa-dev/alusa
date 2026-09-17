@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { deleteCostumeAssignment, updateCostumeAssignment, updateCostumeAssignmentSchema } from '@alusa/lib';
+import { updateCostumeAssignmentSchema } from '@alusa/lib/events/events.schema';
+import { deleteCostumeAssignment, updateCostumeAssignment } from '@alusa/lib/events/events.service';
 
 import { getEventsContext, handleEventsRouteError } from '../../_helpers';
 

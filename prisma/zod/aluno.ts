@@ -98,7 +98,9 @@ const alunoShape = {
 };
 
 export const alunoBaseSchema = z.object(alunoShape);
-export const alunoSchema = alunoBaseSchema.superRefine((data, ctx) => {
+type AlunoBaseData = z.infer<typeof alunoBaseSchema>;
+
+function applyAlunoConditionalRules(data: Partial<AlunoBaseData>, ctx: z.RefinementCtx) {
   const dataNasc = data.dataNasc as Date | undefined;
   if (!(dataNasc instanceof Date)) return; // fallback de segurança
   const diff = today.getTime() - dataNasc.getTime();
@@ -154,7 +156,14 @@ export const alunoSchema = alunoBaseSchema.superRefine((data, ctx) => {
     // @ts-ignore
     data.dataConsentimentoImagem = new Date();
   }
-});
+}
+
+export const alunoSchema = alunoBaseSchema.superRefine(applyAlunoConditionalRules);
+
+// Variante para navegação por etapas: mantém as mesmas regras condicionais,
+// mas não acusa campos obrigatórios que pertencem a etapas ainda não visitadas.
+// A validação final continua usando alunoSchema, sem qualquer relaxamento.
+export const alunoWizardStepSchema = alunoBaseSchema.partial().superRefine(applyAlunoConditionalRules);
 
 export type AlunoInput = z.infer<typeof alunoSchema>;
 

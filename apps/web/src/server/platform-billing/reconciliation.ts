@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { prisma as defaultPrisma } from '@/lib/prisma';
 import {
   computeGracePeriodEnd,
   createDefaultPlatformBillingStripeGateway,
@@ -98,14 +99,15 @@ export function classifyStuckWebhookEventGroups(
 }
 
 export async function reconcilePlatformBilling(input: {
-  prisma: PrismaClient;
+  prisma?: PrismaClient;
   contaId?: string;
   limit?: number;
   environment?: PlatformBillingEnvironment;
 }): Promise<{ checkedAccounts: number; issues: number }> {
+  const db = input.prisma ?? defaultPrisma;
   const environment = input.environment ?? resolvePlatformBillingEnvironment();
   const limit = Math.max(1, Math.min(input.limit ?? 50, 100));
-  const accounts = await input.prisma.platformBillingAccount.findMany({
+  const accounts = await db.platformBillingAccount.findMany({
     where: {
       environment,
       ...(input.contaId ? { contaId: input.contaId } : {}),
@@ -119,7 +121,7 @@ export async function reconcilePlatformBilling(input: {
 
   for (const account of accounts) {
     if (!account.stripeCustomerId) {
-      await upsertIssue(input.prisma, {
+      await upsertIssue(db, {
         contaId: account.contaId,
         billingAccountId: account.id,
         environment,
@@ -134,7 +136,7 @@ export async function reconcilePlatformBilling(input: {
 
     if (!account.stripeSubscriptionId) {
       if (account.status === 'ACTIVE' || account.accessStatus === 'ACTIVE') {
-        await upsertIssue(input.prisma, {
+        await upsertIssue(db, {
           contaId: account.contaId,
           billingAccountId: account.id,
           environment,
@@ -154,7 +156,7 @@ export async function reconcilePlatformBilling(input: {
       const paymentMethod = await resolvePaymentMethod(account, subscription.customerId);
       const paidInvoices = await listPaidInvoices(subscription.customerId ?? account.stripeCustomerId);
       if (subscription.priceId && account.stripePriceId && subscription.priceId !== account.stripePriceId) {
-        await upsertIssue(input.prisma, {
+        await upsertIssue(db, {
           contaId: account.contaId,
           billingAccountId: account.id,
           environment,
@@ -180,7 +182,7 @@ export async function reconcilePlatformBilling(input: {
           });
           resolvedPlanCode = resolved.planCode;
           if (account.planCode && resolved.planCode !== account.planCode) {
-            await upsertIssue(input.prisma, {
+            await upsertIssue(db, {
               contaId: account.contaId,
               billingAccountId: account.id,
               environment,
@@ -197,7 +199,7 @@ export async function reconcilePlatformBilling(input: {
             issues += 1;
           }
         } catch {
-          await upsertIssue(input.prisma, {
+          await upsertIssue(db, {
             contaId: account.contaId,
             billingAccountId: account.id,
             environment,
@@ -212,7 +214,7 @@ export async function reconcilePlatformBilling(input: {
       }
 
       if (resolvedPlanCode) {
-        const corrected = await correctAccountFromStripeSubscription(input.prisma, {
+        const corrected = await correctAccountFromStripeSubscription(db, {
           account,
           subscription,
           planCode: resolvedPlanCode,
@@ -231,7 +233,7 @@ export async function reconcilePlatformBilling(input: {
       }
 
       if (account.accessStatus === 'ACTIVE' && subscription.status === 'canceled') {
-        await upsertIssue(input.prisma, {
+        await upsertIssue(db, {
           contaId: account.contaId,
           billingAccountId: account.id,
           environment,
@@ -244,7 +246,7 @@ export async function reconcilePlatformBilling(input: {
         issues += 1;
       }
     } catch (error) {
-      await upsertIssue(input.prisma, {
+      await upsertIssue(db, {
         contaId: account.contaId,
         billingAccountId: account.id,
         environment,
@@ -261,7 +263,7 @@ export async function reconcilePlatformBilling(input: {
     }
   }
 
-  const stuckEventGroups = await input.prisma.platformBillingWebhookEvent.groupBy({
+  const stuckEventGroups = await db.platformBillingWebhookEvent.groupBy({
     by: ['contaId'],
     where: {
       environment,
@@ -276,7 +278,7 @@ export async function reconcilePlatformBilling(input: {
       .map((group) => group.contaId)
       .filter((contaId): contaId is string => Boolean(contaId));
     const validTenants = candidateTenantIds.length
-      ? await input.prisma.conta.findMany({
+      ? await db.conta.findMany({
           where: { id: { in: candidateTenantIds } },
           select: { id: true },
         })
@@ -290,7 +292,7 @@ export async function reconcilePlatformBilling(input: {
     );
 
     for (const [contaId, count] of Object.entries(classified.tenantCounts)) {
-      await upsertIssue(input.prisma, {
+      await upsertIssue(db, {
         contaId,
         environment,
         severity: 'WARNING',
@@ -304,7 +306,7 @@ export async function reconcilePlatformBilling(input: {
     }
 
     if (classified.platformCount > 0) {
-      await upsertIssue(input.prisma, {
+      await upsertIssue(db, {
         contaId: null,
         billingAccountId: null,
         environment,
@@ -333,12 +335,13 @@ export async function reconcilePlatformBilling(input: {
  * preenchê-lo em subscription.default_payment_method.
  */
 export async function refreshPlatformBillingPaymentMethod(input: {
-  prisma: PrismaClient;
+  prisma?: PrismaClient;
   contaId: string;
   environment?: PlatformBillingEnvironment;
 }): Promise<boolean> {
+  const db = input.prisma ?? defaultPrisma;
   const environment = input.environment ?? resolvePlatformBillingEnvironment();
-  const account = await input.prisma.platformBillingAccount.findUnique({
+  const account = await db.platformBillingAccount.findUnique({
     where: {
       uq_platform_billing_account_conta_env: {
         contaId: input.contaId,
@@ -359,7 +362,7 @@ export async function refreshPlatformBillingPaymentMethod(input: {
   const paymentMethod = await resolvePaymentMethod(account, account.stripeCustomerId);
   if (!paymentMethod) return false;
 
-  await input.prisma.platformBillingAccount.update({
+  await db.platformBillingAccount.update({
     where: { id: account.id },
     data: {
       paymentMethodStatus: paymentMethod.status,

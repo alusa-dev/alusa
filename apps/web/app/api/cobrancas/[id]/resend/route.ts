@@ -7,8 +7,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { cobrancaRouteParamsDTOSchema } from '@/features/financeiro/cobrancas/dtos';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { ManualSyncError, resendTaxaMatricula } from '@alusa/finance';
 
 export const dynamic = 'force-dynamic';
@@ -23,21 +23,18 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
-    const rawParams = await params;
-    const session = await getServerSession(authOptions);
-    const user = (session as { user?: { id?: string; contaId?: string } })?.user;
-
-    if (!user?.id || !user?.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       console.warn('[COBRANCA_RESEND] Usuário não autenticado');
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
 
-    const cobrancaId = rawParams.id;
+    const { id: cobrancaId } = cobrancaRouteParamsDTOSchema.parse(await params);
 
     const result = await resendTaxaMatricula({
       cobrancaId,
-      contaId: user.contaId,
-      actorId: user.id,
+      contaId: auth.contaId,
+      actorId: auth.userId,
     });
 
     return NextResponse.json({

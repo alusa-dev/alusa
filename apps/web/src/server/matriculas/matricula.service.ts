@@ -26,8 +26,8 @@ import {
 import {
   buildSeatOccupancyOverlapWhereClause,
   buildSeatOccupancyWhereClauseForAcademicDate,
-} from '@alusa/lib';
-import { getAcademicDateBoundsForInstant } from '@alusa/lib/date-only';
+} from '@alusa/lib/services/matricula-occupancy';
+import { getAcademicDateBoundsForInstant } from '@alusa/shared/date-only';
 import {
   materializeBillingAgreement,
   mapAsaasPaymentStatusToCharge,
@@ -80,6 +80,31 @@ export class MatriculaConflictError extends Error {
   ) {
     super(message);
     this.name = 'MatriculaConflictError';
+    this.code = code;
+  }
+}
+
+export type MatriculaRuleErrorCode =
+  | 'MATRICULA_NAO_ENCONTRADA'
+  | 'MATRICULA_STATUS_TERMINAL'
+  | 'TRANSICAO_STATUS_INVALIDA'
+  | 'MATRICULA_NAO_EDITAVEL'
+  | 'DATA_FIM_INVALIDA'
+  | 'DATA_INICIO_INVALIDA';
+
+/**
+ * Erro semântico da camada de matrícula.
+ *
+ * A mensagem pode ser detalhada para logs internos, mas as rotas HTTP devem
+ * traduzir `code` para o envelope público estável da API. Assim, regras de
+ * domínio não vazam detalhes internos nem ficam acopladas ao transporte.
+ */
+export class MatriculaRuleError extends Error {
+  readonly code: MatriculaRuleErrorCode;
+
+  constructor(code: MatriculaRuleErrorCode, message: string) {
+    super(message);
+    this.name = 'MatriculaRuleError';
     this.code = code;
   }
 }
@@ -641,7 +666,8 @@ export async function assertMatriculaCreationPreflight(
     permitirInicioPassado: true,
   });
   if (!datasResult.success) {
-    throw new Error(
+    throw new MatriculaRuleError(
+      datasResult.error === 'DATA_FIM_ANTES_INICIO' ? 'DATA_FIM_INVALIDA' : 'DATA_INICIO_INVALIDA',
       datasResult.error === 'DATA_FIM_ANTES_INICIO'
         ? 'Data de fim do contrato deve ser posterior à data de início.'
         : 'Data de início não pode ser no passado.',
@@ -1449,18 +1475,22 @@ export async function atualizarStatusMatricula(input: {
   });
 
   if (!atual) {
-    const exists = await prisma.matricula.findUnique({ where: { id: input.id } });
-    if (exists) throw new Error('Matrícula não pertence à conta informada');
-    throw new Error('Matrícula não encontrada');
+    throw new MatriculaRuleError('MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada');
   }
 
   // Validar transição de estado via máquina de estados
   const transitionResult = validateTransition(atual.status, input.status);
   if (!transitionResult.success) {
     if (transitionResult.error === 'STATUS_TERMINAL') {
-      throw new Error(`Matrícula em estado "${atual.status}" não pode ser alterada (terminal).`);
+      throw new MatriculaRuleError(
+        'MATRICULA_STATUS_TERMINAL',
+        `Matrícula em estado "${atual.status}" não pode ser alterada (terminal).`,
+      );
     }
-    throw new Error(`Transição de "${atual.status}" para "${input.status}" não é permitida.`);
+    throw new MatriculaRuleError(
+      'TRANSICAO_STATUS_INVALIDA',
+      `Transição de "${atual.status}" para "${input.status}" não é permitida.`,
+    );
   }
 
   await prisma.matricula.update({
@@ -1486,13 +1516,14 @@ export async function atualizarDetalhesMatricula(input: {
   });
 
   if (!atual) {
-    const exists = await prisma.matricula.findUnique({ where: { id: input.id } });
-    if (exists) throw new Error('Matrícula não pertence à conta informada');
-    throw new Error('Matrícula não encontrada');
+    throw new MatriculaRuleError('MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada');
   }
 
   if (!canEditStructural(atual.status)) {
-    throw new Error(`Matrícula em status "${atual.status}" não pode ser editada.`);
+    throw new MatriculaRuleError(
+      'MATRICULA_NAO_EDITAVEL',
+      `Matrícula em status "${atual.status}" não pode ser editada.`,
+    );
   }
 
   const data: Record<string, unknown> = {};
@@ -1511,7 +1542,10 @@ export async function atualizarDetalhesMatricula(input: {
         datasResult.error === 'DATA_FIM_ANTES_INICIO'
           ? 'Data de fim do contrato deve ser posterior à data de início.'
           : 'Data de início não pode estar no passado.';
-      throw new Error(message);
+      throw new MatriculaRuleError(
+        datasResult.error === 'DATA_FIM_ANTES_INICIO' ? 'DATA_FIM_INVALIDA' : 'DATA_INICIO_INVALIDA',
+        message,
+      );
     }
 
     data.dataFimContrato = nextDataFimContrato;
@@ -1565,11 +1599,14 @@ export async function editarMatricula(input: {
     where: { id: input.matriculaId, aluno: { contaId: input.contaId } },
     select: { id: true, status: true },
   });
-  if (!matricula) throw new Error('Matrícula não encontrada');
+  if (!matricula) throw new MatriculaRuleError('MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada');
 
   // Bloquear edição estrutural em status terminais
   if (!canEditStructural(matricula.status)) {
-    throw new Error(`Matrícula em status "${matricula.status}" não pode ser editada.`);
+    throw new MatriculaRuleError(
+      'MATRICULA_NAO_EDITAVEL',
+      `Matrícula em status "${matricula.status}" não pode ser editada.`,
+    );
   }
 
   return prisma.$transaction(async (tx) => {
@@ -1586,7 +1623,7 @@ export async function editarMatricula(input: {
         dataFimContrato: true,
       },
     });
-    if (!verify) throw new Error('Matrícula não encontrada');
+    if (!verify) throw new MatriculaRuleError('MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada');
 
     await tx.$executeRaw`
       SELECT pg_advisory_xact_lock(hashtext(${input.contaId}), hashtext(${verify.alunoId}))

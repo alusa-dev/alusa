@@ -14,7 +14,7 @@ vi.mock('@/lib/auth-email-flow', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/auth-email-flow')>();
   return {
     ...actual,
-    sendInviteEmail: vi.fn(),
+    sendInviteEmail: vi.fn().mockResolvedValue({ delivery: 'logged', emailId: null }),
     sendEmailVerificationForUser: vi.fn(),
   };
 });
@@ -120,5 +120,54 @@ describe('convite com identidade global existente', () => {
         select: { id: true },
       }),
     ).resolves.toBeNull();
+  });
+
+  it('mapeia convite pendente duplicado para 409 mesmo com capitalização diferente', async () => {
+    const suffix = randomUUID();
+    const contaId = `conta-duplicado-${suffix}`;
+    const adminEmail = `admin-duplicado-${suffix}@example.com`;
+    const inviteEmail = `invite-duplicado-${suffix}@example.com`;
+    createdContaIds.push(contaId);
+    createdEmails.push(adminEmail);
+
+    await prisma.conta.create({
+      data: { id: contaId, nome: 'Escola Convite Duplicado', status: 'ATIVO' },
+    });
+    const admin = await prisma.usuario.create({
+      data: {
+        contaId,
+        nome: 'Admin Convite',
+        email: adminEmail,
+        senhaHash: await hashPassword('Abcdef1!'),
+        role: Role.ADMIN,
+        status: 'ATIVO',
+        emailVerifiedAt: new Date(),
+      },
+    });
+    await prisma.conta.update({ where: { id: contaId }, data: { ownerUserId: admin.id } });
+    await prisma.usuarioConta.create({
+      data: { usuarioId: admin.id, contaId, role: Role.ADMIN, status: 'ATIVO' },
+    });
+
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: admin.id, role: 'ADMIN', contaId, name: admin.nome },
+    } as never);
+
+    const first = await invitePost(new Request('http://x/api/users/invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: inviteEmail, role: 'FINANCEIRO' }),
+    }));
+    expect(first.status).toBe(201);
+
+    const duplicate = await invitePost(new Request('http://x/api/users/invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: inviteEmail.toUpperCase(), role: 'FINANCEIRO' }),
+    }));
+    expect(duplicate.status).toBe(409);
+    await expect(duplicate.json()).resolves.toMatchObject({
+      error: 'Já existe um convite pendente para este e-mail.',
+    });
   });
 });

@@ -6,7 +6,7 @@ import { buildTenantCacheKey, withTenantCache } from '@/lib/cache/tenant-cache';
 import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
 import { isCacheLayerEnabled } from '@/lib/cache/tenant-cache';
 import { privateJson } from '@/lib/private-cache';
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { withPerfTimer } from '@/lib/perf-logger';
 import { financeInternalError, financeJsonError } from '@/lib/api/finance-api-response';
 
@@ -44,11 +44,9 @@ function buildOperationalCacheKey(
  */
 export async function GET(req: NextRequest) {
   try {
-    const session = await safeGetServerSession();
-    type SessUser = { id?: string; contaId?: string; role?: string };
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
-    if (!user.role || !ALLOWED_ROLES.has(user.role.toUpperCase())) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuário não autenticado');
+    if (!auth.role || !ALLOWED_ROLES.has(auth.role.toUpperCase())) {
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
     }
 
@@ -57,7 +55,7 @@ export async function GET(req: NextRequest) {
     const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') || '20')));
     const search = url.searchParams.get('q')?.trim() || undefined;
     const tipoFilter = url.searchParams.getAll('tipo').filter(Boolean);
-    const contaId = user.contaId!;
+    const contaId = auth.contaId;
 
     const load = () =>
       withPerfTimer(

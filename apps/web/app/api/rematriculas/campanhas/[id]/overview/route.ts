@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { getSessionUser } from '@/lib/auth/session';
-import { prisma } from '@/prisma/client';
-import { getRenewalCampaignOverview } from '@/src/server/matriculas/renewal-management.service';
+import { getRenewalCampaignOverviewFromHttp } from '@/src/server/matriculas/renewal-http-commands.service';
 import { hasRenewalPermission } from '@/src/server/matriculas/renewal-permissions.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
@@ -21,10 +20,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 
   try {
     const { id } = await context.params;
-    const overview = await getRenewalCampaignOverview(
-      { contaId: user.contaId, campaignId: id },
-      { prisma },
-    );
+    const overview = await getRenewalCampaignOverviewFromHttp({ contaId: user.contaId, campaignId: id });
     return NextResponse.json(overview, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     if (error instanceof Error && error.message === 'CAMPANHA_NAO_ENCONTRADA') {
@@ -33,7 +29,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     return jsonError(
       500,
       'ERRO_CONSULTAR_CAPACIDADE_CAMPANHA',
-      error instanceof Error ? error.message : 'Erro ao consultar capacidade da campanha.',
+      'Erro ao consultar capacidade da campanha.',
     );
   }
 }

@@ -1,13 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { syncFiscalSettingsFromProvider } from '@alusa/finance';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
-
-type SessionUser = { id?: string; role?: string; contaId?: string };
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -15,15 +12,14 @@ function json(status: number, body: unknown) {
 
 export async function POST() {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const user = (session as { user?: SessionUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const gate = await guardFinancialAccountOr412(user.contaId);
+    const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
-    const result = await syncFiscalSettingsFromProvider({ contaId: user.contaId });
+    const result = await syncFiscalSettingsFromProvider({ contaId: auth.contaId });
     if (!result.success) {
       return json(result.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' ? 503 : 500, { error: result.error });
     }

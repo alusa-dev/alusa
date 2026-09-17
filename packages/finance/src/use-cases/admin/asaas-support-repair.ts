@@ -5,7 +5,7 @@ import {
   getSubaccount,
 } from '@alusa/asaas';
 import { inspectAsaasCredentials, prisma } from '@alusa/database';
-import { normalizeCpfCnpjDigits } from '@alusa/lib';
+import { normalizeCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
 import { FinanceIntegrationMode, type AuditActorType } from '@prisma/client';
 
 import { auditLogService } from '../../foundation/audit-log.service';

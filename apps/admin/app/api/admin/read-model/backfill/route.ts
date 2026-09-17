@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { chargeReadModelService, refreshFinanceSummaryReadModel } from '@alusa/finance';
 
 import { requireSupportApi } from '@/features/support/api/support-api.server';
+import { supportReadModelBackfillSchema } from '@/features/support/actions/schemas';
 
 export async function POST(req: Request) {
   const auth = await requireSupportApi(req, {
@@ -10,14 +11,14 @@ export async function POST(req: Request) {
   });
   if (!auth.ok) return auth.response;
 
-  const body = await req.json().catch(() => ({})) as { contaId?: string; limit?: number };
-  if (!body.contaId) {
-    return NextResponse.json({ success: false, error: 'CONTA_ID_OBRIGATORIO' }, { status: 422 });
+  const body = supportReadModelBackfillSchema.safeParse(await req.json().catch(() => null));
+  if (!body.success) {
+    return NextResponse.json({ success: false, error: 'PAYLOAD_INVALIDO' }, { status: 422 });
   }
 
-  const limit = Math.min(Math.max(Number(body.limit ?? 500), 1), 2000);
+  const { contaId, limit } = body.data;
   const readModel = await chargeReadModelService.backfillChargeReadModel({
-    contaId: body.contaId,
+    contaId,
     limit,
   });
 
@@ -25,7 +26,7 @@ export async function POST(req: Request) {
   if (process.env.FIN_SUMMARY_READMODEL_ENABLED === 'true') {
     const now = new Date();
     financeSummary = await refreshFinanceSummaryReadModel({
-      contaId: body.contaId,
+      contaId,
       window: {
         start: new Date(now.getFullYear(), now.getMonth(), 1),
         end: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999),
@@ -37,7 +38,7 @@ export async function POST(req: Request) {
   return NextResponse.json({
     success: true,
     data: {
-      contaId: body.contaId,
+      contaId,
       limit,
       readModel,
       financeSummary,

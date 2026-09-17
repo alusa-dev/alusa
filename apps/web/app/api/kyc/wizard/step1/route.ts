@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { ZodError } from 'zod';
 
-import { authOptions } from '@/lib/auth-options';
-import { saveWizardStep1 } from '@alusa/finance';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { saveWizardStep1, wizardStep1Schema } from '@alusa/finance';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -12,8 +11,8 @@ function json(status: number, body: unknown) {
 }
 
 async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
+  const auth = await resolveTenantSession();
+  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role } : null;
 }
 
 /**
@@ -26,11 +25,11 @@ export async function POST(req: Request) {
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!user.role || user.role.toUpperCase() !== 'ADMIN') return json(403, { error: 'SEM_PERMISSAO' });
 
-    const payload = (await req.json()) as unknown;
+    const payload = wizardStep1Schema.parse(await req.json());
 
     const result = await saveWizardStep1({
       contaId: user.contaId,
-      data: payload as never,
+      data: payload,
       actor: { type: 'USER', id: user.id },
     });
 

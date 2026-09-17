@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { z } from 'zod';
-import { authOptions } from '@/lib/auth-options';
-import { listNotifications, markAllNotificationsAsRead, type NotificationFeedView } from '@alusa/lib';
+import {
+  listNotifications,
+  markAllNotificationsAsRead,
+  type NotificationFeedView,
+} from '@alusa/lib/services/notifications.service';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
 import { privateJson } from '@/lib/private-cache';
 import {
@@ -11,12 +13,7 @@ import {
   getNotificationCache,
   setNotificationCache,
 } from '@/lib/notifications/notification-cache';
-
-type SessionUser = {
-  id?: string;
-  role?: string;
-  contaId?: string;
-};
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 const listQuerySchema = z.object({
@@ -45,18 +42,14 @@ function serialize(result: Awaited<ReturnType<typeof listNotifications>>) {
   };
 }
 
-async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
-}
-
 export async function GET(req: NextRequest) {
   const timer = createPerfTimer('api/notifications');
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return json(401, { error: 'NAO_AUTENTICADO', message: 'Usuário não autenticado.' });
     }
+    const user = { id: auth.userId, contaId: auth.contaId, role: auth.role };
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO', message: 'Usuário sem permissão para acessar notificações.' });
     }
@@ -124,10 +117,11 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user.contaId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return json(401, { error: 'NAO_AUTENTICADO', message: 'Usuário não autenticado.' });
     }
+    const user = { id: auth.userId, contaId: auth.contaId, role: auth.role };
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO', message: 'Usuário sem permissão para atualizar notificações.' });
     }

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
-import { deleteAluno, reativarAlunoCompleto } from '@alusa/lib';
+import { deleteAluno, reativarAlunoCompleto } from '@alusa/lib/alunos/aluno.service';
 import { updateAlunoInputDTOSchema } from '@/features/cadastro/alunos/dtos';
 import {
   assertMobileStudentAccess,

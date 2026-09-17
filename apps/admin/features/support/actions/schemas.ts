@@ -77,3 +77,28 @@ export const supportAsaasSaveManualApiKeySchema = z.object({
     understandsEncryptedStorage: z.literal(true),
   }),
 });
+
+export const supportAccountRouteParamsSchema = z.object({
+  contaId: z.string().trim().min(1),
+});
+
+export const supportAccountWebhookRouteParamsSchema = supportAccountRouteParamsSchema.extend({
+  webhookId: z.string().trim().min(1),
+});
+
+export const supportWebhookRejectionRouteParamsSchema = z.object({
+  rejectionId: z.string().trim().min(1),
+});
+
+export const supportUserRouteParamsSchema = z.object({
+  id: z.string().trim().min(1),
+});
+
+export const supportReadModelBackfillSchema = z.object({
+  contaId: z.string().trim().min(1),
+  limit: z.coerce.number().int().positive().max(2000).default(500),
+});
+
+export const supportReadModelHealthQuerySchema = z.object({
+  contaId: z.string().trim().min(1),
+});

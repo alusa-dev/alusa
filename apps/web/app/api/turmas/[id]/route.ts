@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { updateTurma, deleteTurma } from '@alusa/lib';
-import { turmaSchema } from '@alusa/lib';
-import { authOptions } from '@/lib/auth-options';
+import { turmaSchema } from '@alusa/lib/schemas/turma.schema';
+import { updateTurma, deleteTurma } from '@alusa/lib/services/turma.service';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
@@ -16,20 +15,21 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     const ctxParams = await ctx.params;
   try {
     const body = await req.json();
-    const contaId = typeof body.contaId === 'string' ? body.contaId.trim() : '';
-    if (!contaId) return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
-    const session = await getServerSession(authOptions).catch(() => null);
-    const sessionContaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (sessionContaId && contaId !== sessionContaId) {
+    const tenant = await resolveTenantSession(
+      typeof body.contaId === 'string' ? body.contaId : null,
+    );
+    if (!tenant.ok) {
       return jsonError(
-        403,
-        'CONTA_INVALIDA',
-        'A conta informada não pertence ao usuário autenticado.',
+        tenant.reason === 'UNAUTHENTICATED' ? 401 : 403,
+        tenant.reason === 'UNAUTHENTICATED' ? 'NAO_AUTENTICADO' : 'CONTA_INVALIDA',
+        tenant.reason === 'UNAUTHENTICATED'
+          ? 'Usuário não autenticado.'
+          : 'A conta informada não pertence ao usuário autenticado.',
       );
     }
+    const contaId = tenant.contaId;
     await assertPlatformAccessForConta({ contaId, capability: 'CLASS_WRITE' });
-    const merge = { ...body };
+    const merge = { ...body, contaId };
     // valida conjunto parcial mesclando id/contaId para garantir shape
     const parsed = turmaSchema.safeParse(merge);
     if (!parsed.success)
@@ -49,18 +49,17 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
     const ctxParams = await ctx.params;
   try {
     const url = new URL(req.url);
-    const contaId = url.searchParams.get('contaId')?.trim() || null;
-    if (!contaId) return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
-    const session = await getServerSession(authOptions).catch(() => null);
-    const sessionContaId =
-      (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (sessionContaId && contaId !== sessionContaId) {
+    const tenant = await resolveTenantSession(url.searchParams.get('contaId'));
+    if (!tenant.ok) {
       return jsonError(
-        403,
-        'CONTA_INVALIDA',
-        'A conta informada não pertence ao usuário autenticado.',
+        tenant.reason === 'UNAUTHENTICATED' ? 401 : 403,
+        tenant.reason === 'UNAUTHENTICATED' ? 'NAO_AUTENTICADO' : 'CONTA_INVALIDA',
+        tenant.reason === 'UNAUTHENTICATED'
+          ? 'Usuário não autenticado.'
+          : 'A conta informada não pertence ao usuário autenticado.',
       );
     }
+    const contaId = tenant.contaId;
     await assertPlatformAccessForConta({ contaId, capability: 'CLASS_WRITE' });
     try {
       const turma = await deleteTurma(ctxParams.id, contaId);

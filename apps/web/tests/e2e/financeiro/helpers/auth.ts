@@ -24,6 +24,22 @@ export async function seedAdminAndLogin(
     select: { id: true },
   });
 
+  // Todas as mutações do app passam pelo gate comercial da plataforma. A
+  // fixture precisa declarar explicitamente um tenant em trial para que os
+  // testes de financeiro exercitem o fluxo sob teste, e não um bloqueio
+  // incidental de billing.
+  await prisma.platformBillingAccount.create({
+    data: {
+      contaId: conta.id,
+      environment: 'TEST',
+      status: 'TRIALING',
+      planCode: 'STARTER',
+      accessStatus: 'ACTIVE',
+      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      paymentMethodStatus: 'UNKNOWN',
+    },
+  });
+
   const user = await prisma.usuario.create({
     data: {
       contaId: conta.id,

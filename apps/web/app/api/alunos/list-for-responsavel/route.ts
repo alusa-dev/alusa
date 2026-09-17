@@ -1,48 +1,25 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import prisma from '@/lib/prisma';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { listAlunosForResponsavelResultDTOSchema } from '@/features/cadastro/alunos/dtos';
 import { mapAlunoForResponsavelToDTO } from '@/features/cadastro/alunos/mappers';
+import { listAvailableStudentsForResponsible } from '@/src/server/alunos/available-for-responsible.service';
 
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
-    const sessionUser = session.user as { role?: string; contaId?: string };
-    const userRole = sessionUser.role;
-    const contaId = sessionUser.contaId;
-
     // Apenas ADMIN pode acessar
-    if (userRole !== 'ADMIN') {
+    if (auth.role !== 'ADMIN') {
       return NextResponse.json({ error: 'Sem permissão' }, { status: 403 });
     }
 
-    if (!contaId) {
-      return NextResponse.json({ error: 'Conta não identificada' }, { status: 400 });
-    }
+    const contaId = auth.contaId;
 
     // Buscar alunos que ainda não têm usuário vinculado ou não têm responsável
-    const alunos = await prisma.aluno.findMany({
-      where: {
-        contaId,
-        status: 'ATIVO',
-        // Buscar alunos sem usuário vinculado (para não duplicar acesso)
-        usuarioId: null,
-      },
-      select: {
-        id: true,
-        nome: true,
-        email: true,
-        dataNasc: true,
-      },
-      orderBy: {
-        nome: 'asc',
-      },
-    });
+    const alunos = await listAvailableStudentsForResponsible(contaId);
 
     // Formatar resposta
     const alunosFormatados = alunos.map((aluno) => ({
@@ -73,4 +50,3 @@ function calcularIdade(dataNasc: Date): number {
   }
   return idade;
 }
-

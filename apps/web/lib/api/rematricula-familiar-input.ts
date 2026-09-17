@@ -104,13 +104,19 @@ const rematriculaFamiliarBaseSchema = z.object({
   uiRequestId: z.string().trim().min(1).max(120),
 });
 
-export const rematriculaFamiliarPreviewInputSchema = rematriculaFamiliarBaseSchema;
+/** Canonical HTTP input DTO for the family renewal preview endpoint. */
+export const rematriculaFamiliarPreviewInputDTOSchema = rematriculaFamiliarBaseSchema;
+/** Backwards-compatible alias used by existing unit tests and consumers. */
+export const rematriculaFamiliarPreviewInputSchema = rematriculaFamiliarPreviewInputDTOSchema;
 
-export const rematriculaFamiliarCommitInputSchema = rematriculaFamiliarBaseSchema.extend({
+/** Canonical HTTP input DTO for committing a family renewal. */
+export const rematriculaFamiliarCommitInputDTOSchema = rematriculaFamiliarBaseSchema.extend({
   previewId: z.preprocess(emptyToNull, z.string().trim().min(1).nullable().optional()),
   previewHash: z.preprocess(emptyToNull, z.string().trim().min(1).nullable().optional()),
   sourceVersion: z.preprocess(emptyToNull, z.string().trim().min(1).nullable().optional()),
 });
+/** Backwards-compatible alias used by existing consumers. */
+export const rematriculaFamiliarCommitInputSchema = rematriculaFamiliarCommitInputDTOSchema;
 
 export function formatRematriculaFamiliarValidationMessage(issues: z.ZodIssue[]): string {
   const issue = issues[0];

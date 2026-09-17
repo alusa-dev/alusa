@@ -519,6 +519,18 @@ export async function syncFiscalSettingsFromProvider(input: {
   }
 }
 
+export async function listFiscalAccountsForReconciliation(maxAccounts: number) {
+  const prisma = getFiscalPrisma();
+  const rows = await prisma.contaFiscalSettings.findMany({
+    where: { syncStatus: { in: ['PENDING', 'DIVERGED'] } },
+    select: { contaId: true },
+    orderBy: [{ syncStatus: 'desc' }, { updatedAt: 'asc' }],
+    take: maxAccounts,
+  });
+
+  return rows.map((row) => row.contaId);
+}
+
 export async function configureFiscalNationalPortal(input: {
   contaId: string;
   enabled: boolean;

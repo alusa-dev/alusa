@@ -31,9 +31,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       after: data,
     });
     return NextResponse.json({ success: true, data }, { headers: { 'cache-control': 'no-store' } });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Erro ao atualizar usuário interno' },
+      { success: false, error: 'Erro ao atualizar usuário interno' },
       { status: 400, headers: { 'cache-control': 'no-store' } },
     );
   }

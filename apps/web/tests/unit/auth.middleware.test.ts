@@ -134,6 +134,66 @@ describe('auth middleware', () => {
     expect(response.headers.get('location')).toBeNull();
   });
 
+  it('bloqueia API autenticada comum sem sessão', async () => {
+    getTokenMock.mockResolvedValueOnce(null);
+
+    const response = await proxy(new NextRequest('http://localhost:3000/api/salas?contaId=conta-b'));
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'Unauthorized' });
+  });
+
+  it('permite API autenticada comum com sessão válida', async () => {
+    getTokenMock.mockResolvedValueOnce({ id: 'user_1', contaId: 'conta_1' });
+
+    const response = await proxy(new NextRequest('http://localhost:3000/api/salas?contaId=conta_1'));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('preserva API de cobrança autenticada para RECEPCAO quando o handler define a operação permitida', async () => {
+    getTokenMock.mockResolvedValueOnce({
+      id: 'user_1', contaId: 'conta_1', role: 'RECEPCAO',
+    });
+
+    const response = await proxy(new NextRequest('http://localhost:3000/api/cobrancas/cob-1'));
+
+    expect(response.status).toBe(200);
+  });
+
+  it('permite API financeira para papel FINANCEIRO', async () => {
+    getTokenMock.mockResolvedValueOnce({
+      id: 'user_1', contaId: 'conta_1', role: 'FINANCEIRO',
+    });
+
+    const response = await proxy(new NextRequest('http://localhost:3000/api/financeiro/kpis'));
+
+    expect(response.status).toBe(200);
+  });
+
+  it('bloqueia API administrativa para papel financeiro sem privilégio de admin', async () => {
+    getTokenMock.mockResolvedValueOnce({
+      id: 'user_1', contaId: 'conta_1', role: 'FINANCEIRO',
+    });
+
+    const response = await proxy(new NextRequest('http://localhost:3000/api/admin/webhooks'));
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' });
+  });
+
+  it('delega APIs mobile ao Bearer token validado pelo Route Handler', async () => {
+    const response = await proxy(
+      new NextRequest('http://localhost:3000/api/mobile/agenda', {
+        headers: { authorization: 'Bearer mobile-access-token' },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(getTokenMock).not.toHaveBeenCalled();
+  });
+
   it('redireciona páginas protegidas sem sessão para login', async () => {
     getTokenMock.mockResolvedValueOnce(null);
 

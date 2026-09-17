@@ -1,70 +1,47 @@
 import { NextResponse } from 'next/server';
 
+import { renewalJobsQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { prisma } from '@/prisma/client';
 import {
-  activateDueRenewalProcesses,
-  materializePendingRenewalContracts,
-  provisionFutureFinancialAgreements,
-} from '@/src/server/matriculas/renewal-process.service';
-import { processRenewalOutbox } from '@/src/server/matriculas/renewal-outbox.service';
+  activateRenewalProcessesFromJob,
+  listRenewalJobContaIds,
+  materializeRenewalContractsFromJob,
+  processRenewalOutboxFromJob,
+  provisionFutureFinancialAgreementsFromJob,
+} from '@/src/server/matriculas/renewal-job-commands.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-function clamp(value: string | null, fallback: number, max: number) {
-  const parsed = Number(value ?? fallback);
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(max, Math.trunc(parsed))) : fallback;
-}
-
 async function run(req: Request) {
   const url = new URL(req.url);
+  const query = renewalJobsQueryDTOSchema.parse({
+    contaId: url.searchParams.get('contaId'),
+    maxAccounts: url.searchParams.get('maxAccounts'),
+    limit: url.searchParams.get('limit'),
+  });
   const scope = await resolveTenantScope(req, {
     allowCron: true,
-    requestedContaId: url.searchParams.get('contaId'),
+    requestedContaId: query.contaId,
     requireContaIdForCron: false,
   });
   if (!scope.ok) return scope.response;
 
   const now = new Date();
-  const maxAccounts = clamp(url.searchParams.get('maxAccounts'), 25, 100);
-  const perAccountLimit = clamp(url.searchParams.get('limit'), 25, 100);
+  const maxAccounts = query.maxAccounts;
+  const perAccountLimit = query.limit;
 
   const accountRows = scope.contaId
     ? [{ contaId: scope.contaId }]
-    : await prisma.rematriculaProcesso.findMany({
-        where: {
-          OR: [
-            { status: { in: ['CONFIRMED', 'WAITING_FOR_START', 'REQUIRES_ATTENTION'] } },
-            { financeiros: { some: { status: { in: ['SCHEDULED', 'READY_TO_PROVISION', 'FAILED'] } } } },
-            { outbox: { some: { status: { in: ['PENDING', 'FAILED'] } } } },
-          ],
-        },
-        distinct: ['contaId'],
-        take: maxAccounts,
-        orderBy: { updatedAt: 'asc' },
-        select: { contaId: true },
-      });
+    : await listRenewalJobContaIds({ maxAccounts });
 
   const results = [];
   for (const { contaId } of accountRows) {
     try {
-      const contracts = await materializePendingRenewalContracts(
-        { contaId, limit: perAccountLimit },
-        { prisma },
-      );
-      const queued = await provisionFutureFinancialAgreements(
-        { contaId, now, limit: perAccountLimit },
-        { prisma },
-      );
-      const outbox = await processRenewalOutbox(
-        { contaId, now, limit: perAccountLimit },
-        { prisma },
-      );
-      const activated = await activateDueRenewalProcesses(
-        { contaId, now, limit: perAccountLimit },
-        { prisma },
-      );
+      const contracts = await materializeRenewalContractsFromJob({ contaId, limit: perAccountLimit });
+      const queued = await provisionFutureFinancialAgreementsFromJob({ contaId, now, limit: perAccountLimit });
+      const outbox = await processRenewalOutboxFromJob({ contaId, now, limit: perAccountLimit });
+      const activated = await activateRenewalProcessesFromJob({ contaId, now, limit: perAccountLimit });
       results.push({ contaId, success: true, contracts, queued, outbox, activated });
     } catch (error) {
       results.push({

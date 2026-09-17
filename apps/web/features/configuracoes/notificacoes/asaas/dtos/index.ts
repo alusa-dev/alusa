@@ -51,3 +51,26 @@ export const saveAsaasNotificationPreferencesResultDTOSchema = z.object({
 export type SaveAsaasNotificationPreferencesResultDTO = z.infer<
   typeof saveAsaasNotificationPreferencesResultDTOSchema
 >;
+
+export const mobileAsaasNotificationPreferenceDTOSchema = z.object({
+  id: z.string().trim().optional(),
+  event: z.nativeEnum(AsaasNotificationEvent),
+  scheduleOffset: z.number().int().min(0).max(60),
+  enabled: z.boolean(),
+  emailEnabledForCustomer: z.boolean(),
+  smsEnabledForCustomer: z.boolean(),
+  whatsappEnabledForCustomer: z.boolean(),
+  phoneCallEnabledForCustomer: z.boolean(),
+});
+
+export const saveMobileAsaasNotificationPreferencesInputDTOSchema = z.object({
+  preferences: z.array(mobileAsaasNotificationPreferenceDTOSchema).min(1),
+});
+
+export type MobileAsaasNotificationPreferenceDTO = z.infer<
+  typeof mobileAsaasNotificationPreferenceDTOSchema
+>;
+
+export type SaveMobileAsaasNotificationPreferencesInputDTO = z.infer<
+  typeof saveMobileAsaasNotificationPreferencesInputDTOSchema
+>;

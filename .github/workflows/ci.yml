@@ -49,6 +49,14 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
+      - name: Workspace and route boundary checks
+        run: |
+          pnpm workspace:check
+          pnpm audit:route-boundaries
+          pnpm audit:route-sizes
+          pnpm audit:route-inventory
+          pnpm audit:package-graph
+
       # Prisma — aplicar migrations e confirmar estado final
       - name: Prisma migrate deploy
         run: npx prisma migrate deploy --schema prisma/schema.prisma
@@ -59,15 +67,53 @@ jobs:
       - name: Prisma generate
         run: npx prisma generate --schema prisma/schema.prisma
 
+      - name: Security and cron configuration
+        run: |
+          pnpm security:check
+          pnpm validate:cron-config
+          pnpm audit:dtos
+          pnpm audit:api-canonicalization
+          pnpm audit:http-contracts
+          pnpm audit:rate-limit
+          pnpm audit:lib-boundaries
+
       # Pipeline padrão do monorepo (fail-fast)
       - name: Lint
-        run: pnpm -w lint
+        run: pnpm lint:check
 
       - name: Typecheck
         run: pnpm -w typecheck
 
+      # O Mobile participa do gate enquanto consumidor da plataforma. O
+      # expo-doctor evita que patches incompatíveis do SDK cheguem ao merge;
+      # o typecheck/lint continuam cobertos pelo pipeline geral.
+      - name: Mobile SDK health
+        run: pnpm --filter @alusa/mobile run doctor
+
       - name: Unit tests
-        run: pnpm -w test:unit
+        run: |
+          pnpm -w test:unit
+          pnpm --filter @alusa/lib test
+          pnpm --filter @alusa/admin test
+          pnpm --filter @alusa/mobile test
+
+      - name: Critical package tests
+        run: |
+          pnpm --filter @alusa/domain test:unit
+          pnpm --filter @alusa/database test:unit
+          pnpm --filter @alusa/asaas test
+          pnpm --filter @alusa/asaas-gateway test
+          pnpm --filter @alusa/finance test:unit
+
+      # Packages com contratos consumidos diretamente pelas aplicações.
+      # Mantidos separados do bloco crítico para deixar a causa da falha clara.
+      - name: Supporting package tests
+        run: |
+          pnpm --filter @alusa/platform-billing test
+          pnpm --filter @alusa/stripe test
+          pnpm --filter @alusa/whatsapp test
+          pnpm --filter @alusa/shared test:unit
+          pnpm --filter @alusa/ui test
 
       - name: Build
         run: pnpm -w build
@@ -94,6 +140,24 @@ jobs:
       ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
       NEXTAUTH_SECRET: ci-only-nextauth-secret-not-for-production
       NODE_OPTIONS: '--max-old-space-size=4096'
+      E2E_SERVER_MODE: production
+      E2E_REDIS_EMULATOR: true
+      E2E_RLS_ROLE: alusa_app
+      E2E_RLS_PASSWORD: alusa-e2e-rls-password
+      RLS_RUNTIME_ENABLED: true
+      DATABASE_RLS_URL: postgresql://alusa_app:alusa-e2e-rls-password@localhost:5432/alusa_test
+      ASAAS_REDIS_ENABLED: true
+      TRUST_PROXY_HEADERS: true
+      FIN_WEBHOOK_INLINE_DRAIN: false
+      FIN_WEBHOOK_SYNC_OVERRIDE: false
+      ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS: true
+      ASAAS_WEBHOOK_IP_CHECK: strict
+      CACHE_LAYER_ENABLED: true
+      REDIS_CACHE_ENABLED: true
+      ASAAS_DISTRIBUTED_GET_LIMIT_ENABLED: true
+      ASAAS_WEBHOOK_AUTH_TOKEN_SECRET: ci-only-e2e-webhook-secret
+      ASAAS_WEBHOOK_PUBLIC_BASE_URL: http://localhost:3001
+      CRON_SECRET: ci-only-e2e-cron-secret
       CI: true
     steps:
       - name: Checkout
@@ -111,6 +175,9 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
+      - name: Prepare least-privilege RLS role
+        run: pnpm e2e:prepare-rls
+
       - name: Prisma migrate deploy
         run: npx prisma migrate deploy --schema prisma/schema.prisma
 
@@ -127,3 +194,14 @@ jobs:
             e2e/smoke.spec.ts \
             e2e/contratos-publico.spec.ts \
             e2e/contratos-publico-avancado.spec.ts
+
+      - name: Upload Playwright diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-critical-diagnostics
+          path: |
+            apps/web/test-results
+            apps/web/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7

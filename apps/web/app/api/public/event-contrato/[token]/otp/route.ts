@@ -1,45 +1,21 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
-import type { Prisma } from '@prisma/client';
 import {
   createPublicContractSignatureOtp,
-  findPublicEventContractByToken,
-  prisma,
-  resolvePublicContractSigner,
   setPublicContractSignatureOtpMetadata,
-} from '@alusa/lib';
-import { hashCanonicalPayload } from '@alusa/domain';
+} from '@alusa/lib/contracts/use-cases/signature-otp';
+import { resolvePublicContractSigner } from '@alusa/lib/contracts/use-cases/resolve-public-signer';
+import { findPublicEventContractByToken } from '@alusa/lib/events/event-contracts.service';
 import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
 import { publicSolicitarAssinaturaOtpInputDTOSchema } from '@/features/contratos/dtos';
 import { sendContractSignatureOtpEmail } from '@/lib/email/contract-signature-otp-email';
+import { recordPublicEventContractEvidence } from '@/src/server/contracts/public-contract-evidence.service';
 
 function maskEmail(email: string): string {
   const [local, domain] = email.split('@');
   if (!local || !domain) return 'e-mail cadastrado';
   return `${local.slice(0, 1)}${'*'.repeat(Math.max(2, Math.min(local.length - 1, 5)))}@${domain}`;
-}
-
-async function recordOtpEvidence(input: {
-  contaId: string;
-  eventoContratoId: string;
-  type: 'SIGNATURE_OTP_REQUESTED' | 'SIGNATURE_OTP_SENT' | 'SIGNATURE_OTP_FAILED';
-  ip: string;
-  userAgent: string | null;
-  payload: Prisma.InputJsonValue;
-}) {
-  await prisma.eventoContratoEvidence.create({
-    data: {
-      contaId: input.contaId,
-      eventoContratoId: input.eventoContratoId,
-      type: input.type,
-      actorType: 'PUBLIC',
-      ip: input.ip,
-      userAgent: input.userAgent,
-      payload: input.payload,
-      payloadHash: hashCanonicalPayload(input.payload),
-    },
-  });
 }
 
 function mapError(error: unknown) {
@@ -70,7 +46,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { token } = await params;
     const limiter = await strictRateLimitAsync(`public-event-contract-signature-otp-request:${token}:${clientIp}`, 3, 15 * 60 * 1000);
     if (!limiter.ok) return jsonSensitive({ error: { message: 'Aguarde alguns minutos antes de solicitar outro código.' } }, { status: 429 });
-
     const body = publicSolicitarAssinaturaOtpInputDTOSchema.parse(await request.json());
     const contract = await findPublicEventContractByToken(token);
     if (!contract) throw new Error('CONTRACT_NOT_FOUND');
@@ -99,21 +74,49 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       requestedUserAgent: userAgent,
     });
 
-    await recordOtpEvidence({ contaId: contract.contaId, eventoContratoId: contract.id, type: 'SIGNATURE_OTP_REQUESTED', ip: clientIp, userAgent, payload: { otpId: otp.id, emailDomain: signer.email.split('@')[1] ?? null } });
+    await recordPublicEventContractEvidence({
+      contaId: contract.contaId,
+      eventoContratoId: contract.id,
+      type: 'SIGNATURE_OTP_REQUESTED',
+      ip: clientIp,
+      userAgent,
+      payload: { otpId: otp.id, emailDomain: signer.email.split('@')[1] ?? null },
+    });
     let delivery: Awaited<ReturnType<typeof sendContractSignatureOtpEmail>>;
     try {
-      delivery = await sendContractSignatureOtpEmail({ to: otp.email, recipientName: otp.recipientName, code: otp.code, expiresIn: '10 minutos', schoolName: otp.schoolName, contractReference: otp.contractReference, idempotencyKey: `event-contract-signature-otp/${otp.id}` });
+      delivery = await sendContractSignatureOtpEmail({
+        to: otp.email,
+        recipientName: otp.recipientName,
+        code: otp.code,
+        expiresIn: '10 minutos',
+        schoolName: otp.schoolName,
+        contractReference: otp.contractReference,
+        idempotencyKey: `event-contract-signature-otp/${otp.id}`,
+      });
     } catch (error) {
-      await recordOtpEvidence({ contaId: contract.contaId, eventoContratoId: contract.id, type: 'SIGNATURE_OTP_FAILED', ip: clientIp, userAgent, payload: { otpId: otp.id, reason: error instanceof Error ? error.message : 'EMAIL_SEND_FAILED' } }).catch(() => undefined);
+      await recordPublicEventContractEvidence({
+        contaId: contract.contaId,
+        eventoContratoId: contract.id,
+        type: 'SIGNATURE_OTP_FAILED',
+        ip: clientIp,
+        userAgent,
+        payload: { otpId: otp.id, reason: error instanceof Error ? error.message : 'EMAIL_SEND_FAILED' },
+      }).catch(() => undefined);
       throw error;
     }
     try {
       await setPublicContractSignatureOtpMetadata({ id: otp.id, emailSent: true });
-      await recordOtpEvidence({ contaId: contract.contaId, eventoContratoId: contract.id, type: 'SIGNATURE_OTP_SENT', ip: clientIp, userAgent, payload: { otpId: otp.id, delivery: delivery.delivery, emailId: delivery.emailId } });
+      await recordPublicEventContractEvidence({
+        contaId: contract.contaId,
+        eventoContratoId: contract.id,
+        type: 'SIGNATURE_OTP_SENT',
+        ip: clientIp,
+        userAgent,
+        payload: { otpId: otp.id, delivery: delivery.delivery, emailId: delivery.emailId },
+      });
     } catch (error) {
       console.error('[event-contract-signature-otp][post-delivery-persistence]', { otpId: otp.id, error: error instanceof Error ? error.message : String(error) });
     }
-
     return jsonSensitive({ success: true, maskedEmail: maskEmail(otp.email), expiresInSeconds: 600 });
   } catch (error) {
     if (error instanceof z.ZodError) return jsonSensitive({ error: { message: 'Dados inválidos' } }, { status: 400 });

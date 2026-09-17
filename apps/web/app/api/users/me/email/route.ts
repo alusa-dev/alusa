@@ -2,12 +2,10 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
-import { revokeUserSessions } from '@/lib/auth-service';
-import prisma from '@/lib/prisma';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
-import { resolveUserId } from '../helpers';
+import { resolveUserId } from '@/src/server/identity/user-profile-http.helpers';
 import { changeEmailInputDTOSchema, changeEmailResultDTOSchema } from '@/features/users/dtos';
-import { comparePassword } from '@/lib/auth-password';
+import { changeUserEmail } from '@/src/server/users/user-account.service';
 
 export async function PATCH(req: Request) {
   try {
@@ -28,51 +26,33 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
     }
 
-    const user = await prisma.usuario.findUnique({
-      where: { id: userId },
-      select: { email: true, senhaHash: true },
-    });
-
-    if (!user) {
+    const { newEmail, currentPassword } = parsed.data;
+    const result = await changeUserEmail({ userId, newEmail, currentPassword });
+    if (result.status === 'NOT_FOUND') {
       return NextResponse.json({ error: 'Usuario nao encontrado' }, { status: 404 });
     }
-
-    const { newEmail, currentPassword } = parsed.data;
-    if (user.email.toLowerCase() === newEmail) {
+    if (result.status === 'SAME_EMAIL') {
       return NextResponse.json(
         { error: { fieldErrors: { newEmail: ['Este email ja esta em uso na sua conta'] } } },
         { status: 409 },
       );
     }
 
-    const emailInUse = await prisma.usuario.findUnique({
-      where: { email: newEmail },
-      select: { id: true },
-    });
-    if (emailInUse && emailInUse.id !== userId) {
+    if (result.status === 'EMAIL_IN_USE') {
       return NextResponse.json(
         { error: { fieldErrors: { newEmail: ['Este email ja esta associado a outra conta'] } } },
         { status: 409 },
       );
     }
 
-    const validPassword = await comparePassword(currentPassword, user.senhaHash);
-    if (!validPassword) {
+    if (result.status === 'INVALID_PASSWORD') {
       return NextResponse.json(
         { error: { fieldErrors: { currentPassword: ['Senha atual incorreta'] } } },
         { status: 403 },
       );
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.usuario.update({
-        where: { id: userId },
-        data: { email: newEmail },
-      });
-      await revokeUserSessions(userId, tx);
-    });
-
-    return NextResponse.json(changeEmailResultDTOSchema.parse({ success: true, email: newEmail }));
+    return NextResponse.json(changeEmailResultDTOSchema.parse({ success: true, email: result.email }));
   } catch (error) {
     console.error('Error updating email:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

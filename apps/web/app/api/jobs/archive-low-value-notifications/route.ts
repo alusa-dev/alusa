@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
-import { archiveLowValueNotifications } from '@alusa/lib';
+import { archiveLowValueNotifications } from '@alusa/lib/notifications/retention';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
+import { apiJsonError } from '@/lib/api/standard-response';
 
 export const dynamic = 'force-dynamic';
 
 function jsonError(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status });
+  return apiJsonError(status, code, message);
 }
 
 function clamp(value: string | null, fallback: number, max: number) {
@@ -41,7 +42,7 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     console.error('[Job Archive Low Value Notifications] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', error instanceof Error ? error.message : 'Erro desconhecido');
+    return jsonError(500, 'ERRO_JOB', 'Não foi possível arquivar as notificações antigas.');
   }
 }
 

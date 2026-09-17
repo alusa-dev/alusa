@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { verifyCredentialsDetailed } from '@/lib/auth-service';
 import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
@@ -12,14 +11,6 @@ import {
   mapRequestWithdrawDTOToInput,
   mapRequestWithdrawOutputToDTO,
 } from '@alusa/finance';
-
-type SessionUser = {
-  id?: string;
-  role?: string;
-  contaId?: string;
-  email?: string | null;
-  financeIntegrationMode?: string | null;
-};
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 const requestSchema = requestWithdrawDTOSchema.extend({
@@ -45,21 +36,16 @@ function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-async function resolveAuth(): Promise<SessionUser | null> {
-  const session = await getServerSession(authOptions).catch(() => null);
-  return (session as { user?: SessionUser } | null)?.user ?? null;
-}
-
 export async function POST(req: NextRequest) {
   try {
-    const user = await resolveAuth();
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'transfers');
+    const capabilityBlock = blockUnavailableFinanceCapability(auth.financeIntegrationMode, 'transfers');
     if (capabilityBlock) return capabilityBlock;
 
-    const gate = await guardFinancialAccountOr412(user.contaId);
+    const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
     const idempotencyKey = req.headers.get('Idempotency-Key');
@@ -77,9 +63,9 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (!user.email) return json(401, { error: 'REAUTENTICACAO_INDISPONIVEL' });
+    if (!auth.email) return json(401, { error: 'REAUTENTICACAO_INDISPONIVEL' });
 
-    const credentialCheck = await verifyCredentialsDetailed(user.email, parsed.data.currentPassword, user.contaId);
+    const credentialCheck = await verifyCredentialsDetailed(auth.email, parsed.data.currentPassword, auth.contaId);
     if (!credentialCheck.ok) {
       return json(401, { error: 'SENHA_INVALIDA' });
     }
@@ -87,9 +73,9 @@ export async function POST(req: NextRequest) {
     const { currentPassword: _currentPassword, ...transferData } = parsed.data;
 
     const input = mapRequestWithdrawDTOToInput(transferData, {
-      contaId: user.contaId,
+      contaId: auth.contaId,
       idempotencyKey,
-      actorId: user.id,
+      actorId: auth.userId,
     });
 
     const result = await requestWithdraw(input);

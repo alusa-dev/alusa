@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { ZodError } from 'zod';
 import { authOptions } from '@/lib/auth-options';
 import { listDlqWebhooks, getDlqStats, requeueDlqWebhooks, requeueAllDlqWebhooks } from '@alusa/finance';
+import { adminWebhookDlqInputDTOSchema } from '@/features/system/dtos';
 
 async function requireAdmin() {
   const session = await getServerSession(authOptions);
@@ -59,17 +61,13 @@ export async function POST(req: NextRequest) {
     const auth = await requireAdmin();
     if ('error' in auth) return auth.error;
 
-    const body = (await req.json().catch(() => ({}))) as {
-      ids?: string[];
-      all?: boolean;
-    };
+    const body = adminWebhookDlqInputDTOSchema.parse(await req.json().catch(() => ({})));
 
     let result;
     if (body.all) {
       result = await requeueAllDlqWebhooks(auth.contaId);
-    } else if (Array.isArray(body.ids) && body.ids.length > 0) {
-      const safeIds = body.ids.filter((id) => typeof id === 'string').slice(0, 100);
-      result = await requeueDlqWebhooks(auth.contaId, safeIds);
+    } else if (body.ids && body.ids.length > 0) {
+      result = await requeueDlqWebhooks(auth.contaId, body.ids);
     } else {
       return NextResponse.json(
         { success: false, error: 'Envie "ids" ou "all: true"' },
@@ -79,6 +77,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json({ success: false, error: 'Envie "ids" ou "all: true"' }, { status: 400 });
+    }
     console.error('[admin/webhooks/dlq] POST error:', error);
     return NextResponse.json({ success: false, error: 'Erro interno' }, { status: 500 });
   }

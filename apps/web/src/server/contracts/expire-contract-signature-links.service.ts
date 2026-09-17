@@ -1,12 +1,13 @@
 import type { PrismaClient } from '@prisma/client';
-import { createContractEvidence } from '@alusa/lib';
+import { prisma as defaultPrisma } from '@/prisma/client';
+import { createContractEvidence } from '@alusa/lib/contracts/evidence/create-contract-evidence';
 
 export async function expireContractSignatureLinks(input: {
   contaId: string;
   contractId?: string;
   limit?: number;
   now?: Date;
-}, deps: { prisma: PrismaClient }) {
+}, deps: { prisma: PrismaClient } = { prisma: defaultPrisma }) {
   const now = input.now ?? new Date();
   const candidates = await deps.prisma.contrato.findMany({
     where: {
@@ -66,4 +67,25 @@ export async function expireContractSignatureLinks(input: {
 
     return { atualizados: expiredIds.length, contratoIds: expiredIds };
   });
+}
+
+export async function listContasWithExpiredContractLinks(input: {
+  prisma?: PrismaClient;
+  maxAccounts: number;
+  now?: Date;
+}) {
+  const db = input.prisma ?? defaultPrisma;
+  const candidates = await db.contrato.findMany({
+    where: {
+      status: 'PENDENTE',
+      tokenExpiraEm: { not: null, lt: input.now ?? new Date() },
+      conta: { status: 'ATIVO', deletedAt: null },
+    },
+    select: { contaId: true },
+    distinct: ['contaId'],
+    orderBy: { contaId: 'asc' },
+    take: input.maxAccounts,
+  });
+
+  return candidates.map((candidate) => candidate.contaId);
 }

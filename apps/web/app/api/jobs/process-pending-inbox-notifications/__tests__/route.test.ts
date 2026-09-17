@@ -11,7 +11,9 @@ const { processPendingInboxNotifications, getServerSession } = vi.hoisted(() => 
 
 vi.mock('next-auth', () => ({ getServerSession }));
 vi.mock('@/lib/auth-options', () => ({ authOptions: {} }));
-vi.mock('@alusa/lib', () => ({ processPendingInboxNotifications }));
+vi.mock('@alusa/lib/notifications/pending-inbox-notifications', () => ({
+  processPendingInboxNotifications,
+}));
 
 import { GET, POST } from '../route';
 

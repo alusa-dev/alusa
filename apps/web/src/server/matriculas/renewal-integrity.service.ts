@@ -5,8 +5,8 @@ import {
   Prisma,
   type PrismaClient,
 } from '@prisma/client';
-import { createNotification } from '@alusa/lib';
-import { getAcademicDateKey, isAcademicDateInFuture } from '@alusa/lib/date-only';
+import { createNotification } from '@alusa/lib/services/notifications.service';
+import { getAcademicDateKey, isAcademicDateInFuture } from '@alusa/shared/date-only';
 
 import { createRenewalPending } from './renewal-governance.service';
 

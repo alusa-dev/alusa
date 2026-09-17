@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 import { PasswordChangeOtpError } from '@/lib/password-change-otp';
-import prisma from '@/lib/prisma';
+import { prisma } from '@/lib/prisma';
 
 export type MobilePasswordChangeActor = {
   userId: string;

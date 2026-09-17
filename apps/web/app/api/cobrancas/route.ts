@@ -8,11 +8,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@alusa/lib/prisma';
-import { calculateCobrancaDynamicStatus } from '@alusa/finance';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { apiJson, apiJsonCreated } from '@/lib/api/standard-response';
 import { invalidateChargesCache } from '@/lib/cache/invalidation';
+import { createLegacyCobranca, listLegacyCobrancas } from '@/src/server/finance/cobranca-legacy.service';
 import {
   createLegacyCobrancaInputDTOSchema,
   createLegacyCobrancaResultDTOSchema,
@@ -23,6 +22,7 @@ import {
   mapCreateLegacyCobrancaResultToDTO,
   mapLegacyCobrancaListItemToDTO,
 } from '@/features/financeiro/cobrancas/mappers';
+import { ZodError } from 'zod';
 
 /**
  * GET /api/cobrancas
@@ -40,9 +40,8 @@ import {
  */
 export async function GET(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-
-    if (!session?.user) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
@@ -58,119 +57,28 @@ export async function GET(req: NextRequest) {
       limit: parseInt(searchParams.get('limit') || '50'),
       offset: parseInt(searchParams.get('offset') || '0'),
     });
-    const { matriculaId, status, tipo, dataInicio, dataFim, limit, offset } = query;
+    const data = await listLegacyCobrancas({ contaId: auth.contaId, query });
 
-    // Construir filtros - MULTI-TENANT: sempre filtrar pela conta do usuário
-    const contaId = session.user.contaId;
-    if (!contaId) {
-      return NextResponse.json({ error: 'Conta não identificada' }, { status: 400 });
-    }
-
-    const where: Record<string, unknown> = {
-      matricula: { aluno: { contaId } },
-    };
-
-    if (matriculaId) {
-      where.matriculaId = matriculaId;
-    }
-
-    if (status) {
-      where.status = status;
-    }
-
-    if (tipo) {
-      where.tipo = tipo;
-    }
-
-    if (dataInicio || dataFim) {
-      const vencimentoFilter: { gte?: Date; lte?: Date } = {};
-      if (dataInicio) {
-        vencimentoFilter.gte = new Date(String(dataInicio));
-      }
-      if (dataFim) {
-        vencimentoFilter.lte = new Date(String(dataFim));
-      }
-      where.vencimento = vencimentoFilter;
-    }
-
-    // Buscar cobranças
-    const [cobrancas, total] = await Promise.all([
-      prisma.cobranca.findMany({
-        where,
-        include: {
-          matricula: {
-            include: {
-              aluno: {
-                select: {
-                  id: true,
-                  nome: true,
-                  email: true,
-                  telefone: true,
-                  foto: true,
-                },
-              },
-              plano: {
-                select: {
-                  id: true,
-                  nome: true,
-                  valor: true,
-                },
-              },
-              turma: {
-                select: {
-                  id: true,
-                  nome: true,
-                },
-              },
-            },
-          },
-          pagamentos: {
-            orderBy: {
-              dataPagamento: 'desc',
-            },
-            take: 1,
-          },
-        },
-        orderBy: {
-          vencimento: 'desc',
-        },
-        take: limit,
-        skip: offset,
-      }),
-      prisma.cobranca.count({ where }),
-    ]);
-
-    // ⭐ APLICAR CÁLCULO DINÂMICO DE STATUS
-    const cobrancasComStatusAtualizado = cobrancas.map((cobranca) => ({
-      ...cobranca,
-      // Calcular status dinâmico mantendo imutabilidade de status finais
-      statusCalculado: calculateCobrancaDynamicStatus(cobranca.status, cobranca.vencimento),
-      // Informações derivadas úteis para UI
-      diasAteVencimento: Math.floor(
-        (new Date(cobranca.vencimento).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24),
-      ),
-      isPago: cobranca.status === 'PAGO',
-      isEstornado: ['ESTORNADO', 'ESTORNADO_PARCIAL'].includes(cobranca.status),
-      isCancelado: cobranca.status === 'CANCELADO',
-      podeReenviar: ['PENDENTE', 'ATRASADO', 'A_VENCER'].includes(cobranca.status),
-    }));
-
-    return NextResponse.json(
+    return apiJson(
       listLegacyCobrancasResultDTOSchema.parse({
-        data: cobrancasComStatusAtualizado.map((item) =>
+        data: data.data.map((item) =>
           mapLegacyCobrancaListItemToDTO(item as unknown as Record<string, unknown>),
         ),
-        pagination: {
-          total,
-          limit,
-          offset,
-          hasMore: offset + limit < total,
-        },
+        pagination: data.pagination,
       }),
     );
   } catch (error) {
     console.error('[API Cobranças] Erro ao listar cobranças:', error);
-    return NextResponse.json({ error: 'Erro ao listar cobranças' }, { status: 500 });
+    if (error instanceof ZodError) {
+      return NextResponse.json(
+        { error: 'Parâmetros de consulta inválidos', code: 'ERRO_VALIDACAO' },
+        { status: 422 },
+      );
+    }
+    return NextResponse.json(
+      { error: 'Erro ao listar cobranças', code: 'ERRO_LISTAR_COBRANCAS' },
+      { status: 500 },
+    );
   }
 }
 
@@ -184,132 +92,58 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-
-    if (!session?.user) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
     // Verificar se usuário tem permissão (ADMIN ou FINANCEIRO)
-    if (!['ADMIN', 'FINANCEIRO'].includes(session.user.role)) {
+    if (!auth.role || !['ADMIN', 'FINANCEIRO'].includes(auth.role)) {
       return NextResponse.json({ error: 'Sem permissão para criar cobranças' }, { status: 403 });
     }
 
     const body = createLegacyCobrancaInputDTOSchema.parse(await req.json());
 
-    // Validar campos obrigatórios
-    const requiredFields: Array<keyof typeof body> = [
-      'matriculaId',
-      'valor',
-      'vencimento',
-      'competenciaInicio',
-      'competenciaFim',
-    ];
-    const missingFields = requiredFields.filter((field) => !body[field]);
-
-    if (missingFields.length > 0) {
-      return NextResponse.json(
-        { error: `Campos obrigatórios faltando: ${missingFields.join(', ')}` },
-        { status: 400 },
-      );
-    }
-
-    // Verificar se matrícula existe - MULTI-TENANT
-    const contaId = session.user.contaId;
-    if (!contaId) {
-      return NextResponse.json({ error: 'Conta não identificada' }, { status: 400 });
-    }
-
-    const matricula = await prisma.matricula.findFirst({
-      where: { id: body.matriculaId, aluno: { contaId } },
-      include: {
-        aluno: true,
-      },
+    const result = await createLegacyCobranca({
+      contaId: auth.contaId,
+      userId: auth.userId,
+      userName: auth.name,
+      input: body,
     });
 
-    if (!matricula) {
+    if (!result.ok && result.reason === 'MATRICULA_NOT_FOUND') {
       return NextResponse.json({ error: 'Matrícula não encontrada' }, { status: 404 });
     }
-    if (matricula.aluno.status !== 'ATIVO') {
+    if (!result.ok) {
       return NextResponse.json(
         { error: 'Aluno inativo não pode receber nova cobrança' },
         { status: 409 },
       );
     }
 
-    // Calcular status inicial baseado na data de vencimento
-    const vencimento = new Date(body.vencimento);
-    const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0);
-    vencimento.setHours(0, 0, 0, 0);
-
-    let statusInicial: 'PENDENTE' | 'A_VENCER' | 'ATRASADO' = 'PENDENTE';
-    if (vencimento > hoje) {
-      statusInicial = 'A_VENCER';
-    } else if (vencimento < hoje) {
-      statusInicial = 'ATRASADO';
-    }
-
-    // Criar cobrança
-    const cobranca = await prisma.cobranca.create({
-      data: {
-        contaId,
-        matriculaId: body.matriculaId,
-        tipo: (body.tipo || 'MENSALIDADE') as any,
-        descricao: body.descricao,
-        competenciaInicio: new Date(body.competenciaInicio),
-        competenciaFim: new Date(body.competenciaFim),
-        valor: body.valor,
-        vencimento: vencimento,
-        formaPagamento: (body.formaPagamento || 'BOLETO') as any,
-        status: statusInicial,
-      },
-      include: {
-        matricula: {
-          include: {
-            aluno: {
-              select: {
-                id: true,
-                nome: true,
-                email: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    // Registrar no log financeiro
-    await prisma.logFinanceiro.create({
-      data: {
-        contaId: matricula.aluno.contaId,
-        usuarioId: session.user.id,
-        cobrancaId: cobranca.id,
-        acao: 'CRIAR_COBRANCA_MANUAL',
-        detalhes: {
-          valor: body.valor,
-          vencimento: body.vencimento,
-          tipo: body.tipo,
-          descricao: body.descricao,
-          criadoPor: session.user.name,
-        },
-      },
-    });
-
-    void invalidateChargesCache(contaId, 'cobranca-created').catch((cacheError) => {
+    void invalidateChargesCache(auth.contaId, 'cobranca-created').catch((cacheError) => {
       console.warn('[cache][invalidate] cobranca-created failed', cacheError);
     });
 
-    return NextResponse.json(
+    return apiJsonCreated(
       createLegacyCobrancaResultDTOSchema.parse(
         mapCreateLegacyCobrancaResultToDTO({
           success: true,
-          data: cobranca,
+          data: result.data,
         }),
       ),
     );
   } catch (error) {
     console.error('[API Cobranças] Erro ao criar cobrança:', error);
-    return NextResponse.json({ error: 'Erro ao criar cobrança' }, { status: 500 });
+    if (error instanceof ZodError) {
+      return NextResponse.json(
+        { error: 'Dados da cobrança inválidos', code: 'ERRO_VALIDACAO' },
+        { status: 422 },
+      );
+    }
+    return NextResponse.json(
+      { error: 'Erro ao criar cobrança', code: 'ERRO_CRIAR_COBRANCA' },
+      { status: 500 },
+    );
   }
 }

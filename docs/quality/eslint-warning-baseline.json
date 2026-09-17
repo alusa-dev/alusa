@@ -1,0 +1,14 @@
+{
+  "generatedAt": "deterministic",
+  "files": 3553,
+  "warningCount": 1304,
+  "errorCount": 0,
+  "warningsByRule": {
+    "@typescript-eslint/no-explicit-any": 190,
+    "@typescript-eslint/no-unused-vars": 195,
+    "no-restricted-imports": 94,
+    "no-unused-vars": 802,
+    "react-hooks/exhaustive-deps": 13,
+    "unknown": 10
+  }
+}

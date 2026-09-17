@@ -6,7 +6,7 @@ import { prisma } from '@/src/prisma';
 import { listChargesAggregated } from '@alusa/finance';
 
 vi.mock('next-auth', () => ({
-  getServerSession: vi.fn(() => ({ user: { id: 'u1', contaId: 'c1', role: 'FINANCEIRO' } })),
+  getServerSession: vi.fn(async () => ({ user: { id: 'u1', contaId: 'c1', role: 'FINANCEIRO' } })),
 }));
 
 vi.mock('@alusa/finance', () => ({
@@ -125,7 +125,6 @@ describe('API Financeiro Cobrancas', () => {
         statusView: 'open',
         contaId: 'c1',
       }),
-      expect.anything(),
     );
   });
 

@@ -6,7 +6,6 @@ import {
   VALID_CPF,
   DEFAULT_ADDRESS,
   DEFAULT_CEP,
-  advanceThroughOptionalSteps,
   clickConcluir,
   clickWizardNext,
   dismissWelcomeWizard,
@@ -80,9 +79,13 @@ test.describe('Wizard de Cadastro de Aluno — fluxo completo', () => {
     });
 
     await test.step('Etapas opcionais: saúde, perfil e foto', async () => {
+      await clickWizardNext(page);
+      await expect(page.getByRole('heading', { name: 'Perfil & Classificação' })).toBeVisible();
       await page.getByPlaceholder('Ex.: Ballet').fill('Ballet');
       await page.getByPlaceholder('Ex.: Intermediário').fill('Intermediário');
-      await advanceThroughOptionalSteps(page);
+      await clickWizardNext(page);
+      await expect(page.getByRole('heading', { name: 'Foto do aluno' })).toBeVisible();
+      await clickWizardNext(page);
       await expect(page.getByRole('heading', { name: 'Confirmar dados' })).toBeVisible();
       await expectWizardProgress(page, 6, 6);
     });
@@ -118,7 +121,9 @@ test.describe('Wizard de Cadastro de Aluno — fluxo completo', () => {
     await test.step('Preparar sessão e abrir wizard', async () => {
       await setupAlunoWizardTest(page);
       await openAlunoWizard(page);
-      await expectWizardProgress(page, 1, 7);
+      // Antes de informar a data, o wizard ainda não consegue determinar a
+      // idade; a etapa de responsável aparece após o preenchimento.
+      await expectWizardProgress(page, 1, 6);
     });
 
     await test.step('Identificação — menor com contato opcional', async () => {
@@ -132,6 +137,7 @@ test.describe('Wizard de Cadastro de Aluno — fluxo completo', () => {
       await expect(
         page.getByText(/CPF, e-mail e telefone do aluno são opcionais/i),
       ).toBeVisible();
+      await expectWizardProgress(page, 1, 7);
 
       await clickWizardNext(page);
       await expect(page.getByRole('heading', { name: 'Endereço' })).toBeVisible();
@@ -187,7 +193,7 @@ test.describe('Wizard de Cadastro de Aluno — fluxo completo', () => {
       await mockKycRefresh(page);
       await mockViaCep(page, DEFAULT_CEP, DEFAULT_ADDRESS);
       await page.goto('/alunos');
-      await expect(page.getByText('Gestão de Alunos')).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Gestão de Alunos' }).first()).toBeVisible();
       await dismissWelcomeWizard(page);
       await openAlunoWizard(page);
 

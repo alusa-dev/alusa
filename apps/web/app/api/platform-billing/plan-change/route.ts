@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PlatformBillingError } from '@alusa/platform-billing';
 import { z } from 'zod';
-import prisma from '@/lib/prisma';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import {
   assertCanManagePlatformBilling,
   resolvePlatformBillingActor,
 } from '@/src/server/platform-billing/platform-billing-server';
-import { requestPlatformPlanChange } from '@/src/server/platform-billing/plan-change-actions';
+import { requestPlatformPlanChangeFromHttp } from '@/src/server/platform-billing/http-commands';
 
 const planChangeSchema = z.object({
   targetPlanCode: z.enum(['STARTER', 'PREMIUM', 'PRO']),
@@ -42,8 +41,7 @@ export async function POST(req: NextRequest) {
     if (forbidden) return forbidden;
 
     try {
-      const result = await requestPlatformPlanChange({
-        prisma,
+      const result = await requestPlatformPlanChangeFromHttp({
         contaId,
         actorUserId: userId,
         targetPlanCode: parsed.data.targetPlanCode,

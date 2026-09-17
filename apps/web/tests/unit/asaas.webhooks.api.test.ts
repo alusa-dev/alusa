@@ -188,6 +188,29 @@ describe('POST /api/webhooks/asaas', () => {
     expect(json).toMatchObject({ success: true, message: 'ok' });
   });
 
+  it('propaga x-request-id seguro na resposta para correlacionar a entrega', async () => {
+    vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
+      success: true,
+      status: 200,
+      persisted: true,
+      message: 'ok',
+    });
+
+    const req = createRequest({
+      body: { event: 'PAYMENT_RECEIVED', payment: { id: 'pay_123' } },
+      signatureHeader: { name: 'asaas-access-token', value: 'token' },
+    });
+    req.headers.set('x-request-id', 'asaas-test-request-1');
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-request-id')).toBe('asaas-test-request-1');
+    expect(vi.mocked(handleAsaasWebhookEvent)).toHaveBeenCalledWith(
+      expect.objectContaining({ correlationId: 'asaas-test-request-1' }),
+    );
+  });
+
   it('aceita o header oficial asaas-access-token', async () => {
     vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
       success: true,

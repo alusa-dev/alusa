@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
 import {
   requirePortalUser,
   resolvePortalAlunoIds,
@@ -8,6 +7,7 @@ import {
 import { portalNotificationsResultDTOSchema } from '@/features/portal/dtos';
 import { mapPortalNotificationsResultToDTO } from '@/features/portal/mappers';
 import { isPortalPendingStatus, listPortalStandaloneCharges } from '@/features/portal/finance-standalone';
+import { getPortalNotificationData } from '@/src/server/portal/portal-read.service';
 
 export async function GET() {
   try {
@@ -17,27 +17,8 @@ export async function GET() {
     const responsavelId = await resolvePortalResponsavelId(auth.user);
 
     // 4. Buscar cobranças dos alunos
-    const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0);
-
-    const [cobrancas, standaloneCharges] = await Promise.all([
-      prisma.cobranca.findMany({
-        where: {
-          matricula: {
-            contaId: auth.user.contaId,
-            alunoId: { in: alunoIds },
-          },
-          OR: [
-            { status: 'PENDENTE' },
-            { status: 'ATRASADO' },
-          ],
-        },
-        select: {
-          id: true,
-          status: true,
-          vencimento: true,
-        },
-      }),
+    const [{ cobrancas, proximosEventos, hoje }, standaloneCharges] = await Promise.all([
+      getPortalNotificationData({ contaId: auth.user.contaId, alunoIds }),
       listPortalStandaloneCharges({ contaId: auth.user.contaId, alunoIds, responsavelId }),
     ]);
 
@@ -68,28 +49,6 @@ export async function GET() {
       }
     }
 
-    // 6. Buscar próximos eventos (próximos 30 dias)
-    const daqui30Dias = new Date();
-    daqui30Dias.setDate(daqui30Dias.getDate() + 30);
-
-    const proximosEventos = await prisma.portalEvento.findMany({
-      where: {
-        contaId: auth.user.contaId,
-        status: 'ATIVO',
-        dataInicio: {
-          gte: hoje,
-          lte: daqui30Dias,
-        },
-        inscricoes: {
-          some: {
-            alunoId: { in: alunoIds },
-            status: 'CONFIRMADA',
-          },
-        },
-      },
-      select: { id: true },
-    });
-
     // 7. Retornar notificações
     return NextResponse.json(
       portalNotificationsResultDTOSchema.parse(
@@ -108,4 +67,3 @@ export async function GET() {
     );
   }
 }
-

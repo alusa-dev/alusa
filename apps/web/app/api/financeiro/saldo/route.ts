@@ -12,10 +12,8 @@
  */
 
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/src/prisma';
-import { getBalance } from '@alusa/finance';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { getBalance, getLocalAvailableBalance } from '@alusa/finance';
 import { financeiroSaldoQueryDTOSchema } from '@/features/financeiro/dtos';
 import { mapFinanceiroSaldoResultToDTO } from '@/features/financeiro/mappers';
 
@@ -33,15 +31,10 @@ function err(status: number, code: string, message: string) {
 
 export async function GET(request: Request) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    type SessUser = { id?: string; contaId?: string; role?: string };
-    const user = (session as { user?: SessUser } | null)?.user;
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuário não autenticado');
 
-    if (!user?.id || !user?.contaId) {
-      return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
-    }
-
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
     }
 
@@ -52,12 +45,12 @@ export async function GET(request: Request) {
 
     if (fonte === 'asaas') {
       // Saldo real via API Asaas (fonte da verdade)
-      const result = await getBalance({ contaId: user.contaId });
+      const result = await getBalance({ contaId: auth.contaId });
 
       if (!result.success) {
         // Fallback para local se Asaas indisponível
         console.warn('[API Financeiro Saldo] Asaas indisponível, usando fallback local');
-        return getSaldoLocal(user.contaId);
+        return getSaldoLocal(auth.contaId);
       }
 
       return NextResponse.json(
@@ -73,7 +66,7 @@ export async function GET(request: Request) {
     }
 
     // Saldo local (cache sincronizado via webhooks)
-    return getSaldoLocal(user.contaId);
+    return getSaldoLocal(auth.contaId);
   } catch (error) {
     console.error('[API Financeiro Saldo] Erro ao consultar saldo:', error);
     return err(500, 'ERRO_INTERNO', 'Erro ao processar saldo');
@@ -81,22 +74,7 @@ export async function GET(request: Request) {
 }
 
 async function getSaldoLocal(contaId: string) {
-  const contaWhere = { matricula: { aluno: { contaId } } };
-
-  // Soma de asaasNetValue onde liquidacaoStatus = DISPONIVEL
-  // EXCLUIR recebimentos em dinheiro (RECEIVED_IN_CASH) pois não compõem o saldo do Asaas
-  const saldoAgregado = await prisma.cobranca.aggregate({
-    where: {
-      ...contaWhere,
-      liquidacaoStatus: 'DISPONIVEL',
-      asaasStatus: { not: 'RECEIVED_IN_CASH' },
-    },
-    _sum: {
-      asaasNetValue: true,
-    },
-  });
-
-  const saldo = saldoAgregado._sum.asaasNetValue?.toNumber() ?? 0;
+  const saldo = await getLocalAvailableBalance(contaId);
 
   return NextResponse.json(
     mapFinanceiroSaldoResultToDTO({

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { updateSala, deleteSala, salaSchema } from '@alusa/lib';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { salaSchema } from '@alusa/lib/schemas/sala.schema';
+import { updateSala, deleteSala } from '@alusa/lib/services/sala.service';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
@@ -11,15 +11,20 @@ function jsonError(status: number, code: string, message: string, details?: unkn
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
     const ctxParams = await ctx.params;
   try {
-    // MULTI-TENANT: validar sessão e usar contaId da sessão
-    const session = await getServerSession(authOptions);
-    const sessionContaId = (session as { user?: { contaId?: string } })?.user?.contaId;
-    if (!sessionContaId) {
-      return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
-    }
-
     const body = await req.json();
-    const contaId = sessionContaId; // Usar contaId da sessão, ignorar body.contaId
+    const tenant = await resolveTenantSession(
+      typeof body.contaId === 'string' ? body.contaId : null,
+    );
+    if (!tenant.ok) {
+      return jsonError(
+        tenant.reason === 'UNAUTHENTICATED' ? 401 : 403,
+        tenant.reason === 'UNAUTHENTICATED' ? 'NAO_AUTENTICADO' : 'CONTA_INVALIDA',
+        tenant.reason === 'UNAUTHENTICATED'
+          ? 'Usuário não autenticado'
+          : 'A conta informada não pertence ao usuário autenticado.',
+      );
+    }
+    const contaId = tenant.contaId;
     await assertPlatformAccessForConta({ contaId, capability: 'ROOM_WRITE' });
     if (
       body.nome !== undefined ||
@@ -58,12 +63,17 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
     const ctxParams = await ctx.params;
   try {
-    // MULTI-TENANT: validar sessão e usar contaId da sessão
-    const session = await getServerSession(authOptions);
-    const contaId = (session as { user?: { contaId?: string } })?.user?.contaId;
-    if (!contaId) {
-      return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const tenant = await resolveTenantSession(new URL(req.url).searchParams.get('contaId'));
+    if (!tenant.ok) {
+      return jsonError(
+        tenant.reason === 'UNAUTHENTICATED' ? 401 : 403,
+        tenant.reason === 'UNAUTHENTICATED' ? 'NAO_AUTENTICADO' : 'CONTA_INVALIDA',
+        tenant.reason === 'UNAUTHENTICATED'
+          ? 'Usuário não autenticado'
+          : 'A conta informada não pertence ao usuário autenticado.',
+      );
     }
+    const contaId = tenant.contaId;
     await assertPlatformAccessForConta({ contaId, capability: 'ROOM_WRITE' });
 
     try {

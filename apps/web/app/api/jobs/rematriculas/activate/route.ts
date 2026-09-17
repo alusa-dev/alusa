@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { prisma } from '@/prisma/client';
-import { activateDueRenewalProcesses } from '@/src/server/matriculas/renewal-process.service';
+import { activateRenewalProcessesFromJob } from '@/src/server/matriculas/renewal-job-commands.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -38,14 +37,7 @@ async function run(req: Request) {
     );
   }
 
-  const results = await activateDueRenewalProcesses(
-    {
-      contaId: scope.contaId,
-      now,
-      limit,
-    },
-    { prisma },
-  );
+  const results = await activateRenewalProcessesFromJob({ contaId: scope.contaId, now, limit });
 
   return NextResponse.json({
     success: results.every((item) => item.status === 'EFFECTIVE'),

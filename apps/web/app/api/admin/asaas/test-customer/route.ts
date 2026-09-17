@@ -1,18 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/src/prisma';
 import {
-  AsaasHttpError,
   asaasCreateCustomer,
   asaasGetCustomer,
   asaasListCustomers,
 } from '@alusa/finance';
-import { loadAsaasCredentials } from '@alusa/database';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import {
   adminTestCustomerQueryDTOSchema,
   adminTestCustomerResultDTOSchema,
 } from '@/features/system/dtos';
 import { mapAdminTestCustomerResultToDTO } from '@/features/system/mappers';
+import { getAsaasAdminTestContext } from '@/src/server/finance/admin-integration.service';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,16 +48,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'contaId é obrigatório' }, { status: 400 });
     }
 
-    const profile = await prisma.financeProfile.findUnique({
-      where: { contaId },
-      select: { asaasAccountId: true, asaasCredential: { select: { apiKeyEncrypted: true } } },
-    });
+    const { profile, credentials } = await getAsaasAdminTestContext(contaId);
 
     if (!profile?.asaasCredential?.apiKeyEncrypted) {
       return NextResponse.json({ error: 'Conta de pagamentos não configurada' }, { status: 412 });
     }
 
-    const credentials = await loadAsaasCredentials(contaId);
     if (!credentials?.apiKey) {
       return NextResponse.json({ error: 'Conta de pagamentos não configurada' }, { status: 412 });
     }

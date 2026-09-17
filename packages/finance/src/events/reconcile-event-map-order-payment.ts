@@ -1,6 +1,7 @@
 import { getPayment } from '@alusa/asaas';
 import { prisma } from '@alusa/database';
-import { EventsError, loadDecryptedAsaasCredentials } from '@alusa/lib';
+import { EventsError } from '@alusa/lib/events/events.service';
+import { loadDecryptedAsaasCredentials } from '@alusa/lib/services/integracoes/asaas-credentials-service';
 import { Prisma } from '@prisma/client';
 
 import { logEventsFinance } from './events-finance-observability';

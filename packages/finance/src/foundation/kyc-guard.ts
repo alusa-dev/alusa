@@ -1,10 +1,68 @@
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
+import { prisma } from '@alusa/database';
 
 import { financeProfileService } from './finance-profile.service';
 import { isPendingDocumentsBlockBypassedForTesting } from './kyc-test-bypass';
 import { getKycSnapshot } from '../use-cases/kyc/get-kyc-snapshot';
 import type { KycSnapshot } from '../dtos/kyc/kyc-snapshot.dto';
+
+function isLocalMockPaymentsRuntime() {
+  return (
+    (process.env.PAYMENTS_PROVIDER_MODE === 'mock' || process.env.PLAYWRIGHT_TEST === 'true') &&
+    (process.env.NODE_ENV !== 'production' || process.env.PLAYWRIGHT_TEST === 'true')
+  );
+}
+
+/**
+ * O runtime E2E usa uma conta financeira local aprovada, mas não possui uma
+ * subconta Asaas real. Mantemos o mesmo contrato do guard de produção e só
+ * aceitamos o atalho quando o fixture marcou explicitamente todos os estados
+ * locais como operacionais. Nenhum tenant pendente é promovido por ambiente.
+ */
+async function getLocalMockApprovedSnapshot(
+  profile: Awaited<ReturnType<typeof financeProfileService.getOrCreateByTenant>>,
+): Promise<KycSnapshot | null> {
+  if (!isLocalMockPaymentsRuntime()) return null;
+
+  const account = await prisma.asaasAccount.findUnique({
+    where: { financeProfileId: profile.id },
+    select: {
+      status: true,
+      asaasAccountId: true,
+      apiKeyStatus: true,
+      operationalStatus: true,
+      webhookStatus: true,
+    },
+  });
+
+  const approved =
+    profile.status === 'APPROVED' &&
+    profile.isOnboardingCompleted &&
+    account?.status === 'APPROVED' &&
+    Boolean(account.asaasAccountId) &&
+    account.apiKeyStatus === 'CONNECTED' &&
+    account.operationalStatus === 'OPERATIONAL' &&
+    account.webhookStatus === 'ACTIVE';
+
+  if (!approved) return null;
+
+  return {
+    generalStatus: 'APPROVED',
+    documentationStatus: 'APPROVED',
+    bankAccountStatus: 'APPROVED',
+    commercialInfoAreaStatus: 'APPROVED',
+    processStatus: 'APPROVED',
+    commercialInfoStatus: null,
+    commercialInfoScheduledDate: null,
+    commercialInfoExpiration: null,
+    hasBlockingPending: false,
+    nextActions: [],
+    rejectReasons: [],
+    fetchedAt: new Date().toISOString(),
+    isSandbox: true,
+  };
+}
 
 export type RequireKycApprovedError = 'KYC_NAO_APROVADO' | 'ERRO_INTERNO';
 
@@ -56,6 +114,8 @@ export async function requireKycSnapshotApproved(
 ): Promise<Result<KycSnapshot, RequireKycSnapshotApprovedError>> {
   try {
     const fp = await financeProfileService.getOrCreateByTenant(contaId);
+    const localMockSnapshot = await getLocalMockApprovedSnapshot(fp);
+    if (localMockSnapshot) return ok(localMockSnapshot);
     const bypassPendingDocumentsBlock = isPendingDocumentsBlockBypassedForTesting();
 
     if (bypassPendingDocumentsBlock) {

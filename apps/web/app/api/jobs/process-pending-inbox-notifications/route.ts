@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { processPendingInboxNotifications } from '@alusa/lib';
+import { processPendingInboxNotifications } from '@alusa/lib/notifications/pending-inbox-notifications';
 
 export const dynamic = 'force-dynamic';
 

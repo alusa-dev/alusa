@@ -59,6 +59,6 @@ export async function POST(
       return jsonError(authError.status, authError.code, authError.message ?? 'Erro');
     }
 
-    return jsonError(500, 'ERRO_REGISTRAR_DEVOLUCAO', (error as Error).message);
+    return jsonError(500, 'ERRO_REGISTRAR_DEVOLUCAO', 'Não foi possível registrar a devolução.');
   }
 }

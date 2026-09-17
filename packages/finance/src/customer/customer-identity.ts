@@ -1,5 +1,5 @@
 import { prisma } from '@alusa/database';
-import { isValidCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
+import { isValidCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
 import type { CustomerPayerType, Prisma, PrismaClient } from '@prisma/client';
 import { advisoryLockKey64 } from '../foundation/advisory-lock.server';
 

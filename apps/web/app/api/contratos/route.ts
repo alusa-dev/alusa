@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PeriodicidadePlano } from '@prisma/client';
 import { buildSubscriptionExternalReference, createSubscription } from '@alusa/finance';
-import { prisma } from '@/prisma/client';
 import { getSessionUser } from '@/lib/auth/session';
 import {
   createContratoInputDTOSchema,
@@ -28,6 +26,8 @@ import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
 } from '@/src/server/platform-billing/capacity';
+import { getContractForTenant, listContractsForTenant } from '@/src/server/contracts/contract-read.service';
+import { getContractCreationContext, issueContractForTenant, syncContractSubscriptionForTenant } from '@/src/server/contracts/contract-creation.service';
 
 export function replaceMentionSpans(html: string) {
   const mentionRegex = /<span\s+[^>]*?data-type=["']mention["'][^>]*?>[^<]*?<\/span>/g;
@@ -35,43 +35,6 @@ export function replaceMentionSpans(html: string) {
   return html.replace(mentionRegex, (match) => {
     const idMatch = match.match(/data-id=["']([^"']+)["']/);
     return idMatch ? idMatch[1] : match;
-  });
-}
-
-async function getContratoWithRelations(id: string, contaId: string) {
-  return prisma.contrato.findFirst({
-    where: {
-      id,
-      contaId,
-      matricula: { contaId },
-    },
-    include: {
-      modelo: {
-        select: {
-          id: true,
-          nome: true,
-        },
-      },
-      matricula: {
-        select: {
-          id: true,
-          contratoAtualId: true,
-          aluno: {
-            select: {
-              id: true,
-              nome: true,
-              cpf: true,
-            },
-          },
-          turma: {
-            select: {
-              id: true,
-              nome: true,
-            },
-          },
-        },
-      },
-    },
   });
 }
 
@@ -98,44 +61,7 @@ export async function GET(request: NextRequest) {
   const { matriculaId, alunoId, status } = parsedQuery.data;
 
   try {
-    const contratos = await prisma.contrato.findMany({
-      where: {
-        matricula: {
-          aluno: { contaId: user.contaId, ...(alunoId ? { id: alunoId } : {}) },
-          ...(matriculaId ? { id: matriculaId } : {}),
-        },
-        contaId: user.contaId,
-        ...(status ? { status } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        modelo: {
-          select: {
-            id: true,
-            nome: true,
-          },
-        },
-        matricula: {
-          select: {
-            id: true,
-            contratoAtualId: true,
-            aluno: {
-              select: {
-                id: true,
-                nome: true,
-                cpf: true,
-              },
-            },
-            turma: {
-              select: {
-                id: true,
-                nome: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    const contratos = await listContractsForTenant({ contaId: user.contaId, matriculaId, alunoId, status });
 
     return NextResponse.json(
       listContratosResultDTOSchema.parse(contratos.map((contrato) => mapContratoRecordToDTO(contrato))),
@@ -168,75 +94,8 @@ export async function POST(request: NextRequest) {
       throw error;
     }
 
-    const matricula = await prisma.matricula.findFirst({
-      where: { id: body.matriculaId, aluno: { contaId } },
-      select: {
-        id: true,
-        alunoId: true,
-        dataInicio: true,
-        dataFimContrato: true,
-        vencimentoDia: true,
-        formaPagamento: true,
-        descontoAntecipado: true,
-        prazoDesconto: true,
-        descontoTipo: true,
-        jurosMensal: true,
-        multaPercentual: true,
-        multaTipo: true,
-        asaasSubscriptionId: true,
-        billingMode: true,
-        aluno: {
-          select: {
-            id: true,
-            contaId: true,
-            nome: true,
-            cpf: true,
-            dataNasc: true,
-            email: true,
-            telefone: true,
-            enderecoLogradouro: true,
-            enderecoNumero: true,
-            enderecoBairro: true,
-            enderecoCidade: true,
-            enderecoUf: true,
-            responsaveis: {
-              where: { contaId, tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
-              orderBy: { id: 'asc' },
-              take: 1,
-              select: { tipoVinculo: true, responsavel: { select: { id: true, nome: true, cpf: true } } },
-            },
-          },
-        },
-        responsavelFinanceiro: {
-          select: {
-            nome: true,
-            cpf: true,
-            email: true,
-            telefone: true,
-            enderecoLogradouro: true,
-            enderecoNumero: true,
-            enderecoBairro: true,
-            enderecoCidade: true,
-            enderecoUf: true,
-          },
-        },
-        turma: { select: { nome: true } },
-        plano: { select: { id: true, nome: true, valor: true, periodicidade: true } },
-        combo: { select: { id: true, nome: true, valor: true, periodicidade: true } },
-        descontos: {
-          select: {
-            desconto: {
-              select: { tipo: true, valor: true },
-            },
-          },
-        },
-        cobrancas: {
-          where: { tipo: 'MENSALIDADE' },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
-      },
-    });
+    const context = await getContractCreationContext({ contaId, matriculaId: body.matriculaId, contratoOrigemId: body.contratoOrigemId });
+    const matricula = context?.matricula;
 
     if (!matricula) {
       return NextResponse.json(
@@ -249,16 +108,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 403 });
     }
 
-    const existingPendente = await prisma.contrato.findFirst({
-      where: {
-        contaId: user.contaId,
-        matriculaId: body.matriculaId,
-        status: 'PENDENTE',
-      },
-      select: { id: true },
-    });
-
-    if (existingPendente) {
+    if (context?.existingPendente) {
       return NextResponse.json(
         { error: { message: 'Já existe um contrato pendente para esta matrícula.' } },
         { status: 409 },
@@ -266,10 +116,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.contratoOrigemId) {
-      const origem = await prisma.contrato.findFirst({
-        where: { id: body.contratoOrigemId, contaId: user.contaId },
-        select: { id: true, matriculaId: true, status: true },
-      });
+      const origem = context?.origem;
 
       if (!origem || origem.matriculaId !== body.matriculaId) {
         return NextResponse.json(
@@ -286,15 +133,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const issued = await prisma.$transaction((tx) => issueEnrollmentContract(tx, {
+    const issued = await issueContractForTenant({
       contaId: user.contaId,
       matriculaId: body.matriculaId,
       modeloId: body.modeloId,
       contratoOrigemId: body.contratoOrigemId,
       actorId: user.id,
-      source: 'MANUAL',
-      onExisting: 'reject',
-    }));
+    });
     const contrato = issued.contrato;
     const tokenPublico = issued.publicToken;
 
@@ -302,187 +147,23 @@ export async function POST(request: NextRequest) {
       throw new Error('CONTRACT_PUBLIC_TOKEN_NOT_ISSUED');
     }
 
-    let subscriptionSync:
-      | {
-          success: boolean;
-          error?: string;
-          asaasSubscriptionId?: string | null;
-          asaasPaymentId?: string | null;
-          invoiceUrl?: string | null;
-          bankSlipUrl?: string | null;
-          expectedWebhooks?: string[];
-          message?: string;
-        }
-      | null = null;
+    let subscriptionSync = null;
 
     try {
-      const planoOuCombo = matricula.combo ?? matricula.plano;
-      const periodicidade = (planoOuCombo?.periodicidade ?? PeriodicidadePlano.MENSAL) as PeriodicidadePlano;
-      const cycle = mapPeriodicidadeToCycle(periodicidade);
-      const mensalidade = matricula.cobrancas?.[0] ?? null;
-      const billingType = mapFormaPagamentoToBillingType(
-        mensalidade?.formaPagamento ?? matricula.formaPagamento ?? null,
-      );
-      const mensalidadeValue =
-        mensalidade?.valor != null
-          ? Number(mensalidade.valor)
-          : calcularPrecoMatricula({
-              planoValor: Number(planoOuCombo?.valor ?? 0),
-              descontos: (matricula.descontos ?? []).map((item) => ({
-                tipo: item.desconto.tipo === 'PERCENTUAL' ? 'PERCENTUAL' : 'FIXO',
-                valor: Number(item.desconto.valor),
-              })),
-            }).planoLiquido;
-
-      // Matrículas SHARED_PLAN (familiar) não geram assinatura individual —
-      // a cobrança já está consolidada na StandaloneSubscription do responsável.
-      if (matricula.billingMode === 'SHARED_PLAN') {
-        subscriptionSync = null;
-      } else {
-      const existingSubscription = await prisma.subscription.findFirst({
-        where: {
-          contaId: user.contaId,
-          matriculaId: matricula.id,
-        },
-        select: {
-          id: true,
-          contratoId: true,
-          asaasSubscriptionId: true,
-        },
+      subscriptionSync = await syncContractSubscriptionForTenant({
+        contaId: user.contaId,
+        contratoId: contrato.id,
+        actorId: user.id,
+        matricula,
       });
-
-      if (matricula.asaasSubscriptionId) {
-        if (existingSubscription && existingSubscription.contratoId !== contrato.id) {
-          await prisma.subscription.update({
-            where: { id: existingSubscription.id },
-            data: { contratoId: contrato.id },
-          });
-        } else if (!existingSubscription) {
-          const referencePlanId = matricula.combo?.id ?? matricula.plano?.id ?? contrato.id;
-          await prisma.subscription.create({
-            data: {
-              contaId: user.contaId,
-              contratoId: contrato.id,
-              matriculaId: matricula.id,
-              externalReference: buildSubscriptionExternalReference({
-                matriculaId: matricula.id,
-                planoId: referencePlanId,
-              }),
-              asaasSubscriptionId: matricula.asaasSubscriptionId,
-              status: 'REQUESTED',
-              statusUpdatedAt: new Date(),
-            },
-          });
-        }
-
-        const materializedPayment =
-          mensalidade && !mensalidade.asaasPaymentId
-            ? await materializeSubscriptionPaymentForCharge({
-                prisma,
-                contaId: user.contaId,
-                asaasSubscriptionId: matricula.asaasSubscriptionId,
-                cobranca: {
-                  id: mensalidade.id,
-                  vencimento: mensalidade.vencimento,
-                  asaasPaymentId: mensalidade.asaasPaymentId,
-                },
-                intent: 'RECONCILIATION',
-              })
-            : null;
-
-        subscriptionSync = {
-          success: true,
-          asaasSubscriptionId: matricula.asaasSubscriptionId,
-          asaasPaymentId:
-            materializedPayment?.payment?.id ??
-            mensalidade?.asaasPaymentId ??
-            null,
-          invoiceUrl: materializedPayment?.payment?.invoiceUrl ?? null,
-          bankSlipUrl: materializedPayment?.payment?.bankSlipUrl ?? null,
-          expectedWebhooks:
-            mensalidade?.asaasPaymentId || materializedPayment?.found
-              ? []
-              : ['PAYMENT_CREATED'],
-          message:
-            materializedPayment?.found
-              ? 'A cobrança recorrente já existia e o primeiro payment foi reconciliado diretamente com o Asaas.'
-              : 'A cobrança recorrente já foi solicitada na finalização da matrícula. O primeiro ciclo será materializado pelo webhook oficial do Asaas.',
-        };
-      } else if (!billingType || mensalidadeValue <= 0) {
-        subscriptionSync = {
-          success: false,
-          error: mensalidadeValue <= 0
-            ? 'VALOR_ASSINATURA_INVALIDO'
-            : 'FORMA_PAGAMENTO_INVALIDA',
-        };
-      } else {
-        const nextDueDateObj = resolveChargeableFirstDueDate(matricula.dataInicio, matricula.vencimentoDia);
-        const nextDueDate = formatIsoDate(nextDueDateObj);
-        const endDateObj = matricula.dataFimContrato;
-        const endDate = endDateObj >= nextDueDateObj ? formatIsoDate(endDateObj) : undefined;
-
-        const description = planoOuCombo?.nome
-          ? `Mensalidade - ${planoOuCombo.nome}`
-          : 'Mensalidade';
-
-        const discountValue = matricula.descontoAntecipado ? Number(matricula.descontoAntecipado) : 0;
-        const discount = discountValue > 0
-          ? {
-              value: discountValue,
-              dueDateLimitDays: matricula.prazoDesconto ?? 0,
-              type: (matricula.descontoTipo ?? 'PERCENTAGE') as 'FIXED' | 'PERCENTAGE',
-            }
-          : undefined;
-
-        const interestValue = matricula.jurosMensal ? Number(matricula.jurosMensal) : 0;
-        const fineValue = matricula.multaPercentual ? Number(matricula.multaPercentual) : 0;
-
-        const result = await createSubscription({
-          contaId: user.contaId,
-          contratoId: contrato.id,
-          matriculaId: matricula.id,
-          value: mensalidadeValue,
-          nextDueDate,
-          billingType,
-          cycle,
-          description,
-          endDate,
-          discount,
-          interest: interestValue > 0 ? { value: interestValue } : undefined,
-          fine:
-            fineValue > 0
-              ? {
-                  value: fineValue,
-                  type: (matricula.multaTipo ?? 'PERCENTAGE') as 'FIXED' | 'PERCENTAGE',
-                }
-              : undefined,
-          actor: { type: 'USER', id: user.id },
-        });
-
-        if (!result.success) {
-          subscriptionSync = { success: false, error: result.error };
-        } else {
-          subscriptionSync = {
-            success: true,
-            asaasSubscriptionId: result.data.asaasSubscriptionId ?? null,
-            asaasPaymentId: null,
-            invoiceUrl: null,
-            bankSlipUrl: null,
-            expectedWebhooks: ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'],
-            message: 'A assinatura foi criada no Asaas. O primeiro ciclo será materializado pelo webhook oficial.',
-          };
-        }
-      }
-      } // end else (billingMode !== SHARED_PLAN)
     } catch (syncError) {
       subscriptionSync = {
         success: false,
-        error:
-          syncError instanceof Error ? syncError.message : 'ERRO_SINCRONIZAR_ASSINATURA',
+        error: syncError instanceof Error ? syncError.message : 'ERRO_SINCRONIZAR_ASSINATURA',
       };
     }
 
-    const hydratedContrato = await getContratoWithRelations(contrato.id, user.contaId);
+    const hydratedContrato = await getContractForTenant({ id: contrato.id, contaId: user.contaId });
 
     if (!hydratedContrato) {
       return NextResponse.json(

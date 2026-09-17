@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { ZodError } from 'zod';
 import {
   asaasGetMyAccountCommercialInfo,
   asaasGetMyAccountStatus,
@@ -9,6 +10,7 @@ import {
 } from '@alusa/finance';
 
 import { authOptions } from '@/lib/auth-options';
+import { adminAsaasApiKeyInputDTOSchema } from '@/features/system/dtos';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -32,10 +34,9 @@ export async function POST(request: Request) {
       return json(403, { success: false, summary: 'Acesso negado.' });
     }
 
-    const payload = (await request.json().catch(() => null)) as { apiKey?: string } | null;
-    const apiKey = payload?.apiKey?.trim() ?? '';
+    const { apiKey } = adminAsaasApiKeyInputDTOSchema.parse(await request.json().catch(() => null));
 
-    if (apiKey.length < 10 || !isValidAsaasApiKey(apiKey)) {
+    if (!isValidAsaasApiKey(apiKey)) {
       return json(400, { success: false, summary: 'API key inválida.' });
     }
 
@@ -60,6 +61,9 @@ export async function POST(request: Request) {
         : 'Conexão validada com sucesso.',
     });
   } catch (error) {
+    if (error instanceof ZodError) {
+      return json(400, { success: false, summary: 'API key inválida.' });
+    }
     if (error instanceof AsaasApiKeyError) {
       return json(400, {
         success: false,

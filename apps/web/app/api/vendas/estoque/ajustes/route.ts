@@ -51,6 +51,6 @@ export async function POST(request: Request) {
       return jsonError(authError.status, authError.code, authError.message ?? 'Erro');
     }
 
-    return jsonError(500, 'ERRO_REGISTRAR_AJUSTE', (error as Error).message);
+    return jsonError(500, 'ERRO_REGISTRAR_AJUSTE', 'Não foi possível registrar o ajuste.');
   }
 }

@@ -1,7 +1,8 @@
 import * as Sentry from '@sentry/nextjs';
 import { Prisma } from '@prisma/client';
-import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
+
+import { apiJsonError } from './standard-response';
 
 export type ApiErrorContext = {
   route: string;
@@ -21,21 +22,21 @@ export function reportApiError(error: unknown, context: ApiErrorContext): void {
 export function apiErrorResponse(
   error: unknown,
   context: ApiErrorContext & { fallbackMessage: string },
-): NextResponse {
+): ReturnType<typeof apiJsonError> {
   reportApiError(error, context);
 
   if (error instanceof ZodError) {
-    return NextResponse.json({ error: 'Dados inválidos' }, { status: 422 });
+    return apiJsonError(422, 'ERRO_VALIDACAO', 'Dados inválidos.');
   }
 
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2025') {
-      return NextResponse.json({ error: 'Não encontrado' }, { status: 404 });
+      return apiJsonError(404, 'NAO_ENCONTRADO', 'Não encontrado.');
     }
     if (error.code === 'P2021') {
-      return NextResponse.json({ error: context.fallbackMessage }, { status: 503 });
+      return apiJsonError(503, 'SERVICO_INDISPONIVEL', context.fallbackMessage);
     }
   }
 
-  return NextResponse.json({ error: context.fallbackMessage }, { status: 500 });
+  return apiJsonError(500, 'ERRO_INTERNO', context.fallbackMessage);
 }

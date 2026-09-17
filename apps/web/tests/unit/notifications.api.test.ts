@@ -13,13 +13,15 @@ vi.mock('@/lib/auth-options', () => ({
   authOptions: {},
 }));
 
-vi.mock('@alusa/lib', () => ({
+vi.mock('@alusa/lib/services/notifications.service', () => ({
   listNotifications: vi.fn(),
   markAllNotificationsAsRead: vi.fn(),
 }));
 
 const { getServerSession } = await import('next-auth');
-const { listNotifications, markAllNotificationsAsRead } = await import('@alusa/lib');
+const { listNotifications, markAllNotificationsAsRead } = await import(
+  '@alusa/lib/services/notifications.service'
+);
 const { GET, PATCH } = await import('@/app/api/notifications/route');
 
 describe('/api/notifications', () => {

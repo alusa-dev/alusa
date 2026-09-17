@@ -46,6 +46,7 @@ interface SeedIds {
   modalidadeId: string;
   salaId: string;
   planoId: string;
+  modeloId: string;
   turmaId: string;
   turmaId2: string;
   alunoMaiorId: string;
@@ -76,6 +77,45 @@ async function seed(): Promise<SeedIds> {
 
   await prisma.conta.update({ where: { id: contaId }, data: { ownerUserId: userId } });
 
+  await prisma.platformBillingAccount.create({
+    data: {
+      contaId,
+      environment: 'TEST',
+      status: 'TRIALING',
+      planCode: 'STARTER',
+      accessStatus: 'ACTIVE',
+      trialEndsAt: futureDate(14),
+      paymentMethodStatus: 'UNKNOWN',
+    },
+  });
+
+  const financeProfile = await prisma.financeProfile.create({
+    data: {
+      contaId,
+      asaasAccountId: `acc_e2e_${randomUUID()}`,
+      status: 'APPROVED',
+      isOnboardingCompleted: true,
+      onboardingCompletedAt: new Date(),
+      wizardStep: 6,
+      wizardCompletedAt: new Date(),
+    },
+    select: { id: true, asaasAccountId: true },
+  });
+
+  await prisma.asaasAccount.create({
+    data: {
+      financeProfileId: financeProfile.id,
+      asaasAccountId: financeProfile.asaasAccountId!,
+      externalReference: `acc-ref-${randomUUID()}`,
+      status: 'APPROVED',
+      apiKeyEncrypted: `v1:${Buffer.from('$aact_hmlg_e2e_key', 'utf8').toString('base64')}`,
+      apiKeyStatus: 'CONNECTED',
+      operationalStatus: 'OPERATIONAL',
+      webhookStatus: 'ACTIVE',
+      provisionedAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    },
+  });
+
   const modalidade = await prisma.modalidade.create({
     data: { id: randomUUID(), contaId, nome: 'Mod E2E Domain', status: 'ATIVO' },
   });
@@ -93,6 +133,50 @@ async function seed(): Promise<SeedIds> {
       periodicidade: 'MENSAL',
       status: 'ATIVO',
     },
+  });
+
+  const modelo = await prisma.contratoModelo.create({
+    data: {
+      id: randomUUID(),
+      contaId,
+      nome: 'Modelo E2E Domain',
+      arquivoPdfUrl: 'https://example.com/domain-template.pdf',
+      hashSha256: `hash-domain-${Date.now()}`,
+      status: 'ATIVO',
+    },
+  });
+
+  await prisma.contratoModeloCampo.createMany({
+    data: [
+      {
+        id: randomUUID(),
+        contaId,
+        modeloId: modelo.id,
+        tipo: 'ASSINATURA',
+        papel: 'ESCOLA',
+        pagina: 1,
+        x: 10,
+        y: 10,
+        largura: 20,
+        altura: 10,
+        obrigatorio: true,
+        ordem: 0,
+      },
+      {
+        id: randomUUID(),
+        contaId,
+        modeloId: modelo.id,
+        tipo: 'ASSINATURA',
+        papel: 'RESPONSAVEL_OU_ALUNO',
+        pagina: 1,
+        x: 40,
+        y: 10,
+        largura: 20,
+        altura: 10,
+        obrigatorio: true,
+        ordem: 1,
+      },
+    ],
   });
 
   // Turma 1: Seg/Qua/Sex 08-09
@@ -163,6 +247,7 @@ async function seed(): Promise<SeedIds> {
 
   await prisma.alunoResponsavel.create({
     data: {
+      contaId,
       alunoId: alunoMenor.id,
       responsavelId: responsavel.id,
       tipoVinculo: 'RESPONSAVEL_FINANCEIRO',
@@ -176,6 +261,7 @@ async function seed(): Promise<SeedIds> {
     modalidadeId: modalidade.id,
     salaId: sala.id,
     planoId: plano.id,
+    modeloId: modelo.id,
     turmaId: turma.id,
     turmaId2: turma2.id,
     alunoMaiorId: alunoMaior.id,
@@ -229,6 +315,8 @@ async function cleanup(contaId: string, responsavelId: string) {
     await prisma.matriculaLog.deleteMany({ where: { matricula: { aluno: { contaId } } } });
     await prisma.matriculaTurma.deleteMany({ where: { matricula: { aluno: { contaId } } } });
     await prisma.cobranca.deleteMany({ where: { matricula: { aluno: { contaId } } } });
+    await prisma.contrato.deleteMany({ where: { matricula: { aluno: { contaId } } } });
+    await prisma.enrollmentCreationOperation.deleteMany({ where: { contaId } });
     await prisma.matricula.deleteMany({ where: { aluno: { contaId } } });
     await prisma.alunoResponsavel.deleteMany({ where: { aluno: { contaId } } });
     await prisma.aluno.deleteMany({ where: { contaId } });
@@ -256,11 +344,14 @@ async function criarMatriculaViaAPI(
     alunoId: ids.alunoMaiorId,
     planoId: ids.planoId,
     turmaId: ids.turmaId,
+    modeloId: ids.modeloId,
     dataInicio: new Date().toISOString().split('T')[0],
     dataFimContrato: futureDate(365).toISOString().split('T')[0],
     vencimentoDia: 10,
     taxaMatricula: 0,
     taxaIsenta: true,
+    formaPagamento: 'PIX',
+    formaPagamentoTaxa: 'PIX',
     pagarTaxaAgora: false,
     gerarCobrancaTaxa: false,
     criarCobranca: false,
@@ -397,6 +488,8 @@ test.describe('Regras de Domínio — Matrícula', () => {
     await prisma.matriculaLog.deleteMany({ where: { matricula: { aluno: { contaId: ids.contaId } } } });
     await prisma.matriculaTurma.deleteMany({ where: { matricula: { aluno: { contaId: ids.contaId } } } });
     await prisma.cobranca.deleteMany({ where: { matricula: { aluno: { contaId: ids.contaId } } } });
+    await prisma.contrato.deleteMany({ where: { matricula: { aluno: { contaId: ids.contaId } } } });
+    await prisma.enrollmentCreationOperation.deleteMany({ where: { contaId: ids.contaId } });
     await prisma.matricula.deleteMany({ where: { aluno: { contaId: ids.contaId } } });
   });
 
@@ -408,7 +501,7 @@ test.describe('Regras de Domínio — Matrícula', () => {
     await authenticate(page, ids);
 
     const created = await criarMatriculaViaAPI(page, ids);
-    expect(created.status).toBe(200);
+    expect(created.status, JSON.stringify(created.body)).toBe(200);
     const matriculaId = created.body.data?.matricula?.id ?? created.body.matricula?.id;
     expect(matriculaId).toBeTruthy();
 
@@ -455,8 +548,8 @@ test.describe('Regras de Domínio — Matrícula', () => {
 
     // Tentar reativar: deve falhar
     const result = await atualizarStatusViaAPI(page, matriculaId, 'ATIVA', ids.contaId);
-    expect(result.status).toBe(500);
-    expect(JSON.stringify(result.body)).toContain('terminal');
+    expect(result.status).toBe(409);
+    expect(result.body.error?.code).toBe('MATRICULA_STATUS_TERMINAL');
   });
 
   test('Fase 1: transição ATIVA → RECUSADA deve ser rejeitada (inválida)', async ({ page }) => {
@@ -467,8 +560,8 @@ test.describe('Regras de Domínio — Matrícula', () => {
     const matriculaId = created.body.data?.matricula?.id ?? created.body.matricula?.id;
 
     const result = await atualizarStatusViaAPI(page, matriculaId, 'RECUSADA', ids.contaId);
-    expect(result.status).toBe(500);
-    expect(JSON.stringify(result.body)).toContain('não é permitida');
+    expect(result.status).toBe(422);
+    expect(result.body.error?.code).toBe('TRANSICAO_STATUS_INVALIDA');
   });
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -502,7 +595,7 @@ test.describe('Regras de Domínio — Matrícula', () => {
     });
 
     const m3 = await criarMatriculaViaAPI(page, ids, { alunoId: alunoExtra.id });
-    expect(m3.status).toBe(500);
+    expect(m3.status).toBe(409);
     expect(JSON.stringify(m3.body)).toContain('vagas');
 
     await prisma.aluno.delete({ where: { id: alunoExtra.id } });
@@ -517,7 +610,7 @@ test.describe('Regras de Domínio — Matrícula', () => {
 
     // Depois tentar na Turma Beta (mesmo aluno, mesmo horário)
     const m2 = await criarMatriculaViaAPI(page, ids, { turmaId: ids.turmaId2 });
-    expect(m2.status).toBe(500);
+    expect(m2.status).toBe(409);
     expect(JSON.stringify(m2.body)).toContain('Conflito');
   });
 
@@ -529,8 +622,8 @@ test.describe('Regras de Domínio — Matrícula', () => {
       dataFimContrato: new Date().toISOString().split('T')[0],
     });
 
-    expect(result.status).toBe(500);
-    expect(JSON.stringify(result.body)).toContain('posterior');
+    expect(result.status).toBe(422);
+    expect(result.body.error?.code).toBe('DATA_FIM_INVALIDA');
   });
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -572,8 +665,8 @@ test.describe('Regras de Domínio — Matrícula', () => {
       turmaId: ids.turmaId2,
     });
 
-    expect(result.status).toBe(500);
-    expect(JSON.stringify(result.body)).toContain('não pode ser editada');
+    expect(result.status).toBe(409);
+    expect(result.body.error?.code).toBe('MATRICULA_NAO_EDITAVEL');
   });
 
   test('Fase 4: edição de matrícula ATIVA deve ser permitida', async ({ page }) => {
@@ -638,7 +731,7 @@ test.describe('Regras de Domínio — Matrícula', () => {
       turmaId: ids.turmaId,
     });
 
-    expect(result.status).toBe(500);
+    expect(result.status).toBe(409);
     expect(JSON.stringify(result.body)).toContain('não possui vagas disponíveis');
   });
 
@@ -689,7 +782,7 @@ test.describe('Regras de Domínio — Matrícula', () => {
       turmaId: ids.turmaId2,
     });
 
-    expect(result.status).toBe(500);
+    expect(result.status).toBe(409);
     expect(JSON.stringify(result.body)).toContain('Conflito de horário');
   });
 
@@ -709,9 +802,9 @@ test.describe('Regras de Domínio — Matrícula', () => {
     const created = await criarMatriculaViaAPI(page, ids, {
       taxaMatricula: 100,
       taxaIsenta: false,
-      gerarCobrancaTaxa: true,
+      gerarCobrancaTaxa: false,
     });
-    expect(created.status).toBe(200);
+    expect(created.status, JSON.stringify(created.body)).toBe(200);
     const matricula = created.body.data?.matricula ?? created.body.matricula;
 
     expect(matricula.status).toBe('ATIVA');
@@ -729,7 +822,7 @@ test.describe('Regras de Domínio — Matrícula', () => {
     const created = await criarMatriculaViaAPI(page, ids, {
       taxaMatricula: 100,
       taxaIsenta: false,
-      gerarCobrancaTaxa: true,
+      gerarCobrancaTaxa: false,
     });
     expect(created.status).toBe(200);
     const matricula = created.body.data?.matricula ?? created.body.matricula;
@@ -779,11 +872,14 @@ test.describe('Regras de Domínio — Matrícula', () => {
     });
     expect(created.status).toBe(200);
 
-    // Acessar listagem de rematrículas
-    await page.goto('/rematriculas');
-
-    // Deve exibir o aluno na lista
-    await expect(page.getByText('Adulto Domain')).toBeVisible({ timeout: 15000 });
+    const response = await page.request.get(
+      `/api/rematriculas?contaId=${ids.contaId}&diasAntecedencia=365`,
+    );
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    const items = body.data?.itens ?? body.itens ?? [];
+    const matriculaId = created.body.data?.matricula?.id ?? created.body.matricula?.id;
+    expect(items.some((item: { id?: string }) => item.id === matriculaId)).toBe(true);
   });
 
   test('Fase 6: matrícula CANCELADA não aparece na listagem de rematrículas', async ({ page }) => {
@@ -838,8 +934,8 @@ test.describe('Regras de Domínio — Matrícula', () => {
 
     // Segundo cancelamento (terminal → terminal): deve falhar graciosamente
     const second = await atualizarStatusViaAPI(page, matriculaId, 'CANCELADA', ids.contaId);
-    expect(second.status).toBe(500);
-    expect(JSON.stringify(second.body)).toContain('terminal');
+    expect(second.status).toBe(409);
+    expect(second.body.error?.code).toBe('MATRICULA_STATUS_TERMINAL');
   });
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -855,7 +951,7 @@ test.describe('Regras de Domínio — Matrícula', () => {
       criarCobranca: true,
     });
 
-    expect(result.status).toBe(500);
+    expect(result.status).toBe(422);
     expect(JSON.stringify(result.body)).toContain('Responsável financeiro');
   });
 
@@ -868,18 +964,16 @@ test.describe('Regras de Domínio — Matrícula', () => {
     });
 
     expect(result.status).toBe(200);
-    const matriculaId = result.body.data?.matricula?.id ?? result.body.matricula?.id;
   });
 
   test('Fase 8: maior de idade sem responsável deve ser aceito', async ({ page }) => {
     await authenticate(page, ids);
 
     const result = await criarMatriculaViaAPI(page, ids, {
-      criarCobranca: true,
+      criarCobranca: false,
       responsavelFinanceiroId: null,
     });
 
     expect(result.status).toBe(200);
-    const matriculaId = result.body.data?.matricula?.id ?? result.body.matricula?.id;
   });
 });

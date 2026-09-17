@@ -1,4 +1,3 @@
-import type { InvoiceStatus } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { listNotaFiscalPersonIndexResultDTOSchema } from '@/features/financeiro/notafiscal/dtos';
@@ -11,13 +10,14 @@ import {
   withTenantCache,
 } from '@/lib/cache/tenant-cache';
 import { privateJson } from '@/lib/private-cache';
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { listFiscalInvoicePersonIndex } from '@alusa/finance';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
+type InvoiceStatus = 'SCHEDULED' | 'SYNCHRONIZED' | 'AUTHORIZED' | 'PROCESSING_CANCELLATION' | 'CANCELED' | 'CANCELLATION_DENIED' | 'ERROR';
 const NOTA_FISCAL_SUMMARY_CACHE_SECONDS = 60;
 const NOTA_FISCAL_SUMMARY_STALE_SECONDS = 60;
 const allowedStatuses = new Set<InvoiceStatus>([
@@ -73,12 +73,10 @@ export async function GET(req: NextRequest) {
   let contaId: string | undefined;
 
   try {
-    const session = await safeGetServerSession();
-    type SessUser = { id?: string; contaId?: string; role?: string };
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
-    contaId = user.contaId;
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    contaId = auth.contaId;
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
     }
 
@@ -92,7 +90,7 @@ export async function GET(req: NextRequest) {
 
     const loadBody = async () => {
       const result = await listFiscalInvoicePersonIndex({
-        contaId: user.contaId!,
+        contaId: auth.contaId,
         search,
         statusFilters: statusFilters.length ? statusFilters : undefined,
         effectiveDateFrom,
@@ -110,7 +108,7 @@ export async function GET(req: NextRequest) {
 
     const cached = await withTenantCache({
       adapter: getTenantCacheAdapter(),
-      key: buildNotaFiscalSummaryCacheKey(user.contaId, {
+      key: buildNotaFiscalSummaryCacheKey(auth.contaId, {
         search,
         statusFilters,
         effectiveDateFrom,

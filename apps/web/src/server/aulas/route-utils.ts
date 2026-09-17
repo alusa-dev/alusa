@@ -46,5 +46,5 @@ export function handleAulasRouteError(error: unknown, fallbackCode: string) {
     });
   }
 
-  return json(500, { error: fallbackCode, detail: (error as Error).message });
+  return json(500, { error: fallbackCode, detail: 'Não foi possível concluir a operação.' });
 }

@@ -34,7 +34,10 @@ function json<T>(status: number, body: T) {
 }
 
 function isLocalMockFinancialGateEnabled() {
-  return process.env.NODE_ENV !== 'production' && process.env.PAYMENTS_PROVIDER_MODE === 'mock';
+  return (
+    process.env.PAYMENTS_PROVIDER_MODE === 'mock' &&
+    (process.env.NODE_ENV !== 'production' || process.env.PLAYWRIGHT_TEST === 'true')
+  );
 }
 
 async function getLocalMockApprovedSummary(contaId: string): Promise<GetKycSummaryResult | null> {

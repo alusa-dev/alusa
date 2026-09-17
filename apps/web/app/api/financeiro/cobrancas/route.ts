@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { listChargesAggregated, listOperationalCharges, listStandaloneCharges } from '@alusa/finance';
 import type { ChargeOrigin } from '@alusa/finance';
-import { prisma } from '@/src/prisma';
 import {
   financeiroCobrancasQueryDTOSchema,
   listFinanceiroCobrancasResultDTOSchema,
@@ -48,11 +47,9 @@ function mapToLegacyStatus(status: string): string {
  */
 export async function GET(req: NextRequest) {
   try {
-    const session = await safeGetServerSession();
-    type SessUser = { id?: string; contaId?: string; role?: string };
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuário não autenticado');
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const url = new URL(req.url);
@@ -83,7 +80,7 @@ export async function GET(req: NextRequest) {
     // FASE 1: se scope=operational, usar o novo use-case (fila operacional)
     if (scope === 'operational') {
       const opResult = await listOperationalCharges({
-        contaId: user.contaId,
+        contaId: auth.contaId,
         page,
         pageSize,
         search: search || undefined,
@@ -132,7 +129,7 @@ export async function GET(req: NextRequest) {
     // FASE 2: se scope=standalone, listar apenas cobranças avulsas
     if (scope === 'standalone') {
       const stResult = await listStandaloneCharges({
-        contaId: user.contaId,
+        contaId: auth.contaId,
         page,
         pageSize,
         search: search || undefined,
@@ -181,7 +178,7 @@ export async function GET(req: NextRequest) {
     }
 
     const result = await listChargesAggregated({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       page,
       pageSize,
       statusFilter: status.length ? status : undefined,
@@ -190,7 +187,7 @@ export async function GET(req: NextRequest) {
       search: search || undefined,
       origin,
       groupInstallments,
-    }, prisma as any);
+    });
 
     const now = Date.now();
     const items = result.items.map((c) => {

@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { safeGetServerSession } from '@/lib/safe-server-session';
-import { prisma } from '@/src/prisma';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { apiErrorResponse } from '@/lib/api/report-api-error';
 import { getAsaasPaymentDetails } from '@alusa/finance';
 import {
   financeiroLancamentoReciboResultDTOSchema,
   financeiroRouteIdParamsDTOSchema,
 } from '@/features/financeiro/dtos';
 import { mapFinanceiroLancamentoReciboResultToDTO } from '@/features/financeiro/mappers';
+import { getLancamentoReceiptSource } from '@/src/server/finance/lancamento-read.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-type SessUser = { id?: string; contaId?: string; role?: string };
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function err(status: number, code: string, message: string) {
@@ -19,19 +19,14 @@ function err(status: number, code: string, message: string) {
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const rawParams = await params;
   try {
-    const session = await safeGetServerSession();
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuario nao autenticado');
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return err(403, 'SEM_PERMISSAO', 'Acesso negado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(401, 'NAO_AUTENTICADO', 'Usuario nao autenticado');
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
-    const { id } = financeiroRouteIdParamsDTOSchema.parse(params);
+    const { id } = financeiroRouteIdParamsDTOSchema.parse(await params);
 
-    const lancamento = await prisma.lancamento.findFirst({
-      where: { id, contaId: user.contaId },
-      select: { anexoUrl: true, externalRef: true },
-    });
+    const lancamento = await getLancamentoReceiptSource({ contaId: auth.contaId, lancamentoId: id });
 
     if (!lancamento) return err(404, 'NAO_ENCONTRADO', 'Lancamento nao encontrado');
 
@@ -58,7 +53,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     const { payment } = await getAsaasPaymentDetails({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       paymentId,
       includePixQrCode: false,
     });
@@ -79,6 +74,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       { status: 200, headers: { 'cache-control': 'no-store' } },
     );
   } catch (e) {
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return apiErrorResponse(e, {
+      route: 'GET /api/financeiro/lancamentos/[id]/recibo',
+      fallbackMessage: 'Não foi possível carregar o comprovante.',
+    });
   }
 }

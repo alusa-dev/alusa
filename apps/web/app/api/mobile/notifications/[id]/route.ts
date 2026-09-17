@@ -1,4 +1,7 @@
-import { deleteNotificationRecipient, updateNotificationRecipientState } from '@alusa/lib';
+import {
+  deleteNotificationRecipient,
+  updateNotificationRecipientState,
+} from '@alusa/lib/services/notifications.service';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 

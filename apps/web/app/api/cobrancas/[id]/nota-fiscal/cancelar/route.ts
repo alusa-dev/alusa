@@ -1,14 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { resolveChargeFromRouteRef } from '@/lib/finance/resolve-charge-route-ref';
 import { cancelChargeInvoice } from '@alusa/finance';
+import { publicInvoiceProviderErrorMessage } from '@/lib/api/finance-invoice-errors';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
-
-type SessionUser = { id?: string; role?: string; contaId?: string };
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -16,7 +13,10 @@ function json(status: number, body: unknown) {
 
 function cancelInvoiceErrorBody(error: string | { kind: string; message: string }) {
   if (typeof error === 'object' && error !== null && 'message' in error) {
-    return { error: 'ERRO_AO_CANCELAR_INVOICE', message: error.message };
+    return {
+      error: 'ERRO_AO_CANCELAR_INVOICE',
+      message: publicInvoiceProviderErrorMessage(error, 'cancelar'),
+    };
   }
 
   const messages: Record<string, string> = {
@@ -36,22 +36,21 @@ type RouteContext = { params: Promise<{ id: string }> };
 export async function POST(_req: Request, context: RouteContext) {
   try {
     const { id: routeRef } = await context.params;
-    const session = await getServerSession(authOptions).catch(() => null);
-    const user = (session as { user?: SessionUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return json(401, { error: 'NAO_AUTENTICADO' });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const gate = await guardFinancialAccountOr412(user.contaId);
+    const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
-    const resolved = await resolveChargeFromRouteRef(user.contaId, routeRef);
+    const resolved = await resolveChargeFromRouteRef(auth.contaId, routeRef);
     if (!resolved) return json(404, { error: 'CHARGE_NAO_ENCONTRADA' });
 
     const result = await cancelChargeInvoice({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       chargeId: resolved.chargeId,
       cobrancaId: resolved.cobrancaId ?? undefined,
-      actor: { type: 'USER', id: user.id },
+      actor: { type: 'USER', id: auth.userId },
     });
 
     if (!result.success) {

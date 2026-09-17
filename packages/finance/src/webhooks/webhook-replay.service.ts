@@ -327,7 +327,7 @@ async function processWebhookReplay(params: {
     }
 
     if (event.startsWith('BALANCE_VALUE_')) {
-      const { createNotification } = await import('@alusa/lib');
+      const { createNotification } = await import('@alusa/lib/services/notifications.service');
       const { auditLogService } = await import('../foundation/audit-log.service');
       const { NotificationType, NotificationCategory, NotificationSeverity, Role } = await import('@prisma/client');
 
@@ -370,7 +370,7 @@ async function processWebhookReplay(params: {
     }
 
     if (event.startsWith('ACCESS_TOKEN_')) {
-      const { createNotification } = await import('@alusa/lib');
+      const { createNotification } = await import('@alusa/lib/services/notifications.service');
       const { auditLogService } = await import('../foundation/audit-log.service');
       const { NotificationType, NotificationCategory, NotificationSeverity, Role } = await import('@prisma/client');
 

@@ -6,7 +6,7 @@ import {
   evaluatePayerAddressFiscalReadiness,
   payerAddressFromRecord,
   type PayerAddressIssue,
-} from '@alusa/lib';
+} from '@alusa/lib/responsaveis/payer-address';
 
 export type PayerFiscalReadinessResult = {
   ready: boolean;

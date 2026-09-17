@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server';
 import { z, ZodError } from 'zod';
 
 import { getSessionUser } from '@/lib/auth/session';
-import { prisma } from '@/prisma/client';
-import { editRenewalFutureLink } from '@/src/server/matriculas/renewal-process.service';
+import { editRenewalFutureLinkFromHttp } from '@/src/server/matriculas/renewal-http-commands.service';
 import { hasRenewalPermission } from '@/src/server/matriculas/renewal-permissions.service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
@@ -65,8 +64,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   try {
     const { id } = await context.params;
     const body = futureLinkSchema.parse(await request.json().catch(() => null));
-    const result = await editRenewalFutureLink(
-      {
+    const result = await editRenewalFutureLinkFromHttp({
         contaId: user.contaId,
         actorId: user.id,
         processId: id,
@@ -95,9 +93,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         earlyDiscountType: body.earlyDiscountType,
         earlyDiscountDays: body.earlyDiscountDays,
         reason: body.reason,
-      },
-      { prisma },
-    );
+      });
 
     return NextResponse.json(result, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
@@ -118,15 +114,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       );
     }
     if (error instanceof Error && error.message.endsWith('_OBRIGATORIO')) {
-      return jsonError(422, error.message, 'Dados obrigatórios ausentes para editar o próximo ciclo.');
+      return jsonError(422, 'DADOS_OBRIGATORIOS_AUSENTES', 'Dados obrigatórios ausentes para editar o próximo ciclo.');
     }
     if (error instanceof Error && error.message.includes('INVALID')) {
-      return jsonError(422, error.message, 'Destino futuro inválido para esta conta.');
+      return jsonError(422, 'DESTINO_FUTURO_INVALIDO', 'Destino futuro inválido para esta conta.');
     }
     return jsonError(
       500,
       'ERRO_EDITAR_PROXIMO_CICLO',
-      error instanceof Error ? error.message : 'Erro ao editar próximo ciclo.',
+      'Não foi possível editar o próximo ciclo.',
     );
   }
 }

@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { productImagesReorderInputDTOSchema } from '@/features/vendas/dtos';
 import {
   listProductImages,
   addProductImage,
   reorderProductImages,
 } from '@alusa/lib/server';
 import { validateUploadBuffer } from '@/lib/upload-security';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'] as const;
@@ -22,23 +22,23 @@ interface RouteContext {
 
 export async function GET(_req: Request, context: RouteContext) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id: productId } = await Promise.resolve(context.params);
     const images = await listProductImages(productId, contaId);
     return NextResponse.json({ data: images });
   } catch (e) {
-    return jsonError(500, 'ERRO_LISTAR_IMAGENS', (e as Error).message);
+    return jsonError(500, 'ERRO_LISTAR_IMAGENS', 'Não foi possível carregar as imagens.');
   }
 }
 
 export async function POST(req: Request, context: RouteContext) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id: productId } = await Promise.resolve(context.params);
 
@@ -84,18 +84,15 @@ export async function POST(req: Request, context: RouteContext) {
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const session = await getServerSession(authOptions).catch(() => null);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
-    if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const { contaId } = auth;
 
     const { id: productId } = await Promise.resolve(context.params);
-    const body = await req.json();
+    const parsed = productImagesReorderInputDTOSchema.safeParse(await req.json());
+    if (!parsed.success) return jsonError(422, 'DADOS_INVALIDOS', '"orderedIds" deve ser um array de IDs');
 
-    if (!Array.isArray(body.orderedIds)) {
-      return jsonError(422, 'DADOS_INVALIDOS', '"orderedIds" deve ser um array de IDs');
-    }
-
-    await reorderProductImages(productId, contaId, body.orderedIds as string[]);
+    await reorderProductImages(productId, contaId, parsed.data.orderedIds);
     return NextResponse.json({ success: true });
   } catch (e) {
     return jsonError(400, 'ERRO_REORDENAR_IMAGENS', (e as Error).message);

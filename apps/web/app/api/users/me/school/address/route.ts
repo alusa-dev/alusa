@@ -1,27 +1,16 @@
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
-import prisma from '@/lib/prisma';
 import { updateSchoolAddressInputDTOSchema, userSchoolAddressDTOSchema } from '@/features/users/dtos';
 import { jsonNoStore } from '@/lib/http-security';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { getSchoolAddress, updateSchoolAddress } from '@/src/server/users/user-account.service';
 
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId || null;
-    if (!contaId) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 });
+    const { contaId } = auth;
 
-    const conta = await prisma.conta.findUnique({
-      where: { id: contaId },
-      select: {
-        enderecoLogradouro: true,
-        enderecoNumero: true,
-        enderecoBairro: true,
-        enderecoCidade: true,
-        enderecoUf: true,
-        enderecoCep: true,
-      } as any,
-    });
+    const conta = await getSchoolAddress(contaId);
     if (!conta) return jsonNoStore({ error: 'Conta não encontrada' }, { status: 404 });
     return jsonNoStore(
       userSchoolAddressDTOSchema.parse({
@@ -46,6 +35,9 @@ export async function PATCH(req: Request) {
       return tenantScope.response;
     }
     const contaId = tenantScope.contaId;
+    if (!contaId) {
+      return jsonNoStore({ error: 'Conta não encontrada' }, { status: 404 });
+    }
 
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== 'object') {
@@ -58,25 +50,7 @@ export async function PATCH(req: Request) {
     }
 
     const data = parsed.data;
-    const updated = await prisma.conta.update({
-      where: { id: contaId },
-      data: {
-        enderecoLogradouro: typeof data.street === 'string' ? data.street : undefined,
-        enderecoNumero: typeof data.number === 'string' ? data.number : undefined,
-        enderecoBairro: typeof data.district === 'string' ? data.district : undefined,
-        enderecoCidade: typeof data.city === 'string' ? data.city : undefined,
-        enderecoUf: typeof data.state === 'string' ? data.state.toUpperCase() : undefined,
-        enderecoCep: typeof data.cep === 'string' ? data.cep.replace(/\D/g, '') : undefined,
-      } as any,
-      select: {
-        enderecoLogradouro: true,
-        enderecoNumero: true,
-        enderecoBairro: true,
-        enderecoCidade: true,
-        enderecoUf: true,
-        enderecoCep: true,
-      } as any,
-    });
+    const updated = await updateSchoolAddress({ contaId, ...data });
     return jsonNoStore(
       userSchoolAddressDTOSchema.parse({
         street: updated.enderecoLogradouro ?? '',

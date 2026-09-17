@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
 import { requirePortalUser, resolvePortalAlunoIds } from '@/features/portal/api-helpers';
 import { portalEventosResultDTOSchema } from '@/features/portal/dtos';
 import { mapPortalEventoToDTO, mapPortalEventosResultToDTO } from '@/features/portal/mappers';
+import { listPortalEvents } from '@/src/server/portal/portal-read.service';
 
 export async function GET() {
   try {
@@ -11,41 +11,7 @@ export async function GET() {
     const alunoIds = await resolvePortalAlunoIds(auth.user);
 
     // 4. Buscar eventos da conta
-    const eventos = await prisma.portalEvento.findMany({
-      where: {
-        contaId: auth.user.contaId,
-        status: { in: ['ATIVO', 'ENCERRADO'] }, // Mostrar eventos ativos e encerrados recentes
-      },
-      select: {
-        id: true,
-        nome: true,
-        descricao: true,
-        dataInicio: true,
-        dataFim: true,
-        local: true,
-        tipo: true,
-        capacidade: true,
-        status: true,
-        // Incluir inscrições apenas dos alunos relacionados ao usuário
-        inscricoes: {
-          where: {
-            alunoId: { in: alunoIds },
-          },
-          select: {
-            id: true,
-            status: true,
-            quantidade: true,
-            valorTotal: true,
-            qrCode: true,
-          },
-          take: 1, // Um aluno só pode ter uma inscrição por evento
-        },
-      },
-      orderBy: {
-        dataInicio: 'desc',
-      },
-      take: 50, // Limitar a 50 eventos mais recentes
-    });
+    const eventos = await listPortalEvents({ contaId: auth.user.contaId, alunoIds });
 
     // 5. Formatar dados
     const eventosFormatados = eventos.map((e) => ({

@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { listInstallmentPlansAggregated } from '@alusa/finance';
-import type { InstallmentStatus } from '@prisma/client';
 import {
   financeInstallmentAggregatedQueryDTOSchema,
   financeInstallmentAggregatedResultDTOSchema,
@@ -15,7 +13,6 @@ import {
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-type SessUser = { id: string; contaId: string; role?: string };
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function err(status: number, code: string, message: string) {
@@ -31,10 +28,9 @@ function err(status: number, code: string, message: string) {
  */
 export async function GET(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuário não autenticado');
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const { searchParams } = new URL(req.url);
@@ -49,13 +45,13 @@ export async function GET(req: NextRequest) {
       return err(400, 'DADOS_INVALIDOS', issue.message);
     }
     const { page, pageSize, q: search, status: statusRaw } = parsedQuery.data;
-    const statusFilter =
+    const statusFilter: 'ACTIVE' | 'COMPLETED' | 'CANCELED' | undefined =
       statusRaw && statusRaw !== 'all'
-        ? (statusRaw.toUpperCase() as InstallmentStatus)
+        ? (statusRaw.toUpperCase() as 'ACTIVE' | 'COMPLETED' | 'CANCELED')
         : undefined;
 
     const result = await listInstallmentPlansAggregated({
-      contaId: user.contaId,
+      contaId: auth.contaId,
       page,
       pageSize,
       search,
@@ -80,6 +76,6 @@ export async function GET(req: NextRequest) {
     );
   } catch (e) {
     console.error('[API Installments Aggregated] Erro', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return err(500, 'ERRO_INTERNO', 'Não foi possível carregar os parcelamentos.');
   }
 }

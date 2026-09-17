@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { safeGetServerSession } from '@/lib/safe-server-session';
-import { prisma } from '@/src/prisma';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   centroCustoInputDTOSchema,
   centroCustoMutationResultDTOSchema,
@@ -11,11 +10,15 @@ import {
   mapCentroCustoToDTO,
   mapListCentroCustoResultToDTO,
 } from '@/features/financeiro/centros-custo/mappers';
+import {
+  createCentroCusto,
+  findDuplicateCentroCusto,
+  listCentroCustos,
+} from '@/src/server/finance/centro-custo.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-type SessUser = { id?: string; contaId?: string; role?: string };
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 export const centroCustoCreateSchema = centroCustoInputDTOSchema;
@@ -26,10 +29,9 @@ function err(status: number, code: string, message: string) {
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await safeGetServerSession();
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuario nao autenticado');
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return err(403, 'SEM_PERMISSAO', 'Acesso negado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuario nao autenticado');
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const url = new URL(req.url);
     const parsedQuery = centroCustoQueryDTOSchema.safeParse({
@@ -42,17 +44,7 @@ export async function GET(req: NextRequest) {
     }
     const { tipo, status } = parsedQuery.data;
 
-    const where: Record<string, unknown> = { contaId: user.contaId };
-    if (tipo) where.tipo = tipo;
-    if (status) where.status = status;
-
-    const data = await prisma.centroCusto.findMany({
-      where,
-      orderBy: [{ nome: 'asc' }],
-      include: {
-        _count: { select: { lancamentos: true } },
-      },
-    });
+    const data = await listCentroCustos(auth.contaId, { tipo, status });
 
     return NextResponse.json(
       listCentroCustoResultDTOSchema.parse(
@@ -63,16 +55,15 @@ export async function GET(req: NextRequest) {
     );
   } catch (e) {
     console.error('[API centro de custo][GET]', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return err(500, 'ERRO_INTERNO', 'Não foi possível carregar os centros de custo');
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await safeGetServerSession();
-    const user = (session as { user?: SessUser } | null)?.user;
-    if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuario nao autenticado');
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return err(403, 'SEM_PERMISSAO', 'Acesso negado');
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuario nao autenticado');
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const parsed = centroCustoInputDTOSchema.safeParse(await req.json());
     if (!parsed.success) {
@@ -81,24 +72,11 @@ export async function POST(req: NextRequest) {
     }
     const body = parsed.data;
 
-    const existing = await prisma.centroCusto.findFirst({
-      where: {
-        contaId: user.contaId,
-        nome: body.nome.trim(),
-        tipo: body.tipo,
-      },
-    });
+    const normalizedInput = { ...body, nome: body.nome.trim(), descricao: body.descricao?.trim() || null };
+    const existing = await findDuplicateCentroCusto(auth.contaId, normalizedInput);
     if (existing) return err(409, 'JA_EXISTE', 'Centro de custo já existe para este tipo');
 
-    const created = await prisma.centroCusto.create({
-      data: {
-        contaId: user.contaId,
-        nome: body.nome.trim(),
-        tipo: body.tipo,
-        descricao: body.descricao?.trim() || null,
-        status: body.status,
-      },
-    });
+    const created = await createCentroCusto(auth.contaId, normalizedInput);
 
     return NextResponse.json(
       centroCustoMutationResultDTOSchema.parse({
@@ -108,6 +86,6 @@ export async function POST(req: NextRequest) {
     );
   } catch (e) {
     console.error('[API centro de custo][POST]', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return err(500, 'ERRO_INTERNO', 'Não foi possível criar o centro de custo');
   }
 }

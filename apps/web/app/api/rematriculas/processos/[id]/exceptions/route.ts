@@ -1,23 +1,16 @@
 import { NextResponse } from 'next/server';
-import { z, ZodError } from 'zod';
+import { ZodError } from 'zod';
 
-import { getSessionUser } from '@/lib/auth/session';
-import { prisma } from '@/prisma/client';
-import { grantRenewalException } from '@/src/server/matriculas/renewal-governance.service';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import {
+  rematriculaProcessExceptionInputDTOSchema,
+  rematriculaProcessRouteParamsDTOSchema,
+} from '@/features/cadastro/rematriculas/dtos';
+import { grantRenewalExceptionForTenant } from '@/src/server/matriculas/renewal-http.service';
 import {
   RenewalPermissionError,
   requireRenewalPermission,
 } from '@/src/server/matriculas/renewal-permissions.service';
-
-const bodySchema = z.object({
-  itemId: z.string().trim().nullable().optional(),
-  permission: z.string().trim().min(3),
-  rule: z.string().trim().min(3),
-  impact: z.string().trim().min(3),
-  justification: z.string().trim().min(8),
-  expiresAt: z.string().datetime().or(z.string().date()).nullable().optional(),
-  metadata: z.record(z.unknown()).nullable().optional(),
-});
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -34,27 +27,19 @@ function parseDate(value?: string | null) {
 }
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
-  const user = await getSessionUser();
-  if (!user) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
+  const auth = await resolveTenantSession();
+  if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
+  if (!auth.role) return jsonError(403, 'SEM_PERMISSAO', 'Usuário não tem permissão para conceder exceções.');
 
   try {
-    requireRenewalPermission({ role: user.role, permission: 'renewal.exception.grant' });
-    const { id } = await context.params;
-    const process = await prisma.rematriculaProcesso.findFirst({
-      where: { id, contaId: user.contaId },
-      select: { id: true, campanhaId: true },
-    });
-    if (!process) {
-      return jsonError(404, 'REMATRICULA_NAO_ENCONTRADA', 'Processo de rematrícula não encontrado.');
-    }
-
-    const body = bodySchema.parse(await request.json().catch(() => null));
-    const exception = await grantRenewalException(
+    requireRenewalPermission({ role: auth.role, permission: 'renewal.exception.grant' });
+    const { id } = rematriculaProcessRouteParamsDTOSchema.parse(await context.params);
+    const body = rematriculaProcessExceptionInputDTOSchema.parse(await request.json().catch(() => null));
+    const result = await grantRenewalExceptionForTenant(
       {
-        contaId: user.contaId,
-        actorId: user.id,
-        processoId: process.id,
-        campanhaId: process.campanhaId,
+        contaId: auth.contaId,
+        actorId: auth.userId,
+        processoId: id,
         itemId: body.itemId,
         permission: body.permission,
         rule: body.rule,
@@ -63,10 +48,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         expiresAt: parseDate(body.expiresAt),
         metadata: body.metadata,
       },
-      { prisma },
     );
+    if (!result) return jsonError(404, 'REMATRICULA_NAO_ENCONTRADA', 'Processo de rematrícula não encontrado.');
 
-    return NextResponse.json({ exception }, { status: 201, headers: { 'cache-control': 'no-store' } });
+    return NextResponse.json({ exception: result.exception }, { status: 201, headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     if (error instanceof RenewalPermissionError) {
       return jsonError(403, error.code, 'Usuário não tem permissão para conceder exceções.');
@@ -80,8 +65,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return jsonError(
       500,
       'ERRO_CONCEDER_EXCECAO',
-      error instanceof Error ? error.message : 'Erro ao conceder exceção.',
+      'Erro ao conceder exceção.',
     );
   }
 }
-

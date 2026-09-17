@@ -1,17 +1,16 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import {
-  createContractEvidence,
   createPublicContractSignatureOtp,
-  findPublicContractByToken,
-  resolvePublicContractSigner,
   setPublicContractSignatureOtpMetadata,
-  prisma,
-} from '@alusa/lib';
+} from '@alusa/lib/contracts/use-cases/signature-otp';
+import { resolvePublicContractSigner } from '@alusa/lib/contracts/use-cases/resolve-public-signer';
+import { findPublicContractByToken } from '@alusa/lib/contracts/use-cases/sign-contract';
 import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
 import { publicSolicitarAssinaturaOtpInputDTOSchema } from '@/features/contratos/dtos';
 import { sendContractSignatureOtpEmail } from '@/lib/email/contract-signature-otp-email';
+import { recordPublicContractEvidence } from '@/src/server/contracts/public-contract-evidence.service';
 
 function maskEmail(email: string): string {
   const [local, domain] = email.split('@');
@@ -75,7 +74,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       requestedUserAgent: request.headers.get('user-agent'),
     });
 
-    await createContractEvidence(prisma as never, {
+    await recordPublicContractEvidence({
       contaId: contract.contaId,
       contratoId: contract.id,
       type: 'SIGNATURE_OTP_REQUESTED',
@@ -98,7 +97,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       });
     } catch (error) {
       await setPublicContractSignatureOtpMetadata({ id: otp.id }).catch(() => undefined);
-      await createContractEvidence(prisma as never, {
+      await recordPublicContractEvidence({
         contaId: contract.contaId,
         contratoId: contract.id,
         type: 'SIGNATURE_OTP_FAILED',
@@ -114,7 +113,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // the user that delivery failed or invalidate the code they received.
     try {
       await setPublicContractSignatureOtpMetadata({ id: otp.id, emailSent: true });
-      await createContractEvidence(prisma as never, {
+      await recordPublicContractEvidence({
         contaId: contract.contaId,
         contratoId: contract.id,
         type: 'SIGNATURE_OTP_SENT',

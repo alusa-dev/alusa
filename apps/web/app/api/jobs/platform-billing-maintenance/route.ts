@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { expirePlatformBillingGracePeriods } from '@/src/server/platform-billing/grace-period-jobs';
 import { expirePlatformBillingTrials } from '@/src/server/platform-billing/trial-jobs';
@@ -26,10 +25,10 @@ async function run(req: Request) {
     const limit = Number(url.searchParams.get('limit') ?? '100');
     const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(200, limit)) : 100;
 
-    const webhooks = await drainStripeWebhookWorker({ prisma, limit: safeLimit });
-    const trials = await expirePlatformBillingTrials({ prisma, limit: safeLimit });
-    const gracePeriods = await expirePlatformBillingGracePeriods({ prisma, limit: safeLimit });
-    const reconciliation = await reconcilePlatformBilling({ prisma, limit: safeLimit });
+    const webhooks = await drainStripeWebhookWorker({ limit: safeLimit });
+    const trials = await expirePlatformBillingTrials({ limit: safeLimit });
+    const gracePeriods = await expirePlatformBillingGracePeriods({ limit: safeLimit });
+    const reconciliation = await reconcilePlatformBilling({ limit: safeLimit });
 
     return NextResponse.json({
       success: true,

@@ -8,16 +8,17 @@ import { ApiHelper, waitForPageReady } from './helpers/api';
 // Seletores (UI usa div-grid, não <table>) — escopados ao card correto
 // ---------------------------------------------------------------------------
 
-/** Assinaturas list: rows são <Link> (=<a>) dentro de .divide-y */
-const assinaturaListRows = (p: Page) => p.locator('.divide-y > a');
+/** Assinaturas list: cada item possui wrapper e botão acessível de linha. */
+const assinaturaListRows = (p: Page) => p.locator('.divide-y > div > [role="button"]');
 
-/** Parcelamentos list: rows são <div class="...cursor-pointer"> dentro de .divide-y */
-const parcelamentoListRows = (p: Page) => p.locator('.divide-y > .cursor-pointer');
+/** Parcelamentos list: cada item possui wrapper e botão acessível de linha. */
+const parcelamentoListRows = (p: Page) => p.locator('.divide-y > div > [role="button"]');
 
 /**
  * Assinatura detail – Cobranças Geradas:
  * Escopado ao card que contém o heading "Cobranças Geradas".
- * Header bg-gray-50 é a 1ª child DENTRO de .divide-y → pular via :nth-child(n+2)
+ * Header bg-gray-50 é a 1ª child DENTRO de .divide-y → pular via :nth-child(n+2).
+ * O filtro por classe evita contar os nós de fallback interno do layout.
  */
 const assinaturaDetailRows = (p: Page) => {
   const card = p.locator('div.border').filter({ has: p.getByRole('heading', { name: 'Cobranças Geradas', exact: true }) });
@@ -144,7 +145,7 @@ async function seedCenario(contaId: string) {
       status: 'ACTIVE',
       asaasSubscriptionId: `sub_e2e_${uid()}`,
     },
-    select: { id: true, asaasSubscriptionId: true },
+    select: { id: true, asaasSubscriptionId: true, externalReference: true },
   });
 
   await prisma.matricula.update({
@@ -157,7 +158,8 @@ async function seedCenario(contaId: string) {
     const mes = addMonths(now, i);
     const cobranca = await prisma.cobranca.create({
       data: {
-        matriculaId: matricula.id,
+        conta: { connect: { id: contaId } },
+        matricula: { connect: { id: matricula.id } },
         tipo: 'MENSALIDADE',
         descricao: `Mensalidade ${i + 1}/3`,
         competenciaInicio: startOfMonth(mes),
@@ -175,7 +177,7 @@ async function seedCenario(contaId: string) {
       data: {
         contaId,
         cobrancaId: cobranca.id,
-        externalReference: `subscription:${subscription.id}:${i + 1}:${randomUUID()}`,
+        externalReference: `${subscription.externalReference}:${i + 1}:${randomUUID()}`,
         status: i === 0 ? 'OPEN' : 'OPEN',
         asaasPaymentId: `pay_sub_charge_${uid()}_${i}`,
       },
@@ -244,7 +246,8 @@ async function seedCenario(contaId: string) {
     const mes = addMonths(now, i);
     const cobranca = await prisma.cobranca.create({
       data: {
-        matriculaId: matricula.id,
+        conta: { connect: { id: contaId } },
+        matricula: { connect: { id: matricula.id } },
         tipo: 'MENSALIDADE',
         descricao: `Parcela acad. ${i + 1}/3`,
         competenciaInicio: startOfMonth(mes),
@@ -317,7 +320,9 @@ test.describe('Criação e agrupamento — Assinaturas e Parcelamentos', () => {
       await page.goto('/cobrancas/assinaturas');
       await waitForPageReady(page, 'Assinaturas');
 
-      await expect(page.getByText('Lucas Aluno E2E')).toBeVisible();
+      // A linha mantém as versões mobile e desktop no DOM; no viewport E2E
+      // desktop a segunda ocorrência é a variante visível.
+      await expect(assinaturaListRows(page).getByText('Lucas Aluno E2E').last()).toBeVisible();
 
       const rows = assinaturaListRows(page);
       await expect(rows).toHaveCount(1, { timeout: 5_000 });
@@ -346,7 +351,7 @@ test.describe('Criação e agrupamento — Assinaturas e Parcelamentos', () => {
       const data = (detail as { data: Record<string, unknown> }).data;
 
       if (data && typeof data === 'object' && 'alunoNome' in data) {
-        await expect(page.getByText(data.alunoNome as string)).toBeVisible();
+        await expect(page.getByText(data.alunoNome as string).first()).toBeVisible();
       }
 
       if (data && 'cobrancas' in data && Array.isArray(data.cobrancas)) {

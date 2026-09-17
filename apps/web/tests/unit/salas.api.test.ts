@@ -1,4 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({ getServerSession: vi.fn() }));
+
+vi.mock('next-auth', () => ({ getServerSession: mocks.getServerSession }));
+
 import { POST as createSala, GET as listSalas } from '@/app/api/salas/route';
 import { PATCH as patchSala, DELETE as deleteSala } from '@/app/api/salas/[id]/route';
 
@@ -14,6 +19,10 @@ function makeReq(body?: Record<string, unknown>, method: string = 'POST') {
 }
 
 describe('API Salas', () => {
+  beforeEach(() => {
+    mocks.getServerSession.mockResolvedValue({ user: { id: 'user-salas', contaId: TEST_CONTA } });
+  });
+
   it('rejeita nome vazio', async () => {
     const res = await createSala(makeReq({ nome: '' }) as unknown as Request);
     expect(res.status).toBe(422);

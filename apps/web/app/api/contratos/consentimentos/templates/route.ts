@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/prisma/client';
 import { getSessionUser } from '@/lib/auth/session';
 import { listContratoConsentimentoTemplatesResultDTOSchema } from '@/features/contratos/dtos';
+import { listActiveConsentimentoTemplates } from '@/src/server/contracts/consentimento-template.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -11,33 +11,7 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
 
   try {
-    const templates = await prisma.contratoConsentimentoTemplate.findMany({
-      where: {
-        ativo: true,
-        OR: [
-          { contaId: null, origem: 'SISTEMA', slug: 'uso-imagem', grupoSlug: null },
-          { contaId: user.contaId },
-        ],
-      },
-      orderBy: [{ origem: 'asc' }, { nome: 'asc' }, { versao: 'desc' }],
-      select: {
-        id: true,
-        slug: true,
-        nome: true,
-        finalidade: true,
-        titulo: true,
-        texto: true,
-        variaveis: true,
-        grupoSlug: true,
-        grupoNome: true,
-        grupoDescricao: true,
-        introducao: true,
-        encerramento: true,
-        ordem: true,
-        versao: true,
-        origem: true,
-      },
-    });
+    const templates = await listActiveConsentimentoTemplates(user.contaId);
 
     return NextResponse.json(listContratoConsentimentoTemplatesResultDTOSchema.parse(templates));
   } catch (error) {

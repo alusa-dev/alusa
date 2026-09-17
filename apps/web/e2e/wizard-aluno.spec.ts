@@ -1,19 +1,10 @@
 import { test, expect } from '@playwright/test';
+import { seedAdminAndAuthenticate } from './utils/auth';
+import { randomUUID } from 'node:crypto';
 
 test.describe('Wizard de Aluno', () => {
   test.beforeEach(async ({ page }) => {
-    // Primeiro faz registro/login para ter acesso às páginas autenticadas
-    await page.goto('/register');
-    await page.fill('[data-testid="register-nome-first"]', 'Admin');
-    await page.fill('[data-testid="register-nome-last"]', 'E2E');
-    await page.fill('[data-testid="register-cpfCnpj"]', '12345678901');
-    await page.fill('[data-testid="register-email"]', 'admin-e2e@example.com');
-    await page.fill('[data-testid="register-senha"]', 'SenhaFort3!');
-    await page.fill('[data-testid="register-senha-confirmar"]', 'SenhaFort3!');
-    await page.check('input[type="checkbox"]'); // aceitar termos
-    await page.click('[data-testid="register-submit"]');
-    // Aguarda redirecionamento bem-sucedido (qualquer página autenticada)
-    await page.waitForTimeout(2000);
+    await seedAdminAndAuthenticate(page, { email: `wizard-${randomUUID()}@e2e.test` });
 
     // Intercepta GET de alunos para lista vazia inicialmente
     await page.route('**/api/alunos?**', async (route, request) => {
@@ -43,33 +34,29 @@ test.describe('Wizard de Aluno', () => {
     await page.goto('/alunos');
 
     // Aguarda carregamento da página e botão estar visível
-    await expect(page.getByText('Gestão de Alunos')).toBeVisible();
-    await expect(page.getByTestId('abrir-wizard-aluno')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Gestão de Alunos' }).first()).toBeVisible();
+    await expect(page.getByTestId('abrir-wizard-aluno').first()).toBeVisible();
 
     // Abre o wizard
-    await page.getByTestId('abrir-wizard-aluno').click();    // Preenche campos obrigatórios - nome e data de nascimento
+    await page.getByTestId('abrir-wizard-aluno').first().click();    // Preenche campos obrigatórios - nome e data de nascimento
     await page.getByTestId('aluno-nome').fill('Aluno E2E Wizard');
-    const dataInput = page.getByTestId('aluno-dataNasc');
+    const dataInput = page.getByRole('textbox', { name: 'Data de nascimento' });
     await dataInput.click();
-    await dataInput.fill('1990-01-01'); // Data formato ISO para input type="date"
+    await dataInput.fill('01/01/1990'); // O campo usa máscara de data no formato brasileiro
     await dataInput.blur();
 
     // Preenche outros campos obrigatórios
-    await page.fill('#aluno-cpf', '123.456.789-01');
+    await page.fill('#aluno-cpf', '529.982.247-25');
     await page.fill('#aluno-email', 'aluno.e2e@example.com');
     await page.fill('#aluno-telefone', '(11) 99999-8888');
 
     // Aguarda um pouco para validação
     await page.waitForTimeout(500);
 
-    // Avança para Foto
+    // Avança para Endereço
     await page.getByTestId('wizard-next').click();
-    await expect(page.getByTestId('aluno-step-label')).toHaveText('Foto');
+    await expect(page.getByRole('heading', { name: 'Endereço' })).toBeVisible();
 
-    // Avança para Endereço (pula Foto)
-    await page.getByTestId('wizard-next').click();    // Aguarda chegar no step de endereço
-    await expect(page.getByTestId('aluno-step-label')).toHaveText('Endereço');
-    
     // Preenche endereço obrigatório
     await page.getByTestId('aluno-endereco-cep').fill('01001-000'); // com máscara
     await page.getByTestId('aluno-endereco-logradouro').fill('Praça da Sé');
@@ -82,12 +69,15 @@ test.describe('Wizard de Aluno', () => {
 
     // Avança até Confirmação (pula passos opcionais)
     await page.getByTestId('wizard-next').click(); // Saúde
-    await page.getByTestId('wizard-next').click(); // Emergência  
-    await page.getByTestId('wizard-next').click(); // Preferências
-    await page.getByTestId('wizard-next').click(); // Para Confirmação
+    await expect(page.getByRole('heading', { name: 'Saúde & Emergência' })).toBeVisible();
+    await page.getByTestId('wizard-next').click(); // Perfil
+    await expect(page.getByRole('heading', { name: 'Perfil & Classificação' })).toBeVisible();
+    await page.getByTestId('wizard-next').click(); // Foto
+    await expect(page.getByRole('heading', { name: 'Foto do aluno' })).toBeVisible();
+    await page.getByTestId('wizard-next').click(); // Confirmação
     
     // Aguarda chegar na confirmação
-    await expect(page.getByTestId('aluno-step-label')).toHaveText('Confirmação');
+    await expect(page.getByRole('heading', { name: 'Confirmar dados' })).toBeVisible();
 
     // Intercepta POST de criação 
     await page.route('**/api/alunos', async (route, request) => {
@@ -143,22 +133,23 @@ test.describe('Wizard de Aluno', () => {
     await expect(page.getByTestId('aluno-wizard')).toBeHidden({ timeout: 10000 });
 
     // Confirma que voltamos para a lista
-    await expect(page.getByRole('button', { name: 'Novo aluno' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Cadastrar aluno' })).toBeVisible();
   });
 
   test('fechar wizard sem confirmação', async ({ page }) => {
-    await page.goto('/admin/alunos');
-    await expect(page.getByText('Alunos')).toBeVisible();
-    await page.getByRole('button', { name: 'Novo aluno' }).click();
+    await page.goto('/alunos');
+    await expect(page.getByRole('heading', { name: 'Gestão de Alunos' })).toBeVisible();
+    await page.getByRole('button', { name: 'Cadastrar aluno' }).click();
     
     // Preenche um campo para tornar o formulário "sujo"
     await page.getByTestId('aluno-nome').fill('Aluno E2E Wizard');
 
-    // Tenta fechar - agora fecha diretamente sem popup
-    await page.getByRole('button', { name: 'Fechar' }).click();
+    // Tenta fechar e confirma o descarte explícito do rascunho.
+    await page.getByRole('button', { name: 'Close' }).click();
+    await page.getByRole('button', { name: 'Descartar' }).click();
 
-    // Confirma que wizard fechou: botão Novo aluno visível novamente
-    await expect(page.getByRole('button', { name: 'Novo aluno' })).toBeVisible();
+    // Confirma que wizard fechou: botão de cadastro visível novamente
+    await expect(page.getByRole('button', { name: 'Cadastrar aluno' })).toBeVisible();
     await expect(page.getByTestId('aluno-wizard')).toBeHidden();
   });
 });

@@ -1,8 +1,6 @@
 packages:
   - 'apps/*'
   - 'packages/*'
-  - 'mcp'
-  - 'context7'
 allowBuilds:
   '@prisma/client': set this to true or false
   '@prisma/engines': set this to true or false

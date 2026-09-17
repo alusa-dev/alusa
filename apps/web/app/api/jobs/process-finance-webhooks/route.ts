@@ -5,11 +5,12 @@ import {
   processAsaasWebhookQueueWithInbox,
   runWebhookQueuePreflight,
 } from '@alusa/finance';
+import { apiJsonError } from '@/lib/api/standard-response';
 
 export const dynamic = 'force-dynamic';
 
 function jsonError(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status });
+  return apiJsonError(status, code, message);
 }
 
 /**
@@ -67,7 +68,7 @@ async function run(req: Request) {
     });
   } catch (error) {
     console.error('[Job Process Finance Webhooks] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', (error as Error).message);
+    return jsonError(500, 'ERRO_JOB', 'Não foi possível processar os webhooks financeiros.');
   }
 }
 

@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { cancelStoreSale, StoreSaleError } from '@alusa/finance';
 
-import { safeGetServerSession } from '@/lib/safe-server-session';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 const bodySchema = z.object({
   reason: z.string().trim().min(3),
@@ -18,14 +18,11 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await safeGetServerSession();
-    const user = session?.user as { contaId?: string | null; id?: string | null } | undefined;
-    const contaId = user?.contaId?.trim() || null;
-    const operatorId = user?.id?.trim() || null;
-
-    if (!contaId || !operatorId) {
+    const auth = await resolveTenantSession();
+    if (!auth.ok) {
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
     }
+    const { contaId, userId: operatorId } = auth;
 
     const body = await request.json();
     const parsed = bodySchema.safeParse(body);
@@ -47,6 +44,6 @@ export async function POST(
       return jsonError(error.status, error.code, error.message);
     }
 
-    return jsonError(500, 'ERRO_CANCELAR_VENDA', (error as Error).message);
+    return jsonError(500, 'ERRO_CANCELAR_VENDA', 'Não foi possível cancelar a venda.');
   }
 }

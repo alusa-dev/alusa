@@ -16,6 +16,10 @@ export const rematriculaFormaPagamentoDTOSchema = z.enum([
   'INDEFINIDO',
 ]);
 
+export const cancelRenewalInputDTOSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
+});
+
 export type RematriculaFormaPagamentoDTO = z.infer<typeof rematriculaFormaPagamentoDTOSchema>;
 
 export const rematriculaEligibilityStatusDTOSchema = z.enum(['ELEGIVEL', 'NAO_ELEGIVEL']);
@@ -255,3 +259,40 @@ export const createRematriculaResultDTOSchema = z.object({
 });
 
 export type CreateRematriculaResultDTO = z.infer<typeof createRematriculaResultDTOSchema>;
+
+export const rematriculaProcessRouteParamsDTOSchema = z.object({
+  id: z.string().trim().min(1).max(128),
+});
+export type RematriculaProcessRouteParamsDTO = z.infer<
+  typeof rematriculaProcessRouteParamsDTOSchema
+>;
+
+export const rematriculaProcessCommunicationInputDTOSchema = z
+  .object({
+    participanteId: z.string().trim().nullable().optional(),
+    channel: z.enum(['EMAIL', 'WHATSAPP', 'SMS', 'PORTAL']),
+    audience: z.string().trim().min(2),
+    subject: z.string().trim().nullable().optional(),
+    message: z.string().trim().min(3),
+    scheduledAt: z.string().datetime().or(z.string().date()).nullable().optional(),
+    payload: z.record(z.unknown()).nullable().optional(),
+  })
+  .passthrough();
+export type RematriculaProcessCommunicationInputDTO = z.infer<
+  typeof rematriculaProcessCommunicationInputDTOSchema
+>;
+
+export const rematriculaProcessExceptionInputDTOSchema = z
+  .object({
+    itemId: z.string().trim().nullable().optional(),
+    permission: z.string().trim().min(3),
+    rule: z.string().trim().min(3),
+    impact: z.string().trim().min(3),
+    justification: z.string().trim().min(8),
+    expiresAt: z.string().datetime().or(z.string().date()).nullable().optional(),
+    metadata: z.record(z.unknown()).nullable().optional(),
+  })
+  .passthrough();
+export type RematriculaProcessExceptionInputDTO = z.infer<
+  typeof rematriculaProcessExceptionInputDTOSchema
+>;

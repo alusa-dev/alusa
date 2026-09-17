@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { deleteTicketSale, updateTicketSale, updateTicketSaleSchema } from '@alusa/lib';
+import { updateTicketSaleSchema } from '@alusa/lib/events/events.schema';
+import { deleteTicketSale, updateTicketSale } from '@alusa/lib/events/events.service';
 
 import { getEventsContext, handleEventsRouteError } from '../../_helpers';
 

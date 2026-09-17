@@ -19,7 +19,7 @@ vi.mock('@/lib/prisma', () => ({
   prisma: {
     cobranca: mockPrismaCobranca,
     $executeRaw: vi.fn().mockResolvedValue(1),
-    $transaction: vi.fn(async (callback: (tx: { cobranca: typeof mockPrismaCobranca }) => unknown) =>
+    $transaction: vi.fn(async (callback: (_tx: { cobranca: typeof mockPrismaCobranca }) => unknown) =>
       callback({ cobranca: mockPrismaCobranca, $executeRaw: vi.fn().mockResolvedValue(1) }),
     ),
   },
@@ -127,7 +127,7 @@ describe('GET /api/dashboard/receita (refatorado)', () => {
     }
   });
 
-  it('deve retornar erro 400 se contaId não fornecido', async () => {
+  it('deve retornar 401 se a sessão não tiver tenant', async () => {
     mockGetServerSession.mockResolvedValue({ user: { id: 'user-1' } });
 
     const url = new URL('http://localhost/api/dashboard/receita');
@@ -135,7 +135,7 @@ describe('GET /api/dashboard/receita (refatorado)', () => {
     const response = await GET(request);
     const json = await response.json();
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(401);
     expect(json.success).toBe(false);
   });
 });

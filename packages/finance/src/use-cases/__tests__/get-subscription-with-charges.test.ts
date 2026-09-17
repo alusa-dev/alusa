@@ -282,4 +282,61 @@ describe('getSubscriptionWithCharges', () => {
     expect(result.data.valor).toBe(75);
     expect(result.data.nextDueDate).toBe('2099-05-05T00:00:00.000Z');
   });
+
+  it('não mistura mensalidades de outro plano acadêmico quando há Charge vinculado', async () => {
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({
+      id: 'sub_isolated',
+      asaasSubscriptionId: 'asaas_sub_isolated',
+      externalReference: 'alusa:subscription:matricula_isolated:plano_isolated',
+      status: 'ACTIVE',
+      contratoId: 'contrato_isolated',
+      createdAt: new Date('2026-03-01T00:00:00.000Z'),
+      matriculaId: 'matricula_isolated',
+      matricula: {
+        id: 'matricula_isolated',
+        vencimentoDia: 5,
+        formaPagamento: 'PIX',
+        formaPagamentoTaxa: 'PIX',
+        aluno: {
+          id: 'aluno_isolated',
+          nome: 'Aluno Isolado',
+          email: 'isolated@example.com',
+          telefone: null,
+          dataNasc: new Date('2000-01-01T00:00:00.000Z'),
+        },
+        responsavelFinanceiro: null,
+        plano: { nome: 'Plano Isolado', valor: 100, periodicidade: 'MENSAL', descricao: null },
+        combo: null,
+      },
+    } as never);
+    vi.mocked(prisma.charge.findMany).mockResolvedValueOnce([
+      {
+        id: 'charge_isolated',
+        status: 'OPEN',
+        value: 100,
+        dueDate: new Date('2099-05-05T00:00:00.000Z'),
+        asaasPaymentId: 'pay_isolated',
+        cobranca: {
+          id: 'cobranca_isolated',
+          status: 'A_VENCER',
+          asaasStatus: null,
+          liquidacaoStatus: null,
+          valor: 100,
+          vencimento: new Date('2099-05-05T00:00:00.000Z'),
+          dataPagamento: null,
+          asaasPaymentId: 'pay_isolated',
+        },
+      },
+    ] as never);
+
+    const result = await getSubscriptionWithCharges({
+      contaId: 'conta_isolated',
+      subscriptionId: 'sub_isolated',
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.cobrancas.map((charge) => charge.id)).toEqual(['cobranca_isolated']);
+    expect(prisma.cobranca.findMany).not.toHaveBeenCalled();
+  });
 });

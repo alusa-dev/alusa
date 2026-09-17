@@ -3,6 +3,12 @@ import { z } from 'zod';
 import { responsavelSchema } from '@/lib/validations/aluno-responsavel.schema';
 import { responsavelEnderecoInputSchema } from '@alusa/lib/client';
 
+export const responsavelRouteParamsDTOSchema = z.object({
+  id: z.string().trim().min(1),
+});
+
+export type ResponsavelRouteParamsDTO = z.infer<typeof responsavelRouteParamsDTOSchema>;
+
 export const listResponsaveisQueryDTOSchema = z.object({
   q: z.string().trim().max(120).optional(),
   status: z.enum(['TODOS', 'ATIVO', 'INATIVO']).default('ATIVO'),
