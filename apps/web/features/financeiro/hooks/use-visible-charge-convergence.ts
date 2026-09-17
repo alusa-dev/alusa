@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef } from 'react';
 
+import { requestCobrancaAsaasSync } from '@/lib/finance/charge-sync-client';
+
 const TERMINAL_STATUSES = new Set([
   'PAGO',
   'PAID',
@@ -81,16 +83,13 @@ export function useVisibleChargeConvergence({
 
       const results = await Promise.allSettled(
         candidates.map((item) =>
-          fetch(syncEndpoint(item.id), {
-            method: 'POST',
-            headers: { Accept: 'application/json' },
-          }),
+          requestCobrancaAsaasSync(item.id, { throttleMs, endpoint: syncEndpoint }),
         ),
       );
 
       if (cancelled) return;
       const anySynced = results.some(
-        (result) => result.status === 'fulfilled' && result.value.ok,
+        (result) => result.status === 'fulfilled' && result.value,
       );
 
       if (anySynced) {
@@ -105,5 +104,5 @@ export function useVisibleChargeConvergence({
     return () => {
       cancelled = true;
     };
-  }, [enabled, candidates, syncEndpoint]);
+  }, [enabled, candidates, throttleMs, syncEndpoint]);
 }

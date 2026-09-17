@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { runWebhookScheduler } from '@alusa/finance';
+import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -21,6 +22,7 @@ export const maxDuration = 60;
  * - skipArchive: "true" para pular archiving
  */
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -42,9 +44,14 @@ async function run(req: Request) {
       enableReconciliation: url.searchParams.get('enableReconciliation') === 'true',
     });
 
+    logJobResult('webhook-scheduler', startedAt, result, {
+      hasTenantScope: Boolean(tenantScope.contaId),
+      failedSteps: result.steps.filter((step) => !step.ok).length,
+      skippedDueToLock: result.skippedDueToLock === true,
+    });
     return NextResponse.json({ success: true, result });
   } catch (error) {
-    console.error('[webhook-scheduler] Erro:', error instanceof Error ? error.message : String(error));
+    logJobFailure('webhook-scheduler', startedAt, error);
     return NextResponse.json(
       { error: { code: 'SCHEDULER_ERROR', message: 'Falha ao executar o scheduler de webhooks.' } },
       { status: 500 },

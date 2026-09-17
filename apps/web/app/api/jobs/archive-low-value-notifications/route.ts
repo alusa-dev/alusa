@@ -4,6 +4,7 @@ import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { apiJsonError } from '@/lib/api/standard-response';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
 
 function jsonError(status: number, code: string, message: string) {
   return apiJsonError(status, code, message);

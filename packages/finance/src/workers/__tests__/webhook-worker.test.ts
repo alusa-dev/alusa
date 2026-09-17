@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 vi.mock('../../webhooks/asaas-webhook-handler.server', () => ({
-  processAsaasWebhookQueue: vi.fn(async () => ({ processed: 0, failed: 0 })),
+  processAsaasWebhookQueue: vi.fn(async () => ({ processed: 0, failed: 0, processedPayments: [] })),
 }));
 
 vi.mock('../../webhooks/webhook-scheduler.service', () => ({
   runWebhookScheduler: vi.fn(async () => ({})),
 }));
 
-import { stopWorker, type WorkerCycleResult } from '../webhook-worker';
+import { stopWorker } from '../webhook-worker';
 
 describe('webhook-worker', () => {
   beforeEach(() => {
@@ -36,7 +36,7 @@ describe('webhook-worker', () => {
     process.env.WEBHOOK_WORKER_MODE = 'once';
 
     const { processAsaasWebhookQueue } = await import('../../webhooks/asaas-webhook-handler.server');
-    vi.mocked(processAsaasWebhookQueue).mockResolvedValueOnce({ processed: 5, failed: 1 } as never);
+    vi.mocked(processAsaasWebhookQueue).mockResolvedValueOnce({ processed: 5, failed: 1, processedPayments: [] } as never);
 
     const spyLog = vi.spyOn(console, 'info').mockImplementation(() => {});
 
@@ -60,7 +60,7 @@ describe('webhook-worker', () => {
     process.env.WEBHOOK_WORKER_CONTA_ID = 'conta-test';
 
     const { processAsaasWebhookQueue } = await import('../../webhooks/asaas-webhook-handler.server');
-    vi.mocked(processAsaasWebhookQueue).mockResolvedValueOnce({ processed: 0, failed: 0 } as never);
+    vi.mocked(processAsaasWebhookQueue).mockResolvedValueOnce({ processed: 0, failed: 0, processedPayments: [] } as never);
 
     const spyLog = vi.spyOn(console, 'info').mockImplementation(() => {});
 

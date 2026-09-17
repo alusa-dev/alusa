@@ -74,6 +74,7 @@ async function runCycle(config: WorkerConfig): Promise<WorkerCycleResult> {
       limit: config.drainLimit,
       statuses: ['PENDENTE', 'ERRO'],
       source: 'REPROCESS',
+      drainSideEffects: false,
     });
 
     processedCount = result.processed;
@@ -92,7 +93,8 @@ async function runCycle(config: WorkerConfig): Promise<WorkerCycleResult> {
       schedulerRan = true;
       await runWebhookScheduler({
         contaId: config.contaId,
-        drainLimit: 0, // Drain já foi feito acima
+        drainLimit: 0,
+        skipQueueDrain: true, // Drain já foi feito acima
         skipHealthCheck: false,
         skipDriftCheck: true,
         skipArchive: false,

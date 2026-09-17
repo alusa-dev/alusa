@@ -122,122 +122,108 @@ async function listContaIds(maxAccounts: number): Promise<string[]> {
   return rows.map((row) => row.id);
 }
 
-async function countBillingReadModelLag(contaId: string): Promise<number> {
-  const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
-    SELECT COUNT(*)::bigint AS count
-    FROM (
-      SELECT s."id"
-      FROM "Subscription" s
-      LEFT JOIN "FinanceSubscriptionReadModel" rm
-        ON rm."contaId" = s."contaId"
-       AND rm."sourceKind" = 'ACADEMIC_SUBSCRIPTION'
-       AND rm."sourceId" = s."id"
-      WHERE s."contaId" = ${contaId}
-        AND (rm."id" IS NULL OR rm."projectedAt" < s."updatedAt")
+type OperationalMetricRow = {
+  webhookBacklog: bigint;
+  staleWebhooks: bigint;
+  failedWebhooks: bigint;
+  notificationBacklog: bigint;
+  failedNotifications: bigint;
+  notificationSyncBacklog: bigint;
+  failedNotificationSyncs: bigint;
+  failedJobs: bigint;
+  staleJobs: bigint;
+  customerWithAsaas: bigint;
+  customerSnapshots: bigint;
+  billingReadModelLag: bigint;
+  transactionCount: bigint;
+  freshDailyAggregates: bigint;
+};
 
-      UNION ALL
-
-      SELECT ss."id"
-      FROM "StandaloneSubscription" ss
-      LEFT JOIN "FinanceSubscriptionReadModel" rm
-        ON rm."contaId" = ss."contaId"
-       AND rm."sourceKind" = 'STANDALONE_SUBSCRIPTION'
-       AND rm."sourceId" = ss."id"
-      WHERE ss."contaId" = ${contaId}
-        AND (rm."id" IS NULL OR rm."projectedAt" < ss."updatedAt")
-
-      UNION ALL
-
-      SELECT ip."id"
-      FROM "InstallmentPlan" ip
-      LEFT JOIN "FinanceInstallmentPlanReadModel" rm
-        ON rm."contaId" = ip."contaId"
-       AND rm."sourceKind" = 'ACADEMIC_INSTALLMENT'
-       AND rm."sourceId" = ip."id"
-      WHERE ip."contaId" = ${contaId}
-        AND (rm."id" IS NULL OR rm."projectedAt" < ip."updatedAt")
-
-      UNION ALL
-
-      SELECT sip."id"
-      FROM "StandaloneInstallmentPlan" sip
-      LEFT JOIN "FinanceInstallmentPlanReadModel" rm
-        ON rm."contaId" = sip."contaId"
-       AND rm."sourceKind" = 'STANDALONE_INSTALLMENT'
-       AND rm."sourceId" = sip."id"
-      WHERE sip."contaId" = ${contaId}
-        AND (rm."id" IS NULL OR rm."projectedAt" < sip."updatedAt")
-    ) lag
-  `;
-
-  return Number(rows[0]?.count ?? 0);
-}
-
-async function collectMetrics(contaId: string): Promise<FinancialOperationalMetric[]> {
+/**
+ * Consolida as métricas de saúde em uma ida ao banco por tenant.
+ * As subconsultas continuam explicitamente filtradas por contaId; a
+ * consolidação reduz round trips sem enfraquecer RLS ou isolamento.
+ */
+export async function collectFinancialOperationalMetrics(
+  contaId: string,
+  db: typeof prisma = prisma,
+): Promise<FinancialOperationalMetric[]> {
   const now = Date.now();
   const staleWebhookBefore = new Date(now - 10 * 60_000);
   const staleJobBefore = new Date(now - 15 * 60_000);
   const aggregateStaleBefore = new Date(now - 24 * 60 * 60_000);
 
-  const [
-    webhookBacklog,
-    staleWebhooks,
-    failedWebhooks,
-    notificationBacklog,
-    failedNotifications,
-    notificationSyncBacklog,
-    failedNotificationSyncs,
-    failedJobs,
-    staleJobs,
-    customerWithAsaas,
-    customerSnapshots,
-    billingReadModelLag,
-    transactionCount,
-    freshDailyAggregates,
-  ] = await Promise.all([
-    prisma.webhookAsaas.count({
-      where: { contaId, status: { in: ['PENDENTE', 'ERRO'] } },
-    }),
-    prisma.webhookAsaas.count({
-      where: {
-        contaId,
-        status: { in: ['PENDENTE', 'ERRO'] },
-        recebidoEm: { lt: staleWebhookBefore },
-      },
-    }),
-    prisma.webhookAsaas.count({
-      where: { contaId, status: { in: ['EXAURIDO', 'FAILED'] } },
-    }),
-    prisma.asaasNotificationPreferenceOutbox.count({
-      where: { contaId, status: { in: ['PENDING', 'FAILED', 'PROCESSING'] } },
-    }),
-    prisma.asaasNotificationPreferenceOutbox.count({
-      where: { contaId, status: 'FAILED' },
-    }),
-    prisma.asaasNotificationSyncOutbox.count({
-      where: { contaId, status: { in: ['PENDING', 'FAILED', 'PROCESSING'] } },
-    }),
-    prisma.asaasNotificationSyncOutbox.count({
-      where: { contaId, status: { in: ['FAILED', 'EXHAUSTED'] } },
-    }),
-    prisma.asaasIntegrationJob.count({
-      where: { contaId, status: 'FAILED' },
-    }),
-    prisma.asaasIntegrationJob.count({
-      where: {
-        contaId,
-        status: { in: ['PENDING', 'PROCESSING'] },
-        updatedAt: { lt: staleJobBefore },
-      },
-    }),
-    prisma.customer.count({ where: { contaId, asaasCustomerId: { not: null } } }),
-    prisma.asaasCustomerSnapshot.count({ where: { contaId, deleted: false } }),
-    countBillingReadModelLag(contaId),
-    prisma.financialTransactionSnapshot.count({ where: { contaId } }),
-    prisma.financeDailyAggregate.count({
-      where: { contaId, calculatedAt: { gte: aggregateStaleBefore } },
-    }),
-  ]);
+  const rows = await db.$queryRaw<OperationalMetricRow[]>`
+    SELECT
+      (SELECT COUNT(*) FROM "WebhookAsaas" WHERE "contaId" = ${contaId} AND "status" IN ('PENDENTE', 'ERRO')) AS "webhookBacklog",
+      (SELECT COUNT(*) FROM "WebhookAsaas" WHERE "contaId" = ${contaId} AND "status" IN ('PENDENTE', 'ERRO') AND "recebidoEm" < ${staleWebhookBefore}) AS "staleWebhooks",
+      (SELECT COUNT(*) FROM "WebhookAsaas" WHERE "contaId" = ${contaId} AND "status" IN ('EXAURIDO', 'FAILED')) AS "failedWebhooks",
+      (SELECT COUNT(*) FROM "AsaasNotificationPreferenceOutbox" WHERE "contaId" = ${contaId} AND "status" IN ('PENDING', 'FAILED', 'PROCESSING')) AS "notificationBacklog",
+      (SELECT COUNT(*) FROM "AsaasNotificationPreferenceOutbox" WHERE "contaId" = ${contaId} AND "status" = 'FAILED') AS "failedNotifications",
+      (SELECT COUNT(*) FROM "AsaasNotificationSyncOutbox" WHERE "contaId" = ${contaId} AND "status" IN ('PENDING', 'FAILED', 'PROCESSING')) AS "notificationSyncBacklog",
+      (SELECT COUNT(*) FROM "AsaasNotificationSyncOutbox" WHERE "contaId" = ${contaId} AND "status" IN ('FAILED', 'EXHAUSTED')) AS "failedNotificationSyncs",
+      (SELECT COUNT(*) FROM "AsaasIntegrationJob" WHERE "contaId" = ${contaId} AND "status" = 'FAILED') AS "failedJobs",
+      (SELECT COUNT(*) FROM "AsaasIntegrationJob" WHERE "contaId" = ${contaId} AND "status" IN ('PENDING', 'PROCESSING') AND "updatedAt" < ${staleJobBefore}) AS "staleJobs",
+      (SELECT COUNT(*) FROM "Customer" WHERE "contaId" = ${contaId} AND "asaasCustomerId" IS NOT NULL) AS "customerWithAsaas",
+      (SELECT COUNT(*) FROM "AsaasCustomerSnapshot" WHERE "contaId" = ${contaId} AND "deleted" = false) AS "customerSnapshots",
+      (SELECT COUNT(*) FROM (
+        SELECT s."id"
+        FROM "Subscription" s
+        LEFT JOIN "FinanceSubscriptionReadModel" rm
+          ON rm."contaId" = s."contaId"
+         AND rm."sourceKind" = 'ACADEMIC_SUBSCRIPTION'
+         AND rm."sourceId" = s."id"
+        WHERE s."contaId" = ${contaId}
+          AND (rm."id" IS NULL OR rm."projectedAt" < s."updatedAt")
+        UNION ALL
+        SELECT ss."id"
+        FROM "StandaloneSubscription" ss
+        LEFT JOIN "FinanceSubscriptionReadModel" rm
+          ON rm."contaId" = ss."contaId"
+         AND rm."sourceKind" = 'STANDALONE_SUBSCRIPTION'
+         AND rm."sourceId" = ss."id"
+        WHERE ss."contaId" = ${contaId}
+          AND (rm."id" IS NULL OR rm."projectedAt" < ss."updatedAt")
+        UNION ALL
+        SELECT ip."id"
+        FROM "InstallmentPlan" ip
+        LEFT JOIN "FinanceInstallmentPlanReadModel" rm
+          ON rm."contaId" = ip."contaId"
+         AND rm."sourceKind" = 'ACADEMIC_INSTALLMENT'
+         AND rm."sourceId" = ip."id"
+        WHERE ip."contaId" = ${contaId}
+          AND (rm."id" IS NULL OR rm."projectedAt" < ip."updatedAt")
+        UNION ALL
+        SELECT sip."id"
+        FROM "StandaloneInstallmentPlan" sip
+        LEFT JOIN "FinanceInstallmentPlanReadModel" rm
+          ON rm."contaId" = sip."contaId"
+         AND rm."sourceKind" = 'STANDALONE_INSTALLMENT'
+         AND rm."sourceId" = sip."id"
+        WHERE sip."contaId" = ${contaId}
+          AND (rm."id" IS NULL OR rm."projectedAt" < sip."updatedAt")
+      ) lag) AS "billingReadModelLag",
+      (SELECT COUNT(*) FROM "FinancialTransactionSnapshot" WHERE "contaId" = ${contaId}) AS "transactionCount",
+      (SELECT COUNT(*) FROM "FinanceDailyAggregate" WHERE "contaId" = ${contaId} AND "calculatedAt" >= ${aggregateStaleBefore}) AS "freshDailyAggregates"
+  `;
+
+  const row = rows[0];
+  if (!row) throw new Error('Não foi possível coletar métricas financeiras.');
+
+  const webhookBacklog = Number(row.webhookBacklog);
+  const staleWebhooks = Number(row.staleWebhooks);
+  const failedWebhooks = Number(row.failedWebhooks);
+  const notificationBacklog = Number(row.notificationBacklog);
+  const failedNotifications = Number(row.failedNotifications);
+  const notificationSyncBacklog = Number(row.notificationSyncBacklog);
+  const failedNotificationSyncs = Number(row.failedNotificationSyncs);
+  const failedJobs = Number(row.failedJobs);
+  const staleJobs = Number(row.staleJobs);
+  const customerWithAsaas = Number(row.customerWithAsaas);
+  const customerSnapshots = Number(row.customerSnapshots);
+  const billingReadModelLag = Number(row.billingReadModelLag);
+  const transactionCount = Number(row.transactionCount);
+  const freshDailyAggregates = Number(row.freshDailyAggregates);
 
   const missingCustomerSnapshots = Math.max(0, customerWithAsaas - customerSnapshots);
   const aggregateMissing = transactionCount > 0 && freshDailyAggregates === 0 ? 1 : 0;
@@ -401,7 +387,7 @@ export async function evaluateFinancialOperationalHealth(
   const accounts: FinancialOperationalAccountHealth[] = [];
 
   for (const contaId of contaIds) {
-    const metrics = await collectMetrics(contaId);
+    const metrics = await collectFinancialOperationalMetrics(contaId);
     const persisted = await persistAlerts(contaId, metrics);
     accounts.push({
       contaId,

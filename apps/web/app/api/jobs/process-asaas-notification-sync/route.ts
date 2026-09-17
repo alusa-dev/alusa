@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { processAsaasNotificationSyncOutbox } from '@alusa/finance';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
+import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -18,6 +19,7 @@ function clampPositiveInt(value: string | null, fallback: number, max: number) {
  * fluxo de cobrança. Não cria, cancela ou altera pagamentos.
  */
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -32,9 +34,10 @@ async function run(req: Request) {
       maxAttempts: clampPositiveInt(url.searchParams.get('maxAttempts'), 8, 20),
     });
 
+    logJobResult('process-asaas-notification-sync', startedAt, result);
     return NextResponse.json({ success: result.failed === 0, result });
   } catch (error) {
-    console.error('[Job Process Asaas Notification Sync] Erro:', error);
+    logJobFailure('process-asaas-notification-sync', startedAt, error);
     return NextResponse.json(
       { error: { code: 'ERRO_JOB', message: 'Não foi possível processar a fila de notificações.' } },
       { status: 500 },

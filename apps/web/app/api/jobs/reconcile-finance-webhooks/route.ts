@@ -4,6 +4,7 @@ import {
   reconcileFinanceWebhooksJob,
   syncPaymentStateFromAsaas,
 } from '@alusa/finance';
+import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -34,6 +35,7 @@ function jsonError(status: number, code: string, message: string) {
  * - includeGaps (opcional): se true inclui detecção de gaps local (default true no cron)
  */
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -62,6 +64,8 @@ async function run(req: Request) {
       if (!result.success) {
         return jsonError(422, 'PAGAMENTO_NAO_RECONCILIADO', result.error);
       }
+
+      logJobResult('reconcile-finance-webhooks', startedAt, result, { targetedPayment: true });
 
       return NextResponse.json({
         success: true,
@@ -118,6 +122,10 @@ async function run(req: Request) {
       });
 
       const accountResult = job.results[0];
+      logJobResult('reconcile-finance-webhooks', startedAt, job, {
+        targetedAccount: true,
+        partial: job.outcome === 'partial',
+      });
       return NextResponse.json({
         success: job.outcome === 'completed',
         mode: 'webhooks',
@@ -132,13 +140,18 @@ async function run(req: Request) {
       maxAccounts,
     });
 
+    logJobResult('reconcile-finance-webhooks', startedAt, job, {
+      targetedAccount: false,
+      partial: job.outcome === 'partial',
+    });
+
     return NextResponse.json({
       success: job.outcome === 'completed',
       mode: 'webhooks',
       job,
     }, { status: job.outcome === 'failed' ? 502 : job.outcome === 'partial' ? 207 : 200 });
   } catch (error) {
-    console.error('[Job Reconcile Finance Webhooks] Erro não classificado:', error instanceof Error ? error.name : 'UNKNOWN_ERROR');
+    logJobFailure('reconcile-finance-webhooks', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível concluir a reconciliação financeira.');
   }
 }

@@ -3,13 +3,7 @@ import { FormaPagamento, Prisma, StatusCobranca } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
 import { resetDb } from '../utils/reset-db';
-import {
-  prisma,
-  registerAndLogin,
-  getContaId,
-  TEST_ADMIN_EMAIL,
-  createResponsavelWithTwoAlunos,
-} from '../utils/fixtures';
+import { prisma, registerAndLogin, getContaId, createResponsavelWithTwoAlunos } from '../utils/fixtures';
 
 import { criarMatricula } from '../../../src/server/matriculas/matricula.service';
 import { applyMatriculaTimeoutJob } from '../../../../../packages/finance/dist/jobs/apply-matricula-timeout.js';
@@ -27,13 +21,13 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
 
   test('cria matrícula com cobrança e BillingMode padrão', async () => {
     const contaId = await getContaId();
-    const usuario = await prisma.usuario.findUnique({
-      where: { email: TEST_ADMIN_EMAIL },
+    const usuario = await prisma.usuario.findFirst({
+      where: { contaId },
       select: { id: true },
     });
     if (!usuario) throw new Error('Usuário não encontrado');
 
-    const { turmaId, planoId } = await createTurmaEPlano(contaId);
+    const { turmaId, planoId, modeloId } = await createTurmaEPlano(contaId);
     const { alunoId, responsavelId } = await createAlunoComResponsavel(contaId);
 
     const result = await criarMatricula({
@@ -52,30 +46,49 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
       formaPagamento: FormaPagamento.BOLETO,
       createdById: usuario.id,
       responsavelFinanceiroId: responsavelId,
+      modeloId,
     });
 
-    expect(result.cobrancas.mensalidade).not.toBeNull();
+    // O fluxo atual persiste a matrícula e agenda o provisionamento financeiro
+    // na outbox; a cobrança mensal só é materializada após a confirmação do
+    // provisionamento remoto. Isso evita manter a transação HTTP aberta durante
+    // a chamada externa e mantém o retry idempotente.
+    expect(result.cobrancas.mensalidade).toBeNull();
+    expect(result.billingOutboxEventId).toBeTruthy();
 
     const matricula = await prisma.matricula.findUnique({
       where: { id: result.matricula.id },
-      select: { billingMode: true },
+      select: { billingMode: true, billingProvisionStatus: true },
     });
     expect(matricula?.billingMode).toBe('INDIVIDUAL');
+    expect(matricula?.billingProvisionStatus).toBe('PENDENTE');
+
+    const outbox = await prisma.matriculaBillingOutbox.findUnique({
+      where: { id: result.billingOutboxEventId! },
+      select: { contaId: true, matriculaId: true, status: true, eventType: true },
+    });
+    expect(outbox).toEqual({
+      contaId,
+      matriculaId: result.matricula.id,
+      status: 'PENDING',
+      eventType: 'PROVISION_ENROLLMENT_BILLING',
+    });
 
     const cobrancas = await prisma.cobranca.count({
       where: { matriculaId: result.matricula.id, tipo: 'MENSALIDADE' },
     });
-    expect(cobrancas).toBe(1);
+    expect(cobrancas).toBe(0);
   });
 
   test('troca de pagador sem duplicar cobrança e audita', async () => {
     const contaId = await getContaId();
+    const actorId = await getUsuarioId(contaId);
     const { alunoA, matriculaA } = await createResponsavelWithTwoAlunos({ contaId });
     const newResponsavel = await prisma.responsavel.create({
       data: {
         contaId,
         nome: `Responsavel Novo ${randomUUID()}`,
-        cpf: String(Math.floor(Math.random() * 90000000000) + 10000000000),
+        cpf: makeValidCpf(),
         email: `${randomUUID()}@example.com`,
         telefone: '11999999999',
         financeiro: true,
@@ -84,7 +97,7 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
     });
 
     await prisma.alunoResponsavel.create({
-      data: { alunoId: alunoA.id, responsavelId: newResponsavel.id, tipoVinculo: 'RESPONSAVEL' },
+      data: { contaId, alunoId: alunoA.id, responsavelId: newResponsavel.id, tipoVinculo: 'RESPONSAVEL' },
     });
 
     await prisma.cobranca.create({
@@ -108,7 +121,7 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
       contaId,
       matriculaId: matriculaA.id,
       newResponsavelId: newResponsavel.id,
-      actor: { type: 'USER', id: 'tester' },
+      actor: { type: 'USER', id: actorId },
       idempotencyKey: 'change-payer-1',
     });
 
@@ -136,13 +149,14 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
 
   test('idempotência na troca de pagador (mesma idempotencyKey)', async () => {
     const contaId = await getContaId();
+    const actorId = await getUsuarioId(contaId);
     const { alunoA, matriculaA } = await createResponsavelWithTwoAlunos({ contaId });
 
     const novoResponsavel = await prisma.responsavel.create({
       data: {
         contaId,
         nome: `Responsavel Novo ${randomUUID()}`,
-        cpf: String(Math.floor(Math.random() * 90000000000) + 10000000000),
+        cpf: makeValidCpf(),
         email: `${randomUUID()}@example.com`,
         telefone: '11999999999',
         financeiro: true,
@@ -151,14 +165,14 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
     });
 
     await prisma.alunoResponsavel.create({
-      data: { alunoId: alunoA.id, responsavelId: novoResponsavel.id, tipoVinculo: 'RESPONSAVEL' },
+      data: { contaId, alunoId: alunoA.id, responsavelId: novoResponsavel.id, tipoVinculo: 'RESPONSAVEL' },
     });
 
     const first = await changePayer({
       contaId,
       matriculaId: matriculaA.id,
       newResponsavelId: novoResponsavel.id,
-      actor: { type: 'USER', id: 'tester' },
+      actor: { type: 'USER', id: actorId },
       idempotencyKey: 'change-payer-2',
     });
 
@@ -168,7 +182,7 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
       contaId,
       matriculaId: matriculaA.id,
       newResponsavelId: novoResponsavel.id,
-      actor: { type: 'USER', id: 'tester' },
+      actor: { type: 'USER', id: actorId },
       idempotencyKey: 'change-payer-2',
     });
 
@@ -246,8 +260,8 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
 
   test('bloqueia cobrança para aluno dependente sem responsável financeiro', async () => {
     const contaId = await getContaId();
-    const usuario = await prisma.usuario.findUnique({
-      where: { email: TEST_ADMIN_EMAIL },
+    const usuario = await prisma.usuario.findFirst({
+      where: { contaId },
       select: { id: true },
     });
     if (!usuario) throw new Error('Usuário não encontrado');
@@ -289,13 +303,14 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
 
   test('falha parcial e reprocessa troca de pagador', async () => {
     const contaId = await getContaId();
+    const actorId = await getUsuarioId(contaId);
     const { alunoA, matriculaA } = await createResponsavelWithTwoAlunos({ contaId });
 
     const novoResponsavel = await prisma.responsavel.create({
       data: {
         contaId,
         nome: `Responsavel Novo ${randomUUID()}`,
-        cpf: String(Math.floor(Math.random() * 90000000000) + 10000000000),
+        cpf: makeValidCpf(),
         email: `${randomUUID()}@example.com`,
         telefone: '11999999999',
         financeiro: true,
@@ -304,7 +319,7 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
     });
 
     await prisma.alunoResponsavel.create({
-      data: { alunoId: alunoA.id, responsavelId: novoResponsavel.id, tipoVinculo: 'RESPONSAVEL' },
+      data: { contaId, alunoId: alunoA.id, responsavelId: novoResponsavel.id, tipoVinculo: 'RESPONSAVEL' },
     });
 
     const prevMock = process.env.PAYMENTS_PROVIDER_MODE;
@@ -321,7 +336,7 @@ test.describe.serial('Financeiro PR2-PR4 (Playwright)', () => {
       contaId,
       matriculaId: matriculaA.id,
       newResponsavelId: novoResponsavel.id,
-      actor: { type: 'USER', id: 'tester' },
+      actor: { type: 'USER', id: actorId },
       idempotencyKey: 'change-payer-failure',
     });
 
@@ -409,7 +424,72 @@ async function createTurmaEPlano(contaId: string) {
     select: { id: true },
   });
 
-  return { turmaId: turma.id, planoId: plano.id };
+  const modelo = await prisma.contratoModelo.create({
+    data: {
+      contaId,
+      nome: `Modelo ${randomUUID()}`,
+      descricao: 'Modelo de contrato para teste E2E',
+      arquivoPdfUrl: 'https://example.com/contrato-e2e.pdf',
+      hashSha256: randomUUID().replaceAll('-', '').padEnd(64, '0'),
+      campos: {
+        create: [
+          {
+            contaId,
+            tipo: 'ASSINATURA',
+            papel: 'ESCOLA',
+            pagina: 1,
+            x: 10,
+            y: 10,
+            largura: 20,
+            altura: 10,
+            obrigatorio: true,
+            ordem: 0,
+          },
+          {
+            contaId,
+            tipo: 'ASSINATURA',
+            papel: 'RESPONSAVEL_OU_ALUNO',
+            pagina: 1,
+            x: 60,
+            y: 10,
+            largura: 20,
+            altura: 10,
+            obrigatorio: true,
+            ordem: 1,
+          },
+        ],
+      },
+    },
+    select: { id: true },
+  });
+
+  return { turmaId: turma.id, planoId: plano.id, modeloId: modelo.id };
+}
+
+async function getUsuarioId(contaId: string) {
+  const usuario = await prisma.usuario.findFirst({
+    where: { contaId },
+    select: { id: true },
+  });
+  if (!usuario) throw new Error('Usuário de teste não encontrado');
+  return usuario.id;
+}
+
+function makeValidCpf() {
+  const base = randomUUID()
+    .replaceAll('-', '')
+    .slice(0, 9)
+    .split('')
+    .map((digit) => Number.parseInt(digit, 16) % 10);
+  if (new Set(base).size === 1) base[8] = (base[8] + 1) % 10;
+
+  const firstDigit = base.reduce((sum, digit, index) => sum + digit * (10 - index), 0);
+  base.push((firstDigit * 10) % 11 === 10 ? 0 : (firstDigit * 10) % 11);
+
+  const secondDigit = base.reduce((sum, digit, index) => sum + digit * (11 - index), 0);
+  base.push((secondDigit * 10) % 11 === 10 ? 0 : (secondDigit * 10) % 11);
+
+  return base.join('');
 }
 
 async function createAlunoComResponsavel(contaId: string) {
@@ -436,7 +516,7 @@ async function createAlunoComResponsavel(contaId: string) {
   });
 
   await prisma.alunoResponsavel.create({
-    data: { alunoId: aluno.id, responsavelId: responsavel.id, tipoVinculo: 'RESPONSAVEL' },
+    data: { contaId, alunoId: aluno.id, responsavelId: responsavel.id, tipoVinculo: 'RESPONSAVEL' },
   });
 
   return { alunoId: aluno.id, responsavelId: responsavel.id };

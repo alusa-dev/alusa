@@ -117,9 +117,9 @@ describe('asaas-notification-sync-outbox.service', () => {
       'cus-1',
       { email: true, sms: false, whatsapp: false },
     );
-    expect(prismaMock.asaasNotificationSyncOutbox.update).toHaveBeenCalledWith(
+    expect(prismaMock.asaasNotificationSyncOutbox.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'outbox-1' },
+        where: expect.objectContaining({ id: 'outbox-1', contaId: 'conta-1' }),
         data: expect.objectContaining({ status: 'DONE' }),
       }),
     );
@@ -155,9 +155,9 @@ describe('asaas-notification-sync-outbox.service', () => {
     ensureCustomerNotificationsEnabledMock.mockRejectedValue(new Error('Asaas indisponível'));
 
     const retryResult = await processAsaasNotificationSyncOutbox({ maxAttempts: 3 });
-    expect(prismaMock.asaasNotificationSyncOutbox.update).toHaveBeenCalledWith(
+    expect(prismaMock.asaasNotificationSyncOutbox.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'outbox-2' },
+        where: expect.objectContaining({ id: 'outbox-2' }),
         data: expect.objectContaining({ status: 'FAILED', lastError: 'Asaas indisponível' }),
       }),
     );
@@ -179,9 +179,9 @@ describe('asaas-notification-sync-outbox.service', () => {
     auditRecordMock.mockResolvedValue({ id: 'audit-2' });
 
     const exhaustedResult = await processAsaasNotificationSyncOutbox({ maxAttempts: 3 });
-    expect(prismaMock.asaasNotificationSyncOutbox.update).toHaveBeenCalledWith(
+    expect(prismaMock.asaasNotificationSyncOutbox.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'outbox-3' },
+        where: expect.objectContaining({ id: 'outbox-3' }),
         data: expect.objectContaining({ status: 'EXHAUSTED' }),
       }),
     );

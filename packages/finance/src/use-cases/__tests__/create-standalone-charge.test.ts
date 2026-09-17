@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { createStandaloneCharge } from '../create-standalone-charge';
 
@@ -124,6 +124,10 @@ vi.mock('../../foundation/audit-log.service', () => ({
 }));
 
 describe('createStandaloneCharge', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   beforeEach(async () => {
     const { prisma } = await import('@alusa/database');
     vi.clearAllMocks();
@@ -566,6 +570,12 @@ describe('createStandaloneCharge', () => {
 
   describe('Assinatura manual', () => {
     it('deve criar assinatura mesmo sem delegate standaloneSubscription no runtime', async () => {
+      // Este caso valida a integração real (mockada) com o cliente Asaas.
+      // O .env.test ativa o provider mock para os demais testes, portanto o
+      // cenário precisa declarar explicitamente o modo que está exercitando.
+      vi.stubEnv('PAYMENTS_PROVIDER_MODE', 'asaas');
+      vi.stubEnv('PLAYWRIGHT_TEST', 'false');
+      vi.stubEnv('NODE_ENV', 'development');
       const { prisma, loadAsaasCredentials } = await import('@alusa/database');
       const { ensureCustomer } = await import('../ensure-customer');
       const { createSubscription, listSubscriptionPayments } = await import('@alusa/asaas');

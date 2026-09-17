@@ -502,11 +502,11 @@
           "lifecycle": "active-migration",
           "implemented": true,
           "consumers": {
-            "total": 164,
+            "total": 165,
             "bySurface": {
               "packages": 1,
               "scripts": 3,
-              "web": 160
+              "web": 161
             },
             "files": [
               {
@@ -615,7 +615,11 @@
               },
               {
                 "file": "apps/web/hooks/use-cobranca-detail-query.ts",
-                "occurrences": 3
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/lib/finance/charge-sync-client.ts",
+                "occurrences": 1
               },
               {
                 "file": "apps/web/lib/security/api-rate-limit.ts",
@@ -647,6 +651,10 @@
               },
               {
                 "file": "apps/web/tests/unit/auth.middleware.test.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/tests/unit/charge-sync-client.test.ts",
                 "occurrences": 1
               },
               {

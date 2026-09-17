@@ -210,6 +210,7 @@ describe('DTO Refactor Wave 3', () => {
         processing: 0,
         errored: 0,
         processed: 10,
+        exhausted: 0,
         highRetryBacklog: 0,
         stuckProcessing: 0,
         oldestPendingAt: null,

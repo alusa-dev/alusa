@@ -184,9 +184,10 @@ export async function processAsaasNotificationSyncOutbox(
   const maxAttempts = clampInt(input.maxAttempts, 8, 1, 20);
   const now = new Date();
   const staleProcessingBefore = new Date(now.getTime() - processingTimeoutMinutes * 60_000);
+  const tenantFilter = input.contaId ? { contaId: input.contaId } : {};
   const rows = await prisma.asaasNotificationSyncOutbox.findMany({
     where: {
-      contaId: input.contaId,
+      ...tenantFilter,
       attempts: { lt: maxAttempts },
       OR: [
         { status: { in: ['PENDING', 'FAILED'] }, nextAttemptAt: { lte: now } },
@@ -195,6 +196,18 @@ export async function processAsaasNotificationSyncOutbox(
     },
     orderBy: [{ nextAttemptAt: 'asc' }, { createdAt: 'asc' }],
     take: limit,
+    select: {
+      id: true,
+      contaId: true,
+      asaasCustomerId: true,
+      requestedChannels: true,
+      externalReference: true,
+      correlationId: true,
+      reason: true,
+      attempts: true,
+      maxAttempts: true,
+      status: true,
+    },
   });
 
   const result: ProcessAsaasNotificationSyncOutboxResult = {
@@ -209,7 +222,13 @@ export async function processAsaasNotificationSyncOutbox(
   for (const row of rows) {
     const attemptLimit = row.maxAttempts ?? maxAttempts;
     const claimed = await prisma.asaasNotificationSyncOutbox.updateMany({
-      where: { id: row.id, status: row.status, attempts: { lt: attemptLimit } },
+      where: {
+        id: row.id,
+        ...tenantFilter,
+        contaId: row.contaId,
+        status: row.status,
+        attempts: { lt: attemptLimit },
+      },
       data: {
         status: 'PROCESSING',
         processingAt: new Date(),
@@ -248,8 +267,8 @@ export async function processAsaasNotificationSyncOutbox(
       );
       if (!sync.success) throw new Error('Preferências de notificação não foram aplicadas');
 
-      await prisma.asaasNotificationSyncOutbox.update({
-        where: { id: row.id },
+      await prisma.asaasNotificationSyncOutbox.updateMany({
+        where: { id: row.id, ...tenantFilter, contaId: row.contaId },
         data: {
           status: 'DONE',
           processingAt: null,
@@ -276,8 +295,8 @@ export async function processAsaasNotificationSyncOutbox(
     } catch (error) {
       const message = safeErrorMessage(error);
       const exhausted = attempts >= attemptLimit;
-      await prisma.asaasNotificationSyncOutbox.update({
-        where: { id: row.id },
+      await prisma.asaasNotificationSyncOutbox.updateMany({
+        where: { id: row.id, ...tenantFilter, contaId: row.contaId },
         data: {
           status: exhausted ? 'EXHAUSTED' : 'FAILED',
           processingAt: null,

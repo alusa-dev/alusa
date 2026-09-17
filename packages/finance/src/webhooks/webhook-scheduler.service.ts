@@ -77,6 +77,8 @@ export interface WebhookSchedulerOptions {
   lockTtlMs?: number;
   /** Reativa filas penalizadas somente quando explicitamente autorizado. */
   recoverInterruptedWebhooks?: boolean;
+  /** Evita um segundo drain quando um worker já drenou a fila neste ciclo. */
+  skipQueueDrain?: boolean;
 }
 
 export interface WebhookMaintenanceResult {
@@ -188,16 +190,19 @@ async function runWebhookSchedulerUnlocked(
   steps.push(stuckStep);
 
   // ── Step 2: Processar fila (drain) ─────────────────────────────────────
-  const { step: drainStep } = await timed('drain_queue', () =>
-    processAsaasWebhookQueueWithInbox({
-      contaId: options.contaId,
-      limit: drainLimit,
-      statuses: ['PENDENTE', 'ERRO'],
-      source: 'WEBHOOK',
-      tenantFair: !options.contaId,
-    }),
-  );
-  steps.push(drainStep);
+  if (!options.skipQueueDrain) {
+    const { step: drainStep } = await timed('drain_queue', () =>
+      processAsaasWebhookQueueWithInbox({
+        contaId: options.contaId,
+        limit: drainLimit,
+        statuses: ['PENDENTE', 'ERRO'],
+        source: 'WEBHOOK',
+        tenantFair: !options.contaId,
+        drainSideEffects: false,
+      }),
+    );
+    steps.push(drainStep);
+  }
 
   // ── Step 2.1: Processar outbox de side effects ────────────────────────
   const { step: sideEffectsStep } = await timed('drain_side_effects', () =>
@@ -323,20 +328,12 @@ async function runWebhookSchedulerUnlocked(
       };
     }
 
-    // Count exhausted
-    const exhaustedCount = await prisma.webhookAsaas.count({
-      where: {
-        status: 'EXAURIDO',
-        ...(options.contaId ? { contaId: options.contaId } : {}),
-      },
-    });
-
     slo = evaluateWebhookSLOs({
       lagSeconds: metrics.lagSeconds,
       backlog: metrics.backlog,
       errored: metrics.errored,
       processed: metrics.processed,
-      exhausted: exhaustedCount,
+      exhausted: metrics.exhausted,
     });
   } catch {
     // fail-safe

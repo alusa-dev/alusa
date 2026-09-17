@@ -13,7 +13,7 @@
  */
 
 import { loadAsaasCredentials, prisma } from '@alusa/database';
-import type { ChargeStatus, Prisma } from '@prisma/client';
+import { Prisma, type ChargeStatus } from '@prisma/client';
 import { getInstallment, getPayment, getSubscription, listInstallmentPayments, listPayments } from '@alusa/asaas';
 import type { AsaasPayment, AsaasSubscription } from '@alusa/asaas';
 import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
@@ -70,6 +70,7 @@ export interface QueueMetricsResult {
   processing: number;
   errored: number;
   processed: number;
+  exhausted: number;
   highRetryBacklog: number;
   stuckProcessing: number;
   oldestPendingAt: Date | null;
@@ -820,44 +821,60 @@ export async function getWebhookQueueMetrics(
   const processingTimeoutMinutes = Math.max(1, options.processingTimeoutMinutes ?? DEFAULT_PROCESSING_TIMEOUT_MINUTES);
   const stuckThreshold = new Date(now.getTime() - processingTimeoutMinutes * 60_000);
 
-  const whereBase: Prisma.WebhookAsaasWhereInput = options.contaId
-    ? { contaId: options.contaId }
-    : {};
+  const tenantPredicate = options.contaId
+    ? Prisma.sql`"contaId" = ${options.contaId}`
+    : Prisma.sql`TRUE`;
+  const [row] = await prisma.$queryRaw<
+    Array<{
+      pending: bigint;
+      processing: bigint;
+      errored: bigint;
+      processed: bigint;
+      exhausted: bigint;
+      highRetryBacklog: bigint;
+      stuckProcessing: bigint;
+      oldestPendingAt: Date | null;
+    }>
+  >(Prisma.sql`
+    SELECT
+      COUNT(*) FILTER (WHERE "status" = 'PENDENTE')::bigint AS "pending",
+      COUNT(*) FILTER (WHERE "status" = 'PROCESSANDO')::bigint AS "processing",
+      COUNT(*) FILTER (WHERE "status" = 'ERRO')::bigint AS "errored",
+      COUNT(*) FILTER (WHERE "status" = 'PROCESSADO')::bigint AS "processed",
+      COUNT(*) FILTER (WHERE "status" = 'EXAURIDO')::bigint AS "exhausted",
+      COUNT(*) FILTER (
+        WHERE "status" IN ('PENDENTE', 'ERRO', 'PROCESSANDO')
+          AND "tentativas" >= 3
+      )::bigint AS "highRetryBacklog",
+      COUNT(*) FILTER (
+        WHERE "status" = 'PROCESSANDO'
+          AND ("ultimaTentativaEm" < ${stuckThreshold} OR "ultimaTentativaEm" IS NULL)
+      )::bigint AS "stuckProcessing",
+      MIN("recebidoEm") FILTER (WHERE "status" IN ('PENDENTE', 'ERRO')) AS "oldestPendingAt"
+    FROM "WebhookAsaas"
+    WHERE ${tenantPredicate}
+  `);
 
-  const [pending, processing, errored, processed, highRetryBacklog, stuckProcessing, oldestPending] = await Promise.all([
-    prisma.webhookAsaas.count({ where: { ...whereBase, status: 'PENDENTE' } }),
-    prisma.webhookAsaas.count({ where: { ...whereBase, status: 'PROCESSANDO' } }),
-    prisma.webhookAsaas.count({ where: { ...whereBase, status: 'ERRO' } }),
-    prisma.webhookAsaas.count({ where: { ...whereBase, status: 'PROCESSADO' } }),
-    prisma.webhookAsaas.count({
-      where: {
-        ...whereBase,
-        status: { in: ['PENDENTE', 'ERRO', 'PROCESSANDO'] },
-        tentativas: { gte: 3 },
-      },
-    }),
-    prisma.webhookAsaas.count({
-      where: {
-        ...whereBase,
-        status: 'PROCESSANDO',
-        OR: [
-          { ultimaTentativaEm: { lt: stuckThreshold } },
-          { ultimaTentativaEm: null },
-        ],
-      },
-    }),
-    prisma.webhookAsaas.findFirst({
-      where: {
-        ...whereBase,
-        status: { in: ['PENDENTE', 'ERRO'] },
-      },
-      orderBy: { recebidoEm: 'asc' },
-      select: { recebidoEm: true },
-    }),
-  ]);
+  const metrics = row ?? {
+    pending: 0n,
+    processing: 0n,
+    errored: 0n,
+    processed: 0n,
+    exhausted: 0n,
+    highRetryBacklog: 0n,
+    stuckProcessing: 0n,
+    oldestPendingAt: null,
+  };
+  const pending = Number(metrics.pending);
+  const processing = Number(metrics.processing);
+  const errored = Number(metrics.errored);
+  const processed = Number(metrics.processed);
+  const exhausted = Number(metrics.exhausted);
+  const highRetryBacklog = Number(metrics.highRetryBacklog);
+  const stuckProcessing = Number(metrics.stuckProcessing);
 
   const backlog = pending + processing + errored;
-  const oldestPendingAt = oldestPending?.recebidoEm ?? null;
+  const oldestPendingAt = metrics.oldestPendingAt;
   const lagSeconds = oldestPendingAt ? Math.max(0, Math.floor((now.getTime() - oldestPendingAt.getTime()) / 1000)) : null;
 
   return {
@@ -867,6 +884,7 @@ export async function getWebhookQueueMetrics(
     processing,
     errored,
     processed,
+    exhausted,
     highRetryBacklog,
     stuckProcessing,
     oldestPendingAt,

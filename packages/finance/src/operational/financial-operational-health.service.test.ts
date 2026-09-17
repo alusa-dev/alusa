@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  collectFinancialOperationalMetrics,
   hasStoredAsaasWebhookAuthTokenHash,
   listOpenFinancialOperationalAlerts,
 } from './financial-operational-health.service';
@@ -32,5 +33,36 @@ describe('financial operational health queries', () => {
       orderBy: [{ severity: 'asc' }, { lastSeenAt: 'desc' }],
       take: 100,
     });
+  });
+
+  it('consolida a coleta de métricas em uma consulta tenant-scoped', async () => {
+    const $queryRaw = vi.fn().mockResolvedValue([
+      {
+        webhookBacklog: 2n,
+        staleWebhooks: 1n,
+        failedWebhooks: 0n,
+        notificationBacklog: 3n,
+        failedNotifications: 0n,
+        notificationSyncBacklog: 1n,
+        failedNotificationSyncs: 0n,
+        failedJobs: 0n,
+        staleJobs: 0n,
+        customerWithAsaas: 4n,
+        customerSnapshots: 4n,
+        billingReadModelLag: 0n,
+        transactionCount: 1n,
+        freshDailyAggregates: 1n,
+      },
+    ]);
+
+    const metrics = await collectFinancialOperationalMetrics('conta-c', { $queryRaw } as never);
+
+    expect($queryRaw).toHaveBeenCalledTimes(1);
+    expect(metrics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'webhook_backlog', value: 2 }),
+      expect.objectContaining({ key: 'notification_outbox_backlog', value: 3 }),
+      expect.objectContaining({ key: 'customer_snapshot_missing', value: 0 }),
+      expect.objectContaining({ key: 'finance_aggregate_missing', value: 0 }),
+    ]));
   });
 });

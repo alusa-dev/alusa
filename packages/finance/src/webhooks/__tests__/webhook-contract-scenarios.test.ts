@@ -296,6 +296,7 @@ describe('evaluateRetentionAlert', () => {
       processing: 0,
       errored: 0,
       processed: 100,
+      exhausted: 0,
       highRetryBacklog: 0,
       stuckProcessing: 0,
       oldestPendingAt: null,

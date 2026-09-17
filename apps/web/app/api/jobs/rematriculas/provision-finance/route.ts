@@ -7,6 +7,9 @@ import {
   provisionFutureFinancialAgreementsFromJob,
 } from '@/src/server/matriculas/renewal-job-commands.service';
 
+export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
+
 const bodySchema = z.object({
   contaId: z.string().trim().min(1).optional(),
   now: z.string().datetime().or(z.string().date()).optional(),

@@ -8,6 +8,7 @@ import {
 } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
 
 function dayBounds(reference = new Date()) {
   const start = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate());

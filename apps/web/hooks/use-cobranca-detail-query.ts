@@ -3,6 +3,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { StatusCobranca } from '@prisma/client';
 
+import { requestCobrancaAsaasSync } from '@/lib/finance/charge-sync-client';
+
 const TERMINAL_STATUSES = new Set<StatusCobranca>([
   'PAGO',
   'CANCELADO',
@@ -12,7 +14,6 @@ const TERMINAL_STATUSES = new Set<StatusCobranca>([
 
 const SYNC_THROTTLE_MS = 30_000;
 const SYNC_BURST_THROTTLE_MS = 10_000;
-const lastSyncAttemptByChargeId = new Map<string, number>();
 
 export type CobrancaDetailQueryData = {
   id: string;
@@ -37,22 +38,8 @@ async function syncPendingChargeIfNeeded(
 ): Promise<boolean> {
   if (!shouldConvergePendingCharge(data)) return false;
 
-  const now = Date.now();
   const throttleMs = burstActive ? SYNC_BURST_THROTTLE_MS : SYNC_THROTTLE_MS;
-  const lastAttempt = lastSyncAttemptByChargeId.get(id) ?? 0;
-  if (now - lastAttempt < throttleMs) return false;
-
-  lastSyncAttemptByChargeId.set(id, now);
-
-  try {
-    const response = await fetch(`/api/cobrancas/${id}/sync-asaas`, {
-      method: 'POST',
-      headers: { Accept: 'application/json' },
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
+  return requestCobrancaAsaasSync(id, { throttleMs });
 }
 
 async function fetchCobrancaDetail(

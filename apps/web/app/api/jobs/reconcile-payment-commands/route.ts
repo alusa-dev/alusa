@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { reconcileOutboundFinancialOperations, reconcilePendingPaymentCommands } from '@alusa/finance';
 import { reconcileEnrollmentCreationOperations } from '@/src/server/matriculas/reconcile-enrollment-creation-operations';
+import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -52,6 +53,7 @@ async function runStage<T>(stage: ReconciliationStage, run: () => Promise<T>): P
  * - staleOlderThanMinutes (opcional): idade para abrir divergência, default 10.
  */
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -113,6 +115,9 @@ async function run(req: Request) {
     const commands = commandsResult.value;
     const creations = creationsResult.value;
     const enrollmentCreations = enrollmentCreationsResult.value;
+    logJobResult('reconcile-payment-commands', startedAt, commands, {
+      failedStages: 0,
+    });
     // Preserva o contrato legado em `result` e expõe a nova trilha separadamente.
     return NextResponse.json({
       success: true,
@@ -122,6 +127,7 @@ async function run(req: Request) {
     });
   } catch (error) {
     const correlationId = randomUUID();
+    logJobFailure('reconcile-payment-commands', startedAt, error);
     console.error('[job:reconcile-payment-commands]', {
       event: 'request_failed',
       correlationId,

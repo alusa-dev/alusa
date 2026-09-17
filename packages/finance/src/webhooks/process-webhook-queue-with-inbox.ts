@@ -9,6 +9,14 @@ import { processAsaasWebhookQueue } from './asaas-webhook-handler.server';
 export type ProcessAsaasWebhookQueueParams = Parameters<typeof processAsaasWebhookQueue>[0];
 export type ProcessAsaasWebhookQueueResult = Awaited<ReturnType<typeof processAsaasWebhookQueue>>;
 
+export type ProcessAsaasWebhookQueueWithInboxOptions = ProcessAsaasWebhookQueueParams & {
+  /**
+   * Mantém compatibilidade para chamadas inline, mas permite que o scheduler
+   * faça o drain de side effects exatamente uma vez em um passo próprio.
+   */
+  drainSideEffects?: boolean;
+};
+
 function groupCandidatesByConta(
   processedPayments: ProcessAsaasWebhookQueueResult['processedPayments'],
 ): Map<string, BillingNotificationCandidate[]> {
@@ -34,7 +42,7 @@ function groupCandidatesByConta(
  * Processa fila de webhooks Asaas e enfileira efeitos colaterais (inbox) via outbox.
  */
 export async function processAsaasWebhookQueueWithInbox(
-  params?: ProcessAsaasWebhookQueueParams,
+  params?: ProcessAsaasWebhookQueueWithInboxOptions,
 ): Promise<ProcessAsaasWebhookQueueResult> {
   const result = await processAsaasWebhookQueue(params);
 
@@ -49,12 +57,14 @@ export async function processAsaasWebhookQueueWithInbox(
       });
     }
 
-    await drainFinanceWebhookSideEffectOutbox({
-      contaId: params?.contaId,
-      limit: Math.max(50, params?.limit ?? 100),
-    });
+    if (params?.drainSideEffects !== false) {
+      await drainFinanceWebhookSideEffectOutbox({
+        contaId: params?.contaId,
+        limit: Math.max(50, params?.limit ?? 100),
+      });
+    }
   } catch (error) {
-    console.warn('[processAsaasWebhookQueueWithInbox] Falha não crítica ao enfileirar/drenar outbox', {
+    console.warn('[processAsaasWebhookQueueWithInbox] Falha não crítica ao enfileirar outbox', {
       message: error instanceof Error ? error.message : String(error),
     });
   }

@@ -6,8 +6,10 @@ import {
   runWebhookQueuePreflight,
 } from '@alusa/finance';
 import { apiJsonError } from '@/lib/api/standard-response';
+import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
 
 function jsonError(status: number, code: string, message: string) {
   return apiJsonError(status, code, message);
@@ -26,6 +28,7 @@ function jsonError(status: number, code: string, message: string) {
  * - skipPreflight (opcional): se "true", pula stuck recovery e marcação DLQ.
  */
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -53,6 +56,7 @@ async function run(req: Request) {
       limit,
       statuses: onlyErrored ? ['ERRO'] : ['PENDENTE', 'ERRO'],
       source: tenantScope.isCron ? 'WEBHOOK' : 'REPROCESS',
+      drainSideEffects: false,
     });
 
     const sideEffects = await drainFinanceWebhookSideEffectOutbox({
@@ -60,14 +64,21 @@ async function run(req: Request) {
       limit: Math.max(50, limit),
     });
 
-    return NextResponse.json({
+    const response = {
       success: true,
       preflight,
       processed,
       sideEffects,
-    });
+    };
+    logJobResult('process-finance-webhooks', startedAt, {
+      processed: processed.processed,
+      failed: processed.failed,
+      sideEffectsProcessed: sideEffects.processed,
+      sideEffectsFailed: sideEffects.failed,
+    }, { hasTenantScope: Boolean(contaId) });
+    return NextResponse.json(response);
   } catch (error) {
-    console.error('[Job Process Finance Webhooks] Erro:', error);
+    logJobFailure('process-finance-webhooks', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível processar os webhooks financeiros.');
   }
 }

@@ -19,6 +19,7 @@
     "audit:api-canonicalization": "node scripts/audit-api-canonicalization.mjs",
     "audit:http-contracts": "node scripts/audit-http-contracts.mjs",
     "audit:rate-limit": "node scripts/audit-rate-limit-policy.mjs",
+    "audit:job-contracts": "node scripts/audit-job-contracts.mjs",
     "audit:lib-boundaries": "node scripts/audit-lib-boundaries.mjs",
     "audit:package-graph": "node scripts/audit-package-graph.mjs",
     "check:nul-bytes": "node scripts/check-nul-bytes.mjs",

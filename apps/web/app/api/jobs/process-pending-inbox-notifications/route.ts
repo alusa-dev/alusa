@@ -3,6 +3,7 @@ import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { processPendingInboxNotifications } from '@alusa/lib/notifications/pending-inbox-notifications';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });

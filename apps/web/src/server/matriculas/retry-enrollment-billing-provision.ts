@@ -82,6 +82,12 @@ export async function retryEnrollmentBillingProvisionJob(
     },
     orderBy: { createdAt: 'asc' },
     take: limit,
+    select: {
+      id: true,
+      contaId: true,
+      billingMode: true,
+      billingProvisionStatus: true,
+    },
   });
 
   result.scanned = candidates.length;
@@ -142,7 +148,7 @@ export async function retryEnrollmentBillingProvisionJob(
         );
         if (!subscriptionTargetId) {
           await prisma.matricula.update({
-            where: { id: matricula.id },
+            where: { id: matricula.id, contaId: matricula.contaId },
             data: billingProvisionUpdate(
               MatriculaBillingProvisionStatus.FALHO,
               'COBRANCA_UNIFICADA_SEM_ASSINATURA_DESTINO',

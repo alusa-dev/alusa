@@ -3,6 +3,7 @@ import { evaluateFinancialOperationalHealth } from '@alusa/finance';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { apiJsonError } from '@/lib/api/standard-response';
+import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -17,6 +18,7 @@ function clampPositiveInt(value: string | null, fallback: number, max: number) {
 }
 
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -30,9 +32,10 @@ async function run(req: Request) {
       maxAccounts: clampPositiveInt(url.searchParams.get('maxAccounts'), 50, 200),
     });
 
+    logJobResult('evaluate-financial-operational-health', startedAt, result);
     return NextResponse.json({ success: true, result });
   } catch (error) {
-    console.error('[Job Evaluate Financial Operational Health] Erro:', error);
+    logJobFailure('evaluate-financial-operational-health', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível avaliar a saúde operacional financeira.');
   }
 }
