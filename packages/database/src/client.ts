@@ -82,12 +82,11 @@ if (process.env.NODE_ENV !== 'production') {
   assertSafeDatabaseEnv(process.env.NODE_ENV === 'test' ? 'test' : 'dev');
 }
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
-  });
+export const prisma = globalForPrisma.prisma ?? new PrismaClient({
+  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+});
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = prisma;
-}
+// Reutiliza o singleton também em produção. Em Vercel isso limita a criação
+// de múltiplos pools durante reavaliações do módulo dentro da mesma instância,
+// sem compartilhar conexões entre instâncias distintas.
+globalForPrisma.prisma = prisma;

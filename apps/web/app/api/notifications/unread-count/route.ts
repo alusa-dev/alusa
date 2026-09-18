@@ -7,15 +7,23 @@ import {
 } from '@/lib/notifications/notification-cache';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { getRequestId } from '@/lib/observability/api-logger';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
+const inFlightCounts = new Map<string, Promise<number>>();
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-export async function GET(_req: NextRequest) {
+function isDatabasePoolTimeout(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('connection pool') || message.includes('P2024');
+}
+
+export async function GET(req: NextRequest) {
   const timer = createPerfTimer('api/notifications/unread-count');
+  const requestId = getRequestId(req);
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) {
@@ -33,23 +41,50 @@ export async function GET(_req: NextRequest) {
       return json(200, cached.body);
     }
 
-    const body = {
-      count: await withPerfTimer(
+    const requestKey = `${user.contaId}:${user.id}`;
+    let countPromise = inFlightCounts.get(requestKey);
+    if (!countPromise) {
+      countPromise = withPerfTimer(
         'notifications',
         'getUnreadNotificationCount',
         () => getUnreadNotificationCount({ contaId: user.contaId!, userId: user.id! }),
         { contaId: user.contaId },
-      ),
-    };
+      );
+      inFlightCounts.set(requestKey, countPromise);
+      void countPromise
+        .then(
+          () => inFlightCounts.delete(requestKey),
+          () => inFlightCounts.delete(requestKey),
+        );
+    }
+
+    const body = { count: await countPromise };
     await setNotificationCache(cacheKey, body, {
       ttlSeconds: 60,
       staleWhileRevalidateSeconds: 240,
+    }).catch((cacheError) => {
+      console.warn(JSON.stringify({
+        level: 'warning',
+        type: 'notification_cache_write_failed',
+        route: 'api/notifications/unread-count',
+        contaId: user.contaId,
+        error: cacheError instanceof Error ? cacheError.message : String(cacheError),
+      }));
     });
     timer.end('GET /notifications/unread-count (cache miss)');
 
     return json(200, body);
   } catch (error) {
-    console.error('[Notifications][UnreadCount][GET]', error);
+    console.error(JSON.stringify({
+      level: 'error',
+      type: isDatabasePoolTimeout(error)
+        ? 'database_pool_timeout'
+        : 'notification_unread_count_failed',
+      route: 'api/notifications/unread-count',
+      requestId,
+      errorName: error instanceof Error ? error.name : undefined,
+      error: error instanceof Error ? error.message : String(error),
+    }));
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível carregar o contador de notificações.' });
   }
 }

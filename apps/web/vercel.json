@@ -30,7 +30,7 @@
       "schedule": "*/10 * * * *"
     },
     {
-      "path": "/api/jobs/webhook-maintenance?autoRepair=true",
+      "path": "/api/jobs/webhook-maintenance",
       "schedule": "10 * * * *"
     },
     {

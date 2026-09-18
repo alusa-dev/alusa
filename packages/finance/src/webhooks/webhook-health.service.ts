@@ -81,6 +81,7 @@ export async function checkWebhookHealth(opts?: {
     select: {
       id: true,
       asaasAccountId: true,
+      apiKeyStatus: true,
       financeProfile: { select: { contaId: true } },
     },
   });
@@ -193,6 +194,41 @@ export async function checkWebhookHealth(opts?: {
       }
     } catch (err) {
       const failure = classifyAsaasOperationalError(err, 'subaccount');
+      if (failure.category === 'invalid_subaccount_credentials') {
+        let transitionedToInvalid = false;
+        const updateAccount = (prisma.asaasAccount as typeof prisma.asaasAccount & {
+          updateMany?: typeof prisma.asaasAccount.updateMany;
+        }).updateMany;
+        if (typeof updateAccount === 'function') {
+          try {
+            const updateResult = await updateAccount({
+              where: { id: account.id, apiKeyStatus: { not: 'INVALID' } },
+              data: {
+                apiKeyStatus: 'INVALID' as never,
+                operationalStatus: 'API_KEY_REQUIRED' as never,
+                lastApiKeyCheckAt: new Date(),
+                lastHealthCheckAt: new Date(),
+              },
+            });
+            transitionedToInvalid = updateResult.count > 0;
+          } catch (updateError) {
+            console.warn('[webhook-health] Falha ao marcar credencial inválida', redactWebhookLogObject({
+              contaId,
+              error: updateError,
+            }));
+          }
+        }
+
+        if (transitionedToInvalid) {
+          await alertService.dispatch({
+            severity: 'critical',
+            title: 'Credencial Asaas inválida',
+            message: 'A credencial da subconta Asaas foi rejeitada. As rotinas externas foram interrompidas até a reconexão.',
+            contaId,
+            metadata: { status: failure.status, category: failure.category },
+          }).catch(() => undefined);
+        }
+      }
       result.errors.push({
         contaId,
         error: failure.message,

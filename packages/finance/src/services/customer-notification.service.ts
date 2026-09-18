@@ -277,6 +277,43 @@ async function rememberWhatsappCapability(input: {
   });
 }
 
+function isPrismaConnectionPoolTimeout(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('connection pool') || message.includes('P2024');
+}
+
+/**
+ * A capacidade de WhatsApp é um read model auxiliar. Ela nunca deve fazer a
+ * sincronização principal de notificações falhar, especialmente em funções
+ * serverless onde vários customers podem compartilhar um pool pequeno.
+ * Deduplicamos por evento e serializamos as escritas para evitar rajadas.
+ */
+async function rememberWhatsappCapabilitiesSafely(
+  inputs: Array<Parameters<typeof rememberWhatsappCapability>[0]>,
+): Promise<void> {
+  const unique = new Map(
+    inputs.map((input) => [capabilityKey(input.notification.event, input.notification.scheduleOffset), input]),
+  );
+
+  for (const input of unique.values()) {
+    try {
+      await rememberWhatsappCapability(input);
+    } catch (error) {
+      console.warn(JSON.stringify({
+        level: 'warning',
+        type: isPrismaConnectionPoolTimeout(error)
+          ? 'database_pool_timeout_non_critical'
+          : 'notification_capability_persist_failed',
+        operation: 'asaas_notification_preference.upsert',
+        contaId: input.contaId,
+        event: input.notification.event,
+        scheduleOffset: input.notification.scheduleOffset,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+}
+
 function withoutId(update: AsaasNotificationUpdate): Omit<AsaasNotificationUpdate, 'id'> {
   const { id: _id, ...body } = update;
   return body;
@@ -485,16 +522,14 @@ export async function syncCustomerNotificationChannels(
     }
 
     if (sandboxEnv && preferences.whatsapp) {
-      await Promise.all(
-        notifications.map((notification) =>
-          rememberWhatsappCapability({
+      await rememberWhatsappCapabilitiesSafely(
+        notifications.map((notification) => ({
             contaId,
             notification,
             supported: false,
             code: 'sandbox_unsupported',
             environment: 'sandbox',
-          }),
-        ),
+        })),
       );
     }
 
@@ -550,18 +585,16 @@ export async function syncCustomerNotificationChannels(
 
     if (batchRes.ok) {
       const environment = sandboxEnv ? 'sandbox' : 'production';
-      await Promise.all(
+      await rememberWhatsappCapabilitiesSafely(
         updatesNeeded
           .filter((task) => task.desired.whatsappEnabledForCustomer)
-          .map((task) =>
-            rememberWhatsappCapability({
+          .map((task) => ({
               contaId,
               notification: task.notification,
               supported: true,
               code: null,
               environment,
-            }),
-          ),
+          })),
       );
 
       return {
@@ -624,13 +657,13 @@ export async function syncCustomerNotificationChannels(
         appliedDesired.push({ desired: task.desired });
 
         if (task.desired.whatsappEnabledForCustomer) {
-          await rememberWhatsappCapability({
+          await rememberWhatsappCapabilitiesSafely([{
             contaId,
             notification: task.notification,
             supported: true,
             code: null,
             environment,
-          });
+          }]);
         }
 
         continue;
@@ -659,13 +692,13 @@ export async function syncCustomerNotificationChannels(
           appliedDesired.push({ desired: fallbackDesired });
 
           if (itemWhatsappInvalid && !itemMissingPhone) {
-            await rememberWhatsappCapability({
+            await rememberWhatsappCapabilitiesSafely([{
               contaId,
               notification: task.notification,
               supported: false,
               code: 'invalid_action',
               environment,
-            });
+            }]);
           }
 
           warnings.push({

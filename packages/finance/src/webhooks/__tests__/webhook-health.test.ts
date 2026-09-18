@@ -2,12 +2,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Hoisted mocks ────────────────────────────────────────────────────────
 
-const { mockFindMany, mockListWebhooks, mockRemoveBackoff, mockAuditRecord, mockLoadCreds } = vi.hoisted(() => ({
+const {
+  mockFindMany,
+  mockListWebhooks,
+  mockRemoveBackoff,
+  mockAuditRecord,
+  mockLoadCreds,
+  mockCreateNotification,
+} = vi.hoisted(() => ({
   mockFindMany: vi.fn(),
   mockListWebhooks: vi.fn(),
   mockRemoveBackoff: vi.fn(),
   mockAuditRecord: vi.fn().mockResolvedValue(undefined),
   mockLoadCreds: vi.fn(),
+  mockCreateNotification: vi.fn(),
 }));
 
 vi.mock('@alusa/database', () => ({
@@ -15,6 +23,10 @@ vi.mock('@alusa/database', () => ({
     asaasAccount: { findMany: mockFindMany, findFirst: vi.fn() },
   },
   loadAsaasCredentials: mockLoadCreds,
+}));
+
+vi.mock('@alusa/lib/services/notifications.service', () => ({
+  createNotification: mockCreateNotification,
 }));
 
 vi.mock('@alusa/asaas', () => ({
@@ -40,6 +52,11 @@ beforeEach(() => {
     apiKey: 'sandbox_key',
     apiKeyStatus: 'CONNECTED',
     source: 'asaasCredentialRef' as const,
+  });
+  mockCreateNotification.mockResolvedValue({
+    notificationId: 'notification-1',
+    created: true,
+    recipientCount: 1,
   });
 });
 

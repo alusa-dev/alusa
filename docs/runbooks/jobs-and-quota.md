@@ -22,6 +22,12 @@ O catálogo de jobs está em
 Qualquer alteração em `vercel.json` deve atualizar os dois manifests e o
 catálogo; `pnpm audit:job-contracts` bloqueia divergências.
 
+O cron `webhook-maintenance` executa apenas verificação por padrão. A remoção
+de `removeBackoff`/recuperação de fila exige uma chamada administrativa com
+`autoRepair=true`, após confirmar a causa do incidente e registrar a decisão.
+Isso evita que uma rotina periódica reative uma fila do Asaas enquanto a causa
+da interrupção ainda está presente.
+
 ## Leitura operacional
 
 Os jobs em Vercel devem produzir logs JSON com `type` igual a
@@ -56,6 +62,23 @@ Para cada incidente, verificar nesta ordem:
   webhook/reconciliação.
 - Não alterar simultaneamente timers críticos, migrations e compute.
 - Reverter a menor mudança isolada se backlog, p95 ou erro aumentarem.
+
+## Credencial Asaas inválida
+
+Quando a manutenção recebe `401`/credencial inválida de uma subconta, o estado
+local é marcado como `apiKeyStatus=INVALID` e `operationalStatus=API_KEY_REQUIRED`.
+As tentativas externas deixam de ser tratadas como retryable até a reconexão da
+conta. A primeira transição para esse estado gera alerta crítico; execuções
+posteriores não devem gerar uma nova tempestade de alertas.
+
+## Contador de notificações
+
+O contador é servido por cache por usuário/tenant. Em uma mesma instância, erros
+concorrentes para a mesma chave são coalescidos em uma única consulta. A
+persistência auxiliar de capacidades de WhatsApp é best-effort e não pode
+derrubar a sincronização principal de notificações. Falhas de pool ficam
+identificadas nos logs estruturados como `database_pool_timeout` ou
+`database_pool_timeout_non_critical`.
 
 ## Critério de saúde
 
