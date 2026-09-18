@@ -2,14 +2,14 @@ import { prisma } from '@alusa/database';
 import {
   createStandaloneCharge,
   type CreateStandaloneChargeInput,
-} from '../use-cases/create-standalone-charge.js';
+} from '../use-cases/create-standalone-charge';
 import {
   deletePayment,
   deleteSubscription,
   getSubscription,
   listPayments,
-} from '../use-cases/asaas-ops.js';
-import { projectFamilyEnrollmentFeeState } from '../projections/enrollment-fee-projection.service.js';
+} from '../use-cases/asaas-ops';
+import { projectFamilyEnrollmentFeeState } from '../projections/enrollment-fee-projection.service';
 import {
   FamilyBillingOutboxStatus,
   FamilyBillingStatus,
@@ -17,14 +17,14 @@ import {
   StatusMatricula,
   type Prisma,
 } from '@prisma/client';
-import { decideFamilySubscriptionUpdate } from './subscription-update-decision.js';
-import { materializeBillingAgreement } from '../billing-agreements/materialize.js';
+import { decideFamilySubscriptionUpdate } from './subscription-update-decision';
+import { materializeBillingAgreement } from '../billing-agreements/materialize';
 import {
   commitBillingAgreementChange,
   previewBillingAgreementChange,
-} from '../billing-agreements/runtime.js';
-import { processPendingBillingAdjustments } from '../billing-agreements/adjustment-processor.js';
-import { deriveDeterministicId } from '../core/index.js';
+} from '../billing-agreements/runtime';
+import { processPendingBillingAdjustments } from '../billing-agreements/adjustment-processor';
+import { deriveDeterministicId } from '../core/index';
 
 export type SupportedNotificationChannel = 'EMAIL' | 'SMS' | 'WHATSAPP';
 export type SupportedBillingType = 'BOLETO' | 'PIX' | 'CREDIT_CARD';

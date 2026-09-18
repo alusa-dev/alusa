@@ -34,7 +34,7 @@ export {
   projectAcademicEnrollmentFeeState,
   projectFamilyEnrollmentFeeState,
   reconcileEnrollmentFeeProjections,
-} from './projections/enrollment-fee-projection.service.js';
+} from './projections/enrollment-fee-projection.service';
 
 export {
   parseExternalReference as parseExternalReferenceV1,
@@ -1451,6 +1451,12 @@ export type { GetAccountVerificationStatusResult } from './use-cases/kyc/get-acc
 export type { SubaccountProvisioningHint } from './use-cases/kyc/subaccount-provisioning-hint';
 export { requireKycApproved, requireKycSnapshotApproved } from './foundation/kyc-guard';
 export type { RequireKycApprovedError, RequireKycSnapshotApprovedError } from './foundation/kyc-guard';
+export {
+  getTodayBrasiliaDateString,
+  isBeforeOrEqualToday,
+  isPastDate,
+  parseDateOnly,
+} from './foundation/date-guard';
 export type {
   KycViewModel,
   KycGateStatus,
@@ -1631,6 +1637,7 @@ export {
   buildWebhookRateLimitKey,
   globalWebhookRateLimiter,
   isWebhookAuthScopedRateLimitEnabled,
+  isWebhookRateLimitFailClosedEnabled,
 } from './webhooks/webhook-rate-limiter';
 
 export {
