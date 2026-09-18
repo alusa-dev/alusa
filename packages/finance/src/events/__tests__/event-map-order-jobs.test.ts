@@ -253,8 +253,12 @@ describe('reconcilePendingEventMapTicketFulfillment', () => {
   });
 
   it('returns an empty result when there are no pending fulfillment orders', async () => {
+    const resolverInputs: Array<{ contaId?: string; maxAccounts: number; maxAttempts: number }> = [];
     const dependencies = {
-      resolveTargetContaIds: async () => ['conta-1'],
+      resolveTargetContaIds: async (input: { contaId?: string; maxAccounts: number; maxAttempts: number }) => {
+        resolverInputs.push(input);
+        return ['conta-1'];
+      },
       findOrders: async () => [],
       fulfillOrder: async () => ({ ticketsCreated: 1 }),
       recordFailure: async () => undefined,
@@ -266,6 +270,7 @@ describe('reconcilePendingEventMapTicketFulfillment', () => {
     );
 
     expect(result.processed).toBe(0);
+    expect(resolverInputs).toEqual([{ contaId: 'conta-1', maxAccounts: 20, maxAttempts: 10 }]);
   });
 });
 

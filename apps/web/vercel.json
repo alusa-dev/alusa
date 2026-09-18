@@ -95,7 +95,7 @@
     },
     {
       "path": "/api/jobs/events-fulfill-tickets?maxAccounts=20&limit=100",
-      "schedule": "* * * * *"
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/jobs/process-ticket-email-outbox?limit=100",

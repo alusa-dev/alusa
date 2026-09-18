@@ -627,7 +627,11 @@ type EventMapTicketFulfillmentCandidate = {
 };
 
 type ReconcilePendingEventMapTicketFulfillmentDependencies = {
-  resolveTargetContaIds: (input: { contaId?: string; maxAccounts: number }) => Promise<string[]>;
+  resolveTargetContaIds: (input: {
+    contaId?: string;
+    maxAccounts: number;
+    maxAttempts: number;
+  }) => Promise<string[]>;
   findOrders: (input: {
     contaId: string;
     limit: number;
@@ -637,8 +641,31 @@ type ReconcilePendingEventMapTicketFulfillmentDependencies = {
   recordFailure: (input: { contaId: string; orderId: string; reason: string }) => Promise<void>;
 };
 
+async function resolveEventMapTicketFulfillmentContaIds(input: {
+  contaId?: string;
+  maxAccounts: number;
+  maxAttempts: number;
+}): Promise<string[]> {
+  if (input.contaId) return [input.contaId];
+
+  const orders = await prisma.eventMapOrder.findMany({
+    where: {
+      status: 'CONFIRMED',
+      ticketFulfillmentStatus: { in: ['PENDING', 'FAILED'] },
+      asaasPaymentId: { not: null },
+      ticketFulfillmentAttempts: { lt: input.maxAttempts },
+    },
+    select: { contaId: true },
+    distinct: ['contaId'],
+    orderBy: { updatedAt: 'asc' },
+    take: input.maxAccounts,
+  });
+
+  return orders.map((order) => order.contaId);
+}
+
 const defaultReconcilePendingEventMapTicketFulfillmentDependencies = {
-  resolveTargetContaIds: resolveEventMapContaIds,
+  resolveTargetContaIds: resolveEventMapTicketFulfillmentContaIds,
   findOrders: async (input: {
     contaId: string;
     limit: number;
@@ -704,7 +731,7 @@ export async function reconcilePendingEventMapTicketFulfillment(
       generatedAt: new Date(),
     };
 
-    const contaIds = await dependencies.resolveTargetContaIds({ contaId: input.contaId, maxAccounts });
+    const contaIds = await dependencies.resolveTargetContaIds({ contaId: input.contaId, maxAccounts, maxAttempts });
     for (const contaId of contaIds) {
       const orders = await dependencies.findOrders({ contaId, limit, maxAttempts });
       for (const order of orders) {
