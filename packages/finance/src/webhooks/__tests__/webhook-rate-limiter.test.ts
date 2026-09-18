@@ -4,7 +4,11 @@ vi.mock('@alusa/asaas', () => ({
   checkAsaasDistributedRateLimit: vi.fn(async () => null),
 }));
 
-import { buildWebhookRateLimitKey, WebhookRateLimiter } from '../webhook-rate-limiter';
+import {
+  buildWebhookRateLimitKey,
+  isWebhookRateLimitFailClosedEnabled,
+  WebhookRateLimiter,
+} from '../webhook-rate-limiter';
 
 describe('webhook-rate-limiter', () => {
   const originalEnv = { ...process.env };
@@ -52,5 +56,14 @@ describe('webhook-rate-limiter', () => {
     expect(result.backend).toBe('memory');
     expect(result.degraded).toBe(true);
     expect(result.allowed).toBe(true);
+  });
+
+  it('falha fechada por padrão em produção e permite override explícito', () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.ASAAS_WEBHOOK_RATE_LIMIT_FAIL_CLOSED;
+    expect(isWebhookRateLimitFailClosedEnabled()).toBe(true);
+
+    process.env.ASAAS_WEBHOOK_RATE_LIMIT_FAIL_CLOSED = 'false';
+    expect(isWebhookRateLimitFailClosedEnabled()).toBe(false);
   });
 });

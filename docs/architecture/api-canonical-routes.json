@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "policy": "aliases remain compatible until internal consumers, telemetry and contract tests prove zero usage",
+  "policy": "aliases remain compatible until internal consumers, telemetry and contract tests prove zero usage; new alias consumers are blocked by the deterministic inventory",
   "families": [
     {
       "context": "finance",

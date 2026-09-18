@@ -2,6 +2,7 @@ import { loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
 import {
+  AsaasHttpError,
   type AsaasFiscalInfo,
   configureNationalPortal as asaasConfigureNationalPortal,
   getFiscalInfo as asaasGetFiscalInfo,
@@ -92,6 +93,53 @@ export type GetFiscalInvoiceSettingsError =
 export type FiscalRemoteSyncMode = 'always' | 'if_stale' | 'never';
 
 const FISCAL_REMOTE_SYNC_TTL_MS = 15 * 60 * 1000;
+
+async function markFiscalInfoAsNotConfigured(contaId: string) {
+  const now = new Date();
+  const prisma = getFiscalPrisma();
+
+  return prisma.contaFiscalSettings.upsert({
+    where: { contaId },
+    create: {
+      contaId,
+      readinessStatus: 'NOT_CONFIGURED',
+      syncStatus: 'SYNCED',
+      lastSyncedAt: now,
+      asaasFiscalSyncedAt: now,
+    },
+    update: {
+      syncStatus: 'SYNCED',
+      lastSyncError: null,
+      lastSyncedAt: now,
+      asaasFiscalSyncedAt: now,
+    },
+  });
+}
+
+function hasFiscalConfiguration(settings: {
+  readinessStatus: string;
+  fiscalEmail: string | null;
+  municipalInscription: string | null;
+  stateInscription: string | null;
+  accessConfiguredAt: Date | null;
+  passwordConfigured: boolean;
+  accessTokenConfigured: boolean;
+  certificateConfigured: boolean;
+  useNationalPortal: boolean | null;
+} | null): boolean {
+  if (!settings) return false;
+  return Boolean(
+    settings.readinessStatus !== 'NOT_CONFIGURED' ||
+      settings.fiscalEmail ||
+      settings.municipalInscription ||
+      settings.stateInscription ||
+      settings.accessConfiguredAt ||
+      settings.passwordConfigured ||
+      settings.accessTokenConfigured ||
+      settings.certificateConfigured ||
+      settings.useNationalPortal !== null,
+  );
+}
 
 function shouldSyncRemoteFiscalSettings(
   settings: { asaasFiscalSyncedAt: Date | null } | null,
@@ -257,10 +305,16 @@ export async function getFiscalInvoiceSettings(input: {
     const credentials = await loadAsaasCredentials(input.contaId);
     if (credentials && shouldSyncRemoteFiscalSettings(settings, remoteSync)) {
       try {
-        const [options, remote] = await Promise.all([
+        const [options, remoteResult] = await Promise.all([
           asaasGetMunicipalOptions({ apiKey: credentials.apiKey }),
-          asaasGetFiscalInfo({ apiKey: credentials.apiKey }).catch(() => null),
+          asaasGetFiscalInfo({ apiKey: credentials.apiKey })
+            .then((remote) => ({ remote, notConfigured: false }))
+            .catch((error: unknown) => ({
+              remote: null,
+              notConfigured: error instanceof AsaasHttpError && error.status === 404,
+            })),
         ]);
+        const remote = remoteResult.remote;
         municipalOptions = options;
         if (remote) {
           try {
@@ -275,6 +329,11 @@ export async function getFiscalInvoiceSettings(input: {
           } catch (cacheError) {
             console.error('[finance][getFiscalInvoiceSettings][remoteCache]', cacheError);
           }
+        } else if (remoteResult.notConfigured) {
+          // O 404 do fiscalInfo representa uma conta ainda não configurada.
+          // Persistimos o timestamp para respeitar o TTL e não sondar o Asaas
+          // a cada abertura da tela. O marcador permanece NOT_CONFIGURED.
+          settings = await markFiscalInfoAsNotConfigured(input.contaId);
         }
       } catch {
         municipalOptions = null;
@@ -303,7 +362,7 @@ export async function getFiscalInvoiceSettings(input: {
         };
 
     return ok({
-      configured: Boolean(settings),
+      configured: hasFiscalConfiguration(settings),
       settings: settings
         ? {
             fiscalEmail: settings.fiscalEmail,

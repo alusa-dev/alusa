@@ -3,6 +3,7 @@ import path from 'node:path';
 
 const root = process.cwd();
 const outputPath = path.join(root, 'docs/architecture/package-dependency-graph.json');
+const compatibilityBaselinePath = path.join(root, 'docs/quality/package-compatibility-baseline.json');
 const workspaceRoots = ['apps', 'packages'];
 const sourceExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 const testFilePattern = /(?:\.test|\.spec)\.[^.]+$/;
@@ -260,6 +261,20 @@ function buildGraph() {
 
 const graph = buildGraph();
 const serialized = `${JSON.stringify(graph, null, 2)}\n`;
+const expectedCompatibilityEdges = fs.existsSync(compatibilityBaselinePath)
+  ? new Set(JSON.parse(fs.readFileSync(compatibilityBaselinePath, 'utf8')).map((item) => item.edge))
+  : null;
+const actualCompatibilityEdges = new Set(graph.compatibilityImports.map((edge) => `${edge.from}→${edge.to}`));
+const compatibilityRegressions = expectedCompatibilityEdges
+  ? [
+      ...[...actualCompatibilityEdges]
+        .filter((edge) => !expectedCompatibilityEdges.has(edge))
+        .map((edge) => `nova ponte não aprovada: ${edge}`),
+      ...[...expectedCompatibilityEdges]
+        .filter((edge) => !actualCompatibilityEdges.has(edge))
+        .map((edge) => `ponte aprovada ausente: ${edge}`),
+    ]
+  : [`baseline ausente: ${path.relative(root, compatibilityBaselinePath)}`];
 
 if (process.argv.includes('--write')) {
   fs.writeFileSync(outputPath, serialized, 'utf8');
@@ -278,6 +293,12 @@ console.log(`[package-graph] runtime-workspace-edges=${graph.summary.runtimeWork
 console.log(`[package-graph] compatibility-edges=${graph.summary.compatibilityEdges}`);
 console.log(`[package-graph] cycles=${graph.summary.cycles}`);
 console.log(`[package-graph] violations=${graph.summary.violations}`);
+
+if (compatibilityRegressions.length > 0) {
+  console.error('[package-graph] FALHOU: baseline de compatibility edges divergente.');
+  for (const regression of compatibilityRegressions) console.error(`- ${regression}`);
+  process.exitCode = 1;
+}
 
 if (graph.cycles.length > 0) {
   console.error('[package-graph] FALHOU: ciclo entre packages do workspace.');

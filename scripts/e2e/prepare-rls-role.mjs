@@ -92,6 +92,58 @@ try {
   await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO ${role}`);
   await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO ${role}`);
 
+  const privileges = await client.query(
+    `SELECT
+       has_database_privilege($1, $2, 'CONNECT') AS can_connect,
+       has_schema_privilege($1, 'public', 'USAGE') AS can_use_public,
+       has_schema_privilege($1, 'app_security', 'USAGE') AS can_use_security,
+       (SELECT count(*)::int FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'contaId' AND NOT a.attisdropped
+        WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity) AS tenant_rls_tables`,
+    [roleName, databaseName],
+  );
+  const privilegeState = privileges.rows[0];
+  if (
+    !privilegeState?.can_connect
+    || !privilegeState.can_use_public
+    || !privilegeState.can_use_security
+    || Number(privilegeState.tenant_rls_tables ?? 0) < 1
+  ) {
+    throw new Error('Os privilégios ou a cobertura RLS de E2E não foram aplicados ao banco atual.');
+  }
+
+  const runtimeUrl = new URL(databaseUrl);
+  runtimeUrl.username = roleName;
+  runtimeUrl.password = rolePassword;
+  const runtimeClient = new Client({ connectionString: runtimeUrl.toString() });
+  try {
+    await runtimeClient.connect();
+    const runtimeState = await runtimeClient.query(
+      `SELECT current_user AS current_user,
+              current_database() AS current_database,
+              app_security.current_conta_id() AS current_conta_id`,
+    );
+    const runtimeRow = runtimeState.rows[0];
+    if (
+      runtimeRow?.current_user !== roleName
+      || runtimeRow.current_database !== databaseName
+      || runtimeRow.current_conta_id !== null
+    ) {
+      throw new Error('A conexão de runtime RLS não iniciou com o banco ou contexto esperados.');
+    }
+
+    // O probe usa escopo de sessão porque o driver pode usar transações
+    // distintas para cada query; o runtime real usa escopo transacional.
+    await runtimeClient.query(`SELECT set_config('app.current_conta_id', $1, false)`, ['__e2e_rls_probe__']);
+    const contextCheck = await runtimeClient.query('SELECT app_security.current_conta_id() AS current_conta_id');
+    if (contextCheck.rows[0]?.current_conta_id !== '__e2e_rls_probe__') {
+      throw new Error('O contexto app.current_conta_id não está disponível para o papel de runtime.');
+    }
+  } finally {
+    await runtimeClient.end().catch(() => undefined);
+  }
+
   console.log(`[e2e][rls] OK: papel ${roleName} preparado sem SUPERUSER/BYPASSRLS.`);
 } finally {
   await client.end().catch(() => undefined);

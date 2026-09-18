@@ -19,6 +19,8 @@ export interface ApiCallHookPayload {
   httpStatus: number | null;
   durationMs: number;
   success: boolean;
+  /** True when the provider response was intentionally accepted as a known state (for example fiscalInfo 404). */
+  expectedError?: boolean;
   error?: string;
   circuitState?: string;
   rateLimitRemaining?: number;

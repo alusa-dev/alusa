@@ -93,6 +93,19 @@ export function isWebhookAuthScopedRateLimitEnabled(): boolean {
   return process.env.NODE_ENV === 'production';
 }
 
+/**
+ * Em produção, a proteção do endpoint público deve falhar fechada quando o
+ * backend distribuído não estiver disponível. O Asaas reenviará o webhook
+ * diante de um 5xx, evitando aceitar tráfego sem o limite compartilhado.
+ * Desenvolvimento/testes continuam permitindo fallback local explícito.
+ */
+export function isWebhookRateLimitFailClosedEnabled(): boolean {
+  const configured = process.env.ASAAS_WEBHOOK_RATE_LIMIT_FAIL_CLOSED;
+  if (configured === 'true') return true;
+  if (configured === 'false') return false;
+  return process.env.NODE_ENV === 'production';
+}
+
 export function buildWebhookRateLimitKey(params: {
   ip: string | null;
   contaId?: string | null;

@@ -291,6 +291,8 @@ export class AsaasHttp {
           httpStatus: response.status,
           durationMs: Date.now() - startedAt,
           success: true,
+          expectedError: isExpectedError,
+          ...(isExpectedError ? { error: `EXPECTED_HTTP_${response.status}` } : {}),
           circuitState: globalCircuitBreaker.getState(circuitKey),
           rateLimitRemaining: rateLimitInfo.remaining ?? undefined,
           quotaRemaining: quotaStatus.remaining,

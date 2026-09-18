@@ -1,0 +1,7 @@
+[
+  {
+    "file": "prisma/migrations/20260518212000_configure_app_rls_role_privileges/migration.sql",
+    "sha256": "3cde8252403f40275bbf022ba83ab7200eff61552d6c0e455e93160ceed87815",
+    "reason": "Migration histórica preservada; o bootstrap de E2E prepara os grants no banco corrente após o migrate deploy."
+  }
+]

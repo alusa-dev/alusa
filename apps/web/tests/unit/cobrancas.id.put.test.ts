@@ -35,6 +35,17 @@ vi.mock('@/lib/prisma', () => ({
 vi.mock('@alusa/finance', () => {
   class KycNotApprovedError extends Error {}
   class AsaasEnvError extends Error {}
+  class AsaasHttpError extends Error {
+    status: number;
+    responseBody?: unknown;
+
+    constructor(message: string, status: number, responseBody?: unknown) {
+      super(message);
+      this.name = 'AsaasHttpError';
+      this.status = status;
+      this.responseBody = responseBody;
+    }
+  }
   const normalizeCobrancaPaymentAdjustmentType = vi.fn((tipo?: string | null) => tipo || undefined);
   const resolveCanonicalDiscountDueDateLimit = vi.fn(() => 'ATE_VENCIMENTO');
   const buildCobrancaAsaasPaymentUpdatePayload = vi.fn(() => ({
@@ -60,6 +71,8 @@ vi.mock('@alusa/finance', () => {
   return {
     KycNotApprovedError,
     AsaasEnvError,
+    AsaasHttpError,
+    getTodayBrasiliaDateString: vi.fn(() => '2026-01-01'),
     evaluatePaymentActionPolicy,
     normalizeCobrancaPaymentAdjustmentType,
     resolveCanonicalDiscountDueDateLimit,
@@ -84,7 +97,7 @@ vi.mock('@alusa/finance', () => {
 });
 
 import { prisma } from '@/lib/prisma';
-import { readPaymentFullPreflight, updatePayment } from '@alusa/finance';
+import { AsaasHttpError, readPaymentFullPreflight, updatePayment } from '@alusa/finance';
 import { PUT } from '@/app/api/cobrancas/[id]/route';
 
 const buildPutRequest = (url: string, body: unknown): NextRequest =>
@@ -128,7 +141,7 @@ describe('PUT /api/cobrancas/[id]', () => {
     const res = await PUT(
       buildPutRequest('http://localhost/api/cobrancas/cob-1', {
         valor: 200,
-        vencimento: '2026-01-10',
+        vencimento: '2099-01-10',
         descricao: 'Teste',
       }),
       { params: { id: 'cob-1' } },
@@ -221,6 +234,72 @@ describe('PUT /api/cobrancas/[id]', () => {
     expect(prisma.cobranca.findFirst).not.toHaveBeenCalled();
     expect(readPaymentFullPreflight).not.toHaveBeenCalled();
     expect(updatePayment).not.toHaveBeenCalled();
+  });
+
+  it('rejeita vencimento anterior ao dia atual antes de chamar o Asaas', async () => {
+    mockGetSessionUser.mockResolvedValue({
+      id: 'u1', role: 'FINANCEIRO', contaId: 'conta-1',
+    });
+
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
+      id: 'cob-1',
+      status: 'PENDENTE',
+      asaasPaymentId: 'pay_1',
+      matricula: { aluno: { contaId: 'conta-1' } },
+    } as never);
+
+    const res = await PUT(
+      buildPutRequest('http://localhost/api/cobrancas/cob-1', {
+        vencimento: '2020-01-05',
+      }),
+      { params: { id: 'cob-1' } },
+    );
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toMatchObject({
+      success: false,
+      error: 'Não foi possível atualizar a cobrança. Informe uma data de vencimento igual ou posterior a 2026-01-01. A cobrança permanece inalterada.',
+      code: 'DATA_VENCIMENTO_ASAAS_INVALIDA',
+    });
+    expect(readPaymentFullPreflight).not.toHaveBeenCalled();
+    expect(updatePayment).not.toHaveBeenCalled();
+    expect(prisma.cobranca.update).not.toHaveBeenCalled();
+  });
+
+  it('mapeia rejeição de validação do Asaas para 422 sem usar 500', async () => {
+    mockGetSessionUser.mockResolvedValue({
+      id: 'u1', role: 'FINANCEIRO', contaId: 'conta-1',
+    });
+
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
+      id: 'cob-1',
+      status: 'PENDENTE',
+      asaasPaymentId: 'pay_1',
+      matricula: { aluno: { contaId: 'conta-1' } },
+    } as never);
+    vi.mocked(updatePayment).mockRejectedValueOnce(
+      new AsaasHttpError(
+        'A data mínima de vencimento para novas cobranças é 18/09/2026.',
+        400,
+        { errors: [{ code: 'invalid_object', description: 'data inválida' }] },
+      ),
+    );
+
+    const res = await PUT(
+      buildPutRequest('http://localhost/api/cobrancas/cob-1', {
+        vencimento: '2099-01-05',
+      }),
+      { params: { id: 'cob-1' } },
+    );
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toMatchObject({
+      success: false,
+      error: 'Não foi possível atualizar a cobrança. Informe uma data de vencimento igual ou posterior a 18/09/2026. A cobrança permanece inalterada.',
+      code: 'ASAAS_OPERACAO_REJEITADA',
+      providerStatus: 400,
+    });
+    expect(prisma.cobranca.update).not.toHaveBeenCalled();
   });
 
   it('retorna 409 com código de domínio ao editar cobrança recebida em dinheiro no Asaas', async () => {

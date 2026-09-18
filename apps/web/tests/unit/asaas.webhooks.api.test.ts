@@ -32,6 +32,7 @@ vi.mock('@alusa/finance', () => ({
   isAsaasWebhookIpAllowed: vi.fn(() => true),
   shouldBlockAsaasWebhookByIp: vi.fn(() => false),
   buildWebhookRateLimitKey: vi.fn(({ ip }) => `ip:${ip ?? 'unknown'}`),
+  isWebhookRateLimitFailClosedEnabled: vi.fn(() => false),
   redactWebhookLogObject: vi.fn((value) => value),
   globalWebhookRateLimiter: {
     check: vi.fn(() => ({ allowed: true, resetMs: 0 })),
@@ -48,7 +49,11 @@ vi.mock('../../lib/notifications/emit-billing-notifications', () => ({
   emitBillingNotifications: vi.fn(),
 }));
 
-const { handleAsaasWebhookEvent, globalWebhookRateLimiter } = await import('@alusa/finance');
+const {
+  handleAsaasWebhookEvent,
+  globalWebhookRateLimiter,
+  isWebhookRateLimitFailClosedEnabled,
+} = await import('@alusa/finance');
 
 describe('POST /api/webhooks/asaas', () => {
   beforeEach(() => {
@@ -252,6 +257,27 @@ describe('POST /api/webhooks/asaas', () => {
     expect(res.status).toBe(429);
     expect(JSON.stringify(warnSpy.mock.calls)).not.toContain('raw-token-with-enough-length');
     warnSpy.mockRestore();
+  });
+
+  it('retorna 503 quando o rate limit distribuído está indisponível em modo fail-closed', async () => {
+    vi.mocked(globalWebhookRateLimiter.checkAsync).mockResolvedValueOnce({
+      allowed: true,
+      remaining: 199,
+      resetMs: 60_000,
+      backend: 'memory',
+      degraded: true,
+    });
+    vi.mocked(isWebhookRateLimitFailClosedEnabled).mockReturnValueOnce(true);
+
+    const res = await POST(createRequest({
+      body: { event: 'PAYMENT_RECEIVED', payment: { id: 'pay_123' } },
+      signatureHeader: { name: 'asaas-access-token', value: 'token-official' },
+    }));
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('60');
+    expect(await res.json()).toMatchObject({ error: 'RATE_LIMIT_UNAVAILABLE' });
+    expect(handleAsaasWebhookEvent).not.toHaveBeenCalled();
   });
 
   it('mantém sucesso quando a emissão de notificação falha após o processamento', async () => {

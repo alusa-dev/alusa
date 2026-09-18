@@ -96,9 +96,12 @@ const nextConfig = {
     '@alusa/admin-auth',
     '@alusa/database',
     '@alusa/lib',
+    '@alusa/finance',
     '@alusa/ui',
     '@alusa/domain',
     '@alusa/shared',
+    '@alusa/platform-billing',
+    '@alusa/stripe',
     'konva',
   ],
   turbopack: {
@@ -121,25 +124,37 @@ const nextConfig = {
       '@alusa/domain/*': packageDistPath('domain', '*.js'),
       '@alusa/finance': {
         browser: webSourcePath('lib/stubs/server-only-finance.ts'),
-        default: packageDistPath('finance', 'index.js'),
+        default: useWorkspaceSources
+          ? packageSourcePath('finance', 'index.ts')
+          : packageDistPath('finance', 'index.js'),
       },
-      '@alusa/finance/*': packageDistPath('finance', '*.js'),
+      '@alusa/finance/*': useWorkspaceSources
+        ? packageSourcePath('finance', '*')
+        : packageDistPath('finance', '*.js'),
       '@alusa/lib': useWorkspaceSources
         ? packageSourcePath('lib', 'index.ts')
         : packageDistPath('lib', 'index.js'),
       '@alusa/lib/*': useWorkspaceSources
         ? packageSourcePath('lib', '*')
         : packageDistPath('lib', '*.js'),
-      '@alusa/platform-billing': packageDistPath('platform-billing', 'index.js'),
-      '@alusa/platform-billing/*': packageDistPath('platform-billing', '*.js'),
+      '@alusa/platform-billing': useWorkspaceSources
+        ? packageSourcePath('platform-billing', 'index.ts')
+        : packageDistPath('platform-billing', 'index.js'),
+      '@alusa/platform-billing/*': useWorkspaceSources
+        ? packageSourcePath('platform-billing', '*')
+        : packageDistPath('platform-billing', '*.js'),
       '@alusa/shared': useWorkspaceSources
         ? packageSourcePath('shared', 'index.ts')
         : packageDistPath('shared', 'index.js'),
       '@alusa/shared/*': useWorkspaceSources
         ? packageSourcePath('shared', '*')
         : packageDistPath('shared', '*.js'),
-      '@alusa/stripe': packageDistPath('stripe', 'index.js'),
-      '@alusa/stripe/*': packageDistPath('stripe', '*.js'),
+      '@alusa/stripe': useWorkspaceSources
+        ? packageSourcePath('stripe', 'index.ts')
+        : packageDistPath('stripe', 'index.js'),
+      '@alusa/stripe/*': useWorkspaceSources
+        ? packageSourcePath('stripe', '*')
+        : packageDistPath('stripe', '*.js'),
       // O build do pacote UI produz artefatos aninhados por causa dos paths
       // herdados do tsconfig raiz; o código-fonte é a resolução canônica para
       // os subpaths usados pelo app e já está em transpilePackages.
@@ -234,12 +249,29 @@ const nextConfig = {
     };
     config.resolve.alias = config.resolve.alias || {};
     config.resolve.alias['@alusa/asaas'] = resolvePath(__dirname, '../../packages/asaas/dist/index.js');
+    const platformBillingEntry = resolvePath(
+      __dirname,
+      dev ? '../../packages/platform-billing/src/index.ts' : '../../packages/platform-billing/dist/index.js',
+    );
+    config.resolve.alias['@alusa/platform-billing$'] = platformBillingEntry;
+    config.resolve.alias['@alusa/platform-billing'] = platformBillingEntry;
+    const stripeEntry = resolvePath(
+      __dirname,
+      dev ? '../../packages/stripe/src/index.ts' : '../../packages/stripe/dist/index.js',
+    );
+    config.resolve.alias['@alusa/stripe$'] = stripeEntry;
+    config.resolve.alias['@alusa/stripe'] = stripeEntry;
     const databaseEntry = resolvePath(
       __dirname,
       dev ? '../../packages/database/src/index.ts' : '../../packages/database/dist/index.js',
     );
     config.resolve.alias['@alusa/database$'] = databaseEntry;
     config.resolve.alias['@alusa/database'] = databaseEntry;
+    const financeEntry = resolvePath(
+      __dirname,
+      dev ? '../../packages/finance/src/index.ts' : '../../packages/finance/dist/index.js',
+    );
+    config.resolve.alias['@alusa/finance$'] = financeEntry;
     const libSrc = resolvePath(__dirname, '../../packages/lib/src');
     const libDistSrc = resolvePath(__dirname, '../../packages/lib/dist');
     const libBase = dev ? libSrc : libDistSrc;

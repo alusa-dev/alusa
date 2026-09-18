@@ -31,8 +31,6 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('🔑 Secret encontrada (primeiros 12 chars):', secret.slice(0, 12) + '...');
-
   const accounts = await prisma.asaasAccount.findMany({
     where: {
       asaasAccountId: { not: null },

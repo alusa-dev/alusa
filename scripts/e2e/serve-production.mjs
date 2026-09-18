@@ -116,17 +116,19 @@ function runCommand(command) {
 
     // These are the two atomic scripts used by the production adapters:
     // fixed-window rate limiting and compare-and-delete lease release.
-    if (script.includes('redis.call(\'INCR\'')) {
+    if (script.includes('redis.call(\'INCR\'') || script.includes('redis.call("INCR"')) {
       const key = keys[0];
       const count = Number(getValue(key) ?? '0') + 1;
       if (count === 1) setValue(key, count, Number(scriptArgs[1]));
       else setValue(key, count, expirations.get(key) ? expirations.get(key) - Date.now() : undefined);
       const ttl = runCommand(['PTTL', key]);
-      const limit = Number(scriptArgs[0]);
-      return [count <= limit ? 1 : 0, Math.max(0, limit - count), Math.max(0, Number(ttl))];
+      return [count, Math.max(0, Number(ttl))];
     }
 
-    if (script.includes("redis.call('GET'") && script.includes("redis.call('DEL'")) {
+    if (
+      (script.includes("redis.call('GET'") || script.includes('redis.call("GET"'))
+      && (script.includes("redis.call('DEL'") || script.includes('redis.call("DEL"'))
+    ) {
       const key = keys[0];
       if (getValue(key) === scriptArgs[0]) {
         runCommand(['DEL', key]);

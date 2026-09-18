@@ -27,6 +27,7 @@ export interface AsaasApiLogEntry {
   httpStatus: number | null;
   durationMs: number;
   success: boolean;
+  expectedError?: boolean;
   error?: string;
   retryCount?: number;
   circuitState?: string;
@@ -75,6 +76,7 @@ export function logAsaasApiCall(params: {
   httpStatus: number | null;
   durationMs: number;
   success: boolean;
+  expectedError?: boolean;
   error?: string;
   retryCount?: number;
   circuitState?: string;

@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 
 const scripts = [
+  'check-secrets.mjs',
   'check-rls-policies.ts',
   'check-route-protection.ts',
   'check-sensitive-fields.ts',

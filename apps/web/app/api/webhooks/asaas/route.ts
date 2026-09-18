@@ -13,6 +13,7 @@ import {
   globalWebhookRateLimiter,
   buildWebhookRateLimitKey,
   getAsaasWebhookTokenHashPrefix,
+  isWebhookRateLimitFailClosedEnabled,
   redactWebhookLogObject,
   parseAsaasWebhookPayload,
 } from '@alusa/finance';
@@ -97,11 +98,26 @@ export async function POST(req: NextRequest) {
     const rateLimitKey = buildWebhookRateLimitKey({ ip: clientIp, tokenHashPrefix });
     const rateCheck = await globalWebhookRateLimiter.checkAsync(rateLimitKey);
     if (rateCheck.degraded) {
-      console.error('[Asaas Webhook] Rate limit distribuído indisponível; fallback local', redactWebhookLogObject({
+      const failClosed = isWebhookRateLimitFailClosedEnabled();
+      const degradedLog = redactWebhookLogObject({
         requestId,
         clientIp,
         tokenHashPrefix,
-      }));
+        failClosed,
+        backend: rateCheck.backend,
+      });
+      if (failClosed) {
+        console.error('[Asaas Webhook] Rate limit distribuído indisponível; webhook será reentregue pelo Asaas', degradedLog);
+        return jsonWithRequestId(
+          { success: false, error: 'RATE_LIMIT_UNAVAILABLE', message: 'Proteção distribuída temporariamente indisponível.' },
+          requestId,
+          {
+            status: 503,
+            headers: { 'Retry-After': String(Math.max(1, Math.ceil(rateCheck.resetMs / 1000))) },
+          },
+        );
+      }
+      console.warn('[Asaas Webhook] Rate limit distribuído indisponível; fallback local em ambiente não produtivo', degradedLog);
     }
     if (!rateCheck.allowed) {
       console.warn('[Asaas Webhook] Rate limit aplicado', redactWebhookLogObject({

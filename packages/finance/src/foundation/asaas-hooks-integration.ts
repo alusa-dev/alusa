@@ -24,6 +24,7 @@ export function registerAsaasHooksIntegration(): void {
       httpStatus: payload.httpStatus,
       durationMs: payload.durationMs,
       success: payload.success,
+      expectedError: payload.expectedError,
       error: payload.error,
       circuitState: payload.circuitState,
       rateLimitRemaining: payload.rateLimitRemaining,

@@ -30,6 +30,36 @@ export type SendTransactionalEmailResult = {
   emailId: string | null;
 };
 
+const RESEND_TAG_MAX_LENGTH = 256;
+const RESEND_TAG_ALLOWED_CHARACTERS = /[^A-Za-z0-9_-]+/g;
+
+/**
+ * Resend validates both tag names and values at the API boundary. Keep that
+ * provider-specific rule here so individual email flows cannot accidentally
+ * send event names such as `customer.subscription.created`.
+ */
+export function sanitizeResendTagPart(value: string, fallback = 'unknown'): string {
+  const sanitized = value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(RESEND_TAG_ALLOWED_CHARACTERS, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, RESEND_TAG_MAX_LENGTH);
+
+  return sanitized || fallback;
+}
+
+export function sanitizeResendTags(
+  tags: Array<{ name: string; value: string }> | undefined,
+): Array<{ name: string; value: string }> | undefined {
+  if (!tags) return undefined;
+
+  return tags.map((tag) => ({
+    name: sanitizeResendTagPart(tag.name, 'tag'),
+    value: sanitizeResendTagPart(tag.value),
+  }));
+}
+
 let resendClient: Resend | null | undefined;
 
 function getResendClient(): Resend | null {
@@ -80,6 +110,7 @@ export async function sendTransactionalEmail(
   input: SendTransactionalEmailInput,
 ): Promise<SendTransactionalEmailResult> {
   const resend = getResendClient();
+  const tags = sanitizeResendTags(input.tags);
 
   if (!resend) {
     if (process.env.NODE_ENV === 'production' && process.env.PLAYWRIGHT_TEST !== 'true') {
@@ -96,7 +127,7 @@ export async function sendTransactionalEmail(
           from: input.from || getDefaultFrom(input.category),
           to: [input.to],
           template: input.template,
-          tags: input.tags,
+          tags,
         }
       : {
           from: input.from || getDefaultFrom(input.category),
@@ -104,7 +135,7 @@ export async function sendTransactionalEmail(
           subject: input.subject || '',
           html: input.html || '',
           text: input.text || '',
-          tags: input.tags,
+          tags,
         };
 
     const { data, error } = await resend.emails.send(payload, {

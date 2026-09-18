@@ -15,7 +15,16 @@ const consumerRoots = [
   { surface: 'scripts', directory: 'scripts' },
 ];
 const sourceExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
-const excludedDirectories = new Set(['node_modules', 'dist', '.next', '.next-playwright', '.vercel', 'coverage', '.turbo']);
+const excludedDirectories = new Set([
+  'node_modules',
+  'dist',
+  '.next',
+  '.next-playwright',
+  '.vercel',
+  'coverage',
+  'tmp',
+  '.turbo',
+]);
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -112,7 +121,10 @@ if (process.argv.includes('--write')) {
 } else if (!fs.existsSync(consumersFile)) {
   failures.push(`inventário de consumidores ausente (${path.relative(root, consumersFile)})`);
 } else if (fs.readFileSync(consumersFile, 'utf8') !== serializedConsumers) {
-  failures.push('inventário de consumidores desatualizado; execute pnpm audit:api-canonicalization -- --write');
+  failures.push(
+    'inventário de consumidores mudou; novos usos de aliases são bloqueados. ' +
+      'Migre para o endpoint canônico ou atualize o inventário somente após revisão explícita.',
+  );
 }
 
 if (failures.length > 0) {

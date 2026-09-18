@@ -55,7 +55,9 @@ jobs:
           pnpm audit:route-boundaries
           pnpm audit:route-sizes
           pnpm audit:route-inventory
+          pnpm audit:critical-route-coverage
           pnpm audit:package-graph
+          pnpm audit:migration-safety
 
       # Prisma — aplicar migrations e confirmar estado final
       - name: Prisma migrate deploy
@@ -84,18 +86,11 @@ jobs:
       - name: Typecheck
         run: pnpm -w typecheck
 
-      # O Mobile participa do gate enquanto consumidor da plataforma. O
-      # expo-doctor evita que patches incompatíveis do SDK cheguem ao merge;
-      # o typecheck/lint continuam cobertos pelo pipeline geral.
-      - name: Mobile SDK health
-        run: pnpm --filter @alusa/mobile run doctor
-
       - name: Unit tests
         run: |
           pnpm -w test:unit
           pnpm --filter @alusa/lib test
           pnpm --filter @alusa/admin test
-          pnpm --filter @alusa/mobile test
 
       - name: Critical package tests
         run: |
@@ -117,6 +112,38 @@ jobs:
 
       - name: Build
         run: pnpm -w build
+
+  mobile-health:
+    name: Mobile SDK health
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.1
+          cache: 'pnpm'
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Expo doctor
+        run: pnpm --filter @alusa/mobile run doctor
+
+      - name: Mobile typecheck
+        run: pnpm --filter @alusa/mobile typecheck
+
+      - name: Mobile lint
+        run: pnpm --filter @alusa/mobile lint
+
+      - name: Mobile tests
+        run: pnpm --filter @alusa/mobile test
 
   # Gate rápido do PR: cobre o fluxo alterado e o smoke da aplicação.
   e2e-critical:
@@ -175,14 +202,17 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      - name: Prepare least-privilege RLS role
-        run: pnpm e2e:prepare-rls
+      - name: Validate E2E RLS bootstrap order
+        run: pnpm audit:e2e-rls-bootstrap
 
       - name: Prisma migrate deploy
         run: npx prisma migrate deploy --schema prisma/schema.prisma
 
       - name: Prisma generate
         run: npx prisma generate --schema prisma/schema.prisma
+
+      - name: Prepare and verify least-privilege RLS role
+        run: pnpm e2e:prepare-rls
 
       - name: Install Playwright deps
         run: pnpm --filter @alusa/web exec playwright install --with-deps

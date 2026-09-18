@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getSessionUser } from '@/lib/auth/session';
-import { AsaasEnvError, KycNotApprovedError, buildStandaloneExternalReference, deletePayment, handlePaymentWebhook, isAsaasEnabled, readPaymentFullPreflight, resolveOperationalChargePayment, syncPaymentStateFromAsaas, updatePayment, auditLogService, evaluatePaymentActionPolicy, runAsaasPaymentCommand, buildCobrancaAsaasPaymentUpdatePayload, normalizeCobrancaPaymentAdjustmentType, resolveCanonicalDiscountDueDateLimit } from '@alusa/finance';
+import { AsaasEnvError, AsaasHttpError, KycNotApprovedError, buildStandaloneExternalReference, deletePayment, getTodayBrasiliaDateString, handlePaymentWebhook, isAsaasEnabled, readPaymentFullPreflight, resolveOperationalChargePayment, syncPaymentStateFromAsaas, updatePayment, auditLogService, evaluatePaymentActionPolicy, runAsaasPaymentCommand, buildCobrancaAsaasPaymentUpdatePayload, normalizeCobrancaPaymentAdjustmentType, resolveCanonicalDiscountDueDateLimit } from '@alusa/finance';
 
 import { cobrancaMutationResultDTOSchema, cobrancaUpdateInputDTOSchema } from '@/features/financeiro/cobrancas/dtos';
 import { mapCobrancaMutationResultToDTO } from '@/features/financeiro/cobrancas/mappers';
@@ -25,6 +25,20 @@ const FINANCIAL_MUTATION_ROLES = new Set(['ADMIN', 'FINANCEIRO']);
 
 function canMutateCobranca(role: string | null | undefined): boolean {
   return Boolean(role && FINANCIAL_MUTATION_ROLES.has(role.toUpperCase()));
+}
+
+function invalidDueDateMessage(minimumDueDate: string): string {
+  return `Não foi possível atualizar a cobrança. Informe uma data de vencimento igual ou posterior a ${minimumDueDate}. A cobrança permanece inalterada.`;
+}
+
+function getProviderMutationMessage(error: AsaasHttpError): string {
+  const minimumDueDate = (error.message || '').match(/(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/)?.[1];
+
+  if (minimumDueDate) {
+    return invalidDueDateMessage(minimumDueDate);
+  }
+
+  return 'Não foi possível atualizar a cobrança. Confira os dados informados e tente novamente. A cobrança permanece inalterada.';
 }
 
 /**
@@ -194,6 +208,30 @@ export async function updateCobrancaRoute(req: NextRequest, { params }: { params
       return NextResponse.json(
         { success: false, error: 'Valores fixos não podem ser negativos' },
         { status: 400 },
+      );
+    }
+
+    // O endpoint PUT /v3/payments/{id} do Asaas rejeita cobranças novas com
+    // vencimento anterior ao dia corrente. Validamos a fronteira localmente
+    // para devolver 422 ao cliente e evitar criar um job que falhará no
+    // provedor, sem alterar cobranças locais sem integração com o Asaas.
+    const requestedDueDate = vencimento ? String(vencimento).slice(0, 10) : null;
+    const providerPaymentId = chargeAtual?.asaasPaymentId ?? cobrancaAtual?.asaasPaymentId ?? null;
+    if (
+      requestedDueDate &&
+      providerPaymentId &&
+      isAsaasEnabled() &&
+      requestedDueDate < getTodayBrasiliaDateString()
+    ) {
+      const minimumDueDate = getTodayBrasiliaDateString();
+      return NextResponse.json(
+        {
+          success: false,
+          error: invalidDueDateMessage(minimumDueDate),
+          code: 'DATA_VENCIMENTO_ASAAS_INVALIDA',
+          minimumDueDate,
+        },
+        { status: 422, headers: { 'cache-control': 'no-store' } },
       );
     }
 
@@ -521,6 +559,61 @@ export async function updateCobrancaRoute(req: NextRequest, { params }: { params
       return NextResponse.json(
         { success: false, error: 'ASAAS_INDISPONIVEL' },
         { status: 503 },
+      );
+    }
+    if (error instanceof AsaasHttpError) {
+      const correlationId = logFinanceApiError('PUT /api/cobrancas/[id]', error, {
+        providerStatus: error.status,
+      });
+
+      if (error.status === 400 || error.status === 422) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: getProviderMutationMessage(error),
+            code: 'ASAAS_OPERACAO_REJEITADA',
+            providerStatus: error.status,
+            correlationId,
+          },
+          { status: 422, headers: { 'cache-control': 'no-store' } },
+        );
+      }
+
+      if (error.status === 429) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'A plataforma financeira está temporariamente indisponível. Tente novamente em alguns instantes.',
+            code: 'ASAAS_TEMPORARIAMENTE_INDISPONIVEL',
+            providerStatus: error.status,
+            correlationId,
+          },
+          { status: 503, headers: { 'cache-control': 'no-store' } },
+        );
+      }
+
+      if (error.status >= 500) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'A plataforma financeira não conseguiu processar a alteração.',
+            code: 'ASAAS_FALHA_PROCESSAMENTO',
+            providerStatus: error.status,
+            correlationId,
+          },
+          { status: 502, headers: { 'cache-control': 'no-store' } },
+        );
+      }
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'A cobrança não pôde ser atualizada na plataforma financeira.',
+          code: 'ASAAS_OPERACAO_REJEITADA',
+          providerStatus: error.status,
+          correlationId,
+        },
+        { status: error.status >= 400 && error.status < 500 ? 422 : 502, headers: { 'cache-control': 'no-store' } },
       );
     }
     const correlationId = logFinanceApiError('PUT /api/cobrancas/[id]', error);

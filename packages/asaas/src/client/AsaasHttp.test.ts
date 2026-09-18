@@ -147,7 +147,7 @@ describe('AsaasHttp (idempotência + retry)', () => {
     expect(details.responseDetails).toEqual([{ code: 'invalid_webhook', description: 'Webhook inválido' }]);
   });
 
-  it('404 esperado não emite log de erro nem success=false no hook', async () => {
+  it('404 esperado não emite log de erro e fica marcado como estado esperado no hook', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const hookSpy = vi.spyOn(globalAsaasHooks, 'emitApiCall');
 
@@ -163,6 +163,8 @@ describe('AsaasHttp (idempotência + retry)', () => {
       expect.objectContaining({
         httpStatus: 404,
         success: true,
+        expectedError: true,
+        error: 'EXPECTED_HTTP_404',
       }),
     );
 

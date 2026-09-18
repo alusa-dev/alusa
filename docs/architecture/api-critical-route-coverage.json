@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "policy": "Critical API surfaces must reference existing contract, use-case, or E2E evidence; a nearby test is not required when coverage is centralized.",
+  "surfaces": [
+    {
+      "pathPrefix": "/api/cobrancas",
+      "tests": [
+        "apps/web/tests/unit/cobrancas.refund.post.test.ts",
+        "apps/web/app/api/cobrancas/[id]/__tests__/commands.test.ts"
+      ]
+    },
+    {
+      "pathPrefix": "/api/finance",
+      "tests": [
+        "apps/web/app/api/finance/charges/__tests__/route.test.ts",
+        "apps/web/app/api/finance/transfers/__tests__/route.test.ts",
+        "apps/web/tests/unit/financial-reports.api.test.ts"
+      ]
+    },
+    {
+      "pathPrefix": "/api/matriculas",
+      "tests": [
+        "apps/web/app/api/matriculas/[id]/__tests__/route.test.ts",
+        "apps/web/tests/unit/matriculas.financial-permissions.test.ts",
+        "apps/web/e2e/matriculas-sync.spec.ts"
+      ]
+    },
+    {
+      "pathPrefix": "/api/rematriculas",
+      "tests": [
+        "apps/web/app/api/rematriculas/__tests__/route.test.ts",
+        "apps/web/e2e/matriculas-kyc-block.spec.ts"
+      ]
+    },
+    {
+      "pathPrefix": "/api/contratos",
+      "tests": [
+        "apps/web/app/api/contratos/__tests__/route.test.ts",
+        "apps/web/tests/unit/public.contrato.assinar.route.test.ts"
+      ]
+    },
+    {
+      "pathPrefix": "/api/webhooks/asaas",
+      "tests": [
+        "apps/web/tests/unit/asaas.webhooks.api.test.ts",
+        "packages/asaas-gateway/src/webhook/__tests__/webhook-verifier.test.ts"
+      ]
+    },
+    {
+      "pathPrefix": "/api/platform-billing",
+      "tests": [
+        "apps/web/features/platform-billing/__tests__/platform-billing-summary-dto.test.ts",
+        "packages/platform-billing/tests/webhooks.test.ts",
+        "packages/platform-billing/tests/webhook-retry.test.ts"
+      ]
+    },
+    {
+      "pathPrefix": "/api/kyc",
+      "tests": [
+        "apps/web/app/api/kyc/__tests__/summary.route.test.ts",
+        "packages/finance/src/guards/__tests__/kyc-gate-guard.test.ts"
+      ]
+    },
+    {
+      "pathPrefix": "/api/privacy",
+      "tests": [
+        "apps/web/tests/unit/privacy.evidence.test.ts",
+        "apps/web/tests/unit/privacy.sensitive-access.test.ts"
+      ]
+    },
+    {
+      "pathPrefix": "/api/admin/webhooks",
+      "tests": [
+        "apps/admin/tests/unit/support-webhooks.test.ts"
+      ]
+    }
+  ]
+}

@@ -73,14 +73,20 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      - name: Prepare least-privilege RLS role
-        run: pnpm e2e:prepare-rls
+      - name: Validate E2E RLS bootstrap order
+        run: pnpm audit:e2e-rls-bootstrap
+
+      - name: Validate migration safety
+        run: pnpm audit:migration-safety
 
       - name: Prisma migrate deploy
         run: npx prisma migrate deploy --schema prisma/schema.prisma
 
       - name: Prisma generate
         run: npx prisma generate --schema prisma/schema.prisma
+
+      - name: Prepare and verify least-privilege RLS role
+        run: pnpm e2e:prepare-rls
 
       - name: Install Playwright deps
         run: pnpm --filter @alusa/web exec playwright install --with-deps

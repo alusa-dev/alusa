@@ -88,6 +88,18 @@ Para desenvolvimento local:
 pnpm dev:web
 ```
 
+O `next.config.mjs` resolve os pacotes internos em `src` durante o
+desenvolvimento e em `dist` durante o build de produção. Assim, comandos
+diretos como `pnpm --filter @alusa/web dev:raw` não dependem de artefatos
+ignorados pelo Git, enquanto o pipeline de produção continua consumindo os
+artefatos compilados pelo Turbo.
+
+As tags de e-mail também são normalizadas no adapter transacional antes de
+chegar ao Resend. Nomes de eventos com pontos, como
+`customer.subscription.created`, são convertidos para o formato aceito pelo
+provedor (`customer-subscription-created`), sem alterar o conteúdo do e-mail
+nem o estado financeiro.
+
 Para validar o build completo antes do push:
 
 ```bash
