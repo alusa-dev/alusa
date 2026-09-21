@@ -96,7 +96,7 @@
     },
     {
       "path": "/api/jobs/process-ticket-email-outbox?limit=100",
-      "schedule": "* * * * *"
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/jobs/events-inspect-financial-inconsistencies?maxAccounts=30&limit=200",
@@ -136,7 +136,7 @@
     },
     {
       "path": "/api/jobs/whatsapp?outboxLimit=50&webhookLimit=100",
-      "schedule": "* * * * *"
+      "schedule": "*/5 * * * *"
     }
   ]
 }

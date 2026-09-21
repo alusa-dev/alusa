@@ -55,4 +55,22 @@ describe('/api/notifications/unread-count', () => {
     expect(response.status).toBe(403);
     expect(getUnreadNotificationCount).not.toHaveBeenCalled();
   });
+
+  it('retorna 503 e orienta retry quando o pool do banco está temporariamente indisponível', async () => {
+    vi.mocked(getServerSession).mockResolvedValueOnce({
+      user: { id: 'user-2', contaId: 'conta-1', role: 'ADMIN' },
+    } as never);
+    vi.mocked(getUnreadNotificationCount).mockRejectedValueOnce(
+      new Error('Timed out fetching a new connection from the connection pool (P2024)'),
+    );
+
+    const response = await GET(new NextRequest('http://localhost/api/notifications/unread-count'));
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('retry-after')).toBe('2');
+    expect(await response.json()).toEqual({
+      error: 'BANCO_TEMPORARIAMENTE_INDISPONIVEL',
+      message: 'O contador será atualizado novamente em instantes.',
+    });
+  });
 });

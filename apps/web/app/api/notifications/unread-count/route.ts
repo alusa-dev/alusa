@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUnreadNotificationCount } from '@alusa/lib/services/notifications.service';
+import { isTransientDatabaseError } from '@alusa/lib/database-retry';
 import {
   buildNotificationUnreadCountCacheKey,
   getNotificationCache,
@@ -17,8 +18,7 @@ function json(status: number, body: unknown) {
 }
 
 function isDatabasePoolTimeout(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes('connection pool') || message.includes('P2024');
+  return isTransientDatabaseError(error);
 }
 
 export async function GET(req: NextRequest) {
@@ -85,6 +85,19 @@ export async function GET(req: NextRequest) {
       errorName: error instanceof Error ? error.name : undefined,
       error: error instanceof Error ? error.message : String(error),
     }));
+    if (isDatabasePoolTimeout(error)) {
+      return NextResponse.json(
+        { error: 'BANCO_TEMPORARIAMENTE_INDISPONIVEL', message: 'O contador será atualizado novamente em instantes.' },
+        {
+          status: 503,
+          headers: {
+            'cache-control': 'no-store',
+            'retry-after': '2',
+          },
+        },
+      );
+    }
+
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível carregar o contador de notificações.' });
   }
 }

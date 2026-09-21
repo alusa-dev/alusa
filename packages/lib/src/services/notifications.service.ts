@@ -1,4 +1,5 @@
 import { prisma } from '../prisma';
+import { withDatabaseRetry } from '../database-retry';
 import { logInboxMetric } from '../notifications/inbox-metrics';
 import {
   NotificationCategory,
@@ -675,7 +676,7 @@ export async function getUnreadNotificationCount(params: {
   contaId: string;
   userId: string;
 }): Promise<number> {
-  return prisma.notificationRecipient.count({
+  return withDatabaseRetry(() => prisma.notificationRecipient.count({
     where: {
       contaId: params.contaId,
       userId: params.userId,
@@ -683,7 +684,7 @@ export async function getUnreadNotificationCount(params: {
       readAt: null,
       deletedAt: null,
     },
-  });
+  }));
 }
 
 export async function updateNotificationRecipientState(params: {

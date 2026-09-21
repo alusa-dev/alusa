@@ -25,7 +25,7 @@
     { "id": "events-expire-reservations", "route": "/api/jobs/events-expire-reservations", "schedule": "*/5 * * * *", "owner": "events", "criticality": "CRITICAL_FINANCE", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "events-reservations" },
     { "id": "events-reconcile-orders", "route": "/api/jobs/events-reconcile-orders", "schedule": "*/15 * * * *", "owner": "events", "criticality": "RECONCILIATION", "retryStrategy": "budgeted-retry", "exclusiveGroup": "events-orders" },
     { "id": "events-fulfill-tickets", "route": "/api/jobs/events-fulfill-tickets", "schedule": "*/5 * * * *", "owner": "events", "criticality": "NOTIFICATION", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "events-tickets" },
-    { "id": "process-ticket-email-outbox", "route": "/api/jobs/process-ticket-email-outbox", "schedule": "* * * * *", "owner": "events", "criticality": "NOTIFICATION", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "ticket-email" },
+    { "id": "process-ticket-email-outbox", "route": "/api/jobs/process-ticket-email-outbox", "schedule": "*/5 * * * *", "owner": "events", "criticality": "NOTIFICATION", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "ticket-email" },
     { "id": "events-inspect-financial-inconsistencies", "route": "/api/jobs/events-inspect-financial-inconsistencies", "schedule": "15 * * * *", "owner": "events", "criticality": "RECONCILIATION", "retryStrategy": "bounded-backoff", "exclusiveGroup": "events-financial-audit" },
     { "id": "process-pending-inbox-notifications", "route": "/api/jobs/process-pending-inbox-notifications", "schedule": "*/5 * * * *", "owner": "notifications", "criticality": "NOTIFICATION", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "inbox-notifications" },
     { "id": "archive-low-value-notifications", "route": "/api/jobs/archive-low-value-notifications", "schedule": "15 3 * * *", "owner": "notifications", "criticality": "MAINTENANCE", "retryStrategy": "bounded-backoff", "exclusiveGroup": "notification-retention" },
@@ -35,6 +35,6 @@
     { "id": "expire-contract-links", "route": "/api/jobs/expire-contract-links", "schedule": "*/15 * * * *", "owner": "finance", "criticality": "MAINTENANCE", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "contract-lifecycle" },
     { "id": "reconcile-matricula-cancellations", "route": "/api/jobs/reconcile-matricula-cancellations", "schedule": "*/5 * * * *", "owner": "domain", "criticality": "CRITICAL_FINANCE", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "matricula-cancellations" },
     { "id": "rematriculas-run", "route": "/api/jobs/rematriculas/run", "schedule": "*/5 * * * *", "owner": "domain", "criticality": "CRITICAL_FINANCE", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "rematriculas" },
-    { "id": "whatsapp", "route": "/api/jobs/whatsapp", "schedule": "* * * * *", "owner": "whatsapp", "criticality": "NOTIFICATION", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "whatsapp" }
+    { "id": "whatsapp", "route": "/api/jobs/whatsapp", "schedule": "*/5 * * * *", "owner": "whatsapp", "criticality": "NOTIFICATION", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "whatsapp" }
   ]
 }

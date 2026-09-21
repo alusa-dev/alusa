@@ -36,10 +36,14 @@ async function run(req: Request) {
       partialFailure: result.failed > 0,
     });
 
-    return NextResponse.json({
-      success: result.failed === 0,
-      job: result,
-    });
+    return NextResponse.json(
+      {
+        success: result.failed === 0,
+        outcome: result.failed > 0 ? 'partial' : 'completed',
+        job: result,
+      },
+      { status: result.failed > 0 ? 503 : 200 },
+    );
   } catch (error) {
     logJobFailure('process-ticket-email-outbox', startedAt, error);
     return apiJsonError(500, 'JOB_FAILED', 'Não foi possível processar a fila de e-mails de ingressos.');

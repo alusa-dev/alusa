@@ -46,6 +46,10 @@
       "types": "./dist/prisma.d.ts",
       "default": "./dist/prisma.js"
     },
+    "./database-retry": {
+      "types": "./dist/database-retry.d.ts",
+      "default": "./dist/database-retry.js"
+    },
     "./server": {
       "types": "./dist/server.d.ts",
       "default": "./dist/server.js"

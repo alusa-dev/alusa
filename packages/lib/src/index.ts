@@ -27,6 +27,7 @@ export * from './notifications/notification-policy';
 export * from './notifications/retention';
 export * from './notifications/tenant-notification-preferences';
 export * from './prisma';
+export * from './database-retry';
 // Planos
 export * from './planos/planos-schema';
 export * from './planos/planos-service';

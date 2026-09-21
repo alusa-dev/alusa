@@ -29,6 +29,7 @@ describe('GET|POST /api/jobs/process-ticket-email-outbox', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       success: true,
+      outcome: 'completed',
       job: { attempted: 1, processed: 1, failed: 0 },
     });
     expect(drainFinanceWebhookSideEffectOutbox).toHaveBeenCalledWith({
@@ -45,9 +46,10 @@ describe('GET|POST /api/jobs/process-ticket-email-outbox', () => {
       method: 'POST',
     }));
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
     expect(await response.json()).toEqual({
       success: false,
+      outcome: 'partial',
       job: { attempted: 2, processed: 1, failed: 1 },
     });
   });
