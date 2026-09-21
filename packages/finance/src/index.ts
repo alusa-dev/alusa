@@ -1278,6 +1278,8 @@ export {
   drainFinanceWebhookSideEffectOutbox,
   enqueueFinanceSideEffect,
   enqueueBillingNotificationSideEffects,
+  markExhaustedFinanceWebhookSideEffects,
+  reconcileMissingBillingNotificationSideEffects,
   processFinanceWebhookSideEffectOutboxEvent,
 } from './webhooks/finance-side-effect-outbox.service';
 export type {

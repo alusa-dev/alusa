@@ -3,6 +3,7 @@ import type { BillingNotificationCandidate } from '@alusa/lib/notifications/emit
 import {
   drainFinanceWebhookSideEffectOutbox,
   enqueueBillingNotificationSideEffects,
+  reconcileMissingBillingNotificationSideEffects,
 } from './finance-side-effect-outbox.service';
 import { processAsaasWebhookQueue } from './asaas-webhook-handler.server';
 
@@ -64,9 +65,23 @@ export async function processAsaasWebhookQueueWithInbox(
       });
     }
   } catch (error) {
-    console.warn('[processAsaasWebhookQueueWithInbox] Falha não crítica ao enfileirar outbox', {
+    console.error('[processAsaasWebhookQueueWithInbox] Falha ao enfileirar outbox; recuperação será tentada', {
       message: error instanceof Error ? error.message : String(error),
     });
+
+    // O webhook já pode ter sido confirmado pelo inbox. A reconciliação é a
+    // recuperação durável e idempotente para o caso de o outbox falhar depois.
+    try {
+      await reconcileMissingBillingNotificationSideEffects({
+        contaId: params?.contaId,
+        lookbackHours: 48,
+        limit: Math.max(100, params?.limit ?? 100),
+      });
+    } catch (recoveryError) {
+      console.error('[processAsaasWebhookQueueWithInbox] Falha na recuperação do outbox', {
+        message: recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
+      });
+    }
   }
 
   return result;

@@ -20,11 +20,14 @@ const EVENT_TICKET_TEMPLATE_ID =
 const EVENT_TIME_ZONE = process.env.APP_TIMEZONE || 'America/Manaus';
 
 class SideEffectDeliveryError extends Error {
+  readonly retryable: boolean;
+
   constructor(
     message: string,
-    readonly retryable: boolean,
+    retryable: boolean,
   ) {
     super(message);
+    this.retryable = retryable;
     this.name = 'SideEffectDeliveryError';
   }
 }
@@ -373,6 +376,130 @@ export async function enqueueBillingNotificationSideEffects(
   return { enqueued, skipped };
 }
 
+export interface ReconcileBillingNotificationSideEffectsParams {
+  contaId?: string;
+  lookbackHours?: number;
+  limit?: number;
+}
+
+export interface ReconcileBillingNotificationSideEffectsResult {
+  scanned: number;
+  eligible: number;
+  enqueued: number;
+  skipped: number;
+}
+
+/**
+ * Reconstitui o efeito de notificação a partir do inbox já processado.
+ *
+ * O processamento do webhook e a gravação no outbox são commits distintos.
+ * Se o segundo falhar depois que o primeiro foi confirmado, esta rotina
+ * recompõe o efeito de forma idempotente pela chave tenant + evento + cobrança.
+ * Ela não reprocessa o webhook nem altera estado financeiro.
+ */
+export async function reconcileMissingBillingNotificationSideEffects(
+  params: ReconcileBillingNotificationSideEffectsParams = {},
+): Promise<ReconcileBillingNotificationSideEffectsResult> {
+  const lookbackHours = Math.min(168, Math.max(1, params.lookbackHours ?? 48));
+  const limit = Math.min(1000, Math.max(1, params.limit ?? 500));
+  const receivedAfter = new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
+
+  const webhooks = await prisma.webhookAsaas.findMany({
+    where: {
+      status: 'PROCESSADO',
+      sideEffectsReconciledAt: null,
+      recebidoEm: { gte: receivedAfter },
+      asaasPaymentId: { not: null },
+      ...(params.contaId ? { contaId: params.contaId } : {}),
+    },
+    orderBy: { recebidoEm: 'desc' },
+    take: limit,
+    select: {
+      id: true,
+      contaId: true,
+      evento: true,
+      eventId: true,
+      asaasPaymentId: true,
+      recebidoEm: true,
+    },
+  });
+
+  let eligible = 0;
+  let enqueued = 0;
+  let skipped = 0;
+
+  for (const webhook of webhooks) {
+    if (!webhook.asaasPaymentId || !normalizeBillingNotificationEvent(webhook.evento)) {
+      continue;
+    }
+
+    eligible += 1;
+    const result = await enqueueBillingNotificationSideEffects({
+      contaId: webhook.contaId,
+      sourceType: 'ASAAS_WEBHOOK',
+      webhookBatchId: 'processed-webhook-reconciliation',
+      candidates: [{
+        contaId: webhook.contaId,
+        event: webhook.evento,
+        eventId: webhook.eventId,
+        asaasPaymentId: webhook.asaasPaymentId,
+        occurredAt: webhook.recebidoEm,
+      }],
+    });
+    enqueued += result.enqueued;
+    skipped += result.skipped;
+
+    await prisma.webhookAsaas.updateMany({
+      where: {
+        id: webhook.id,
+        status: 'PROCESSADO',
+        sideEffectsReconciledAt: null,
+      },
+      data: { sideEffectsReconciledAt: new Date() },
+    });
+  }
+
+  return { scanned: webhooks.length, eligible, enqueued, skipped };
+}
+
+/** Promove registros legados FAILED que já consumiram todas as tentativas. */
+export async function markExhaustedFinanceWebhookSideEffects(params?: {
+  contaId?: string;
+  limit?: number;
+}): Promise<{ marked: number }> {
+  const limit = Math.min(500, Math.max(1, params?.limit ?? 200));
+  const candidates = await prisma.financeWebhookSideEffectOutbox.findMany({
+    where: {
+      status: FinanceWebhookSideEffectStatus.FAILED,
+      attempts: { gte: MAX_ATTEMPTS },
+      ...(params?.contaId ? { contaId: params.contaId } : {}),
+    },
+    orderBy: { updatedAt: 'asc' },
+    take: limit,
+    select: { id: true },
+  });
+
+  if (!candidates.length) return { marked: 0 };
+
+  const result = await prisma.financeWebhookSideEffectOutbox.updateMany({
+    where: {
+      id: { in: candidates.map((candidate) => candidate.id) },
+      status: FinanceWebhookSideEffectStatus.FAILED,
+      attempts: { gte: MAX_ATTEMPTS },
+    },
+    data: { status: FinanceWebhookSideEffectStatus.EXHAUSTED },
+  });
+
+  if (result.count > 0) {
+    console.error('[finance-side-effect-outbox] Efeitos legados movidos para EXHAUSTED', {
+      count: result.count,
+      contaId: params?.contaId ?? null,
+    });
+  }
+
+  return { marked: result.count };
+}
+
 export async function processFinanceWebhookSideEffectOutboxEvent(
   eventId: string,
 ): Promise<{ processed: boolean; reason?: string }> {
@@ -384,7 +511,10 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
     return { processed: false, reason: 'not_found_or_done' };
   }
 
-  if (event.status === FinanceWebhookSideEffectStatus.FAILED && event.attempts >= MAX_ATTEMPTS) {
+  if (
+    event.status === FinanceWebhookSideEffectStatus.EXHAUSTED ||
+    (event.status === FinanceWebhookSideEffectStatus.FAILED && event.attempts >= MAX_ATTEMPTS)
+  ) {
     return { processed: false, reason: 'exhausted' };
   }
 
@@ -433,7 +563,7 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
         candidate: BillingNotificationCandidate;
         sourceType: 'ASAAS_WEBHOOK' | 'ASAAS_SYNC';
       };
-      await emitBillingNotifications([payload.candidate], payload.sourceType);
+      await emitBillingNotifications([payload.candidate], payload.sourceType, { throwOnError: true });
     } else if (event.effectType === 'EVENT_PUBLIC_ORDER_TICKET_EMAIL') {
       providerMessageId = (await sendEventPublicOrderTicketEmail(
         event.payload as EventPublicOrderTicketEmailPayload,
@@ -490,7 +620,7 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
       },
       data: {
         status: exhausted
-          ? FinanceWebhookSideEffectStatus.FAILED
+          ? FinanceWebhookSideEffectStatus.EXHAUSTED
           : FinanceWebhookSideEffectStatus.PENDING,
         lockedAt: null,
         leaseExpiresAt: null,
@@ -530,6 +660,11 @@ export async function drainFinanceWebhookSideEffectOutbox(params?: {
   effectTypes?: FinanceSideEffectType[];
 }): Promise<{ attempted: number; processed: number; failed: number }> {
   const limit = Math.max(1, Math.min(500, params?.limit ?? 100));
+
+  await markExhaustedFinanceWebhookSideEffects({
+    contaId: params?.contaId,
+    limit,
+  });
 
   const events = await prisma.financeWebhookSideEffectOutbox.findMany({
     where: {

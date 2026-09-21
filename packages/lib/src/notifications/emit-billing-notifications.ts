@@ -50,10 +50,13 @@ export async function emitBillingNotificationCandidate(
 export async function emitBillingNotifications(
   candidates: BillingNotificationCandidate[],
   sourceType: 'ASAAS_WEBHOOK' | 'ASAAS_SYNC',
+  options?: { throwOnError?: boolean },
 ) {
   await Promise.all(
     candidates.map((candidate) =>
       emitBillingNotificationCandidate(candidate, sourceType).catch((error) => {
+        if (options?.throwOnError) throw error;
+
         console.error('[Notifications][billing] Falha não crítica ao criar notificação interna', {
           sourceType,
           event: candidate.event,

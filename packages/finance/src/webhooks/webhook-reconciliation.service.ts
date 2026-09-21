@@ -1031,7 +1031,7 @@ export interface MarkExhaustedResult {
 const DEFAULT_MAX_ATTEMPTS = 5;
 
 /**
- * Marca webhooks em ERRO que excederam o limite de tentativas como EXAURIDO (DLQ).
+ * Marca webhooks elegíveis que excederam o limite de tentativas como EXAURIDO (DLQ).
  * Esses registros não serão mais reprocessados automaticamente, mas ficam disponíveis
  * para replay manual e auditoria.
  */
@@ -1044,7 +1044,9 @@ export async function markExhaustedWebhooks(
   const limit = Math.min(500, Math.max(1, options.limit ?? defaultLimit));
 
   const where: Prisma.WebhookAsaasWhereInput = {
-    status: 'ERRO',
+    // PENDENTE também é elegível: uma queda entre o incremento da tentativa
+    // e o registro do erro não pode deixar o item fora da DLQ para sempre.
+    status: { in: ['ERRO', 'PENDENTE'] },
     tentativas: { gte: maxAttempts },
     ...(options.contaId ? { contaId: options.contaId } : {}),
     ...(scopedIds.length > 0 ? { id: { in: scopedIds } } : {}),
@@ -1064,7 +1066,11 @@ export async function markExhaustedWebhooks(
   const ids = candidates.map((c) => c.id);
 
   const result = await prisma.webhookAsaas.updateMany({
-    where: { id: { in: ids } },
+    where: {
+      id: { in: ids },
+      status: { in: ['ERRO', 'PENDENTE'] },
+      tentativas: { gte: maxAttempts },
+    },
     data: {
       status: 'EXAURIDO',
       ultimoErro: `Exhausted after ${maxAttempts} attempts. Marked as DLQ.`,

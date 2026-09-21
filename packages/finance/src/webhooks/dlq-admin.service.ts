@@ -170,6 +170,7 @@ export async function requeueDlqWebhooks(
     where: { id: { in: validIds } },
     data: {
       status: 'PENDENTE',
+      sideEffectsReconciledAt: null,
       tentativas: 0,
       ultimoErro: null,
       nextRetryAt: null,

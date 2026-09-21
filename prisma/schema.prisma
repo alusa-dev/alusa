@@ -1003,6 +1003,7 @@ enum FinanceWebhookSideEffectStatus {
   PROCESSING
   PROCESSED
   FAILED
+  EXHAUSTED
 }
 
 enum FinanceReconciliationEntityType {
@@ -3607,6 +3608,7 @@ model WebhookAsaas {
   payload      Json
   recebidoEm   DateTime  @default(now())
   processadoEm DateTime?
+  sideEffectsReconciledAt DateTime?
   status       String    @default("PENDENTE")
 
   // Campos de correlação para rastreio de recursos
@@ -3636,6 +3638,7 @@ model WebhookAsaas {
   @@index([asaasSubscriptionId], name: "idx_webhookasaas_subscription")
   @@index([asaasTransferId], name: "idx_webhookasaas_transfer")
   @@index([processadoEm], name: "idx_webhookasaas_processado")
+  @@index([status, sideEffectsReconciledAt, recebidoEm], name: "idx_webhookasaas_side_effect_reconciliation")
   @@index([recebidoEm], name: "idx_webhookasaas_recebido_em")
 }
 

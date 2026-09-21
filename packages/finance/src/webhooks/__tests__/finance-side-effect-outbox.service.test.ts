@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { outboxMock, emitBillingNotificationsMock } = vi.hoisted(() => ({
+const { outboxMock, webhookAsaasMock, emitBillingNotificationsMock } = vi.hoisted(() => ({
   outboxMock: {
     create: vi.fn(),
     findUnique: vi.fn(),
     updateMany: vi.fn(),
     findMany: vi.fn(),
+  },
+  webhookAsaasMock: {
+    findMany: vi.fn(),
+    updateMany: vi.fn(),
   },
   emitBillingNotificationsMock: vi.fn(),
 }));
@@ -13,6 +17,7 @@ const { outboxMock, emitBillingNotificationsMock } = vi.hoisted(() => ({
 vi.mock('@alusa/database', () => ({
   prisma: {
     financeWebhookSideEffectOutbox: outboxMock,
+    webhookAsaas: webhookAsaasMock,
   },
 }));
 
@@ -34,6 +39,7 @@ vi.mock('@alusa/lib/services/notifications.service', () => ({
 import { FinanceWebhookSideEffectStatus } from '@prisma/client';
 import {
   enqueueBillingNotificationSideEffects,
+  reconcileMissingBillingNotificationSideEffects,
   processFinanceWebhookSideEffectOutboxEvent,
 } from '../finance-side-effect-outbox.service';
 
@@ -71,6 +77,8 @@ describe('finance side-effect outbox leases', () => {
     vi.clearAllMocks();
     emitBillingNotificationsMock.mockResolvedValue(undefined);
     outboxMock.create.mockResolvedValue({ id: 'effect-1' });
+    webhookAsaasMock.findMany.mockResolvedValue([]);
+    webhookAsaasMock.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it('usa a mesma chave para eventos Asaas semanticamente equivalentes', async () => {
@@ -147,6 +155,42 @@ describe('finance side-effect outbox leases', () => {
         }),
       }),
     );
+  });
+
+  it('mantém EXHAUSTED terminal e não chama o provedor novamente', async () => {
+    outboxMock.findUnique.mockResolvedValue(buildEvent(FinanceWebhookSideEffectStatus.EXHAUSTED));
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent('effect-1');
+
+    expect(result).toEqual({ processed: false, reason: 'exhausted' });
+    expect(emitBillingNotificationsMock).not.toHaveBeenCalled();
+    expect(outboxMock.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('reconstrói efeitos ausentes a partir do inbox processado com deduplicação', async () => {
+    webhookAsaasMock.findMany.mockResolvedValue([{
+      id: 'webhook-1',
+      contaId: 'conta-a',
+      evento: 'PAYMENT_RECEIVED',
+      eventId: 'evt-1',
+      asaasPaymentId: 'pay-1',
+      recebidoEm: new Date('2026-09-21T12:00:00.000Z'),
+    }]);
+
+    const result = await reconcileMissingBillingNotificationSideEffects({
+      contaId: 'conta-a',
+      lookbackHours: 24,
+      limit: 10,
+    });
+
+    expect(result).toEqual({ scanned: 1, eligible: 1, enqueued: 1, skipped: 0 });
+    expect(outboxMock.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        contaId: 'conta-a',
+        effectType: 'BILLING_NOTIFICATION',
+        dedupeKey: 'conta-a:BILLING_NOTIFICATION:payment:confirmed:pay-1',
+      }),
+    }));
   });
 
   it('não marca ingresso como enviado quando o Resend não está configurado', async () => {
@@ -266,7 +310,7 @@ describe('finance side-effect outbox leases', () => {
     }
   });
 
-  it('envia erro permanente do provedor para FAILED sem consumir retries', async () => {
+  it('envia erro permanente do provedor para EXHAUSTED sem consumir retries', async () => {
     const previousApiKey = process.env.RESEND_API_KEY;
     process.env.RESEND_API_KEY = 'test-key';
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
@@ -297,7 +341,7 @@ describe('finance side-effect outbox leases', () => {
         2,
         expect.objectContaining({
           data: expect.objectContaining({
-            status: FinanceWebhookSideEffectStatus.FAILED,
+            status: FinanceWebhookSideEffectStatus.EXHAUSTED,
             deliveryStatus: 'FAILED',
             lastError: 'Template inválido',
           }),

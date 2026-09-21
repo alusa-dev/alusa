@@ -827,6 +827,42 @@ async function enqueueAsaasWebhookEventInternal(
     };
   }
 
+  const maxAttempts = getMaxReprocessAttempts();
+
+  // EXAURIDO é um estado terminal. Redelivery do Asaas deve ser respondido
+  // com sucesso, mas nunca pode reabrir automaticamente a DLQ.
+  if (existing?.status === 'EXAURIDO') {
+    return {
+      success: true,
+      status: 200,
+      persisted: true,
+      message: 'Evento já está na DLQ',
+      webhookId: existing.id,
+      contaId,
+      event,
+      eventId,
+    };
+  }
+
+  if (existing && existing.tentativas >= maxAttempts && existing.status !== 'PROCESSANDO') {
+    await markExhaustedWebhooks({
+      contaId,
+      ids: [existing.id],
+      maxAttempts,
+      limit: 1,
+    });
+    return {
+      success: true,
+      status: 200,
+      persisted: true,
+      message: 'Evento ignorado (limite de tentativas excedido)',
+      webhookId: existing.id,
+      contaId,
+      event,
+      eventId,
+    };
+  }
+
   if (existing?.status === 'PROCESSANDO' || existing?.status === 'PENDENTE') {
     return {
       success: true,
@@ -850,6 +886,7 @@ async function enqueueAsaasWebhookEventInternal(
         payload: sanitizedPayload as unknown as object,
         payloadHash,
         status: 'PENDENTE',
+        sideEffectsReconciledAt: null,
         ultimoErro: null,
         duracaoMs: null,
         processadoEm: null,

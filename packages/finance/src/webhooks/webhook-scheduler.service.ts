@@ -16,7 +16,10 @@
 import { prisma } from '@alusa/database';
 
 import { processAsaasWebhookQueueWithInbox } from './process-webhook-queue-with-inbox';
-import { drainFinanceWebhookSideEffectOutbox } from './finance-side-effect-outbox.service';
+import {
+  drainFinanceWebhookSideEffectOutbox,
+  reconcileMissingBillingNotificationSideEffects,
+} from './finance-side-effect-outbox.service';
 import { checkWebhookHealth } from './webhook-health.service';
 import { getWebhookConfigDriftStatus, repairWebhookConfigDrift } from './webhook-config-drift.service';
 import {
@@ -205,6 +208,15 @@ async function runWebhookSchedulerUnlocked(
   }
 
   // ── Step 2.1: Processar outbox de side effects ────────────────────────
+  const { step: sideEffectsReconciliationStep } = await timed('reconcile_side_effect_outbox', () =>
+    reconcileMissingBillingNotificationSideEffects({
+      contaId: options.contaId,
+      lookbackHours: 48,
+      limit: Math.max(100, Math.min(drainLimit, 500)),
+    }),
+  );
+  steps.push(sideEffectsReconciliationStep);
+
   const { step: sideEffectsStep } = await timed('drain_side_effects', () =>
     drainFinanceWebhookSideEffectOutbox({
       contaId: options.contaId,

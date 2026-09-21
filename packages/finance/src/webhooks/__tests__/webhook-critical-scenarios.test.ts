@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { prisma } from '@alusa/database';
 
-import { handleAsaasWebhookEvent } from '../asaas-webhook-handler';
+import { enqueueAsaasWebhookEvent, handleAsaasWebhookEvent } from '../asaas-webhook-handler';
 
 vi.mock('@alusa/asaas', async () => {
   const actual = await vi.importActual<typeof import('@alusa/asaas')>('@alusa/asaas');
@@ -266,6 +266,48 @@ describe('Webhook Critical Tests - Idempotência', () => {
     });
     expect(webhooks.length).toBe(1);
     expect(webhooks[0].status).toBe('PROCESSADO');
+  });
+
+  it('não ressuscita um webhook EXAURIDO quando o provedor faz redelivery', async () => {
+    const eventId = `evt_${randomUUID()}`;
+    const paymentId = `pay_${randomUUID()}`;
+    await prisma.webhookAsaas.create({
+      data: {
+        contaId: ctx.contaId,
+        evento: 'PAYMENT_RECEIVED',
+        eventId,
+        payloadHash: sha256Hex(JSON.stringify({ eventId })),
+        payload: {
+          id: eventId,
+          event: 'PAYMENT_RECEIVED',
+          payment: { id: paymentId, status: 'RECEIVED' },
+        },
+        asaasPaymentId: paymentId,
+        status: 'EXAURIDO',
+        tentativas: 5,
+        ultimoErro: 'Exhausted after 5 attempts. Marked as DLQ.',
+      },
+    });
+
+    const result = await enqueueAsaasWebhookEvent({
+      rawBody: JSON.stringify({
+        id: eventId,
+        event: 'PAYMENT_RECEIVED',
+        payment: { id: paymentId, status: 'RECEIVED' },
+      }),
+      accessToken: ctx.authToken,
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      status: 200,
+      message: 'Evento já está na DLQ',
+    });
+
+    const webhook = await prisma.webhookAsaas.findUnique({
+      where: { uq_webhookasaas_conta_event: { contaId: ctx.contaId, eventId } },
+    });
+    expect(webhook).toMatchObject({ status: 'EXAURIDO', tentativas: 5 });
   });
 
   it('não colide mesmo eventId e payloadHash entre tenants diferentes', async () => {
