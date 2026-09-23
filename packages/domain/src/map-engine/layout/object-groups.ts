@@ -3,7 +3,7 @@ import type { EventMapDTO, EventMapObjectDTO } from '../types/event-map-types.js
 import { resolveCanvasSelection } from '../operations/selection/selection-resolver.js';
 import { getSelectableItems, selectionKey, type MapSelectionItem } from '../selection/selection-utils.js';
 
-export type DragTargetMap = Pick<EventMapDTO, 'objects' | 'seats' | 'seatGroups'>;
+export type DragTargetMap = Pick<EventMapDTO, 'objects' | 'seats'>;
 
 export const OBJECT_GROUP_ID_KEY = 'groupId';
 export const OBJECT_GROUP_LABEL_KEY = 'groupLabel';
@@ -243,7 +243,6 @@ export function resolveDragTarget(
   const resolvedNodeIds = [
     ...resolved.objectIds.map((id) => `node-${id}`),
     ...resolved.seatIds.map((id) => `node-${id}`),
-    ...resolved.seatGroupIds.map((id) => `node-seatgroup-${id}`),
   ];
 
   if (item && resolvedNodeIds.includes(nodeId) && resolvedNodeIds.length > 1) {
@@ -261,7 +260,7 @@ export function resolveDragTarget(
   }
 
   const selectionItems =
-    item && (item.type === 'object' || item.type === 'seat' || item.type === 'seatgroup')
+    item && (item.type === 'object' || item.type === 'seat')
       ? [item]
       : getSelectableItems(selection);
 

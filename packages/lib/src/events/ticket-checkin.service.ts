@@ -2,7 +2,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 
 import { prisma } from '../prisma';
 import { EventsError } from './events.service';
-import { toCheckInCode } from './map/ticket-code';
+import { normalizeCheckInCode, toCheckInCode } from './map/ticket-code';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -70,6 +70,12 @@ export type EventTicketCheckInEvent = {
   startsAt: string;
 };
 
+export function assertEventAllowsCheckIn(status: EventTicketCheckInEvent['status']) {
+  if (status === 'CANCELLED' || status === 'ARCHIVED') {
+    throw new EventsError('EVENTO_INDISPONIVEL', 'Não é possível registrar entradas neste evento.', 409);
+  }
+}
+
 function toAuditJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;
 }
@@ -119,6 +125,16 @@ async function findTicket(
     include: ticketInclude,
   });
 
+  if (!ticket) {
+    const checkInCode = normalizeCheckInCode(normalized);
+    if (checkInCode) {
+      ticket = await db.eventTicket.findFirst({
+        where: { ...eventScope, checkInCode },
+        include: ticketInclude,
+      });
+    }
+  }
+
   // Os ingressos PDF legados imprimem apenas o código curto no Code 128.
   // A busca permanece limitada à conta e ao evento, e colisões são recusadas.
   if (!ticket) {
@@ -151,12 +167,14 @@ async function findTicket(
 export async function verifyEventTicketForCheckIn(contaId: string, eventId: string, ticketCode: string) {
   const ticket = await findTicket(prisma, contaId, eventId, ticketCode);
   if (!ticket) throw new EventsError('INGRESSO_NAO_ENCONTRADO', 'Ingresso não encontrado para este evento.', 404);
+  assertEventAllowsCheckIn(ticket.event.status);
   return mapTicket(ticket);
 }
 
 export async function verifyEventTicketForCheckInAcrossEvents(contaId: string, ticketCode: string) {
   const ticket = await findTicket(prisma, contaId, '', ticketCode);
   if (!ticket) throw new EventsError('INGRESSO_NAO_ENCONTRADO', 'Ingresso não encontrado.', 404);
+  assertEventAllowsCheckIn(ticket.event.status);
 
   return {
     event: {

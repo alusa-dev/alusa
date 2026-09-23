@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getCreationBox,
   getCreationShape,
+  getSeatBlockConfigForBounds,
   isCreationTool,
   isPlacementTool,
   isProportionalTool,
@@ -26,7 +27,7 @@ describe('map-creation-draft', () => {
     expect(box).toEqual({ x: 100, y: 100, width: 60, height: 60 });
   });
 
-  it('builds freeform creation boxes', () => {
+  it('builds non-proportional creation boxes', () => {
     const box = getCreationBox({
       tool: 'stage',
       start: { x: 200, y: 200 },
@@ -39,5 +40,16 @@ describe('map-creation-draft', () => {
   it('maps creation tools to preview shapes', () => {
     expect(getCreationShape('shape-triangle')).toBe('triangle');
     expect(getCreationShape('text')).toBe(null);
+  });
+
+  it('derives a parametric block from the dragged bounds and calibration', () => {
+    const draft = getSeatBlockConfigForBounds(
+      { x: 100, y: 200, width: 160, height: 100 },
+      { seatDiameter: 20, seatPitch: 10, rowPitch: 20 },
+      5,
+    );
+
+    expect(draft.origin).toEqual({ x: 110, y: 210 });
+    expect(draft.config).toMatchObject({ rows: 3, columns: 5, totalSeats: 15, startNumber: 5 });
   });
 });

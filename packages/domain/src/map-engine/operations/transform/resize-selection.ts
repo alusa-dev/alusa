@@ -1,8 +1,7 @@
-import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../../types/event-map-types.js';
+import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO } from '../../types/event-map-types.js';
 import type { MapSelection } from '../../selection/selection-utils.js';
 import { getObjectBounds } from '../../layout/object-bounds.js';
 import { getSeatBounds, unionBounds, centerOf } from '../../geometry/bounds.js';
-import { getSeatGroupWorldBounds } from '../../layout/seat-group-bounds.js';
 import { emptyTransformPatchSet, hasTransformPatches, type TransformPatchSet } from './transform-types.js';
 import { buildUndoTransformPatches, filterFiniteTransformPatches } from './transform-patches.js';
 import { resolveOperationSelection } from '../selection/selection-resolver.js';
@@ -34,10 +33,6 @@ function resolvePivot(map: EventMapDTO, resolved: ReturnType<typeof resolveOpera
       .map((id) => map.seats.find((entry) => entry.id === id))
       .filter((entry): entry is EventSeatDTO => Boolean(entry))
       .map(getSeatBounds),
-    ...resolved.seatGroupIds
-      .map((id) => map.seatGroups?.find((entry) => entry.id === id))
-      .filter((entry): entry is EventSeatGroupDTO => Boolean(entry))
-      .map((group) => getSeatGroupWorldBounds(group, map.seats)),
   ];
   const union = unionBounds(bounds);
   return union ? centerOf(union) : null;
@@ -47,19 +42,16 @@ function normalizeExplicitPatches(patches?: Partial<TransformPatchSet>): Transfo
   return {
     objects: patches?.objects ?? [],
     seats: patches?.seats ?? [],
-    seatGroups: patches?.seatGroups ?? [],
   };
 }
 
 function filterExplicitPatchesToSelection(patches: TransformPatchSet, resolved: ReturnType<typeof resolveOperationSelection>) {
   const objectIds = new Set(resolved.objectIds);
   const seatIds = new Set(resolved.seatIds);
-  const seatGroupIds = new Set(resolved.seatGroupIds);
 
   return {
     objects: patches.objects.filter((entry) => objectIds.has(entry.id)),
     seats: patches.seats.filter((entry) => seatIds.has(entry.id)),
-    seatGroups: patches.seatGroups.filter((entry) => seatGroupIds.has(entry.id)),
   };
 }
 
@@ -128,25 +120,6 @@ export function resizeSelection(input: ResizeSelectionInput): ResizeSelectionRes
     });
   }
 
-  for (const id of resolved.seatGroupIds) {
-    const group = input.map.seatGroups?.find((entry) => entry.id === id);
-    if (!group) continue;
-    patches.seatGroups.push({
-      id,
-      patch: {
-        x: pivot.x + (group.x - pivot.x) * sx,
-        y: pivot.y + (group.y - pivot.y) * sy,
-        seatWidth: Math.max(8, group.seatWidth * Math.abs(sx)),
-        seatHeight: Math.max(8, group.seatHeight * Math.abs(sy)),
-        gapX: Math.max(0, group.gapX * Math.abs(sx)),
-        gapY: Math.max(0, group.gapY * Math.abs(sy)),
-        paddingLeft: Math.max(0, group.paddingLeft * Math.abs(sx)),
-        paddingRight: Math.max(0, group.paddingRight * Math.abs(sx)),
-        paddingTop: Math.max(0, group.paddingTop * Math.abs(sy)),
-        paddingBottom: Math.max(0, group.paddingBottom * Math.abs(sy)),
-      },
-    });
-  }
 
   const safe = filterFiniteTransformPatches(patches);
   return {

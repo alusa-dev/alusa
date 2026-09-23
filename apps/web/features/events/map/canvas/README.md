@@ -8,7 +8,6 @@ Camada de execução visual do Map Creator. **Não contém matemática de transf
 |---|---|
 | `adapters/` | Leitura/escrita Konva (transform, snap, polygon points) |
 | `commit/` | Konva node → MapCommand → `applyTransform` |
-| `corridor/` | Sync corredor, sessions de transform, preview |
 | `render/` | Modelo de render, aparência, drafts |
 | `sessions/` | Hooks React (drag, transform, selection, viewport, snap guides) |
 | `transform/` | Routing e `map-transform-session` |
@@ -18,25 +17,23 @@ Camada de execução visual do Map Creator. **Não contém matemática de transf
 
 ```txt
 Transformer / drag end
-  → commit/* (buildObjectTransformCommit | buildSeatGroupTransformCommit | buildGroupDragCommit)
+  → commit/* (buildObjectTransformCommit | buildGroupDragCommit)
   → applyCanvasTransformPayload / applyCanvasTransformCommit
-  → buildCanvasTransformCommand (ROTATE_SELECTION | MOVE_SELECTION/MOVE_OBJECTS | RESIZE_SELECTION/RESIZE_OBJECTS | TRANSFORM_CORRIDOR)
+  → buildCanvasTransformCommand (ROTATE_SELECTION | MOVE_SELECTION/MOVE_OBJECTS | RESIZE_SELECTION/RESIZE_OBJECTS)
   → @alusa/domain executeMapCommand
-  → resync corridor nodes
 ```
 
-Seleção única via transformer, multi-select via `use-transform-session`, e drag de grupo via `buildGroupDragCommit` — todos passam pelo mesmo path semântico.
+Seleção única via transformer, multi-select e arraste de múltiplos elementos passam pelo mesmo path semântico.
 
 ## Fluxo de transform (multi-select)
 
 ```txt
 Transformer event
   → sessions/use-transform-session
-  → transform/map-transform-session + corridor/corridor-transform-session
+  → transform/map-transform-session
   → adapters/konva-transform-adapter (preview)
-  → store.applyTransform(ROTATE_SELECTION | MOVE_SELECTION/MOVE_OBJECTS | RESIZE_SELECTION/RESIZE_OBJECTS | TRANSFORM_CORRIDOR)
+  → store.applyTransform(ROTATE_SELECTION | MOVE_SELECTION/MOVE_OBJECTS | RESIZE_SELECTION/RESIZE_OBJECTS)
   → @alusa/domain executeMapCommand
-  → resync corridor nodes
 ```
 
 ## Imports
@@ -46,7 +43,6 @@ Transformer event
 import { readObjectTransformCommitFromNodes } from '../adapters/konva-transform-adapter';
 
 // ✅ Domain
-import { buildCorridorGroupRotationUpdates } from '@alusa/domain';
 
 // ❌ Trigonometria / resize math no canvas
 ```
@@ -57,4 +53,4 @@ import { buildCorridorGroupRotationUpdates } from '@alusa/domain';
 MAP_CANVAS_UNIT=1 pnpm test:unit:map-canvas
 ```
 
-Inclui testes Konva em `canvas/__tests__` e integração de store in-memory em `store/__tests__/corridor-group-transform-store.test.ts`. Não requer `DATABASE_URL` de teste.
+Inclui testes Konva em `canvas/__tests__` e integração de store in-memory em `store/__tests__`. Não requer `DATABASE_URL` de teste.

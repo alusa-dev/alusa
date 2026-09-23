@@ -12,6 +12,10 @@ export type MapValidationResult = {
   errors: MapValidationError[];
 };
 
+function countLabel(count: number, singular: string, plural: string) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 export function validateEventMapIntegrity(map: EventMapDTO): MapValidationResult {
   const errors: MapValidationError[] = [];
 
@@ -29,7 +33,7 @@ export function validateEventMapIntegrity(map: EventMapDTO): MapValidationResult
     errors.push({
       type: 'seat-no-section',
       severity: 'error',
-      message: `${orphanSeatIds.length} assento(s) sem setor associado.`,
+      message: `${countLabel(orphanSeatIds.length, 'assento', 'assentos')} sem setor associado.`,
       ids: orphanSeatIds,
     });
   }
@@ -46,7 +50,7 @@ export function validateEventMapIntegrity(map: EventMapDTO): MapValidationResult
     errors.push({
       type: 'section-no-lot',
       severity: 'warning',
-      message: `${activeSectionsWithoutLot.length} setor(es) ativo(s) sem lote de ingressos vinculado.`,
+      message: `${countLabel(activeSectionsWithoutLot.length, 'setor ativo', 'setores ativos')} sem lote de ingressos vinculado.`,
       ids: activeSectionsWithoutLot,
     });
   }
@@ -99,7 +103,7 @@ export function validateEventMapIntegrity(map: EventMapDTO): MapValidationResult
     errors.push({
       type: 'seat-overlap',
       severity: 'error',
-      message: `${overlappingSeatIds.size} assento(s) sobreposto(s) detectado(s).`,
+      message: `${countLabel(overlappingSeatIds.size, 'assento sobreposto detectado', 'assentos sobrepostos detectados')}.`,
       ids: Array.from(overlappingSeatIds),
     });
   }

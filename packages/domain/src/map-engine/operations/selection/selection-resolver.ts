@@ -2,12 +2,12 @@ import type { EventMapDTO } from '../../types/event-map-types.js';
 import type { MapSelection } from '../../selection/selection-utils.js';
 import { getSelectableItems } from '../../selection/selection-utils.js';
 import { expandObjectSelectionItems } from '../../layout/object-groups.js';
+import { findMapBlockOwner, findMapRowOwner } from '../../model/event-map-document.js';
 
 export type ResolvedSelection = {
   selection: MapSelection;
   objectIds: string[];
   seatIds: string[];
-  seatGroupIds: string[];
   sectionIds: string[];
   warnings: string[];
   blocked: boolean;
@@ -19,57 +19,45 @@ function addUnique(target: string[], seen: Set<string>, id: string) {
   target.push(id);
 }
 
-function removeFrom(target: string[], seen: Set<string>, id: string) {
-  seen.delete(id);
-  const index = target.indexOf(id);
-  if (index >= 0) target.splice(index, 1);
-}
-
-function addSeatGroup(
-  map: EventMapDTO,
-  groupId: string,
-  seatGroupIds: string[],
-  seenSeatGroups: Set<string>,
-  warnings: string[],
-  blockLocked: boolean,
-) {
-  const group = map.seatGroups?.find((entry) => entry.id === groupId);
-  if (!group) return false;
-  if (group.locked && blockLocked) {
-    warnings.push('A seleção contém grupo de assentos bloqueado.');
-    return true;
-  }
-  addUnique(seatGroupIds, seenSeatGroups, group.id);
-  return false;
-}
-
 export function resolveOperationSelection(
   map: EventMapDTO,
   selection: MapSelection,
-  options?: {
-    includeSectionSeats?: boolean;
-    blockLocked?: boolean;
-    blockSoldSeats?: boolean;
-    preferSeatGroups?: boolean;
-  },
+  options?: { includeSectionSeats?: boolean; blockLocked?: boolean; blockSoldSeats?: boolean },
 ): ResolvedSelection {
   const includeSectionSeats = options?.includeSectionSeats ?? true;
   const blockLocked = options?.blockLocked ?? true;
   const blockSoldSeats = options?.blockSoldSeats ?? true;
-  const preferSeatGroups = options?.preferSeatGroups ?? true;
-
   const objectIds: string[] = [];
   const seatIds: string[] = [];
-  const seatGroupIds: string[] = [];
   const sectionIds: string[] = [];
   const seenObjects = new Set<string>();
   const seenSeats = new Set<string>();
-  const seenSeatGroups = new Set<string>();
   const seenSections = new Set<string>();
   const warnings: string[] = [];
   let blocked = false;
-
   const items = expandObjectSelectionItems(getSelectableItems(selection), map.objects);
+
+  function addParametricSeats(item: Extract<(typeof items)[number], { type: 'seatblock' | 'seatrow' }>) {
+    if (!map.document) return;
+    const rows = item.type === 'seatblock'
+      ? findMapBlockOwner(map.document, item.id)?.block.rows ?? []
+      : (() => {
+          const owner = findMapRowOwner(map.document!, item.id);
+          return owner ? [owner.row] : [];
+        })();
+    for (const row of rows) {
+      for (const seatId of row.seatIds) {
+        const seat = map.seats.find((entry) => entry.id === seatId);
+        if (!seat) continue;
+        if (seat.status === 'SOLD' && blockSoldSeats) {
+          blocked = true;
+          warnings.push('A seleção contém assento vendido.');
+          continue;
+        }
+        addUnique(seatIds, seenSeats, seat.id);
+      }
+    }
+  }
 
   for (const item of items) {
     if (item.type === 'object') {
@@ -91,23 +79,14 @@ export function resolveOperationSelection(
         if (object.locked && blockLocked) {
           blocked = true;
           warnings.push('A seleção contém setor bloqueado.');
-        } else {
-          addUnique(objectIds, seenObjects, object.id);
-        }
+        } else addUnique(objectIds, seenObjects, object.id);
       }
-
       if (includeSectionSeats) {
         for (const seat of map.seats.filter((entry) => entry.sectionId === item.id)) {
           if (seat.status === 'SOLD' && blockSoldSeats) {
             blocked = true;
             warnings.push('A seleção contém assento vendido.');
-            continue;
-          }
-          if (seat.groupId && preferSeatGroups) {
-            blocked = addSeatGroup(map, seat.groupId, seatGroupIds, seenSeatGroups, warnings, blockLocked) || blocked;
-            continue;
-          }
-          addUnique(seatIds, seenSeats, seat.id);
+          } else addUnique(seatIds, seenSeats, seat.id);
         }
       }
       continue;
@@ -119,76 +98,39 @@ export function resolveOperationSelection(
       if (seat.status === 'SOLD' && blockSoldSeats) {
         blocked = true;
         warnings.push('A seleção contém assento vendido.');
-        continue;
-      }
-      if (seat.groupId && preferSeatGroups) {
-        blocked = addSeatGroup(map, seat.groupId, seatGroupIds, seenSeatGroups, warnings, blockLocked) || blocked;
-        removeFrom(seatIds, seenSeats, seat.id);
-        continue;
-      }
-      addUnique(seatIds, seenSeats, seat.id);
+      } else addUnique(seatIds, seenSeats, seat.id);
       continue;
     }
 
-    if (item.type === 'seatgroup') {
-      const group = map.seatGroups?.find((entry) => entry.id === item.id);
-      if (!group) continue;
-      if (group.locked && blockLocked) {
-        blocked = true;
-        warnings.push('A seleção contém grupo de assentos bloqueado.');
-        continue;
-      }
-      addUnique(seatGroupIds, seenSeatGroups, group.id);
-      if (preferSeatGroups) {
-        for (const seat of map.seats.filter((entry) => entry.groupId === group.id)) {
-          removeFrom(seatIds, seenSeats, seat.id);
-        }
-      }
+    if (item.type === 'seatblock' || item.type === 'seatrow') {
+      addParametricSeats(item);
     }
   }
 
   return {
-    selection: [
-      ...objectIds.map((id) => ({ type: 'object' as const, id })),
-      ...seatIds.map((id) => ({ type: 'seat' as const, id })),
-      ...seatGroupIds.map((id) => ({ type: 'seatgroup' as const, id })),
-    ],
+    selection: items.some((item) => item.type === 'seatblock' || item.type === 'seatrow')
+      ? items
+      : [...objectIds.map((id) => ({ type: 'object' as const, id })), ...seatIds.map((id) => ({ type: 'seat' as const, id }))],
     objectIds,
     seatIds,
-    seatGroupIds,
     sectionIds,
     warnings,
     blocked,
   };
 }
 
-const DEFAULT_CANVAS_SELECTION_OPTIONS = {
-  preferSeatGroups: true,
-  includeSectionSeats: true,
-} as const;
-
-/** Collapses member seats into their parent seat groups for canvas drag/transform. */
-export function resolveCanvasSelection(
-  map: EventMapDTO,
-  selection: MapSelection,
-  options?: {
-    includeSectionSeats?: boolean;
-    blockLocked?: boolean;
-    blockSoldSeats?: boolean;
-    preferSeatGroups?: boolean;
-  },
-): ResolvedSelection {
-  return resolveOperationSelection(map, selection, {
-    ...DEFAULT_CANVAS_SELECTION_OPTIONS,
-    ...options,
-  });
+export function resolveCanvasSelection(map: EventMapDTO, selection: MapSelection, options?: Parameters<typeof resolveOperationSelection>[2]) {
+  const resolved = resolveOperationSelection(map, selection, options);
+  const sectionObjectIds = new Set(map.objects.filter((object) => object.type === 'SECTION').map((object) => object.id));
+  const objectIds = resolved.objectIds.filter((id) => !sectionObjectIds.has(id));
+  return {
+    ...resolved,
+    objectIds,
+    selection: [...objectIds.map((id) => ({ type: 'object' as const, id })), ...resolved.seatIds.map((id) => ({ type: 'seat' as const, id }))],
+  };
 }
 
 export function resolveCanvasNodeIds(map: EventMapDTO, selection: MapSelection): string[] {
   const resolved = resolveCanvasSelection(map, selection);
-  return [
-    ...resolved.objectIds.map((id) => `node-${id}`),
-    ...resolved.seatIds.map((id) => `node-${id}`),
-    ...resolved.seatGroupIds.map((id) => `node-seatgroup-${id}`),
-  ];
+  return [...resolved.objectIds.map((id) => `node-${id}`), ...resolved.seatIds.map((id) => `node-${id}`)];
 }

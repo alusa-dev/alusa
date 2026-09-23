@@ -5,7 +5,7 @@ import {
   isFiniteBoundingBox,
   resolveSnapGuides as resolveSnapGuidesFromGeometry,
   type BoundingBox,
-  type CorridorPolygonPoint,
+  type PolygonPoint,
   type LayerSnapGeometry,
   type LevelBounds,
   type ResolveSnapGuidesOptions,
@@ -15,12 +15,12 @@ import {
 } from '@alusa/domain';
 import type Konva from 'konva';
 
-export function polygonToKonvaPoints(polygon: CorridorPolygonPoint[]): number[] {
+export function polygonToKonvaPoints(polygon: PolygonPoint[]): number[] {
   return polygon.flatMap((point) => [point.x, point.y]);
 }
 
 export type SnapGuideStopCacheEntry = {
-  skipKey: string;
+  skipIds: Set<string>;
   stops: SnapGuideStops;
   objectBounds: BoundingBox[];
 };
@@ -109,14 +109,17 @@ export function createSnapGuideStopCache() {
 
   return {
     get(contentLayer: Konva.Layer, skipIds: string[], levelBounds: LevelBounds): SnapGuideStopCacheEntry {
-      const skipKey = [...skipIds].sort().join('|');
-      if (entry?.skipKey === skipKey) {
+      // Compare sets in linear time. Sorting a large multi-selection on every
+      // pointer-move made snapping noticeably expensive.
+      const sameSkipSet = entry?.skipIds.size === skipIds.length
+        && skipIds.every((id) => entry?.skipIds.has(id));
+      if (entry && sameSkipSet) {
         return entry;
       }
 
       const objectBounds = collectSnapTargetBounds(contentLayer, skipIds).filter(isFiniteBoundingBox);
       const stops = buildGuideStops(levelBounds, objectBounds);
-      entry = { skipKey, stops, objectBounds };
+      entry = { skipIds: new Set(skipIds), stops, objectBounds };
       return entry;
     },
     invalidate() {

@@ -4,7 +4,7 @@ import {
   rotatePoint,
   shortestRotationDelta,
   snapAngleToStep,
-  snapSmartCorridorRotation,
+  snapQuarterTurn,
   toGlobal,
   toLocal,
 } from '../geometry/rotation.js';
@@ -19,8 +19,8 @@ describe('geometry/rotation', () => {
   });
 
   it('snaps to quarter turns', () => {
-    expect(snapSmartCorridorRotation(44)).toBe(0);
-    expect(snapSmartCorridorRotation(46)).toBe(90);
+    expect(snapQuarterTurn(44)).toBe(0);
+    expect(snapQuarterTurn(46)).toBe(90);
     expect(snapAngleToStep(170, 45)).toBe(180);
   });
 

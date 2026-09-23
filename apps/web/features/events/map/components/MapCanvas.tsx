@@ -1,8 +1,16 @@
 'use client';
 
-import type { LevelBounds } from '@alusa/domain';
-import { replaceSelection } from '@alusa/domain';
-import { isPlacementTool, type CreationDraft, type MarqueeDraft, type SeatGridDraft } from '../canvas/render/map-creation-draft';
+import type { EventMapDTO } from '../api/event-map-service';
+import type { LevelBounds, MapSelection, SeatBlockConfig } from '@alusa/domain';
+import { findMapBlockOwner, findMapRowOwner, replaceSelection } from '@alusa/domain';
+import {
+  isPlacementTool,
+  type CreationDraft,
+  type MarqueeDraft,
+  type SeatCreationMode,
+  getCreationBox,
+  getSeatBlockConfigForBounds,
+} from '../canvas/render/map-creation-draft';
 import type { MapTransformSession } from '../canvas/transform/map-transform-session';
 import { DEFAULT_TRANSFORMER_SCALE_OPTIONS } from '../canvas/transform/transform-handle-mode';
 import type { TransformerScaleOptions } from '../canvas/transform/transform-handle-mode';
@@ -18,14 +26,12 @@ import {
 } from '../canvas/sessions/use-canvas-viewport-session';
 import { applyCanvasTransformPayload } from '../canvas/commit/apply-canvas-transform';
 import { buildObjectTransformCommit } from '../canvas/commit/map-object-transform-commit';
-import { buildSeatGroupTransformCommit } from '../canvas/commit/seat-group-transform-commit';
 import {
   buildMapCanvasRenderHandlers,
   buildMapCanvasRenderState,
   buildTextEditorOverlayDimensions,
   getMapPointerPoint,
 } from '../canvas/render/map-canvas-render-model';
-import { useCorridorPreviewSession } from '../canvas/sessions/use-corridor-preview-session';
 import { useDragSession } from '../canvas/sessions/use-drag-session';
 import { useKeyboardSession } from '../canvas/sessions/use-keyboard-session';
 import { useMapCanvasStore } from '../canvas/sessions/use-map-canvas-store';
@@ -39,23 +45,50 @@ import { useSelectionSession } from '../canvas/sessions/use-selection-session';
 import { useSnapGuidesSession } from '../canvas/sessions/use-snap-guides-session';
 import { useTextEditorSession } from '../canvas/sessions/use-text-editor-session';
 import { useTransformSession } from '../canvas/sessions/use-transform-session';
-import type { EventMapObjectDTO, EventSeatGroupDTO } from '../api/event-map-service';
+import type { EventMapObjectDTO } from '../api/event-map-service';
 import { useEventMapEditorStore } from '../store/event-map-editor-store';
-import { CreateSeatGridDialog } from './CreateSeatGridDialog';
 import { MapCanvasStage } from './MapCanvasStage';
 import { MapInlineTextEditor } from './MapInlineTextEditor';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Konva from 'konva';
 
-export function MapCanvas({ readOnly }: { readOnly: boolean }) {
+function getInheritedSeatBlockDefaults(
+  map: EventMapDTO | null,
+  levelId: string | undefined,
+  selection: MapSelection,
+): Pick<SeatBlockConfig, 'seatSize' | 'horizontalSpacing' | 'verticalSpacing'> | undefined {
+  const document = map?.document;
+  if (!document) return undefined;
+
+  const selected = selection.length === 1 ? selection[0] : undefined;
+  const selectedBlock = selected?.type === 'seatblock'
+    ? findMapBlockOwner(document, selected.id)
+    : selected?.type === 'seatrow'
+      ? findMapRowOwner(document, selected.id)
+      : null;
+  const block = selectedBlock?.block ?? document.sections
+    .filter((section) => section.levelId === levelId)
+    .flatMap((section) => section.blocks)
+    .at(-1);
+  if (!block) return undefined;
+
+  const firstRow = block.rows[0];
+  const seatSize = firstRow?.seatSize ?? 28;
+  return {
+    seatSize,
+    horizontalSpacing: seatSize + (firstRow?.seatGap ?? block.defaultSeatGap),
+    verticalSpacing: seatSize + block.rowGap,
+  };
+}
+
+export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, onReferenceChartTransformCommit }: { readOnly: boolean; seatCreationMode: SeatCreationMode; referenceChartEditing: boolean; onReferenceChartTransformCommit: (transform: import('@alusa/domain').MapReferenceTransform) => void }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const contentLayerRef = useRef<Konva.Layer | null>(null);
   const transformerRef = useRef<Konva.Transformer | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const [creationDraft, setCreationDraft] = useState<CreationDraft | null>(null);
-  const [seatGridDraft, setSeatGridDraft] = useState<SeatGridDraft | null>(null);
   const [individualSeatDragId, setIndividualSeatDragId] = useState<string | null>(null);
   const [marqueeDraft, setMarqueeDraft] = useState<MarqueeDraft | null>(null);
   const [textEditor, setTextEditor] = useState<TextEditorState | null>(null);
@@ -63,39 +96,24 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   const textEditorFocusKeyRef = useRef<string | null>(null);
   const textEditSnapshotRef = useRef<string | null>(null);
   const mapTransformSessionRef = useRef<MapTransformSession | null>(null);
-  const transformReflowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transformCancelSnapshotsRef = useRef<TransformNodeSnapshot[]>([]);
   const transformCancelledRef = useRef(false);
   const transformContextRef = useRef({
     selectedObjectIds: [] as string[],
     selectedSeatIds: [] as string[],
-    selectedSeatGroupIds: [] as string[],
     selectedNodeIds: [] as string[],
     transformKind: null as ReturnType<typeof resolveTransformRouting>['kind'],
+    selectedParametricItem: null as MapSelection[number] | null,
+    selectedParametricItems: [] as Extract<MapSelection[number], { type: 'seatblock' | 'seatrow' }>[],
     levelBounds: null as LevelBounds | null,
-    forceUniformSeatGroupScale: false,
   });
   const [isTransformSessionActive, setIsTransformSessionActive] = useState(false);
   const [transformerScaleOptions, setTransformerScaleOptions] = useState<TransformerScaleOptions>(
     DEFAULT_TRANSFORMER_SCALE_OPTIONS,
   );
-  const [corridorVisualRevision, setCorridorVisualRevision] = useState(0);
-  const [activeUnionDragIds, setActiveUnionDragIds] = useState<Set<string>>(() => new Set());
   const lastTransformCommitRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   const { groupDragRef, committedGroupDragNodeIdsRef, beginGroupDrag, syncGroupDrag } = useDragSession({ stageRef });
-  const bumpCorridorVisualRevision = useCallback(() => setCorridorVisualRevision((value) => value + 1), []);
-  const corridorPreview = useCorridorPreviewSession({
-    stageRef,
-    contentLayerRef,
-    groupDragRef,
-    mapTransformSessionRef,
-    transformReflowTimerRef,
-    setIsTransformSessionActive,
-    setTransformerScaleOptions,
-    setActiveUnionDragIds,
-    bumpCorridorVisualRevision,
-  });
 
   const store = useMapCanvasStore();
   const {
@@ -110,11 +128,10 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     setSelection,
     addObjectAt,
     addRowAt,
-    addSeatGridAt,
+    addSeatBlockAt,
     updateObject,
     deleteObject,
     updateSeat,
-    updateSeatGroup,
     setInlineTextEditorActive,
     setViewportSize,
   } = store;
@@ -135,15 +152,20 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     [pan, zoom],
   );
 
+  const seatBlockDraft =
+    map && creationDraft?.tool === 'seat'
+      ? getSeatBlockConfigForBounds(
+          getCreationBox(creationDraft),
+          map.referenceChart?.calibration,
+          Math.max(1, map.seats.length + 1),
+          getInheritedSeatBlockDefaults(map, activeLevelId ?? undefined, selection),
+        )
+      : null;
+
   const levelView = useMapLevelViewModel({
     map,
     activeLevelId,
-    selection,
-    seatGridDraft,
-    stageRef,
-    isCorridorLivePreviewRef: corridorPreview.isCorridorLivePreviewRef,
-    isTransformSessionActive,
-    corridorVisualRevision,
+    seatBlockDraft,
   });
 
   const {
@@ -152,18 +174,15 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     levelObjects,
     displayLevelObjects,
     levelSeats,
-    levelSeatGroups,
-    corridorUnionGroups,
     renderStack,
-    selectedCorridorIds,
-    seatGridPreviewSeats,
+    seatBlockPreviewSeats,
   } = levelView;
 
   const size = useCanvasViewportSize({ containerRef, setViewportSize });
   const isZoomScrubbing = useZoomScrubSession({ enabled: tool === 'zoom', containerRef, stageRef, setZoom, setPan });
 
   useEffect(() => {
-    if (tool !== 'seat' || readOnly) setSeatGridDraft(null);
+    if (tool !== 'seat' || readOnly) setCreationDraft((draft) => (draft?.tool === 'seat' ? null : draft));
   }, [readOnly, tool]);
 
   useTextEditorSession({
@@ -182,7 +201,6 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     selection,
     levelObjects,
     levelSeats,
-    levelSeatGroups,
     setSelection,
     clearIndividualSeatDrag: () => setIndividualSeatDragId(null),
   });
@@ -191,7 +209,6 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     selectedNodeIds,
     selectedObjectIds,
     selectedSeatIds,
-    selectedSeatGroupIds,
     selectionContainsSeatsOrSections,
     handleSelectItem,
     getMarqueeSelection,
@@ -199,11 +216,9 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   } = selectionSession;
 
   useEffect(() => {
-    setEventMapE2ERenderMapProvider(
-      () => corridorPreview.corridorPreviewWorkingMapRef.current ?? useEventMapEditorStore.getState().map,
-    );
+    setEventMapE2ERenderMapProvider(() => useEventMapEditorStore.getState().map);
     return () => setEventMapE2ERenderMapProvider(null);
-  }, [map, corridorPreview.corridorPreviewWorkingMapRef]);
+  }, []);
 
   const transformRouting = useMapTransformRouting({
     map,
@@ -211,11 +226,13 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     selectedNodeIds,
     selectedObjectIds,
     selectedSeatIds,
-    selectedSeatGroupIds,
     selectionContainsSeatsOrSections,
+    selection,
     levelBounds,
     transformContextRef,
   });
+
+  const ascendSelection = useEventMapEditorStore((state) => state.ascendSelection);
 
   useKeyboardSession({
     stageRef,
@@ -225,21 +242,9 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     mapTransformSessionRef,
     transformCancelSnapshotsRef,
     transformCancelledRef,
-    transformReflowTimerRef,
-    isCorridorTransformActiveRef: corridorPreview.isCorridorTransformActiveRef,
-    corridorPreviewBaseMapRef: corridorPreview.corridorPreviewBaseMapRef,
-    corridorPreviewWorkingMapRef: corridorPreview.corridorPreviewWorkingMapRef,
     setIsTransformSessionActive,
     setTransformerScaleOptions,
-    getCommittedState: useCallback(
-      () => ({
-        map: useEventMapEditorStore.getState().map,
-        activeLevelId: useEventMapEditorStore.getState().activeLevelId,
-        levelObjects,
-      }),
-      [levelObjects],
-    ),
-    bumpCorridorVisualRevision,
+    ascendSelection,
   });
 
   useTransformSession({
@@ -253,30 +258,24 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     selectedNodeIds,
     transformContextRef,
     mapTransformSessionRef,
-    transformReflowTimerRef,
     transformCancelSnapshotsRef,
     transformCancelledRef,
-    corridorPreviewBaseMapRef: corridorPreview.corridorPreviewBaseMapRef,
-    corridorPreviewWorkingMapRef: corridorPreview.corridorPreviewWorkingMapRef,
-    isCorridorLivePreviewRef: corridorPreview.isCorridorLivePreviewRef,
-    isCorridorTransformActiveRef: corridorPreview.isCorridorTransformActiveRef,
     lastTransformCommitRef,
     setIsTransformSessionActive,
     setTransformerScaleOptions,
-    bumpCorridorVisualRevision,
   });
 
   const snapSession = useSnapGuidesSession({
     enabled: !readOnly && tool !== 'pan',
     levelBounds,
     zoom,
-    stageRef,
     groupDragRef,
     syncGroupDrag,
   });
 
   const nodeDrag = useMapNodeDragSession({
     activeLevelId,
+    transformerRef,
     levelObjects,
     levelSeats,
     map,
@@ -284,22 +283,11 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     committedGroupDragNodeIdsRef,
     beginGroupDrag,
     syncGroupDrag,
-    flushCorridorDragPreview: corridorPreview.flushCorridorDragPreview,
-    clearSmartCorridorPreview: corridorPreview.clearSmartCorridorPreview,
-    corridorPreviewBaseMapRef: corridorPreview.corridorPreviewBaseMapRef,
-    corridorPreviewWorkingMapRef: corridorPreview.corridorPreviewWorkingMapRef,
-    corridorDragCorridorNodeIdsRef: corridorPreview.corridorDragCorridorNodeIdsRef,
-    corridorDragModeRef: corridorPreview.corridorDragModeRef,
-    isCorridorLivePreviewRef: corridorPreview.isCorridorLivePreviewRef,
-    setActiveUnionDragIds,
     lastTransformCommitRef,
     setSelection,
     individualSeatDragId,
-    setIndividualSeatDragId,
     clearGuides: snapSession.clearGuides,
     handleSnapDragMove: snapSession.handleDragMove,
-    isSmartCorridorPreviewDrag: corridorPreview.isSmartCorridorPreviewDrag,
-    scheduleCorridorDragPreview: corridorPreview.scheduleCorridorDragPreview,
   });
 
   const { openTextEditor, openNewTextEditor } = useMapTextEditorOpen({
@@ -322,9 +310,12 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     tool,
     map,
     levelId: level?.id,
+    zoom,
     getPointerPoint,
     addObjectAt,
     addRowAt,
+    addSeatBlockAt,
+    seatBlockDefaults: getInheritedSeatBlockDefaults(map, level?.id, selection),
     setSelection,
     setIndividualSeatDragId,
     getMarqueeSelection,
@@ -333,8 +324,6 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     setCreationDraft,
     marqueeDraft,
     setMarqueeDraft,
-    seatGridDraft,
-    setSeatGridDraft,
   });
 
   const viewportHandlers = useMapStageViewportHandlers({ setPan, setZoom, zoom, pan, setIsPanning });
@@ -362,24 +351,15 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
           routing: {
             useUniformGroupTransform: transformRouting.useUniformGroupTransform,
             useGenericTransform: transformRouting.useGenericTransform,
-            useCorridorTransformerPipeline: transformRouting.useCorridorTransformerPipeline,
           },
           lastTransformCommitRef,
         }),
       );
     },
     [
-      transformRouting.useCorridorTransformerPipeline,
       transformRouting.useGenericTransform,
       transformRouting.useUniformGroupTransform,
     ],
-  );
-
-  const handleSeatGroupTransformEnd = useCallback(
-    (group: EventSeatGroupDTO, node: Konva.Node) => {
-      applyCanvasTransformPayload(buildSeatGroupTransformCommit({ group, node, lastTransformCommitRef }));
-    },
-    [],
   );
 
   const placementToolActive = isPlacementTool(tool);
@@ -391,13 +371,10 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
 
   const canvasRenderState = buildMapCanvasRenderState({
     renderStack,
+    document: map.document,
     displayLevelObjects,
     levelSeats,
-    levelSeatGroups,
-    corridorUnionGroups,
     selection,
-    selectedCorridorIds,
-    activeUnionDragIds,
     levelObjects,
     textEditorObjectId: textEditor?.objectId ?? null,
     placementToolActive,
@@ -421,10 +398,8 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     onDragMove: nodeDrag.handleResponsiveDragMove,
     onDragEnd: nodeDrag.handleNodeDragEnd,
     onObjectTransformEnd: handleTransformEnd,
-    onSeatGroupTransformEnd: handleSeatGroupTransformEnd,
     onUpdateObjectPosition: (objectId, x, y) => updateObject(objectId, { x, y }),
     onUpdateSeatPosition: (seatId, x, y) => updateSeat(seatId, { x, y }),
-    onUpdateSeatGroupPosition: (groupId, x, y) => updateSeatGroup(groupId, { x, y }),
     onOpenTextEditor: openTextEditor,
   });
 
@@ -447,17 +422,6 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
           onKeyDown={handleTextEditorKeyDown}
         />
       ) : null}
-      {seatGridDraft ? (
-        <CreateSeatGridDialog
-          config={seatGridDraft.config}
-          onChange={(config) => setSeatGridDraft((draft) => (draft ? { ...draft, config } : draft))}
-          onCancel={() => setSeatGridDraft(null)}
-          onConfirm={() => {
-            addSeatGridAt(seatGridDraft.origin, seatGridDraft.config);
-            setSeatGridDraft(null);
-          }}
-        />
-      ) : null}
       <MapCanvasStage
         stageRef={stageRef}
         contentLayerRef={contentLayerRef}
@@ -465,6 +429,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
         transformerRef={transformerRef}
         size={size}
         level={level}
+        levelId={level.id}
         pan={pan}
         zoom={zoom}
         readOnly={readOnly}
@@ -473,10 +438,12 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
         renderHandlers={canvasRenderHandlers}
         creationDraft={creationDraft}
         marqueeDraft={marqueeDraft}
-        seatGridDraft={seatGridDraft}
-        seatGridPreviewSeats={seatGridPreviewSeats}
-        disableRotateForMixedSmartCorridorSelection={transformRouting.disableRotateForMixedSmartCorridorSelection}
-        disableResizeForMixedSmartCorridorSelection={transformRouting.disableResizeForMixedSmartCorridorSelection}
+        seatBlockDraft={seatBlockDraft}
+        seatBlockPreviewSeats={seatBlockPreviewSeats}
+        referenceChart={map.referenceChart}
+        referenceChartEditing={referenceChartEditing}
+        onReferenceChartTransformCommit={onReferenceChartTransformCommit}
+        transformDisabled={transformRouting.transformDisabled}
         transformerScaleOptions={transformerScaleOptions}
         selectedTextTransformAnchors={transformRouting.selectedTextTransformAnchors}
         placementToolActive={placementToolActive}
@@ -489,6 +456,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
         onMouseDown={stagePointer.handleStageMouseDown}
         onMouseMove={stagePointer.handleStageMouseMove}
         onMouseUp={stagePointer.handleStageMouseUp}
+        onClick={stagePointer.handleStageClick}
         onWheel={viewportHandlers.handleWheel}
       />
     </div>

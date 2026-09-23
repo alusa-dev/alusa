@@ -10,6 +10,7 @@ import { Circle, Group, Text } from 'react-konva';
 export type LooseSeatNodeProps = {
   seat: EventSeatDTO;
   selection: MapSelection;
+  parametricOwner: { block: { id: string }; row: { id: string } } | null;
   placementToolActive: boolean;
   readOnly: boolean;
   tool: string;
@@ -24,6 +25,7 @@ export type LooseSeatNodeProps = {
 export function LooseSeatNode({
   seat,
   selection,
+  parametricOwner,
   placementToolActive,
   readOnly,
   tool,
@@ -34,7 +36,8 @@ export function LooseSeatNode({
   onDragEnd,
   onCommitPosition,
 }: LooseSeatNodeProps) {
-  const selected = isItemSelected(selection, { type: 'seat', id: seat.id });
+  const selected = isItemSelected(selection, { type: 'seat', id: seat.id }) ||
+    (parametricOwner ? isItemSelected(selection, { type: 'seatblock', id: parametricOwner.block.id }) || isItemSelected(selection, { type: 'seatrow', id: parametricOwner.row.id }) : false);
   const radius = (seat.size ?? 24) / 2;
 
   return (

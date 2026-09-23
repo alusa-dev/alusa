@@ -7,10 +7,9 @@ export type {
   EventMapObjectDTO,
   EventMapSectionDTO,
   EventSeatDTO,
-  EventSeatGroupDTO,
 } from '@alusa/domain';
 
-import type { EventMapDTO, EventMapDraftPayload } from '@alusa/domain';
+import type { EventMapDTO, EventMapDraftPayload, MapReferenceChart } from '@alusa/domain';
 
 type JsonEnvelope<T> = { data: T };
 
@@ -78,7 +77,34 @@ export async function getEventMap(eventId: string, mapId: string) {
   return json.data;
 }
 
-export async function createEventMap(eventId: string, payload: { name: string }) {
+export async function uploadEventMapReferenceChart(eventId: string, mapId: string, file: File) {
+  const form = new FormData();
+  form.append('file', file);
+  const json = await parseResponse<JsonEnvelope<EventMapDTO>>(
+    await eventMapFetch(`/api/events/${eventId}/maps/${mapId}/reference-chart`, { method: 'POST', body: form }),
+  );
+  return json.data;
+}
+
+export async function updateEventMapReferenceChart(
+  eventId: string,
+  mapId: string,
+  referenceChart: MapReferenceChart | null,
+) {
+  const json = await parseResponse<JsonEnvelope<EventMapDTO>>(
+    await eventMapFetch(`/api/events/${eventId}/maps/${mapId}/reference-chart`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ referenceChart }),
+    }),
+  );
+  return json.data;
+}
+
+export async function createEventMap(
+  eventId: string,
+  payload: { name: string; creationMode?: 'blank' | 'reference-plan' },
+) {
   const json = await parseResponse<JsonEnvelope<EventMapDTO>>(
     await eventMapFetch(`/api/events/${eventId}/maps`, {
       method: 'POST',

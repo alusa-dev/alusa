@@ -109,8 +109,8 @@ e exige sandbox; o teste de webhook sem assinatura usa a superfície atual e
 passa com rejeição estrita em production-like.
 
 Validações adicionais concluídas nesta rodada: regras de matrícula em 22/22,
-hard-block de KYC em 1/1, hardening de eventos em 2/2, layout de detalhes de
-contrato em 1/1 e criação de corredor no editor de mapas em 1/1. Esses números
+hard-block de KYC em 1/1, hardening de eventos em 2/2 e layout de detalhes de
+contrato em 1/1. Esses números
 representam execuções isoladas com banco de teste local; não substituem a
 validação dos cenários que dependem de sandbox Asaas, HMAC real, emulador
 Mobile ou observabilidade de produção.

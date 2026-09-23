@@ -41,21 +41,20 @@ export function filterPublicMapSeatsByLevel<T extends { levelId?: string | null 
 }
 
 type PublicMapRenderableSource = {
-  seatGroups?: Array<{ id: string }>;
-  seats: Array<{ groupId?: string | null; sectionId?: string | null }>;
+  seats: Array<{ sectionId?: string | null }>;
 };
 
 export function filterPublicMapRenderableObjects<
   T extends { levelId?: string | null; hidden?: boolean; type?: string; sectionId?: string | null },
 >(map: PublicMapRenderableSource, objects: T[], levelId: string): T[] {
-  const groupedSectionIds = new Set(
+  const seatedSectionIds = new Set(
     map.seats
-      .filter((seat) => seat.groupId && seat.sectionId)
+      .filter((seat) => seat.sectionId)
       .map((seat) => seat.sectionId as string),
   );
 
   return filterPublicMapObjectsByLevel(objects, levelId).filter((object) => {
     if (object.type !== 'SECTION' || !object.sectionId) return true;
-    return !groupedSectionIds.has(object.sectionId);
+    return !seatedSectionIds.has(object.sectionId);
   });
 }

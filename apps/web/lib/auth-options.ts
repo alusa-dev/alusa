@@ -135,10 +135,23 @@ export const authOptions: NextAuthOptions = {
       if (tokenUserId && !(token as any).id) {
         (token as any).id = tokenUserId;
       }
-      const tokenContaId = typeof (token as any).contaId === 'string' ? (token as any).contaId : null;
+      let tokenContaId = typeof (token as any).contaId === 'string' ? (token as any).contaId : null;
 
       if (tokenUserId) {
         try {
+          if (trigger === 'update' && typeof (session as any)?.contaId === 'string') {
+            const requestedContaId = (session as any).contaId as string;
+            const requestedAccess = await resolveSessionAccess({
+              userId: tokenUserId,
+              contaId: requestedContaId,
+              sessionVersion: typeof (token as any).sessionVersion === 'number' ? (token as any).sessionVersion : null,
+            });
+            if (requestedAccess.ok) {
+              tokenContaId = requestedAccess.contaId;
+              (token as any).contaId = requestedAccess.contaId;
+              (token as any).role = requestedAccess.role;
+            }
+          }
           const isInitialLogin = Boolean(user);
           const tokenSessionVersion = typeof (token as any).sessionVersion === 'number'
             ? (token as any).sessionVersion

@@ -62,7 +62,6 @@ export const EVENT_MAP_OBJECT_TYPES = [
   'TABLE',
   'TEXT',
   'BLOCKED_AREA',
-  'CORRIDOR',
   'BOOTH',
   'GENERAL_AREA',
 ] as const;
@@ -220,7 +219,6 @@ export const EVENT_MAP_OBJECT_TYPE_LABELS: Record<EventMapObjectType, string> = 
   TABLE: 'Mesa',
   TEXT: 'Texto',
   BLOCKED_AREA: 'Área bloqueada',
-  CORRIDOR: 'Corredor',
   BOOTH: 'Camarote',
   GENERAL_AREA: 'Área geral',
 };

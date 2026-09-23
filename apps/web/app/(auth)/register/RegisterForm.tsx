@@ -1,6 +1,6 @@
 // Página de registro: componente client isolado para permitir wrapper SSR em page.tsx
 "use client";
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -19,8 +19,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { LegalAcceptanceModal } from '@/components/legal/LegalAcceptanceModal';
+import PasswordStrengthIndicator from '@/components/auth/PasswordStrengthIndicator';
 import { requiredRegisterLegalDocuments } from '@/lib/privacy/legal-versions';
-import { isPasswordPolicyValid, passwordMinLength, passwordPolicyMessage, passwordPolicyRegex } from '@/lib/password-policy';
+import { passwordPolicyRegex } from '@/lib/password-policy';
+import { isValidCpfDigits, normalizeCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
 
 export const REQUIRES_SCHOOL_DATA = false;
 
@@ -33,62 +35,32 @@ const baseSchema = z.object({
   senha: z.string().regex(passwordPolicyRegex, 'Senha fraca'),
   confirmarSenha: z.string(),
   termos: z.boolean().refine((val) => val === true, { message: 'Você deve aceitar os termos' }),
+  cpf: z.string().optional(),
+  telefone: z.string().optional(),
 });
 
-function schemaFor() {
-  return baseSchema.refine((data) => data.senha === data.confirmarSenha, {
-    path: ['confirmarSenha'],
-    message: 'Senhas não coincidem'
-  });
+function schemaFor(isGuardianInvite: boolean) {
+  return baseSchema
+    .refine((data) => data.senha === data.confirmarSenha, {
+      path: ['confirmarSenha'],
+      message: 'Senhas não coincidem',
+    })
+    .refine((data) => !isGuardianInvite || (Boolean(data.cpf) && isValidCpfDigits(normalizeCpfCnpjDigits(data.cpf))), {
+      path: ['cpf'],
+      message: 'Informe um CPF válido',
+    })
+    .refine((data) => !isGuardianInvite || /^\d{10,11}$/.test((data.telefone ?? '').replace(/\D/g, '')) , {
+      path: ['telefone'],
+      message: 'Informe um telefone com DDD',
+    });
 }
 
-function getPasswordStrength(password: string) {
-  const requirements = [
-    password.length >= passwordMinLength,
-    /[A-Z]/.test(password),
-    /[a-z]/.test(password),
-    /\d/.test(password),
-    /[!@#$%^&*]/.test(password),
-  ];
-  const score = requirements.filter(Boolean).length;
-  return {
-    score,
-    strength: score <= 1
-    ? { label: 'Muito fraca', tone: 'bg-red-500', text: 'text-red-600' }
-    : score === 2
-      ? { label: 'Fraca', tone: 'bg-red-500', text: 'text-red-600' }
-      : score === 3
-        ? { label: 'Média', tone: 'bg-amber-400', text: 'text-amber-600' }
-        : score === 4
-        ? { label: 'Forte', tone: 'bg-emerald-500', text: 'text-emerald-600' }
-          : { label: 'Muito forte', tone: 'bg-emerald-500', text: 'text-emerald-600' },
-  };
-}
-
-function PasswordStrength({ password }: { password: string }) {
-  const { score, strength } = getPasswordStrength(password);
-
-  if (!password) return null;
-
-  return (
-    <div className="mt-2 space-y-1.5" aria-label={`Força da senha: ${strength.label}`}>
-      <span className="sr-only">{strength.label}. {passwordPolicyMessage}</span>
-      <div className="flex gap-1" aria-hidden="true">
-        {[0, 1, 2].map((bar) => (
-          <span
-            key={bar}
-            className={`h-1.5 flex-1 rounded-full transition-colors ${bar < Math.max(1, Math.ceil(score / 2)) ? strength.tone : 'bg-slate-200'}`}
-          />
-        ))}
-      </div>
-      <p className="text-xs leading-4 text-slate-500">
-        {isPasswordPolicyValid(password)
-          ? 'Sua senha atende aos requisitos de segurança.'
-          : passwordPolicyMessage}
-      </p>
-    </div>
-  );
-}
+const INVITE_ROLE_LABELS: Record<string, string> = {
+  PROFESSOR: 'Professor',
+  RECEPCAO: 'Recepção',
+  FINANCEIRO: 'Financeiro',
+  RESPONSAVEL: 'Responsável',
+};
 
 // Tipos do formulário (superset para todos os modos)
 type FormValues = {
@@ -99,6 +71,8 @@ type FormValues = {
   senha: string;
   confirmarSenha: string;
   termos: boolean;
+  cpf?: string;
+  telefone?: string;
 };
 
 interface InviteData {
@@ -125,8 +99,11 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [passwordValue, setPasswordValue] = useState('');
+  const passwordInputRef = useRef<HTMLInputElement | null>(null);
   const [legalModalOpen, setLegalModalOpen] = useState(false);
-  const schema = useMemo(() => schemaFor(), []);
+  const isGuardianInvite = mode === 'invite' && inviteData?.role.toUpperCase() === 'RESPONSAVEL';
+  const schema = useMemo(() => schemaFor(isGuardianInvite), [isGuardianInvite]);
   const { register, handleSubmit, control, formState: { errors, isSubmitting }, setValue, watch } = useForm<FormValues>({
     resolver: zodResolver(schema),
     mode: 'onSubmit',
@@ -139,8 +116,12 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
     }
   });
   const termsAccepted = watch('termos');
-  const password = watch('senha');
-  const passwordStrength = password ? getPasswordStrength(password).strength : null;
+  const passwordRegistration = register('senha');
+
+  useEffect(() => {
+    const autofilledPassword = passwordInputRef.current?.value;
+    if (autofilledPassword) setPasswordValue(autofilledPassword);
+  }, []);
 
   // Convites dão acesso a uma conta já configurada; somente o primeiro cadastro
   // deve iniciar o onboarding financeiro da nova escola.
@@ -182,8 +163,9 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
         payload = {
           token: inviteData.token,
           name: `${data.firstName} ${data.lastName}`.trim(),
-          email: data.email, // Envia o email (pode ser do convite ou digitado pelo usuário)
+          email: inviteData.email ?? data.email,
           password: data.senha,
+          ...(isGuardianInvite ? { cpf: data.cpf, telefone: data.telefone } : {}),
         };
       }
 
@@ -202,14 +184,28 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
 
       if (!res.ok) {
         const isConflict = res.status === 409;
+        const isExistingInviteAccount = mode === 'invite' && responsePayload.code === 'ACCOUNT_EXISTS' && Boolean(inviteData?.token);
+        const isAlreadyLinked = mode === 'invite' && responsePayload.code === 'USER_ALREADY_LINKED';
         const isDeactivatedAccount = isConflict && responsePayload.code === 'ACCOUNT_DEACTIVATED';
+        const isInactiveInviteAccount = mode === 'invite' && responsePayload.code === 'ACCOUNT_INACTIVE';
         const isAsaasEmailInUse = isConflict && responsePayload.code === 'ASAAS_EMAIL_IN_USE';
-        const descText = isDeactivatedAccount
+        const descText = isAlreadyLinked
+          ? 'Esta conta já está vinculada a esta escola. Fale com o administrador.'
+          : isInactiveInviteAccount
+          ? 'A conta associada a este e-mail está inativa. Peça ao administrador da escola para reativar o acesso antes de continuar.'
+          : isDeactivatedAccount
           ? 'Já existe uma conta desativada para este e-mail. Faça login para iniciar a reativação.'
           : responsePayload.error ?? (isConflict ? 'E-mail já cadastrado.' : 'Falha ao criar conta.');
-        setGlobalError(descText);
+        setGlobalError(isAlreadyLinked ? null : descText);
         if (isAuthDebug) debugLog('register', 'error', { status: res.status, error: responsePayload.error });
-        const descNode = isDeactivatedAccount ? (
+        const descNode = isAlreadyLinked ? descText : isInactiveInviteAccount ? (
+          <span>{descText}</span>
+        ) : isExistingInviteAccount ? (
+          <span>
+            Este e-mail já possui uma conta.{' '}
+            <a href={`/auth/login?callbackUrl=${encodeURIComponent(`/auth/register?token=${inviteData!.token}`)}`} className="underline">Entre para aceitar o convite</a>.
+          </span>
+        ) : isDeactivatedAccount ? (
           <span>
             Já existe uma conta desativada para este e-mail.{' '}
             <a href="/auth/login" className="underline">Faça login</a>{' '}
@@ -226,8 +222,8 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
         ) : (descText);
         toast.custom((t) => (
           <CustomToast
-            variant={isDeactivatedAccount ? 'warning' : 'error'}
-            title={isDeactivatedAccount ? 'Conta desativada encontrada' : isAsaasEmailInUse ? 'E-mail indisponível no cadastro financeiro' : isConflict ? 'E-mail já cadastrado' : 'Erro ao criar conta'}
+            variant={isAlreadyLinked || isDeactivatedAccount ? 'warning' : 'error'}
+            title={isAlreadyLinked ? 'Conta já vinculada' : isInactiveInviteAccount ? 'Conta de usuário inativa' : isExistingInviteAccount ? 'Entre na sua conta para aceitar' : isDeactivatedAccount ? 'Conta desativada encontrada' : isAsaasEmailInUse ? 'E-mail indisponível no cadastro financeiro' : isConflict ? 'E-mail já cadastrado' : 'Erro ao criar conta'}
             description={descNode}
             onClose={() => { toast.dismiss(t); }}
           />
@@ -337,7 +333,10 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
           </h1>
           {mode === 'invite' && inviteData ? (
             <p className="text-left text-sm font-medium leading-relaxed text-brand-muted lg:text-center lg:text-[12px]">
-              Você foi convidado como {inviteData.role} para acessar o sistema.
+              Você recebeu um convite para acessar a Alusa com o perfil de{' '}
+              <strong className="font-semibold text-brand-primary">
+                {INVITE_ROLE_LABELS[inviteData.role.toUpperCase()] ?? inviteData.role}
+              </strong>.
             </p>
           ) : null}
           {globalError && (
@@ -386,16 +385,49 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
                 placeholder="Email"
                 data-testid="register-email"
                 autoComplete="email"
-                className="h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-4 pr-11 text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 disabled:bg-gray-100 lg:h-12 lg:pl-5 lg:pr-11 lg:text-[14px]"
                 {...register('email')}
+                defaultValue={mode === 'invite' ? inviteData?.email ?? '' : undefined}
                 readOnly={mode === 'invite' && !!inviteData?.email}
-                disabled={mode === 'invite' && !!inviteData?.email}
+                aria-readonly={mode === 'invite' && !!inviteData?.email}
+                className={`h-12 w-full rounded-[12px] border border-gray-300 pl-4 pr-11 text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 lg:h-12 lg:pl-5 lg:pr-11 lg:text-[14px] ${mode === 'invite' && inviteData?.email ? 'cursor-not-allowed bg-gray-100 text-gray-600' : 'bg-white'}`}
               />
               <span className="absolute right-4 top-1/2 -translate-y-1/2 text-brand-muted lg:right-4" aria-hidden>
                 <Mail className="h-4 w-4 lg:h-4 lg:w-4" />
               </span>
             </div>
           </div>
+          {isGuardianInvite ? (
+            <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  maxLength={14}
+                  placeholder="CPF"
+                  aria-label="CPF do responsável"
+                  data-testid="register-guardian-cpf"
+                  className="h-12 w-full rounded-[12px] border border-gray-300 bg-white px-4 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0"
+                  {...register('cpf')}
+                />
+                {errors.cpf ? <p role="alert" className="mt-1 text-xs text-red-600">{errors.cpf.message}</p> : null}
+              </div>
+              <div>
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  maxLength={20}
+                  placeholder="Telefone com DDD"
+                  aria-label="Telefone do responsável"
+                  data-testid="register-guardian-phone"
+                  className="h-12 w-full rounded-[12px] border border-gray-300 bg-white px-4 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0"
+                  {...register('telefone')}
+                />
+                {errors.telefone ? <p role="alert" className="mt-1 text-xs text-red-600">{errors.telefone.message}</p> : null}
+              </div>
+            </div>
+          ) : null}
           {mode === 'first' && enableExternalAsaasOnboarding ? (
             <div className="w-full">
               <Controller
@@ -438,28 +470,38 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
           <div className="w-full">
             <div className="relative h-12 w-full lg:h-12">
               <input
+                id="register-senha"
                 type={showPassword ? 'text' : 'password'}
                 placeholder="Senha"
                 data-testid="register-senha"
                 autoComplete="new-password"
-                className={`h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-4 ${passwordStrength ? 'pr-28 lg:pr-28' : 'pr-11 lg:pr-11'} text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 lg:h-12 lg:pl-5 lg:text-[14px]`}
-                {...register('senha')}
+                className="h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-4 pr-28 text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 lg:h-12 lg:pl-5 lg:text-[14px]"
+                {...passwordRegistration}
+                ref={(element) => {
+                  passwordRegistration.ref(element);
+                  passwordInputRef.current = element;
+                }}
+                onChange={(event) => {
+                  void passwordRegistration.onChange(event);
+                  setPasswordValue(event.currentTarget.value);
+                }}
+                onInput={(event) => setPasswordValue(event.currentTarget.value)}
+                onFocus={(event) => setPasswordValue(event.currentTarget.value)}
               />
-              {passwordStrength ? (
-                <span className={`pointer-events-none absolute right-11 top-1/2 -translate-y-1/2 text-xs font-medium ${passwordStrength.text}`}>
-                  {passwordStrength.label}
-                </span>
-              ) : null}
+              <PasswordStrengthIndicator password={passwordValue} placement="field" />
               <button
                 type="button"
                 onClick={() => { setShowPassword(s => !s); }}
                 aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
-                className="absolute right-2 top-1/2 flex min-h-12 min-w-12 -translate-y-1/2 items-center justify-center text-brand-muted outline-none lg:right-3 lg:min-h-0 lg:min-w-0 lg:p-1"
+                aria-pressed={showPassword}
+                aria-controls="register-senha"
+                data-testid="register-senha-toggle"
+                className="absolute right-1 top-1/2 z-10 flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center rounded-full bg-transparent text-brand-muted outline-none hover:bg-transparent hover:text-brand-primary active:bg-transparent focus-visible:ring-2 focus-visible:ring-brand-primary lg:right-1 lg:min-h-10 lg:min-w-10"
               >
-                {showPassword ? <EyeOff className="h-4 w-4 lg:h-4 lg:w-4" /> : <Eye className="h-4 w-4 lg:h-4 lg:w-4" />}
+                {showPassword ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
               </button>
             </div>
-            <PasswordStrength password={password} />
+            <PasswordStrengthIndicator password={passwordValue} placement="meter" />
           </div>
           <div className="w-full">
             <div className="relative h-12 w-full lg:h-12">
@@ -475,9 +517,12 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
                 type="button"
                 onClick={() => { setShowConfirmPassword(s => !s); }}
                 aria-label={showConfirmPassword ? 'Ocultar senha' : 'Mostrar senha'}
-                className="absolute right-2 top-1/2 flex min-h-12 min-w-12 -translate-y-1/2 items-center justify-center text-brand-muted outline-none lg:right-3 lg:min-h-0 lg:min-w-0 lg:p-1"
+                aria-pressed={showConfirmPassword}
+                aria-controls="register-senha-confirmar"
+                data-testid="register-senha-confirmar-toggle"
+                className="absolute right-1 top-1/2 z-10 flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center rounded-full bg-transparent text-brand-muted outline-none hover:bg-transparent hover:text-brand-primary active:bg-transparent focus-visible:ring-2 focus-visible:ring-brand-primary lg:right-1 lg:min-h-10 lg:min-w-10"
               >
-                {showConfirmPassword ? <EyeOff className="h-4 w-4 lg:h-4 lg:w-4" /> : <Eye className="h-4 w-4 lg:h-4 lg:w-4" />}
+                {showConfirmPassword ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
               </button>
             </div>
           </div>
@@ -515,12 +560,12 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
           >
             {isSubmitting ? 'Processando...' : (mode === 'invite' ? 'Aceitar Convite' : 'Criar conta')}
           </button>
-          <p className="mt-6 w-full pb-4 text-center text-[0.8125rem] font-medium min-[400px]:text-sm lg:mt-8 lg:pb-0 lg:text-[11px]">
-            <span className="text-[#686868]">{mode === 'invite' ? 'Não recebeu este convite? ' : 'Já tenho uma conta! '}</span>
-            <a href="/auth/login" className="text-brand-accent hover:underline">
-              {mode === 'invite' ? 'Contatar administrador' : 'Fazer login'}
-            </a>
-          </p>
+          {mode === 'first' ? (
+            <p className="mt-6 w-full pb-4 text-center text-[0.8125rem] font-medium min-[400px]:text-sm lg:mt-8 lg:pb-0 lg:text-[11px]">
+              <span className="text-[#686868]">Já tenho uma conta! </span>
+              <a href="/auth/login" className="text-brand-accent hover:underline">Fazer login</a>
+            </p>
+          ) : null}
         </form>
         <LegalAcceptanceModal
           open={legalModalOpen}

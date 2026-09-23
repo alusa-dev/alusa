@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
+import { formatCheckInCode } from '@alusa/lib/events/map/ticket-code';
 
 const CODE_128_PATTERNS = [
   '212222', '222122', '222221', '121223', '121322', '131222', '122213', '122312', '132212', '221213',
@@ -54,6 +55,7 @@ type EventTicketPdfOrder = {
     technicalCode: string;
     unitPrice: number;
     ticketCode: string;
+    checkInCode: string;
   }>;
 };
 
@@ -224,9 +226,8 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
       y = marginY;
     }
 
-    // Novos ingressos levam o código completo para que o scanner identifique
-    // o evento sem depender de uma seleção manual.
-    const checkInCode = item.ticketCode.trim().toUpperCase();
+    const checkInCode = item.checkInCode.trim().toUpperCase();
+    const formattedCheckInCode = formatCheckInCode(checkInCode);
 
     doc.setDrawColor(226, 232, 240);
     doc.setFillColor(255, 255, 255);
@@ -308,7 +309,7 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
     const eventFontSize = fitFontSize(doc, eventLabel, 9.2, 5.8, stubTextHeight, true);
     const detailsFontSize = fitFontSize(doc, detailsLabel, 7.4, 5.4, stubTextHeight, true);
     const checkInFontSize = 6.5;
-    const checkInLabelY = getVerticalTextY(doc, checkInCode, stubCenterY, stubBottomY, { fontSize: checkInFontSize, bold: true, topY: stubTopY });
+    const checkInLabelY = getVerticalTextY(doc, formattedCheckInCode, stubCenterY, stubBottomY, { fontSize: checkInFontSize, bold: true, topY: stubTopY });
 
     // 1. Evento (cresce para cima, centrado no canhoto - apenas o valor)
     doc.setTextColor(30, 41, 59); // slate-800
@@ -334,7 +335,7 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
     drawRotatedCode128(doc, checkInCode, barcodeX, barcodeY, barcodeWidth, barcodeHeight);
     // Código de check-in vertical (cresce para cima, alinhado com padding de 4.5pt)
     doc.setTextColor(15, 23, 42); // slate-900
-    drawVerticalText(doc, checkInCode, checkInX, checkInLabelY, { fontSize: checkInFontSize, bold: true });
+    drawVerticalText(doc, formattedCheckInCode, checkInX, checkInLabelY, { fontSize: checkInFontSize, bold: true });
 
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(contentX, y, ticketWidth, ticketHeight, radius, radius, 'S');

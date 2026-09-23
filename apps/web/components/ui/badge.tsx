@@ -63,7 +63,7 @@ const statusConfig = {
   ATIVO: { text: 'Ativo', className: 'alusa-badge alusa-badge-tone-success' },
   ENCERRADO: { text: 'Encerrado', className: 'alusa-badge alusa-badge-tone-neutral' },
   INATIVO: { text: 'Inativo', className: 'alusa-badge alusa-badge-tone-danger' },
-  ADMIN: { text: 'Admin', className: 'alusa-badge alusa-badge-tone-brand' },
+  ADMIN: { text: 'Administrador', className: 'alusa-badge alusa-badge-tone-brand' },
   PROFESSOR: { text: 'Professor', className: 'alusa-badge alusa-badge-tone-info' },
   INSTRUTOR: { text: 'Instrutor', className: 'alusa-badge alusa-badge-tone-info' },
   SECRETARIA: { text: 'Secretaria', className: 'alusa-badge alusa-badge-tone-muted' },

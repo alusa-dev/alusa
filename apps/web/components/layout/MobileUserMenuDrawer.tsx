@@ -5,6 +5,7 @@ import { UserAvatar } from '@/components/layout/UserAvatar';
 import { useSession } from 'next-auth/react';
 import { X } from '@/components/icons/icons';
 import { UserMenuPanel } from '@/components/layout/UserMenu';
+import { AccountSwitcher } from '@/components/layout/AccountSwitcher';
 import { useUserStore, type UserState, type User } from '@/lib/stores/user-store';
 
 type MobileUserMenuDrawerProps = {
@@ -82,6 +83,7 @@ export function MobileUserMenuDrawer({ open, onOpenChange }: MobileUserMenuDrawe
         </div>
 
         <div className="flex-1 overflow-y-auto">
+          <AccountSwitcher />
           <UserMenuPanel onClose={() => onOpenChange(false)} />
         </div>
       </aside>

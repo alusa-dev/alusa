@@ -112,6 +112,39 @@ describe('verifyEmailByToken', () => {
     expect(prismaTransactionMock).not.toHaveBeenCalled();
   });
 
+  it('finaliza a confirmação quando uma requisição concorrente já reivindicou o token', async () => {
+    const user = {
+      id: 'user_verify_race',
+      contaId: 'conta_verify_race',
+      email: 'race@example.com',
+      nome: 'Race User',
+      emailVerifiedAt: null,
+    };
+
+    consumeAuthActionTokenMock.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    findAuthActionTokenByPlainTokenMock.mockResolvedValueOnce({
+      tokenId: 'token_verify_race',
+      usedAt: new Date(),
+      invalidatedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      user,
+    });
+    contaFindUniqueMock.mockResolvedValueOnce({ status: 'ATIVO', deletedAt: null });
+
+    const { verifyEmailByToken } = await import('@/lib/auth-email-flow');
+    await verifyEmailByToken('concurrent-token');
+
+    expect(usuarioUpdateMock).toHaveBeenCalledWith({
+      where: { id: 'user_verify_race' },
+      data: { emailVerifiedAt: expect.any(Date) },
+    });
+    expect(invalidateAuthActionTokensMock).toHaveBeenCalledWith(
+      'user_verify_race',
+      'VERIFY_EMAIL',
+      expect.any(Object),
+    );
+  });
+
   it('confirma o e-mail e invalida tokens remanescentes quando o token ainda está válido', async () => {
     const user = {
       id: 'user_2',

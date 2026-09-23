@@ -56,6 +56,7 @@
     "db:migrate:test": "pnpm --filter @alusa/web run db:migrate:test",
     "db:reset:test": "pnpm --filter @alusa/web run db:reset:test",
     "db:seed:test": "pnpm --filter @alusa/web run db:seed:test",
+    "events:map:migrate-document": "tsx scripts/migrate-event-map-documents.ts",
     "db:verify:test": "dotenv -e .env.test -- node scripts/verify-test-db.mjs",
     "mcp:asaas": "npx -y mcp-remote@0.1.38 https://docs.asaas.com/mcp",
     "sandbox:asaas:add-balance": "dotenv -e .env.local -- node scripts/asaas/sandbox-add-wallet-balance.mjs",

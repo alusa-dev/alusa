@@ -28,22 +28,6 @@ export function assertNoSeatOverlaps(seats: Array<{ id: string; bounds: Rect }>)
   }
 }
 
-export function assertNoSeatIntersectsCorridors(
-  seats: Array<{ id: string; bounds: Rect }>,
-  corridors: Array<{ id: string; coreRect: Rect; clearanceRect: Rect }>,
-) {
-  for (const seat of seats) {
-    for (const corridor of corridors) {
-      if (intersects(seat.bounds, corridor.coreRect)) {
-        throw new Error(`Seat ${seat.id} intersects corridor core ${corridor.id}`);
-      }
-      if (intersects(seat.bounds, corridor.clearanceRect)) {
-        throw new Error(`Seat ${seat.id} intersects corridor clearance ${corridor.id}`);
-      }
-    }
-  }
-}
-
 export type SeatGeometry = {
   id: string;
   label: string;
@@ -52,6 +36,7 @@ export type SeatGeometry = {
   x: number;
   y: number;
   size: number;
+  rotation: number;
   bounds: Rect;
 };
 

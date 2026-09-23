@@ -10,6 +10,8 @@ import {
 import { mapInviteRecordToDTO } from '@/features/users/mappers';
 import { sendInviteEmail } from '@/lib/auth-email-flow';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { getInviteBaseUrl } from '@/lib/app-url';
+import prisma from '@/lib/prisma';
 
 export async function POST(req: Request) {
   try {
@@ -60,10 +62,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Restrito a ADMIN — se há sessão, usa a role dela; em teste sem sessão, assume ADMIN
+    // ADMIN pode convidar colaboradores e responsáveis; RECEPCAO pode apenas
+    // iniciar convites de responsáveis, dentro da escola ativa.
     const inviterRole = auth.ok ? auth.role : isTest ? 'ADMIN' : undefined;
-    const isAdmin = String(inviterRole || '').toUpperCase() === 'ADMIN';
-    if (!isAdmin) return NextResponse.json({ error: 'Sem permissão para convidar este papel.' }, { status: 403 });
+    const normalizedInviterRole = String(inviterRole || '').toUpperCase();
+    const canInviteRole = normalizedInviterRole === 'ADMIN' ||
+      (normalizedInviterRole === 'RECEPCAO' && role === 'RESPONSAVEL');
+    if (!canInviteRole) return NextResponse.json({ error: 'Sem permissão para convidar este papel.' }, { status: 403 });
 
     // invitedById: preferir o usuário da sessão quando existir; em teste puro sem sessão, usa mock
     const invitedById = auth.ok ? auth.userId : isTest ? 'admin-mock' : undefined;
@@ -74,11 +79,36 @@ export async function POST(req: Request) {
     const invitedByName = auth.ok ? auth.name ?? undefined : undefined;
     const inviterContaId = auth.ok ? auth.contaId : undefined;
 
+    let inviteBaseUrl: string;
+    try {
+      inviteBaseUrl = getInviteBaseUrl();
+    } catch (error) {
+      console.error('[invite][base-url-unavailable]', error);
+      return NextResponse.json(
+        { error: 'Não foi possível gerar o convite agora. Tente novamente mais tarde.' },
+        { status: 503 },
+      );
+    }
+
+    if (role === 'RESPONSAVEL' && alunosIds?.length) {
+      const uniqueAlunoIds = [...new Set(alunosIds)];
+      if (!inviterContaId) return NextResponse.json({ error: 'Conta inválida.' }, { status: 403 });
+      const scopedStudents = await prisma.aluno.findMany({
+        where: { contaId: inviterContaId, id: { in: uniqueAlunoIds } },
+        select: { id: true },
+      });
+      if (scopedStudents.length !== uniqueAlunoIds.length) {
+        return NextResponse.json({ error: 'Um ou mais alunos não pertencem à sua escola.' }, { status: 404 });
+      }
+    }
+
     try {
       const inviteRole = role as Parameters<typeof InviteUserService.createInvite>[1];
-      // Criar convite (com ou sem email)
+      // Convite de responsável fica deliberadamente sem e-mail: a identidade
+      // é escolhida pelo responsável no aceite e verificada por confirmação.
+      const inviteEmail = role === 'RESPONSAVEL' ? null : email;
       const invite = await InviteUserService.createInvite(
-        email ?? undefined,
+        inviteEmail ?? undefined,
         inviteRole,
         invitedById,
         inviterContaId,
@@ -88,18 +118,17 @@ export async function POST(req: Request) {
       );
 
       // Construir link de registro (mesma rota para todos)
-      const base = (process.env.NEXT_PUBLIC_APP_URL as string | undefined) ?? 
-                   (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
-      
-      const inviteUrl = `${base}/auth/register?token=${invite.token}`;
+      const inviteUrl = new URL('/auth/register', `${inviteBaseUrl}/`);
+      inviteUrl.searchParams.set('token', invite.token);
+      const inviteLink = inviteUrl.toString();
 
       let emailDelivery: 'sent' | 'logged' | 'failed' | 'not_applicable' = 'not_applicable';
-      if (email) {
+      if (inviteEmail) {
         try {
           const delivery = await sendInviteEmail({
             inviteId: invite.id,
-            inviteUrl,
-            email,
+            inviteUrl: inviteLink,
+            email: inviteEmail,
             role: inviteRole,
             invitedByName,
             expiresAt: invite.expiresAt,
@@ -115,7 +144,7 @@ export async function POST(req: Request) {
         createInviteResultDTOSchema.parse({
           invite: mapInviteRecordToDTO({
             ...invite,
-            inviteUrl,
+            inviteUrl: inviteLink,
           }),
           emailDelivery,
         }),
@@ -124,6 +153,9 @@ export async function POST(req: Request) {
     } catch (e: unknown) {
       const msg = (e instanceof Error) ? e.message : 'Erro ao criar convite';
       const normalizedMessage = msg.toLocaleLowerCase('pt-BR');
+      if (e instanceof InviteUserService.StudentAlreadyLinkedError) {
+        return NextResponse.json({ error: msg, code: 'STUDENT_ALREADY_LINKED' }, { status: 409 });
+      }
       if (normalizedMessage.includes('já existe') || normalizedMessage.includes('cadastrado') || normalizedMessage.includes('vinculado')) {
         console.warn(`[AUDIT] Convite duplicado bloqueado para ${email}`);
         return NextResponse.json({ error: msg }, { status: 409 });
@@ -144,13 +176,15 @@ export async function GET() {
     const auth = await resolveTenantSession();
     if (!auth.ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const role = String(auth.role ?? '').toUpperCase();
-    if (role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (role !== 'ADMIN' && role !== 'RECEPCAO') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const contaId = auth.contaId;
     const invites = await InviteUserService.listInvitesByConta(contaId);
     return NextResponse.json(
       listInvitesResultDTOSchema.parse({
-        items: invites.map((invite) => mapInviteRecordToDTO(invite as Record<string, unknown>)),
+        items: invites
+          .filter((invite) => role === 'ADMIN' || invite.role === 'RESPONSAVEL')
+          .map((invite) => mapInviteRecordToDTO(invite as Record<string, unknown>)),
       }),
     );
   } catch (error) {

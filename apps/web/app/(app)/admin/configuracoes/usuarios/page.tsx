@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useState, useCallback } from 'react';
+import { useSession } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -16,7 +17,6 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ConfirmDeleteDialog from '@/components/dialogs/ConfirmDeleteDialog';
 import UsuarioEditDialog from '@/components/usuarios/UsuarioEditDialog';
 import InviteLinkModal from '@/components/invite/InviteLinkModal';
-import { buildInviteUrl } from '@alusa/lib/invite/build-invite-url';
 
 type Role = 'PROFESSOR' | 'RECEPCAO' | 'FINANCEIRO' | 'RESPONSAVEL' | 'ADMIN';
 type UserStatus = 'ATIVO' | 'INATIVO';
@@ -34,14 +34,13 @@ type UserRow = {
   email: string;
   role: Role;
   status: UserStatus;
-  createdVia?: 'INVITE' | 'DIRECT';
-  isCurrentUser: boolean;
-  isOwner: boolean;
   permissions: UserPermissions;
 };
 type UsersListItem = UserRow;
 
 export default function ConfigUsuariosPage() {
+  const { data: session } = useSession();
+  const isReceptionist = String(session?.user?.role ?? '').toUpperCase() === 'RECEPCAO';
   // Toast
   const [toast, setToast] = useState<{
     title: string;
@@ -78,6 +77,10 @@ export default function ConfigUsuariosPage() {
   const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
   const [deleteUserName, setDeleteUserName] = useState<string | undefined>();
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteInviteOpen, setDeleteInviteOpen] = useState(false);
+  const [deleteInviteId, setDeleteInviteId] = useState<string | null>(null);
+  const [deleteInviteEmail, setDeleteInviteEmail] = useState<string | null>(null);
+  const [deleteInviteLoading, setDeleteInviteLoading] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editUserId, setEditUserId] = useState<string | null>(null);
   const [editUserName, setEditUserName] = useState<string | undefined>();
@@ -122,9 +125,6 @@ export default function ConfigUsuariosPage() {
         email: String(u.email ?? ''),
         role: String(u.role ?? 'RESPONSAVEL') as Role,
         status: String(u.status ?? 'ATIVO') as UserStatus,
-        createdVia: u.createdVia === 'INVITE' ? 'INVITE' : 'DIRECT',
-        isCurrentUser: Boolean(u.isCurrentUser),
-        isOwner: Boolean(u.isOwner),
         permissions: {
           canEdit: Boolean(u.permissions?.canEdit),
           canToggleStatus: Boolean(u.permissions?.canToggleStatus),
@@ -143,6 +143,13 @@ export default function ConfigUsuariosPage() {
     void loadInvites();
     void reloadUsers();
   }, [loadInvites, reloadUsers]);
+
+  useEffect(() => {
+    if (isReceptionist) {
+      setRole('RESPONSAVEL');
+      setTab('PENDING');
+    }
+  }, [isReceptionist]);
   
   // Carregar alunos quando selecionar RESPONSAVEL
   useEffect(() => {
@@ -220,7 +227,7 @@ export default function ConfigUsuariosPage() {
     setSubmitting(true);
     try {
       setInviteUrl(null);
-      setLastInviteEmail(email || 'responsavel@convidado');
+      setLastInviteEmail(role === 'RESPONSAVEL' ? undefined : email || undefined);
       setInviteOpen(true);
       
       // Enviar payload apropriado
@@ -239,11 +246,7 @@ export default function ConfigUsuariosPage() {
         throw new Error(errorData.error || 'Falha ao criar convite');
       }
       const json = await res.json();
-      const base =
-        (process.env.NEXT_PUBLIC_APP_URL as string | undefined) ?? window.location.origin;
-      const token: string | undefined = json?.invite?.token || json?.token;
-      const link: string | undefined =
-        json?.invite?.inviteUrl || (token ? buildInviteUrl(base, token) : undefined);
+      const link: string | undefined = json?.invite?.inviteUrl;
       setInviteUrl(link ?? null);
       if (json?.emailDelivery === 'failed') {
         setToast({
@@ -328,15 +331,24 @@ export default function ConfigUsuariosPage() {
     }
   }
 
-  const onDeleteInvite = useCallback(async (id: string) => {
+  const onDeleteInvite = useCallback((invite: InviteRow) => {
+    setDeleteInviteId(invite.id);
+    setDeleteInviteEmail(invite.email);
+    setDeleteInviteOpen(true);
+  }, []);
+
+  async function handleConfirmDeleteInvite() {
+    if (!deleteInviteId) return;
+    setDeleteInviteLoading(true);
     try {
-      const res = await fetch(`/api/users/invite/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const res = await fetch(`/api/users/invite/${encodeURIComponent(deleteInviteId)}`, { method: 'DELETE' });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
         throw new Error(json?.error || 'Falha ao excluir convite');
       }
       await loadInvites();
-      setToast({ title: 'Convite removido', variant: 'success' });
+      setToast({ title: 'Convite excluído permanentemente', variant: 'success' });
+      setDeleteInviteOpen(false);
     } catch (error) {
       setToast({
         title: 'Erro ao excluir convite',
@@ -344,9 +356,10 @@ export default function ConfigUsuariosPage() {
         variant: 'error',
       });
     } finally {
+      setDeleteInviteLoading(false);
       setTimeout(() => setToast(null), 2500);
     }
-  }, [loadInvites]);
+  }
 
   const onToggleStatus = useCallback(async (u: UserRow) => {
     if (!u.permissions.canToggleStatus) return;
@@ -427,26 +440,6 @@ export default function ConfigUsuariosPage() {
                 <div className="grid grid-cols-12 gap-4 items-center">
                   <div className="col-span-4 text-sm text-gray-900 truncate flex items-center gap-2 alusa-dark:text-[color:var(--color-text-primary)]">
                     <span className="truncate">{u.name}</span>
-                    {u.isCurrentUser && (
-                      <Badge
-                        variant="default"
-                        size="sm"
-                        aria-label="Você"
-                        title="Você"
-                      >
-                        Você
-                      </Badge>
-                    )}
-                    {u.isOwner && (
-                      <Badge variant="neutral" size="sm">
-                        Owner
-                      </Badge>
-                    )}
-                    {u.createdVia === 'INVITE' && (
-                      <Badge variant="info" size="sm">
-                        Via convite
-                      </Badge>
-                    )}
                   </div>
 
                   <div
@@ -594,7 +587,7 @@ export default function ConfigUsuariosPage() {
                       size="icon"
                       className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 alusa-dark:text-red-300 alusa-dark:hover:bg-red-500/10 alusa-dark:hover:text-red-200"
                       aria-label="Excluir convite"
-                      onClick={() => onDeleteInvite(i.id)}
+                      onClick={() => onDeleteInvite(i)}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -747,10 +740,14 @@ export default function ConfigUsuariosPage() {
               </SelectTrigger>
               {/* Popover com largura do trigger */}
               <SelectContent className="w-[var(--radix-select-trigger-width)]">
-                <SelectItem value="PROFESSOR">Professor</SelectItem>
-                <SelectItem value="RECEPCAO">Recepção</SelectItem>
-                <SelectItem value="FINANCEIRO">Financeiro</SelectItem>
-                <SelectItem value="RESPONSAVEL">Responsável</SelectItem>
+                {isReceptionist ? <SelectItem value="RESPONSAVEL">Responsável</SelectItem> : (
+                  <>
+                    <SelectItem value="PROFESSOR">Professor</SelectItem>
+                    <SelectItem value="RECEPCAO">Recepção</SelectItem>
+                    <SelectItem value="FINANCEIRO">Financeiro</SelectItem>
+                    <SelectItem value="RESPONSAVEL">Responsável</SelectItem>
+                  </>
+                )}
               </SelectContent>
             </Select>
           </div>
@@ -779,9 +776,11 @@ export default function ConfigUsuariosPage() {
               aria-label="Alternar listagens"
               className="h-10 rounded-xl bg-slate-100/80 p-1 alusa-dark:bg-[color:var(--color-bg-card-soft)]"
             >
-              <TabsTrigger value="USERS" className="h-8 rounded-lg px-4 py-0 text-sm shadow-none data-[state=active]:bg-white data-[state=active]:text-gray-900 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:data-[state=active]:bg-[color:var(--color-bg-elevated)] alusa-dark:data-[state=active]:text-[color:var(--color-text-primary)]">
-                Usuários
-              </TabsTrigger>
+              {!isReceptionist ? (
+                <TabsTrigger value="USERS" className="h-8 rounded-lg px-4 py-0 text-sm shadow-none data-[state=active]:bg-white data-[state=active]:text-gray-900 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:data-[state=active]:bg-[color:var(--color-bg-elevated)] alusa-dark:data-[state=active]:text-[color:var(--color-text-primary)]">
+                  Usuários
+                </TabsTrigger>
+              ) : null}
               <TabsTrigger value="PENDING" className="h-8 rounded-lg px-4 py-0 text-sm shadow-none data-[state=active]:bg-white data-[state=active]:text-gray-900 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:data-[state=active]:bg-[color:var(--color-bg-elevated)] alusa-dark:data-[state=active]:text-[color:var(--color-text-primary)]">
                 Pendentes
               </TabsTrigger>
@@ -808,13 +807,13 @@ export default function ConfigUsuariosPage() {
         </div>
 
         <div className="mt-4">
-          {typeof userCount === 'number' && (
+          {!isReceptionist && typeof userCount === 'number' && (
             <div className="mb-2 text-[12px] text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
               Total de usuários cadastrados:{' '}
               <span className="font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-secondary)]">{userCount}</span>
             </div>
           )}
-          {tab === 'USERS' ? renderUserTable() : renderInviteTable()}
+          {tab === 'USERS' && !isReceptionist ? renderUserTable() : renderInviteTable()}
         </div>
       </div>
 
@@ -858,6 +857,24 @@ export default function ConfigUsuariosPage() {
         })()}
         confirmLabel={deleteLoading ? 'Excluindo…' : 'Excluir'}
         onConfirm={handleConfirmDeleteUser}
+      />
+      <ConfirmDeleteDialog
+        open={deleteInviteOpen}
+        onOpenChange={(open) => {
+          setDeleteInviteOpen(open);
+          if (!open) {
+            setDeleteInviteId(null);
+            setDeleteInviteEmail(null);
+          }
+        }}
+        title="Excluir convite permanentemente"
+        description={(
+          <span>
+            O convite{deleteInviteEmail ? <> de <strong>{deleteInviteEmail}</strong></> : ''} será apagado definitivamente e não aparecerá mais no histórico desta lista. Convites já aceitos não terão o acesso do usuário removido; apenas o vínculo com o registro do convite será apagado.
+          </span>
+        )}
+        confirmLabel={deleteInviteLoading ? 'Excluindo…' : 'Excluir permanentemente'}
+        onConfirm={handleConfirmDeleteInvite}
       />
       <UsuarioEditDialog
         open={editOpen}

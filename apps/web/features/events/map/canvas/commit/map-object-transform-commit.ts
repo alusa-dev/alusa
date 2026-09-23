@@ -7,7 +7,6 @@ import type { TransformCommitPayload } from './build-canvas-transform-command';
 export type ObjectTransformRoutingFlags = {
   useUniformGroupTransform: boolean;
   useGenericTransform: boolean;
-  useCorridorTransformerPipeline: boolean;
 };
 
 export type BuildObjectTransformCommitParams = {
@@ -29,12 +28,10 @@ export function buildObjectTransformCommit({
   routing,
   lastTransformCommitRef,
 }: BuildObjectTransformCommitParams): TransformCommitPayload | null {
-  const { useUniformGroupTransform, useGenericTransform, useCorridorTransformerPipeline } = routing;
+  const { useUniformGroupTransform, useGenericTransform } = routing;
 
   if (
-    useUniformGroupTransform ||
-    useGenericTransform ||
-    (object.type === 'CORRIDOR' && useCorridorTransformerPipeline)
+    useUniformGroupTransform || useGenericTransform
   ) {
     resetNodeScale(node);
     return null;

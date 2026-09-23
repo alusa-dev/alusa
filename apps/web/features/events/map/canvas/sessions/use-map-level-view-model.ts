@@ -2,35 +2,20 @@
 
 import {
   buildLevelRenderStack,
-  buildSeatGridPreview,
-  getCorridorUnionGroups,
-  type MapSelection,
+  buildSeatBlockPreview,
 } from '@alusa/domain';
-import type { MutableRefObject, RefObject } from 'react';
 import { useMemo } from 'react';
-import type Konva from 'konva';
 import type { EventMapDTO } from '../../api/event-map-service';
-import { resolveCorridorObjectsForUnion } from '../corridor/corridor-union-live';
-import type { SeatGridDraft } from '../render/map-creation-draft';
+import type { SeatBlockDraft } from '../render/map-creation-draft';
 
 export function useMapLevelViewModel({
   map,
   activeLevelId,
-  selection,
-  seatGridDraft,
-  stageRef,
-  isCorridorLivePreviewRef,
-  isTransformSessionActive,
-  corridorVisualRevision,
+  seatBlockDraft,
 }: {
   map: EventMapDTO | null;
   activeLevelId: string | null;
-  selection: MapSelection;
-  seatGridDraft: SeatGridDraft | null;
-  stageRef: RefObject<Konva.Stage | null>;
-  isCorridorLivePreviewRef: MutableRefObject<boolean>;
-  isTransformSessionActive: boolean;
-  corridorVisualRevision: number;
+  seatBlockDraft: SeatBlockDraft | null;
 }) {
   const level = useMemo(
     () => map?.levels.find((item) => item.id === activeLevelId) ?? map?.levels[0] ?? null,
@@ -42,50 +27,34 @@ export function useMapLevelViewModel({
     [level],
   );
 
-  const levelObjects = useMemo(
-    () => map?.objects.filter((object) => object.levelId === level?.id && !object.hidden) ?? [],
-    [map, level?.id],
+  const hiddenSectionIds = useMemo(
+    () => new Set([
+      ...(map?.document?.sections.filter((section) => section.hidden).map((section) => section.id) ?? []),
+      ...(map?.sections.filter((section) => section.hidden).map((section) => section.id) ?? []),
+    ]),
+    [map?.document, map?.sections],
   );
 
-  const displayLevelObjects = useMemo(() => {
-    const livePreview = isCorridorLivePreviewRef.current || isTransformSessionActive;
-    if (!livePreview) return levelObjects;
-    return resolveCorridorObjectsForUnion(stageRef.current, levelObjects, true);
-  }, [levelObjects, corridorVisualRevision, isTransformSessionActive, isCorridorLivePreviewRef, stageRef]);
+  const levelObjects = useMemo(
+    () => map?.objects.filter((object) => object.levelId === level?.id && !object.hidden && !(object.sectionId && hiddenSectionIds.has(object.sectionId))) ?? [],
+    [hiddenSectionIds, map, level?.id],
+  );
+
+  const displayLevelObjects = levelObjects;
 
   const levelSeats = useMemo(
-    () => map?.seats.filter((seat) => seat.levelId === level?.id && seat.publicVisible) ?? [],
-    [map, level?.id],
+    () => map?.seats.filter((seat) => seat.levelId === level?.id && seat.publicVisible && !hiddenSectionIds.has(seat.sectionId)) ?? [],
+    [hiddenSectionIds, map, level?.id],
   );
-
-  const levelSeatGroups = useMemo(
-    () => map?.seatGroups?.filter((group) => group.levelId === level?.id) ?? [],
-    [map, level?.id],
-  );
-
-  const corridorUnionGroups = useMemo(() => {
-    const corridors = displayLevelObjects.filter((object) => object.type === 'CORRIDOR');
-    return getCorridorUnionGroups(corridors, 1);
-  }, [displayLevelObjects]);
 
   const renderStack = useMemo(() => {
     if (!map || !level) return [];
     return buildLevelRenderStack({ ...map, objects: displayLevelObjects }, level.id);
   }, [displayLevelObjects, level, map]);
 
-  const selectedCorridorIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const item of selection) {
-      if (item.type !== 'object') continue;
-      const object = levelObjects.find((entry) => entry.id === item.id);
-      if (object?.type === 'CORRIDOR') ids.add(object.id);
-    }
-    return ids;
-  }, [selection, levelObjects]);
-
-  const seatGridPreviewSeats = useMemo(
-    () => (seatGridDraft ? buildSeatGridPreview(seatGridDraft.origin, seatGridDraft.config) : []),
-    [seatGridDraft],
+  const seatBlockPreviewSeats = useMemo(
+    () => (seatBlockDraft ? buildSeatBlockPreview(seatBlockDraft.origin, seatBlockDraft.config) : []),
+    [seatBlockDraft],
   );
 
   return {
@@ -94,10 +63,7 @@ export function useMapLevelViewModel({
     levelObjects,
     displayLevelObjects,
     levelSeats,
-    levelSeatGroups,
-    corridorUnionGroups,
     renderStack,
-    selectedCorridorIds,
-    seatGridPreviewSeats,
+    seatBlockPreviewSeats,
   };
 }

@@ -1,25 +1,12 @@
 'use client';
 
-import {
-  DEFAULT_SEAT_GRID_CONFIG,
-  normalizeBoundsRect,
-  suggestNextSeatGridConfig,
-  type MapSelection,
-  type TextMode,
-} from '@alusa/domain';
+import { normalizeBoundsRect, type MapSelection, type SeatBlockConfig, type TextMode } from '@alusa/domain';
 import type { Dispatch, SetStateAction } from 'react';
 import { useCallback } from 'react';
 import type Konva from 'konva';
 import type { EventMapDTO } from '../../api/event-map-service';
 import type { MapTool } from '../../store/event-map-editor-store';
-import {
-  getCreationBox,
-  isCreationTool,
-  isPlacementTool,
-  type CreationDraft,
-  type MarqueeDraft,
-  type SeatGridDraft,
-} from '../render/map-creation-draft';
+import { getCreationBox, getSeatBlockConfigForBounds, isCreationTool, isPlacementTool, type CreationDraft, type MarqueeDraft } from '../render/map-creation-draft';
 
 export function useMapStagePointerSession({
   readOnly,
@@ -29,6 +16,8 @@ export function useMapStagePointerSession({
   getPointerPoint,
   addObjectAt,
   addRowAt,
+  addSeatBlockAt,
+  seatBlockDefaults,
   setSelection,
   setIndividualSeatDragId,
   getMarqueeSelection,
@@ -37,187 +26,116 @@ export function useMapStagePointerSession({
   setCreationDraft,
   marqueeDraft,
   setMarqueeDraft,
-  seatGridDraft,
-  setSeatGridDraft,
 }: {
   readOnly: boolean;
   tool: MapTool;
   map: EventMapDTO | null;
   levelId: string | undefined;
+  zoom: number;
   getPointerPoint: () => { x: number; y: number } | null;
-  addObjectAt: (
-    tool: MapTool,
-    point: { x: number; y: number },
-    size?: { width?: number; height?: number },
-  ) => string | null;
+  addObjectAt: (tool: MapTool, point: { x: number; y: number }, size?: { width?: number; height?: number }) => string | null;
   addRowAt: (point: { x: number; y: number }, quantity?: number) => void;
+  addSeatBlockAt: (point: { x: number; y: number }, config: Partial<SeatBlockConfig>) => void;
+  seatBlockDefaults?: Pick<SeatBlockConfig, 'seatSize' | 'horizontalSpacing' | 'verticalSpacing'>;
   setSelection: (selection: MapSelection | null) => void;
   setIndividualSeatDragId: Dispatch<SetStateAction<string | null>>;
   getMarqueeSelection: (box: { x: number; y: number; width: number; height: number }) => MapSelection;
-  openNewTextEditor: (box: {
-    x: number;
-    y: number;
-    width: number | null;
-    height: number | null;
-    textMode: TextMode;
-  }) => void;
+  openNewTextEditor: (box: { x: number; y: number; width: number | null; height: number | null; textMode: TextMode }) => void;
   creationDraft: CreationDraft | null;
   setCreationDraft: Dispatch<SetStateAction<CreationDraft | null>>;
   marqueeDraft: MarqueeDraft | null;
   setMarqueeDraft: Dispatch<SetStateAction<MarqueeDraft | null>>;
-  seatGridDraft: SeatGridDraft | null;
-  setSeatGridDraft: Dispatch<SetStateAction<SeatGridDraft | null>>;
 }) {
-  const handleStageMouseDown = useCallback(
-    (event: Konva.KonvaEventObject<MouseEvent>) => {
-      if (readOnly) return;
+  const handleStageMouseDown = useCallback((event: Konva.KonvaEventObject<MouseEvent>) => {
+    if (readOnly) return;
+    const point = getPointerPoint();
+    if (!point) return;
 
-      const placementActive = isPlacementTool(tool);
-      const point = getPointerPoint();
-      if (!point) return;
-
-      if (placementActive) {
-        if (tool === 'row') {
-          addRowAt(point, 12);
-          return;
-        }
-
-        if (tool === 'seat') {
-          setCreationDraft(null);
-          setSeatGridDraft({
-            origin: point,
-            config: suggestNextSeatGridConfig(map?.seats ?? [], levelId, DEFAULT_SEAT_GRID_CONFIG),
-          });
-          return;
-        }
-
-        if (isCreationTool(tool)) {
-          setCreationDraft({ tool, start: point, current: point });
-        }
+    if (isPlacementTool(tool)) {
+      if (tool === 'row') {
+        addRowAt(point, 12);
         return;
       }
-
-      if (event.target !== event.target.getStage()) return;
-
-      if (tool === 'select') {
-        setIndividualSeatDragId(null);
-        setMarqueeDraft({ start: point, current: point });
+      if (tool === 'seat') {
+        setCreationDraft({ tool, start: point, current: point });
         return;
       }
+      if (isCreationTool(tool)) setCreationDraft({ tool, start: point, current: point });
+      return;
+    }
 
+    if (event.target !== event.target.getStage()) return;
+    if (tool === 'select') {
       setIndividualSeatDragId(null);
-      setSelection(levelId ? [{ type: 'level', id: levelId }] : []);
-    },
-    [
-      addRowAt,
-      getPointerPoint,
-      levelId,
-      map?.seats,
-      readOnly,
-      setCreationDraft,
-      setIndividualSeatDragId,
-      setMarqueeDraft,
-      setSeatGridDraft,
-      setSelection,
-      tool,
-    ],
-  );
+      setMarqueeDraft({ start: point, current: point });
+      return;
+    }
+    setIndividualSeatDragId(null);
+    setSelection(levelId ? [{ type: 'level', id: levelId }] : []);
+  }, [addRowAt, getPointerPoint, levelId, readOnly, setCreationDraft, setIndividualSeatDragId, setMarqueeDraft, setSelection, tool]);
 
-  const handleStageMouseMove = useCallback(
-    (_event: Konva.KonvaEventObject<MouseEvent>) => {
-      if (marqueeDraft && tool === 'select') {
-        const point = getPointerPoint();
-        if (!point) return;
-        setMarqueeDraft((draft) => (draft ? { ...draft, current: point } : null));
-        return;
-      }
-
-      if (!creationDraft) return;
+  const handleStageMouseMove = useCallback(() => {
+    if (marqueeDraft && tool === 'select') {
       const point = getPointerPoint();
-      if (!point) return;
-      setCreationDraft((draft) => (draft ? { ...draft, current: point } : null));
-    },
-    [creationDraft, getPointerPoint, marqueeDraft, setCreationDraft, setMarqueeDraft, tool],
-  );
+      if (point) setMarqueeDraft((draft) => (draft ? { ...draft, current: point } : null));
+      return;
+    }
+    if (!creationDraft) return;
+    const point = getPointerPoint();
+    if (point) setCreationDraft((draft) => (draft ? { ...draft, current: point } : null));
+  }, [creationDraft, getPointerPoint, marqueeDraft, setCreationDraft, setMarqueeDraft, tool]);
 
-  const handleStageMouseUp = useCallback(
-    (_event: Konva.KonvaEventObject<MouseEvent>) => {
-      if (marqueeDraft && tool === 'select') {
-        const point = getPointerPoint() ?? marqueeDraft.current;
-        const box = normalizeBoundsRect(marqueeDraft.start, point);
-        setMarqueeDraft(null);
-
-        if (box.width >= 4 || box.height >= 4) {
-          const items = getMarqueeSelection(box);
-          setSelection(items.length > 0 ? items : levelId ? [{ type: 'level', id: levelId }] : []);
-        } else {
-          setSelection(levelId ? [{ type: 'level', id: levelId }] : []);
-        }
-        return;
+  const handleStageMouseUp = useCallback(() => {
+    if (marqueeDraft && tool === 'select') {
+      const point = getPointerPoint() ?? marqueeDraft.current;
+      const box = normalizeBoundsRect(marqueeDraft.start, point);
+      setMarqueeDraft(null);
+      if (box.width >= 4 || box.height >= 4) {
+        const items = getMarqueeSelection(box);
+        setSelection(items.length > 0 ? items : levelId ? [{ type: 'level', id: levelId }] : []);
+      } else {
+        setSelection(levelId ? [{ type: 'level', id: levelId }] : []);
       }
+      return;
+    }
+    if (!creationDraft) return;
+    const point = getPointerPoint();
+    if (!point) return;
+    const draft = { ...creationDraft, current: point };
+    const box = getCreationBox(draft);
+    setCreationDraft(null);
 
-      if (!creationDraft) return;
-      const point = getPointerPoint();
-      if (!point) return;
+    if (draft.tool === 'seat') {
+      const seatBlock = getSeatBlockConfigForBounds(
+        box.width >= 6 && box.height >= 6
+          ? box
+          : { x: draft.start.x, y: draft.start.y, width: 260, height: 160 },
+          map?.referenceChart?.calibration,
+          Math.max(1, (map?.seats.length ?? 0) + 1),
+          seatBlockDefaults,
+      );
+      addSeatBlockAt(seatBlock.origin, seatBlock.config);
+      return;
+    }
 
-      const draft = { ...creationDraft, current: point };
-      const box = getCreationBox(draft);
-      setCreationDraft(null);
-
-      if (draft.tool === 'text') {
-        if (box.width >= 6 && box.height >= 6) {
-          openNewTextEditor({
-            x: box.x,
-            y: box.y,
-            width: Math.max(20, box.width),
-            height: Math.max(20, box.height),
-            textMode: 'area',
-          });
-        } else if (box.width >= 6) {
-          openNewTextEditor({
-            x: box.x,
-            y: box.y,
-            width: Math.max(20, box.width),
-            height: null,
-            textMode: 'fixed-width',
-          });
-        } else {
-          openNewTextEditor({
-            x: draft.start.x,
-            y: draft.start.y,
-            width: null,
-            height: null,
-            textMode: 'auto',
-          });
-        }
-        return;
+    if (draft.tool === 'text') {
+      if (box.width >= 6 && box.height >= 6) {
+        openNewTextEditor({ x: box.x, y: box.y, width: Math.max(20, box.width), height: Math.max(20, box.height), textMode: 'area' });
+      } else if (box.width >= 6) {
+        openNewTextEditor({ x: box.x, y: box.y, width: Math.max(20, box.width), height: null, textMode: 'fixed-width' });
+      } else {
+        openNewTextEditor({ x: draft.start.x, y: draft.start.y, width: null, height: null, textMode: 'auto' });
       }
+      return;
+    }
+    if (box.width < 6 || box.height < 6) {
+      addObjectAt(draft.tool, draft.start);
+      return;
+    }
+    addObjectAt(draft.tool, { x: box.x, y: box.y }, { width: Math.max(20, box.width), height: Math.max(20, box.height) });
+  }, [addObjectAt, addSeatBlockAt, creationDraft, getMarqueeSelection, getPointerPoint, levelId, map?.referenceChart?.calibration, map?.seats.length, marqueeDraft, openNewTextEditor, seatBlockDefaults, setCreationDraft, setMarqueeDraft, setSelection, tool]);
 
-      if (box.width < 6 || box.height < 6) {
-        addObjectAt(draft.tool, draft.start);
-        return;
-      }
+  const handleStageClick = useCallback(() => undefined, []);
 
-      addObjectAt(draft.tool, { x: box.x, y: box.y }, { width: Math.max(20, box.width), height: Math.max(20, box.height) });
-    },
-    [
-      addObjectAt,
-      creationDraft,
-      getMarqueeSelection,
-      getPointerPoint,
-      levelId,
-      marqueeDraft,
-      openNewTextEditor,
-      setCreationDraft,
-      setMarqueeDraft,
-      setSelection,
-      tool,
-    ],
-  );
-
-  return {
-    handleStageMouseDown,
-    handleStageMouseMove,
-    handleStageMouseUp,
-  };
+  return { handleStageMouseDown, handleStageMouseMove, handleStageMouseUp, handleStageClick };
 }

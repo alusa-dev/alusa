@@ -12,6 +12,14 @@
 			],
 			"type": "stdio"
 		},
+		"hugeicons": {
+			"type": "stdio",
+			"command": "npx",
+			"args": [
+				"-y",
+				"@hugeicons/mcp-server"
+			]
+		},
 		"io.github.upstash/context7": {
 			"type": "stdio",
 			"command": "npx",

@@ -87,7 +87,7 @@ export function handleNudgeSelection(
 ): MapCommandHandlerResult {
   const { delta } = command.payload;
   const result = moveSelection({ map: state.nextMap, selection: state.selection, delta });
-  if (result.patches.objects.length === 0 && result.patches.seats.length === 0 && result.patches.seatGroups.length === 0) {
+  if (result.patches.objects.length === 0 && result.patches.seats.length === 0) {
     return {
       earlyReturn: commandResult({
         map: state.beforeMap,
@@ -102,8 +102,6 @@ export function handleNudgeSelection(
     payload: {
       objects: result.patches.objects,
       seats: result.patches.seats,
-      seatGroups: result.patches.seatGroups,
-      skipSeatBaseLayoutTranslation: true,
     },
   });
 }

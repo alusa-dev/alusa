@@ -30,6 +30,10 @@
       "types": "./dist/events/map/event-map.service.d.ts",
       "default": "./dist/events/map/event-map.service.js"
     },
+    "./events/map/ticket-code": {
+      "types": "./dist/events/map/ticket-code.d.ts",
+      "default": "./dist/events/map/ticket-code.js"
+    },
     "./events/events.service": {
       "types": "./dist/events/events.service.d.ts",
       "default": "./dist/events/events.service.js"

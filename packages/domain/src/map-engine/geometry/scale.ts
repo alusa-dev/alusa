@@ -1,9 +1,9 @@
 import { getMovingEdgesFromAnchor } from './anchor.js';
-import { snapSmartCorridorRotation } from './rotation.js';
+import { snapQuarterTurn } from './rotation.js';
 
 export const MIN_UNIFORM_SCALE = 0.05;
 export const MAX_UNIFORM_SCALE = 20;
-export const MIN_CORRIDOR_SIZE = 8;
+export const MIN_TRANSFORM_SIZE = 8;
 
 export function clampUniformScale(value: number) {
   return Math.max(MIN_UNIFORM_SCALE, Math.min(MAX_UNIFORM_SCALE, value));
@@ -20,7 +20,7 @@ export function mapLocalScaleToAabbScale(
   localScaleX: number,
   localScaleY: number,
 ): ResizeScale {
-  const snapped = snapSmartCorridorRotation(rotation);
+  const snapped = snapQuarterTurn(rotation);
 
   if (snapped === 90 || snapped === 270) {
     return { scaleX: localScaleY, scaleY: localScaleX };
@@ -44,7 +44,7 @@ export function localDimensionsFromAabbSize(
   aabbHeight: number,
   rotation: number,
 ): { width: number; height: number } {
-  const snapped = snapSmartCorridorRotation(rotation);
+  const snapped = snapQuarterTurn(rotation);
 
   if (snapped === 90 || snapped === 270) {
     return { width: aabbHeight, height: aabbWidth };

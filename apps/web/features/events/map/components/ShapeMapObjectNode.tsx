@@ -57,7 +57,10 @@ export function ShapeMapObjectNode({
       offsetX={0}
       offsetY={0}
       name={SNAP_TARGET_NAME}
-      listening={!placementToolActive}
+      // The section frame is a visual boundary derived from its seats. It must
+      // not sit above the seats in the hit graph, otherwise a click on A1/A2
+      // selects the transparent section rectangle instead of the seat.
+      listening={object.type !== 'SECTION' && !placementToolActive}
       draggable={!readOnly && !placementToolActive && tool !== 'pan' && tool !== 'zoom' && !object.locked}
       onClick={(event) => onSelect(event, selectionItem)}
       onDragStart={() => onDragStart(`node-${object.id}`, selectionItem)}

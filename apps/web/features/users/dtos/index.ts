@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { authRegisterInputSchema } from '@/lib/dtos/auth-register.dto';
 import { isValidIanaTimeZone } from '@/lib/brazil-iana-timezones';
 import { PROFILE_LOCALE_VALUES, PROFILE_THEME_VALUES } from '@/lib/profile-preferences';
+import { isValidCpfDigits, normalizeCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
 
 const dateLikeDTOSchema = z.union([z.string(), z.date()]);
 
@@ -224,11 +225,10 @@ export const listInvitesResultDTOSchema = z.object({
 export type ListInvitesResultDTO = z.infer<typeof listInvitesResultDTOSchema>;
 
 export const createInviteInputDTOSchema = z.object({
-  email: z.union([z.string().email('Email inválido'), z.null(), z.undefined()]).optional(),
+  email: z.union([z.string().trim().email('Email inválido').transform((value) => value.toLowerCase()), z.null()]).optional(),
   role: inviteRoleDTOSchema.default('RECEPCAO'),
-  escolaId: z.string().optional(),
-  alunosIds: z.array(z.string()).optional(),
-});
+  alunosIds: z.array(z.string().trim().min(1).max(191)).max(100).optional(),
+}).strict();
 
 export type CreateInviteInputDTO = z.input<typeof createInviteInputDTOSchema>;
 
@@ -252,6 +252,16 @@ export const validateInviteResultDTOSchema = z.object({
 
 export type ValidateInviteResultDTO = z.infer<typeof validateInviteResultDTOSchema>;
 
+const optionalGuardianCpfSchema = z.preprocess(
+  (value) => typeof value === 'string' && value.trim() ? normalizeCpfCnpjDigits(value) : undefined,
+  z.string().refine(isValidCpfDigits, 'CPF inválido').optional(),
+);
+
+const optionalGuardianPhoneSchema = z.preprocess(
+  (value) => typeof value === 'string' ? value.replace(/\D/g, '') || undefined : value,
+  z.string().regex(/^\d{10,11}$/, 'Informe um telefone com DDD').optional(),
+);
+
 export const acceptInviteInputDTOSchema = z.object({
   token: z.string().min(1, 'Token é obrigatório'),
   password: z.string().regex(
@@ -261,17 +271,20 @@ export const acceptInviteInputDTOSchema = z.object({
       )},}$`,
     ),
     'Senha deve ter no mínimo 8 caracteres, incluindo maiúscula, minúscula, número e caractere especial.',
-  ),
-  name: z.string().min(2, 'Nome deve ter no mínimo 2 caracteres'),
+  ).optional(),
+  name: z.string().min(2, 'Nome deve ter no mínimo 2 caracteres').optional(),
   email: z.string().email('E-mail inválido').optional(),
+  cpf: optionalGuardianCpfSchema,
+  telefone: optionalGuardianPhoneSchema,
   senha: z.string().optional(),
   nome: z.string().optional(),
-});
+}).strict();
 
 export type AcceptInviteInputDTO = z.input<typeof acceptInviteInputDTOSchema>;
 
 export const acceptInviteResultDTOSchema = z.object({
   message: z.string(),
+  verificationEmailSent: z.boolean().optional(),
   user: z.object({
     id: z.string(),
     email: z.string().email(),

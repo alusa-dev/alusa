@@ -24,7 +24,7 @@ export function buildPreviewPublicMap(map: EventMapDTO): PublicMapViewModel {
     levels: map.levels,
     sections: map.sections,
     objects: map.objects,
-    seatGroups: map.seatGroups,
+    document: map.document ?? null,
     seats: map.seats
       .filter((seat) => seat.publicVisible)
       .map((seat) => {
@@ -34,7 +34,6 @@ export function buildPreviewPublicMap(map: EventMapDTO): PublicMapViewModel {
           originalSeatId: seat.id,
           levelId: seat.levelId,
           sectionId: seat.sectionId,
-          groupId: seat.groupId,
           rowIndex: seat.rowIndex,
           columnIndex: seat.columnIndex,
           sectionName: section?.name ?? 'Setor',

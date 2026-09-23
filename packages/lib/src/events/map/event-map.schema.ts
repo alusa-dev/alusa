@@ -22,10 +22,109 @@ const idSchema = z.string().trim().min(1).max(120);
 const positiveSize = z.coerce.number().finite().positive();
 const coordinate = z.coerce.number().finite();
 
+const mapPointSchema = z.object({ x: coordinate, y: coordinate });
+const seatRowPathSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('LINE'), start: mapPointSchema, end: mapPointSchema }),
+  z.object({
+    type: z.literal('ARC'),
+    center: mapPointSchema,
+    radius: positiveSize,
+    startAngle: coordinate,
+    endAngle: coordinate,
+    clockwise: z.boolean(),
+  }),
+  z.object({ type: z.literal('POLYLINE'), points: z.array(mapPointSchema).min(2).max(500) }),
+  z.object({ type: z.literal('BEZIER'), p0: mapPointSchema, p1: mapPointSchema, p2: mapPointSchema, p3: mapPointSchema }),
+]);
+const mapSeatSchema = z.object({
+  id: idSchema,
+  label: requiredText('Informe o nome do assento.', 120),
+  technicalCode: z.string().trim().max(120).optional(),
+  categoryId: z.string().trim().max(120).optional(),
+  accessible: z.boolean().optional(),
+  publicVisible: z.boolean().optional(),
+  rowIndex: z.number().int().nonnegative(),
+  columnIndex: z.number().int().nonnegative(),
+  position: mapPointSchema.optional(),
+  rotation: coordinate.optional(),
+});
+const distributionSegmentSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('SEATS'), count: z.number().int().nonnegative() }),
+  z.object({ type: z.literal('GAP'), width: z.number().finite().min(0).max(10000) }),
+]);
+const mapSeatRowSchema = z.object({
+  id: idSchema,
+  sectionId: idSchema,
+  blockId: idSchema.optional(),
+  label: requiredText('Informe o nome da fileira.', 80),
+  path: seatRowPathSchema,
+  transformRotation: coordinate.optional(),
+  seatGap: z.number().finite().min(0),
+  seatSize: positiveSize,
+  seatIds: z.array(idSchema),
+  seats: z.array(mapSeatSchema),
+  distribution: z.array(distributionSegmentSchema).min(1).max(200).optional(),
+});
+const mapSeatBlockSchema = z.object({
+  id: idSchema,
+  sectionId: idSchema,
+  name: z.string().trim().max(120).optional().nullable(),
+  transformRotation: coordinate.optional(),
+  columnCount: z.number().int().min(1).optional(),
+  rowGap: z.number().finite().min(0),
+  defaultSeatGap: z.number().finite().min(0),
+  distribution: z.array(distributionSegmentSchema).min(1).max(200),
+  distributionMode: z.enum(['FIXED', 'PROGRESSIVE', 'FIT']).default('FIXED'),
+  distributionAlignment: z.enum(['LEFT', 'CENTER', 'RIGHT']).default('LEFT'),
+  firstRowSeatCount: z.number().int().nonnegative().optional(),
+  lastRowSeatCount: z.number().int().nonnegative().optional(),
+  fitMinimumSeatCount: z.number().int().nonnegative().optional(),
+  fitMaximumSeatCount: z.number().int().nonnegative().optional(),
+  rowIds: z.array(idSchema),
+  rows: z.array(mapSeatRowSchema),
+});
+const mapSectionDocumentSchema = z.object({
+  id: idSchema,
+  levelId: idSchema,
+  name: requiredText('Informe o nome do setor.'),
+  color: z.string().trim().min(4).max(32),
+  lotId: z.string().trim().min(1).optional().nullable(),
+  capacity: z.number().int().nonnegative().optional().nullable(),
+  status: z.string().trim().min(1).max(40).optional(),
+  notes: optionalText,
+  hidden: z.boolean().optional(),
+  position: mapPointSchema,
+  rotation: coordinate,
+  outline: z.array(mapPointSchema).max(500),
+  blockIds: z.array(idSchema),
+  blocks: z.array(mapSeatBlockSchema),
+});
+const mapVisualElementSchema = z.object({
+  id: idSchema,
+  levelId: idSchema,
+  sectionId: z.string().trim().min(1).optional().nullable(),
+  type: z.string().trim().min(1).max(40),
+  data: z.record(z.unknown()),
+  x: coordinate,
+  y: coordinate,
+  width: positiveSize.optional().nullable(),
+  height: positiveSize.optional().nullable(),
+  rotation: coordinate,
+  locked: z.boolean(),
+  hidden: z.boolean(),
+  sortOrder: z.number().int().nonnegative(),
+});
+export const eventMapDocumentSchema = z.object({
+  schemaVersion: z.literal(1),
+  sections: z.array(mapSectionDocumentSchema),
+  visualElements: z.array(mapVisualElementSchema),
+});
+
 export const eventMapIdSchema = z.string().trim().min(1);
 
 export const createEventMapSchema = z.object({
   name: requiredText('Informe o nome do mapa.').default('Mapa principal'),
+  creationMode: z.enum(['blank', 'reference-plan']).default('blank'),
   templateMapId: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional()),
 });
 
@@ -77,7 +176,6 @@ export const eventSeatSchema = z.object({
   levelId: idSchema,
   sectionId: idSchema,
   objectId: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional().nullable()),
-  groupId: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional().nullable()),
   rowIndex: z.coerce.number().int().min(0).optional().nullable(),
   columnIndex: z.coerce.number().int().min(0).optional().nullable(),
   technicalCode: z.string().trim().min(1).max(120),
@@ -93,33 +191,39 @@ export const eventSeatSchema = z.object({
   rotation: z.coerce.number().finite().default(0),
 });
 
-export const eventSeatGroupSchema = z.object({
-  id: idSchema,
-  levelId: idSchema,
-  name: z.string().trim().max(120).optional().nullable(),
+const mapReferenceCalibrationSchema = z.object({
+  seatDiameter: positiveSize,
+  seatPitch: z.number().finite().min(0),
+  rowPitch: z.number().finite().min(0),
+});
+
+const mapReferenceTransformSchema = z.object({
   x: coordinate,
   y: coordinate,
-  rotation: z.coerce.number().finite().default(0),
-  rows: z.coerce.number().int().min(1).max(200),
-  columns: z.coerce.number().int().min(1).max(200),
-  seatWidth: z.coerce.number().finite().positive().default(28),
-  seatHeight: z.coerce.number().finite().positive().default(28),
-  gapX: z.coerce.number().finite().min(0).default(4),
-  gapY: z.coerce.number().finite().min(0).default(4),
-  paddingTop: z.coerce.number().finite().min(0).default(0),
-  paddingRight: z.coerce.number().finite().min(0).default(0),
-  paddingBottom: z.coerce.number().finite().min(0).default(0),
-  paddingLeft: z.coerce.number().finite().min(0).default(0),
-  numbering: z.record(z.unknown()).default({}),
-  locked: z.coerce.boolean().default(false),
+  scale: positiveSize,
+  rotation: coordinate,
+});
+
+export const eventMapReferenceChartSchema = z.object({
+  url: z.string().trim().min(1).max(1000),
+  storageKey: z.string().trim().min(1).max(500).nullable(),
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+  width: positiveSize,
+  height: positiveSize,
+  visible: z.boolean(),
+  opacity: z.number().finite().min(0.05).max(1),
+  locked: z.boolean(),
+  transform: mapReferenceTransformSchema,
+  calibration: mapReferenceCalibrationSchema.nullable(),
 });
 
 export const updateEventMapDraftSchema = z.object({
   name: requiredText('Informe o nome do mapa.').optional(),
+  document: eventMapDocumentSchema.optional(),
   levels: z.array(eventMapLevelSchema).min(1, 'Crie pelo menos uma prancheta.'),
   sections: z.array(eventMapSectionSchema).default([]),
   objects: z.array(eventMapObjectSchema).default([]),
-  seatGroups: z.array(eventSeatGroupSchema).default([]),
   seats: z.array(eventSeatSchema).default([]),
 });
 
@@ -131,6 +235,10 @@ export const updateEventMapSettingsSchema = z
   .refine((value) => value.name !== undefined || value.publicEnabled !== undefined, {
     message: 'Informe ao menos uma configuração para salvar.',
   });
+
+export const updateEventMapReferenceChartSchema = z.object({
+  referenceChart: eventMapReferenceChartSchema.nullable(),
+});
 
 export const duplicateEventMapSchema = z.object({
   name: requiredText('Informe o nome do novo mapa.').optional(),
@@ -160,8 +268,8 @@ export const publicCheckoutSchema = z.object({
 export type CreateEventMapInput = z.infer<typeof createEventMapSchema>;
 export type UpdateEventMapDraftInput = z.infer<typeof updateEventMapDraftSchema>;
 export type UpdateEventMapSettingsInput = z.infer<typeof updateEventMapSettingsSchema>;
+export type UpdateEventMapReferenceChartInput = z.infer<typeof updateEventMapReferenceChartSchema>;
 export type DuplicateEventMapInput = z.infer<typeof duplicateEventMapSchema>;
-export type EventSeatGroupInput = z.infer<typeof eventSeatGroupSchema>;
 export type PublicSeatReservationInput = z.infer<typeof publicSeatReservationSchema>;
 export const staffSeatReservationSchema = z.object({
   seatIds: z.array(idSchema).min(1, 'Selecione pelo menos um assento.'),

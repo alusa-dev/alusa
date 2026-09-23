@@ -1,8 +1,8 @@
-import { DEFAULT_SEAT_GRID_CONFIG, getSeatBounds, intersectsRect, resolveSmartCorridorLayout } from '@alusa/domain';
+import { DEFAULT_SEAT_BLOCK_CONFIG } from '@alusa/domain';
 import type { EventMapDTO } from '../../api/event-map-service';
+import type { MapReferenceChart } from '@alusa/domain';
 import { useEventMapEditorStore } from '../event-map-editor-store';
-
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vitest';
 
 function createMap(): EventMapDTO {
   return {
@@ -18,878 +18,549 @@ function createMap(): EventMapDTO {
     updatedAt: '2026-01-01T00:00:00.000Z',
     publishedAt: null,
     archivedAt: null,
-    levels: [{ id: 'level-1', name: 'Ambiente 1', sortOrder: 0, widthPx: 1440, heightPx: 900, unit: 'px', scale: null }],
-    sections: [
-      {
-        id: 'section-1',
-        levelId: 'level-1',
-        lotId: null,
-        lot: null,
-        name: 'Setor 1',
-        color: '#6d28d9',
-        capacity: null,
-        status: 'ACTIVE',
-        notes: null,
-      },
-    ],
-    objects: [
-      {
-        id: 'object-1',
-        levelId: 'level-1',
-        sectionId: null,
-        type: 'GENERAL_AREA',
-        data: { label: 'Objeto 1' },
-        x: 100,
-        y: 100,
-        width: 100,
-        height: 80,
-        rotation: 0,
-        locked: false,
-        hidden: false,
-        sortOrder: 0,
-      },
-      {
-        id: 'object-2',
-        levelId: 'level-1',
-        sectionId: null,
-        type: 'GENERAL_AREA',
-        data: { label: 'Objeto 2' },
-        x: 240,
-        y: 100,
-        width: 100,
-        height: 80,
-        rotation: 0,
-        locked: false,
-        hidden: false,
-        sortOrder: 1,
-      },
-    ],
-    seats: [
-      {
-        id: 'seat-1',
-        levelId: 'level-1',
-        sectionId: 'section-1',
-        objectId: null,
-        groupId: null,
-        rowIndex: null,
-        columnIndex: null,
-        technicalCode: 'A1',
-        displayLabel: 'A1',
-        rowLabel: 'A',
-        seatNumber: '1',
-        status: 'AVAILABLE',
-        accessible: false,
-        publicVisible: true,
-        x: 400,
-        y: 100,
-        size: 24,
-        rotation: 0,
-      },
-    ],
-    seatGroups: [],
+    levels: [{ id: 'level-1', name: 'Ambiente 1', sortOrder: 0, widthPx: 1200, heightPx: 800, unit: 'px', scale: null }],
+    sections: [],
+    objects: [],
+    seats: [],
     versions: [],
-    counts: { levels: 1, sections: 1, seats: 1, availableSeats: 1 },
+    document: { schemaVersion: 1, sections: [], visualElements: [] },
+    counts: { levels: 1, sections: 0, seats: 0, availableSeats: 0 },
   };
 }
 
-function createMapWithSeatGroup(): EventMapDTO {
-  const map = createMap();
-  return {
-    ...map,
-    seatGroups: [
-      {
-        id: 'group-1',
-        levelId: 'level-1',
-        name: 'Grid 1',
-        x: 100,
-        y: 120,
-        rotation: 0,
-        rows: 1,
-        columns: 2,
-        seatWidth: 20,
-        seatHeight: 20,
-        gapX: 10,
-        gapY: 10,
-        paddingTop: 4,
-        paddingRight: 4,
-        paddingBottom: 4,
-        paddingLeft: 4,
-        numbering: { rowPrefix: 'A', startNumber: 1, direction: 'left-to-right' },
-        locked: false,
-      },
-    ],
-    seats: [
-      ...map.seats,
-      {
-        id: 'seat-g1',
-        levelId: 'level-1',
-        sectionId: 'section-1',
-        objectId: null,
-        groupId: 'group-1',
-        rowIndex: 0,
-        columnIndex: 0,
-        technicalCode: 'SETOR-1-A1',
-        displayLabel: 'A1',
-        rowLabel: 'A',
-        seatNumber: '1',
-        status: 'AVAILABLE',
-        accessible: false,
-        publicVisible: true,
-        x: 114,
-        y: 134,
-        size: 20,
-        rotation: 0,
-      },
-      {
-        id: 'seat-g2',
-        levelId: 'level-1',
-        sectionId: 'section-1',
-        objectId: null,
-        groupId: 'group-1',
-        rowIndex: 0,
-        columnIndex: 1,
-        technicalCode: 'SETOR-1-A2',
-        displayLabel: 'A2',
-        rowLabel: 'A',
-        seatNumber: '2',
-        status: 'AVAILABLE',
-        accessible: false,
-        publicVisible: true,
-        x: 144,
-        y: 134,
-        size: 20,
-        rotation: 0,
-      },
-    ],
-    counts: { ...map.counts, seats: 3, availableSeats: 3 },
-  };
-}
-
-describe('event-map-editor-store history', () => {
-  it('undoes and redoes mixed group movement as one history entry', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
-
-    store.getState().updateMapItems({
-      objects: [
-        { id: 'object-1', patch: { x: 120, y: 130 } },
-        { id: 'object-2', patch: { x: 260, y: 130 } },
-      ],
-      seats: [{ id: 'seat-1', patch: { x: 420, y: 130 } }],
-    });
-
-    expect(store.getState().past).toHaveLength(1);
-    expect(store.getState().map?.objects.map((object) => object.x)).toEqual([120, 260]);
-    expect(store.getState().map?.seats[0]?.x).toBe(420);
-
-    store.getState().undo();
-    expect(store.getState().map?.objects.map((object) => object.x)).toEqual([100, 240]);
-    expect(store.getState().map?.seats[0]?.x).toBe(400);
-
-    store.getState().redo();
-    expect(store.getState().map?.objects.map((object) => object.x)).toEqual([120, 260]);
-    expect(store.getState().map?.seats[0]?.x).toBe(420);
+describe('event map editor store', () => {
+  beforeEach(() => {
+    useEventMapEditorStore.getState().loadMap(createMap());
   });
 
-  it('undoes and redoes mixed movement with a seat group as one history entry', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMapWithSeatGroup());
+  it('creates a row block as one undoable operation', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, DEFAULT_SEAT_BLOCK_CONFIG);
+    const state = useEventMapEditorStore.getState();
+    expect(state.map?.document?.sections[0]?.blocks).toHaveLength(1);
+    expect(state.map?.document?.sections[0]?.blocks[0]?.rows).toHaveLength(DEFAULT_SEAT_BLOCK_CONFIG.rows);
+    expect(state.map?.seats).toHaveLength(DEFAULT_SEAT_BLOCK_CONFIG.totalSeats);
 
-    store.getState().updateMapItems({
-      objects: [{ id: 'object-1', patch: { x: 140, y: 150 } }],
-      seatGroups: [{ id: 'group-1', patch: { x: 150, y: 160 } }],
+    state.undo();
+    expect(useEventMapEditorStore.getState().map?.document?.sections).toHaveLength(0);
+    state.redo();
+    expect(useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks).toHaveLength(1);
+  });
+
+  it('creates every seat block in its own independently sellable section', () => {
+    const config = { ...DEFAULT_SEAT_BLOCK_CONFIG, rows: 2, columns: 4, totalSeats: 8 };
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, config);
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 400, y: 100 }, config);
+
+    const map = useEventMapEditorStore.getState().map!;
+    const document = map.document!;
+    expect(document.sections).toHaveLength(2);
+    expect(map.sections.map((section) => section.id)).toEqual(document.sections.map((section) => section.id));
+    expect(document.sections.map((section) => section.blocks[0]?.rows.map((row) => row.label))).toEqual([
+      ['A', 'B'],
+      ['C', 'D'],
+    ]);
+    expect(document.sections.map((section) => section.blocks)).toEqual([
+      [expect.objectContaining({ sectionId: document.sections[0]!.id })],
+      [expect.objectContaining({ sectionId: document.sections[1]!.id })],
+    ]);
+    expect(new Set(map.seats.map((seat) => seat.sectionId))).toEqual(new Set(map.sections.map((section) => section.id)));
+    expect(map.sections.every((section) => section.lotId === null)).toBe(true);
+  });
+
+  it('continues row labels alphabetically beyond Z for later seat groups', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 26,
+      columns: 1,
+      totalSeats: 26,
+    });
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 400, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 1,
+      columns: 1,
+      totalSeats: 1,
     });
 
-    expect(store.getState().past).toHaveLength(1);
-    expect(store.getState().map?.objects.find((object) => object.id === 'object-1')).toMatchObject({ x: 140, y: 150 });
-    expect(store.getState().map?.seatGroups[0]).toMatchObject({ x: 150, y: 160 });
-    expect(store.getState().map?.seats.find((seat) => seat.id === 'seat-g1')).toMatchObject({ x: 164, y: 174 });
-
-    store.getState().undo();
-    expect(store.getState().map?.objects.find((object) => object.id === 'object-1')).toMatchObject({ x: 100, y: 100 });
-    expect(store.getState().map?.seatGroups[0]).toMatchObject({ x: 100, y: 120 });
-    expect(store.getState().map?.seats.find((seat) => seat.id === 'seat-g1')).toMatchObject({ x: 114, y: 134 });
-
-    store.getState().redo();
-    expect(store.getState().map?.objects.find((object) => object.id === 'object-1')).toMatchObject({ x: 140, y: 150 });
-    expect(store.getState().map?.seatGroups[0]).toMatchObject({ x: 150, y: 160 });
-    expect(store.getState().map?.seats.find((seat) => seat.id === 'seat-g1')).toMatchObject({ x: 164, y: 174 });
+    const sections = useEventMapEditorStore.getState().map!.document!.sections;
+    expect(sections[0]!.blocks[0]!.rows.at(-1)?.label).toBe('Z');
+    expect(sections[1]!.blocks[0]!.rows[0]?.label).toBe('AA');
   });
 
-  it('creates new map areas with area-oriented labels', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
+  it('duplicates a seat block into a new section instead of appending it to its source', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 2,
+      columns: 4,
+      totalSeats: 8,
+    });
+    let state = useEventMapEditorStore.getState();
+    const source = state.map!.document!.sections[0]!;
+    state.setSelection({ type: 'seatblock', id: source.blocks[0]!.id });
+    state.duplicateSelection();
 
-    store.getState().addLevel();
-
-    const created = store.getState().map?.levels.find((level) => level.sortOrder === 1);
-    expect(created?.name).toBe('Ambiente 2');
-    expect(created?.widthPx).toBe(1440);
-    expect(created?.heightPx).toBe(900);
-    expect(store.getState().selection).toEqual([{ type: 'level', id: created?.id }]);
+    state = useEventMapEditorStore.getState();
+    const sections = state.map!.document!.sections;
+    expect(sections).toHaveLength(2);
+    expect(sections.map((section) => section.blocks)).toEqual([
+      [expect.objectContaining({ sectionId: source.id })],
+      [expect.objectContaining({ sectionId: sections[1]!.id })],
+    ]);
+    expect(sections[1]!.id).not.toBe(source.id);
+    expect(sections[1]!.lotId).toBeNull();
+    expect(state.map!.seats.filter((seat) => seat.sectionId === sections[1]!.id)).toHaveLength(8);
+    expect(state.map!.seats.filter((seat) => seat.sectionId === source.id)).toHaveLength(8);
+    expect(sections[1]!.blocks[0]!.rows.map((row) => row.label)).toEqual(['C', 'D']);
   });
 
-  it('creates a seat grid as one undoable history entry', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
+  it('duplicates a sector as a separate section and applies the offset only once', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 1,
+      columns: 3,
+      totalSeats: 3,
+    });
+    let state = useEventMapEditorStore.getState();
+    const source = state.map!.document!.sections[0]!;
+    const sourceSeats = state.map!.seats.filter((seat) => seat.sectionId === source.id);
+    state.setSelection({ type: 'section', id: source.id });
+    state.duplicateSelection();
 
-    store.getState().addSeatGridAt(
-      { x: 120, y: 160 },
-      {
-        ...DEFAULT_SEAT_GRID_CONFIG,
-        totalSeats: 6,
-        rows: 2,
-        columns: 3,
-        horizontalSpacing: 40,
-        verticalSpacing: 50,
+    state = useEventMapEditorStore.getState();
+    const duplicate = state.map!.document!.sections.find((section) => section.id !== source.id)!;
+    const duplicateSeats = state.map!.seats.filter((seat) => seat.sectionId === duplicate.id);
+    expect(duplicate.id).not.toBe(source.id);
+    expect(duplicate.lotId).toBeNull();
+    expect(duplicateSeats).toHaveLength(sourceSeats.length);
+    expect(duplicate.blocks[0]!.rows[0]!.label).toBe('B');
+    expect(duplicateSeats[0]!.displayLabel).toBe('B1');
+    expect(duplicateSeats[0]!.x - sourceSeats[0]!.x).toBeCloseTo(28);
+    expect(duplicateSeats[0]!.y - sourceSeats[0]!.y).toBeCloseTo(28);
+  });
+
+  it('updates a row path without recreating its seats', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 1,
+      columns: 4,
+      totalSeats: 4,
+    });
+    const beforeIds = useEventMapEditorStore.getState().map?.seats.map((seat) => seat.id);
+    const rowId = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0]?.rows[0]?.id;
+    expect(rowId).toBeTruthy();
+    useEventMapEditorStore.getState().updateSeatRowPath(rowId!, {
+      type: 'ARC',
+      center: { x: 100, y: 100 },
+      radius: 160,
+      startAngle: 0,
+      endAngle: Math.PI / 2,
+      clockwise: false,
+    });
+    const state = useEventMapEditorStore.getState();
+    expect(state.map?.document?.sections[0]?.blocks[0]?.rows[0]?.path.type).toBe('ARC');
+    expect(state.map?.seats.map((seat) => seat.id)).toEqual(beforeIds);
+    expect(new Set(state.map?.seats.map((seat) => seat.rotation)).size).toBeGreaterThan(1);
+  });
+
+  it('updates seat size and progressive alignment at block level', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 2,
+      columns: 4,
+      totalSeats: 8,
+    });
+    const block = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0];
+    expect(block).toBeTruthy();
+
+    useEventMapEditorStore.getState().updateSeatBlock(block!.id, {
+      seatSize: 42,
+      distributionMode: 'PROGRESSIVE',
+      distributionAlignment: 'CENTER',
+      firstRowSeatCount: 2,
+      lastRowSeatCount: 4,
+    });
+
+    const state = useEventMapEditorStore.getState();
+    const updatedBlock = state.map?.document?.sections[0]?.blocks[0];
+    expect(updatedBlock?.distributionAlignment).toBe('CENTER');
+    expect(updatedBlock?.rows.every((row) => row.seatSize === 42)).toBe(true);
+    expect(state.map?.seats.every((seat) => seat.size === 42)).toBe(true);
+  });
+
+  it('reflows seats after changing size or default spacing instead of keeping stale positions', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 2,
+      columns: 4,
+      totalSeats: 8,
+    });
+    const block = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0];
+    expect(block).toBeTruthy();
+
+    useEventMapEditorStore.getState().updateSeatBlock(block!.id, { seatSize: 48, defaultSeatGap: 24 });
+
+    const seats = useEventMapEditorStore.getState().map?.seats ?? [];
+    const firstRow = seats.filter((seat) => seat.rowIndex === 0).sort((left, right) => left.x - right.x);
+    const secondRow = seats.filter((seat) => seat.rowIndex === 1).sort((left, right) => left.x - right.x);
+    expect(firstRow).toHaveLength(4);
+    expect(new Set(firstRow.map((seat) => seat.x)).size).toBe(4);
+    expect(firstRow[1]!.x - firstRow[0]!.x).toBeCloseTo(72);
+    expect(secondRow[0]!.y).toBeGreaterThan(firstRow[0]!.y);
+    expect(useEventMapEditorStore.getState().map?.document?.sections[0]?.outline).toEqual([]);
+  });
+
+  it('supports changing fixed total seats one at a time across rows', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 2,
+      columns: 4,
+      totalSeats: 8,
+    });
+    const block = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0];
+    expect(block).toBeTruthy();
+
+    useEventMapEditorStore.getState().updateSeatBlock(block!.id, {
+      distributionMode: 'FIXED',
+      distribution: [{ type: 'SEATS', count: 3 }],
+      rowSeatCounts: [4, 3],
+    });
+
+    const updated = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0];
+    expect(updated?.rows.map((row) => row.distribution?.[0])).toEqual([
+      { type: 'SEATS', count: 4 },
+      { type: 'SEATS', count: 3 },
+    ]);
+    expect(useEventMapEditorStore.getState().map?.seats).toHaveLength(7);
+  });
+
+  it('updates the horizontal column capacity without recreating the block', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 2,
+      columns: 2,
+      totalSeats: 4,
+    });
+    const block = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0];
+    expect(block).toBeTruthy();
+
+    useEventMapEditorStore.getState().updateSeatBlock(block!.id, {
+      columnCount: 3,
+      distributionMode: 'FIXED',
+      distribution: [{ type: 'SEATS', count: 3 }],
+      rowSeatCounts: [3, 1],
+    });
+
+    const updated = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0];
+    expect(updated?.columnCount).toBe(3);
+    expect(updated?.rows.map((row) => row.distribution?.[0])).toEqual([
+      { type: 'SEATS', count: 3 },
+      { type: 'SEATS', count: 1 },
+    ]);
+    expect(useEventMapEditorStore.getState().map?.seats).toHaveLength(4);
+  });
+
+  it('wraps new seats into additional rows when the fixed column count is reached', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 4,
+      columns: 14,
+      totalSeats: 56,
+    });
+    const block = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0];
+    expect(block).toBeTruthy();
+
+    const nextTotal = 57;
+    const rowCounts = [14, 14, 14, 14, 1];
+    useEventMapEditorStore.getState().updateSeatBlock(block!.id, {
+      rowSeatCounts: rowCounts,
+      distributionMode: 'FIXED',
+    });
+
+    const updated = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0];
+    expect(updated?.columnCount).toBe(14);
+    expect(updated?.rows).toHaveLength(5);
+    expect(updated?.rowIds).toHaveLength(5);
+    expect(updated?.rows[4]?.label).toBe('E');
+    expect(updated?.rows.map((row) => row.distribution?.[0])).toEqual(
+      rowCounts.map((count) => ({ type: 'SEATS', count })),
+    );
+    expect(updated?.rows.map((row) => row.seats.length)).toEqual([14, 14, 14, 14, 14]);
+    expect(useEventMapEditorStore.getState().map?.seats).toHaveLength(57);
+
+    useEventMapEditorStore.getState().updateSeatBlock(block!.id, {
+      rowSeatCounts: [14, 14, 14, 14],
+      distributionMode: 'FIXED',
+    });
+    const reduced = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0];
+    expect(reduced?.columnCount).toBe(14);
+    expect(reduced?.rows.map((row) => row.label)).toEqual(['A', 'B', 'C', 'D']);
+    expect(useEventMapEditorStore.getState().map?.seats).toHaveLength(56);
+  });
+
+  it('moves a seat block and stage in one undoable transaction', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 3,
+      columns: 14,
+      totalSeats: 42,
+    });
+    const stageId = useEventMapEditorStore.getState().addObjectAt('stage', { x: 400, y: 40 }, { width: 240, height: 60 });
+    expect(stageId).toBeTruthy();
+    useEventMapEditorStore.setState({ past: [], future: [] });
+
+    const before = useEventMapEditorStore.getState().map!;
+    const seatIds = before.seats.map((seat) => seat.id);
+    const initialStage = before.objects.find((object) => object.id === stageId)!;
+    const initialSeatPositions = new Map(before.seats.map((seat) => [seat.id, { x: seat.x, y: seat.y }]));
+    useEventMapEditorStore.getState().applyTransform({
+      type: 'MOVE_OBJECTS',
+      payload: { objectIds: [stageId!], seatIds, delta: { x: 80, y: 45 } },
+    });
+
+    let state = useEventMapEditorStore.getState();
+    expect(state.past).toHaveLength(1);
+    expect(state.map?.objects.find((object) => object.id === stageId)).toMatchObject({ x: initialStage.x + 80, y: initialStage.y + 45 });
+    expect(state.map?.seats.every((seat) => {
+      const initial = initialSeatPositions.get(seat.id)!;
+      return Math.abs(seat.x - initial.x - 80) < 0.01 && Math.abs(seat.y - initial.y - 45) < 0.01;
+    })).toBe(true);
+
+    state.undo();
+    state = useEventMapEditorStore.getState();
+    expect(state.map?.objects.find((object) => object.id === stageId)).toMatchObject({ x: initialStage.x, y: initialStage.y });
+    expect(state.map?.seats.every((seat) => {
+      const initial = initialSeatPositions.get(seat.id)!;
+      return Math.abs(seat.x - initial.x) < 0.01 && Math.abs(seat.y - initial.y) < 0.01;
+    })).toBe(true);
+
+    state.redo();
+    state = useEventMapEditorStore.getState();
+    expect(state.map?.objects.find((object) => object.id === stageId)).toMatchObject({ x: initialStage.x + 80, y: initialStage.y + 45 });
+    expect(state.map?.seats.every((seat) => {
+      const initial = initialSeatPositions.get(seat.id)!;
+      return Math.abs(seat.x - initial.x - 80) < 0.01 && Math.abs(seat.y - initial.y - 45) < 0.01;
+    })).toBe(true);
+  });
+
+  it('supports a fixed block with more than eighty columns', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 1,
+      columns: 81,
+      totalSeats: 81,
+    });
+
+    const block = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0];
+    expect(block?.columnCount).toBe(81);
+    expect(block?.rows[0]?.seats).toHaveLength(81);
+    expect(useEventMapEditorStore.getState().map?.seats).toHaveLength(81);
+  });
+
+  it('keeps the seat-block section as a logical container during a complete drag', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 2,
+      columns: 4,
+      totalSeats: 8,
+    });
+    const before = useEventMapEditorStore.getState().map?.document?.sections[0]?.outline ?? [];
+    const seatIds = useEventMapEditorStore.getState().map?.seats.map((seat) => seat.id) ?? [];
+
+    useEventMapEditorStore.getState().applyTransform({
+      type: 'MOVE_OBJECTS',
+      payload: {
+        seatIds,
+        delta: { x: 20, y: 15 },
       },
-    );
-
-    expect(store.getState().past).toHaveLength(1);
-    expect(store.getState().map?.sections).toHaveLength(2);
-    expect(store.getState().map?.objects).toHaveLength(3);
-    expect(store.getState().map?.seats).toHaveLength(7);
-    const createdSection = store.getState().map?.sections.at(-1);
-    const createdSectionObject = store.getState().map?.objects.find((object) => object.sectionId === createdSection?.id);
-    expect(store.getState().selection).toEqual([{ type: 'section', id: createdSection?.id }]);
-    expect(createdSection?.capacity).toBe(6);
-    expect(createdSectionObject).toMatchObject({
-      x: 84,
-      y: 124,
-      width: 152,
-      height: 122,
     });
-    expect(store.getState().map?.seats.slice(1).map((seat) => seat.displayLabel)).toEqual(['A1', 'A2', 'A3', 'B1', 'B2', 'B3']);
 
-    store.getState().nudgeSelection({ x: 10, y: 12 });
-    expect(store.getState().map?.objects.find((object) => object.sectionId === createdSection?.id)?.x).toBe(94);
-    expect(store.getState().map?.seats.at(1)).toMatchObject({ x: 130, y: 172 });
-
-    store.getState().undo();
-    expect(store.getState().map?.objects.find((object) => object.sectionId === createdSection?.id)?.x).toBe(84);
-    expect(store.getState().map?.seats.at(1)).toMatchObject({ x: 120, y: 160 });
-
-    store.getState().undo();
-    expect(store.getState().map?.sections).toHaveLength(1);
-    expect(store.getState().map?.seats).toHaveLength(1);
-
-    store.getState().redo();
-    expect(store.getState().map?.sections).toHaveLength(2);
-    expect(store.getState().map?.seats).toHaveLength(7);
-
-    store.getState().redo();
-    expect(store.getState().map?.sections).toHaveLength(2);
-    expect(store.getState().map?.seats).toHaveLength(7);
-    expect(store.getState().map?.objects.find((object) => object.sectionId === createdSection?.id)?.x).toBe(94);
+    const after = useEventMapEditorStore.getState().map?.document?.sections[0]?.outline ?? [];
+    expect(before).toEqual([]);
+    expect(after).toEqual([]);
   });
 
-  it('undoes and redoes a seat section movement as a single history entry', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
-
-    store.getState().addSeatGridAt(
-      { x: 120, y: 160 },
-      {
-        ...DEFAULT_SEAT_GRID_CONFIG,
-        totalSeats: 6,
-        rows: 2,
-        columns: 3,
-        horizontalSpacing: 40,
-        verticalSpacing: 50,
-      },
-    );
-
-    store.setState({ past: [], future: [] });
-
-    const createdSection = store.getState().map?.sections.at(-1);
-    const createdSectionObject = store.getState().map?.objects.find((object) => object.sectionId === createdSection?.id);
-    const createdSeats = store.getState().map?.seats.filter((seat) => seat.sectionId === createdSection?.id) ?? [];
-    expect(createdSectionObject).toBeTruthy();
-    expect(createdSeats).toHaveLength(6);
-    if (!createdSectionObject) return;
-
-    store.getState().updateMapItems({
-      objects: [{ id: createdSectionObject.id, patch: { x: createdSectionObject.x + 80, y: createdSectionObject.y + 40 } }],
-      seats: createdSeats.map((seat) => ({ id: seat.id, patch: { x: seat.x + 80, y: seat.y + 40 } })),
+  it('keeps progressive row guides aligned when only the visible seats are dragged', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 2,
+      columns: 4,
+      totalSeats: 8,
+    });
+    const block = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0];
+    expect(block).toBeTruthy();
+    useEventMapEditorStore.getState().updateSeatBlock(block!.id, {
+      distributionMode: 'PROGRESSIVE',
+      firstRowSeatCount: 1,
+      lastRowSeatCount: 4,
     });
 
-    expect(store.getState().past).toHaveLength(1);
-    expect(store.getState().map?.objects.find((object) => object.id === createdSectionObject.id)).toMatchObject({
-      x: createdSectionObject.x + 80,
-      y: createdSectionObject.y + 40,
-    });
-    expect(store.getState().map?.seats.filter((seat) => seat.sectionId === createdSection?.id).map((seat) => seat.x)).toEqual(
-      createdSeats.map((seat) => seat.x + 80),
-    );
+    const progressiveState = useEventMapEditorStore.getState();
+    const progressiveSeats = progressiveState.map?.seats ?? [];
+    expect(progressiveState.map?.document?.sections[0]?.outline).toEqual([]);
 
-    store.getState().undo();
-    expect(store.getState().map?.objects.find((object) => object.id === createdSectionObject.id)).toMatchObject({
-      x: createdSectionObject.x,
-      y: createdSectionObject.y,
-    });
-    expect(store.getState().map?.seats.filter((seat) => seat.sectionId === createdSection?.id).map((seat) => seat.x)).toEqual(
-      createdSeats.map((seat) => seat.x),
-    );
+    const beforeRow = progressiveState.map?.document?.sections[0]?.blocks[0]?.rows[0];
+    const visibleFirstRowSeats = progressiveSeats
+      .filter((seat) => seat.rowIndex === 0)
+      .map((seat) => seat.id);
+    expect(visibleFirstRowSeats).toHaveLength(1);
+    expect(beforeRow).toBeTruthy();
 
-    store.getState().redo();
-    expect(store.getState().map?.objects.find((object) => object.id === createdSectionObject.id)).toMatchObject({
-      x: createdSectionObject.x + 80,
-      y: createdSectionObject.y + 40,
+    useEventMapEditorStore.getState().applyTransform({
+      type: 'MOVE_OBJECTS',
+      payload: { seatIds: visibleFirstRowSeats, delta: { x: 20, y: 15 } },
     });
-    expect(store.getState().map?.seats.filter((seat) => seat.sectionId === createdSection?.id).map((seat) => seat.x)).toEqual(
-      createdSeats.map((seat) => seat.x + 80),
-    );
+
+    const afterRow = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0]?.rows[0];
+    expect(afterRow?.path.type).toBe('LINE');
+    if (afterRow?.path.type === 'LINE' && beforeRow?.path.type === 'LINE') {
+      expect(afterRow.path.start.x).toBeCloseTo(beforeRow.path.start.x + 20);
+      expect(afterRow.path.start.y).toBeCloseTo(beforeRow.path.start.y + 15);
+    }
   });
 
-  it('duplicates a selected section and keeps object duplication scoped', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap({
-      ...createMap(),
-      objects: [
-        ...createMap().objects,
-        {
-          id: 'section-object-1',
-          levelId: 'level-1',
-          sectionId: 'section-1',
-          type: 'SECTION',
-          data: { label: 'Setor 1', fill: '#6d28d9' },
-          x: 80,
-          y: 80,
-          width: 220,
-          height: 140,
-          rotation: 0,
-          locked: false,
-          hidden: false,
-          sortOrder: 2,
-        },
-      ],
+  it('shrinks the row guide when returning from progressive to fixed distribution', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 2,
+      columns: 10,
+      totalSeats: 20,
     });
+    const block = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0];
+    expect(block).toBeTruthy();
 
-    store.getState().setSelection({ type: 'section', id: 'section-1' });
-    store.getState().duplicateSelection();
+    useEventMapEditorStore.getState().updateSeatBlock(block!.id, {
+      distributionMode: 'PROGRESSIVE',
+      firstRowSeatCount: 3,
+      lastRowSeatCount: 10,
+    });
+    useEventMapEditorStore.getState().updateSeatBlock(block!.id, { distributionMode: 'FIXED' });
 
-    expect(store.getState().map?.sections).toHaveLength(2);
-    expect(store.getState().map?.objects.filter((object) => object.type === 'SECTION')).toHaveLength(2);
-    expect(store.getState().past).toHaveLength(1);
-
-    store.getState().setSelection({ type: 'object', id: 'section-object-1' });
-    store.getState().duplicateSelection();
-
-    expect(store.getState().map?.sections).toHaveLength(2);
-    expect(store.getState().map?.objects.filter((object) => object.type === 'SECTION')).toHaveLength(3);
-    expect(store.getState().past).toHaveLength(2);
+    const state = useEventMapEditorStore.getState();
+    const seats = state.map?.seats ?? [];
+    const row = state.map?.document?.sections[0]?.blocks[0]?.rows[0];
+    expect(row?.path.type).toBe('LINE');
+    if (row?.path.type === 'LINE') {
+      expect(row.path.end.x).toBeCloseTo(Math.max(...seats.map((seat) => seat.x)) + (seats[0]?.size ?? 0) / 2);
+    }
+    expect(state.map?.document?.sections[0]?.outline).toEqual([]);
   });
 
-  it('opens a responsive gap for corridors and restores seats when the corridor is removed', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
+  it('transforms multiple parametric seat blocks together while preserving their geometry', () => {
+    const config = { ...DEFAULT_SEAT_BLOCK_CONFIG, rows: 2, columns: 3, totalSeats: 6 };
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, config);
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 500, y: 100 }, config);
 
-    store.getState().addSeatGridAt(
-      { x: 100, y: 100 },
-      {
-        ...DEFAULT_SEAT_GRID_CONFIG,
-        totalSeats: 8,
-        rows: 2,
-        columns: 4,
-        seatSize: 20,
-        horizontalSpacing: 40,
-        verticalSpacing: 40,
-      },
-    );
+    let state = useEventMapEditorStore.getState();
+    const blocks = state.map?.document?.sections.flatMap((section) => section.blocks) ?? [];
+    expect(blocks).toHaveLength(2);
+    const items = blocks.map((block) => ({ type: 'seatblock' as const, id: block.id }));
+    const seatIds = blocks.map((block) => block.rows.flatMap((row) => row.seatIds));
+    const initialSeatSize = blocks[0]!.rows[0]!.seatSize;
+    const initialSeats = seatIds.map((ids) => ids.map((id) => state.map!.seats.find((seat) => seat.id === id)!));
 
-    const baseSeats = store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y })) ?? [];
-    const baseSectionWidth =
-      store.getState().map?.objects.find((object) => object.type === 'SECTION' && object.sectionId)?.width ?? 0;
-
-    const corridorId = store.getState().addObjectAt('corridor', { x: 135, y: 70 }, { width: 30, height: 120 });
-    const shiftedSeats = store.getState().map?.seats.slice(1) ?? [];
-    const shiftedSectionObject = store.getState().map?.objects.find((object) => object.type === 'SECTION' && object.sectionId);
-
-    expect(corridorId).toBeTruthy();
-    expect(shiftedSeats.map((seat) => ({ id: seat.id, x: seat.x, y: seat.y }))).toEqual(baseSeats);
-    expect(shiftedSectionObject?.width).toBe(baseSectionWidth);
-
-    if (corridorId) {
-      store.getState().setSelection({ type: 'object', id: corridorId });
-      store.getState().deleteSelection();
+    const move = [1, 0, 0, 1, 30, 20] as [number, number, number, number, number, number];
+    state.transformParametricSelections(items.map((item) => ({ item, matrix: move })));
+    state = useEventMapEditorStore.getState();
+    for (let blockIndex = 0; blockIndex < seatIds.length; blockIndex += 1) {
+      for (let seatIndex = 0; seatIndex < seatIds[blockIndex]!.length; seatIndex += 1) {
+        const moved = state.map!.seats.find((seat) => seat.id === seatIds[blockIndex]![seatIndex])!;
+        expect(moved.x).toBeCloseTo(initialSeats[blockIndex]![seatIndex]!.x + 30);
+        expect(moved.y).toBeCloseTo(initialSeats[blockIndex]![seatIndex]!.y + 20);
+      }
     }
 
-    const restoredSeats = store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y })) ?? [];
-    expect(restoredSeats).toEqual(baseSeats);
-    const restoredSectionObject = store.getState().map?.objects.find((object) => object.type === 'SECTION' && object.sectionId);
-    expect(restoredSectionObject?.data.sectionBaseBounds).toBeUndefined();
-  });
-
-  it('recalculates corridor gaps from the original seat positions when a corridor moves', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
-
-    store.getState().addSeatGridAt(
-      { x: 100, y: 100 },
-      {
-        ...DEFAULT_SEAT_GRID_CONFIG,
-        totalSeats: 8,
-        rows: 2,
-        columns: 4,
-        seatSize: 20,
-        horizontalSpacing: 40,
-        verticalSpacing: 40,
-      },
-    );
-
-    const baseSeats = store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y })) ?? [];
-    const corridorId = store.getState().addObjectAt('corridor', { x: 135, y: 70 }, { width: 30, height: 120 });
-    expect(corridorId).toBeTruthy();
-    if (!corridorId) return;
-
-    const firstGapSeats = store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y })) ?? [];
-    store.getState().updateObject(corridorId, { x: 320, y: 70 });
-    const movedAwaySeats = store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y })) ?? [];
-    expect(movedAwaySeats).toEqual(baseSeats);
-
-    store.getState().updateObject(corridorId, { x: 135 });
-    const secondGapSeats = store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y })) ?? [];
-    expect(secondGapSeats).toEqual(firstGapSeats);
-  });
-
-  it('treats overlapping corridors as one obstacle without doubling seat displacement', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
-
-    store.getState().addSeatGridAt(
-      { x: 100, y: 100 },
-      {
-        ...DEFAULT_SEAT_GRID_CONFIG,
-        totalSeats: 8,
-        rows: 2,
-        columns: 4,
-        seatSize: 20,
-        horizontalSpacing: 40,
-        verticalSpacing: 40,
-      },
-    );
-
-    const firstCorridorId = store.getState().addObjectAt('corridor', { x: 135, y: 70 }, { width: 30, height: 120 });
-    expect(firstCorridorId).toBeTruthy();
-    const firstGapSeats = store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y })) ?? [];
-
-    const secondCorridorId = store.getState().addObjectAt('corridor', { x: 135, y: 70 }, { width: 30, height: 120 });
-    expect(secondCorridorId).toBeTruthy();
-    const mergedGapSeats = store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y })) ?? [];
-
-    expect(mergedGapSeats).toEqual(firstGapSeats);
-  });
-
-  it('uses per-side corridor spacing controls when recalculating seats', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
-
-    store.getState().addSeatGridAt(
-      { x: 100, y: 100 },
-      {
-        ...DEFAULT_SEAT_GRID_CONFIG,
-        totalSeats: 8,
-        rows: 2,
-        columns: 4,
-        seatSize: 20,
-        horizontalSpacing: 40,
-        verticalSpacing: 40,
-      },
-    );
-
-    const corridorId = store.getState().addObjectAt('corridor', { x: 135, y: 70 }, { width: 30, height: 120 });
-    expect(corridorId).toBeTruthy();
-    if (!corridorId) return;
-
-    const readGap = () => {
-      const seats = (store.getState().map?.seats ?? [])
-        .filter((seat) => seat.rowLabel === 'A' && seat.x < 300)
-        .sort((left, right) => left.x - right.x);
-      const col1 = seats[0];
-      const col2 = seats[1];
-      if (!col1 || !col2) return 0;
-      return col2.x - (col1.x + (col1.size ?? 20));
-    };
-
-    const defaultGap = readGap();
-    store.getState().updateObject(corridorId, { data: { seatGapLeft: 40 } });
-    const widerGap = readGap();
-
-    expect(defaultGap).toBeGreaterThan(0);
-    expect(widerGap).toBe(defaultGap);
-  });
-
-  it('moves a reflowed seat section as one stable undoable state', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
-
-    store.getState().addSeatGridAt(
-      { x: 100, y: 100 },
-      {
-        ...DEFAULT_SEAT_GRID_CONFIG,
-        totalSeats: 8,
-        rows: 2,
-        columns: 4,
-        seatSize: 20,
-        horizontalSpacing: 40,
-        verticalSpacing: 40,
-      },
-    );
-
-    const corridorId = store.getState().addObjectAt('corridor', { x: 135, y: 70 }, { width: 30, height: 120 });
-    expect(corridorId).toBeTruthy();
-
-    const section = store.getState().map?.sections.at(-1);
-    const sectionObject = store.getState().map?.objects.find((object) => object.sectionId === section?.id);
-    const shiftedSeats = store.getState().map?.seats.filter((seat) => seat.sectionId === section?.id) ?? [];
-    expect(sectionObject).toBeTruthy();
-    expect(shiftedSeats).toHaveLength(8);
-    if (!section || !sectionObject) return;
-
-    store.setState({ past: [], future: [] });
-    store.getState().setSelection({ type: 'section', id: section.id });
-    store.getState().nudgeSelection({ x: 80, y: 40 });
-
-    const movedSectionObject = store.getState().map?.objects.find((object) => object.id === sectionObject.id);
-    const movedSeats = store.getState().map?.seats.filter((seat) => seat.sectionId === section.id) ?? [];
-    expect(store.getState().past).toHaveLength(1);
-    expect(movedSectionObject?.x).not.toBe(sectionObject.x);
-    expect(movedSectionObject?.y).not.toBe(sectionObject.y);
-    expect(movedSeats.map((seat) => ({ x: seat.x, y: seat.y }))).not.toEqual(
-      shiftedSeats.map((seat) => ({ x: seat.x, y: seat.y })),
-    );
-
-    store.getState().undo();
-    expect(store.getState().map?.objects.find((object) => object.id === sectionObject.id)).toMatchObject({
-      x: sectionObject.x,
-      y: sectionObject.y,
-    });
-    expect(store.getState().map?.seats.filter((seat) => seat.sectionId === section.id).map((seat) => ({ x: seat.x, y: seat.y }))).toEqual(
-      shiftedSeats.map((seat) => ({ x: seat.x, y: seat.y })),
-    );
-
-    store.getState().redo();
-    expect(store.getState().map?.objects.find((object) => object.id === sectionObject.id)).toEqual(movedSectionObject);
-    expect(store.getState().map?.seats.filter((seat) => seat.sectionId === section.id).map((seat) => ({ x: seat.x, y: seat.y }))).toEqual(
-      movedSeats.map((seat) => ({ x: seat.x, y: seat.y })),
-    );
-  });
-
-  it('keeps resized reflowed seat sections as one atomic history state', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
-
-    store.getState().addSeatGridAt(
-      { x: 100, y: 100 },
-      {
-        ...DEFAULT_SEAT_GRID_CONFIG,
-        totalSeats: 8,
-        rows: 2,
-        columns: 4,
-        seatSize: 20,
-        horizontalSpacing: 40,
-        verticalSpacing: 40,
-      },
-    );
-
-    const corridorId = store.getState().addObjectAt('corridor', { x: 135, y: 70 }, { width: 30, height: 120 });
-    expect(corridorId).toBeTruthy();
-
-    const section = store.getState().map?.sections.at(-1);
-    const sectionObject = store.getState().map?.objects.find((object) => object.sectionId === section?.id);
-    const shiftedSeats = store.getState().map?.seats.filter((seat) => seat.sectionId === section?.id) ?? [];
-    expect(sectionObject).toBeTruthy();
-    expect(shiftedSeats).toHaveLength(8);
-    if (!section || !sectionObject) return;
-
-    const seatPatches = shiftedSeats.map((seat) => ({
-      id: seat.id,
-      patch: {
-        x: seat.x + 300 + (seat.x - sectionObject.x) * 0.15,
-        y: seat.y + (seat.y - sectionObject.y) * 0.1,
-        size: (seat.size ?? 20) * 1.2,
-      },
-    }));
-
-    store.setState({ past: [], future: [] });
-    store.getState().updateMapItems({
-      objects: [
-        {
-          id: sectionObject.id,
-          patch: {
-            x: sectionObject.x + 300,
-            y: sectionObject.y,
-            width: (sectionObject.width ?? 0) * 1.15,
-            height: (sectionObject.height ?? 0) * 1.1,
-          },
-        },
-      ],
-      seats: seatPatches,
-    });
-
-    expect(store.getState().past).toHaveLength(1);
-    const resizedSeats = store.getState().map?.seats.filter((seat) => seat.sectionId === section.id).map((seat) => ({ x: seat.x, y: seat.y, size: seat.size })) ?? [];
-    expect(resizedSeats).not.toEqual(shiftedSeats.map((seat) => ({ x: seat.x, y: seat.y, size: seat.size })));
-
-    store.getState().undo();
-    expect(store.getState().map?.seats.filter((seat) => seat.sectionId === section.id).map((seat) => ({ x: seat.x, y: seat.y, size: seat.size }))).toEqual(
-      shiftedSeats.map((seat) => ({ x: seat.x, y: seat.y, size: seat.size })),
-    );
-
-    store.getState().redo();
-    expect(store.getState().map?.seats.filter((seat) => seat.sectionId === section.id).map((seat) => ({ x: seat.x, y: seat.y, size: seat.size }))).toEqual(
-      resizedSeats,
-    );
-  });
-
-  it('creates corridor defaults as smart corridor with spacing metadata', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
-
-    const corridorId = store.getState().addObjectAt('corridor', { x: 200, y: 100 });
-    expect(corridorId).toBeTruthy();
-
-    const corridor = store.getState().map?.objects.find((object) => object.id === corridorId);
-    expect(corridor).toMatchObject({
-      width: 32,
-      height: 280,
-      rotation: 0,
-      data: expect.objectContaining({
-        smartCorridor: false,
-        corridorAxis: 'vertical',
-        corridorAutoFit: false,
-        corridorThickness: 32,
-      }),
-    });
-  });
-
-  it('reflows a new seat grid immediately when a corridor already exists in the area', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
-
-    const corridorId = store.getState().addObjectAt('corridor', { x: 135, y: 70 }, { width: 30, height: 120 });
-    expect(corridorId).toBeTruthy();
-    if (!corridorId) return;
-
-    store.getState().addSeatGridAt(
-      { x: 100, y: 100 },
-      {
-        ...DEFAULT_SEAT_GRID_CONFIG,
-        totalSeats: 8,
-        rows: 2,
-        columns: 4,
-        seatSize: 20,
-        horizontalSpacing: 40,
-        verticalSpacing: 40,
-      },
-    );
-
-    const createdSection = store.getState().map?.sections.at(-1);
-    const gridSeats =
-      store.getState().map?.seats.filter((seat) => seat.sectionId === createdSection?.id) ?? [];
-    const col1 = gridSeats.find((seat) => seat.seatNumber === '1' && seat.rowLabel === 'A');
-    const col2 = gridSeats.find((seat) => seat.seatNumber === '2' && seat.rowLabel === 'A');
-    expect(col1).toBeTruthy();
-    expect(col2).toBeTruthy();
-    if (!col1 || !col2) return;
-
-    const col1Bounds = getSeatBounds(col1);
-    const col2Bounds = getSeatBounds(col2);
-    const gap = col2Bounds.x - (col1Bounds.x + col1Bounds.width);
-
-    expect(gap).toBe(20);
-  });
-
-  it('recalculates corridor reflow when corridor geometry changes orientation', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
-
-    store.getState().addSeatGridAt(
-      { x: 100, y: 100 },
-      {
-        ...DEFAULT_SEAT_GRID_CONFIG,
-        totalSeats: 8,
-        rows: 2,
-        columns: 4,
-        seatSize: 20,
-        horizontalSpacing: 40,
-        verticalSpacing: 40,
-      },
-    );
-
-    const corridorId = store.getState().addObjectAt('corridor', { x: 135, y: 70 }, { width: 30, height: 120 });
-    expect(corridorId).toBeTruthy();
-    if (!corridorId) return;
-
-    const verticalLayout =
-      store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y })) ?? [];
-    store.getState().updateObject(corridorId, { width: 280, height: 32 });
-    const horizontalLayout =
-      store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y })) ?? [];
-
-    expect(horizontalLayout).toEqual(verticalLayout);
-    store.getState().updateObject(corridorId, { width: 30, height: 120 });
-    const finalLayout = store.getState().map?.seats.slice(1).map((seat) => ({ x: seat.x, y: seat.y })) ?? [];
-    expect(finalLayout).toEqual(verticalLayout.map(({ x, y }) => ({ x, y })));
-  });
-
-  it('reflows seats when duplicating a freely rotated corridor', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
-
-    store.getState().addSeatGridAt(
-      { x: 100, y: 100 },
-      {
-        ...DEFAULT_SEAT_GRID_CONFIG,
-        totalSeats: 8,
-        rows: 2,
-        columns: 4,
-        seatSize: 20,
-        horizontalSpacing: 40,
-        verticalSpacing: 40,
-      },
-    );
-
-    const corridorId = store.getState().addObjectAt('corridor', { x: 155, y: 40 }, { width: 120, height: 28 });
-    expect(corridorId).toBeTruthy();
-    if (!corridorId) return;
-
-    store.getState().updateObject(corridorId, { rotation: 37 });
-    store.getState().setSelection({ type: 'object', id: corridorId });
-    store.getState().duplicateSelection();
-
-    const duplicated = store.getState().map?.objects.find((object) => object.type === 'CORRIDOR' && object.id !== corridorId);
-    expect(duplicated).toBeTruthy();
-    if (!duplicated) return;
-
-    expect(duplicated).toMatchObject({ rotation: 37 });
-    expect(Number.isFinite(duplicated.x)).toBe(true);
-    expect(Number.isFinite(duplicated.y)).toBe(true);
-    expect(duplicated.width).toBe(120);
-    expect(duplicated.height).toBe(28);
-    expect(store.getState().past).toHaveLength(4);
-  });
-
-  it('preserves custom artboard size when updating level', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap({
-      ...createMap(),
-      levels: [{ id: 'level-1', name: 'Plateia', sortOrder: 0, widthPx: 1600, heightPx: 1000, unit: 'px', scale: '1m = 50px' }],
-    });
-
-    expect(store.getState().map?.levels[0]?.name).toBe('Ambiente 1');
-    expect(store.getState().map?.levels[0]?.widthPx).toBe(1600);
-    expect(store.getState().map?.levels[0]?.heightPx).toBe(1000);
-
-    store.getState().updateLevel('level-1', { name: 'Mezanino', widthPx: 3000, heightPx: 2000 });
-
-    expect(store.getState().map?.levels[0]?.name).toBe('Mezanino');
-    expect(store.getState().map?.levels[0]?.widthPx).toBe(3000);
-    expect(store.getState().map?.levels[0]?.heightPx).toBe(2000);
-  });
-
-  it('normalizes corridor metadata on loadMap and toPayload', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
-
-    store.getState().addSeatGridAt(
-      { x: 100, y: 100 },
-      {
-        ...DEFAULT_SEAT_GRID_CONFIG,
-        totalSeats: 8,
-        rows: 2,
-        columns: 4,
-        seatSize: 20,
-        horizontalSpacing: 40,
-        verticalSpacing: 40,
-      },
-    );
-
-    const corridorId = store.getState().addObjectAt('corridor', { x: 135, y: 70 }, { width: 30, height: 120 });
-    expect(corridorId).toBeTruthy();
-    if (!corridorId) return;
-
-    const sectionObject = store.getState().map?.objects.find(
-      (object) => object.type === 'SECTION' && object.sectionId,
-    );
-    expect(sectionObject?.data.seatBaseLayout ?? sectionObject?.data.sectionBaseBounds).toBeUndefined();
-
-    const payload = store.getState().toPayload();
-    expect(payload).toBeTruthy();
-    if (!payload) return;
-
-    const corridorPayload = payload.objects.find((object) => object.id === corridorId);
-    expect(Number(corridorPayload?.data?.corridorThickness ?? 0)).toBeGreaterThanOrEqual(8);
-
-    const reloadedMap: EventMapDTO = {
-      ...createMap(),
-      name: payload.name ?? createMap().name,
-      levels: payload.levels,
-      sections: payload.sections.map((section) => ({
-        ...section,
-        lotId: null,
-        lot: null,
-        capacity: null,
-        notes: null,
-      })),
-      objects: payload.objects,
-      seats: store.getState().map?.seats ?? [],
-    };
-
-    store.getState().loadMap(reloadedMap);
-
-    for (const corridorObject of store.getState().map?.objects.filter((object) => object.type === 'CORRIDOR') ?? []) {
-      const layout = resolveSmartCorridorLayout(corridorObject);
-      expect(Number(corridorObject.data.corridorThickness)).toBeGreaterThanOrEqual(8);
-      expect(layout.thickness).toBeGreaterThanOrEqual(8);
+    const rotate = [0, 1, -1, 0, 550, -350] as [number, number, number, number, number, number];
+    state.transformParametricSelections(items.map((item) => ({ item, matrix: rotate })));
+    state = useEventMapEditorStore.getState();
+    const rotatedBlocks = state.map!.document!.sections.flatMap((section) => section.blocks);
+    expect(rotatedBlocks.every((block) => block.rows.every((row) => row.path.type === 'LINE'))).toBe(true);
+    const afterRotationSeats = seatIds.map((ids) => ids.map((id) => state.map!.seats.find((seat) => seat.id === id)!));
+    for (let blockIndex = 0; blockIndex < seatIds.length; blockIndex += 1) {
+      for (let seatIndex = 0; seatIndex < seatIds[blockIndex]!.length; seatIndex += 1) {
+        const moved = initialSeats[blockIndex]![seatIndex]!;
+        const rotated = afterRotationSeats[blockIndex]![seatIndex]!;
+        expect(rotated.x).toBeCloseTo(550 - (moved.y + 20));
+        expect(rotated.y).toBeCloseTo(moved.x + 30 - 350);
+      }
     }
 
-    const reloadedSection = store.getState().map?.objects.find(
-      (object) => object.type === 'SECTION' && object.sectionId,
-    );
-    expect(reloadedSection?.data.seatBaseLayout ?? reloadedSection?.data.sectionBaseBounds).toBeUndefined();
+    const scale = [1.5, 0, 0, 1.5, -225, -50] as [number, number, number, number, number, number];
+    state.transformParametricSelections(items.map((item) => ({ item, matrix: scale })));
+    state = useEventMapEditorStore.getState();
+    const scaledBlocks = state.map!.document!.sections.flatMap((section) => section.blocks);
+    expect(scaledBlocks.every((block) => block.rows.every((row) => Math.abs(row.seatSize - initialSeatSize * 1.5) < 0.001))).toBe(true);
+    for (let blockIndex = 0; blockIndex < seatIds.length; blockIndex += 1) {
+      for (let seatIndex = 0; seatIndex < seatIds[blockIndex]!.length; seatIndex += 1) {
+        const current = state.map!.seats.find((seat) => seat.id === seatIds[blockIndex]![seatIndex])!;
+        const previous = afterRotationSeats[blockIndex]![seatIndex]!;
+        expect(current.x).toBeCloseTo(previous.x * 1.5 - 225);
+        expect(current.y).toBeCloseTo(previous.y * 1.5 - 50);
+      }
+    }
   });
 
-  it('skips seat base layout translation when reflow commits seat positions', () => {
-    const store = useEventMapEditorStore;
-    store.getState().loadMap(createMap());
-
-    store.getState().addSeatGridAt(
-      { x: 100, y: 100 },
-      {
-        ...DEFAULT_SEAT_GRID_CONFIG,
-        totalSeats: 8,
-        rows: 2,
-        columns: 4,
-        seatSize: 20,
-        horizontalSpacing: 40,
-        verticalSpacing: 40,
-      },
-    );
-
-    const corridorId = store.getState().addObjectAt('corridor', { x: 135, y: 70 }, { width: 30, height: 120 });
-    expect(corridorId).toBeTruthy();
-    if (!corridorId) return;
-
-    const sectionObject = store.getState().map?.objects.find(
-      (object) => object.type === 'SECTION' && object.sectionId,
-    );
-    const baseLayoutBefore = JSON.stringify(sectionObject?.data.seatBaseLayout ?? {});
-
-    const reflowedSeat = store.getState().map?.seats.find((seat) => seat.seatNumber === '2' && seat.rowLabel === 'A');
-    expect(reflowedSeat).toBeTruthy();
-    if (!reflowedSeat) return;
-
-    store.getState().updateMapItems({
-      objects: [{ id: corridorId, patch: { x: 145, y: 70 } }],
-      seats: [{ id: reflowedSeat.id, patch: { x: reflowedSeat.x + 10, y: reflowedSeat.y } }],
-      skipSeatBaseLayoutTranslation: true,
+  it('preserves the visible progressive capacity when switching to equal rows', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 4,
+      columns: 10,
+      totalSeats: 40,
     });
+    const block = useEventMapEditorStore.getState().map?.document?.sections[0]?.blocks[0];
+    expect(block).toBeTruthy();
 
-    const baseLayoutAfter = JSON.stringify(
-      store.getState().map?.objects.find((object) => object.type === 'SECTION' && object.sectionId)?.data
-        .seatBaseLayout ?? {},
-    );
-    expect(baseLayoutAfter).toBe(baseLayoutBefore);
+    useEventMapEditorStore.getState().updateSeatBlock(block!.id, {
+      distributionMode: 'PROGRESSIVE',
+      firstRowSeatCount: 3,
+      lastRowSeatCount: 6,
+    });
+    useEventMapEditorStore.getState().updateSeatBlock(block!.id, { distributionMode: 'FIXED' });
+
+    const state = useEventMapEditorStore.getState();
+    const updated = state.map?.document?.sections[0]?.blocks[0];
+    expect(updated?.distribution).toEqual([{ type: 'SEATS', count: 6 }]);
+    expect(state.map?.seats).toHaveLength(24);
+  });
+
+  it('removes the empty section when its last seat block is deleted', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 2,
+      columns: 3,
+      totalSeats: 6,
+    });
+    const state = useEventMapEditorStore.getState();
+    const blockId = state.map?.document?.sections[0]?.blocks[0]?.id;
+    expect(blockId).toBeTruthy();
+    state.setSelection({ type: 'seatblock', id: blockId! });
+
+    state.deleteSeatBlock(blockId!);
+
+    const after = useEventMapEditorStore.getState();
+    expect(after.map?.document?.sections).toHaveLength(0);
+    expect(after.map?.seats).toHaveLength(0);
+    expect(after.selection).toEqual([]);
+  });
+
+  it('keeps reference-chart metadata outside the map draft history', () => {
+    const referenceChart: MapReferenceChart = {
+      url: '/uploads/reference.png',
+      storageKey: 'uploads/event-maps/conta-1/map-1/reference.png',
+      fileName: 'reference.png',
+      mimeType: 'image/png',
+      width: 1200,
+      height: 800,
+      visible: true,
+      opacity: 0.5,
+      locked: true,
+      transform: { x: 0, y: 0, scale: 1, rotation: 0 },
+      calibration: { seatDiameter: 24, seatPitch: 8, rowPitch: 18 },
+    };
+
+    useEventMapEditorStore.getState().setReferenceChart(referenceChart);
+
+    const state = useEventMapEditorStore.getState();
+    expect(state.map?.referenceChart).toEqual(referenceChart);
+    expect(state.isDirty).toBe(false);
+    expect(state.past).toHaveLength(0);
   });
 });

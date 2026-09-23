@@ -4,6 +4,8 @@ import type {
   EventSeatStatus,
   EventTicketLotStatus,
 } from '@alusa/shared';
+import type { EventMapDocument } from '../model/event-map-document.js';
+import type { MapReferenceChart } from '../model/map-reference-chart.js';
 
 export type EventMapLevelDTO = {
   id: string;
@@ -32,6 +34,7 @@ export type EventMapSectionDTO = {
   capacity: number | null;
   status: string;
   notes: string | null;
+  hidden?: boolean;
 };
 
 export type EventMapObjectDTO = {
@@ -55,7 +58,6 @@ export type EventSeatDTO = {
   levelId: string;
   sectionId: string;
   objectId: string | null;
-  groupId: string | null;
   rowIndex: number | null;
   columnIndex: number | null;
   technicalCode: string;
@@ -69,27 +71,6 @@ export type EventSeatDTO = {
   y: number;
   size: number | null;
   rotation: number;
-};
-
-export type EventSeatGroupDTO = {
-  id: string;
-  levelId: string;
-  name: string | null;
-  x: number;
-  y: number;
-  rotation: number;
-  rows: number;
-  columns: number;
-  seatWidth: number;
-  seatHeight: number;
-  gapX: number;
-  gapY: number;
-  paddingTop: number;
-  paddingRight: number;
-  paddingBottom: number;
-  paddingLeft: number;
-  numbering: Record<string, unknown>;
-  locked: boolean;
 };
 
 export type EventMapDTO = {
@@ -108,10 +89,11 @@ export type EventMapDTO = {
   updatedAt: string;
   publishedAt: string | null;
   archivedAt: string | null;
+  document?: EventMapDocument;
+  referenceChart?: MapReferenceChart | null;
   levels: EventMapLevelDTO[];
   sections: EventMapSectionDTO[];
   objects: EventMapObjectDTO[];
-  seatGroups: EventSeatGroupDTO[];
   seats: EventSeatDTO[];
   versions: Array<{
     id: string;
@@ -132,10 +114,10 @@ export type EventMapDTO = {
 
 export type EventMapDraftPayload = {
   name?: string;
+  document?: EventMapDocument;
   levels: EventMapLevelDTO[];
   sections: Array<Omit<EventMapSectionDTO, 'lot'>>;
   objects: EventMapObjectDTO[];
-  seatGroups: EventSeatGroupDTO[];
   seats: EventSeatDTO[];
 };
 
@@ -150,7 +132,6 @@ export type MapTool =
   | 'stage'
   | 'text'
   | 'blocked'
-  | 'corridor'
   | 'booth'
   | 'general'
   | 'shape-square'

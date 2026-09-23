@@ -4,7 +4,6 @@ export type CanvasTransformCommand = Extract<
   MapCommand,
   {
     type:
-      | 'TRANSFORM_CORRIDOR'
       | 'RESIZE_OBJECTS'
       | 'RESIZE_SELECTION'
       | 'ROTATE_OBJECTS'

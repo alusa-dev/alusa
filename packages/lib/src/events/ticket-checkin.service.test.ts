@@ -11,6 +11,7 @@ vi.mock('../prisma', () => ({
 
 import { prisma } from '../prisma';
 import {
+  assertEventAllowsCheckIn,
   verifyEventTicketForCheckInAcrossEvents,
 } from './ticket-checkin.service';
 
@@ -59,6 +60,7 @@ describe('verifyEventTicketForCheckInAcrossEvents', () => {
   it('resolve códigos curtos legados sem exigir evento e rejeita colisões', async () => {
     vi.mocked(prisma.eventTicket.findFirst)
       .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(ticket() as never);
     vi.mocked(prisma.eventTicket.findMany).mockResolvedValue([
       { id: 'ticket-1', eventId: 'event-1', ticketCode: 'TICKET-123456789' },
@@ -72,7 +74,9 @@ describe('verifyEventTicketForCheckInAcrossEvents', () => {
     expect(result.event.id).toBe('event-1');
 
     vi.clearAllMocks();
-    vi.mocked(prisma.eventTicket.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.eventTicket.findFirst)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
     vi.mocked(prisma.eventTicket.findMany).mockResolvedValue([
       { id: 'ticket-1', eventId: 'event-1', ticketCode: 'TICKET-123456789' },
       { id: 'ticket-2', eventId: 'event-2', ticketCode: 'OTHER-123456789' },
@@ -81,5 +85,32 @@ describe('verifyEventTicketForCheckInAcrossEvents', () => {
     await expect(verifyEventTicketForCheckInAcrossEvents('conta-1', '23456789')).rejects.toMatchObject({
       code: 'CODIGO_AMBIGUO',
     });
+  });
+
+  it('resolve o novo código curto diretamente e aceita a versão formatada', async () => {
+    vi.mocked(prisma.eventTicket.findFirst)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(ticket({ checkInCode: '01AB23CD45EF' }) as never);
+
+    const result = await verifyEventTicketForCheckInAcrossEvents('conta-1', '01AB-23CD-45EF');
+
+    expect(prisma.eventTicket.findFirst).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: { contaId: 'conta-1', checkInCode: '01AB23CD45EF' },
+    }));
+    expect(prisma.eventTicket.findMany).not.toHaveBeenCalled();
+    expect(result.event.id).toBe('event-1');
+  });
+});
+
+describe('assertEventAllowsCheckIn', () => {
+  it.each(['DRAFT', 'PLANNING', 'ACTIVE', 'FINISHED'] as const)('allows check-in for %s events', (status) => {
+    expect(() => assertEventAllowsCheckIn(status)).not.toThrow();
+  });
+
+  it.each(['CANCELLED', 'ARCHIVED'] as const)('rejects check-in for %s events', (status) => {
+    expect(() => assertEventAllowsCheckIn(status)).toThrow(expect.objectContaining({
+      code: 'EVENTO_INDISPONIVEL',
+      status: 409,
+    }));
   });
 });

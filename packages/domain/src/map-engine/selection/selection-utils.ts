@@ -14,7 +14,8 @@ export { getObjectBounds } from '../layout/object-bounds.js';
 export type MapSelectionItem =
   | { type: 'object'; id: string }
   | { type: 'seat'; id: string }
-  | { type: 'seatgroup'; id: string }
+  | { type: 'seatblock'; id: string }
+  | { type: 'seatrow'; id: string }
   | { type: 'section'; id: string }
   | { type: 'level'; id: string };
 
@@ -65,4 +66,3 @@ export function toggleSelectionItem(selection: MapSelection, item: MapSelectionI
 export function replaceSelection(item: MapSelectionItem): MapSelection {
   return [item];
 }
-

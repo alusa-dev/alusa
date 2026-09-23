@@ -18,7 +18,7 @@ type RouteParams = { params: Promise<{ eventId: string }> };
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const { eventId } = await params;
-    const ctx = await getEventsContext('eventTickets.view');
+    const ctx = await getEventsContext('eventTickets.checkIn');
     const body = bodySchema.parse(await request.json());
 
     if (body.confirm) {

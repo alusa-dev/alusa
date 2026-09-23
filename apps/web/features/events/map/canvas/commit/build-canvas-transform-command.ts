@@ -8,7 +8,6 @@ export type TransformCommitPayload = TransformCommandPayload;
 export function buildCanvasTransformCommand(
   payload: TransformCommitPayload,
   map: EventMapDTO | null,
-  options?: { forceCorridor?: boolean },
 ): CanvasTransformCommand | null {
-  return classifyTransformPayload(payload, map, options) as CanvasTransformCommand | null;
+  return classifyTransformPayload(payload, map) as CanvasTransformCommand | null;
 }

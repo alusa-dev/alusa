@@ -14,13 +14,12 @@ export function useMapCanvasStore() {
   const setSelection = useEventMapEditorStore((state) => state.setSelection);
   const addObjectAt = useEventMapEditorStore((state) => state.addObjectAt);
   const addRowAt = useEventMapEditorStore((state) => state.addRowAt);
-  const addSeatGridAt = useEventMapEditorStore((state) => state.addSeatGridAt);
+  const addSeatBlockAt = useEventMapEditorStore((state) => state.addSeatBlockAt);
   const updateObject = useEventMapEditorStore((state) => state.updateObject);
   const updateObjects = useEventMapEditorStore((state) => state.updateObjects);
   const updateMapItems = useEventMapEditorStore((state) => state.updateMapItems);
   const deleteObject = useEventMapEditorStore((state) => state.deleteObject);
   const updateSeat = useEventMapEditorStore((state) => state.updateSeat);
-  const updateSeatGroup = useEventMapEditorStore((state) => state.updateSeatGroup);
   const setInlineTextEditorActive = useEventMapEditorStore((state) => state.setInlineTextEditorActive);
   const setViewportSize = useEventMapEditorStore((state) => state.setViewportSize);
 
@@ -36,13 +35,12 @@ export function useMapCanvasStore() {
     setSelection,
     addObjectAt,
     addRowAt,
-    addSeatGridAt,
+    addSeatBlockAt,
     updateObject,
     updateObjects,
     updateMapItems,
     deleteObject,
     updateSeat,
-    updateSeatGroup,
     setInlineTextEditorActive,
     setViewportSize,
   };

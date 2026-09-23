@@ -6,11 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { seedAdminAndAuthenticate } from '../utils/auth';
 import { resetDb } from '../utils/reset-db';
 
-import {
-  assertNoSeatIntersectsCorridors,
-  assertNoSeatOverlaps,
-  type SeatGeometry,
-} from './geometry';
+import { assertNoSeatOverlaps, type SeatGeometry } from './geometry';
 
 const prisma = new PrismaClient();
 
@@ -23,27 +19,11 @@ export type EditorScenario = {
 
 export type EditorGeometry = {
   seats: SeatGeometry[];
-  corridors: Array<{
-    id: string;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    rotation: number;
-    data: Record<string, unknown>;
-    coreRect: { x: number; y: number; width: number; height: number };
-    clearanceRect: { x: number; y: number; width: number; height: number };
-  }>;
+  objects: Array<{ id: string; type: string; x: number; y: number; width: number; height: number; rotation: number; data: Record<string, unknown>; bounds: SeatGeometry['bounds'] }>;
   sections: Array<{ id: string; x: number; y: number; width: number; height: number }>;
 };
 
-export async function seedEmptyMapEditor(page: Page, label: string): Promise<EditorScenario> {
-  await resetDb(prisma);
-
-  const { contaId } = await seedAdminAndAuthenticate(page, {
-    email: `smart-corridors-${label}-${Date.now()}@e2e.test`,
-  });
-
+export async function createMapEditorScenario(contaId: string, label: string): Promise<EditorScenario> {
   const event = await prisma.schoolEvent.create({
     data: {
       id: randomUUID(),
@@ -85,6 +65,16 @@ export async function seedEmptyMapEditor(page: Page, label: string): Promise<Edi
   return { contaId, eventId: event.id, mapId: map.id, mapName };
 }
 
+export async function seedEmptyMapEditor(page: Page, label: string): Promise<EditorScenario> {
+  await resetDb(prisma);
+
+  const { contaId } = await seedAdminAndAuthenticate(page, {
+    email: `seat-layout-${label}-${Date.now()}@e2e.test`,
+  });
+
+  return createMapEditorScenario(contaId, label);
+}
+
 export async function openEventMapEditor(page: Page, scenario: EditorScenario) {
   await page.goto(`/events/${scenario.eventId}/maps/${scenario.mapId}/editor`);
   await expect(page.getByTestId('event-map-editor')).toBeVisible({ timeout: 20_000 });
@@ -107,6 +97,10 @@ export async function getEditorState(page: Page) {
 
 export async function getEditorGeometry(page: Page): Promise<EditorGeometry> {
   return page.evaluate(() => window.__ALUSA_EVENT_MAP_EDITOR_E2E__!.getGeometry());
+}
+
+export async function getRenderedEditorGeometry(page: Page): Promise<EditorGeometry> {
+  return page.evaluate(() => window.__ALUSA_EVENT_MAP_EDITOR_E2E__!.getRenderGeometry());
 }
 
 export async function fitArtboard(page: Page) {
@@ -166,7 +160,7 @@ export async function openPresetsMenu(page: Page) {
   await page.getByRole('button', { name: 'Presets' }).click();
 }
 
-export async function activateTool(page: Page, toolId: 'seat' | 'corridor' | 'select') {
+export async function activateTool(page: Page, toolId: 'seat' | 'select') {
   if (toolId === 'select') {
     await page.getByRole('button', { name: 'Selecionar' }).click();
     return;
@@ -175,7 +169,7 @@ export async function activateTool(page: Page, toolId: 'seat' | 'corridor' | 'se
   await page.getByTestId(`toolbar-${toolId}-tool`).click();
 }
 
-export async function createSeatGrid(
+export async function createSeatBlock(
   page: Page,
   options: {
     origin: { x: number; y: number };
@@ -187,134 +181,31 @@ export async function createSeatGrid(
     verticalSpacing?: number;
   },
 ) {
+  const seatsBefore = (await getEditorGeometry(page)).seats.length;
   await activateTool(page, 'seat');
-  await clickMapPoint(page, options.origin);
-
-  const dialog = page.getByTestId('seat-grid-dialog');
-  await expect(dialog).toBeVisible({ timeout: 8_000 });
-
-  await dialog.getByTestId('seat-grid-rows').fill(String(options.rows));
-  await dialog.getByTestId('seat-grid-columns').fill(String(options.columns));
-  await dialog.getByTestId('seat-grid-total-seats').fill(String(options.totalSeats));
-
-  if (options.seatSize != null) {
-    await dialog.getByTestId('seat-grid-seat-size').fill(String(options.seatSize));
-  }
-  if (options.horizontalSpacing != null) {
-    await dialog.getByTestId('seat-grid-horizontal-spacing').fill(String(options.horizontalSpacing));
-  }
-  if (options.verticalSpacing != null) {
-    await dialog.getByTestId('seat-grid-vertical-spacing').fill(String(options.verticalSpacing));
-  }
-
-  await dialog.getByTestId('seat-grid-submit').click();
-  await expect(dialog).toBeHidden({ timeout: 10_000 });
+  const seatSize = options.seatSize ?? 28;
+  const horizontalSpacing = options.horizontalSpacing ?? seatSize + 10;
+  const verticalSpacing = options.verticalSpacing ?? seatSize + 14;
+  const seatGap = Math.max(0, horizontalSpacing - seatSize);
+  const rowGap = Math.max(0, verticalSpacing - seatSize);
+  const width = options.columns * horizontalSpacing - seatGap;
+  const height = options.rows * verticalSpacing - rowGap;
+  await dragOnCanvas(
+    page,
+    options.origin,
+    { x: options.origin.x + width, y: options.origin.y + height },
+    12,
+  );
   await fitArtboard(page);
 
-  await expect.poll(async () => (await getEditorGeometry(page)).seats.length, { timeout: 10_000 }).toBe(
-    options.totalSeats,
-  );
-}
-
-export async function createCorridor(
-  page: Page,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-) {
-  await activateTool(page, 'corridor');
-  await dragOnCanvas(page, from, to);
-  await activateTool(page, 'select');
-  await expect.poll(async () => (await getEditorGeometry(page)).corridors.length, { timeout: 8_000 }).toBeGreaterThan(0);
-}
-
-export async function dragCorridorByIndex(
-  page: Page,
-  index: number,
-  delta: { x: number; y: number },
-  options?: { assertDuringDrag?: boolean; baselineSeats?: SeatGeometry[] },
-) {
-  const geometry = await getEditorGeometry(page);
-  const corridor = geometry.corridors[index];
-  if (!corridor) throw new Error(`Corridor index ${index} not found`);
-
-  const core = corridor.coreRect;
-  const from = { x: core.x + core.width / 2, y: core.y + core.height / 2 };
-  const to = { x: from.x + delta.x, y: from.y + delta.y };
-
-  const startViewport = await mapPointToViewport(page, from);
-  const endViewport = await mapPointToViewport(page, to);
-
-  await page.mouse.move(startViewport.x, startViewport.y);
-  await page.mouse.down();
-
-  let responsiveDuringDrag = false;
-  for (let step = 1; step <= 16; step += 1) {
-    const x = startViewport.x + ((endViewport.x - startViewport.x) * step) / 16;
-    const y = startViewport.y + ((endViewport.y - startViewport.y) * step) / 16;
-    await page.mouse.move(x, y);
-
-    if (options?.assertDuringDrag && options.baselineSeats && step > 2 && step < 16) {
-      const current = await page.evaluate(() => window.__ALUSA_EVENT_MAP_EDITOR_E2E__!.getRenderGeometry());
-      const moved = current.seats.some((seat) => {
-        const baseline = options.baselineSeats!.find((entry) => entry.id === seat.id);
-        return baseline && (Math.abs(seat.x - baseline.x) > 0.5 || Math.abs(seat.y - baseline.y) > 0.5);
-      });
-      if (moved) responsiveDuringDrag = true;
-    }
-  }
-
-  await page.mouse.up();
-
-  if (options?.assertDuringDrag) {
-    expect(responsiveDuringDrag, 'Expected seats to reflow during corridor drag preview').toBe(true);
-  }
-}
-
-export async function selectCorridorByIndex(page: Page, index: number) {
-  const geometry = await getEditorGeometry(page);
-  const corridor = geometry.corridors[index];
-  if (!corridor) throw new Error(`Corridor index ${index} not found`);
-  const center = {
-    x: corridor.coreRect.x + corridor.coreRect.width / 2,
-    y: corridor.coreRect.y + corridor.coreRect.height / 2,
-  };
-  await activateTool(page, 'select');
-  await clickMapPoint(page, center);
+  await expect
+    .poll(async () => (await getEditorGeometry(page)).seats.length, { timeout: 10_000 })
+    .toBe(seatsBefore + options.totalSeats);
 }
 
 export async function marqueeSelect(page: Page, from: { x: number; y: number }, to: { x: number; y: number }) {
   await activateTool(page, 'select');
   await dragOnCanvas(page, from, to, 12);
-}
-
-export async function setCorridorSpacing(
-  page: Page,
-  spacing: { top?: number; right?: number; bottom?: number; left?: number },
-) {
-  if (spacing.top != null) {
-    const input = page.getByTestId('corridor-seat-gap-top');
-    await input.click({ clickCount: 3 });
-    await input.fill(String(spacing.top));
-    await input.press('Tab');
-  }
-  if (spacing.right != null) {
-    const input = page.getByTestId('corridor-seat-gap-right');
-    await input.click({ clickCount: 3 });
-    await input.fill(String(spacing.right));
-    await input.press('Tab');
-  }
-  if (spacing.bottom != null) {
-    const input = page.getByTestId('corridor-seat-gap-bottom');
-    await input.click({ clickCount: 3 });
-    await input.fill(String(spacing.bottom));
-    await input.press('Tab');
-  }
-  if (spacing.left != null) {
-    const input = page.getByTestId('corridor-seat-gap-left');
-    await input.click({ clickCount: 3 });
-    await input.fill(String(spacing.left));
-    await input.press('Tab');
-  }
 }
 
 export async function expectSeatCount(page: Page, count: number) {
@@ -324,7 +215,6 @@ export async function expectSeatCount(page: Page, count: number) {
 export async function expectNoOverlaps(page: Page) {
   const geometry = await getEditorGeometry(page);
   assertNoSeatOverlaps(geometry.seats);
-  assertNoSeatIntersectsCorridors(geometry.seats, geometry.corridors);
 }
 
 export async function saveMap(page: Page) {
@@ -337,14 +227,6 @@ export async function saveMap(page: Page) {
       response.ok(),
     { timeout: 20_000 },
   );
-}
-
-export async function assertCorridorPanelHasOnlySpacing(page: Page) {
-  const panel = page.getByTestId('properties-panel');
-  await expect(panel.getByRole('heading', { name: 'Espaçamento dos assentos' })).toBeVisible();
-  await expect(panel.getByText('Orientação')).toHaveCount(0);
-  await expect(panel.getByText('Ajustar ao gap')).toHaveCount(0);
-  await expect(panel.getByRole('heading', { name: 'Corredor' })).toHaveCount(0);
 }
 
 export async function deleteSelection(page: Page) {

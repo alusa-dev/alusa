@@ -1,7 +1,6 @@
 'use client';
 import {
   isItemSelected,
-  isSeatedSectorLayerSelected,
   replaceSelection,
   resolveGroupSelectionItem,
   sortLevelPanelChildren,
@@ -14,6 +13,7 @@ import { useEventMapEditorStore } from '../store/event-map-editor-store';
 import { MapObjectPreview, MapSectionPreview } from './MapObjectPreview';
 
 import { cn } from '@/lib/utils';
+import { CreatorIcon } from '@/components/icons/hugeicons';
 
 import {
   DndContext,
@@ -31,7 +31,6 @@ import {
 } from '@dnd-kit/core';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { useMemo, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
-import { ChevronRight, Eye, EyeOff, GripVertical, Group, Layers3, Trash2 } from 'lucide-react';
 
 function getLayerItemSortId(item: LevelPanelChildItem) {
   return `${item.kind}-${item.id}`;
@@ -43,6 +42,10 @@ type LayerInsertionIndicator = {
 };
 
 function isSectionHidden(map: EventMapDTO, sectionId: string) {
+  const section = map.document?.sections.find((entry) => entry.id === sectionId);
+  if (section) return section.hidden ?? false;
+  const dtoSection = map.sections.find((entry) => entry.id === sectionId);
+  if (dtoSection?.hidden !== undefined) return dtoSection.hidden;
   const linked = map.objects.find((object) => object.sectionId === sectionId);
   return linked?.hidden ?? false;
 }
@@ -139,7 +142,7 @@ function LayerRow({
             isDragOverlay && 'cursor-grabbing text-slate-400',
           )}
         >
-          <GripVertical className="h-3.5 w-3.5" />
+          <CreatorIcon name="dragHandle" size={14} />
         </button>
       ) : null}
 
@@ -149,8 +152,10 @@ function LayerRow({
           disabled={disabled}
           onClick={expandable.onToggle}
         >
-          <ChevronRight
-            className={cn('h-3.5 w-3.5 transition-transform duration-200', expandable.expanded && 'rotate-90')}
+          <CreatorIcon
+            name="back"
+            size={14}
+            className={cn('rotate-180 transition-transform duration-200', expandable.expanded && 'rotate-90')}
           />
         </LayerActionButton>
       ) : null}
@@ -176,12 +181,12 @@ function LayerRow({
             disabled={disabled || isDragOverlay}
             onClick={onToggleVisibility}
           >
-            {hidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            <CreatorIcon name={hidden ? 'hidden' : 'visible'} size={14} />
           </LayerActionButton>
         ) : null}
         {showDelete && onDelete ? (
           <LayerActionButton label="Excluir camada" disabled={disabled || isDragOverlay} onClick={onDelete}>
-            <Trash2 className="h-3.5 w-3.5" />
+            <CreatorIcon name="delete" size={14} />
           </LayerActionButton>
         ) : null}
       </div>
@@ -279,7 +284,7 @@ function buildLayerRowContent(
     return {
       label: section.name,
       preview: <MapSectionPreview color={section.color} size={22} />,
-      selected: isSeatedSectorLayerSelected(map, options.selection, section.id),
+      selected: isItemSelected(options.selection, { type: 'section', id: section.id }),
       hidden,
       showVisibility: true,
       showDelete: true,
@@ -303,7 +308,7 @@ function buildLayerRowContent(
       label: item.label,
       preview: (
         <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[3px] border border-slate-300 bg-white text-slate-500">
-          <Group className="h-3.5 w-3.5" />
+          <CreatorIcon name="block" size={14} />
         </span>
       ),
       selected,
@@ -585,7 +590,7 @@ export function MapLayersPanel() {
     <aside className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-lg shadow-slate-300/30 backdrop-blur">
       <div className="border-b border-slate-200 px-4 py-3">
         <div className="flex items-center gap-2">
-          <Layers3 className="h-4 w-4 text-brand-accent" />
+          <CreatorIcon name="layers" size={16} className="text-brand-accent" />
           <h2 className="text-sm font-semibold text-slate-950">Camadas</h2>
         </div>
         <p className="text-xs text-slate-500">Arraste para definir o que fica na frente no mapa.</p>

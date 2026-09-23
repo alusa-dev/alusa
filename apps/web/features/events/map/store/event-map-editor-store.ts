@@ -1,10 +1,16 @@
 'use client';
-import { DEFAULT_CORRIDOR_THICKNESS, MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, MIN_CORRIDOR_THICKNESS, SEAT_GRID_SECTION_PADDING, applyCorridorReflow, applyCorridorRotationPreservingCenter, buildLevelLayerSortOrderPatches, buildSeatGridPreview, computeArtboardFitView, executeMapCommand, expandObjectSelectionItems, getNextGroupDisplayName, getNextLevelSortOrder, getObjectGroupId, getObjectGroupLabel, getSeatGridPreviewBounds, getSeatGridRowLabel, getSelectableItems, getTextModeFromCreation, inferCorridorAxisFromSize, isCorridorRotationOnlyTransform, isPlateiaBaseLevel, normalizeMapLevels, normalizeRotation, normalizeSeatGridConfig, normalizeSelection, normalizeTextData, persistCorridorMetadataOnly, reconcileCorridorGeometry, reorderLevelPanelChildItems, replaceSelection, sanitizeGroupMembership, sanitizeTextObjectData, setObjectGroupData, sortLevelPanelChildren, toggleSelectionItem, translateSeatCorridorBase, translateSectionCorridorBase, updateCorridorSplitAnchorsOnDrag, validateGroupCandidates, withAutoObjectLabel, withDuplicateObjectLabel } from '@alusa/domain';
-import type { EventMapDTO, EventMapDraftPayload, EventMapLevelDTO, EventMapObjectDTO, EventMapSectionDTO, EventSeatDTO, EventSeatGroupDTO, MapCommand, MapSelection, MapSelectionItem, MapTool, SeatGridConfig } from '@alusa/domain';
+import { MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, buildLevelLayerSortOrderPatches, computeArtboardFitView, createSeatBlock, executeMapCommand, expandObjectSelectionItems, findMapBlockOwner, findMapRowOwner, findMapSeatOwner, getNextGroupDisplayName, getNextLevelSortOrder, getNextSeatBlockRowPrefix, getObjectGroupId, getObjectGroupLabel, getSeatBlockPreviewBounds, getSeatBlockRowLabel, getSelectableItems, getTextModeFromCreation, isPlateiaBaseLevel, migrateLegacyMapDocument, normalizeMapLevels, normalizeSeatBlockConfig, normalizeSelection, normalizeTextData, pathLength, projectMapDocumentToEditorFields, reorderLevelPanelChildItems, replaceSelection, resizeArcPathToLength, resolveSeatCountForRow, sanitizeGroupMembership, sanitizeTextObjectData, sectionLocalToWorld, setObjectGroupData, sortLevelPanelChildren, toggleSelectionItem, validateGroupCandidates, withAutoObjectLabel, withDuplicateObjectLabel, worldToSectionLocal } from '@alusa/domain';
+import type { EventMapDTO, EventMapDraftPayload, EventMapLevelDTO, EventMapObjectDTO, EventMapSectionDTO, EventSeatDTO, MapCommand, MapSelection, MapSelectionItem, MapTool, MapReferenceChart, MapSeatBlock, MapSeatRow, SeatBlockConfig, SeatDistributionMode, SeatRowPath } from '@alusa/domain';
 
 import { create } from 'zustand';
 
 export type { MapSelection, MapSelectionItem, MapTool };
+
+type SeatBlockPropertiesPatch = Partial<Pick<MapSeatBlock, 'name' | 'columnCount' | 'rowGap' | 'defaultSeatGap' | 'distribution' | 'distributionMode' | 'distributionAlignment' | 'firstRowSeatCount' | 'lastRowSeatCount' | 'fitMinimumSeatCount' | 'fitMaximumSeatCount'>> & {
+  seatSize?: number;
+  rowSeatCounts?: number[];
+  rowPaths?: SeatRowPath[];
+};
 
 type EventMapEditorState = {
   map: EventMapDTO | null;
@@ -38,6 +44,7 @@ type EventMapEditorState = {
   commitPermanentZoomTool: () => void;
   markZoomScrubbedThisHold: () => void;
   setSelection: (selection: MapSelectionItem | MapSelection | null) => void;
+  ascendSelection: () => boolean;
   toggleSelectionItem: (item: MapSelectionItem) => void;
   setActiveLevelId: (levelId: string) => void;
   setZoom: (zoom: number) => void;
@@ -51,24 +58,25 @@ type EventMapEditorState = {
   ) => string | null;
   deleteObject: (id: string) => void;
   addRowAt: (point: { x: number; y: number }, quantity?: number) => void;
-  addSeatGridAt: (point: { x: number; y: number }, config: Partial<SeatGridConfig>) => void;
-  updateSeatGroup: (id: string, patch: Partial<EventSeatGroupDTO>) => void;
-  deleteSeatGroup: (id: string) => void;
+  addSeatBlockAt: (point: { x: number; y: number }, config: Partial<SeatBlockConfig>) => void;
+  updateSeatBlock: (id: string, patch: SeatBlockPropertiesPatch) => void;
+  updateSeatRow: (id: string, patch: Partial<Pick<MapSeatRow, 'path' | 'seatGap' | 'seatSize'>>) => void;
+  deleteSeatBlock: (id: string) => void;
+  updateSeatRowPath: (rowId: string, path: SeatRowPath) => void;
+  transformParametricSelection: (item: Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>, matrix: [number, number, number, number, number, number]) => void;
+  transformParametricSelections: (transforms: Array<{ item: Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>; matrix: [number, number, number, number, number, number] }>) => void;
   updateObject: (id: string, patch: Partial<EventMapObjectDTO>) => void;
   updateObjects: (updates: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>) => void;
   updateMapItems: (updates: {
     objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
     seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
-    seatGroups?: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }>;
     skipSeatBaseLayoutTranslation?: boolean;
-    skipCorridorReflow?: boolean;
   }) => void;
   applyTransform: (
     command: Extract<
       MapCommand,
       {
         type:
-          | 'TRANSFORM_CORRIDOR'
           | 'RESIZE_OBJECTS'
           | 'RESIZE_SELECTION'
           | 'ROTATE_OBJECTS'
@@ -96,6 +104,7 @@ type EventMapEditorState = {
   redo: () => void;
   markSaved: (map?: EventMapDTO) => void;
   patchMapSettings: (patch: { name?: string; publicEnabled?: boolean }) => void;
+  setReferenceChart: (referenceChart: MapReferenceChart | null) => void;
   toPayload: () => EventMapDraftPayload | null;
   setInlineTextEditorActive: (active: boolean) => void;
 };
@@ -113,6 +122,117 @@ function createLocalId(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
+function translateRowPath(path: SeatRowPath, dx: number, dy: number): SeatRowPath {
+  const point = (value: { x: number; y: number }) => ({ x: value.x + dx, y: value.y + dy });
+  if (path.type === 'LINE') return { ...path, start: point(path.start), end: point(path.end) };
+  if (path.type === 'ARC') return { ...path, center: point(path.center) };
+  if (path.type === 'POLYLINE') return { ...path, points: path.points.map(point) };
+  return { ...path, p0: point(path.p0), p1: point(path.p1), p2: point(path.p2), p3: point(path.p3) };
+}
+
+function ensureRowSeatCapacity(row: MapSeatBlock['rows'][number], requiredCount: number, rowIndex?: number): MapSeatBlock['rows'][number] {
+  if (row.seats.length >= requiredCount) return row;
+  const seats = [...row.seats];
+  const seatIds = [...row.seatIds];
+  for (let index = seats.length; index < requiredCount; index += 1) {
+    const id = createLocalId('seat');
+    const number = index + 1;
+    seats.push({
+      id,
+      label: `${row.label}${number}`,
+      technicalCode: `${row.label}${number}`,
+      rowIndex: rowIndex ?? row.seats[0]?.rowIndex ?? 0,
+      columnIndex: index,
+      accessible: false,
+      publicVisible: true,
+    });
+    seatIds.push(id);
+  }
+  return { ...row, seats, seatIds };
+}
+
+function seatCountFromSegments(segments: MapSeatBlock['distribution']) {
+  return segments.reduce((total, segment) => total + (segment.type === 'SEATS' ? segment.count : 0), 0);
+}
+
+function fixedRowSeatCounts(block: MapSeatBlock) {
+  const fallback = seatCountFromSegments(block.distribution);
+  return block.rows.map((row) => row.distribution ? seatCountFromSegments(row.distribution) : fallback);
+}
+
+/**
+ * A seat position is an explicit exception to the row's parametric layout.
+ * Changing the row rhythm must return seats to that layout; otherwise an old
+ * dragged position wins over the new size/gap and seats visually pile up.
+ */
+function clearSeatLayoutOverrides(row: MapSeatBlock['rows'][number]): MapSeatBlock['rows'][number] {
+  return {
+    ...row,
+    seats: row.seats.map(({ position: _position, rotation: _rotation, ...seat }) => seat),
+  };
+}
+
+function resizeRowPath(
+  path: SeatRowPath,
+  seatCount: number,
+  seatSize: number,
+  seatGap: number,
+): SeatRowPath {
+  if (seatCount < 1) return path;
+  const nextLength = seatSize + Math.max(0, seatCount - 1) * (seatSize + seatGap);
+  if (path.type === 'ARC') {
+    return resizeArcPathToLength(path, nextLength);
+  }
+  if (path.type === 'LINE') {
+    const dx = path.end.x - path.start.x;
+    const dy = path.end.y - path.start.y;
+    const currentLength = Math.hypot(dx, dy);
+    const unitX = currentLength <= 0.001 ? 1 : dx / currentLength;
+    const unitY = currentLength <= 0.001 ? 0 : dy / currentLength;
+    return {
+      type: 'LINE',
+      start: path.start,
+      end: { x: path.start.x + unitX * nextLength, y: path.start.y + unitY * nextLength },
+    };
+  }
+  const currentLength = pathLength(path);
+  if (currentLength <= 0.001) return path;
+  const first = path.type === 'POLYLINE' ? path.points[0]! : path.p0;
+  const last = path.type === 'POLYLINE' ? path.points.at(-1)! : path.p3;
+  const anchor = { x: (first.x + last.x) / 2, y: (first.y + last.y) / 2 };
+  const scale = nextLength / currentLength;
+  const resizePoint = (point: { x: number; y: number }) => ({
+    x: anchor.x + (point.x - anchor.x) * scale,
+    y: anchor.y + (point.y - anchor.y) * scale,
+  });
+  if (path.type === 'POLYLINE') return { ...path, points: path.points.map(resizePoint) };
+  return {
+    type: 'BEZIER',
+    p0: resizePoint(path.p0),
+    p1: resizePoint(path.p1),
+    p2: resizePoint(path.p2),
+    p3: resizePoint(path.p3),
+  };
+}
+
+function getAlignedLinearRowPath(basePath: Extract<SeatRowPath, { type: 'LINE' }>, rowIndex: number, rowPitch: number) {
+  const dx = basePath.end.x - basePath.start.x;
+  const dy = basePath.end.y - basePath.start.y;
+  const length = Math.hypot(dx, dy);
+  const unitX = length <= 0.001 ? 1 : dx / length;
+  const unitY = length <= 0.001 ? 0 : dy / length;
+  const offset = rowIndex * rowPitch;
+  const start = {
+    x: basePath.start.x - unitY * offset,
+    y: basePath.start.y + unitX * offset,
+  };
+  return {
+    type: 'LINE' as const,
+    start,
+    end: { x: start.x + unitX * length, y: start.y + unitY * length },
+  };
+}
+
 function applyMapLevels(map: EventMapDTO) {
   map.levels = normalizeMapLevels(map.levels);
 }
@@ -121,26 +241,65 @@ function cloneAndNormalizeMap(map: EventMapDTO): EventMapDTO {
   const next = cloneMap(map);
   applyMapLevels(next);
   next.objects = next.objects.map((object) =>
-    object.type === 'TEXT'
-      ? { ...object, data: sanitizeTextObjectData(normalizeTextData(object.data)) }
-      : object,
+    object.type === 'TEXT' ? { ...object, data: sanitizeTextObjectData(normalizeTextData(object.data)) } : object,
   );
+  const document = next.document ?? documentFromMap(next);
+  const normalizedDocument = {
+    ...document,
+    sections: document.sections.map((section) => ({
+      ...section,
+      outline: section.blocks.length > 0 ? [] : section.outline,
+      blocks: section.blocks.map((block) => ({
+        ...block,
+        columnCount: Math.max(
+          1,
+          Math.round(block.columnCount ?? Math.max(...block.rows.map((row) => row.seats.length), 1)),
+        ),
+      })),
+    })),
+  };
+  const projection = projectMapDocumentToEditorFields(normalizedDocument, next);
+  next.document = normalizedDocument;
+  next.sections = projection.sections;
+  next.objects = projection.objects;
+  next.seats = projection.seats;
+  next.counts = {
+    ...next.counts,
+    sections: projection.sections.length,
+    seats: projection.seats.length,
+    availableSeats: projection.seats.filter((seat) => seat.status === 'AVAILABLE' && seat.publicVisible).length,
+  };
   return next;
 }
 
-function mapHasCorridors(map: EventMapDTO) {
-  return map.objects.some((object) => object.type === 'CORRIDOR');
-}
-
-function cloneNormalizeAndReflowMap(map: EventMapDTO): EventMapDTO {
-  const next = cloneAndNormalizeMap(map);
-
-  if (mapHasCorridors(next)) {
-    applyCorridorReflow(next);
-    updateCounts(next);
-  }
-
-  return next;
+function documentFromMap(map: EventMapDTO) {
+  if (map.document) return cloneMap({ ...map, document: map.document }).document!;
+  return migrateLegacyMapDocument({
+    sections: map.sections.map((section) => ({
+      id: section.id,
+      levelId: section.levelId,
+      name: section.name,
+      color: section.color,
+      lotId: section.lotId,
+      capacity: section.capacity,
+      status: section.status,
+      notes: section.notes,
+    })),
+    groups: [],
+    seats: map.seats.map((seat) => ({
+      id: seat.id,
+      sectionId: seat.sectionId,
+      rowIndex: seat.rowIndex,
+      columnIndex: seat.columnIndex,
+      technicalCode: seat.technicalCode,
+      displayLabel: seat.displayLabel,
+      rowLabel: seat.rowLabel,
+      seatNumber: seat.seatNumber,
+      accessible: seat.accessible,
+      publicVisible: seat.publicVisible,
+    })),
+    visualElements: map.objects,
+  });
 }
 
 function buildRedoUpdateItems(
@@ -149,7 +308,6 @@ function buildRedoUpdateItems(
 ): MapCommand {
   const objects: Array<{ id: string; patch: Partial<EventMapObjectDTO> }> = [];
   const seats: Array<{ id: string; patch: Partial<EventSeatDTO> }> = [];
-  const seatGroups: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }> = [];
   const sections: Array<{ id: string; patch: Partial<EventMapSectionDTO> }> = [];
   const levels: Array<{ id: string; patch: Partial<EventMapLevelDTO> }> = [];
 
@@ -178,7 +336,7 @@ function buildRedoUpdateItems(
     if (!prev) continue;
     const patch: Partial<EventSeatDTO> = {};
     let changed = false;
-    for (const key of ['x', 'y', 'size', 'rotation', 'status', 'accessible', 'publicVisible', 'technicalCode', 'displayLabel', 'rowLabel', 'seatNumber', 'objectId', 'groupId'] as const) {
+    for (const key of ['x', 'y', 'size', 'rotation', 'status', 'accessible', 'publicVisible', 'technicalCode', 'displayLabel', 'rowLabel', 'seatNumber', 'objectId'] as const) {
       if (prev[key] !== next[key]) {
         (patch as any)[key] = next[key];
         changed = true;
@@ -189,32 +347,12 @@ function buildRedoUpdateItems(
     }
   }
 
-  for (const next of nextMap.seatGroups ?? []) {
-    const prev = (map.seatGroups ?? []).find((g) => g.id === next.id);
-    if (!prev) continue;
-    const patch: Partial<EventSeatGroupDTO> = {};
-    let changed = false;
-    for (const key of ['x', 'y', 'rotation', 'rows', 'columns', 'seatWidth', 'seatHeight', 'gapX', 'gapY', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'locked', 'name'] as const) {
-      if (prev[key] !== next[key]) {
-        (patch as any)[key] = next[key];
-        changed = true;
-      }
-    }
-    if (JSON.stringify(prev.numbering) !== JSON.stringify(next.numbering)) {
-      patch.numbering = next.numbering;
-      changed = true;
-    }
-    if (changed) {
-      seatGroups.push({ id: next.id, patch });
-    }
-  }
-
   for (const next of nextMap.sections) {
     const prev = map.sections.find((s) => s.id === next.id);
     if (!prev) continue;
     const patch: Partial<EventMapSectionDTO> = {};
     let changed = false;
-    for (const key of ['name', 'color', 'capacity', 'status', 'notes', 'lotId'] as const) {
+    for (const key of ['name', 'color', 'capacity', 'status', 'notes', 'lotId', 'hidden'] as const) {
       if (prev[key] !== next[key]) {
         (patch as any)[key] = next[key];
         changed = true;
@@ -246,10 +384,8 @@ function buildRedoUpdateItems(
     payload: {
       objects,
       seats,
-      seatGroups,
       sections,
       levels,
-      skipCorridorReflow: true,
       skipSeatBaseLayoutTranslation: true,
     },
   };
@@ -260,18 +396,18 @@ function buildRedoCommand(
   map: EventMapDTO,
   nextMap: EventMapDTO,
 ): MapCommand {
+  if (command.type === 'REPLACE_DOCUMENT') return command;
   const createdObjects = nextMap.objects.filter((no) => !map.objects.some((o) => o.id === no.id));
   const createdSeats = nextMap.seats.filter((ns) => !map.seats.some((s) => s.id === ns.id));
   const createdSections = nextMap.sections.filter((ns) => !map.sections.some((s) => s.id === ns.id));
   const createdLevels = nextMap.levels.filter((nl) => !map.levels.some((l) => l.id === nl.id));
-  const createdSeatGroups = (nextMap.seatGroups ?? []).filter((ng) => !(map.seatGroups ?? []).some((g) => g.id === ng.id));
 
   if (
     createdObjects.length > 0 ||
     createdSeats.length > 0 ||
     createdSections.length > 0 ||
     createdLevels.length > 0 ||
-    createdSeatGroups.length > 0
+    false
   ) {
     return {
       type: 'RESTORE_DELETED_ITEMS',
@@ -280,15 +416,13 @@ function buildRedoCommand(
         seats: createdSeats,
         sections: createdSections,
         levels: createdLevels,
-        seatGroups: createdSeatGroups,
       },
     };
   }
 
   if (
     command.type === 'DELETE_SELECTION' ||
-    command.type === 'DELETE_LEVEL' ||
-    command.type === 'DELETE_SEAT_GROUP'
+    command.type === 'DELETE_LEVEL'
   ) {
     return command;
   }
@@ -402,88 +536,6 @@ function updateCounts(map: EventMapDTO) {
   };
 }
 
-function hasCorridorGeometryPatch(patch: Partial<EventMapObjectDTO>) {
-  return (
-    typeof patch.x === 'number' ||
-    typeof patch.y === 'number' ||
-    typeof patch.width === 'number' ||
-    typeof patch.height === 'number' ||
-    typeof patch.rotation === 'number'
-  );
-}
-
-function corridorReflowOptionsForPatch(
-  object: EventMapObjectDTO | undefined,
-  patch: Partial<EventMapObjectDTO>,
-) {
-  if (object?.type !== 'CORRIDOR') return undefined;
-
-  if (isCorridorRotationOnlyTransform(patch, object)) {
-    return { freezeAutoFitCorridorIds: [object.id] };
-  }
-
-  const sizeChanged =
-    (typeof patch.width === 'number' && object.width != null && Math.abs(patch.width - object.width) > 0.001) ||
-    (typeof patch.height === 'number' && object.height != null && Math.abs(patch.height - object.height) > 0.001);
-
-  if (sizeChanged) {
-    return { freezeAutoFitCorridorIds: [object.id] };
-  }
-
-  return undefined;
-}
-
-function hasCorridorMetadataPatch(patch: Partial<EventMapObjectDTO>) {
-  if (!patch.data) return false;
-  return (
-    'seatGapTop' in patch.data ||
-    'seatGapRight' in patch.data ||
-    'seatGapBottom' in patch.data ||
-    'seatGapLeft' in patch.data
-  );
-}
-
-function applyObjectPatchWithCorridorMetadata(
-  object: EventMapObjectDTO,
-  patch: Partial<EventMapObjectDTO>,
-): EventMapObjectDTO {
-  const previous: EventMapObjectDTO = {
-    ...object,
-    data: { ...object.data },
-  };
-
-  const next: EventMapObjectDTO = patch.data
-    ? {
-        ...object,
-        ...patch,
-        data: { ...object.data, ...patch.data },
-      }
-    : {
-        ...object,
-        ...patch,
-      };
-
-  if (next.type === 'CORRIDOR' && hasCorridorGeometryPatch(patch)) {
-    if (isCorridorRotationOnlyTransform(patch, previous) && typeof patch.rotation === 'number') {
-      applyCorridorRotationPreservingCenter(next, patch.rotation, previous, { snap: false });
-    } else {
-      if (typeof patch.rotation === 'number') {
-        next.rotation = normalizeRotation(patch.rotation);
-      }
-      reconcileCorridorGeometry(next);
-    }
-    updateCorridorSplitAnchorsOnDrag(next, patch, previous);
-    return next;
-  }
-
-  if (next.type === 'CORRIDOR' && hasCorridorMetadataPatch(patch)) {
-    persistCorridorMetadataOnly(next);
-    return next;
-  }
-
-  return next;
-}
-
 export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => ({
   map: null,
   activeLevelId: null,
@@ -500,7 +552,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
   zoomScrubbedThisHold: false,
   inlineTextEditorActive: false,
   loadMap: (map, options) => {
-    const normalized = cloneNormalizeAndReflowMap(map);
+    const normalized = cloneAndNormalizeMap(map);
     const activeLevelId = getDefaultActiveLevelId(normalized.levels);
     const state = get();
 
@@ -599,6 +651,35 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
     }
   },
   setSelection: (selection) => set({ selection: normalizeSelection(selection) }),
+  ascendSelection: () => {
+    const state = get();
+    if (!state.map?.document || state.selection.length !== 1) return false;
+    const current = state.selection[0];
+    if (!current || current.type === 'level') return false;
+    if (current.type === 'seat') {
+      const owner = findMapSeatOwner(state.map.document, current.id);
+      if (!owner) return false;
+      set({ selection: [{ type: 'seatrow', id: owner.row.id }] });
+      return true;
+    }
+    if (current.type === 'seatrow') {
+      const owner = findMapRowOwner(state.map.document, current.id);
+      if (!owner) return false;
+      set({ selection: [{ type: 'seatblock', id: owner.block.id }] });
+      return true;
+    }
+    if (current.type === 'seatblock') {
+      const owner = findMapBlockOwner(state.map.document, current.id);
+      if (!owner) return false;
+      set({ selection: [{ type: 'section', id: owner.section.id }] });
+      return true;
+    }
+    if (current.type === 'section') {
+      set({ selection: [] });
+      return true;
+    }
+    return false;
+  },
   toggleSelectionItem: (item) =>
     set((state) => ({
       selection: toggleSelectionItem(state.selection, item),
@@ -630,6 +711,35 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
     let createdId: string | null = null;
     set((state) => {
       if (!state.map) return state;
+      if (tool === 'section' && state.map.document) {
+        const levelId = state.activeLevelId ?? state.map.levels[0]?.id;
+        if (!levelId) return state;
+        const width = Math.max(120, size?.width ?? 360);
+        const height = Math.max(90, size?.height ?? 240);
+        const section = {
+          id,
+          levelId,
+          name: `Setor ${state.map.document.sections.length + 1}`,
+          color: DEFAULT_COLORS[state.map.document.sections.length % DEFAULT_COLORS.length]!,
+          lotId: null,
+          capacity: null,
+          status: 'ACTIVE',
+          notes: null,
+          position: { x: point.x, y: point.y },
+          rotation: 0,
+          outline: [{ x: 0, y: 0 }, { x: width, y: 0 }, { x: width, y: height }, { x: 0, y: height }],
+          blockIds: [],
+          blocks: [],
+        };
+        const before = state.map.document;
+        const after = { ...before, sections: [...before.sections, section] };
+        const result = runCommand(state, {
+          type: 'REPLACE_DOCUMENT',
+          payload: { before, after, description: 'Criar seção' },
+        });
+        createdId = id;
+        return { ...result, selection: [{ type: 'section', id }] };
+      }
       const cmd: MapCommand = { type: 'ADD_OBJECT', payload: { id, tool, point, size } };
       const res = executeMapCommand(
         state.map,
@@ -648,27 +758,401 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
   deleteObject: (id) =>
     set((state) => runCommand(state, { type: 'DELETE_SELECTION', payload: { selection: [{ type: 'object', id }] } })),
   addRowAt: (point, quantity = 12) =>
-    set((state) => runCommand(state, { type: 'ADD_ROW', payload: { point, quantity } })),
-  addSeatGridAt: (point, config) =>
-    set((state) => runCommand(state, { type: 'ADD_SEAT_GRID', payload: { point, config } })),
-  updateSeatGroup: (id, patch) =>
-    set((state) => runCommand(state, { type: 'UPDATE_SEAT_GROUP', payload: { id, patch } })),
-  deleteSeatGroup: (id) =>
-    set((state) => runCommand(state, { type: 'DELETE_SEAT_GROUP', payload: { id } })),
+    (() => {
+      const calibration = get().map?.referenceChart?.calibration;
+      const seatSize = calibration?.seatDiameter ?? 28;
+      get().addSeatBlockAt(point, {
+        rows: 1,
+        columns: quantity,
+        totalSeats: quantity,
+        seatSize,
+        horizontalSpacing: seatSize + (calibration?.seatPitch ?? 10),
+        verticalSpacing: seatSize + (calibration?.rowPitch ?? 14),
+      });
+    })(),
+  addSeatBlockAt: (point, config) =>
+    set((state) => {
+      if (!state.map) return state;
+      const normalizedConfig = normalizeSeatBlockConfig(config);
+      const rowCount = Math.min(normalizedConfig.rows, Math.max(1, Math.ceil(normalizedConfig.totalSeats / normalizedConfig.columns)));
+      const rowSeatCounts = Array.from({ length: rowCount }, (_, rowIndex) =>
+        Math.min(normalizedConfig.columns, Math.max(0, normalizedConfig.totalSeats - rowIndex * normalizedConfig.columns)),
+      );
+      const before = documentFromMap(state.map);
+      const levelId = state.activeLevelId ?? state.map.levels[0]?.id;
+      if (!levelId) return state;
+      const usedRowLabels = before.sections
+        .filter((entry) => entry.levelId === levelId)
+        .flatMap((entry) => entry.blocks.flatMap((block) => block.rows.map((row) => row.label)));
+      const configuredPrefix = config.rowPrefix?.trim();
+      const rowPrefix = configuredPrefix && configuredPrefix.toUpperCase() !== 'A'
+        ? configuredPrefix
+        : getNextSeatBlockRowPrefix(usedRowLabels);
+      const sectionId = createLocalId('section');
+      const section = {
+        id: sectionId,
+        levelId,
+        name: `Setor ${before.sections.length + 1}`,
+        color: DEFAULT_COLORS[before.sections.length % DEFAULT_COLORS.length]!,
+        lotId: null,
+        capacity: null,
+        status: 'ACTIVE',
+        notes: null,
+        position: { x: 0, y: 0 },
+        rotation: 0,
+        outline: [],
+        blockIds: [],
+        blocks: [],
+      };
+      const document = { ...before, sections: [...before.sections, section] };
+      const result = createSeatBlock({
+        document,
+        sectionId: section.id,
+        origin: point,
+        rows: rowCount,
+        columns: normalizedConfig.columns,
+        seatSize: normalizedConfig.seatSize,
+        seatGap: Math.max(0, normalizedConfig.horizontalSpacing - normalizedConfig.seatSize),
+        rowGap: Math.max(0, normalizedConfig.verticalSpacing - normalizedConfig.seatSize),
+        rowSeatCounts,
+        rowPrefix,
+        startNumber: normalizedConfig.startNumber,
+        createId: createLocalId,
+      });
+      const command: MapCommand = {
+        type: 'REPLACE_DOCUMENT',
+        payload: { before, after: result.document, description: 'Criar bloco de fileiras' },
+      };
+      const next = runCommand(state, command);
+      return { ...next, selection: [{ type: 'seatblock', id: result.blockId }] };
+    }),
+  updateSeatBlock: (id, patch) =>
+    set((state) => {
+      if (!state.map?.document) return state;
+      const before = state.map.document;
+      const { seatSize, rowSeatCounts, rowPaths, columnCount, ...blockPatch } = patch;
+      const after = {
+        ...before,
+        sections: before.sections.map((section) => {
+          const containsTarget = section.blocks.some((block) => block.id === id);
+          const nextSection = {
+            ...section,
+            blocks: section.blocks.map((block) => {
+            if (block.id !== id) return block;
+            const nextColumnCount = columnCount === undefined
+              ? Math.max(1, Math.round(block.columnCount ?? Math.max(...block.rows.map((row) => row.seats.length), 1)))
+              : Math.max(1, Math.round(columnCount));
+            const nextSeatGap = blockPatch.defaultSeatGap ?? block.defaultSeatGap;
+            const nextRowGap = blockPatch.rowGap ?? block.rowGap;
+            const nextSeatSize = seatSize === undefined ? block.rows[0]?.seatSize ?? 0 : Math.max(8, seatSize);
+            const currentSeatSize = block.rows[0]?.seatSize ?? nextSeatSize;
+            const rowPitchDelta = nextSeatSize + nextRowGap - (currentSeatSize + block.rowGap);
+            const currentDistributionMode = block.distributionMode ?? 'FIXED';
+            const nextDistributionMode = blockPatch.distributionMode ?? currentDistributionMode;
+            const currentFixedRows = fixedRowSeatCounts(block);
+            const isSwitchingToProgressive = blockPatch.distributionMode === 'PROGRESSIVE' && currentDistributionMode !== 'PROGRESSIVE';
+            const isSwitchingToFixed = blockPatch.distributionMode === 'FIXED' && currentDistributionMode !== 'FIXED';
+            const nextFirstRowSeatCount = blockPatch.firstRowSeatCount ?? (
+              isSwitchingToProgressive ? currentFixedRows[0] ?? block.columnCount ?? 1 : block.firstRowSeatCount
+            );
+            const requestedLastRowSeatCount = blockPatch.lastRowSeatCount ?? (
+              isSwitchingToProgressive ? currentFixedRows.at(-1) ?? block.columnCount ?? 1 : block.lastRowSeatCount
+            );
+            const normalizedFirstRowSeatCount = nextFirstRowSeatCount === undefined
+              ? undefined
+              : Math.min(nextColumnCount, Math.max(0, Math.round(nextFirstRowSeatCount)));
+            const normalizedLastRowSeatCount = requestedLastRowSeatCount === undefined
+              ? undefined
+              : Math.min(nextColumnCount, Math.max(0, Math.round(requestedLastRowSeatCount)));
+            const requestedFitMaximum = blockPatch.fitMaximumSeatCount ?? block.fitMaximumSeatCount ?? nextColumnCount;
+            const normalizedFitMaximum = Math.min(nextColumnCount, Math.max(0, Math.round(requestedFitMaximum)));
+            const requestedFitMinimum = blockPatch.fitMinimumSeatCount ?? block.fitMinimumSeatCount ?? 1;
+            const normalizedFitMinimum = Math.min(normalizedFitMaximum, Math.max(0, Math.round(requestedFitMinimum)));
+            const progressiveSeatCount = Math.max(
+              1,
+              Math.round(normalizedFirstRowSeatCount ?? seatCountFromSegments(block.distribution)),
+              Math.round(normalizedLastRowSeatCount ?? seatCountFromSegments(block.distribution)),
+            );
+            const fixedTransitionSeatCount = currentDistributionMode === 'PROGRESSIVE'
+              ? Math.max(1, Math.round(normalizedFirstRowSeatCount ?? 0), Math.round(normalizedLastRowSeatCount ?? 0))
+              : Math.max(1, ...currentFixedRows);
+            const sequentialRowCounts = rowSeatCounts?.map((count) => Math.max(0, Math.round(count))) ?? null;
+            const nextRows = sequentialRowCounts
+              ? block.rows.slice(0, Math.max(1, sequentialRowCounts.length))
+              : [...block.rows];
+            while (sequentialRowCounts && nextRows.length < sequentialRowCounts.length) {
+              const previousRow = nextRows.at(-1) ?? block.rows.at(-1);
+              if (!previousRow) break;
+              const rowIndex = nextRows.length;
+              nextRows.push({
+                ...previousRow,
+                id: createLocalId('row'),
+                label: getSeatBlockRowLabel(rowIndex, block.rows[0]?.label ?? 'A'),
+                path: translateRowPath(previousRow.path, 0, previousRow.seatSize + nextRowGap),
+                seatIds: [],
+                seats: [],
+                distribution: [{ type: 'SEATS', count: sequentialRowCounts[rowIndex] ?? 0 }],
+              });
+            }
+            const nextDistribution = sequentialRowCounts
+              ? [{ type: 'SEATS' as const, count: Math.max(0, ...sequentialRowCounts) }]
+              : blockPatch.distribution ?? (
+              isSwitchingToFixed
+                ? [{ type: 'SEATS' as const, count: fixedTransitionSeatCount }]
+                : block.distribution
+            );
+            const distributionSeatCount = seatCountFromSegments(nextDistribution);
+            const requestedPathSeatCount = nextDistributionMode === 'PROGRESSIVE'
+              ? columnCount === undefined ? progressiveSeatCount : nextColumnCount
+              : nextDistributionMode === 'FIT'
+                ? nextColumnCount
+                : Math.max(1, ...(sequentialRowCounts ?? []), ...block.rows.map((row) => seatCountFromSegments(row.distribution ?? nextDistribution)));
+            const availableSeatCapacity = Math.max(nextColumnCount, ...nextRows.map((row) => row.seats.length), ...(sequentialRowCounts ?? []));
+            const pathSeatCount = Math.min(requestedPathSeatCount, availableSeatCapacity);
+            const requestedMaximum = Math.max(
+              nextColumnCount,
+              nextRows.reduce((maximum, row) => Math.max(maximum, row.seats.length), 0),
+              normalizedFirstRowSeatCount ?? 0,
+              normalizedLastRowSeatCount ?? 0,
+              normalizedFitMaximum,
+              ...(sequentialRowCounts ?? []),
+            );
+            const shouldReflowSeats = seatSize !== undefined || blockPatch.defaultSeatGap !== undefined ||
+              columnCount !== undefined ||
+              rowPaths !== undefined ||
+              sequentialRowCounts !== null ||
+              blockPatch.distribution !== undefined || blockPatch.distributionMode !== undefined ||
+              blockPatch.distributionAlignment !== undefined || blockPatch.firstRowSeatCount !== undefined ||
+              blockPatch.lastRowSeatCount !== undefined || blockPatch.fitMinimumSeatCount !== undefined ||
+              blockPatch.fitMaximumSeatCount !== undefined;
+            const firstRequestedPath = rowPaths?.[0] ?? block.rows[0]?.path;
+            const baseLinearPath = nextRows.length > 0 && firstRequestedPath?.type === 'LINE' &&
+              nextRows.every((row, rowIndex) => (rowPaths?.[rowIndex] ?? row.path).type === 'LINE')
+              ? firstRequestedPath
+              : null;
+            const rows = nextRows.map((row, rowIndex) => {
+              const capacityRow = ensureRowSeatCapacity(row, requestedMaximum, rowIndex);
+              const layoutRow = shouldReflowSeats ? clearSeatLayoutOverrides(capacityRow) : capacityRow;
+              const nextRowDistribution = sequentialRowCounts
+                ? [{ type: 'SEATS' as const, count: sequentialRowCounts[rowIndex] ?? 0 }]
+                : blockPatch.distributionMode !== undefined
+                  ? undefined
+                  : row.distribution;
+              const rowPathSeatCount = nextDistributionMode === 'FIXED'
+                ? sequentialRowCounts?.[rowIndex] ?? (nextRowDistribution
+                  ? seatCountFromSegments(nextRowDistribution)
+                  : distributionSeatCount)
+                : pathSeatCount;
+              const sourcePath = rowPaths?.[rowIndex] ?? row.path;
+              const rowPath = baseLinearPath && sourcePath.type === 'LINE'
+                ? getAlignedLinearRowPath(baseLinearPath, rowIndex, nextSeatSize + nextRowGap)
+                : rowPitchDelta === 0 ? sourcePath : translateRowPath(sourcePath, 0, rowIndex * rowPitchDelta);
+              return {
+                ...layoutRow,
+                distribution: nextRowDistribution,
+                seatGap: blockPatch.defaultSeatGap === undefined ? row.seatGap : nextSeatGap,
+                seatSize: seatSize === undefined ? row.seatSize : Math.max(8, seatSize),
+                path: shouldReflowSeats
+                  ? resizeRowPath(rowPath, rowPathSeatCount, seatSize === undefined ? row.seatSize : Math.max(8, seatSize), blockPatch.defaultSeatGap === undefined ? row.seatGap : nextSeatGap)
+                  : rowPath,
+              };
+            });
+            return {
+              ...block,
+              ...blockPatch,
+              columnCount: nextColumnCount,
+              rowIds: rows.map((row) => row.id),
+              distribution: nextDistribution,
+              firstRowSeatCount: normalizedFirstRowSeatCount,
+              lastRowSeatCount: normalizedLastRowSeatCount,
+              fitMinimumSeatCount: normalizedFitMinimum,
+              fitMaximumSeatCount: normalizedFitMaximum,
+              rows,
+            };
+          }),
+          };
+          return containsTarget && nextSection.blocks.length > 0 ? { ...nextSection, outline: [] } : nextSection;
+        }),
+      };
+      return runCommand(state, {
+        type: 'REPLACE_DOCUMENT',
+        payload: { before, after, description: 'Atualizar bloco de fileiras' },
+      });
+    }),
+  updateSeatRow: (id, patch) =>
+    set((state) => {
+      if (!state.map?.document) return state;
+      const before = state.map.document;
+      const rowOwner = findMapRowOwner(before, id);
+      const rowIndex = rowOwner?.block.rows.findIndex((candidate) => candidate.id === id) ?? -1;
+      const rowSeatCount = rowOwner && rowIndex >= 0
+        ? resolveSeatCountForRow(rowOwner.block, rowOwner.row, rowIndex, rowOwner.block.rows.length)
+        : rowOwner?.row.seats.length ?? 0;
+      const after = {
+        ...before,
+        sections: before.sections.map((section) => {
+          const containsTarget = section.blocks.some((block) => block.rows.some((row) => row.id === id));
+          const nextSection = {
+            ...section,
+            blocks: section.blocks.map((block) => ({
+            ...block,
+            rows: block.rows.map((row) => {
+              if (row.id !== id) return row;
+              const nextRow = patch.path !== undefined || patch.seatSize !== undefined || patch.seatGap !== undefined
+                ? clearSeatLayoutOverrides(row)
+                : row;
+              const nextSeatSize = patch.seatSize === undefined ? row.seatSize : Math.max(8, patch.seatSize);
+              const nextSeatGap = patch.seatGap === undefined ? row.seatGap : Math.max(0, patch.seatGap);
+              return {
+                ...nextRow,
+                ...patch,
+                seatGap: nextSeatGap,
+                seatSize: nextSeatSize,
+                path: patch.path !== undefined
+                  ? patch.path
+                  : patch.seatSize === undefined && patch.seatGap === undefined
+                  ? row.path
+                  : resizeRowPath(row.path, rowSeatCount, nextSeatSize, nextSeatGap),
+              };
+            }),
+          })),
+          };
+          return containsTarget && nextSection.blocks.length > 0 ? { ...nextSection, outline: [] } : nextSection;
+        }),
+      };
+      return runCommand(state, {
+        type: 'REPLACE_DOCUMENT',
+        payload: { before, after, description: 'Atualizar fileira' },
+      });
+    }),
+  deleteSeatBlock: (id) =>
+    set((state) => {
+      if (!state.map?.document) return state;
+      const before = state.map.document;
+      const after = {
+        ...before,
+        sections: before.sections.flatMap((section) => {
+          if (!section.blocks.some((block) => block.id === id)) return [section];
+          const blocks = section.blocks.filter((block) => block.id !== id);
+          if (blocks.length === 0) return [];
+          return [{
+            ...section,
+            blockIds: section.blockIds.filter((blockId) => blockId !== id),
+            blocks,
+          }];
+        }),
+      };
+      return {
+        ...runCommand(state, {
+        type: 'REPLACE_DOCUMENT',
+        payload: { before, after, description: 'Excluir bloco de fileiras' },
+        }),
+        selection: state.selection.some((item) => item.type === 'seatblock' && item.id === id) ? [] : state.selection,
+      };
+    }),
+  updateSeatRowPath: (rowId, path) =>
+    set((state) => {
+      if (!state.map?.document) return state;
+      const before = state.map.document;
+      const after = {
+        ...before,
+        sections: before.sections.map((section) => ({
+          ...section,
+          blocks: section.blocks.map((block) => ({
+            ...block,
+            rows: block.rows.map((row) => (row.id === rowId ? { ...clearSeatLayoutOverrides(row), path } : row)),
+          })),
+        })),
+      };
+      return runCommand(state, {
+        type: 'REPLACE_DOCUMENT',
+        payload: { before, after, description: 'Editar geometria da fileira' },
+      });
+    }),
+  transformParametricSelection: (item, matrix) => get().transformParametricSelections([{ item, matrix }]),
+  transformParametricSelections: (transforms) =>
+    set((state) => {
+      const document = state.map?.document;
+      if (!document || transforms.length === 0) return state;
+      const validTransforms = transforms.filter(({ matrix }) => matrix.every(Number.isFinite) && Math.abs(matrix[0] * matrix[3] - matrix[1] * matrix[2]) >= 0.0001);
+      if (validTransforms.length === 0) return state;
+      const blockTransforms = new Map(validTransforms.flatMap(({ item, matrix }) => item.type === 'seatblock' ? [[item.id, matrix] as const] : []));
+      const rowTransforms = new Map(validTransforms.flatMap(({ item, matrix }) => item.type === 'seatrow' ? [[item.id, matrix] as const] : []));
+      const transformPoint = (point: { x: number; y: number }, section: (typeof document.sections)[number], matrix: [number, number, number, number, number, number]) => {
+        const [a, b, c, d, e, f] = matrix;
+        const world = sectionLocalToWorld(point, section.position, section.rotation);
+        return worldToSectionLocal({ x: a * world.x + c * world.y + e, y: b * world.x + d * world.y + f }, section.position, section.rotation);
+      };
+      const transformPath = (path: SeatRowPath, section: (typeof document.sections)[number], matrix: [number, number, number, number, number, number]): SeatRowPath => {
+        const scale = Math.max(0.05, Math.hypot(matrix[0], matrix[1]));
+        const rotation = Math.atan2(matrix[1], matrix[0]) * (180 / Math.PI);
+        switch (path.type) {
+          case 'LINE': return { ...path, start: transformPoint(path.start, section, matrix), end: transformPoint(path.end, section, matrix) };
+          case 'ARC': return { ...path, center: transformPoint(path.center, section, matrix), radius: Math.max(1, path.radius * scale), startAngle: path.startAngle + rotation * Math.PI / 180, endAngle: path.endAngle + rotation * Math.PI / 180 };
+          case 'POLYLINE': return { ...path, points: path.points.map((point) => transformPoint(point, section, matrix)) };
+          case 'BEZIER': return { ...path, p0: transformPoint(path.p0, section, matrix), p1: transformPoint(path.p1, section, matrix), p2: transformPoint(path.p2, section, matrix), p3: transformPoint(path.p3, section, matrix) };
+        }
+      };
+      const before = document;
+      const after = {
+        ...document,
+        sections: document.sections.map((section) => ({
+          ...section,
+          blocks: section.blocks.map((block) => {
+            const blockMatrix = blockTransforms.get(block.id);
+            const blockTarget = Boolean(blockMatrix);
+            const selectedRows = new Set(blockTarget ? [] : block.rows.filter((row) => rowTransforms.has(row.id)).map((row) => row.id));
+            if (!blockTarget && selectedRows.size === 0) return block;
+            const matrixForRow = (rowId: string) => blockMatrix ?? rowTransforms.get(rowId)!;
+            const firstSelectedRow = block.rows.find((row) => selectedRows.has(row.id));
+            const baseMatrix = blockMatrix ?? rowTransforms.get(firstSelectedRow!.id)!;
+            const scale = Math.max(0.05, Math.hypot(baseMatrix[0], baseMatrix[1]));
+            const rotation = Math.atan2(baseMatrix[1], baseMatrix[0]) * (180 / Math.PI);
+            return {
+              ...block,
+              ...(blockTarget ? {
+                rowGap: Math.max(0, block.rowGap * scale),
+                defaultSeatGap: Math.max(0, block.defaultSeatGap * scale),
+                transformRotation: ((block.transformRotation ?? 0) + rotation + 360) % 360,
+              } : {}),
+              rows: block.rows.map((row) => {
+                if (!blockTarget && !selectedRows.has(row.id)) return row;
+                const rowMatrix = matrixForRow(row.id);
+                const rowScale = Math.max(0.05, Math.hypot(rowMatrix[0], rowMatrix[1]));
+                const rowRotation = Math.atan2(rowMatrix[1], rowMatrix[0]) * (180 / Math.PI);
+                return {
+                  ...row,
+                  path: transformPath(row.path, section, rowMatrix),
+                  ...(!blockTarget ? { transformRotation: ((row.transformRotation ?? block.transformRotation ?? 0) + rowRotation + 360) % 360 } : {}),
+                  seatSize: Math.max(8, row.seatSize * rowScale),
+                  seatGap: Math.max(0, row.seatGap * rowScale),
+                  seats: row.seats.map((seat) => ({
+                    ...seat,
+                    ...(seat.position ? { position: transformPoint(seat.position, section, rowMatrix) } : {}),
+                    ...(seat.rotation !== undefined ? { rotation: seat.rotation + rowRotation } : {}),
+                  })),
+                };
+              }),
+            };
+          }),
+        })),
+      };
+      if (after === before) return state;
+      const description = validTransforms.length > 1 ? 'Transformar grupos de assentos' : validTransforms[0]!.item.type === 'seatblock' ? 'Transformar bloco de fileiras' : 'Transformar fileira';
+      return runCommand(state, { type: 'REPLACE_DOCUMENT', payload: { before, after, description } });
+    }),
   updateObject: (id, patch) =>
     set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { objects: [{ id, patch }] } })),
   updateObjects: (updates) =>
     set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { objects: updates } })),
-  updateMapItems: ({ objects = [], seats = [], seatGroups = [], skipSeatBaseLayoutTranslation, skipCorridorReflow }) =>
+  updateMapItems: ({ objects = [], seats = [], skipSeatBaseLayoutTranslation }) =>
     set((state) =>
       runCommand(state, {
         type: 'UPDATE_ITEMS',
         payload: {
           objects,
           seats,
-          seatGroups,
           skipSeatBaseLayoutTranslation,
-          skipCorridorReflow,
         },
       }),
     ),
@@ -676,7 +1160,18 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
   updateSeat: (id, patch) =>
     set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { seats: [{ id, patch }] } })),
   updateSection: (id, patch) =>
-    set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { sections: [{ id, patch }] } })),
+    set((state) => {
+      if (!state.map?.document) return runCommand(state, { type: 'UPDATE_ITEMS', payload: { sections: [{ id, patch }] } });
+      const before = state.map.document;
+      const after = {
+        ...before,
+        sections: before.sections.map((section) => (section.id === id ? { ...section, ...patch } : section)),
+      };
+      return runCommand(state, {
+        type: 'REPLACE_DOCUMENT',
+        payload: { before, after, description: 'Atualizar seção' },
+      });
+    }),
   updateLevel: (id, patch) =>
     set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { levels: [{ id, patch }] } })),
   addLevel: (name) =>
@@ -697,21 +1192,41 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
   toggleSectionVisibility: (id) =>
     set((state) => {
       if (!state.map) return state;
-      const linked = state.map.objects.find((object) => object.sectionId === id);
-      const nextHidden = linked ? !linked.hidden : true;
-      const associatedSeats = state.map.seats
-        .filter((seat) => seat.sectionId === id)
-        .map((seat) => ({ id: seat.id, patch: { publicVisible: !nextHidden } }));
-      const associatedObjects = state.map.objects
-        .filter((object) => object.sectionId === id)
-        .map((object) => ({ id: object.id, patch: { hidden: nextHidden } }));
-      return runCommand(state, {
+      const section = state.map.document?.sections.find((entry) => entry.id === id);
+      const legacySection = state.map.sections.find((entry) => entry.id === id);
+      const linkedObjects = state.map.objects.filter((object) => object.sectionId === id);
+      const currentHidden = section?.hidden ?? legacySection?.hidden ?? (linkedObjects.length > 0 && linkedObjects.every((object) => object.hidden));
+      const nextHidden = !currentHidden;
+
+      if (state.map.document && section) {
+        const before = state.map.document;
+        const after = {
+          ...before,
+          sections: before.sections.map((entry) => entry.id === id ? { ...entry, hidden: nextHidden } : entry),
+        };
+        const result = runCommand(state, {
+          type: 'REPLACE_DOCUMENT',
+          payload: { before, after, description: nextHidden ? 'Ocultar camada' : 'Exibir camada' },
+        });
+        return nextHidden ? { ...result, selection: [] } : result;
+      }
+
+      const result = runCommand(state, {
         type: 'UPDATE_ITEMS',
-        payload: { objects: associatedObjects, seats: associatedSeats },
+        payload: {
+          sections: [{ id, patch: { hidden: nextHidden } }],
+          objects: linkedObjects.map((object) => ({ id: object.id, patch: { hidden: nextHidden } })),
+        },
       });
+      return nextHidden ? { ...result, selection: [] } : result;
     }),
   deleteSection: (id) =>
-    set((state) => runCommand(state, { type: 'DELETE_SELECTION', payload: { selection: [{ type: 'section', id }] } })),
+    set((state) => {
+      if (!state.map?.document) return runCommand(state, { type: 'DELETE_SELECTION', payload: { selection: [{ type: 'section', id }] } });
+      const before = state.map.document;
+      const after = { ...before, sections: before.sections.filter((section) => section.id !== id) };
+      return { ...runCommand(state, { type: 'REPLACE_DOCUMENT', payload: { before, after, description: 'Excluir seção' } }), selection: [] };
+    }),
   deleteLevel: (id) =>
     set((state) => runCommand(state, { type: 'DELETE_LEVEL', payload: { levelId: id } })),
   deleteSelection: () =>
@@ -789,7 +1304,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
     }),
   markSaved: (map) =>
     set((state) => {
-      const nextMap = map ? cloneNormalizeAndReflowMap(map) : state.map;
+      const nextMap = map ? cloneAndNormalizeMap(map) : state.map;
       const activeStillExists = nextMap?.levels.some((level) => level.id === state.activeLevelId) ?? false;
       return {
         map: nextMap,
@@ -810,17 +1325,44 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         },
       };
     }),
+  setReferenceChart: (referenceChart) =>
+    set((state) => (state.map ? { map: { ...state.map, referenceChart } } : state)),
   setInlineTextEditorActive: (active) => set({ inlineTextEditorActive: active }),
   toPayload: () => {
     const map = get().map;
     if (!map) return null;
-    const normalized = cloneNormalizeAndReflowMap(map);
+    const normalized = cloneAndNormalizeMap(map);
     return {
       name: normalized.name,
       levels: normalized.levels,
+      document: normalized.document ?? migrateLegacyMapDocument({
+        sections: normalized.sections.map((section) => ({
+          id: section.id,
+          levelId: section.levelId,
+          name: section.name,
+          color: section.color,
+          lotId: section.lotId,
+          capacity: section.capacity,
+          status: section.status,
+          notes: section.notes,
+        })),
+        groups: [],
+        seats: normalized.seats.map((seat) => ({
+          id: seat.id,
+          sectionId: seat.sectionId,
+          rowIndex: seat.rowIndex,
+          columnIndex: seat.columnIndex,
+          technicalCode: seat.technicalCode,
+          displayLabel: seat.displayLabel,
+          rowLabel: seat.rowLabel,
+          seatNumber: seat.seatNumber,
+          accessible: seat.accessible,
+          publicVisible: seat.publicVisible,
+        })),
+        visualElements: normalized.objects,
+      }),
       sections: normalized.sections.map(({ lot: _lot, ...section }) => section),
       objects: normalized.objects,
-      seatGroups: normalized.seatGroups ?? [],
       seats: normalized.seats,
     };
   },

@@ -9,11 +9,10 @@ export function applyCanvasTransformCommit(command: CanvasTransformCommand | nul
 
 export function applyCanvasTransformPayload(
   payload: TransformCommitPayload | null,
-  options?: { forceCorridor?: boolean },
 ) {
   if (!payload) return;
   const map = useEventMapEditorStore.getState().map;
-  applyCanvasTransformCommit(buildCanvasTransformCommand(payload, map, options));
+  applyCanvasTransformCommit(buildCanvasTransformCommand(payload, map));
 }
 
 export type { CanvasTransformCommand } from './transform-commit-types';

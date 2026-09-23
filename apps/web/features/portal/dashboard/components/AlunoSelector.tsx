@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { User, ChevronDown } from '@/components/icons/icons';
 import type { PortalResponsavelAlunoDTO } from '@/features/portal/dtos';
+import { DASHBOARD_SECTION_CARD_CLASSNAME } from '@/app/(app)/dashboard/components/utils';
 
 interface AlunoSelectorProps {
   onAlunoSelect: (_alunoId: string | null) => void;
@@ -55,8 +56,10 @@ export function AlunoSelector({ onAlunoSelect }: AlunoSelectorProps) {
 
   if (loading) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-4 animate-pulse">
-        <div className="h-12 bg-gray-200 rounded"></div>
+      <div
+        className={`${DASHBOARD_SECTION_CARD_CLASSNAME} animate-pulse rounded-2xl bg-white p-4 alusa-dark:bg-[color:var(--color-bg-card)]`}
+      >
+        <div className="h-12 rounded-xl bg-gray-100 alusa-dark:bg-white/5" />
       </div>
     );
   }
@@ -68,39 +71,47 @@ export function AlunoSelector({ onAlunoSelect }: AlunoSelectorProps) {
   if (alunos.length === 1) {
     // Se houver apenas um aluno, mostrar apenas como info, sem dropdown
     return (
-      <div className="bg-gradient-to-br from-violet-500 to-violet-600 rounded-xl p-4 text-white">
-        <div className="flex items-center gap-3">
-          <div className="h-12 w-12 rounded-full bg-white/20 flex items-center justify-center">
-            {alunos[0].foto ? (
-              <img
-                src={alunos[0].foto}
-                alt={alunos[0].nome}
-                className="h-12 w-12 rounded-full object-cover"
-              />
-            ) : (
-              <User className="h-6 w-6" />
-            )}
-          </div>
-          <div className="flex-1">
-            <p className="text-sm font-medium text-white/80">Visualizando dados de</p>
-            <p className="text-lg font-semibold">{alunos[0].nome}</p>
-            {alunos[0].idade && (
-              <p className="text-sm text-white/80">{alunos[0].idade} anos</p>
-            )}
-          </div>
+      <div
+        className={`${DASHBOARD_SECTION_CARD_CLASSNAME} flex items-center gap-3 rounded-2xl bg-white p-4 alusa-dark:bg-[color:var(--color-bg-card)]`}
+      >
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#f2e9fc] text-[#542a88] alusa-dark:bg-white/10 alusa-dark:text-violet-200">
+          {alunos[0].foto ? (
+            <img
+              src={alunos[0].foto}
+              alt={alunos[0].nome}
+              className="h-12 w-12 rounded-full object-cover"
+            />
+          ) : (
+            <User className="h-6 w-6" />
+          )}
+        </div>
+        <div className="flex-1">
+          <p className="text-xs font-medium text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
+            Visualizando dados de
+          </p>
+          <p className="text-base font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+            {alunos[0].nome}
+          </p>
+          {alunos[0].idade && (
+            <p className="text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
+              {alunos[0].idade} anos
+            </p>
+          )}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+    <div
+      className={`${DASHBOARD_SECTION_CARD_CLASSNAME} overflow-visible rounded-2xl bg-white alusa-dark:bg-[color:var(--color-bg-card)]`}
+    >
       <div className="relative">
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className="w-full p-4 flex items-center gap-3 hover:bg-gray-50 transition-colors"
+          className="flex w-full items-center gap-3 rounded-2xl p-4 text-left transition-colors hover:bg-gray-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/35 alusa-dark:hover:bg-white/[0.04]"
         >
-          <div className="h-12 w-12 rounded-full bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center text-white font-bold">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#f2e9fc] font-semibold text-[#542a88] alusa-dark:bg-white/10 alusa-dark:text-violet-200">
             {selectedAluno?.foto ? (
               <img
                 src={selectedAluno.foto}
@@ -114,14 +125,16 @@ export function AlunoSelector({ onAlunoSelect }: AlunoSelectorProps) {
             )}
           </div>
           <div className="flex-1 text-left">
-            <p className="text-sm font-medium text-gray-600">
+            <p className="text-xs font-medium text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
               {selectedAluno ? 'Visualizando dados de' : 'Todos os alunos'}
             </p>
-            <p className="text-lg font-semibold text-gray-900">
+            <p className="text-base font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
               {selectedAluno ? selectedAluno.nome : `${alunos.length} alunos`}
             </p>
             {selectedAluno?.idade && (
-              <p className="text-sm text-gray-500">{selectedAluno.idade} anos</p>
+              <p className="text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
+                {selectedAluno.idade} anos
+              </p>
             )}
           </div>
           <ChevronDown
@@ -136,35 +149,39 @@ export function AlunoSelector({ onAlunoSelect }: AlunoSelectorProps) {
               className="fixed inset-0 z-10"
               onClick={() => setIsOpen(false)}
             />
-            <div className="absolute top-full left-0 right-0 z-20 bg-white border border-gray-200 rounded-b-xl shadow-lg max-h-96 overflow-y-auto">
+            <div className="absolute left-0 right-0 top-full z-20 max-h-96 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
               {/* Opção "Todos os alunos" */}
               <button
                 onClick={handleViewAll}
-                className={`w-full p-4 flex items-center gap-3 hover:bg-violet-50 transition-colors ${
-                  !selectedAlunoId ? 'bg-violet-50' : ''
+                className={`flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-violet-50/70 alusa-dark:hover:bg-white/[0.04] ${
+                  !selectedAlunoId ? 'bg-violet-50/70 alusa-dark:bg-white/[0.04]' : ''
                 }`}
               >
-                <div className="h-12 w-12 rounded-full bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center text-white">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#f2e9fc] text-[#542a88] alusa-dark:bg-white/10 alusa-dark:text-violet-200">
                   <User className="h-6 w-6" />
                 </div>
                 <div className="flex-1 text-left">
-                  <p className="font-semibold text-gray-900">Todos os alunos</p>
-                  <p className="text-sm text-gray-500">Visualizar dados consolidados</p>
+                  <p className="font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                    Todos os alunos
+                  </p>
+                  <p className="text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
+                    Visualizar dados consolidados
+                  </p>
                 </div>
               </button>
 
-              <div className="border-t border-gray-200" />
+              <div className="border-t border-gray-200 alusa-dark:border-[color:var(--color-border-default)]" />
 
               {/* Lista de alunos */}
               {alunos.map((aluno) => (
                 <button
                   key={aluno.id}
                   onClick={() => handleSelect(aluno.id)}
-                  className={`w-full p-4 flex items-center gap-3 hover:bg-violet-50 transition-colors ${
-                    selectedAlunoId === aluno.id ? 'bg-violet-50' : ''
+                  className={`flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-violet-50/70 alusa-dark:hover:bg-white/[0.04] ${
+                    selectedAlunoId === aluno.id ? 'bg-violet-50/70 alusa-dark:bg-white/[0.04]' : ''
                   }`}
                 >
-                  <div className="h-12 w-12 rounded-full bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center text-white font-bold">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#f2e9fc] font-semibold text-[#542a88] alusa-dark:bg-white/10 alusa-dark:text-violet-200">
                     {aluno.foto ? (
                       <img
                         src={aluno.foto}
@@ -176,9 +193,13 @@ export function AlunoSelector({ onAlunoSelect }: AlunoSelectorProps) {
                     )}
                   </div>
                   <div className="flex-1 text-left">
-                    <p className="font-semibold text-gray-900">{aluno.nome}</p>
+                    <p className="font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                      {aluno.nome}
+                    </p>
                     {aluno.idade && (
-                      <p className="text-sm text-gray-500">{aluno.idade} anos</p>
+                      <p className="text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
+                        {aluno.idade} anos
+                      </p>
                     )}
                   </div>
                   {selectedAlunoId === aluno.id && (
@@ -193,5 +214,3 @@ export function AlunoSelector({ onAlunoSelect }: AlunoSelectorProps) {
     </div>
   );
 }
-
-

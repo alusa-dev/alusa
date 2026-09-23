@@ -8,10 +8,12 @@ import {
   isSameSelectionItem,
   resolveCanvasNodeIds,
   resolveGroupSelectionItem,
+  findMapSeatOwner,
   type BoundsRect,
 } from '@alusa/domain';
 import type { MapSelectionItem } from '@alusa/domain';
-import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../../api/event-map-service';
+import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO } from '../../api/event-map-service';
+import { compactParametricSeatSelection } from './compact-seat-selection';
 
 import { useCallback, useMemo } from 'react';
 import type Konva from 'konva';
@@ -21,7 +23,6 @@ type SelectionSessionInput = {
   selection: MapSelectionItem[];
   levelObjects: EventMapObjectDTO[];
   levelSeats: EventSeatDTO[];
-  levelSeatGroups: EventSeatGroupDTO[];
   setSelection: (selection: MapSelectionItem[] | MapSelectionItem) => void;
   clearIndividualSeatDrag: () => void;
 };
@@ -35,12 +36,16 @@ export function useSelectionSession({
   selection,
   levelObjects,
   levelSeats,
-  levelSeatGroups,
   setSelection,
   clearIndividualSeatDrag,
 }: SelectionSessionInput) {
   const selectedNodeIds = useMemo(() => {
     if (!map || selection.length === 0) return [];
+    if (selection.length === 1 && selection[0]?.type === 'seatblock') return [`node-seatblock-${selection[0].id}`];
+    if (selection.length === 1 && selection[0]?.type === 'seatrow') return [`node-seatrow-${selection[0].id}`];
+    if (selection.every((item) => item.type === 'seatblock')) return selection.map((item) => `node-seatblock-${item.id}`);
+    if (selection.every((item) => item.type === 'seatrow')) return selection.map((item) => `node-seatrow-${item.id}`);
+    if (selection.some((item) => item.type === 'section' || item.type === 'seatblock' || item.type === 'seatrow')) return [];
     return resolveCanvasNodeIds(map, selection);
   }, [selection, map]);
 
@@ -56,32 +61,18 @@ export function useSelectionSession({
     return selectedNodeIds.map((nodeId) => nodeId.replace(/^node-/, '')).filter((id) => seatIds.has(id));
   }, [selectedNodeIds, map]);
 
-  const selectedSeatGroupIds = useMemo(() => {
-    if (!map) return [];
-    const seatGroupIds = new Set((map.seatGroups ?? []).map((group) => group.id));
-    return selectedNodeIds
-      .filter((nodeId) => nodeId.startsWith('node-seatgroup-'))
-      .map((nodeId) => nodeId.replace('node-seatgroup-', ''))
-      .filter((id) => seatGroupIds.has(id));
-  }, [selectedNodeIds, map]);
-
-  const selectedAnyCorridor = useMemo(() => {
-    if (!map) return false;
-    return selectedObjectIds.some((id) =>
-      map.objects.some((object) => object.id === id && object.type === 'CORRIDOR'),
-    );
-  }, [map, selectedObjectIds]);
-
   const selectionContainsSeatsOrSections = useMemo(() => {
     if (selectedSeatIds.length > 0) return true;
-    return selection.some((item) => item.type === 'section' || item.type === 'seatgroup');
+    return selection.some((item) => item.type === 'section' || item.type === 'seatblock' || item.type === 'seatrow');
   }, [selectedSeatIds, selection]);
 
   const handleSelectItem = useCallback(
     (item: MapSelectionItem, event: Konva.KonvaEventObject<MouseEvent>) => {
       event.cancelBubble = true;
       clearIndividualSeatDrag();
-      const groupItems = item.type === 'object' ? resolveGroupSelectionItem(item, levelObjects) : [item];
+      const parametricSeatOwner = item.type === 'seat' && map?.document ? findMapSeatOwner(map.document, item.id) : null;
+      const selectionItem = parametricSeatOwner ? { type: 'seatblock' as const, id: parametricSeatOwner.block.id } : item;
+      const groupItems = selectionItem.type === 'object' ? resolveGroupSelectionItem(selectionItem, levelObjects) : [selectionItem];
 
       if (isAdditiveSelect(event)) {
         const allSelected = groupItems.every((entry) => isItemSelected(selection, entry));
@@ -102,20 +93,25 @@ export function useSelectionSession({
 
       setSelection(groupItems);
     },
-    [clearIndividualSeatDrag, levelObjects, selection, setSelection],
+    [clearIndividualSeatDrag, levelObjects, map, selection, setSelection],
   );
 
   const getMarqueeSelection = useCallback(
-    (box: BoundsRect) =>
-      expandObjectSelectionItems(
+    (box: BoundsRect) => {
+      const items = expandObjectSelectionItems(
         hitTestRect(box, {
           objects: levelObjects,
           seats: levelSeats,
-          seatGroups: levelSeatGroups,
         }),
         levelObjects,
-      ),
-    [levelObjects, levelSeats, levelSeatGroups],
+      );
+      return compactParametricSeatSelection(
+        items,
+        map?.document,
+        map?.seats.filter((seat) => seat.status !== 'SOLD').map((seat) => seat.id),
+      );
+    },
+    [levelObjects, levelSeats, map?.document],
   );
 
   const isObjectSelected = useCallback(
@@ -130,8 +126,6 @@ export function useSelectionSession({
     selectedNodeIds,
     selectedObjectIds,
     selectedSeatIds,
-    selectedSeatGroupIds,
-    selectedAnyCorridor,
     selectionContainsSeatsOrSections,
     handleSelectItem,
     getMarqueeSelection,

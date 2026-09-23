@@ -25,8 +25,8 @@ export function snapAngleToStep(rotation: number, stepDegrees = 90) {
   return Math.round(normalized / stepDegrees) * stepDegrees % 360;
 }
 
-/** Quarter-turn snap for corridor rotation gestures. */
-export function snapSmartCorridorRotation(rotation: number) {
+/** Quarter-turn snap used by resize math for axis-aligned shapes. */
+export function snapQuarterTurn(rotation: number) {
   return snapAngleToStep(rotation, 90);
 }
 

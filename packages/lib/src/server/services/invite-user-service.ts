@@ -2,15 +2,51 @@ import { Prisma, Role } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { prisma } from '../../prisma';
 
-export class DuplicateInviteError extends Error { constructor(){ super('Já existe um convite pendente para este e-mail.'); } }
-export class UserAlreadyExistsError extends Error { constructor(){ super('Usuário já cadastrado com este e-mail.'); } }
-export class UserAlreadyLinkedError extends Error { constructor(){ super('Usuário já vinculado a esta escola.'); } }
-export class ForbiddenRoleError extends Error { constructor(){ super('Convites para ADMIN não são permitidos.'); } }
-export class InvalidInviteError extends Error { constructor(){ super('Convite inválido.'); } }
-export class ExpiredInviteError extends Error { constructor(){ super('Convite expirado.'); } }
-export class OwnerRestrictionError extends Error { constructor(){ super('Operação não permitida para Owner.'); } }
-export class MissingContaError extends Error { constructor(){ super('Conta do convidador não encontrada.'); } }
-export class MissingInviteEmailError extends Error { constructor(){ super('Email é obrigatório para concluir este convite.'); } }
+export class DuplicateInviteError extends Error {
+  constructor() { super('Já existe um convite pendente para este e-mail nesta escola.'); }
+}
+export class UserInactiveError extends Error {
+  constructor() { super('Esta conta de usuário está inativa.'); }
+}
+export class UserAlreadyLinkedError extends Error {
+  constructor() { super('Usuário já vinculado a esta escola.'); }
+}
+export class ExistingAccountAuthenticationRequiredError extends Error {
+  constructor() { super('Entre na conta existente para aceitar este convite.'); }
+}
+export class InviteStateConflictError extends Error {
+  constructor() { super('O convite foi alterado em outra operação. Atualize a página e tente novamente.'); }
+}
+export class ForbiddenRoleError extends Error {
+  constructor() { super('Convites para ADMIN não são permitidos.'); }
+}
+export class InvalidInviteError extends Error {
+  constructor() { super('Convite inválido.'); }
+}
+export class ExpiredInviteError extends Error {
+  constructor() { super('Convite expirado.'); }
+}
+export class MissingContaError extends Error {
+  constructor() { super('Conta do convidador não encontrada.'); }
+}
+export class MissingInviteEmailError extends Error {
+  constructor() { super('Email é obrigatório para concluir este convite.'); }
+}
+export class MissingGuardianRecordError extends Error {
+  constructor() { super('Não foi encontrado um cadastro de responsável compatível com este e-mail e os alunos selecionados.'); }
+}
+export class InvalidGuardianStudentsError extends Error {
+  constructor() { super('Um ou mais alunos não pertencem a esta escola.'); }
+}
+export class StudentAlreadyLinkedError extends Error {
+  constructor() { super('Um ou mais alunos já estão vinculados a outro responsável.'); }
+}
+export class GuardianProfileConflictError extends Error {
+  constructor() { super('Os dados informados já pertencem a outro cadastro de responsável nesta escola.'); }
+}
+export class MissingGuardianDataError extends Error {
+  constructor() { super('Informe CPF e telefone para concluir o cadastro de responsável.'); }
+}
 
 function normalizeEmail(email: string | undefined | null) {
   const normalized = email?.trim().toLowerCase() ?? null;
@@ -44,17 +80,6 @@ function hasSameResponsavelInviteTarget(
   return JSON.stringify(currentAlunosIds) === JSON.stringify(nextAlunosIds);
 }
 
-/**
- * Verifica se o usuário alvo é o Owner da conta.
- * Útil para serviços de usuário que precisam bloquear exclusão/desativação/rebaixamento.
- */
-export async function isOwner(userId: string): Promise<boolean> {
-  const user = await prisma.usuario.findUnique({ where: { id: userId }, select: { contaId: true, id: true } });
-  if (!user?.contaId) return false;
-  const conta = await prisma.conta.findUnique({ where: { id: user.contaId }, select: { ownerUserId: true } });
-  return !!(conta && conta.ownerUserId === userId);
-}
-
 export async function createInvite(
   email: string | undefined | null,
   role: Role,
@@ -74,22 +99,45 @@ export async function createInvite(
   // Para coerência multi-tenant e do índice único, novas criações DEVEM carregar contaId
   if (!targetContaId) throw new MissingContaError();
 
-  // O e-mail é uma identidade de acesso global e não pode ser reutilizado em outra escola.
+  if (role === Role.RESPONSAVEL) {
+    const studentIds = normalizeAlunoIds(metadata as Prisma.JsonValue | undefined);
+    if (!studentIds.length) throw new InvalidInviteError();
+    const linkedStudents = await prisma.alunoResponsavel.findMany({
+      where: { contaId: targetContaId, alunoId: { in: studentIds } },
+      select: { alunoId: true },
+      distinct: ['alunoId'],
+    });
+    if (linkedStudents.length > 0) throw new StudentAlreadyLinkedError();
+  }
+
+  const now = new Date();
+  // Expiração é terminal; limpar o estado antes de checar/reemitir dentro do tenant.
+  await prisma.invite.updateMany({
+    where: { contaId: targetContaId, status: 'PENDING', expiresAt: { lte: now } },
+    data: { status: 'EXPIRED' },
+  });
+
+  // Um usuário global pode receber acesso a várias escolas, mas não duas vezes à mesma.
   if (normalizedEmail) {
     const existingUser = await prisma.usuario.findFirst({
       where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
-      select: { id: true },
+      select: { id: true, contaId: true },
     });
+    if (existingUser) {
+      if (existingUser.contaId === targetContaId) throw new UserAlreadyLinkedError();
+      const membership = await prisma.usuarioConta.findUnique({
+        where: { usuarioId_contaId: { usuarioId: existingUser.id, contaId: targetContaId } },
+        select: { id: true, status: true },
+      });
+      if (membership?.status === 'ATIVO') throw new UserAlreadyLinkedError();
+    }
 
-    if (existingUser) throw new UserAlreadyExistsError();
-  }
-
-  // Evitar convite duplicado pendente globalmente por (email,status).
-  if (normalizedEmail) {
     const dup = await prisma.invite.findFirst({
       where: {
+        contaId: targetContaId,
         email: { equals: normalizedEmail, mode: 'insensitive' },
         status: 'PENDING',
+        expiresAt: { gt: now },
       },
     });
     if (dup) throw new DuplicateInviteError();
@@ -106,7 +154,6 @@ export async function createInvite(
     if (duplicatedInvite) throw new DuplicateInviteError();
   }
 
-  const now = new Date();
   const expiresAt = new Date(now.getTime() + 72 * 60 * 60 * 1000);
   const token = randomUUID();
 
@@ -138,101 +185,173 @@ export async function acceptInvite(
   nome: string,
   senhaHash: string,
   email?: string | null,
+  authenticatedUserId?: string,
+  guardianProfile?: { cpf: string; telefone: string } | null,
 ) {
-  const invite = await prisma.invite.findUnique({ where: { token } });
-  if (!invite || invite.status !== 'PENDING') throw new InvalidInviteError();
-  if (invite.expiresAt.getTime() <= Date.now()) throw new ExpiredInviteError();
+  const finalEmail = normalizeEmail(email);
+  const now = new Date();
 
-  // Conta alvo: do convite ou do convidador
-  let contaId: string | null = invite.contaId ?? null;
-  if (!contaId) {
-    const inviter = await prisma.usuario.findUnique({ where: { id: invite.invitedById } });
-    contaId = inviter?.contaId ?? null;
-  }
-  if (!contaId) throw new InvalidInviteError();
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const invite = await tx.invite.findUnique({ where: { token } });
+      if (!invite || invite.status !== 'PENDING') throw new InvalidInviteError();
+      if (invite.expiresAt <= now) throw new ExpiredInviteError();
 
-  const finalEmail = normalizeEmail(invite.email) ?? normalizeEmail(email);
-  if (!finalEmail) throw new MissingInviteEmailError();
+      const contaId = invite.contaId ?? (await tx.usuario.findUnique({ where: { id: invite.invitedById }, select: { contaId: true } }))?.contaId;
+      if (!contaId) throw new InvalidInviteError();
+      const invitedEmail = normalizeEmail(invite.email);
+      if (invitedEmail && finalEmail !== invitedEmail) throw new InvalidInviteError();
+      const acceptedEmail = invitedEmail ?? finalEmail;
+      if (!acceptedEmail) throw new MissingInviteEmailError();
+      if (invite.role === Role.ADMIN) throw new InvalidInviteError();
+      const role = invite.role;
 
-  const existingUser = await prisma.usuario.findFirst({
-    where: { email: { equals: finalEmail, mode: 'insensitive' } },
-    select: {
-      id: true,
-      contaId: true,
-      nome: true,
-      email: true,
-      telefone: true,
-      birthDate: true,
-      foto: true,
-      bio: true,
-      locale: true,
-      theme: true,
-      notifyEmailProduct: true,
-      notifyEmailSecurity: true,
-      notifyEmailMarketing: true,
-      notifyWhatsapp: true,
-      notifySms: true,
-      senhaHash: true,
-      emailVerifiedAt: true,
-      role: true,
-      status: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
+      let user = authenticatedUserId
+        ? await tx.usuario.findFirst({ where: { id: authenticatedUserId, email: { equals: acceptedEmail, mode: 'insensitive' } } })
+        : await tx.usuario.findFirst({ where: { email: { equals: acceptedEmail, mode: 'insensitive' } } });
+      if (authenticatedUserId && !user) throw new InvalidInviteError();
+      if (user && String(user.status).toUpperCase() !== 'ATIVO') throw new UserInactiveError();
+      if (user && !authenticatedUserId) throw new ExistingAccountAuthenticationRequiredError();
+      let isNewUser = false;
+      if (!user) {
+        user = await tx.usuario.create({
+          data: {
+            contaId,
+            nome,
+            email: acceptedEmail,
+            senhaHash,
+            role,
+            ...(guardianProfile?.telefone ? { telefone: guardianProfile.telefone } : {}),
+          },
+        });
+        isNewUser = true;
+      }
 
-  const role = invite.role === 'ADMIN' ? Role.RESPONSAVEL : invite.role as Role;
-
-  return prisma.$transaction(async (tx) => {
-    let user = existingUser;
-
-    if (user) {
-      // A identidade de acesso é globalmente única. Não compartilhar usuários
-      // entre escolas: um e-mail já cadastrado não pode aceitar outro convite.
-      throw new UserAlreadyExistsError();
-    } else {
-      user = await tx.usuario.create({ data: { contaId, nome, email: finalEmail, senhaHash, role } });
-    }
-
-    await tx.usuarioConta.create({
-      data: {
-        usuarioId: user.id,
-        contaId,
-        role,
-        status: 'ATIVO',
-        invitedById: invite.invitedById,
-        inviteId: invite.id,
-        lastAccessedAt: new Date(),
-      },
-    });
-
-    await tx.invite.update({
-      where: { id: invite.id },
-      data: { status: 'ACCEPTED', acceptedByUserId: user.id, acceptedAt: new Date() },
-    });
-
-    if (role === Role.RESPONSAVEL) {
-      await tx.responsavel.updateMany({
-        where: { contaId, email: finalEmail },
-        data: { usuarioId: user.id },
+      const existingMembership = await tx.usuarioConta.findUnique({
+        where: { usuarioId_contaId: { usuarioId: user.id, contaId } },
       });
-    }
+      if (
+        existingMembership?.status === 'ATIVO' ||
+        (!isNewUser && user.contaId === contaId && !existingMembership)
+      ) {
+        throw new UserAlreadyLinkedError();
+      }
 
-    return { ...user, contaId, role };
+      if (role === Role.RESPONSAVEL) {
+        if (!guardianProfile?.cpf || !guardianProfile.telefone) throw new MissingGuardianDataError();
+        const studentIds = normalizeAlunoIds(invite.metadata);
+        if (!studentIds.length) throw new InvalidInviteError();
+        const students = await tx.aluno.findMany({ where: { contaId, id: { in: studentIds } }, select: { id: true } });
+        if (students.length !== studentIds.length) throw new InvalidGuardianStudentsError();
+        const matchingGuardians = await tx.responsavel.findMany({
+          where: {
+            contaId,
+            OR: [
+              { cpf: guardianProfile.cpf },
+              { usuarioId: user.id },
+              { email: { equals: acceptedEmail, mode: 'insensitive' } },
+            ],
+          },
+          select: { id: true, usuarioId: true, cpf: true, email: true },
+        });
+        const matchingGuardianIds = new Set(matchingGuardians.map(({ id }) => id));
+        if (
+          matchingGuardianIds.size > 1 ||
+          matchingGuardians.some(({ usuarioId, cpf, email: guardianEmail }) =>
+            (usuarioId && usuarioId !== user.id) ||
+            (cpf !== guardianProfile.cpf && (usuarioId === user.id || guardianEmail.toLowerCase() === acceptedEmail)),
+          )
+        ) {
+          throw new GuardianProfileConflictError();
+        }
+        const guardian = matchingGuardians[0] ?? null;
+        if (!guardian) {
+          await tx.responsavel.create({
+            data: {
+              contaId,
+              nome: nome.trim(),
+              cpf: guardianProfile.cpf,
+              email: acceptedEmail,
+              telefone: guardianProfile.telefone,
+              usuarioId: user.id,
+            },
+          });
+        } else {
+          await tx.responsavel.update({ where: { id: guardian.id }, data: { usuarioId: user.id } });
+        }
+        const guardianId = guardian?.id ?? (await tx.responsavel.findFirstOrThrow({
+          where: { contaId, cpf: guardianProfile.cpf }, select: { id: true },
+        })).id;
+        const existingLinks = await tx.alunoResponsavel.findMany({
+          where: { contaId, alunoId: { in: studentIds }, responsavelId: { not: guardianId } },
+          select: { alunoId: true },
+          distinct: ['alunoId'],
+        });
+        if (existingLinks.length > 0) throw new StudentAlreadyLinkedError();
+        for (const alunoId of studentIds) {
+          await tx.alunoResponsavel.upsert({
+            where: { uq_aluno_responsavel_conta_aluno_responsavel: { contaId, alunoId, responsavelId: guardianId } },
+            create: { contaId, alunoId, responsavelId: guardianId, tipoVinculo: 'RESPONSAVEL' },
+            update: {},
+          });
+        }
+      }
+
+      if (existingMembership) {
+        await tx.usuarioConta.update({
+          where: { id: existingMembership.id },
+          data: { role, status: 'ATIVO', invitedById: invite.invitedById, inviteId: invite.id, lastAccessedAt: now },
+        });
+      } else {
+        await tx.usuarioConta.create({
+          data: { usuarioId: user.id, contaId, role, status: 'ATIVO', invitedById: invite.invitedById, inviteId: invite.id, lastAccessedAt: now },
+        });
+      }
+
+      const claimed = await tx.invite.updateMany({
+        where: { id: invite.id, status: 'PENDING', expiresAt: { gt: now } },
+        data: { status: 'ACCEPTED', acceptedByUserId: user.id, acceptedAt: now },
+      });
+      if (claimed.count !== 1) throw new InvalidInviteError();
+      return { ...user, contaId, role };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (error instanceof ExpiredInviteError) {
+      await prisma.invite.updateMany({ where: { token, status: 'PENDING', expiresAt: { lte: now } }, data: { status: 'EXPIRED' } });
+      throw error;
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2002' || error.code === 'P2034')) {
+      const invite = await prisma.invite.findUnique({ where: { token }, select: { id: true, contaId: true, email: true, status: true } });
+      if (invite?.status !== 'PENDING') throw new InvalidInviteError();
+      const existingUser = await prisma.usuario.findFirst({ where: { email: { equals: finalEmail ?? invite.email ?? '', mode: 'insensitive' } }, select: { id: true } });
+      if (existingUser && invite.contaId) {
+        const membership = await prisma.usuarioConta.findUnique({ where: { usuarioId_contaId: { usuarioId: existingUser.id, contaId: invite.contaId } }, select: { status: true } });
+        if (membership) throw new UserAlreadyLinkedError();
+        throw new ExistingAccountAuthenticationRequiredError();
+      }
+      if (error.code === 'P2034') throw new InviteStateConflictError();
+      throw new DuplicateInviteError();
+    }
+    throw error;
+  }
+}
+
+export async function expirePendingInvite(token: string) {
+  await prisma.invite.updateMany({
+    where: { token, status: 'PENDING', expiresAt: { lte: new Date() } },
+    data: { status: 'EXPIRED' },
   });
 }
 
 export async function listInvitesByConta(contaId: string) {
-  return prisma.invite.findMany({ where: { contaId, status: 'PENDING' }, orderBy: { createdAt: 'desc' } });
+  const now = new Date();
+  await prisma.invite.updateMany({ where: { contaId, status: 'PENDING', expiresAt: { lte: now } }, data: { status: 'EXPIRED' } });
+  return prisma.invite.findMany({ where: { contaId, status: { in: ['PENDING', 'EXPIRED', 'ACCEPTED', 'REVOKED'] } }, orderBy: { createdAt: 'desc' } });
 }
 
-export async function getInviteById(id: string) {
-  return prisma.invite.findUnique({ where: { id } });
-}
-
-export async function cancelInviteById(id: string): Promise<boolean> {
-  const found = await prisma.invite.findUnique({ where: { id } });
-  if (!found || String(found.status).toUpperCase() !== 'PENDING') return false;
-  await prisma.invite.update({ where: { id }, data: { status: 'REVOKED' } });
-  return true;
+export async function deleteInviteById(id: string, contaId: string): Promise<boolean> {
+  const result = await prisma.invite.deleteMany({
+    where: { id, contaId },
+  });
+  return result.count === 1;
 }

@@ -142,9 +142,6 @@ export function resolveAnchorMode(
   if (objectType === 'TEXT') {
     return TEXT_AREA_ANCHORS;
   }
-  if (objectType === 'CORRIDOR') {
-    return TEXT_AREA_ANCHORS;
-  }
   return TEXT_AREA_ANCHORS;
 }
 

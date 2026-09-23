@@ -10,6 +10,9 @@ import {
   validateInviteResultDTOSchema,
 } from '@/features/users/dtos';
 import { findPendingInviteForAcceptance } from '@/src/server/users/invite-acceptance.service';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth-options';
+import prisma from '@/lib/prisma';
 
 export async function GET(req: Request) {
   try {
@@ -34,6 +37,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Convite inválido' }, { status: 404 });
     }
     if (invite.expiresAt.getTime() <= Date.now()) {
+      await InviteUserService.expirePendingInvite(token);
       return NextResponse.json({ error: 'Convite expirado' }, { status: 410 });
     }
     return NextResponse.json(
@@ -70,35 +74,83 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Convite inválido' }, { status: 404 });
     }
     if (invite.expiresAt.getTime() <= Date.now()) {
+      await InviteUserService.expirePendingInvite(token);
       return NextResponse.json({ error: 'Convite expirado' }, { status: 410 });
     }
 
-    const finalEmail = (invite.email ?? parsed.data.email)?.trim().toLowerCase();
-    let senhaHash: string;
-
     try {
-      senhaHash = await hashPassword(finalPassword);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : passwordPolicyMessage;
-      return NextResponse.json({ error: message }, { status: 400 });
-    }
+      const session = await getServerSession(authOptions);
+      const authenticatedUserId = session?.user?.id || undefined;
+      const finalEmail = (invite.email ?? session?.user?.email ?? parsed.data.email)?.trim().toLowerCase();
+      const guardianProfile = invite.role === 'RESPONSAVEL' && parsed.data.cpf && parsed.data.telefone
+        ? { cpf: parsed.data.cpf, telefone: parsed.data.telefone }
+        : null;
+      if (invite.role === 'RESPONSAVEL' && !guardianProfile) {
+        return NextResponse.json({ error: 'Informe CPF e telefone para concluir o cadastro de responsável.' }, { status: 400 });
+      }
+      if (authenticatedUserId && invite.email && session?.user?.email?.trim().toLowerCase() !== invite.email.trim().toLowerCase()) {
+        return NextResponse.json({ error: 'Entre com o e-mail destinatário do convite.' }, { status: 403 });
+      }
 
-    try {
-      // Passa o email do usuário (se fornecido) para o acceptInvite
-      const user = await InviteUserService.acceptInvite(token, finalName, senhaHash, parsed.data.email);
+      let senhaHash = '';
+      if (!authenticatedUserId) {
+        if (!finalEmail) {
+          return NextResponse.json({ error: 'Informe o e-mail que deseja usar na conta.' }, { status: 400 });
+        }
+        if (finalEmail) {
+          const existingUser = await prisma.usuario.findFirst({
+            where: { email: { equals: finalEmail, mode: 'insensitive' } },
+            select: { id: true, status: true, contaId: true },
+          });
+          if (existingUser && String(existingUser.status).toUpperCase() !== 'ATIVO') {
+            return NextResponse.json({ error: 'Esta conta está desativada. Solicite a um administrador a reativação antes de aceitar o convite.', code: 'ACCOUNT_INACTIVE' }, { status: 409 });
+          }
+          if (existingUser && invite.contaId) {
+            const membership = await prisma.usuarioConta.findUnique({
+              where: { usuarioId_contaId: { usuarioId: existingUser.id, contaId: invite.contaId } },
+              select: { status: true },
+            });
+            if (membership?.status === 'ATIVO' || existingUser.contaId === invite.contaId) {
+              return NextResponse.json({
+                error: 'Esta conta já está vinculada a esta escola. Fale com o administrador.',
+                code: 'USER_ALREADY_LINKED',
+              }, { status: 409 });
+            }
+          }
+          if (existingUser) return NextResponse.json({ error: 'Entre na sua conta para aceitar este convite.', code: 'ACCOUNT_EXISTS' }, { status: 409 });
+        }
+        if (!finalPassword || !finalName) return NextResponse.json({ error: 'Nome e senha são obrigatórios para criar uma conta.' }, { status: 400 });
+        try {
+          senhaHash = await hashPassword(finalPassword);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : passwordPolicyMessage;
+          return NextResponse.json({ error: message }, { status: 400 });
+        }
+      }
 
-      if (!user.emailVerifiedAt) {
-        await sendEmailVerificationForUser(user.id, {
-          ip,
-          userAgent: req.headers.get('user-agent'),
-        }, {
-          callbackUrl: '/dashboard',
-        });
+      const user = await InviteUserService.acceptInvite(
+        token,
+        finalName ?? session?.user?.name ?? 'Usuário',
+        senhaHash,
+        finalEmail,
+        authenticatedUserId,
+        guardianProfile,
+      );
+
+      let verificationEmailSent = true;
+      if (!authenticatedUserId && !user.emailVerifiedAt) {
+        try {
+          await sendEmailVerificationForUser(user.id, { ip, userAgent: req.headers.get('user-agent') }, { callbackUrl: '/dashboard' });
+        } catch (error) {
+          verificationEmailSent = false;
+          console.error('[invite][verification-email-failed]', { userId: user.id, error });
+        }
       }
 
       return NextResponse.json(
         acceptInviteResultDTOSchema.parse({
-          message: 'Convite aceito com sucesso',
+          message: verificationEmailSent ? 'Convite aceito com sucesso' : 'Acesso criado; não foi possível enviar o e-mail de verificação. Solicite um novo envio na tela de login.',
+          verificationEmailSent,
           user: {
             id: user.id,
             email: user.email,
@@ -110,11 +162,23 @@ export async function POST(req: Request) {
         { status: 200 },
       );
     } catch (e: unknown) {
-      const msg = (e instanceof Error) ? e.message : '';
-      if (msg.includes('expirado')) return NextResponse.json({ error: 'Convite expirado' }, { status: 410 });
-      if (msg.includes('inválido')) return NextResponse.json({ error: 'Convite inválido' }, { status: 404 });
-      if (msg.includes('Email é obrigatório')) return NextResponse.json({ error: msg }, { status: 400 });
-      if (msg.includes('já cadastrado') || msg.includes('em uso') || msg.includes('vinculado')) return NextResponse.json({ error: msg }, { status: 409 });
+      if (e instanceof InviteUserService.ExpiredInviteError) return NextResponse.json({ error: 'Convite expirado' }, { status: 410 });
+      if (e instanceof InviteUserService.InvalidInviteError) return NextResponse.json({ error: 'Convite inválido' }, { status: 404 });
+      if (e instanceof InviteUserService.MissingInviteEmailError) return NextResponse.json({ error: e.message }, { status: 400 });
+      if (e instanceof InviteUserService.MissingGuardianDataError) return NextResponse.json({ error: e.message }, { status: 400 });
+      if (e instanceof InviteUserService.UserAlreadyLinkedError) {
+        return NextResponse.json({
+          error: 'Esta conta já está vinculada a esta escola. Fale com o administrador.',
+          code: 'USER_ALREADY_LINKED',
+        }, { status: 409 });
+      }
+      if (e instanceof InviteUserService.StudentAlreadyLinkedError || e instanceof InviteUserService.GuardianProfileConflictError) {
+        return NextResponse.json({ error: e.message, code: e instanceof InviteUserService.StudentAlreadyLinkedError ? 'STUDENT_ALREADY_LINKED' : 'GUARDIAN_PROFILE_CONFLICT' }, { status: 409 });
+      }
+      if (e instanceof InviteUserService.DuplicateInviteError || e instanceof InviteUserService.InviteStateConflictError) return NextResponse.json({ error: e.message, code: 'INVITE_CONFLICT' }, { status: 409 });
+      if (e instanceof InviteUserService.ExistingAccountAuthenticationRequiredError) return NextResponse.json({ error: 'Entre na sua conta para aceitar este convite.', code: 'ACCOUNT_EXISTS' }, { status: 409 });
+      if (e instanceof InviteUserService.MissingGuardianRecordError || e instanceof InviteUserService.InvalidGuardianStudentsError) return NextResponse.json({ error: e.message }, { status: 422 });
+      if (e instanceof InviteUserService.UserInactiveError) return NextResponse.json({ error: e.message, code: 'ACCOUNT_INACTIVE' }, { status: 409 });
       throw e;
     }
   } catch (error) {

@@ -1,5 +1,4 @@
 import type { MapCommand } from '../../commands/command-types.js';
-import { applyCorridorReflow } from '../../layout/corridor/index.js';
 import {
   applyMapLevels,
   type MapCommandHandlerResult,
@@ -11,7 +10,7 @@ export function handleRestoreDeletedItems(
   state: MapCommandHandlerState,
   command: Extract<MapCommand, { type: 'RESTORE_DELETED_ITEMS' }>,
 ): MapCommandHandlerResult {
-  const { objects, seats, sections, levels, seatGroups = [] } = command.payload;
+  const { objects, seats, sections, levels } = command.payload;
   for (const level of levels) {
     if (!state.nextMap.levels.some((l) => l.id === level.id)) {
       state.nextMap.levels.push(level);
@@ -28,18 +27,11 @@ export function handleRestoreDeletedItems(
       state.nextMap.objects.push(object);
     }
   }
-  state.nextMap.seatGroups = state.nextMap.seatGroups ?? [];
-  for (const group of seatGroups) {
-    if (!state.nextMap.seatGroups.some((g) => g.id === group.id)) {
-      state.nextMap.seatGroups.push(group);
-    }
-  }
   for (const seat of seats) {
     if (!state.nextMap.seats.some((s) => s.id === seat.id)) {
       state.nextMap.seats.push(seat);
     }
   }
-  applyCorridorReflow(state.nextMap);
   updateCounts(state.nextMap);
 }
 

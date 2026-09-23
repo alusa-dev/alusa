@@ -2,20 +2,13 @@
 import { useMemo, useState } from 'react';
 import { formatDateTime } from '../../events-service';
 import type { SchoolEventDTO } from '../../events-service';
-import {
-  createEventMap,
-  deleteEventMap,
-  listEventMaps,
-  publishEventMap,
-} from '../api/event-map-service';
+import { deleteEventMap, listEventMaps, publishEventMap } from '../api/event-map-service';
 import type { EventMapDTO } from '../api/event-map-service';
 
 import { cn } from '@/lib/utils';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, Edit3, Layers3, Plus, Rocket, Trash2 } from 'lucide-react';
 
 import {
   canCreateEventMap,
@@ -32,6 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { toast } from '@/components/ui/toast';
 import { ConfirmDeleteDialog } from '@/components/dialogs/ConfirmDeleteDialog';
+import { CreatorIcon } from '@/components/icons/hugeicons';
 
 const eventMapQueryKeys = {
   maps: (eventId: string) => ['events', 'maps', eventId] as const,
@@ -116,23 +110,14 @@ function describeMapPublish(map: EventMapDTO, activePublishedMap: EventMapDTO | 
 }
 
 export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
-  const router = useRouter();
   const queryClient = useQueryClient();
   const [mapToDelete, setMapToDelete] = useState<EventMapDTO | null>(null);
   const [mapToPublish, setMapToPublish] = useState<EventMapDTO | null>(null);
+  const [copiedMapId, setCopiedMapId] = useState<string | null>(null);
   const mapsQuery = useQuery({
     queryKey: eventMapQueryKeys.maps(event.id),
     queryFn: () => listEventMaps(event.id),
     staleTime: 20_000,
-  });
-
-  const createMutation = useMutation({
-    mutationFn: () => createEventMap(event.id, { name: 'Mapa principal' }),
-    onSuccess: async (map) => {
-      await queryClient.invalidateQueries({ queryKey: eventMapQueryKeys.maps(event.id) });
-      router.push(`/events/${event.id}/maps/${map.id}/editor`);
-    },
-    onError: (error) => toast.error({ title: 'Não foi possível criar o mapa', description: (error as Error).message }),
   });
 
   const publishMutation = useMutation({
@@ -205,25 +190,23 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
         <div className="overflow-x-auto pb-2">
           <div className="flex w-max min-w-full flex-nowrap items-stretch gap-4">
           {canAddMap ? (
-            <button
-              type="button"
-              onClick={() => createMutation.mutate()}
-              disabled={createMutation.isPending}
+            <Link
+              href={`/events/${event.id}/maps/new`}
               className={cn(
-                'flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed border-brand-accent/40 bg-brand-accent/5 p-6 text-center transition hover:border-brand-accent hover:bg-brand-accent/10 disabled:cursor-not-allowed disabled:opacity-60',
+                'flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed border-brand-accent/40 bg-brand-accent/5 p-6 text-center transition hover:border-brand-accent hover:bg-brand-accent/10',
                 EVENT_MAP_CARD_WIDTH_CLASS,
               )}
             >
               <span className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-accent text-white shadow-sm">
-                <Plus className="h-6 w-6" />
+                <CreatorIcon name="add" size={24} />
               </span>
               <span className="mt-4 text-base font-semibold text-slate-950">
-                {createMutation.isPending ? 'Criando mapa...' : 'Criar Mapa'}
+                Criar Mapa
               </span>
               <span className="mt-2 max-w-64 text-sm text-slate-500">
-                Inicia um rascunho com prancheta, toolbar flutuante e editor dedicado.
+                Escolha começar em branco ou importar a planta do local.
               </span>
-            </button>
+            </Link>
           ) : null}
 
           {maps.map((map) => (
@@ -237,7 +220,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <Layers3 className="h-4 w-4 text-brand-accent" />
+                    <CreatorIcon name="layers" size={16} className="text-brand-accent" />
                     <h3 className="truncate text-base font-semibold text-slate-950">{map.name}</h3>
                   </div>
                   <p className="mt-1 text-xs text-slate-500">Atualizado em {formatDateTime(map.updatedAt)}</p>
@@ -263,7 +246,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
               <div className="mt-auto grid grid-cols-3 gap-2 pt-5">
                 <Button asChild variant="outline" size="sm" className={cn('border-slate-200 bg-white text-slate-700', MAP_ACTION_BUTTON_CLASS)}>
                   <Link href={`/events/${event.id}/maps/${map.id}/editor`}>
-                    <Edit3 className="h-3.5 w-3.5 shrink-0" />
+                    <CreatorIcon name="edit" size={14} className="shrink-0" />
                     Editar
                   </Link>
                 </Button>
@@ -280,7 +263,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
                     onClick={() => setMapToPublish(map)}
                     disabled={publishMutation.isPending}
                   >
-                    <Rocket className="h-3.5 w-3.5 shrink-0" />
+                    <CreatorIcon name="publish" size={14} className="shrink-0" />
                     Publicar
                   </Button>
                 ) : map.status === 'PUBLISHED' && map.publicUrl ? (
@@ -291,16 +274,22 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
                     className={cn('border-slate-200 bg-white text-slate-700', MAP_ACTION_BUTTON_CLASS)}
                     onClick={async () => {
                       if (!map.publicUrl) return;
-                      const absoluteUrl = new URL(map.publicUrl, window.location.origin).toString();
-                      await navigator.clipboard.writeText(absoluteUrl);
-                      toast.success({
-                        title: 'Link copiado',
-                        description: 'O link público do mapa foi copiado para a área de transferência.',
-                      });
+                      try {
+                        const absoluteUrl = new URL(map.publicUrl, window.location.origin).toString();
+                        await navigator.clipboard.writeText(absoluteUrl);
+                        setCopiedMapId(map.id);
+                        window.setTimeout(() => setCopiedMapId((current) => current === map.id ? null : current), 1800);
+                        toast.success({
+                          title: 'Link copiado',
+                          description: 'O link público do mapa foi copiado para a área de transferência.',
+                        });
+                      } catch {
+                        toast.error({ title: 'Não foi possível copiar o link' });
+                      }
                     }}
                   >
-                    <Copy className="h-3.5 w-3.5 shrink-0" />
-                    Copiar link
+                    <CreatorIcon name={copiedMapId === map.id ? 'copySuccess' : 'copy'} size={14} className="shrink-0" />
+                    {copiedMapId === map.id ? 'Link copiado' : 'Copiar link'}
                   </Button>
                 ) : null}
 
@@ -312,7 +301,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
                   onClick={() => setMapToDelete(map)}
                   disabled={deleteMutation.isPending}
                 >
-                  <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                  <CreatorIcon name="delete" size={14} className="shrink-0" />
                   {map.status === 'PUBLISHED' ? 'Remover' : 'Excluir'}
                 </Button>
               </div>

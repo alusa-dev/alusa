@@ -15,6 +15,7 @@ export type EventsPermission =
   | 'events.archive'
   | 'events.deleteParticipant'
   | 'eventTickets.view'
+  | 'eventTickets.checkIn'
   | 'eventTickets.manageLots'
   | 'eventTickets.createSale'
   | 'eventTickets.cancelSale'
@@ -44,6 +45,7 @@ const ALL_PERMISSIONS: EventsPermission[] = [
   'events.archive',
   'events.deleteParticipant',
   'eventTickets.view',
+  'eventTickets.checkIn',
   'eventTickets.manageLots',
   'eventTickets.createSale',
   'eventTickets.cancelSale',
@@ -74,6 +76,7 @@ const ROLE_PERMISSIONS: Record<string, EventsPermission[]> = {
     'events.update',
     'events.cancel',
     'eventTickets.view',
+    'eventTickets.checkIn',
     'eventTickets.manageLots',
     'eventTickets.createSale',
     'eventTickets.cancelSale',
@@ -91,6 +94,7 @@ const ROLE_PERMISSIONS: Record<string, EventsPermission[]> = {
   FINANCEIRO: [
     'events.view',
     'eventTickets.view',
+    'eventTickets.checkIn',
     'eventTickets.markPaid',
     'eventMaps.view',
     'eventFinance.view',

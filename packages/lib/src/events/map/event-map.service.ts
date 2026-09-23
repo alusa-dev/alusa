@@ -13,19 +13,24 @@ import {
   validateEventMapStatusTransition,
   validatePublishableEventMap,
 } from '@alusa/domain/events';
+import { migrateLegacyMapDocument, normalizeMapReferenceChart, resolveEventMapLayout, sectionLocalToWorld } from '@alusa/domain';
+import type { EventMapDocument, MapReferenceChart, MapSeatBlock, MapSeatRow } from '@alusa/domain';
 
 import { prisma } from '../../prisma';
 import { loadDecryptedAsaasCredentials } from '../../services/integracoes/asaas-credentials-service';
 import { getEventAsaasPaymentProvider, type EventAsaasPayment } from '../event-asaas-payment-provider';
 import { assertEventTicketSalesOpen, EventsError, type EventsContext } from '../events.service';
 import { enqueueEventTicketEmail } from '../ticket-email-outbox';
+import { createCheckInCode, toCheckInCode } from './ticket-code';
 import { markEventTicketUsed, verifyEventTicketForCheckIn } from '../ticket-checkin.service';
+import { getPublicReservationExpiration } from './public-reservation-policy';
 import type {
   CreateEventMapInput,
   DuplicateEventMapInput,
   PublicCheckoutInput,
   PublicSeatReservationInput,
   UpdateEventMapDraftInput,
+  UpdateEventMapReferenceChartInput,
   UpdateEventMapSettingsInput,
 } from './event-map.schema';
 
@@ -41,7 +46,6 @@ const eventMapInclude = {
     orderBy: [{ createdAt: 'asc' as const }],
   },
   objects: { orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }] },
-  seatGroups: { orderBy: [{ createdAt: 'asc' as const }] },
   seats: { orderBy: [{ technicalCode: 'asc' as const }] },
   versions: {
     select: { id: true, version: true, status: true, seatCount: true, publishedAt: true, createdAt: true },
@@ -81,16 +85,29 @@ function toInputJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value ?? {})) as Prisma.InputJsonValue;
 }
 
+function assertOwnedReferenceChart(referenceChart: MapReferenceChart, contaId: string, mapId: string) {
+  const storageKey = referenceChart.storageKey;
+  const expectedPrefix = `uploads/event-maps/${contaId}/${mapId}/reference-`;
+  const isOwnedKey = Boolean(
+    storageKey &&
+      storageKey.startsWith(expectedPrefix) &&
+      /^uploads\/event-maps\/[^/]+\/[^/]+\/reference-[^/]+\.(jpg|jpeg|png|webp)$/i.test(storageKey),
+  );
+  if (!isOwnedKey) {
+    throw new EventsError(
+      'PLANTA_REFERENCIA_INVALIDA',
+      'A planta de referência não pertence a este mapa.',
+      400,
+    );
+  }
+}
+
 function createLocalId(prefix: string) {
   return `${prefix}_${globalThis.crypto.randomUUID()}`;
 }
 
 function createPublicToken(prefix: string) {
   return `${prefix}_${globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`;
-}
-
-function addHours(date: Date, hours: number) {
-  return new Date(date.getTime() + hours * 60 * 60 * 1000);
 }
 
 function toAsaasDate(date: Date) {
@@ -127,6 +144,106 @@ function publicOrderStatusPath(publicSlug: string | null | undefined, orderId: s
   const slug = publicSlug?.trim();
   const query = `token=${encodeURIComponent(accessToken)}`;
   return slug ? `/m/${slug}/pedido/${orderId}?${query}` : `/api/public/event-map-orders/${orderId}/status?${query}`;
+}
+
+function readDraftDocument(record: EventMapRecord | EventMapListRecord): EventMapDocument {
+  const candidate = record.draftDocument;
+  if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+    const value = candidate as Partial<EventMapDocument>;
+    if (value.schemaVersion === 1 && Array.isArray(value.sections) && Array.isArray(value.visualElements)) {
+      return value as EventMapDocument;
+    }
+  }
+
+  return migrateLegacyMapDocument({
+    sections: record.sections.map((section) => ({
+      id: section.id,
+      levelId: section.levelId,
+      name: section.name,
+      color: section.color,
+      lotId: section.lotId,
+      capacity: section.capacity,
+      status: section.status,
+      notes: section.notes,
+    })),
+    groups: [],
+    seats: record.seats.map((seat) => ({
+      id: seat.id,
+      sectionId: seat.sectionId,
+      rowIndex: seat.rowIndex,
+      columnIndex: seat.columnIndex,
+      technicalCode: seat.technicalCode,
+      displayLabel: seat.displayLabel,
+      rowLabel: seat.rowLabel,
+      seatNumber: seat.seatNumber,
+      accessible: seat.accessible,
+      publicVisible: seat.publicVisible,
+    })),
+    visualElements: record.objects.map((object) => ({
+      id: object.id,
+      levelId: object.levelId,
+      sectionId: object.sectionId,
+      type: object.type,
+      data: (object.data ?? {}) as Record<string, unknown>,
+      x: toNumber(object.x),
+      y: toNumber(object.y),
+      width: object.width == null ? null : toNumber(object.width),
+      height: object.height == null ? null : toNumber(object.height),
+      rotation: toNumber(object.rotation),
+      locked: object.locked,
+      hidden: object.hidden,
+      sortOrder: object.sortOrder,
+    })),
+  });
+}
+
+function remapDraftDocument(
+  document: EventMapDocument | undefined,
+  maps: {
+    levelIds: Map<string, string>;
+    sectionIds: Map<string, string>;
+    objectIds: Map<string, string>;
+    blockIds: Map<string, string>;
+    rowIds: Map<string, string>;
+    seatIds: Map<string, string>;
+  },
+): EventMapDocument | undefined {
+  if (!document) return undefined;
+  const remapRow = (row: MapSeatRow, blockId: string, sectionId: string): MapSeatRow => ({
+    ...row,
+    id: maps.rowIds.get(row.id) ?? row.id,
+    sectionId,
+    blockId,
+    seatIds: row.seatIds.map((id) => maps.seatIds.get(id) ?? id),
+    seats: row.seats.map((seat) => ({ ...seat, id: maps.seatIds.get(seat.id) ?? seat.id })),
+  });
+  const remapBlock = (block: MapSeatBlock, sectionId: string): MapSeatBlock => ({
+    ...block,
+    id: maps.blockIds.get(block.id) ?? block.id,
+    sectionId,
+    rowIds: block.rowIds.map((id) => maps.rowIds.get(id) ?? id),
+    rows: block.rows.map((row) => remapRow(row, maps.blockIds.get(block.id) ?? block.id, sectionId)),
+  });
+
+  return {
+    ...document,
+    sections: document.sections.map((section) => {
+      const sectionId = maps.sectionIds.get(section.id) ?? section.id;
+      return {
+        ...section,
+        id: sectionId,
+        levelId: maps.levelIds.get(section.levelId) ?? section.levelId,
+        blockIds: section.blockIds.map((id) => maps.blockIds.get(id) ?? id),
+        blocks: section.blocks.map((block) => remapBlock(block, sectionId)),
+      };
+    }),
+    visualElements: document.visualElements.map((element) => ({
+      ...element,
+      id: maps.objectIds.get(element.id) ?? element.id,
+      levelId: maps.levelIds.get(element.levelId) ?? element.levelId,
+      sectionId: element.sectionId ? maps.sectionIds.get(element.sectionId) ?? element.sectionId : null,
+    })),
+  };
 }
 
 function toPublicSeatStatus(status: string): EventMapPublicSeatStatus {
@@ -237,6 +354,8 @@ function mapEventMap(record: EventMapRecord | EventMapListRecord) {
     updatedAt: record.updatedAt.toISOString(),
     publishedAt: record.publishedAt?.toISOString() ?? null,
     archivedAt: record.archivedAt?.toISOString() ?? null,
+    document: readDraftDocument(record),
+    referenceChart: normalizeMapReferenceChart(record.referenceChart),
     levels: record.levels.map((level) => ({
       id: level.id,
       name: level.name,
@@ -286,7 +405,6 @@ function mapEventMap(record: EventMapRecord | EventMapListRecord) {
       levelId: seat.levelId,
       sectionId: seat.sectionId,
       objectId: seat.objectId,
-      groupId: seat.groupId,
       rowIndex: seat.rowIndex,
       columnIndex: seat.columnIndex,
       technicalCode: seat.technicalCode,
@@ -308,26 +426,6 @@ function mapEventMap(record: EventMapRecord | EventMapListRecord) {
       seatCount: version.seatCount,
       publishedAt: version.publishedAt.toISOString(),
       createdAt: version.createdAt.toISOString(),
-    })),
-    seatGroups: record.seatGroups.map((group) => ({
-      id: group.id,
-      levelId: group.levelId,
-      name: group.name,
-      x: toNumber(group.x),
-      y: toNumber(group.y),
-      rotation: toNumber(group.rotation),
-      rows: group.rows,
-      columns: group.columns,
-      seatWidth: toNumber(group.seatWidth),
-      seatHeight: toNumber(group.seatHeight),
-      gapX: toNumber(group.gapX),
-      gapY: toNumber(group.gapY),
-      paddingTop: toNumber(group.paddingTop),
-      paddingRight: toNumber(group.paddingRight),
-      paddingBottom: toNumber(group.paddingBottom),
-      paddingLeft: toNumber(group.paddingLeft),
-      numbering: (group.numbering ?? {}) as Record<string, unknown>,
-      locked: group.locked,
     })),
     counts: {
       levels: record.levels.length,
@@ -402,7 +500,9 @@ export async function createEventMap(ctx: EventsContext, eventId: string, input:
       entityId: created.id,
       eventId,
       after: created,
-      metadata: { source: input.templateMapId ? 'template' : 'blank' },
+      metadata: {
+        source: input.templateMapId ? 'template' : input.creationMode === 'reference-plan' ? 'reference-plan' : 'blank',
+      },
     });
 
     return mapEventMap(await getMapRecordOrThrow(tx, ctx.contaId, eventId, created.id));
@@ -445,6 +545,75 @@ function validateDraftReferences(input: UpdateEventMapDraftInput) {
     }
     technicalCodes.add(seat.technicalCode);
   }
+}
+
+function materializeDocumentDraft(
+  input: UpdateEventMapDraftInput,
+  previousSeats: ReadonlyArray<Pick<UpdateEventMapDraftInput['seats'][number], 'id' | 'status' | 'publicVisible' | 'accessible'>> = [],
+): UpdateEventMapDraftInput {
+  if (!input.document) return input;
+  const layout = resolveEventMapLayout(input.document);
+  const blocking = layout.diagnostics.filter((diagnostic) =>
+    ['INVALID_SECTION', 'INVALID_ROW_PATH', 'INVALID_DISTRIBUTION', 'INVALID_SPACING', 'ROW_OUTSIDE_SECTION', 'SEAT_OUTSIDE_SECTION', 'SEAT_OVERLAP'].includes(diagnostic.type),
+  );
+  if (blocking.length > 0) {
+    throw new EventsError('MAPA_LAYOUT_INVALIDO', blocking.map((diagnostic) => diagnostic.message).join(' '), 422);
+  }
+
+  const sectionById = new Map(input.document.sections.map((section) => [section.id, section]));
+  const inputSeatById = new Map(input.seats.map((seat) => [seat.id, seat]));
+  const previousSeatById = new Map(previousSeats.map((seat) => [seat.id, seat]));
+  return {
+    ...input,
+    sections: input.document.sections.map((section) => ({
+      id: section.id,
+      levelId: section.levelId,
+      lotId: section.lotId ?? null,
+      name: section.name,
+      color: section.color,
+      capacity: section.capacity ?? null,
+      status: section.status ?? 'ACTIVE',
+      notes: section.notes ?? null,
+    })),
+    objects: input.document.visualElements.map((element) => ({
+      id: element.id,
+      levelId: element.levelId,
+      sectionId: element.sectionId ?? null,
+      type: element.type as UpdateEventMapDraftInput['objects'][number]['type'],
+      data: element.data,
+      x: element.x,
+      y: element.y,
+      width: element.width ?? null,
+      height: element.height ?? null,
+      rotation: element.rotation,
+      locked: element.locked,
+      hidden: element.hidden,
+      sortOrder: element.sortOrder,
+    })),
+    seats: layout.seats.map((seat) => {
+      const section = sectionById.get(seat.sectionId)!;
+      const world = sectionLocalToWorld({ x: seat.x, y: seat.y }, section.position, section.rotation);
+      return {
+        id: seat.seatId,
+        levelId: seat.levelId,
+        sectionId: seat.sectionId,
+        objectId: null,
+        rowIndex: seat.rowIndex,
+        columnIndex: seat.columnIndex,
+        technicalCode: seat.technicalCode,
+        displayLabel: seat.label,
+        rowLabel: seat.rowLabel,
+        seatNumber: seat.seatNumber,
+        status: inputSeatById.get(seat.seatId)?.status ?? previousSeatById.get(seat.seatId)?.status ?? ('AVAILABLE' as const),
+        accessible: inputSeatById.get(seat.seatId)?.accessible ?? seat.accessible ?? previousSeatById.get(seat.seatId)?.accessible ?? false,
+        publicVisible: inputSeatById.get(seat.seatId)?.publicVisible ?? seat.publicVisible ?? previousSeatById.get(seat.seatId)?.publicVisible ?? true,
+        x: world.x,
+        y: world.y,
+        size: seat.size,
+        rotation: seat.rotation + section.rotation,
+      };
+    }),
+  };
 }
 
 async function syncNumberedSeatLotCapacities(
@@ -512,27 +681,33 @@ export async function updateEventMapDraft(
   mapId: string,
   input: UpdateEventMapDraftInput,
 ) {
-  validateDraftReferences(input);
-
   return prisma.$transaction(async (tx) => {
     const current = await tx.eventMap.findFirst({ where: { id: mapId, contaId: ctx.contaId, eventId } });
     if (!current) throw new EventsError('MAPA_NAO_ENCONTRADO', 'Mapa do evento não encontrado.', 404);
     assertMapEditable(current);
-    await assertLotsBelongToEvent(tx, ctx, eventId, input);
+    const previousSeats = await tx.eventSeat.findMany({
+      where: { contaId: ctx.contaId, eventMapId: mapId },
+      select: { id: true, status: true, publicVisible: true, accessible: true },
+    });
+    const materializedInput = materializeDocumentDraft(input, previousSeats);
+    if (!materializedInput.document) validateDraftReferences(materializedInput);
+    await assertLotsBelongToEvent(tx, ctx, eventId, materializedInput);
 
     await tx.eventSeat.deleteMany({ where: { contaId: ctx.contaId, eventMapId: mapId } });
-    await tx.eventSeatGroup.deleteMany({ where: { contaId: ctx.contaId, eventMapId: mapId } });
     await tx.eventMapObject.deleteMany({ where: { contaId: ctx.contaId, eventMapId: mapId } });
     await tx.eventMapSection.deleteMany({ where: { contaId: ctx.contaId, eventMapId: mapId } });
     await tx.eventMapLevel.deleteMany({ where: { contaId: ctx.contaId, eventMapId: mapId } });
 
     await tx.eventMap.update({
       where: { id: mapId },
-      data: { name: input.name ?? current.name },
+      data: {
+        name: materializedInput.name ?? current.name,
+        ...(materializedInput.document ? { draftDocument: toInputJson(materializedInput.document) } : {}),
+      },
     });
 
     await tx.eventMapLevel.createMany({
-      data: input.levels.map((level) => ({
+      data: materializedInput.levels.map((level) => ({
         id: level.id,
         contaId: ctx.contaId,
         eventMapId: mapId,
@@ -545,9 +720,9 @@ export async function updateEventMapDraft(
       })),
     });
 
-    if (input.sections.length > 0) {
+    if (materializedInput.sections.length > 0) {
       await tx.eventMapSection.createMany({
-        data: input.sections.map((section) => ({
+        data: materializedInput.sections.map((section) => ({
           id: section.id,
           contaId: ctx.contaId,
           eventMapId: mapId,
@@ -562,9 +737,9 @@ export async function updateEventMapDraft(
       });
     }
 
-    if (input.objects.length > 0) {
+    if (materializedInput.objects.length > 0) {
       await tx.eventMapObject.createMany({
-        data: input.objects.map((object) => ({
+        data: materializedInput.objects.map((object) => ({
           id: object.id,
           contaId: ctx.contaId,
           eventMapId: mapId,
@@ -584,43 +759,15 @@ export async function updateEventMapDraft(
       });
     }
 
-    if (input.seatGroups.length > 0) {
-      await tx.eventSeatGroup.createMany({
-        data: input.seatGroups.map((group) => ({
-          id: group.id,
-          contaId: ctx.contaId,
-          eventMapId: mapId,
-          levelId: group.levelId,
-          name: group.name,
-          x: decimal(group.x),
-          y: decimal(group.y),
-          rotation: decimal(group.rotation),
-          rows: group.rows,
-          columns: group.columns,
-          seatWidth: decimal(group.seatWidth),
-          seatHeight: decimal(group.seatHeight),
-          gapX: decimal(group.gapX),
-          gapY: decimal(group.gapY),
-          paddingTop: decimal(group.paddingTop),
-          paddingRight: decimal(group.paddingRight),
-          paddingBottom: decimal(group.paddingBottom),
-          paddingLeft: decimal(group.paddingLeft),
-          numbering: toInputJson(group.numbering),
-          locked: group.locked,
-        })),
-      });
-    }
-
-    if (input.seats.length > 0) {
+    if (materializedInput.seats.length > 0) {
       await tx.eventSeat.createMany({
-        data: input.seats.map((seat) => ({
+        data: materializedInput.seats.map((seat) => ({
           id: seat.id,
           contaId: ctx.contaId,
           eventMapId: mapId,
           levelId: seat.levelId,
           sectionId: seat.sectionId,
           objectId: seat.objectId,
-          groupId: seat.groupId,
           rowIndex: seat.rowIndex,
           columnIndex: seat.columnIndex,
           technicalCode: seat.technicalCode,
@@ -646,17 +793,16 @@ export async function updateEventMapDraft(
       eventId,
       before: current,
       metadata: {
-        levels: input.levels.length,
-        sections: input.sections.length,
-        objects: input.objects.length,
-        seatGroups: input.seatGroups.length,
-        seats: input.seats.length,
+        levels: materializedInput.levels.length,
+        sections: materializedInput.sections.length,
+        objects: materializedInput.objects.length,
+        seats: materializedInput.seats.length,
       },
     });
 
     await syncNumberedSeatLotCapacities(tx, ctx, eventId, {
-      sections: input.sections,
-      seats: input.seats,
+      sections: materializedInput.sections,
+      seats: materializedInput.seats,
     });
 
     return mapEventMap(await getMapRecordOrThrow(tx, ctx.contaId, eventId, mapId));
@@ -705,6 +851,37 @@ export async function updateEventMapSettings(
   });
 
   return getEventMap(ctx, eventId, mapId);
+}
+
+export async function updateEventMapReferenceChart(
+  ctx: EventsContext,
+  eventId: string,
+  mapId: string,
+  input: UpdateEventMapReferenceChartInput,
+) {
+  return prisma.$transaction(async (tx) => {
+    const current = await tx.eventMap.findFirst({ where: { id: mapId, contaId: ctx.contaId, eventId } });
+    if (!current) throw new EventsError('MAPA_NAO_ENCONTRADO', 'Mapa do evento não encontrado.', 404);
+    assertMapEditable(current);
+
+    const referenceChart = input.referenceChart as MapReferenceChart | null;
+    if (referenceChart) assertOwnedReferenceChart(referenceChart, ctx.contaId, mapId);
+    await tx.eventMap.update({
+      where: { id: mapId },
+      data: { referenceChart: referenceChart ? toInputJson(referenceChart) : Prisma.DbNull },
+    });
+    await recordMapAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.map.reference-chart.update',
+      entityId: mapId,
+      eventId,
+      before: { referenceChart: current.referenceChart },
+      after: { referenceChart },
+    });
+
+    return mapEventMap(await getMapRecordOrThrow(tx, ctx.contaId, eventId, mapId));
+  });
 }
 
 async function replaceCurrentPublishedMap(
@@ -798,7 +975,8 @@ export async function publishEventMap(ctx: EventsContext, eventId: string, mapId
 
     const nextVersion = (map.versions[0]?.version ?? 0) + 1;
     const publicSlug = map.publicSlug ?? createPublicToken('map');
-    const snapshot = { ...mapEventMap(map), publicSlug, publicEnabled: true, publicUrl: publicMapPath(publicSlug) };
+    const { referenceChart: _referenceChart, ...mapSnapshot } = mapEventMap(map);
+    const snapshot = { ...mapSnapshot, publicSlug, publicEnabled: true, publicUrl: publicMapPath(publicSlug) };
     const soldCodes = new Set(
       (
         await tx.eventMapPublicSeat.findMany({
@@ -854,7 +1032,6 @@ export async function publishEventMap(ctx: EventsContext, eventId: string, mapId
               rotation: seat.rotation,
               metadata: toInputJson({
                 objectId: seat.objectId,
-                groupId: seat.groupId,
                 rowIndex: seat.rowIndex,
                 columnIndex: seat.columnIndex,
               }),
@@ -995,10 +1172,37 @@ export async function duplicateEventMap(
     }
 
     const source = await getMapRecordOrThrow(tx, ctx.contaId, eventId, mapId);
+    const sourceDocument = readDraftDocument(source);
     const levelIdMap = new Map<string, string>();
     const sectionIdMap = new Map<string, string>();
     const objectIdMap = new Map<string, string>();
-    const groupIdMap = new Map<string, string>();
+    const blockIdMap = new Map<string, string>();
+    const rowIdMap = new Map<string, string>();
+    const seatIdMap = new Map<string, string>();
+
+    for (const level of source.levels) levelIdMap.set(level.id, createLocalId('level'));
+    for (const section of source.sections) sectionIdMap.set(section.id, createLocalId('section'));
+    for (const object of source.objects) objectIdMap.set(object.id, createLocalId('object'));
+    for (const section of sourceDocument.sections) {
+      for (const block of section.blocks) {
+        blockIdMap.set(block.id, createLocalId('block'));
+        for (const row of block.rows) {
+          rowIdMap.set(row.id, createLocalId('row'));
+          for (const seat of row.seats) seatIdMap.set(seat.id, createLocalId('seat'));
+        }
+      }
+    }
+    for (const seat of source.seats) {
+      if (!seatIdMap.has(seat.id)) seatIdMap.set(seat.id, createLocalId('seat'));
+    }
+    const duplicatedDocument = remapDraftDocument(sourceDocument, {
+      levelIds: levelIdMap,
+      sectionIds: sectionIdMap,
+      objectIds: objectIdMap,
+      blockIds: blockIdMap,
+      rowIds: rowIdMap,
+      seatIds: seatIdMap,
+    });
 
     const created = await tx.eventMap.create({
       data: {
@@ -1007,13 +1211,9 @@ export async function duplicateEventMap(
         name: input.name ?? `${source.name} (cópia)`,
         status: 'DRAFT',
         createdByUserId: ctx.userId,
+        ...(duplicatedDocument ? { draftDocument: toInputJson(duplicatedDocument) } : {}),
       },
     });
-
-    for (const level of source.levels) levelIdMap.set(level.id, createLocalId('level'));
-    for (const section of source.sections) sectionIdMap.set(section.id, createLocalId('section'));
-    for (const object of source.objects) objectIdMap.set(object.id, createLocalId('object'));
-    for (const group of source.seatGroups) groupIdMap.set(group.id, createLocalId('seatgroup'));
 
     if (source.levels.length > 0) {
       await tx.eventMapLevel.createMany({
@@ -1070,43 +1270,15 @@ export async function duplicateEventMap(
       });
     }
 
-    if (source.seatGroups.length > 0) {
-      await tx.eventSeatGroup.createMany({
-        data: source.seatGroups.map((group) => ({
-          id: groupIdMap.get(group.id)!,
-          contaId: ctx.contaId,
-          eventMapId: created.id,
-          levelId: levelIdMap.get(group.levelId)!,
-          name: group.name,
-          x: group.x,
-          y: group.y,
-          rotation: group.rotation,
-          rows: group.rows,
-          columns: group.columns,
-          seatWidth: group.seatWidth,
-          seatHeight: group.seatHeight,
-          gapX: group.gapX,
-          gapY: group.gapY,
-          paddingTop: group.paddingTop,
-          paddingRight: group.paddingRight,
-          paddingBottom: group.paddingBottom,
-          paddingLeft: group.paddingLeft,
-          numbering: toInputJson(group.numbering as Record<string, unknown>),
-          locked: group.locked,
-        })),
-      });
-    }
-
     if (source.seats.length > 0) {
       await tx.eventSeat.createMany({
         data: source.seats.map((seat) => ({
-          id: createLocalId('seat'),
+          id: seatIdMap.get(seat.id) ?? createLocalId('seat'),
           contaId: ctx.contaId,
           eventMapId: created.id,
           levelId: levelIdMap.get(seat.levelId)!,
           sectionId: sectionIdMap.get(seat.sectionId)!,
           objectId: seat.objectId ? objectIdMap.get(seat.objectId) ?? null : null,
-          groupId: seat.groupId ? groupIdMap.get(seat.groupId) ?? null : null,
           rowIndex: seat.rowIndex,
           columnIndex: seat.columnIndex,
           technicalCode: seat.technicalCode,
@@ -1205,7 +1377,6 @@ function mapPublicSeat(seat: EventMapPublicSeatRecord) {
     originalSeatId: seat.originalSeatId,
     levelId: seat.levelId,
     sectionId: seat.sectionId,
-    groupId: typeof metadata.groupId === 'string' ? metadata.groupId : null,
     rowIndex: typeof metadata.rowIndex === 'number' ? metadata.rowIndex : null,
     columnIndex: typeof metadata.columnIndex === 'number' ? metadata.columnIndex : null,
     sectionName: seat.sectionName,
@@ -1423,7 +1594,7 @@ export async function getPublicEventMap(publicSlug: string) {
     levels: Array.isArray(snapshot.levels) ? snapshot.levels : [],
     sections: Array.isArray(snapshot.sections) ? snapshot.sections : [],
     objects: Array.isArray(snapshot.objects) ? snapshot.objects : [],
-    seatGroups: Array.isArray(snapshot.seatGroups) ? snapshot.seatGroups : [],
+    document: snapshot.document && typeof snapshot.document === 'object' ? snapshot.document : null,
     seats: seats.map(mapPublicSeat),
     counts: {
       seats: seats.length,
@@ -1517,7 +1688,7 @@ export async function reservePublicEventMapSeats(publicSlug: string, input: Publ
       throw new EventsError('ASSENTOS_INDISPONIVEIS', 'Um ou mais assentos acabaram de ficar indisponíveis.', 409);
     }
 
-    const expiresAt = addHours(new Date(), 24);
+    const expiresAt = getPublicReservationExpiration(new Date());
     const reservation = await tx.eventMapReservation.create({
       data: {
         contaId: map.contaId,
@@ -1595,7 +1766,7 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
     }
 
     const totalAmount = publicSeats.reduce((sum, seat) => sum + toMoney(seat.unitPrice), 0);
-    const expiresAt = addHours(new Date(), 24);
+    const proposedExpiresAt = getPublicReservationExpiration(new Date(), input.paymentMethod);
     const order =
       reservation.order ??
       (await tx.eventMapOrder.create({
@@ -1612,7 +1783,7 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
           status: 'PAYMENT_PENDING',
           paymentProvider: 'ASAAS',
           paymentMethod: input.paymentMethod,
-          expiresAt,
+          expiresAt: proposedExpiresAt,
           accessToken: createPublicToken('order'),
         },
         include: { items: { include: { ticket: true } } },
@@ -1621,6 +1792,17 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
     if (order.status === 'CANCELLED' || order.status === 'EXPIRED' || order.status === 'REFUNDED') {
       throw new EventsError('PEDIDO_NAO_REUTILIZAVEL', 'A reserva já foi encerrada. Selecione os assentos novamente.', 409);
     }
+    if (order.asaasPaymentId && order.paymentMethod !== input.paymentMethod) {
+      throw new EventsError(
+        'METODO_PAGAMENTO_FIXO',
+        'A cobrança deste pedido já foi gerada com outro meio de pagamento. Cancele o pedido e inicie uma nova compra para alterá-lo.',
+        409,
+      );
+    }
+
+    const expiresAt = order.asaasPaymentId
+      ? order.expiresAt ?? proposedExpiresAt
+      : proposedExpiresAt;
 
     await tx.eventMapReservation.update({
       where: { id: reservation.id },
@@ -1632,10 +1814,10 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
       },
     });
 
-    if (order.paymentMethod !== input.paymentMethod) {
+    if (order.paymentMethod !== input.paymentMethod || order.expiresAt?.getTime() !== expiresAt.getTime()) {
       await tx.eventMapOrder.update({
         where: { id: order.id },
-        data: { paymentMethod: input.paymentMethod },
+        data: { paymentMethod: input.paymentMethod, expiresAt },
       });
     }
 
@@ -1663,7 +1845,7 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
       map,
       publicSeats,
       totalAmount,
-      expiresAt: order.expiresAt ?? expiresAt,
+      expiresAt,
     };
   });
 
@@ -2065,6 +2247,7 @@ export async function confirmPublicEventMapOrderPayment(params: {
           eventMapOrderId: order.id,
           orderItemId: item.id,
           ticketCode: createPublicToken('ticket').toUpperCase(),
+          checkInCode: createCheckInCode(),
         },
       });
       createdItems.push({ item, ticket, seat });
@@ -2490,6 +2673,7 @@ export async function getPublicEventMapOrderTickets(orderId: string, accessToken
       technicalCode: item.technicalCode,
       unitPrice: toMoney(item.unitPriceSnapshot),
       ticketCode: item.ticket?.ticketCode ?? '',
+      checkInCode: item.ticket?.checkInCode ?? toCheckInCode(item.ticket?.ticketCode ?? ''),
       ticketStatus: item.ticket?.status ?? 'VALID',
       seat: mapPublicSeat(item.publicSeat),
     })),
@@ -2537,6 +2721,7 @@ export async function getEventMapOrderTicketsForAdmin(contaId: string, orderId: 
       technicalCode: item.technicalCode,
       unitPrice: toMoney(item.unitPriceSnapshot),
       ticketCode: item.ticket?.ticketCode ?? '',
+      checkInCode: item.ticket?.checkInCode ?? toCheckInCode(item.ticket?.ticketCode ?? ''),
       ticketStatus: item.ticket?.status ?? 'VALID',
       seat: mapPublicSeat(item.publicSeat),
     })),

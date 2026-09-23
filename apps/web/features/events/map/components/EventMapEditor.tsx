@@ -1,10 +1,11 @@
 'use client';
-import { getSelectableItems, mergeEventMapWithLocalDraft, validateDuplicateSelection, validateGroupCandidates, validatePublishableEventMap, getPrimarySelection, type EventMapDTO, type EventTicketMode } from '@alusa/domain';
+import { BLOCKING_MAP_DOCUMENT_DIAGNOSTIC_TYPES, getSelectableItems, mergeEventMapWithLocalDraft, validateDuplicateSelection, validateEventMapDocument, validateEventMapIntegrity, validateGroupCandidates, validatePublishableEventMap, getPrimarySelection, type EventMapDTO, type EventTicketMode } from '@alusa/domain';
 import { registerEventMapE2EBridge, unregisterEventMapE2EBridge } from '../browser/event-map-e2e-bridge';
 import { clearEventMapLocalDraft, readEventMapLocalDraft, writeEventMapLocalDraft } from '../browser/local-draft-storage';
 import { listTicketLots } from '../../events-service';
-import { getEventMap, publishEventMap, saveEventMapDraft } from '../api/event-map-service';
+import { getEventMap, publishEventMap, saveEventMapDraft, updateEventMapReferenceChart } from '../api/event-map-service';
 import { useEventMapEditorStore } from '../store/event-map-editor-store';
+import type { SeatCreationMode } from '../canvas/render/map-creation-draft';
 import { FloatingMapToolbar } from './FloatingMapToolbar';
 import { FloatingTextFormatToolbar } from './FloatingTextFormatToolbar';
 import { MapAreasPanel } from './MapAreasPanel';
@@ -13,12 +14,15 @@ import { MapEditorHeader } from './MapEditorHeader';
 import { MapEditorLoading } from './MapEditorLoading';
 import { MapLayersPanel } from './MapLayersPanel';
 import { MapPropertiesPanel } from './MapPropertiesPanel';
+import { SeatCreationToolbar } from './SeatCreationToolbar';
 
 import dynamic from 'next/dynamic';
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { toast } from '@/components/ui/toast';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 
 const MapCanvas = dynamic(() => import('./MapCanvas').then((mod) => mod.MapCanvas), {
   ssr: false,
@@ -33,6 +37,10 @@ const eventMapEditorQueryKeys = {
 function isTypingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable;
+}
+
+function isNativeActivationTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement && target.closest('button, a, [role="button"], [role="menuitem"], [role="combobox"]') !== null;
 }
 
 function buildPublishValidationInput(map: EventMapDTO) {
@@ -80,6 +88,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
   const setTool = useEventMapEditorStore((state) => state.setTool);
   const isDirty = useEventMapEditorStore((state) => state.isDirty);
   const markSaved = useEventMapEditorStore((state) => state.markSaved);
+  const setReferenceChart = useEventMapEditorStore((state) => state.setReferenceChart);
   const patchMapSettings = useEventMapEditorStore((state) => state.patchMapSettings);
   const toPayload = useEventMapEditorStore((state) => state.toPayload);
   const updateObject = useEventMapEditorStore((state) => state.updateObject);
@@ -87,6 +96,11 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
   const spacePanPreviousToolRef = useRef<typeof tool | null>(null);
   const zoomKeyDownAtRef = useRef(0);
   const loadedMapIdRef = useRef<string | null>(null);
+  const referenceChartSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const referenceChartSaveRevisionRef = useRef(0);
+  const [seatCreationMode, setSeatCreationMode] = useState<SeatCreationMode>('RECTANGULAR');
+  const [referenceChartEditing, setReferenceChartEditing] = useState(false);
+  const [publishConfirmationOpen, setPublishConfirmationOpen] = useState(false);
 
   const ZOOM_TAP_THRESHOLD_MS = 250;
 
@@ -97,6 +111,37 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
     const object = map.objects.find((entry) => entry.id === primary.id);
     return object?.type === 'TEXT' ? object : null;
   }, [map, selection]);
+
+  const publishBlocked = useMemo(() => {
+    if (!map) return true;
+    const documentDiagnostics = map.document ? validateEventMapDocument(map.document).diagnostics : [];
+    const integrityErrors = validateEventMapIntegrity(map).errors;
+    return documentDiagnostics.some((diagnostic) => BLOCKING_MAP_DOCUMENT_DIAGNOSTIC_TYPES.includes(diagnostic.type)) || integrityErrors.some((error) => error.severity === 'error');
+  }, [map]);
+
+  const handleReferenceChartTransformCommit = useCallback(
+    (transform: NonNullable<EventMapDTO['referenceChart']>['transform']) => {
+      const current = useEventMapEditorStore.getState().map?.referenceChart;
+      if (!current) return;
+      const next = { ...current, transform };
+      const revision = ++referenceChartSaveRevisionRef.current;
+      setReferenceChart(next);
+      const save = referenceChartSaveQueueRef.current
+        .catch(() => undefined)
+        .then(() => updateEventMapReferenceChart(eventId, mapId, next));
+      referenceChartSaveQueueRef.current = save.then(
+        () => undefined,
+        (error: unknown) => {
+          if (revision === referenceChartSaveRevisionRef.current) setReferenceChart(current);
+          toast.error({
+            title: 'Não foi possível salvar a posição da planta',
+            description: error instanceof Error ? error.message : 'Tente novamente.',
+          });
+        },
+      );
+    },
+    [eventId, mapId, setReferenceChart],
+  );
 
   useEffect(() => {
     if (mapQuery.data && loadedMapIdRef.current !== mapQuery.data.id) {
@@ -201,6 +246,10 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
       return;
     }
 
+    setPublishConfirmationOpen(true);
+  }
+
+  async function confirmPublish() {
     const latestState = useEventMapEditorStore.getState();
     const payload = latestState.isDirty ? latestState.toPayload() : null;
     if (latestState.isDirty && !payload) {
@@ -210,6 +259,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
 
     try {
       await publishMutation.mutateAsync(payload);
+      setPublishConfirmationOpen(false);
     } catch {
       // publishMutation.onError already surfaces the toast
     }
@@ -223,6 +273,13 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (isTypingTarget(event.target)) return;
+      if (
+        isNativeActivationTarget(event.target) &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        event.key !== 'Delete' &&
+        event.key !== 'Backspace'
+      ) return;
       const key = event.key.toLowerCase();
       const store = useEventMapEditorStore.getState();
 
@@ -236,6 +293,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
       }
       if (store.map?.status === 'ARCHIVED') return;
       if (event.code === 'Space') {
+        if (isNativeActivationTarget(event.target)) return;
         event.preventDefault();
         if (!spacePanPreviousToolRef.current) {
           spacePanPreviousToolRef.current = store.tool;
@@ -301,6 +359,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
 
     function handleKeyUp(event: KeyboardEvent) {
       if (event.code === 'Space') {
+        if (isNativeActivationTarget(event.target) && !spacePanPreviousToolRef.current) return;
         restoreSpacePanTool();
         event.preventDefault();
         return;
@@ -356,6 +415,8 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
     >
       <MapEditorHeader
         map={map}
+        eventId={eventId}
+        mapId={mapId}
         isSaving={saveMutation.isPending}
         isPublishing={publishMutation.isPending}
         onSave={() => saveMutation.mutate()}
@@ -367,7 +428,31 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
           });
           queryClient.setQueryData(eventMapEditorQueryKeys.map(eventId, mapId), savedMap);
         }}
+        publishBlocked={publishBlocked}
+        onReferenceChartEditingChange={setReferenceChartEditing}
       />
+      <Dialog open={publishConfirmationOpen} onOpenChange={(open) => !publishMutation.isPending && setPublishConfirmationOpen(open)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Publicar mapa para venda?</DialogTitle>
+            <DialogDescription>
+              A publicação disponibiliza os assentos visíveis e vinculados a lotes na página pública do evento.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="rounded-lg bg-slate-50 p-3"><span className="block text-xs text-slate-500">Setores</span><strong>{map.counts.sections}</strong></div>
+            <div className="rounded-lg bg-slate-50 p-3"><span className="block text-xs text-slate-500">Assentos no mapa</span><strong>{map.counts.seats}</strong></div>
+            <div className="rounded-lg bg-slate-50 p-3"><span className="block text-xs text-slate-500">Visíveis para venda</span><strong>{map.seats.filter((seat) => seat.publicVisible).length}</strong></div>
+            <div className="rounded-lg bg-slate-50 p-3"><span className="block text-xs text-slate-500">Setores sem lote</span><strong>{map.sections.filter((section) => !section.lotId).length}</strong></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPublishConfirmationOpen(false)} disabled={publishMutation.isPending}>Voltar ao mapa</Button>
+            <Button onClick={() => void confirmPublish()} disabled={publishMutation.isPending}>
+              {publishMutation.isPending ? 'Publicando…' : 'Confirmar publicação'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <div className="min-h-0 flex-1">
         <section className="relative h-full min-w-0 overflow-hidden">
           <div className={`absolute left-4 top-24 z-20 flex max-h-[calc(100%-8rem)] w-72 flex-col gap-3${!['select', 'pan', 'zoom'].includes(tool) ? ' pointer-events-none' : ''}`}>
@@ -375,21 +460,39 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
             <MapLayersPanel />
           </div>
           {!readOnly ? (
-            <div className="pointer-events-auto absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2">
-              <FloatingMapToolbar activeTool={tool} onToolChange={setTool} />
-              {selectedTextObject ? (
-                <FloatingTextFormatToolbar
-                  object={selectedTextObject}
-                  disabled={map.status === 'ARCHIVED'}
-                  onUpdate={(patch) => updateObject(selectedTextObject.id, patch)}
-                />
-              ) : null}
-            </div>
+            <>
+              <div className="pointer-events-auto absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2">
+                <FloatingMapToolbar activeTool={tool} onToolChange={setTool} />
+                {tool === 'seat' ? (
+                  <SeatCreationToolbar mode={seatCreationMode} onModeChange={setSeatCreationMode} />
+                ) : null}
+                {selectedTextObject ? (
+                  <FloatingTextFormatToolbar
+                    object={selectedTextObject}
+                    disabled={map.status === 'ARCHIVED'}
+                    onUpdate={(patch) => updateObject(selectedTextObject.id, patch)}
+                  />
+                ) : null}
+              </div>
+            </>
           ) : null}
-          <MapCanvas readOnly={readOnly} />
+          <MapCanvas
+            readOnly={readOnly}
+            seatCreationMode={seatCreationMode}
+            referenceChartEditing={referenceChartEditing}
+            onReferenceChartTransformCommit={handleReferenceChartTransformCommit}
+          />
           <MapBottomBar />
           <div className={!['select', 'pan', 'zoom'].includes(tool) ? 'pointer-events-none' : ''}>
-            <MapPropertiesPanel lots={lotsQuery.data ?? []} status={map.status} />
+            <MapPropertiesPanel
+              status={map.status}
+              eventId={eventId}
+              mapId={mapId}
+              lots={lotsQuery.data ?? []}
+              lotsLoading={lotsQuery.isLoading}
+              lotsError={lotsQuery.isError}
+              onReferenceChartEditingChange={setReferenceChartEditing}
+            />
           </div>
         </section>
       </div>

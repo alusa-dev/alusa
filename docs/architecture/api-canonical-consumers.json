@@ -502,11 +502,11 @@
           "lifecycle": "active-migration",
           "implemented": true,
           "consumers": {
-            "total": 165,
+            "total": 168,
             "bySurface": {
               "packages": 1,
               "scripts": 3,
-              "web": 161
+              "web": 164
             },
             "files": [
               {
@@ -635,7 +635,7 @@
               },
               {
                 "file": "apps/web/src/server/finance/cobranca-command-http.service.ts",
-                "occurrences": 22
+                "occurrences": 23
               },
               {
                 "file": "apps/web/src/server/finance/cobranca-detail-http-route.service.ts",
@@ -675,7 +675,7 @@
               },
               {
                 "file": "apps/web/tests/unit/cobrancas.id.put.test.ts",
-                "occurrences": 9
+                "occurrences": 11
               },
               {
                 "file": "apps/web/tests/unit/cobrancas.refund.post.test.ts",
@@ -716,10 +716,10 @@
         "path": "/api/alunos",
         "owner": "apps/web/src/server/alunos",
         "consumers": {
-          "total": 60,
+          "total": 63,
           "bySurface": {
             "packages": 1,
-            "web": 59
+            "web": 62
           },
           "files": [
             {
@@ -761,6 +761,10 @@
             {
               "file": "apps/web/e2e/helpers/aluno-wizard.ts",
               "occurrences": 1
+            },
+            {
+              "file": "apps/web/e2e/responsible-invite-multitenant.spec.ts",
+              "occurrences": 3
             },
             {
               "file": "apps/web/e2e/wizard-aluno-simples.spec.ts",

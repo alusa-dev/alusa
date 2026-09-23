@@ -1,70 +1,49 @@
-import {
-  MIN_OBJECT_SIZE,
-  computeUniformTransformPatch,
-  getObjectBounds,
-  getSeatGroupTightBounds,
-  getSnapshotsUnionBounds,
-  resolveLiveUniformScale,
-} from '@alusa/domain';
-import type { CorridorTransformPreviewPatch, ObjectTransformSnapshot } from '@alusa/domain';
-import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../../api/event-map-service';
+import { MIN_OBJECT_SIZE, findMapBlockOwner, findMapRowOwner, getObjectBounds, shortestRotationDelta } from '@alusa/domain';
+import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO } from '../../api/event-map-service';
 import {
   applyObjectTransformLivePreview,
   beginObjectTransformSession,
   readObjectTransformCommitFromNodes,
-  readSeatGroupTransformFromNode,
   readSeatTransformFromNode,
   resolveLiveObjectTransformScale,
   resetNodeScale,
   type ObjectTransformSession,
 } from '../adapters/konva-transform-adapter';
-import { applyCorridorTransformLivePreview, beginCorridorTransformToolSession, buildCorridorTransformCommitPatches, resetCorridorTransformer } from '../corridor/corridor-transform-session';
-import type { CorridorSnapCommitContext, CorridorTransformStageContext, CorridorTransformToolSession } from '../corridor/corridor-transform-session';
-
 import Konva from 'konva';
-
 import type { MapTransformSessionKind } from './transform-routing';
+import type { MapSelectionItem } from '@alusa/domain';
 
 export type UniformTransformSession = ObjectTransformSession;
 
 export type MapTransformSession = {
   kind: MapTransformSessionKind;
-  corridor: CorridorTransformToolSession | null;
+  transformAnchor: string;
+  initialTransformerRotation: number;
   objectTransform: ObjectTransformSession | null;
-  seatGroupTransform: SeatGroupTransformSession | null;
   selectedObjectIds: string[];
   selectedSeatIds: string[];
-  selectedSeatGroupIds: string[];
+  parametricItems: Array<Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>>;
+  initialParametricTransforms: Map<string, Konva.Transform>;
+  parametricPreviewSnapshots: ParametricPreviewSnapshot[];
 };
 
-type SeatGroupTransformSnapshot = ObjectTransformSnapshot & {
-  seatWidth: number;
-  seatHeight: number;
-  gapX: number;
-  gapY: number;
-  paddingTop: number;
-  paddingRight: number;
-  paddingBottom: number;
-  paddingLeft: number;
+type ParametricPreviewSnapshot = {
+  itemKey: string;
+  id: string;
+  kind: 'seat' | 'line' | 'label';
+  x: number;
+  y: number;
+  rotation: number;
+  scaleX: number;
+  scaleY: number;
+  points?: number[];
 };
 
-type SeatGroupTransformSession = {
-  snapshots: Map<string, SeatGroupTransformSnapshot>;
-  initialBounds: ReturnType<typeof getSnapshotsUnionBounds>;
-  initialRotation: number;
-  currentScale: number;
-  currentRotationDelta: number;
-};
-
-export type MapTransformStageContext = CorridorTransformStageContext & {
-  snap?: CorridorSnapCommitContext;
-};
+export type MapTransformStageContext = { stage: Konva.Stage; transformer: Konva.Transformer };
 
 export type MapTransformCommitResult = {
   objectUpdates: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
   seatUpdates: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
-  seatGroupUpdates: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }>;
-  corridorPatches: CorridorTransformPreviewPatch[];
 };
 
 export function beginUniformTransformSession(
@@ -79,58 +58,73 @@ export function beginUniformTransformSession(
 export function beginMapTransformSession(input: {
   kind: MapTransformSessionKind;
   map: EventMapDTO;
-  corridorIds: string[];
   selectedObjectIds: string[];
   selectedSeatIds: string[];
-  selectedSeatGroupIds: string[];
+  parametricItems?: Array<Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>>;
   stage: Konva.Stage;
   transformer: Konva.Transformer;
 }): MapTransformSession | null {
-  const { kind, map, corridorIds, selectedObjectIds, selectedSeatIds, selectedSeatGroupIds, stage, transformer } = input;
-  const seatGroupTransform = beginSeatGroupTransformSession(map, selectedSeatGroupIds, stage, transformer);
-
-  if (kind === 'corridor') {
-    const corridor = beginCorridorTransformToolSession(map, corridorIds, transformer, stage);
-    if (!corridor) return null;
-    return {
-      kind,
-      corridor,
-      objectTransform: null,
-      seatGroupTransform,
-      selectedObjectIds,
-      selectedSeatIds,
-      selectedSeatGroupIds,
-    };
+  const objectTransform = beginObjectTransformSession(input.map, input.selectedObjectIds, input.stage, input.transformer);
+  const parametricItems = input.parametricItems ?? [];
+  const initialParametricTransforms = new Map<string, Konva.Transform>();
+  const parametricPreviewSnapshots: ParametricPreviewSnapshot[] = [];
+  const capturedNodes = new Set<string>();
+  if (input.map.document) {
+    for (const item of parametricItems) {
+      const itemKey = `${item.type}:${item.id}`;
+      const proxy = input.stage.findOne(`#node-${item.type}-${item.id}`);
+      if (proxy) initialParametricTransforms.set(itemKey, proxy.getTransform().copy());
+      const owner = item.type === 'seatblock'
+        ? findMapBlockOwner(input.map.document, item.id)
+        : findMapRowOwner(input.map.document, item.id);
+      const rows = owner
+        ? (item.type === 'seatblock' ? owner.block.rows : owner.block.rows.filter((row) => row.id === item.id))
+        : [];
+    for (const row of rows) {
+      for (const seatId of row.seatIds) {
+        if (capturedNodes.has(`node-${seatId}`)) continue;
+        const node = input.stage.findOne(`#node-${seatId}`);
+        if (node) {
+          capturedNodes.add(`node-${seatId}`);
+          parametricPreviewSnapshots.push({ itemKey, id: `node-${seatId}`, kind: 'seat', x: node.x(), y: node.y(), rotation: node.rotation(), scaleX: node.scaleX(), scaleY: node.scaleY() });
+        }
+      }
+      for (const [id, kind] of [[`node-seatrow-line-${row.id}`, 'line'], [`node-seatrow-label-${row.id}`, 'label']] as const) {
+        if (capturedNodes.has(id)) continue;
+        const node = input.stage.findOne(`#${id}`);
+        if (!node) continue;
+        capturedNodes.add(id);
+        parametricPreviewSnapshots.push({
+          itemKey,
+          id,
+          kind,
+          x: node.x(),
+          y: node.y(),
+          rotation: node.rotation(),
+          scaleX: node.scaleX(),
+          scaleY: node.scaleY(),
+          ...(kind === 'line' ? { points: (node as Konva.Line).points() } : {}),
+        });
+      }
+    }
+    }
   }
-
-  if (kind === 'uniform') {
-    const objectTransform = beginObjectTransformSession(map, selectedObjectIds, stage, transformer);
-    if (!objectTransform) return null;
-    return {
-      kind,
-      corridor: null,
-      objectTransform,
-      seatGroupTransform,
-      selectedObjectIds,
-      selectedSeatIds,
-      selectedSeatGroupIds,
-    };
-  }
-
-  const objectTransform = beginObjectTransformSession(map, selectedObjectIds, stage, transformer, {
-    excludeCorridors: true,
-  });
-  if (!objectTransform && selectedSeatIds.length === 0 && selectedSeatGroupIds.length === 0) return null;
-
+  if (!objectTransform && input.selectedSeatIds.length === 0 && initialParametricTransforms.size === 0) return null;
   return {
-    kind: 'generic',
-    corridor: null,
+    kind: input.kind,
+    transformAnchor: input.transformer.getActiveAnchor() ?? '',
+    initialTransformerRotation: input.transformer.rotation(),
     objectTransform,
-    seatGroupTransform,
-    selectedObjectIds,
-    selectedSeatIds,
-    selectedSeatGroupIds,
+    selectedObjectIds: input.selectedObjectIds,
+    selectedSeatIds: input.selectedSeatIds,
+    parametricItems,
+    initialParametricTransforms,
+    parametricPreviewSnapshots,
   };
+}
+
+export function isSemanticGenericRotation(session: MapTransformSession | null) {
+  return session?.kind === 'generic' && session.transformAnchor === 'rotater';
 }
 
 function readNodeScale(stage: Konva.Stage, objectId: string) {
@@ -139,153 +133,72 @@ function readNodeScale(stage: Konva.Stage, objectId: string) {
   return { scaleX: node.scaleX(), scaleY: node.scaleY() };
 }
 
-function readSeatGroupNodeScale(stage: Konva.Stage, groupId: string) {
-  const node = stage.findOne(`#node-seatgroup-${groupId}`);
-  if (!node) return null;
-  return { scaleX: node.scaleX(), scaleY: node.scaleY() };
-}
-
-function beginSeatGroupTransformSession(
-  map: EventMapDTO,
-  selectedSeatGroupIds: string[],
-  stage: Konva.Stage,
-  transformer: Konva.Transformer,
-): SeatGroupTransformSession | null {
-  const snapshots = new Map<string, SeatGroupTransformSnapshot>();
-
-  for (const groupId of selectedSeatGroupIds) {
-    const group = map.seatGroups?.find((entry) => entry.id === groupId);
-    if (!group || group.locked) continue;
-    const bounds = getSeatGroupTightBounds(group, map.seats);
-    snapshots.set(groupId, {
-      x: group.x,
-      y: group.y,
-      width: bounds.width,
-      height: bounds.height,
-      rotation: group.rotation ?? 0,
-      type: 'SEAT_GROUP',
-      seatWidth: group.seatWidth,
-      seatHeight: group.seatHeight,
-      gapX: group.gapX,
-      gapY: group.gapY,
-      paddingTop: group.paddingTop,
-      paddingRight: group.paddingRight,
-      paddingBottom: group.paddingBottom,
-      paddingLeft: group.paddingLeft,
-    });
-
-    const node = stage.findOne(`#node-seatgroup-${groupId}`);
-    if (node) resetNodeScale(node);
-  }
-
-  if (snapshots.size === 0) return null;
-  return {
-    snapshots,
-    initialBounds: getSnapshotsUnionBounds([...snapshots.values()]),
-    initialRotation: transformer.rotation(),
-    currentScale: 1,
-    currentRotationDelta: 0,
-  };
-}
-
-function buildSeatGroupPatchFromUniformTransform(snapshot: SeatGroupTransformSnapshot, patch: ReturnType<typeof computeUniformTransformPatch>) {
-  const scale = Math.max(
-    Math.abs((typeof patch.width === 'number' ? patch.width : snapshot.width) / snapshot.width),
-    Math.abs((typeof patch.height === 'number' ? patch.height : snapshot.height) / snapshot.height),
-    0.001,
-  );
-
-  return {
-    x: patch.x,
-    y: patch.y,
-    rotation: patch.rotation,
-    seatWidth: Math.max(MIN_OBJECT_SIZE, snapshot.seatWidth * scale),
-    seatHeight: Math.max(MIN_OBJECT_SIZE, snapshot.seatHeight * scale),
-    gapX: Math.max(0, snapshot.gapX * scale),
-    gapY: Math.max(0, snapshot.gapY * scale),
-    paddingTop: Math.max(0, snapshot.paddingTop * scale),
-    paddingRight: Math.max(0, snapshot.paddingRight * scale),
-    paddingBottom: Math.max(0, snapshot.paddingBottom * scale),
-    paddingLeft: Math.max(0, snapshot.paddingLeft * scale),
-  };
-}
-
-function applySeatGroupTransformLivePreview(session: SeatGroupTransformSession, stage: Konva.Stage, transformer: Konva.Transformer) {
-  const scale = resolveLiveUniformScale(session.snapshots, (groupId) => readSeatGroupNodeScale(stage, groupId));
-  const rotationDelta = transformer.rotation() - session.initialRotation;
-  session.currentScale = scale;
-  session.currentRotationDelta = rotationDelta;
-
-  for (const [groupId, snapshot] of session.snapshots) {
-    const node = stage.findOne(`#node-seatgroup-${groupId}`);
-    if (!node) continue;
-    const patch = computeUniformTransformPatch(
-      snapshot,
-      session.initialBounds.centerX,
-      session.initialBounds.centerY,
-      scale,
-      rotationDelta,
-    );
-    node.x(patch.x);
-    node.y(patch.y);
-    node.rotation(patch.rotation ?? 0);
-    resetNodeScale(node);
-  }
-}
-
-function buildSeatGroupTransformCommits(session: SeatGroupTransformSession, stage: Konva.Stage, transformer: Konva.Transformer) {
-  const liveScale = resolveLiveUniformScale(session.snapshots, (groupId) => readSeatGroupNodeScale(stage, groupId));
-  if (Math.abs(liveScale - 1) > 0.001) session.currentScale = liveScale;
-  session.currentRotationDelta = transformer.rotation() - session.initialRotation;
-  const scale = session.currentScale;
-  const rotationDelta = session.currentRotationDelta;
-  const updates: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }> = [];
-
-  for (const [groupId, snapshot] of session.snapshots) {
-    const patch = computeUniformTransformPatch(
-      snapshot,
-      session.initialBounds.centerX,
-      session.initialBounds.centerY,
-      scale,
-      rotationDelta,
-      { clampDimensions: true },
-    );
-    updates.push({ id: groupId, patch: buildSeatGroupPatchFromUniformTransform(snapshot, patch) });
-    const node = stage.findOne(`#node-seatgroup-${groupId}`);
-    if (node) resetNodeScale(node);
-  }
-
-  return updates;
-}
-
-export function applyMapTransformLivePreview(
-  session: MapTransformSession,
-  ctx: MapTransformStageContext,
-) {
-  const { stage, transformer } = ctx;
-
-  if (session.kind === 'corridor' && session.corridor) {
-    applyCorridorTransformLivePreview(session.corridor, ctx);
-    transformer.forceUpdate();
+export function applyMapTransformLivePreview(session: MapTransformSession, ctx: MapTransformStageContext) {
+  if (session.parametricItems.length > 0 && session.initialParametricTransforms.size > 0) {
+    for (const item of session.parametricItems) {
+      const itemKey = `${item.type}:${item.id}`;
+      const initialTransform = session.initialParametricTransforms.get(itemKey);
+      const proxy = ctx.stage.findOne(`#node-${item.type}-${item.id}`);
+      if (!proxy || !initialTransform) continue;
+      const delta = proxy.getTransform().copy().multiply(initialTransform.copy().invert()).getMatrix();
+      const [a, b, c, d, e, f] = delta;
+      const scale = Math.hypot(a ?? 1, b ?? 0);
+      const rotation = Math.atan2(b ?? 0, a ?? 1) * (180 / Math.PI);
+      for (const snapshot of session.parametricPreviewSnapshots.filter((entry) => entry.itemKey === itemKey)) {
+        const node = ctx.stage.findOne(`#${snapshot.id}`);
+        if (!node) continue;
+        const transformPoint = (x: number, y: number) => ({ x: (a ?? 1) * x + (c ?? 0) * y + (e ?? 0), y: (b ?? 0) * x + (d ?? 1) * y + (f ?? 0) });
+      if (snapshot.kind === 'line' && snapshot.points) {
+        const points: number[] = [];
+        for (let index = 0; index < snapshot.points.length; index += 2) {
+          const point = transformPoint(snapshot.points[index]!, snapshot.points[index + 1]!);
+          points.push(point.x, point.y);
+        }
+        node.position({ x: 0, y: 0 });
+        (node as Konva.Line).points(points);
+      } else {
+        const point = transformPoint(snapshot.x, snapshot.y);
+        node.position(point);
+        if (snapshot.kind === 'seat') {
+          node.rotation(snapshot.rotation + rotation);
+          node.scaleX(snapshot.scaleX * scale);
+          node.scaleY(snapshot.scaleY * scale);
+        }
+      }
+    }
+    }
+    ctx.transformer.forceUpdate();
     return;
   }
-
-  if (session.objectTransform) {
-    if (session.kind === 'generic') {
-      transformer.forceUpdate();
-      return;
-    }
-
-    const scale = resolveLiveObjectTransformScale(session.objectTransform, (objectId) =>
-      readNodeScale(stage, objectId),
-    );
-    applyObjectTransformLivePreview({ session: session.objectTransform, stage, transformer, scale });
-    transformer.forceUpdate();
+  if (!session.objectTransform) return;
+  if (session.kind === 'generic') {
+    ctx.transformer.forceUpdate();
+    return;
   }
+  const scale = resolveLiveObjectTransformScale(session.objectTransform, (objectId) => readNodeScale(ctx.stage, objectId));
+  applyObjectTransformLivePreview({ session: session.objectTransform, stage: ctx.stage, transformer: ctx.transformer, scale });
+  ctx.transformer.forceUpdate();
+}
 
-  if (session.seatGroupTransform) {
-    applySeatGroupTransformLivePreview(session.seatGroupTransform, stage, transformer);
-    transformer.forceUpdate();
+export function restoreParametricLivePreview(session: MapTransformSession, stage: Konva.Stage) {
+  for (const snapshot of session.parametricPreviewSnapshots) {
+    const node = stage.findOne(`#${snapshot.id}`);
+    if (!node) continue;
+    node.position({ x: snapshot.x, y: snapshot.y });
+    node.rotation(snapshot.rotation);
+    node.scaleX(snapshot.scaleX);
+    node.scaleY(snapshot.scaleY);
+    if (snapshot.kind === 'line' && snapshot.points) (node as Konva.Line).points(snapshot.points);
+  }
+}
+
+export function resetParametricPreviewScales(session: MapTransformSession, stage: Konva.Stage) {
+  for (const snapshot of session.parametricPreviewSnapshots) {
+    if (snapshot.kind !== 'seat') continue;
+    const node = stage.findOne(`#${snapshot.id}`);
+    if (!node) continue;
+    node.scaleX(snapshot.scaleX);
+    node.scaleY(snapshot.scaleY);
   }
 }
 
@@ -294,91 +207,57 @@ export function buildMapTransformCommit(
   ctx: MapTransformStageContext,
   map: EventMapDTO,
 ): MapTransformCommitResult {
-  const { stage, transformer } = ctx;
-  const objectUpdates: Array<{ id: string; patch: Partial<EventMapObjectDTO> }> = [];
-  const seatUpdates: Array<{ id: string; patch: Partial<EventSeatDTO> }> = [];
-  const seatGroupUpdates: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }> = [];
-  let corridorPatches: CorridorTransformPreviewPatch[] = [];
+  const objectUpdates: MapTransformCommitResult['objectUpdates'] = [];
+  const seatUpdates: MapTransformCommitResult['seatUpdates'] = [];
 
-  if (session.kind === 'corridor' && session.corridor) {
-    corridorPatches = buildCorridorTransformCommitPatches(session.corridor, ctx, ctx.snap);
-  } else if (session.objectTransform) {
+  if (session.objectTransform) {
     if (session.kind === 'generic') {
-      const updates = readObjectTransformCommitFromNodes(
-        stage,
-        session.objectTransform,
-        [...session.objectTransform.snapshots.keys()],
-        { scaleMode: 'independent' },
+      objectUpdates.push(
+        ...readObjectTransformCommitFromNodes(ctx.stage, session.objectTransform, [...session.objectTransform.snapshots.keys()], {
+          scaleMode: 'independent',
+        }).map((entry) => ({ id: entry.id, patch: entry.patch })),
       );
-      for (const entry of updates) {
-        objectUpdates.push({ id: entry.id, patch: entry.patch });
-      }
     } else {
-      const scale = resolveLiveObjectTransformScale(session.objectTransform, (objectId) =>
-        readNodeScale(stage, objectId),
+      const scale = resolveLiveObjectTransformScale(session.objectTransform, (objectId) => readNodeScale(ctx.stage, objectId));
+      applyObjectTransformLivePreview({ session: session.objectTransform, stage: ctx.stage, transformer: ctx.transformer, scale });
+      const selectedIds = session.kind === 'uniform' ? session.selectedObjectIds : [...session.objectTransform.snapshots.keys()];
+      objectUpdates.push(
+        ...readObjectTransformCommitFromNodes(ctx.stage, session.objectTransform, selectedIds).map((entry) => ({
+          id: entry.id,
+          patch: entry.patch,
+        })),
       );
-      applyObjectTransformLivePreview({ session: session.objectTransform, stage, transformer, scale });
-      const selectedIds =
-        session.kind === 'uniform' ? session.selectedObjectIds : [...session.objectTransform.snapshots.keys()];
-      const updates = readObjectTransformCommitFromNodes(stage, session.objectTransform, selectedIds);
-      for (const entry of updates) {
-        objectUpdates.push({ id: entry.id, patch: entry.patch });
-      }
     }
   }
 
   for (const objectId of session.selectedObjectIds) {
     const object = map.objects.find((entry) => entry.id === objectId);
-    const node = stage.findOne(`#node-${objectId}`);
-    if (!object || !node || object.type === 'TEXT' || object.type === 'CORRIDOR') continue;
-    if (session.kind === 'uniform' || session.kind === 'generic') continue;
-
-    const scaleX = node.scaleX();
-    const scaleY = node.scaleY();
+    const node = ctx.stage.findOne(`#node-${objectId}`);
+    if (!object || !node || object.type === 'TEXT' || session.kind !== 'generic') continue;
     const bounds = getObjectBounds(object);
     const x = node.x();
     const y = node.y();
-    const width = Math.max(MIN_OBJECT_SIZE, bounds.width * Math.abs(scaleX || 1));
-    const height = Math.max(MIN_OBJECT_SIZE, bounds.height * Math.abs(scaleY || 1));
+    const width = Math.max(MIN_OBJECT_SIZE, bounds.width * Math.abs(node.scaleX() || 1));
+    const height = Math.max(MIN_OBJECT_SIZE, bounds.height * Math.abs(node.scaleY() || 1));
     const rotation = node.rotation();
-
     resetNodeScale(node);
-
-    if (![x, y, width, height, rotation].every(Number.isFinite)) continue;
-    objectUpdates.push({ id: objectId, patch: { x, y, width, height, rotation } });
+    if ([x, y, width, height, rotation].every(Number.isFinite)) objectUpdates.push({ id: objectId, patch: { x, y, width, height, rotation } });
   }
 
   for (const seatId of session.selectedSeatIds) {
     const seat = map.seats.find((entry) => entry.id === seatId);
-    const node = stage.findOne(`#node-${seatId}`);
+    const node = ctx.stage.findOne(`#node-${seatId}`);
     if (!seat || !node || seat.status === 'SOLD') continue;
-
     const patch = readSeatTransformFromNode(node, seat.size ?? 24);
-    if (!patch) continue;
-    seatUpdates.push({ id: seatId, patch });
+    if (patch) seatUpdates.push({ id: seatId, patch });
   }
 
-  if (session.seatGroupTransform) {
-    seatGroupUpdates.push(...buildSeatGroupTransformCommits(session.seatGroupTransform, stage, transformer));
-  } else {
-    for (const groupId of session.selectedSeatGroupIds) {
-      const group = map.seatGroups?.find((entry) => entry.id === groupId);
-      const node = stage.findOne(`#node-seatgroup-${groupId}`);
-      if (!group || !node || group.locked) continue;
-
-      const patch = readSeatGroupTransformFromNode(node, group);
-      if (!patch) continue;
-      seatGroupUpdates.push({ id: groupId, patch });
-    }
-  }
-
-  return { objectUpdates, seatUpdates, seatGroupUpdates, corridorPatches };
+  return { objectUpdates, seatUpdates };
 }
 
 export function resetMapTransformTransformer(session: MapTransformSession, transformer: Konva.Transformer) {
-  if (session.kind === 'corridor') {
-    resetCorridorTransformer(transformer);
-  }
+  if (isSemanticGenericRotation(session)) transformer.rotation(0);
+  transformer.forceUpdate();
 }
 
-export type { ObjectTransformSnapshot };
+export { shortestRotationDelta };

@@ -1,9 +1,9 @@
 {
   "generatedAt": "deterministic",
-  "routeCount": 519,
+  "routeCount": 521,
   "summary": {
     "byApp": {
-      "web": 492,
+      "web": 494,
       "admin": 27
     },
     "byCategory": {
@@ -16,10 +16,10 @@
       "configuration": 11,
       "contracts": 14,
       "development": 4,
-      "events": 48,
+      "events": 49,
       "files": 3,
       "finance": 78,
-      "identity": 22,
+      "identity": 23,
       "integrations": 5,
       "mobile": 47,
       "operations": 48,
@@ -33,7 +33,7 @@
       "tenant": 7
     },
     "byProtection": {
-      "AUTH_USER": 271,
+      "AUTH_USER": 273,
       "CRON_SECRET": 45,
       "MOBILE_ACCESS_TOKEN": 43,
       "PUBLIC": 41,
@@ -41,9 +41,9 @@
       "TENANT_FINANCE": 61,
       "WEBHOOK_TOKEN": 4
     },
-    "withoutNearbyTest": 479,
+    "withoutNearbyTest": 478,
     "withoutAuthEvidence": 0,
-    "directPrisma": 0,
+    "directPrisma": 2,
     "directAsaas": 0
   },
   "routes": [
@@ -3226,6 +3226,27 @@
     },
     {
       "app": "web",
+      "file": "apps/web/app/api/events/[eventId]/maps/[mapId]/reference-chart/route.ts",
+      "path": "/api/events/:eventId/maps/:mapId/reference-chart",
+      "category": "events",
+      "protection": "AUTH_USER",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantSession",
+        "withTenantSession",
+        "getEventsContext",
+        "getServerSession",
+        "resolveSessionAccess",
+        "authenticate"
+      ],
+      "hasDTOValidation": true,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
       "file": "apps/web/app/api/events/[eventId]/maps/[mapId]/settings/route.ts",
       "path": "/api/events/:eventId/maps/:mapId/settings",
       "category": "events",
@@ -5520,7 +5541,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -5760,7 +5781,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -6200,7 +6221,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -9203,6 +9224,23 @@
       ],
       "hasDTOValidation": true,
       "hasNearbyTest": false,
+      "directPrisma": true,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
+      "file": "apps/web/app/api/users/accounts/route.ts",
+      "path": "/api/users/accounts",
+      "category": "identity",
+      "protection": "AUTH_USER",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "getServerSession",
+        "resolveSessionAccess"
+      ],
+      "hasDTOValidation": false,
+      "hasNearbyTest": false,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -9255,7 +9293,7 @@
       ],
       "hasDTOValidation": true,
       "hasNearbyTest": false,
-      "directPrisma": false,
+      "directPrisma": true,
       "directAsaas": false
     },
     {

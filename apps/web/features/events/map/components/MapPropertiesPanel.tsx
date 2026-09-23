@@ -9,25 +9,24 @@ import {
   getPrimarySelection,
   getSelectableItems,
   getTextMode,
-  normalizeRotation,
-  resolveSeatedSectorFromSelection,
-  shortestRotationDelta,
   validateDuplicateSelection,
 } from '@alusa/domain';
 import type { TextMode } from '@alusa/domain';
+import type { EventMapDTO, EventMapLevelDTO, EventMapObjectDTO, EventSeatDTO } from '../api/event-map-service';
 import type { TicketLotDTO } from '../../events-service';
-import type { EventMapDTO, EventMapLevelDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
+import type { MapSeatBlock, MapSeatRow } from '@alusa/domain';
 import { useEventMapEditorStore } from '../store/event-map-editor-store';
 
 import { cn } from '@/lib/utils';
+import { CreatorIcon } from '@/components/icons/hugeicons';
 
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { RectangleHorizontal, RectangleVertical, CircleAlert } from 'lucide-react';
 
 import { EVENT_SEAT_STATUS_LABELS, EVENT_SEAT_STATUSES } from '@alusa/shared';
 
-import { SeatedSectorProperties } from './SeatedSectorProperties';
+import { ParametricSeatProperties } from './ParametricSeatProperties';
+import { MapReferenceChartPanel } from './MapReferenceChartPanel';
 import {
   MAP_PANEL_COLOR_INPUT_CLASS,
   MAP_PANEL_FIELD_CLASS,
@@ -37,17 +36,11 @@ import {
   MAP_PANEL_SELECT_TRIGGER_CLASS,
   MAP_TEXT_AREA_CLASS,
 } from './text-format-options';
-import {
-  MAP_PANEL_SELECT_NONE_VALUE,
-  MapPanelSelect,
-  mapNullableSelectChange,
-  mapNullableSelectValue,
-} from './MapPanelSelect';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { mapNullableSelectChange, mapNullableSelectValue, MapPanelSelect, MAP_PANEL_SELECT_NONE_VALUE } from './MapPanelSelect';
 import {
   Select,
   SelectContent,
@@ -76,6 +69,10 @@ function numberValue(value: number | null | undefined, fallback = 0) {
   return Number.isFinite(Number(value)) ? Number(value) : fallback;
 }
 
+function formatMapCurrency(value: number) {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+}
+
 function PanelField({
   label,
   hint,
@@ -98,7 +95,7 @@ function PanelField({
                   className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-slate-400 transition-colors hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30"
                   aria-label={hint}
                 >
-                  <CircleAlert className="h-3.5 w-3.5" strokeWidth={2} />
+                  <CreatorIcon name="info" size={14} />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-56 text-xs">
@@ -251,7 +248,7 @@ function LevelArtboardProperties({
             onClick={() => onUpdate(applyArtboardOrientation(level, 'landscape'))}
           >
             <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden>
-              <RectangleHorizontal className="h-3.5 w-3.5" />
+              <CreatorIcon name="horizontal" size={14} />
             </span>
             Horizontal
           </button>
@@ -270,7 +267,7 @@ function LevelArtboardProperties({
             onClick={() => onUpdate(applyArtboardOrientation(level, 'portrait'))}
           >
             <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden>
-              <RectangleVertical className="h-3.5 w-3.5" />
+              <CreatorIcon name="vertical" size={14} />
             </span>
             Vertical
           </button>
@@ -448,14 +445,13 @@ function ObjectProperties({
   const fill = String(object.data.fill ?? '#ffffff');
   const stroke = String(object.data.stroke ?? '#64748b');
   const strokeWidth = numberValue(typeof object.data.strokeWidth === 'number' ? object.data.strokeWidth : Number(object.data.strokeWidth), 1.5);
-  const strokeStyle = String(object.data.strokeStyle ?? (object.type === 'CORRIDOR' ? 'dashed' : 'solid'));
+  const strokeStyle = String(object.data.strokeStyle ?? 'solid');
   const opacity = numberValue(typeof object.data.opacity === 'number' ? object.data.opacity : Number(object.data.opacity), object.type === 'SECTION' ? 0 : 1);
   const cornerRadius = numberValue(typeof object.data.cornerRadius === 'number' ? object.data.cornerRadius : Number(object.data.cornerRadius), object.type === 'TABLE' ? 999 : object.data.shape ? 0 : 8);
   const fillEnabled = isAppearanceFlagEnabled(object.data.fillEnabled);
   const strokeEnabled = isAppearanceFlagEnabled(object.data.strokeEnabled);
   const strokeWidthEnabled = isAppearanceFlagEnabled(object.data.strokeWidthEnabled);
   const strokeControlsEnabled = strokeEnabled && strokeWidthEnabled;
-
   function updateData(patch: Record<string, unknown>) {
     onUpdate({ data: { ...object.data, ...patch } });
   }
@@ -489,30 +485,18 @@ function ObjectProperties({
           </PanelField>
           <PanelField label="Rotação">
             <Input
-              data-testid={object.type === 'CORRIDOR' ? 'corridor-rotation' : undefined}
               type="number"
               step={1}
               value={numberValue(object.rotation, 0)}
               disabled={disabled}
               onChange={(event) =>
-                onUpdate({
-	                  rotation:
-	                    object.type === 'CORRIDOR'
-	                      ? normalizeRotation(toNumber(event.target.value, object.rotation ?? 0))
-	                      : toNumber(event.target.value, object.rotation ?? 0),
-                })
+                onUpdate({ rotation: toNumber(event.target.value, object.rotation ?? 0) })
               }
               className={FIELD_CLASS}
             />
           </PanelField>
         </div>
       </PanelSection>
-
-      {object.type === 'CORRIDOR' ? (
-        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-          Corredor visual: não desloca assentos. Interseções entre dois ou mais corredores continuam destacadas no mapa.
-        </p>
-      ) : null}
 
       <PanelSection title="Aparência">
         {object.type !== 'SECTION' ? (
@@ -594,7 +578,23 @@ function ObjectProperties({
   );
 }
 
-export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; status: EventMapDTO['status'] }) {
+export function MapPropertiesPanel({
+  status,
+  eventId,
+  mapId,
+  lots,
+  lotsLoading,
+  lotsError,
+  onReferenceChartEditingChange,
+}: {
+  status: EventMapDTO['status'];
+  eventId: string;
+  mapId: string;
+  lots: TicketLotDTO[];
+  lotsLoading: boolean;
+  lotsError: boolean;
+  onReferenceChartEditingChange: (editing: boolean) => void;
+}) {
   const map = useEventMapEditorStore((state) => state.map);
   const selection = useEventMapEditorStore((state) => state.selection);
   const updateSection = useEventMapEditorStore((state) => state.updateSection);
@@ -602,18 +602,12 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
   const updateObject = useEventMapEditorStore((state) => state.updateObject);
   const updateLevel = useEventMapEditorStore((state) => state.updateLevel);
   const fitArtboardToView = useEventMapEditorStore((state) => state.fitArtboardToView);
-  const updateSeatGroup = useEventMapEditorStore((state) => state.updateSeatGroup);
-  const applyTransform = useEventMapEditorStore((state) => state.applyTransform);
-  const deleteSeatGroup = useEventMapEditorStore((state) => state.deleteSeatGroup);
+  const updateSeatBlock = useEventMapEditorStore((state) => state.updateSeatBlock);
+  const updateSeatRow = useEventMapEditorStore((state) => state.updateSeatRow);
   const deleteSection = useEventMapEditorStore((state) => state.deleteSection);
   const inlineTextEditorActive = useEventMapEditorStore((state) => state.inlineTextEditorActive);
   const disabled = status === 'ARCHIVED';
   const multiSelectCount = getSelectableItems(selection).length;
-
-  const seatedSector = useMemo(() => {
-    if (!map || multiSelectCount > 1) return null;
-    return resolveSeatedSectorFromSelection(map, selection);
-  }, [map, multiSelectCount, selection]);
 
   const duplicateValidation = useMemo(() => {
     if (!map) return { ok: true as const };
@@ -626,11 +620,41 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
     if (!primary) return null;
     if (primary.type === 'section') return { type: 'section' as const, value: map.sections.find((section) => section.id === primary.id) };
     if (primary.type === 'seat') return { type: 'seat' as const, value: map.seats.find((seat) => seat.id === primary.id) };
-    if (primary.type === 'seatgroup') return { type: 'seatgroup' as const, value: (map.seatGroups ?? []).find((g) => g.id === primary.id) };
+    if (primary.type === 'seatblock') {
+      const section = map.document?.sections.find((candidate) => candidate.blocks.some((block) => block.id === primary.id));
+      return { type: 'seatblock' as const, section, value: section?.blocks.find((block) => block.id === primary.id) };
+    }
+    if (primary.type === 'seatrow') {
+      const section = map.document?.sections.find((candidate) => candidate.blocks.some((block) => block.rows.some((row) => row.id === primary.id)));
+      const block = section?.blocks.find((candidate) => candidate.rows.some((row) => row.id === primary.id));
+      return { type: 'seatrow' as const, section, block, value: block?.rows.find((row) => row.id === primary.id) };
+    }
     if (primary.type === 'object') return { type: 'object' as const, value: map.objects.find((object) => object.id === primary.id) };
     if (primary.type === 'level') return { type: 'level' as const, value: map.levels.find((level) => level.id === primary.id) };
     return null;
   }, [map, selection]);
+
+  const parametricSelection = useMemo(() => {
+    if (!map?.document || multiSelectCount > 1) return null;
+    if (selected?.type === 'seatblock' && selected.section && selected.value) {
+      return { section: selected.section, block: selected.value as MapSeatBlock, row: null as MapSeatRow | null };
+    }
+    if (selected?.type === 'seatrow' && selected.section && selected.block && selected.value) {
+      return { section: selected.section, block: selected.block as MapSeatBlock, row: selected.value as MapSeatRow };
+    }
+    return null;
+  }, [map?.document, multiSelectCount, selected]);
+
+  const selectedSection = selected?.type === 'section' ? selected.value : undefined;
+  const selectedSectionForSale = selectedSection ?? parametricSelection?.section;
+  const selectedSectionLot = selectedSectionForSale?.lotId
+    ? lots.find((lot) => lot.id === selectedSectionForSale.lotId)
+    : undefined;
+  const selectedSectionSellableSeatCount = selectedSectionForSale
+    ? map?.seats.filter((seat) =>
+        seat.sectionId === selectedSectionForSale.id && seat.status === 'AVAILABLE' && seat.publicVisible,
+      ).length ?? 0
+    : 0;
 
   function updateLevelArtboard(
     levelId: string,
@@ -640,24 +664,6 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
     fitArtboardToView();
   }
 
-  function updateSectionObjectData(objectId: string, patch: { label?: string }) {
-    const object = map?.objects.find((entry) => entry.id === objectId);
-    if (!object) return;
-    updateObject(objectId, { data: { ...object.data, ...patch } });
-  }
-
-  function rotateSeatGroupLikeCanvas(groupId: string, nextRotation: number, currentRotation: number) {
-    const angleDelta = shortestRotationDelta(currentRotation, nextRotation);
-    if (Math.abs(angleDelta) < 0.001) return;
-    applyTransform({
-      type: 'ROTATE_SELECTION',
-      payload: {
-        selection: [{ type: 'seatgroup', id: groupId }],
-        angleDelta,
-        mode: 'free',
-      },
-    });
-  }
 
   return (
     <aside
@@ -676,64 +682,93 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
             <p className="mt-1 text-xs text-slate-500">
               {duplicateValidation.ok
                 ? 'Mova, duplique ou exclua em lote. Use ⌘/Ctrl + G para agrupar e ⌘/Ctrl + U para desagrupar.'
-                : 'Mova ou exclua em lote. Duplique apenas um grupo de assentos por vez. Use ⌘/Ctrl + G para agrupar e ⌘/Ctrl + U para desagrupar.'}
+                : 'Mova ou exclua em lote. Duplique apenas um bloco de fileiras por vez. Use ⌘/Ctrl + G para agrupar e ⌘/Ctrl + U para desagrupar.'}
             </p>
           </div>
         ) : null}
 
-        {!selected?.value && !seatedSector ? (
+        {!selected?.value ? (
           <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-            Selecione uma prancheta, setor, cadeira ou objeto para editar propriedades.
+            Selecione uma prancheta, setor, assento ou objeto para editar propriedades.
           </div>
         ) : null}
 
-        {multiSelectCount <= 1 && seatedSector ? (
-          <SeatedSectorProperties
-            context={seatedSector}
-            lots={lots}
+        {multiSelectCount <= 1 && parametricSelection ? (
+          <ParametricSeatProperties
+            section={parametricSelection.section}
+            block={parametricSelection.block}
+            row={parametricSelection.row}
             disabled={disabled}
-            onUpdateSection={updateSection}
-            onUpdateSeatGroup={updateSeatGroup}
-            onUpdateSectionObject={updateSectionObjectData}
-            onRotateSeatGroup={rotateSeatGroupLikeCanvas}
-            onDeleteSection={deleteSection}
+            onUpdateBlock={updateSeatBlock}
+            onUpdateRow={updateSeatRow}
           />
         ) : null}
 
-        {multiSelectCount <= 1 && selected?.type === 'section' && selected.value! && !seatedSector ? (
-          <PanelSection title="Setor">
-            <PanelField label="Nome do setor">
-              <Input
-                value={selected.value!.name}
-                disabled={disabled}
-                onChange={(event) => updateSection(selected.value!.id, { name: event.target.value })}
-                className={FIELD_CLASS}
-              />
-            </PanelField>
-            <PanelField label="Lote vinculado">
+        {multiSelectCount <= 1 && selectedSection ? (
+          <>
+            <PanelSection title="Setor">
+              <PanelField label="Nome do setor">
+                <Input
+                  value={selectedSection.name}
+                  disabled={disabled}
+                  onChange={(event) => updateSection(selectedSection.id, { name: event.target.value })}
+                  className={FIELD_CLASS}
+                />
+              </PanelField>
+              <PanelField label="Capacidade">
+                <Input
+                  type="number"
+                  min={0}
+                  value={selectedSection.capacity ?? ''}
+                  disabled={disabled}
+                  onChange={(event) => updateSection(selectedSection.id, { capacity: event.target.value ? Number(event.target.value) : null })}
+                  className={FIELD_CLASS}
+                />
+              </PanelField>
+            </PanelSection>
+          </>
+        ) : null}
+
+        {multiSelectCount <= 1 && selectedSectionForSale ? (
+          <PanelSection title="Valores do setor">
+            <PanelField label="Lote e valor do ingresso">
               <MapPanelSelect
-                value={mapNullableSelectValue(selected.value!.lotId)}
-                disabled={disabled}
-                placeholder="Sem lote"
+                value={mapNullableSelectValue(selectedSectionForSale.lotId)}
+                disabled={disabled || lotsLoading}
+                placeholder={lotsLoading ? 'Carregando lotes…' : 'Selecione um lote'}
                 options={[
-                  { value: MAP_PANEL_SELECT_NONE_VALUE, label: 'Sem lote' },
-                  ...lots.map((lot) => ({ value: lot.id, label: lot.name })),
+                  { value: MAP_PANEL_SELECT_NONE_VALUE, label: 'Sem lote atribuído' },
+                  ...lots.map((lot) => ({
+                    value: lot.id,
+                    label: `${lot.name} · ${formatMapCurrency(lot.unitPrice)}`,
+                  })),
                 ]}
-                onValueChange={(value) =>
-                  updateSection(selected.value!.id, { lotId: mapNullableSelectChange(value) })
-                }
+                onValueChange={(value) => updateSection(selectedSectionForSale.id, { lotId: mapNullableSelectChange(value) })}
               />
             </PanelField>
-            <PanelField label="Capacidade">
-              <Input
-                type="number"
-                min={0}
-                value={selected.value!.capacity ?? ''}
-                disabled={disabled}
-                onChange={(event) => updateSection(selected.value!.id, { capacity: event.target.value ? Number(event.target.value) : null })}
-                className={FIELD_CLASS}
-              />
-            </PanelField>
+            {lotsLoading ? (
+              <p className="text-xs leading-5 text-slate-500">Carregando os lotes deste evento.</p>
+            ) : lotsError ? (
+              <p className="text-xs leading-5 text-amber-700">Não foi possível carregar os lotes do evento. Tente novamente mais tarde.</p>
+            ) : selectedSectionLot ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs text-slate-500">Valor por assento</span>
+                  <span className="text-sm font-semibold tabular-nums text-slate-950">{formatMapCurrency(selectedSectionLot.unitPrice)}</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  {selectedSectionSellableSeatCount} {selectedSectionSellableSeatCount === 1 ? 'assento vendável' : 'assentos vendáveis'} neste setor. Os assentos herdam o valor do lote.
+                </p>
+              </div>
+            ) : selectedSectionForSale.lotId ? (
+              <p className="text-xs leading-5 text-amber-700">O lote vinculado não está disponível. Escolha outro lote para definir o valor deste setor.</p>
+            ) : (
+              <p className="text-xs leading-5 text-slate-500">
+                {lots.length > 0
+                  ? 'Escolha um lote para aplicar seu valor aos assentos deste setor.'
+                  : 'Este evento ainda não tem lotes de ingresso. Crie um lote para definir o valor do setor.'}
+              </p>
+            )}
           </PanelSection>
         ) : null}
 
@@ -797,82 +832,6 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
           </>
         ) : null}
 
-        {multiSelectCount <= 1 && selected?.type === 'seatgroup' && selected.value && !seatedSector ? (
-          <>
-            <PanelSection title="Grupo de cadeiras">
-              <PanelField label="Nome">
-                <Input
-                  value={selected.value.name ?? ''}
-                  disabled={disabled}
-                  onChange={(event) => updateSeatGroup(selected.value!.id, { name: event.target.value || null })}
-                  className={FIELD_CLASS}
-                />
-              </PanelField>
-              <div className={PANEL_GRID_CLASS}>
-                <PanelField label="Fileiras">
-                  <Input type="number" min={1} max={50} value={selected.value.rows} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { rows: Math.max(1, toNumber(event.target.value, selected.value!.rows)) })} className={FIELD_CLASS} />
-                </PanelField>
-                <PanelField label="Colunas">
-                  <Input type="number" min={1} max={80} value={selected.value.columns} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { columns: Math.max(1, toNumber(event.target.value, selected.value!.columns)) })} className={FIELD_CLASS} />
-                </PanelField>
-              </div>
-            </PanelSection>
-            <PanelSection title="Cadeira">
-              <div className={PANEL_GRID_CLASS}>
-                <PanelField label="Largura">
-                  <Input type="number" min={8} value={selected.value.seatWidth} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { seatWidth: Math.max(8, toNumber(event.target.value, selected.value!.seatWidth)) })} className={FIELD_CLASS} />
-                </PanelField>
-                <PanelField label="Altura">
-                  <Input type="number" min={8} value={selected.value.seatHeight} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { seatHeight: Math.max(8, toNumber(event.target.value, selected.value!.seatHeight)) })} className={FIELD_CLASS} />
-                </PanelField>
-              </div>
-              <div className={PANEL_GRID_CLASS}>
-                <PanelField label="Espaç. horizontal">
-                  <Input type="number" min={0} value={selected.value.gapX} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { gapX: Math.max(0, toNumber(event.target.value, selected.value!.gapX)) })} className={FIELD_CLASS} />
-                </PanelField>
-                <PanelField label="Espaç. vertical">
-                  <Input type="number" min={0} value={selected.value.gapY} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { gapY: Math.max(0, toNumber(event.target.value, selected.value!.gapY)) })} className={FIELD_CLASS} />
-                </PanelField>
-              </div>
-            </PanelSection>
-            <PanelSection title="Posição">
-              <div className={PANEL_GRID_CLASS}>
-                <PanelField label="X">
-                  <Input type="number" value={selected.value.x} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { x: toNumber(event.target.value, selected.value!.x) })} className={FIELD_CLASS} />
-                </PanelField>
-                <PanelField label="Y">
-                  <Input type="number" value={selected.value.y} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { y: toNumber(event.target.value, selected.value!.y) })} className={FIELD_CLASS} />
-                </PanelField>
-              </div>
-              <PanelField label="Rotação">
-                <Input
-                  type="number"
-                  value={selected.value.rotation}
-                  disabled={disabled}
-                  onChange={(event) =>
-                    rotateSeatGroupLikeCanvas(
-                      selected.value!.id,
-                      toNumber(event.target.value, 0),
-                      selected.value!.rotation ?? 0,
-                    )
-                  }
-                  className={FIELD_CLASS}
-                />
-              </PanelField>
-            </PanelSection>
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              disabled={disabled}
-              className="w-full"
-              onClick={() => deleteSeatGroup(selected.value!.id)}
-            >
-              Excluir grupo
-            </Button>
-          </>
-        ) : null}
-
         {multiSelectCount <= 1 && selected?.type === 'object' && selected.value! ? (
           selected.value!.type === 'TEXT' ? (
             <TextProperties
@@ -906,6 +865,16 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
               onUpdate={(patch) => updateLevelArtboard(selected.value!.id, patch)}
             />
           </>
+        ) : null}
+
+        {multiSelectCount === 0 || selected?.type === 'level' ? (
+          <MapReferenceChartPanel
+            eventId={eventId}
+            mapId={mapId}
+            disabled={disabled}
+            embedded
+            onEditingChange={onReferenceChartEditingChange}
+          />
         ) : null}
       </div>
     </aside>

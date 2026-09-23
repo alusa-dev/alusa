@@ -9,14 +9,14 @@ describe('map-object-appearance', () => {
     expect(seatFill('SOLD')).toBe('#94a3b8');
   });
 
-  it('derives corridor dash and appearance flags', () => {
-    const corridor = {
-      type: 'CORRIDOR',
+  it('derives dashed appearance flags for any map object', () => {
+    const object = {
+      type: 'GENERAL_AREA',
       data: { strokeStyle: 'dashed', strokeWidth: 2 },
     } as unknown as EventMapObjectDTO;
 
-    expect(getObjectStrokeDash(corridor)).toEqual([10, 6]);
-    expect(getObjectAppearance(corridor).dash).toEqual([10, 6]);
+    expect(getObjectStrokeDash(object)).toEqual([10, 6]);
+    expect(getObjectAppearance(object).dash).toEqual([10, 6]);
   });
 
   it('respects disabled stroke appearance', () => {

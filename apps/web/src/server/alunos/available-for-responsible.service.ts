@@ -6,6 +6,7 @@ export async function listAvailableStudentsForResponsible(contaId: string) {
       contaId,
       status: 'ATIVO',
       usuarioId: null,
+      responsaveis: { none: {} },
     },
     select: {
       id: true,

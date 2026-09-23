@@ -1,9 +1,17 @@
 import type { MapSelection } from '../selection/selection-utils.js';
 import type { MapTool } from '../types/event-map-types.js';
-import type { EventMapObjectDTO, EventSeatDTO, EventMapSectionDTO, EventMapLevelDTO, EventSeatGroupDTO } from '../types/event-map-types.js';
-import type { SeatGridConfig } from '../layout/seat-grid.js';
+import type { EventMapObjectDTO, EventSeatDTO, EventMapSectionDTO, EventMapLevelDTO } from '../types/event-map-types.js';
+import type { EventMapDocument } from '../model/event-map-document.js';
 
 export type MapCommand =
+  | {
+      type: 'REPLACE_DOCUMENT';
+      payload: {
+        before: EventMapDocument;
+        after: EventMapDocument;
+        description?: string;
+      };
+    }
   | {
       type: 'ADD_OBJECT';
       payload: {
@@ -46,9 +54,7 @@ export type MapCommand =
       payload: {
         objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
         seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
-        seatGroups?: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }>;
         skipSeatBaseLayoutTranslation?: boolean;
-        skipCorridorReflow?: boolean;
       };
     }
   | {
@@ -60,9 +66,7 @@ export type MapCommand =
         pivot?: { x: number; y: number } | null;
         objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
         seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
-        seatGroups?: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }>;
         skipSeatBaseLayoutTranslation?: boolean;
-        skipCorridorReflow?: boolean;
       };
     }
   | {
@@ -87,11 +91,9 @@ export type MapCommand =
       payload: {
         objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
         seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
-        seatGroups?: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }>;
         sections?: Array<{ id: string; patch: Partial<EventMapSectionDTO> }>;
         levels?: Array<{ id: string; patch: Partial<EventMapLevelDTO> }>;
         skipSeatBaseLayoutTranslation?: boolean;
-        skipCorridorReflow?: boolean;
       };
     }
   | {
@@ -105,20 +107,6 @@ export type MapCommand =
       type: 'DELETE_LEVEL';
       payload: {
         levelId: string;
-      };
-    }
-  | {
-      type: 'ADD_ROW';
-      payload: {
-        point: { x: number; y: number };
-        quantity: number;
-      };
-    }
-  | {
-      type: 'ADD_SEAT_GRID';
-      payload: {
-        point: { x: number; y: number };
-        config: Partial<SeatGridConfig>;
       };
     }
   | {
@@ -149,16 +137,6 @@ export type MapCommand =
       };
     }
   | {
-      type: 'TRANSFORM_CORRIDOR';
-      payload: {
-        objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
-        seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
-        seatGroups?: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }>;
-        skipSeatBaseLayoutTranslation?: boolean;
-        skipCorridorReflow?: boolean;
-      };
-    }
-  | {
       type: 'DUPLICATE_SELECTION';
       payload: {
         selection: MapSelection;
@@ -177,19 +155,6 @@ export type MapCommand =
       };
     }
   | {
-      type: 'UPDATE_SEAT_GROUP';
-      payload: {
-        id: string;
-        patch: Partial<EventSeatGroupDTO>;
-      };
-    }
-  | {
-      type: 'DELETE_SEAT_GROUP';
-      payload: {
-        id: string;
-      };
-    }
-  | {
       type: 'NUDGE_SELECTION';
       payload: {
         delta: { x: number; y: number };
@@ -202,7 +167,6 @@ export type MapCommand =
         seats: EventSeatDTO[];
         sections: EventMapSectionDTO[];
         levels: EventMapLevelDTO[];
-        seatGroups?: EventSeatGroupDTO[];
       };
     }
   | {

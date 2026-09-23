@@ -46,10 +46,7 @@ describe('public-map-level-view', () => {
   });
 
   it('hides seated sector SECTION objects from the public map canvas', () => {
-    const map = {
-      seatGroups: [{ id: 'group-1' }],
-      seats: [{ id: 'seat-1', groupId: 'group-1', sectionId: 'section-1' }],
-    };
+    const map = { seats: [{ id: 'seat-1', sectionId: 'section-1' }] };
     const objects = [
       { id: 'section-obj', type: 'SECTION', sectionId: 'section-1', levelId: 'level-base', hidden: false },
       { id: 'stage-obj', type: 'STAGE', levelId: 'level-base', hidden: false },

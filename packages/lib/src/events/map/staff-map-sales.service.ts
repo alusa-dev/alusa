@@ -13,6 +13,7 @@ import {
   buildPublicEventTicketSalePath,
   enqueueEventTicketEmail,
 } from '../ticket-email-outbox';
+import { createCheckInCode, toCheckInCode } from './ticket-code';
 import { assertEventTicketSalesOpen, EventsError, type EventsContext } from '../events.service';
 import type { CreateTicketSaleInput } from '../events.schema';
 
@@ -116,7 +117,6 @@ function mapStaffSeat(seat: {
     originalSeatId: seat.originalSeatId,
     levelId: seat.levelId,
     sectionId: seat.sectionId,
-    groupId: typeof metadata.groupId === 'string' ? metadata.groupId : null,
     rowIndex: typeof metadata.rowIndex === 'number' ? metadata.rowIndex : null,
     columnIndex: typeof metadata.columnIndex === 'number' ? metadata.columnIndex : null,
     sectionName: seat.sectionName,
@@ -232,7 +232,7 @@ export async function getStaffEventMapSalesView(ctx: Pick<EventsContext, 'contaI
     levels: Array.isArray(snapshot.levels) ? snapshot.levels : [],
     sections: Array.isArray(snapshot.sections) ? snapshot.sections : [],
     objects: Array.isArray(snapshot.objects) ? snapshot.objects : [],
-    seatGroups: Array.isArray(snapshot.seatGroups) ? snapshot.seatGroups : [],
+    document: snapshot.document && typeof snapshot.document === 'object' ? snapshot.document : null,
     seats: seats.map(mapStaffSeat),
     counts: {
       seats: seats.length,
@@ -598,6 +598,7 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
             eventTicketSaleId: sale.id,
             saleSeatId: saleSeat.id,
             ticketCode: createPublicToken('ticket').toUpperCase(),
+            checkInCode: createCheckInCode(),
           },
         });
       }
@@ -655,10 +656,10 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
     include: {
       saleSeats: {
         include: {
-          ticket: { select: { id: true, ticketCode: true, status: true } },
+          ticket: { select: { id: true, ticketCode: true, checkInCode: true, status: true } },
         },
       },
-      tickets: { where: { status: 'VALID' }, select: { id: true, ticketCode: true, status: true }, orderBy: { createdAt: 'asc' } },
+      tickets: { where: { status: 'VALID' }, select: { id: true, ticketCode: true, checkInCode: true, status: true }, orderBy: { createdAt: 'asc' } },
       event: { select: { id: true, name: true, startsAt: true, locationName: true, locationAddress: true } },
       lot: { select: { name: true } },
     },
@@ -692,6 +693,7 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
         technicalCode: seat.technicalCode,
         unitPrice: toMoney(seat.unitPriceSnapshot),
         ticketCode: seat.ticket!.ticketCode,
+        checkInCode: seat.ticket!.checkInCode ?? toCheckInCode(seat.ticket!.ticketCode),
         ticketStatus: seat.ticket?.status ?? 'VALID',
       }))
     : sale.tickets.map((ticket, index) => ({
@@ -701,6 +703,7 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
         technicalCode: ticket.ticketCode,
         unitPrice: toMoney(sale.quantity > 0 ? toNumber(sale.totalAmount) / sale.quantity : 0),
         ticketCode: ticket.ticketCode,
+        checkInCode: ticket.checkInCode ?? toCheckInCode(ticket.ticketCode),
         ticketStatus: ticket.status,
       }));
   if (items.length === 0) {

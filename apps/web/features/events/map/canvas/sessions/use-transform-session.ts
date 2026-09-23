@@ -1,54 +1,41 @@
 'use client';
 
-import {
-  CORRIDOR_REFLOW_ITERATIONS,
-  buildSmartCorridorTransformPreview,
-  cloneEventMap,
-  extractCorridorDragCommitUpdates,
-  getObjectBounds,
-} from '@alusa/domain';
+import { shortestRotationDelta, type EventMapDTO, type EventMapObjectDTO } from '@alusa/domain';
 import type { LevelBounds } from '@alusa/domain';
-import type { EventMapDTO, EventMapObjectDTO } from '../../api/event-map-service';
+import type { MutableRefObject, RefObject } from 'react';
+import { useEffect } from 'react';
+import type Konva from 'konva';
 import { useEventMapEditorStore } from '../../store/event-map-editor-store';
-import { applyCanvasTransformPayload } from '../commit/apply-canvas-transform';
-import { buildCorridorTransformCommitPatches } from '../corridor/corridor-transform-session';
-import { corridorPatchesToDomainOperations } from '@alusa/domain';
-import { recordCorridorDomainOperations } from '../../browser/event-map-e2e-bridge';
+import { applyCanvasTransformCommit, applyCanvasTransformPayload } from '../commit/apply-canvas-transform';
 import {
   applyMapTransformLivePreview,
   beginMapTransformSession,
   buildMapTransformCommit,
+  isSemanticGenericRotation,
+  resetParametricPreviewScales,
   resetMapTransformTransformer,
+  type MapTransformSession,
 } from '../transform/map-transform-session';
-import type { MapTransformSession } from '../transform/map-transform-session';
-import { applyCorridorPreviewToStage } from '../corridor/corridor-preview-stage';
-import { syncCorridorNodesFromMap } from '../corridor/corridor-canvas';
 import {
   captureTransformNodeSnapshots,
+  resetNodeScale,
   type TransformNodeSnapshot,
 } from '../adapters/konva-transform-adapter';
 import {
   DEFAULT_TRANSFORMER_SCALE_OPTIONS,
-  resolveCorridorTransformerScaleOptions,
   resolveGenericTransformerScaleOptions,
   resolveUniformTransformerScaleOptions,
+  type TransformerScaleOptions,
 } from '../transform/transform-handle-mode';
-import type { TransformerScaleOptions } from '../transform/transform-handle-mode';
-
-import { useEffect } from 'react';
-import type { MutableRefObject, RefObject } from 'react';
-import type Konva from 'konva';
-
-type TransformKind = 'uniform' | 'corridor' | 'generic' | null;
 
 type TransformContextRef = MutableRefObject<{
   selectedObjectIds: string[];
   selectedSeatIds: string[];
-  selectedSeatGroupIds: string[];
   selectedNodeIds: string[];
-  transformKind: TransformKind;
+  selectedParametricItem: import('@alusa/domain').MapSelectionItem | null;
+  selectedParametricItems: Array<Extract<import('@alusa/domain').MapSelectionItem, { type: 'seatblock' | 'seatrow' }>>;
+  transformKind: import('../transform/transform-routing').MapTransformRoutingKind;
   levelBounds: LevelBounds | null;
-  forceUniformSeatGroupScale?: boolean;
 }>;
 
 type TransformSessionInput = {
@@ -62,310 +49,165 @@ type TransformSessionInput = {
   selectedNodeIds: string[];
   transformContextRef: TransformContextRef;
   mapTransformSessionRef: MutableRefObject<MapTransformSession | null>;
-  transformReflowTimerRef: MutableRefObject<ReturnType<typeof setTimeout> | null>;
   transformCancelSnapshotsRef: MutableRefObject<TransformNodeSnapshot[]>;
   transformCancelledRef: MutableRefObject<boolean>;
-  corridorPreviewBaseMapRef: MutableRefObject<EventMapDTO | null>;
-  corridorPreviewWorkingMapRef: MutableRefObject<EventMapDTO | null>;
-  isCorridorLivePreviewRef: MutableRefObject<boolean>;
-  isCorridorTransformActiveRef: MutableRefObject<boolean>;
   lastTransformCommitRef: MutableRefObject<Map<string, { x: number; y: number }>>;
   setIsTransformSessionActive: (active: boolean) => void;
   setTransformerScaleOptions: (options: TransformerScaleOptions) => void;
-  bumpCorridorVisualRevision: () => void;
 };
 
-export function useTransformSession({
-  stageRef,
-  contentLayerRef,
-  transformerRef,
-  transformPipelineActive,
-  map,
-  levelId,
-  levelObjects,
-  selectedNodeIds,
-  transformContextRef,
-  mapTransformSessionRef,
-  transformReflowTimerRef,
-  transformCancelSnapshotsRef,
-  transformCancelledRef,
-  corridorPreviewBaseMapRef,
-  corridorPreviewWorkingMapRef,
-  isCorridorLivePreviewRef,
-  isCorridorTransformActiveRef,
-  lastTransformCommitRef,
-  setIsTransformSessionActive,
-  setTransformerScaleOptions,
-  bumpCorridorVisualRevision,
-}: TransformSessionInput) {
+function buildRotationSelection(session: MapTransformSession) {
+  return [
+    ...session.selectedObjectIds.map((id) => ({ type: 'object' as const, id })),
+    ...session.selectedSeatIds.map((id) => ({ type: 'seat' as const, id })),
+  ];
+}
+
+export function useTransformSession(input: TransformSessionInput) {
+  const {
+    stageRef,
+    contentLayerRef,
+    transformerRef,
+    transformPipelineActive,
+    map,
+    levelId,
+    levelObjects,
+    selectedNodeIds,
+    transformContextRef,
+    mapTransformSessionRef,
+    transformCancelSnapshotsRef,
+    transformCancelledRef,
+    lastTransformCommitRef,
+    setIsTransformSessionActive,
+    setTransformerScaleOptions,
+  } = input;
+
   useEffect(() => {
     const transformer = transformerRef.current!;
     const stage = stageRef.current!;
     if (!transformer || !stage || !transformPipelineActive || !map) return;
 
-    function buildCorridorSnapContext() {
-      const ctx = transformContextRef.current;
-      const currentMap = useEventMapEditorStore.getState().map;
-      if (!currentMap || !ctx.levelBounds) return undefined;
-
-      const skipIds = new Set(ctx.selectedObjectIds);
-      const objectBounds = currentMap.objects
-        .filter((object) => object.levelId === levelId && !object.hidden && !skipIds.has(object.id))
-        .map((object) => getObjectBounds(object));
-
-      return {
-        levelBounds: ctx.levelBounds,
-        objectBounds,
-      };
-    }
-
-    function scheduleDebouncedReflowPreview() {
-      const session = mapTransformSessionRef.current;
-      if (!session || session.kind !== 'corridor' || !session.corridor) return;
-      if (session.corridor.mode === 'rotate' && session.corridor.snapshots.length < 2) return;
-
-      if (transformReflowTimerRef.current) clearTimeout(transformReflowTimerRef.current);
-      transformReflowTimerRef.current = setTimeout(() => {
-        transformReflowTimerRef.current = null;
-        const baseMap = corridorPreviewBaseMapRef.current;
-        const corridorSession = mapTransformSessionRef.current?.corridor;
-        const activeLevelId = useEventMapEditorStore.getState().activeLevelId;
-        if (!baseMap || !corridorSession || !activeLevelId) return;
-
-        const patches = buildCorridorTransformCommitPatches(
-          corridorSession,
-          { stage, transformer },
-          buildCorridorSnapContext(),
-        );
-        if (patches.length === 0) return;
-
-        const preview = buildSmartCorridorTransformPreview(baseMap, patches, {
-          previewMap: corridorPreviewWorkingMapRef.current ?? undefined,
-          maxIterations: CORRIDOR_REFLOW_ITERATIONS,
-          activeCorridorIds: corridorSession.corridorIds,
-        });
-        applyCorridorPreviewToStage(
-          stage,
-          preview,
-          baseMap,
-          corridorSession.corridorIds.map((id) => `node-${id}`),
-          activeLevelId,
-          { syncCorridorGeometry: false },
-        );
-        contentLayerRef.current?.batchDraw();
-      }, 40);
-    }
-
     function onTransformStart() {
       transformCancelledRef.current = false;
-      const ctx = transformContextRef.current;
-      const transformKind = ctx.transformKind;
-      if (!transformKind) return;
-
+      const context = transformContextRef.current;
+      const kind = context.transformKind;
       const currentMap = useEventMapEditorStore.getState().map;
-      if (!currentMap) return;
+      if (!kind || !currentMap) return;
 
-      transformCancelSnapshotsRef.current = captureTransformNodeSnapshots(stage, ctx.selectedNodeIds);
-
-      const corridorIds = ctx.selectedObjectIds.filter((objectId) =>
-        currentMap.objects.some((entry) => entry.id === objectId && entry.type === 'CORRIDOR'),
+      transformCancelSnapshotsRef.current = captureTransformNodeSnapshots(stage, context.selectedNodeIds);
+      setIsTransformSessionActive(true);
+      setTransformerScaleOptions(
+        kind === 'uniform' || kind === 'parametric'
+          ? resolveUniformTransformerScaleOptions()
+          : resolveGenericTransformerScaleOptions(false),
       );
 
-      const anchor = transformer.getActiveAnchor() ?? '';
-
-      if (transformKind === 'corridor') {
-        corridorPreviewBaseMapRef.current = cloneEventMap(currentMap);
-        corridorPreviewWorkingMapRef.current = cloneEventMap(currentMap);
-        isCorridorTransformActiveRef.current = true;
-        setIsTransformSessionActive(true);
-        setTransformerScaleOptions(resolveCorridorTransformerScaleOptions(anchor, corridorIds.length));
-      } else if (transformKind === 'uniform') {
-        setIsTransformSessionActive(true);
-        setTransformerScaleOptions(resolveUniformTransformerScaleOptions());
-      } else if (transformKind === 'generic') {
-        setIsTransformSessionActive(true);
-        setTransformerScaleOptions(
-          ctx.forceUniformSeatGroupScale
-            ? resolveUniformTransformerScaleOptions()
-            : resolveGenericTransformerScaleOptions(false),
-        );
-      }
-
       const session = beginMapTransformSession({
-        kind: transformKind,
+        kind,
         map: currentMap,
-        corridorIds,
-        selectedObjectIds: ctx.selectedObjectIds,
-        selectedSeatIds: ctx.selectedSeatIds,
-        selectedSeatGroupIds: ctx.selectedSeatGroupIds,
+        selectedObjectIds: context.selectedObjectIds,
+        selectedSeatIds: context.selectedSeatIds,
+        parametricItems: context.selectedParametricItems,
         stage,
         transformer,
       });
-      if (!session) return;
-      mapTransformSessionRef.current = session;
+      if (session) mapTransformSessionRef.current = session;
     }
 
     function onTransform() {
       const session = mapTransformSessionRef.current;
       if (!session) return;
-
-      applyMapTransformLivePreview(session, {
-        stage,
-        transformer,
-        snap: buildCorridorSnapContext(),
-      });
+      applyMapTransformLivePreview(session, { stage, transformer });
       transformer.getLayer()?.batchDraw();
-      scheduleDebouncedReflowPreview();
     }
 
     function onTransformEnd() {
+      const session = mapTransformSessionRef.current;
+      const currentMap = useEventMapEditorStore.getState().map;
+      if (!session || !currentMap) return;
+
       if (transformCancelledRef.current) {
         transformCancelledRef.current = false;
+        mapTransformSessionRef.current = null;
+        setIsTransformSessionActive(false);
         return;
       }
 
-      const ctx = transformContextRef.current;
-      const session = mapTransformSessionRef.current;
-      const currentMap = useEventMapEditorStore.getState().map;
-      if (!currentMap) return;
-
-      if (transformReflowTimerRef.current) {
-        clearTimeout(transformReflowTimerRef.current);
-        transformReflowTimerRef.current = null;
-      }
-
-      const corridorIds = ctx.selectedObjectIds.filter((objectId) =>
-        currentMap.objects.some((entry) => entry.id === objectId && entry.type === 'CORRIDOR'),
-      );
-
-      const commit = session
-        ? buildMapTransformCommit(
-            session,
-            { stage, transformer, snap: buildCorridorSnapContext() },
-            currentMap,
-          )
-        : { objectUpdates: [], seatUpdates: [], seatGroupUpdates: [], corridorPatches: [] };
-
-      for (const entry of commit.objectUpdates) {
-        lastTransformCommitRef.current.set(entry.id, { x: entry.patch.x ?? 0, y: entry.patch.y ?? 0 });
-      }
-      for (const entry of commit.seatUpdates) {
-        lastTransformCommitRef.current.set(entry.id, { x: entry.patch.x ?? 0, y: entry.patch.y ?? 0 });
-      }
-      for (const entry of commit.seatGroupUpdates) {
-        lastTransformCommitRef.current.set(`seatgroup-${entry.id}`, { x: entry.patch.x ?? 0, y: entry.patch.y ?? 0 });
-      }
-
-      if (session?.kind === 'uniform' && commit.objectUpdates.length > 0) {
-        applyCanvasTransformPayload({
-          objects: commit.objectUpdates,
-          seats: commit.seatUpdates,
-          seatGroups: commit.seatGroupUpdates,
+      if (session.parametricItems.length > 0 && session.initialParametricTransforms.size > 0) {
+        const transforms = session.parametricItems.flatMap((item) => {
+          const initial = session.initialParametricTransforms.get(`${item.type}:${item.id}`);
+          const node = stage.findOne(`#node-${item.type}-${item.id}`);
+          if (!initial || !node) return [];
+          const values = node.getTransform().copy().multiply(initial.copy().invert()).getMatrix();
+          node.position({ x: 0, y: 0 });
+          node.rotation(0);
+          node.scale({ x: 1, y: 1 });
+          node.getLayer()?.batchDraw();
+          return [{ item, matrix: values as [number, number, number, number, number, number] }];
         });
-      } else if (session?.kind === 'generic' && (commit.objectUpdates.length > 0 || commit.seatUpdates.length > 0 || commit.seatGroupUpdates.length > 0)) {
-        applyCanvasTransformPayload({
-          objects: commit.objectUpdates,
-          seats: commit.seatUpdates,
-          seatGroups: commit.seatGroupUpdates,
-        });
-      } else if (session?.kind === 'corridor' && corridorIds.length > 0) {
-        const baseMap = corridorPreviewBaseMapRef.current ?? cloneEventMap(currentMap);
-        const patches = commit.corridorPatches;
-        const sessionAnchor = session.corridor?.anchor;
+        useEventMapEditorStore.getState().transformParametricSelections(transforms);
+        resetParametricPreviewScales(session, stage);
+        resetMapTransformTransformer(session, transformer);
+        mapTransformSessionRef.current = null;
+        transformCancelSnapshotsRef.current = [];
+        setIsTransformSessionActive(false);
+        setTransformerScaleOptions(DEFAULT_TRANSFORMER_SCALE_OPTIONS);
+        contentLayerRef.current?.batchDraw();
+        return;
+      }
 
-        for (const patch of patches) {
-          lastTransformCommitRef.current.set(patch.objectId, {
-            x: patch.patch.x ?? 0,
-            y: patch.patch.y ?? 0,
-          });
+      if (isSemanticGenericRotation(session)) {
+        for (const nodeId of session.selectedObjectIds.concat(session.selectedSeatIds)) {
+          const node = stage.findOne(`#node-${nodeId}`) ?? stage.findOne(`#${nodeId}`);
+          if (node) resetNodeScale(node);
         }
-
-        recordCorridorDomainOperations(corridorPatchesToDomainOperations(patches, sessionAnchor));
-
-        if (patches.length > 0) {
-          const preview = buildSmartCorridorTransformPreview(baseMap, patches, {
-            previewMap: corridorPreviewWorkingMapRef.current ?? undefined,
-            maxIterations: CORRIDOR_REFLOW_ITERATIONS,
-            activeCorridorIds: corridorIds,
-          });
-          const { objects: corridorObjects, seats: reflowedSeats } = extractCorridorDragCommitUpdates(
-            baseMap,
-            preview,
-            corridorIds,
-          );
-
-          applyCanvasTransformPayload(
-            {
-              objects: [...commit.objectUpdates, ...corridorObjects],
-              seats: reflowedSeats.length > 0 ? reflowedSeats : commit.seatUpdates,
-              seatGroups: commit.seatGroupUpdates,
-              skipSeatBaseLayoutTranslation: reflowedSeats.length > 0,
-              skipCorridorReflow: corridorIds.length > 0,
-            },
-            { forceCorridor: true },
-          );
-        } else if (commit.objectUpdates.length > 0 || commit.seatUpdates.length > 0 || commit.seatGroupUpdates.length > 0) {
+        const angleDelta = shortestRotationDelta(session.initialTransformerRotation, transformer.rotation());
+        applyCanvasTransformCommit({
+          type: 'ROTATE_SELECTION',
+          payload: { selection: buildRotationSelection(session), angleDelta, mode: 'free' },
+        });
+      } else {
+        const commit = buildMapTransformCommit(session, { stage, transformer }, currentMap);
+        for (const entry of commit.objectUpdates) {
+          lastTransformCommitRef.current.set(entry.id, { x: entry.patch.x ?? 0, y: entry.patch.y ?? 0 });
+        }
+        for (const entry of commit.seatUpdates) {
+          lastTransformCommitRef.current.set(entry.id, { x: entry.patch.x ?? 0, y: entry.patch.y ?? 0 });
+        }
+        if (commit.objectUpdates.length || commit.seatUpdates.length) {
           applyCanvasTransformPayload({
             objects: commit.objectUpdates,
             seats: commit.seatUpdates,
-            seatGroups: commit.seatGroupUpdates,
           });
         }
-      } else if (commit.objectUpdates.length > 0 || commit.seatUpdates.length > 0 || commit.seatGroupUpdates.length > 0) {
-        applyCanvasTransformPayload({
-          objects: commit.objectUpdates,
-          seats: commit.seatUpdates,
-          seatGroups: commit.seatGroupUpdates,
-        });
       }
 
-      if (session) resetMapTransformTransformer(session, transformer);
-
-      isCorridorTransformActiveRef.current = false;
+      resetMapTransformTransformer(session, transformer);
       mapTransformSessionRef.current = null;
-      corridorPreviewBaseMapRef.current = null;
-      corridorPreviewWorkingMapRef.current = null;
       transformCancelSnapshotsRef.current = [];
       setIsTransformSessionActive(false);
       setTransformerScaleOptions(DEFAULT_TRANSFORMER_SCALE_OPTIONS);
-
-      const activeLevelId = useEventMapEditorStore.getState().activeLevelId;
-      const committedMap = useEventMapEditorStore.getState().map;
-      if (committedMap && activeLevelId) {
-        syncCorridorNodesFromMap(stage, committedMap.objects, activeLevelId);
-      }
-
-      const nodes = ctx.selectedNodeIds
-        .map((nodeId) => stage.findOne(`#${nodeId}`))
-        .filter((node): node is Konva.Node => Boolean(node));
-      transformer.nodes(nodes);
-      transformer.getLayer()?.batchDraw();
-      bumpCorridorVisualRevision();
+      const context = transformContextRef.current;
+      transformer.nodes(
+        context.selectedNodeIds
+          .map((nodeId) => stage.findOne(`#${nodeId}`))
+          .filter((node): node is Konva.Node => Boolean(node)),
+      );
+      contentLayerRef.current?.batchDraw();
     }
 
     transformer.on('transformstart', onTransformStart);
     transformer.on('transform', onTransform);
     transformer.on('transformend', onTransformEnd);
-
     return () => {
       transformer.off('transformstart', onTransformStart);
       transformer.off('transform', onTransform);
       transformer.off('transformend', onTransformEnd);
       mapTransformSessionRef.current = null;
-      isCorridorTransformActiveRef.current = false;
-      if (transformReflowTimerRef.current) {
-        clearTimeout(transformReflowTimerRef.current);
-        transformReflowTimerRef.current = null;
-      }
     };
   }, [
-    bumpCorridorVisualRevision,
     contentLayerRef,
-    corridorPreviewBaseMapRef,
-    corridorPreviewWorkingMapRef,
-    isCorridorTransformActiveRef,
     lastTransformCommitRef,
-    levelId,
     map,
     mapTransformSessionRef,
     setIsTransformSessionActive,
@@ -375,40 +217,18 @@ export function useTransformSession({
     transformCancelledRef,
     transformContextRef,
     transformPipelineActive,
-    transformReflowTimerRef,
     transformerRef,
   ]);
 
   useEffect(() => {
     const transformer = transformerRef.current;
     const stage = stageRef.current;
-    if (!stage || !levelId) return;
-
-    if (!isCorridorLivePreviewRef.current && !isCorridorTransformActiveRef.current) {
-      syncCorridorNodesFromMap(stage, levelObjects, levelId);
-      contentLayerRef.current?.batchDraw();
-    }
-
-    if (!transformer || selectedNodeIds.length === 0) {
-      transformer?.nodes([]);
-      transformer?.getLayer()?.batchDraw();
-      return;
-    }
-    if (isCorridorLivePreviewRef.current || isCorridorTransformActiveRef.current) return;
-
+    if (!stage || !transformer || !levelId) return;
     const nodes = selectedNodeIds
       .map((nodeId) => stage.findOne(`#${nodeId}`))
       .filter((node): node is Konva.Node => Boolean(node));
     transformer.nodes(nodes);
     transformer.getLayer()?.batchDraw();
-  }, [
-    contentLayerRef,
-    isCorridorLivePreviewRef,
-    isCorridorTransformActiveRef,
-    levelId,
-    levelObjects,
-    selectedNodeIds,
-    stageRef,
-    transformerRef,
-  ]);
+    contentLayerRef.current?.batchDraw();
+  }, [contentLayerRef, levelId, levelObjects, selectedNodeIds, stageRef, transformerRef]);
 }

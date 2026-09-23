@@ -162,8 +162,9 @@ export function InviteLinkModal({
                   {copied ? "Link copiado para a área de transferência" : ""}
                 </span>
                 <p className="text-xs text-muted-foreground max-w-sm">
-                  Por segurança, não compartilhe publicamente. O convite é pessoal e
-                  vinculado ao e-mail.
+                  Por segurança, não publique este link. {email
+                    ? 'O convite é pessoal e vinculado ao e-mail informado.'
+                    : 'Envie-o somente ao responsável convidado; o e-mail será informado e confirmado no aceite.'}
                 </p>
               </div>
 

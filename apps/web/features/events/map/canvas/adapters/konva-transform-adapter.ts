@@ -29,18 +29,11 @@ export type ObjectTransformSession = {
   snapshots: Map<string, ObjectTransformSnapshot>;
   initialBounds: ReturnType<typeof getSnapshotsUnionBounds>;
   initialRotation: number;
-  /** When true, corridors are excluded from the session (generic mixed selection). */
-  excludeCorridors: boolean;
 };
 
 export function resetNodeScale(node: Konva.Node) {
   node.scaleX(1);
   node.scaleY(1);
-}
-
-function findChildShape(node: Konva.Node, selector: string) {
-  if (!(node instanceof Konva.Container)) return undefined;
-  return node.findOne(selector) as Konva.Rect | undefined;
 }
 
 export function readNodeScale(node: Konva.Node) {
@@ -61,7 +54,6 @@ export function captureTransformNodeSnapshots(stage: Konva.Stage, nodeIds: strin
     const node = stage.findOne(`#${nodeId}`);
     if (!node) continue;
 
-    const body = findChildShape(node, '.corridor-body');
     snapshots.push({
       id: nodeId,
       x: node.x(),
@@ -69,8 +61,6 @@ export function captureTransformNodeSnapshots(stage: Konva.Stage, nodeIds: strin
       rotation: node.rotation(),
       scaleX: node.scaleX(),
       scaleY: node.scaleY(),
-      bodyWidth: body?.width(),
-      bodyHeight: body?.height(),
     });
   }
 
@@ -87,11 +77,6 @@ export function restoreTransformNodeSnapshots(stage: Konva.Stage, snapshots: Tra
     node.scaleX(snapshot.scaleX);
     node.scaleY(snapshot.scaleY);
 
-    const body = findChildShape(node, '.corridor-body');
-    if (body && typeof snapshot.bodyWidth === 'number' && typeof snapshot.bodyHeight === 'number') {
-      body.width(snapshot.bodyWidth);
-      body.height(snapshot.bodyHeight);
-    }
   }
 }
 
@@ -100,14 +85,12 @@ export function beginObjectTransformSession(
   selectedObjectIds: string[],
   stage: Konva.Stage,
   transformer: Konva.Transformer,
-  options?: { excludeCorridors?: boolean },
 ): ObjectTransformSession | null {
-  const excludeCorridors = options?.excludeCorridors ?? false;
   const snapshots = new Map<string, ObjectTransformSnapshot>();
 
   for (const objectId of selectedObjectIds) {
     const object = map.objects.find((entry) => entry.id === objectId);
-    if (!object || (excludeCorridors && object.type === 'CORRIDOR')) continue;
+    if (!object) continue;
     snapshots.set(objectId, getObjectTransformSnapshot(object));
 
     const node = stage.findOne(`#node-${objectId}`);
@@ -120,7 +103,6 @@ export function beginObjectTransformSession(
     snapshots,
     initialBounds: getSnapshotsUnionBounds([...snapshots.values()]),
     initialRotation: transformer.rotation(),
-    excludeCorridors,
   };
 }
 
@@ -176,20 +158,6 @@ export function resolveLiveObjectTransformScale(
   session: ObjectTransformSession,
   getNodeScale: (objectId: string) => { scaleX: number; scaleY: number } | null,
 ) {
-  if (session.excludeCorridors) {
-    let maxScale = 1;
-    for (const objectId of session.snapshots.keys()) {
-      const scale = getNodeScale(objectId);
-      if (!scale) continue;
-      const sx = Math.abs(scale.scaleX);
-      const sy = Math.abs(scale.scaleY);
-      if (sx > MIN_UNIFORM_SCALE || sy > MIN_UNIFORM_SCALE) {
-        maxScale = Math.max(maxScale, clampUniformScale(Math.max(sx, sy)));
-      }
-    }
-    return maxScale;
-  }
-
   return resolveLiveUniformScale(session.snapshots, getNodeScale);
 }
 
@@ -259,41 +227,6 @@ export function readSeatTransformFromNode(node: Konva.Node, baseSize = 24) {
   const rotation = node.rotation();
   if (![x, y, size, rotation].every(Number.isFinite)) return null;
   return { x, y, size, rotation };
-}
-
-export function readSeatGroupTransformFromNode(
-  node: Konva.Node,
-  group: {
-    seatWidth: number;
-    seatHeight: number;
-    gapX: number;
-    gapY: number;
-    paddingLeft: number;
-    paddingRight: number;
-    paddingTop: number;
-    paddingBottom: number;
-  },
-) {
-  const scaleX = Math.abs(node.scaleX() || 1);
-  const scaleY = Math.abs(node.scaleY() || 1);
-  const x = node.x();
-  const y = node.y();
-  const rotation = node.rotation();
-  resetNodeScale(node);
-  if (![x, y, rotation, scaleX, scaleY].every(Number.isFinite)) return null;
-  return {
-    x,
-    y,
-    rotation,
-    seatWidth: Math.max(MIN_OBJECT_SIZE, group.seatWidth * scaleX),
-    seatHeight: Math.max(MIN_OBJECT_SIZE, group.seatHeight * scaleY),
-    gapX: Math.max(0, group.gapX * scaleX),
-    gapY: Math.max(0, group.gapY * scaleY),
-    paddingLeft: Math.max(0, group.paddingLeft * scaleX),
-    paddingRight: Math.max(0, group.paddingRight * scaleX),
-    paddingTop: Math.max(0, group.paddingTop * scaleY),
-    paddingBottom: Math.max(0, group.paddingBottom * scaleY),
-  };
 }
 
 export function readScaledShapeTransformFromNode(

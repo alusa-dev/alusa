@@ -1,7 +1,7 @@
-import type { CorridorUnionGroup, LevelRenderStackItem, MapSelection, MapSelectionItem } from '@alusa/domain';
+import type { EventMapDocument, LevelRenderStackItem, MapSelection, MapSelectionItem } from '@alusa/domain';
 import type { RefObject } from 'react';
 import type Konva from 'konva';
-import type { EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../../api/event-map-service';
+import type { EventMapObjectDTO, EventSeatDTO } from '../../api/event-map-service';
 import { getTextEditorDimensions } from './text-editor-layout';
 import type { TextEditorState } from './text-editor-layout';
 
@@ -17,22 +17,17 @@ export type MapCanvasRenderHandlers = {
     onCommit: (x: number, y: number) => void,
   ) => void;
   onObjectTransformEnd: (object: EventMapObjectDTO, node: Konva.Node) => void;
-  onSeatGroupTransformEnd: (group: EventSeatGroupDTO, node: Konva.Node) => void;
   onUpdateObjectPosition: (objectId: string, x: number, y: number) => void;
   onUpdateSeatPosition: (seatId: string, x: number, y: number) => void;
-  onUpdateSeatGroupPosition: (groupId: string, x: number, y: number) => void;
   onOpenTextEditor: (object: EventMapObjectDTO, node: Konva.Text) => void;
 };
 
 export type MapCanvasRenderState = {
   renderStack: LevelRenderStackItem[];
+  document: EventMapDocument | null | undefined;
   displayLevelObjects: EventMapObjectDTO[];
   levelSeats: EventSeatDTO[];
-  levelSeatGroups: EventSeatGroupDTO[];
-  corridorUnionGroups: CorridorUnionGroup[];
   selection: MapSelection;
-  selectedCorridorIds: Set<string>;
-  activeUnionDragIds: Set<string>;
   levelObjects: EventMapObjectDTO[];
   textEditorObjectId: string | null;
   placementToolActive: boolean;
@@ -61,13 +56,10 @@ export function getMapPointerPoint(
 
 export function buildMapCanvasRenderState(input: {
   renderStack: LevelRenderStackItem[];
+  document: EventMapDocument | null | undefined;
   displayLevelObjects: EventMapObjectDTO[];
   levelSeats: EventSeatDTO[];
-  levelSeatGroups: EventSeatGroupDTO[];
-  corridorUnionGroups: CorridorUnionGroup[];
   selection: MapSelection;
-  selectedCorridorIds: Set<string>;
-  activeUnionDragIds: Set<string>;
   levelObjects: EventMapObjectDTO[];
   textEditorObjectId: string | null;
   placementToolActive: boolean;

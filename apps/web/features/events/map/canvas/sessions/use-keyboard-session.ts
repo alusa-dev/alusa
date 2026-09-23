@@ -1,32 +1,17 @@
 'use client';
 
-import { useEffect } from 'react';
 import type { MutableRefObject, RefObject } from 'react';
+import { useEffect } from 'react';
 import type Konva from 'konva';
-import type { EventMapDTO, EventMapObjectDTO } from '../../api/event-map-service';
-import { syncCorridorNodesFromMap } from '../corridor/corridor-canvas';
-import { resetMapTransformTransformer } from '../transform/map-transform-session';
+import { resetMapTransformTransformer, restoreParametricLivePreview } from '../transform/map-transform-session';
 import type { MapTransformSession } from '../transform/map-transform-session';
-import {
-  captureTransformNodeSnapshots,
-  restoreTransformNodeSnapshots,
-  type TransformNodeSnapshot,
-} from '../adapters/konva-transform-adapter';
-import {
-  DEFAULT_TRANSFORMER_SCALE_OPTIONS,
-  resolveGenericTransformerScaleOptions,
-} from '../transform/transform-handle-mode';
+import { restoreTransformNodeSnapshots, type TransformNodeSnapshot } from '../adapters/konva-transform-adapter';
+import { DEFAULT_TRANSFORMER_SCALE_OPTIONS, resolveGenericTransformerScaleOptions } from '../transform/transform-handle-mode';
 import type { TransformerScaleOptions } from '../transform/transform-handle-mode';
-
-const ROTATION_SNAPS_15 = [
-  0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240, 255, 270, 285,
-  300, 315, 330, 345,
-];
 
 type TransformContextRef = MutableRefObject<{
   selectedNodeIds: string[];
-  transformKind: 'uniform' | 'corridor' | 'generic' | null;
-  forceUniformSeatGroupScale?: boolean;
+  transformKind: 'uniform' | 'generic' | 'parametric' | null;
 }>;
 
 type KeyboardSessionInput = {
@@ -37,15 +22,12 @@ type KeyboardSessionInput = {
   mapTransformSessionRef: MutableRefObject<MapTransformSession | null>;
   transformCancelSnapshotsRef: MutableRefObject<TransformNodeSnapshot[]>;
   transformCancelledRef: MutableRefObject<boolean>;
-  transformReflowTimerRef: MutableRefObject<ReturnType<typeof setTimeout> | null>;
-  isCorridorTransformActiveRef: MutableRefObject<boolean>;
-  corridorPreviewBaseMapRef: MutableRefObject<EventMapDTO | null>;
-  corridorPreviewWorkingMapRef: MutableRefObject<EventMapDTO | null>;
   setIsTransformSessionActive: (active: boolean) => void;
   setTransformerScaleOptions: (options: TransformerScaleOptions) => void;
-  getCommittedState: () => { map: EventMapDTO | null; activeLevelId: string | null; levelObjects: EventMapObjectDTO[] };
-  bumpCorridorVisualRevision: () => void;
+  ascendSelection: () => boolean;
 };
+
+const ROTATION_SNAPS_15 = Array.from({ length: 24 }, (_, index) => index * 15);
 
 export function useKeyboardSession({
   stageRef,
@@ -55,29 +37,17 @@ export function useKeyboardSession({
   mapTransformSessionRef,
   transformCancelSnapshotsRef,
   transformCancelledRef,
-  transformReflowTimerRef,
-  isCorridorTransformActiveRef,
-  corridorPreviewBaseMapRef,
-  corridorPreviewWorkingMapRef,
   setIsTransformSessionActive,
   setTransformerScaleOptions,
-  getCommittedState,
-  bumpCorridorVisualRevision,
+  ascendSelection,
 }: KeyboardSessionInput) {
   useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key !== 'Shift') return;
+    const onKey = (event: KeyboardEvent) => {
       const transformer = transformerRef.current;
-      if (!transformer) return;
-      if (event.type === 'keydown') {
-        transformer.rotationSnaps(ROTATION_SNAPS_15);
-        transformer.rotationSnapTolerance(7);
-      } else {
-        transformer.rotationSnaps([]);
-        transformer.rotationSnapTolerance(5);
-      }
-    }
-
+      if (!transformer || event.key !== 'Shift') return;
+      transformer.rotationSnaps(event.type === 'keydown' ? ROTATION_SNAPS_15 : []);
+      transformer.rotationSnapTolerance(event.type === 'keydown' ? 7 : 5);
+    };
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKey);
     return () => {
@@ -87,59 +57,48 @@ export function useKeyboardSession({
   }, [transformerRef]);
 
   useEffect(() => {
-    if (!isTransformSessionActive) return;
-
-    function onEscape(event: KeyboardEvent) {
+    if (isTransformSessionActive) return;
+    const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+      if (!ascendSelection()) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [ascendSelection, isTransformSessionActive]);
 
+  useEffect(() => {
+    if (!isTransformSessionActive) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
       const stage = stageRef.current;
       const transformer = transformerRef.current;
       const snapshots = transformCancelSnapshotsRef.current;
       if (!stage || !transformer || snapshots.length === 0) return;
-
       event.preventDefault();
       transformCancelledRef.current = true;
-
-      if (transformReflowTimerRef.current) {
-        clearTimeout(transformReflowTimerRef.current);
-        transformReflowTimerRef.current = null;
-      }
-
       restoreTransformNodeSnapshots(stage, snapshots);
-
       const session = mapTransformSessionRef.current;
-      if (session) resetMapTransformTransformer(session, transformer);
-
-      isCorridorTransformActiveRef.current = false;
+      if (session) {
+        restoreParametricLivePreview(session, stage);
+        resetMapTransformTransformer(session, transformer);
+      }
       mapTransformSessionRef.current = null;
-      corridorPreviewBaseMapRef.current = null;
-      corridorPreviewWorkingMapRef.current = null;
       transformCancelSnapshotsRef.current = [];
       setIsTransformSessionActive(false);
       setTransformerScaleOptions(DEFAULT_TRANSFORMER_SCALE_OPTIONS);
-
-      const { map, activeLevelId, levelObjects } = getCommittedState();
-      if (map && activeLevelId) {
-        syncCorridorNodesFromMap(stage, levelObjects.length > 0 ? levelObjects : map.objects, activeLevelId);
-      }
-
-      const ctx = transformContextRef.current;
-      const nodes = ctx.selectedNodeIds
+      const nodes = transformContextRef.current.selectedNodeIds
         .map((nodeId) => stage.findOne(`#${nodeId}`))
         .filter((node): node is Konva.Node => Boolean(node));
       transformer.nodes(nodes);
       transformer.getLayer()?.batchDraw();
-      bumpCorridorVisualRevision();
-    }
-
-    window.addEventListener('keydown', onEscape);
-    return () => window.removeEventListener('keydown', onEscape);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [
-    bumpCorridorVisualRevision,
-    corridorPreviewBaseMapRef,
-    corridorPreviewWorkingMapRef,
-    getCommittedState,
-    isCorridorTransformActiveRef,
     isTransformSessionActive,
     mapTransformSessionRef,
     setIsTransformSessionActive,
@@ -148,25 +107,20 @@ export function useKeyboardSession({
     transformCancelSnapshotsRef,
     transformCancelledRef,
     transformContextRef,
-    transformReflowTimerRef,
     transformerRef,
   ]);
 
   useEffect(() => {
     if (!isTransformSessionActive) return;
-
-    function onShiftKey(event: KeyboardEvent) {
-      if (event.key !== 'Shift') return;
-      if (transformContextRef.current.transformKind !== 'generic') return;
-      if (transformContextRef.current.forceUniformSeatGroupScale) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Shift' || transformContextRef.current.transformKind !== 'generic') return;
       setTransformerScaleOptions(resolveGenericTransformerScaleOptions(event.type === 'keydown'));
-    }
-
-    window.addEventListener('keydown', onShiftKey);
-    window.addEventListener('keyup', onShiftKey);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKey);
     return () => {
-      window.removeEventListener('keydown', onShiftKey);
-      window.removeEventListener('keyup', onShiftKey);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKey);
     };
   }, [isTransformSessionActive, setTransformerScaleOptions, transformContextRef]);
 }

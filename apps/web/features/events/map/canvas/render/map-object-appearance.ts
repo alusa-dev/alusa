@@ -1,19 +1,5 @@
 import type { EventMapObjectDTO, EventSeatDTO } from '../../api/event-map-service';
 
-export const CORRIDOR_CANVAS_DEFAULT = {
-  fill: '#f8fafc',
-  stroke: '#cbd5e1',
-  strokeWidth: 1.5,
-  dash: [8, 6] as number[],
-};
-
-export type CorridorCanvasAppearance = {
-  fill: string;
-  stroke: string;
-  strokeWidth: number;
-  dash: number[];
-};
-
 export function seatFill(status: EventSeatDTO['status']) {
   if (status === 'SOLD') return '#94a3b8';
   if (status === 'HELD') return '#f59e0b';
@@ -25,7 +11,6 @@ export function seatFill(status: EventSeatDTO['status']) {
 export function objectStyle(object: EventMapObjectDTO) {
   if (object.type === 'STAGE') return { fill: '#111827', stroke: '#111827', text: '#ffffff' };
   if (object.type === 'BLOCKED_AREA') return { fill: '#e2e8f0', stroke: '#94a3b8', text: '#475569' };
-  if (object.type === 'CORRIDOR') return { fill: CORRIDOR_CANVAS_DEFAULT.fill, stroke: CORRIDOR_CANVAS_DEFAULT.stroke, text: '#64748b' };
   if (object.type === 'TABLE') return { fill: '#fefce8', stroke: '#ca8a04', text: '#854d0e' };
   if (object.type === 'BOOTH') return { fill: '#fff7ed', stroke: '#ea580c', text: '#9a3412' };
   if (object.type === 'GENERAL_AREA' && object.data.shape) {
@@ -58,37 +43,13 @@ export function getObjectPreviewBorderStyle(object: EventMapObjectDTO) {
   const strokeStyle = object.data.strokeStyle;
   if (strokeStyle === 'dashed') return 'dashed';
   if (strokeStyle === 'dotted') return 'dotted';
-  if (object.type === 'CORRIDOR') return 'dashed';
   return 'solid';
-}
-
-export function getCorridorCanvasAppearance(selected: boolean, isSiblingOfSelected: boolean): CorridorCanvasAppearance {
-  if (selected) {
-    return {
-      fill: 'rgba(124, 58, 237, 0.06)',
-      stroke: '#7c3aed',
-      strokeWidth: 1.5,
-      dash: [8, 6],
-    };
-  }
-
-  if (isSiblingOfSelected) {
-    return {
-      fill: 'rgba(248, 250, 252, 0.92)',
-      stroke: CORRIDOR_CANVAS_DEFAULT.stroke,
-      strokeWidth: CORRIDOR_CANVAS_DEFAULT.strokeWidth,
-      dash: [4, 4],
-    };
-  }
-
-  return { ...CORRIDOR_CANVAS_DEFAULT };
 }
 
 export function getObjectStrokeDash(object: EventMapObjectDTO) {
   const strokeStyle = object.data.strokeStyle;
   if (strokeStyle === 'dashed') return [10, 6];
   if (strokeStyle === 'dotted') return [2, 6];
-  if (object.type === 'CORRIDOR') return CORRIDOR_CANVAS_DEFAULT.dash;
   return undefined;
 }
 

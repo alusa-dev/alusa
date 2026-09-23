@@ -33,7 +33,6 @@ function baseMap(): EventMapDTO {
       sortOrder: 0,
       data: {},
     }],
-    seatGroups: [],
     seats: [],
     versions: [],
     counts: { levels: 1, sections: 0, seats: 0, availableSeats: 0 },
@@ -73,13 +72,4 @@ describe('buildCanvasTransformCommand', () => {
     });
   });
 
-  it('uses TRANSFORM_CORRIDOR when forced', () => {
-    const map = baseMap();
-    const command = buildCanvasTransformCommand(
-      { objects: [{ id: 'obj-1', patch: { x: 15, y: 17 } }] },
-      map,
-      { forceCorridor: true },
-    );
-    expect(command?.type).toBe('TRANSFORM_CORRIDOR');
-  });
 });

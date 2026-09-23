@@ -10,8 +10,7 @@ import { Transformer } from 'react-konva';
 
 type MapTransformerProps = {
   transformerRef: RefObject<Konva.Transformer | null>;
-  disableRotateForMixedSmartCorridorSelection: boolean;
-  disableResizeForMixedSmartCorridorSelection: boolean;
+  transformDisabled: boolean;
   transformerScaleOptions: TransformerScaleOptions;
   selectedTextTransformAnchors: readonly string[];
   placementToolActive: boolean;
@@ -33,8 +32,7 @@ type MapTransformerProps = {
 
 export function MapTransformer({
   transformerRef,
-  disableRotateForMixedSmartCorridorSelection,
-  disableResizeForMixedSmartCorridorSelection,
+  transformDisabled,
   transformerScaleOptions,
   selectedTextTransformAnchors,
   placementToolActive,
@@ -49,12 +47,12 @@ export function MapTransformer({
       ref={(instance) => {
         transformerRef.current = instance as unknown as Konva.Transformer | null;
       }}
-      rotateEnabled={!disableRotateForMixedSmartCorridorSelection}
-      resizeEnabled={!disableResizeForMixedSmartCorridorSelection}
-      keepRatio={transformerScaleOptions.keepRatio}
+      rotateEnabled={!transformDisabled}
+      resizeEnabled={!transformDisabled}
+      keepRatio={transformerScaleOptions.keepRatio || selectedNodeIds.some((id) => id.startsWith('node-seatblock-') || id.startsWith('node-seatrow-'))}
       centeredScaling={transformerScaleOptions.centeredScaling}
       flipEnabled={false}
-      enabledAnchors={disableResizeForMixedSmartCorridorSelection ? [] : [...selectedTextTransformAnchors]}
+      enabledAnchors={transformDisabled ? [] : [...selectedTextTransformAnchors]}
       listening={!placementToolActive}
       anchorDragBoundFunc={(_oldAbs, newAbs, event) => {
         if (readOnly || tool === 'pan' || tool === 'zoom' || !levelBounds) {

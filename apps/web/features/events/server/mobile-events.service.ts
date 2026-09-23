@@ -334,9 +334,6 @@ export async function verifyMobileTicket(
   assertRole(actor, TICKET_SCAN_ROLES, 'Você não tem permissão para validar ingressos.');
 
   const event = await getSchoolEvent({ contaId: actor.contaId }, eventId);
-  if (event.status === 'CANCELLED' || event.status === 'ARCHIVED') {
-    throw new EventsError('EVENTO_INDISPONIVEL', 'Não é possível registrar entradas neste evento.', 409);
-  }
 
   if (confirm) {
     const result = await markEventTicketUsed(actor.contaId, eventId, ticketCode, actor.userId);
@@ -355,10 +352,6 @@ export async function verifyMobileTicketByCode(
   assertRole(actor, TICKET_SCAN_ROLES, 'Você não tem permissão para validar ingressos.');
 
   const resolved = await verifyEventTicketForCheckInAcrossEvents(actor.contaId, ticketCode);
-  if (resolved.event.status === 'CANCELLED' || resolved.event.status === 'ARCHIVED') {
-    throw new EventsError('EVENTO_INDISPONIVEL', 'Não é possível registrar entradas neste evento.', 409);
-  }
-
   if (confirm) {
     return markEventTicketUsedAcrossEvents(actor.contaId, ticketCode, actor.userId);
   }

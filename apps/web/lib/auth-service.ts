@@ -129,6 +129,17 @@ async function resolveUserContaAccess(input: {
         return { ok: true as const, contaId: membership.contaId, role: membership.role };
       }
     }
+
+    // Usuario.contaId é apenas fallback para identidades legadas sem nenhum
+    // vínculo. Se há registros em UsuarioConta, a falta de vínculo ativo na
+    // escola solicitada significa acesso revogado — nunca reabrir pelo legado.
+    const anyMembership = await db.usuarioConta.findFirst({
+      where: { usuarioId: input.userId },
+      select: { contaId: true },
+    });
+    if (anyMembership) {
+      return { ok: false as const, reason: 'ACCOUNT_UNAVAILABLE' as const };
+    }
   }
 
   const legacyContaId = input.legacyContaId?.trim();

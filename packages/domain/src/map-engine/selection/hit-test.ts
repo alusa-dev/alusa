@@ -1,14 +1,11 @@
 import type { BoundsRect } from '../geometry/bounds.js';
 import { getSeatBounds, intersectsRect, normalizeBoundsRect } from '../geometry/bounds.js';
 import { getObjectBounds } from '../layout/object-bounds.js';
-import { getSeatGroupWorldBounds } from '../layout/seat-group-bounds.js';
 import type { MapSelectionItem } from '../selection/selection-utils.js';
-import type { EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../types/event-map-types.js';
+import type { EventMapObjectDTO, EventSeatDTO } from '../types/event-map-types.js';
 
 export type HitTestOptions = {
   includeLockedObjects?: boolean;
-  includeLockedSeatGroups?: boolean;
-  includeGroupedSeats?: boolean;
   includeSoldSeats?: boolean;
 };
 
@@ -17,7 +14,6 @@ export type MarqueeHitTestInput = {
   current: { x: number; y: number };
   objects: EventMapObjectDTO[];
   seats: EventSeatDTO[];
-  seatGroups: EventSeatGroupDTO[];
   options?: HitTestOptions;
 };
 
@@ -49,23 +45,12 @@ export function hitTestRect(
   }
 
   for (const seat of input.seats) {
-    if (seat.groupId != null && !options.includeGroupedSeats) continue;
     if (seat.status === 'SOLD' && !options.includeSoldSeats) continue;
     if (!intersectsRect(box, getSeatBounds(seat))) continue;
     const key = selectionKey({ type: 'seat', id: seat.id });
     if (seen.has(key)) continue;
     seen.add(key);
     items.push({ type: 'seat', id: seat.id });
-  }
-
-  for (const group of input.seatGroups) {
-    if (group.locked && !options.includeLockedSeatGroups) continue;
-    const bounds = getSeatGroupWorldBounds(group, input.seats);
-    if (!intersectsRect(box, bounds)) continue;
-    const key = selectionKey({ type: 'seatgroup', id: group.id });
-    if (seen.has(key)) continue;
-    seen.add(key);
-    items.push({ type: 'seatgroup', id: group.id });
   }
 
   return items;

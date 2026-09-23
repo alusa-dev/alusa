@@ -1,6 +1,6 @@
 import type { AuthActionTokenType, Role } from '@prisma/client';
 import prisma from '@/lib/prisma';
-import { buildAppUrl } from '@/lib/app-url';
+import { buildPublicAppUrl } from '@/lib/app-url';
 import { safeRedirect } from '@/lib/safe-redirect';
 import { auditLogService } from '@alusa/finance';
 import {
@@ -61,11 +61,11 @@ function buildVerifyEmailUrl(token: string, callbackUrl?: string | null): string
     params.set('callbackUrl', redirectTo);
   }
 
-  return buildAppUrl(`/auth/verify-email?${params.toString()}`);
+  return buildPublicAppUrl(`/auth/verify-email?${params.toString()}`);
 }
 
 function buildResetPasswordUrl(token: string): string {
-  return buildAppUrl(`/auth/reset-password?token=${encodeURIComponent(token)}`);
+  return buildPublicAppUrl(`/auth/reset-password?token=${encodeURIComponent(token)}`);
 }
 
 function getRoleLabel(role: Role): string {
@@ -315,13 +315,22 @@ export async function verifyEmailByToken(token: string) {
   }
 
   if (!consumed) {
-    const existing =
-      (await findAuthActionTokenByPlainToken('VERIFY_EMAIL', token)) ??
-      (await findAuthActionTokenByPlainToken('ACCOUNT_REACTIVATION', token));
-    if (existing?.usedAt && existing.user.emailVerifiedAt) {
-      return existing.user;
+    const existingVerification = await findAuthActionTokenByPlainToken('VERIFY_EMAIL', token);
+    const existingReactivation = existingVerification
+      ? null
+      : await findAuthActionTokenByPlainToken('ACCOUNT_REACTIVATION', token);
+    const existing = existingVerification ?? existingReactivation;
+
+    if (!existing?.usedAt || existing.invalidatedAt) {
+      return null;
     }
-    return null;
+
+    // Verification consumption and the user update span two transactions.
+    // In dev Strict Mode, retries, or a process interruption, the token may
+    // already be claimed while emailVerifiedAt is still null. Finish safely.
+    tokenType = existingVerification ? 'VERIFY_EMAIL' : 'ACCOUNT_REACTIVATION';
+    if (existing.user.emailVerifiedAt) return existing.user;
+    consumed = { tokenId: existing.tokenId, user: existing.user };
   }
 
   let reactivatedAccount = false;

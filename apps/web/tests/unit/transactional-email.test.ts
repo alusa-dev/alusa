@@ -38,6 +38,23 @@ describe('sendTransactionalEmail', () => {
     })).rejects.toThrow('RESEND_API_KEY ausente em produção.');
   });
 
+  it('propaga falha do provedor em produção em vez de reportar envio como sucesso', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('PLAYWRIGHT_TEST', 'false');
+    vi.stubEnv('RESEND_API_KEY', 'test-key');
+    const send = vi.fn().mockResolvedValue({ data: null, error: { message: 'provider rejected request' } });
+    vi.doMock('resend', () => ({ Resend: vi.fn(() => ({ emails: { send } })) }));
+    const { sendTransactionalEmail } = await import('@/lib/email/transactional-email');
+
+    await expect(sendTransactionalEmail({
+      to: 'person@example.com',
+      category: 'verify_email',
+      idempotencyKey: 'verify-email/provider-error',
+      subject: 'Confirme seu e-mail',
+    })).rejects.toThrow('provider rejected request');
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it('normaliza tags para o contrato ASCII do Resend antes do envio', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('PLAYWRIGHT_TEST', 'true');
@@ -65,6 +82,29 @@ describe('sendTransactionalEmail', () => {
         ],
       }),
       { idempotencyKey: 'platform-billing/event-1' },
+    );
+  });
+
+  it('usa o domínio autenticado da Alusa como remetente padrão de confirmação', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('PLAYWRIGHT_TEST', 'true');
+    vi.stubEnv('RESEND_API_KEY', 'test-key');
+    vi.stubEnv('EMAIL_FROM_AUTH', '');
+    vi.stubEnv('RESEND_FROM', '');
+    const send = vi.fn().mockResolvedValue({ data: { id: 'email_verify_123' }, error: null });
+    vi.doMock('resend', () => ({ Resend: vi.fn(() => ({ emails: { send } })) }));
+    const { sendTransactionalEmail } = await import('@/lib/email/transactional-email');
+
+    await sendTransactionalEmail({
+      to: 'person@example.com',
+      category: 'verify_email',
+      idempotencyKey: 'verify-email/token-123',
+      template: { id: 'verify-email-template', variables: { ACTION_URL: 'https://alusa.app/verify' } },
+    });
+
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ from: 'Alusa <no-reply@alusa.app>' }),
+      { idempotencyKey: 'verify-email/token-123' },
     );
   });
 });

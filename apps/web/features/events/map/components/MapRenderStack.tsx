@@ -1,18 +1,10 @@
-import type { CorridorUnionGroup, LevelRenderStackItem, MapSelection, MapSelectionItem } from '@alusa/domain';
-
-import { polygonToKonvaPoints } from '../canvas/adapters/konva-snap-adapter';
-import { CORRIDOR_CANVAS_DEFAULT } from '../canvas/render/map-object-appearance';
+import { findMapSeatOwner } from '@alusa/domain';
 import type { MapCanvasRenderHandlers, MapCanvasRenderState } from '../canvas/render/map-canvas-render-model';
-import type { EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
-import { CorridorMapObject, buildCorridorMapObjectProps } from './CorridorMapObject';
+import type { EventMapObjectDTO } from '../api/event-map-service';
 import { LooseSeatNode } from './LooseSeatNode';
-import { SeatGroupNode } from './SeatGroupNode';
 import { ShapeMapObjectNode } from './ShapeMapObjectNode';
 import { TextMapObjectNode } from './TextMapObjectNode';
 
-import Konva from 'konva';
-import type { RefObject } from 'react';
-import { Group, Line } from 'react-konva';
 
 export type { MapCanvasRenderHandlers, MapCanvasRenderState } from '../canvas/render/map-canvas-render-model';
 
@@ -25,37 +17,9 @@ export function MapObjectNode({
   state: MapCanvasRenderState;
   handlers: MapCanvasRenderHandlers;
 }) {
-  if (object.type === 'CORRIDOR') {
-    const corridorProps = buildCorridorMapObjectProps(object, {
-      selection: state.selection,
-      levelObjects: state.levelObjects,
-      selectedCorridorIds: state.selectedCorridorIds,
-      corridorUnionGroups: state.corridorUnionGroups,
-      activeUnionDragIds: state.activeUnionDragIds,
-      isObjectSelected: handlers.isObjectSelected,
-    });
-    const freezeFromReact = state.isTransformSessionActive && state.selectedCorridorIds.has(object.id);
-
-    return (
-      <CorridorMapObject
-        key={object.id}
-        {...corridorProps}
-        freezeFromReact={freezeFromReact}
-        placementToolActive={state.placementToolActive}
-        readOnly={state.readOnly}
-        tool={state.tool}
-        onSelect={(event) => handlers.onSelect(event, { type: 'object', id: object.id })}
-        onDragStart={() => handlers.onDragStart(`node-${object.id}`, { type: 'object', id: object.id })}
-        onDragMove={handlers.onDragMove}
-        onDragEnd={(event) =>
-          handlers.onDragEnd(`node-${object.id}`, event, (x, y) => handlers.onUpdateObjectPosition(object.id, x, y))
-        }
-        onTransformEnd={(event) => {
-          if (state.isSingleSelectionTransform) handlers.onObjectTransformEnd(object, event.target);
-        }}
-      />
-    );
-  }
+  // A seated section is a logical container, not an independent canvas shape.
+  // Its visible boundary is rendered from the current seat geometry below.
+  if (object.type === 'SECTION') return null;
 
   if (object.type === 'TEXT') {
     return (
@@ -95,32 +59,6 @@ export function MapObjectNode({
   );
 }
 
-function renderCorridorUnionItem(
-  item: Extract<LevelRenderStackItem, { kind: 'corridorUnion' }>,
-  corridorUnionGroups: CorridorUnionGroup[],
-) {
-  const group = corridorUnionGroups.find((entry) => entry.id === item.id);
-  if (!group || group.objectIds.length < 2) return null;
-
-  return (
-    <Group key={`corridor-union-${group.id}`} listening={false}>
-      {group.mergedPolygons.map((polygon, index) => (
-        <Line
-          key={`${group.id}-merged-${index}`}
-          points={polygonToKonvaPoints(polygon)}
-          closed
-          fill={CORRIDOR_CANVAS_DEFAULT.fill}
-          stroke={CORRIDOR_CANVAS_DEFAULT.stroke}
-          strokeWidth={CORRIDOR_CANVAS_DEFAULT.strokeWidth}
-          strokeScaleEnabled={false}
-          dash={CORRIDOR_CANVAS_DEFAULT.dash}
-          listening={false}
-        />
-      ))}
-    </Group>
-  );
-}
-
 export function MapRenderStack({
   state,
   handlers,
@@ -131,34 +69,6 @@ export function MapRenderStack({
   return (
     <>
       {state.renderStack.map((item) => {
-        if (item.kind === 'corridorUnion') {
-          return renderCorridorUnionItem(item, state.corridorUnionGroups);
-        }
-
-        if (item.kind === 'seatGroup') {
-          const group = state.levelSeatGroups.find((entry) => entry.id === item.id);
-          if (!group) return null;
-          const groupSeats = state.levelSeats.filter((seat) => seat.groupId === group.id);
-          return (
-            <SeatGroupNode
-              key={group.id}
-              group={group}
-              groupSeats={groupSeats}
-              selection={state.selection}
-              placementToolActive={state.placementToolActive}
-              readOnly={state.readOnly}
-              tool={state.tool}
-              onSelect={handlers.onSelect}
-              onDoubleClickSelectIndividual={handlers.onDoubleClickSelectIndividualSeat}
-              onDragStart={handlers.onDragStart}
-              onDragMove={handlers.onDragMove}
-              onDragEnd={handlers.onDragEnd}
-              onTransformEnd={handlers.onSeatGroupTransformEnd}
-              onCommitPosition={(x, y) => handlers.onUpdateSeatGroupPosition(group.id, x, y)}
-            />
-          );
-        }
-
         if (item.kind === 'seat') {
           const seat = state.levelSeats.find((entry) => entry.id === item.id);
           if (!seat) return null;
@@ -167,6 +77,7 @@ export function MapRenderStack({
               key={seat.id}
               seat={seat}
               selection={state.selection}
+              parametricOwner={state.document ? findMapSeatOwner(state.document, seat.id) : null}
               placementToolActive={state.placementToolActive}
               readOnly={state.readOnly}
               tool={state.tool}

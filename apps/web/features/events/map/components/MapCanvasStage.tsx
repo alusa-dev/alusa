@@ -7,14 +7,16 @@ import type { MapTool } from '../store/event-map-editor-store';
 import type { TransformerScaleOptions } from '../canvas/transform/transform-handle-mode';
 import { getNodeBounds } from '../canvas/adapters/konva-snap-adapter';
 import type { MapCanvasRenderHandlers, MapCanvasRenderState } from '../canvas/render/map-canvas-render-model';
-import type { CreationDraft, MarqueeDraft, SeatGridDraft } from '../canvas/render/map-creation-draft';
-import type { SeatGridPreviewSeat } from '@alusa/domain';
+import type { CreationDraft, MarqueeDraft, SeatBlockDraft } from '../canvas/render/map-creation-draft';
+import type { SeatBlockPreviewSeat } from '@alusa/domain';
 import type { SnapGuidesLayerHandle } from './SnapGuidesLayer';
 import { MapCreationPreview } from './MapCreationPreview';
 import { MapMarqueePreview } from './MapMarqueePreview';
 import { MapRenderStack } from './MapRenderStack';
+import { ParametricMapLayer } from './ParametricMapLayer';
+import { ReferenceChartLayer } from './ReferenceChartLayer';
 import { MapTransformer } from './MapTransformer';
-import { SeatGridPreviewLayer } from './SeatGridPreviewLayer';
+import { SeatBlockPreviewLayer } from './SeatBlockPreviewLayer';
 import { SnapGuidesLayer } from './SnapGuidesLayer';
 
 type MapCanvasStageProps = {
@@ -24,6 +26,7 @@ type MapCanvasStageProps = {
   transformerRef: RefObject<Konva.Transformer | null>;
   size: { width: number; height: number };
   level: { widthPx: number; heightPx: number };
+  levelId: string;
   pan: { x: number; y: number };
   zoom: number;
   readOnly: boolean;
@@ -32,10 +35,12 @@ type MapCanvasStageProps = {
   renderHandlers: MapCanvasRenderHandlers;
   creationDraft: CreationDraft | null;
   marqueeDraft: MarqueeDraft | null;
-  seatGridDraft: SeatGridDraft | null;
-  seatGridPreviewSeats: SeatGridPreviewSeat[];
-  disableRotateForMixedSmartCorridorSelection: boolean;
-  disableResizeForMixedSmartCorridorSelection: boolean;
+  seatBlockDraft: SeatBlockDraft | null;
+  seatBlockPreviewSeats: SeatBlockPreviewSeat[];
+  referenceChart: import('@alusa/domain').MapReferenceChart | null | undefined;
+  referenceChartEditing: boolean;
+  onReferenceChartTransformCommit: (transform: import('@alusa/domain').MapReferenceTransform) => void;
+  transformDisabled: boolean;
   transformerScaleOptions: TransformerScaleOptions;
   selectedTextTransformAnchors: readonly string[];
   placementToolActive: boolean;
@@ -57,6 +62,7 @@ type MapCanvasStageProps = {
   onMouseDown: (event: Konva.KonvaEventObject<MouseEvent>) => void;
   onMouseMove: (event: Konva.KonvaEventObject<MouseEvent>) => void;
   onMouseUp: (event: Konva.KonvaEventObject<MouseEvent>) => void;
+  onClick: (event: Konva.KonvaEventObject<MouseEvent>) => void;
   onWheel: (event: Konva.KonvaEventObject<WheelEvent>) => void;
 };
 
@@ -67,6 +73,7 @@ export function MapCanvasStage({
   transformerRef,
   size,
   level,
+  levelId,
   pan,
   zoom,
   readOnly,
@@ -75,10 +82,12 @@ export function MapCanvasStage({
   renderHandlers,
   creationDraft,
   marqueeDraft,
-  seatGridDraft,
-  seatGridPreviewSeats,
-  disableRotateForMixedSmartCorridorSelection,
-  disableResizeForMixedSmartCorridorSelection,
+  seatBlockDraft,
+  seatBlockPreviewSeats,
+  referenceChart,
+  referenceChartEditing,
+  onReferenceChartTransformCommit,
+  transformDisabled,
   transformerScaleOptions,
   selectedTextTransformAnchors,
   placementToolActive,
@@ -91,6 +100,7 @@ export function MapCanvasStage({
   onMouseDown,
   onMouseMove,
   onMouseUp,
+  onClick,
   onWheel,
 }: MapCanvasStageProps) {
   return (
@@ -109,6 +119,7 @@ export function MapCanvasStage({
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
+      onClick={onClick}
       onWheel={onWheel}
     >
       <Layer listening={false}>
@@ -116,12 +127,23 @@ export function MapCanvasStage({
       </Layer>
 
       <Layer ref={contentLayerRef as RefObject<Konva.Layer>}>
+        <ReferenceChartLayer
+          chart={referenceChart}
+          editing={referenceChartEditing}
+          onTransformCommit={onReferenceChartTransformCommit}
+        />
+        <ParametricMapLayer
+          document={renderState.document}
+          levelId={levelId}
+          selection={renderState.selection}
+          readOnly={readOnly}
+          onSelect={renderHandlers.onSelect}
+        />
         <MapRenderStack state={renderState} handlers={renderHandlers} />
-        <SeatGridPreviewLayer seatGridDraft={seatGridDraft} seatGridPreviewSeats={seatGridPreviewSeats} />
+        <SeatBlockPreviewLayer seatBlockDraft={seatBlockDraft} seatBlockPreviewSeats={seatBlockPreviewSeats} />
         <MapTransformer
           transformerRef={transformerRef}
-          disableRotateForMixedSmartCorridorSelection={disableRotateForMixedSmartCorridorSelection}
-          disableResizeForMixedSmartCorridorSelection={disableResizeForMixedSmartCorridorSelection}
+          transformDisabled={transformDisabled}
           transformerScaleOptions={transformerScaleOptions}
           selectedTextTransformAnchors={selectedTextTransformAnchors}
           placementToolActive={placementToolActive}

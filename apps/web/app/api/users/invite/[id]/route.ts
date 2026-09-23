@@ -38,18 +38,10 @@ export async function DELETE(_req: Request, ctx: RouteContext) {
       return NextResponse.json({ error: 'Sem permissão para excluir este convite.' }, { status: 403 });
     }
 
-    const invite = await InviteUserService.getInviteById(id);
-    if (!invite) {
-      return NextResponse.json({ error: 'Convite não encontrado.' }, { status: 404 });
-    }
-
-    if (inviterContaId && invite.contaId && invite.contaId !== inviterContaId) {
-      return NextResponse.json({ error: 'Convite não pertence à sua conta.' }, { status: 403 });
-    }
-
-    const ok = await InviteUserService.cancelInviteById(id);
+    if (!inviterContaId) return NextResponse.json({ error: 'Conta inválida.' }, { status: 403 });
+    const ok = await InviteUserService.deleteInviteById(id, inviterContaId);
     if (!ok) {
-      return NextResponse.json({ error: 'Convite não encontrado ou já processado.' }, { status: 404 });
+      return NextResponse.json({ error: 'Convite não encontrado.' }, { status: 404 });
     }
     return NextResponse.json(deleteInviteResultDTOSchema.parse({ ok: true }));
   } catch (error) {

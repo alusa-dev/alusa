@@ -3,6 +3,10 @@ import RegisterForm from './RegisterForm';
 import { redirect } from 'next/navigation';
 import AuthPageContainer from '@/components/auth/AuthPageContainer';
 import { isExternalAsaasOnboardingRolloutEnabled } from '@/lib/feature-flags/external-asaas-onboarding';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth-options';
+import AcceptInviteButton from './AcceptInviteButton';
+import SignOutForInviteButton from './SignOutForInviteButton';
 
 interface RegisterPageProps {
   searchParams: Promise<{ token?: string; next?: string }>;
@@ -22,7 +26,6 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
         role: true,
         status: true,
         expiresAt: true,
-        metadata: true,
       }
     });
 
@@ -31,29 +34,44 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
       redirect('/auth/login?error=invalid_token');
     }
 
-    // Se for RESPONSAVEL, buscar alunos vinculados
-    let alunos: any[] = [];
-    if (invite.role === 'RESPONSAVEL' && invite.metadata) {
-      const metadata = invite.metadata as { alunosIds?: string[] };
-      const alunosIds = metadata.alunosIds || [];
+    const session = await getServerSession(authOptions);
+    if (session?.user?.id) {
+      const sessionEmail = session.user.email?.trim().toLowerCase();
+      if (invite.email && invite.email.trim().toLowerCase() !== sessionEmail) {
+        return (
+          <AuthPageContainer>
+            <main className="flex min-h-svh items-center justify-center px-4 py-8">
+              <div className="w-full max-w-lg rounded-2xl border bg-background p-6 text-center shadow-sm">
+                <h1 className="text-xl font-semibold">Convite válido para outro e-mail</h1>
+                <p role="status" className="mt-2 text-sm text-muted-foreground">
+                  Este convite foi enviado para <strong>{invite.email}</strong>, mas você está conectado como <strong>{session.user.email}</strong>. Para aceitá-lo na conta correta, saia desta sessão e entre com o e-mail do convite.
+                </p>
+                <SignOutForInviteButton token={token} />
+              </div>
+            </main>
+          </AuthPageContainer>
+        );
+      }
+      return (
+        <AuthPageContainer>
+          <main className="flex min-h-svh items-center justify-center px-4 py-8">
+            <div data-testid="invite-acceptance-card" className="w-full max-w-lg rounded-2xl border p-6 text-center">
+              <h1 className="text-xl font-semibold">Aceitar convite da escola</h1>
+              <p className="mt-2 text-sm text-muted-foreground">Você está autenticado como {session.user.email}. Confirme para adicionar o acesso sem criar outra conta ou alterar sua senha.</p>
+              <AcceptInviteButton token={token} requireGuardianData={invite.role === 'RESPONSAVEL'} />
+            </div>
+          </main>
+        </AuthPageContainer>
+      );
+    }
 
-      if (alunosIds.length > 0) {
-        const alunosData = await prisma.aluno.findMany({
-          where: { id: { in: alunosIds } },
-          select: {
-            id: true,
-            nome: true,
-            email: true,
-            dataNasc: true,
-          },
-        });
-
-        alunos = alunosData.map((aluno) => ({
-          id: aluno.id,
-          nome: aluno.nome,
-          email: aluno.email || null,
-          idade: aluno.dataNasc ? calcularIdade(aluno.dataNasc) : null,
-        }));
+    if (invite.email) {
+      const existingUser = await prisma.usuario.findFirst({
+        where: { email: { equals: invite.email, mode: 'insensitive' } },
+        select: { id: true, status: true },
+      });
+      if (existingUser && String(existingUser.status).toUpperCase() === 'ATIVO') {
+        redirect(`/auth/login?callbackUrl=${encodeURIComponent(`/auth/register?token=${token}`)}`);
       }
     }
 
@@ -65,7 +83,6 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
             email: invite.email || undefined,
             role: invite.role,
             token,
-            alunos: alunos.length > 0 ? alunos : undefined,
           }}
         />
       </AuthPageContainer>
@@ -78,15 +95,4 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
       <RegisterForm enableExternalAsaasOnboarding={enableExternalAsaasOnboarding} />
     </AuthPageContainer>
   );
-}
-
-function calcularIdade(dataNasc: Date): number {
-  const hoje = new Date();
-  const nascimento = new Date(dataNasc);
-  let idade = hoje.getFullYear() - nascimento.getFullYear();
-  const mes = hoje.getMonth() - nascimento.getMonth();
-  if (mes < 0 || (mes === 0 && hoje.getDate() < nascimento.getDate())) {
-    idade--;
-  }
-  return idade;
 }

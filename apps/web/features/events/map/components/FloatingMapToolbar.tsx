@@ -1,23 +1,8 @@
 'use client';
 import type { MapTool } from '../store/event-map-editor-store';
+import { CreatorIcon, type CreatorIconName } from '@/components/icons/hugeicons';
 
 import { cn } from '@/lib/utils';
-
-import type { ComponentType } from 'react';
-import {
-  Armchair,
-  Ban,
-  Circle,
-  Grid2X2,
-  Hand,
-  LayoutGrid,
-  MousePointer2,
-  PanelTop,
-  Shapes,
-  Square,
-  Type,
-  ZoomIn,
-} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -32,52 +17,58 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { useState } from 'react';
 
 type ToolbarTool = {
   id: MapTool;
   label: string;
   shortcut?: string;
-  icon: ComponentType<{ className?: string }>;
+  icon: CreatorIconName;
 };
 
 const presetTools: ToolbarTool[] = [
-  { id: 'seat', label: 'Organizar assentos', shortcut: 'C', icon: Armchair },
-  { id: 'stage', label: 'Adicionar palco', icon: PanelTop },
-  { id: 'corridor', label: 'Corredor', icon: Grid2X2 },
-  { id: 'blocked', label: 'Sessão bloqueada', icon: Ban },
+  { id: 'seat', label: 'Bloco de fileiras', shortcut: 'C', icon: 'block' },
+  { id: 'stage', label: 'Adicionar palco', icon: 'stage' },
+  { id: 'blocked', label: 'Área bloqueada', icon: 'blocked' },
 ];
 
 const shapeTools: ToolbarTool[] = [
-  { id: 'shape-square', label: 'Quadrado', icon: Square },
-  { id: 'shape-circle', label: 'Círculo', icon: Circle },
-  { id: 'shape-ellipse', label: 'Elipse', icon: Circle },
-  { id: 'shape-triangle', label: 'Triângulo', icon: Shapes },
+  { id: 'shape-square', label: 'Quadrado', icon: 'square' },
+  { id: 'shape-circle', label: 'Círculo', icon: 'circle' },
+  { id: 'shape-ellipse', label: 'Elipse', icon: 'ellipse' },
+  { id: 'shape-triangle', label: 'Triângulo', icon: 'triangle' },
 ];
 
 const tools: ToolbarTool[] = [
-  { id: 'select', label: 'Selecionar', shortcut: 'V', icon: MousePointer2 },
-  { id: 'pan', label: 'Mover canvas', shortcut: 'H', icon: Hand },
-  { id: 'zoom', label: 'Zoom', shortcut: 'Z', icon: ZoomIn },
-  { id: 'text', label: 'Adicionar texto', shortcut: 'T', icon: Type },
+  { id: 'select', label: 'Selecionar', shortcut: 'V', icon: 'select' },
+  { id: 'pan', label: 'Mover canvas', shortcut: 'H', icon: 'pan' },
+  { id: 'zoom', label: 'Zoom', shortcut: 'Z', icon: 'zoom' },
+  { id: 'text', label: 'Adicionar texto', shortcut: 'T', icon: 'text' },
 ];
 
 function ToolbarDropdown({
+  menuId,
   label,
-  triggerIcon: TriggerIcon,
+  triggerIcon,
   items,
   activeTool,
   onToolChange,
+  open,
+  onOpenChange,
 }: {
+  menuId: 'elements' | 'shapes';
   label: string;
-  triggerIcon: ComponentType<{ className?: string }>;
+  triggerIcon: CreatorIconName;
   items: ToolbarTool[];
   activeTool: MapTool;
   onToolChange: (tool: MapTool) => void;
+  open: boolean;
+  onOpenChange: (menuId: 'elements' | 'shapes', open: boolean) => void;
 }) {
   const isActive = items.some((tool) => tool.id === activeTool);
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={(nextOpen) => onOpenChange(menuId, nextOpen)}>
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
@@ -91,7 +82,7 @@ function ToolbarDropdown({
               )}
               aria-label={label}
             >
-              <TriggerIcon className="h-4 w-4" />
+              <CreatorIcon name={triggerIcon} size={16} />
             </Button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
@@ -99,7 +90,6 @@ function ToolbarDropdown({
       </Tooltip>
       <DropdownMenuContent side="top" align="center" className="w-52">
         {items.map((tool) => {
-          const Icon = tool.icon;
           return (
             <DropdownMenuItem
               key={tool.id}
@@ -107,7 +97,7 @@ function ToolbarDropdown({
               onSelect={() => onToolChange(tool.id)}
               className="gap-2"
             >
-              <Icon className="h-4 w-4 text-slate-500" />
+              <CreatorIcon name={tool.icon} size={16} className="text-slate-500" />
               <span className="flex-1">{tool.label}</span>
               {tool.shortcut ? <span className="text-xs text-slate-400">{tool.shortcut}</span> : null}
             </DropdownMenuItem>
@@ -127,6 +117,15 @@ export function FloatingMapToolbar({
   onToolChange: (tool: MapTool) => void;
   className?: string;
 }) {
+  const [openMenu, setOpenMenu] = useState<'elements' | 'shapes' | null>(null);
+
+  const handleMenuOpenChange = (menuId: 'elements' | 'shapes', open: boolean) => {
+    setOpenMenu((current) => {
+      if (open) return menuId;
+      return current === menuId ? null : current;
+    });
+  };
+
   return (
     <TooltipProvider>
       <div
@@ -137,7 +136,6 @@ export function FloatingMapToolbar({
         )}
       >
         {tools.map((tool) => {
-          const Icon = tool.icon;
           const active = activeTool === tool.id;
           return (
             <Tooltip key={tool.id}>
@@ -153,7 +151,7 @@ export function FloatingMapToolbar({
                   )}
                   aria-label={tool.label}
                 >
-                  <Icon className="h-4 w-4" />
+                  <CreatorIcon name={tool.icon} size={16} />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="top">
@@ -164,18 +162,24 @@ export function FloatingMapToolbar({
           );
         })}
         <ToolbarDropdown
-          label="Presets"
-          triggerIcon={LayoutGrid}
+          menuId="elements"
+          label="Elementos"
+          triggerIcon="block"
           items={presetTools}
           activeTool={activeTool}
           onToolChange={onToolChange}
+          open={openMenu === 'elements'}
+          onOpenChange={handleMenuOpenChange}
         />
         <ToolbarDropdown
+          menuId="shapes"
           label="Formas"
-          triggerIcon={Shapes}
+          triggerIcon="shape"
           items={shapeTools}
           activeTool={activeTool}
           onToolChange={onToolChange}
+          open={openMenu === 'shapes'}
+          onOpenChange={handleMenuOpenChange}
         />
       </div>
     </TooltipProvider>

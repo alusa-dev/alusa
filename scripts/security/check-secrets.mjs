@@ -26,6 +26,10 @@ const detectors = [
 const findings = [];
 for (const relativeFile of trackedFiles) {
   const absoluteFile = path.join(root, relativeFile);
+  // Deleted paths remain in `git ls-files` until the next index update. They
+  // have no worktree contents to scan; staged additions are checked after they
+  // enter the index, and removed files are represented by their deletion.
+  if (!fs.existsSync(absoluteFile)) continue;
   const contents = fs.readFileSync(absoluteFile);
   if (contents.includes(0)) continue;
 

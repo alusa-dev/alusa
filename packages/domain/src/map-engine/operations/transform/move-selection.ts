@@ -48,11 +48,6 @@ export function moveSelection(input: MoveSelectionInput): MoveSelectionResult {
     patches.seats.push({ id, patch: { x: seat.x + delta.x, y: seat.y + delta.y } });
   }
 
-  for (const id of resolved.seatGroupIds) {
-    const group = input.map.seatGroups?.find((entry) => entry.id === id);
-    if (!group) continue;
-    patches.seatGroups.push({ id, patch: { x: group.x + delta.x, y: group.y + delta.y } });
-  }
 
   const safePatches = filterFiniteTransformPatches(patches);
 

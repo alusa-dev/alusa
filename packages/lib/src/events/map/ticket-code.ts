@@ -1,3 +1,23 @@
+const CHECK_IN_CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const CHECK_IN_CODE_LENGTH = 12;
+
+/** Creates a compact, case-insensitive Crockford Base32 code for a ticket. */
+export function createCheckInCode(): string {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(CHECK_IN_CODE_LENGTH));
+  return Array.from(bytes, (byte) => CHECK_IN_CODE_ALPHABET[byte & 31]!).join('');
+}
+
+export function normalizeCheckInCode(value: string): string {
+  return value.trim().toUpperCase().replace(/[\s-]/g, '');
+}
+
+export function formatCheckInCode(value: string): string {
+  const normalized = normalizeCheckInCode(value);
+  return normalized.length === CHECK_IN_CODE_LENGTH
+    ? `${normalized.slice(0, 4)}-${normalized.slice(4, 8)}-${normalized.slice(8)}`
+    : normalized;
+}
+
 /**
  * Código curto legado impresso em versões antigas do ingresso.
  *

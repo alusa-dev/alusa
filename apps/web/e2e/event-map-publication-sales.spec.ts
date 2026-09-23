@@ -148,6 +148,7 @@ test.describe('event map publication, public sales and ticket delivery', () => {
     await page.waitForResponse((response) => response.url().includes(`/api/events/${event.id}/maps/${map.id}`) && response.request().method() === 'PATCH');
 
     await page.getByRole('button', { name: /Publicar/ }).click();
+    await page.getByRole('dialog').getByRole('button', { name: /Confirmar publicação/ }).click();
     await page.waitForResponse((response) => response.url().includes(`/api/events/${event.id}/maps/${map.id}/publish`) && response.ok());
 
     const published = await getAdminMap(page, event.id, map.id);
@@ -159,11 +160,14 @@ test.describe('event map publication, public sales and ticket delivery', () => {
     await expect(page.getByTestId('public-event-map-canvas')).toBeVisible({ timeout: 20_000 });
     await page.getByTestId('public-seat-A1').click();
     await page.getByTestId('public-seat-A2').click();
-    await page.getByLabel('Nome').fill('Cliente E2E');
+    await page.getByRole('button', { name: /Continuar compra/ }).click();
+    await page.getByLabel('Nome Completo').fill('Cliente E2E');
     await page.getByLabel('E-mail').fill('cliente.e2e@example.com');
-    await page.getByLabel('Documento').fill('12345678900');
-    await page.getByRole('button', { name: /Confirmar compra/ }).click();
-    await expect(page.getByText('Compra confirmada')).toBeVisible({ timeout: 20_000 });
+    await page.getByLabel('CPF ou CNPJ').fill('12345678900');
+    await page.getByRole('button', { name: /^Avançar$/ }).click();
+    await page.getByRole('button', { name: /Confirmar e Reservar/ }).click();
+    await expect(page.getByText(/Pagamento confirmado|Reserva criada/)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('link', { name: /Baixar ingressos/ })).toBeVisible({ timeout: 20_000 });
 
     const download = page.getByRole('link', { name: /Baixar ingressos/ });
     const ticketsUrl = await download.getAttribute('href');
@@ -180,6 +184,31 @@ test.describe('event map publication, public sales and ticket delivery', () => {
       .filter((seat) => ['A1', 'A2'].includes(seat.technicalCode));
     expect(soldSeats.map((seat) => seat.status)).toEqual(['SOLD', 'SOLD']);
 
+    const ticket = await prisma.eventTicket.findFirst({
+      where: { contaId: event.contaId, eventId: event.id },
+      select: { checkInCode: true, ticketCode: true, status: true },
+    });
+    expect(ticket).toBeTruthy();
+    expect(ticket?.status).toBe('VALID');
+    const checkInCode = ticket?.checkInCode ?? ticket?.ticketCode;
+    const verifyCheckIn = await page.request.post(`/api/events/${event.id}/public-orders/verify-ticket`, {
+      data: { ticketCode: checkInCode },
+    });
+    expect(verifyCheckIn.status()).toBe(200);
+    expect((await verifyCheckIn.json()).data.ticket.status).toBe('VALID');
+
+    const confirmCheckIn = await page.request.post(`/api/events/${event.id}/public-orders/verify-ticket`, {
+      data: { ticketCode: checkInCode, confirm: true },
+    });
+    expect(confirmCheckIn.status()).toBe(200);
+    expect((await confirmCheckIn.json()).data.ticket.status).toBe('USED');
+
+    const duplicateCheckIn = await page.request.post(`/api/events/${event.id}/public-orders/verify-ticket`, {
+      data: { ticketCode: checkInCode, confirm: true },
+    });
+    expect(duplicateCheckIn.status()).toBe(200);
+    expect((await duplicateCheckIn.json()).data.alreadyUsed).toBe(true);
+
     const draft = await getAdminMap(page, event.id, map.id);
     const extraSeat = {
       ...draft.seats[0],
@@ -195,7 +224,6 @@ test.describe('event map publication, public sales and ticket delivery', () => {
         levels: draft.levels,
         sections: draft.sections,
         objects: draft.objects,
-        seatGroups: draft.seatGroups,
         seats: [...draft.seats, extraSeat],
       },
     });

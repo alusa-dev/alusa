@@ -88,6 +88,8 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
     queryKey: ['events', event.id, 'public-orders'],
     queryFn: async () =>
       parseResponse<PublicOrderListItem[]>(await fetch(`/api/events/${event.id}/public-orders`)),
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
   });
 
   const reconcileMutation = useMutation({
@@ -127,9 +129,27 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
   });
 
   const orders = ordersQuery.data ?? [];
+  const pendingOrdersCount = orders.filter((order) => order.status === 'PAYMENT_PENDING').length;
+  const issuedTicketsCount = orders.reduce((sum, order) => sum + order.ticketCount, 0);
+  const checkedInTicketsCount = orders.reduce((sum, order) => sum + order.ticketsUsed, 0);
 
   return (
     <div className="space-y-6">
+      <section aria-label="Resumo operacional das vendas online" className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <span className="text-xs text-slate-500">Pedidos aguardando pagamento</span>
+          <strong className="mt-1 block text-2xl text-slate-900">{pendingOrdersCount}</strong>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <span className="text-xs text-slate-500">Ingressos emitidos · vendas online</span>
+          <strong className="mt-1 block text-2xl text-slate-900">{issuedTicketsCount}</strong>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <span className="text-xs text-slate-500">Check-ins registrados · vendas online</span>
+          <strong className="mt-1 block text-2xl text-slate-900">{checkedInTicketsCount}</strong>
+        </div>
+      </section>
+
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="text-base font-semibold text-slate-900">Check-in por código</h3>
         <p className="mt-1 text-sm text-slate-500">Valide ingressos do mapa público na entrada do evento.</p>

@@ -1,13 +1,17 @@
 'use client';
 
-import type { ComponentType } from 'react';
 import { useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { CreditCard, Calendar, User, AlertCircle } from '@/components/icons/icons';
+import Link from 'next/link';
+import { AlertCircle } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { PortalDashboardResultDTO } from '@/features/portal/dtos';
 import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 import { AlunoSelector } from './components/AlunoSelector';
+import {
+  DASHBOARD_KPI_TILE_CLASSNAME,
+  DASHBOARD_SECTION_CARD_CLASSNAME,
+} from '@/app/(app)/dashboard/components/utils';
 
 export function PortalDashboardFeature() {
   const { data: session } = useSession();
@@ -47,99 +51,122 @@ export function PortalDashboardFeature() {
 
   if (isInitialLoading) {
     return (
-      <div className="space-y-6">
-        <Skeleton className="h-12 w-96" />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Skeleton className="h-32" />
-          <Skeleton className="h-32" />
-          <Skeleton className="h-32" />
+      <section
+        aria-label="Carregando dashboard"
+        aria-busy="true"
+        className="alusa-dashboard-page flex flex-col gap-7 pb-8"
+      >
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-72" />
+          <Skeleton className="h-4 w-80" />
         </div>
-      </div>
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+          <Skeleton className="h-[190px] rounded-2xl" />
+          <Skeleton className="h-[190px] rounded-2xl" />
+          <Skeleton className="h-[190px] rounded-2xl" />
+        </div>
+      </section>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800">
-        <AlertCircle className="h-5 w-5" />
+      <div
+        role="alert"
+        className="flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800 alusa-dark:border-red-900/60 alusa-dark:bg-red-950/20 alusa-dark:text-red-200"
+      >
+        <AlertCircle aria-hidden="true" className="h-5 w-5 shrink-0" />
         <span>{error}</span>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <section
+      aria-label="Dashboard do portal"
+      className="alusa-dashboard-page flex flex-col gap-7 pb-8"
+    >
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">
+        <h1 className="text-2xl font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
           {greeting}, {userName}!
         </h1>
-        <p className="mt-2 text-gray-600">Confira suas informações e atividades</p>
+        <p className="mt-1 text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
+          Acompanhe matrículas, cobranças e eventos dos seus alunos.
+        </p>
       </div>
 
       {/* Seletor de Aluno (apenas para responsáveis) */}
       {isResponsavel && <AlunoSelector onAlunoSelect={setSelectedAlunoId} />}
 
       {/* Cards de resumo */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         {/* Matrículas */}
         <Card
           title="Matrículas"
-          icon={User}
           value={data?.matriculas.ativas.toString() || '0'}
           subtitle={`${data?.matriculas.total || 0} no total`}
-          variant="violet"
+          action={{ label: 'Ver matrículas', href: '/portal/matriculas' }}
         />
 
         {/* Financeiro */}
         <Card
-          title="Cobranças Pendentes"
-          icon={CreditCard}
+          title="Cobranças pendentes"
           value={data?.financeiro.pendentes.toString() || '0'}
           subtitle={
             data?.financeiro.totalPendente
-              ? `R$ ${Number(data.financeiro.totalPendente).toFixed(2)}`
+              ? formatCurrency(Number(data.financeiro.totalPendente))
               : 'Nenhuma pendência'
           }
-          variant={data?.financeiro.pendentes ? 'red' : 'green'}
+          action={{ label: 'Ver cobranças', href: '/portal/financeiro' }}
         />
 
         {/* Eventos */}
         <Card
-          title="Próximos Eventos"
-          icon={Calendar}
+          title="Próximos eventos"
           value={data?.eventos.proximos.toString() || '0'}
           subtitle="eventos confirmados"
-          variant="blue"
+          action={{ label: 'Ver eventos', href: '/portal/eventos' }}
         />
       </div>
 
       {/* Próximo vencimento */}
       {data?.financeiro.proxVencimento && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-6">
-          <div className="flex items-start gap-4">
-            <div className="p-3 bg-amber-100 rounded-lg">
-              <AlertCircle className="h-6 w-6 text-amber-700" />
-            </div>
-            <div className="flex-1">
-              <h3 className="font-semibold text-amber-900">Próximo Vencimento</h3>
-              <p className="mt-1 text-sm text-amber-800">
-                Você tem uma cobrança de{' '}
-                <span className="font-semibold">R$ {Number(data.financeiro.proxVencimento.valor).toFixed(2)}</span>{' '}
-                com vencimento em{' '}
-                <span className="font-semibold">
-                  {new Date(data.financeiro.proxVencimento.data).toLocaleDateString('pt-BR')}
-                </span>
-              </p>
-            </div>
+        <div className="flex items-start gap-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-5 alusa-dark:border-amber-900/60 alusa-dark:bg-amber-950/20">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700 alusa-dark:bg-amber-900/40 alusa-dark:text-amber-300">
+            <AlertCircle aria-hidden="true" className="h-5 w-5" />
+          </div>
+          <div className="flex-1">
+            <h2 className="font-medium text-amber-950 alusa-dark:text-amber-200">
+              Próximo vencimento
+            </h2>
+            <p className="mt-1 text-sm text-amber-900/90 alusa-dark:text-amber-100/80">
+              Você tem uma cobrança de{' '}
+              <span className="font-semibold">
+                {formatCurrency(Number(data.financeiro.proxVencimento.valor))}
+              </span>{' '}
+              com vencimento em{' '}
+              <span className="font-semibold">
+                {new Date(data.financeiro.proxVencimento.data).toLocaleDateString('pt-BR')}
+              </span>
+            </p>
           </div>
         </div>
       )}
 
       {/* Ações rápidas */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Ações Rápidas</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <section
+        className={`${DASHBOARD_SECTION_CARD_CLASSNAME} rounded-2xl bg-white p-5 md:p-6 alusa-dark:bg-[color:var(--color-bg-card)]`}
+      >
+        <div className="mb-4">
+          <h2 className="text-base font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+            Acesso rápido
+          </h2>
+          <p className="mt-1 text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
+            Atalhos para as principais áreas do portal.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <QuickAction
             title="Ver Matrículas"
             description="Consulte o status das suas matrículas"
@@ -161,46 +188,42 @@ export function PortalDashboardFeature() {
             href="/portal/perfil"
           />
         </div>
-      </div>
-    </div>
+      </section>
+    </section>
   );
 }
 
-type CardIcon = ComponentType<{ className?: string }>;
-
 function Card({
   title,
-  icon: Icon,
   value,
   subtitle,
-  variant,
+  action,
 }: {
   title: string;
-  icon: CardIcon;
   value: string;
   subtitle: string;
-  variant: 'violet' | 'red' | 'green' | 'blue';
+  action: { label: string; href: string };
 }) {
-  const colors = {
-    violet: 'from-violet-500 to-violet-600',
-    red: 'from-red-500 to-red-600',
-    green: 'from-green-500 to-green-600',
-    blue: 'from-blue-500 to-blue-600',
-  };
-
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg transition-shadow">
-      <div className="flex items-start justify-between">
-        <div className="flex-1">
-          <p className="text-sm font-medium text-gray-600">{title}</p>
-          <p className="mt-2 text-3xl font-bold text-gray-900">{value}</p>
-          <p className="mt-1 text-sm text-gray-500">{subtitle}</p>
-        </div>
-        <div className={`p-3 rounded-lg bg-gradient-to-br ${colors[variant]}`}>
-          <Icon className="h-6 w-6 text-white" />
-        </div>
+    <article
+      className={`${DASHBOARD_KPI_TILE_CLASSNAME} flex min-h-[190px] flex-col justify-between rounded-2xl bg-[#f2e9fc] px-5 py-5 text-[#3d3a3f] alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)] alusa-dark:text-[color:var(--color-text-primary)]`}
+    >
+      <div>
+        <p className="text-xs font-medium text-[#3d3a3f]/80 alusa-dark:text-[color:var(--color-text-secondary)]">
+          {title}
+        </p>
+        <p className="mt-5 text-[40px] font-normal leading-none tabular-nums">{value}</p>
+        <p className="mt-2 text-sm text-[#3d3a3f]/70 alusa-dark:text-[color:var(--color-text-muted)]">
+          {subtitle}
+        </p>
       </div>
-    </div>
+      <Link
+        href={action.href}
+        className="inline-flex h-7 w-fit items-center rounded-full bg-[#3d3a3f] px-3 text-xs font-medium text-[#f2e9fc] transition-colors hover:bg-[#26222d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3d3a3f]/30 alusa-dark:bg-white/10 alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-white/15"
+      >
+        {action.label}
+      </Link>
+    </article>
   );
 }
 
@@ -214,25 +237,27 @@ function QuickAction({
   href: string;
 }) {
   return (
-    <a
+    <Link
       href={href}
-      className="flex items-start gap-4 p-4 rounded-lg border border-gray-200 hover:border-violet-300 hover:bg-violet-50 transition-all group"
+      className={`${DASHBOARD_SECTION_CARD_CLASSNAME} group flex items-start gap-4 rounded-xl bg-white p-4 transition-colors hover:bg-gray-50/70 focus-visible:ring-2 focus-visible:ring-brand-accent/35 alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:hover:bg-white/[0.04]`}
     >
       <div className="flex-1">
-        <h4 className="font-medium text-gray-900 group-hover:text-violet-700 transition-colors">
+        <h3 className="font-medium text-gray-900 transition-colors group-hover:text-violet-700 alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:group-hover:text-violet-300">
           {title}
-        </h4>
-        <p className="mt-1 text-sm text-gray-600">{description}</p>
+        </h3>
+        <p className="mt-1 text-sm text-gray-600 alusa-dark:text-[color:var(--color-text-muted)]">
+          {description}
+        </p>
       </div>
       <svg
-        className="h-5 w-5 text-gray-400 group-hover:text-violet-600 transition-colors"
+        className="h-5 w-5 shrink-0 text-gray-400 transition-colors group-hover:text-violet-600 alusa-dark:text-[color:var(--color-text-muted)]"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
       >
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
       </svg>
-    </a>
+    </Link>
   );
 }
 
@@ -241,4 +266,12 @@ function getGreeting(): string {
   if (hour < 12) return 'Bom dia';
   if (hour < 18) return 'Boa tarde';
   return 'Boa noite';
+}
+
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    maximumFractionDigits: 2,
+  }).format(value);
 }

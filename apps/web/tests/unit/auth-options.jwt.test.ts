@@ -40,6 +40,38 @@ describe('authOptions callbacks.jwt', () => {
     expect((result as { emailVerified?: boolean }).emailVerified).toBe(false);
   });
 
+  it('permite trocar a escola ativa somente após validar o vínculo', async () => {
+    resolveSessionAccessMock
+      .mockResolvedValueOnce({ ok: true, contaId: 'conta_2', role: 'RECEPCAO', emailVerified: true, sessionVersion: 1 })
+      .mockResolvedValueOnce({ ok: true, contaId: 'conta_2', role: 'RECEPCAO', emailVerified: true, sessionVersion: 1 });
+    const { authOptions } = await import('@/lib/auth-options');
+
+    const result = await authOptions.callbacks!.jwt!({
+      token: { id: 'user_1', contaId: 'conta_1', sessionVersion: 1 },
+      trigger: 'update',
+      session: { contaId: 'conta_2' },
+    } as never);
+
+    expect((result as { contaId?: string }).contaId).toBe('conta_2');
+    expect((result as { role?: string }).role).toBe('RECEPCAO');
+  });
+
+  it('ignora escola sem vínculo sem invalidar a sessão atual', async () => {
+    resolveSessionAccessMock
+      .mockResolvedValueOnce({ ok: false, reason: 'ACCOUNT_UNAVAILABLE' })
+      .mockResolvedValueOnce({ ok: true, contaId: 'conta_1', role: 'ADMIN', emailVerified: true, sessionVersion: 1 });
+    const { authOptions } = await import('@/lib/auth-options');
+
+    const result = await authOptions.callbacks!.jwt!({
+      token: { id: 'user_1', contaId: 'conta_1', sessionVersion: 1 },
+      trigger: 'update',
+      session: { contaId: 'conta_alheia' },
+    } as never);
+
+    expect((result as { id?: string }).id).toBe('user_1');
+    expect((result as { contaId?: string }).contaId).toBe('conta_1');
+  });
+
   it('remove o acesso da sessão quando a conta está desativada', async () => {
     resolveSessionAccessMock.mockResolvedValueOnce({ ok: false, reason: 'ACCOUNT_DEACTIVATED' });
     const { authOptions } = await import('@/lib/auth-options');

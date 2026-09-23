@@ -73,14 +73,14 @@ function getResendClient(): Resend | null {
 
 function getDefaultFrom(category: EmailCategory): string {
   if (category === 'invite_user') {
-    const sender = process.env.EMAIL_FROM_INVITES || process.env.EMAIL_FROM_AUTH;
+    const sender = process.env.EMAIL_FROM_INVITES || process.env.EMAIL_FROM_AUTH || process.env.RESEND_FROM;
     if (!sender) {
       throw new Error('EMAIL_FROM_INVITES ausente para o envio de convites.');
     }
     return sender;
   }
 
-  return process.env.EMAIL_FROM_AUTH || 'Alusa <onboarding@resend.dev>';
+  return process.env.EMAIL_FROM_AUTH || process.env.RESEND_FROM || 'Alusa <no-reply@alusa.app>';
 }
 
 function canFallbackToLog(): boolean {

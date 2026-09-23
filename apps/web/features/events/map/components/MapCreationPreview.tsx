@@ -5,6 +5,7 @@ import { Ellipse, Rect, RegularPolygon, Text } from 'react-konva';
 
 export function MapCreationPreview({ creationDraft }: { creationDraft: CreationDraft | null }) {
   if (!creationDraft) return null;
+  if (creationDraft.tool === 'seat') return null;
 
   const box = getCreationBox(creationDraft);
   if (box.width < 2 || box.height < 2) return null;

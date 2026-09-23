@@ -39,13 +39,13 @@ export function mergeEventMapWithLocalDraft(map: EventMapDTO, payload: EventMapD
   return {
     ...map,
     name: payload.name ?? map.name,
+    document: payload.document,
     levels: payload.levels,
     sections: payload.sections.map((section) => ({
       ...section,
       lot: map.sections.find((entry) => entry.id === section.id)?.lot ?? null,
     })),
     objects: payload.objects,
-    seatGroups: payload.seatGroups ?? [],
     seats: payload.seats,
     counts: {
       levels: payload.levels.length,

@@ -1,7 +1,13 @@
 import { getSnapReleaseThreshold, getSnapThreshold, isSnapModifierActive, resolveAnchorResizeSnap } from '@alusa/domain';
 import type { BoundingBox, LevelBounds } from '@alusa/domain';
 import type { SnapGuidesLayerHandle } from '../../components/SnapGuidesLayer';
-import { applySnapResult, createSnapGuideStopCache, getSnapLayer, resolveSnapGuides } from '../adapters/konva-snap-adapter';
+import {
+  applySnapResult,
+  createSnapGuideStopCache,
+  getSnapLayer,
+  resolveSnapGuides,
+} from '../adapters/konva-snap-adapter';
+import { resolveSnapGuides as resolveSnapGuidesFromGeometry } from '@alusa/domain';
 
 import { useCallback, useRef, type RefObject } from 'react';
 import type Konva from 'konva';
@@ -9,13 +15,15 @@ import type Konva from 'konva';
 type GroupDragState = {
   anchorNodeId: string;
   origin: Map<string, { x: number; y: number }>;
+  nodes: Map<string, Konva.Node>;
+  bounds: BoundingBox | null;
+  delta: { x: number; y: number };
 };
 
 type UseSnapGuidesSessionOptions = {
   enabled: boolean;
   levelBounds: LevelBounds | null;
   zoom: number;
-  stageRef: RefObject<Konva.Stage | null>;
   groupDragRef: RefObject<GroupDragState | null>;
   syncGroupDrag: (event: Konva.KonvaEventObject<DragEvent>) => void;
 };
@@ -37,7 +45,6 @@ export function useSnapGuidesSession({
   enabled,
   levelBounds,
   zoom,
-  stageRef,
   groupDragRef,
   syncGroupDrag,
 }: UseSnapGuidesSessionOptions) {
@@ -61,17 +68,16 @@ export function useSnapGuidesSession({
         return;
       }
 
-      const stage = stageRef.current;
       const drag = groupDragRef.current;
       const threshold = activeDragSnapRef.current ? getSnapReleaseThreshold(zoom) : getSnapThreshold(zoom);
 
-      if (drag && drag.origin.size > 1 && stage) {
+      if (drag && drag.origin.size > 1) {
         if (event.target.id() !== drag.anchorNodeId) return;
 
         syncGroupDrag(event);
 
         const nodes = Array.from(drag.origin.keys())
-          .map((nodeId) => stage.findOne(`#${nodeId}`))
+          .map((nodeId) => drag.nodes.get(nodeId))
           .filter((node): node is Konva.Node => Boolean(node));
 
         const contentLayer = getSnapLayer(nodes[0] ?? event.target);
@@ -82,7 +88,17 @@ export function useSnapGuidesSession({
           nodes.map((node) => node.id()),
           levelBounds,
         );
-        const result = resolveSnapGuides(nodes, levelBounds, {
+        const bounds = drag.bounds
+          ? { ...drag.bounds, x: drag.bounds.x + drag.delta.x, y: drag.bounds.y + drag.delta.y }
+          : null;
+        const result = bounds
+          ? resolveSnapGuidesFromGeometry({ box: bounds, anchor: { x: bounds.x, y: bounds.y } }, levelBounds, {
+            threshold,
+            stops: cached.stops,
+            objectBounds: cached.objectBounds,
+            targetKind: 'multi',
+          })
+          : resolveSnapGuides(nodes, levelBounds, {
           threshold,
           stops: cached.stops,
           objectBounds: cached.objectBounds,
@@ -111,7 +127,7 @@ export function useSnapGuidesSession({
       activeDragSnapRef.current = hasActiveGuides(result);
       guidesLayerRef.current?.setGuides(result.guides, result.spacingGuides);
     },
-    [enabled, groupDragRef, levelBounds, stageRef, syncGroupDrag, zoom],
+    [enabled, groupDragRef, levelBounds, syncGroupDrag, zoom],
   );
 
   const handleAnchorDragBound = useCallback(

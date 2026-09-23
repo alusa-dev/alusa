@@ -4,16 +4,7 @@ import { getTextDecorationParts } from '@alusa/domain';
 import type { EventMapObjectDTO } from '../api/event-map-service';
 
 import { cn } from '@/lib/utils';
-
-import {
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
-  Bold,
-  Italic,
-  Strikethrough,
-  Underline,
-} from 'lucide-react';
+import { CreatorIcon } from '@/components/icons/hugeicons';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -149,7 +140,7 @@ export function FloatingTextFormatToolbar({
           label="Negrito"
           onClick={() => updateData({ fontWeight: data.fontWeight === 'bold' ? 'normal' : 'bold' })}
         >
-          <Bold className="h-4 w-4" />
+          <CreatorIcon name="bold" size={16} />
         </FormatToggleButton>
         <FormatToggleButton
           active={Boolean(data.italic)}
@@ -157,7 +148,7 @@ export function FloatingTextFormatToolbar({
           label="Itálico"
           onClick={() => updateData({ italic: !data.italic })}
         >
-          <Italic className="h-4 w-4" />
+          <CreatorIcon name="italic" size={16} />
         </FormatToggleButton>
         <FormatToggleButton
           active={underline}
@@ -165,7 +156,7 @@ export function FloatingTextFormatToolbar({
           label="Sublinhado"
           onClick={() => toggleDecoration('underline')}
         >
-          <Underline className="h-4 w-4" />
+          <CreatorIcon name="underline" size={16} />
         </FormatToggleButton>
         <FormatToggleButton
           active={lineThrough}
@@ -173,7 +164,7 @@ export function FloatingTextFormatToolbar({
           label="Tachado"
           onClick={() => toggleDecoration('lineThrough')}
         >
-          <Strikethrough className="h-4 w-4" />
+          <CreatorIcon name="strikethrough" size={16} />
         </FormatToggleButton>
 
         <span className="mx-0.5 h-6 w-px bg-slate-200" aria-hidden />
@@ -184,7 +175,7 @@ export function FloatingTextFormatToolbar({
           label="Alinhar à esquerda"
           onClick={() => updateData({ align: 'left' })}
         >
-          <AlignLeft className="h-4 w-4" />
+          <CreatorIcon name="alignLeft" size={16} />
         </FormatToggleButton>
         <FormatToggleButton
           active={align === 'center'}
@@ -192,7 +183,7 @@ export function FloatingTextFormatToolbar({
           label="Centralizar"
           onClick={() => updateData({ align: 'center' })}
         >
-          <AlignCenter className="h-4 w-4" />
+          <CreatorIcon name="alignCenter" size={16} />
         </FormatToggleButton>
         <FormatToggleButton
           active={align === 'right'}
@@ -200,7 +191,7 @@ export function FloatingTextFormatToolbar({
           label="Alinhar à direita"
           onClick={() => updateData({ align: 'right' })}
         >
-          <AlignRight className="h-4 w-4" />
+          <CreatorIcon name="alignRight" size={16} />
         </FormatToggleButton>
       </div>
     </TooltipProvider>

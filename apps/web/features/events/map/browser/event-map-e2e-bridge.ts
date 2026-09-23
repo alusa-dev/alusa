@@ -20,23 +20,12 @@ declare global {
       getState: () => EventMapE2EState;
       getGeometry: () => EventMapE2EGeometry;
       getRenderGeometry: () => EventMapE2EGeometry;
-      getLastCorridorDomainOperations: () => unknown[];
       fitArtboardToView: () => void;
     };
   }
 }
 
 let currentRenderMapProvider: (() => EventMapDTO | null) | null = null;
-let lastCorridorDomainOperations: unknown[] = [];
-
-export function recordCorridorDomainOperations(operations: unknown[]) {
-  lastCorridorDomainOperations = operations;
-}
-
-export function getLastCorridorDomainOperations() {
-  return lastCorridorDomainOperations;
-}
-
 export function setEventMapE2ERenderMapProvider(provider: (() => EventMapDTO | null) | null) {
   currentRenderMapProvider = provider;
 }
@@ -67,14 +56,13 @@ export function registerEventMapE2EBridge() {
     getGeometry: () => {
       const state = useEventMapEditorStore.getState();
       const map = state.map;
-      return map ? buildEventMapE2EGeometry(map, state.activeLevelId) : { seats: [], corridors: [], sections: [] };
+      return map ? buildEventMapE2EGeometry(map, state.activeLevelId) : { seats: [], objects: [], sections: [] };
     },
     getRenderGeometry: () => {
       const state = useEventMapEditorStore.getState();
       const map = getBridgeMap();
-      return map ? buildEventMapE2EGeometry(map, state.activeLevelId) : { seats: [], corridors: [], sections: [] };
+      return map ? buildEventMapE2EGeometry(map, state.activeLevelId) : { seats: [], objects: [], sections: [] };
     },
-    getLastCorridorDomainOperations: () => getLastCorridorDomainOperations(),
     fitArtboardToView: () => {
       useEventMapEditorStore.getState().fitArtboardToView();
     },
@@ -84,6 +72,5 @@ export function registerEventMapE2EBridge() {
 export function unregisterEventMapE2EBridge() {
   if (typeof window === 'undefined') return;
   currentRenderMapProvider = null;
-  lastCorridorDomainOperations = [];
   delete window.__ALUSA_EVENT_MAP_EDITOR_E2E__;
 }

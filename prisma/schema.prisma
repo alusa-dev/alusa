@@ -399,7 +399,6 @@ enum EventMapObjectType {
   TABLE
   TEXT
   BLOCKED_AREA
-  CORRIDOR
   BOOTH
   GENERAL_AREA
 }
@@ -1433,7 +1432,6 @@ model Conta {
   eventMapObjects                   EventMapObject[]
   eventMapSections                  EventMapSection[]
   eventSeats                        EventSeat[]
-  eventSeatGroups                   EventSeatGroup[]
   eventMapPublicSeats               EventMapPublicSeat[]
   eventMapReservations              EventMapReservation[]
   eventMapReservationSeats          EventMapReservationSeat[]
@@ -1696,7 +1694,7 @@ model Usuario {
 
   colaborador                     Colaborador?
   // Backrelation para vínculo opcional com Responsavel (1-1)
-  responsavel                     Responsavel?
+  responsaveis                    Responsavel[]                    @relation("UsuarioResponsaveis")
   // Backrelation para vínculo opcional com Aluno (1-1)
   aluno                           Aluno?
   checkoutLinksCriados            CheckoutLink[]
@@ -1908,8 +1906,8 @@ model Responsavel {
   creditCardUpdatedAt            DateTime? // Data da última atualização do cartão
   preferredBillingType           String? // Tipo de cobrança preferido (BOLETO, PIX, CREDIT_CARD)
   // Vinculação opcional com um usuário do sistema (para acesso via portal)
-  usuarioId                      String?   @unique
-  usuario                        Usuario?  @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+  usuarioId                      String?
+  usuario                        Usuario?  @relation("UsuarioResponsaveis", fields: [usuarioId], references: [id], onDelete: SetNull)
 
   conta                  Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
   alunos                 AlunoResponsavel[]
@@ -1929,6 +1927,7 @@ model Responsavel {
   @@unique([contaId, asaasCustomerExternalReference])
   @@index([contaId])
   @@index([contaId, nome], name: "idx_responsavel_conta_nome")
+  @@index([usuarioId], map: "idx_responsavel_usuario")
 }
 
 model AlunoResponsavel {
@@ -4335,6 +4334,7 @@ model Invite {
   @@index([email, status], name: "idx_invite_email_status")
   @@index([expiresAt], name: "idx_invite_expires")
   @@index([contaId], name: "idx_invite_conta")
+  @@index([contaId, status, expiresAt], map: "idx_invite_tenant_status_expiry")
 }
 
 model AuthActionToken {
@@ -4535,6 +4535,8 @@ model EventMap {
   updatedAt          DateTime       @updatedAt
   publishedAt        DateTime?
   archivedAt         DateTime?
+  draftDocument      Json?
+  referenceChart     Json?
 
   conta        Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
   event        SchoolEvent           @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -4543,7 +4545,6 @@ model EventMap {
   objects      EventMapObject[]
   sections     EventMapSection[]
   seats        EventSeat[]
-  seatGroups   EventSeatGroup[]
   publicSeats  EventMapPublicSeat[]
   reservations EventMapReservation[]
   orders       EventMapOrder[]
@@ -4595,41 +4596,8 @@ model EventMapLevel {
   objects    EventMapObject[]
   sections   EventMapSection[]
   seats      EventSeat[]
-  seatGroups EventSeatGroup[]
 
   @@index([contaId, eventMapId], name: "idx_event_map_level_conta_map")
-}
-
-model EventSeatGroup {
-  id            String   @id @default(cuid())
-  contaId       String
-  eventMapId    String
-  levelId       String
-  name          String?
-  x             Decimal  @db.Decimal(12, 2)
-  y             Decimal  @db.Decimal(12, 2)
-  rotation      Decimal  @default(0) @db.Decimal(8, 2)
-  rows          Int
-  columns       Int
-  seatWidth     Decimal  @default(28) @db.Decimal(8, 2)
-  seatHeight    Decimal  @default(28) @db.Decimal(8, 2)
-  gapX          Decimal  @default(4) @db.Decimal(8, 2)
-  gapY          Decimal  @default(4) @db.Decimal(8, 2)
-  paddingTop    Decimal  @default(0) @db.Decimal(8, 2)
-  paddingRight  Decimal  @default(0) @db.Decimal(8, 2)
-  paddingBottom Decimal  @default(0) @db.Decimal(8, 2)
-  paddingLeft   Decimal  @default(0) @db.Decimal(8, 2)
-  numbering     Json
-  locked        Boolean  @default(false)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  conta Conta         @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  map   EventMap      @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
-  level EventMapLevel @relation(fields: [levelId], references: [id], onDelete: Cascade)
-  seats EventSeat[]
-
-  @@index([contaId, eventMapId, levelId], name: "idx_event_seat_group_conta_map_level")
 }
 
 model EventMapObject {
@@ -4694,7 +4662,6 @@ model EventSeat {
   displayLabel  String
   rowLabel      String?
   seatNumber    String?
-  groupId       String?
   rowIndex      Int?
   columnIndex   Int?
   status        EventSeatStatus @default(AVAILABLE)
@@ -4711,7 +4678,6 @@ model EventSeat {
   map     EventMap        @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
   level   EventMapLevel   @relation(fields: [levelId], references: [id], onDelete: Cascade)
   section EventMapSection @relation(fields: [sectionId], references: [id], onDelete: Restrict)
-  group   EventSeatGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
 
   @@unique([contaId, eventMapId, technicalCode], name: "uq_event_seat_conta_map_code")
   @@index([contaId, eventMapId, status], name: "idx_event_seat_conta_map_status")
@@ -4886,6 +4852,7 @@ model EventTicket {
   eventTicketSaleId String?
   saleSeatId        String?           @unique
   ticketCode        String            @unique
+  checkInCode       String?
   status            EventTicketStatus @default(VALID)
   issuedAt          DateTime          @default(now())
   usedAt            DateTime?
@@ -4903,6 +4870,7 @@ model EventTicket {
   @@index([contaId, eventId, status], name: "idx_event_ticket_conta_event_status")
   @@index([contaId, eventMapOrderId], name: "idx_event_ticket_conta_order")
   @@index([contaId, eventTicketSaleId], name: "idx_event_ticket_conta_sale")
+  @@unique([contaId, checkInCode], name: "uq_event_ticket_conta_check_in_code", map: "uq_event_ticket_conta_check_in_code")
 }
 
 model EventTicketSale {

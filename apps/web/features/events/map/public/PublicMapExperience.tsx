@@ -1,7 +1,7 @@
 'use client';
 
 import type { PublicMapViewModel } from './public-map-adapter';
-import { getSeatGroupSeatWorldCenter, MAP_ARTBOARD_STROKE, MAP_ARTBOARD_STROKE_WIDTH } from '@alusa/domain';
+import { MAP_ARTBOARD_STROKE, MAP_ARTBOARD_STROKE_WIDTH } from '@alusa/domain';
 
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, CheckCircle2, ExternalLink, Loader2, MapPin, ShoppingCart, Ticket, Check, Copy, CreditCard, QrCode, User, RefreshCw } from 'lucide-react';
@@ -34,7 +34,6 @@ import { findCEP } from '@/lib/cep';
 import { formatCepBR, formatCpfCnpjBR, isValidCepBR, isValidCpfCnpjBR, onlyDigits } from '@/lib/formatters';
 
 type PublicSeat = PublicMapViewModel['seats'][number];
-type PublicSeatGroup = NonNullable<PublicMapViewModel['seatGroups']>[number];
 type PublicObject = {
   id: string;
   levelId?: string | null;
@@ -67,7 +66,6 @@ function createCheckoutKey() {
 
 function objectStyle(object: PublicObject) {
   const data = object.data ?? {};
-  if (object.type === 'CORRIDOR') return { fill: '#ede9fe', stroke: '#8b5cf6', dash: '7 5' };
   if (object.type === 'STAGE') return { fill: '#111827', stroke: '#111827', dash: undefined };
   if (object.type === 'BLOCKED_AREA') return { fill: '#fee2e2', stroke: '#ef4444', dash: '7 5' };
   if (object.type === 'TEXT') return { fill: 'transparent', stroke: 'transparent', dash: undefined };
@@ -169,19 +167,16 @@ export function PublicMapExperience({
   const levelObjects = useMemo(
     () =>
       filterPublicMapRenderableObjects(
-        { seatGroups: map.seatGroups, seats: map.seats },
+        { seats: map.seats },
         map.objects as PublicObject[],
         activeLevel.id,
       ),
-    [activeLevel.id, map.objects, map.seatGroups, map.seats],
+    [activeLevel.id, map.objects, map.seats],
   );
   const levelSeats = useMemo(
     () => filterPublicMapSeatsByLevel(seats, activeLevel.id),
     [activeLevel.id, seats],
   );
-  const seatGroupById = useMemo(() => {
-    return new Map((map.seatGroups ?? []).map((group) => [group.id, group as PublicSeatGroup]));
-  }, [map.seatGroups]);
   const selectedSeats = useMemo(
     () => seats.filter((seat) => selectedIds.includes(seat.id)),
     [seats, selectedIds],
@@ -512,7 +507,9 @@ export function PublicMapExperience({
             <PublicMapKpiTile
               title="Seleção"
               value={formatCurrency(total)}
-              description={selectedSeats.length > 0 ? `${selectedSeats.length} assento(s) escolhido(s)` : 'Nenhum assento selecionado'}
+              description={selectedSeats.length > 0
+                ? `${selectedSeats.length} ${selectedSeats.length === 1 ? 'assento escolhido' : 'assentos escolhidos'}`
+                : 'Nenhum assento selecionado'}
             />
           </div>
         </div>
@@ -601,10 +598,10 @@ export function PublicMapExperience({
                     y={object.y}
                     width={width}
                     height={height}
-                    rx={object.type === 'CORRIDOR' ? 0 : 6}
+                    rx={6}
                     fill={style.fill}
                     stroke={style.stroke}
-                    strokeWidth={object.type === 'CORRIDOR' ? 2 : 1.5}
+                    strokeWidth={1.5}
                     strokeDasharray={style.dash}
                     transform={`rotate(${object.rotation} ${cx} ${cy})`}
                   />
@@ -612,10 +609,9 @@ export function PublicMapExperience({
               })}
               {levelSeats.map((seat) => {
                 const selected = selectedIds.includes(seat.id);
-                const group = seat.groupId ? seatGroupById.get(seat.groupId) : null;
-                const center = group ? getSeatGroupSeatWorldCenter(group, seat) : { x: seat.x, y: seat.y };
-                const rotation = group ? group.rotation : seat.rotation;
-                const radius = Math.max((group?.seatWidth ?? seat.size ?? 28) / 2, 8);
+                const center = { x: seat.x, y: seat.y };
+                const rotation = seat.rotation;
+                const radius = Math.max((seat.size ?? 28) / 2, 8);
                 const interactive = mode === 'public';
                 return (
                   <g key={seat.id} transform={`rotate(${rotation} ${center.x} ${center.y})`}>

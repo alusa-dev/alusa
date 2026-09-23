@@ -32,13 +32,12 @@ packages/domain/src/map-engine/
   operations/
     transform/uniform-transform.ts
   layout/
-    object-bounds.ts, text-transform.ts, seat-group-transform.ts
-    corridor/                    # reflow, previews, split-anchors, extract-commit
-    corridor-rotation.ts, corridor-group-*.ts, ...
+    object-bounds.ts, text-transform.ts
+    seat-block-config.ts, create-seat-block.ts, resolve-map-layout.ts
   commands/transform-commands.ts   # classifyTransformPayload (ROTATE/MOVE/RESIZE)
   reducer/
     map-command-reducer.ts         # router + normalizeMapCommand
-    handlers/                      # add-entities, update-items, seat-group, corridor, selection
+    handlers/                      # add-entities, update-items, selection
 
 apps/web/.../map/canvas/
   adapters/
@@ -60,8 +59,7 @@ O documento retornado pela engine e a fonte da verdade apos cada commit.
 
 Transform commits (transform, drag, resize) usam commands semanticos via `applyTransform`:
 
-- `TRANSFORM_CORRIDOR` — corredor + reflow (transform e drag)
-- `ROTATE_SELECTION` — rotacao canonica de selecao (objetos, textos, setores, assentos, grupos e corredores)
+- `ROTATE_SELECTION` — rotação canônica de seleção (objetos, textos, setores, assentos e grupos)
 - `ROTATE_OBJECTS` — compatibilidade para patches antigos de rotacao pura
 - `MOVE_SELECTION` / `MOVE_OBJECTS` — translacao pura por selecao, preservando grupos e seat groups como fonte da verdade
 - `RESIZE_SELECTION` / `RESIZE_OBJECTS` — escala, texto, seat groups e patches mistos com filtro de patches invalidos
@@ -73,8 +71,7 @@ Bridge browser: `apps/web/.../browser/event-map-e2e-bridge.ts`.
 
 ```typescript
 import { normalizeRotation, rotatePoint } from '@alusa/domain';
-import { buildCorridorGroupRotationUpdates } from '@alusa/domain';
-import { corridorPatchesToDomainOperations } from '@alusa/domain';
+import { buildSeatBlockPreview, resolveEventMapLayout } from '@alusa/domain';
 ```
 
 Barrel semantico: `@alusa/domain` re-exporta `map-engine/transform/index.js`.

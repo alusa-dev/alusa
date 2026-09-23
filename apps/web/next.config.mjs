@@ -60,7 +60,7 @@ const securityHeaders = [
       "font-src 'self' data:",
       "connect-src 'self' https: wss:",
       "media-src 'self' blob:",
-      'upgrade-insecure-requests',
+      ...(process.env.NODE_ENV === 'production' ? ['upgrade-insecure-requests'] : []),
     ].join('; '),
   },
 ];

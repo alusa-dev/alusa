@@ -7,7 +7,6 @@ const OBJECT_NAME_PREFIX_BY_KEY: Record<string, string> = {
   stage: 'Palco',
   text: 'Texto',
   blocked: 'Sessão bloqueada',
-  corridor: 'Corredor',
   booth: 'Camarote',
   general: 'Área geral',
   'shape-square': 'Quadrado',
@@ -34,7 +33,6 @@ export function getObjectNamingKey(object: EventMapObjectDTO): string | null {
   if (object.type === 'STAGE') return 'stage';
   if (object.type === 'TEXT') return 'text';
   if (object.type === 'BLOCKED_AREA') return 'blocked';
-  if (object.type === 'CORRIDOR') return 'corridor';
   if (object.type === 'BOOTH') return 'booth';
   if (object.type === 'GENERAL_AREA') return 'general';
 

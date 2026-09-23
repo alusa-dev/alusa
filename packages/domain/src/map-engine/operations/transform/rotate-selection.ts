@@ -11,12 +11,6 @@ import {
   snapAngleToStep,
   type Point2D,
 } from '../../geometry/rotation.js';
-import {
-  applyCorridorRotationPreservingCenter,
-  getCorridorWorldCenter,
-} from '../../layout/corridor-rotation.js';
-import { getSeatGroupWorldBounds } from '../../layout/seat-group-bounds.js';
-import { buildSeatGroupRotationPatch } from '../../layout/seat-group-transform.js';
 import { emptyTransformPatchSet, hasTransformPatches, type TransformPatchSet } from './transform-types.js';
 import { buildUndoTransformPatches } from './transform-patches.js';
 
@@ -42,7 +36,6 @@ type RotatableSelection = {
   selection: MapSelection;
   objectIds: string[];
   seatIds: string[];
-  seatGroupIds: string[];
   warnings: string[];
   blocked: boolean;
 };
@@ -91,7 +84,6 @@ function rotatedRectWorldBounds(
 }
 
 function objectWorldCenter(object: EventMapObjectDTO) {
-  if (object.type === 'CORRIDOR') return getCorridorWorldCenter(object);
   return centerOf(rotatedRectWorldBounds(object));
 }
 
@@ -114,12 +106,7 @@ function resolveSelectionBounds(map: EventMapDTO, rotatable: RotatableSelection)
   for (const id of rotatable.objectIds) {
     const object = map.objects.find((entry) => entry.id === id);
     if (!object) continue;
-    if (object.type === 'CORRIDOR') {
-      const center = getCorridorWorldCenter(object);
-      bounds.push({ x: center.x, y: center.y, width: 0, height: 0 });
-    } else {
-      bounds.push(rotatedRectWorldBounds(object));
-    }
+    bounds.push(rotatedRectWorldBounds(object));
   }
 
   for (const id of rotatable.seatIds) {
@@ -127,10 +114,6 @@ function resolveSelectionBounds(map: EventMapDTO, rotatable: RotatableSelection)
     if (seat) bounds.push(getSeatBounds(seat));
   }
 
-  for (const id of rotatable.seatGroupIds) {
-    const group = map.seatGroups?.find((entry) => entry.id === id);
-    if (group) bounds.push(getSeatGroupWorldBounds(group, map.seats));
-  }
 
   return unionBounds(bounds);
 }
@@ -143,17 +126,6 @@ function resolveRotationPivot(map: EventMapDTO, rotatable: RotatableSelection, e
 
 function buildObjectRotationPatch(object: EventMapObjectDTO, pivot: Point2D, angleDelta: number) {
   const nextRotation = normalizeRotation((object.rotation ?? 0) + angleDelta);
-
-  if (object.type === 'CORRIDOR') {
-    const center = getCorridorWorldCenter(object);
-    const nextCenter = rotatePoint(center, pivot, angleDelta);
-    const next: EventMapObjectDTO = { ...object, data: { ...object.data } };
-    const centerDelta = { x: nextCenter.x - center.x, y: nextCenter.y - center.y };
-    next.x += centerDelta.x;
-    next.y += centerDelta.y;
-    applyCorridorRotationPreservingCenter(next, nextRotation, next, { snap: false });
-    return { x: roundValue(next.x), y: roundValue(next.y), rotation: next.rotation };
-  }
 
   const center = objectWorldCenter(object);
   const nextCenter = rotatePoint(center, pivot, angleDelta);
@@ -224,12 +196,6 @@ export function rotateSelection(input: RotateSelectionInput): RotateSelectionRes
     if (!isNoopPatch(seat, patch)) patches.seats.push({ id, patch });
   }
 
-  for (const id of rotatable.seatGroupIds) {
-    const group = input.map.seatGroups?.find((entry) => entry.id === id);
-    if (!group) continue;
-    const patch = buildSeatGroupRotationPatch(group, input.map.seats, pivot, angleDelta);
-    if (!isNoopPatch(group, patch)) patches.seatGroups.push({ id, patch });
-  }
 
   return {
     patches,
@@ -244,11 +210,9 @@ export function rotateSelection(input: RotateSelectionInput): RotateSelectionRes
 export function selectionFromRotationPatchIds(input: {
   objects?: Array<{ id: string }>;
   seats?: Array<{ id: string }>;
-  seatGroups?: Array<{ id: string }>;
 }): MapSelection {
   return [
     ...(input.objects ?? []).map((entry) => ({ type: 'object' as const, id: entry.id })),
     ...(input.seats ?? []).map((entry) => ({ type: 'seat' as const, id: entry.id })),
-    ...(input.seatGroups ?? []).map((entry) => ({ type: 'seatgroup' as const, id: entry.id })),
   ];
 }

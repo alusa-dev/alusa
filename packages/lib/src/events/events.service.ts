@@ -27,6 +27,7 @@ import {
   listStandaloneInstallmentPlanIdsForParticipant,
 } from '../services/standalone-installment-plan-status.service';
 import { getEventAsaasPaymentProvider } from './event-asaas-payment-provider';
+import { createCheckInCode } from './map/ticket-code';
 import { createEventContractForParticipant } from './event-contracts.service';
 import {
   buildPublicEventTicketSalePath,
@@ -1562,6 +1563,7 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
         eventId: lot.eventId,
         eventTicketSaleId: sale.id,
         ticketCode: createPublicToken('ticket').toUpperCase(),
+        checkInCode: createCheckInCode(),
       })),
     });
 

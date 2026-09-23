@@ -47,5 +47,11 @@ export async function canReadStorageKey(input: {
     if (await prisma.contrato.findFirst({ where: { arquivoPdfUrl: url, matricula: { contaId } }, select: { id: true } })) return true;
     return Boolean(await prisma.contratoModelo.findFirst({ where: { contaId, OR: [{ arquivoPdfUrl: url }, { arquivoOriginalUrl: url }] }, select: { id: true } }));
   }
+  const referenceMatch = /^uploads\/event-maps\/([^/]+)\/([^/]+)\/reference-[^/]+\.(jpg|jpeg|png|webp)$/i.exec(key);
+  if (referenceMatch) {
+    const [, keyContaId, eventMapId] = referenceMatch;
+    if (keyContaId !== contaId) return false;
+    return Boolean(await prisma.eventMap.findFirst({ where: { id: eventMapId, contaId }, select: { id: true } }));
+  }
   return false;
 }

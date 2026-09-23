@@ -5,8 +5,8 @@ import { saveEventMapSettings } from '../api/event-map-service';
 
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Copy } from 'lucide-react';
 
+import { CreatorIcon } from '@/components/icons/hugeicons';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -21,22 +21,30 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { toast } from '@/components/ui/toast';
 import { MAP_PANEL_FIELD_CLASS } from './text-format-options';
+import { MapReferenceChartPanel } from './MapReferenceChartPanel';
 
 export function MapSettingsDialog({
   map,
+  eventId,
+  mapId,
   open,
   onOpenChange,
   disabled,
   onSaved,
+  onReferenceChartEditingChange,
 }: {
   map: EventMapDTO;
+  eventId: string;
+  mapId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   disabled?: boolean;
   onSaved: (map: EventMapDTO) => void;
+  onReferenceChartEditingChange: (editing: boolean) => void;
 }) {
   const [name, setName] = useState(map.name);
   const [publicEnabled, setPublicEnabled] = useState(Boolean(map.publicEnabled));
+  const [publicLinkCopied, setPublicLinkCopied] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -79,13 +87,19 @@ export function MapSettingsDialog({
 
   async function handleCopyPublicLink() {
     if (!absolutePublicUrl) return;
-    await navigator.clipboard.writeText(absolutePublicUrl);
-    toast.success({ title: 'Link público copiado' });
+    try {
+      await navigator.clipboard.writeText(absolutePublicUrl);
+      setPublicLinkCopied(true);
+      window.setTimeout(() => setPublicLinkCopied(false), 1800);
+      toast.success({ title: 'Link público copiado' });
+    } catch {
+      toast.error({ title: 'Não foi possível copiar o link público' });
+    }
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md gap-0 p-0">
+      <DialogContent className="max-w-lg gap-0 p-0">
         <DialogHeader className="border-b border-slate-200 px-5 py-4">
           <DialogTitle className="text-base">Configurações do mapa</DialogTitle>
           <DialogDescription className="text-sm text-slate-500">
@@ -122,9 +136,9 @@ export function MapSettingsDialog({
                   size="icon"
                   className="h-9 w-9 shrink-0 border-slate-200"
                   onClick={handleCopyPublicLink}
-                  aria-label="Copiar link público"
+                  aria-label={publicLinkCopied ? 'Link público copiado' : 'Copiar link público'}
                 >
-                  <Copy className="h-4 w-4" />
+                  <CreatorIcon name={publicLinkCopied ? 'copySuccess' : 'copy'} size={16} />
                 </Button>
               </div>
             </div>
@@ -150,6 +164,16 @@ export function MapSettingsDialog({
               />
             </div>
           ) : null}
+
+          <div className="border-t border-slate-200 pt-4">
+            <MapReferenceChartPanel
+              eventId={eventId}
+              mapId={mapId}
+              disabled={disabled ?? false}
+              embedded
+              onEditingChange={onReferenceChartEditingChange}
+            />
+          </div>
 
           <p className="text-xs leading-relaxed text-slate-500">
             Alterações de layout exigem republicar pelo botão <span className="font-medium text-slate-700">Publicar</span>.

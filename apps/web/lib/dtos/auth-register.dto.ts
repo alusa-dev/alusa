@@ -54,7 +54,7 @@ export const authRegisterInputSchema = z.object({
     .refine((v) => isValidCpfCnpjDigits(v), 'CPF/CNPJ inválido')
     .optional(),
   nome: z.string().min(2),
-  email: z.string().email(),
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
   financeIntegrationMode: financeIntegrationModeSchema.optional().default('WHITELABEL_BAAS'),
   birthDate: z
     .string()

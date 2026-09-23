@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   captureTransformNodeSnapshots,
   readObjectTransformCommitFromNodes,
-  readSeatGroupTransformFromNode,
   readSeatTransformFromNode,
   resetNodeScale,
 } from '../adapters/konva-transform-adapter';
@@ -53,28 +52,6 @@ describe('konva-transform-adapter', () => {
     expect(node.scaleX()).toBe(1);
   });
 
-  it('reads seat group transform with uniform scale axes', () => {
-    const node = mockNode({ x: 5, y: 6, rotation: 30, scaleX: 2, scaleY: 2 });
-    const patch = readSeatGroupTransformFromNode(node as never, {
-      seatWidth: 20,
-      seatHeight: 20,
-      gapX: 8,
-      gapY: 8,
-      paddingLeft: 4,
-      paddingRight: 4,
-      paddingTop: 4,
-      paddingBottom: 4,
-    });
-    expect(patch).toMatchObject({
-      x: 5,
-      y: 6,
-      rotation: 30,
-      seatWidth: 40,
-      seatHeight: 40,
-      gapX: 16,
-      gapY: 16,
-    });
-  });
 
   it('captures snapshots for leaf nodes without assuming a Konva container', () => {
     const node = mockNode({ x: 10, y: 20, rotation: 5, scaleX: 1.2, scaleY: 0.8 });
@@ -90,8 +67,6 @@ describe('konva-transform-adapter', () => {
         rotation: 5,
         scaleX: 1.2,
         scaleY: 0.8,
-        bodyWidth: undefined,
-        bodyHeight: undefined,
       },
     ]);
   });
@@ -117,7 +92,6 @@ describe('konva-transform-adapter', () => {
       ]),
       initialBounds: { x: 10, y: 20, width: 100, height: 80, centerX: 60, centerY: 60 },
       initialRotation: 0,
-      excludeCorridors: false,
     };
 
     const updates = readObjectTransformCommitFromNodes(stage as never, session, ['object-1'], {

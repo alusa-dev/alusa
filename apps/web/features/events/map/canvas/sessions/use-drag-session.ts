@@ -3,12 +3,18 @@
 import { useCallback, useRef } from 'react';
 import type { RefObject } from 'react';
 import type Konva from 'konva';
+import type { BoundingBox } from '@alusa/domain';
 import { useEventMapEditorStore } from '../../store/event-map-editor-store';
+import { computeUnionBoundsFromNodes } from '../adapters/konva-snap-adapter';
+import type { MapSelectionItem } from '@alusa/domain';
 
 export type GroupDragState = {
   anchorNodeId: string;
   origin: Map<string, { x: number; y: number }>;
+  nodes: Map<string, Konva.Node>;
+  bounds: BoundingBox | null;
   delta: { x: number; y: number };
+  parametricItems?: Array<Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>>;
 };
 
 type DragSessionInput = {
@@ -16,16 +22,14 @@ type DragSessionInput = {
 };
 
 function getNodeEntityId(nodeId: string) {
-  return nodeId.startsWith('node-seatgroup-')
-    ? nodeId.replace('node-seatgroup-', '')
-    : nodeId.replace(/^node-/, '');
+  return nodeId.replace(/^node-/, '');
 }
 
 export function useDragSession({ stageRef }: DragSessionInput) {
   const groupDragRef = useRef<GroupDragState | null>(null);
   const committedGroupDragNodeIdsRef = useRef<Set<string>>(new Set());
 
-  const beginGroupDrag = useCallback((nodeId: string, nodeIds: string[]) => {
+  const beginGroupDrag = useCallback((nodeId: string, nodeIds: string[], parametricItems?: GroupDragState['parametricItems']) => {
     committedGroupDragNodeIdsRef.current.clear();
     if (!nodeIds.includes(nodeId)) {
       groupDragRef.current = null;
@@ -36,32 +40,44 @@ export function useDragSession({ stageRef }: DragSessionInput) {
     if (!stage) return;
 
     const currentMap = useEventMapEditorStore.getState().map;
+    const objectsById = new Map(currentMap?.objects.map((entry) => [entry.id, entry]) ?? []);
+    const seatsById = new Map(currentMap?.seats.map((entry) => [entry.id, entry]) ?? []);
+    const requestedNodeIds = new Set(nodeIds);
+    const nodes = new Map<string, Konva.Node>();
+    for (const node of stage.find((candidate: Konva.Node) => requestedNodeIds.has(candidate.id()))) {
+      nodes.set(node.id(), node);
+    }
     const origin = new Map<string, { x: number; y: number }>();
     for (const id of nodeIds) {
       const entityId = getNodeEntityId(id);
-      const object = currentMap?.objects.find((entry) => entry.id === entityId);
+      const object = objectsById.get(entityId);
       if (object) {
         origin.set(id, { x: object.x, y: object.y });
         continue;
       }
 
-      const seat = currentMap?.seats.find((entry) => entry.id === entityId);
+      const seat = seatsById.get(entityId);
       if (seat) {
         origin.set(id, { x: seat.x, y: seat.y });
         continue;
       }
 
-      const seatGroup = currentMap?.seatGroups?.find((entry) => entry.id === entityId);
-      if (seatGroup) {
-        origin.set(id, { x: seatGroup.x, y: seatGroup.y });
-        continue;
-      }
-
-      const node = stage.findOne(`#${id}`);
+      const node = nodes.get(id);
       if (node) origin.set(id, { x: node.x(), y: node.y() });
     }
 
-    groupDragRef.current = { anchorNodeId: nodeId, origin, delta: { x: 0, y: 0 } };
+    const dragNodes = [...origin.keys()].flatMap((id) => {
+      const node = nodes.get(id);
+      return node ? [node] : [];
+    });
+    groupDragRef.current = {
+      anchorNodeId: nodeId,
+      origin,
+      nodes,
+      bounds: dragNodes.length > 0 ? computeUnionBoundsFromNodes(dragNodes) : null,
+      delta: { x: 0, y: 0 },
+      parametricItems,
+    };
   }, [stageRef]);
 
   const syncGroupDrag = useCallback((event: Konva.KonvaEventObject<DragEvent>) => {
@@ -74,17 +90,14 @@ export function useDragSession({ stageRef }: DragSessionInput) {
     const dx = event.target.x() - anchorOrigin.x;
     const dy = event.target.y() - anchorOrigin.y;
     drag.delta = { x: dx, y: dy };
-    const stage = stageRef.current;
-    if (!stage) return;
-
     for (const [nodeId, start] of drag.origin) {
       if (nodeId === drag.anchorNodeId) continue;
-      const node = stage.findOne(`#${nodeId}`);
+      const node = drag.nodes.get(nodeId);
       if (!node) continue;
       node.x(start.x + dx);
       node.y(start.y + dy);
     }
-  }, [stageRef]);
+  }, []);
 
   return {
     groupDragRef,

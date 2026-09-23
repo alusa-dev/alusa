@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 import {
   activateTool,
   clickMapPoint,
-  createSeatGrid,
+  createSeatBlock,
   dragOnCanvas,
   getCanvasBox,
   getEditorGeometry,
@@ -19,7 +19,7 @@ type DraftShape = {
   id: string;
   levelId: string;
   sectionId: string | null;
-  type: 'GENERAL_AREA' | 'SECTION' | 'CORRIDOR';
+  type: 'GENERAL_AREA' | 'SECTION';
   data: Record<string, unknown>;
   x: number;
   y: number;
@@ -34,8 +34,6 @@ type DraftShape = {
 const SHAPE_A = 'shape-a';
 const SHAPE_B = 'shape-b';
 const SECTION_ID = 'section-loose';
-const SECTION_FRAME_ID = 'section-frame-loose';
-const CORRIDOR_ID = 'corridor-loose';
 
 function shape(id: string, levelId: string, x: number, y: number, width = 100, height = 80): DraftShape {
   return {
@@ -96,7 +94,6 @@ async function seedDraft(
       levelId: string;
       sectionId: string;
       objectId: string | null;
-      groupId: string | null;
       rowIndex: number | null;
       columnIndex: number | null;
       technicalCode: string;
@@ -129,7 +126,6 @@ async function seedDraft(
           levelId: string;
           sectionId: string;
           objectId: string | null;
-          groupId: string | null;
           rowIndex: number | null;
           columnIndex: number | null;
           technicalCode: string;
@@ -157,7 +153,6 @@ async function seedDraft(
       levels: current.levels,
       sections: draft.sections ?? [],
       objects: draft.objects ?? [],
-      seatGroups: [],
       seats: draft.seats ?? [],
     },
   });
@@ -215,6 +210,42 @@ function watchCriticalPageErrors(page: Page) {
 test.describe('Event map editor transform flows', () => {
   test.describe.configure({ timeout: 120_000 });
   test.use({ viewport: { width: 1600, height: 1000 } });
+
+  test('creates independent parametric seat blocks', async ({ page }) => {
+    const scenario = await seedEmptyMapEditor(page, 'seat-layout-modes');
+    await openEventMapEditor(page, scenario);
+
+    await createSeatBlock(page, {
+      origin: { x: 220, y: 180 },
+      totalSeats: 4,
+      rows: 1,
+      columns: 4,
+      horizontalSpacing: 44,
+      layoutMode: 'RECTANGULAR',
+    });
+    await createSeatBlock(page, {
+      origin: { x: 220, y: 380 },
+      totalSeats: 12,
+      rows: 3,
+      columns: 4,
+      horizontalSpacing: 40,
+      verticalSpacing: 70,
+      layoutMode: 'RECTANGULAR',
+    });
+
+    const seats = await getEditorGeometry(page);
+    const rectangular = seats.seats.filter((seat) => seat.y < 300);
+    const secondBlock = seats.seats.filter((seat) => seat.y > 300);
+    expect(rectangular).toHaveLength(4);
+    expect(secondBlock).toHaveLength(12);
+    expect(new Set(rectangular.map((seat) => Math.round(seat.y * 100) / 100)).size).toBe(1);
+    expect(new Set(secondBlock.map((seat) => Math.round(seat.y * 100) / 100)).size).toBe(3);
+    expect(secondBlock.every((seat) => seat.rotation === 0)).toBe(true);
+
+    const map = (await getEditorState(page)).map;
+    expect(map?.document?.sections[0]?.blocks).toHaveLength(2);
+    expect(map?.document?.sections[0]?.blocks.every((block) => block.rows.every((row) => row.path.type === 'LINE'))).toBe(true);
+  });
 
   test('multi-object resize uses the whole selection and preserves the untouched axis', async ({ page }) => {
     const errors = watchCriticalPageErrors(page);
@@ -294,10 +325,10 @@ test.describe('Event map editor transform flows', () => {
       .toBeLessThanOrEqual(1.5);
   });
 
-  test('double-clicking a seat inside a seat group selects the individual seat properties', async ({ page }) => {
+  test('double-clicking a seat inside a parametric block selects the individual seat properties', async ({ page }) => {
     const scenario = await seedEmptyMapEditor(page, 'seat-double-click');
     await openEventMapEditor(page, scenario);
-    await createSeatGrid(page, {
+    await createSeatBlock(page, {
       origin: { x: 360, y: 240 },
       totalSeats: 4,
       rows: 2,
@@ -346,102 +377,4 @@ test.describe('Event map editor transform flows', () => {
       .toBe(true);
   });
 
-  test('dragging a selected corridor together with loose seats keeps the rigid selection coherent', async ({ page }) => {
-    const { scenario } = await seedDraft(page, 'corridor-seat-drag', (levelId) => ({
-      sections: [
-        {
-          id: SECTION_ID,
-          levelId,
-          lotId: null,
-          name: 'Setor solto',
-          color: '#6d28d9',
-          capacity: 8,
-          status: 'ACTIVE',
-          notes: null,
-        },
-      ],
-      objects: [
-        {
-          ...shape(SECTION_FRAME_ID, levelId, 290, 190, 310, 190),
-          sectionId: SECTION_ID,
-          type: 'SECTION',
-          data: { fill: '#6d28d9', opacity: 0.12 },
-        },
-        {
-          ...shape(CORRIDOR_ID, levelId, 420, 175, 28, 220),
-          type: 'CORRIDOR',
-          data: { smartCorridor: true, corridorAxis: 'vertical', corridorThickness: 28 },
-          sortOrder: 1,
-        },
-      ],
-      seats: Array.from({ length: 8 }, (_, index) => {
-        const row = index < 4 ? 0 : 1;
-        const col = index % 4;
-        const seatXs = [330, 380, 500, 550] as const;
-        const label = `${row === 0 ? 'A' : 'B'}${col + 1}`;
-        return {
-          id: `loose-seat-${index + 1}`,
-          levelId,
-          sectionId: SECTION_ID,
-          objectId: null,
-          groupId: null,
-          rowIndex: row,
-          columnIndex: col,
-          technicalCode: label,
-          displayLabel: label,
-          rowLabel: row === 0 ? 'A' : 'B',
-          seatNumber: String(col + 1),
-          status: 'AVAILABLE' as const,
-          accessible: false,
-          publicVisible: true,
-          x: seatXs[col]!,
-          y: 235 + row * 70,
-          size: 26,
-          rotation: 0,
-        };
-      }),
-    }));
-    await openEventMapEditor(page, scenario);
-
-    await activateTool(page, 'select');
-    await clickMapPoint(page, { x: 330, y: 235 });
-    await shiftClickMapPoint(page, { x: 380, y: 235 });
-    await shiftClickMapPoint(page, { x: 434, y: 285 });
-    await expect
-      .poll(async () => (await getEditorState(page)).selection.length, { timeout: 5_000 })
-      .toBe(3);
-
-    const beforeGeometry = await getEditorGeometry(page);
-    const beforeCorridor = beforeGeometry.corridors.find((entry) => entry.id === CORRIDOR_ID);
-    expect(beforeCorridor).toBeTruthy();
-    const selectedBeforeSeats = beforeGeometry.seats.filter((seat) => seat.id === 'loose-seat-1' || seat.id === 'loose-seat-2');
-
-    await dragOnCanvas(
-      page,
-      {
-        x: beforeCorridor!.coreRect.x + beforeCorridor!.coreRect.width / 2,
-        y: beforeCorridor!.coreRect.y + beforeCorridor!.coreRect.height / 2,
-      },
-      {
-        x: beforeCorridor!.coreRect.x + beforeCorridor!.coreRect.width / 2 + 72,
-        y: beforeCorridor!.coreRect.y + beforeCorridor!.coreRect.height / 2 + 24,
-      },
-      24,
-    );
-
-    await expect
-      .poll(async () => (await getEditorGeometry(page)).corridors.find((entry) => entry.id === CORRIDOR_ID)?.x ?? 0, {
-        timeout: 6_000,
-      })
-      .not.toBe(beforeCorridor!.x);
-
-    const afterGeometry = await getEditorGeometry(page);
-    const afterCorridor = afterGeometry.corridors.find((entry) => entry.id === CORRIDOR_ID)!;
-    expect(Math.abs(afterCorridor.x - beforeCorridor!.x)).toBeGreaterThan(20);
-    for (const beforeSeat of selectedBeforeSeats) {
-      const afterSeat = afterGeometry.seats.find((entry) => entry.id === beforeSeat.id);
-      expect(afterSeat).toBeTruthy();
-      expect(Math.abs(afterSeat!.x - beforeSeat.x)).toBeGreaterThan(20);
-    }
-  });
 });

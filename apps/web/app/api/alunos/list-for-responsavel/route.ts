@@ -11,8 +11,8 @@ export async function GET() {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
-    // Apenas ADMIN pode acessar
-    if (auth.role !== 'ADMIN') {
+    // ADMIN e RECEPCAO podem preparar convites para responsáveis.
+    if (auth.role !== 'ADMIN' && auth.role !== 'RECEPCAO') {
       return NextResponse.json({ error: 'Sem permissão' }, { status: 403 });
     }
 

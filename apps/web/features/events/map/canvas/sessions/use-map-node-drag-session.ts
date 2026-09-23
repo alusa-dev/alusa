@@ -1,14 +1,7 @@
 'use client';
 
-import {
-  cloneEventMap,
-  getSelectableItems,
-  isItemSelected,
-  resolveCorridorDragMode,
-  resolveDragTarget,
-  type MapSelectionItem,
-} from '@alusa/domain';
-import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from 'react';
+import { findMapBlockOwner, findMapSeatOwner, getSelectableItems, isItemSelected, resolveDragTarget, type MapSelectionItem } from '@alusa/domain';
+import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { useCallback } from 'react';
 import type Konva from 'konva';
 import type { EventMapDTO, EventMapObjectDTO } from '../../api/event-map-service';
@@ -19,6 +12,7 @@ import type { GroupDragState } from './use-drag-session';
 
 export function useMapNodeDragSession({
   activeLevelId,
+  transformerRef,
   levelObjects,
   levelSeats,
   map,
@@ -26,143 +20,151 @@ export function useMapNodeDragSession({
   committedGroupDragNodeIdsRef,
   beginGroupDrag,
   syncGroupDrag,
-  flushCorridorDragPreview,
-  clearSmartCorridorPreview,
-  corridorPreviewBaseMapRef,
-  corridorPreviewWorkingMapRef,
-  corridorDragCorridorNodeIdsRef,
-  corridorDragModeRef,
-  isCorridorLivePreviewRef,
-  setActiveUnionDragIds,
   lastTransformCommitRef,
   setSelection,
   individualSeatDragId,
-  setIndividualSeatDragId,
   clearGuides,
   handleSnapDragMove,
-  isSmartCorridorPreviewDrag,
-  scheduleCorridorDragPreview,
 }: {
   activeLevelId: string | null;
+  transformerRef: import('react').RefObject<Konva.Transformer | null>;
   levelObjects: EventMapObjectDTO[];
   levelSeats: EventMapDTO['seats'];
   map: EventMapDTO | null;
   groupDragRef: MutableRefObject<GroupDragState | null>;
   committedGroupDragNodeIdsRef: MutableRefObject<Set<string>>;
-  beginGroupDrag: (nodeId: string, nodeIds: string[]) => void;
+  beginGroupDrag: (nodeId: string, nodeIds: string[], parametricItems?: GroupDragState['parametricItems']) => void;
   syncGroupDrag: (event: Konva.KonvaEventObject<DragEvent>) => void;
-  flushCorridorDragPreview: () => void;
-  clearSmartCorridorPreview: () => void;
-  corridorPreviewBaseMapRef: MutableRefObject<EventMapDTO | null>;
-  corridorPreviewWorkingMapRef: MutableRefObject<EventMapDTO | null>;
-  corridorDragCorridorNodeIdsRef: MutableRefObject<string[]>;
-  corridorDragModeRef: MutableRefObject<ReturnType<typeof resolveCorridorDragMode> | null>;
-  isCorridorLivePreviewRef: MutableRefObject<boolean>;
-  setActiveUnionDragIds: Dispatch<SetStateAction<Set<string>>>;
   lastTransformCommitRef: MutableRefObject<Map<string, { x: number; y: number }>>;
   setSelection: (selection: MapSelectionItem | MapSelectionItem[] | null) => void;
   individualSeatDragId: string | null;
-  setIndividualSeatDragId: Dispatch<SetStateAction<string | null>>;
   clearGuides: () => void;
   handleSnapDragMove: (event: Konva.KonvaEventObject<DragEvent>) => void;
-  isSmartCorridorPreviewDrag: (event: Konva.KonvaEventObject<DragEvent>) => boolean;
-  scheduleCorridorDragPreview: () => void;
 }) {
   const getSectionGroupNodeIds = useCallback(
     (sectionId: string) => {
+      const currentMap = useEventMapEditorStore.getState().map ?? map;
       const linkedObject = levelObjects.find((object) => object.sectionId === sectionId && object.type === 'SECTION');
-      const sectionSeats = levelSeats.filter((seat) => seat.sectionId === sectionId && seat.status !== 'SOLD');
-      const seatGroupIds = [
-        ...new Set(sectionSeats.map((seat) => seat.groupId).filter((groupId): groupId is string => Boolean(groupId))),
-      ];
-      const seatGroupNodeIds = seatGroupIds.map((groupId) => `node-seatgroup-${groupId}`);
-      const looseSeatNodeIds = sectionSeats
-        .filter((seat) => !seat.groupId)
-        .map((seat) => `node-${seat.id}`);
-
+      const sectionSeats = currentMap?.seats.filter((seat) => seat.sectionId === sectionId && seat.status !== 'SOLD') ?? levelSeats.filter((seat) => seat.sectionId === sectionId && seat.status !== 'SOLD');
+      const seatNodeIds = sectionSeats.map((seat) => `node-${seat.id}`);
       return linkedObject
-        ? [`node-${linkedObject.id}`, ...seatGroupNodeIds, ...looseSeatNodeIds]
-        : [...seatGroupNodeIds, ...looseSeatNodeIds];
+        ? [`node-${linkedObject.id}`, ...seatNodeIds]
+        : seatNodeIds;
     },
-    [levelObjects, levelSeats],
+    [levelObjects, levelSeats, map],
+  );
+
+  const getBlockGroupNodeIds = useCallback(
+    (blockId: string) => {
+      const currentMap = useEventMapEditorStore.getState().map ?? map;
+      const document = currentMap?.document;
+      const owner = document ? findMapBlockOwner(document, blockId) : null;
+      if (!owner) return [];
+      const selected = useEventMapEditorStore.getState().selection;
+      const selectedBlocks = selected.length > 1 && selected.every((item) => item.type === 'seatblock')
+        ? selected.filter((item) => item.type === 'seatblock')
+        : [{ type: 'seatblock' as const, id: blockId }];
+      if (!selectedBlocks.some((item) => item.id === blockId)) selectedBlocks.splice(0, selectedBlocks.length, { type: 'seatblock', id: blockId });
+      const blockOwners = selectedBlocks.flatMap((item) => {
+        const selectedOwner = findMapBlockOwner(document!, item.id);
+        return selectedOwner ? [{ item, owner: selectedOwner }] : [];
+      });
+      if (blockOwners.length > 1) {
+        const selectedSeatIds = new Set(blockOwners.flatMap(({ owner }) => owner.block.rows.flatMap((row) => row.seatIds)));
+        return (currentMap?.seats ?? levelSeats)
+          .filter((seat) => selectedSeatIds.has(seat.id))
+          .map((seat) => `node-${seat.id}`)
+          .concat(blockOwners.flatMap(({ owner }) => owner.block.rows.flatMap((row) => [`node-seatrow-line-${row.id}`, `node-seatrow-label-${row.id}`, `node-seatrow-${row.id}`])))
+          .concat(blockOwners.map(({ item }) => `node-seatblock-${item.id}`));
+      }
+      const selectedRow = selected.length === 1 && selected[0]?.type === 'seatrow' && owner.block.rows.some((row) => row.id === selected[0]?.id)
+        ? owner.block.rows.find((row) => row.id === selected[0]?.id)
+        : null;
+      const rows = selectedRow ? [selectedRow] : owner.block.rows;
+      const seatIds = new Set(rows.flatMap((row) => row.seatIds));
+      return (currentMap?.seats ?? levelSeats)
+        .filter((seat) => seat.levelId === owner.section.levelId && seatIds.has(seat.id))
+        .map((seat) => `node-${seat.id}`)
+        .concat(rows.flatMap((row) => [`node-seatrow-line-${row.id}`, `node-seatrow-label-${row.id}`, `node-seatrow-${row.id}`]))
+        .concat(selectedRow ? [] : [`node-seatblock-${owner.block.id}`]);
+    },
+    [levelSeats, map],
   );
 
   const commitGroupDrag = useCallback(() => {
     const drag = groupDragRef.current;
     groupDragRef.current = null;
     if (!drag) return;
-
     committedGroupDragNodeIdsRef.current = new Set(drag.origin.keys());
-
-    const { payload, forceCorridor } = buildGroupDragCommit({
-      drag,
-      map,
-      baseMap: corridorPreviewBaseMapRef.current,
-      previewWorkingMap: corridorPreviewWorkingMapRef.current,
-      corridorDragMode: corridorDragModeRef.current,
-    });
-    applyCanvasTransformPayload(payload, { forceCorridor });
-    clearSmartCorridorPreview();
-  }, [
-    clearSmartCorridorPreview,
-    committedGroupDragNodeIdsRef,
-    corridorDragModeRef,
-    corridorPreviewBaseMapRef,
-    corridorPreviewWorkingMapRef,
-    groupDragRef,
-    map,
-  ]);
-
-  const handleResponsiveDragMove = useCallback(
-    (event: Konva.KonvaEventObject<DragEvent>) => {
-      if (isSmartCorridorPreviewDrag(event)) {
-        if (corridorDragModeRef.current === 'rigid') {
-          handleSnapDragMove(event);
-          scheduleCorridorDragPreview();
-          return;
+    if (drag.parametricItems?.length) {
+        useEventMapEditorStore.getState().transformParametricSelections(drag.parametricItems.map((item) => ({ item, matrix: [1, 0, 0, 1, drag.delta.x, drag.delta.y] })));
+        for (const [nodeId, origin] of drag.origin) {
+          if (nodeId.startsWith('node-seatrow-line-') || nodeId.startsWith('node-seatrow-label-') || nodeId.startsWith('node-seatrow-') || nodeId.startsWith('node-seatblock-')) {
+            drag.nodes.get(nodeId)?.position(origin);
+          }
         }
-
-        clearGuides();
-        syncGroupDrag(event);
-        scheduleCorridorDragPreview();
-        return;
+      } else {
+        applyCanvasTransformPayload(buildGroupDragCommit({ drag, map }).payload);
       }
-
-      handleSnapDragMove(event);
-    },
-    [clearGuides, corridorDragModeRef, handleSnapDragMove, isSmartCorridorPreviewDrag, scheduleCorridorDragPreview, syncGroupDrag],
-  );
+  }, [committedGroupDragNodeIdsRef, groupDragRef, map]);
 
   const handleNodeDragStart = useCallback(
     (nodeId: string, item?: MapSelectionItem) => {
       clearGuides();
-      const activeDrag = groupDragRef.current;
-      if (activeDrag?.origin.has(nodeId)) {
-        return;
-      }
-
+      if (groupDragRef.current?.origin.has(nodeId)) return;
       const currentState = useEventMapEditorStore.getState();
       const currentSelection = currentState.selection;
+      const selectedItems = getSelectableItems(currentSelection);
       const currentObjects =
         currentState.map?.objects.filter((object) => object.levelId === activeLevelId && !object.hidden) ?? levelObjects;
-      const dragTarget = resolveDragTarget(nodeId, item, currentSelection, currentState.map ?? {
-        objects: currentObjects,
-        seats: [],
-        seatGroups: [],
-      });
+      const dragTarget = resolveDragTarget(
+        nodeId,
+        item,
+        currentSelection,
+        currentState.map ?? { objects: currentObjects, seats: [] },
+      );
       const draggedSeat = item?.type === 'seat' ? currentState.map?.seats.find((seat) => seat.id === item.id) : null;
+      const draggedSeatOwner = item?.type === 'seat' && currentState.map?.document ? findMapSeatOwner(currentState.map.document, item.id) : null;
+      const itemIsPartOfSelection = item !== undefined && (
+        isItemSelected(currentSelection, item) ||
+        (item.type === 'seat' && draggedSeatOwner !== null && (
+          isItemSelected(currentSelection, { type: 'seatblock', id: draggedSeatOwner.block.id }) ||
+          isItemSelected(currentSelection, { type: 'seatrow', id: draggedSeatOwner.row.id })
+        ))
+      );
+      const isDraggingExistingMultiSelection = selectedItems.length > 1 && itemIsPartOfSelection;
       const shouldDragSeatSection =
-        item?.type === 'seat' && item.id !== individualSeatDragId && Boolean(draggedSeat?.sectionId);
+        !isDraggingExistingMultiSelection && item?.type === 'seat' && item.id !== individualSeatDragId && Boolean(draggedSeat?.sectionId);
+      const shouldDragSeatBlock =
+        !isDraggingExistingMultiSelection && item?.type === 'seat' && item.id !== individualSeatDragId && Boolean(draggedSeatOwner);
+      const blockNodeIds = shouldDragSeatBlock && draggedSeatOwner ? getBlockGroupNodeIds(draggedSeatOwner.block.id) : [];
+      const selectedRow = currentSelection.length === 1 && currentSelection[0]?.type === 'seatrow' && draggedSeatOwner?.row.id === currentSelection[0].id
+        ? currentSelection[0]
+        : null;
+      const parametricItem = shouldDragSeatBlock && draggedSeatOwner
+        ? selectedRow ?? { type: 'seatblock' as const, id: draggedSeatOwner.block.id }
+        : undefined;
+      const selectedParametricItems = shouldDragSeatBlock && draggedSeatOwner
+        ? currentSelection.length > 1 && currentSelection.every((entry) => entry.type === 'seatblock') && currentSelection.some((entry) => entry.id === draggedSeatOwner.block.id)
+          ? currentSelection.filter((entry): entry is Extract<MapSelectionItem, { type: 'seatblock' }> => entry.type === 'seatblock')
+          : [parametricItem!]
+        : undefined;
       const sectionNodeIds =
-        item?.type === 'section'
+        !isDraggingExistingMultiSelection && item?.type === 'section'
           ? getSectionGroupNodeIds(item.id)
           : shouldDragSeatSection && draggedSeat?.sectionId
             ? getSectionGroupNodeIds(draggedSeat.sectionId)
             : [];
-      const resolvedNodeIds = sectionNodeIds.length > 0 ? sectionNodeIds : dragTarget.nodeIds;
-      const resolvedSelectionItems =
-        item?.type === 'section'
+      const resolvedNodeIds = blockNodeIds.length > 0 ? blockNodeIds : sectionNodeIds.length > 0 ? sectionNodeIds : dragTarget.nodeIds;
+      const preserveSelectedBlocks = Boolean(selectedParametricItems && selectedParametricItems.length > 1);
+      const resolvedSelectionItems = isDraggingExistingMultiSelection
+        ? selectedItems
+        : preserveSelectedBlocks
+        ? selectedParametricItems!
+        : !isDraggingExistingMultiSelection && item?.type === 'section'
           ? [item]
+          : shouldDragSeatBlock && draggedSeatOwner
+            ? [parametricItem!]
           : shouldDragSeatSection && draggedSeat?.sectionId
             ? [{ type: 'section' as const, id: draggedSeat.sectionId }]
             : dragTarget.selectionItems;
@@ -170,107 +172,59 @@ export function useMapNodeDragSession({
       const selectionChanged =
         resolvedSelectionItems.length !== selectableSelection.length ||
         !resolvedSelectionItems.every((entry) => isItemSelected(currentSelection, entry));
-
-      if (selectionChanged) {
-        setSelection(resolvedSelectionItems);
-      }
-
-      beginGroupDrag(nodeId, resolvedNodeIds);
-
-      const corridorIds = new Set(
-        (currentState.map?.objects ?? []).filter((object) => object.type === 'CORRIDOR').map((object) => object.id),
-      );
-      const draggingCorridorIds = resolvedNodeIds
-        .map((id) => id.replace(/^node-/, ''))
-        .filter((id) => corridorIds.has(id));
-
-      if (draggingCorridorIds.length > 0) {
-        const base = currentState.map ? cloneEventMap(currentState.map) : null;
-        corridorPreviewBaseMapRef.current = base;
-        corridorPreviewWorkingMapRef.current = base ? cloneEventMap(base) : null;
-        corridorDragCorridorNodeIdsRef.current = draggingCorridorIds.map((id) => `node-${id}`);
-        isCorridorLivePreviewRef.current = true;
-        setActiveUnionDragIds(new Set(draggingCorridorIds));
-
-        const drag = groupDragRef.current;
-        if (base && drag) {
-          corridorDragModeRef.current = resolveCorridorDragMode(base, drag, draggingCorridorIds);
-        }
-      }
+      if (selectionChanged) setSelection(resolvedSelectionItems);
+      beginGroupDrag(nodeId, resolvedNodeIds, selectedParametricItems);
     },
     [
       activeLevelId,
       beginGroupDrag,
       clearGuides,
-      corridorDragCorridorNodeIdsRef,
-      corridorDragModeRef,
-      corridorPreviewBaseMapRef,
-      corridorPreviewWorkingMapRef,
       getSectionGroupNodeIds,
+      getBlockGroupNodeIds,
       groupDragRef,
       individualSeatDragId,
-      isCorridorLivePreviewRef,
       levelObjects,
-      setActiveUnionDragIds,
       setSelection,
     ],
+  );
+
+  const handleResponsiveDragMove = useCallback(
+    (event: Konva.KonvaEventObject<DragEvent>) => {
+      handleSnapDragMove(event);
+      syncGroupDrag(event);
+      transformerRef.current?.forceUpdate();
+      transformerRef.current?.getLayer()?.batchDraw();
+    },
+    [handleSnapDragMove, syncGroupDrag, transformerRef],
   );
 
   const handleNodeDragEnd = useCallback(
     (nodeId: string, event: Konva.KonvaEventObject<DragEvent>, onCommit: (x: number, y: number) => void) => {
       clearGuides();
-
       const drag = groupDragRef.current;
       if (drag?.origin.has(nodeId)) {
-        if (corridorPreviewBaseMapRef.current) {
-          syncGroupDrag(event);
-          flushCorridorDragPreview();
-        }
+        syncGroupDrag(event);
         commitGroupDrag();
         return;
       }
-
       if (committedGroupDragNodeIdsRef.current.has(nodeId)) {
         committedGroupDragNodeIdsRef.current.delete(nodeId);
-        clearSmartCorridorPreview();
         return;
       }
-
       groupDragRef.current = null;
       const entityId = nodeId.replace('node-', '');
-      const nx = event.target.x();
-      const ny = event.target.y();
-      if (!Number.isFinite(nx) || !Number.isFinite(ny)) {
-        groupDragRef.current = null;
-        clearSmartCorridorPreview();
-        return;
-      }
+      const x = event.target.x();
+      const y = event.target.y();
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
       const last = lastTransformCommitRef.current.get(entityId);
-      if (last && Math.abs(last.x - nx) < 0.5 && Math.abs(last.y - ny) < 0.5) {
+      if (last && Math.abs(last.x - x) < 0.5 && Math.abs(last.y - y) < 0.5) {
         lastTransformCommitRef.current.delete(entityId);
-        clearSmartCorridorPreview();
         return;
       }
-      onCommit(nx, ny);
-      clearSmartCorridorPreview();
+      onCommit(x, y);
     },
-    [
-      clearGuides,
-      clearSmartCorridorPreview,
-      commitGroupDrag,
-      committedGroupDragNodeIdsRef,
-      corridorPreviewBaseMapRef,
-      flushCorridorDragPreview,
-      groupDragRef,
-      lastTransformCommitRef,
-      syncGroupDrag,
-    ],
+    [clearGuides, commitGroupDrag, committedGroupDragNodeIdsRef, groupDragRef, lastTransformCommitRef, syncGroupDrag],
   );
 
-  return {
-    handleNodeDragStart,
-    handleNodeDragEnd,
-    handleResponsiveDragMove,
-    commitGroupDrag,
-  };
+  return { handleNodeDragStart, handleNodeDragEnd, handleResponsiveDragMove, commitGroupDrag };
 }

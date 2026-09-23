@@ -1,6 +1,6 @@
 'use client';
 
-import { getTextMode, getTextResizeAnchors, selectionHasMixedTextAndShapes, type LevelBounds } from '@alusa/domain';
+import { getTextMode, getTextResizeAnchors, selectionHasMixedTextAndShapes, type LevelBounds, type MapSelectionItem } from '@alusa/domain';
 import type { MutableRefObject } from 'react';
 import { useMemo } from 'react';
 import type { EventMapDTO, EventMapObjectDTO } from '../../api/event-map-service';
@@ -23,8 +23,8 @@ export function useMapTransformRouting({
   selectedNodeIds,
   selectedObjectIds,
   selectedSeatIds,
-  selectedSeatGroupIds,
   selectionContainsSeatsOrSections,
+  selection,
   levelBounds,
   transformContextRef,
 }: {
@@ -33,17 +33,17 @@ export function useMapTransformRouting({
   selectedNodeIds: string[];
   selectedObjectIds: string[];
   selectedSeatIds: string[];
-  selectedSeatGroupIds: string[];
   selectionContainsSeatsOrSections: boolean;
+  selection: MapSelectionItem[];
   levelBounds: LevelBounds | null;
   transformContextRef: MutableRefObject<{
     selectedObjectIds: string[];
     selectedSeatIds: string[];
-    selectedSeatGroupIds: string[];
     selectedNodeIds: string[];
     transformKind: ReturnType<typeof resolveTransformRouting>['kind'];
+    selectedParametricItem: MapSelectionItem | null;
+    selectedParametricItems: Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>[];
     levelBounds: LevelBounds | null;
-    forceUniformSeatGroupScale?: boolean;
   }>;
 }) {
   const mixedTextAndShapes = useMemo(() => {
@@ -67,6 +67,7 @@ export function useMapTransformRouting({
         mixedTextAndShapes,
         selectedTextCount,
         selectionContainsSeatsOrSections,
+        selectedParametricItem: selection.length > 0 && selection.every((item) => item.type === 'seatblock' || item.type === 'seatrow'),
       }),
     [
       map?.objects,
@@ -75,33 +76,25 @@ export function useMapTransformRouting({
       selectedObjectIds,
       selectedTextCount,
       selectionContainsSeatsOrSections,
+      selection,
     ],
   );
 
   const useUniformGroupTransform = transformRouting.kind === 'uniform';
-  const useCorridorTransformerPipeline = transformRouting.kind === 'corridor';
   const useGenericTransform = transformRouting.kind === 'generic';
   const isSingleSelectionTransform = selectedNodeIds.length <= 1;
   const transformPipelineActive = transformRouting.kind !== null;
-  const disableResizeForMixedSmartCorridorSelection = transformRouting.transformDisabled;
-  const disableRotateForMixedSmartCorridorSelection = transformRouting.transformDisabled;
-  const selectedSeatGroupHasRotation = useMemo(() => {
-    if (!map || selectedSeatGroupIds.length === 0) return false;
-    return selectedSeatGroupIds.some((id) => {
-      const group = map.seatGroups?.find((entry) => entry.id === id);
-      return Boolean(group && Math.abs((group.rotation ?? 0) % 360) > 0.001);
-    });
-  }, [map, selectedSeatGroupIds]);
-  const forceUniformSeatGroupScale = selectedSeatGroupIds.length >= 2 || selectedSeatGroupHasRotation;
-
+  const transformDisabled = transformRouting.transformDisabled;
   transformContextRef.current = {
     selectedObjectIds,
     selectedSeatIds,
-    selectedSeatGroupIds,
     selectedNodeIds,
     transformKind: transformRouting.kind,
+    selectedParametricItem: selection.length === 1 && (selection[0]?.type === 'seatblock' || selection[0]?.type === 'seatrow') ? selection[0] : null,
+    selectedParametricItems: selection.length > 0 && selection.every((item) => item.type === 'seatblock' || item.type === 'seatrow')
+      ? selection as Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>[]
+      : [],
     levelBounds,
-    forceUniformSeatGroupScale,
   };
 
   const selectedTextTransformAnchors = useMemo(() => {
@@ -114,13 +107,10 @@ export function useMapTransformRouting({
   return {
     transformRouting,
     useUniformGroupTransform,
-    useCorridorTransformerPipeline,
     useGenericTransform,
     isSingleSelectionTransform,
     transformPipelineActive,
-    disableResizeForMixedSmartCorridorSelection,
-    disableRotateForMixedSmartCorridorSelection,
-    forceUniformSeatGroupScale,
+    transformDisabled,
     selectedTextTransformAnchors,
   };
 }
