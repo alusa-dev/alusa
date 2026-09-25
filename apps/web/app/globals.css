@@ -140,7 +140,7 @@ body:has([data-area='public']) {
 	--site-body-leading: 24px;
 	background: var(--site-purple);
 	color: var(--site-text-primary);
-	font-family: var(--font-sans), Inter, sans-serif;
+	font-family: var(--font-inter), Inter, sans-serif;
 }
 
 .site-container { width: min(100% - 48px, 1200px); margin: 0 auto; padding-inline: 24px; box-sizing: border-box; }

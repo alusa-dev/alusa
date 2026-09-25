@@ -2,16 +2,10 @@ import "./globals.css";
 import "@/lib/zod-error-map";
 import { AppProviders } from "./providers";
 import React from "react";
-import { Inter } from "next/font/google";
+import { inter } from "./fonts";
 import type { Metadata, Viewport } from "next";
 import { WebVitalsReporter } from "./WebVitalsReporter";
 import { CookieConsentBanner } from "@/components/legal/CookieConsentBanner";
-
-const inter = Inter({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-inter",
-});
 
 export const metadata: Metadata = {
   title: {
