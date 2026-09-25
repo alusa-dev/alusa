@@ -177,6 +177,11 @@ const nextConfig = {
     },
   },
   experimental: {
+    // A função webpack customizada abaixo apenas configura aliases, mas faz o
+    // Next desativar o worker automático. Reativá-lo separa a compilação e
+    // reduz o pico de memória no build de produção.
+    webpackBuildWorker: true,
+    webpackMemoryOptimizations: true,
     optimizePackageImports: [
       'lucide-react',
       '@heroicons/react',
