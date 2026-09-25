@@ -17,8 +17,6 @@ import { migrateLegacyMapDocument, normalizeMapReferenceChart, resolveEventMapLa
 import type { EventMapDocument, MapReferenceChart, MapSeatBlock, MapSeatRow } from '@alusa/domain';
 
 import { prisma } from '../../prisma';
-import { loadDecryptedAsaasCredentials } from '../../services/integracoes/asaas-credentials-service';
-import { getEventAsaasPaymentProvider, type EventAsaasPayment } from '../event-asaas-payment-provider';
 import { assertEventTicketSalesOpen, EventsError, type EventsContext } from '../events.service';
 import { enqueueEventTicketEmail } from '../ticket-email-outbox';
 import { createCheckInCode, toCheckInCode } from './ticket-code';
@@ -33,6 +31,8 @@ import type {
   UpdateEventMapReferenceChartInput,
   UpdateEventMapSettingsInput,
 } from './event-map.schema';
+
+export type { PublicCheckoutInput } from './event-map.schema';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -110,14 +110,6 @@ function createPublicToken(prefix: string) {
   return `${prefix}_${globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`;
 }
 
-function toAsaasDate(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function buildEventMapAsaasIdempotencyKey(scope: 'customer' | 'payment', orderId: string) {
-  return `event-map:${scope}:${orderId}`;
-}
-
 function normalizeDocument(document: string | null | undefined) {
   return document?.replace(/\D/g, '') ?? '';
 }
@@ -130,20 +122,10 @@ function publicOrderTicketsPath(orderId: string, accessToken: string) {
   return `/api/public/event-map-orders/${orderId}/tickets?token=${encodeURIComponent(accessToken)}`;
 }
 
-function publicOrderTicketsHtmlPath(
-  publicSlug: string | null | undefined,
-  orderId: string,
-  accessToken: string,
-) {
+export function publicOrderStatusPath(publicSlug: string | null | undefined, orderId: string, accessToken: string) {
   const slug = publicSlug?.trim();
-  const query = `token=${encodeURIComponent(accessToken)}`;
-  return slug ? `/m/${slug}/pedido/${orderId}/ingressos?${query}` : null;
-}
-
-function publicOrderStatusPath(publicSlug: string | null | undefined, orderId: string, accessToken: string) {
-  const slug = publicSlug?.trim();
-  const query = `token=${encodeURIComponent(accessToken)}`;
-  return slug ? `/m/${slug}/pedido/${orderId}?${query}` : `/api/public/event-map-orders/${orderId}/status?${query}`;
+  const query = `orderId=${encodeURIComponent(orderId)}&token=${encodeURIComponent(accessToken)}`;
+  return slug ? `/m/${slug}?${query}` : `/api/public/event-map-orders/${orderId}/status?token=${encodeURIComponent(accessToken)}`;
 }
 
 function readDraftDocument(record: EventMapRecord | EventMapListRecord): EventMapDocument {
@@ -1357,7 +1339,10 @@ function ticketFulfillmentFailureStatus(reason: string | null | undefined) {
   const normalized = (reason ?? '').toUpperCase();
   return normalized.includes('RESERVA_EXPIRADA')
     || normalized.includes('ASSENTOS_INDISPONIVEIS')
+    || normalized.includes('ASSENTOS_REVENDIDOS')
     || normalized.includes('RESERVA_INVALIDA')
+    || normalized.includes('VALOR_PAGAMENTO_DIVERGENTE')
+    || normalized.includes('PEDIDO_NAO_ENCONTRADO')
     ? 'REQUIRES_RECONCILIATION' as const
     : 'FAILED' as const;
 }
@@ -1419,27 +1404,15 @@ function eventMapOrderPaymentWhere(params: {
   } satisfies Prisma.EventMapOrderWhereInput;
 }
 
-async function buildPublicCheckoutResponse(
+export function buildPublicEventMapCheckoutResponse(
   order: PublicCheckoutOrderRecord,
-  params?: { apiKey?: string | null; paymentMethod?: PublicCheckoutInput['paymentMethod']; publicSlug?: string | null },
+  params?: {
+    publicSlug?: string | null;
+    pixQrCode?: { encodedImage: string; payload: string; expirationDate: string } | null;
+    bankSlipCode?: string | null;
+    bankSlipBarcode?: string | null;
+  },
 ) {
-  let pixQrCode: { encodedImage: string; payload: string; expirationDate: string } | null = null;
-  if (params?.paymentMethod === 'PIX' && params.apiKey && order.asaasPaymentId) {
-    try {
-      const qr = await getEventAsaasPaymentProvider().getPixQrCode({
-        apiKey: params.apiKey,
-        paymentId: order.asaasPaymentId,
-      });
-      pixQrCode = {
-        encodedImage: qr.encodedImage,
-        payload: qr.payload,
-        expirationDate: qr.expirationDate,
-      };
-    } catch (qrError) {
-      console.warn('[event-map] Falha ao obter QR Code Pix:', qrError);
-    }
-  }
-
   return {
     orderId: order.id,
     accessToken: order.accessToken,
@@ -1456,12 +1429,6 @@ async function buildPublicCheckoutResponse(
       && hasCompletePublicOrderTickets(order)
         ? publicOrderTicketsPath(order.id, order.accessToken)
         : null,
-    ticketsHtmlUrl:
-      order.status === 'CONFIRMED'
-      && order.ticketFulfillmentStatus === 'ISSUED'
-      && hasCompletePublicOrderTickets(order)
-        ? publicOrderTicketsHtmlPath(params?.publicSlug, order.id, order.accessToken)
-        : null,
     ticketFulfillmentStatus: order.ticketFulfillmentStatus,
     statusUrl: publicOrderStatusPath(params?.publicSlug, order.id, order.accessToken),
     items: order.items.map((item) => ({
@@ -1469,7 +1436,9 @@ async function buildPublicCheckoutResponse(
       seatLabel: item.seatLabel,
       sectionName: item.sectionName,
     })),
-    pixQrCode,
+    pixQrCode: params?.pixQrCode ?? null,
+    bankSlipCode: params?.bankSlipCode ?? null,
+    bankSlipBarcode: params?.bankSlipBarcode ?? null,
   };
 }
 
@@ -1489,6 +1458,7 @@ async function expirePublicReservations(db: DbClient, contaId: string, now = new
           id: true,
           status: true,
           asaasPaymentId: true,
+          paymentStatus: true,
           _count: { select: { tickets: true } },
         },
       },
@@ -1496,14 +1466,37 @@ async function expirePublicReservations(db: DbClient, contaId: string, now = new
   });
   if (expired.length === 0) return;
 
-  const expirable = expired.filter((reservation) => {
-    if (!reservation.order) return true;
-    return (
-      reservation.order.status === 'PAYMENT_PENDING' &&
-      !reservation.order.asaasPaymentId &&
-      reservation.order._count.tickets === 0
-    );
-  });
+  const expirable: typeof expired = [];
+  for (const reservation of expired) {
+    if (!reservation.order) {
+      expirable.push(reservation);
+      continue;
+    }
+    if (
+      reservation.order.status !== 'PAYMENT_PENDING' ||
+      reservation.order.asaasPaymentId ||
+      reservation.order._count.tickets > 0 ||
+      reservation.order.paymentStatus === 'PAYMENT_CREATION_IN_PROGRESS' ||
+      reservation.order.paymentStatus === 'PAYMENT_CREATION_UNKNOWN'
+    ) continue;
+
+    // Claim order expiry before releasing its seats. This compare-and-set
+    // races safely with checkout's payment-creation claim: only one wins.
+    const expiredOrder = await db.eventMapOrder.updateMany({
+      where: {
+        id: reservation.order.id,
+        contaId,
+        status: 'PAYMENT_PENDING',
+        asaasPaymentId: null,
+        OR: [
+          { paymentStatus: null },
+          { paymentStatus: { notIn: ['PAYMENT_CREATION_IN_PROGRESS', 'PAYMENT_CREATION_UNKNOWN'] } },
+        ],
+      },
+      data: { status: 'EXPIRED', cancelledAt: now, paymentStatus: 'EXPIRED' },
+    });
+    if (expiredOrder.count === 1) expirable.push(reservation);
+  }
   const skipped = expired.length - expirable.length;
   if (skipped > 0) {
     console.info('[events.finance]', {
@@ -1525,15 +1518,6 @@ async function expirePublicReservations(db: DbClient, contaId: string, now = new
   await db.eventMapReservation.updateMany({
     where: { contaId, id: { in: expirable.map((reservation) => reservation.id) }, status: 'HELD' },
     data: { status: 'EXPIRED', checkoutKey: null },
-  });
-  await db.eventMapOrder.updateMany({
-    where: {
-      contaId,
-      reservationId: { in: expirable.map((reservation) => reservation.id) },
-      status: 'PAYMENT_PENDING',
-      asaasPaymentId: null,
-    },
-    data: { status: 'EXPIRED', cancelledAt: now, paymentStatus: 'EXPIRED' },
   });
 }
 
@@ -1725,7 +1709,7 @@ export async function reservePublicEventMapSeats(publicSlug: string, input: Publ
 
 export type PublicSeatReservationDTO = Awaited<ReturnType<typeof reservePublicEventMapSeats>>;
 
-export async function completePublicEventMapCheckout(publicSlug: string, input: PublicCheckoutInput) {
+export async function preparePublicEventMapCheckout(publicSlug: string, input: PublicCheckoutInput) {
   const buyerDocument = normalizeDocument(input.buyerDocument);
   if (!buyerDocument) {
     throw new EventsError('DOCUMENTO_OBRIGATORIO', 'Informe o CPF/CNPJ do comprador para gerar a cobrança.', 422);
@@ -1779,6 +1763,7 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
           buyerName: input.buyerName,
           buyerEmail: input.buyerEmail,
           buyerDocument: input.buyerDocument ?? null,
+          buyerPhone: input.buyerPhone,
           totalAmount: decimal(totalAmount),
           status: 'PAYMENT_PENDING',
           paymentProvider: 'ASAAS',
@@ -1791,6 +1776,18 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
 
     if (order.status === 'CANCELLED' || order.status === 'EXPIRED' || order.status === 'REFUNDED') {
       throw new EventsError('PEDIDO_NAO_REUTILIZAVEL', 'A reserva já foi encerrada. Selecione os assentos novamente.', 409);
+    }
+    if (
+      (order.paymentStatus === 'PAYMENT_CREATION_IN_PROGRESS' || order.paymentStatus === 'PAYMENT_CREATION_UNKNOWN') &&
+      (order.buyerName !== input.buyerName || order.buyerEmail !== input.buyerEmail ||
+        order.buyerDocument !== buyerDocument || order.buyerPhone !== input.buyerPhone ||
+        order.paymentMethod !== input.paymentMethod)
+    ) {
+      throw new EventsError(
+        'CHECKOUT_EM_RECONCILIACAO',
+        'Esta tentativa de pagamento ainda está sendo verificada. Mantenha os dados e o meio de pagamento e consulte o pedido novamente.',
+        409,
+      );
     }
     if (order.asaasPaymentId && order.paymentMethod !== input.paymentMethod) {
       throw new EventsError(
@@ -1814,10 +1811,24 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
       },
     });
 
-    if (order.paymentMethod !== input.paymentMethod || order.expiresAt?.getTime() !== expiresAt.getTime()) {
+    if (
+      order.buyerName !== input.buyerName ||
+      order.buyerEmail !== input.buyerEmail ||
+      order.buyerDocument !== buyerDocument ||
+      order.buyerPhone !== input.buyerPhone ||
+      order.paymentMethod !== input.paymentMethod ||
+      order.expiresAt?.getTime() !== expiresAt.getTime()
+    ) {
       await tx.eventMapOrder.update({
         where: { id: order.id },
-        data: { paymentMethod: input.paymentMethod, expiresAt },
+        data: {
+          buyerName: input.buyerName,
+          buyerEmail: input.buyerEmail,
+          buyerDocument,
+          buyerPhone: input.buyerPhone,
+          paymentMethod: input.paymentMethod,
+          expiresAt,
+        },
       });
     }
 
@@ -1849,165 +1860,9 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
     };
   });
 
-  console.info('[events.finance]', {
-    action: 'eventMapOrder.checkout.prepared',
-    contaId: pending.map.contaId,
-    eventId: pending.map.eventId,
-    orderId: pending.order.id,
-    updated: Boolean(pending.order.asaasPaymentId),
-  });
-
-  try {
-    const credentials = await loadDecryptedAsaasCredentials(pending.map.contaId);
-    if (!credentials?.apiKey) {
-      throw new EventsError('ASAAS_NAO_CONFIGURADO', 'Configure a integração Asaas para vender ingressos no mapa público.', 409);
-    }
-
-    if (pending.order.asaasPaymentId) {
-      return buildPublicCheckoutResponse(pending.order, {
-        apiKey: credentials.apiKey,
-        paymentMethod: input.paymentMethod,
-        publicSlug: pending.map.publicSlug,
-      });
-    }
-
-    let customerId = '';
-    try {
-      const existing = await getEventAsaasPaymentProvider().listCustomers({
-        apiKey: credentials.apiKey,
-        cpfCnpj: buyerDocument,
-        limit: 10,
-      });
-      const activeCustomer = existing.data.find((c) => !c.deleted) ?? existing.data[0];
-      if (activeCustomer) {
-        customerId = activeCustomer.id;
-        await getEventAsaasPaymentProvider().updateCustomer({
-          apiKey: credentials.apiKey,
-          customerId,
-          data: {
-            name: input.buyerName,
-            email: input.buyerEmail,
-            address: input.buyerAddress ?? undefined,
-            addressNumber: input.buyerAddressNumber ?? undefined,
-            complement: input.buyerComplement ?? undefined,
-            province: input.buyerProvince ?? undefined,
-            postalCode: input.buyerPostalCode ?? undefined,
-            externalReference: `event-map-order:${pending.order.id}`,
-          },
-        });
-      }
-    } catch (listError) {
-      console.warn('[event-map] Falha ao listar/atualizar customer existente, criando novo:', listError);
-    }
-
-    if (!customerId) {
-      const customer = await getEventAsaasPaymentProvider().createCustomer({
-        apiKey: credentials.apiKey,
-        idempotencyKey: buildEventMapAsaasIdempotencyKey('customer', pending.order.id),
-        data: {
-          name: input.buyerName,
-          email: input.buyerEmail,
-          cpfCnpj: buyerDocument,
-          address: input.buyerAddress ?? undefined,
-          addressNumber: input.buyerAddressNumber ?? undefined,
-          complement: input.buyerComplement ?? undefined,
-          province: input.buyerProvince ?? undefined,
-          postalCode: input.buyerPostalCode ?? undefined,
-          externalReference: `event-map-order:${pending.order.id}`,
-          notificationDisabled: false,
-        },
-      });
-      customerId = customer.id;
-    }
-
-    const externalReference = `event-map-order:${pending.order.id}`;
-    let payment: EventAsaasPayment;
-    try {
-      console.info('[events.finance]', {
-        action: 'eventMapOrder.payment.create.start',
-        contaId: pending.map.contaId,
-        eventId: pending.map.eventId,
-        orderId: pending.order.id,
-      });
-      payment = await getEventAsaasPaymentProvider().createPayment({
-        apiKey: credentials.apiKey,
-        idempotencyKey: buildEventMapAsaasIdempotencyKey('payment', pending.order.id),
-        data: {
-          customer: customerId,
-          value: pending.totalAmount,
-          dueDate: toAsaasDate(pending.expiresAt),
-          billingType: input.paymentMethod,
-          description: `Ingressos - ${pending.map.event.name}`,
-          externalReference,
-        },
-      });
-    } catch (paymentError) {
-      const reconciled = await getEventAsaasPaymentProvider().listPayments({
-        apiKey: credentials.apiKey,
-        externalReference,
-        limit: 10,
-      }).catch((listError) => {
-        console.warn('[event-map] Falha ao reconciliar cobrança Asaas por externalReference:', listError);
-        return null;
-      });
-      const existingPayment = reconciled?.data.find((candidate) => !candidate.deleted) ?? null;
-      if (!existingPayment) throw paymentError;
-      payment = existingPayment;
-    }
-
-    console.info('[events.finance]', {
-      action: 'eventMapOrder.payment.create',
-      contaId: pending.map.contaId,
-      eventId: pending.map.eventId,
-      orderId: pending.order.id,
-      asaasPaymentId: payment.id,
-    });
-
-    const updated = await prisma.eventMapOrder.update({
-      where: { id: pending.order.id },
-      data: {
-        asaasCustomerId: customerId,
-        asaasPaymentId: payment.id,
-        paymentMethod: input.paymentMethod,
-        paymentStatus: payment.status,
-        invoiceUrl: payment.invoiceUrl ?? null,
-      },
-      include: { items: { include: { ticket: true } } },
-    });
-
-    await prisma.$transaction(async (tx) => {
-      await enqueuePublicOrderCreatedEmail(tx, {
-        contaId: pending.map.contaId,
-        orderId: updated.id,
-        buyerEmail: updated.buyerEmail,
-        buyerName: updated.buyerName,
-        eventName: pending.map.event.name,
-        eventStartsAt: pending.map.event.startsAt,
-        statusPath: publicOrderStatusPath(pending.map.publicSlug, updated.id, updated.accessToken),
-        invoiceUrl: updated.invoiceUrl,
-        paymentMethod: input.paymentMethod,
-        expiresAt: pending.expiresAt,
-      });
-    });
-
-    return buildPublicCheckoutResponse(updated, {
-      apiKey: credentials.apiKey,
-      paymentMethod: input.paymentMethod,
-      publicSlug: pending.map.publicSlug,
-    });
-  } catch (error) {
-    const currentOrder = await prisma.eventMapOrder.findUnique({
-      where: { id: pending.order.id },
-      select: { asaasPaymentId: true },
-    });
-    if (!currentOrder?.asaasPaymentId) {
-      await cancelPublicEventMapOrder(pending.order.id, 'Falha ao gerar cobrança Asaas.');
-    }
-    throw error;
-  }
+  return pending;
 }
 
-export type PublicCheckoutDTO = Awaited<ReturnType<typeof completePublicEventMapCheckout>>;
 
 export async function getPublicEventMapOrderStatus(orderId: string, accessToken: string) {
   const order = await prisma.eventMapOrder.findFirst({
@@ -2043,10 +1898,34 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
     && order.ticketFulfillmentStatus === 'ISSUED'
     && hasCompletePublicOrderTickets(order);
   const ticketsUrl = ticketsAvailable ? publicOrderTicketsPath(order.id, order.accessToken) : null;
-  const ticketsHtmlUrl =
-    ticketsAvailable
-      ? publicOrderTicketsHtmlPath(order.map.publicSlug, order.id, order.accessToken)
-      : null;
+  let refundRequestUrl: string | null = null;
+  if (
+    order.paymentMethod === 'BOLETO'
+    && order.status === 'CONFIRMED'
+    && order.ticketFulfillmentLastError?.startsWith('ASSENTOS_INDISPONIVEIS:')
+    && order.paymentStatus !== 'REFUND_DENIED'
+    && order.paymentStatus !== 'REFUNDED'
+  ) {
+    const refundEffect = await prisma.financeWebhookSideEffectOutbox.findFirst({
+      where: {
+        contaId: order.contaId,
+        dedupeKey: `${order.contaId}:EVENT_MAP_LATE_PAYMENT_REFUND:${order.id}`,
+      },
+      select: { payload: true },
+    });
+    const candidate = (refundEffect?.payload as { bankSlipRefundRequestUrl?: unknown } | null)
+      ?.bankSlipRefundRequestUrl;
+    if (typeof candidate === 'string') {
+      try {
+        const url = new URL(candidate);
+        if (url.protocol === 'https:' && (url.hostname === 'asaas.com' || url.hostname.endsWith('.asaas.com'))) {
+          refundRequestUrl = url.toString();
+        }
+      } catch {
+        // Ignore malformed persisted provider links; never expose an unsafe URL.
+      }
+    }
+  }
 
   return {
     orderId: order.id,
@@ -2055,14 +1934,15 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
     totalAmount: toMoney(order.totalAmount),
     status: order.status,
     ticketFulfillmentStatus: order.ticketFulfillmentStatus,
+    paymentMethod: order.paymentMethod,
     ticketFulfillmentLastError: order.ticketFulfillmentLastError,
     paymentStatus: order.paymentStatus,
+    refundRequestUrl,
     invoiceUrl: order.invoiceUrl,
     expiresAt: order.expiresAt?.toISOString() ?? null,
     paidAt: order.paidAt?.toISOString() ?? null,
     confirmedAt: order.confirmedAt?.toISOString() ?? null,
     ticketsUrl,
-    ticketsHtmlUrl,
     statusUrl: publicOrderStatusPath(order.map.publicSlug, order.id, order.accessToken),
     event: {
       ...order.event,
@@ -2095,7 +1975,7 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
 
 export type PublicOrderStatusDTO = Awaited<ReturnType<typeof getPublicEventMapOrderStatus>>;
 
-async function enqueuePublicOrderCreatedEmail(
+export async function enqueuePublicOrderCreatedEmail(
   tx: Prisma.TransactionClient,
   params: {
     contaId: string;
@@ -2146,7 +2026,7 @@ export async function syncPublicEventMapOrderPaymentCreated(params: {
     where: {
       id: orderId,
       contaId: params.contaId,
-      status: 'PAYMENT_PENDING',
+      status: { in: ['PAYMENT_PENDING', 'EXPIRED', 'CANCELLED'] },
       OR: [{ asaasPaymentId: null }, { asaasPaymentId: params.asaasPaymentId }],
     },
     data: {
@@ -2168,6 +2048,7 @@ export async function confirmPublicEventMapOrderPayment(params: {
   invoiceUrl?: string | null;
   paidAt?: Date | string | null;
   paidAmount?: number | null;
+  allowReleasedReservation?: boolean;
 }) {
   return prisma.$transaction(async (tx) => {
     const order = await tx.eventMapOrder.findFirst({
@@ -2189,7 +2070,11 @@ export async function confirmPublicEventMapOrderPayment(params: {
       };
     }
 
-    if (order.status !== 'PAYMENT_PENDING' && order.status !== 'CONFIRMED') {
+    if (
+      order.status !== 'PAYMENT_PENDING' &&
+      order.status !== 'CONFIRMED' &&
+      !(params.allowReleasedReservation && (order.status === 'EXPIRED' || order.status === 'CANCELLED'))
+    ) {
       throw new EventsError('PEDIDO_NAO_CONFIRMAVEL', 'Pedido público não está pendente de pagamento.', 409);
     }
 
@@ -2205,11 +2090,50 @@ export async function confirmPublicEventMapOrderPayment(params: {
       );
     }
 
-    const reservation = order.reservation;
-    if (!reservation || reservation.status !== 'HELD') {
+    let reservation = order.reservation;
+    if (!reservation) {
       throw new EventsError('RESERVA_INVALIDA', 'Reserva do pedido público não está disponível para confirmação.', 409);
     }
-    if (reservation.expiresAt < new Date()) {
+    if (
+      (reservation.status === 'EXPIRED' || reservation.status === 'CANCELLED')
+      && params.allowReleasedReservation
+    ) {
+      const releasedSeatIds = reservation.seats.map((entry) => entry.publicSeatId);
+      if (reservation.seats.some((entry) => entry.publicSeat.status === 'SOLD')) {
+        throw new EventsError('ASSENTOS_REVENDIDOS', 'Um ou mais assentos desta reserva já foram vendidos novamente.', 409);
+      }
+      if (releasedSeatIds.length === 0 || reservation.seats.some((entry) => entry.publicSeat.status !== 'AVAILABLE')) {
+        throw new EventsError('ASSENTOS_INDISPONIVEIS', 'Um ou mais assentos desta reserva não estão mais disponíveis.', 409);
+      }
+
+      const reclaimedSeats = await tx.eventMapPublicSeat.updateMany({
+        where: { contaId: order.contaId, id: { in: releasedSeatIds }, status: 'AVAILABLE' },
+        data: { status: 'HELD' },
+      });
+      if (reclaimedSeats.count !== releasedSeatIds.length) {
+        throw new EventsError('ASSENTOS_INDISPONIVEIS', 'Um ou mais assentos foram reservados por outra compra.', 409);
+      }
+
+      const reclaimedReservation = await tx.eventMapReservation.updateMany({
+        where: { id: reservation.id, contaId: order.contaId, status: { in: ['EXPIRED', 'CANCELLED'] } },
+        data: { status: 'HELD', cancelledAt: null, consumedAt: null },
+      });
+      if (reclaimedReservation.count !== 1) {
+        throw new EventsError('RESERVA_INVALIDA', 'A reserva já foi processada por outra operação.', 409);
+      }
+      reservation = {
+        ...reservation,
+        status: 'HELD',
+        seats: reservation.seats.map((entry) => ({
+          ...entry,
+          publicSeat: { ...entry.publicSeat, status: 'HELD' },
+        })),
+      };
+    }
+    if (reservation.status !== 'HELD') {
+      throw new EventsError('RESERVA_INVALIDA', 'Reserva do pedido público não está disponível para confirmação.', 409);
+    }
+    if (!params.allowReleasedReservation && reservation.expiresAt < new Date()) {
       throw new EventsError('RESERVA_EXPIRADA', 'Reserva do pedido público expirou antes da confirmação do pagamento.', 409);
     }
 
@@ -2228,7 +2152,8 @@ export async function confirmPublicEventMapOrderPayment(params: {
 
     const createdItems: Array<{ item: EventMapOrderItemRecord; ticket: EventTicketRecord; seat: EventMapPublicSeatRecord }> = [];
     for (const seat of publicSeats) {
-      const item = await tx.eventMapOrderItem.create({
+      const existingItem = order.items.find((candidate) => candidate.publicSeatId === seat.id);
+      const item = existingItem ?? await tx.eventMapOrderItem.create({
         data: {
           contaId: order.contaId,
           orderId: order.id,
@@ -2240,7 +2165,7 @@ export async function confirmPublicEventMapOrderPayment(params: {
           technicalCode: seat.technicalCode,
         },
       });
-      const ticket = await tx.eventTicket.create({
+      const ticket = existingItem?.ticket ?? await tx.eventTicket.create({
         data: {
           contaId: order.contaId,
           eventId: order.eventId,
@@ -2365,7 +2290,6 @@ export async function confirmPublicEventMapOrderPayment(params: {
       ticketType: [...new Set(publicSeats.map((seat) => seat.lotName).filter(Boolean))].join(', ') || 'Ingresso',
       ticketCount: createdItems.length,
       ticketsPath: publicOrderTicketsPath(order.id, order.accessToken),
-      ticketsHtmlPath: publicOrderTicketsHtmlPath(order.map.publicSlug, order.id, order.accessToken),
       statusPath: publicOrderStatusPath(order.map.publicSlug, order.id, order.accessToken),
     });
 
@@ -2383,10 +2307,10 @@ const PAID_ASAAS_PAYMENT_STATUSES = new Set([
   'RECEIVED_IN_CASH',
   'DUNNING_RECEIVED',
 ]);
-
 /**
  * Converge financial state when the payment is confirmed in Asaas but the full
- * public-order confirmation flow cannot run (ex.: reserva expirada).
+ * public-order confirmation flow cannot run (ex.: reserva liberada e assento
+ * revendidos ou retidos por outro pedido).
  */
 export async function reconcileEventMapOrderFinancialStateFromAsaas(params: {
   contaId: string;
@@ -2401,55 +2325,114 @@ export async function reconcileEventMapOrderFinancialStateFromAsaas(params: {
   const paymentStatus = (params.paymentStatus ?? '').trim().toUpperCase();
   if (!PAID_ASAAS_PAYMENT_STATUSES.has(paymentStatus)) return null;
 
-  const order = await prisma.eventMapOrder.findFirst({
-    where: {
-      ...eventMapOrderPaymentWhere(params),
-      status: 'PAYMENT_PENDING',
-    },
-    select: { id: true, eventId: true, confirmedAt: true },
-  });
-  if (!order) return null;
-
   const paidAt = params.paidAt ? new Date(params.paidAt) : new Date();
   if (Number.isNaN(paidAt.getTime())) {
     return null;
   }
 
-  await prisma.eventMapOrder.update({
-    where: { id: order.id },
-    data: {
-      status: 'CONFIRMED',
-      ticketFulfillmentStatus: ticketFulfillmentFailureStatus(params.ticketFulfillmentError),
-      ticketFulfillmentAttempts: { increment: 1 },
-      ticketFulfillmentLastAttemptAt: new Date(),
-      ticketFulfillmentLastError: normalizeTicketFulfillmentError(params.ticketFulfillmentError),
-      asaasPaymentId: params.asaasPaymentId,
-      paymentStatus,
-      paymentProvider: 'ASAAS',
-      invoiceUrl: params.invoiceUrl ?? undefined,
-      paidAt,
-      confirmedAt: order.confirmedAt ?? paidAt,
-    },
-  });
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.eventMapOrder.findFirst({
+      where: {
+        ...eventMapOrderPaymentWhere(params),
+        status: { in: ['PAYMENT_PENDING', 'EXPIRED', 'CANCELLED', 'CONFIRMED'] },
+      },
+      include: {
+        reservation: { include: { seats: { include: { publicSeat: { select: { status: true } } } } } },
+      },
+    });
+    if (!order) return null;
+    if (order.status === 'CONFIRMED' && order.ticketFulfillmentStatus === 'REQUIRES_RECONCILIATION') {
+      // A replayed payment webhook is already represented locally; preserve
+      // idempotent success while the refund/fulfillment outbox is reconciled.
+      return { orderId: order.id, status: 'CONFIRMED', financialOnly: true };
+    }
 
-  await prisma.auditLog.create({
-    data: {
-      contaId: params.contaId,
-      actorType: 'SYSTEM',
-      actorId: null,
-      action: 'events.map.public.payment.reconcile_financial',
-      entityType: 'EventMapOrder',
-      entityId: order.id,
-      metadata: toAuditJson({
-        eventId: order.eventId,
+    // A payment can arrive after its local hold has been released. If another
+    // buyer already acquired one of those seats, preserve the payment truth,
+    // issue no ticket, and enqueue one durable full refund for the actual paid
+    // amount. The outbox's tenant-scoped dedupe key prevents webhook retries
+    // from creating duplicate refund commands.
+    const releasedOrder = order.status === 'EXPIRED' || order.status === 'CANCELLED';
+    const seatsStillFree = order.reservation?.seats.length
+      && order.reservation.seats.every((seat) => seat.publicSeat.status === 'AVAILABLE');
+    // Available seats are reclaimed atomically by confirmPublic... before this
+    // fallback runs. Do not downgrade a transient confirmation failure into a
+    // financial-only state while the order can still be fulfilled normally.
+    if (releasedOrder && seatsStillFree) return null;
+    // Any missing or occupied seat makes fulfillment impossible right now.
+    // A competing hold is as important as a completed resale: never steal it,
+    // and do not leave the paid order waiting for a future webhook replay.
+    const cannotFulfillLatePayment = releasedOrder && !seatsStillFree;
+
+    const update = await tx.eventMapOrder.updateMany({
+      where: {
+        id: order.id,
+        contaId: params.contaId,
+        status: order.status,
+      },
+      data: {
+        status: 'CONFIRMED',
+        ticketFulfillmentStatus: 'REQUIRES_RECONCILIATION',
+        ticketFulfillmentAttempts: { increment: 1 },
+        ticketFulfillmentLastAttemptAt: new Date(),
+        ticketFulfillmentLastError: cannotFulfillLatePayment
+          ? 'ASSENTOS_INDISPONIVEIS: pagamento confirmado após expiração/cancelamento; estorno automático solicitado.'
+          : normalizeTicketFulfillmentError(params.ticketFulfillmentError),
         asaasPaymentId: params.asaasPaymentId,
         paymentStatus,
-        financialOnly: true,
-      }),
-    },
-  });
+        paymentProvider: 'ASAAS',
+        invoiceUrl: params.invoiceUrl ?? undefined,
+        paidAt,
+        confirmedAt: order.confirmedAt ?? paidAt,
+      },
+    });
+    if (update.count !== 1) return null;
 
-  return { orderId: order.id, status: 'CONFIRMED', financialOnly: true };
+    if (cannotFulfillLatePayment) {
+      const refundValue = typeof params.paidAmount === 'number' && Number.isFinite(params.paidAmount)
+        ? toMoney(params.paidAmount)
+        : toMoney(order.totalAmount);
+      const dedupeKey = `${params.contaId}:EVENT_MAP_LATE_PAYMENT_REFUND:${order.id}`;
+      await tx.financeWebhookSideEffectOutbox.createMany({
+        data: {
+          contaId: params.contaId,
+          effectType: 'EVENT_MAP_LATE_PAYMENT_REFUND',
+          dedupeKey,
+          payload: toAuditJson({
+            orderId: order.id,
+            asaasPaymentId: params.asaasPaymentId,
+            value: refundValue,
+            description: `Estorno por indisponibilidade dos assentos - pedido ${order.id}`,
+            requestState: 'NOT_SUBMITTED',
+          }),
+          status: 'PENDING',
+        },
+        skipDuplicates: true,
+      });
+    }
+
+    await tx.auditLog.create({
+      data: {
+        contaId: params.contaId,
+        actorType: 'SYSTEM',
+        actorId: null,
+        action: cannotFulfillLatePayment
+          ? 'events.map.public.payment.late_refund_enqueued'
+          : 'events.map.public.payment.reconcile_financial',
+        entityType: 'EventMapOrder',
+        entityId: order.id,
+        metadata: toAuditJson({
+          eventId: order.eventId,
+          asaasPaymentId: params.asaasPaymentId,
+          paymentStatus,
+          financialOnly: true,
+          latePaymentRefundQueued: Boolean(cannotFulfillLatePayment),
+        }),
+      },
+    });
+
+    return { orderId: order.id, status: 'CONFIRMED', financialOnly: true };
+  });
 }
 
 export async function recordPublicOrderTicketFulfillmentFailure(params: {
@@ -2482,7 +2465,13 @@ export async function cancelPublicEventMapOrder(orderId: string, reason?: string
       where: { id: orderId },
       include: { reservation: { include: { seats: true } } },
     });
-    if (!order || order.status === 'CANCELLED' || order.status === 'REFUNDED') return { ok: true };
+    if (
+      !order ||
+      order.status === 'CANCELLED' ||
+      order.status === 'EXPIRED' ||
+      order.status === 'CONFIRMED' ||
+      order.status === 'REFUNDED'
+    ) return { ok: true };
 
     const seatIds = order.reservation?.seats.map((seat) => seat.publicSeatId) ?? [];
     if (seatIds.length > 0) {
@@ -2729,8 +2718,6 @@ export async function getEventMapOrderTicketsForAdmin(contaId: string, orderId: 
 }
 
 const PUBLIC_ORDER_RESEND_EMAIL_WINDOW_MS = 60 * 60 * 1000;
-const PUBLIC_ORDER_SYNC_PAYMENT_WINDOW_MS = 15 * 60 * 1000;
-const PUBLIC_ORDER_SYNC_PAYMENT_MAX_PER_WINDOW = 8;
 
 async function countRecentOrderAuditActions(
   contaId: string,
@@ -2789,7 +2776,6 @@ export async function requestPublicOrderTicketEmailResend(orderId: string, acces
       ticketType: [...new Set(order.items.map((item) => item.publicSeat?.lotName).filter(Boolean))].join(', ') || 'Ingresso',
       ticketCount,
       ticketsPath: publicOrderTicketsPath(order.id, order.accessToken),
-      ticketsHtmlPath: publicOrderTicketsHtmlPath(order.map.publicSlug, order.id, order.accessToken),
       statusPath: publicOrderStatusPath(order.map.publicSlug, order.id, order.accessToken),
       deliveryKey: dedupeSuffix,
     });
@@ -2808,112 +2794,6 @@ export async function requestPublicOrderTicketEmailResend(orderId: string, acces
   });
 
   return { ok: true as const, orderId: order.id, buyerEmail: order.buyerEmail };
-}
-
-export async function syncPublicEventMapOrderPaymentByBuyer(orderId: string, accessToken: string) {
-  const order = await prisma.eventMapOrder.findFirst({
-    where: { id: orderId, accessToken },
-    select: {
-      id: true,
-      contaId: true,
-      status: true,
-      ticketFulfillmentStatus: true,
-      asaasPaymentId: true,
-      accessToken: true,
-    },
-  });
-  if (!order) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido não encontrado.', 404);
-
-  if (order.status === 'CONFIRMED' && order.ticketFulfillmentStatus === 'ISSUED') {
-    return {
-      synced: false as const,
-      status: order.status,
-      order: await getPublicEventMapOrderStatus(orderId, accessToken),
-    };
-  }
-
-  if (order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED') {
-    throw new EventsError('PEDIDO_ENCERRADO', 'Este pedido não está disponível para pagamento.', 409);
-  }
-
-  if (!order.asaasPaymentId) {
-    throw new EventsError('COBRANCA_AUSENTE', 'Cobrança ainda não foi gerada para este pedido.', 409);
-  }
-
-  const recentSyncs = await countRecentOrderAuditActions(
-    order.contaId,
-    order.id,
-    'events.map.public.sync_payment',
-    PUBLIC_ORDER_SYNC_PAYMENT_WINDOW_MS,
-  );
-  if (recentSyncs >= PUBLIC_ORDER_SYNC_PAYMENT_MAX_PER_WINDOW) {
-    throw new EventsError('LIMITE_SINCRONIZACAO', 'Aguarde alguns minutos antes de tentar novamente.', 429);
-  }
-
-  const credentials = await loadDecryptedAsaasCredentials(order.contaId);
-  if (!credentials?.apiKey) {
-    throw new EventsError('ASAAS_NAO_CONFIGURADO', 'Integração Asaas não configurada.', 409);
-  }
-
-  const payment = await getEventAsaasPaymentProvider().getPayment({
-    apiKey: credentials.apiKey,
-    paymentId: order.asaasPaymentId,
-  });
-  const paymentStatus = (payment.status ?? '').trim().toUpperCase();
-
-  await prisma.auditLog.create({
-    data: {
-      contaId: order.contaId,
-      actorType: 'SYSTEM',
-      actorId: null,
-      action: 'events.map.public.sync_payment',
-      entityType: 'EventMapOrder',
-      entityId: order.id,
-      metadata: toAuditJson({ asaasPaymentId: order.asaasPaymentId, paymentStatus }),
-    },
-  });
-
-  if (!PAID_ASAAS_PAYMENT_STATUSES.has(paymentStatus)) {
-    return {
-      synced: false as const,
-      status: order.status,
-      paymentStatus,
-      order: await getPublicEventMapOrderStatus(orderId, accessToken),
-    };
-  }
-
-  try {
-    await confirmPublicEventMapOrderPayment({
-      contaId: order.contaId,
-      asaasPaymentId: order.asaasPaymentId,
-      externalReference: `event-map-order:${order.id}`,
-      paymentStatus,
-      invoiceUrl: payment.invoiceUrl ?? null,
-      paidAt: payment.paymentDate ?? payment.clientPaymentDate ?? new Date(),
-      paidAmount: payment.value ?? null,
-    });
-  } catch (confirmError) {
-    if (confirmError instanceof EventsError) {
-      await reconcileEventMapOrderFinancialStateFromAsaas({
-        contaId: order.contaId,
-        asaasPaymentId: order.asaasPaymentId,
-        externalReference: `event-map-order:${order.id}`,
-        paymentStatus,
-        invoiceUrl: payment.invoiceUrl ?? null,
-        paidAt: payment.paymentDate ?? payment.clientPaymentDate ?? new Date(),
-        paidAmount: payment.value ?? null,
-        ticketFulfillmentError: confirmError instanceof EventsError ? confirmError.code : String(confirmError),
-      }).catch(() => null);
-    } else {
-      throw confirmError;
-    }
-  }
-
-  return {
-    synced: true as const,
-    status: 'CONFIRMED' as const,
-    order: await getPublicEventMapOrderStatus(orderId, accessToken),
-  };
 }
 
 export async function listEventPublicMapOrdersForAdmin(contaId: string, eventId: string) {

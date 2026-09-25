@@ -11,7 +11,6 @@ type EventTicketEmailOutboxParams = {
   ticketType?: string | null;
   ticketCount: number;
   ticketsPath: string;
-  ticketsHtmlPath?: string | null;
   statusPath?: string | null;
   deliveryKey?: string;
 };
@@ -48,7 +47,6 @@ export async function enqueueEventTicketEmail(
         ticketType: params.ticketType ?? null,
         ticketCount: params.ticketCount,
         ticketsPath: params.ticketsPath,
-        ticketsHtmlPath: params.ticketsHtmlPath ?? null,
         statusPath: params.statusPath ?? null,
         deliveryKey,
       }),

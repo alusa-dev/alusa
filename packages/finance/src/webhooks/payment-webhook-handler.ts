@@ -28,7 +28,6 @@ import { chargeReadModelService } from '../read-model/charge-read-model.service'
 import { financeSummaryReadModelService } from '../read-model/finance-summary-read-model.service';
 import { updateFinanceStatusFromPayment } from '../guards/finance-status-guard';
 import { withSessionAdvisoryLock } from '../core/idempotency.service';
-import { getBillingInfo, getPayment, isAsaasEnabled } from '../use-cases/asaas-ops';
 import { confirmPaymentCommandsByProviderEvent } from '../use-cases/payment-command-ledger';
 import {
   fulfillReservedSaleOnPayment,
@@ -309,13 +308,6 @@ function resolveChargeInvoiceUrlUpdate(invoiceUrl?: string | null): string | und
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function hasOfficialAccessLink(payment: PaymentWebhookPayload['payment']): boolean {
-  return Boolean(
-    resolveChargeInvoiceUrlUpdate(payment.invoiceUrl) ||
-      resolveChargeInvoiceUrlUpdate(payment.bankSlipUrl),
-  );
-}
-
 function buildPaymentDocumentUpdate(payload: PaymentWebhookPayload): Record<string, unknown> {
   const p = payload.payment;
   const update: Record<string, unknown> = {};
@@ -332,45 +324,6 @@ function buildPaymentDocumentUpdate(payload: PaymentWebhookPayload): Record<stri
   }
 
   return update;
-}
-
-async function enrichPaymentWithOfficialLinks(
-  contaId: string,
-  payment: PaymentWebhookPayload['payment'],
-): Promise<PaymentWebhookPayload['payment']> {
-  const needsBoletoData = payment.billingType === 'BOLETO' && !payment.identificationField;
-  if (!isAsaasEnabled() || (hasOfficialAccessLink(payment) && !needsBoletoData)) {
-    return payment;
-  }
-
-  try {
-    const officialPayment = await getPayment(payment.id, { contaId });
-    const billingType = payment.billingType ?? officialPayment.billingType ?? null;
-    const billingInfo = billingType === 'BOLETO'
-      ? await getBillingInfo(payment.id, { contaId }).catch(() => null)
-      : null;
-    return {
-      ...payment,
-      invoiceUrl: payment.invoiceUrl ?? officialPayment.invoiceUrl ?? null,
-      bankSlipUrl: payment.bankSlipUrl ?? officialPayment.bankSlipUrl ?? null,
-      transactionReceiptUrl: payment.transactionReceiptUrl ?? officialPayment.transactionReceiptUrl ?? null,
-      billingType,
-      identificationField: payment.identificationField ?? billingInfo?.bankSlip?.identificationField ?? null,
-      barCode: payment.barCode ?? billingInfo?.bankSlip?.barCode ?? null,
-      nossoNumero: payment.nossoNumero ?? billingInfo?.bankSlip?.nossoNumero ?? null,
-      description: payment.description ?? officialPayment.description ?? null,
-      dueDate: payment.dueDate ?? officialPayment.dueDate ?? null,
-      creditDate: payment.creditDate ?? officialPayment.creditDate ?? null,
-      estimatedCreditDate: payment.estimatedCreditDate ?? officialPayment.estimatedCreditDate ?? null,
-    };
-  } catch (error) {
-    console.warn('[Asaas Webhook] Falha ao enriquecer payment sem link oficial', {
-      contaId,
-      asaasPaymentId: payment.id,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return payment;
-  }
 }
 
 function resolveChargeDueDateUpdate(dueDate?: string | null): Date | undefined {
@@ -1153,10 +1106,6 @@ async function handlePaymentWebhookCore(
   payload: PaymentWebhookPayload
 ): Promise<PaymentWebhookResult> {
   try {
-    payload = {
-      ...payload,
-      payment: await enrichPaymentWithOfficialLinks(contaId, payload.payment),
-    };
     const effectiveAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload) ?? payload.payment.status;
 
     try {
@@ -1175,109 +1124,138 @@ async function handlePaymentWebhookCore(
       });
     }
 
-    try {
-      const paidAt =
-        payload.payment.clientPaymentDate ??
-        payload.payment.paymentDate ??
-        payload.payment.creditDate ??
-        new Date().toISOString();
-      if (
-        ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH'].includes(payload.event) ||
-        ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(effectiveAsaasStatus)
-      ) {
-        const eventPaymentParams = {
-          contaId,
-          asaasPaymentId: payload.payment.id,
-          externalReference: payload.payment.externalReference,
-          paymentStatus: effectiveAsaasStatus,
-          invoiceUrl: payload.payment.invoiceUrl ?? null,
-          paidAt,
-          paidAmount: payload.payment.value,
-        };
-        try {
-          const confirmed = await confirmPublicEventMapOrderPayment(eventPaymentParams);
-          if (!confirmed) {
-            await reconcileEventMapOrderFinancialStateFromAsaas({
-              ...eventPaymentParams,
-              ticketFulfillmentError: 'PEDIDO_NAO_ENCONTRADO',
-            });
-          }
-        } catch (confirmError) {
-          console.warn('[payment-webhook] Confirmação completa do pedido público falhou; tentando reconciliação financeira', {
-            contaId,
-            asaasPaymentId: payload.payment.id,
-            message: confirmError instanceof Error ? confirmError.message : String(confirmError),
-          });
-          await reconcileEventMapOrderFinancialStateFromAsaas({
-            ...eventPaymentParams,
-            ticketFulfillmentError:
-              typeof (confirmError as { code?: unknown })?.code === 'string'
-                ? (confirmError as { code: string }).code
-                : confirmError instanceof Error
-                  ? confirmError.message
-                  : String(confirmError),
-          });
-        }
-      } else if (payload.event === 'PAYMENT_CREATED' || payload.payment.status === 'PENDING') {
-        await syncPublicEventMapOrderPaymentCreated({
-          contaId,
-          asaasPaymentId: payload.payment.id,
-          externalReference: payload.payment.externalReference,
-          paymentStatus: effectiveAsaasStatus,
-          invoiceUrl: payload.payment.invoiceUrl ?? null,
+    const paidAt =
+      payload.payment.clientPaymentDate ??
+      payload.payment.paymentDate ??
+      payload.payment.creditDate ??
+      new Date().toISOString();
+    if (
+      ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH'].includes(payload.event) ||
+      ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(effectiveAsaasStatus)
+    ) {
+      const eventPaymentParams = {
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        externalReference: payload.payment.externalReference,
+        paymentStatus: effectiveAsaasStatus,
+        invoiceUrl: payload.payment.invoiceUrl ?? null,
+        paidAt,
+        paidAmount: payload.payment.value,
+      };
+      let confirmed: Awaited<ReturnType<typeof confirmPublicEventMapOrderPayment>> = null;
+      let confirmationError: unknown = null;
+      try {
+        confirmed = await confirmPublicEventMapOrderPayment({
+          ...eventPaymentParams,
+          // A valid late payment can still be fulfilled when the reservation
+          // expired but every seat is still available. The service atomically
+          // reclaims the complete set, or rejects without issuing any ticket.
+          allowReleasedReservation: true,
         });
-      } else if (payload.event === 'PAYMENT_REFUNDED' || effectiveAsaasStatus === 'REFUNDED') {
-        await refundPublicEventMapOrderByPayment({
+      } catch (error) {
+        confirmationError = error;
+        console.warn('[payment-webhook] Confirmação completa do pedido público falhou; tentando reconciliação financeira', {
           contaId,
           asaasPaymentId: payload.payment.id,
-          externalReference: payload.payment.externalReference,
-          refundedAmount: payload.payment.value,
-        });
-        await refundTicketSalesByAsaasPayment({
-          contaId,
-          asaasPaymentId: payload.payment.id,
-          paymentStatus: effectiveAsaasStatus,
-          isFinalRefund: true,
-          refundedAmount: payload.payment.value,
-        });
-      } else if (payload.event === 'PAYMENT_PARTIALLY_REFUNDED') {
-        await refundPublicEventMapOrderByPayment({
-          contaId,
-          asaasPaymentId: payload.payment.id,
-          externalReference: payload.payment.externalReference,
-          refundedAmount: payload.payment.value,
-          partial: true,
-        });
-        await refundTicketSalesByAsaasPayment({
-          contaId,
-          asaasPaymentId: payload.payment.id,
-          paymentStatus: effectiveAsaasStatus,
-          isFinalRefund: false,
-          refundedAmount: payload.payment.value,
-        });
-      } else if (payload.event === 'PAYMENT_REFUND_IN_PROGRESS' || payload.event === 'PAYMENT_REFUND_DENIED') {
-        await markPublicEventMapOrderRefundProcessingByPayment({
-          contaId,
-          asaasPaymentId: payload.payment.id,
-          externalReference: payload.payment.externalReference,
-          paymentStatus: payload.event === 'PAYMENT_REFUND_DENIED' ? 'REFUND_DENIED' : payload.payment.status,
-        });
-        await refundTicketSalesByAsaasPayment({
-          contaId,
-          asaasPaymentId: payload.payment.id,
-          paymentStatus: payload.event === 'PAYMENT_REFUND_DENIED' ? 'REFUND_DENIED' : payload.payment.status,
-          isFinalRefund: false,
-        });
-      } else if (payload.event === 'PAYMENT_DELETED' || payload.payment.deleted) {
-        await cancelPublicEventMapOrderByPayment({
-          contaId,
-          asaasPaymentId: payload.payment.id,
-          externalReference: payload.payment.externalReference,
-          reason: payload.event,
+          message: error instanceof Error ? error.message : String(error),
         });
       }
-    } catch (eventOrderError) {
-      console.error('[payment-webhook] Falha ao sincronizar pedido público de evento:', eventOrderError);
+      if (!confirmed) {
+        const reconciled = await reconcileEventMapOrderFinancialStateFromAsaas({
+          ...eventPaymentParams,
+          ticketFulfillmentError: confirmationError
+            ? typeof (confirmationError as { code?: unknown })?.code === 'string'
+              ? (confirmationError as { code: string }).code
+              : confirmationError instanceof Error
+                ? confirmationError.message
+                : String(confirmationError)
+            : 'PEDIDO_NAO_ENCONTRADO',
+        });
+        if (!reconciled && payload.payment.externalReference?.startsWith('event-map-order:')) {
+          throw new Error('EVENT_MAP_PAID_PAYMENT_REQUIRES_RETRY', confirmationError ? { cause: confirmationError } : undefined);
+        }
+      }
+    } else if (payload.event === 'PAYMENT_CREATED' || payload.payment.status === 'PENDING') {
+      await syncPublicEventMapOrderPaymentCreated({
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        externalReference: payload.payment.externalReference,
+        paymentStatus: effectiveAsaasStatus,
+        invoiceUrl: payload.payment.invoiceUrl ?? null,
+      });
+    } else if (payload.event === 'PAYMENT_REFUNDED' || effectiveAsaasStatus === 'REFUNDED') {
+      await refundPublicEventMapOrderByPayment({
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        externalReference: payload.payment.externalReference,
+        refundedAmount: payload.payment.value,
+      });
+      await refundTicketSalesByAsaasPayment({
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        paymentStatus: effectiveAsaasStatus,
+        isFinalRefund: true,
+        refundedAmount: payload.payment.value,
+      });
+    } else if (payload.event === 'PAYMENT_PARTIALLY_REFUNDED') {
+      await refundPublicEventMapOrderByPayment({
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        externalReference: payload.payment.externalReference,
+        refundedAmount: payload.payment.value,
+        partial: true,
+      });
+      await refundTicketSalesByAsaasPayment({
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        paymentStatus: effectiveAsaasStatus,
+        isFinalRefund: false,
+        refundedAmount: payload.payment.value,
+      });
+    } else if (payload.event === 'PAYMENT_REFUND_IN_PROGRESS' || payload.event === 'PAYMENT_REFUND_DENIED') {
+      await markPublicEventMapOrderRefundProcessingByPayment({
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        externalReference: payload.payment.externalReference,
+        paymentStatus: payload.event === 'PAYMENT_REFUND_DENIED' ? 'REFUND_DENIED' : payload.payment.status,
+      });
+      await refundTicketSalesByAsaasPayment({
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        paymentStatus: payload.event === 'PAYMENT_REFUND_DENIED' ? 'REFUND_DENIED' : payload.payment.status,
+        isFinalRefund: false,
+      });
+    } else if (payload.event === 'PAYMENT_DELETED' || payload.payment.deleted) {
+      await cancelPublicEventMapOrderByPayment({
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        externalReference: payload.payment.externalReference,
+        reason: payload.event,
+      });
+    }
+
+    // Event-map orders are not academic Cobranca/Charge records. Once the
+    // domain-specific handler has had the opportunity to apply this event,
+    // stop before the legacy resolver opens false PAYMENT_MISSING_LOCAL_ENTITY
+    // issues for a valid public ticket purchase. Unknown provider states still
+    // update the pending order's payment snapshot through the same guarded CAS.
+    if (payload.payment.externalReference?.startsWith('event-map-order:')) {
+      await syncPublicEventMapOrderPaymentCreated({
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        externalReference: payload.payment.externalReference,
+        paymentStatus: effectiveAsaasStatus,
+        invoiceUrl: payload.payment.invoiceUrl ?? null,
+      });
+      const orderId = payload.payment.externalReference.slice('event-map-order:'.length);
+      const order = await prisma.eventMapOrder.findFirst({
+        where: { id: orderId, contaId },
+        select: { id: true, asaasPaymentId: true },
+      });
+      if (!order || (order.asaasPaymentId && order.asaasPaymentId !== payload.payment.id)) {
+        throw new Error('EVENT_MAP_ORDER_PAYMENT_REFERENCE_NOT_FOUND');
+      }
+      return { success: true };
     }
 
     // A validação de origem/assinatura do webhook deve acontecer no handler principal

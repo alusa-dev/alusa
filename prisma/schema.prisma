@@ -4784,6 +4784,7 @@ model EventMapOrder {
   buyerName                      String
   buyerEmail                     String
   buyerDocument                  String?
+  buyerPhone                     String?
   totalAmount                    Decimal                         @default(0) @db.Decimal(12, 2)
   status                         EventMapOrderStatus             @default(PAYMENT_PENDING)
   ticketFulfillmentStatus        EventMapTicketFulfillmentStatus @default(PENDING)

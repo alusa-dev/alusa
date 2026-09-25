@@ -11,6 +11,13 @@ const {
   mockProjectFamilyEnrollmentFeeState,
   mockUpsertFinanceReconciliationIssue,
   mockLinkSaleToFirstInstallmentCharge,
+  mockConfirmEventMapOrderPayment,
+  mockReconcileEventMapOrder,
+  mockSyncEventMapOrderPaymentCreated,
+  mockRefundEventMapOrder,
+  mockMarkEventMapRefundProcessing,
+  mockCancelEventMapOrder,
+  mockRefundTicketSales,
 } = vi.hoisted(() => ({
   mockUpdateFinanceStatusFromPayment: vi.fn(async () => ({ success: true })),
   mockResolvePaymentToLocalEntity: vi.fn(async () => ({ type: 'not_found', reason: 'test_default' })),
@@ -19,6 +26,26 @@ const {
   mockProjectFamilyEnrollmentFeeState: vi.fn(async () => ({ projected: true })),
   mockUpsertFinanceReconciliationIssue: vi.fn(async () => ({ id: 'issue-1' })),
   mockLinkSaleToFirstInstallmentCharge: vi.fn(async () => null),
+  mockConfirmEventMapOrderPayment: vi.fn(async () => null),
+  mockReconcileEventMapOrder: vi.fn(async () => null),
+  mockSyncEventMapOrderPaymentCreated: vi.fn(async () => null),
+  mockRefundEventMapOrder: vi.fn(async () => null),
+  mockMarkEventMapRefundProcessing: vi.fn(async () => null),
+  mockCancelEventMapOrder: vi.fn(async () => null),
+  mockRefundTicketSales: vi.fn(async () => null),
+}));
+
+vi.mock('@alusa/lib/events/events.service', () => ({
+  refundTicketSalesByAsaasPayment: mockRefundTicketSales,
+}));
+
+vi.mock('@alusa/lib/events/map/event-map.service', () => ({
+  cancelPublicEventMapOrderByPayment: mockCancelEventMapOrder,
+  confirmPublicEventMapOrderPayment: mockConfirmEventMapOrderPayment,
+  markPublicEventMapOrderRefundProcessingByPayment: mockMarkEventMapRefundProcessing,
+  reconcileEventMapOrderFinancialStateFromAsaas: mockReconcileEventMapOrder,
+  refundPublicEventMapOrderByPayment: mockRefundEventMapOrder,
+  syncPublicEventMapOrderPaymentCreated: mockSyncEventMapOrderPaymentCreated,
 }));
 
 vi.mock('../../foundation/payment-resolution-policy', () => {
@@ -129,6 +156,9 @@ vi.mock('@alusa/database', () => ({
       findFirst: vi.fn(),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
+    eventMapOrder: {
+      findFirst: vi.fn(),
+    },
   },
 }));
 
@@ -146,6 +176,13 @@ describe('handlePaymentWebhook', () => {
     mockProjectFamilyEnrollmentFeeState.mockResolvedValue({ projected: true });
     mockUpsertFinanceReconciliationIssue.mockResolvedValue({ id: 'issue-1' });
     mockLinkSaleToFirstInstallmentCharge.mockResolvedValue(null);
+    mockConfirmEventMapOrderPayment.mockResolvedValue(null);
+    mockReconcileEventMapOrder.mockResolvedValue(null);
+    mockSyncEventMapOrderPaymentCreated.mockResolvedValue(null);
+    mockRefundEventMapOrder.mockResolvedValue(null);
+    mockMarkEventMapRefundProcessing.mockResolvedValue(null);
+    mockCancelEventMapOrder.mockResolvedValue(null);
+    mockRefundTicketSales.mockResolvedValue(null);
     vi.mocked(prisma.$transaction).mockImplementation(
       async (callback: (_tx: unknown) => Promise<unknown>) => callback(prisma),
     );
@@ -1005,5 +1042,84 @@ describe('handlePaymentWebhook', () => {
         data: expect.objectContaining({ status: 'ESTORNADO' }),
       }),
     );
+  });
+
+  it('retorna falha para retry da inbox quando confirmação e reconciliação do pedido de assentos falham', async () => {
+    mockConfirmEventMapOrderPayment.mockRejectedValueOnce(new Error('DB write failed'));
+    mockReconcileEventMapOrder.mockRejectedValueOnce(new Error('DB unavailable'));
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: 'pay_event_map',
+        status: 'RECEIVED',
+        value: 60,
+        netValue: 60,
+        externalReference: 'event-map-order:order-1',
+      },
+    });
+
+    expect(mockConfirmEventMapOrderPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contaId: 'conta-1',
+        asaasPaymentId: 'pay_event_map',
+        externalReference: 'event-map-order:order-1',
+        allowReleasedReservation: true,
+      }),
+    );
+    expect(mockReconcileEventMapOrder).toHaveBeenCalled();
+    expect(result).toMatchObject({ success: false, error: 'DB unavailable' });
+  });
+
+  it('não marca o webhook como sucesso quando o pedido ainda não pôde ser reconciliado', async () => {
+    mockConfirmEventMapOrderPayment.mockResolvedValueOnce(null);
+    mockReconcileEventMapOrder.mockResolvedValueOnce(null);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: 'pay_event_map',
+        status: 'RECEIVED',
+        value: 60,
+        netValue: 60,
+        externalReference: 'event-map-order:order-1',
+      },
+    });
+
+    expect(result).toMatchObject({ success: false, error: 'EVENT_MAP_PAID_PAYMENT_REQUIRES_RETRY' });
+  });
+
+  it('registra recusa de estorno sem marcar pedido ou venda como estornados', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-1',
+      asaasPaymentId: 'pay_event_map_refund_denied',
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_REFUND_DENIED',
+      payment: {
+        id: 'pay_event_map_refund_denied',
+        status: 'REFUND_DENIED',
+        value: 60,
+        netValue: 60,
+        externalReference: 'event-map-order:order-1',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockMarkEventMapRefundProcessing).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      asaasPaymentId: 'pay_event_map_refund_denied',
+      externalReference: 'event-map-order:order-1',
+      paymentStatus: 'REFUND_DENIED',
+    });
+    expect(mockRefundTicketSales).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      asaasPaymentId: 'pay_event_map_refund_denied',
+      paymentStatus: 'REFUND_DENIED',
+      isFinalRefund: false,
+    });
+    expect(mockRefundEventMapOrder).not.toHaveBeenCalled();
   });
 });

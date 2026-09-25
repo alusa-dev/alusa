@@ -13,10 +13,6 @@ export type PublicSeatStatus =
   | 'BLOCKED'
   | 'UNAVAILABLE';
 
-export function isTerminalPublicOrderStatus(status: string): boolean {
-  return status === 'CONFIRMED' || status === 'EXPIRED' || status === 'CANCELLED' || status === 'REFUNDED';
-}
-
 export function publicOrderStatusLabel(status: string): string {
   switch (status) {
     case 'CONFIRMED':
@@ -62,10 +58,10 @@ export function formatReservationCountdown(expiresAt: string | null): string | n
   const diff = new Date(expiresAt).getTime() - Date.now();
   if (diff <= 0) return 'Expirado';
 
-  const totalMinutes = Math.floor(diff / 60000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
+  const totalSeconds = Math.ceil(diff / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
 
-  if (hours > 0) return `${hours}h ${minutes}min restantes`;
-  return `${minutes}min restantes`;
+  return [hours, minutes, seconds].map((value) => String(value).padStart(2, '0')).join(':');
 }

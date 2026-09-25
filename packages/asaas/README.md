@@ -77,6 +77,10 @@ O cliente aplica os limites documentados pelo Asaas:
 
 As chamadas mutáveis só são repetidas automaticamente quando possuem `Idempotency-Key`. O contador de quota é reservado por tentativa física, e não por chamada lógica.
 
-Em produção, configure `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` e `ASAAS_REDIS_ENABLED=true` para compartilhar quota e semáforo de GET entre instâncias. Sem Redis, o cliente mantém fallback em memória por processo, com o limite local de segurança; isso não substitui o controle distribuído em múltiplas réplicas.
+Em produção, configure `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` e `ASAAS_REDIS_ENABLED=true` para compartilhar quota e semáforo de GET entre instâncias. Se Redis estiver ausente ou indisponível, o cliente falha fechado com erro 503 antes de chamar o Asaas. O fallback em memória existe apenas fora de produção, pois contadores por processo não protegem o limite global entre réplicas.
+
+O semáforo distribui os 50 slots por conta com uma única operação Lua atômica
+por tentativa, reduzindo chamadas REST ao Redis. O lease padrão dura 75 segundos,
+acima do timeout máximo de 60 segundos do cliente.
 
 Variáveis opcionais: `ASAAS_MAX_CONCURRENT_GETS` (máximo local, limitado a 50), `ASAAS_GET_CONCURRENCY_WAIT_TIMEOUT_MS`, `ASAAS_GET_LEASE_TTL_MS`, `ASAAS_QUOTA_LIMIT`, `ASAAS_QUOTA_REDIS_KEY_PREFIX` e `ASAAS_GET_REDIS_KEY_PREFIX`.

@@ -79,6 +79,7 @@ export default defineConfig({
       PORT: port,
       TEST_ROUTES_ENABLED: 'true',
       PLAYWRIGHT_TEST: 'true',
+      RATE_LIMIT_DISABLE_IN_DEV: 'false',
       PAYMENTS_PROVIDER_MODE: 'mock',
       // Never let the local developer Resend key escape into E2E runs. The
       // transactional email adapter then exercises its deterministic log

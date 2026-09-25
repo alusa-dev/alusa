@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { asaasRedisCommand, asaasRedisEval, getAsaasRedisConfig, sanitizeAsaasRedisKeyPart } from './redis-rest';
+import { asaasRedisEval, getAsaasRedisConfig, sanitizeAsaasRedisKeyPart } from './redis-rest';
 
 const OFFICIAL_MAX_CONCURRENT = 50;
 const DEFAULT_LOCAL_MAX_CONCURRENT = 45;
@@ -68,6 +68,16 @@ export class AsaasConcurrencyLimitError extends Error {
   }
 }
 
+export class AsaasConcurrencyStoreUnavailableError extends Error {
+  readonly code = 'ASAAS_GET_CONCURRENCY_STORE_UNAVAILABLE' as const;
+  readonly status = 503;
+
+  constructor() {
+    super('Controle distribuído de concorrência do Asaas indisponível.');
+    this.name = 'AsaasConcurrencyStoreUnavailableError';
+  }
+}
+
 interface DistributedLease {
   key: string;
   token: string;
@@ -89,7 +99,9 @@ export class AccountScopedConcurrencyLimiter {
   constructor(maxConcurrent: number, distributedMax = OFFICIAL_MAX_CONCURRENT) {
     this.maxConcurrent = Math.max(1, maxConcurrent);
     this.distributedMax = Math.max(1, Math.min(OFFICIAL_MAX_CONCURRENT, distributedMax));
-    this.leaseTtlMs = intFromEnv('ASAAS_GET_LEASE_TTL_MS', 60_000);
+    // The SDK caps a single provider request at 60s; keep a margin so a slow
+    // abort/release cannot expire the distributed slot while the request runs.
+    this.leaseTtlMs = Math.max(65_000, intFromEnv('ASAAS_GET_LEASE_TTL_MS', 75_000));
     this.waitTimeoutMs = intFromEnv('ASAAS_GET_CONCURRENCY_WAIT_TIMEOUT_MS', 10_000);
   }
 
@@ -131,24 +143,35 @@ export class AccountScopedConcurrencyLimiter {
 
   private async acquireDistributed(accountKey: string): Promise<DistributedLease | null> {
     const config = getAsaasRedisConfig();
-    if (!config || process.env.ASAAS_DISTRIBUTED_GET_LIMIT_ENABLED === 'false') return null;
+    if (!config || process.env.ASAAS_DISTRIBUTED_GET_LIMIT_ENABLED === 'false') {
+      if (process.env.NODE_ENV === 'production') throw new AsaasConcurrencyStoreUnavailableError();
+      return null;
+    }
 
     const prefix = process.env.ASAAS_GET_REDIS_KEY_PREFIX ?? 'alusa:asaas:get';
     const safeAccount = sanitizeAsaasRedisKeyPart(accountKey);
     const token = randomUUID();
     const startedAt = Date.now();
+    const keys = Array.from(
+      { length: this.distributedMax },
+      (_, slot) => `${prefix}:${safeAccount}:slot:${slot}`,
+    );
+    const acquireScript = `
+for i, key in ipairs(KEYS) do
+  if redis.call('SET', key, ARGV[1], 'NX', 'PX', ARGV[2]) then
+    return i
+  end
+end
+return 0
+`;
 
     while (Date.now() - startedAt < this.waitTimeoutMs) {
       try {
-        for (let slot = 0; slot < this.distributedMax; slot += 1) {
-          const key = `${prefix}:${safeAccount}:slot:${slot}`;
-          const result = await asaasRedisCommand<string | null>(config, [
-            'SET', key, token, 'NX', 'PX', String(this.leaseTtlMs),
-          ]);
-          if (result === 'OK') return { key, token, ttlMs: this.leaseTtlMs };
-        }
+        const slot = Number(await asaasRedisEval<number>(config, acquireScript, keys, [token, String(this.leaseTtlMs)]));
+        if (slot > 0) return { key: keys[slot - 1]!, token, ttlMs: this.leaseTtlMs };
       } catch {
-        // Redis é um reforço distribuído; se estiver indisponível, o semáforo local continua ativo.
+        if (process.env.NODE_ENV === 'production') throw new AsaasConcurrencyStoreUnavailableError();
+        // Fallback local é permitido apenas fora de produção.
         return null;
       }
       await sleep(100);

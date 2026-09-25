@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   EVENT_MAP_OBJECT_TYPES,
   EVENT_SEAT_STATUSES,
+  isValidCpfCnpjDigits,
 } from '@alusa/shared';
 
 import { sanitizeTextObjectData } from './text-object.schema';
@@ -256,12 +257,9 @@ export const publicCheckoutSchema = z.object({
   holdToken: idSchema,
   buyerName: requiredText('Informe o nome do comprador.', 120),
   buyerEmail: z.string().trim().email('Informe um e-mail válido.').max(180),
-  buyerDocument: z.string().trim().max(32).optional().nullable(),
-  buyerAddress: z.string().trim().max(255).optional().nullable(),
-  buyerAddressNumber: z.string().trim().max(32).optional().nullable(),
-  buyerComplement: z.string().trim().max(255).optional().nullable(),
-  buyerProvince: z.string().trim().max(255).optional().nullable(),
-  buyerPostalCode: z.string().trim().max(32).optional().nullable(),
+  buyerDocument: z.string().trim().min(1, 'Informe o CPF/CNPJ do comprador.').max(32)
+    .refine((value) => isValidCpfCnpjDigits(value), 'Informe um CPF/CNPJ válido.'),
+  buyerPhone: z.string().trim().max(24).regex(/^\D*(?:\d\D*){10,11}$/, 'Informe um número de WhatsApp válido.'),
   paymentMethod: z.enum(['PIX', 'CREDIT_CARD', 'BOLETO']),
 });
 

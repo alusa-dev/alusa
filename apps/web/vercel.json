@@ -86,7 +86,7 @@
       "schedule": "*/10 * * * *"
     },
     {
-      "path": "/api/jobs/events-expire-reservations?maxAccounts=30&limit=100",
+      "path": "/api/jobs/events-expire-reservations?maxAccounts=30&limit=100&maxExternalPaymentChecks=25",
       "schedule": "*/5 * * * *"
     },
     {

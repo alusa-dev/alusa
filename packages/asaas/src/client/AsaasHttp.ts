@@ -13,10 +13,19 @@
  */
 
 import { getAsaasBaseUrlForApiKeyOrThrow } from './asaasBaseUrl';
-import { AsaasConcurrencyLimitError, globalGetLimiter } from './concurrency-limiter';
+import {
+  AsaasConcurrencyLimitError,
+  AsaasConcurrencyStoreUnavailableError,
+  globalGetLimiter,
+} from './concurrency-limiter';
 import { extractRateLimitHeaders, globalRateLimitTracker } from './rate-limit-tracker';
 import { globalCircuitBreaker, CircuitOpenError } from './circuit-breaker';
-import { AsaasQuotaExceededError, globalQuotaTracker, type QuotaStatus } from './quota-tracker';
+import {
+  AsaasQuotaExceededError,
+  AsaasQuotaStoreUnavailableError,
+  globalQuotaTracker,
+  type QuotaStatus,
+} from './quota-tracker';
 import { globalAsaasHooks } from './asaas-hooks';
 import { createAsaasAccountKey } from './account-key';
 
@@ -180,7 +189,12 @@ export class AsaasHttp {
         ? await globalGetLimiter.run(circuitKey, fetchFn)
         : await fetchFn();
     } catch (error) {
-      if (error instanceof AsaasQuotaExceededError || error instanceof AsaasConcurrencyLimitError) {
+      if (
+        error instanceof AsaasQuotaExceededError
+        || error instanceof AsaasConcurrencyLimitError
+        || error instanceof AsaasQuotaStoreUnavailableError
+        || error instanceof AsaasConcurrencyStoreUnavailableError
+      ) {
         globalAsaasHooks.emitApiCall({
           method: method as 'GET' | 'POST' | 'PUT' | 'DELETE',
           endpoint: url.pathname,
@@ -190,7 +204,7 @@ export class AsaasHttp {
           durationMs: Date.now() - startedAt,
           success: false,
           error: error.code,
-          quotaRemaining: 0,
+          quotaRemaining: error instanceof AsaasQuotaExceededError ? 0 : undefined,
         });
       }
       throw error;

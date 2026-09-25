@@ -5,6 +5,9 @@ export type EventAsaasCustomer = {
 
 export type EventAsaasPayment = {
   id: string;
+  customer?: string;
+  billingType?: string;
+  externalReference?: string;
   status?: string;
   paymentDate?: string | null;
   clientPaymentDate?: string | null;
@@ -17,6 +20,11 @@ export type EventPixQrCode = {
   encodedImage: string;
   payload: string;
   expirationDate: string;
+};
+
+export type EventBankSlipBillingInfo = {
+  identificationField: string | null;
+  barCode: string | null;
 };
 
 export type EventAsaasPaymentProvider = {
@@ -33,6 +41,7 @@ export type EventAsaasPaymentProvider = {
       name: string;
       email?: string;
       cpfCnpj: string;
+      mobilePhone?: string;
       address?: string;
       addressNumber?: string;
       complement?: string;
@@ -48,6 +57,7 @@ export type EventAsaasPaymentProvider = {
     data: {
       name?: string;
       email?: string;
+      mobilePhone?: string;
       address?: string;
       addressNumber?: string;
       complement?: string;
@@ -76,6 +86,7 @@ export type EventAsaasPaymentProvider = {
   }): Promise<{ data: EventAsaasPayment[] }>;
   getPayment(_params: { apiKey: string; paymentId: string }): Promise<EventAsaasPayment>;
   getPixQrCode(_params: { apiKey: string; paymentId: string }): Promise<EventPixQrCode>;
+  getBankSlipBillingInfo(_params: { apiKey: string; paymentId: string }): Promise<EventBankSlipBillingInfo | null>;
   deletePayment(_params: { apiKey: string; paymentId: string }): Promise<EventAsaasPayment>;
 };
 

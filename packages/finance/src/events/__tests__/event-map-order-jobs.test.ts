@@ -29,6 +29,7 @@ function reservation(
       status: 'PAYMENT_PENDING',
       asaasPaymentId: null,
       paymentStatus: null,
+      updatedAt: now,
       ticketCount: 0,
     },
     ...overrides,
@@ -77,9 +78,103 @@ describe('getExpiredReservationDecision', () => {
       },
     }), now)).toEqual({ expire: false, reason: 'external_payment_requires_reconciliation' });
   });
+
+  it('preserves holds when remote payment creation has an uncertain result', () => {
+    const uncertain = reservation({
+      order: {
+        id: 'order-1',
+        status: 'PAYMENT_PENDING',
+        asaasPaymentId: null,
+        paymentStatus: 'PAYMENT_CREATION_UNKNOWN',
+        ticketCount: 0,
+      },
+    });
+    expect(getExpiredReservationDecision(uncertain, now)).toEqual({
+      expire: false,
+      reason: 'external_payment_requires_reconciliation',
+    });
+    expect(getExpiredReservationDecision(uncertain, now, { noRemotePaymentConfirmed: true })).toEqual({
+      expire: true,
+    });
+  });
+
+  it('allows expiring an uncertain creation after the discovered remote charge is confirmed deleted', () => {
+    const uncertain = reservation({
+      order: {
+        id: 'order-1',
+        status: 'PAYMENT_PENDING',
+        asaasPaymentId: null,
+        paymentStatus: 'PAYMENT_CREATION_UNKNOWN',
+        ticketCount: 0,
+      },
+    });
+
+    expect(getExpiredReservationDecision(uncertain, now, { deletedAsaasPaymentId: 'pay-discovered' }))
+      .toEqual({ expire: true });
+  });
 });
 
 describe('expireEventMapReservations', () => {
+  it('limits Asaas reconciliation calls to the configured per-run budget', async () => {
+    let providerChecks = 0;
+    const expired = [
+      reservation({ id: 'reservation-1', order: { ...reservation().order!, asaasPaymentId: 'pay-1' } }),
+      reservation({ id: 'reservation-2', order: { ...reservation().order!, asaasPaymentId: 'pay-2' } }),
+    ];
+    const dependencies = {
+      resolveTargetContaIds: async () => ['conta-1'],
+      findExpiredReservations: async () => expired,
+      expireReservation: async () => ({ expired: false, reason: 'not_expired' }),
+      resolveExternalPaymentAtExpiry: async () => {
+        providerChecks += 1;
+        return { decision: 'NOT_CANCELLABLE' as const };
+      },
+    };
+
+    const result = await expireEventMapReservations(
+      { contaId: 'conta-1', now, limit: 10, maxExternalPaymentChecks: 1, useLock: false },
+      dependencies,
+    );
+
+    expect(providerChecks).toBe(1);
+    expect(result.processed).toBe(2);
+    expect(result.skipped).toBe(2);
+  });
+
+  it('keeps seats held when an aged payment creation remains unknown after provider lookup', async () => {
+    let expireCalls = 0;
+    const unresolved = reservation({
+      order: {
+        id: 'order-unknown',
+        status: 'PAYMENT_PENDING',
+        asaasPaymentId: null,
+        paymentStatus: 'PAYMENT_CREATION_UNKNOWN',
+        updatedAt: new Date(now.getTime() - 60 * 60_000),
+        ticketCount: 0,
+      },
+    });
+    const result = await expireEventMapReservations({
+      contaId: 'conta-1',
+      now,
+      useLock: false,
+    }, {
+      resolveTargetContaIds: async () => ['conta-1'],
+      findExpiredReservations: async () => [unresolved],
+      resolveExternalPaymentAtExpiry: async ({ paymentCreationUnresolved }) => {
+        expect(paymentCreationUnresolved).toBe(true);
+        return { decision: 'NOT_CANCELLABLE' };
+      },
+      expireReservation: async () => {
+        expireCalls += 1;
+        return { expired: true };
+      },
+    });
+
+    expect(result.expired).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(expireCalls).toBe(0);
+  });
+
   it('expires eligible reservations and is safe to run again', async () => {
     const expiredIds = new Set<string>();
     const target = reservation();

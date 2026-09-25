@@ -814,12 +814,17 @@ html:not([data-theme='dark']) .alusa-dashboard-kpi-tile:active {
 	--tw-ring-shadow: 0 0 #0000 !important;
 }
 
-/* Vendas — card de modo de cliente selecionado (lilás KPI; sem traço/borda roxa em foco). */
+/* Card selecionado em vendas e checkout público (lilás KPI, sem contorno roxo). */
 .alusa-venda-customer-card--selected,
+.alusa-selection-card--selected,
 .alusa-venda-customer-card--selected:hover,
+.alusa-selection-card--selected:hover,
 .alusa-venda-customer-card--selected:focus,
+.alusa-selection-card--selected:focus,
 .alusa-venda-customer-card--selected:focus-visible,
-.alusa-venda-customer-card--selected:active {
+.alusa-selection-card--selected:focus-visible,
+.alusa-venda-customer-card--selected:active,
+.alusa-selection-card--selected:active {
 	background-color: #e6d6fb !important;
 	border-width: 0 !important;
 	border-style: solid !important;
@@ -833,10 +838,15 @@ html:not([data-theme='dark']) .alusa-dashboard-kpi-tile:active {
 }
 
 [data-theme='dark'] .alusa-venda-customer-card--selected,
+[data-theme='dark'] .alusa-selection-card--selected,
 [data-theme='dark'] .alusa-venda-customer-card--selected:hover,
+[data-theme='dark'] .alusa-selection-card--selected:hover,
 [data-theme='dark'] .alusa-venda-customer-card--selected:focus,
+[data-theme='dark'] .alusa-selection-card--selected:focus,
 [data-theme='dark'] .alusa-venda-customer-card--selected:focus-visible,
-[data-theme='dark'] .alusa-venda-customer-card--selected:active {
+[data-theme='dark'] .alusa-selection-card--selected:focus-visible,
+[data-theme='dark'] .alusa-venda-customer-card--selected:active,
+[data-theme='dark'] .alusa-selection-card--selected:active {
 	background: linear-gradient(165deg, var(--color-card-bg-purple) 0%, var(--color-bg-card-soft) 55%) !important;
 	border-width: 1px !important;
 	border-style: solid !important;

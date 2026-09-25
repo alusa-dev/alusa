@@ -10,6 +10,7 @@ import {
   undoReceivedInCash as asaasUndoReceivedInCash,
   refundPayment as asaasRefundPayment,
   refundBankSlip as asaasRefundBankSlip,
+  listPaymentRefunds as asaasListPaymentRefunds,
   getBillingInfo as asaasGetBillingInfo,
   updatePayment as asaasUpdatePayment,
   getSubscription as asaasGetSubscription,
@@ -329,6 +330,11 @@ export async function refundCobranca(input: {
   });
   invalidateReadCache([paymentCachePrefix(input.contaId, input.paymentId)]);
   return { success: true, message: 'Reembolso solicitado' };
+}
+
+export async function listPaymentRefunds(input: { paymentId: string; contaId: string }) {
+  const { apiKey } = await getCredentialsOrThrow(input.contaId);
+  return asaasListPaymentRefunds({ apiKey, paymentId: input.paymentId });
 }
 
 export async function requestBankSlipRefund(input: {

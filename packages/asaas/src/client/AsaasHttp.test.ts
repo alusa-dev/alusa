@@ -31,6 +31,8 @@ describe('AsaasHttp (idempotência + retry)', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it('mantem Idempotency-Key quando fornecida externamente', async () => {
@@ -59,6 +61,41 @@ describe('AsaasHttp (idempotência + retry)', () => {
 
   it('recusa API key com caracteres de controle antes de montar o header HTTP', () => {
     expect(() => new AsaasHttp({ apiKey: 'valid-\nkey' })).toThrow(AsaasApiKeyError);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('não chama o Asaas em produção quando o Redis de quota está ausente', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('ASAAS_REDIS_ENABLED', 'false');
+    const hookSpy = vi.spyOn(globalAsaasHooks, 'emitApiCall');
+    const client = new AsaasHttp({ apiKey: 'k' });
+
+    await expect(client.post('/payments', { value: 10 })).rejects.toMatchObject({
+      name: 'AsaasQuotaStoreUnavailableError',
+      code: 'ASAAS_QUOTA_STORE_UNAVAILABLE',
+      status: 503,
+    });
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(hookSpy).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'POST',
+      httpStatus: 503,
+      success: false,
+      error: 'ASAAS_QUOTA_STORE_UNAVAILABLE',
+    }));
+  });
+
+  it('não inicia GET em produção quando o semáforo distribuído está ausente', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('ASAAS_REDIS_ENABLED', 'false');
+    const client = new AsaasHttp({ apiKey: 'k' });
+
+    await expect(client.get('/balance')).rejects.toMatchObject({
+      name: 'AsaasConcurrencyStoreUnavailableError',
+      code: 'ASAAS_GET_CONCURRENCY_STORE_UNAVAILABLE',
+      status: 503,
+    });
+
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 

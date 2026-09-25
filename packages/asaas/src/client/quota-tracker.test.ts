@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { QuotaTracker } from './quota-tracker';
 
 describe('QuotaTracker', () => {
@@ -6,6 +6,11 @@ describe('QuotaTracker', () => {
 
   beforeEach(() => {
     tracker = new QuotaTracker(100); // limite baixo para testes
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
   describe('increment', () => {
@@ -52,6 +57,43 @@ describe('QuotaTracker', () => {
       expect(limited.reserve('acc1')).toMatchObject({ allowed: true, count: 2, remaining: 0 });
       expect(limited.reserve('acc1')).toMatchObject({ allowed: false, count: 2, remaining: 0 });
       expect(limited.getStatus('acc1').count).toBe(2);
+    });
+  });
+
+  describe('reserva distribuída em produção', () => {
+    it('falha fechado sem Redis configurado', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('ASAAS_REDIS_ENABLED', 'false');
+
+      await expect(tracker.reserveAsync('acc-production')).rejects.toMatchObject({
+        name: 'AsaasQuotaStoreUnavailableError',
+        code: 'ASAAS_QUOTA_STORE_UNAVAILABLE',
+        status: 503,
+      });
+    });
+
+    it('falha fechado quando Redis não responde', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('ASAAS_REDIS_ENABLED', 'true');
+      vi.stubEnv('UPSTASH_REDIS_REST_URL', 'https://redis.invalid');
+      vi.stubEnv('UPSTASH_REDIS_REST_TOKEN', 'test-token');
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('redis unavailable')));
+
+      await expect(tracker.reserveAsync('acc-production')).rejects.toMatchObject({
+        name: 'AsaasQuotaStoreUnavailableError',
+        status: 503,
+      });
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('mantém fallback em memória fora de produção', async () => {
+      vi.stubEnv('NODE_ENV', 'test');
+      vi.stubEnv('ASAAS_REDIS_ENABLED', 'false');
+
+      await expect(tracker.reserveAsync('acc-test')).resolves.toMatchObject({
+        allowed: true,
+        count: 1,
+      });
     });
   });
 

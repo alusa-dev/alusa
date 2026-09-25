@@ -1,7 +1,16 @@
-import { describe, it, expect, vi } from 'vitest';
-import { AccountScopedConcurrencyLimiter, ConcurrencyLimiter } from './concurrency-limiter';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import {
+  AccountScopedConcurrencyLimiter,
+  AsaasConcurrencyStoreUnavailableError,
+  ConcurrencyLimiter,
+} from './concurrency-limiter';
 
 describe('ConcurrencyLimiter', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
   it('separa a concorrência por conta Asaas', async () => {
     vi.stubEnv('ASAAS_REDIS_ENABLED', 'false');
     const limiter = new AccountScopedConcurrencyLimiter(1);
@@ -16,6 +25,59 @@ describe('ConcurrencyLimiter', () => {
     release();
     await first;
     vi.unstubAllEnvs();
+  });
+
+  describe('semáforo distribuído em produção', () => {
+    it('falha fechado sem Redis configurado e libera o slot local', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('ASAAS_REDIS_ENABLED', 'false');
+      const limiter = new AccountScopedConcurrencyLimiter(1);
+      const task = vi.fn(async () => 'must-not-run');
+
+      await expect(limiter.run('account-a', task)).rejects.toBeInstanceOf(AsaasConcurrencyStoreUnavailableError);
+      expect(task).not.toHaveBeenCalled();
+      expect(limiter.currentRunning).toBe(0);
+    });
+
+    it('falha fechado se o Redis configurado ficar indisponível', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('ASAAS_REDIS_ENABLED', 'true');
+      vi.stubEnv('UPSTASH_REDIS_REST_URL', 'https://redis.invalid');
+      vi.stubEnv('UPSTASH_REDIS_REST_TOKEN', 'test-token');
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('redis unavailable')));
+      const limiter = new AccountScopedConcurrencyLimiter(1);
+
+      await expect(limiter.run('account-a', async () => 'must-not-run')).rejects.toMatchObject({
+        code: 'ASAAS_GET_CONCURRENCY_STORE_UNAVAILABLE',
+        status: 503,
+      });
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('aloca e libera um slot com dois comandos Redis atômicos', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('ASAAS_REDIS_ENABLED', 'true');
+      vi.stubEnv('UPSTASH_REDIS_REST_URL', 'https://redis.example.com');
+      vi.stubEnv('UPSTASH_REDIS_REST_TOKEN', 'test-token');
+      const redisFetch = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ result: 1 }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ result: 1 }),
+        });
+      vi.stubGlobal('fetch', redisFetch);
+      const limiter = new AccountScopedConcurrencyLimiter(1);
+
+      await expect(limiter.run('account-a', async () => 'ok')).resolves.toBe('ok');
+
+      expect(redisFetch).toHaveBeenCalledTimes(2);
+      const acquireCommand = JSON.parse(String(redisFetch.mock.calls[0]?.[1]?.body)) as string[];
+      expect(acquireCommand[0]).toBe('EVAL');
+      expect(acquireCommand[2]).toBe('50');
+    });
   });
 
   describe('execução básica', () => {

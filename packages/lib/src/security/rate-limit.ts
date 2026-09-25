@@ -56,10 +56,22 @@ async function redisCommand<T>(command: unknown[]): Promise<T> {
     body: JSON.stringify(command),
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!response.ok) throw new Error(`Redis REST rate limit failed with HTTP ${response.status}`);
-  const payload = (await response.json()) as { result?: T; error?: string };
-  if (payload.error) throw new Error(payload.error);
+  const payload = await response.json().catch(() => ({})) as { result?: T; error?: unknown };
+  if (!response.ok) {
+    throw new Error(`Redis REST rate limit failed with HTTP ${response.status} [${classifyRedisError(payload.error)}]`);
+  }
+  if (payload.error) throw new Error(`Redis REST rate limit failed [${classifyRedisError(payload.error)}]`);
   return payload.result as T;
+}
+
+function classifyRedisError(value: unknown): string {
+  if (typeof value !== 'string') return 'PROVIDER_ERROR';
+  const message = value.toLowerCase();
+  if (/auth|token|unauthor/.test(message)) return 'AUTH_REJECTED';
+  if (/lua|script|eval|compile/.test(message)) return 'SCRIPT_REJECTED';
+  if (/limit|quota|rate/.test(message)) return 'LIMIT_EXCEEDED';
+  if (/command|argument|syntax|invalid|wrong number/.test(message)) return 'COMMAND_REJECTED';
+  return 'PROVIDER_ERROR';
 }
 
 function redisKey(key: string) {

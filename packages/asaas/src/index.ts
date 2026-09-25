@@ -30,6 +30,7 @@ export {
   ConcurrencyLimiter,
   AccountScopedConcurrencyLimiter,
   AsaasConcurrencyLimitError,
+  AsaasConcurrencyStoreUnavailableError,
   globalGetLimiter,
 } from './client/concurrency-limiter';
 export {
@@ -44,7 +45,12 @@ export { CircuitBreaker, CircuitOpenError, globalCircuitBreaker } from './client
 export type { CircuitBreakerConfig, CircuitState } from './client/circuit-breaker';
 
 // Quota Tracker
-export { AsaasQuotaExceededError, QuotaTracker, globalQuotaTracker } from './client/quota-tracker';
+export {
+  AsaasQuotaExceededError,
+  AsaasQuotaStoreUnavailableError,
+  QuotaTracker,
+  globalQuotaTracker,
+} from './client/quota-tracker';
 export type { QuotaStatus } from './client/quota-tracker';
 export { checkAsaasRedisHealth, isAsaasRedisConfigured } from './client/redis-health';
 export type { AsaasRedisHealth } from './client/redis-health';
@@ -286,6 +292,8 @@ export { deletePayment } from './payments/deletePayment';
 export type { DeletePaymentParams } from './payments/deletePayment';
 export { refundPayment } from './payments/refundPayment';
 export type { RefundPaymentParams } from './payments/refundPayment';
+export { listPaymentRefunds } from './payments/listPaymentRefunds';
+export type { ListPaymentRefundsParams, AsaasPaymentRefund, AsaasPaymentRefundStatus } from './payments/listPaymentRefunds';
 export { refundBankSlip } from './payments/refundBankSlip';
 export type { RefundBankSlipParams, RefundBankSlipResponse } from './payments/refundBankSlip';
 export { getPixQrCode } from './payments/getPixQrCode';

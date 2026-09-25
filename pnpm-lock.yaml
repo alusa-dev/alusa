@@ -337,6 +337,9 @@ importers:
       '@aws-sdk/client-s3':
         specifier: ^3.1107.0
         version: 3.1107.0
+      '@bwip-js/browser':
+        specifier: ^4.11.4
+        version: 4.11.4
       '@date-fns/tz':
         specifier: ^1.5.0
         version: 1.5.0
@@ -1550,6 +1553,9 @@ packages:
 
   '@bcoe/v8-coverage@0.2.3':
     resolution: {integrity: sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==}
+
+  '@bwip-js/browser@4.11.4':
+    resolution: {integrity: sha512-WZtwXE7YrBw+do7rKqqr2c7pprLa2qTKCA63to1pkwKEBQZ22eBX+L/X6MhNhXY/qP6nIbeHo73R7emRDJpzZA==}
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -11033,6 +11039,8 @@ snapshots:
       '@babel/helper-validator-identifier': 7.29.7
 
   '@bcoe/v8-coverage@0.2.3': {}
+
+  '@bwip-js/browser@4.11.4': {}
 
   '@cspotcode/source-map-support@0.8.1':
     dependencies:

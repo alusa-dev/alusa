@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { expireEventMapReservations } from '@alusa/finance';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
+import { ensureEventAsaasPaymentProviderRegistered } from '@/src/server/events/register-event-asaas-payment-provider';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -13,6 +14,7 @@ function toPositiveInt(value: string | null, fallback: number, max: number) {
 }
 
 async function run(req: Request) {
+  ensureEventAsaasPaymentProviderRegistered();
   const url = new URL(req.url);
   const tenantScope = await resolveTenantScope(req, {
     allowCron: true,
@@ -24,6 +26,7 @@ async function run(req: Request) {
     contaId: tenantScope.contaId,
     limit: toPositiveInt(url.searchParams.get('limit'), 100, 500),
     maxAccounts: toPositiveInt(url.searchParams.get('maxAccounts'), 20, 50),
+    maxExternalPaymentChecks: toPositiveInt(url.searchParams.get('maxExternalPaymentChecks'), 25, 100),
   });
 
   return NextResponse.json({ success: true, job: result });

@@ -2,8 +2,9 @@
  * Quota Tracker para API do Asaas.
  *
  * O Asaas permite 25.000 requests por conta a cada 12 horas.
- * Este tracker mantém contagem distribuída via Upstash Redis quando disponível
- * e usa memória como fallback local.
+ * Este tracker mantém contagem distribuída via Upstash Redis. Em produção,
+ * falha fechado quando Redis não está configurado ou disponível para não
+ * ultrapassar a quota global ao escalar para múltiplas instâncias.
  */
 
 import { globalAsaasHooks } from './asaas-hooks';
@@ -41,6 +42,16 @@ export class AsaasQuotaExceededError extends Error {
     super(`Quota da API Asaas atingida. Aguarde aproximadamente ${Math.ceil(retryAfterMs / 1000)}s.`);
     this.name = 'AsaasQuotaExceededError';
     this.retryAfterMs = retryAfterMs;
+  }
+}
+
+export class AsaasQuotaStoreUnavailableError extends Error {
+  readonly code = 'ASAAS_QUOTA_STORE_UNAVAILABLE' as const;
+  readonly status = 503;
+
+  constructor() {
+    super('Controle distribuído de quota do Asaas indisponível.');
+    this.name = 'AsaasQuotaStoreUnavailableError';
   }
 }
 
@@ -104,7 +115,10 @@ export class QuotaTracker {
 
   async reserveAsync(accountKey: string): Promise<QuotaStatus> {
     const redisConfig = getAsaasRedisConfig();
-    if (!redisConfig) return this.reserve(accountKey);
+    if (!redisConfig) {
+      if (process.env.NODE_ENV === 'production') throw new AsaasQuotaStoreUnavailableError();
+      return this.reserve(accountKey);
+    }
 
     const now = Date.now();
     const windowMs = WINDOW_MS;
@@ -152,7 +166,8 @@ return {1, nextCount, start, math.max(0, redis.call('PTTL', KEYS[1]))}
       this.emitWarnings(accountKey, enriched, count);
       return enriched;
     } catch (error) {
-      console.warn('[quota-tracker] Redis indisponível para reserva de quota; usando fallback em memória', {
+      if (process.env.NODE_ENV === 'production') throw new AsaasQuotaStoreUnavailableError();
+      console.warn('[quota-tracker] Redis indisponível para reserva de quota; usando fallback em memória fora de produção', {
         error: error instanceof Error ? error.message : 'unknown',
       });
       return this.reserve(accountKey);

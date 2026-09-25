@@ -3,6 +3,7 @@ import {
   createPayment,
   deletePayment,
   getPayment,
+  getBillingInfo,
   getPixQrCode,
   listCustomers,
   listPayments,
@@ -26,5 +27,13 @@ export const eventAsaasPaymentProvider: EventAsaasPaymentProvider = {
   listPayments: (params) => listPayments(params),
   getPayment: (params) => getPayment(params),
   getPixQrCode: (params) => getPixQrCode(params),
+  getBankSlipBillingInfo: async (params) => {
+    const result = await getBillingInfo(params);
+    if (!result.bankSlip) return null;
+    return {
+      identificationField: result.bankSlip.identificationField ?? null,
+      barCode: result.bankSlip.barCode ?? null,
+    };
+  },
   deletePayment: (params) => deletePayment(params),
 };

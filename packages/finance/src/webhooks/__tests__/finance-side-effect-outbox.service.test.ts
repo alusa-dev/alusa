@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { outboxMock, webhookAsaasMock, emitBillingNotificationsMock } = vi.hoisted(() => ({
+const {
+  outboxMock,
+  webhookAsaasMock,
+  eventMapOrderMock,
+  emitBillingNotificationsMock,
+  listPaymentRefundsMock,
+  refundCobrancaMock,
+  requestBankSlipRefundMock,
+  sendBankSlipRefundNoticeMock,
+} = vi.hoisted(() => ({
   outboxMock: {
     create: vi.fn(),
     findUnique: vi.fn(),
@@ -11,13 +20,19 @@ const { outboxMock, webhookAsaasMock, emitBillingNotificationsMock } = vi.hoiste
     findMany: vi.fn(),
     updateMany: vi.fn(),
   },
+  eventMapOrderMock: { findFirst: vi.fn() },
   emitBillingNotificationsMock: vi.fn(),
+  listPaymentRefundsMock: vi.fn(),
+  refundCobrancaMock: vi.fn(),
+  requestBankSlipRefundMock: vi.fn(),
+  sendBankSlipRefundNoticeMock: vi.fn(),
 }));
 
 vi.mock('@alusa/database', () => ({
   prisma: {
     financeWebhookSideEffectOutbox: outboxMock,
     webhookAsaas: webhookAsaasMock,
+    eventMapOrder: eventMapOrderMock,
   },
 }));
 
@@ -34,6 +49,18 @@ vi.mock('@alusa/lib/notifications/emit-billing-notifications', () => ({
 vi.mock('@alusa/lib/services/notifications.service', () => ({
   normalizeBillingNotificationEvent: (event: string) => event,
   buildBillingNotificationDedupeKey: (event: string, paymentId: string) => `payment:confirmed:${paymentId}`,
+}));
+
+vi.mock('../../use-cases/asaas-ops', () => ({
+  listPaymentRefunds: listPaymentRefundsMock,
+  refundCobranca: refundCobrancaMock,
+  requestBankSlipRefund: requestBankSlipRefundMock,
+}));
+
+vi.mock('../finance-side-effect-email-gateway', () => ({
+  getFinanceSideEffectEmailGateway: () => ({
+    sendBankSlipRefundNotice: sendBankSlipRefundNoticeMock,
+  }),
 }));
 
 import { FinanceWebhookSideEffectStatus } from '@prisma/client';
@@ -76,6 +103,17 @@ describe('finance side-effect outbox leases', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     emitBillingNotificationsMock.mockResolvedValue(undefined);
+    listPaymentRefundsMock.mockResolvedValue({ data: [] });
+    refundCobrancaMock.mockResolvedValue({ success: true, message: 'Reembolso solicitado' });
+    requestBankSlipRefundMock.mockResolvedValue({ requestUrl: 'https://sandbox.asaas.com/solicitar-estorno/abc' });
+    sendBankSlipRefundNoticeMock.mockResolvedValue({ id: 'email-refund-1' });
+    eventMapOrderMock.findFirst.mockResolvedValue({
+      buyerEmail: 'buyer@example.com',
+      buyerName: 'Comprador',
+      paymentMethod: 'PIX',
+      event: { name: 'Evento de teste' },
+    });
+    outboxMock.updateMany.mockResolvedValue({ count: 1 });
     outboxMock.create.mockResolvedValue({ id: 'effect-1' });
     webhookAsaasMock.findMany.mockResolvedValue([]);
     webhookAsaasMock.updateMany.mockResolvedValue({ count: 1 });
@@ -133,6 +171,234 @@ describe('finance side-effect outbox leases', () => {
         }),
       }),
     );
+  });
+
+  it('solicita um único estorno tardio e grava a intenção antes do POST ao Asaas', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_MAP_LATE_PAYMENT_REFUND',
+      payload: {
+        orderId: 'order-1',
+        asaasPaymentId: 'pay-1',
+        value: 60,
+        description: 'Estorno por assento revendido - pedido order-1',
+        requestState: 'NOT_SUBMITTED',
+      },
+      attempts: 0,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+    listPaymentRefundsMock.mockResolvedValueOnce({ data: [] });
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result).toEqual({
+      processed: false,
+      reason: 'Estorno solicitado; aguardando confirmação de conclusão pelo Asaas.',
+    });
+    expect(listPaymentRefundsMock).toHaveBeenCalledWith({ paymentId: 'pay-1', contaId: 'conta-a' });
+    expect(outboxMock.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: expect.objectContaining({ id: event.id, lockToken: expect.any(String) }),
+      data: expect.objectContaining({
+        payload: expect.objectContaining({ requestState: 'SUBMITTING' }),
+      }),
+    }));
+    expect(refundCobrancaMock).toHaveBeenCalledWith({
+      paymentId: 'pay-1',
+      contaId: 'conta-a',
+      value: 60,
+      description: 'Estorno por assento revendido - pedido order-1',
+    });
+  });
+
+  it('inicia estorno de boleto uma vez, persiste o link do Asaas e notifica o pagador', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_MAP_LATE_PAYMENT_REFUND',
+      payload: {
+        orderId: 'order-boleto',
+        asaasPaymentId: 'pay-boleto',
+        value: 60,
+        description: 'Estorno por assento revendido - pedido order-boleto',
+        requestState: 'NOT_SUBMITTED',
+      },
+      attempts: 0,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+    eventMapOrderMock.findFirst.mockResolvedValue({
+      buyerEmail: 'boleto@example.com',
+      buyerName: 'Comprador Boleto',
+      paymentMethod: 'BOLETO',
+      event: { name: 'Festival de teste' },
+    });
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result).toEqual({ processed: true });
+    expect(requestBankSlipRefundMock).toHaveBeenCalledWith({ paymentId: 'pay-boleto', contaId: 'conta-a' });
+    expect(refundCobrancaMock).not.toHaveBeenCalled();
+    expect(sendBankSlipRefundNoticeMock).toHaveBeenCalledWith({
+      orderId: 'order-boleto',
+      buyerEmail: 'boleto@example.com',
+      buyerName: 'Comprador Boleto',
+      eventName: 'Festival de teste',
+      requestUrl: 'https://sandbox.asaas.com/solicitar-estorno/abc',
+    });
+    expect(outboxMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        payload: expect.objectContaining({
+          requestState: 'AWAITING_CUSTOMER_ACTION',
+          bankSlipRefundRequestUrl: 'https://sandbox.asaas.com/solicitar-estorno/abc',
+        }),
+      }),
+    }));
+    expect(outboxMock.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: FinanceWebhookSideEffectStatus.PROCESSED,
+        providerMessageId: 'email-refund-1',
+        deliveryStatus: 'SENT',
+      }),
+    }));
+  });
+
+  it('não repete uma solicitação de estorno de boleto quando o resultado anterior é incerto', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_MAP_LATE_PAYMENT_REFUND',
+      payload: {
+        orderId: 'order-boleto-unknown',
+        asaasPaymentId: 'pay-boleto-unknown',
+        value: 60,
+        description: 'Estorno por assento revendido - pedido order-boleto-unknown',
+        requestState: 'SUBMITTING',
+      },
+      attempts: 1,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+    listPaymentRefundsMock.mockResolvedValue({ data: [] });
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result.processed).toBe(false);
+    expect(requestBankSlipRefundMock).not.toHaveBeenCalled();
+    expect(sendBankSlipRefundNoticeMock).not.toHaveBeenCalled();
+  });
+
+  it('reenvia a instrução do boleto quando o Asaas já aguarda os dados do pagador', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_MAP_LATE_PAYMENT_REFUND',
+      payload: {
+        orderId: 'order-boleto-retry',
+        asaasPaymentId: 'pay-boleto-retry',
+        value: 60,
+        description: 'Estorno por assento revendido - pedido order-boleto-retry',
+        requestState: 'AWAITING_CUSTOMER_ACTION',
+        bankSlipRefundRequestUrl: 'https://sandbox.asaas.com/solicitar-estorno/pay-boleto-retry',
+      },
+      attempts: 1,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+    listPaymentRefundsMock.mockResolvedValue({ data: [{
+      dateCreated: '2026-09-25',
+      status: 'AWAITING_CUSTOMER_EXTERNAL_AUTHORIZATION',
+      value: 60,
+      description: 'Estorno por assento revendido - pedido order-boleto-retry',
+    }] });
+    eventMapOrderMock.findFirst.mockResolvedValue({
+      buyerEmail: 'boleto@example.com',
+      buyerName: 'Comprador Boleto',
+      event: { name: 'Festival de teste' },
+    });
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result).toEqual({ processed: true });
+    expect(requestBankSlipRefundMock).not.toHaveBeenCalled();
+    expect(sendBankSlipRefundNoticeMock).toHaveBeenCalledWith(expect.objectContaining({
+      requestUrl: 'https://sandbox.asaas.com/solicitar-estorno/pay-boleto-retry',
+    }));
+  });
+
+  it('só conclui o efeito de estorno quando o Asaas confirma status DONE', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_MAP_LATE_PAYMENT_REFUND',
+      payload: {
+        orderId: 'order-1',
+        asaasPaymentId: 'pay-1',
+        value: 60,
+        description: 'Estorno por assento revendido - pedido order-1',
+        requestState: 'SUBMITTING',
+      },
+      attempts: 1,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+    listPaymentRefundsMock.mockResolvedValue({ data: [{
+      dateCreated: '2026-09-25',
+      status: 'DONE',
+      value: 60,
+      description: 'Estorno por assento revendido - pedido order-1',
+    }] });
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result).toEqual({ processed: true });
+    expect(refundCobrancaMock).not.toHaveBeenCalled();
+    expect(outboxMock.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      data: expect.objectContaining({ status: FinanceWebhookSideEffectStatus.PROCESSED }),
+    }));
+  });
+
+  it('considera PENDING um estorno aceito e deixa a conclusão para o webhook financeiro', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_MAP_LATE_PAYMENT_REFUND',
+      payload: {
+        orderId: 'order-1',
+        asaasPaymentId: 'pay-1',
+        value: 60,
+        description: 'Estorno por indisponibilidade dos assentos - pedido order-1',
+        requestState: 'SUBMITTING',
+      },
+      attempts: 1,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+    listPaymentRefundsMock.mockResolvedValue({ data: [{
+      dateCreated: '2026-09-25',
+      status: 'PENDING',
+      value: 60,
+      description: 'Estorno por indisponibilidade dos assentos - pedido order-1',
+    }] });
+    outboxMock.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result).toEqual({ processed: true });
+    expect(refundCobrancaMock).not.toHaveBeenCalled();
+    expect(outboxMock.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      data: expect.objectContaining({ status: FinanceWebhookSideEffectStatus.PROCESSED }),
+    }));
+  });
+
+  it('não repete o POST quando o resultado do estorno anterior ainda é incerto', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_MAP_LATE_PAYMENT_REFUND',
+      payload: {
+        orderId: 'order-1',
+        asaasPaymentId: 'pay-1',
+        value: 60,
+        description: 'Estorno por assento revendido - pedido order-1',
+        requestState: 'SUBMITTING',
+      },
+      attempts: 1,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result.processed).toBe(false);
+    expect(refundCobrancaMock).not.toHaveBeenCalled();
   });
 
   it('processa PENDING e limpa o token somente com a posse atual do lease', async () => {
@@ -207,7 +473,6 @@ describe('finance side-effect outbox leases', () => {
         eventStartsAt: '2026-08-23T20:00:00.000Z',
         ticketCount: 1,
         ticketsPath: '/tickets',
-        ticketsHtmlPath: '/tickets/html',
         statusPath: '/order',
       },
     } as never);

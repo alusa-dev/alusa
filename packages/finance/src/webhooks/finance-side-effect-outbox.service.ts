@@ -10,6 +10,8 @@ import {
   emitBillingNotifications,
   type BillingNotificationCandidate,
 } from '@alusa/lib/notifications/emit-billing-notifications';
+import { getFinanceSideEffectRefundGateway } from './finance-side-effect-refund-gateway';
+import { getFinanceSideEffectEmailGateway } from './finance-side-effect-email-gateway';
 
 const MAX_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 60_000;
@@ -32,10 +34,13 @@ class SideEffectDeliveryError extends Error {
   }
 }
 
-export type FinanceSideEffectType =
-  | 'BILLING_NOTIFICATION'
-  | 'EVENT_PUBLIC_ORDER_TICKET_EMAIL'
-  | 'EVENT_PUBLIC_ORDER_CREATED_EMAIL';
+export const FINANCE_SIDE_EFFECT_TYPES = [
+  'BILLING_NOTIFICATION',
+  'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
+  'EVENT_PUBLIC_ORDER_CREATED_EMAIL',
+  'EVENT_MAP_LATE_PAYMENT_REFUND',
+] as const;
+export type FinanceSideEffectType = (typeof FINANCE_SIDE_EFFECT_TYPES)[number];
 
 export type FinanceSideEffectSourceType =
   | 'ASAAS_WEBHOOK'
@@ -59,7 +64,6 @@ type EventPublicOrderTicketEmailPayload = {
   ticketType?: string | null;
   ticketCount: number;
   ticketsPath: string;
-  ticketsHtmlPath?: string | null;
   statusPath?: string | null;
   deliveryKey?: string;
 };
@@ -74,6 +78,15 @@ type EventPublicOrderCreatedEmailPayload = {
   invoiceUrl: string | null;
   paymentMethod: string;
   expiresAt: string;
+};
+
+type EventMapLatePaymentRefundPayload = {
+  orderId: string;
+  asaasPaymentId: string;
+  value: number;
+  description: string;
+  requestState: 'NOT_SUBMITTED' | 'SUBMITTING' | 'AWAITING_CUSTOMER_ACTION';
+  bankSlipRefundRequestUrl?: string;
 };
 
 export interface EnqueueBillingNotificationSideEffectsParams {
@@ -116,6 +129,24 @@ function getAppBaseUrl(): string {
 function buildAppUrl(pathname: string): string {
   const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
   return new URL(normalizedPath, `${getAppBaseUrl()}/`).toString();
+}
+
+function validateBankSlipRefundRequestUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new SideEffectDeliveryError('O Asaas retornou um link de estorno inválido.', false);
+  }
+  if (
+    url.protocol !== 'https:'
+    || (url.hostname !== 'asaas.com' && !url.hostname.endsWith('.asaas.com'))
+    || url.username
+    || url.password
+  ) {
+    throw new SideEffectDeliveryError('O Asaas retornou um link de estorno fora do domínio oficial.', false);
+  }
+  return url.toString();
 }
 
 function escapeHtml(value: string): string {
@@ -556,6 +587,8 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
   const isEmailEffect =
     event.effectType === 'EVENT_PUBLIC_ORDER_TICKET_EMAIL' ||
     event.effectType === 'EVENT_PUBLIC_ORDER_CREATED_EMAIL';
+  let hasBankSlipRefundRequestUrl = event.effectType === 'EVENT_MAP_LATE_PAYMENT_REFUND'
+    && typeof (event.payload as Partial<EventMapLatePaymentRefundPayload>).bankSlipRefundRequestUrl === 'string';
 
   try {
     if (event.effectType === 'BILLING_NOTIFICATION') {
@@ -572,6 +605,135 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
       providerMessageId = (await sendEventPublicOrderCreatedEmail(
         event.payload as EventPublicOrderCreatedEmailPayload,
       )).id;
+    } else if (event.effectType === 'EVENT_MAP_LATE_PAYMENT_REFUND') {
+      const payload = event.payload as EventMapLatePaymentRefundPayload;
+      const refundGateway = getFinanceSideEffectRefundGateway();
+      const refunds = await refundGateway.listPaymentRefunds({ paymentId: payload.asaasPaymentId, contaId: event.contaId });
+      const matchingRefunds = refunds.data.filter((refund) =>
+        refund.description === payload.description && Math.abs(Number(refund.value) - payload.value) < 0.01,
+      );
+      if (matchingRefunds.length > 1) {
+        throw new SideEffectDeliveryError('Há mais de um estorno compatível no Asaas; requer reconciliação operacional.', false);
+      }
+      const matchingRefund = matchingRefunds[0];
+
+      if (matchingRefund && matchingRefund.status === 'PENDING') {
+        // The command was accepted. Refund completion is driven by the Asaas
+        // payment webhook; don't burn the delivery retry budget while the
+        // provider is processing the refund.
+      } else if (matchingRefund && matchingRefund.status !== 'DONE' && !payload.bankSlipRefundRequestUrl) {
+        const requiresOperator = matchingRefund.status === 'CANCELLED' || matchingRefund.status.startsWith('AWAITING_');
+        throw new SideEffectDeliveryError(
+          requiresOperator
+            ? `O estorno está em ${matchingRefund.status}; requer ação operacional.`
+            : 'O estorno foi aceito e ainda está pendente no Asaas.',
+          !requiresOperator,
+        );
+      }
+      if (!matchingRefund && payload.requestState === 'SUBMITTING' && !payload.bankSlipRefundRequestUrl) {
+        // Never repeat a refund POST whose outcome is unknown. Poll the
+        // provider's refund list with bounded outbox backoff instead.
+        throw new SideEffectDeliveryError('Resultado do estorno ainda não apareceu na consulta do Asaas.', true);
+      }
+      if (matchingRefund && (!payload.bankSlipRefundRequestUrl || matchingRefund.status === 'DONE')) {
+        // An existing provider refund (PENDING or DONE) means the financial
+        // command was already accepted. Its completion is tracked by webhook.
+      } else if (payload.bankSlipRefundRequestUrl) {
+        const order = await prisma.eventMapOrder.findFirst({
+          where: { id: payload.orderId, contaId: event.contaId },
+          select: { buyerEmail: true, buyerName: true, event: { select: { name: true } } },
+        });
+        if (!order) {
+          throw new SideEffectDeliveryError('Pedido de boleto não encontrado para notificar o pagador.', false);
+        }
+        const email = await getFinanceSideEffectEmailGateway().sendBankSlipRefundNotice({
+          orderId: payload.orderId,
+          buyerEmail: order.buyerEmail,
+          buyerName: order.buyerName,
+          eventName: order.event.name,
+          requestUrl: payload.bankSlipRefundRequestUrl,
+        });
+        providerMessageId = email.id;
+      } else if (!matchingRefund) {
+        const order = await prisma.eventMapOrder.findFirst({
+          where: { id: payload.orderId, contaId: event.contaId },
+          select: {
+            buyerEmail: true,
+            buyerName: true,
+            paymentMethod: true,
+            event: { select: { name: true } },
+          },
+        });
+        if (!order) {
+          throw new SideEffectDeliveryError('Pedido não encontrado para conciliar o estorno tardio.', false);
+        }
+        if (order.paymentMethod === 'BOLETO') {
+          if (payload.requestState !== 'NOT_SUBMITTED') {
+            throw new SideEffectDeliveryError(
+              'O resultado da solicitação de estorno de boleto é incerto; exige reconciliação operacional para evitar solicitação duplicada.',
+              false,
+            );
+          }
+          const submittingPayload = { ...payload, requestState: 'SUBMITTING' as const };
+          const markedSubmitting = await prisma.financeWebhookSideEffectOutbox.updateMany({
+            where: { id: eventId, status: FinanceWebhookSideEffectStatus.PROCESSING, lockToken },
+            data: { payload: submittingPayload as unknown as Prisma.InputJsonObject },
+          });
+          if (markedSubmitting.count !== 1) {
+            throw new SideEffectDeliveryError('A concessão da solicitação de estorno perdeu a lease do outbox.', true);
+          }
+
+          const request = await refundGateway.requestBankSlipRefund({
+            paymentId: payload.asaasPaymentId,
+            contaId: event.contaId,
+          });
+          const requestUrl = validateBankSlipRefundRequestUrl(request.requestUrl);
+          const requestPayload: EventMapLatePaymentRefundPayload = {
+            ...payload,
+            requestState: 'AWAITING_CUSTOMER_ACTION',
+            bankSlipRefundRequestUrl: requestUrl,
+          };
+          const persistedRequest = await prisma.financeWebhookSideEffectOutbox.updateMany({
+            where: { id: eventId, status: FinanceWebhookSideEffectStatus.PROCESSING, lockToken },
+            data: { payload: requestPayload as unknown as Prisma.InputJsonObject },
+          });
+          if (persistedRequest.count !== 1) {
+            throw new SideEffectDeliveryError('A solicitação de estorno foi criada, mas a lease do outbox foi perdida antes de persistir o link.', false);
+          }
+          hasBankSlipRefundRequestUrl = true;
+
+          const email = await getFinanceSideEffectEmailGateway().sendBankSlipRefundNotice({
+            orderId: payload.orderId,
+            buyerEmail: order.buyerEmail,
+            buyerName: order.buyerName,
+            eventName: order.event.name,
+            requestUrl,
+          });
+          providerMessageId = email.id;
+        } else {
+          if (order.paymentMethod !== 'PIX' && order.paymentMethod !== 'CREDIT_CARD') {
+            throw new SideEffectDeliveryError(
+              'Forma de pagamento não suportada para estorno automático; requer reconciliação operacional.',
+              false,
+            );
+          }
+        const submittingPayload = { ...payload, requestState: 'SUBMITTING' as const };
+        const markedSubmitting = await prisma.financeWebhookSideEffectOutbox.updateMany({
+          where: { id: eventId, status: FinanceWebhookSideEffectStatus.PROCESSING, lockToken },
+          data: { payload: submittingPayload as unknown as Prisma.InputJsonObject },
+        });
+        if (markedSubmitting.count !== 1) {
+          throw new SideEffectDeliveryError('A concessão do estorno perdeu a lease do outbox.', true);
+        }
+        await refundGateway.refundCobranca({
+          paymentId: payload.asaasPaymentId,
+          contaId: event.contaId,
+          value: payload.value,
+          description: payload.description,
+        });
+        throw new SideEffectDeliveryError('Estorno solicitado; aguardando confirmação de conclusão pelo Asaas.', true);
+        }
+      }
     }
 
     const completed = await prisma.financeWebhookSideEffectOutbox.updateMany({
@@ -587,7 +749,7 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
         leaseExpiresAt: null,
         lockToken: null,
         lastError: null,
-        ...(isEmailEffect
+        ...(isEmailEffect || hasBankSlipRefundRequestUrl
           ? {
               providerMessageId,
               deliveryStatus: 'SENT',
@@ -605,7 +767,15 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const attempts = event.attempts + 1;
-    const retryable = error instanceof SideEffectDeliveryError ? error.retryable : true;
+    const providerStatus = typeof (error as { status?: unknown })?.status === 'number'
+      ? (error as { status: number }).status
+      : null;
+    const rejectedByRateLimit = event.effectType === 'EVENT_MAP_LATE_PAYMENT_REFUND' && providerStatus === 429;
+    const retryable = error instanceof SideEffectDeliveryError
+      ? error.retryable
+      : event.effectType === 'EVENT_MAP_LATE_PAYMENT_REFUND' && providerStatus !== null && providerStatus < 500
+        ? rejectedByRateLimit
+        : true;
     const exhausted = !retryable || attempts >= MAX_ATTEMPTS;
     const retryDelayMs = Math.min(
       MAX_RETRY_DELAY_MS,
@@ -627,7 +797,15 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
         lockToken: null,
         lastError: message,
         availableAt: exhausted ? event.availableAt : new Date(Date.now() + retryDelayMs),
-        ...(isEmailEffect
+        ...(rejectedByRateLimit && !hasBankSlipRefundRequestUrl
+          ? {
+              payload: {
+                ...(event.payload as Record<string, unknown>),
+                requestState: 'NOT_SUBMITTED',
+              } as Prisma.InputJsonObject,
+            }
+          : {}),
+        ...(isEmailEffect || hasBankSlipRefundRequestUrl
           ? {
               deliveryStatus: 'FAILED',
               deliveryStatusAt: new Date(),

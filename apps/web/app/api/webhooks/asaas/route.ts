@@ -4,7 +4,6 @@ import {
   enqueueAsaasWebhookEvent,
   handleAsaasWebhookEvent,
   inspectWebhookProcessingRuntimeStatus,
-  drainFinanceWebhookSideEffectOutbox,
   processAsaasWebhookQueueWithInbox,
   resolveAsaasWebhookAccessToken,
   extractClientIps,
@@ -179,8 +178,9 @@ export async function POST(req: NextRequest) {
           await processAsaasWebhookQueueWithInbox({
             contaId: queued.contaId,
             limit: 5,
-            statuses: ['PENDENTE', 'ERRO'],
-            source: 'WEBHOOK',
+          statuses: ['PENDENTE', 'ERRO'],
+          source: 'WEBHOOK',
+          drainSideEffects: false,
           });
         } catch (drainError) {
           console.warn('[Asaas Webhook][inline-drain] Falha no processamento imediato da fila', redactWebhookLogObject({
@@ -223,18 +223,6 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // No modo síncrono, o webhook confirma a venda na mesma requisição.
-      // O envio continua fora da transação, mas é drenado antes da resposta;
-      // se o provedor falhar, a outbox permanece disponível para retry.
-      if (result.success && processedContaId) {
-        await drainFinanceWebhookSideEffectOutbox({ contaId: processedContaId, limit: 10 }).catch((drainError) => {
-          console.warn('[Asaas Webhook][inline-side-effects] Falha não crítica ao drenar outbox', redactWebhookLogObject({
-            requestId,
-            contaId: processedContaId,
-            error: drainError instanceof Error ? drainError.message : String(drainError),
-          }));
-        });
-      }
     }
     if (result.success && processedContaId) {
       void invalidateChargesCache(processedContaId, 'asaas-webhook').catch((cacheError) => {

@@ -8,6 +8,16 @@ export interface AsaasRedisCommandOptions {
   timeoutMs?: number;
 }
 
+function classifyRedisError(value: unknown): string {
+  if (typeof value !== 'string') return 'PROVIDER_ERROR';
+  const message = value.toLowerCase();
+  if (/auth|token|unauthor/.test(message)) return 'AUTH_REJECTED';
+  if (/lua|script|eval|compile/.test(message)) return 'SCRIPT_REJECTED';
+  if (/limit|quota|rate/.test(message)) return 'LIMIT_EXCEEDED';
+  if (/command|argument|syntax|invalid|wrong number/.test(message)) return 'COMMAND_REJECTED';
+  return 'PROVIDER_ERROR';
+}
+
 function resolveRedisTimeoutMs(): number {
   const configured = Number(process.env.ASAAS_REDIS_TIMEOUT_MS ?? 1_500);
   return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 1_500;
@@ -38,10 +48,13 @@ export async function asaasRedisCommand<T = unknown>(
     signal: options.signal ?? AbortSignal.timeout(options.timeoutMs ?? resolveRedisTimeoutMs()),
   });
 
-  if (!response.ok) throw new Error(`Redis REST ${response.status}`);
-
-  const body = await response.json() as { result?: T; error?: string };
-  if (body.error) throw new Error(body.error);
+  const body = await response.json().catch(() => ({})) as { result?: T; error?: unknown };
+  if (!response.ok) {
+    throw new Error(`Redis REST ${response.status} [${classifyRedisError(body.error)}]`);
+  }
+  if (body.error) {
+    throw new Error(`Redis REST [${classifyRedisError(body.error)}]`);
+  }
   return body.result as T;
 }
 

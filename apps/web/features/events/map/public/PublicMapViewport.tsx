@@ -15,7 +15,6 @@ type ViewportSize = { width: number; height: number };
 const VIEWPORT_HEIGHT_DESKTOP_PX = 520;
 const VIEWPORT_HEIGHT_MOBILE_MIN_PX = 280;
 const VIEWPORT_HEIGHT_MOBILE_MAX_PX = 400;
-const VIEWPORT_SURROUND_FILL = '#e2e8f0';
 
 function resolveViewportHeight() {
   if (typeof window === 'undefined') return VIEWPORT_HEIGHT_DESKTOP_PX;
@@ -72,10 +71,12 @@ function computeCenteredArtboardPan({
 function readContainerViewportSize(
   container: HTMLDivElement | null,
   viewportHeight: number,
+  fillAvailable: boolean,
 ): ViewportSize | null {
   const width = Math.floor(container?.clientWidth ?? 0);
   if (width <= 0) return null;
-  return { width, height: viewportHeight };
+  const measuredHeight = fillAvailable ? Math.floor(container?.clientHeight ?? 0) : viewportHeight;
+  return { width, height: measuredHeight > 0 ? measuredHeight : viewportHeight };
 }
 
 function PublicMapZoomBar({
@@ -90,7 +91,7 @@ function PublicMapZoomBar({
   onFitToView: () => void;
 }) {
   return (
-    <div className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 gap-2 sm:bottom-4 sm:left-4 sm:translate-x-0">
+    <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex gap-2 sm:bottom-4 sm:left-4">
       <div className="pointer-events-auto flex h-8 items-center gap-0.5 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-lg shadow-slate-300/30 backdrop-blur sm:h-9 sm:gap-1">
         <Button
           type="button"
@@ -135,17 +136,23 @@ export function PublicMapViewport({
   artboardHeight,
   levelId,
   ariaLabel,
+  fillAvailable = false,
+  fillAvailableOnMobile = false,
   children,
 }: {
   artboardWidth: number;
   artboardHeight: number;
   levelId: string;
   ariaLabel: string;
+  fillAvailable?: boolean;
+  fillAvailableOnMobile?: boolean;
   children: ReactNode;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const zoomRef = useRef(1);
-  const [viewportHeight, setViewportHeight] = useState(resolveViewportHeight);
+  // Keep the initial server and client render identical. The actual viewport
+  // height is read after mount in the resize effect below.
+  const [viewportHeight, setViewportHeight] = useState(VIEWPORT_HEIGHT_DESKTOP_PX);
   const [viewportSize, setViewportSize] = useState<ViewportSize | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<Pan>({ x: 0, y: 0 });
@@ -156,7 +163,11 @@ export function PublicMapViewport({
 
   const syncViewport = useCallback(
     (recenter = false) => {
-      const viewport = readContainerViewportSize(containerRef.current, viewportHeight);
+      const viewport = readContainerViewportSize(
+        containerRef.current,
+        viewportHeight,
+        fillAvailable || fillAvailableOnMobile,
+      );
       if (!viewport) return null;
       setViewportSize(viewport);
       if (recenter) {
@@ -172,12 +183,16 @@ export function PublicMapViewport({
       }
       return viewport;
     },
-    [artboardHeight, artboardWidth, viewportHeight],
+    [artboardHeight, artboardWidth, fillAvailable, fillAvailableOnMobile, viewportHeight],
   );
 
   const applyZoom = useCallback(
     (nextZoom: number) => {
-      const viewport = syncViewport(false) ?? readContainerViewportSize(containerRef.current, viewportHeight);
+      const viewport = syncViewport(false) ?? readContainerViewportSize(
+        containerRef.current,
+        viewportHeight,
+        fillAvailable || fillAvailableOnMobile,
+      );
       if (!viewport) return;
       setViewportSize(viewport);
       setZoom(nextZoom);
@@ -191,23 +206,43 @@ export function PublicMapViewport({
         }),
       );
     },
-    [artboardHeight, artboardWidth, syncViewport, viewportHeight],
+    [artboardHeight, artboardWidth, fillAvailable, fillAvailableOnMobile, syncViewport, viewportHeight],
   );
 
   const fitToView = useCallback(() => {
-    const viewport = syncViewport(false) ?? readContainerViewportSize(containerRef.current, viewportHeight);
+    const viewport = syncViewport(false) ?? readContainerViewportSize(
+      containerRef.current,
+      viewportHeight,
+      fillAvailable || fillAvailableOnMobile,
+    );
     if (!viewport) return;
     setViewportSize(viewport);
-    const fit = computeArtboardFitView({
-      artboardWidth,
-      artboardHeight,
-      viewportWidth: viewport.width,
-      viewportHeight: viewport.height,
-      padding: 0,
-    });
+    const shouldFillMobileViewport =
+      fillAvailableOnMobile && window.matchMedia('(max-width: 639px)').matches;
+    const fillZoom = shouldFillMobileViewport
+      ? clampZoom(Math.max(viewport.width / artboardWidth, viewport.height / artboardHeight))
+      : null;
+    const fit = fillZoom !== null
+      ? {
+          zoom: fillZoom,
+          pan: computeCenteredArtboardPan({
+            artboardWidth,
+            artboardHeight,
+            zoom: fillZoom,
+            viewportWidth: viewport.width,
+            viewportHeight: viewport.height,
+          }),
+        }
+      : computeArtboardFitView({
+          artboardWidth,
+          artboardHeight,
+          viewportWidth: viewport.width,
+          viewportHeight: viewport.height,
+          padding: 0,
+        });
     setZoom(fit.zoom);
     setPan(fit.pan);
-  }, [artboardHeight, artboardWidth, syncViewport, viewportHeight]);
+  }, [artboardHeight, artboardWidth, fillAvailable, fillAvailableOnMobile, syncViewport, viewportHeight]);
 
   useEffect(() => {
     const updateHeight = () => setViewportHeight(resolveViewportHeight());
@@ -246,7 +281,7 @@ export function PublicMapViewport({
     fitToView();
     const frame = requestAnimationFrame(fitToView);
     return () => cancelAnimationFrame(frame);
-  }, [levelId, artboardWidth, artboardHeight, viewportHeight, fitToView]);
+  }, [levelId, artboardWidth, artboardHeight, fillAvailable, fillAvailableOnMobile, viewportHeight, fitToView]);
 
   const adjustZoom = useCallback(
     (delta: number) => {
@@ -313,8 +348,17 @@ export function PublicMapViewport({
   return (
     <div
       ref={containerRef}
-      className="relative overflow-hidden bg-slate-200"
-      style={{ height: viewportHeight }}
+      className={`relative overflow-hidden bg-slate-200 ${fillAvailableOnMobile ? 'lg:bg-gray-300' : ''} ${
+        fillAvailableOnMobile
+          ? `h-full min-h-0 flex-1 ${fillAvailable ? 'lg:h-full lg:min-h-0 lg:flex-1' : 'lg:h-[var(--public-map-viewport-height)] lg:flex-none'}`
+          : fillAvailable
+            ? 'h-[var(--public-map-viewport-height)] lg:h-full lg:min-h-0 lg:flex-1'
+            : ''
+      }`}
+      style={{
+        height: fillAvailable || fillAvailableOnMobile ? undefined : viewportHeight,
+        '--public-map-viewport-height': `${viewportHeight}px`,
+      } as React.CSSProperties}
     >
       {viewportSize ? (
         <svg
@@ -330,7 +374,13 @@ export function PublicMapViewport({
           onPointerUp={endPan}
           onPointerCancel={endPan}
         >
-          <rect x={0} y={0} width={viewportSize.width} height={viewportSize.height} fill={VIEWPORT_SURROUND_FILL} />
+          <rect
+            x={0}
+            y={0}
+            width={viewportSize.width}
+            height={viewportSize.height}
+            className={`fill-slate-200 ${fillAvailableOnMobile ? 'lg:fill-gray-300' : ''}`}
+          />
           <g transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`}>{children}</g>
         </svg>
       ) : null}

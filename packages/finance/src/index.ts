@@ -1281,6 +1281,7 @@ export {
   markExhaustedFinanceWebhookSideEffects,
   reconcileMissingBillingNotificationSideEffects,
   processFinanceWebhookSideEffectOutboxEvent,
+  FINANCE_SIDE_EFFECT_TYPES,
 } from './webhooks/finance-side-effect-outbox.service';
 export type {
   EnqueueFinanceSideEffectParams,
@@ -1895,6 +1896,27 @@ export type {
 export {
   logEventsFinance,
 } from './events/events-finance-observability';
+export {
+  syncPublicEventMapOrderPaymentByBuyer,
+} from './events/sync-public-event-map-order-payment';
+export {
+  completePublicEventMapCheckout,
+} from './events/complete-public-event-map-checkout';
+export {
+  getPublicEventMapPaymentInstruments,
+} from './events/get-public-event-map-payment-instruments';
+export {
+  registerFinanceSideEffectRefundGatewayForTests,
+} from './webhooks/finance-side-effect-refund-gateway';
+export type {
+  FinanceSideEffectRefundGateway,
+} from './webhooks/finance-side-effect-refund-gateway';
+export {
+  registerFinanceSideEffectEmailGatewayForTests,
+} from './webhooks/finance-side-effect-email-gateway';
+export type {
+  FinanceSideEffectEmailGateway,
+} from './webhooks/finance-side-effect-email-gateway';
 export type {
   EventFinanceLogPayload,
 } from './events/events-finance-observability';

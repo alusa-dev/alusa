@@ -7,11 +7,13 @@ import { formatReservationCountdown } from './public-order-utils';
 export function PublicOrderReservationCountdown({
   expiresAt,
   className,
+  tone = 'warning',
 }: {
   expiresAt: string | null;
   className?: string;
+  tone?: 'warning' | 'danger';
 }) {
-  const [label, setLabel] = useState(() => formatReservationCountdown(expiresAt));
+  const [label, setLabel] = useState<string | null>(null);
 
   useEffect(() => {
     function tick() {
@@ -19,7 +21,7 @@ export function PublicOrderReservationCountdown({
     }
 
     tick();
-    const intervalId = window.setInterval(tick, 30_000);
+    const intervalId = window.setInterval(tick, 1_000);
     return () => window.clearInterval(intervalId);
   }, [expiresAt]);
 
@@ -33,8 +35,10 @@ export function PublicOrderReservationCountdown({
       role="status"
       aria-live="polite"
     >
-      <span className={expired ? 'text-rose-700 font-semibold' : 'text-amber-800 font-semibold'}>{label}</span>
-      {!expired ? <span className="text-slate-500"> para pagamento</span> : null}
+      {!expired ? (
+        <span className={tone === 'danger' ? 'text-red-700' : 'text-slate-500'}>Tempo restante: </span>
+      ) : null}
+      <span className={expired ? 'font-semibold text-rose-700' : tone === 'danger' ? 'font-mono font-semibold tabular-nums text-red-700' : 'font-mono font-semibold tabular-nums text-amber-800'}>{label}</span>
     </p>
   );
 }
