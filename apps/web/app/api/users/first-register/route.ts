@@ -92,7 +92,15 @@ export async function POST(req: Request) {
       callbackUrl: '/finance/wizard',
     });
     return NextResponse.json(
-      firstRegisterResultDTOSchema.parse({ id: user.id, email: user.email, role: user.role }),
+      firstRegisterResultDTOSchema.parse({
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          contaId: user.contaId,
+          emailVerified: Boolean(user.emailVerifiedAt),
+        },
+      }),
       { status: 201 },
     );
   } catch (e: unknown) {

@@ -159,6 +159,8 @@ describe('POST /api/users/first-register', () => {
       id: 'user_asaas_external',
       email: 'piloto@example.com',
       role: 'ADMIN',
+      contaId: 'conta_asaas_external',
+      emailVerifiedAt: null,
     });
 
     const { POST } = await import('@/app/api/users/first-register/route');
@@ -181,8 +183,18 @@ describe('POST /api/users/first-register', () => {
     });
 
     const response = await POST(req);
+    const body = await response.json();
 
     expect(response.status).toBe(201);
+    expect(body).toEqual({
+      user: {
+        id: 'user_asaas_external',
+        email: 'piloto@example.com',
+        role: 'ADMIN',
+        contaId: 'conta_asaas_external',
+        emailVerified: false,
+      },
+    });
     expect(checkFirstUserRegistrationAvailabilityMock).toHaveBeenCalledWith({
       email: 'piloto@example.com',
       financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',

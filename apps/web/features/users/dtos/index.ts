@@ -356,9 +356,13 @@ export const firstRegisterInputDTOSchema = authRegisterInputSchema;
 export type FirstRegisterInputDTO = z.input<typeof firstRegisterInputDTOSchema>;
 
 export const firstRegisterResultDTOSchema = z.object({
-  id: z.string(),
-  email: z.string().email(),
-  role: z.string(),
+  user: z.object({
+    id: z.string(),
+    email: z.string().email(),
+    role: z.string(),
+    contaId: z.string(),
+    emailVerified: z.boolean(),
+  }),
 });
 
 export type FirstRegisterResultDTO = z.infer<typeof firstRegisterResultDTOSchema>;
