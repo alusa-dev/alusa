@@ -1,19 +1,27 @@
-import { execSync } from 'node:child_process';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const repoRoot = path.resolve(__dirname, '../../../');
 
 function rg(pattern: string, searchPath: string): string[] {
-  const output = execSync(`rg -l "${pattern}" "${searchPath}" --glob '*.ts' 2>/dev/null || true`, {
-    cwd: repoRoot,
-    encoding: 'utf8',
-  });
+  const matcher = new RegExp(pattern);
+  const absoluteRoot = path.resolve(repoRoot, searchPath);
+  const matches: string[] = [];
 
-  return output
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
+  function visit(directory: string): void {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(absolutePath);
+      } else if (entry.isFile() && entry.name.endsWith('.ts') && matcher.test(readFileSync(absolutePath, 'utf8'))) {
+        matches.push(path.relative(repoRoot, absolutePath));
+      }
+    }
+  }
+
+  visit(absoluteRoot);
+  return matches;
 }
 
 describe('@alusa/platform-billing architecture boundaries', () => {
