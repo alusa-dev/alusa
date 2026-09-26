@@ -24,6 +24,17 @@ describe('classifyAsaasProvisioningError', () => {
     expect(result?.storedMessage).not.toContain('lucas@example.com');
   });
 
+  it('classifica conflito quando o Asaas escreve “e-mail” com hífen', () => {
+    const error = new AsaasHttpError('HTTP 400', 400, {
+      errors: [{ code: 'invalid_object', description: 'O e-mail lucas@example.com já está em uso.' }],
+    });
+
+    expect(classifyAsaasProvisioningError(error)).toMatchObject({
+      code: ASAAS_EMAIL_IN_USE_CODE,
+      retryable: false,
+    });
+  });
+
   it('não classifica erros temporários como conflito de e-mail', () => {
     expect(classifyAsaasProvisioningError(new AsaasHttpError('HTTP 503', 503))).toBeNull();
     expect(classifyAsaasProvisioningError(new AsaasHttpError('HTTP 400', 400, {
