@@ -136,6 +136,9 @@ jobs:
       - name: Expo doctor
         run: pnpm --filter @alusa/mobile run doctor
 
+      - name: Build shared workspace package
+        run: pnpm --filter @alusa/shared build
+
       - name: Mobile typecheck
         run: pnpm --filter @alusa/mobile typecheck
 
