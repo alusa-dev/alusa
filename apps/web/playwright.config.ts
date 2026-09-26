@@ -72,7 +72,9 @@ export default defineConfig({
       `cross-env NODE_OPTIONS=--max-old-space-size=${nodeMaxOldSpaceSize} NEXT_TELEMETRY_DISABLED=1 ` +
       (useProductionServer ? `node ../../scripts/e2e/serve-production.mjs --port ${port}` : `next dev --webpack -p ${port}`),
     url: baseURL,
-    timeout: useProductionServer ? 300_000 : 120_000,
+    // Fresh CI runners need longer for the complete production build before
+    // the server binds its port; keep the limit finite for real startup hangs.
+    timeout: useProductionServer ? 600_000 : 120_000,
     reuseExistingServer: !process.env.CI,
     env: {
       NODE_ENV: useProductionServer ? 'production' : 'development',

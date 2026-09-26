@@ -1,8 +1,5 @@
 import { ExternalAsaasOnboardingStatus, FinanceIntegrationMode, Role, type Usuario } from '@prisma/client';
 import { randomUUID } from 'crypto';
-import { existsSync, readFileSync } from 'fs';
-import { resolve } from 'path';
-import { asaasGetMyAccount, asaasListSubaccounts } from '@alusa/finance';
 import { isValidCpfCnpjDigits, normalizeCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
 import {
   isAtLeastAgeYears,
@@ -57,51 +54,7 @@ export class PasswordPolicyError extends Error { constructor() { super(passwordP
 export type FirstUserRegistrationAvailability =
   | { available: true }
   | { available: false; reason: 'LOCAL_ACTIVE' }
-  | { available: false; reason: 'LOCAL_DEACTIVATED'; userId: string; email: string }
-  | { available: false; reason: 'ASAAS_EMAIL_IN_USE' }
-  | { available: false; reason: 'ASAAS_UNAVAILABLE' };
-
-function normalizeEmail(value: string | null | undefined): string {
-  return String(value ?? '').trim().toLowerCase();
-}
-
-function parseEnvFileValue(filePath: string, key: string): string | null {
-  if (!existsSync(filePath)) return null;
-
-  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`^${escapedKey}=(.*)$`, 'm');
-  const match = readFileSync(filePath, 'utf8').match(pattern);
-  if (!match) return null;
-
-  let value = match[1]?.trim() ?? '';
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    value = value.slice(1, -1);
-  }
-
-  return value.replace(/^\\(?=\$aact_)/, '').trim() || null;
-}
-
-function getMasterApiKeyForFirstRegister(): string | null {
-  const fromEnv = process.env.ASAAS_API_KEY?.trim();
-  if (fromEnv) return fromEnv;
-  if (process.env.NODE_ENV !== 'development') return null;
-
-  const cwd = process.cwd();
-  const candidateFiles = [
-    resolve(cwd, '.env.local'),
-    resolve(cwd, '../../.env.local'),
-  ];
-
-  for (const filePath of candidateFiles) {
-    const value = parseEnvFileValue(filePath, 'ASAAS_API_KEY');
-    if (value) return value;
-  }
-
-  return null;
-}
+  | { available: false; reason: 'LOCAL_DEACTIVATED'; userId: string; email: string };
 
 function isAccountDeactivated(status: string | null | undefined, deletedAt: Date | null | undefined): boolean {
   return Boolean(deletedAt) || (typeof status === 'string' && status.toUpperCase() !== 'ATIVO');
@@ -125,69 +78,21 @@ async function findUserByEmail(email: string) {
 
 export async function checkFirstUserRegistrationAvailability(input: {
   email: string;
-  financeIntegrationMode?: FinanceIntegrationMode;
 }): Promise<FirstUserRegistrationAvailability> {
-  const financeIntegrationMode = input.financeIntegrationMode ?? FinanceIntegrationMode.WHITELABEL_BAAS;
   const normalizedEmail = input.email.trim();
-
   const existingEmail = await findUserByEmail(normalizedEmail);
-  if (existingEmail) {
-    if (isAccountDeactivated(existingEmail.conta?.status, existingEmail.conta?.deletedAt)) {
-      return {
-        available: false,
-        reason: 'LOCAL_DEACTIVATED',
-        userId: existingEmail.id,
-        email: existingEmail.email,
-      };
-    }
 
-    return { available: false, reason: 'LOCAL_ACTIVE' };
+  if (!existingEmail) return { available: true };
+  if (isAccountDeactivated(existingEmail.conta?.status, existingEmail.conta?.deletedAt)) {
+    return {
+      available: false,
+      reason: 'LOCAL_DEACTIVATED',
+      userId: existingEmail.id,
+      email: existingEmail.email,
+    };
   }
 
-  if (financeIntegrationMode === FinanceIntegrationMode.EXTERNAL_ASAAS_ACCOUNT) {
-    return { available: true };
-  }
-
-  // E2E/unit environments using the explicit mock provider do not have a
-  // real Asaas account to reconcile against. PLAYWRIGHT_TEST is explicit so
-  // a production-like `next start` can stay offline without changing the
-  // production behavior for real deployments.
-  if (
-    process.env.PAYMENTS_PROVIDER_MODE === 'mock' &&
-    (process.env.NODE_ENV !== 'production' || process.env.PLAYWRIGHT_TEST === 'true')
-  ) {
-    return { available: true };
-  }
-
-  const masterApiKey = getMasterApiKeyForFirstRegister();
-  if (!masterApiKey) {
-    return { available: false, reason: 'ASAAS_UNAVAILABLE' };
-  }
-
-  try {
-    const masterAccount = await asaasGetMyAccount({ apiKey: masterApiKey });
-    if (normalizeEmail(masterAccount.email) === normalizeEmail(normalizedEmail)) {
-      return { available: false, reason: 'ASAAS_EMAIL_IN_USE' };
-    }
-
-    const response = await asaasListSubaccounts({
-      apiKey: masterApiKey,
-      email: normalizedEmail,
-      limit: 1,
-      offset: 0,
-    });
-
-    if ((response.data?.length ?? 0) > 0) {
-      return { available: false, reason: 'ASAAS_EMAIL_IN_USE' };
-    }
-  } catch (error) {
-    console.error('[auth.first-register] Falha ao validar e-mail no Asaas', {
-      message: error instanceof Error ? error.message : String(error),
-    });
-    return { available: false, reason: 'ASAAS_UNAVAILABLE' };
-  }
-
-  return { available: true };
+  return { available: false, reason: 'LOCAL_ACTIVE' };
 }
 
 export async function createFirstUser(data: FirstUserInput): Promise<Usuario> {

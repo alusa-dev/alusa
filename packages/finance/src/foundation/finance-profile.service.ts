@@ -20,6 +20,7 @@ export type FinanceProfileOnboardingData = {
   birthDate?: string;
   companyType?: 'MEI' | 'LIMITED' | 'INDIVIDUAL' | 'ASSOCIATION' | string;
   loginEmail?: string;
+  subaccountEmail?: string;
   phone?: string;
   site?: string;
 };
@@ -65,6 +66,7 @@ export const financeProfileService = {
         asaasOwnerName: validated.ownerName,
         asaasCompanyName: validated.personType === 'PJ' ? validated.companyName ?? null : null,
         asaasLoginEmail: validated.loginEmail,
+        asaasSubaccountEmail: validated.subaccountEmail,
         asaasPhone: validated.phone,
         asaasSite: validated.site,
         mobilePhone: normalizeMobilePhone(validated.mobilePhone),

@@ -1040,7 +1040,6 @@
         "apps/web/lib/finance/charge-display-status.ts",
         "apps/web/lib/finance/financial-account-gate.ts",
         "apps/web/lib/financeiro/cobranca-arquivos.ts",
-        "apps/web/lib/first-user-service.ts",
         "apps/web/lib/password-change-otp.ts",
         "apps/web/src/server/alunos/aluno-archive.orchestrator.ts",
         "apps/web/src/server/alunos/aluno-detail-http-route.service.ts",

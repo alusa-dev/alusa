@@ -12,9 +12,17 @@ export function resolveCanonicalSubaccountEmail(ownerEmail: string | null | unde
   return normalizeTrimmedEmail(ownerEmail);
 }
 
+/** Use the selected Asaas contact email, falling back to the Alusa owner's email. */
+export function resolveSubaccountEmail(
+  configuredEmail: string | null | undefined,
+  ownerEmail: string | null | undefined,
+): string | null {
+  return normalizeTrimmedEmail(configuredEmail) ?? resolveCanonicalSubaccountEmail(ownerEmail);
+}
+
 /**
  * @deprecated Apenas para reconciliação de subcontas legadas criadas com email aliasado.
- * Novas subcontas sempre usam o email canônico do dono.
+ * Novas subcontas usam o e-mail definido no cadastro financeiro, com fallback para o e-mail do dono.
  */
 export function deriveLegacyAliasedSubaccountEmail(baseEmail: string, contaId: string): string {
   const trimmed = baseEmail.trim();

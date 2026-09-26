@@ -254,6 +254,7 @@ describe('createAsaasAccount - idempotência', () => {
       asaasOwnerName: 'Owner Name',
       asaasCompanyName: null,
       asaasName: 'Owner Name',
+      asaasSubaccountEmail: 'financeiro@suaescola.example',
       mobilePhone: '11999999999',
       incomeValue: 5000,
       address: 'Rua Teste',
@@ -299,6 +300,7 @@ describe('createAsaasAccount - idempotência', () => {
     // Deve chamar createSubaccount com idempotencyKey
     expect(vi.mocked(createSubaccount)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(createSubaccount).mock.calls[0]?.[0]).toHaveProperty('idempotencyKey');
+    expect(vi.mocked(createSubaccount).mock.calls[0]?.[0].data.email).toBe('financeiro@suaescola.example');
   });
 
   it('chamadas paralelas devem resultar em uma única criação (via lock)', async () => {

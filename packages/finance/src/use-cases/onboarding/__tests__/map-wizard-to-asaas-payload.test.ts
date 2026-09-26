@@ -28,6 +28,7 @@ const baseWizardStatePF: WizardState = {
   postalCode: '01234-567',
   complement: 'Apto 42',
   loginEmail: 'joao.login@example.com',
+  subaccountEmail: null,
 };
 
 const baseWizardStatePJ: WizardState = {
@@ -51,6 +52,7 @@ const baseWizardStatePJ: WizardState = {
   postalCode: '01310100',
   complement: null,
   loginEmail: null,
+  subaccountEmail: null,
 };
 
 const testEmail = 'test@example.com';

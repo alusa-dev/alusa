@@ -87,12 +87,14 @@ describe('POST /api/users/first-register', () => {
     expect(sendEmailVerificationForUserMock).not.toHaveBeenCalled();
   });
 
-  it('bloqueia cadastro quando o e-mail já existe no cadastro financeiro', async () => {
-    checkFirstUserRegistrationAvailabilityMock.mockResolvedValueOnce({
-      available: false,
-      reason: 'ASAAS_EMAIL_IN_USE',
+  it('não bloqueia o cadastro Alusa por conflito de e-mail que só existe no Asaas', async () => {
+    createFirstUserMock.mockResolvedValueOnce({
+      id: 'user_finance',
+      email: 'finance@example.com',
+      role: 'ADMIN',
+      contaId: 'conta_finance',
+      emailVerifiedAt: null,
     });
-
     const { POST } = await import('@/app/api/users/first-register/route');
     const req = new Request('http://localhost/api/users/first-register', {
       method: 'POST',
@@ -112,16 +114,12 @@ describe('POST /api/users/first-register', () => {
     });
 
     const response = await POST(req);
-    const body = await response.json();
-
-    expect(response.status).toBe(409);
-    expect(body.code).toBe('ASAAS_EMAIL_IN_USE');
+    expect(response.status).toBe(201);
     expect(checkFirstUserRegistrationAvailabilityMock).toHaveBeenCalledWith({
       email: 'finance@example.com',
-      financeIntegrationMode: 'WHITELABEL_BAAS',
     });
-    expect(createFirstUserMock).not.toHaveBeenCalled();
-    expect(sendEmailVerificationForUserMock).not.toHaveBeenCalled();
+    expect(createFirstUserMock).toHaveBeenCalled();
+    expect(sendEmailVerificationForUserMock).toHaveBeenCalled();
   });
 
   it('bloqueia o onboarding externo quando a feature flag está desabilitada', async () => {
@@ -197,7 +195,6 @@ describe('POST /api/users/first-register', () => {
     });
     expect(checkFirstUserRegistrationAvailabilityMock).toHaveBeenCalledWith({
       email: 'piloto@example.com',
-      financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
     });
     expect(createFirstUserMock).toHaveBeenCalledWith(
       expect.objectContaining({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' }),

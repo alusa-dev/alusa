@@ -23,6 +23,8 @@
       "@alusa/finance/*": ["../../packages/finance/src/*"],
       "@alusa/platform-billing": ["../../packages/platform-billing/src/index.ts"],
       "@alusa/platform-billing/*": ["../../packages/platform-billing/src/*"],
+      "@alusa/stripe": ["../../packages/stripe/src/index.ts"],
+      "@alusa/stripe/*": ["../../packages/stripe/src/*"],
       "@alusa/whatsapp": ["../../packages/whatsapp/src/index.ts"],
       "@alusa/whatsapp/*": ["../../packages/whatsapp/src/*"],
       "@alusa/shared": ["../../packages/shared/src/index.ts"],

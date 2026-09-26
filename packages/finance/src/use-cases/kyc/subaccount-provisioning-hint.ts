@@ -1,5 +1,10 @@
 import { prisma } from '@alusa/database';
 
+import {
+  ASAAS_EMAIL_IN_USE_MESSAGE,
+  ASAAS_EMAIL_IN_USE_PREFIX,
+} from '../asaas-account/provisioning-error';
+
 const PROVISION_JOB_TYPE = 'PROVISION_SUBACCOUNT' as const;
 const RECOVERY_REQUIRED_PREFIX = 'RECOVERY_REQUIRED:';
 
@@ -7,7 +12,7 @@ const RECOVERY_REQUIRED_PREFIX = 'RECOVERY_REQUIRED:';
  * Estado de provisionamento de subconta Asaas (white-label), para UI/API quando o snapshot KYC ainda não existe.
  */
 export type SubaccountProvisioningHint = {
-  state: 'QUEUED' | 'PROCESSING' | 'FAILED' | 'RECOVERY_REQUIRED';
+  state: 'QUEUED' | 'PROCESSING' | 'FAILED' | 'RECOVERY_REQUIRED' | 'ACTION_REQUIRED';
   jobStatus?: string;
   asaasAccountStatus?: string | null;
   lastError?: string | null;
@@ -73,6 +78,17 @@ export async function resolveSubaccountProvisioningHint(contaId: string): Promis
         jobStatus: job.status,
         asaasAccountStatus: acc?.status ?? null,
         lastError: job.lastError,
+        attempts: job.attempts,
+      };
+    }
+    if (job.status === 'ACTION_REQUIRED') {
+      return {
+        state: 'ACTION_REQUIRED',
+        jobStatus: job.status,
+        asaasAccountStatus: acc?.status ?? null,
+        lastError: job.lastError?.startsWith(ASAAS_EMAIL_IN_USE_PREFIX)
+          ? ASAAS_EMAIL_IN_USE_MESSAGE
+          : job.lastError,
         attempts: job.attempts,
       };
     }

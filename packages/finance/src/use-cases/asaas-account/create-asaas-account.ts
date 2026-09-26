@@ -33,9 +33,12 @@ import { reconcileAsaasAccount } from './reconcile-asaas-account';
 import {
   deriveLegacyAliasedSubaccountEmail,
   matchesSubaccountEmail,
-  resolveCanonicalSubaccountEmail,
+  resolveSubaccountEmail,
 } from './subaccount-email';
 import { resolveWebhookNotificationEmail } from './webhook-notification-email.server';
+import {
+  classifyAsaasProvisioningError,
+} from './provisioning-error';
 
 // ============================================================================
 // Helpers: Error detection
@@ -830,6 +833,7 @@ async function tryResolveContaIdentity(
       asaasOwnerName: true,
       asaasCompanyName: true,
       asaasName: true,
+      asaasSubaccountEmail: true,
       draftCpfCnpj: true,
       draftBirthDate: true,
     },
@@ -850,7 +854,7 @@ async function tryResolveContaIdentity(
     ? toDateOnlyUtcString(fallbackUser.birthDate)
     : (profile?.draftBirthDate ?? null);
 
-  const subaccountEmail = resolveCanonicalSubaccountEmail(fallbackUser.email);
+  const subaccountEmail = resolveSubaccountEmail(profile?.asaasSubaccountEmail, fallbackUser.email);
   if (!subaccountEmail) {
     return null;
   }
@@ -1495,13 +1499,21 @@ async function createAsaasAccountInternal(params: {
     });
   } catch (error) {
     const errorInfo = extractErrorInfo(error);
+    const classifiedError = classifyAsaasProvisioningError(error);
 
     // Registrar erro (sem dados sensíveis)
     if (existing) {
       await prisma.asaasAccount.update({
         where: { financeProfileId: financeProfile.id },
         data: {
-          provisionLastError: errorInfo.message.slice(0, 500),
+          ...(classifiedError
+            ? {
+                status: 'PROVISIONING_FAILED',
+                statusUpdatedAt: new Date(),
+                operationalStatus: 'NOT_READY',
+                provisionLastError: classifiedError.storedMessage,
+              }
+            : { provisionLastError: errorInfo.message.slice(0, 500) }),
           provisionLastHttpStatus: errorInfo.status ?? null,
         },
         select: { id: true },

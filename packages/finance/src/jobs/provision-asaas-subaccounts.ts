@@ -3,6 +3,7 @@ import type { AuditActorType } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
 import { createAsaasAccount } from '../use-cases/asaas-account/create-asaas-account';
+import { classifyAsaasProvisioningError } from '../use-cases/asaas-account/provisioning-error';
 import { repairWebhookConfigDrift } from '../webhooks/webhook-config-drift.service';
 
 const PROVISION_JOB_TYPE = 'PROVISION_SUBACCOUNT' as const;
@@ -107,6 +108,8 @@ export async function enqueueAsaasSubaccountProvisioning(params: {
         status: 'READY_FOR_PROVISIONING',
         statusUpdatedAt: new Date(),
         operationalStatus: 'NOT_READY',
+        provisionLastError: null,
+        provisionLastHttpStatus: null,
       },
       select: { id: true },
     });
@@ -296,10 +299,38 @@ export async function processAsaasProvisioningJobs(params?: {
       });
       result.succeeded++;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const classifiedError = job.type === PROVISION_JOB_TYPE
+        ? classifyAsaasProvisioningError(error)
+        : null;
+      const message = classifiedError?.userMessage ?? (error instanceof Error ? error.message : String(error));
       result.failed++;
       result.errors.push({ jobId: job.id, contaId: job.contaId, error: message });
-      await failJob(job.id, attempts, message);
+      if (classifiedError) {
+        await prisma.asaasAccount.updateMany({
+          where: { financeProfile: { contaId: job.contaId } },
+          data: {
+            status: 'PROVISIONING_FAILED',
+            statusUpdatedAt: new Date(),
+            operationalStatus: 'NOT_READY',
+            provisionLastError: classifiedError.storedMessage,
+            provisionLastHttpStatus: 400,
+          },
+        });
+        await prisma.asaasIntegrationJob.update({
+          where: { id: job.id },
+          data: {
+            status: 'ACTION_REQUIRED',
+            attempts,
+            lastError: classifiedError.storedMessage,
+            lastErrorAt: new Date(),
+            processingAt: null,
+            nextAttemptAt: new Date(),
+          },
+          select: { id: true },
+        });
+      } else {
+        await failJob(job.id, attempts, message);
+      }
     }
   }
 

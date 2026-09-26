@@ -43,6 +43,7 @@ export type WizardState = {
   postalCode: string | null;
   complement: string | null;
   loginEmail: string | null;
+  subaccountEmail: string | null;
 };
 
 export type GetWizardStateResult = {
@@ -230,9 +231,14 @@ export const wizardStep3Schema = z.object({
     .optional()
     .transform((v) => (v ? v.trim() : ''))
     .refine((v) => !v || emailRegex.test(v), 'E-mail inválido'),
+  subaccountEmail: z
+    .string()
+    .optional()
+    .transform((v) => (v ? v.trim() : ''))
+    .refine((v) => !v || emailRegex.test(v), 'E-mail de cadastro financeiro inválido'),
 });
 
-export type WizardStep3Data = z.infer<typeof wizardStep3Schema>;
+export type WizardStep3Data = z.input<typeof wizardStep3Schema>;
 
 // ================================================================================
 // Step 4: Endereço
