@@ -44,7 +44,6 @@ export async function POST(req: Request) {
 
   const availability = await checkFirstUserRegistrationAvailability({
     email: parsed.data.email,
-    financeIntegrationMode,
   });
   if (!availability.available) {
     if (availability.reason === 'LOCAL_DEACTIVATED') {
@@ -60,24 +59,6 @@ export async function POST(req: Request) {
     if (availability.reason === 'LOCAL_ACTIVE') {
       return NextResponse.json({ error: 'E-mail já está em uso.' }, { status: 409 });
     }
-
-    if (availability.reason === 'ASAAS_EMAIL_IN_USE') {
-      return NextResponse.json(
-        {
-          error: 'Este e-mail já está vinculado a um cadastro financeiro existente. Use outro e-mail para criar uma nova conta.',
-          code: 'ASAAS_EMAIL_IN_USE',
-        },
-        { status: 409 },
-      );
-    }
-
-    return NextResponse.json(
-      {
-        error: 'Não foi possível validar o e-mail no cadastro financeiro agora. Tente novamente em instantes.',
-        code: 'ASAAS_UNAVAILABLE',
-      },
-      { status: 503 },
-    );
   }
 
   try {

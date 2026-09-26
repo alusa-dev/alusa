@@ -7,6 +7,11 @@ import {
   enqueueAsaasSubaccountProvisioning,
   processAsaasProvisioningJobs,
 } from '../../jobs/provision-asaas-subaccounts';
+import {
+  ASAAS_EMAIL_IN_USE_CODE,
+  ASAAS_EMAIL_IN_USE_MESSAGE,
+  ASAAS_EMAIL_IN_USE_PREFIX,
+} from '../asaas-account/provisioning-error';
 
 import {
   type GetWizardStateResult,
@@ -80,6 +85,10 @@ async function resolveImmediateProvisioningTerminalFailure(params: {
       message:
         'A subconta existe no Asaas, mas a chave de API não está salva na Alusa. Reconecte a chave pelo painel administrativo.',
     };
+  }
+
+  if (account.provisionLastError?.startsWith(ASAAS_EMAIL_IN_USE_PREFIX)) {
+    return { code: ASAAS_EMAIL_IN_USE_CODE, message: ASAAS_EMAIL_IN_USE_MESSAGE };
   }
 
   if (account.status === 'PROVISIONING_FAILED' || account.operationalStatus === 'API_KEY_REQUIRED') {
@@ -158,6 +167,7 @@ async function loadWizardState(contaId: string): Promise<WizardState> {
         postalCode: true,
         complement: true,
         asaasLoginEmail: true,
+        asaasSubaccountEmail: true,
       },
     }),
     prisma.conta.findUnique({
@@ -165,6 +175,7 @@ async function loadWizardState(contaId: string): Promise<WizardState> {
       select: {
         nome: true,
         cpfCnpj: true,
+        ownerUser: { select: { email: true } },
       },
     }),
   ]);
@@ -191,6 +202,7 @@ async function loadWizardState(contaId: string): Promise<WizardState> {
       postalCode: null,
       complement: null,
       loginEmail: null,
+      subaccountEmail: conta?.ownerUser?.email ?? null,
     };
   }
 
@@ -215,6 +227,7 @@ async function loadWizardState(contaId: string): Promise<WizardState> {
     postalCode: profile.postalCode,
     complement: profile.complement,
     loginEmail: profile.asaasLoginEmail,
+    subaccountEmail: profile.asaasSubaccountEmail ?? conta?.ownerUser?.email ?? null,
   };
 }
 
@@ -345,6 +358,7 @@ export async function saveWizardStep3(params: {
       wizardStep: 3,
       mobilePhone: validated.mobilePhone,
       landlinePhone: validated.landlinePhone ? validated.landlinePhone : null,
+      asaasSubaccountEmail: validated.subaccountEmail || null,
     },
   });
 

@@ -104,13 +104,21 @@ describe('wizardStep3Schema', () => {
       mobilePhone: '(11) 99999-9999',
       landlinePhone: '(11) 3333-3333',
       loginEmail: 'financeiro@empresa.com',
+      subaccountEmail: '  financeiro+asaas@empresa.com  ',
     });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.mobilePhone).toBe('11999999999');
       expect(result.data.landlinePhone).toBe('1133333333');
       expect(result.data.loginEmail).toBe('financeiro@empresa.com');
+      expect(result.data.subaccountEmail).toBe('financeiro+asaas@empresa.com');
     }
+  });
+
+  it('permite omitir o e-mail exclusivo da subconta Asaas', () => {
+    const result = wizardStep3Schema.safeParse({ mobilePhone: '(11) 99999-9999' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.subaccountEmail).toBe('');
   });
 
   it('aceita contato sem campos opcionais', () => {
@@ -178,6 +186,7 @@ describe('getMissingFieldsForSubaccount', () => {
     postalCode: '01234567',
     complement: null,
     loginEmail: null,
+    subaccountEmail: null,
   };
 
   const completeStatePJ: WizardState = {
@@ -201,6 +210,7 @@ describe('getMissingFieldsForSubaccount', () => {
     postalCode: '01310100',
     complement: null,
     loginEmail: null,
+    subaccountEmail: null,
   };
 
   it('retorna array vazio para PF completo', () => {

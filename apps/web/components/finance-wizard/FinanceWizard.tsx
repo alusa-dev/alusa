@@ -47,6 +47,7 @@ type Draft = {
   companyType: WizardCompanyType | '';
   mobilePhone: string;
   landlinePhone: string;
+  subaccountEmail: string;
   incomeValue: string;
   postalCode: string;
   address: string;
@@ -198,6 +199,7 @@ function makeDraft(wizard?: WizardState | null): Draft {
     companyType: wizard?.companyType ?? '',
     mobilePhone: wizard?.mobilePhone ?? '',
     landlinePhone: wizard?.landlinePhone ?? '',
+    subaccountEmail: wizard?.subaccountEmail ?? '',
     incomeValue:
       wizard?.incomeValue === null || wizard?.incomeValue === undefined
         ? ''
@@ -552,7 +554,7 @@ export function FinanceWizard() {
       await saveWizardStep3({
         mobilePhone: draft.mobilePhone,
         landlinePhone: draft.landlinePhone,
-        loginEmail: '',
+        subaccountEmail: draft.subaccountEmail,
       });
       const step5 = await saveWizardStep5({ incomeValue: parseMoneyToNumber(draft.incomeValue) });
 
@@ -695,6 +697,7 @@ export function FinanceWizard() {
 
       if (!result.success) {
         setCompleting(false);
+        if (result.error?.code === 'ASAAS_EMAIL_IN_USE') setCurrentStep(2);
         toast.error(result.error?.message || 'Nao foi possivel confirmar a criacao da conta.');
         return;
       }
@@ -899,6 +902,25 @@ export function FinanceWizard() {
                 />
               </Field>
             </div>
+
+            {!isExternalAsaasMode ? (
+              <>
+                <Field label="E-mail da subconta Asaas">
+                  <Input
+                    type="email"
+                    autoComplete="email"
+                    value={draft.subaccountEmail}
+                    onChange={(event) => updateDraft('subaccountEmail', event.target.value)}
+                    placeholder="financeiro@suaescola.com.br"
+                    className={FIELD_CLASS}
+                  />
+                </Field>
+                <p className="-mt-4 text-xs leading-5 text-[#6f6878]">
+                  Se o Asaas informar que este e-mail já está em uso, volte aqui e informe outro endereço.
+                  Se deixar em branco, usaremos o e-mail da sua conta Alusa.
+                </p>
+              </>
+            ) : null}
 
             <Field label="Faturamento mensal (R$) *">
               <Input
@@ -1190,6 +1212,7 @@ export function FinanceWizard() {
             <ReviewSection title="Contato e faturamento">
               <SummaryItem label="Telefone celular" value={maskPhone(draft.mobilePhone)} />
               <SummaryItem label="Telefone fixo" value={maskPhone(draft.landlinePhone)} />
+              {!isExternalAsaasMode ? <SummaryItem label="E-mail financeiro" value={draft.subaccountEmail} /> : null}
               <SummaryItem label="Faturamento mensal" value={draft.incomeValue} />
             </ReviewSection>
 

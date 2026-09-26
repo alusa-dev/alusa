@@ -1,14 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const {
-  usuarioFindFirstMock,
-  asaasGetMyAccountMock,
-  asaasListSubaccountsMock,
-} = vi.hoisted(() => ({
-  usuarioFindFirstMock: vi.fn(),
-  asaasGetMyAccountMock: vi.fn(),
-  asaasListSubaccountsMock: vi.fn(),
-}));
+const usuarioFindFirstMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/prisma', () => ({
   default: {
@@ -18,125 +10,53 @@ vi.mock('@/lib/prisma', () => ({
   },
 }));
 
-vi.mock('@alusa/finance', () => ({
-  asaasGetMyAccount: asaasGetMyAccountMock,
-  asaasListSubaccounts: asaasListSubaccountsMock,
-}));
-
 describe('checkFirstUserRegistrationAvailability', () => {
-  const originalAsaasApiKey = process.env.ASAAS_API_KEY;
-  const originalPaymentsProviderMode = process.env.PAYMENTS_PROVIDER_MODE;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.ASAAS_API_KEY = '$aact_test_master_key';
-    delete process.env.PAYMENTS_PROVIDER_MODE;
     usuarioFindFirstMock.mockResolvedValue(null);
-    asaasGetMyAccountMock.mockResolvedValue({ email: 'master@example.com' });
-    asaasListSubaccountsMock.mockResolvedValue({ data: [] });
   });
 
-  afterEach(() => {
-    if (typeof originalAsaasApiKey === 'undefined') {
-      delete process.env.ASAAS_API_KEY;
-    } else {
-      process.env.ASAAS_API_KEY = originalAsaasApiKey;
-    }
-    if (typeof originalPaymentsProviderMode === 'undefined') {
-      delete process.env.PAYMENTS_PROVIDER_MODE;
-    } else {
-      process.env.PAYMENTS_PROVIDER_MODE = originalPaymentsProviderMode;
-    }
-  });
-
-  it('bloqueia o e-mail da conta mestra antes de consultar subcontas', async () => {
+  it('permite e-mail que ainda não existe no cadastro local', async () => {
     const { checkFirstUserRegistrationAvailability } = await import('@/lib/first-user-service');
 
     await expect(
-      checkFirstUserRegistrationAvailability({
-        email: ' MASTER@example.com ',
-        financeIntegrationMode: 'WHITELABEL_BAAS',
-      }),
-    ).resolves.toEqual({ available: false, reason: 'ASAAS_EMAIL_IN_USE' });
+      checkFirstUserRegistrationAvailability({ email: 'new@example.com' }),
+    ).resolves.toEqual({ available: true });
 
-    expect(asaasGetMyAccountMock).toHaveBeenCalledWith({ apiKey: '$aact_test_master_key' });
-    expect(asaasListSubaccountsMock).not.toHaveBeenCalled();
-  });
-
-  it('bloqueia e-mail encontrado no cadastro financeiro mesmo quando não é a conta mestra', async () => {
-    asaasListSubaccountsMock.mockResolvedValueOnce({ data: [{ id: 'acc_1', email: 'school@example.com' }] });
-    const { checkFirstUserRegistrationAvailability } = await import('@/lib/first-user-service');
-
-    await expect(
-      checkFirstUserRegistrationAvailability({
-        email: 'school@example.com',
-        financeIntegrationMode: 'WHITELABEL_BAAS',
-      }),
-    ).resolves.toEqual({ available: false, reason: 'ASAAS_EMAIL_IN_USE' });
-
-    expect(asaasListSubaccountsMock).toHaveBeenCalledWith({
-      apiKey: '$aact_test_master_key',
-      email: 'school@example.com',
-      limit: 1,
-      offset: 0,
+    expect(usuarioFindFirstMock).toHaveBeenCalledWith({
+      where: { email: { equals: 'new@example.com', mode: 'insensitive' } },
+      select: { id: true, email: true, conta: { select: { status: true, deletedAt: true } } },
     });
   });
 
-  it('libera e-mail inexistente localmente e no cadastro financeiro', async () => {
+  it('bloqueia e-mail ligado a uma conta local ativa', async () => {
+    usuarioFindFirstMock.mockResolvedValueOnce({
+      id: 'user_1',
+      email: 'used@example.com',
+      conta: { status: 'ATIVO', deletedAt: null },
+    });
     const { checkFirstUserRegistrationAvailability } = await import('@/lib/first-user-service');
 
     await expect(
-      checkFirstUserRegistrationAvailability({
-        email: 'new@example.com',
-        financeIntegrationMode: 'WHITELABEL_BAAS',
-      }),
-    ).resolves.toEqual({ available: true });
+      checkFirstUserRegistrationAvailability({ email: 'used@example.com' }),
+    ).resolves.toEqual({ available: false, reason: 'LOCAL_ACTIVE' });
   });
 
-  it('não consulta cadastro financeiro no modo de conta existente', async () => {
+  it('orienta reativação para e-mail ligado a uma conta desativada', async () => {
+    usuarioFindFirstMock.mockResolvedValueOnce({
+      id: 'user_2',
+      email: 'inactive@example.com',
+      conta: { status: 'INATIVO', deletedAt: null },
+    });
     const { checkFirstUserRegistrationAvailability } = await import('@/lib/first-user-service');
 
     await expect(
-      checkFirstUserRegistrationAvailability({
-        email: 'existing@example.com',
-        financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
-      }),
-    ).resolves.toEqual({ available: true });
-
-    expect(asaasGetMyAccountMock).not.toHaveBeenCalled();
-    expect(asaasListSubaccountsMock).not.toHaveBeenCalled();
-  });
-
-  it('não chama o Asaas no provider mock de ambientes não produtivos', async () => {
-    process.env.PAYMENTS_PROVIDER_MODE = 'mock';
-    const { checkFirstUserRegistrationAvailability } = await import('@/lib/first-user-service');
-
-    await expect(
-      checkFirstUserRegistrationAvailability({
-        email: 'offline@example.com',
-        financeIntegrationMode: 'WHITELABEL_BAAS',
-      }),
-    ).resolves.toEqual({ available: true });
-
-    expect(asaasGetMyAccountMock).not.toHaveBeenCalled();
-    expect(asaasListSubaccountsMock).not.toHaveBeenCalled();
-  });
-
-  it('mantém o cadastro E2E production-like offline quando o mock é explícito', async () => {
-    vi.stubEnv('NODE_ENV', 'production');
-    vi.stubEnv('PLAYWRIGHT_TEST', 'true');
-    process.env.PAYMENTS_PROVIDER_MODE = 'mock';
-    const { checkFirstUserRegistrationAvailability } = await import('@/lib/first-user-service');
-
-    await expect(
-      checkFirstUserRegistrationAvailability({
-        email: 'offline-production-like@example.com',
-        financeIntegrationMode: 'WHITELABEL_BAAS',
-      }),
-    ).resolves.toEqual({ available: true });
-
-    expect(asaasGetMyAccountMock).not.toHaveBeenCalled();
-    expect(asaasListSubaccountsMock).not.toHaveBeenCalled();
-    vi.unstubAllEnvs();
+      checkFirstUserRegistrationAvailability({ email: 'inactive@example.com' }),
+    ).resolves.toEqual({
+      available: false,
+      reason: 'LOCAL_DEACTIVATED',
+      userId: 'user_2',
+      email: 'inactive@example.com',
+    });
   });
 });

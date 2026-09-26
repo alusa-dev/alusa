@@ -41,6 +41,12 @@ function provisioningCopy(hint: SubaccountProvisioningHint): { title: string; de
           hint.lastError?.replace(/^RECOVERY_REQUIRED:/, '') ??
           'Tente novamente mais tarde ou fale com o suporte. O erro foi registrado para análise.',
       };
+    case 'ACTION_REQUIRED':
+      return {
+        title: 'Atualize o e-mail da subconta',
+        description:
+          hint.lastError ?? 'Volte ao assistente financeiro e informe outro e-mail para a subconta Asaas.',
+      };
     case 'RECOVERY_REQUIRED':
       return {
         title: 'Reconexão necessária',
@@ -174,6 +180,14 @@ export default function VerificacaoPage() {
         >
           <p className="font-medium text-amber-950 dark:text-amber-100">{provisioningBanner.title}</p>
           <p className="mt-1 text-amber-900/90 dark:text-amber-200/90">{provisioningBanner.description}</p>
+          {provisioningHint?.state === 'ACTION_REQUIRED' ? (
+            <a
+              href="/finance/wizard"
+              className="mt-3 inline-flex font-semibold text-[#55298a] underline underline-offset-4"
+            >
+              Revisar e-mail financeiro
+            </a>
+          ) : null}
         </div>
       ) : null}
       {/* Cabeçalho com status global */}

@@ -1108,6 +1108,7 @@ enum AsaasIntegrationJobStatus {
   PROCESSING
   DONE
   FAILED
+  ACTION_REQUIRED
 }
 
 enum AsaasIntegrationJobType {
@@ -5865,6 +5866,7 @@ model FinanceProfile {
   asaasOwnerName   String?
   asaasCompanyName String?
   asaasLoginEmail  String?
+  asaasSubaccountEmail String?
   asaasPhone       String?
   asaasSite        String?
 

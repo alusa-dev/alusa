@@ -16,6 +16,7 @@ import { prisma } from '@alusa/database';
 import type { AuditActorType, FinancialOnboardingStatus } from '@prisma/client';
 
 import { AsaasSandboxSubaccountDailyLimitError } from '../../errors/asaas-sandbox-subaccount-daily-limit-error';
+import { getAsaasProvisioningUserMessage } from './provisioning-error';
 import { financeProfileService } from '../../foundation/finance-profile.service';
 import { auditLogService } from '../../foundation/audit-log.service';
 import {
@@ -144,6 +145,9 @@ function isLikelyConfigurationError(item: AsaasErrorItem): boolean {
 }
 
 function getProvisioningFailureMessage(error: unknown): string {
+  const asaasUserMessage = getAsaasProvisioningUserMessage(error);
+  if (asaasUserMessage) return asaasUserMessage;
+
   if (error instanceof AsaasSandboxSubaccountDailyLimitError) {
     return 'O ambiente de testes atingiu o limite diário de cadastros financeiros. Tente novamente mais tarde.';
   }
@@ -205,7 +209,7 @@ function getProvisioningFailureMessage(error: unknown): string {
         code.includes('already');
 
       if (looksLikeEmail && looksInUse) {
-        return 'O e-mail informado já está em uso em outro cadastro financeiro. Revise o e-mail da conta e tente novamente.';
+        return 'Este e-mail já está em uso no Asaas. Volte aos dados financeiros e informe outro e-mail para a subconta.';
       }
     }
 
@@ -249,6 +253,7 @@ function buildWizardStateFromProfile(profile: {
   postalCode: string | null;
   complement: string | null;
   asaasLoginEmail: string | null;
+  asaasSubaccountEmail: string | null;
   conta?: { nome: string } | null;
 }): WizardState {
   return {
@@ -272,6 +277,7 @@ function buildWizardStateFromProfile(profile: {
     postalCode: profile.postalCode,
     complement: profile.complement,
     loginEmail: profile.asaasLoginEmail,
+    subaccountEmail: profile.asaasSubaccountEmail,
   };
 }
 
@@ -375,6 +381,7 @@ export async function ensureAsaasSubaccount(params: {
       postalCode: true,
       complement: true,
       asaasLoginEmail: true,
+      asaasSubaccountEmail: true,
       conta: {
         select: {
           nome: true,
@@ -584,6 +591,7 @@ export async function canCreateSubaccount(contaId: string): Promise<CanCreateSub
       postalCode: true,
       complement: true,
       asaasLoginEmail: true,
+      asaasSubaccountEmail: true,
       conta: {
         select: {
           nome: true,

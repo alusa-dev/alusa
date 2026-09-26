@@ -235,7 +235,7 @@ describe('completeWizard em modo externo', () => {
     expect(result.wizard.step).toBe(6);
   });
 
-  it('não conclui como sucesso quando a tentativa imediata entra em falha terminal', async () => {
+  it('retorna ação necessária quando o Asaas rejeita e-mail duplicado', async () => {
     const { completeWizard } = await import('../wizard-service');
 
     getOrCreateByTenantMock.mockReset();
@@ -315,9 +315,9 @@ describe('completeWizard em modo externo', () => {
     });
     asaasAccountFindUniqueMock.mockResolvedValueOnce({
       asaasAccountId: null,
-      status: 'PROVISIONING',
+      status: 'PROVISIONING_FAILED',
       operationalStatus: 'NOT_READY',
-      provisionLastError: 'CPF/CNPJ inválido',
+      provisionLastError: 'ACTION_REQUIRED:ASAAS_EMAIL_IN_USE:Este e-mail já está em uso no Asaas.',
     });
 
     const result = await completeWizard({
@@ -327,15 +327,15 @@ describe('completeWizard em modo externo', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toEqual({
-      code: 'PROVISIONING_FAILED',
-      message: 'CPF/CNPJ inválido',
+      code: 'ASAAS_EMAIL_IN_USE',
+      message: 'Este e-mail já está em uso no Asaas. Informe outro e-mail para a subconta ou fale com o suporte da Alusa.',
     });
     expect(transactionMock).not.toHaveBeenCalled();
     expect(auditLogRecordMock).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'finance.wizard.complete_failed',
         metadata: expect.objectContaining({
-          reason: 'PROVISIONING_FAILED',
+          reason: 'ASAAS_EMAIL_IN_USE',
           provisioningFailedImmediately: true,
         }),
       }),

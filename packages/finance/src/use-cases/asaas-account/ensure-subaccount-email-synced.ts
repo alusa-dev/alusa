@@ -2,7 +2,7 @@ import { prisma } from '@alusa/database';
 import type { AuditActorType } from '@prisma/client';
 
 import { updateAsaasAccount } from './update-asaas-account';
-import { needsSubaccountEmailSync, resolveCanonicalSubaccountEmail } from './subaccount-email';
+import { needsSubaccountEmailSync, resolveSubaccountEmail } from './subaccount-email';
 
 export async function ensureSubaccountEmailSynced(params: {
   contaId: string;
@@ -13,6 +13,7 @@ export async function ensureSubaccountEmailSynced(params: {
       where: { contaId: params.contaId },
       select: {
         id: true,
+        asaasSubaccountEmail: true,
         asaasAccount: {
           select: {
             asaasAccountId: true,
@@ -39,7 +40,7 @@ export async function ensureSubaccountEmailSynced(params: {
         orderBy: { createdAt: 'asc' },
       });
 
-  const canonicalEmail = resolveCanonicalSubaccountEmail(ownerUser?.email ?? null);
+  const canonicalEmail = resolveSubaccountEmail(financeProfile.asaasSubaccountEmail, ownerUser?.email);
   if (!canonicalEmail) {
     return { synced: false, canonicalEmail: null };
   }

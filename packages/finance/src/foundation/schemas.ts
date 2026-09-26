@@ -129,6 +129,10 @@ export const financeProfileOnboardingDataSchema = z.object({
     z.enum(['MEI', 'LIMITED', 'INDIVIDUAL', 'ASSOCIATION']).optional(),
   ),
   loginEmail: z.preprocess(normalizeOptionalString, z.string().email('E-mail inválido').optional()).optional(),
+  subaccountEmail: z.preprocess(
+    normalizeOptionalString,
+    z.string().email('E-mail de cadastro financeiro inválido').optional(),
+  ).optional(),
   phone: z
     .preprocess(normalizeOptionalString, z.string().optional())
     .transform((v) => (v ? onlyDigits(v) : undefined))

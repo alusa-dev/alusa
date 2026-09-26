@@ -9,7 +9,7 @@ import { financeProfileService, type FinanceProfileOnboardingData } from '../../
 import { MissingAsaasAccountIdError } from '../../errors/missing-asaas-account-id-error';
 import { MissingAsaasApiKeyError } from '../../errors/missing-asaas-api-key-error';
 import { resolveCommercialInfoState } from '../kyc/kyc-cache-utils';
-import { resolveCanonicalSubaccountEmail } from './subaccount-email';
+import { resolveSubaccountEmail } from './subaccount-email';
 
 export type UpdateAsaasAccountResult = { status: FinancialOnboardingStatus };
 
@@ -273,6 +273,7 @@ export async function updateAsaasAccount(params: {
         asaasOwnerName: true,
         asaasCompanyName: true,
         asaasName: true,
+        asaasSubaccountEmail: true,
         asaasPhone: true,
         asaasSite: true,
         mobilePhone: true,
@@ -287,7 +288,7 @@ export async function updateAsaasAccount(params: {
     }),
   ]);
 
-  const canonicalEmail = resolveCanonicalSubaccountEmail(ownerUser?.email ?? null);
+  const canonicalEmail = resolveSubaccountEmail(financeData?.asaasSubaccountEmail, ownerUser?.email);
 
   let existingCommercialInfo: AsaasMyAccountCommercialInfo | null = null;
   try {
