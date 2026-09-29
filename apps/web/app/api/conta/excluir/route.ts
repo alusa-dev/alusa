@@ -6,12 +6,12 @@ import { PlatformBillingError } from '@alusa/platform-billing';
 import {
   isContaOwner,
   requestContaPlanCancellation,
-} from '@/src/server/tenant/conta-close.service';
+} from '@/src/server/tenant/account-close.service';
 import {
   closeContaErrorResultDTOSchema,
   closeContaInputDTOSchema,
   closeContaSuccessResultDTOSchema,
-} from '@/features/conta/dtos';
+} from '@/features/account/dtos';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

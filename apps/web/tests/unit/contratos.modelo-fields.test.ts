@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createContratoModeloSchema } from '@/features/contratos/schemas';
+import { createContratoModeloSchema } from '@/features/contracts/schemas';
 
 const base = {
   nome: 'Contrato de matrícula 2026',

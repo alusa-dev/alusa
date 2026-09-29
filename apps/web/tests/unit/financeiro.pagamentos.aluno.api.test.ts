@@ -80,7 +80,7 @@ describe('GET /api/financeiro/pagamentos/aluno/[alunoId]', () => {
           installmentsPaid: null,
           installmentLabel: null,
           planName: 'Plano Básico',
-          detailHref: '/cobrancas/cb1',
+          detailHref: '/charges/cb1',
           createdAt: '2026-04-01T00:00:00.000Z',
           pagamento: {
             id: 'pay-local',
@@ -164,7 +164,7 @@ describe('GET /api/financeiro/pagamentos/aluno/[alunoId]', () => {
     expect(json.data.cobrancas[0]).toMatchObject({
       category: 'MENSALIDADE',
       payerRole: 'RESPONSAVEL',
-      detailHref: '/cobrancas/cb1',
+      detailHref: '/charges/cb1',
     });
     expect(json.data.resumo.totalPago).toBe(150);
     expect(json.data.resumo.porCategoria.MENSALIDADE.totalPago).toBe(150);

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import {
   getMobileStatement,
   MobileStatementUnauthorizedError,
-} from '@/features/financeiro/server/mobile-extrato.service';
+} from '@/features/finance/operations/server/mobile-statement.service';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';

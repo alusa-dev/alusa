@@ -80,24 +80,11 @@ function logMiddlewareRedirect(pathname: string, reason: string, status: number)
 }
 
 const protectedPagePrefixes = [
-  '/dashboard',
-  '/admin/',
-  '/alunos/',
-  '/colaboradores/',
-  '/configuracoes/',
-  '/conta/',
-  '/ajuda',
-  '/comunicacao',
-  '/modalidades/',
-  '/planos/',
-  '/professores/',
-  '/matriculas/',
-  '/rematriculas/',
-  '/antecipacoes/',
-  '/portal/',
-  '/vendas/',
-  '/finance/',
-  '/financeiro/',
+  '/dashboard', '/admin', '/students', '/employees', '/settings', '/account',
+  '/help', '/communications', '/programs', '/plans', '/teachers', '/enrollments',
+  '/reenrollments', '/advances', '/portal', '/sales', '/finance', '/lessons',
+  '/classes', '/rooms', '/charges', '/contracts', '/bundles', '/responsibles',
+  '/events', '/notifications', '/search',
 ] as const;
 
 function isProtectedPagePath(pathname: string): boolean {
@@ -111,9 +98,45 @@ function isProtectedPagePath(pathname: string): boolean {
 }
 
 function isFinanceiroPagePath(pathname: string): boolean {
-  return pathname === '/financeiro' || pathname.startsWith('/financeiro/');
+  const prefixes = [
+    '/finance/charges', '/finance/account', '/finance/cost-centers', '/finance/entries',
+    '/finance/payments', '/finance/reports', '/finance/statement', '/finance/tax-invoices',
+    '/advances',
+  ];
+  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
+const legacyRouteSegments: Record<string, string> = {
+  ajuda: 'help', alunos: 'students', antecipacoes: 'advances', aulas: 'lessons', busca: 'search',
+  cobrancas: 'charges', colaboradores: 'employees', combos: 'bundles', comunicacao: 'communications',
+  conta: 'account', contratos: 'contracts', eventos: 'events', financeiro: 'finance', matriculas: 'enrollments',
+  modalidades: 'programs', notificacoes: 'notifications', planos: 'plans', rematriculas: 'reenrollments',
+  responsaveis: 'responsibles', salas: 'rooms', turmas: 'classes', vendas: 'sales', configuracoes: 'settings',
+  agenda: 'schedule', frequencia: 'attendance', reposicoes: 'replacements', avulsas: 'one-time',
+  parcelamentos: 'installments', 'simulador-vendas': 'sales-simulator', campanhas: 'campaigns', turma: 'class',
+  evento: 'event', aluno: 'student', responsavel: 'responsible', historico: 'history', estoque: 'inventory',
+  categorias: 'categories', produtos: 'products', comprovante: 'receipt', cobranca: 'charge', perfil: 'profile',
+  documentos: 'documents', assinaturas: 'subscriptions', figurinos: 'costumes', ingressos: 'tickets',
+  'centros-custo': 'cost-centers', lancamentos: 'entries', extrato: 'statement', 'nota-fiscal': 'tax-invoices',
+  pagamentos: 'payments', relatorios: 'reports', novo: 'new', nova: 'new', minhas: 'mine', antecipar: 'request',
+  automatica: 'automatic', 'whatsapp-teste': 'whatsapp-test', 'excluir-conta': 'delete',
+  'forma-pagamento': 'payment-method', 'plano-faturamento': 'billing-plan',
+  'situacao-cadastral': 'registration-status', verificacao: 'verification', seguranca: 'security',
+  integracoes: 'integrations', notafiscal: 'tax-invoices', usuarios: 'users', 'teste-asaas': 'asaas-test',
+  modelos: 'templates', importar: 'import', editar: 'edit',
+};
+
+function legacyDestination(pathname: string): string | null {
+  if (pathname.startsWith('/api/') || pathname === '/finance/minha-conta' || pathname.startsWith('/finance/minha-conta/')) return null;
+  const sourceSegments = pathname.split('/');
+  const translatedSegments = sourceSegments.map((segment, index) => {
+    if (segment === 'reposicoes' && sourceSegments[index - 1] === 'vendas') return 'restocks';
+    if (segment === 'financeiro' && sourceSegments[index - 1] === 'eventos') return 'financial';
+    return legacyRouteSegments[segment] ?? segment;
+  });
+  const translated = translatedSegments.join('/');
+  return translated === pathname ? null : translated;
+}
 function canAccessFinanceiroPages(role: unknown): boolean {
   return typeof role === 'string' && financeiroPageRoles.has(role.toUpperCase());
 }
@@ -427,7 +450,7 @@ export default async function proxy(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
   if (isTest) {
-    if (!pathname.startsWith('/api/') && (pathname === '/rematriculas' || pathname.startsWith('/rematriculas/'))) {
+    if (!pathname.startsWith('/api/') && (pathname === '/reenrollments' || pathname.startsWith('/reenrollments/'))) {
       return handleProtectedPage(req);
     }
 
@@ -439,6 +462,14 @@ export default async function proxy(req: NextRequest) {
     const apexUrl = new URL(req.nextUrl.pathname + req.nextUrl.search, 'https://alusa.app');
     logMiddlewareRedirect(req.nextUrl.pathname, 'www_to_apex', 308);
     return NextResponse.redirect(apexUrl, 308);
+  }
+
+  const legacyPath = legacyDestination(pathname);
+  if (legacyPath) {
+    const destination = req.nextUrl.clone();
+    destination.pathname = legacyPath;
+    logMiddlewareRedirect(pathname, 'legacy_route_migration', 308);
+    return NextResponse.redirect(destination, 308);
   }
 
   if (pathname.startsWith('/api/')) {
@@ -462,26 +493,36 @@ export const config = {
     '/',
     '/dashboard',
     '/admin/:path*',
-    '/alunos/:path*',
-    '/colaboradores/:path*',
-    '/configuracoes/:path*',
-    '/conta/:path*',
-    '/ajuda',
-    '/ajuda/:path*',
-    '/comunicacao',
-    '/comunicacao/:path*',
-    '/modalidades/:path*',
-    '/planos/:path*',
+    '/students/:path*',
+    '/employees/:path*',
+    '/settings/:path*',
+    '/account/:path*',
+    '/help',
+    '/help/:path*',
+    '/communications',
+    '/communications/:path*',
+    '/programs/:path*',
+    '/plans/:path*',
     '/professores/:path*',
-    '/matriculas/:path*',
-    '/rematriculas/:path*',
-    '/antecipacoes/:path*',
+    '/enrollments/:path*',
+    '/reenrollments/:path*',
+    '/advances/:path*',
     '/dashboard/:path*',
     '/portal/:path*',
-    '/vendas/:path*',
+    '/sales/:path*',
     '/finance/wizard/:path*',
-    '/financeiro/:path*',
     '/finance/:path*',
+    '/advances/:path*',
+    '/lessons/:path*',
+    '/classes/:path*',
+    '/rooms/:path*',
+    '/charges/:path*',
+    '/contracts/:path*',
+    '/bundles/:path*',
+    '/responsibles/:path*',
+    '/events/:path*',
+    '/notifications/:path*',
+    '/search',
     '/api/:path*',
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
   ],

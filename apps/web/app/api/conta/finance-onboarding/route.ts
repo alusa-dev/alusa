@@ -3,8 +3,8 @@ import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { asaasGetMyAccountCommercialInfo } from '@alusa/finance';
 import { getKycSummary } from '@alusa/finance';
-import { contaFinanceOnboardingResultDTOSchema } from '@/features/conta/dtos';
-import { mapContaFinanceOnboardingResultToDTO } from '@/features/conta/mappers';
+import { contaFinanceOnboardingResultDTOSchema } from '@/features/account/dtos';
+import { mapContaFinanceOnboardingResultToDTO } from '@/features/account/mappers';
 import { getFinanceOnboardingContext } from '@/src/server/finance/admin-integration.service';
 
 const allowedRoles = new Set(['ADMIN']);

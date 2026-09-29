@@ -11,7 +11,7 @@ import {
   getRenewalPreviewStudentNames,
   previewRenewalProcessForTenant,
   validateRenewalPreviewReferences,
-} from '@/src/server/matriculas/renewal-preview-http.service';
+} from '@/src/server/enrollments/renewal-preview-http.service';
 import { ZodError } from 'zod';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);

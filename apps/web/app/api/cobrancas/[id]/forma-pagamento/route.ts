@@ -4,9 +4,9 @@ import {
   cobrancaRouteParamsDTOSchema,
   cobrancaUpdateFormaPagamentoInputDTOSchema,
   cobrancaUpdateFormaPagamentoResultDTOSchema,
-} from '@/features/financeiro/cobrancas/dtos';
-import { mapCobrancaUpdateFormaPagamentoResultToDTO } from '@/features/financeiro/cobrancas/mappers';
-import { updateCobrancaFormaPagamento } from '@/src/server/finance/cobranca-forma-pagamento.service';
+} from '@/features/finance/operations/charges/dtos';
+import { mapCobrancaUpdateFormaPagamentoResultToDTO } from '@/features/finance/operations/charges/mappers';
+import { updateCobrancaFormaPagamento } from '@/src/server/finance/charge-payment-method.service';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 

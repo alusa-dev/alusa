@@ -43,7 +43,7 @@ test.describe('Cadastro de aluno maior de idade', () => {
       uf: 'SP',
     });
 
-    await page.goto('/alunos');
+    await page.goto('/students');
 
     // Fechar dialog de boas-vindas se aparecer
     const welcomeDialog = page.getByRole('dialog', { name: 'Bem-vindo à Alusa' });
@@ -134,7 +134,7 @@ test.describe('Cadastro de aluno maior de idade', () => {
       });
     });
 
-    await page.goto('/alunos');
+    await page.goto('/students');
 
     // Fechar dialog se aparecer
     const welcomeDialog = page.getByRole('dialog', { name: 'Bem-vindo à Alusa' });

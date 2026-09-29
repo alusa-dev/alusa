@@ -4,7 +4,7 @@ import {
   getFinancialOverviewReport,
   validateFinancialReportDimensions,
 } from '@alusa/finance';
-import { financialOverviewReportDTOSchema } from '@/features/financeiro/relatorios/dtos';
+import { financialOverviewReportDTOSchema } from '@/features/finance/operations/reports/dtos';
 import {
   financialReportJson,
   handleFinancialReportError,

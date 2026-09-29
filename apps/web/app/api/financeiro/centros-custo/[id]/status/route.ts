@@ -3,17 +3,17 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   centroCustoMutationResultDTOSchema,
   centroCustoRouteParamsDTOSchema,
-  centroCustoStatusInputDTOSchema,
-} from '@/features/financeiro/centros-custo/dtos';
-import { mapCentroCustoToDTO } from '@/features/financeiro/centros-custo/mappers';
-import { getCentroCusto, updateCentroCustoStatus } from '@/src/server/finance/centro-custo.service';
+  costCenterStatusInputDTOSchema,
+} from '@/features/finance/operations/cost-centers/dtos';
+import { mapCostCenterToDTO } from '@/features/finance/operations/cost-centers/mappers';
+import { getCostCenter, updateCostCenterStatus } from '@/src/server/finance/cost-center.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
-const statusSchema = centroCustoStatusInputDTOSchema;
+const statusSchema = costCenterStatusInputDTOSchema;
 
 function err(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status, headers: { 'cache-control': 'no-store' } });
@@ -40,18 +40,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return err(400, 'DADOS_INVALIDOS', issue.message);
     }
 
-    const centro = await getCentroCusto(user.contaId, id);
+    const centro = await getCostCenter(user.contaId, id);
     if (!centro) return err(404, 'NAO_ENCONTRADO', 'Centro de custo nao encontrado');
 
-    const updateResult = await updateCentroCustoStatus(user.contaId, id, parsed.data);
+    const updateResult = await updateCostCenterStatus(user.contaId, id, parsed.data);
     if (updateResult.count === 0) return err(404, 'NAO_ENCONTRADO', 'Centro de custo nao encontrado');
 
-    const updated = await getCentroCusto(user.contaId, id);
+    const updated = await getCostCenter(user.contaId, id);
     if (!updated) return err(404, 'NAO_ENCONTRADO', 'Centro de custo nao encontrado');
 
     return NextResponse.json(
       centroCustoMutationResultDTOSchema.parse({
-        data: mapCentroCustoToDTO(updated as unknown as Record<string, unknown>),
+        data: mapCostCenterToDTO(updated as unknown as Record<string, unknown>),
       }),
     );
   } catch (e) {

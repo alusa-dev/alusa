@@ -5,20 +5,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-vi.mock('@/src/server/aulas/session', () => ({
+vi.mock('@/src/server/lessons/session', () => ({
   canAccessAulas: vi.fn(),
   getAulasSessionUser: vi.fn(),
   resolveAulasAccessScope: vi.fn(),
 }));
 
-vi.mock('@/src/server/aulas/frequencia/attendance-workspace.service', () => ({
+vi.mock('@/src/server/lessons/attendance/attendance-workspace.service', () => ({
   getAttendanceTurmaWorkspace: vi.fn(),
   listAttendanceWorkspace: vi.fn(),
 }));
 
-const { canAccessAulas, getAulasSessionUser, resolveAulasAccessScope } = await import('@/src/server/aulas/session');
+const { canAccessAulas, getAulasSessionUser, resolveAulasAccessScope } = await import('@/src/server/lessons/session');
 const { getAttendanceTurmaWorkspace, listAttendanceWorkspace } = await import(
-  '@/src/server/aulas/frequencia/attendance-workspace.service'
+  '@/src/server/lessons/attendance/attendance-workspace.service'
 );
 const { GET: GET_WORKSPACE } = await import('@/app/api/aulas/frequencia/workspace/route');
 const { GET: GET_TURMA_WORKSPACE } = await import(

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { signPublicEventContract } from '@alusa/lib/events/event-contracts.service';
 import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
-import { publicAssinarContratoInputDTOSchema, publicAssinarContratoResultDTOSchema } from '@/features/contratos/dtos';
+import { publicAssinarContratoInputDTOSchema, publicAssinarContratoResultDTOSchema } from '@/features/contracts/dtos';
 import { loadPublicContractPdf } from '@/src/server/contracts/load-public-contract-pdf';
 
 function mapError(error: unknown) {

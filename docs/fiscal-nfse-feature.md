@@ -45,7 +45,7 @@ apps/web/
   app/api/cobrancas/[id]/nota-fiscal/**                 # APIs de emissão/sync/cancel
   app/api/jobs/reconcile-fiscal-settings/route.ts       # Cron config fiscal
   app/api/jobs/reconcile-stale-invoices/route.ts        # Cron notas stale
-  features/configuracoes/notafiscal/**                  # Wizard UI + hooks + DTOs
+  features/settings/notafiscal/**                  # Wizard UI + hooks + DTOs
   components/financeiro/CobrancaNotaFiscal.tsx          # Painel na cobrança
 
 packages/finance/src/

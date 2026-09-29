@@ -6,10 +6,10 @@ vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
 }));
 
-vi.mock('@/src/server/matriculas/matricula-pausa.service', async () => {
+vi.mock('@/src/server/enrollments/enrollment-pause.service', async () => {
   const actual = await vi.importActual<
-    typeof import('@/src/server/matriculas/matricula-pausa.service')
-  >('@/src/server/matriculas/matricula-pausa.service');
+    typeof import('@/src/server/enrollments/enrollment-pause.service')
+  >('@/src/server/enrollments/enrollment-pause.service');
   return {
     ...actual,
     getPausaResumo: vi.fn(),
@@ -41,7 +41,7 @@ describe('GET /api/matriculas/[id]/pausa-resumo', () => {
 
   it('deve retornar resumo completo de pausa', async () => {
     const { getServerSession } = await import('next-auth');
-    const { getPausaResumo } = await import('@/src/server/matriculas/matricula-pausa.service');
+    const { getPausaResumo } = await import('@/src/server/enrollments/enrollment-pause.service');
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
     const mockResumo = {
@@ -87,7 +87,7 @@ describe('GET /api/matriculas/[id]/pausa-resumo', () => {
 
   it('deve retornar resumo quando matrícula não está pausada', async () => {
     const { getServerSession } = await import('next-auth');
-    const { getPausaResumo } = await import('@/src/server/matriculas/matricula-pausa.service');
+    const { getPausaResumo } = await import('@/src/server/enrollments/enrollment-pause.service');
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
     const mockResumo = {
@@ -118,7 +118,7 @@ describe('GET /api/matriculas/[id]/pausa-resumo', () => {
   it('deve retornar 404 se matrícula não encontrada', async () => {
     const { getServerSession } = await import('next-auth');
     const { getPausaResumo, PausaBusinessError } = await import(
-      '@/src/server/matriculas/matricula-pausa.service'
+      '@/src/server/enrollments/enrollment-pause.service'
     );
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
@@ -135,7 +135,7 @@ describe('GET /api/matriculas/[id]/pausa-resumo', () => {
 
   it('deve retornar 500 para erros não tratados', async () => {
     const { getServerSession } = await import('next-auth');
-    const { getPausaResumo } = await import('@/src/server/matriculas/matricula-pausa.service');
+    const { getPausaResumo } = await import('@/src/server/enrollments/enrollment-pause.service');
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
     vi.mocked(getPausaResumo).mockRejectedValue(new Error('Unexpected'));

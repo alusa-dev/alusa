@@ -5,9 +5,9 @@ import {
   cobrancaNotifyInputDTOSchema,
   cobrancaNotifyResultDTOSchema,
   cobrancaRouteParamsDTOSchema,
-} from '@/features/financeiro/cobrancas/dtos';
-import { mapCobrancaNotifyResultToDTO } from '@/features/financeiro/cobrancas/mappers';
-import { resolveCobrancaPaymentLookupForTenant } from '@/src/server/finance/resolve-cobranca-payment-lookup';
+} from '@/features/finance/operations/charges/dtos';
+import { mapCobrancaNotifyResultToDTO } from '@/features/finance/operations/charges/mappers';
+import { resolveCobrancaPaymentLookupForTenant } from '@/src/server/finance/resolve-charge-payment-lookup';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 

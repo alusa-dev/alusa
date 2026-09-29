@@ -34,7 +34,7 @@ export async function notifyPlatformBillingEvent(input: {
     title: notification.title,
     message: notification.message,
     dedupeKey: `platform-billing:${input.eventType}:${input.eventId}`,
-    relatedPath: '/conta/plano-faturamento',
+    relatedPath: '/account/billing-plan',
     entityType: 'PlatformBillingWebhookEvent',
     entityId: input.eventId,
     sourceType: 'Stripe',
@@ -94,7 +94,7 @@ async function sendPlatformBillingEmails(input: {
     take: 10,
   });
 
-  const actionUrl = buildAppUrl('/conta/plano-faturamento');
+  const actionUrl = buildAppUrl('/account/billing-plan');
 
   for (const recipient of recipients) {
     await sendTransactionalEmail({

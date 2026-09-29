@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { cn } from '@/lib/utils';
 
 import { FILTER_INPUT_CLASS, TIME_OPTIONS, formatDateInputValue, toDateOnly, toTimeOnly } from './event-form-utils';
 
@@ -17,10 +18,14 @@ export function EventDateTimeField({
   name,
   defaultValue,
   required,
+  inputClassName,
+  timeSelectClassName,
 }: {
   name: string;
   defaultValue?: string | null;
   required?: boolean;
+  inputClassName?: string;
+  timeSelectClassName?: string;
 }) {
   const [date, setDate] = useState<Date | undefined>(() => {
     const raw = toDateOnly(defaultValue);
@@ -40,11 +45,11 @@ export function EventDateTimeField({
         onChange={setDate}
         variant="input"
         placeholder="dd/mm/aaaa"
-        className={FILTER_INPUT_CLASS}
+        className={cn(FILTER_INPUT_CLASS, inputClassName)}
         readOnlyInput
       />
       <Select value={time || undefined} onValueChange={setTime}>
-        <SelectTrigger aria-label="Horário" className="h-10 w-full rounded-lg border-slate-200 bg-white text-sm text-slate-900 shadow-none">
+        <SelectTrigger aria-label="Horário" className={cn('h-10 w-full rounded-lg border-slate-200 bg-white text-sm text-slate-900 shadow-none', timeSelectClassName)}>
           <SelectValue placeholder="--:--" />
         </SelectTrigger>
         <SelectContent className="max-h-72 text-[13px]">

@@ -3,8 +3,8 @@ import { NextRequest } from 'next/server';
 import {
   contratoPublicTokenParamsDTOSchema,
   contratoPublicoDTOSchema,
-} from '@/features/contratos/dtos';
-import { mapPublicContratoRecordToDTO } from '@/features/contratos/mappers';
+} from '@/features/contracts/dtos';
+import { mapPublicContratoRecordToDTO } from '@/features/contracts/mappers';
 import { jsonSensitive } from '@/lib/http-security';
 import { hashPublicContractToken } from '@alusa/lib/contracts/tokens';
 import { ipFromRequest } from '@/lib/rate-limit';

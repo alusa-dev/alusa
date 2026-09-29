@@ -23,7 +23,7 @@ vi.mock('@/src/prisma', () => ({
   prisma: prismaMock,
 }));
 
-const { criarMatricula } = await import('@/src/server/matriculas/matricula.service');
+const { criarMatricula } = await import('@/src/server/enrollments/enrollment.service');
 
 describe('criarMatricula conflicts', () => {
   beforeEach(() => {

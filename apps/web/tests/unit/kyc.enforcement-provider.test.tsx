@@ -58,7 +58,7 @@ describe('KycEnforcementProvider', () => {
   });
 
   it('desabilita enforcement na própria página de verificação para evitar duplicidade', () => {
-    usePathnameMock.mockReturnValue('/conta/verificacao');
+    usePathnameMock.mockReturnValue('/account/verification');
     useSessionMock.mockReturnValue({
       status: 'authenticated',
       data: { user: { id: 'u1', role: 'ADMIN' } },

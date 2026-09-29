@@ -10,8 +10,8 @@ import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
 import { privateJson } from '@/lib/private-cache';
 import {
   financeiroKpisResultDTOSchema,
-} from '@/features/financeiro/dtos';
-import { mapFinanceiroKpisResultToDTO } from '@/features/financeiro/mappers';
+} from '@/features/finance/operations/dtos';
+import { mapFinanceiroKpisResultToDTO } from '@/features/finance/operations/mappers';
 import { financeInternalError, financeJsonError, logFinanceApiRequest } from '@/lib/api/finance-api-response';
 
 export const dynamic = 'force-dynamic';

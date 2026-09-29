@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import { contaBlockedActionResultDTOSchema } from '@/features/conta/dtos';
+import { contaBlockedActionResultDTOSchema } from '@/features/account/dtos';
 
 const BLOCKED_MESSAGE =
   'Atualizações de cartão precisam ser solicitadas diretamente à secretaria para garantirmos segurança e sincronização correta.';

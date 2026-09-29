@@ -60,9 +60,9 @@ vi.mock('@/src/prisma', () => ({
   prisma: prismaMock,
 }));
 
-vi.mock('@/src/server/matriculas/matricula.service', async () => {
-  const actual = await vi.importActual<typeof import('@/src/server/matriculas/matricula.service')>(
-    '@/src/server/matriculas/matricula.service',
+vi.mock('@/src/server/enrollments/enrollment.service', async () => {
+  const actual = await vi.importActual<typeof import('@/src/server/enrollments/enrollment.service')>(
+    '@/src/server/enrollments/enrollment.service',
   );
 
   return {
@@ -71,7 +71,7 @@ vi.mock('@/src/server/matriculas/matricula.service', async () => {
   };
 });
 
-vi.mock('@/src/server/matriculas/financial-context.service', () => ({
+vi.mock('@/src/server/enrollments/financial-context.service', () => ({
   isFinancialContextEditable: vi.fn(() => true),
   resolveMatriculaFinancialContext: resolveMatriculaFinancialContextMock,
   updateFamilyFinancialLocalState: updateFamilyFinancialLocalStateMock,

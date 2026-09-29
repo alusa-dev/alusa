@@ -7,7 +7,7 @@ import {
   getVariantAttributeEntries,
   needsVariantGeneration,
   type ProductVariantDTO,
-} from '@/features/vendas/services/product-variant-service';
+} from '@/features/sales/services/product-variant-service';
 
 function makeVariant(
   title: string,

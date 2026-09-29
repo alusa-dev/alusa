@@ -11,7 +11,7 @@ import {
   getAttendanceLaunchDeadline,
   getAttendanceLaunchPolicyMessage,
   isAttendanceEventOnSelectedDay,
-} from '@/features/aulas/utils/attendance-launch';
+} from '@/features/lessons/utils/attendance-launch';
 
 describe('attendance-launch', () => {
   it('expõe a janela operacional padrão de 7 dias', () => {

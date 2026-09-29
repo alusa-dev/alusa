@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server';
 
-import { updateCalendarEventInputSchema } from '@/features/aulas/dtos';
+import { updateCalendarEventInputSchema } from '@/features/lessons/dtos';
 import {
   getMobileAgendaEvent,
   MobileAgendaForbiddenError,
   MobileAgendaNotFoundError,
   MobileAgendaUnauthorizedError,
   updateMobileAgendaEvent,
-} from '@/features/aulas/server/mobile-agenda.service';
-import { knownMobileAgendaError } from '@/features/aulas/server/mobile-agenda-route-utils';
+} from '@/features/lessons/server/mobile-agenda.service';
+import { knownMobileAgendaError } from '@/features/lessons/server/mobile-agenda-route-utils';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 

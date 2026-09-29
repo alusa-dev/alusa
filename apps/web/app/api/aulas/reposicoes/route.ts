@@ -3,13 +3,13 @@ import { NextRequest } from 'next/server';
 import {
   createMakeupClassInputSchema,
   listMakeupClassesQuerySchema,
-} from '@/features/aulas/dtos';
+} from '@/features/lessons/dtos';
 import {
   createMakeupClass,
   listMakeupClasses,
-} from '@/src/server/aulas/reposicoes/makeup.service';
-import { handleAulasRouteError, json } from '@/src/server/aulas/route-utils';
-import { assertAulasWriteAccess, canAccessAulas, getAulasSessionUser } from '@/src/server/aulas/session';
+} from '@/src/server/lessons/makeups/makeup.service';
+import { handleAulasRouteError, json } from '@/src/server/lessons/route-utils';
+import { assertAulasWriteAccess, canAccessAulas, getAulasSessionUser } from '@/src/server/lessons/session';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

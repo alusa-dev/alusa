@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server';
 
-import { createExperimentalClassInputSchema } from '@/features/aulas/dtos';
-import { createExperimentalClass } from '@/src/server/aulas/experimentais/experimental.service';
-import { handleAulasRouteError, json } from '@/src/server/aulas/route-utils';
-import { assertAulasWriteAccess, canAccessAulas, getAulasSessionUser } from '@/src/server/aulas/session';
+import { createExperimentalClassInputSchema } from '@/features/lessons/dtos';
+import { createExperimentalClass } from '@/src/server/lessons/experimental-classes/experimental.service';
+import { handleAulasRouteError, json } from '@/src/server/lessons/route-utils';
+import { assertAulasWriteAccess, canAccessAulas, getAulasSessionUser } from '@/src/server/lessons/session';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

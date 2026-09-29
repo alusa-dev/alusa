@@ -9,7 +9,7 @@ import {
 } from '../../../../../packages/lib/src/schemas/colaborador';
 import { create as createColab } from '../../../../../packages/lib/src/server/services/colaborador-service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
-import { listColaboradores } from '@/src/server/colaboradores/colaborador-read.service';
+import { listColaboradores } from '@/src/server/employees/employee-read.service';
 
 export async function GET(req: NextRequest) {
   // MULTI-TENANT: validar sessão e usar contaId da sessão

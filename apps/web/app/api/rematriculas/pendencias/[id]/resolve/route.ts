@@ -5,8 +5,8 @@ import { getSessionUser } from '@/lib/auth/session';
 import {
   RenewalPermissionError,
   requireRenewalPermission,
-} from '@/src/server/matriculas/renewal-permissions.service';
-import { resolveRenewalPendingFromHttp } from '@/src/server/matriculas/renewal-http-commands.service';
+} from '@/src/server/enrollments/renewal-permissions.service';
+import { resolveRenewalPendingFromHttp } from '@/src/server/enrollments/renewal-http-commands.service';
 
 const bodySchema = z.object({
   resolution: z.string().trim().min(5),

@@ -11,7 +11,7 @@ vi.mock('@/lib/auth-options', () => ({
   authOptions: {},
 }));
 
-vi.mock('@/src/server/matriculas/matricula.service', () => ({
+vi.mock('@/src/server/enrollments/enrollment.service', () => ({
   criarMatricula: vi.fn(),
   listarMatriculas: vi.fn(),
   MatriculaConflictError: class MatriculaConflictError extends Error {
@@ -19,7 +19,7 @@ vi.mock('@/src/server/matriculas/matricula.service', () => ({
   },
 }));
 
-vi.mock('@/src/server/matriculas/create-immediate-enrollment.use-case', () => ({
+vi.mock('@/src/server/enrollments/create-immediate-enrollment.use-case', () => ({
   createImmediateEnrollment: vi.fn(),
   ImmediateEnrollmentCreationError: class ImmediateEnrollmentCreationError extends Error {
     constructor(
@@ -45,7 +45,7 @@ vi.mock('@/lib/finance/financial-account-gate', () => ({
   guardFinancialAccountOr412: vi.fn(async () => ({ ok: true, summary: {} })),
 }));
 
-vi.mock('@/src/server/matriculas/enrollment-billing.orchestrator', () => ({
+vi.mock('@/src/server/enrollments/enrollment-billing.orchestrator', () => ({
   provisionIndividualEnrollmentBilling: vi.fn(async () => ({
     taxaSync: null,
     subscriptionSync: null,
@@ -54,11 +54,11 @@ vi.mock('@/src/server/matriculas/enrollment-billing.orchestrator', () => ({
   })),
 }));
 
-vi.mock('@/src/server/matriculas/enrollment-billing-outbox.service', () => ({
+vi.mock('@/src/server/enrollments/enrollment-billing-outbox.service', () => ({
   enqueueEnrollmentBillingOutbox: vi.fn(async () => ({ id: 'outbox-1' })),
 }));
 
-vi.mock('@/src/server/matriculas/initial-enrollment-billing-preview.service', () => ({
+vi.mock('@/src/server/enrollments/initial-enrollment-billing-preview.service', () => ({
   previewInitialEnrollmentBilling: vi.fn(async () => ({
     previewHash: 'a'.repeat(64),
     sourceVersion: 'b'.repeat(64),
@@ -117,7 +117,7 @@ describe('POST /api/matriculas', () => {
 
   it('retorna aviso diferido para canais escolhidos sem chamar customer financeiro inline', async () => {
     const { getServerSession } = await import('next-auth');
-    const { criarMatricula } = await import('@/src/server/matriculas/matricula.service');
+    const { criarMatricula } = await import('@/src/server/enrollments/enrollment.service');
     const { ensureCustomer, syncCustomerNotificationsForUserSelection } =
       await import('@alusa/finance');
 
@@ -193,7 +193,7 @@ describe('POST /api/matriculas', () => {
 
   it('mantem canais desabilitados como aviso assíncrono quando o wizard confirmou a configuração', async () => {
     const { getServerSession } = await import('next-auth');
-    const { criarMatricula } = await import('@/src/server/matriculas/matricula.service');
+    const { criarMatricula } = await import('@/src/server/enrollments/enrollment.service');
     const { ensureCustomer, syncCustomerNotificationsForUserSelection } =
       await import('@alusa/finance');
 
@@ -270,11 +270,11 @@ describe('POST /api/matriculas', () => {
   it('confirma o financeiro inline antes de retornar a matrícula', async () => {
     const { getServerSession } = await import('next-auth');
     const { createImmediateEnrollment } = await import(
-      '@/src/server/matriculas/create-immediate-enrollment.use-case'
+      '@/src/server/enrollments/create-immediate-enrollment.use-case'
     );
     const { guardFinancialAccountOr412 } = await import('@/lib/finance/financial-account-gate');
     const { enqueueEnrollmentBillingOutbox } = await import(
-      '@/src/server/matriculas/enrollment-billing-outbox.service'
+      '@/src/server/enrollments/enrollment-billing-outbox.service'
     );
 
     vi.mocked(getServerSession).mockResolvedValue({
@@ -286,7 +286,7 @@ describe('POST /api/matriculas', () => {
         {
           code: 'KYC_REQUIRED',
           financialAccount: { status: 'PENDING_ACTIVATION' },
-          redirectTo: '/conta/verificacao',
+          redirectTo: '/account/verification',
         },
         { status: 412 },
       ) as never,
@@ -386,7 +386,7 @@ describe('POST /api/matriculas', () => {
   it('retorna 409 quando o commit remoto foi compensado por preview desatualizado', async () => {
     const { getServerSession } = await import('next-auth');
     const { createImmediateEnrollment, ImmediateEnrollmentCreationError } = await import(
-      '@/src/server/matriculas/create-immediate-enrollment.use-case'
+      '@/src/server/enrollments/create-immediate-enrollment.use-case'
     );
 
     vi.mocked(getServerSession).mockResolvedValue({

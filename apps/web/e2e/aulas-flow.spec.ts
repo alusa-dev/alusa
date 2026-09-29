@@ -206,7 +206,7 @@ test.describe('Aulas', () => {
         response.status() === 200,
     );
 
-    await page.goto('/aulas/agenda');
+    await page.goto('/lessons/schedule');
     await initialAgendaLoad;
     await expect(page.getByRole('heading', { name: 'Agenda' })).toBeVisible();
     await expect(page.getByTestId('agenda-new-event')).toBeEnabled({ timeout: 15000 });
@@ -238,7 +238,7 @@ test.describe('Aulas', () => {
     await createdEventCard.click();
     await expect(page.getByText('REALIZADO')).toBeVisible({ timeout: 10000 });
 
-    await page.goto('/aulas/frequencia');
+    await page.goto('/lessons/attendance');
     await page.getByRole('tab', { name: 'Histórico' }).click();
     await expect(page.getByText(data.turma.nome)).toBeVisible({ timeout: 15000 });
     await page.getByRole('button', { name: new RegExp(data.turma.nome) }).first().click();
@@ -255,7 +255,7 @@ test.describe('Aulas', () => {
         response.status() === 200,
     );
 
-    await page.goto('/aulas/reposicoes');
+    await page.goto('/lessons/replacements');
     await initialMakeupLoad;
     await expect(page.getByRole('heading', { name: 'Reposições', exact: true })).toBeVisible();
     await expect(page.getByTestId('makeup-create-open')).toBeEnabled({ timeout: 15000 });

@@ -3,8 +3,8 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   cobrancaRefundInputDTOSchema,
   cobrancaRouteParamsDTOSchema,
-} from '@/features/financeiro/cobrancas/dtos';
-import { executeCobrancaRefund } from '@/src/server/finance/refund-cobranca.service';
+} from '@/features/finance/operations/charges/dtos';
+import { executeCobrancaRefund } from '@/src/server/finance/refund-charge.service';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {

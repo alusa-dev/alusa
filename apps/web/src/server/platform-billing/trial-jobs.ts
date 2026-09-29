@@ -140,7 +140,7 @@ export async function expirePlatformBillingTrials(input: {
         title: 'Seu período gratuito terminou',
         message: 'Cadastre um cartão para continuar usando as operações da Alusa.',
         dedupeKey: `platform-billing:trial-expired:${account.id}`,
-        relatedPath: '/conta/plano-faturamento',
+        relatedPath: '/account/billing-plan',
         entityType: 'PlatformBillingAccount',
         entityId: account.id,
         sourceType: 'Stripe',

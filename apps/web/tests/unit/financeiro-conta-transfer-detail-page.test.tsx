@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { ContaTransferDetailPage } from '@/features/financeiro/conta/ContaTransferDetailPage';
+import { AccountTransferDetailPage } from '@/features/finance/operations/account/AccountTransferDetailPage';
 
 void React;
 
@@ -118,7 +118,7 @@ describe('ContaTransferDetailPage', () => {
         }),
       } as Response);
 
-    renderWithQueryClient(<ContaTransferDetailPage transferId="tr_1" />);
+    renderWithQueryClient(<AccountTransferDetailPage transferId="tr_1" />);
 
     expect(await screen.findByRole('button', { name: 'Cancelar transferência' })).toBeInTheDocument();
 
@@ -180,7 +180,7 @@ describe('ContaTransferDetailPage', () => {
       }),
     } as Response);
 
-    renderWithQueryClient(<ContaTransferDetailPage transferId="tr_2" />);
+    renderWithQueryClient(<AccountTransferDetailPage transferId="tr_2" />);
 
     expect(await screen.findByRole('link', { name: 'Ver comprovante' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Cancelar transferência' })).not.toBeInTheDocument();

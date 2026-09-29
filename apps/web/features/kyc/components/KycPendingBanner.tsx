@@ -22,7 +22,7 @@ export function KycPendingBanner() {
         <Warning className="h-4 w-4 text-amber-600 mt-0.5" />
         <p className="text-sm text-amber-900">{message}</p>
       </div>
-      <Button size="sm" onClick={() => router.push('/conta/verificacao')}>
+      <Button size="sm" onClick={() => router.push('/account/verification')}>
         Enviar documentos pendentes
       </Button>
     </div>

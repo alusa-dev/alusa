@@ -3,7 +3,7 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   getPausaResumo,
   PausaBusinessError,
-} from '@/src/server/matriculas/matricula-pausa.service';
+} from '@/src/server/enrollments/enrollment-pause.service';
 
 export const dynamic = 'force-dynamic';
 

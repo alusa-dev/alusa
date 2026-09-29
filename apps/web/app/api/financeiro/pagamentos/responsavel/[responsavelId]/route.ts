@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { mapFinanceiroPagamentoPessoaHistoricoResultToDTO } from '@/features/financeiro/mappers';
+import { mapFinanceiroPagamentoPessoaHistoricoResultToDTO } from '@/features/finance/operations/mappers';
 import { buildPersonPaymentLedger } from '@/src/server/finance/person-payment-ledger';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);

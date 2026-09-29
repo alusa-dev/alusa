@@ -7,7 +7,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { cobrancaRouteParamsDTOSchema } from '@/features/financeiro/cobrancas/dtos';
+import { cobrancaRouteParamsDTOSchema } from '@/features/finance/operations/charges/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { ManualSyncError, resendTaxaMatricula } from '@alusa/finance';
 

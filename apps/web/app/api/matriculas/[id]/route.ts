@@ -2,7 +2,7 @@ import {
   deleteMatriculaRoute,
   getMatriculaRoute,
   patchMatriculaRoute,
-} from '@/src/server/matriculas/matricula-operations-http.service';
+} from '@/src/server/enrollments/enrollment-operations-http.service';
 
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   return getMatriculaRoute(req, ctx);

@@ -2,11 +2,11 @@ import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
-import type { WizardState } from '@/components/matriculas/wizard/types';
+import type { WizardState } from '@/features/enrollments/components/wizard/types';
 import { prepararPayloadMatricula } from '@/lib/validations/resumo.schema';
 import { showNotificationSyncWarnings } from '@/lib/notifications/show-notification-sync-warnings';
-import { previewInitialEnrollmentBillingRequest } from '@/features/cadastro/matriculas/services/matriculas-service';
-import type { EnrollmentBillingStrategyDTO } from '@/features/cadastro/matriculas/dtos';
+import { previewInitialEnrollmentBillingRequest } from '@/features/enrollments/services/enrollments-service';
+import type { EnrollmentBillingStrategyDTO } from '@/features/enrollments/dtos';
 import {
   clearEnrollmentAttempt,
   readEnrollmentAttempt,
@@ -15,9 +15,9 @@ import {
   sendEnrollmentAttempt,
   EnrollmentSubmissionError,
   type EnrollmentConfirmationState,
-} from '@/features/cadastro/matriculas/services/enrollment-attempt';
+} from '@/features/enrollments/services/enrollment-attempt';
 
-export type MatriculaResponse = import('@/features/cadastro/matriculas/dtos').CreateMatriculaResultDTO;
+export type MatriculaResponse = import('@/features/enrollments/dtos').CreateMatriculaResultDTO;
 
 interface UseMatriculaSubmitOptions {
   onSuccess?: (_data: MatriculaResponse) => void;
@@ -247,7 +247,7 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
               { duration: 7000 },
             );
 
-            router.push(`/matriculas/${result.matricula.id}`);
+            router.push(`/enrollments/${result.matricula.id}`);
             return result;
           }
 
@@ -269,9 +269,9 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
             { duration: 7000 },
           );
 
-          router.push(`/matriculas/${result.matricula.id}`);
+          router.push(`/enrollments/${result.matricula.id}`);
         } else {
-          router.push(`/matriculas/${result.matricula.id}`);
+          router.push(`/enrollments/${result.matricula.id}`);
         }
       }
 

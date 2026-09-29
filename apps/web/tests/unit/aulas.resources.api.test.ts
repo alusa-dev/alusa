@@ -5,17 +5,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-vi.mock('@/src/server/aulas/session', () => ({
+vi.mock('@/src/server/lessons/session', () => ({
   canAccessAulas: vi.fn(),
   getAulasSessionUser: vi.fn(),
 }));
 
-vi.mock('@/src/server/aulas/agenda/agenda.service', () => ({
+vi.mock('@/src/server/lessons/agenda/agenda.service', () => ({
   listAgendaResources: vi.fn(),
 }));
 
-const { canAccessAulas, getAulasSessionUser } = await import('@/src/server/aulas/session');
-const { listAgendaResources } = await import('@/src/server/aulas/agenda/agenda.service');
+const { canAccessAulas, getAulasSessionUser } = await import('@/src/server/lessons/session');
+const { listAgendaResources } = await import('@/src/server/lessons/agenda/agenda.service');
 const { GET } = await import('@/app/api/aulas/resources/route');
 
 describe('/api/aulas/resources', () => {

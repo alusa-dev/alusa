@@ -12,3 +12,17 @@ export async function findPendingInviteForAcceptance(
 ) {
   return prisma.invite.findUnique({ where: { token }, select });
 }
+
+export async function findExistingUserForInvite(email: string) {
+  return prisma.usuario.findFirst({
+    where: { email: { equals: email, mode: 'insensitive' } },
+    select: { id: true, status: true, contaId: true },
+  });
+}
+
+export async function findUserMembershipForInvite(usuarioId: string, contaId: string) {
+  return prisma.usuarioConta.findUnique({
+    where: { usuarioId_contaId: { usuarioId, contaId } },
+    select: { status: true },
+  });
+}

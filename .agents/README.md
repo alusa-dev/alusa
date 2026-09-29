@@ -8,6 +8,7 @@ Contratos canônicos de especialistas de IA para o monorepo Alusa.
 |------------|--------------|
 | **Cursor** | **`alusa-orchestrator` / `#orchestrator`** (pipeline multi-agente) · Skill `alusa` / `#alusa` · `alusa-education-domain` / `#education-domain` · `core` / `#core` · `tenant` / `#tenant` · `alusa-tenant-security-auditor` / `#tenant-audit` · `alusa-prisma-data-integrity` / `#prisma-integrity` · `asaas` / `#asaas` · `asaas-client` / `#asaas-client` · `alusa-webhook-reliability` / `#webhook-reliability` · `finance-sync` / `#finance-sync` · `alusa-test-adversarial` / `#test-adversarial` · `alusa-architecture-reviewer` / `#architecture-review` · `chrome-devtools` / `#chrome-devtools` |
 | **Copilot** | **`@Alusa Delivery Orchestrator`** · `@Alusa Product Context` · `@Alusa Education Domain Specialist` · `@Alusa Core` · `@Multitenancy Isolation` · `@Alusa Tenant Security Auditor` · `@Alusa Prisma Data Integrity Specialist` · `@Asaas MCP Specialist` · `@Asaas HTTP Client Specialist` · `@Alusa Webhook Reliability Specialist` · `@Financial Sync Specialist` · `@Alusa Adversarial Testing Specialist` · `@Alusa Architecture Reviewer` · `@Chrome DevTools MCP Specialist` |
+| **Codex** | Skill **`$alusa-delivery-workflow`** para orquestração; somente GPT-6 Luna. Medium é o padrão para trabalho delimitado, High para mudanças substanciais e Extra High (`xhigh`) para casos excepcionalmente difíceis. No máximo um subagente ativo e revisores read-only conforme risco. |
 | **Qualquer** | “Siga `.agents/alusa-orchestrator.md`” (coordenação) · `.agents/alusa.md`, `.agents/alusa-education-domain.md`, `.agents/core.md`, `.agents/tenant.md`, `.agents/alusa-tenant-security-auditor.md`, `.agents/alusa-prisma-data-integrity.md`, `.agents/asaas.md`, `.agents/asaas-client.md`, `.agents/alusa-webhook-reliability.md`, `.agents/finance-sync.md`, `.agents/alusa-test-adversarial.md`, `.agents/alusa-architecture-reviewer.md` ou `.agents/chrome-devtools.md` |
 
 ## Mapa de agentes
@@ -55,4 +56,5 @@ alusa-orchestrator (coordenação — roteamento + síntese)
 - Sincronização financeira outbound: [finance-sync.md](./finance-sync.md)
 - Automação e auditoria no navegador: [chrome-devtools.md](./chrome-devtools.md)
 - Skills Cursor: `.cursor/skills/`
+- Workflow Codex: `.agents/skills/alusa-delivery-workflow/` · configuração e subagentes: `.codex/`
 - Adaptadores Copilot: `.github/agents/`

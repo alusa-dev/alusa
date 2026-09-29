@@ -38,7 +38,7 @@ describe('AuthLoadingClient', () => {
   });
 
   it('renderiza a logo da Alusa e redireciona para o callback interno', async () => {
-    useSearchParamsMock.mockReturnValue(new URLSearchParams('callbackUrl=%2Ffinanceiro%2Fpagamentos'));
+    useSearchParamsMock.mockReturnValue(new URLSearchParams('callbackUrl=%2Ffinance%2Fpayments'));
 
     render(<LoadingClient />);
 
@@ -46,7 +46,7 @@ describe('AuthLoadingClient', () => {
     expect(screen.getByTestId('alusa-loader-logo')).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(replaceMock).toHaveBeenCalledWith('/financeiro/pagamentos');
+      expect(replaceMock).toHaveBeenCalledWith('/finance/payments');
     });
   });
 

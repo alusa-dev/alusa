@@ -4,21 +4,21 @@ import {
   userProfileWithSchoolDTOSchema,
   userSchoolAddressDTOSchema,
 } from '@/features/users/dtos';
-import { mapContaFormaPagamentoResultToDTO } from '@/features/conta/mappers';
-import { mapAlunoListItemToDTO } from '@/features/cadastro/alunos/mappers';
-import { mapProfessorRecordToDTO } from '@/features/cadastro/professores/mappers';
+import { mapContaFormaPagamentoResultToDTO } from '@/features/account/mappers';
+import { mapAlunoListItemToDTO } from '@/features/students/mappers';
+import { mapProfessorRecordToDTO } from '@/features/teachers/mappers';
 import { mapDashboardMetricsResultToDTO } from '@/features/dashboard/mappers';
-import { mapCreateRematriculaResultToDTO } from '@/features/cadastro/rematriculas/mappers';
+import { mapCreateRematriculaResultToDTO } from '@/features/renewals/mappers';
 import {
   mapFinanceiroIndicadoresResultToDTO,
   mapFinanceiroLancamentoRecordToDTO,
   mapFinanceiroPagamentoAlunoHistoricoResultToDTO,
   mapFinanceiroKpisResultToDTO,
-} from '@/features/financeiro/mappers';
+} from '@/features/finance/operations/mappers';
 import {
   mapCobrancaActionResultToDTO,
   mapFinanceiroCobrancaListItemToDTO,
-} from '@/features/financeiro/cobrancas/mappers';
+} from '@/features/finance/operations/charges/mappers';
 
 describe('DTO Refactor Wave 2', () => {
   it('parses user profile with school address', () => {

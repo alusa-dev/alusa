@@ -896,7 +896,7 @@ test.describe('Regras de Domínio — Matrícula', () => {
     await atualizarStatusViaAPI(page, matriculaId, 'CANCELADA', ids.contaId);
 
     // Navegar e verificar que não aparece
-    await page.goto('/rematriculas');
+    await page.goto('/reenrollments');
     await page.waitForLoadState('networkidle');
 
     // Único aluno com nome "Adulto Domain" e matrícula cancelada não deveria aparecer

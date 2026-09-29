@@ -6,7 +6,7 @@ import {
   MobileStudentUnauthorizedError,
   saveMobileStudentNotifications,
 } from '@/features/students/server/mobile-students.service';
-import { saveMobileAsaasNotificationPreferencesInputDTOSchema } from '@/features/configuracoes/notificacoes/asaas/dtos';
+import { saveMobileAsaasNotificationPreferencesInputDTOSchema } from '@/features/settings/notifications/asaas/dtos';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 
 export const runtime = 'nodejs';

@@ -8,7 +8,7 @@ import {
   calcularPrecoMatricula,
   criarMatricula,
   listarMatriculas,
-} from '@/src/server/matriculas/matricula.service';
+} from '@/src/server/enrollments/enrollment.service';
 
 // Serviço oficial para criar conta com owner atendendo ao schema
 import { createFirstUser } from '@/lib/first-user-service';

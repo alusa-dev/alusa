@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { contratoRouteParamsDTOSchema } from '@/features/contratos/dtos';
+import { contratoRouteParamsDTOSchema } from '@/features/contracts/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   drainContractWhatsAppNotifications,

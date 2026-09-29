@@ -88,7 +88,7 @@ export function ConfirmadasCard({ data, loading }: FinanceiroKpiCardProps) {
       titulo="Turmas ativas"
       valor={valor}
       descricao="Com status ativo"
-      action={{ label: 'Ver turmas', href: '/turmas' }}
+      action={{ label: 'Ver turmas', href: '/classes' }}
       loading={loading}
     />
   );
@@ -102,7 +102,7 @@ export function VencidasCard({ data, loading }: FinanceiroKpiCardProps) {
       valor={valor}
       descricao="Arrecadado até hoje"
       formato="moeda"
-      action={{ label: 'Ver taxas', href: '/financeiro/relatorios' }}
+      action={{ label: 'Ver taxas', href: '/finance/reports' }}
       loading={loading}
     />
   );
@@ -116,7 +116,7 @@ export function AguardandoPagamentoCard({ data, loading }: DashboardFinanceKpiCa
       valor={valor}
       descricao="Mesmo total de Todas as Cobranças em aberto"
       formato="moeda"
-      action={{ label: 'Ver cobranças', href: '/cobrancas' }}
+      action={{ label: 'Ver cobranças', href: '/charges' }}
       loading={loading}
     />
   );

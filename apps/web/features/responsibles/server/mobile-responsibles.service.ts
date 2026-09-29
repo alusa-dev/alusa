@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 
-import { mapUpdateResponsavelDTOToData } from '@/features/responsaveis/mappers';
-import { updateResponsavelInputDTOSchema } from '@/features/responsaveis/dtos';
+import { mapUpdateResponsavelDTOToData } from '@/features/responsibles/mappers';
+import { updateResponsavelInputDTOSchema } from '@/features/responsibles/dtos';
 import { prisma } from '@/lib/prisma';
 import { runWithTenant, type TenantTransactionClient } from '@/lib/prisma-tenant';
 import {

@@ -3,7 +3,7 @@ import {
   updateProductVariant,
   deleteProductVariant,
 } from '@alusa/lib/services/product-variant.service';
-import { productVariantUpdateInputDTOSchema } from '@/features/vendas/dtos';
+import { productVariantUpdateInputDTOSchema } from '@/features/sales/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 function jsonError(status: number, code: string, message: string) {

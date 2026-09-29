@@ -1,1 +1,0 @@
-export { ExtratoPage } from './ExtratoPage';

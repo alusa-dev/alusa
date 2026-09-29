@@ -171,6 +171,10 @@ Este arquivo (**`AGENTS.md`**) espelha as **regras universais** do agente **core
 - Usar Zod para validação de dados quando aplicável.
 - Usar Prisma respeitando transações quando houver consistência entre múltiplas escritas.
 - Usar nomes claros, preferencialmente em inglês para arquivos, funções, DTOs e módulos técnicos.
+- Agrupar features web por domínio em inglês (`students`, `responsibles`, `enrollments`, `finance`, `employees`, `lessons`); criar `components`, `hooks`, `services` e `dtos` dentro do domínio apenas quando necessários.
+- Manter UI exclusiva de uma feature em `apps/web/features/<domain>/components`, UI compartilhada entre features em `apps/web/components/shared` e UI compartilhada entre apps em `packages/ui`.
+- Preservar URLs públicas existentes em português; renomear URLs exige migração planejada com redirects de compatibilidade.
+- Manter testes unitários em `apps/web/tests/unit`, testes de integração em `apps/web/tests/integration` e testes E2E em `apps/web/e2e`.
 - Não inventar tabelas, rotas, funções, packages ou contratos como se já existissem.
 - Quando algo depender do código real, inspecionar o código antes de propor alteração.
 - Reutilizar padrões existentes do repositório.

@@ -2,13 +2,13 @@ import { NextResponse } from 'next/server';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { apiJsonError } from '@/lib/api/standard-response';
-import { editMatriculaInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
-import { MatriculaConflictError } from '@/src/server/matriculas/matricula.service';
+import { editMatriculaInputDTOSchema } from '@/features/enrollments/dtos';
+import { MatriculaConflictError } from '@/src/server/enrollments/enrollment.service';
 import {
   editMatriculaForHttp,
   EditMatriculaHttpError,
-} from '@/src/server/matriculas/edit-matricula.service';
-import { mapMatriculaRuleError } from '@/src/server/matriculas/matricula-http-error';
+} from '@/src/server/enrollments/edit-enrollment.service';
+import { mapMatriculaRuleError } from '@/src/server/enrollments/enrollment-http-error';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,

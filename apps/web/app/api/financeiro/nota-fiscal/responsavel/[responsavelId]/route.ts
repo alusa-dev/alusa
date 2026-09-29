@@ -3,8 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   notaFiscalPersonDetailQueryDTOSchema,
   notaFiscalResponsavelRouteParamsDTOSchema,
-} from '@/features/financeiro/notafiscal/dtos';
-import { mapNotaFiscalPessoaDetalheResultToDTO } from '@/features/financeiro/notafiscal/mappers';
+} from '@/features/finance/operations/tax-invoices/dtos';
+import { mapNotaFiscalPessoaDetalheResultToDTO } from '@/features/finance/operations/tax-invoices/mappers';
 import { financeInternalError, financeJsonError } from '@/lib/api/finance-api-response';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getFiscalInvoicePersonDetail } from '@alusa/finance';

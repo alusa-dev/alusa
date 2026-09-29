@@ -44,7 +44,12 @@ const alunoShape = {
   // Para menor, o contato principal pode ficar no responsável.
   nome: z.string().min(2, 'Nome obrigatório'),
   nomeSocial: z.string().nullable().optional(),
-  dataNasc: z.coerce.date().refine(d => d >= MIN_DATE && d < today, 'Data de nascimento inválida'),
+  dataNasc: z.coerce
+    .date({
+      required_error: 'Data de nascimento obrigatória',
+      invalid_type_error: 'Data de nascimento inválida',
+    })
+    .refine(d => d >= MIN_DATE && d < today, 'Data de nascimento inválida'),
   // CPF opcional para -18 anos, obrigatório para +18 (validado no superRefine)
   cpf: z.string().optional().transform(v => v ? digits(v) : '').refine(v => !v || v.length === 11, 'CPF inválido'),
   email: z.preprocess(emptyToUndefined, z.string().email('E-mail inválido').optional()),

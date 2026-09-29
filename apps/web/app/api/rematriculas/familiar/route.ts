@@ -11,13 +11,13 @@ import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate
 import {
   RENEWAL_IDEMPOTENCY_CONFLICT,
   RENEWAL_IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT,
-} from '@/src/server/matriculas/renewal-process.service';
+} from '@/src/server/enrollments/renewal-process.service';
 import {
   confirmRenewalProcessFromHttp,
   listConfirmedRenewalItems,
   previewRenewalProcessFromHttp,
   validateFamilyRenewalReferences,
-} from '@/src/server/matriculas/renewal-http-commands.service';
+} from '@/src/server/enrollments/renewal-http-commands.service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);

@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 
 import { getSessionUser } from '@/lib/auth/session';
-import { getRenewalProcessDetailFromHttp } from '@/src/server/matriculas/renewal-http-commands.service';
-import { hasRenewalPermission } from '@/src/server/matriculas/renewal-permissions.service';
+import { getRenewalProcessDetailFromHttp } from '@/src/server/enrollments/renewal-http-commands.service';
+import { hasRenewalPermission } from '@/src/server/enrollments/renewal-permissions.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(

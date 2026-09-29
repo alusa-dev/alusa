@@ -8,8 +8,8 @@ import {
 } from '@/lib/cache/tenant-cache';
 import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
 import { privateJson } from '@/lib/private-cache';
-import { financeiroIndicadoresResultDTOSchema } from '@/features/financeiro/dtos';
-import { mapFinanceiroIndicadoresResultToDTO } from '@/features/financeiro/mappers';
+import { financeiroIndicadoresResultDTOSchema } from '@/features/finance/operations/dtos';
+import { mapFinanceiroIndicadoresResultToDTO } from '@/features/finance/operations/mappers';
 import { financeInternalError, financeJsonError, logFinanceApiRequest } from '@/lib/api/finance-api-response';
 
 export const dynamic = 'force-dynamic';

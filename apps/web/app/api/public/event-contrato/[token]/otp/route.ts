@@ -8,7 +8,7 @@ import { resolvePublicContractSigner } from '@alusa/lib/contracts/use-cases/reso
 import { findPublicEventContractByToken } from '@alusa/lib/events/event-contracts.service';
 import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
-import { publicSolicitarAssinaturaOtpInputDTOSchema } from '@/features/contratos/dtos';
+import { publicSolicitarAssinaturaOtpInputDTOSchema } from '@/features/contracts/dtos';
 import { sendContractSignatureOtpEmail } from '@/lib/email/contract-signature-otp-email';
 import { recordPublicEventContractEvidence } from '@/src/server/contracts/public-contract-evidence.service';
 

@@ -161,7 +161,7 @@ export async function getEventParticipantDetail(input: {
           asaasPaymentId: order.asaasPaymentId,
           paymentStatus: order.paymentStatus,
           invoiceUrl: order.invoiceUrl,
-          chargeDetailUrl: `/cobrancas/event-map-order:${order.id}`,
+          chargeDetailUrl: `/charges/event-map-order:${order.id}`,
           ticketsUrl: order.status === 'CONFIRMED'
             && order.ticketFulfillmentStatus === 'ISSUED'
             && order.items.length > 0

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { ProductFormValues } from '@/features/vendas/ProductFormFeature';
+import type { ProductFormValues } from '@/features/sales/ProductFormFeature';
 
 // ── Pure validation logic extracted for testing ────────────────────
 

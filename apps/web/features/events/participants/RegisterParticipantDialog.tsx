@@ -4,14 +4,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Trash2 } from 'lucide-react';
 
-import { AutocompleteList } from '@/components/matriculas/wizard/shared/AutocompleteList';
+import { AutocompleteList } from '@/components/shared/AutocompleteList';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
@@ -20,6 +19,12 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { InfoCallout } from '@/components/ui/info-callout';
+import { cn } from '@/lib/utils';
+import {
+  wizardSoftCheckboxClass,
+  wizardSoftFieldInputClass,
+  wizardSoftTextareaFieldClass,
+} from '@/components/shared/wizard/field-styles';
 
 import {
   EventApiError,
@@ -29,7 +34,7 @@ import {
 } from '../events-service';
 import { EventField as Field } from '../shared/EventField';
 import { eventQueryKeys } from '../shared/event-query-keys';
-import { FILTER_INPUT_CLASS, PRIMARY_BUTTON_CLASS } from '../shared/event-form-utils';
+import { PRIMARY_BUTTON_CLASS } from '../shared/event-form-utils';
 import { parseCurrencyInput } from '../shared/event-formatters';
 import { ParticipantBillingFields, type ParticipantBillingMethod, type ParticipantChargeType, type ParticipantDiscountType, type ParticipantNotificationChannel } from './ParticipantBillingFields';
 import { useStudentAutocomplete } from './useStudentAutocomplete';
@@ -309,14 +314,24 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
           Inscrever aluno
         </Button>
       </DialogTrigger>
-      <DialogContent className="flex w-[calc(100vw-2rem)] max-w-md min-h-0 max-h-[min(90dvh,calc(100dvh-2rem))] flex-col gap-0 overflow-hidden bg-slate-50 p-0 sm:rounded-2xl">
-        <form key={open ? 'open' : 'closed'} action={handleRegisterParticipant} className="flex min-h-0 max-h-[min(90dvh,calc(100dvh-2rem))] flex-col overflow-hidden">
-          <DialogHeader className="shrink-0 border-b border-slate-200 bg-slate-50 px-6 py-6 pr-14 text-left">
-            <DialogTitle className="text-xl font-semibold text-slate-900">Inscrever aluno no evento</DialogTitle>
-            <DialogDescription className="mt-2 text-sm leading-5 text-slate-600">Selecione um aluno cadastrado e especifique a taxa cobrada.</DialogDescription>
-          </DialogHeader>
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-6 [scrollbar-gutter:auto]">
-          <Field label="Pesquise um aluno">
+      <DialogContent
+        fullScreenMobile
+        overlayClass="alusa-registration-wizard-overlay"
+        className={cn(
+          'event-registration-dialog alusa-wizard-corner-smoothing flex w-[calc(100vw-2rem)] max-w-md min-h-0 flex-col gap-0 overflow-hidden rounded-[20px] bg-white p-0 transition-[height] duration-200 ease-out',
+          billingMethod === 'MANUAL_RECEIVED' || billingMethod === 'ISSUE_CHARGE'
+            ? 'h-[min(760px,calc(100dvh-3rem))]'
+            : 'h-[min(488px,calc(100dvh-3rem))]',
+          'max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0',
+        )}
+      >
+        <form key={open ? 'open' : 'closed'} action={handleRegisterParticipant} className="flex h-full min-h-0 flex-col overflow-hidden">
+          <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-4 pr-14 max-md:pb-4 max-md:pl-4 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
+            <DialogTitle className="text-xl font-semibold tracking-tight text-slate-900">Inscrever aluno no evento</DialogTitle>
+            <DialogDescription className="mt-2 max-w-2xl text-sm text-slate-600">Selecione um aluno cadastrado e especifique a taxa cobrada.</DialogDescription>
+          </div>
+          <div className="alusa-wizard-fields flex-1 space-y-4 overflow-y-auto scroll-smooth !bg-white px-4 py-4 max-md:min-h-0 md:px-6 md:py-5">
+            <Field label="Pesquise um aluno">
             <div className="relative">
               <Input
                 type="text"
@@ -342,7 +357,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
                     setShowSuggestions(false);
                   }
                 }}
-                className={`${FILTER_INPUT_CLASS} pr-10`}
+                className={cn(wizardSoftFieldInputClass, 'pr-10')}
                 placeholder="Busque pelo nome do aluno..."
                 required
               />
@@ -412,7 +427,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
                     value={groupSearch}
                     onChange={(event) => setGroupSearch(event.target.value)}
                     placeholder="Busque outro aluno do responsável..."
-                    className={`${FILTER_INPUT_CLASS} pr-10`}
+                    className={cn(wizardSoftFieldInputClass, 'pr-10')}
                     autoFocus
                   />
                   <Search
@@ -452,7 +467,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
               )}
             </div>
           )}
-          <ParticipantBillingFields
+            <ParticipantBillingFields
             billingMethod={billingMethod}
             chargePaymentMethod={chargePaymentMethod}
             chargeType={chargeType}
@@ -491,13 +506,18 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
             notificationChannels={notificationChannels}
             onNotificationChannelsChange={setNotificationChannels}
             feeMultiplier={1 + groupStudents.length}
+            controlClassName={wizardSoftFieldInputClass}
+            checkboxClassName={wizardSoftCheckboxClass}
           />
-          <Field label="Observações">
-            <Textarea name="notes" className="min-h-16 rounded-lg border-slate-200" />
-          </Field>
+            <Field label="Observações">
+              <Textarea name="notes" className={wizardSoftTextareaFieldClass} />
+            </Field>
           </div>
-          <DialogFooter className="shrink-0 border-t border-slate-200 bg-slate-50 px-6 py-4">
-            <Button type="submit" disabled={registerMutation.isPending} className="w-full">
+          <DialogFooter className="shrink-0 flex-col-reverse gap-3 space-x-0 border-t border-slate-200 bg-white px-4 py-3 max-md:pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:flex-col-reverse sm:space-x-0 md:flex-row md:justify-end md:px-6 md:py-3">
+            <Button type="button" variant="outline" disabled={registerMutation.isPending} className="h-10 min-h-10 w-full min-w-0 rounded-[10px] border-0 bg-[#eff3f8] px-5 font-normal text-[#303030] shadow-none transition-colors hover:bg-[#e7edf5] md:w-[120px]" onClick={() => handleDialogOpenChange(false)}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={registerMutation.isPending} variant="wizardPrimary" className="h-10 min-h-10 w-full min-w-0 rounded-[10px] bg-[#512a82] px-5 font-normal text-white shadow-none hover:bg-[#512a82] md:w-[160px]">
               {registerMutation.isPending ? 'Inscrevendo...' : 'Confirmar inscrição'}
             </Button>
           </DialogFooter>

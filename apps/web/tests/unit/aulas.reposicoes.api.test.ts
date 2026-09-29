@@ -5,22 +5,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-vi.mock('@/src/server/aulas/session', () => ({
+vi.mock('@/src/server/lessons/session', () => ({
   assertAulasWriteAccess: vi.fn().mockResolvedValue(undefined),
   canAccessAulas: vi.fn(),
   getAulasSessionUser: vi.fn(),
 }));
 
-vi.mock('@/src/server/aulas/reposicoes/makeup.service', () => ({
+vi.mock('@/src/server/lessons/makeups/makeup.service', () => ({
   createMakeupClass: vi.fn(),
   getMakeupClassDetails: vi.fn(),
   listMakeupClasses: vi.fn(),
   updateMakeupClass: vi.fn(),
 }));
 
-const { canAccessAulas, getAulasSessionUser } = await import('@/src/server/aulas/session');
+const { canAccessAulas, getAulasSessionUser } = await import('@/src/server/lessons/session');
 const { createMakeupClass, getMakeupClassDetails, listMakeupClasses, updateMakeupClass } = await import(
-  '@/src/server/aulas/reposicoes/makeup.service'
+  '@/src/server/lessons/makeups/makeup.service'
 );
 const { GET: GET_LIST, POST } = await import('@/app/api/aulas/reposicoes/route');
 const { GET: GET_DETAILS, PATCH } = await import('@/app/api/aulas/reposicoes/[id]/route');

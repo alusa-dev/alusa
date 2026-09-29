@@ -3,8 +3,8 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { z } from 'zod';
 import {
   PausaBusinessError,
-} from '@/src/server/matriculas/matricula-pausa.service';
-import { reactivateMatriculaFromHttp } from '@/src/server/matriculas/matricula-http-commands.service';
+} from '@/src/server/enrollments/enrollment-pause.service';
+import { reactivateMatriculaFromHttp } from '@/src/server/enrollments/enrollment-http-commands.service';
 import { notifyMatriculaAction } from '@alusa/lib/notifications/matricula-notifications';
 import { isPlatformBillingCapacityError } from '@/src/server/platform-billing/capacity';
 import {

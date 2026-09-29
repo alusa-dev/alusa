@@ -3,7 +3,7 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { resolveChargeFromRouteRef } from '@/lib/finance/resolve-charge-route-ref';
 import { authorizeChargeInvoice, getChargeInvoiceDetail } from '@alusa/finance';
-import { chargeInvoiceResponseSchema } from '@/features/configuracoes/notafiscal/dtos';
+import { chargeInvoiceResponseSchema } from '@/features/settings/tax-invoices/dtos';
 import { publicInvoiceProviderErrorMessage } from '@/lib/api/finance-invoice-errors';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);

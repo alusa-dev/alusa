@@ -195,6 +195,7 @@ const nextConfig = {
   },
   async rewrites() {
     return [
+      // Keep /auth/... as the public URL while resolving through the shared auth route group.
       { source: '/auth/login', destination: '/login' },
       { source: '/auth/register', destination: '/register' },
       { source: '/auth/accept', destination: '/accept' },
@@ -203,6 +204,7 @@ const nextConfig = {
       { source: '/auth/verify-email', destination: '/verify-email' },
       { source: '/auth/forgot-password', destination: '/forgot-password' },
       { source: '/auth/reset-password', destination: '/reset-password' },
+      { source: '/auth/loading', destination: '/loading' },
     ];
   },
   async headers() {

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { matriculaTaxaUpdateInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
-import { updateMatriculaEnrollmentFee } from '@/src/server/matriculas/matricula-fee.service';
+import { matriculaTaxaUpdateInputDTOSchema } from '@/features/enrollments/dtos';
+import { updateMatriculaEnrollmentFee } from '@/src/server/enrollments/enrollment-fee.service';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 function error(status: number, code: string, message: string) { return NextResponse.json({ error: { code, message } }, { status }); }

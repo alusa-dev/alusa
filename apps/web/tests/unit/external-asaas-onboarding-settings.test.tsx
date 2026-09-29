@@ -51,7 +51,7 @@ describe('ExternalAsaasOnboarding settings', () => {
       }),
     });
 
-    const { ExternalAsaasOnboarding } = await import('@/components/external-asaas-onboarding/ExternalAsaasOnboarding');
+    const { ExternalAsaasOnboarding } = await import('@/features/account/components/asaas-onboarding/ExternalAsaasOnboarding');
 
     render(<ExternalAsaasOnboarding variant="settings" />);
 
@@ -107,7 +107,7 @@ describe('ExternalAsaasOnboarding settings', () => {
         json: async () => ({ success: true, summary: 'Conexão validada com sucesso.' }),
       });
 
-    const { ExternalAsaasOnboarding } = await import('@/components/external-asaas-onboarding/ExternalAsaasOnboarding');
+    const { ExternalAsaasOnboarding } = await import('@/features/account/components/asaas-onboarding/ExternalAsaasOnboarding');
 
     render(<ExternalAsaasOnboarding variant="settings" />);
 

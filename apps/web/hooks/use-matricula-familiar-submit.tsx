@@ -3,9 +3,9 @@ import type {
   FamilyEnrollmentOutcome,
   WizardFamiliarSubmitResult,
   WizardState,
-} from '@/components/matriculas/wizard/types';
-import { previewInitialEnrollmentBillingRequest } from '@/features/cadastro/matriculas/services/matriculas-service';
-import { calculateFamilyMonthlyTotal } from '@/components/matriculas/wizard/family-pricing';
+} from '@/features/enrollments/components/wizard/types';
+import { previewInitialEnrollmentBillingRequest } from '@/features/enrollments/services/enrollments-service';
+import { calculateFamilyMonthlyTotal } from '@/features/enrollments/components/wizard/family-pricing';
 
 interface UseMatriculaFamiliarSubmitOptions {
   onSuccess?: (_outcome: FamilyEnrollmentOutcome) => void;

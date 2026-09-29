@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { matriculaRouteParamsDTOSchema } from '@/features/cadastro/matriculas/dtos';
-import { matriculaProvisionamentoActionDTOSchema } from '@/features/cadastro/matriculas/dtos';
+import { matriculaRouteParamsDTOSchema } from '@/features/enrollments/dtos';
+import { matriculaProvisionamentoActionDTOSchema } from '@/features/enrollments/dtos';
 import {
   loadMatriculaProvisioningView,
   reconcileMatriculaProvisioning,
   retryMatriculaProvisioning,
-} from '@/src/server/matriculas/provisioning-http.service';
+} from '@/src/server/enrollments/provisioning-http.service';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,10 +57,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (action === 'RECONCILE_LOCAL_CHARGES') {
     const result = await reconcileMatriculaProvisioning({ matriculaId: id, contaId: auth.user.contaId, actorUserId: auth.user.id });
     if (!result.ok) {
+      const message = result.code === 'COBRANCA_PAGA_REQUER_DECISAO_MANUAL'
+        ? 'Há pagamento confirmado para esta matrícula. O recebimento foi preservado; a intenção terminal permanece bloqueada até decisão operacional.'
+        : result.code === 'INTENCAO_TERMINAL_ESTADO_REMOTO_INCOMPLETO'
+          ? 'O Asaas não confirmou o estado de todas as cobranças. A matrícula continua em reconciliação.'
+          : result.code === 'INTENCAO_TERMINAL_SEM_COBRANCAS_REQUER_REVISAO'
+            ? 'Não há cobranças locais suficientes para confirmar a operação remota. A matrícula continua em reconciliação.'
+            : 'Não há cobrança local com identificador financeiro para reconciliar automaticamente. Revise antes de reenviar.';
       return jsonError(
         409,
-        'RECONCILIACAO_MANUAL_NECESSARIA',
-        'Não há cobrança local com identificador financeiro para reconciliar automaticamente. Revise antes de reenviar.',
+        result.code ?? 'RECONCILIACAO_MANUAL_NECESSARIA',
+        message,
+        'reason' in result ? { reason: result.reason } : undefined,
       );
     }
 
@@ -69,8 +77,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       {
         ...nextView,
         reconciliation: { checked: result.checked, updated: result.updated },
+        terminalIntent: 'terminalIntent' in result ? result.terminalIntent : undefined,
       },
-      { status: 202, headers: { 'cache-control': 'no-store' } },
+      { status: 'terminalIntent' in result ? 200 : 202, headers: { 'cache-control': 'no-store' } },
     );
   }
 
@@ -82,7 +91,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     );
   }
 
-  await retryMatriculaProvisioning({ matriculaId: id, contaId: auth.user.contaId, actorUserId: auth.user.id });
+  const retried = await retryMatriculaProvisioning({ matriculaId: id, contaId: auth.user.contaId, actorUserId: auth.user.id });
+  if (retried === 'TERMINAL') {
+    return jsonError(409, 'MATRICULA_TERMINAL', 'Matrículas recusadas ou canceladas não podem reenviar o provisionamento financeiro.');
+  }
+  if (retried === 'RECONCILIATION_REQUIRED') {
+    return jsonError(409, 'RECONCILIACAO_OBRIGATORIA', 'Há resultado financeiro incerto. Reconcilie antes de reenviar para evitar duplicidade.');
+  }
+  if (retried === 'NOT_RETRYABLE') {
+    return jsonError(409, 'PROVISIONAMENTO_NAO_REENVIAVEL', 'O provisionamento atual não está disponível para reenvio.');
+  }
 
   const nextView = await loadMatriculaProvisioningView(id, auth.user.contaId);
   return NextResponse.json(nextView, { status: 202, headers: { 'cache-control': 'no-store' } });

@@ -10,8 +10,8 @@ import {
   asaasNotificationPreferencesResultDTOSchema,
   saveAsaasNotificationPreferencesResultDTOSchema,
   updateAsaasNotificationPreferencesInputDTOSchema,
-} from '@/features/configuracoes/notificacoes/asaas/dtos';
-import { deriveCustomerNotificationChannelDefaults } from '@/features/configuracoes/notificacoes/asaas/customer-channel-defaults';
+} from '@/features/settings/notifications/asaas/dtos';
+import { deriveCustomerNotificationChannelDefaults } from '@/features/settings/notifications/asaas/customer-channel-defaults';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 

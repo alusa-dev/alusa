@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { ContaPage } from '@/features/financeiro/conta/ContaPage';
+import { AccountPage } from '@/features/finance/operations/account/AccountPage';
 
 void React;
 
@@ -134,7 +134,7 @@ describe('ContaPage', () => {
         }),
       } as Response);
 
-    renderWithQueryClient(<ContaPage />);
+    renderWithQueryClient(<AccountPage />);
 
     expect(await screen.findByText('Saldo disponível')).toBeInTheDocument();
     expect(await screen.findByText('Saídas e transferências')).toBeInTheDocument();
@@ -211,11 +211,11 @@ describe('ContaPage', () => {
         }),
       } as Response);
 
-    renderWithQueryClient(<ContaPage />);
+    renderWithQueryClient(<AccountPage />);
 
     fireEvent.click(await screen.findByLabelText(/Abrir detalhes da transferência transfer:tr_1/));
 
-    expect(pushMock).toHaveBeenCalledWith('/financeiro/conta/transferencias/tr_1');
+    expect(pushMock).toHaveBeenCalledWith('/finance/account/transferencias/tr_1');
   });
 
   it('renderiza erro quando falha ao carregar dados', async () => {
@@ -225,7 +225,7 @@ describe('ContaPage', () => {
       json: async () => ({ error: 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' }),
     } as Response);
 
-    renderWithQueryClient(<ContaPage />);
+    renderWithQueryClient(<AccountPage />);
 
     expect(await screen.findByText('Não foi possível carregar a conta')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Tentar novamente' })).toBeInTheDocument();
@@ -287,7 +287,7 @@ describe('ContaPage', () => {
         }),
       } as Response);
 
-    renderWithQueryClient(<ContaPage />);
+    renderWithQueryClient(<AccountPage />);
 
     await screen.findByText('Saldo disponível');
     fireEvent.click(screen.getByRole('button', { name: /transferir/i }));
@@ -406,7 +406,7 @@ describe('ContaPage', () => {
         json: async () => ({ data: { items: [] } }),
       } as Response);
 
-    renderWithQueryClient(<ContaPage />);
+    renderWithQueryClient(<AccountPage />);
 
     await screen.findByText('Saldo disponível');
     fireEvent.click(screen.getByRole('button', { name: /transferir/i }));
@@ -486,7 +486,7 @@ describe('ContaPage', () => {
         }),
       } as Response);
 
-    renderWithQueryClient(<ContaPage />);
+    renderWithQueryClient(<AccountPage />);
 
     await screen.findByText('Saldo disponível');
     fireEvent.click(screen.getByRole('button', { name: /transferir/i }));
@@ -587,7 +587,7 @@ describe('ContaPage', () => {
       throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
     }) as typeof fetch;
 
-    renderWithQueryClient(<ContaPage />);
+    renderWithQueryClient(<AccountPage />);
 
     await screen.findByText('Saldo disponível');
     fireEvent.click(screen.getByRole('button', { name: /transferir/i }));

@@ -6,8 +6,8 @@ import {
 } from '@alusa/finance';
 import type { BillingAgreementChangeInput } from '@alusa/finance';
 import { runWithTenant } from '@/lib/prisma-tenant';
-import { updateMatriculaValueInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
-import { mapMatriculaSubscriptionValueUpdateResultToDTO } from '@/features/cadastro/matriculas/mappers';
+import { updateMatriculaValueInputDTOSchema } from '@/features/enrollments/dtos';
+import { mapMatriculaSubscriptionValueUpdateResultToDTO } from '@/features/enrollments/mappers';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(

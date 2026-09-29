@@ -3,7 +3,7 @@ import {
   listProductOptions,
   createProductOption,
 } from '@alusa/lib/services/product-option.service';
-import { productOptionCreateInputDTOSchema } from '@/features/vendas/dtos';
+import { productOptionCreateInputDTOSchema } from '@/features/sales/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 function jsonError(status: number, code: string, message: string) {

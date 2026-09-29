@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { WhatsAppConfigurationError } from '@alusa/whatsapp';
-import { whatsappTestMessageInputDTOSchema } from '@/features/comunicacao/dtos';
+import { whatsappTestMessageInputDTOSchema } from '@/features/communications/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { assertTestRecipient, assertWhatsAppConfigured, getWhatsAppRuntimeConfig } from '@/src/server/whatsapp/config';
 import { drainWhatsAppOutbox, enqueueWhatsAppMessage } from '@/src/server/whatsapp/outbox.service';

@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { listAlunosForResponsavelResultDTOSchema } from '@/features/cadastro/alunos/dtos';
-import { mapAlunoForResponsavelToDTO } from '@/features/cadastro/alunos/mappers';
-import { listAvailableStudentsForResponsible } from '@/src/server/alunos/available-for-responsible.service';
+import { listAlunosForResponsavelResultDTOSchema } from '@/features/students/dtos';
+import { mapAlunoForResponsavelToDTO } from '@/features/students/mappers';
+import { listAvailableStudentsForResponsible } from '@/src/server/students/available-for-responsible.service';
 
 export async function GET() {
   try {

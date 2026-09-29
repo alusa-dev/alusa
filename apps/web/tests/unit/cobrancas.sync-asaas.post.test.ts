@@ -22,7 +22,7 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimitAsync: mockRateLimit,
 }));
 
-vi.mock('@/src/server/finance/resolve-cobranca-payment-lookup', () => ({
+vi.mock('@/src/server/finance/resolve-charge-payment-lookup', () => ({
   resolveCobrancaPaymentLookupForTenant: mockResolveCobrancaPaymentLookupForTenant,
 }));
 

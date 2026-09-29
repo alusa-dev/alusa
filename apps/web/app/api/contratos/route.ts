@@ -5,17 +5,17 @@ import {
   createContratoInputDTOSchema,
   listContratosQueryDTOSchema,
   listContratosResultDTOSchema,
-} from '@/features/contratos/dtos';
-import { mapContratoRecordToDTO } from '@/features/contratos/mappers';
+} from '@/features/contracts/dtos';
+import { mapContratoRecordToDTO } from '@/features/contracts/mappers';
 import { z } from 'zod';
-import { materializeSubscriptionPaymentForCharge } from '@/src/server/matriculas/subscription-payment-materialization';
-import { calcularPrecoMatricula } from '@/src/server/matriculas/matricula.service';
+import { materializeSubscriptionPaymentForCharge } from '@/src/server/enrollments/subscription-payment-materialization';
+import { calcularPrecoMatricula } from '@/src/server/enrollments/enrollment.service';
 import {
   formatIsoDate,
   mapFormaPagamentoToBillingType,
   mapPeriodicidadeToCycle,
   resolveChargeableFirstDueDate,
-} from '@/src/server/matriculas/recurring-billing';
+} from '@/src/server/enrollments/recurring-billing';
 import {
   EnrollmentContractModelNotFoundError,
   EnrollmentContractModelSignatureFieldsError,

@@ -15,7 +15,7 @@ import { SidebarLogoMark } from '@/components/layout/SidebarLogoMark';
 import { FINANCE_LOCKED_GROUP_KEYS } from '@/components/layout/sidebar-config';
 import { useSidebarNavAccess } from '@/components/layout/use-sidebar-nav-access';
 
-const SETTINGS_HREF = '/admin/configuracoes';
+const SETTINGS_HREF = '/admin/settings';
 
 type MobileSidebarProps = {
   open: boolean;
@@ -110,7 +110,7 @@ export function MobileSidebar({ open, onOpenChange }: MobileSidebarProps) {
                       sidebarLocked || (isFinanceGroup && financeLocked) || isComingSoon;
                     const badgeCount =
                       isPortalUser &&
-                      item.href === '/portal/financeiro' &&
+                      item.href === '/portal/finance' &&
                       (notifications.cobrancasPendentes > 0 || notifications.cobrancasAtrasadas > 0)
                         ? notifications.cobrancasPendentes + notifications.cobrancasAtrasadas
                         : 0;

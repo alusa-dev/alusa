@@ -172,7 +172,7 @@ export default function DashboardClient({ initialData = null }: DashboardClientP
   ]);
 
   const handleGoToCadastro = useCallback(() => {
-    router.push('/alunos');
+    router.push('/students');
   }, [router]);
 
   const showKycCard = !verificationLoading && Boolean(verification) && !isApproved && !kycCardDismissed;

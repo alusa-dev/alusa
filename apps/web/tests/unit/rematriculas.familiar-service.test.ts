@@ -4,7 +4,7 @@ import {
   createRematriculaFamiliarRequest,
   previewRematriculaFamiliarRequest,
   type CreateRematriculaFamiliarInput,
-} from '@/features/cadastro/rematriculas/services/rematriculas-service';
+} from '@/features/renewals/services/renewals-service';
 
 const baseInput: CreateRematriculaFamiliarInput = {
   contaId: 'conta-1',

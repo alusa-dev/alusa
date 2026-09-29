@@ -17,13 +17,13 @@ export function resolveFinancialCapabilities(financeIntegrationMode?: string | n
 
 export function isWhitelabelTreasuryPath(pathname: string): boolean {
   return (
-    pathname === '/conta/verificacao' ||
-    pathname.startsWith('/conta/verificacao/') ||
-    pathname === '/financeiro/conta' ||
-    pathname.startsWith('/financeiro/conta/') ||
-    pathname === '/financeiro/extrato' ||
-    pathname.startsWith('/financeiro/extrato/') ||
-    pathname === '/antecipacoes' ||
-    pathname.startsWith('/antecipacoes/')
+    pathname === '/account/verification' ||
+    pathname.startsWith('/account/verification/') ||
+    pathname === '/finance/account' ||
+    pathname.startsWith('/finance/account/') ||
+    pathname === '/finance/statement' ||
+    pathname.startsWith('/finance/statement/') ||
+    pathname === '/advances' ||
+    pathname.startsWith('/advances/')
   );
 }

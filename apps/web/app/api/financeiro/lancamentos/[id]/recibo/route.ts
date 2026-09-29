@@ -5,9 +5,9 @@ import { getAsaasPaymentDetails } from '@alusa/finance';
 import {
   financeiroLancamentoReciboResultDTOSchema,
   financeiroRouteIdParamsDTOSchema,
-} from '@/features/financeiro/dtos';
-import { mapFinanceiroLancamentoReciboResultToDTO } from '@/features/financeiro/mappers';
-import { getLancamentoReceiptSource } from '@/src/server/finance/lancamento-read.service';
+} from '@/features/finance/operations/dtos';
+import { mapFinanceiroLancamentoReciboResultToDTO } from '@/features/finance/operations/mappers';
+import { getTransactionReceiptSource } from '@/src/server/finance/financial-transaction-read.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -26,7 +26,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
     const { id } = financeiroRouteIdParamsDTOSchema.parse(await params);
 
-    const lancamento = await getLancamentoReceiptSource({ contaId: auth.contaId, lancamentoId: id });
+    const lancamento = await getTransactionReceiptSource({ contaId: auth.contaId, lancamentoId: id });
 
     if (!lancamento) return err(404, 'NAO_ENCONTRADO', 'Lancamento nao encontrado');
 

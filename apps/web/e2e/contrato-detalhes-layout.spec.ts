@@ -75,7 +75,7 @@ test.describe('Contrato detalhes (layout)', () => {
       )
       .toBe(200);
 
-    await page.goto(`/contratos/${contrato.id}`);
+    await page.goto(`/contracts/${contrato.id}`);
     await expect(page.getByRole('heading', { name: /detalhes do contrato/i })).toBeVisible();
 
     const viewer = page.getByTitle('Contrato - Aluno Layout');

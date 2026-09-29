@@ -5,21 +5,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-vi.mock('@/src/server/aulas/session', () => ({
+vi.mock('@/src/server/lessons/session', () => ({
   assertAulasWriteAccess: vi.fn().mockResolvedValue(undefined),
   canAccessAulas: vi.fn(),
   getAulasSessionUser: vi.fn(),
 }));
 
-vi.mock('@/src/server/aulas/experimentais/experimental.service', () => ({
+vi.mock('@/src/server/lessons/experimental-classes/experimental.service', () => ({
   createExperimentalClass: vi.fn(),
   getExperimentalClassDetails: vi.fn(),
   updateExperimentalClass: vi.fn(),
 }));
 
-const { canAccessAulas, getAulasSessionUser } = await import('@/src/server/aulas/session');
+const { canAccessAulas, getAulasSessionUser } = await import('@/src/server/lessons/session');
 const { createExperimentalClass, getExperimentalClassDetails, updateExperimentalClass } = await import(
-  '@/src/server/aulas/experimentais/experimental.service'
+  '@/src/server/lessons/experimental-classes/experimental.service'
 );
 const { POST } = await import('@/app/api/aulas/experimentais/route');
 const { GET, PATCH } = await import('@/app/api/aulas/experimentais/[id]/route');

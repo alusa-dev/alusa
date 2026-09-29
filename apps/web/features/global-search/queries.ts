@@ -170,7 +170,7 @@ async function searchEntityGroups(query: string, contaId: string) {
         id: item.id,
         title: item.nome,
         description: compactDescription(maskCpf(item.cpf), maskEmail(item.email)),
-        href: `/alunos/${item.id}`,
+        href: `/students/${item.id}`,
       })),
     ),
     createGroup(
@@ -181,7 +181,7 @@ async function searchEntityGroups(query: string, contaId: string) {
         id: item.id,
         title: item.nome,
         description: compactDescription(maskCpf(item.cpf), maskEmail(item.email)),
-        href: `/responsaveis/${item.id}`,
+        href: `/responsibles/${item.id}`,
       })),
     ),
     createGroup(
@@ -192,7 +192,7 @@ async function searchEntityGroups(query: string, contaId: string) {
         id: item.id,
         title: item.aluno.nome,
         description: compactDescription(mapStatus(item.status), item.plano?.nome, item.turma?.nome),
-        href: `/matriculas/${item.id}`,
+        href: `/enrollments/${item.id}`,
       })),
     ),
     createGroup(
@@ -204,7 +204,7 @@ async function searchEntityGroups(query: string, contaId: string) {
         title: item.matricula.aluno.nome,
         description: compactDescription(item.asaasPaymentId, item.id, mapStatus(item.status), formatCurrency(Number(item.valor))),
         badgeLabel: mapChargeTypeLabel(item.tipo),
-        href: `/cobrancas/${item.id}`,
+        href: `/charges/${item.id}`,
       })),
     ),
     createGroup(
@@ -215,7 +215,7 @@ async function searchEntityGroups(query: string, contaId: string) {
         id: item.id,
         title: item.matricula.aluno.nome,
         description: compactDescription(mapStatus(item.status), item.id),
-        href: `/contratos/${item.id}`,
+        href: `/contracts/${item.id}`,
       })),
     ),
   ].filter((group): group is GlobalSearchGroupDTO => Boolean(group));

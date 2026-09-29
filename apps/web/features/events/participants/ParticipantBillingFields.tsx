@@ -46,6 +46,8 @@ export function ParticipantBillingFields({
   chargePaymentMethod = '',
   onChargePaymentMethodChange,
   notificationCallout,
+  controlClassName,
+  checkboxClassName,
 }: {
   billingMethod: ParticipantBillingMethod;
   chargeType: ParticipantChargeType;
@@ -71,6 +73,8 @@ export function ParticipantBillingFields({
   chargePaymentMethod?: 'BOLETO' | 'PIX' | 'CREDIT_CARD' | '';
   onChargePaymentMethodChange?: (value: 'BOLETO' | 'PIX' | 'CREDIT_CARD') => void;
   notificationCallout?: ReactNode;
+  controlClassName?: string;
+  checkboxClassName?: string;
 }) {
   const isManualBilling = billingMethod === 'MANUAL_RECEIVED' || billingMethod === 'EXEMPT';
   const effectiveBillingMethod = useBillingModeSelection && billingMethod === 'ISSUE_CHARGE'
@@ -117,6 +121,7 @@ export function ParticipantBillingFields({
           value={billingMethod || undefined}
           placeholder="Selecione a forma de cobrança"
           required
+          triggerClassName={controlClassName}
           onValueChange={(value) => {
             const nextValue = value as ParticipantBillingMethod;
             onBillingMethodChange(nextValue);
@@ -149,6 +154,7 @@ export function ParticipantBillingFields({
             value={chargePaymentMethod || undefined}
             placeholder="Selecione o meio de pagamento"
             required
+            triggerClassName={controlClassName}
             onValueChange={(value) => {
               const nextValue = value as 'BOLETO' | 'PIX' | 'CREDIT_CARD';
               onChargePaymentMethodChange?.(nextValue);
@@ -176,7 +182,7 @@ export function ParticipantBillingFields({
                   type="text"
                   value={feeText}
                   onChange={(event) => onFeeTextChange(formatCurrencyInput(event.target.value))}
-                  className={cn(FILTER_INPUT_CLASS, 'pl-10 text-right')}
+                  className={cn(FILTER_INPUT_CLASS, controlClassName, 'pl-10 text-right')}
                   required
                 />
               </div>
@@ -199,7 +205,7 @@ export function ParticipantBillingFields({
                     aria-label="Tipo de desconto"
                     className="shrink-0"
                   >
-                    <TabsList className="h-10 rounded-xl bg-slate-100/80 p-1">
+                    <TabsList className="h-10 rounded-xl bg-[#e7edf5] p-1">
                       <TabsTrigger value="PERCENTAGE" className="h-8 rounded-lg px-3 py-0 text-sm shadow-none" aria-label="Desconto percentual">%</TabsTrigger>
                       <TabsTrigger value="FIXED" className="h-8 rounded-lg px-3 py-0 text-sm shadow-none" aria-label="Desconto em valor fixo">R$</TabsTrigger>
                     </TabsList>
@@ -211,7 +217,7 @@ export function ParticipantBillingFields({
                     onChange={(event) => onDiscountTextChange?.(
                       discountType === 'FIXED' ? formatCurrencyInput(event.target.value) : event.target.value.replace(/[^\d,.]/g, ''),
                     )}
-                    className={cn(FILTER_INPUT_CLASS, 'flex-1 text-right')}
+                    className={cn(FILTER_INPUT_CLASS, controlClassName, 'flex-1 text-right')}
                     placeholder={discountType === 'FIXED' ? '0,00' : '0,00'}
                   />
                 </div>
@@ -235,6 +241,7 @@ export function ParticipantBillingFields({
             <div className="flex items-center gap-2 py-1">
               <Checkbox
                 id="event-has-entry"
+                className={checkboxClassName}
                 checked={hasEntry}
                 onCheckedChange={(checked) => {
                   onHasEntryChange(checked);
@@ -281,7 +288,7 @@ export function ParticipantBillingFields({
                     type="text"
                     value={entryText}
                     onChange={(event) => onEntryTextChange(formatCurrencyInput(event.target.value))}
-                    className={cn(FILTER_INPUT_CLASS, 'pl-10 text-right')}
+                    className={cn(FILTER_INPUT_CLASS, controlClassName, 'pl-10 text-right')}
                     required
                   />
                 </div>
@@ -292,6 +299,7 @@ export function ParticipantBillingFields({
                   name="entryPaymentMethod"
                   defaultValue="CASH"
                   required
+                  triggerClassName={controlClassName}
                   options={EVENT_PAYMENT_METHODS.filter((method) => method !== 'COMPLIMENTARY').map((method) => ({
                     value: method,
                     label: EVENT_PAYMENT_METHOD_LABELS[method],
@@ -317,7 +325,7 @@ export function ParticipantBillingFields({
                     type="text"
                     value={entryText}
                     onChange={(event) => onEntryTextChange(formatCurrencyInput(event.target.value))}
-                    className={cn(FILTER_INPUT_CLASS, 'pl-10 text-right')}
+                    className={cn(FILTER_INPUT_CLASS, controlClassName, 'pl-10 text-right')}
                     placeholder="0,00"
                   />
                 </div>
@@ -327,6 +335,7 @@ export function ParticipantBillingFields({
                 <NativeSelect
                   name="feePaymentMethod"
                   defaultValue="MANUAL_PIX"
+                  triggerClassName={controlClassName}
                   options={EVENT_PAYMENT_METHODS.filter((method) => method !== 'COMPLIMENTARY').map((method) => ({
                     value: method,
                     label: EVENT_PAYMENT_METHOD_LABELS[method],
@@ -343,6 +352,7 @@ export function ParticipantBillingFields({
                   name="chargeType"
                   value={hasEntry ? 'INSTALLMENT' : effectiveBillingMethod === 'PIX' ? 'ONE_TIME' : chargeType}
                   onValueChange={(value) => onChargeTypeChange(value as ParticipantChargeType)}
+                  triggerClassName={controlClassName}
                   options={
                     hasEntry
                       ? [{ value: 'INSTALLMENT', label: 'Parcelado' }]
@@ -363,14 +373,14 @@ export function ParticipantBillingFields({
                   onChange={onDueDateChange}
                   variant="input"
                   placeholder="dd/mm/aaaa"
-                  className={FILTER_INPUT_CLASS}
+                  className={cn(FILTER_INPUT_CLASS, controlClassName)}
                   readOnlyInput
                 />
               </Field>
 
               {(chargeType === 'INSTALLMENT' || hasEntry) && billingMethod !== 'PIX' && (
                 <Field label="Quantidade de parcelas">
-                  <NativeSelect name="installmentCount" defaultValue="2" options={installmentOptions} />
+                  <NativeSelect name="installmentCount" defaultValue="2" triggerClassName={controlClassName} options={installmentOptions} />
                 </Field>
               )}
             </>

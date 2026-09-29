@@ -65,7 +65,7 @@ vi.mock('@/src/prisma', () => ({
   prisma: prismaMock,
 }));
 
-vi.mock('@/src/server/matriculas/matricula.service', () => ({
+vi.mock('@/src/server/enrollments/enrollment.service', () => ({
   atualizarStatusMatricula: atualizarStatusMatriculaMock,
   atualizarDetalhesMatricula: atualizarDetalhesMatriculaMock,
   buscarMatriculaPorId: buscarMatriculaPorIdMock,

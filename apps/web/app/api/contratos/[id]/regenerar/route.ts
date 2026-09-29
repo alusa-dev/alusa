@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
-import { contratoDTOSchema, contratoRouteParamsDTOSchema } from '@/features/contratos/dtos';
-import { mapContratoRecordToDTO } from '@/features/contratos/mappers';
+import { contratoDTOSchema, contratoRouteParamsDTOSchema } from '@/features/contracts/dtos';
+import { mapContratoRecordToDTO } from '@/features/contracts/mappers';
 import { regenerateContractLinkForTenant } from '@/src/server/contracts/contract-read.service';
 
 export async function PATCH(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {

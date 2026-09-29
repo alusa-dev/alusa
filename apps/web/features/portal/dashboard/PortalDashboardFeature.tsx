@@ -6,8 +6,8 @@ import Link from 'next/link';
 import { AlertCircle } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { PortalDashboardResultDTO } from '@/features/portal/dtos';
-import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
-import { AlunoSelector } from './components/AlunoSelector';
+import { useFinanceListLoad } from '@/features/finance/operations/hooks/use-finance-list-load';
+import { StudentSelector } from './components/StudentSelector';
 import {
   DASHBOARD_KPI_TILE_CLASSNAME,
   DASHBOARD_SECTION_CARD_CLASSNAME,
@@ -97,7 +97,7 @@ export function PortalDashboardFeature() {
       </div>
 
       {/* Seletor de Aluno (apenas para responsáveis) */}
-      {isResponsavel && <AlunoSelector onAlunoSelect={setSelectedAlunoId} />}
+      {isResponsavel && <StudentSelector onAlunoSelect={setSelectedAlunoId} />}
 
       {/* Cards de resumo */}
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
@@ -106,7 +106,7 @@ export function PortalDashboardFeature() {
           title="Matrículas"
           value={data?.matriculas.ativas.toString() || '0'}
           subtitle={`${data?.matriculas.total || 0} no total`}
-          action={{ label: 'Ver matrículas', href: '/portal/matriculas' }}
+          action={{ label: 'Ver matrículas', href: '/portal/enrollments' }}
         />
 
         {/* Financeiro */}
@@ -118,7 +118,7 @@ export function PortalDashboardFeature() {
               ? formatCurrency(Number(data.financeiro.totalPendente))
               : 'Nenhuma pendência'
           }
-          action={{ label: 'Ver cobranças', href: '/portal/financeiro' }}
+          action={{ label: 'Ver cobranças', href: '/portal/finance' }}
         />
 
         {/* Eventos */}
@@ -126,7 +126,7 @@ export function PortalDashboardFeature() {
           title="Próximos eventos"
           value={data?.eventos.proximos.toString() || '0'}
           subtitle="eventos confirmados"
-          action={{ label: 'Ver eventos', href: '/portal/eventos' }}
+          action={{ label: 'Ver eventos', href: '/portal/events' }}
         />
       </div>
 
@@ -170,22 +170,22 @@ export function PortalDashboardFeature() {
           <QuickAction
             title="Ver Matrículas"
             description="Consulte o status das suas matrículas"
-            href="/portal/matriculas"
+            href="/portal/enrollments"
           />
           <QuickAction
             title="Financeiro"
             description="Veja e pague suas cobranças"
-            href="/portal/financeiro"
+            href="/portal/finance"
           />
           <QuickAction
             title="Meus Eventos"
             description="Eventos inscritos e ingressos"
-            href="/portal/eventos"
+            href="/portal/events"
           />
           <QuickAction
             title="Meu Perfil"
             description="Atualize seus dados pessoais"
-            href="/portal/perfil"
+            href="/portal/profile"
           />
         </div>
       </section>

@@ -1,0 +1,674 @@
+'use client';
+
+/**
+ * Página: Cobranças → Todas
+ *
+ * Visão operacional que exibe todas as cobranças, independente do tipo.
+ *
+ * Domínio: Navegação
+ * Esta página é apenas uma camada de navegação, sem lógica financeira.
+ */
+
+import { useEffect, useCallback, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Plus, ChevronLeft, ChevronRight } from '@/components/icons/icons';
+import TableLayout from '@/components/layout/TableLayout';
+import EntityFiltersBar, { type SortOrder } from '@/components/layout/EntityFiltersBar';
+import { ChargeDisplayStatusBadge } from '@/features/finance/operations/components/ChargeDisplayStatusBadge';
+import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
+import { pushToast } from '@/components/ui/toast';
+import { ChargeActionsMenu } from '@/features/finance/operations/components/ChargeActionsMenu';
+import dynamic from 'next/dynamic';
+
+const CreateChargeModal = dynamic(
+  () => import('@/features/finance/operations/components/CreateChargeModal').then((m) => ({ default: m.CreateChargeModal })),
+  { ssr: false },
+);
+import { AsaasSeal } from '@/components/shared/AsaasSeal';
+import { useFinanceListLoad } from '@/features/finance/operations/hooks/use-finance-list-load';
+import { useVisibleChargeConvergence } from '@/features/finance/operations/hooks/use-visible-charge-convergence';
+import { getChargeTipoLabel } from '@/lib/finance/charge-tipo-label';
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+
+const formatDate = (dateStr?: string | null) => {
+  if (!dateStr) return '—';
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleDateString('pt-BR');
+};
+
+const getTipoLabel = (tipo: string, description?: string | null) =>
+  getChargeTipoLabel(tipo, description);
+
+type Cobranca = {
+  id: string;
+  description?: string | null;
+  tipo?: string;
+  status?: string;
+  displayStatus?: {
+    status: string;
+    label: string;
+    hint: string | null;
+    variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+  };
+  valor: number;
+  vencimento?: string;
+  createdAt?: string | null;
+  payerName?: string;
+  studentName?: string | null;
+  asaasPaymentId?: string | null;
+  invoiceUrl?: string | null;
+  matriculaId?: string | null;
+  eventId?: string | null;
+  formaPagamento?: string | null;
+  origin?: 'ACADEMIC' | 'STANDALONE' | 'EVENT';
+  isGroup?: boolean;
+  groupType?: 'INSTALLMENT' | 'SUBSCRIPTION' | null;
+  groupId?: string | null;
+  installmentCount?: number | null;
+  installmentsPaid?: number | null;
+};
+
+export default function CobrancasTodasPage() {
+  const router = useRouter();
+  const [cobrancas, setCobrancas] = useState<Cobranca[]>([]);
+  const [page, setPage] = useState<number>(1);
+  const [pageSize] = useState<number>(6);
+  const [totalItems, setTotalItems] = useState<number>(0);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [tipoFilter, setTipoFilter] = useState<string>('TODOS');
+  const searchParams = useSearchParams();
+  const statusView = searchParams.get('view') || 'open';
+  const shouldOpenCreateModal = searchParams.get('new') === '1';
+  const [sortOrder, setSortOrder] = useState<SortOrder>('DESC');
+
+  const [createModalOpen, setCreateModalOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (shouldOpenCreateModal) {
+      setCreateModalOpen(true);
+    }
+  }, [shouldOpenCreateModal]);
+
+  const { isInitialLoading, refresh } = useFinanceListLoad(
+    async ({ signal }) => {
+      const isOperational = statusView === 'open';
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+      });
+      const trimmedSearch = searchQuery.trim();
+      if (trimmedSearch) params.set('q', trimmedSearch);
+      if (tipoFilter !== 'TODOS') params.append('tipo', tipoFilter);
+
+      const url = isOperational
+        ? `/api/finance/charges/operational?${params.toString()}`
+        : `/api/financeiro/cobrancas?statusView=${statusView}&${params.toString()}`;
+
+      const res = await fetch(url, { headers: { Accept: 'application/json' }, signal });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const errorMsg =
+          typeof data?.error === 'string'
+            ? data.error
+            : data?.error?.message || 'Falha ao carregar cobranças';
+        pushToast({
+          title: 'Erro',
+          description: errorMsg,
+          variant: 'error',
+        });
+        setCobrancas([]);
+        setTotalItems(0);
+        return;
+      }
+      const payload = await res.json().catch(() => null);
+      const raw: unknown[] = (payload && payload.data) || payload || [];
+      setTotalItems(typeof payload?.total === 'number' ? payload.total : raw.length);
+
+      const normalized: Cobranca[] = (raw as Record<string, unknown>[]).map((item) => {
+        if (isOperational) {
+          return {
+            id: item.id as string,
+            description: (item.description as string | null | undefined) ?? null,
+            tipo: item.tipo as string | undefined,
+            status: item.status as string | undefined,
+            displayStatus: item.displayStatus as Cobranca['displayStatus'],
+            valor: (item.value as number) ?? 0,
+            vencimento: item.dueDate as string | undefined,
+            createdAt: typeof item.createdAt === 'string' ? item.createdAt : null,
+            payerName: item.payerName as string | undefined,
+            studentName: item.studentName as string | null | undefined,
+            asaasPaymentId: item.asaasPaymentId as string | null,
+            invoiceUrl: item.invoiceUrl as string | null,
+            matriculaId: item.matriculaId as string | null,
+            eventId: item.eventId as string | null,
+            formaPagamento: item.billingType as string | null,
+            origin: item.origin as 'ACADEMIC' | 'STANDALONE' | 'EVENT',
+            isGroup: item.isGroup as boolean | undefined,
+            groupType: item.groupType as 'INSTALLMENT' | 'SUBSCRIPTION' | null,
+            groupId: item.groupId as string | null,
+            installmentCount: item.installmentCount as number | null,
+            installmentsPaid: item.installmentsPaid as number | null,
+          };
+        }
+        return {
+          id: item.id as string,
+          tipo: item.tipo as string | undefined,
+          status: item.status as string | undefined,
+          displayStatus: item.displayStatus as Cobranca['displayStatus'],
+          valor: (item.valor as number) ?? 0,
+          vencimento: item.vencimento as string | undefined,
+          createdAt:
+            typeof (item as Record<string, unknown>).createdAt === 'string'
+              ? ((item as Record<string, unknown>).createdAt as string)
+              : null,
+          payerName: ((item as Record<string, unknown>).aluno as Record<string, unknown>)?.nome as string
+            ?? ((item as Record<string, unknown>).matricula as Record<string, unknown>)?.aluno
+              ? (((item as Record<string, unknown>).matricula as Record<string, unknown>)?.aluno as Record<string, unknown>)?.nome as string
+              : undefined,
+          studentName: ((item as Record<string, unknown>).aluno as Record<string, unknown>)?.nome as string
+            ?? (((item as Record<string, unknown>).matricula as Record<string, unknown>)?.aluno as Record<string, unknown>)?.nome as string
+            ?? null,
+          asaasPaymentId: item.asaasPaymentId as string | null,
+          invoiceUrl: null,
+          matriculaId: item.matriculaId as string | null,
+          eventId: item.eventId as string | null,
+          formaPagamento: item.formaPagamento as string | null,
+          description:
+            (item as Record<string, unknown>).description as string | null | undefined ??
+            (item as Record<string, unknown>).descricao as string | null | undefined ??
+            null,
+          isGroup: item.isGroup as boolean | undefined,
+          groupType: item.groupType as 'INSTALLMENT' | 'SUBSCRIPTION' | null,
+          groupId: item.installmentPlanId as string | null,
+          installmentCount: item.installmentCount as number | null,
+          installmentsPaid: item.installmentsPaid as number | null,
+        };
+      });
+
+      setCobrancas(normalized);
+    },
+    {
+      deps: [page, pageSize, searchQuery, statusView, tipoFilter],
+      liveRefresh: { localRefresh: true, financeiro: true, cobrancaQueries: true },
+      intervalMs: 45_000,
+      minIntervalMs: 10_000,
+    },
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, statusView, tipoFilter]);
+
+  const handleStatusViewChange = useCallback(
+    (value: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set('view', value);
+      router.replace(`/charges?${params.toString()}`);
+      setPage(1);
+    },
+    [searchParams, router],
+  );
+
+  const orderedCobrancas = useMemo(() => {
+    const items = [...cobrancas];
+    items.sort((a, b) => {
+      const aOverdue = a.status === 'OVERDUE' || a.status === 'ATRASADO';
+      const bOverdue = b.status === 'OVERDUE' || b.status === 'ATRASADO';
+      if (aOverdue && !bOverdue) return -1;
+      if (bOverdue && !aOverdue) return 1;
+
+      const ta = new Date(a.createdAt ?? a.vencimento ?? '').getTime() || 0;
+      const tb = new Date(b.createdAt ?? b.vencimento ?? '').getTime() || 0;
+      const cmp = tb - ta;
+      return sortOrder === 'DESC' ? cmp : -cmp;
+    });
+    return items;
+  }, [cobrancas, sortOrder]);
+
+  useVisibleChargeConvergence({
+    enabled: statusView === 'open',
+    items: orderedCobrancas,
+    refresh,
+    maxItems: pageSize,
+  });
+
+  const handlePrint = (cobranca: Cobranca) => {
+    if (!cobranca?.id) return;
+    window.open(`/charges/${cobranca.id}`);
+  };
+
+  const handleCreateCharge = useCallback(() => {
+    setCreateModalOpen(true);
+  }, []);
+
+  return (
+    <TableLayout
+      className="min-w-0 max-w-full pb-6 pr-5"
+      title="Todas as Cobranças"
+      subtitle="Visão operacional de todas as cobranças da instituição."
+      headerEnd={<AsaasSeal variant="negativo-preto" />}
+      actions={
+        <Button
+          onClick={handleCreateCharge}
+          className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
+          aria-label="Gerar nova cobrança"
+        >
+          <Plus className="mr-2 h-4 w-4 transition-none" />
+          Nova cobrança
+        </Button>
+      }
+      filtersBar={
+        <EntityFiltersBar
+          searchValue={searchQuery}
+          onSearchChange={setSearchQuery}
+          searchPlaceholder="Buscar por aluno ou descrição..."
+          statusValue="TODOS"
+          onStatusChange={() => {}}
+          hideStatusFilter
+          sortOrder={sortOrder}
+          onSortChange={setSortOrder}
+          sortMenuTitle="Ordenar por criação"
+          sortAscLabel="Mais antigas primeiro"
+          sortDescLabel="Mais recentes primeiro"
+          extraLeft={
+            <div className="grid min-w-0 w-full grid-cols-2 gap-2 lg:flex lg:w-auto lg:shrink-0 lg:gap-2">
+              <Select value={tipoFilter} onValueChange={setTipoFilter}>
+                <SelectTrigger className="flex h-10 w-full min-w-0 shrink-0 items-center justify-between gap-2 rounded-lg border-slate-200 bg-white px-3 text-slate-700 shadow-none lg:w-auto lg:min-w-[150px] lg:max-w-[190px]">
+                  <SelectValue placeholder="Todos os tipos" />
+                </SelectTrigger>
+                <SelectContent align="end" className="text-[13px]">
+                  <SelectItem value="TODOS">Todos os tipos</SelectItem>
+                  <SelectItem value="MENSALIDADE">Mensalidade</SelectItem>
+                  <SelectItem value="TAXA_MATRICULA">Taxa de Matrícula</SelectItem>
+                  <SelectItem value="EXTRA">Extra</SelectItem>
+                  <SelectItem value="AVULSA">Avulsa</SelectItem>
+                  <SelectItem value="PARCELADA">Parcelamento</SelectItem>
+                  <SelectItem value="RECORRENTE">Assinatura</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={statusView} onValueChange={handleStatusViewChange}>
+                <SelectTrigger className="flex h-10 w-full min-w-0 shrink-0 items-center justify-between gap-2 rounded-lg border-slate-200 bg-white px-3 text-slate-700 shadow-none lg:w-auto lg:min-w-[150px] lg:max-w-[190px]">
+                  <SelectValue placeholder="Em aberto" />
+                </SelectTrigger>
+                <SelectContent align="end" className="text-[13px]">
+                  <SelectItem value="open">Em aberto</SelectItem>
+                  <SelectItem value="paid">Pagas</SelectItem>
+                  <SelectItem value="all">Todas</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          }
+        />
+      }
+      footer={
+        <footer className="mt-8 flex min-w-0 max-w-full flex-col items-center border-t border-gray-100 pt-8 lg:hidden">
+          <AsaasSeal variant="negativo-preto" />
+        </footer>
+      }
+    >
+      <div className="min-w-0 w-full max-w-full overflow-x-hidden rounded-lg border border-gray-200 bg-white md:rounded-xl">
+        {isInitialLoading ? (
+          <>
+            <div className="hidden border-b bg-gray-50 px-6 py-3 lg:block">
+              <div className="grid grid-cols-12 gap-4">
+                <Skeleton className="col-span-4 h-4" />
+                <Skeleton className="col-span-2 h-4" />
+                <Skeleton className="col-span-2 h-4" />
+                <Skeleton className="col-span-2 h-4" />
+                <Skeleton className="col-span-1 h-4" />
+                <Skeleton className="col-span-1 h-4" />
+              </div>
+            </div>
+            <div className="divide-y lg:hidden">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="min-w-0 space-y-2 px-4 py-3 sm:px-5">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-3 w-1/2" />
+                  <Skeleton className="h-3 w-full" />
+                </div>
+              ))}
+            </div>
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="hidden px-6 py-3 lg:block">
+                <div className="grid grid-cols-12 items-center gap-4">
+                  <Skeleton className="col-span-4 h-4 w-40" />
+                  <Skeleton className="col-span-2 h-4 w-24" />
+                  <Skeleton className="col-span-2 h-4 w-28" />
+                  <Skeleton className="col-span-2 h-4 w-24" />
+                  <Skeleton className="col-span-1 h-6 w-16 rounded-full" />
+                  <Skeleton className="col-span-1 h-8 w-8 justify-self-center" />
+                </div>
+              </div>
+            ))}
+          </>
+        ) : (
+          <>
+            <div className="hidden border-b bg-gray-50 px-6 py-3 lg:block">
+              <div className="grid grid-cols-12 gap-4 text-[11px] font-medium uppercase tracking-wider text-gray-500">
+                <div className="col-span-4">Nome</div>
+                <div className="col-span-2 text-center">Valor</div>
+                <div className="col-span-2 text-center">Tipo</div>
+                <div className="col-span-2 text-center">Vencimento</div>
+                <div className="col-span-1 text-center">Status</div>
+                <div className="col-span-1 text-center">Ações</div>
+              </div>
+            </div>
+
+            <div className="min-w-0 divide-y">
+              {orderedCobrancas.length === 0 ? (
+                <div className="px-6 py-12 text-center text-gray-500">Nenhuma cobrança encontrada</div>
+              ) : (
+                orderedCobrancas.map((cobranca) => {
+                  const isOverdue = cobranca.status === 'OVERDUE' || cobranca.status === 'ATRASADO';
+                  const isInstallmentGroup = cobranca.isGroup && cobranca.groupType === 'INSTALLMENT';
+                  const isSubscriptionGroup = cobranca.isGroup && cobranca.groupType === 'SUBSCRIPTION';
+                  const displayStatus =
+                    cobranca.displayStatus ??
+                    (cobranca.status
+                      ? buildChargeDisplayStatusDTO({ localStatus: cobranca.status })
+                      : undefined);
+
+                  const handleRowClick = () => {
+                    if (isInstallmentGroup && cobranca.groupId) {
+                      router.push(`/charges/installments/${cobranca.groupId}`);
+                    } else if (isSubscriptionGroup && cobranca.groupId) {
+                      router.push(`/charges/subscriptions/${cobranca.groupId}`);
+                    } else {
+                      router.push(`/charges/${cobranca.id}`);
+                    }
+                  };
+
+                  const actionMenuCobranca = {
+                    id: cobranca.id,
+                    status: (cobranca.status ?? '') as string,
+                    asaasPaymentId: cobranca.asaasPaymentId ?? undefined,
+                    invoiceUrl: cobranca.invoiceUrl ?? undefined,
+                    matriculaId: cobranca.matriculaId ?? '',
+                    formaPagamento: cobranca.formaPagamento ?? undefined,
+                    tipo: cobranca.tipo ?? undefined,
+                    origin: cobranca.origin,
+                    valor: cobranca.valor ?? undefined,
+                    isInstallmentPayment: cobranca.tipo === 'PARCELADA',
+                    isSubscriptionPayment: cobranca.tipo === 'RECORRENTE',
+                    atrasado: isOverdue,
+                  };
+
+                  return (
+                    <div key={cobranca.id}>
+                      <div
+                        className={`cursor-pointer transition-colors hover:bg-gray-50 ${
+                          isInstallmentGroup ? 'bg-gray-50/50' : 'bg-white'
+                        }`}
+                        onClick={handleRowClick}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            handleRowClick();
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        {/* Mobile: uma coluna — valor, tipo e vencimento em linha auxiliar */}
+                        <div className="flex min-w-0 w-full max-w-full gap-2 px-4 py-3 box-border sm:gap-3 sm:px-5 lg:hidden">
+                          <div className="min-w-0 flex-1 overflow-hidden">
+                            <div className="truncate text-[13px] font-medium text-gray-900">
+                              {cobranca.studentName ?? cobranca.payerName ?? '—'}
+                            </div>
+                            {cobranca.description ? (
+                              <div className="mt-0.5 line-clamp-2 break-words text-[11px] text-gray-500">
+                                {cobranca.description}
+                              </div>
+                            ) : null}
+                            <div className="mt-2 space-y-1 text-[12px] text-gray-600">
+                              <div className="break-words font-semibold text-gray-900">
+                                {formatCurrency(cobranca.valor)}
+                                {isInstallmentGroup && cobranca.installmentCount ? (
+                                  <span className="ml-1 text-[11px] font-normal text-gray-500">
+                                    ({cobranca.installmentsPaid ?? 0}/{cobranca.installmentCount})
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
+                                <span className="min-w-0 break-words text-gray-600">
+                                  {getTipoLabel(cobranca.tipo ?? '', cobranca.description)}
+                                </span>
+                                <span className="shrink-0 text-gray-300" aria-hidden>
+                                  ·
+                                </span>
+                                <span
+                                  className={`shrink-0 tabular-nums ${
+                                    isOverdue ? 'font-medium text-red-600' : 'text-gray-700'
+                                  }`}
+                                >
+                                  {formatDate(cobranca.vencimento ?? '')}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div
+                            className="flex w-14 shrink-0 flex-col items-end self-stretch sm:w-[3.75rem]"
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
+                            <div className="shrink-0">
+                              {!cobranca.isGroup ? (
+                                <ChargeActionsMenu
+                                  cobranca={actionMenuCobranca}
+                                  onPrint={() => handlePrint(cobranca)}
+                                  onActionComplete={() => refresh()}
+                                  variant="icon"
+                                />
+                              ) : null}
+                            </div>
+                            <div className="mt-auto shrink-0 pt-1">
+                              {displayStatus ? (
+                                <ChargeDisplayStatusBadge
+                                  displayStatus={displayStatus}
+                                  size="sm"
+                                  className="w-full max-w-full whitespace-normal px-2 text-center text-[10px] leading-snug"
+                                />
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Desktop: grade completa */}
+                        <div className="hidden min-w-0 px-6 py-3 lg:block">
+                          <div className="grid min-w-0 grid-cols-12 items-center gap-4">
+                            <div className="col-span-4 flex min-w-0 items-center gap-2">
+                              <div className="min-w-0">
+                                <div className="truncate text-[13px] font-medium text-gray-900">
+                                  {cobranca.studentName ?? cobranca.payerName ?? '-'}
+                                </div>
+                                {cobranca.description ? (
+                                  <div className="truncate text-[11px] text-gray-500">
+                                    {cobranca.description}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="col-span-2 text-center text-[13px] font-semibold text-gray-900">
+                              {formatCurrency(cobranca.valor)}
+                              {isInstallmentGroup && cobranca.installmentCount && (
+                                <span className="ml-1 text-[11px] font-normal text-gray-500">
+                                  ({cobranca.installmentsPaid ?? 0}/{cobranca.installmentCount})
+                                </span>
+                              )}
+                            </div>
+                            <div className="col-span-2 text-center text-[13px] text-gray-700">
+                              {getTipoLabel(cobranca.tipo ?? '', cobranca.description)}
+                            </div>
+                            <div className="col-span-2 text-center">
+                              <div
+                                className={`text-[13px] ${isOverdue ? 'font-medium text-red-600' : 'text-gray-700'}`}
+                              >
+                                {formatDate(cobranca.vencimento ?? '')}
+                              </div>
+                            </div>
+                            <div className="col-span-1 flex justify-center">
+                              {displayStatus ? (
+                                <ChargeDisplayStatusBadge displayStatus={displayStatus} size="sm" />
+                              ) : null}
+                            </div>
+                            <div
+                              className="col-span-1 flex justify-center"
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
+                            >
+                              {!cobranca.isGroup && (
+                                <ChargeActionsMenu
+                                  cobranca={actionMenuCobranca}
+                                  onPrint={() => handlePrint(cobranca)}
+                                  onActionComplete={() => refresh()}
+                                  variant="icon"
+                                />
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            {totalItems > pageSize ? (
+              <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+                <Pagination
+                  totalItems={totalItems}
+                  pageSize={pageSize}
+                  page={page}
+                  onChange={setPage}
+                />
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
+
+      <CreateChargeModal
+        open={createModalOpen}
+        onOpenChange={setCreateModalOpen}
+        onSuccess={() => void refresh()}
+      />
+    </TableLayout>
+  );
+}
+
+function Pagination({
+  totalItems,
+  pageSize,
+  page,
+  onChange,
+}: {
+  totalItems: number;
+  pageSize: number;
+  page: number;
+  onChange: (_p: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const clamp = (n: number) => Math.min(totalPages, Math.max(1, n));
+
+  const makePages = () => {
+    const pages: (number | '…')[] = [];
+    const maxButtons = 7;
+    if (totalPages <= maxButtons + 2) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+      return pages;
+    }
+    const siblings = 2;
+    const left = Math.max(2, page - siblings);
+    const right = Math.min(totalPages - 1, page + siblings);
+    pages.push(1);
+    if (left > 2) pages.push('…');
+    for (let i = left; i <= right; i++) pages.push(i);
+    if (right < totalPages - 1) pages.push('…');
+    pages.push(totalPages);
+    return pages;
+  };
+
+  const pages = makePages();
+  return (
+    <div className="flex min-h-9 flex-col items-center justify-between gap-3 sm:flex-row">
+      <div className="text-xs font-medium text-gray-500">
+        Página {page} de {totalPages}
+      </div>
+      <div className="flex flex-wrap items-center justify-center gap-1">
+        <PaginationTextButton
+          aria-label="Página anterior"
+          disabled={page === 1}
+          onClick={() => onChange(clamp(page - 1))}
+        >
+          <ChevronLeft className="h-4 w-4" />
+          <span>Anterior</span>
+        </PaginationTextButton>
+
+        {pages.map((p, idx) =>
+          p === '…' ? (
+            <span key={`e-${idx}`} className="grid h-9 min-w-9 place-items-center px-1 text-sm font-semibold text-gray-400">…</span>
+          ) : (
+            <button
+              key={p}
+              onClick={() => onChange(p)}
+              aria-current={p === page ? 'page' : undefined}
+              className={
+                'grid h-8 min-w-8 place-items-center rounded-full border px-2 text-sm font-semibold transition ' +
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 ' +
+                (p === page
+                  ? 'border-transparent bg-gray-200 text-gray-900 hover:bg-gray-200'
+                  : 'border-transparent bg-transparent text-gray-700 hover:bg-white hover:text-brand-accent')
+              }
+            >
+              {p}
+            </button>
+          ),
+        )}
+
+        <PaginationTextButton
+          aria-label="Próxima página"
+          disabled={page === totalPages}
+          onClick={() => onChange(clamp(page + 1))}
+        >
+          <span>Próxima</span>
+          <ChevronRight className="h-4 w-4" />
+        </PaginationTextButton>
+      </div>
+    </div>
+  );
+}
+
+function PaginationTextButton({
+  children,
+  onClick,
+  disabled,
+  'aria-label': ariaLabel,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  'aria-label'?: string;
+}) {
+  return (
+    <button
+      aria-label={ariaLabel}
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-semibold text-gray-700 transition hover:bg-white hover:text-brand-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent disabled:hover:text-gray-300"
+    >
+      {children}
+    </button>
+  );
+}

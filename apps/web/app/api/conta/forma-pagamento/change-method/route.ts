@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import { contaBlockedActionResultDTOSchema } from '@/features/conta/dtos';
+import { contaBlockedActionResultDTOSchema } from '@/features/account/dtos';
 
 const BLOCKED_MESSAGE =
   'Alterações da forma de pagamento agora são realizadas exclusivamente pela secretaria da escola.';

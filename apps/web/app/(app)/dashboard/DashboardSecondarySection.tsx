@@ -92,7 +92,7 @@ export default function DashboardSecondarySection({
             <div className="flex flex-1 flex-col space-y-0.5 px-3 pb-5 pt-3">
               <button
                 type="button"
-                onClick={() => router.push('/alunos')}
+                onClick={() => router.push('/students')}
                 className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
               >
                 <div className="flex items-center gap-3">
@@ -122,7 +122,7 @@ export default function DashboardSecondarySection({
 
               <button
                 type="button"
-                onClick={() => router.push('/matriculas')}
+                onClick={() => router.push('/enrollments')}
                 className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
               >
                 <div className="flex items-center gap-3">
@@ -152,7 +152,7 @@ export default function DashboardSecondarySection({
 
               <button
                 type="button"
-                onClick={() => router.push('/financeiro/relatorios')}
+                onClick={() => router.push('/finance/reports')}
                 className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
               >
                 <div className="flex items-center gap-3">
@@ -195,7 +195,7 @@ export default function DashboardSecondarySection({
             <div className="flex flex-1 flex-col justify-center space-y-1 p-3">
               <button
                 type="button"
-                onClick={() => router.push('/cobrancas?new=1')}
+                onClick={() => router.push('/charges?new=1')}
                 className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
               >
                 <div className="flex items-center gap-3">
@@ -225,7 +225,7 @@ export default function DashboardSecondarySection({
 
               <button
                 type="button"
-                onClick={() => router.push('/matriculas?new=1')}
+                onClick={() => router.push('/enrollments?new=1')}
                 className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
               >
                 <div className="flex items-center gap-3">
@@ -255,7 +255,7 @@ export default function DashboardSecondarySection({
 
               <button
                 type="button"
-                onClick={() => router.push('/rematriculas')}
+                onClick={() => router.push('/reenrollments')}
                 className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
               >
                 <div className="flex items-center gap-3">
@@ -301,7 +301,7 @@ export default function DashboardSecondarySection({
                   </h2>
                   <button
                     type="button"
-                    onClick={() => router.push('/financeiro/cobrancas')}
+                    onClick={() => router.push('/finance/charges')}
                     className="rounded-lg bg-[#f4ecfd] px-4 py-1.5 text-sm font-medium text-[#383242] transition-colors hover:bg-[#e9dffc] focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/35 focus-visible:ring-offset-0 alusa-dark:bg-[color:var(--color-button-secondary-bg)] alusa-dark:text-[color:var(--color-button-secondary-text)] alusa-dark:hover:bg-[color:var(--color-button-secondary-hover)]"
                   >
                     Ver Todas
@@ -400,7 +400,7 @@ export default function DashboardSecondarySection({
                       <button
                         key={aluno.id}
                         type="button"
-                        onClick={() => router.push(`/alunos/${aluno.id}`)}
+                        onClick={() => router.push(`/students/${aluno.id}`)}
                         className="group flex w-full items-center gap-3 px-6 py-4 text-left transition-colors hover:bg-gray-50/50 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
                       >
                         <PersonAvatar
@@ -425,7 +425,7 @@ export default function DashboardSecondarySection({
                 <div className="mt-auto shrink-0 border-t border-gray-100 bg-gray-50/30 px-6 py-4 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
                   <button
                     type="button"
-                    onClick={() => router.push('/alunos')}
+                    onClick={() => router.push('/students')}
                     className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-[#383242] shadow-sm transition-all hover:border-[#383242]/20 hover:shadow-md focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/35 focus-visible:ring-offset-0 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-button-secondary-bg)] alusa-dark:text-[color:var(--color-button-secondary-text)] alusa-dark:hover:bg-[color:var(--color-button-secondary-hover)]"
                   >
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

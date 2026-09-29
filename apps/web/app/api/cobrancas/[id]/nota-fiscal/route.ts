@@ -14,7 +14,7 @@ import { publicInvoiceProviderErrorMessage } from '@/lib/api/finance-invoice-err
 import {
   chargeInvoiceResponseSchema,
   scheduleChargeInvoiceInputSchema,
-} from '@/features/configuracoes/notafiscal/dtos';
+} from '@/features/settings/tax-invoices/dtos';
 import {
   emitChargeInvoice,
   getChargeInvoiceDetail,

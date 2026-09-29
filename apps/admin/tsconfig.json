@@ -13,7 +13,9 @@
       "@alusa/finance": ["../../packages/finance/dist/index.d.ts"],
       "@alusa/finance/*": ["../../packages/finance/dist/*"],
       "@alusa/lib": ["../../packages/lib/src/index.ts"],
-      "@alusa/lib/*": ["../../packages/lib/src/*"]
+      "@alusa/lib/*": ["../../packages/lib/src/*"],
+      "@alusa/ui": ["../../packages/ui/src/index.ts"],
+      "@alusa/ui/*": ["../../packages/ui/src/*"]
     },
     "plugins": [{ "name": "next" }]
   },

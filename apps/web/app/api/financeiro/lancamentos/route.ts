@@ -3,14 +3,14 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   financeiroLancamentoInputDTOSchema,
   financeiroLancamentoMutationResultDTOSchema,
-  listFinanceiroLancamentosResultDTOSchema,
-} from '@/features/financeiro/dtos';
-import { mapFinanceiroLancamentoRecordToDTO } from '@/features/financeiro/mappers';
+  listFinancialTransactionsResultDTOSchema,
+} from '@/features/finance/operations/dtos';
+import { mapFinanceiroLancamentoRecordToDTO } from '@/features/finance/operations/mappers';
 import { financeInternalError } from '@/lib/api/finance-api-response';
 import {
-  createFinanceiroLancamento,
-  listFinanceiroLancamentos,
-} from '@/src/server/finance/lancamento.service';
+  createFinancialTransaction,
+  listFinancialTransactions,
+} from '@/src/server/finance/financial-transaction.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -99,7 +99,7 @@ export async function GET(req: NextRequest) {
     const sort = url.searchParams.get('sort') === 'valor' ? 'valor' : 'dataEfetiva';
     const order = url.searchParams.get('order') === 'asc' ? 'asc' : 'desc';
 
-    const result = await listFinanceiroLancamentos({
+    const result = await listFinancialTransactions({
       contaId: user.contaId,
       page,
       pageSize,
@@ -117,7 +117,7 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json(
-      listFinanceiroLancamentosResultDTOSchema.parse({
+      listFinancialTransactionsResultDTOSchema.parse({
         data: result.items.map((item) =>
           mapFinanceiroLancamentoRecordToDTO(serializeLancamento(item)),
         ),
@@ -147,7 +147,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = parsed.data;
-    const result = await createFinanceiroLancamento({
+    const result = await createFinancialTransaction({
       contaId: user.contaId,
       userId: user.id,
       data: body,

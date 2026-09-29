@@ -12,7 +12,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Wizard de Matrícula - Fluxo Completo', () => {
   test.beforeEach(async () => {
     // TODO: Configurar autenticação e navegação para página de matrícula
-    // await page.goto('/matriculas/novo');
+    // await page.goto('/enrollments/new');
   });
 
   test('fluxo completo: aluno → turma → plano', async ({ page }) => {

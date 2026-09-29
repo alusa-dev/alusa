@@ -1,3 +1,3 @@
 export {
   getResponsavelOverviewRoute as GET,
-} from '@/src/server/responsaveis/responsavel-overview-http-route.service';
+} from '@/src/server/responsibles/responsible-overview-http-route.service';

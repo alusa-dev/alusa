@@ -5,14 +5,14 @@ import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { useUserStore, type UserState, type User } from '@/lib/stores/user-store';
 import { Bell } from '@/components/icons/icons';
-import NotificationsPanel from '@/components/notifications/NotificationsPanel';
+import NotificationsPanel from '@/features/notifications/components/NotificationsPanel';
 import UserMenu from './UserMenu';
 import { usePortalNotifications } from '@/hooks/use-portal-notifications';
 import {
   useNotificationUnreadCount,
   useNotificationsFeed,
   NOTIFICATION_INBOX_ROLES,
-} from '@/features/notificacoes/hooks/use-notifications-feed';
+} from '@/features/notifications/hooks/use-notifications-feed';
 import { HeaderSearch } from '@/features/global-search/components/HeaderSearch';
 import { useTheme } from '@/components/theme/ThemeProvider';
 
@@ -142,14 +142,14 @@ export default function CardHeader(): JSX.Element {
       }
 
       closeNotifications();
-      router.push('/notificacoes');
+      router.push('/notifications');
     },
     [closeNotifications, inboxItems, isPortalUser, reloadUnreadCount, router, updateNotification],
   );
 
   const handleViewAllNotifications = useCallback(() => {
     closeNotifications();
-    router.push(isPortalUser ? '/portal' : '/notificacoes');
+    router.push(isPortalUser ? '/portal' : '/notifications');
   }, [closeNotifications, isPortalUser, router]);
 
   const { isDark } = useTheme();

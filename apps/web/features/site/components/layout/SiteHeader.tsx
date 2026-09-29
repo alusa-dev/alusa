@@ -67,7 +67,7 @@ export function SiteHeader() {
       '/termos',
       '/cookies',
       '/preferencias-de-cookies',
-      '/seguranca',
+      '/security',
       '/dpa',
       '/suboperadores',
       '/direitos-lgpd',

@@ -7,9 +7,9 @@ import {
 } from '@alusa/finance';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { asaasNotificationPreferenceDTOSchema } from '@/features/configuracoes/notificacoes/asaas/dtos';
-import { deriveCustomerNotificationChannelDefaults } from '@/features/configuracoes/notificacoes/asaas/customer-channel-defaults';
-import { resolveResponsavelRouteId } from '@/src/server/responsaveis/resolve-responsavel-route-id.service';
+import { asaasNotificationPreferenceDTOSchema } from '@/features/settings/notifications/asaas/dtos';
+import { deriveCustomerNotificationChannelDefaults } from '@/features/settings/notifications/asaas/customer-channel-defaults';
+import { resolveResponsavelRouteId } from '@/src/server/responsibles/resolve-responsible-route-id.service';
 import { apiJsonError } from '@/lib/api/standard-response';
 import { resolveResponsavelNotificationCustomer } from '@/src/server/finance/customer-notification-scope.service';
 

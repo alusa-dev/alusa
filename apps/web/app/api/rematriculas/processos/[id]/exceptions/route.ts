@@ -5,12 +5,12 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   rematriculaProcessExceptionInputDTOSchema,
   rematriculaProcessRouteParamsDTOSchema,
-} from '@/features/cadastro/rematriculas/dtos';
-import { grantRenewalExceptionForTenant } from '@/src/server/matriculas/renewal-http.service';
+} from '@/features/renewals/dtos';
+import { grantRenewalExceptionForTenant } from '@/src/server/enrollments/renewal-http.service';
 import {
   RenewalPermissionError,
   requireRenewalPermission,
-} from '@/src/server/matriculas/renewal-permissions.service';
+} from '@/src/server/enrollments/renewal-permissions.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(

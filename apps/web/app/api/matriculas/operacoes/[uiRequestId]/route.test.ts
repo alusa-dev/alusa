@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('next-auth', () => ({ getServerSession: mocks.session }));
 vi.mock('@/lib/auth-options', () => ({ authOptions: {} }));
-vi.mock('@/src/server/matriculas/enrollment-creation-status.service', () => ({
+vi.mock('@/src/server/enrollments/enrollment-creation-status.service', () => ({
   readEnrollmentCreationStatus: mocks.status,
 }));
 

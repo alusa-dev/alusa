@@ -6,17 +6,17 @@ import {
   centroCustoDeleteResultDTOSchema,
   centroCustoMutationResultDTOSchema,
   centroCustoRouteParamsDTOSchema,
-} from '@/features/financeiro/centros-custo/dtos';
+} from '@/features/finance/operations/cost-centers/dtos';
 import {
   mapCentroCustoDeleteResultToDTO,
-  mapCentroCustoToDTO,
-} from '@/features/financeiro/centros-custo/mappers';
+  mapCostCenterToDTO,
+} from '@/features/finance/operations/cost-centers/mappers';
 import {
-  deleteCentroCusto,
-  findDuplicateCentroCusto,
-  getCentroCusto,
-  updateCentroCusto,
-} from '@/src/server/finance/centro-custo.service';
+  deleteCostCenter,
+  findDuplicateCostCenter,
+  getCostCenter,
+  updateCostCenter,
+} from '@/src/server/finance/cost-center.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -46,10 +46,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const user = auth.user!;
     const { id } = centroCustoRouteParamsDTOSchema.parse(await params);
 
-    const centro = await getCentroCusto(user.contaId, id);
+    const centro = await getCostCenter(user.contaId, id);
     if (!centro) return err(404, 'NAO_ENCONTRADO', 'Centro de custo nao encontrado');
     return NextResponse.json({
-      data: mapCentroCustoToDTO(centro as unknown as Record<string, unknown>),
+      data: mapCostCenterToDTO(centro as unknown as Record<string, unknown>),
     });
   } catch (e) {
     console.error('[API centro de custo][GET id]', e);
@@ -71,24 +71,24 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     const body = parsed.data;
 
-    const current = await getCentroCusto(user.contaId, id);
+    const current = await getCostCenter(user.contaId, id);
     if (!current) return err(404, 'NAO_ENCONTRADO', 'Centro de custo nao encontrado');
 
     const normalizedInput = { ...body, nome: body.nome.trim(), descricao: body.descricao?.trim() || null };
-    const exists = await findDuplicateCentroCusto(user.contaId, normalizedInput, id);
+    const exists = await findDuplicateCostCenter(user.contaId, normalizedInput, id);
     if (exists) return err(409, 'JA_EXISTE', 'Já existe um centro com este nome e tipo');
 
     // Multi-tenant: usar updateMany para garantir atomicidade com contaId
-    const updateResult = await updateCentroCusto(user.contaId, id, normalizedInput, current.status);
+    const updateResult = await updateCostCenter(user.contaId, id, normalizedInput, current.status);
     if (updateResult.count === 0) {
       return err(404, 'NAO_ENCONTRADO', 'Centro de custo nao encontrado');
     }
-    const updated = await getCentroCusto(user.contaId, id);
+    const updated = await getCostCenter(user.contaId, id);
     if (!updated) return err(404, 'NAO_ENCONTRADO', 'Centro de custo nao encontrado');
 
     return NextResponse.json(
       centroCustoMutationResultDTOSchema.parse({
-        data: mapCentroCustoToDTO(updated as unknown as Record<string, unknown>),
+        data: mapCostCenterToDTO(updated as unknown as Record<string, unknown>),
       }),
     );
   } catch (e) {
@@ -104,14 +104,14 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     const user = auth.user!;
     const { id } = centroCustoRouteParamsDTOSchema.parse(await params);
 
-    const centro = await getCentroCusto(user.contaId, id);
+    const centro = await getCostCenter(user.contaId, id);
     if (!centro) return err(404, 'NAO_ENCONTRADO', 'Centro de custo nao encontrado');
     if (centro._count.lancamentos > 0) {
       return err(400, 'NAO_PERMITIDO', 'Centro de custo possui lançamentos; inative ao invés de excluir');
     }
 
     // Multi-tenant: usar deleteMany para garantir atomicidade com contaId
-    const deleteResult = await deleteCentroCusto(user.contaId, id);
+    const deleteResult = await deleteCostCenter(user.contaId, id);
     if (deleteResult.count === 0) {
       return err(404, 'NAO_ENCONTRADO', 'Centro de custo nao encontrado');
     }

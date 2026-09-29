@@ -7,7 +7,7 @@ import {
   MobileResponsibleUnauthorizedError,
   updateMobileResponsible,
 } from '@/features/responsibles/server/mobile-responsibles.service';
-import { updateResponsavelInputDTOSchema } from '@/features/responsaveis/dtos';
+import { updateResponsavelInputDTOSchema } from '@/features/responsibles/dtos';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 
 export const runtime = 'nodejs';

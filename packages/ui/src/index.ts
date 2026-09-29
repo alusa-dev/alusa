@@ -1,1 +1,1 @@
-export { Button } from './primitive/Button';
+export { Button, buttonVariants, type ButtonProps } from './primitive/Button';

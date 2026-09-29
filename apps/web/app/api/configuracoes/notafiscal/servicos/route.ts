@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
-import { fiscalServiceInputSchema } from '@/features/configuracoes/notafiscal/dtos';
+import { fiscalServiceInputSchema } from '@/features/settings/tax-invoices/dtos';
 import { createFiscalService, listFiscalServices } from '@alusa/finance';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);

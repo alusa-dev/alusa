@@ -4,8 +4,8 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   matriculaRouteParamsDTOSchema,
   updateMatriculaJurosMultaInputDTOSchema,
-} from '@/features/cadastro/matriculas/dtos';
-import { updateEnrollmentTerms } from '@/src/server/matriculas/update-enrollment-terms.service';
+} from '@/features/enrollments/dtos';
+import { updateEnrollmentTerms } from '@/src/server/enrollments/update-enrollment-terms.service';
 
 function jsonError(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });

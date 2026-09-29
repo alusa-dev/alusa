@@ -5,8 +5,8 @@ import { getSessionUser } from '@/lib/auth/session';
 import {
   createRenewalCampaignFromHttp,
   listRenewalManagementFromHttp,
-} from '@/src/server/matriculas/renewal-http-commands.service';
-import { hasRenewalPermission } from '@/src/server/matriculas/renewal-permissions.service';
+} from '@/src/server/enrollments/renewal-http-commands.service';
+import { hasRenewalPermission } from '@/src/server/enrollments/renewal-permissions.service';
 
 const campaignSchema = z.object({
   nome: z.string().trim().min(2),

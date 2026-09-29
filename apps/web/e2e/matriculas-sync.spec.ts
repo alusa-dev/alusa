@@ -162,7 +162,7 @@ test.describe('Gestão de Matrículas – Sincronização com Asaas', () => {
       });
     });
 
-    await page.goto('/matriculas');
+    await page.goto('/enrollments');
 
     await expect(page.getByText('Ana Souza')).toBeVisible();
     await expect(page.getByTestId('matricula-status-matricula-ativa')).toContainText(/ativa/i);

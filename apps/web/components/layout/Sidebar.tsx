@@ -447,7 +447,7 @@ function Sidebar() {
                               href={item.href}
                               prefetch={false}
                               aria-label={item.label}
-                              data-testid={item.href === '/planos' ? 'sidebar-planos' : undefined}
+                              data-testid={item.href === '/plans' ? 'sidebar-planos' : undefined}
                               className={[
                                 'group relative mx-auto flex items-center rounded-[10px] text-[16px] outline-none select-none transition-[width,padding,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:scale-[1.02]',
                                 collapsed
@@ -484,7 +484,7 @@ function Sidebar() {
                               </span>
                               {/* Badge de notificação para Financeiro */}
                               {isPortalUser &&
-                                item.href === '/portal/financeiro' &&
+                                item.href === '/portal/finance' &&
                                 (notifications.cobrancasPendentes > 0 ||
                                   notifications.cobrancasAtrasadas > 0) &&
                                 !collapsed && (
@@ -542,7 +542,7 @@ function Sidebar() {
                 </span>
               ) : (
                 <Link
-                  href="/admin/configuracoes"
+                  href="/admin/settings"
                   prefetch={false}
                   aria-label="Configurações"
                   className={[
@@ -550,7 +550,7 @@ function Sidebar() {
                     collapsed ? 'justify-center gap-0 px-0 pl-0' : 'gap-3 px-4 pl-[30px]',
                     anyGroupOpen
                       ? 'font-light'
-                      : pathname.startsWith('/admin/configuracoes')
+                      : pathname.startsWith('/admin/settings')
                         ? 'font-semibold'
                         : 'font-medium',
                     anyGroupOpen
@@ -558,9 +558,9 @@ function Sidebar() {
                       : '',
                     anyGroupOpen ? 'hover:scale-95' : 'hover:scale-[1.02]',
                   ].join(' ')}
-                  style={pill(pathname.startsWith('/admin/configuracoes'))}
+                  style={pill(pathname.startsWith('/admin/settings'))}
                   ref={
-                    pathname.startsWith('/admin/configuracoes')
+                    pathname.startsWith('/admin/settings')
                       ? (el) => setActiveElement(el)
                       : undefined
                   }
@@ -573,7 +573,7 @@ function Sidebar() {
                     }}
                   />
                   <span className="flex h-5 w-5 items-center justify-center relative z-10">
-                    {pathname.startsWith('/admin/configuracoes') ? (
+                    {pathname.startsWith('/admin/settings') ? (
                       <Cog6ToothSolid className="h-5 w-5" />
                     ) : (
                       <Cog6ToothIcon className="h-5 w-5" />

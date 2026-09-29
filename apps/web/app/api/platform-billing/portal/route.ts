@@ -73,12 +73,12 @@ async function readBody(req: NextRequest): Promise<unknown> {
 }
 
 function readSafeReturnPath(body: unknown): string {
-  if (!body || typeof body !== 'object') return '/conta/plano-faturamento';
+  if (!body || typeof body !== 'object') return '/account/billing-plan';
   const value = (body as { returnPath?: unknown }).returnPath;
-  if (typeof value !== 'string') return '/conta/plano-faturamento';
+  if (typeof value !== 'string') return '/account/billing-plan';
   const trimmed = value.trim();
   if (!trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.includes('\\')) {
-    return '/conta/plano-faturamento';
+    return '/account/billing-plan';
   }
   return trimmed;
 }

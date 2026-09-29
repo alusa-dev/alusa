@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Modalidade, Sala } from '@/components/turmas/types';
+import type { Modalidade, Sala } from '@/features/classes/components/types';
 
 type CacheEntry<T> = {
   data: T;

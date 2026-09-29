@@ -48,11 +48,11 @@ vi.mock('@/lib/auth-options', () => ({
   authOptions: {},
 }));
 
-vi.mock('@/src/server/matriculas/rematricula.service', () => ({
+vi.mock('@/src/server/enrollments/renewal.service', () => ({
   listarRematriculasElegiveis: vi.fn(),
 }));
 
-vi.mock('@/src/server/matriculas/renewal-process.service', () => ({
+vi.mock('@/src/server/enrollments/renewal-process.service', () => ({
   previewRenewalProcess: previewRenewalProcessMock,
   confirmRenewalProcess: confirmRenewalProcessMock,
 }));
@@ -69,7 +69,7 @@ vi.mock('@alusa/domain', () => ({
   validarElegibilidadeRematricula: validarElegibilidadeRematriculaMock,
 }));
 
-vi.mock('@/src/server/matriculas/rematricula-financial-policy.service', () => ({
+vi.mock('@/src/server/enrollments/renewal-financial-policy.service', () => ({
   buildFinancialSnapshot: buildFinancialSnapshotMock,
   evaluateCanonicalRematriculaDecision: evaluateCanonicalRematriculaDecisionMock,
   serializeFinancialSnapshot: serializeFinancialSnapshotMock,

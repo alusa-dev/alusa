@@ -48,7 +48,7 @@ vi.mock('@alusa/lib', () => ({
   calcIdade: vi.fn(() => 25),
 }));
 
-vi.mock('@/src/server/matriculas/subscription-payment-materialization', () => ({
+vi.mock('@/src/server/enrollments/subscription-payment-materialization', () => ({
   materializeSubscriptionPaymentForCharge: materializeSubscriptionPaymentForChargeMock,
 }));
 

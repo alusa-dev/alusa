@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { reconcileOutboundFinancialOperations, reconcilePendingPaymentCommands } from '@alusa/finance';
-import { reconcileEnrollmentCreationOperations } from '@/src/server/matriculas/reconcile-enrollment-creation-operations';
+import { reconcileEnrollmentCreationOperations } from '@/src/server/enrollments/reconcile-enrollment-creation-operations';
 import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 export const dynamic = 'force-dynamic';

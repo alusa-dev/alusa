@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
-import { contratoRouteParamsDTOSchema } from '@/features/contratos/dtos';
+import { contratoRouteParamsDTOSchema } from '@/features/contracts/dtos';
 import { getSignedContractDocument } from '@/src/server/contracts/contract-read.service';
 
 export async function GET(

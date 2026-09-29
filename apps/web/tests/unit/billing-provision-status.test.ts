@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   deriveBillingProvisionStatusFromSync,
   resolveInitialBillingProvisionStatus,
-} from '@/src/server/matriculas/billing-provision-status';
+} from '@/src/server/enrollments/billing-provision-status';
 import { BillingMode, MatriculaBillingProvisionStatus } from '@prisma/client';
 
 describe('billing-provision-status', () => {

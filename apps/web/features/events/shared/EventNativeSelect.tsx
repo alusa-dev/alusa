@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { cn } from '@/lib/utils';
 
 export type EventSelectOption = { value: string; label: string };
 
@@ -22,6 +23,7 @@ export function EventNativeSelect({
   required,
   placeholder,
   onValueChange,
+  triggerClassName,
 }: {
   name: string;
   value?: string | null;
@@ -30,6 +32,7 @@ export function EventNativeSelect({
   required?: boolean;
   placeholder?: string;
   onValueChange?: (value: string) => void;
+  triggerClassName?: string;
 }) {
   const [internalValue, setInternalValue] = useState<string>(defaultValue ?? '');
   const selectedValue = value ?? internalValue;
@@ -44,7 +47,7 @@ export function EventNativeSelect({
           onValueChange?.(val);
         }}
       >
-        <SelectTrigger className="h-10 w-full rounded-lg border-slate-200 bg-white text-sm text-slate-900 shadow-none">
+        <SelectTrigger className={cn('h-10 w-full rounded-lg border-slate-200 bg-white text-sm text-slate-900 shadow-none', triggerClassName)}>
           <SelectValue placeholder={placeholder ?? 'Selecione'} />
         </SelectTrigger>
         <SelectContent className="text-[13px]">

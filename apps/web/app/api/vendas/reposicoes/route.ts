@@ -10,7 +10,7 @@ import { getStoreRequestContext, jsonError } from '../_helpers';
 import {
   createRestockOrderInputDTOSchema,
   listRestockOrdersQueryDTOSchema,
-} from '@/features/vendas/dtos';
+} from '@/features/sales/dtos';
 
 export async function GET(request: Request) {
   try {

@@ -11,7 +11,7 @@ import { mapInviteRecordToDTO } from '@/features/users/mappers';
 import { sendInviteEmail } from '@/lib/auth-email-flow';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getInviteBaseUrl } from '@/lib/app-url';
-import prisma from '@/lib/prisma';
+import { findStudentsInContaForInvite } from '@/src/server/users/invite-scope.service';
 
 export async function POST(req: Request) {
   try {
@@ -93,10 +93,7 @@ export async function POST(req: Request) {
     if (role === 'RESPONSAVEL' && alunosIds?.length) {
       const uniqueAlunoIds = [...new Set(alunosIds)];
       if (!inviterContaId) return NextResponse.json({ error: 'Conta inválida.' }, { status: 403 });
-      const scopedStudents = await prisma.aluno.findMany({
-        where: { contaId: inviterContaId, id: { in: uniqueAlunoIds } },
-        select: { id: true },
-      });
+      const scopedStudents = await findStudentsInContaForInvite(inviterContaId, uniqueAlunoIds);
       if (scopedStudents.length !== uniqueAlunoIds.length) {
         return NextResponse.json({ error: 'Um ou mais alunos não pertencem à sua escola.' }, { status: 404 });
       }

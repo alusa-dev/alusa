@@ -125,15 +125,15 @@ Variações (matrícula familiar consolidada, loja avulsa, rematrícula) mantêm
 | Domínio | Foco | Onde no repo |
 |---------|------|--------------|
 | Plataforma / tenant | `contaId`, isolamento | `apps/web/lib/prisma-tenant.ts`, skill **tenant** |
-| Cadastro | Alunos, turmas, planos, combos | `apps/web/features/cadastro/` |
-| Matrículas | Wizard, vínculo acadêmico-financeiro | `apps/web/features/cadastro/matriculas/` + **`packages/domain`** |
-| Financeiro | Cobranças, extrato, reconciliação | `packages/finance/` |
+| Cadastro | Alunos, turmas, planos, combos | `apps/web/features/students/`, `classes/`, `plans/`, `bundles/` |
+| Matrículas | Wizard, vínculo acadêmico-financeiro | `apps/web/features/enrollments/` + **`packages/domain`** |
+| Financeiro | Cobranças, extrato, reconciliação | `apps/web/features/finance/` + `packages/finance/` |
 | Asaas | Subconta, customer, payment | `packages/asaas/`, skill **asaas** |
 | Webhooks | Idempotência, eventos | `packages/finance/src/webhooks/` |
 | KYC | Subconta whitelabel | `packages/finance/src/use-cases/kyc/` |
-| Aulas | Agenda, frequência | `apps/web/src/server/aulas/` |
+| Aulas | Agenda, frequência | `apps/web/features/lessons/` + `apps/web/src/server/lessons/` |
 | Portal | Responsável / aluno | `apps/web/features/portal/` |
-| Loja | Vendas avulsas | `apps/web/features/vendas/` |
+| Loja | Vendas avulsas | `apps/web/features/sales/` |
 | Eventos / mapa | Assentos, layout | `packages/domain/src/map-engine/` |
 
 ## Invariantes (confirmar em código + `.github/instructions/invariantes.instructions.md`)

@@ -1,8 +1,8 @@
 import {
   listCobrancaArquivosResultDTOSchema,
   uploadCobrancaArquivoResultDTOSchema,
-} from '@/features/financeiro/cobrancas/dtos';
-import { mapCobrancaArquivoToDTO } from '@/features/financeiro/cobrancas/mappers';
+} from '@/features/finance/operations/charges/dtos';
+import { mapCobrancaArquivoToDTO } from '@/features/finance/operations/charges/mappers';
 import { parseOperationalChargeId } from '@alusa/finance';
 import type { TenantTransactionClient } from '@/lib/prisma-tenant';
 

@@ -5,7 +5,7 @@ import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate
 import {
   fiscalSettingsResponseSchema,
   saveFiscalSettingsInputSchema,
-} from '@/features/configuracoes/notafiscal/dtos';
+} from '@/features/settings/tax-invoices/dtos';
 import {
   getFiscalInvoiceSettings,
   saveFiscalCoreSettings,

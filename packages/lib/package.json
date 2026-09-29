@@ -110,6 +110,14 @@
       "types": "./dist/schemas/modalidade.schema.d.ts",
       "default": "./dist/schemas/modalidade.schema.js"
     },
+    "./schemas/colaborador": {
+      "types": "./dist/schemas/colaborador.d.ts",
+      "default": "./dist/schemas/colaborador.js"
+    },
+    "./schemas/professor": {
+      "types": "./dist/schemas/professor.d.ts",
+      "default": "./dist/schemas/professor.js"
+    },
     "./services/modalidade.service": {
       "types": "./dist/services/modalidade.service.d.ts",
       "default": "./dist/services/modalidade.service.js"

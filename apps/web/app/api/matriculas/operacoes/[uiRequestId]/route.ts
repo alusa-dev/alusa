@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { readEnrollmentCreationStatus } from '@/src/server/matriculas/enrollment-creation-status.service';
+import { readEnrollmentCreationStatus } from '@/src/server/enrollments/enrollment-creation-status.service';
 
 const requestIdSchema = z.string().trim().min(1).max(200);
 const roles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);

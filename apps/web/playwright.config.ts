@@ -48,9 +48,8 @@ const nodeMaxOldSpaceSize = /^\d+$/.test(configuredPlaywrightHeap ?? '')
     : '8192';
 
 export default defineConfig({
-  testDir: './',
-  // Permite rodar qualquer *.spec.ts dentro de e2e/ ou tests/e2e/
-  testMatch: ['e2e/**/*.spec.ts', 'tests/e2e/**/*.spec.ts'],
+  testDir: './e2e',
+  testMatch: '**/*.spec.ts',
   // Os fixtures de integração resetam o banco compartilhado entre os testes;
   // um único worker evita corridas destrutivas tanto localmente quanto no CI.
   workers: 1,

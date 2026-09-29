@@ -2,7 +2,7 @@
 
 > Fonte de verdade visual e de composição da Alusa. Este documento registra os padrões de interface e experiência que devem orientar novas telas, componentes e fluxos do ERP Educacional.
 
-**Status:** versão inicial consolidada a partir da interface existente e dos padrões mapeados no código.
+**Status:** padrões consolidados para orientar a evolução visual da aplicação; os wizards de alunos e colaboradores são a referência atual para formulários extensos.
 **Escopo:** `apps/web`, com referências complementares a `packages/ui`.
 **Princípio de manutenção:** este documento descreve decisões de design e composição; os componentes reutilizáveis continuam sendo implementados em `packages/ui` ou nos componentes compartilhados da aplicação.
 
@@ -245,12 +245,16 @@ Padrões recorrentes:
 | --- | ---: |
 | Controle pequeno/botão padrão | `6px` (`rounded-md`) |
 | Input, select e ações de filtro | `8px` (`rounded-lg`) |
+| Campo de formulário em wizard | `10px` |
 | Card interno e modal de detalhe | `12px` (`rounded-xl`) |
 | KPI e card de dashboard | `16px` (`rounded-2xl`) |
+| Modal wizard de cadastro | `20px` |
 | Botão circular | `9999px` ou tamanho explicitamente circular |
 | Card de autenticação | `40px` |
 
 A profundidade padrão da aplicação administrativa é baseada em bordas sutis. Usar `shadow-sm` somente quando o componente existente já utiliza esse padrão ou quando a superfície precisar se separar do fundo. Evitar sombras grandes em tabelas, filtros e cards de operação.
+
+Wizards de cadastro usam `corner-shape: superellipse(1.1)` como aprimoramento progressivo nos cantos, preservando os `border-radius` como fallback. Aplicar o mesmo tratamento à superfície do wizard, campos, botões, cards e popovers vinculados ao fluxo. Elementos circulares (`rounded-full`) mantêm seu formato.
 
 ## 5. Shell e layout de páginas
 
@@ -289,7 +293,7 @@ Valores canônicos atuais:
 - margem inferior do cabeçalho: `mb-8` — `32px`;
 - distância entre seções: `space-y-8` — `32px`.
 
-Referências: [AlunoDetalhesFeature.tsx](/Users/blendstudio/Projects/alusa/apps/web/features/cadastro/alunos/AlunoDetalhesFeature.tsx) e [MatriculaDetalhesClient.tsx](/Users/blendstudio/Projects/alusa/apps/web/app/(app)/matriculas/[id]/MatriculaDetalhesClient.tsx).
+Referências: [StudentDetailsFeature.tsx](/Users/blendstudio/Projects/alusa/apps/web/features/students/StudentDetailsFeature.tsx) e [MatriculaDetalhesClient.tsx](/Users/blendstudio/Projects/alusa/apps/web/app/(app)/matriculas/[id]/MatriculaDetalhesClient.tsx).
 
 ### 5.3 Responsividade
 
@@ -438,6 +442,51 @@ O componente [select.tsx](/Users/blendstudio/Projects/alusa/apps/web/components/
 - item com `rounded-md`, `px-3 py-2`, `text-sm`;
 - item selecionado/destacado com fundo `gray-100`;
 - ícone de chevron de `16px`.
+
+### 8.4 Wizard de cadastro — alunos e colaboradores
+
+Os wizards de alunos e colaboradores compartilham o mesmo padrão visual e de interação. As implementações de referência são [StudentRegistrationWizard.tsx](../apps/web/features/students/components/StudentRegistrationWizard.tsx) e [ColaboradorWizardDialog.tsx](../apps/web/features/employees/components/ColaboradorWizardDialog.tsx), com campos compostos em componentes próprios de cada fluxo.
+
+#### Campos
+
+- altura: `40px` (`h-10`);
+- raio: `10px`;
+- padding horizontal: `12px`;
+- texto: `13px`, line-height `20px`;
+- superfície inicial: cinza claro (`#eff3f8` como referência canônica);
+- placeholder: cinza azulado (`#8a9bb2` como referência);
+- hover em dispositivo com ponteiro: fundo `#e7edf5`, sem mudar borda, sombra ou cor do texto;
+- foco/seleção: fundo transparente, borda cinza fina `1px solid #9ca3af`, sem anel roxo;
+- o hover não substitui nem remove a borda de foco enquanto o campo está selecionado;
+- campo obrigatório vazio: fundo âmbar `#fff7ed`; campo inválido: fundo vermelho `#fef2f2`, sem contorno colorido;
+- erros aparecem em tooltip à direita do campo e também permanecem acessíveis a leitores de tela;
+- ao iniciar o wizard, campos vazios não são marcados como erro; a validação visível ocorre após a tentativa de avançar ou concluir;
+- selects seguem a mesma altura, superfície, raio, hover e foco dos inputs;
+- textareas seguem as mesmas cores e estados, respeitando a altura definida pelo conteúdo.
+
+Labels ficam acima do controle, com `12px`, peso `500` e intervalo de `4px`. Campos em grid usam gap de `16px`; a quantidade de colunas se adapta à largura disponível. No mobile, os campos se reorganizam sem rolagem horizontal.
+
+`#eff3f8` é a superfície cinza canônica.
+
+#### Organização dos componentes
+
+- `apps/web/components/shared/wizard/layout.tsx` contém cabeçalhos e cards de etapa reutilizados entre alunos, colaboradores, matrículas e cobrança;
+- `apps/web/components/shared/wizard/fields.tsx` concentra estado de validação, rótulos, campos de texto/select e erros em tooltip;
+- `apps/web/components/shared/wizard/field-styles.ts` mantém uma única definição visual dos controles;
+- máscaras com comportamento específico permanecem junto ao wizard que as utiliza;
+- primitivas e composições compartilhadas apenas no Next.js ficam em `apps/web/components/ui`; componentes independentes do app e compartilhados entre packages devem ser exportados por `packages/ui`.
+
+#### Ações do wizard
+
+- botões de rodapé: altura `40px`, raio `10px` e largura de `120px` no desktop;
+- em telas estreitas, botões ocupam a largura disponível e podem empilhar;
+- botão primário: fundo roxo `#512a82`, texto branco e sem sombra;
+- botão secundário: fundo cinza claro `#eff3f8`, texto escuro e sem sombra;
+- manter distância de `12px` entre ações no desktop e `8px` quando empilhadas.
+
+#### Revisão e resumo
+
+O passo final deve resumir informações em cards cinza-claro agrupados por assunto. Evitar repetir no conteúdo do passo o título e a descrição já apresentados no topo do wizard. Manter as ações de voltar e concluir no rodapé.
 
 ## 9. Cards e KPIs
 
@@ -591,7 +640,7 @@ O modal base está em [dialog.tsx](/Users/blendstudio/Projects/alusa/apps/web/co
 
 ### 11.2 Modal de formulário extenso
 
-Referência: [AlunoEditDialog.tsx](/Users/blendstudio/Projects/alusa/apps/web/components/alunos/AlunoEditDialog.tsx).
+Referência: [AlunoEditDialog.tsx](/Users/blendstudio/Projects/alusa/apps/web/features/students/components/AlunoEditDialog.tsx).
 
 - largura: `max-w-4xl` — `896px`;
 - fundo: `#f8fafc`;
@@ -607,7 +656,7 @@ Referência: [AlunoEditDialog.tsx](/Users/blendstudio/Projects/alusa/apps/web/co
 
 ### 11.3 Modal com tabela
 
-Referência: modal “Detalhes da variante” em [ProductVariantsTab.tsx](/Users/blendstudio/Projects/alusa/apps/web/features/vendas/components/tabs/ProductVariantsTab.tsx).
+Referência: modal “Detalhes da variante” em [ProductVariantsTab.tsx](/Users/blendstudio/Projects/alusa/apps/web/features/sales/components/tabs/ProductVariantsTab.tsx).
 
 - largura máxima: `896px`;
 - altura máxima: `640px`;
@@ -632,15 +681,15 @@ O modal de criação/edição de evento usa a composição de formulário extens
 - labels: `12px`, peso `500`, sem caixa alta obrigatória;
 - ações: `h-10`, `rounded-lg`, primário sem sombra forte.
 
-Referência: [CalendarEventDialog.tsx](/Users/blendstudio/Projects/alusa/apps/web/features/aulas/agenda/components/CalendarEventDialog.tsx).
+Referência: [CalendarEventDialog.tsx](/Users/blendstudio/Projects/alusa/apps/web/features/lessons/agenda/components/CalendarEventDialog.tsx).
 
-O modal “Nova reposição” segue o mesmo padrão visual e de acessibilidade, incluindo `max-w-4xl`, `rounded-2xl`, controles `h-10 rounded-lg`, seções `rounded-xl` e labels associados aos controles. Referência: [MakeupClassDialog.tsx](/Users/blendstudio/Projects/alusa/apps/web/features/aulas/reposicoes/components/MakeupClassDialog.tsx).
+O modal “Nova reposição” segue o mesmo padrão visual e de acessibilidade, incluindo `max-w-4xl`, `rounded-2xl`, controles `h-10 rounded-lg`, seções `rounded-xl` e labels associados aos controles. Referência: [MakeupClassDialog.tsx](/Users/blendstudio/Projects/alusa/apps/web/features/lessons/reposicoes/components/MakeupClassDialog.tsx).
 
 ### 11.5 Modal de detalhes — leitura de dados
 
 O modal mostrado em “Detalhes da rematrícula” é uma variação própria para consulta. Ele não deve ser tratado como modal de formulário: o conteúdo é organizado para leitura rápida, sem campos editáveis, com seções suaves e footer fixo.
 
-Referência canônica: [DetailsDialog.tsx](/Users/blendstudio/Projects/alusa/apps/web/components/shared/DetailsDialog.tsx). Exemplo de uso: [RematriculaProcessDialogs.tsx](/Users/blendstudio/Projects/alusa/apps/web/features/cadastro/rematriculas/components/RematriculaProcessDialogs.tsx).
+Referência canônica: [DetailsDialog.tsx](/Users/blendstudio/Projects/alusa/apps/web/components/shared/DetailsDialog.tsx). Exemplo de uso: [RematriculaProcessDialogs.tsx](/Users/blendstudio/Projects/alusa/apps/web/features/renewals/components/RematriculaProcessDialogs.tsx).
 
 #### Estrutura
 
@@ -716,6 +765,22 @@ Cada grupo de informações usa um card suave sem borda:
 #### Quando usar
 
 Usar este padrão quando a pessoa precisa consultar um resumo e detalhes relacionados sem editar o registro. Para criação ou edição, usar o modal de formulário extenso documentado na seção 11.2. Para ações com risco, usar confirmação destrutiva com ação explícita e sem transformar o modal de detalhes em formulário.
+
+### 11.6 Wizard de cadastro e confirmação de saída
+
+Wizards extensos de cadastro usam modal próprio, com largura máxima de `1020px`, raio de `20px`, cabeçalho e rodapé fixos e área de conteúdo rolável quando necessário. Em telas pequenas, ocupam a viewport (`100dvh`) e mantêm controles e ações dentro da área visível.
+
+- overlay do wizard: preto com `60%` de opacidade, sem blur;
+- superfície do modal: branca no tema claro e token de superfície no tema escuro;
+- progresso: trilho cinza claro e preenchimento roxo `#512a82`;
+- título e descrição geral ficam no topo; cada etapa identifica sua seção antes dos campos;
+- não exibir um nome de etapa duplicado no topo direito;
+- cantos: `20px` no modal, com `corner-shape: superellipse(1.1)` quando suportado e raio CSS como fallback;
+- confirmação de alterações não salvas antes de descartar;
+- o diálogo de confirmação usa superfície compacta, raio de `16px`, overlay preto com `25%` de opacidade e sem blur;
+- manter texto objetivo e ações explícitas para continuar editando ou descartar.
+
+O padrão compartilhado de confirmação está em [UnsavedChangesDialog.tsx](../apps/web/components/ui/UnsavedChangesDialog.tsx). Reutilizar esse componente em vez de recriar a composição dentro de cada modal ou wizard.
 
 ## 12. Seleções preenchidas
 
@@ -836,6 +901,18 @@ Para barras de disponibilidade:
 - usar skeleton em vez de spinner quando a estrutura já for conhecida;
 - usar `animate-pulse` de forma discreta;
 - não deslocar a página quando o conteúdo chegar.
+
+#### Salvamento em wizard de cadastro
+
+No último passo, ao confirmar o cadastro, exibir o indicador reutilizável [LoadingDots.tsx](../apps/web/components/ui/LoadingDots.tsx) centralizado sobre o wizard:
+
+- três pontos animados em lilás Alusa claro (`#8a63b8`), sem texto visível;
+- escurecer levemente a superfície do wizard enquanto a operação está em andamento;
+- bloquear campos, navegação, confirmação repetida e fechamento até a resposta;
+- fornecer nome acessível de status para tecnologias assistivas;
+- respeitar `prefers-reduced-motion`.
+
+Remover o overlay e reabilitar o wizard quando o servidor responder. Em erro, preservar os dados digitados e apresentar o feedback de erro já adotado pelo fluxo.
 
 ### Empty state
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { resolveResponsavelRouteId } from '@/src/server/responsaveis/resolve-responsavel-route-id.service';
-import { listStudentsLinkedToResponsibleForTenant } from '@/src/server/responsaveis/linked-students.service';
+import { resolveResponsavelRouteId } from '@/src/server/responsibles/resolve-responsible-route-id.service';
+import { listStudentsLinkedToResponsibleForTenant } from '@/src/server/responsibles/linked-students.service';
 
 export const dynamic = 'force-dynamic';
 

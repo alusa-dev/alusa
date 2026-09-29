@@ -4,7 +4,7 @@ import {
   createProduct,
   updateProduct,
   listProducts,
-} from '@/features/vendas/services/products-service';
+} from '@/features/sales/services/products-service';
 
 // ── Helpers ───────────────────────────────────────────────────────
 

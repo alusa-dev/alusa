@@ -3,7 +3,7 @@ import { randomUUID, createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { getSessionUser } from '@/lib/auth/session';
-import { uploadContratoArquivoResultDTOSchema } from '@/features/contratos/dtos';
+import { uploadContratoArquivoResultDTOSchema } from '@/features/contracts/dtos';
 import { jsonNoStore } from '@/lib/http-security';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { validateUploadBuffer } from '@/lib/upload-security';
@@ -117,7 +117,7 @@ export async function POST(req: NextRequest) {
       await ensureDir();
       const filePath = path.join(UPLOAD_DIR, filename);
       await fs.writeFile(filePath, bytes);
-      url = `/uploads/contratos/${filename}`;
+      url = `/uploads/contracts/${filename}`;
     }
 
     const result = {

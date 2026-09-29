@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { apiErrorResponse } from '@/lib/api/report-api-error';
-import { financeiroCobrancaCancelResultDTOSchema } from '@/features/financeiro/cobrancas/dtos';
-import { mapFinanceiroCobrancaCancelResultToDTO } from '@/features/financeiro/cobrancas/mappers';
-import { cancelAcademicCobranca } from '@/src/server/finance/cobranca-cancellation.service';
+import { financeiroCobrancaCancelResultDTOSchema } from '@/features/finance/operations/charges/dtos';
+import { mapFinanceiroCobrancaCancelResultToDTO } from '@/features/finance/operations/charges/mappers';
+import { cancelAcademicCobranca } from '@/src/server/finance/charge-cancellation.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

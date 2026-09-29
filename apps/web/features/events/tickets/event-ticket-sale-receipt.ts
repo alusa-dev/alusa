@@ -1,7 +1,7 @@
 import type {
   PaidReceiptAluno,
   PaidReceiptItem,
-} from '@/features/financeiro/pagamentos/paid-receipts-pdf';
+} from '@/features/finance/operations/payments/paid-receipts-pdf';
 
 type EventTicketSaleReceiptCobranca = {
   id: string;

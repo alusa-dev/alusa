@@ -1,0 +1,1 @@
+ALTER TYPE "MatriculaBillingOutboxStatus" ADD VALUE IF NOT EXISTS 'CANCELLED';

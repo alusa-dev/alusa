@@ -1,0 +1,427 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import TableLayout from '@/components/layout/TableLayout';
+import { table } from '@/components/layout/TableStyles';
+import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
+import EntityFiltersBar, {
+  type SortOrder as FiltersSortOrder,
+  type StatusValue,
+} from '@/components/layout/EntityFiltersBar';
+import Pagination from '@/components/layout/Pagination';
+import { Button } from '@/components/ui/button';
+// Skeleton manual removido; DataTable fornece skeleton por coluna
+import { Plus } from '@/components/icons/icons';
+import { statusColumn, actionsColumn } from '@alusa/ui/datatable/columns';
+import ActionConfirmationDialog from '@/components/dialogs/ActionConfirmationDialog';
+import { CustomToast } from '@/components/ui/toast';
+import { toast } from '@/components/ui/toast';
+import { useEditDialog } from '@/hooks/use-edit-dialog';
+import { useDeleteDialog } from '@/hooks/use-delete-dialog';
+import { useEntityListFiltering } from '@/hooks/entity/use-entity-list-filtering';
+import useCurrentUser from '@/hooks/use-current-user';
+import { formatFirstLast } from '@alusa/lib/client';
+import RoomDialog from '@/features/rooms/components/RoomDialog';
+import { cn } from '@/lib/utils';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
+import { useRooms } from './hooks/use-rooms';
+import {
+  updateRoom,
+  createRoom,
+  deleteRoom,
+  type RoomListItem,
+  type UpdateRoomPayload,
+  type RoomStatus,
+} from './services/rooms-service';
+
+const PAGE_SIZE = 6;
+
+type SortOrder = 'ASC' | 'DESC';
+type StatusFilter = StatusValue;
+
+interface SalasTableProps {
+  salas: RoomListItem[];
+  accountMissing: boolean;
+  onEdit: (_sala: RoomListItem) => void;
+  onDelete: (_sala: RoomListItem) => void;
+  canWrite: boolean;
+  loading: boolean;
+}
+
+export function SalasFeature() {
+  const { user, loading: userLoading } = useCurrentUser();
+const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
+  const contaId = user?.contaId ?? null;
+
+  const { items, loading, reload, setItems } = useRooms({ contaId });
+  const editDialog = useEditDialog<RoomListItem>();
+  const deleteDialog = useDeleteDialog<RoomListItem>({
+    onDelete: async (sala) => {
+      if (!contaId) throw new Error('Conta não informada para exclusão.');
+      await deleteRoom({ id: sala.id, contaId });
+      setItems((prev) => prev.filter((item) => item.id !== sala.id));
+    },
+  });
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [sortOrder, setSortOrder] = useState<SortOrder>('ASC');
+
+  const {
+    search: searchTerm,
+    setSearch: setSearchTerm,
+    status: statusFilter,
+    setStatus: setStatusFilter,
+    sort,
+    setSort,
+    page,
+    setPage,
+    paginated,
+    total,
+  } = useEntityListFiltering<RoomListItem>({
+    items,
+    nameAccessor: (sala) => sala.nome ?? '',
+    statusAccessor: (sala) => (sala.status === 'INATIVO' ? 'INATIVO' : 'ATIVO'),
+    searchPredicate: (sala, term, digits) => {
+      const nome = (sala.nome || '').toLowerCase();
+      const descricao = (sala.descricao || '').toLowerCase();
+      const termMatch = term ? nome.includes(term) || descricao.includes(term) : false;
+      const capacidadeMatch = digits ? String(sala.capacidade ?? '').includes(digits) : false;
+      return termMatch || capacidadeMatch;
+    },
+    initialSort: 'ASC',
+  });
+
+  useEffect(() => {
+    const handler = () => {
+      void reload();
+    };
+    window.addEventListener('salas:changed', handler);
+    return () => window.removeEventListener('salas:changed', handler);
+  }, [reload]);
+
+  useEffect(() => {
+    setSort(sortOrder);
+  }, [sortOrder, setSort]);
+
+  useEffect(() => {
+    setSortOrder(sort);
+  }, [sort]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, statusFilter, sortOrder, setPage]);
+
+  const accountMissing = !contaId && !userLoading;
+
+  return (
+    <TableLayout
+      title="Salas"
+      subtitle="Gerencie as salas cadastradas."
+      actions={
+        <Button
+          onClick={() => {
+            editDialog.closeDialog();
+            setDialogOpen(true);
+          }}
+          className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
+          disabled={!contaId || billingLoading || !canWrite}
+        >
+          <Plus className="h-4 w-4 mr-2" /> Nova sala
+        </Button>
+      }
+      filtersBar={
+        <EntityFiltersBar
+          searchValue={searchTerm}
+          onSearchChange={setSearchTerm}
+          onSearchEnter={() => {
+            void reload();
+          }}
+          statusValue={statusFilter as StatusFilter}
+          onStatusChange={(value) => {
+            setStatusFilter(value as StatusFilter);
+          }}
+          sortOrder={sortOrder as FiltersSortOrder}
+          onSortChange={(order) => setSortOrder(order as SortOrder)}
+          searchPlaceholder="Buscar por nome ou descrição..."
+        />
+      }
+    >
+      <div className={table.container}>
+        <SalasTable
+          salas={paginated}
+          accountMissing={accountMissing}
+          onEdit={(sala) => {
+            editDialog.openDialog(sala);
+          }}
+          onDelete={(sala) => {
+            deleteDialog.openDialog(sala);
+          }}
+          canWrite={canWrite}
+          loading={loading || userLoading}
+        />
+        {total > PAGE_SIZE ? (
+          <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+            <Pagination total={total} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
+          </div>
+        ) : null}
+      </div>
+
+      <RoomDialog
+        open={dialogOpen || !!editDialog.entity}
+        creating={!editDialog.entity}
+        sala={editDialog.entity ?? null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDialogOpen(false);
+            editDialog.closeDialog();
+          } else {
+            setDialogOpen(true);
+          }
+        }}
+        onSubmit={async (formValues: {
+          nome: string;
+          status: string;
+          capacidade: string;
+          descricao: string;
+        }) => {
+          if (!contaId) {
+            toast.custom((t) => (
+              <CustomToast
+                variant="error"
+                title="Conta não encontrada"
+                description="Não foi possível identificar a conta para salvar a sala."
+                onClose={() => toast.dismiss(t)}
+              />
+            ));
+            return;
+          }
+
+          const basePayload = {
+            contaId,
+            nome: formValues.nome.trim(),
+            // Enviar undefined em vez de null para compatibilidade com zod schema (evita 422)
+            descricao: formValues.descricao.trim() || undefined,
+            capacidade: Number(formValues.capacidade),
+            status: (formValues.status === 'INATIVO' ? 'INATIVO' : 'ATIVO') as RoomStatus,
+          };
+
+          // Create
+          if (!editDialog.entity) {
+            try {
+              const created = await createRoom(basePayload);
+              setItems((prev) => [created, ...prev]);
+              toast.custom((t) => (
+                <CustomToast
+                  variant="success"
+                  title="Sala criada"
+                  description="A sala foi cadastrada."
+                  onClose={() => toast.dismiss(t)}
+                />
+              ));
+              setDialogOpen(false);
+              window.dispatchEvent(new CustomEvent('salas:changed'));
+              return;
+            } catch (error) {
+              toast.custom((t) => (
+                <CustomToast
+                  variant="error"
+                  title="Erro ao salvar"
+                  description={(error as Error).message}
+                  onClose={() => toast.dismiss(t)}
+                />
+              ));
+              throw error;
+            }
+          }
+
+          // Update
+          try {
+            const current = editDialog.entity;
+            if (!current) return;
+            const updatePayload: UpdateRoomPayload = {
+              contaId,
+              nome: basePayload.nome,
+              // Mantém mesma regra de create
+              descricao: basePayload.descricao,
+              capacidade: basePayload.capacidade,
+              status: basePayload.status,
+            };
+            const updated = await updateRoom({ id: current.id, payload: updatePayload });
+            setItems((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
+            toast.custom((t) => (
+              <CustomToast
+                variant="success"
+                title="Sala atualizada"
+                description="As alterações foram salvas."
+                onClose={() => toast.dismiss(t)}
+              />
+            ));
+            editDialog.closeDialog();
+            window.dispatchEvent(new CustomEvent('salas:changed'));
+          } catch (error) {
+            toast.custom((t) => (
+              <CustomToast
+                variant="error"
+                title="Erro ao salvar"
+                description={(error as Error).message}
+                onClose={() => toast.dismiss(t)}
+              />
+            ));
+            throw error;
+          }
+        }}
+      />
+
+      <ActionConfirmationDialog
+        open={deleteDialog.open}
+        title="Excluir sala"
+        description={(() => {
+          if (!deleteDialog.entity) {
+            return 'Tem certeza que deseja excluir esta sala? Esta ação é permanente.';
+          }
+          const rawName = deleteDialog.entity.nome ?? '';
+          const shortName = formatFirstLast(rawName) || rawName || 'esta sala';
+          return (
+            <span>
+              Tem certeza que deseja excluir a sala <strong>{shortName}</strong>? Esta ação é
+              permanente e não poderá ser desfeita.
+            </span>
+          );
+        })()}
+        onOpenChange={deleteDialog.onOpenChange}
+        confirmLabel={deleteDialog.loading ? 'Excluindo...' : 'Excluir'}
+        loadingLabel="Excluindo..."
+        cancelLabel="Cancelar"
+        onConfirm={async () => {
+          try {
+            await deleteDialog.confirm();
+            toast.custom((t) => (
+              <CustomToast
+                variant="success"
+                title="Sala excluída"
+                description="A sala foi removida do sistema."
+                onClose={() => toast.dismiss(t)}
+              />
+            ));
+            window.dispatchEvent(new CustomEvent('salas:changed'));
+          } catch (error) {
+            toast.custom((t) => (
+              <CustomToast
+                variant="error"
+                title="Erro ao excluir"
+                description={(error as Error).message}
+                onClose={() => toast.dismiss(t)}
+              />
+            ));
+          }
+        }}
+      />
+    </TableLayout>
+  );
+}
+
+function SalasTable({ salas, accountMissing, onEdit, onDelete, canWrite, loading }: SalasTableProps) {
+  if (accountMissing) {
+    return (
+      <div className="px-6 py-12 text-center text-gray-500">
+        Conecte-se a uma conta para visualizar as salas cadastradas.
+      </div>
+    );
+  }
+
+  const columns: DataTableColumn<RoomListItem>[] = [
+    {
+      id: 'nome',
+      header: 'Sala',
+      width: 'min-w-0 lg:w-[34%]',
+      align: 'left',
+      render: (s) => (
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-normal text-gray-900" title={s.nome}>
+            {s.nome}
+          </div>
+          <div className="mt-0.5 text-[11px] leading-snug text-gray-500 lg:hidden">
+            {s.descricao?.trim() || '—'}
+            <span className="tabular-nums"> · Cap. {s.capacidade}</span>
+          </div>
+        </div>
+      ),
+      skeleton: (
+        <div className="space-y-2">
+          <div className="h-4 w-40 rounded bg-gray-200" />
+          <div className="h-3 w-32 rounded bg-gray-200 lg:hidden" />
+        </div>
+      ),
+    },
+    {
+      id: 'descricao',
+      header: 'Descrição',
+      width: 'lg:w-[30%]',
+      align: 'left',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
+      render: (s) => (
+        <div className="w-full min-w-0">
+          <span className="block truncate" title={s.descricao ?? ''}>
+            {s.descricao?.trim() || '-'}
+          </span>
+        </div>
+      ),
+      skeleton: <div className="hidden h-4 w-full rounded bg-gray-200 lg:block" />,
+    },
+    {
+      id: 'capacidade',
+      header: 'Capacidade',
+      width: 'lg:w-[14%]',
+      align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
+      render: (s) => <span className="text-gray-700">{s.capacidade}</span>,
+      skeleton: <div className="mx-auto hidden h-4 w-10 rounded bg-gray-200 lg:block" />,
+    },
+    (() => {
+      const col = statusColumn<RoomListItem>({
+        activeLabel: 'Ativa',
+        inactiveLabel: 'Inativa',
+        getStatus: (sala) => sala.status,
+      });
+      return {
+        ...col,
+        width: 'w-[4.5rem] max-lg:shrink-0 max-lg:whitespace-nowrap lg:w-[12%]',
+        cellClassName: cn(col.cellClassName, 'align-middle'),
+      };
+    })(),
+    (() => {
+      const col = actionsColumn<RoomListItem>({
+        onEdit,
+        onDelete,
+        editButtonAriaLabel: (sala) => `Editar sala ${sala.nome}`,
+        deleteButtonAriaLabel: (sala) => `Inativar sala ${sala.nome}`,
+        editDisabled: !canWrite,
+        deleteDisabled: !canWrite,
+      });
+      return {
+        ...col,
+        width: 'w-[5.5rem] max-lg:shrink-0 lg:w-[10%]',
+        headerClassName: cn(col.headerClassName, 'max-lg:px-1'),
+        cellClassName: cn(col.cellClassName, 'max-lg:px-1'),
+      };
+    })(),
+  ];
+
+  return (
+    <DataTable
+      columns={columns}
+      data={salas}
+      rowKey={(s) => s.id}
+      loading={loading}
+      skeletonRows={5}
+      emptyMessage={
+        <div className="px-6 py-12 text-center text-gray-500">Nenhuma sala encontrada</div>
+      }
+      ariaLabel="Tabela de salas"
+    />
+  );
+}
+
+// (Função buildUpdatePayload removida após unificação create/edit no SalaDialog)

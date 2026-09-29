@@ -2,10 +2,10 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ExtratoTable } from '@/features/financeiro/extrato/components/ExtratoTable';
-import type { LedgerEntry } from '@/features/financeiro/extrato/dtos';
+import { StatementTable } from '@/features/finance/operations/statements/components/StatementTable';
+import type { LedgerEntry } from '@/features/finance/operations/statements/dtos';
 
-describe('ExtratoTable', () => {
+describe('StatementTable', () => {
   it('renderiza contexto de transferencia usando destinatario, referencia e taxa correlata', () => {
     const onSelect = vi.fn();
     const entries: LedgerEntry[] = [
@@ -62,7 +62,7 @@ describe('ExtratoTable', () => {
     ];
 
     render(
-      <ExtratoTable
+      <StatementTable
         entries={entries}
         onSelect={onSelect}
       />,

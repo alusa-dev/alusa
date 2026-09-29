@@ -5,7 +5,7 @@ import {
   PAYMENT_HISTORY_CATEGORY_LABELS,
   resolvePaymentHistoryDetailHref,
   resolveStandalonePaymentHistoryTipo,
-} from '@/features/financeiro/pagamentos/payment-history-categories';
+} from '@/features/finance/operations/payments/payment-history-categories';
 
 describe('payment-history-categories', () => {
   it('normaliza tipos academicos e standalone para categorias canonicas', () => {
@@ -64,7 +64,7 @@ describe('payment-history-categories', () => {
         sourceId: 'sale-1',
         category: 'LOJA',
       }),
-    ).toBe('/vendas/sale-1');
+    ).toBe('/sales/sale-1');
 
     expect(
       resolvePaymentHistoryDetailHref({
@@ -81,6 +81,6 @@ describe('payment-history-categories', () => {
         sourceId: 'cobranca-1',
         category: 'MENSALIDADE',
       }),
-    ).toBe('/cobrancas/cobranca-1');
+    ).toBe('/charges/cobranca-1');
   });
 });

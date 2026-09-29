@@ -313,7 +313,7 @@ async function authenticate(page: Page, seed: Pick<SeedResult, 'userId' | 'email
 
 // ─── Navegação comum ──────────────────────────────────────────────────────────
 async function openWizard(page: Page) {
-  await page.goto('/matriculas');
+  await page.goto('/enrollments');
   await page.waitForSelector('button[aria-label="Cadastrar matrícula"]', { timeout: 20_000 });
   await page.click('button[aria-label="Cadastrar matrícula"]');
   await expect(page.getByTestId('matricula-wizard')).toBeVisible({ timeout: 10_000 });

@@ -4,14 +4,14 @@ import {
   financeiroLancamentoInputDTOSchema,
   financeiroLancamentoMutationResultDTOSchema,
   financeiroRouteIdParamsDTOSchema,
-} from '@/features/financeiro/dtos';
-import { mapFinanceiroLancamentoRecordToDTO } from '@/features/financeiro/mappers';
+} from '@/features/finance/operations/dtos';
+import { mapFinanceiroLancamentoRecordToDTO } from '@/features/finance/operations/mappers';
 import { financeInternalError } from '@/lib/api/finance-api-response';
 import { logMethodNotAllowed } from '@/lib/security/http-method-observability';
 import {
-  getFinanceiroLancamento,
-  updateFinanceiroLancamento,
-} from '@/src/server/finance/lancamento.service';
+  getFinancialTransaction,
+  updateFinancialTransaction,
+} from '@/src/server/finance/financial-transaction.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -97,7 +97,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
     const auth = await ensureAuth();
     if ('error' in auth) return auth.error;
     const { id } = financeiroRouteIdParamsDTOSchema.parse(await params);
-    const lancamento = await getFinanceiroLancamento({ contaId: auth.user.contaId, lancamentoId: id });
+    const lancamento = await getFinancialTransaction({ contaId: auth.user.contaId, lancamentoId: id });
     if (!lancamento) return err(404, 'NAO_ENCONTRADO', 'Lancamento nao encontrado');
     return NextResponse.json(
       financeiroLancamentoMutationResultDTOSchema.parse({
@@ -119,7 +119,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       return err(400, 'DADOS_INVALIDOS', parsed.error.issues[0]?.message ?? 'Dados inválidos');
     }
 
-    const result = await updateFinanceiroLancamento({
+    const result = await updateFinancialTransaction({
       contaId: auth.user.contaId,
       lancamentoId: id,
       data: parsed.data,

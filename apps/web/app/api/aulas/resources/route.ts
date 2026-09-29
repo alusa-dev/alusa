@@ -1,8 +1,8 @@
 import { NextRequest } from 'next/server';
 
-import { listAgendaResources } from '@/src/server/aulas/agenda/agenda.service';
-import { handleAulasRouteError, json } from '@/src/server/aulas/route-utils';
-import { canAccessAulas, getAulasSessionUser } from '@/src/server/aulas/session';
+import { listAgendaResources } from '@/src/server/lessons/agenda/agenda.service';
+import { handleAulasRouteError, json } from '@/src/server/lessons/route-utils';
+import { canAccessAulas, getAulasSessionUser } from '@/src/server/lessons/session';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

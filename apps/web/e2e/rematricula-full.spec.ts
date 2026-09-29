@@ -500,11 +500,11 @@ test.afterAll(async () => {
 test('bloqueia acesso sem autenticação e mostra estados básicos autenticados', async ({ page }) => {
   await resetDb(prisma);
 
-  await page.goto('/rematriculas');
+  await page.goto('/reenrollments');
   await expect(page).toHaveURL(/auth|login/);
 
   const seed = await setupAuthenticatedPage(page);
-  await page.goto('/rematriculas');
+  await page.goto('/reenrollments');
   await expect(page.getByRole('heading', { name: 'Gestão de Rematrículas' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Campanhas' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Todos os processos' })).toBeVisible();
@@ -548,7 +548,7 @@ test('cria, edita, valida janela e arquiva campanhas sem vazar para outra conta'
   });
   await expectOk(update);
 
-  await page.goto('/rematriculas');
+  await page.goto('/reenrollments');
   await expect(page.getByText('Rematrículas Antecipadas Editada')).toBeVisible();
   await expect(page.getByText('0 Rematriculados')).toBeVisible();
 
@@ -587,7 +587,7 @@ test('realiza rematrícula individual pela campanha e preserva ciclo financeiro 
     select: { id: true, status: true, valor: true },
   });
 
-  await page.goto(`/rematriculas/campanhas/${campaign.id}`);
+  await page.goto(`/reenrollments/campaigns/${campaign.id}`);
   await expect(page.getByRole('heading', { name: 'Detalhes da Campanha' })).toBeVisible();
   const sessionResponse = await page.request.get('/api/auth/session');
   const sessionBody = await sessionResponse.json();
@@ -662,7 +662,7 @@ test('abre detalhes em modal e edita próximo ciclo salvando dados futuros coere
   });
   expect(created.response.ok(), created.body.text).toBeTruthy();
 
-  await page.goto('/rematriculas');
+  await page.goto('/reenrollments');
   await page.getByRole('button', { name: 'Todos os processos' }).click();
   const row = page.locator('tr', { hasText: 'Bryan de Alencar Bezerra' });
   await expect(row).toBeVisible();
@@ -732,7 +732,7 @@ test('exige motivo ao cancelar, cancela artefatos futuros e permite nova rematr�
   const blocked = await page.request.post(`/api/rematriculas/${firstProcess.id}/cancel`, { data: { reason: '' } });
   await expectStatus(blocked, 422);
 
-  await page.goto('/rematriculas');
+  await page.goto('/reenrollments');
   await page.getByRole('button', { name: 'Todos os processos' }).click();
   await expect(page.getByText('Bryan de Alencar Bezerra')).toBeVisible();
   const row = page.locator('tr', { hasText: 'Bryan de Alencar Bezerra' }).first();
@@ -909,7 +909,7 @@ test('efetiva processo vencido pelo job sem alterar cobranças do ciclo atual', 
 test('permissões negam operações críticas para usuário sem papel operacional', async ({ page }) => {
   const seed = await setupAuthenticatedPage(page, { role: 'PROFESSOR' });
 
-  await page.goto('/rematriculas');
+  await page.goto('/reenrollments');
   await expect(page.getByRole('heading', { name: 'Gestão de Rematrículas' })).toBeVisible();
 
   const create = await page.request.post('/api/rematriculas/campanhas', {

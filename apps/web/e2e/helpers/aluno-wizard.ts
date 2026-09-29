@@ -77,7 +77,7 @@ export async function setupAlunoWizardTest(page: Page, adminEmail?: string) {
   await seedAdminAndAuthenticate(page, { email });
   await mockKycRefresh(page);
   await mockViaCep(page, DEFAULT_CEP, DEFAULT_ADDRESS);
-  await page.goto('/alunos');
+  await page.goto('/students');
   await expect(page.getByRole('heading', { name: 'Gestão de Alunos' }).first()).toBeVisible();
   await dismissWelcomeWizard(page);
   await expect(page.getByTestId('abrir-wizard-aluno').first()).toBeEnabled({ timeout: 20_000 });

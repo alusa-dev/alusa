@@ -4,7 +4,7 @@ import {
   rematriculaProcessCommunicationInputDTOSchema,
   rematriculaProcessExceptionInputDTOSchema,
   rematriculaProcessRouteParamsDTOSchema,
-} from '@/features/cadastro/rematriculas/dtos';
+} from '@/features/renewals/dtos';
 
 describe('DTOs de governança de rematrícula', () => {
   it('valida parâmetros e comunicação com os campos canônicos', () => {

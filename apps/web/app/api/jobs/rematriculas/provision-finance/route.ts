@@ -5,7 +5,7 @@ import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import {
   processRenewalOutboxFromJob,
   provisionFutureFinancialAgreementsFromJob,
-} from '@/src/server/matriculas/renewal-job-commands.service';
+} from '@/src/server/enrollments/renewal-job-commands.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;

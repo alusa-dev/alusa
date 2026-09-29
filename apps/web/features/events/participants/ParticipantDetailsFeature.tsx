@@ -46,8 +46,8 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import ConfirmDeleteDialog from '@/components/dialogs/ConfirmDeleteDialog';
-import { DangerActionDialog } from '@/components/rematriculas/DangerActionDialog';
+import ActionConfirmationDialog from '@/components/dialogs/ActionConfirmationDialog';
+import { DangerActionDialog } from '@/features/renewals/components/DangerActionDialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -55,11 +55,11 @@ import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { refundEventCharge } from '@/features/events/events-service';
 import { Receipt, RotateCcw, Trash } from '@/components/icons/icons';
-import { exportPaidReceiptsPdf } from '@/features/financeiro/pagamentos/paid-receipts-pdf';
-import { loadPaidReceiptSchoolProfile } from '@/features/financeiro/pagamentos/receipt-school-profile';
+import { exportPaidReceiptsPdf } from '@/features/finance/operations/payments/paid-receipts-pdf';
+import { loadPaidReceiptSchoolProfile } from '@/features/finance/operations/payments/receipt-school-profile';
 import { buildEventFeeReceiptInput } from './event-fee-receipt';
 import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
-import { CompartilharContratoDialog } from '@/features/contratos/components/CompartilharContratoDialog';
+import { ShareContractDialog } from '@/features/contracts/components/ShareContractDialog';
 
 type EditSection = 'cadastro' | 'figurinos' | null;
 
@@ -1610,7 +1610,7 @@ export function ParticipantDetailsFeature({
                   ]}
                   data={charges}
                   rowKey={(c) => c.id}
-                  onRowClick={(c) => router.push(`/cobrancas/${c.id}`)}
+                  onRowClick={(c) => router.push(`/charges/${c.id}`)}
                   emptyMessage={<EmptyState title="Nenhuma parcela encontrada." description="Nenhuma cobrança registrada no gateway para este plano." />}
                 />
               </TablePanel>
@@ -1676,7 +1676,7 @@ export function ParticipantDetailsFeature({
                               <Button variant="ghost" size="icon" title="Ações do contrato"><MoreHorizontal className="h-4 w-4" /></Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => router.push(`/contratos/evento/${contract.id}`)}>
+                              <DropdownMenuItem onClick={() => router.push(`/contracts/event/${contract.id}`)}>
                                 <ExternalLink className="mr-2 h-4 w-4" /> Ver contrato
                               </DropdownMenuItem>
                               <DropdownMenuItem disabled={sharingContractId === contract.id} onClick={() => void handleShareEventContract(contract)}>
@@ -1761,7 +1761,7 @@ export function ParticipantDetailsFeature({
                               <Button variant="ghost" size="icon" title="Ações do consentimento"><MoreHorizontal className="h-4 w-4" /></Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => router.push(`/contratos/evento/${consentimento.contratoId}`)}>
+                              <DropdownMenuItem onClick={() => router.push(`/contracts/event/${consentimento.contratoId}`)}>
                                 <ExternalLink className="mr-2 h-4 w-4" /> Ver documento
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => void handleShareConsentDocument(consentimento.contratoId)}>
@@ -1914,7 +1914,7 @@ export function ParticipantDetailsFeature({
       </div>
 
       {/* Confirmation Modals */}
-      <ConfirmDeleteDialog
+      <ActionConfirmationDialog
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}
         title="Cancelar Inscrição no Evento"
@@ -1941,7 +1941,7 @@ export function ParticipantDetailsFeature({
         }}
       />
 
-      <CompartilharContratoDialog
+      <ShareContractDialog
         open={shareContract !== null}
         onOpenChange={(open) => !open && setShareContract(null)}
         tokenPublico={shareContract?.token ?? ''}

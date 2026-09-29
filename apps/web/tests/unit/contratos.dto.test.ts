@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapContratoModeloRecordToDTO, mapContratoRecordToDTO } from '@/features/contratos/mappers';
+import { mapContratoModeloRecordToDTO, mapContratoRecordToDTO } from '@/features/contracts/mappers';
 
 describe('contratos DTO mappers', () => {
   it('mapeia contrato hidratado para DTO canônico', () => {

@@ -34,7 +34,7 @@ vi.mock('@/lib/auth-options', () => ({
   authOptions: {},
 }));
 
-vi.mock('@/src/server/matriculas/matricula.service', () => ({
+vi.mock('@/src/server/enrollments/enrollment.service', () => ({
   criarMatricula: criarMatriculaMock,
   buscarMatriculaPorId: buscarMatriculaPorIdMock,
   listarMatriculas: vi.fn(),
@@ -43,11 +43,11 @@ vi.mock('@/src/server/matriculas/matricula.service', () => ({
   },
 }));
 
-vi.mock('@/src/server/matriculas/enrollment-billing-outbox.service', () => ({
+vi.mock('@/src/server/enrollments/enrollment-billing-outbox.service', () => ({
   processEnrollmentBillingOutboxEvent: processEnrollmentBillingOutboxEventMock,
 }));
 
-vi.mock('@/src/server/matriculas/create-immediate-enrollment.use-case', () => ({
+vi.mock('@/src/server/enrollments/create-immediate-enrollment.use-case', () => ({
   createImmediateEnrollment: createImmediateEnrollmentMock,
   ImmediateEnrollmentCreationError: class ImmediateEnrollmentCreationError extends Error {
     constructor(
@@ -72,7 +72,7 @@ vi.mock('@alusa/finance', () => ({
 vi.mock('@alusa/lib', () => ({
 }));
 
-vi.mock('@/src/server/matriculas/subscription-payment-materialization', () => ({
+vi.mock('@/src/server/enrollments/subscription-payment-materialization', () => ({
   syncInitialSubscriptionPaymentFromAsaas: syncInitialSubscriptionPaymentFromAsaasMock,
 }));
 
@@ -319,7 +319,7 @@ describe('POST /api/matriculas', () => {
 
   it('propaga falha de vigência sem criar matrícula', async () => {
     const { ImmediateEnrollmentCreationError } = await import(
-      '@/src/server/matriculas/create-immediate-enrollment.use-case'
+      '@/src/server/enrollments/create-immediate-enrollment.use-case'
     );
     createImmediateEnrollmentMock.mockRejectedValueOnce(
       new ImmediateEnrollmentCreationError(
@@ -344,7 +344,7 @@ describe('POST /api/matriculas', () => {
 
   it('preserva o motivo financeiro seguro para o wizard exibir uma ação clara', async () => {
     const { ImmediateEnrollmentCreationError } = await import(
-      '@/src/server/matriculas/create-immediate-enrollment.use-case'
+      '@/src/server/enrollments/create-immediate-enrollment.use-case'
     );
     createImmediateEnrollmentMock.mockRejectedValueOnce(
       new ImmediateEnrollmentCreationError(

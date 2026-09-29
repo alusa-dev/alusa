@@ -23,7 +23,7 @@ describe('GET /api/public/contrato/[token]', () => {
     prismaMock.contrato.findFirst.mockResolvedValueOnce({
       id: 'contrato-1',
       contaId: 'conta-1',
-      arquivoPdfUrl: '/uploads/contratos/contrato-1.pdf',
+      arquivoPdfUrl: '/uploads/contracts/contrato-1.pdf',
       hashPdf: 'a'.repeat(64),
       status: 'PENDENTE',
       tokenExpiraEm: new Date(Date.now() + 60_000),
@@ -67,7 +67,7 @@ describe('GET /api/public/contrato/[token]', () => {
     prismaMock.contrato.findFirst.mockResolvedValueOnce({
       id: 'contrato-1',
       contaId: 'conta-1',
-      arquivoPdfUrl: '/uploads/contratos/contrato-1.pdf',
+      arquivoPdfUrl: '/uploads/contracts/contrato-1.pdf',
       hashPdf: 'a'.repeat(64),
       status: 'PENDENTE',
       tokenExpiraEm: new Date(Date.now() + 60_000),
@@ -123,7 +123,7 @@ describe('GET /api/public/contrato/[token]', () => {
     prismaMock.contrato.findFirst.mockResolvedValueOnce({
       id: 'contrato-2',
       contaId: 'conta-1',
-      arquivoPdfUrl: '/uploads/contratos/contrato-2.pdf',
+      arquivoPdfUrl: '/uploads/contracts/contrato-2.pdf',
       hashPdf: 'b'.repeat(64),
       status: 'PENDENTE',
       tokenExpiraEm: new Date(Date.now() + 60_000),
@@ -181,7 +181,7 @@ describe('GET /api/public/contrato/[token]', () => {
     prismaMock.contrato.findFirst.mockResolvedValueOnce({
       id: 'contrato-3',
       contaId: 'conta-1',
-      arquivoPdfUrl: '/uploads/contratos/contrato-3.pdf',
+      arquivoPdfUrl: '/uploads/contracts/contrato-3.pdf',
       hashPdf: 'c'.repeat(64),
       status: 'PENDENTE',
       tokenExpiraEm: new Date(Date.now() + 60_000),

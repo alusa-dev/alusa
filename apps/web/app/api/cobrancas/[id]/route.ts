@@ -1,10 +1,10 @@
 import type { NextRequest } from 'next/server';
 
-import { getCobrancaDetailRoute } from '@/src/server/finance/cobranca-detail-http-route.service';
+import { getCobrancaDetailRoute } from '@/src/server/finance/charge-detail-http-route.service';
 import {
   deleteCobrancaRoute,
   updateCobrancaRoute,
-} from '@/src/server/finance/cobranca-command-http.service';
+} from '@/src/server/finance/charge-command-http.service';
 
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   return getCobrancaDetailRoute(req, context);

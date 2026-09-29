@@ -150,7 +150,7 @@ export async function guardFinancialAccountOr412(
           code: 'COMMERCIAL_INFO_EXPIRED',
           financialAccount: { status: 'PENDING_ACTIVATION' },
           reasons: kyc.error.reasons,
-          redirectTo: '/conta/perfil',
+          redirectTo: '/account/profile',
         }),
       };
     }
@@ -162,7 +162,7 @@ export async function guardFinancialAccountOr412(
           code: 'KYC_REQUIRED',
           financialAccount: { status: 'PENDING_ACTIVATION' },
           reasons: kyc.error.reasons,
-          redirectTo: '/conta/verificacao',
+          redirectTo: '/account/verification',
         }),
       };
     }
@@ -172,7 +172,7 @@ export async function guardFinancialAccountOr412(
       response: json(412, {
         code: 'FINANCIAL_ACCOUNT_UNAVAILABLE',
         financialAccount: { status: 'UNAVAILABLE' },
-        redirectTo: '/conta/verificacao',
+        redirectTo: '/account/verification',
       }),
     };
   }

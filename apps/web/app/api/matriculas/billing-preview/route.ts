@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import { z, ZodError } from 'zod';
 
 import { getSessionUser } from '@/lib/auth/session';
-import { previewInitialEnrollmentBillingForTenant } from '@/src/server/matriculas/initial-enrollment-billing-http.service';
-import { enrollmentBillingStrategyDTOSchema } from '@/features/cadastro/matriculas/dtos';
+import { previewInitialEnrollmentBillingForTenant } from '@/src/server/enrollments/initial-enrollment-billing-http.service';
+import { enrollmentBillingStrategyDTOSchema } from '@/features/enrollments/dtos';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 

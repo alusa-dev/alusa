@@ -32,15 +32,15 @@ vi.mock('@/src/prisma', () => ({
   prisma: prismaMock,
 }));
 
-vi.mock('@/src/server/matriculas/matricula.service', () => ({
+vi.mock('@/src/server/enrollments/enrollment.service', () => ({
   buscarMatriculaPorId: buscarMatriculaPorIdMock,
   atualizarDetalhesMatricula: vi.fn(),
   atualizarStatusMatricula: vi.fn(),
 }));
 
-vi.mock('@/src/server/matriculas/matricula-sync.service', async () => {
-  const actual = await vi.importActual<typeof import('@/src/server/matriculas/matricula-sync.service')>(
-    '@/src/server/matriculas/matricula-sync.service',
+vi.mock('@/src/server/enrollments/enrollment-sync.service', async () => {
+  const actual = await vi.importActual<typeof import('@/src/server/enrollments/enrollment-sync.service')>(
+    '@/src/server/enrollments/enrollment-sync.service',
   );
   return {
     ...actual,
@@ -48,12 +48,12 @@ vi.mock('@/src/server/matriculas/matricula-sync.service', async () => {
   };
 });
 
-vi.mock('@/src/server/matriculas/financial-context.service', () => ({
+vi.mock('@/src/server/enrollments/financial-context.service', () => ({
   resolveMatriculaFinancialContext: resolveMatriculaFinancialContextMock,
   updateFamilyFinancialLocalState: vi.fn(),
 }));
 
-vi.mock('@/features/cadastro/matriculas/mappers', () => ({
+vi.mock('@/features/enrollments/mappers', () => ({
   mapMatriculaDeleteResultToDTO: vi.fn(),
   mapMatriculaRecordToCoreDTO: vi.fn(),
   mapMatriculaRecordToResumoDTO: (value: unknown) => value,

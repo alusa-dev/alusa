@@ -5,7 +5,7 @@ import { encerrarContratosExpirados } from '@alusa/lib/jobs/encerrar-contratos-e
 import {
   finalizeExpiredFamilyEnrollments,
   listContasWithExpiredEnrollments,
-} from '@/src/server/matriculas/enrollment-closure.service';
+} from '@/src/server/enrollments/enrollment-closure.service';
 import { apiJsonError } from '@/lib/api/standard-response';
 
 export const dynamic = 'force-dynamic';

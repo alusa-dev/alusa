@@ -1,0 +1,662 @@
+'use client';
+
+import { useState } from 'react';
+import { TZDateMini } from '@date-fns/tz';
+import { addDays } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+import { ChevronLeft, ChevronRight, Filter, MoreVertical, Search } from '@/components/icons/icons';
+import { cn } from '@/lib/utils';
+
+import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
+import TableLayout from '@/components/layout/TableLayout';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import type {
+  AttendanceHistoryTurmaItemDTO,
+  AttendanceWorkspaceTurmaItemDTO,
+} from '@/features/lessons/dtos';
+import { AttendanceHistoryDetailsDialog } from '@/features/lessons/attendance/components/AttendanceHistoryDetailsDialog';
+import { ClassAttendanceDialog } from '@/features/lessons/attendance/components/ClassAttendanceDialog';
+import { useAttendance } from '@/features/lessons/attendance/hooks/use-attendance';
+import { useAttendanceWorkspace } from '@/features/lessons/attendance/hooks/use-attendance-workspace';
+import {
+  DEFAULT_ACCOUNT_TIMEZONE,
+  endOfZonedDayClient,
+  formatInstantInAccountZone,
+  normalizeAccountTimeZoneClient,
+  startOfZonedDayClient,
+  zonedNaiveToUtcIso,
+} from '@/lib/agenda-timezone';
+
+const ALL = '__ALL__';
+const tzDefault = DEFAULT_ACCOUNT_TIMEZONE;
+const zNowDefault = new TZDateMini(Date.now(), tzDefault);
+const DEFAULT_START = startOfZonedDayClient(
+  new Date(addDays(zNowDefault, -30).getTime()),
+  tzDefault,
+).toISOString();
+const DEFAULT_END = endOfZonedDayClient(
+  new Date(addDays(zNowDefault, 30).getTime()),
+  tzDefault,
+).toISOString();
+const TOOLBAR_TRIGGER_CLASS = 'h-10 rounded-lg border-slate-200 bg-white';
+
+function toZonedDateInputValue(value: string | undefined, timeZone: string) {
+  if (!value) return '';
+  return formatInstantInAccountZone(value, 'yyyy-MM-dd', timeZone);
+}
+
+function AttendanceHistoryRow({
+  item,
+  onSelect,
+  timeZone,
+}: {
+  item: AttendanceHistoryTurmaItemDTO;
+  onSelect: (_turmaId: string) => void;
+  timeZone: string;
+}) {
+  return (
+    <tr
+      onClick={() => item.turma && onSelect(item.turma.id)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          if (item.turma) onSelect(item.turma.id);
+        }
+      }}
+      tabIndex={0}
+      role="button"
+      className="cursor-pointer border-b border-slate-100 text-left transition-colors last:border-b-0 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none"
+    >
+      <td className="max-w-[240px] truncate px-4 py-4 text-sm font-semibold text-slate-900 sm:px-6">
+        {item.turma?.label ?? 'Turma sem vínculo'}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-600 sm:px-6">
+        {formatInstantInAccountZone(item.lastLaunchedAt, "dd/MM/yyyy 'às' HH:mm", timeZone, {
+          locale: ptBR,
+        })}
+      </td>
+      <td className="max-w-[220px] truncate px-4 py-4 text-sm text-slate-700 sm:px-6">
+        {item.professores.map((professor) => professor.label).join(', ') || 'Sem professor'}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-700 sm:px-6">
+        {item.summary.recorded}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-700 sm:px-6">
+        {item.summary.presentes}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-700 sm:px-6">
+        {item.summary.faltas}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-700 sm:px-6">
+        {item.occurrenceCount}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-right text-sm font-medium text-[#5c2f91] sm:px-6">
+        Abrir histórico
+      </td>
+    </tr>
+  );
+}
+
+function getWorkspaceColumns(
+  timeZone: string,
+  onSelect: (_turmaId: string) => void,
+): DataTableColumn<AttendanceWorkspaceTurmaItemDTO>[] {
+  return [
+    {
+      id: 'turma',
+      header: 'Turma',
+      width: 'w-[24%]',
+      align: 'left',
+      render: (item) => (
+        <span className="truncate font-medium text-gray-900">{item.turma.label}</span>
+      ),
+    },
+    {
+      id: 'professores',
+      header: 'Professor(es)',
+      width: 'w-[24%]',
+      align: 'left',
+      render: (item) => (
+        <span className="truncate text-gray-600">
+          {item.professores.map((professor) => professor.label).join(', ') ||
+            'Sem professor vinculado'}
+        </span>
+      ),
+    },
+    {
+      id: 'horario',
+      header: 'Horário',
+      width: 'w-[17%]',
+      align: 'left',
+      render: (item) => {
+        const occurrence = item.selectedOccurrence;
+        return occurrence
+          ? `${formatInstantInAccountZone(occurrence.startAt, 'HH:mm', timeZone)} - ${formatInstantInAccountZone(occurrence.endAt, 'HH:mm', timeZone)}`
+          : 'Sem aula';
+      },
+    },
+    {
+      id: 'sala',
+      header: 'Sala',
+      width: 'w-[14%]',
+      align: 'left',
+      render: (item) => item.selectedOccurrence?.sala?.label ?? item.sala?.label ?? 'Sem sala',
+    },
+    {
+      id: 'chamada',
+      header: 'Chamada',
+      width: 'w-[11%]',
+      align: 'left',
+      render: (item) => {
+        const summary = item.selectedOccurrence?.attendanceSummary;
+        return summary ? `${summary.recorded}/${summary.totalEligible}` : 'Sem ocorrência';
+      },
+    },
+    {
+      id: 'acoes',
+      header: 'Ações',
+      width: 'w-[5rem]',
+      align: 'right',
+      headerClassName: 'pr-6 md:pr-8',
+      cellClassName: 'pr-6 md:pr-8',
+      render: (item) => (
+        <div className="flex justify-end">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label={`Ações da turma ${item.turma.label}`}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#A94DFF]/30"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <MoreVertical className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="w-48"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <DropdownMenuItem onSelect={() => onSelect(item.turma.id)}>
+                Lançar frequência
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      ),
+    },
+  ];
+}
+
+function AttendanceHistoryToolbar({
+  filters,
+  setFilters,
+  resources,
+  timeZone,
+}: {
+  filters: ReturnType<typeof useAttendance>['filters'];
+  setFilters: ReturnType<typeof useAttendance>['setFilters'];
+  resources: {
+    turmas: Array<{ id: string; label: string }>;
+    professores: Array<{ id: string; label: string }>;
+  };
+  timeZone: string;
+}) {
+  const activeFilters = [
+    Boolean(filters.turmaId),
+    Boolean(filters.professorId),
+    Boolean(filters.startDate),
+    Boolean(filters.endDate),
+  ].filter(Boolean).length;
+
+  return (
+    <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-end">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" className="h-10 rounded-lg border-slate-200 px-3">
+              <Filter className="mr-2 h-4 w-4" />
+              {activeFilters > 0 ? `Filtros (${activeFilters})` : 'Filtros'}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-[340px] rounded-xl border-slate-200 p-4">
+            <div className="space-y-4">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Filtros do histórico</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  Refine o histórico por turma, professor e período.
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <label className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                    Turma
+                  </label>
+                  <Select
+                    value={filters.turmaId ?? ALL}
+                    onValueChange={(value) =>
+                      setFilters((current) => ({
+                        ...current,
+                        turmaId: value === ALL ? undefined : value,
+                      }))
+                    }
+                  >
+                    <SelectTrigger className={TOOLBAR_TRIGGER_CLASS}>
+                      <SelectValue placeholder="Turma" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todas as turmas</SelectItem>
+                      {resources.turmas.map((turma) => (
+                        <SelectItem key={turma.id} value={turma.id}>
+                          {turma.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                    Professor
+                  </label>
+                  <Select
+                    value={filters.professorId ?? ALL}
+                    onValueChange={(value) =>
+                      setFilters((current) => ({
+                        ...current,
+                        professorId: value === ALL ? undefined : value,
+                      }))
+                    }
+                  >
+                    <SelectTrigger className={TOOLBAR_TRIGGER_CLASS}>
+                      <SelectValue placeholder="Professor" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todos os professores</SelectItem>
+                      {resources.professores.map((professor) => (
+                        <SelectItem key={professor.id} value={professor.id}>
+                          {professor.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                      Início
+                    </label>
+                    <Input
+                      type="date"
+                      value={toZonedDateInputValue(filters.startDate, timeZone)}
+                      onChange={(event) =>
+                        setFilters((current) => ({
+                          ...current,
+                          startDate: event.target.value
+                            ? zonedNaiveToUtcIso(`${event.target.value}T00:00`, timeZone)
+                            : undefined,
+                        }))
+                      }
+                      className="h-10 rounded-lg border-slate-200"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                      Fim
+                    </label>
+                    <Input
+                      type="date"
+                      value={toZonedDateInputValue(filters.endDate, timeZone)}
+                      onChange={(event) =>
+                        setFilters((current) => ({
+                          ...current,
+                          endDate: event.target.value
+                            ? endOfZonedDayClient(
+                                new Date(
+                                  zonedNaiveToUtcIso(`${event.target.value}T00:00`, timeZone),
+                                ),
+                                timeZone,
+                              ).toISOString()
+                            : undefined,
+                        }))
+                      }
+                      className="h-10 rounded-lg border-slate-200"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {activeFilters > 0 ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-8 px-2 text-xs text-slate-500 hover:text-slate-900"
+                  onClick={() =>
+                    setFilters((current) => ({
+                      ...current,
+                      turmaId: undefined,
+                      professorId: undefined,
+                      startDate: undefined,
+                      endDate: undefined,
+                    }))
+                  }
+                >
+                  Limpar filtros
+                </Button>
+              ) : null}
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
+    </div>
+  );
+}
+
+function AttendanceHistoryContent({
+  filters,
+  data,
+  loading,
+  error,
+  selectedTurmaId,
+  onSelectedTurmaIdChange,
+  timeZone,
+}: {
+  filters: ReturnType<typeof useAttendance>['filters'];
+  data: ReturnType<typeof useAttendance>['data'];
+  loading: boolean;
+  error: string | null;
+  selectedTurmaId: string | null;
+  onSelectedTurmaIdChange: (_value: string | null) => void;
+  timeZone: string;
+}) {
+  const items = data?.data.items ?? [];
+
+  return (
+    <div className="space-y-5">
+      {error ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:flex-row sm:items-center sm:px-6">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">Histórico por turma</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Selecione a turma para abrir as frequências já lançadas no período.
+            </p>
+          </div>
+          <div className="text-xs font-medium uppercase tracking-wide text-slate-400">
+            {items.length} turma(s)
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="px-6 py-10 text-sm text-slate-500">Carregando histórico...</div>
+        ) : items.length === 0 ? (
+          <div className="m-6 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-10 text-center text-sm text-slate-500">
+            Nenhum registro encontrado.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[980px] table-fixed divide-y divide-slate-100">
+              <colgroup>
+                <col className="w-[20%]" />
+                <col className="w-[14%]" />
+                <col className="w-[18%]" />
+                <col className="w-[10%]" />
+                <col className="w-[10%]" />
+                <col className="w-[8%]" />
+                <col className="w-[10%]" />
+                <col className="w-[10%]" />
+              </colgroup>
+              <thead className="bg-gray-50">
+                <tr>
+                  {[
+                    'Turma',
+                    'Última frequência',
+                    'Professor(es)',
+                    'Lançamentos',
+                    'Presentes',
+                    'Faltas',
+                    'Ocorrências',
+                    'Ações',
+                  ].map((label, index) => (
+                    <th
+                      key={label}
+                      scope="col"
+                      className={cn(
+                        'px-4 py-3 text-xs font-medium uppercase tracking-wide text-slate-500 sm:px-6',
+                        index === 7 ? 'text-right' : 'text-left',
+                      )}
+                    >
+                      {label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="bg-white">
+                {items.map((item) => (
+                  <AttendanceHistoryRow
+                    key={item.turma?.id ?? item.lastLaunchedAt}
+                    item={item}
+                    onSelect={onSelectedTurmaIdChange}
+                    timeZone={timeZone}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <AttendanceHistoryDetailsDialog
+        open={Boolean(selectedTurmaId)}
+        turmaId={selectedTurmaId}
+        filters={filters}
+        onOpenChange={(open) => {
+          if (!open) onSelectedTurmaIdChange(null);
+        }}
+      />
+    </div>
+  );
+}
+
+export function AttendancePage() {
+  const [view, setView] = useState<'workspace' | 'history'>('workspace');
+  const [selectedTurmaId, setSelectedTurmaId] = useState<string | null>(null);
+  const {
+    filters: historyFilters,
+    setFilters: setHistoryFilters,
+    data: historyData,
+    loading: historyLoading,
+    error: historyError,
+  } = useAttendance({
+    startDate: DEFAULT_START,
+    endDate: DEFAULT_END,
+  });
+  const { selectedDate, setSelectedDate, search, setSearch, data, loading, error, refresh } =
+    useAttendanceWorkspace();
+
+  const workspace = data?.data;
+  const historyResources = historyData?.data.resources ?? { turmas: [], professores: [] };
+  const workspaceTz = normalizeAccountTimeZoneClient(workspace?.timeZone);
+  const historyTz = normalizeAccountTimeZoneClient(historyData?.data.timeZone);
+
+  return (
+    <TableLayout
+      title="Frequência"
+      subtitle="Lance a chamada por turma e navegue entre datas sem sair do padrão operacional da Alusa."
+    >
+      <div className="space-y-5">
+        <div className="border-b border-slate-200">
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <Tabs
+              variant="line"
+              value={view}
+              onValueChange={(value) => setView(value as 'workspace' | 'history')}
+            >
+              <TabsList>
+                <TabsTrigger value="workspace">Lançar frequência</TabsTrigger>
+                <TabsTrigger value="history">Histórico</TabsTrigger>
+              </TabsList>
+            </Tabs>
+
+            {view === 'workspace' && workspace?.professorScope.active ? (
+              <Badge variant="info" className="mb-2 sm:mb-1">
+                {workspace.professorScope.label
+                  ? `Turmas de ${workspace.professorScope.label}`
+                  : 'Escopo do professor'}
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="min-w-0 pt-4">
+          {view === 'workspace' ? (
+            <div className="flex w-full flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between lg:gap-2">
+              <div className="relative block w-full lg:max-w-[360px]">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Buscar turma"
+                  className="h-10 rounded-lg border-slate-200 pl-9"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="inline-flex h-10 items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium capitalize text-slate-900 shadow-sm">
+                  {formatInstantInAccountZone(selectedDate, "dd 'de' MMMM", workspaceTz, {
+                    locale: ptBR,
+                  })}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 rounded-lg border-slate-200"
+                  onClick={() =>
+                    setSelectedDate(startOfZonedDayClient(new Date(), workspaceTz).toISOString())
+                  }
+                >
+                  Hoje
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-10 w-10 rounded-lg border-slate-200"
+                  onClick={() => {
+                    const z = new TZDateMini(new Date(selectedDate).getTime(), workspaceTz);
+                    const shifted = addDays(z, -1);
+                    setSelectedDate(
+                      startOfZonedDayClient(new Date(shifted.getTime()), workspaceTz).toISOString(),
+                    );
+                  }}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-10 w-10 rounded-lg border-slate-200"
+                  onClick={() => {
+                    const z = new TZDateMini(new Date(selectedDate).getTime(), workspaceTz);
+                    const shifted = addDays(z, 1);
+                    setSelectedDate(
+                      startOfZonedDayClient(new Date(shifted.getTime()), workspaceTz).toISOString(),
+                    );
+                  }}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <AttendanceHistoryToolbar
+              filters={historyFilters}
+              setFilters={setHistoryFilters}
+              resources={historyResources}
+              timeZone={historyTz}
+            />
+          )}
+        </div>
+
+        {view === 'workspace' ? (
+          <>
+            {error ? (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {error}
+              </div>
+            ) : null}
+
+            {workspace?.professorScope.reason === 'PROFESSOR_NOT_LINKED' ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                {workspace.professorScope.message}
+              </div>
+            ) : null}
+
+            <div className="alusa-session-panel w-full overflow-hidden rounded-lg border border-gray-200 bg-white outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:rounded-xl">
+              <DataTable
+                columns={getWorkspaceColumns(workspaceTz, setSelectedTurmaId)}
+                data={workspace?.items ?? []}
+                rowKey={(item) => item.turma.id}
+                loading={loading}
+                skeletonRows={4}
+                ariaLabel="Tabela de turmas operacionais"
+                onRowClick={(item) => setSelectedTurmaId(item.turma.id)}
+                emptyMessage={
+                  <div className="px-6 py-12 text-center text-sm text-gray-500">
+                    Nenhuma turma encontrada para a data e busca selecionadas.
+                  </div>
+                }
+              />
+            </div>
+
+      <ClassAttendanceDialog
+              open={Boolean(selectedTurmaId)}
+              turmaId={selectedTurmaId}
+              initialDate={selectedDate}
+              onOpenChange={(open) => {
+                if (!open) setSelectedTurmaId(null);
+              }}
+              onSaved={refresh}
+            />
+          </>
+        ) : (
+          <AttendanceHistoryContent
+            filters={historyFilters}
+            data={historyData}
+            loading={historyLoading}
+            error={historyError}
+            selectedTurmaId={selectedTurmaId}
+            onSelectedTurmaIdChange={setSelectedTurmaId}
+            timeZone={historyTz}
+          />
+        )}
+      </div>
+    </TableLayout>
+  );
+}

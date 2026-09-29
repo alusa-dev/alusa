@@ -7,7 +7,7 @@ import {
   cobrancaArquivoIdQueryDTOSchema,
   cobrancaRouteParamsDTOSchema,
   deleteCobrancaArquivoResultDTOSchema,
-} from '@/features/financeiro/cobrancas/dtos';
+} from '@/features/finance/operations/charges/dtos';
 import { apiErrorResponse } from '@/lib/api/report-api-error';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
 import {
@@ -208,7 +208,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
         nomeArquivo,
         mimetype: binaryValidation.detectedMimeType,
         tamanho: file.size,
-        url: isR2Configured() ? storageUrl : `/uploads/cobrancas/${nomeArquivo}`,
+        url: isR2Configured() ? storageUrl : `/uploads/charges/${nomeArquivo}`,
         uploadPor: userId,
       });
 

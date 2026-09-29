@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { matriculaBillingGroupsQueryDTOSchema } from '@/features/cadastro/matriculas/dtos';
+import { matriculaBillingGroupsQueryDTOSchema } from '@/features/enrollments/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { listMatriculaBillingGroups } from '@/src/server/matriculas/billing-views.service';
+import { listMatriculaBillingGroups } from '@/src/server/enrollments/billing-views.service';
 
 export const dynamic = 'force-dynamic';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);

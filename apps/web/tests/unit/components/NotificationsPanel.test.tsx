@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import NotificationsPanel from '@/components/notifications/NotificationsPanel';
+import NotificationsPanel from '@/features/notifications/components/NotificationsPanel';
 
 const items = [
   { id: '1', title: 'Nova matrícula', description: 'Aluno João inscrito', createdAt: '2025-09-18T12:00:00Z' },

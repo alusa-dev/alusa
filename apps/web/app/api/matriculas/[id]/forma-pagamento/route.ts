@@ -6,17 +6,17 @@ import {
 } from '@alusa/finance';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { runWithTenant } from '@/lib/prisma-tenant';
-import { updateMatriculaBillingTypeInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
-import { mapMatriculaSubscriptionBillingTypeUpdateResultToDTO } from '@/features/cadastro/matriculas/mappers';
+import { updateMatriculaBillingTypeInputDTOSchema } from '@/features/enrollments/dtos';
+import { mapMatriculaSubscriptionBillingTypeUpdateResultToDTO } from '@/features/enrollments/mappers';
 import { classifyAsaasSubscriptionMutationError } from '@/src/server/finance/asaas-subscription-mutation-error';
-import { deriveLocalAssinaturaSnapshot } from '@/src/server/matriculas/subscription-snapshot';
-import { mapBillingTypeToFormaPagamento } from '@/src/server/matriculas/recurring-billing';
-import { alignLocalPendingEnrollmentCharges } from '@/src/server/matriculas/enrollment-finance-consistency.service';
+import { deriveLocalAssinaturaSnapshot } from '@/src/server/enrollments/subscription-snapshot';
+import { mapBillingTypeToFormaPagamento } from '@/src/server/enrollments/recurring-billing';
+import { alignLocalPendingEnrollmentCharges } from '@/src/server/enrollments/enrollment-finance-consistency.service';
 import {
   isFinancialContextEditable,
   resolveMatriculaFinancialContext,
   updateFamilyFinancialLocalState,
-} from '@/src/server/matriculas/financial-context.service';
+} from '@/src/server/enrollments/financial-context.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(

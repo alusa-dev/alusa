@@ -79,7 +79,7 @@ export function KycBlockingModal({ open, onOpenChange, verification, reason }: P
               className="w-full"
               onClick={() => {
                 onOpenChange(false);
-                router.push(isCommercialInfoExpired ? '/conta/perfil' : '/conta/verificacao');
+                router.push(isCommercialInfoExpired ? '/account/profile' : '/account/verification');
               }}
             >
               {isCommercialInfoExpired ? 'Regularizar dados comerciais' : 'Enviar documentos'}

@@ -32,7 +32,7 @@ function metric(label: string, value: string | number) {
 export default async function AdminFinanceWebhooksPage() {
   const session = await getServerSession(authOptions).catch(() => null);
   const user = session?.user;
-  if (!user?.contaId || !['ADMIN', 'SUPER_ADMIN'].includes(user.role ?? '')) redirect('/admin/configuracoes');
+  if (!user?.contaId || !['ADMIN', 'SUPER_ADMIN'].includes(user.role ?? '')) redirect('/admin/settings');
 
   const [status, webhooks, issueSummary] = await Promise.all([
     getAsaasWebhookOperationalStatus({ contaId: user.contaId }),

@@ -1,12 +1,12 @@
 import { NextRequest } from 'next/server';
 
-import { saveAttendanceInputSchema } from '@/features/aulas/dtos';
+import { saveAttendanceInputSchema } from '@/features/lessons/dtos';
 import {
   getAttendanceEventDetails,
   saveAttendanceForEvent,
-} from '@/src/server/aulas/frequencia/attendance.service';
-import { handleAulasRouteError, json } from '@/src/server/aulas/route-utils';
-import { canAccessAulas, getAulasSessionUser } from '@/src/server/aulas/session';
+} from '@/src/server/lessons/attendance/attendance.service';
+import { handleAulasRouteError, json } from '@/src/server/lessons/route-utils';
+import { canAccessAulas, getAulasSessionUser } from '@/src/server/lessons/session';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

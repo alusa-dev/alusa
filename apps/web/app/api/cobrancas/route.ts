@@ -11,17 +11,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { apiJson, apiJsonCreated } from '@/lib/api/standard-response';
 import { invalidateChargesCache } from '@/lib/cache/invalidation';
-import { createLegacyCobranca, listLegacyCobrancas } from '@/src/server/finance/cobranca-legacy.service';
+import { createLegacyCobranca, listLegacyCobrancas } from '@/src/server/finance/charge-legacy.service';
 import {
   createLegacyCobrancaInputDTOSchema,
   createLegacyCobrancaResultDTOSchema,
   listLegacyCobrancasQueryDTOSchema,
   listLegacyCobrancasResultDTOSchema,
-} from '@/features/financeiro/cobrancas/dtos';
+} from '@/features/finance/operations/charges/dtos';
 import {
   mapCreateLegacyCobrancaResultToDTO,
   mapLegacyCobrancaListItemToDTO,
-} from '@/features/financeiro/cobrancas/mappers';
+} from '@/features/finance/operations/charges/mappers';
 import { ZodError } from 'zod';
 
 /**

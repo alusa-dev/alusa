@@ -36,7 +36,7 @@ export function useKycEnforcement() {
 function shouldEnableKycEnforcement(pathname: string | null): boolean {
   if (!pathname) return false;
   if (pathname.startsWith('/auth')) return false;
-  if (pathname.startsWith('/conta/verificacao')) return false;
+  if (pathname.startsWith('/account/verification')) return false;
   return true;
 }
 

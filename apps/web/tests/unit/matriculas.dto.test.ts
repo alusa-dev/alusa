@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   mapCreateMatriculaDTOToServiceInput,
   mapListMatriculasResultToDTO,
-} from '@/features/cadastro/matriculas/mappers';
+} from '@/features/enrollments/mappers';
 
 describe('matriculas DTO mappers', () => {
   it('normaliza payload de criação para input de serviço', () => {

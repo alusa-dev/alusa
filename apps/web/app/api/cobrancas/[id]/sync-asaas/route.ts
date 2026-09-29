@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { cobrancaRouteParamsDTOSchema } from '@/features/financeiro/cobrancas/dtos';
+import { cobrancaRouteParamsDTOSchema } from '@/features/finance/operations/charges/dtos';
 import { syncPaymentStateFromAsaas } from '@alusa/finance';
-import { resolveCobrancaPaymentLookupForTenant } from '@/src/server/finance/resolve-cobranca-payment-lookup';
+import { resolveCobrancaPaymentLookupForTenant } from '@/src/server/finance/resolve-charge-payment-lookup';
 import { rateLimitAsync } from '@/lib/rate-limit';
 import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { invalidateChargeResourceCache } from '@/lib/cache/invalidation';

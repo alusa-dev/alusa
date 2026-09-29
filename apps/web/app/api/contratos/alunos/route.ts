@@ -3,8 +3,8 @@ import { getSessionUser } from '@/lib/auth/session';
 import {
   listAlunosComContratosQueryDTOSchema,
   listAlunosComContratosResultDTOSchema,
-} from '@/features/contratos/dtos';
-import { mapAlunoContratoCardToDTO } from '@/features/contratos/mappers';
+} from '@/features/contracts/dtos';
+import { mapAlunoContratoCardToDTO } from '@/features/contracts/mappers';
 import { listStudentsWithContracts } from '@/src/server/contracts/contract-read.service';
 
 const PAGE_SIZE = 7;

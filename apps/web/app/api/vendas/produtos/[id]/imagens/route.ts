@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { productImagesReorderInputDTOSchema } from '@/features/vendas/dtos';
+import { productImagesReorderInputDTOSchema } from '@/features/sales/dtos';
 import {
   listProductImages,
   addProductImage,

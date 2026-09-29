@@ -37,16 +37,16 @@ describe('IntegracoesFeature', () => {
       },
     });
 
-    const { IntegracoesFeature } = await import('@/features/integracoes/IntegracoesFeature');
+    const { IntegrationsFeature } = await import('@/features/integrations/IntegrationsFeature');
 
-    render(<IntegracoesFeature />);
+    render(<IntegrationsFeature />);
 
     const card = screen.getByRole('button', { name: /Plataforma de pagamento Asaas/i });
     expect(screen.getByText('Conexão pendente')).toBeInTheDocument();
 
     fireEvent.click(card);
 
-    expect(pushMock).toHaveBeenCalledWith('/admin/configuracoes/integracoes/asaas');
+    expect(pushMock).toHaveBeenCalledWith('/admin/settings/integrations/asaas');
     expect(screen.queryByText('Abra para configurar a API key.')).not.toBeInTheDocument();
   });
 
@@ -60,9 +60,9 @@ describe('IntegracoesFeature', () => {
       },
     });
 
-    const { IntegracoesFeature } = await import('@/features/integracoes/IntegracoesFeature');
+    const { IntegrationsFeature } = await import('@/features/integrations/IntegrationsFeature');
 
-    render(<IntegracoesFeature />);
+    render(<IntegrationsFeature />);
 
     expect(screen.getByText('Conectado')).toBeInTheDocument();
     expect(screen.queryByText('Conexão pendente')).not.toBeInTheDocument();
@@ -79,9 +79,9 @@ describe('IntegracoesFeature', () => {
       },
     });
 
-    const { IntegracoesFeature } = await import('@/features/integracoes/IntegracoesFeature');
+    const { IntegrationsFeature } = await import('@/features/integrations/IntegrationsFeature');
 
-    render(<IntegracoesFeature />);
+    render(<IntegrationsFeature />);
 
     expect(screen.queryByRole('button', { name: /Plataforma de pagamento Asaas/i })).not.toBeInTheDocument();
     expect(screen.queryByText('Gerenciado pela Alusa')).not.toBeInTheDocument();

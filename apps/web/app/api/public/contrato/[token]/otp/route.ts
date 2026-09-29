@@ -8,7 +8,7 @@ import { resolvePublicContractSigner } from '@alusa/lib/contracts/use-cases/reso
 import { findPublicContractByToken } from '@alusa/lib/contracts/use-cases/sign-contract';
 import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
-import { publicSolicitarAssinaturaOtpInputDTOSchema } from '@/features/contratos/dtos';
+import { publicSolicitarAssinaturaOtpInputDTOSchema } from '@/features/contracts/dtos';
 import { sendContractSignatureOtpEmail } from '@/lib/email/contract-signature-otp-email';
 import { recordPublicContractEvidence } from '@/src/server/contracts/public-contract-evidence.service';
 

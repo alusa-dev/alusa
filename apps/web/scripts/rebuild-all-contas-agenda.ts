@@ -5,11 +5,11 @@
  *   cd apps/web && dotenv -e ../../.env -- pnpm exec tsx scripts/rebuild-all-contas-agenda.ts
  */
 import { prisma } from '@/src/prisma';
-import { resolveAccountTimeZone } from '@/src/server/aulas/calendar/account-timezone';
+import { resolveAccountTimeZone } from '@/src/server/lessons/calendar/account-timezone';
 import {
   materializeCalendarWindow,
   normalizeAgendaRange,
-} from '@/src/server/aulas/calendar/calendar-core.service';
+} from '@/src/server/lessons/calendar/calendar-core.service';
 
 async function main() {
   const contas = await prisma.conta.findMany({

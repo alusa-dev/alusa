@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getMobileResponsibleNotifications, MobileResponsibleNotFoundError, MobileResponsibleUnauthorizedError, saveMobileResponsibleNotifications } from '@/features/responsibles/server/mobile-responsibles.service';
 import {
   saveMobileAsaasNotificationPreferencesInputDTOSchema,
-} from '@/features/configuracoes/notificacoes/asaas/dtos';
+} from '@/features/settings/notifications/asaas/dtos';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 
 export const runtime = 'nodejs';

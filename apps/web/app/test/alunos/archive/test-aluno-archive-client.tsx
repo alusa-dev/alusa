@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import AlunoDeleteDialog from '@/components/alunos/AlunoDeleteDialog';
+import StudentDeleteDialog from '@/features/students/components/StudentDeleteDialog';
 import { Button } from '@/components/ui/button';
 
 type Props = {
@@ -49,7 +49,7 @@ export default function TestAlunoArchiveClient({ alunoId }: Props) {
         Abrir Arquivamento
       </Button>
 
-      <AlunoDeleteDialog
+      <StudentDeleteDialog
         open={open}
         onOpenChange={setOpen}
         alunoId={currentAlunoId || null}

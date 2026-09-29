@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeCombo } from '@/features/cadastro/combos/services/combos-service';
+import { normalizeBundle } from '@/features/bundles/services/bundles-service';
 
 describe('combos-service normalizeCombo', () => {
   it('normaliza campos obrigatórios e opcionais', () => {
-    const combo = normalizeCombo({
+    const combo = normalizeBundle({
       id: '1',
       contaId: 'c1',
       nome: 'Combo Gold',
@@ -21,7 +21,7 @@ describe('combos-service normalizeCombo', () => {
   });
 
   it('aplica defaults e coerções', () => {
-    const combo = normalizeCombo({
+    const combo = normalizeBundle({
       id: 2,
       contaId: 'c2',
       nome: 'X',

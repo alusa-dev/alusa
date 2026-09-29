@@ -1,9 +1,9 @@
 import { prisma } from '@/prisma/client';
 import { PeriodicidadePlano, type Prisma } from '@prisma/client';
 import { buildSubscriptionExternalReference, createSubscription } from '@alusa/finance';
-import { calcularPrecoMatricula } from '@/src/server/matriculas/matricula.service';
-import { materializeSubscriptionPaymentForCharge } from '@/src/server/matriculas/subscription-payment-materialization';
-import { formatIsoDate, mapFormaPagamentoToBillingType, mapPeriodicidadeToCycle, resolveChargeableFirstDueDate } from '@/src/server/matriculas/recurring-billing';
+import { calcularPrecoMatricula } from '@/src/server/enrollments/enrollment.service';
+import { materializeSubscriptionPaymentForCharge } from '@/src/server/enrollments/subscription-payment-materialization';
+import { formatIsoDate, mapFormaPagamentoToBillingType, mapPeriodicidadeToCycle, resolveChargeableFirstDueDate } from '@/src/server/enrollments/recurring-billing';
 import { issueEnrollmentContract } from './issue-enrollment-contract.service';
 
 export async function getContractCreationContext(input: { contaId: string; matriculaId: string; contratoOrigemId?: string | null }) {

@@ -17,7 +17,7 @@ vi.mock('@/components/ui/dialog', () => ({
   DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
-vi.mock('@/components/external-asaas-onboarding/ExternalAsaasOnboarding', () => ({
+vi.mock('@/features/account/components/asaas-onboarding/ExternalAsaasOnboarding', () => ({
   ExternalAsaasOnboarding: ({ variant }: { variant?: string }) => (
     <div data-testid="external-asaas-onboarding">variant:{variant}</div>
   ),
@@ -47,7 +47,7 @@ describe('ExternalAsaasOnboardingPersistentModal', () => {
     });
 
     const { ExternalAsaasOnboardingPersistentModal } = await import(
-      '@/components/external-asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
+      '@/features/account/components/asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
     );
 
     render(<ExternalAsaasOnboardingPersistentModal />);
@@ -70,7 +70,7 @@ describe('ExternalAsaasOnboardingPersistentModal', () => {
     });
 
     const { ExternalAsaasOnboardingPersistentModal } = await import(
-      '@/components/external-asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
+      '@/features/account/components/asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
     );
 
     render(<ExternalAsaasOnboardingPersistentModal />);
@@ -92,7 +92,7 @@ describe('ExternalAsaasOnboardingPersistentModal', () => {
     });
 
     const { ExternalAsaasOnboardingPersistentModal } = await import(
-      '@/components/external-asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
+      '@/features/account/components/asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
     );
 
     render(<ExternalAsaasOnboardingPersistentModal />);
@@ -116,7 +116,7 @@ describe('ExternalAsaasOnboardingPersistentModal', () => {
       });
 
       const { ExternalAsaasOnboardingPersistentModal } = await import(
-        '@/components/external-asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
+        '@/features/account/components/asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
       );
 
       render(<ExternalAsaasOnboardingPersistentModal />);
@@ -139,7 +139,7 @@ describe('ExternalAsaasOnboardingPersistentModal', () => {
     });
 
     const { ExternalAsaasOnboardingPersistentModal } = await import(
-      '@/components/external-asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
+      '@/features/account/components/asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
     );
 
     render(<ExternalAsaasOnboardingPersistentModal />);

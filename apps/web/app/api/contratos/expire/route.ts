@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
-import { expireContratosResultDTOSchema } from '@/features/contratos/dtos';
+import { expireContratosResultDTOSchema } from '@/features/contracts/dtos';
 import { expireContractSignatureLinks } from '@/src/server/contracts/expire-contract-signature-links.service';
 
 export async function POST(_request: NextRequest) {

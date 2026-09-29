@@ -43,7 +43,7 @@
     },
     "withoutNearbyTest": 478,
     "withoutAuthEvidence": 0,
-    "directPrisma": 2,
+    "directPrisma": 0,
     "directAsaas": 0
   },
   "routes": [
@@ -9224,7 +9224,7 @@
       ],
       "hasDTOValidation": true,
       "hasNearbyTest": false,
-      "directPrisma": true,
+      "directPrisma": false,
       "directAsaas": false
     },
     {
@@ -9293,7 +9293,7 @@
       ],
       "hasDTOValidation": true,
       "hasNearbyTest": false,
-      "directPrisma": true,
+      "directPrisma": false,
       "directAsaas": false
     },
     {

@@ -5,20 +5,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-vi.mock('@/src/server/aulas/session', () => ({
+vi.mock('@/src/server/lessons/session', () => ({
   assertAulasWriteAccess: vi.fn().mockResolvedValue(undefined),
   canAccessAulas: vi.fn(),
   getAulasSessionUser: vi.fn(),
   resolveAulasAccessScope: vi.fn(),
 }));
 
-vi.mock('@/src/server/aulas/agenda/agenda.service', () => ({
+vi.mock('@/src/server/lessons/agenda/agenda.service', () => ({
   createAgendaEvent: vi.fn(),
   listAgendaEvents: vi.fn(),
 }));
 
-const { canAccessAulas, getAulasSessionUser, resolveAulasAccessScope } = await import('@/src/server/aulas/session');
-const { createAgendaEvent, listAgendaEvents } = await import('@/src/server/aulas/agenda/agenda.service');
+const { canAccessAulas, getAulasSessionUser, resolveAulasAccessScope } = await import('@/src/server/lessons/session');
+const { createAgendaEvent, listAgendaEvents } = await import('@/src/server/lessons/agenda/agenda.service');
 const { GET, POST } = await import('@/app/api/aulas/agenda/route');
 
 describe('/api/aulas/agenda', () => {

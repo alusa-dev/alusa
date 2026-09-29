@@ -49,7 +49,7 @@ import {
 import { resolveFinancialCapabilities } from '@/lib/finance/financial-capabilities';
 
 export const FINANCE_LOCKED_GROUP_KEYS = new Set(['financeiro', 'meu-dinheiro', 'antecipacoes']);
-export const AUTOMATIC_ANTICIPATION_ITEM_HREF = '/antecipacoes/automatica';
+export const AUTOMATIC_ANTICIPATION_ITEM_HREF = '/advances/automatic';
 
 export type SidebarSubItem = {
   label: string;
@@ -92,49 +92,49 @@ export const SIDEBAR_GROUPS: SidebarGroup[] = [
     items: [
       {
         label: 'Alunos',
-        href: '/alunos',
+        href: '/students',
         icon: <UserIcon className="h-5 w-5" />,
         iconSolid: <UserSolid className="h-5 w-5" />,
       },
       {
         label: 'Responsáveis',
-        href: '/responsaveis',
+        href: '/responsibles',
         icon: <UsersIcon className="h-5 w-5" />,
         iconSolid: <UsersSolid className="h-5 w-5" />,
       },
       {
         label: 'Colaboradores',
-        href: '/colaboradores',
+        href: '/employees',
         icon: <UsersIcon className="h-5 w-5" />,
         iconSolid: <UsersSolid className="h-5 w-5" />,
       },
       {
         label: 'Turmas',
-        href: '/turmas',
+        href: '/classes',
         icon: <BookOpenIcon className="h-5 w-5" />,
         iconSolid: <BookOpenSolid className="h-5 w-5" />,
       },
       {
         label: 'Planos',
-        href: '/planos',
+        href: '/plans',
         icon: <RectangleStackIcon className="h-5 w-5" />,
         iconSolid: <RectangleStackSolid className="h-5 w-5" />,
       },
       {
         label: 'Combos',
-        href: '/combos',
+        href: '/bundles',
         icon: <RectangleStackIcon className="h-5 w-5" />,
         iconSolid: <RectangleStackSolid className="h-5 w-5" />,
       },
       {
         label: 'Modalidades',
-        href: '/modalidades',
+        href: '/programs',
         icon: <BookOpenIcon className="h-5 w-5" />,
         iconSolid: <BookOpenSolid className="h-5 w-5" />,
       },
       {
         label: 'Salas',
-        href: '/salas',
+        href: '/rooms',
         icon: <BuildingLibraryIcon className="h-5 w-5" />,
         iconSolid: <BuildingLibrarySolid className="h-5 w-5" />,
       },
@@ -148,13 +148,13 @@ export const SIDEBAR_GROUPS: SidebarGroup[] = [
     items: [
       {
         label: 'Minhas Matrículas',
-        href: '/matriculas',
+        href: '/enrollments',
         icon: <ClipboardDocumentCheckIcon className="h-5 w-5" />,
         iconSolid: <ClipboardDocumentCheckSolid className="h-5 w-5" />,
       },
       {
         label: 'Rematrículas',
-        href: '/rematriculas',
+        href: '/reenrollments',
         icon: <ClipboardDocumentCheckIcon className="h-5 w-5" />,
         iconSolid: <ClipboardDocumentCheckSolid className="h-5 w-5" />,
       },
@@ -168,13 +168,13 @@ export const SIDEBAR_GROUPS: SidebarGroup[] = [
     items: [
       {
         label: 'Gestão de Contratos',
-        href: '/contratos',
+        href: '/contracts',
         icon: <DocumentText className="h-5 w-5" />,
         iconSolid: <DocumentTextSolid className="h-5 w-5" />,
       },
       {
         label: 'Modelos',
-        href: '/contratos/modelos',
+        href: '/contracts/templates',
         icon: <DocumentDuplicate className="h-5 w-5" />,
         iconSolid: <DocumentDuplicateSolid className="h-5 w-5" />,
       },
@@ -188,31 +188,31 @@ export const SIDEBAR_GROUPS: SidebarGroup[] = [
     items: [
       {
         label: 'Todas',
-        href: '/cobrancas',
+        href: '/charges',
         icon: <BanknotesIcon className="h-5 w-5" />,
         iconSolid: <BanknotesSolid className="h-5 w-5" />,
       },
       {
         label: 'Avulsas',
-        href: '/cobrancas/avulsas',
+        href: '/charges/one-time',
         icon: <BanknotesIcon className="h-5 w-5" />,
         iconSolid: <BanknotesSolid className="h-5 w-5" />,
       },
       {
         label: 'Parcelamentos',
-        href: '/cobrancas/parcelamentos',
+        href: '/charges/installments',
         icon: <RectangleStackIcon className="h-5 w-5" />,
         iconSolid: <RectangleStackSolid className="h-5 w-5" />,
       },
       {
         label: 'Assinaturas',
-        href: '/cobrancas/assinaturas',
+        href: '/charges/subscriptions',
         icon: <ClipboardDocumentCheckIcon className="h-5 w-5" />,
         iconSolid: <ClipboardDocumentCheckSolid className="h-5 w-5" />,
       },
       {
         label: 'Simulador de vendas',
-        href: '/cobrancas/simulador-vendas',
+        href: '/charges/sales-simulator',
         icon: <Receipt className="h-5 w-5" />,
         iconSolid: <Receipt className="h-5 w-5" />,
       },
@@ -226,13 +226,13 @@ export const SIDEBAR_GROUPS: SidebarGroup[] = [
     items: [
       {
         label: 'Saldo',
-        href: '/financeiro/conta',
+        href: '/finance/account',
         icon: <WalletIcon className="h-5 w-5" />,
         iconSolid: <WalletSolid className="h-5 w-5" />,
       },
       {
         label: 'Extrato',
-        href: '/financeiro/extrato',
+        href: '/finance/statement',
         icon: <DocumentText className="h-5 w-5" />,
         iconSolid: <DocumentTextSolid className="h-5 w-5" />,
       },
@@ -246,19 +246,19 @@ export const SIDEBAR_GROUPS: SidebarGroup[] = [
     items: [
       {
         label: 'Minhas antecipações',
-        href: '/antecipacoes/minhas',
+        href: '/advances/mine',
         icon: <DocumentText className="h-5 w-5" />,
         iconSolid: <DocumentTextSolid className="h-5 w-5" />,
       },
       {
         label: 'Antecipar recebimento',
-        href: '/antecipacoes/antecipar',
+        href: '/advances/request',
         icon: <BanknotesIcon className="h-5 w-5" />,
         iconSolid: <BanknotesSolid className="h-5 w-5" />,
       },
       {
         label: 'Antecipação automática',
-        href: '/antecipacoes/automatica',
+        href: '/advances/automatic',
         icon: <ArrowPathRoundedSquareIcon className="h-5 w-5" />,
         iconSolid: <ArrowPathRoundedSquareSolid className="h-5 w-5" />,
       },
@@ -272,19 +272,19 @@ export const SIDEBAR_GROUPS: SidebarGroup[] = [
     items: [
       {
         label: 'Pagamentos',
-        href: '/financeiro/pagamentos',
+        href: '/finance/payments',
         icon: <BanknotesIcon className="h-5 w-5" />,
         iconSolid: <BanknotesSolid className="h-5 w-5" />,
       },
       {
         label: 'Nota Fiscal',
-        href: '/financeiro/nota-fiscal',
+        href: '/finance/tax-invoices',
         icon: <DocumentText className="h-5 w-5" />,
         iconSolid: <DocumentTextSolid className="h-5 w-5" />,
       },
       {
         label: 'Relatórios',
-        href: '/financeiro/relatorios',
+        href: '/finance/reports',
         icon: <ChartBarIcon className="h-5 w-5" />,
         iconSolid: <ChartBarSolid className="h-5 w-5" />,
       },
@@ -298,19 +298,19 @@ export const SIDEBAR_GROUPS: SidebarGroup[] = [
     items: [
       {
         label: 'Agenda',
-        href: '/aulas/agenda',
+        href: '/lessons/schedule',
         icon: <BookOpenIcon className="h-5 w-5" />,
         iconSolid: <BookOpenSolid className="h-5 w-5" />,
       },
       {
         label: 'Frequência',
-        href: '/aulas/frequencia',
+        href: '/lessons/attendance',
         icon: <CalendarDaysIcon className="h-5 w-5" />,
         iconSolid: <CalendarDaysSolid className="h-5 w-5" />,
       },
       {
         label: 'Reposições de aula',
-        href: '/aulas/reposicoes',
+        href: '/lessons/replacements',
         icon: <CalendarDaysIcon className="h-5 w-5" />,
         iconSolid: <CalendarDaysSolid className="h-5 w-5" />,
       },
@@ -324,37 +324,37 @@ export const SIDEBAR_GROUPS: SidebarGroup[] = [
     items: [
       {
         label: 'Nova Venda',
-        href: '/vendas/nova',
+        href: '/sales/new',
         icon: <ShoppingCartIcon className="h-5 w-5" />,
         iconSolid: <ShoppingCartSolid className="h-5 w-5" />,
       },
       {
         label: 'Histórico',
-        href: '/vendas/historico',
+        href: '/sales/history',
         icon: <ClockIcon className="h-5 w-5" />,
         iconSolid: <ClockSolid className="h-5 w-5" />,
       },
       {
         label: 'Produtos',
-        href: '/vendas/produtos',
+        href: '/sales/products',
         icon: <CubeIcon className="h-5 w-5" />,
         iconSolid: <CubeSolid className="h-5 w-5" />,
       },
       {
         label: 'Estoque',
-        href: '/vendas/estoque',
+        href: '/sales/inventory',
         icon: <CircleStackIcon className="h-5 w-5" />,
         iconSolid: <CircleStackSolid className="h-5 w-5" />,
       },
       {
         label: 'Reposições de estoque',
-        href: '/vendas/reposicoes',
+        href: '/sales/restocks',
         icon: <ArrowPathRoundedSquareIcon className="h-5 w-5" />,
         iconSolid: <ArrowPathRoundedSquareSolid className="h-5 w-5" />,
       },
       {
         label: 'Categorias',
-        href: '/vendas/categorias',
+        href: '/sales/categories',
         icon: <TagIcon className="h-5 w-5" />,
         iconSolid: <TagSolid className="h-5 w-5" />,
       },
@@ -391,7 +391,7 @@ export const SIDEBAR_PORTAL_GROUPS: SidebarGroup[] = [
     items: [
       {
         label: 'Minhas Matrículas',
-        href: '/portal/matriculas',
+        href: '/portal/enrollments',
         icon: <ClipboardDocumentCheckIcon className="h-5 w-5" />,
         iconSolid: <ClipboardDocumentCheckSolid className="h-5 w-5" />,
       },
@@ -405,7 +405,7 @@ export const SIDEBAR_PORTAL_GROUPS: SidebarGroup[] = [
     items: [
       {
         label: 'Cobranças',
-        href: '/portal/financeiro',
+        href: '/portal/finance',
         icon: <BanknotesIcon className="h-5 w-5" />,
         iconSolid: <BanknotesSolid className="h-5 w-5" />,
       },
@@ -419,7 +419,7 @@ export const SIDEBAR_PORTAL_GROUPS: SidebarGroup[] = [
     items: [
       {
         label: 'Meus Eventos',
-        href: '/portal/eventos',
+        href: '/portal/events',
         icon: <TicketIcon className="h-5 w-5" />,
         iconSolid: <TicketSolid className="h-5 w-5" />,
       },
@@ -450,7 +450,7 @@ export const SIDEBAR_PERMISSIONS: Record<SidebarRoleKey, SidebarPermissionSet> =
   RECEPCAO: {
     allowDashboard: true,
     allowGroups: [
-      { key: 'cadastro', items: ['/alunos', '/responsaveis', '/colaboradores'] },
+      { key: 'cadastro', items: ['/students', '/responsibles', '/employees'] },
       { key: 'matriculas' },
       { key: 'aulas' },
       { key: 'vendas' },

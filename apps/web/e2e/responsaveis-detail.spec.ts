@@ -158,22 +158,22 @@ test.describe('Detalhe de responsáveis', () => {
   test('abre detalhes de responsável do fluxo de aluno e de responsável criado pelo modal', async ({
     page,
   }) => {
-    await page.goto('/responsaveis');
+    await page.goto('/responsibles');
 
     await expect(page.getByText(ids.responsavelFluxoAlunoNome)).toBeVisible();
     await page.getByText(ids.responsavelFluxoAlunoNome).click();
 
-    await expect(page).toHaveURL(new RegExp(`/responsaveis/${ids.responsavelFluxoAlunoId}$`));
+    await expect(page).toHaveURL(new RegExp(`/responsibles/${ids.responsavelFluxoAlunoId}$`));
     await expect(page.getByRole('heading', { name: 'Detalhes do responsável' })).toBeVisible();
     await expect(page.getByLabel('Nome Completo')).toHaveValue(ids.responsavelFluxoAlunoNome);
     await expect(page.getByText('Responsável não encontrado.')).toHaveCount(0);
 
-    await page.goto(`/responsaveis/${ids.vinculoFluxoAlunoId}`);
+    await page.goto(`/responsibles/${ids.vinculoFluxoAlunoId}`);
     await expect(page.getByRole('heading', { name: 'Detalhes do responsável' })).toBeVisible();
     await expect(page.getByLabel('Nome Completo')).toHaveValue(ids.responsavelFluxoAlunoNome);
     await expect(page.getByText('Responsável não encontrado.')).toHaveCount(0);
 
-    await page.goto('/responsaveis');
+    await page.goto('/responsibles');
     await page.getByRole('button', { name: 'Novo responsável' }).click();
 
     const dialog = page.getByRole('dialog', { name: 'Novo responsável' });

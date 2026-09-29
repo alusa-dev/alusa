@@ -1,7 +1,7 @@
 import { updateSchoolInputDTOSchema, userSchoolSummaryDTOSchema } from '@/features/users/dtos';
 import { jsonNoStore } from '@/lib/http-security';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { normalizeAccountTimeZone } from '@/src/server/aulas/calendar/account-timezone';
+import { normalizeAccountTimeZone } from '@/src/server/lessons/calendar/account-timezone';
 import { updateSchool } from '@/src/server/users/user-account.service';
 
 export async function PATCH(req: Request) {

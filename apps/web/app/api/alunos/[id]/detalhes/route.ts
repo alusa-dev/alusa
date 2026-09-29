@@ -1,1 +1,1 @@
-export { getAlunoDetalhesRoute as GET } from '@/src/server/alunos/aluno-detail-http-route.service';
+export { getAlunoDetalhesRoute as GET } from '@/src/server/students/student-detail-http-route.service';

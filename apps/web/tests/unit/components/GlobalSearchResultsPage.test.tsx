@@ -32,7 +32,7 @@ describe('GlobalSearchResultsPage', () => {
                 type: 'aluno',
                 title: 'Maria Silva',
                 description: '12345678900',
-                href: '/alunos/aluno-1',
+                href: '/students/aluno-1',
               },
             ],
           },

@@ -14,8 +14,8 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getBalance, getLocalAvailableBalance } from '@alusa/finance';
-import { financeiroSaldoQueryDTOSchema } from '@/features/financeiro/dtos';
-import { mapFinanceiroSaldoResultToDTO } from '@/features/financeiro/mappers';
+import { financeiroSaldoQueryDTOSchema } from '@/features/finance/operations/dtos';
+import { mapFinanceiroSaldoResultToDTO } from '@/features/finance/operations/mappers';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

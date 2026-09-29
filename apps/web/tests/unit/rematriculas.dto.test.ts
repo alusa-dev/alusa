@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mapListRematriculasResultToDTO } from '@/features/cadastro/rematriculas/mappers';
+import { mapListRematriculasResultToDTO } from '@/features/renewals/mappers';
 
 describe('Rematrículas DTO', () => {
   it('aceita listagem com campos financeiros nulos explícitos', () => {

@@ -15,14 +15,14 @@ vi.mock('@/lib/rate-limit', () => ({
   ipFromRequest: vi.fn(() => '127.0.0.1'),
   rateLimit: vi.fn(() => ({ ok: true })),
 }));
-vi.mock('@/features/aulas/server/mobile-agenda.service', () => ({
+vi.mock('@/features/lessons/server/mobile-agenda.service', () => ({
   listMobileAgendaEvents,
   createMobileAgendaEvent,
   MobileAgendaUnauthorizedError: class MobileAgendaUnauthorizedError extends Error {},
   MobileAgendaForbiddenError: class MobileAgendaForbiddenError extends Error {},
   MobileAgendaNotFoundError: class MobileAgendaNotFoundError extends Error {},
 }));
-vi.mock('@/features/aulas/server/mobile-agenda-route-utils', () => ({ knownMobileAgendaError }));
+vi.mock('@/features/lessons/server/mobile-agenda-route-utils', () => ({ knownMobileAgendaError }));
 
 function request(path: string, init?: Omit<RequestInit, 'signal'>, token = 'access-token') {
   return new NextRequest(`http://localhost:3000${path}`, {

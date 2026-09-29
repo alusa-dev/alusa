@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ChatBubble, Eye, EyeOff, Mail } from '@/components/icons/icons';
 import { InfoCallout } from '@/components/ui/info-callout';
-import { OtpCodeInput } from '@/features/contratos/public/OtpCodeInput';
+import { OtpCodeInput } from '@/features/contracts/public/OtpCodeInput';
 import { logoutCurrentSession } from '@/lib/client/logout';
 import { isPasswordPolicyValid, passwordMinLength, passwordPolicyMessage } from '@/lib/password-policy';
 import {

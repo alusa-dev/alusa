@@ -96,7 +96,7 @@ const PUBLIC_WRITE_PATHS = [
 ];
 
 const EXPENSIVE_SEGMENTS = [
-  '/relatorios',
+  '/reports',
   '/relatorio',
   '/export',
   '/rebuild',

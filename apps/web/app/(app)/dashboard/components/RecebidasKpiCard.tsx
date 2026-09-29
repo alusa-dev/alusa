@@ -47,7 +47,7 @@ export function RecebidasKpiCard({ data, loading, error = null }: RecebidasKpiCa
           {error ? '---' : formatCount(valor)}
         </span>
       </div>
-      <Link href="/turmas" className="inline-flex h-6 w-fit items-center rounded-full bg-[#3d3a3f] px-3 text-xs font-normal text-[#f2e9fc] transition hover:bg-[#26222d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3d3a3f]/30">
+      <Link href="/classes" className="inline-flex h-6 w-fit items-center rounded-full bg-[#3d3a3f] px-3 text-xs font-normal text-[#f2e9fc] transition hover:bg-[#26222d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3d3a3f]/30">
         Ver turmas
       </Link>
     </div>

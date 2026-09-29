@@ -5,12 +5,10 @@
     ".next",
     "e2e",
     "tests",
-    "tests/e2e",
     "**/__tests__/**",
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/*.spec.ts",
     "**/*.spec.tsx",
-    "components/colaboradores/ColaboradorWizardDialog.tsx",
   ]
 }

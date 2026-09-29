@@ -201,7 +201,7 @@ flowchart LR
 |------|----------|
 | Core | `packages/finance/src/use-cases/request-withdraw.ts`, `cancel-transfer.ts`, `list-transfers.ts`, `transfers/asaas-transfer-payload.ts`, `transfers/transfer-metadata.ts` |
 | Webhooks | `packages/finance/src/webhooks/transfer-webhook-handler.ts` |
-| UI | `apps/web/features/financeiro/conta/transfer-wizards.tsx`, `ContaPage.tsx`, `ContaTransferDetailPage.tsx` |
+| UI | `apps/web/features/finance/operations/conta/transfer-wizards.tsx`, `ContaPage.tsx`, `ContaTransferDetailPage.tsx` |
 | API | `apps/web/app/api/finance/transfers/**` |
 | Testes | `request-withdraw.test.ts`, `list-transfers.test.ts`, E2E Playwright (novo spec transferências) |
 | Docs | Atualizar runbook sandbox + ADR se mudar ordem create |

@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { apiJsonError } from '@/lib/api/standard-response';
-import { listMatriculasHttp } from '@/src/server/matriculas/list-matriculas-http.service';
-import { createMatriculaHttp, isPrismaClientInfrastructureError } from '@/src/server/matriculas/create-matricula-http.service';
-import { MatriculaConflictError } from '@/src/server/matriculas/matricula.service';
-import { mapMatriculaRuleError } from '@/src/server/matriculas/matricula-http-error';
-import { ImmediateEnrollmentCreationError } from '@/src/server/matriculas/create-immediate-enrollment.use-case';
+import { listMatriculasHttp } from '@/src/server/enrollments/list-enrollments-http.service';
+import { createMatriculaHttp, isPrismaClientInfrastructureError } from '@/src/server/enrollments/create-enrollment-http.service';
+import { MatriculaConflictError } from '@/src/server/enrollments/enrollment.service';
+import { mapMatriculaRuleError } from '@/src/server/enrollments/enrollment-http-error';
+import { ImmediateEnrollmentCreationError } from '@/src/server/enrollments/create-immediate-enrollment.use-case';
 import { EnrollmentContractModelSignatureFieldsError } from '@/src/server/contracts/create-pending-enrollment-contract.service';
 import { isPlatformBillingCapacityError } from '@/src/server/platform-billing/capacity';
 

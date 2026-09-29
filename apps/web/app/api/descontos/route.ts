@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
-  createDesconto,
-  listActiveDescontos,
-} from '@/src/server/finance/desconto.service';
+  createDiscount,
+  listActiveDiscounts,
+} from '@/src/server/finance/discount.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -22,7 +22,7 @@ const descontoListResultDTOSchema = z.object({
   items: z.array(descontoListItemDTOSchema),
 });
 
-const createDescontoInputDTOSchema = z.object({
+const createDiscountInputDTOSchema = z.object({
   nome: z.string().trim().min(2).max(120),
   tipo: z.enum(['FIXO', 'PERCENTUAL']),
   valor: z.number().positive(),
@@ -36,7 +36,7 @@ export async function GET() {
     }
     const { contaId } = auth;
 
-    const descontos = await listActiveDescontos(contaId);
+    const descontos = await listActiveDiscounts(contaId);
 
     return NextResponse.json(
       descontoListResultDTOSchema.parse({
@@ -68,7 +68,7 @@ export async function POST(request: Request) {
     const { contaId } = auth;
 
     const raw = await request.json().catch(() => null);
-    const parsed = createDescontoInputDTOSchema.safeParse(raw);
+    const parsed = createDiscountInputDTOSchema.safeParse(raw);
 
     if (!parsed.success) {
       return NextResponse.json(
@@ -84,7 +84,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const created = await createDesconto({ contaId, ...parsed.data });
+    const created = await createDiscount({ contaId, ...parsed.data });
 
     return NextResponse.json({
       item: descontoListItemDTOSchema.parse({

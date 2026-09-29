@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchExtrato } from '@/features/financeiro/extrato/services/get-extrato';
+import { fetchStatement } from '@/features/finance/operations/statements/services/get-statement';
 
-describe('fetchExtrato', () => {
+describe('fetchStatement', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     window.history.replaceState({}, '', '/');
@@ -11,11 +11,11 @@ describe('fetchExtrato', () => {
 
   it('usa fixture local em desenvolvimento quando debugFixture=sample-ledger', async () => {
     vi.stubEnv('NODE_ENV', 'development');
-    window.history.replaceState({}, '', '/financeiro/extrato?debugFixture=sample-ledger');
+    window.history.replaceState({}, '', '/finance/statement?debugFixture=sample-ledger');
 
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
-    const result = await fetchExtrato({
+    const result = await fetchStatement({
       page: 1,
       pageSize: 20,
       sort: 'date',
@@ -50,7 +50,7 @@ describe('fetchExtrato', () => {
       ),
     );
 
-    await fetchExtrato(
+    await fetchStatement(
       {
         page: 1,
         pageSize: 20,

@@ -29,7 +29,7 @@ vi.mock('@/hooks/use-portal-notifications', () => ({
   }),
 }));
 
-vi.mock('@/features/notificacoes/hooks/use-notifications-feed', () => ({
+vi.mock('@/features/notifications/hooks/use-notifications-feed', () => ({
   useNotificationUnreadCount: () => ({
     count: 0,
     loading: false,

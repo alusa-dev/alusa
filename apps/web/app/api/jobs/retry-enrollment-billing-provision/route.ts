@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { processFamilyBillingOutboxBatch } from '@/src/server/family-billing/processor';
-import { processEnrollmentBillingOutboxBatch } from '@/src/server/matriculas/enrollment-billing-outbox.service';
-import { retryEnrollmentBillingProvisionJob } from '@/src/server/matriculas/retry-enrollment-billing-provision';
+import { processEnrollmentBillingOutboxBatch } from '@/src/server/enrollments/enrollment-billing-outbox.service';
+import { retryEnrollmentBillingProvisionJob } from '@/src/server/enrollments/retry-enrollment-billing-provision';
 import { apiJsonError } from '@/lib/api/standard-response';
 import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 

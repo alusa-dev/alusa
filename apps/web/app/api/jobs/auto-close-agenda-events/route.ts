@@ -5,7 +5,7 @@ import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import {
   autoCloseAgendaEventsInRange,
   listContasWithAgendaEventsToAutoClose,
-} from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
+} from '@/src/server/lessons/agenda/agenda-event-auto-close.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;

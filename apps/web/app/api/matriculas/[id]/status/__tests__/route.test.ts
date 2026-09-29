@@ -20,10 +20,10 @@ vi.mock('@/src/server/platform-billing/capacity', () => ({
   platformBillingAccessResponse: vi.fn(() => null),
 }));
 
-vi.mock('@/src/server/matriculas/matricula-sync.service', async () => {
+vi.mock('@/src/server/enrollments/enrollment-sync.service', async () => {
   const actual = await vi.importActual<
-    typeof import('@/src/server/matriculas/matricula-sync.service')
-  >('@/src/server/matriculas/matricula-sync.service');
+    typeof import('@/src/server/enrollments/enrollment-sync.service')
+  >('@/src/server/enrollments/enrollment-sync.service');
   return {
     ...actual,
     syncMatriculaStatus: vi.fn(),
@@ -94,7 +94,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
   it('deve cancelar matrícula com sucesso', async () => {
     const { getServerSession } = await import('next-auth');
     const { syncMatriculaStatus } = await import(
-      '@/src/server/matriculas/matricula-sync.service'
+      '@/src/server/enrollments/enrollment-sync.service'
     );
 
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
@@ -139,7 +139,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
   it('deve retornar 404 se matrícula não encontrada ao cancelar', async () => {
     const { getServerSession } = await import('next-auth');
     const { ManualSyncError, syncMatriculaStatus } = await import(
-      '@/src/server/matriculas/matricula-sync.service'
+      '@/src/server/enrollments/enrollment-sync.service'
     );
 
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
@@ -157,7 +157,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
   it('deve retornar a mensagem específica da falha financeira', async () => {
     const { getServerSession } = await import('next-auth');
     const { ManualSyncError, syncMatriculaStatus } = await import(
-      '@/src/server/matriculas/matricula-sync.service'
+      '@/src/server/enrollments/enrollment-sync.service'
     );
 
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
@@ -180,7 +180,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
   it('deve retornar warning quando ação for apenas local', async () => {
     const { getServerSession } = await import('next-auth');
     const { syncMatriculaStatus } = await import(
-      '@/src/server/matriculas/matricula-sync.service'
+      '@/src/server/enrollments/enrollment-sync.service'
     );
 
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
@@ -212,7 +212,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
   it('deve retornar 500 para erros não tratados', async () => {
     const { getServerSession } = await import('next-auth');
     const { syncMatriculaStatus } = await import(
-      '@/src/server/matriculas/matricula-sync.service'
+      '@/src/server/enrollments/enrollment-sync.service'
     );
 
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);

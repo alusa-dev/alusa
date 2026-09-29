@@ -3,8 +3,8 @@ import { getSessionUser } from '@/lib/auth/session';
 import {
   deleteContratoModeloResultDTOSchema,
   updateContratoModeloInputDTOSchema,
-} from '@/features/contratos/dtos';
-import { mapContratoModeloRecordToDTO } from '@/features/contratos/mappers';
+} from '@/features/contracts/dtos';
+import { mapContratoModeloRecordToDTO } from '@/features/contracts/mappers';
 import {
   deleteContractModelForTenant,
   getContractModelForTenant,

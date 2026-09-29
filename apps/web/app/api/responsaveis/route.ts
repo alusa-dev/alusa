@@ -6,13 +6,13 @@ import {
   createResponsavelResultDTOSchema,
   listResponsaveisQueryDTOSchema,
   listResponsaveisResultDTOSchema,
-} from '@/features/responsaveis/dtos';
+} from '@/features/responsibles/dtos';
 import {
   mapCreateResponsavelDTOToData,
   mapListResponsaveisQueryToFilters,
   mapResponsavelRecordToMaskedSummaryDTO,
   mapResponsavelRecordToSummaryDTO,
-} from '@/features/responsaveis/mappers';
+} from '@/features/responsibles/mappers';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
@@ -21,7 +21,7 @@ import {
   createResponsavelForTenant,
   findResponsavelByTenantIdentity,
   listResponsaveisForTenant,
-} from '@/src/server/responsaveis/responsavel.service';
+} from '@/src/server/responsibles/responsible.service';
 
 /**
  * GET /api/responsaveis

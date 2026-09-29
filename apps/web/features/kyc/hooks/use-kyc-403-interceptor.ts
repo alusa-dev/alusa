@@ -4,7 +4,7 @@ import { isPendingDocumentsBlockBypassedForTesting } from '../test-bypass';
 
 /**
  * Hook que intercepta respostas 403 de APIs financeiras para exibir
- * um toast e redirecionar o usuário para /conta/verificacao.
+ * um toast e redirecionar o usuário para /account/verification.
  *
  * Uso: chamar `wrapFetch` envolvendo qualquer fetch financeiro, ou
  * montar no layout financeiro para interceptar globalmente.
@@ -28,7 +28,7 @@ export function useKyc403Interceptor() {
     });
 
     setTimeout(() => {
-      window.location.href = '/conta/verificacao';
+      window.location.href = '/account/verification';
     }, 1500);
   }, [bypassPendingDocumentsBlock]);
 

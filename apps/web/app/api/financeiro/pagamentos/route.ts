@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { listFinanceiroPagamentosResultDTOSchema } from '@/features/financeiro/dtos';
-import { mapFinanceiroPagamentoRecordToDTO } from '@/features/financeiro/mappers';
+import { listFinanceiroPagamentosResultDTOSchema } from '@/features/finance/operations/dtos';
+import { mapFinanceiroPagamentoRecordToDTO } from '@/features/finance/operations/mappers';
 import { financeInternalError, financeJsonError, stableQueryFingerprint } from '@/lib/api/finance-api-response';
 import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
 import {

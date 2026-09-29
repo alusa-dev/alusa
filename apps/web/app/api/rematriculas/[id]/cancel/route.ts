@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 
 import { getSessionUser } from '@/lib/auth/session';
-import { cancelRenewalProcessFromHttp } from '@/src/server/matriculas/renewal-http-commands.service';
-import { hasRenewalPermission } from '@/src/server/matriculas/renewal-permissions.service';
-import { cancelRenewalInputDTOSchema } from '@/features/cadastro/rematriculas/dtos';
+import { cancelRenewalProcessFromHttp } from '@/src/server/enrollments/renewal-http-commands.service';
+import { hasRenewalPermission } from '@/src/server/enrollments/renewal-permissions.service';
+import { cancelRenewalInputDTOSchema } from '@/features/renewals/dtos';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(

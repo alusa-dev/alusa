@@ -11,7 +11,7 @@ import { useUserStore } from '@/lib/stores/user-store';
 
 const ExternalAsaasOnboardingPersistentModal = dynamic(
   () =>
-    import('@/components/external-asaas-onboarding/ExternalAsaasOnboardingPersistentModal').then((m) => ({
+    import('@/features/account/components/asaas-onboarding/ExternalAsaasOnboardingPersistentModal').then((m) => ({
       default: m.ExternalAsaasOnboardingPersistentModal,
     })),
   { ssr: false },
@@ -27,7 +27,7 @@ const GlobalQuickCreatePortals = dynamic(
 
 const PlatformBillingPersistentModal = dynamic(
   () =>
-    import('@/components/platform-billing/PlatformBillingPersistentModal').then((m) => ({
+    import('@/features/platform-billing/components/PlatformBillingPersistentModal').then((m) => ({
       default: m.PlatformBillingPersistentModal,
     })),
   { ssr: false },

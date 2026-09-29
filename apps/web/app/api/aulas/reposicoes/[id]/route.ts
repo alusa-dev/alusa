@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server';
 
-import { updateMakeupClassInputSchema } from '@/features/aulas/dtos';
-import { getMakeupClassDetails, updateMakeupClass } from '@/src/server/aulas/reposicoes/makeup.service';
-import { handleAulasRouteError, json } from '@/src/server/aulas/route-utils';
-import { assertAulasWriteAccess, canAccessAulas, getAulasSessionUser } from '@/src/server/aulas/session';
+import { updateMakeupClassInputSchema } from '@/features/lessons/dtos';
+import { getMakeupClassDetails, updateMakeupClass } from '@/src/server/lessons/makeups/makeup.service';
+import { handleAulasRouteError, json } from '@/src/server/lessons/route-utils';
+import { assertAulasWriteAccess, canAccessAulas, getAulasSessionUser } from '@/src/server/lessons/session';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

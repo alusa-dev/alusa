@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Professor } from '@/components/turmas/types';
+import type { Professor } from '@/features/classes/components/types';
 
 interface CacheEntry<T> {
   data: T;

@@ -23,7 +23,7 @@ import {
   type BillingAgreementPreviewResponse,
   type BillingAgreementView,
   type BillingPayer as WebBillingPayer,
-} from '@/features/cadastro/matriculas/billing-agreements/contracts';
+} from '@/features/enrollments/billing-agreements/contracts';
 import { runWithTenant } from '@/lib/prisma-tenant';
 
 import {

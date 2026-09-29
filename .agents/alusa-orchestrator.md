@@ -20,16 +20,27 @@ Entender o pedido no contexto do monorepo Alusa (ERP educacional multi-tenant + 
 |------|--------|-------|
 | **Análise (`analysis`)** | Escopo incerto, arquitetura, PR review, decisão | Brief + roteamento + riscos — **sem código** |
 | **Entrega (`delivery`)** | Feature/fix aprovada para implementar | Brief → delegação `core` + especialista → revisores → gate |
-| **Revisão (`review`)** | Diff/PR pronto | Revisores paralelos → `alusa-architecture-reviewer` |
+| **Revisão (`review`)** | Diff/PR pronto | Revisores de risco em sequência → `alusa-architecture-reviewer` quando exigido |
 | **Hotfix (`hotfix`)** | Bug urgente, escopo estreito | `core` + 1 especialista + revisão mínima tenant |
 
 **Padrão:** se o usuário não disser, inferir `analysis` quando houver ambiguidade de produto; `delivery` quando pedido explícito de implementar.
+
+## Política de modelos e uso
+
+- Use exclusivamente GPT-6 Luna em toda a sessão e nos subagentes.
+- Comece em **Medium** para tarefas delimitadas, análise rotineira e implementação simples. Use **High** para mudanças substanciais, debugging complexo e decisões com múltiplas camadas. Use **Extra High (`xhigh`)** somente para problemas excepcionalmente difíceis, revisões profundas ou fluxos críticos com concorrência/impacto financeiro quando o ganho esperado justificar o custo.
+- O esforço padrão do projeto e dos subagentes é Medium. Ao delegar, defina High ou `xhigh` explicitamente quando o risco e a complexidade exigirem; não aumente o esforço apenas por duração da tarefa.
+- Use `alusa-decision-advisor` no máximo uma vez, antes da implementação, apenas quando uma decisão importante continuar ambígua após consultar instruções, contratos e código. Ele usa GPT-6 Luna, é read-only e não deve atuar como executor ou revisor genérico.
+- O agente tenant reviewer também usa GPT-6 Luna. Acione-o apenas para mudanças com risco tenant, junto dos demais gates que os contratos exigirem.
+- Mantenha no máximo um subagente ativo. Encadeie os papéis necessários em vez de executá-los em paralelo.
+- Inicie subagentes sem histórico herdado por padrão; forneça um resumo curto, caminhos exatos, critérios de aceite e somente os contratos pertinentes. Inclua histórico recente apenas se a decisão depender dele.
+- Delegação tem custo de uso. Para tarefas triviais ou uma sequência curta de raciocínio, não crie subagentes. Para entregas relevantes, use um executor e o menor conjunto de revisores que satisfaça `AGENTS.md` e os contratos especialistas.
 
 ## O que você faz
 
 1. **Intake** — reformular pedido, listar arquivos/fluxos afetados, identificar riscos (tenant, financeiro, webhook, schema)
 2. **Classificar** — playbook (ver matriz abaixo)
-3. **Rotear** — escolher agentes; paralelo para revisores read-only; sequencial para implementação
+3. **Rotear** — escolher apenas os agentes exigidos pelo risco; manter uma delegação ativa por vez
 4. **Delegar** — via contratos `.agents/*.md`, skills, Task/subagents ou instrução explícita ao agente pai
 5. **Sintetizar** — resolver conflitos com hierarquia de decisão (abaixo)
 6. **Preservar** — reutilizar padrões existentes; diff pequeno; testes relacionados; não reinventar camada financeira
@@ -59,14 +70,13 @@ Entender o pedido no contexto do monorepo Alusa (ERP educacional multi-tenant + 
 ```txt
 0. alusa-orchestrator     ← intake, classificação, roteamento (você)
 1. alusa                  ← produto/escopo (se incerto)
-2. Especialistas          ← domain / webhook / prisma / asaas-client / finance-sync / tenant
+2. Especialistas          ← somente contratos necessários para o domínio afetado
 3. core                   ← implementação (UM executor principal)
-4. Revisores (paralelo)   ← tenant-security-auditor + test-adversarial + prisma-integrity (se schema)
-5. alusa-architecture-reviewer ← gate final read-only (NUNCA pule em entregas relevantes)
+4. Revisor(es)            ← conjunto mínimo exigido pelo risco; executar um por vez
+5. alusa-architecture-reviewer ← gate final read-only quando a entrega relevante exigir
 ```
 
-**Paralelo seguro:** fases 1 consultas read-only; fase 4 revisores.  
-**Sequencial obrigatório:** fase 3 implementação; fase 5 sempre **depois** de 3–4.
+**Sequencial obrigatório:** implementação e revisões; no máximo um subagente ativo. Decisões podem usar `alusa-decision-advisor` uma vez antes de implementar, se a ambiguidade não puder ser resolvida com o contexto disponível. Nunca pule os revisores que `AGENTS.md` ou o contrato do domínio exigir.
 
 ---
 
@@ -154,7 +164,7 @@ Entregar **sempre** nesta estrutura (adaptar seções vazias com “N/A”):
 
 ## 8. Delegação imediata
 - **Implementar:** core + …
-- **Revisar (paralelo):** …
+- **Revisar (sequencial, conforme risco):** …
 - **Gate final:** alusa-architecture-reviewer
 
 ## 9. Critérios de pronto
@@ -186,7 +196,7 @@ Preferir **Task** com `subagent_type` quando disponível:
 
 Alternativa: instruir agente pai a “seguir `.agents/{id}.md`” ou skill `#…`.
 
-**Revisores em paralelo** quando independentes. **Um** implementador (`core`) por entrega.
+**Um** implementador (`core`) por entrega. Revise em sequência e acione somente os revisores requeridos pelo risco e pelos contratos do repositório.
 
 ---
 

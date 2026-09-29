@@ -64,13 +64,13 @@ vi.mock('@/src/prisma', () => ({
   prisma: prismaMock,
 }));
 
-vi.mock('@/src/server/matriculas/financial-context.service', () => ({
+vi.mock('@/src/server/enrollments/financial-context.service', () => ({
   isFinancialContextEditable: vi.fn(() => true),
   resolveMatriculaFinancialContext: resolveMatriculaFinancialContextMock,
   updateFamilyFinancialLocalState: updateFamilyFinancialLocalStateMock,
 }));
 
-vi.mock('@/src/server/matriculas/enrollment-finance-consistency.service', () => ({
+vi.mock('@/src/server/enrollments/enrollment-finance-consistency.service', () => ({
   alignLocalPendingEnrollmentCharges: alignLocalPendingEnrollmentChargesMock,
   markEnrollmentFinanceDivergence: vi.fn(),
 }));

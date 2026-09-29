@@ -15,7 +15,6 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
@@ -30,12 +29,17 @@ import { EventDateTimeField as DateTimeField } from '../shared/EventDateTimeFiel
 import { EventField as Field } from '../shared/EventField';
 import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
 import { eventQueryKeys } from '../shared/event-query-keys';
-import { datetimeValue, FILTER_INPUT_CLASS, getRoundedNowISOString, nullableString, numberValue, OUTLINE_BUTTON_CLASS, PRIMARY_BUTTON_CLASS } from '../shared/event-form-utils';
+import { datetimeValue, getRoundedNowISOString, nullableString, numberValue } from '../shared/event-form-utils';
 import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
 import { useEventResources } from '../shared/useEventResources';
 import { FieldHelpTooltip } from '@/components/ui/field-help-tooltip';
+import { wizardSoftFieldInputClass, wizardSoftTextareaFieldClass } from '@/components/shared/wizard/field-styles';
 
 type PaymentRuleType = 'FIXED' | 'PERCENTAGE';
+
+const EVENT_CONTROL_CLASS = wizardSoftFieldInputClass;
+const EVENT_TEXTAREA_CLASS = wizardSoftTextareaFieldClass;
+const EVENT_SECTION_CLASS = 'space-y-3 rounded-xl border border-slate-200 bg-white p-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]';
 
 function parseOptionalNumber(value: FormDataEntryValue | null) {
   if (typeof value !== 'string' || value.trim() === '') return null;
@@ -145,11 +149,11 @@ export function EventFormDialog({
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent
         fullScreenMobile
-        className="max-w-4xl w-full gap-0 overflow-hidden bg-slate-50 p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
+        overlayClass="alusa-registration-wizard-overlay"
+        className="event-registration-dialog alusa-wizard-corner-smoothing flex h-[min(820px,calc(100dvh-3rem))] w-[calc(100vw-2rem)] max-w-4xl min-h-0 flex-col gap-0 overflow-hidden rounded-[20px] bg-[#f8fafc] p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0"
       >
-        <form action={handleSubmit} className="flex max-h-[88vh] min-h-0 flex-col max-md:max-h-none max-md:flex-1">
-          <div className="relative shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] md:px-8 md:py-6">
-            <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+        <form action={handleSubmit} className="flex h-full min-h-0 flex-col max-md:max-h-none max-md:flex-1">
+          <div className="shrink-0 bg-[#f8fafc] px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] alusa-dark:bg-[color:var(--color-bg-card)] md:px-6 md:py-5">
             <DialogTitle className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0 alusa-dark:text-[color:var(--color-text-primary)]">
               {event ? 'Editar evento' : 'Novo evento'}
             </DialogTitle>
@@ -157,13 +161,13 @@ export function EventFormDialog({
               Organize os dados básicos e as configurações operacionais do evento.
             </DialogDescription>
           </div>
-          <div className="flex-1 space-y-6 overflow-y-auto scroll-smooth bg-slate-50 px-4 py-6 max-md:min-h-0 alusa-dark:bg-transparent md:px-8">
-            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/40 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+          <div className="alusa-wizard-fields flex-1 space-y-4 overflow-y-auto scroll-smooth bg-[#f8fafc] px-4 py-4 max-md:min-h-0 alusa-dark:bg-transparent md:px-6 md:py-5">
+            <section className={EVENT_SECTION_CLASS}>
               <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Dados básicos</span>
-              <div className="mt-4 grid gap-4 md:grid-cols-3">
+              <div className="grid gap-x-4 gap-y-3 md:grid-cols-3">
                 <div className="md:col-span-2">
                   <Field label="Nome do evento">
-                    <Input name="name" defaultValue={event?.name ?? ''} required className={FILTER_INPUT_CLASS} />
+                    <Input name="name" defaultValue={event?.name ?? ''} required className={EVENT_CONTROL_CLASS} />
                   </Field>
                 </div>
                 <Field label="Tipo">
@@ -171,40 +175,53 @@ export function EventFormDialog({
                     name="type"
                     required
                     defaultValue={event?.type ?? 'PRESENTATION'}
+                    triggerClassName={EVENT_CONTROL_CLASS}
                     options={SCHOOL_EVENT_TYPES.map((type) => ({ value: type, label: EVENT_TYPE_LABELS[type] }))}
                   />
                 </Field>
                 <Field label="Início">
-                  <DateTimeField name="startsAt" defaultValue={defaultStartsAt} required />
+                  <DateTimeField
+                    name="startsAt"
+                    defaultValue={defaultStartsAt}
+                    required
+                    inputClassName={EVENT_CONTROL_CLASS}
+                    timeSelectClassName={EVENT_CONTROL_CLASS}
+                  />
                 </Field>
                 <Field label="Fim (opcional)">
-                  <DateTimeField name="endsAt" defaultValue={event?.endsAt} />
+                  <DateTimeField
+                    name="endsAt"
+                    defaultValue={event?.endsAt}
+                    inputClassName={EVENT_CONTROL_CLASS}
+                    timeSelectClassName={EVENT_CONTROL_CLASS}
+                  />
                 </Field>
                 <Field label="Capacidade estimada">
-                  <Input type="number" min={1} name="estimatedCapacity" defaultValue={event?.estimatedCapacity ?? ''} className={FILTER_INPUT_CLASS} />
+                  <Input type="number" min={1} name="estimatedCapacity" defaultValue={event?.estimatedCapacity ?? ''} className={EVENT_CONTROL_CLASS} />
                 </Field>
                 <Field label="Local">
-                  <Input name="locationName" defaultValue={event?.locationName ?? ''} className={FILTER_INPUT_CLASS} />
+                  <Input name="locationName" defaultValue={event?.locationName ?? ''} className={EVENT_CONTROL_CLASS} />
                 </Field>
                 <Field label="Endereço">
-                  <Input name="locationAddress" defaultValue={event?.locationAddress ?? ''} className={FILTER_INPUT_CLASS} />
+                  <Input name="locationAddress" defaultValue={event?.locationAddress ?? ''} className={EVENT_CONTROL_CLASS} />
                 </Field>
                 <Field label="Responsável interno (opcional)">
                   <NativeSelect
                     name="responsibleUserId"
                     defaultValue={event?.responsibleUserId}
                     placeholder="Sem responsável"
+                    triggerClassName={EVENT_CONTROL_CLASS}
                     options={userOptions}
                   />
                 </Field>
               </div>
-              <div className="mt-4">
+              <div>
                 <Field label="Descrição">
-                  <Textarea name="description" defaultValue={event?.description ?? ''} className="min-h-20 rounded-lg border-slate-200 shadow-none" />
+                  <Textarea name="description" defaultValue={event?.description ?? ''} className={EVENT_TEXTAREA_CLASS} />
                 </Field>
               </div>
             </section>
-            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/40 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+            <section className={EVENT_SECTION_CLASS}>
               <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Contrato do evento</span>
               <div className="mt-4 max-w-xl">
                 <div className="space-y-1">
@@ -216,6 +233,7 @@ export function EventFormDialog({
                     name="contratoModeloId"
                     defaultValue={event?.contratoModeloId ?? ''}
                     placeholder="Sem contrato para este evento"
+                    triggerClassName={EVENT_CONTROL_CLASS}
                     options={(resources.data?.contratoModelos ?? []).map((modelo) => ({
                       value: modelo.id,
                       label: `${modelo.nome} · versão ${modelo.versao}`,
@@ -224,50 +242,51 @@ export function EventFormDialog({
                 </div>
               </div>
             </section>
-            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/40 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+            <section className={EVENT_SECTION_CLASS}>
               <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Configurações</span>
               <div className="mt-4">
-                <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Tipo de ingresso">
-                  <NativeSelect
-                    name="ticketMode"
-                    defaultValue={event?.ticketMode ?? (event ? (event.hasTickets ? 'SIMPLE' : 'NONE') : 'SIMPLE')}
-                    options={EVENT_TICKET_MODES.map((mode) => ({ value: mode, label: EVENT_TICKET_MODE_LABELS[mode] }))}
-                  />
-                </Field>
-                <Field label="Taxa de inscrição sugerida">
-                  <div className="relative flex items-center">
-                    <span className="absolute left-3 text-xs font-semibold text-slate-400 pointer-events-none">
-                      R$
-                    </span>
-                    <Input
-                      name="registrationFee"
-                      type="text"
-                      value={regFeeText}
-                      onChange={(e) => setRegFeeText(formatCurrencyInput(e.target.value))}
-                      className={cn(FILTER_INPUT_CLASS, "pl-10 text-right")}
+                <div className="grid gap-x-4 gap-y-3 md:grid-cols-2">
+                  <Field label="Tipo de ingresso">
+                    <NativeSelect
+                      name="ticketMode"
+                      defaultValue={event?.ticketMode ?? (event ? (event.hasTickets ? 'SIMPLE' : 'NONE') : 'SIMPLE')}
+                      triggerClassName={EVENT_CONTROL_CLASS}
+                      options={EVENT_TICKET_MODES.map((mode) => ({ value: mode, label: EVENT_TICKET_MODE_LABELS[mode] }))}
                     />
-                  </div>
-                </Field>
+                  </Field>
+                  <Field label="Taxa de inscrição sugerida">
+                    <div className="relative flex items-center">
+                      <span className="pointer-events-none absolute left-3 text-xs font-semibold text-slate-400">
+                        R$
+                      </span>
+                      <Input
+                        name="registrationFee"
+                        type="text"
+                        value={regFeeText}
+                        onChange={(e) => setRegFeeText(formatCurrencyInput(e.target.value))}
+                        className={cn(EVENT_CONTROL_CLASS, 'pl-10 text-right')}
+                      />
+                    </div>
+                  </Field>
+                </div>
               </div>
-              </div>
-              <div className="mt-4">
+              <div>
                 <Field label="Observações">
-                  <Textarea name="notes" defaultValue={event?.notes ?? ''} className="min-h-20 rounded-lg border-slate-200 shadow-none" />
+                  <Textarea name="notes" defaultValue={event?.notes ?? ''} className={EVENT_TEXTAREA_CLASS} />
                 </Field>
               </div>
             </section>
-            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/40 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+            <section className={EVENT_SECTION_CLASS}>
               <div>
                 <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Juros e Multa</span>
                 <p className="mt-1 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
                   Configure multa, juros e desconto por antecipação. Os campos são opcionais.
                 </p>
               </div>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
-                  <h3 className="mb-1 text-sm font-semibold text-gray-900">Multa por atraso</h3>
-                  <p className="mb-3 text-xs text-gray-500">Aplicada no dia seguinte ao vencimento</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border border-slate-200 bg-[#f8fafc] p-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+                  <h3 className="mb-1 text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Multa por atraso</h3>
+                  <p className="mb-3 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">Aplicada no dia seguinte ao vencimento</p>
                   <div className="flex items-center gap-2">
                     <Input
                       name="paymentFineValue"
@@ -278,15 +297,15 @@ export function EventFormDialog({
                       placeholder="Ex: 2.0"
                       value={fineText}
                       onChange={(e) => setFineText(e.target.value)}
-                      className="h-9 w-24 rounded-md border-gray-300 text-sm"
+                      className={cn(EVENT_CONTROL_CLASS, 'w-24')}
                     />
-                    <span className="text-sm text-gray-600">%</span>
-                    <span className="ml-auto text-xs text-gray-400">máx. 10%</span>
+                    <span className="text-sm text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">%</span>
+                    <span className="ml-auto text-xs text-slate-400">máx. 10%</span>
                   </div>
                 </div>
-                <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
-                  <h3 className="mb-1 text-sm font-semibold text-gray-900">Juros mensais</h3>
-                  <p className="mb-3 text-xs text-gray-500">Aplicados proporcionalmente aos dias em atraso</p>
+                <div className="rounded-lg border border-slate-200 bg-[#f8fafc] p-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+                  <h3 className="mb-1 text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Juros mensais</h3>
+                  <p className="mb-3 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">Aplicados proporcionalmente aos dias em atraso</p>
                   <div className="flex items-center gap-2">
                     <Input
                       name="paymentInterestPercent"
@@ -297,19 +316,19 @@ export function EventFormDialog({
                       placeholder="Ex: 1.0"
                       value={interestText}
                       onChange={(e) => setInterestText(e.target.value)}
-                      className="h-9 w-24 rounded-md border-gray-300 text-sm"
+                      className={cn(EVENT_CONTROL_CLASS, 'w-24')}
                     />
-                    <span className="text-sm text-gray-600">% a.m.</span>
-                    <span className="ml-auto text-xs text-gray-400">máx. 5%</span>
+                    <span className="text-sm text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">% a.m.</span>
+                    <span className="ml-auto text-xs text-slate-400">máx. 5%</span>
                   </div>
                 </div>
               </div>
-              <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50/50 p-4">
-                <h3 className="mb-1 text-sm font-semibold text-gray-900">Desconto por antecipação</h3>
-                <p className="mb-3 text-xs text-gray-500">Incentivo para pagamento antes do vencimento</p>
+              <div className="rounded-lg border border-slate-200 bg-[#f8fafc] p-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+                <h3 className="mb-1 text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Desconto por antecipação</h3>
+                <p className="mb-3 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">Incentivo para pagamento antes do vencimento</p>
                 <div className="flex flex-wrap items-end gap-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs text-gray-600">Tipo</label>
+                    <label className="text-xs font-medium text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">Tipo</label>
                     <input type="hidden" name="paymentDiscountType" value={discountType} />
                     <Tabs value={discountType} onValueChange={(value) => setDiscountType(value as PaymentRuleType)}>
                       <TabsList className="h-10 rounded-xl bg-slate-100/80 p-1">
@@ -319,7 +338,7 @@ export function EventFormDialog({
                     </Tabs>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs text-gray-600">Valor</label>
+                    <label className="text-xs font-medium text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">Valor</label>
                     <Input
                       name="paymentDiscountValue"
                       type="number"
@@ -329,11 +348,11 @@ export function EventFormDialog({
                       placeholder={discountType === 'PERCENTAGE' ? '5.0' : '10.00'}
                       value={discountText}
                       onChange={(e) => setDiscountText(e.target.value)}
-                      className="h-9 w-24 rounded-md border-gray-300 text-sm"
+                      className={cn(EVENT_CONTROL_CLASS, 'w-24')}
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs text-gray-600">Prazo (dias antes)</label>
+                    <label className="text-xs font-medium text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">Prazo (dias antes)</label>
                     <Input
                       name="paymentDiscountDueDateLimitDays"
                       type="number"
@@ -342,20 +361,20 @@ export function EventFormDialog({
                       value={discountDaysText}
                       onChange={(e) => setDiscountDaysText(e.target.value)}
                       placeholder="0"
-                      className="h-9 w-20 rounded-md border-gray-300 text-sm"
+                      className={cn(EVENT_CONTROL_CLASS, 'w-20')}
                     />
                   </div>
-                  <span className="pb-2 text-xs text-gray-400">0 = válido até o vencimento</span>
+                  <span className="pb-2 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">0 = válido até o vencimento</span>
                 </div>
               </div>
-              <p className="mt-4 text-xs text-gray-500">Deixe os campos vazios para não aplicar estas configurações.</p>
+              <p className="text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">Deixe os campos vazios para não aplicar estas configurações.</p>
             </section>
           </div>
-          <DialogFooter className="shrink-0 border-t border-slate-200 bg-slate-50 px-4 py-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] md:px-8">
-            <Button type="button" variant="outline" className={cn(OUTLINE_BUTTON_CLASS, 'min-w-32')} onClick={() => setOpen(false)}>
+          <DialogFooter className="shrink-0 flex-col-reverse gap-3 space-x-0 bg-[#f8fafc] px-4 py-3 max-md:pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:flex-col-reverse sm:space-x-0 md:flex-row md:justify-end md:px-6 md:py-3">
+            <Button type="button" variant="outline" className="h-10 min-h-10 w-full min-w-0 rounded-[10px] border-0 bg-[#eff3f8] px-5 font-normal text-[#303030] shadow-none hover:bg-[#eff3f8] md:w-[120px]" onClick={() => setOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={mutation.isPending} className={cn(PRIMARY_BUTTON_CLASS, 'min-w-40')}>
+            <Button type="submit" disabled={mutation.isPending} variant="wizardPrimary" className="h-10 min-h-10 w-full min-w-0 rounded-[10px] bg-[#512a82] px-5 font-normal text-white shadow-none hover:bg-[#512a82] md:w-[160px]">
               {mutation.isPending ? 'Salvando...' : 'Salvar evento'}
             </Button>
           </DialogFooter>

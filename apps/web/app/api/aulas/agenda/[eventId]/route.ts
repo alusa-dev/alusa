@@ -1,12 +1,12 @@
 import { NextRequest } from 'next/server';
 
-import { updateCalendarEventInputSchema } from '@/features/aulas/dtos';
+import { updateCalendarEventInputSchema } from '@/features/lessons/dtos';
 import {
   getAgendaEventDetails,
   updateAgendaEvent,
-} from '@/src/server/aulas/agenda/agenda.service';
-import { handleAulasRouteError, json } from '@/src/server/aulas/route-utils';
-import { assertAulasWriteAccess, canAccessAulas, getAulasSessionUser } from '@/src/server/aulas/session';
+} from '@/src/server/lessons/agenda/agenda.service';
+import { handleAulasRouteError, json } from '@/src/server/lessons/route-utils';
+import { assertAulasWriteAccess, canAccessAulas, getAulasSessionUser } from '@/src/server/lessons/session';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

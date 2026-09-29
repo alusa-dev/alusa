@@ -4,7 +4,7 @@ import {
   listMobileAgendaResources,
   MobileAgendaForbiddenError,
   MobileAgendaUnauthorizedError,
-} from '@/features/aulas/server/mobile-agenda.service';
+} from '@/features/lessons/server/mobile-agenda.service';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 

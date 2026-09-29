@@ -81,7 +81,7 @@ export function KycDashboardCard({ onDismiss }: KycDashboardCardProps) {
             <Button
               size="sm"
               className="h-11 min-w-[220px] rounded-xl bg-[#5c2d91] px-5 text-sm font-medium text-white hover:bg-[#4b2377]"
-              onClick={() => router.push('/conta/verificacao')}
+              onClick={() => router.push('/account/verification')}
             >
               Concluir cadastro
               <ChevronRight className="ml-2 h-3.5 w-3.5" />

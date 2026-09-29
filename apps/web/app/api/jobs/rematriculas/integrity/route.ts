@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { checkRenewalIntegrityFromJob } from '@/src/server/matriculas/renewal-job-commands.service';
+import { checkRenewalIntegrityFromJob } from '@/src/server/enrollments/renewal-job-commands.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;

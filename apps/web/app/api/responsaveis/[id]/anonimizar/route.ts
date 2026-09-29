@@ -4,8 +4,8 @@ import { anonimizarResponsavel } from '@alusa/lib/alunos/aluno.service';
 import {
   anonymizeResponsavelInputDTOSchema,
   anonymizeResponsavelResultDTOSchema,
-} from '@/features/responsaveis/dtos';
-import { resolveResponsavelRouteId } from '@/src/server/responsaveis/resolve-responsavel-route-id.service';
+} from '@/features/responsibles/dtos';
+import { resolveResponsavelRouteId } from '@/src/server/responsibles/resolve-responsible-route-id.service';
 
 type IdParams = Promise<{ id: string }> | { id: string };
 

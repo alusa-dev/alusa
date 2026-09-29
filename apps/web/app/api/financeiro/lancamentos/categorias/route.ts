@@ -6,12 +6,12 @@ import {
   financeiroLancamentoCategoriaMutationResultDTOSchema,
   financeiroLancamentoCategoriaQueryDTOSchema,
   listFinanceiroLancamentoCategoriasResultDTOSchema,
-} from '@/features/financeiro/dtos';
+} from '@/features/finance/operations/dtos';
 import {
   mapFinanceiroLancamentoCategoriaToDTO,
   mapListFinanceiroLancamentoCategoriasResultToDTO,
-} from '@/features/financeiro/mappers';
-import { createLancamentoCategoria, listLancamentoCategorias } from '@/src/server/finance/lancamento-categoria.service';
+} from '@/features/finance/operations/mappers';
+import { createTransactionCategory, listTransactionCategories } from '@/src/server/finance/transaction-category.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
     }
     const { tipo } = parsedQuery.data;
 
-    const categorias = await listLancamentoCategorias({ contaId: auth.contaId, tipo });
+    const categorias = await listTransactionCategories({ contaId: auth.contaId, tipo });
 
     return NextResponse.json(
       listFinanceiroLancamentoCategoriasResultDTOSchema.parse(
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     }
     const body = parsed.data;
 
-    const result = await createLancamentoCategoria({ contaId: auth.contaId, ...body });
+    const result = await createTransactionCategory({ contaId: auth.contaId, ...body });
     if (result.kind === 'INVALID_PARENT') return err(400, 'DADOS_INVALIDOS', 'Subcategoria precisa referenciar uma categoria valida');
     if (result.kind === 'DUPLICATE') return err(409, 'JA_EXISTE', 'Categoria ja existe');
     const created = result.value;

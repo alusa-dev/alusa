@@ -13,7 +13,7 @@ vi.mock('@/lib/rate-limit', () => ({
   ipFromRequest: vi.fn(() => '127.0.0.1'),
   rateLimit: vi.fn(() => ({ ok: true })),
 }));
-vi.mock('@/features/financeiro/server/mobile-relatorio.service', () => ({
+vi.mock('@/features/finance/operations/server/mobile-report.service', () => ({
   getMobileFinancialReport: mocks.getMobileFinancialReport,
   MobileReportUnauthorizedError: class MobileReportUnauthorizedError extends Error {},
 }));

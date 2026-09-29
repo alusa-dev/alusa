@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { matriculaRouteParamsDTOSchema, matriculaProvisionamentoActionDTOSchema } from '@/features/cadastro/matriculas/dtos';
-import { getFamilyProvisioningView, retryFamilyProvisioning } from '@/src/server/matriculas/family-provisioning-http.service';
+import { matriculaRouteParamsDTOSchema, matriculaProvisionamentoActionDTOSchema } from '@/features/enrollments/dtos';
+import { getFamilyProvisioningView, retryFamilyProvisioning } from '@/src/server/enrollments/family-provisioning-http.service';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 function unauthorized() { return NextResponse.json({ error: { message: 'Usuário não autenticado.' } }, { status: 401 }); }

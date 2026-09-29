@@ -7,7 +7,7 @@ Implementação incremental do plano de auditoria — **sem alterar UX/regras de
 | Fase | Item | Onde |
 |------|------|------|
 | 1 | `uiRequestId` + header `X-Idempotency-Key` | `Matricula`, DTO, `criarMatricula` |
-| 1 | DTOs compartilhados `asaasSync` | `features/cadastro/matriculas/dtos` |
+| 1 | DTOs compartilhados `asaasSync` | `features/enrollments/dtos` |
 | 2 | Orquestrador `provisionIndividualEnrollmentBilling` | `enrollment-billing.orchestrator.ts` |
 | 2 | `billingProvisionStatus` | schema + `billing-provision-status.ts` |
 | 2 | Datas unificadas (`recurring-billing`) | `matricula.service.ts` |

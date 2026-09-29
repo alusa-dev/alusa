@@ -4,7 +4,7 @@ import { z } from 'zod';
 import {
   getMobileFinancialReport,
   MobileReportUnauthorizedError,
-} from '@/features/financeiro/server/mobile-relatorio.service';
+} from '@/features/finance/operations/server/mobile-report.service';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 

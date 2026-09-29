@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 
-import { FinanceWizard } from '@/components/finance-wizard';
+import { FinanceWizard } from '@/features/finance/operations/components/wizard';
 
 export const metadata: Metadata = {
   title: 'Configurar Conta | Alusa',

@@ -4,10 +4,10 @@ import {
   financeiroLancamentoEstornoInputDTOSchema,
   financeiroLancamentoMutationResultDTOSchema,
   financeiroRouteIdParamsDTOSchema,
-} from '@/features/financeiro/dtos';
-import { mapFinanceiroLancamentoRecordToDTO } from '@/features/financeiro/mappers';
+} from '@/features/finance/operations/dtos';
+import { mapFinanceiroLancamentoRecordToDTO } from '@/features/finance/operations/mappers';
 import { financeInternalError } from '@/lib/api/finance-api-response';
-import { estornarFinanceiroLancamento } from '@/src/server/finance/lancamento.service';
+import { reverseFinancialTransaction } from '@/src/server/finance/financial-transaction.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return err(400, 'DADOS_INVALIDOS', parsed.error.issues[0]?.message ?? 'Dados inválidos');
     }
 
-    const result = await estornarFinanceiroLancamento({
+    const result = await reverseFinancialTransaction({
       contaId: auth.contaId,
       userId: auth.userId,
       lancamentoId: id,

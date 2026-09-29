@@ -2,8 +2,8 @@ import { prisma } from '@/prisma/client';
 import type {
   CreateContratoModeloInputDTO,
   UpdateContratoModeloInputDTO,
-} from '@/features/contratos/dtos';
-import { generateContratoConsentimentoCodigo } from '@/features/contratos/consent-code';
+} from '@/features/contracts/dtos';
+import { generateContratoConsentimentoCodigo } from '@/features/contracts/consent-code';
 
 const contractModelInclude = {
   campos: { orderBy: { ordem: 'asc' as const } },

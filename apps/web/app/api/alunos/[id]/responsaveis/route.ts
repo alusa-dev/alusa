@@ -3,11 +3,11 @@ import { getSessionUser } from '@/lib/auth/session';
 import {
   linkAlunoResponsavelInputDTOSchema,
   linkAlunoResponsavelResultDTOSchema,
-} from '@/features/responsaveis/dtos';
+} from '@/features/responsibles/dtos';
 import {
   vincularResponsavelAoAluno,
   VinculoAlunoResponsavelError,
-} from '@/src/server/alunos/aluno-responsavel.service';
+} from '@/src/server/students/student-responsible.service';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,

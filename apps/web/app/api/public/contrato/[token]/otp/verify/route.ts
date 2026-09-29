@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { findPublicContractByToken } from '@alusa/lib/contracts/use-cases/sign-contract';
 import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
-import { publicVerificarAssinaturaOtpInputDTOSchema } from '@/features/contratos/dtos';
+import { publicVerificarAssinaturaOtpInputDTOSchema } from '@/features/contracts/dtos';
 import { verifyPublicContractOtpWithEvidence } from '@/src/server/contracts/public-contract-evidence.service';
 
 function mapError(error: unknown) {

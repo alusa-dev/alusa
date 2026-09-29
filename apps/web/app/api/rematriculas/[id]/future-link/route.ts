@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import { z, ZodError } from 'zod';
 
 import { getSessionUser } from '@/lib/auth/session';
-import { editRenewalFutureLinkFromHttp } from '@/src/server/matriculas/renewal-http-commands.service';
-import { hasRenewalPermission } from '@/src/server/matriculas/renewal-permissions.service';
+import { editRenewalFutureLinkFromHttp } from '@/src/server/enrollments/renewal-http-commands.service';
+import { hasRenewalPermission } from '@/src/server/enrollments/renewal-permissions.service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 const futureLinkSchema = z.object({

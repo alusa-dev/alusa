@@ -67,7 +67,7 @@ describe('auth middleware', () => {
     expect(response.headers.get('location')).toBeNull();
   });
 
-  it('bloqueia páginas /financeiro para usuário autenticado sem papel financeiro', async () => {
+  it('bloqueia páginas /finance para usuário autenticado sem papel financeiro', async () => {
     getTokenMock.mockResolvedValueOnce({
       id: 'user_1',
       contaId: 'conta_1',
@@ -81,13 +81,13 @@ describe('auth middleware', () => {
       }),
     );
 
-    const response = await proxy(new NextRequest('http://localhost:3000/financeiro/pagamentos'));
+    const response = await proxy(new NextRequest('http://localhost:3000/finance/payments'));
 
     expect(response.status).toBe(307);
     expect(response.headers.get('location')).toBe('http://localhost:3000/dashboard');
   });
 
-  it('permite páginas /financeiro para FINANCEIRO', async () => {
+  it('permite páginas /finance para FINANCEIRO', async () => {
     getTokenMock.mockResolvedValueOnce({
       id: 'user_1',
       contaId: 'conta_1',
@@ -101,7 +101,24 @@ describe('auth middleware', () => {
       }),
     );
 
-    const response = await proxy(new NextRequest('http://localhost:3000/financeiro/pagamentos'));
+    const response = await proxy(new NextRequest('http://localhost:3000/finance/payments'));
+
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('redireciona rotas legadas para os caminhos canônicos com redirect permanente', async () => {
+    const response = await proxy(
+      new NextRequest('http://localhost:3000/financeiro/pagamentos?status=open'),
+    );
+
+    expect(response.status).toBe(308);
+    expect(response.headers.get('location')).toBe(
+      'http://localhost:3000/finance/payments?status=open',
+    );
+  });
+
+  it('preserva a API pública em português sem aplicar tradução de rotas de interface', async () => {
+    const response = await proxy(new NextRequest('http://localhost:3000/api/alunos'));
 
     expect(response.headers.get('location')).toBeNull();
   });

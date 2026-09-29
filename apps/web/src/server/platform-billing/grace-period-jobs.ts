@@ -133,7 +133,7 @@ export async function expirePlatformBillingGracePeriods(input: {
         title: 'Conta restrita por pagamento pendente',
         message: 'Regularize a assinatura da Alusa para liberar novas escritas na plataforma.',
         dedupeKey: `platform-billing:grace-expired:${account.id}`,
-        relatedPath: '/conta/plano-faturamento',
+        relatedPath: '/account/billing-plan',
         entityType: 'PlatformBillingAccount',
         entityId: account.id,
         sourceType: 'Stripe',

@@ -114,7 +114,7 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
     const trimmedQuery = query.trim();
     if (trimmedQuery.length < GLOBAL_SEARCH_MIN_QUERY_LENGTH) return;
     setOpen(false);
-    router.push(`/busca?q=${encodeURIComponent(trimmedQuery)}`);
+    router.push(`/search?q=${encodeURIComponent(trimmedQuery)}`);
   };
 
   const handleInputValueChange = (value: string) => {

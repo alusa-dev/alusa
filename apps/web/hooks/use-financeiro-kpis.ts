@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import useCurrentUser from '@/hooks/use-current-user';
-import type { FinanceiroKpisResultDTO, FinanceiroKpiDataDTO } from '@/features/financeiro/dtos';
+import type { FinanceiroKpisResultDTO, FinanceiroKpiDataDTO } from '@/features/finance/operations/dtos';
 
 export type KpiData = FinanceiroKpiDataDTO;
 export type KpisResponse = FinanceiroKpisResultDTO['data'];

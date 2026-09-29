@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { closeExpiredEnrollmentsJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { closeExpiredEnrollmentsWithoutSuccessor } from '@/src/server/matriculas/enrollment-closure.service';
+import { closeExpiredEnrollmentsWithoutSuccessor } from '@/src/server/enrollments/enrollment-closure.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;

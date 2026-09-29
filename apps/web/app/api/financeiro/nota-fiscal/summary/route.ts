@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { listNotaFiscalPersonIndexResultDTOSchema } from '@/features/financeiro/notafiscal/dtos';
-import { mapListNotaFiscalPersonIndexResultToDTO } from '@/features/financeiro/notafiscal/mappers';
+import { listNotaFiscalPersonIndexResultDTOSchema } from '@/features/finance/operations/tax-invoices/dtos';
+import { mapListNotaFiscalPersonIndexResultToDTO } from '@/features/finance/operations/tax-invoices/mappers';
 import { financeInternalError, financeJsonError, logFinanceApiRequest, stableQueryFingerprint } from '@/lib/api/finance-api-response';
 import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
 import {

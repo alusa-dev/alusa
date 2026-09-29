@@ -5,7 +5,7 @@ test.skip('fluxo básico de combos (create/edit/delete)', async ({ page }) => {
   await page.goto('/login');
   // Assumindo helper de login test user
   // await login(page);
-  await page.goto('/combos');
+  await page.goto('/bundles');
   await expect(page.getByRole('heading', { name: 'Combos' })).toBeVisible();
   await page.getByRole('button', { name: 'Novo combo' }).click();
   await page.getByLabel('Nome').fill('Combo Teste');

@@ -15,7 +15,7 @@ vi.mock('@/lib/rate-limit', () => ({
   rateLimit: vi.fn(() => ({ ok: true })),
 }));
 vi.mock('@/lib/finance/financial-account-gate', () => ({ guardFinancialAccountOr412: mocks.guardFinancialAccountOr412 }));
-vi.mock('@/features/financeiro/server/mobile-extrato.service', () => ({
+vi.mock('@/features/finance/operations/server/mobile-statement.service', () => ({
   getMobileStatement: mocks.getMobileStatement,
   MobileStatementUnauthorizedError: class MobileStatementUnauthorizedError extends Error {},
 }));

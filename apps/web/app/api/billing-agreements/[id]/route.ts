@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { billingAgreementParamsSchema } from '@/features/cadastro/matriculas/billing-agreements/contracts';
+import { billingAgreementParamsSchema } from '@/features/enrollments/billing-agreements/contracts';
 import {
   billingAgreementUnexpectedError,
   billingAgreementValidationError,

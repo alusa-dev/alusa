@@ -11,17 +11,19 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { ManualSyncError } from '@/src/server/matriculas/matricula-sync.service';
-import { syncMatriculaStatusFromHttp } from '@/src/server/matriculas/matricula-http-commands.service';
+import { ManualSyncError } from '@/src/server/enrollments/enrollment-sync.service';
+import { syncMatriculaStatusFromHttp } from '@/src/server/enrollments/enrollment-http-commands.service';
 import { notifyMatriculaAction } from '@alusa/lib/notifications/matricula-notifications';
-import { updateMatriculaStatusSyncInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
-import { mapMatriculaStatusSyncResultToDTO } from '@/features/cadastro/matriculas/mappers';
+import { updateMatriculaStatusSyncInputDTOSchema } from '@/features/enrollments/dtos';
+import { mapMatriculaStatusSyncResultToDTO } from '@/features/enrollments/mappers';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
 } from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
+
+const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
 /**
  * PATCH /api/matriculas/[id]/status
@@ -37,6 +39,12 @@ export async function PATCH(
     if (!auth.ok) {
       console.warn('[MATRICULA_STATUS] Usuário não autenticado');
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
+    }
+    if (!auth.role || !allowedRoles.has(String(auth.role).toUpperCase())) {
+      return NextResponse.json(
+        { error: 'PERMISSAO_NEGADA', message: 'Usuário não tem permissão para cancelar matrículas.' },
+        { status: 403 },
+      );
     }
 
     try {
@@ -73,6 +81,17 @@ export async function PATCH(
       actorId: auth.userId,
       motivo: motivo || undefined,
     });
+
+    if (result.deferred) {
+      return NextResponse.json({
+        success: true,
+        pending: true,
+        code: 'CANCELAMENTO_AGUARDANDO_PROVISIONAMENTO',
+        message: 'O cancelamento foi registrado e será concluído após a operação financeira em andamento.',
+        matriculaId,
+        status: result.previousStatus,
+      }, { status: 202, headers: { 'cache-control': 'no-store' } });
+    }
 
     const wasLocalOnly = result.asaasAction === 'LOCAL_ONLY';
     const message = wasLocalOnly

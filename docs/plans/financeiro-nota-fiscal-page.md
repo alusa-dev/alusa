@@ -10,7 +10,7 @@ Dar ao time financeiro da escola uma visão **consolidada por pessoa** das NFS-e
 
 | Tela | Referência UX | Comportamento |
 | --- | --- | --- |
-| Índice | [ContratosFeature](../../apps/web/features/contratos/ContratosFeature.tsx) + [Pagamentos](../../apps/web/app/(app)/financeiro/pagamentos/page.tsx) | Lista alunos e responsáveis **somente com ≥1 nota**; busca, filtro de status, paginação |
+| Índice | [ContratosFeature](../../apps/web/features/contracts/ContratosFeature.tsx) + [Pagamentos](../../apps/web/app/(app)/financeiro/pagamentos/page.tsx) | Lista alunos e responsáveis **somente com ≥1 nota**; busca, filtro de status, paginação |
 | Detalhe aluno | [AssinaturaDetalheClient](../../apps/web/app/(app)/cobrancas/assinaturas/[id]/AssinaturaDetalheClient.tsx) | Voltar, KPIs, dados da pessoa, tabela de notas |
 | Detalhe responsável | Idem | + coluna **Aluno** quando `matriculaId` existir |
 
@@ -69,7 +69,7 @@ Filtros Asaas (`GET /v3/invoices`: `status`, `effectiveDate[Ge/Le]`, `payment`, 
 | Painel por cobrança | `CobrancaNotaFiscal.tsx` + `/api/cobrancas/[id]/nota-fiscal/*` |
 | Status / labels / badges | `CobrancaNotaFiscal` (`STATUS_LABELS`, `STATUS_BADGE_VARIANT`) |
 | Readiness | `computeFiscalReadiness` — callout se config incompleta |
-| Índice financeiro por pessoa (padrão API) | `GET /api/financeiro/pagamentos/summary` + DTOs em `features/financeiro/dtos` |
+| Índice financeiro por pessoa (padrão API) | `GET /api/financeiro/pagamentos/summary` + DTOs em `features/finance/operations/dtos` |
 | Gate financeiro | `guardFinancialAccountOr412` (usar nas novas rotas se cobranças financeiras exigirem) |
 | Roles | `ADMIN`, `FINANCEIRO` (mesmo de pagamentos) |
 
@@ -87,7 +87,7 @@ apps/web/
     summary/route.ts
     aluno/[alunoId]/route.ts
     responsavel/[responsavelId]/route.ts
-  features/financeiro/notafiscal/
+  features/finance/operations/notafiscal/
     NotaFiscalIndexFeature.tsx
     NotaFiscalPessoaDetalheClient.tsx
     components/PessoaNotaFiscalCard.tsx

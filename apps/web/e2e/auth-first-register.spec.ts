@@ -28,40 +28,39 @@ test.describe('First Register', () => {
   test.afterAll(async () => { await prisma.$disconnect(); });
 
   test('Primeiro registro cria um ADMIN e inicia a confirmação de e-mail', async ({ page }) => {
-    const email = 'primeiro@example.com';
+    const email = 'primeiro-e2e@example.com';
     await registerAccount(page, { email, firstName: 'Primeiro', lastName: 'Admin' });
+    await expect(page.getByRole('heading', { name: 'Confirme seu e-mail' })).toBeVisible();
 
-    const user = await prisma.usuario.findFirst({
+    await expect(prisma.usuario.findFirst({
       where: { email },
       select: { nome: true, role: true },
-    });
-    expect(user).toEqual({ nome: 'Primeiro Admin', role: 'ADMIN' });
-    await expect(page.getByRole('heading', { name: 'Confirme seu e-mail' })).toBeVisible();
+    })).resolves.toEqual({ nome: 'Primeiro Admin', role: 'ADMIN' });
   });
 
   test('Login subsequente exige confirmação de e-mail', async ({ page }) => {
-    await registerAccount(page, { email: 'primeiro@example.com', firstName: 'Primeiro', lastName: 'Admin' });
+    await registerAccount(page, { email: 'login-e2e@example.com', firstName: 'Primeiro', lastName: 'Admin' });
     await page.context().clearCookies();
     await page.goto('/auth/login');
-    await page.getByTestId('email').fill('primeiro@example.com');
+    await page.getByTestId('email').fill('login-e2e@example.com');
     await page.getByTestId('password').fill('SenhaFort3!');
     await page.getByTestId('login-button').click();
     await expect(page).toHaveURL(/\/auth\/login/);
   });
 
   test('Novo cadastro usa o fluxo público atual e cria outra conta', async ({ page }) => {
-    await registerAccount(page, { email: 'primeiro@example.com', firstName: 'Primeiro', lastName: 'Admin' });
+    await registerAccount(page, { email: 'primeiro-2-e2e@example.com', firstName: 'Primeiro', lastName: 'Admin' });
     await page.context().clearCookies();
-    await registerAccount(page, { email: 'segundo@example.com', firstName: 'Segundo', lastName: 'Admin' });
+    await registerAccount(page, { email: 'segundo-2-e2e@example.com', firstName: 'Segundo', lastName: 'Admin' });
 
     const users = await prisma.usuario.findMany({
-      where: { email: { in: ['primeiro@example.com', 'segundo@example.com'] } },
+      where: { email: { in: ['primeiro-2-e2e@example.com', 'segundo-2-e2e@example.com'] } },
       select: { email: true, role: true },
       orderBy: { email: 'asc' },
     });
     expect(users).toEqual([
-      { email: 'primeiro@example.com', role: 'ADMIN' },
-      { email: 'segundo@example.com', role: 'ADMIN' },
+      { email: 'primeiro-2-e2e@example.com', role: 'ADMIN' },
+      { email: 'segundo-2-e2e@example.com', role: 'ADMIN' },
     ]);
   });
 });

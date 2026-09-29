@@ -26,7 +26,7 @@ function countMapValue(map: Record<string, number>, key: string) {
 export default async function AdminFinanceReconciliationPage() {
   const session = await getServerSession(authOptions).catch(() => null);
   const user = session?.user;
-  if (!user?.contaId || !['ADMIN', 'SUPER_ADMIN'].includes(user.role ?? '')) redirect('/admin/configuracoes');
+  if (!user?.contaId || !['ADMIN', 'SUPER_ADMIN'].includes(user.role ?? '')) redirect('/admin/settings');
 
   const [summary, issues] = await Promise.all([
     getFinanceReconciliationIssueSummary(user.contaId),

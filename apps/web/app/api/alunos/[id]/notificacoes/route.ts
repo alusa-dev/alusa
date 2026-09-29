@@ -6,8 +6,8 @@ import {
   type CustomerNotificationPreferenceInput,
 } from '@alusa/finance';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { asaasNotificationPreferenceDTOSchema } from '@/features/configuracoes/notificacoes/asaas/dtos';
-import { deriveCustomerNotificationChannelDefaults } from '@/features/configuracoes/notificacoes/asaas/customer-channel-defaults';
+import { asaasNotificationPreferenceDTOSchema } from '@/features/settings/notifications/asaas/dtos';
+import { deriveCustomerNotificationChannelDefaults } from '@/features/settings/notifications/asaas/customer-channel-defaults';
 import { apiJsonError } from '@/lib/api/standard-response';
 import { resolveAlunoNotificationCustomer } from '@/src/server/finance/customer-notification-scope.service';
 

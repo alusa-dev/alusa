@@ -3214,7 +3214,7 @@ export const legalHubItems = [
   },
   {
     title: legalPages.seguranca.title,
-    href: '/seguranca',
+    href: '/security',
     intro: legalPages.seguranca.intro,
     updatedAt: legalPages.seguranca.updatedAt,
   },

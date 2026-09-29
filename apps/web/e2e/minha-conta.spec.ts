@@ -4,7 +4,7 @@ test.describe('Minha Conta', () => {
   test('editar nome e telefone e refletir no perfil', async ({ page, request }) => {
     // Em E2E com TEST_ROUTES_ENABLED=true o middleware não exige login e a API /api/users/me usa fallback admin
     // a) Ir direto para /conta
-    await page.goto('/conta');
+    await page.goto('/account');
     await expect(page.getByRole('heading', { name: /minha conta/i })).toBeVisible();
 
   // c) Aguardar inputs carregarem e editar nome e telefone

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { vendasClienteDocumentoQueryDTOSchema } from '@/features/vendas/dtos';
+import { vendasClienteDocumentoQueryDTOSchema } from '@/features/sales/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { findCustomerByDocument } from '@/src/server/vendas/customer-document.service';
+import { findCustomerByDocument } from '@/src/server/sales/customer-document.service';
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });

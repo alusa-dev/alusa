@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { PersonAvatar } from '@/components/shared/PersonAvatar';
-import { DangerActionDialog } from '@/components/rematriculas/DangerActionDialog';
+import { DangerActionDialog } from '@/features/renewals/components/DangerActionDialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from '@/components/ui/toast';

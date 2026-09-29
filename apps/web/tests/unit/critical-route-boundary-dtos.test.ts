@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { matriculaBillingGroupsQueryDTOSchema } from '@/features/cadastro/matriculas/dtos';
+import { matriculaBillingGroupsQueryDTOSchema } from '@/features/enrollments/dtos';
 import {
   financeInstallmentRouteParamsDTOSchema,
   financeSubscriptionRouteParamsDTOSchema,
@@ -8,7 +8,7 @@ import {
 import {
   notaFiscalAlunoRouteParamsDTOSchema,
   notaFiscalPersonDetailQueryDTOSchema,
-} from '@/features/financeiro/notafiscal/dtos';
+} from '@/features/finance/operations/tax-invoices/dtos';
 import {
   adminAsaasApiKeyInputDTOSchema,
   adminFinancialOperationalHealthResultDTOSchema,

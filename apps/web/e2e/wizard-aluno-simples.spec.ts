@@ -19,7 +19,7 @@ test.describe('Wizard de Aluno - Simples', () => {
   });
 
   test('wizard abre e mostra campos básicos', async ({ page }) => {
-    await page.goto('/alunos');
+    await page.goto('/students');
 
     // Aguarda carregamento da página e botão estar visível
     await expect(page.getByRole('heading', { name: 'Gestão de Alunos' }).first()).toBeVisible();

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { financeiroPagamentoAlunoParamsDTOSchema } from '@/features/financeiro/dtos';
-import { mapFinanceiroPagamentoPessoaHistoricoResultToDTO } from '@/features/financeiro/mappers';
+import { financeiroPagamentoAlunoParamsDTOSchema } from '@/features/finance/operations/dtos';
+import { mapFinanceiroPagamentoPessoaHistoricoResultToDTO } from '@/features/finance/operations/mappers';
 import { getStudentPaymentHistory } from '@/src/server/finance/student-payment-history';
 import { buildPersonPaymentLedger } from '@/src/server/finance/person-payment-ledger';
 import { getStudentPaymentPerson } from '@/src/server/finance/student-payment-person.service';

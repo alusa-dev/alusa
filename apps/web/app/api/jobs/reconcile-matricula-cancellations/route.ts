@@ -5,7 +5,7 @@ import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import {
   listContasWithPendingMatriculaCancellations,
   reconcilePendingMatriculaCancellations,
-} from '@/src/server/matriculas/matricula-sync.service';
+} from '@/src/server/enrollments/enrollment-sync.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;

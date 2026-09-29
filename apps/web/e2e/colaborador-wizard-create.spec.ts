@@ -10,7 +10,7 @@ test.describe('Wizard Colaborador - fluxo completo', () => {
     const cep = '01311-000';
 
     await seedAdminAndAuthenticate(page, { email: `colaborador-modal-${now}@e2e.test` });
-    await page.goto('/colaboradores');
+    await page.goto('/employees');
 
     await page.getByRole('button', { name: 'Cadastrar colaborador' }).click();
     await expect(page.getByTestId('colaborador-wizard')).toBeVisible();

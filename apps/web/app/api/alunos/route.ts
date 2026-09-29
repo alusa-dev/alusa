@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { resolveTenantSession, withTenantSession } from '@/lib/api/with-tenant-session';
 import { AsaasCustomerEnsureError } from '@alusa/finance';
-import { alunoDetailDTOSchema, listAlunosResultDTOSchema } from '@/features/cadastro/alunos/dtos';
-import { mapAlunoDetailToDTO, mapAlunoListItemToDTO } from '@/features/cadastro/alunos/mappers';
+import { alunoDetailDTOSchema, listAlunosResultDTOSchema } from '@/features/students/dtos';
+import { mapAlunoDetailToDTO, mapAlunoListItemToDTO } from '@/features/students/mappers';
 import {
   createAlunoForTenant,
   formatZodErrors,
   listAlunosForTenant,
   parseAlunoListQuery,
-} from '@/src/server/alunos/alunos-route.service';
+} from '@/src/server/students/students-route.service';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,

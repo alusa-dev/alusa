@@ -192,7 +192,7 @@ test.describe('Wizard de Cadastro de Aluno — fluxo completo', () => {
     await test.step('Abrir wizard para menor', async () => {
       await mockKycRefresh(page);
       await mockViaCep(page, DEFAULT_CEP, DEFAULT_ADDRESS);
-      await page.goto('/alunos');
+      await page.goto('/students');
       await expect(page.getByRole('heading', { name: 'Gestão de Alunos' }).first()).toBeVisible();
       await dismissWelcomeWizard(page);
       await openAlunoWizard(page);

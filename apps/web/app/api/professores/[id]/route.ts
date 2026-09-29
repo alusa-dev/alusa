@@ -2,11 +2,11 @@ import { NextResponse } from 'next/server';
 import {
   professorMutationResultDTOSchema,
   updateProfessorInputDTOSchema,
-} from '@/features/cadastro/professores/dtos';
-import { mapProfessorRecordToDTO } from '@/features/cadastro/professores/mappers';
+} from '@/features/teachers/dtos';
+import { mapProfessorRecordToDTO } from '@/features/teachers/mappers';
 import { logMethodNotAllowed } from '@/lib/security/http-method-observability';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { getProfessor, updateProfessor } from '@/src/server/professores/professor.service';
+import { getProfessor, updateProfessor } from '@/src/server/teachers/teacher.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

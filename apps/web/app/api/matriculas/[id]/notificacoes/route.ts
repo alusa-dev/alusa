@@ -7,9 +7,9 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { runWithTenant } from '@/lib/prisma-tenant';
 import {
   updateMatriculaNotificationChannelsInputDTOSchema,
-} from '@/features/cadastro/matriculas/dtos';
-import { mapMatriculaNotificationChannelsResultToDTO } from '@/features/cadastro/matriculas/mappers';
-import { resolveMatriculaFinancialContext } from '@/src/server/matriculas/financial-context.service';
+} from '@/features/enrollments/dtos';
+import { mapMatriculaNotificationChannelsResultToDTO } from '@/features/enrollments/mappers';
+import { resolveMatriculaFinancialContext } from '@/src/server/enrollments/financial-context.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(

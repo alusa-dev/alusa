@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server';
 
-import { listAttendanceQuerySchema } from '@/features/aulas/dtos';
-import { listAttendanceHistoryByTurma } from '@/src/server/aulas/frequencia/attendance.service';
-import { handleAulasRouteError, json } from '@/src/server/aulas/route-utils';
-import { canAccessAulas, getAulasSessionUser, resolveAulasAccessScope } from '@/src/server/aulas/session';
+import { listAttendanceQuerySchema } from '@/features/lessons/dtos';
+import { listAttendanceHistoryByTurma } from '@/src/server/lessons/attendance/attendance.service';
+import { handleAulasRouteError, json } from '@/src/server/lessons/route-utils';
+import { canAccessAulas, getAulasSessionUser, resolveAulasAccessScope } from '@/src/server/lessons/session';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

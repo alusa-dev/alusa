@@ -114,13 +114,13 @@ Variações (loja avulsa, matrícula familiar consolidada, rematrícula) **mant�
 |-------|------------|--------------|
 | Tenant | Auth, sessão | `apps/web/lib/prisma-tenant.ts`, skill **tenant** |
 | Subconta / KYC | Conta | `packages/finance/src/use-cases/ensure-asaas-account.ts`, `kyc/` |
-| Cadastro base | Conta | `apps/web/features/cadastro/` (turmas, planos, combos…) |
-| Aluno / responsável | Cadastro, tenant | `features/cadastro/alunos/`, `responsaveis/` |
-| Matrícula | Aluno, turma, plano, responsável | `features/cadastro/matriculas/` |
+| Cadastro base | Conta | `apps/web/features/classes/`, `plans/`, `bundles/` |
+| Aluno / responsável | Cadastro, tenant | `features/students/`, `features/responsibles/` |
+| Matrícula | Aluno, turma, plano, responsável | `features/enrollments/` |
 | Financeiro | Matrícula/plano, customer, subconta | `packages/finance/` |
 | Webhooks | Endpoint + handlers idempotentes | `packages/finance/src/webhooks/` |
 | Portal | Matrícula, cobrança, auth portal | `apps/web/features/portal/` |
-| Loja avulsa | Customer, subconta (domínio próprio) | `apps/web/features/vendas/` |
+| Loja avulsa | Customer, subconta (domínio próprio) | `apps/web/features/sales/` |
 
 ### Regras de ordem na implementação
 
@@ -347,9 +347,9 @@ Quando o pedido for feature end-to-end: entregar dados + API + UI + testes do es
 | Onde | O quê |
 |------|--------|
 | `apps/web/app/` | App Router, route handlers |
-| `apps/web/features/<domínio>/` | Telas, hooks, services, DTOs da feature |
-| `apps/web/components/` | UI compartilhada, layout, domínio visual |
-| `apps/web/components/ui/` | **shadcn** (primitivos Radix) |
+| `apps/web/features/<domain>/` | Domain-owned screens, components, hooks, services, and DTOs |
+| `apps/web/components/shared/` | Reusable UI shared by web features |
+| `apps/web/components/ui/` | **shadcn** primitives and app adapters |
 | `packages/domain/` | Regras puras, sem Prisma/HTTP |
 | `packages/finance/` | Use cases financeiros |
 | `packages/asaas/` / `asaas-gateway/` | Cliente/contratos Asaas |
@@ -359,6 +359,11 @@ Quando o pedido for feature end-to-end: entregar dados + API + UI + testes do es
 
 **Regras:**
 
+- Group web features by English domain names (`students`, `responsibles`, `enrollments`, `finance`, `employees`, `lessons`). Add `components/`, `hooks/`, `services/`, or `dtos/` only when that feature needs them.
+- Keep feature-only UI inside its feature. Put UI shared by web features under `apps/web/components/shared/`; put UI shared across apps in `packages/ui/`.
+- Keep technical filenames, symbols, and internal module paths in English. Preserve existing Portuguese public page and API URLs unless a separately planned URL migration includes compatibility redirects.
+- Keep unit tests in `apps/web/tests/unit/`, integration tests in `apps/web/tests/integration/`, and browser E2E tests in `apps/web/e2e/`. Co-locate a package's tests with that package.
+- Keep monorepo-wide scripts in the root `scripts/`; scripts used only by an app stay in that app's `scripts/` directory.
 - Route handler **não** carrega regra de negócio pesada
 - Componente React **não** carrega regra financeira/acadêmica crítica
 - Não usar `packages/lib` como depósito genérico

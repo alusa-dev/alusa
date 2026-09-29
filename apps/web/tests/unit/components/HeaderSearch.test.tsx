@@ -58,7 +58,7 @@ describe('HeaderSearch', () => {
           type: 'aluno',
           title: 'Maria Silva',
           description: '12345678900',
-          href: '/alunos/aluno-1',
+          href: '/students/aluno-1',
           visitedAt: '2026-05-12T10:00:00.000Z',
         },
       ]),
@@ -85,7 +85,7 @@ describe('HeaderSearch', () => {
           type: 'aluno',
           title: 'Maria Silva',
           description: '12345678900',
-          href: '/alunos/aluno-1',
+          href: '/students/aluno-1',
           visitedAt: '2026-05-12T10:00:00.000Z',
         },
       ]),
@@ -121,7 +121,7 @@ describe('HeaderSearch', () => {
                 type: 'aluno',
                 title: 'Maria Silva',
                 description: '12345678900',
-                href: '/alunos/aluno-1',
+                href: '/students/aluno-1',
               },
             ],
           },
@@ -143,7 +143,7 @@ describe('HeaderSearch', () => {
     fireEvent.click(screen.getByText('Maria Silva'));
 
     await waitFor(() => {
-      expect(pushMock).toHaveBeenCalledWith('/alunos/aluno-1');
+      expect(pushMock).toHaveBeenCalledWith('/students/aluno-1');
     });
     expect(storage.getItem('alusa.global-search.recent-items')).toContain('Maria Silva');
   });
@@ -165,7 +165,7 @@ describe('HeaderSearch', () => {
                 title: 'Guilherme Araújo Souza',
                 description: 'pay_123',
                 badgeLabel: 'Taxa de matrícula',
-                href: '/cobrancas/cob-1',
+                href: '/charges/cob-1',
               },
             ],
           },

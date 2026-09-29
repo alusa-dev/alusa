@@ -5,27 +5,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-vi.mock('@/src/server/aulas/session', () => ({
+vi.mock('@/src/server/lessons/session', () => ({
   canAccessAulas: vi.fn(),
   getAulasSessionUser: vi.fn(),
   resolveAulasAccessScope: vi.fn(),
 }));
 
-vi.mock('@/src/server/aulas/frequencia/attendance.service', () => ({
+vi.mock('@/src/server/lessons/attendance/attendance.service', () => ({
   getAttendanceEventDetails: vi.fn(),
   listAttendanceHistory: vi.fn(),
   listAttendanceHistoryByTurma: vi.fn(),
   saveAttendanceForEvent: vi.fn(),
 }));
 
-const { canAccessAulas, getAulasSessionUser, resolveAulasAccessScope } = await import('@/src/server/aulas/session');
+const { canAccessAulas, getAulasSessionUser, resolveAulasAccessScope } = await import('@/src/server/lessons/session');
 const {
   getAttendanceEventDetails,
   listAttendanceHistory,
   listAttendanceHistoryByTurma,
   saveAttendanceForEvent,
 } = await import(
-  '@/src/server/aulas/frequencia/attendance.service'
+  '@/src/server/lessons/attendance/attendance.service'
 );
 const { GET: GET_HISTORY } = await import('@/app/api/aulas/frequencia/route');
 const { GET: GET_TURMA_HISTORY } = await import(

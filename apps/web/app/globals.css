@@ -1,3 +1,5 @@
+@import '../../../packages/ui/src/styles/button.css';
+
 /* por quê: define fundação Tailwind + tokens CSS custom para fallback */
 @tailwind base;
 
@@ -2799,7 +2801,6 @@ select option:checked {
 
 /* Estilos específicos para selects do Radix UI */
 [data-radix-select-trigger] {
-	background-color: white !important;
 	color: #111827 !important;
 	/* text-gray-900 */
 	border-color: #d1d5db !important;
@@ -2809,8 +2810,6 @@ select option:checked {
 }
 
 [data-radix-select-trigger]:hover {
-	background-color: #f9fafb !important;
-	/* gray-50 */
 	border-color: #d1d5db !important;
 	/* gray-300 */
 	transition: all 0.2s ease;
@@ -2823,7 +2822,6 @@ select option:checked {
 	box-shadow: none !important;
 	border-color: #d1d5db !important;
 	/* border-gray-300 */
-	background-color: white !important;
 }
 
 [data-radix-select-content] {
@@ -2889,10 +2887,7 @@ input[type="checkbox"]:focus {
 }
 
 /* Força estilos para componentes Radix Select específicos */
-[data-radix-select-trigger],
-.radix-select-trigger,
-button[data-radix-select-trigger][data-state] {
-	background-color: white !important;
+.radix-select-trigger {
 	color: #111827 !important;
 }
 
@@ -2922,8 +2917,7 @@ html[data-theme="dark"] * {
 
 /* Light apenas: selects/combobox com fundo claro (histórico da base) */
 html:not([data-theme="dark"]) select,
-html:not([data-theme="dark"]) [role="combobox"],
-html:not([data-theme="dark"]) [data-radix-select-trigger] {
+html:not([data-theme="dark"]) [role="combobox"]:not(.alusa-select-trigger) {
 	background-color: white !important;
 	color: #111827 !important;
 }
@@ -3755,4 +3749,316 @@ svg:hover,
 [data-theme="dark"] .editor-table th {
 	background-color: var(--color-bg-card-soft) !important;
 	color: var(--color-text-primary) !important;
+}
+
+/* Student wizard validation states: required empty and invalid values. */
+.wizard-field-input--required-empty {
+	background-color: #fff7ed !important;
+	box-shadow: inset 0 0 0 1px #fdba74 !important;
+}
+
+.wizard-field-input--error {
+	background-color: #fef2f2 !important;
+	box-shadow: inset 0 0 0 1px #f87171 !important;
+}
+
+[data-theme="dark"] .wizard-field-input--required-empty {
+	background-color: rgb(245 158 11 / 10%) !important;
+	box-shadow: inset 0 0 0 1px rgb(245 158 11 / 55%) !important;
+}
+
+[data-theme="dark"] .wizard-field-input--error {
+	background-color: rgb(239 68 68 / 10%) !important;
+	box-shadow: inset 0 0 0 1px rgb(248 113 113 / 65%) !important;
+}
+
+/* Shared interaction and shape tokens for registration forms and wizards. */
+@media (hover: hover) and (pointer: fine) {
+	.aluno-registration-wizard .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):not(:focus):not(:disabled):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error):hover,
+	.event-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):not(:focus):not(:disabled):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error):hover,
+	.campaign-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):not(:focus):not(:disabled):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error):hover,
+	.colaborador-registration-wizard .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):not(:focus):not(:disabled):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error):hover,
+	.class-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):not(:focus):not(:disabled):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error):hover,
+	.plan-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):not(:focus):not(:disabled):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error):hover,
+	.bundle-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):not(:focus):not(:disabled):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error):hover,
+	.modality-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):not(:focus):not(:disabled):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error):hover,
+	.room-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):not(:focus):not(:disabled):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error):hover {
+		background-color: #e7edf5 !important;
+	}
+
+	.aluno-registration-wizard .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):hover:not(:focus):not(:focus-visible):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.event-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):hover:not(:focus):not(:focus-visible):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.campaign-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):hover:not(:focus):not(:focus-visible):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.colaborador-registration-wizard .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):hover:not(:focus):not(:focus-visible):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.class-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):hover:not(:focus):not(:focus-visible):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.plan-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):hover:not(:focus):not(:focus-visible):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.bundle-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):hover:not(:focus):not(:focus-visible):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.modality-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):hover:not(:focus):not(:focus-visible):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.room-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):hover:not(:focus):not(:focus-visible):not([data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error) {
+		border-color: transparent !important;
+		box-shadow: none !important;
+		outline: none !important;
+		--tw-ring-shadow: 0 0 #0000 !important;
+	}
+}
+
+.aluno-registration-wizard .alusa-wizard-fields :is(.wizard-field-input, .alusa-select-trigger),
+.event-registration-dialog .alusa-wizard-fields :is(.wizard-field-input, .alusa-select-trigger),
+.campaign-registration-dialog .alusa-wizard-fields :is(.wizard-field-input, .alusa-select-trigger),
+.colaborador-registration-wizard .alusa-wizard-fields :is(.wizard-field-input, .alusa-select-trigger),
+.class-registration-dialog .alusa-wizard-fields :is(.wizard-field-input, .alusa-select-trigger),
+.plan-registration-dialog .alusa-wizard-fields :is(.wizard-field-input, .alusa-select-trigger),
+.bundle-registration-dialog .alusa-wizard-fields :is(.wizard-field-input, .alusa-select-trigger),
+.modality-registration-dialog .alusa-wizard-fields :is(.wizard-field-input, .alusa-select-trigger),
+.room-registration-dialog .alusa-wizard-fields :is(.wizard-field-input, .alusa-select-trigger) {
+	border-radius: 10px !important;
+}
+
+/* Registration dialogs use a neutral dimmed backdrop without blur. */
+.alusa-registration-wizard-overlay {
+	background-color: rgb(0 0 0 / 60%) !important;
+	backdrop-filter: none !important;
+	-webkit-backdrop-filter: none !important;
+}
+
+/* Responsável modal fields follow the same filled, low-contrast treatment as the registration wizards. */
+.responsible-registration-modal .responsible-form-input {
+	height: 40px !important;
+	border: 0 !important;
+	border-radius: 10px !important;
+	background-color: #eff3f8 !important;
+	box-shadow: none !important;
+	color: #30333b !important;
+	font-size: 13px !important;
+	line-height: 20px !important;
+	padding-left: 12px !important;
+	padding-right: 12px !important;
+	transition: background-color 140ms ease-out;
+}
+
+.responsible-registration-modal .responsible-form-input::placeholder {
+	color: #8a9bb2 !important;
+	opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+	.responsible-registration-modal .responsible-form-input:hover:not(:focus):not(:disabled) {
+		border-color: transparent !important;
+		background-color: #e7edf5 !important;
+		box-shadow: none !important;
+		outline: none !important;
+		--tw-ring-shadow: 0 0 #0000 !important;
+	}
+}
+
+.responsible-registration-modal .responsible-form-input:is(:focus, :focus-visible) {
+	border-color: transparent !important;
+	background-color: transparent !important;
+	box-shadow: inset 0 0 0 1px #9ca3af !important;
+	outline: none !important;
+	--tw-ring-shadow: 0 0 #0000 !important;
+}
+
+[data-theme='dark'] .responsible-registration-modal .responsible-form-input {
+	background-color: var(--color-bg-elevated) !important;
+	color: var(--color-input-text) !important;
+}
+
+[data-theme='dark'] .responsible-registration-modal .responsible-form-input::placeholder {
+	color: var(--color-input-placeholder) !important;
+}
+
+@supports (corner-shape: superellipse(1.1)) {
+	.responsible-registration-modal,
+	.responsible-registration-modal :not(.rounded-full) {
+		corner-shape: superellipse(1.1);
+	}
+}
+
+[data-theme="dark"] .alusa-registration-wizard-overlay {
+	background-color: rgb(0 0 0 / 60%) !important;
+}
+
+.aluno-registration-wizard .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+.event-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+.campaign-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+.colaborador-registration-wizard .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+.class-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+.plan-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+.bundle-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+.modality-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+.room-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error) {
+	border: 1px solid #9ca3af !important;
+	box-shadow: none !important;
+	outline: none !important;
+	--tw-ring-shadow: 0 0 #0000 !important;
+}
+
+@media (hover: hover) and (pointer: fine) {
+	.aluno-registration-wizard .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):hover:not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.event-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):hover:not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.campaign-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):hover:not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.colaborador-registration-wizard .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):hover:not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.class-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):hover:not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.plan-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):hover:not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.bundle-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):hover:not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.modality-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):hover:not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+	.room-registration-dialog .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):hover:not(.wizard-field-input--required-empty):not(.wizard-field-input--error) {
+		background-color: transparent !important;
+	}
+}
+
+/* Keep selects filled consistently in wizard-style forms and the student edit dialog. */
+.aluno-registration-wizard.student-edit-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+.aluno-registration-wizard.student-edit-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error) {
+	background-color: #eff3f8 !important;
+}
+
+.event-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+.event-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+.class-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+.class-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+.plan-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+.plan-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+.bundle-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+.bundle-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+.modality-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+.modality-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+.room-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+.room-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error) {
+	background-color: #eff3f8 !important;
+}
+
+[data-theme="dark"] .aluno-registration-wizard.student-edit-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+[data-theme="dark"] .aluno-registration-wizard.student-edit-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error) {
+	background-color: var(--color-bg-elevated) !important;
+}
+
+[data-theme="dark"] .event-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+[data-theme="dark"] .event-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+[data-theme="dark"] .class-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+[data-theme="dark"] .class-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+[data-theme="dark"] .plan-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+[data-theme="dark"] .plan-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+[data-theme="dark"] .bundle-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+[data-theme="dark"] .bundle-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+[data-theme="dark"] .modality-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+[data-theme="dark"] .modality-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),
+[data-theme="dark"] .room-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input,
+[data-theme="dark"] .room-registration-dialog .alusa-wizard-fields .alusa-select-trigger.wizard-field-input:is(:hover, :focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error) {
+	background-color: var(--color-bg-elevated) !important;
+}
+
+/* Enrollment wizard uses the same neutral fields, surfaces, and focus treatment. */
+.enrollment-registration-wizard .alusa-session-panel {
+	border-radius: 12px;
+	box-shadow: none;
+}
+
+.enrollment-registration-wizard #wizard-step-content :is(
+		input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='hidden']):not([type='range']),
+		textarea,
+		.alusa-select-trigger
+	) {
+	border: 1px solid transparent;
+	border-radius: 10px;
+	background-color: #eff3f8;
+	box-shadow: none;
+	color: #30333b;
+	font-size: 13px;
+	line-height: 20px;
+	outline: none;
+	transition:
+		background-color 140ms ease-out,
+		border-color 140ms ease-out;
+}
+
+.enrollment-registration-wizard #wizard-step-content :is(
+		input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='hidden']):not([type='range']),
+		textarea,
+		.alusa-select-trigger
+	)::placeholder {
+	color: #8a9bb2;
+	opacity: 1;
+}
+
+.enrollment-registration-wizard #wizard-step-content :is(
+		input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='hidden']):not([type='range']),
+		textarea,
+		.alusa-select-trigger
+	):is(:focus, :focus-visible, [data-state='open']):not(.wizard-field-input--error):not(.wizard-field-input--required-empty) {
+	border-color: #9ca3af;
+	box-shadow: none;
+	outline: none;
+	--tw-ring-shadow: 0 0 #0000;
+}
+
+@media (hover: hover) and (pointer: fine) {
+	.enrollment-registration-wizard #wizard-step-content :is(
+			input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='hidden']):not([type='range']),
+			textarea,
+			.alusa-select-trigger
+		):hover:not(:focus):not(:focus-visible):not(:disabled):not([data-state='open']):not(.wizard-field-input--error):not(.wizard-field-input--required-empty) {
+		background-color: #e7edf5;
+		border-color: transparent;
+		box-shadow: none;
+		outline: none;
+		--tw-ring-shadow: 0 0 #0000;
+	}
+}
+
+.enrollment-wizard-flow #wizard-step-content .alusa-select-trigger,
+.enrollment-wizard-flow #wizard-step-content .alusa-select-trigger:is(
+		:hover,
+		:focus,
+		:focus-visible,
+		[data-state='open']
+	):not(.wizard-field-input--error):not(.wizard-field-input--required-empty) {
+	background-color: #eff3f8 !important;
+}
+
+[data-theme='dark'] .enrollment-registration-wizard .alusa-session-panel {
+	background-color: var(--color-bg-card);
+	border-color: var(--color-border-default);
+}
+
+[data-theme='dark'] .enrollment-registration-wizard #wizard-step-content :is(
+		input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='hidden']):not([type='range']),
+		textarea,
+		.alusa-select-trigger
+	) {
+	background-color: var(--color-bg-elevated);
+	color: var(--color-input-text);
+}
+
+[data-theme='dark'] .enrollment-registration-wizard #wizard-step-content :is(
+		input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='hidden']):not([type='range']),
+		textarea,
+		.alusa-select-trigger
+	)::placeholder {
+	color: var(--color-input-placeholder);
+}
+
+[data-theme='dark'] .enrollment-wizard-flow #wizard-step-content .alusa-select-trigger,
+[data-theme='dark'] .enrollment-wizard-flow #wizard-step-content .alusa-select-trigger:is(
+		:hover,
+		:focus,
+		:focus-visible,
+		[data-state='open']
+	):not(.wizard-field-input--error):not(.wizard-field-input--required-empty) {
+	background-color: var(--color-bg-elevated) !important;
+}
+
+.student-edit-dialog .student-edit-date-input {
+	position: relative;
+	padding-right: 2.5rem;
+}
+
+.student-edit-dialog .student-edit-date-input::-webkit-calendar-picker-indicator {
+	position: absolute;
+	right: 12px;
+	top: 50%;
+	margin: 0;
+	transform: translateY(-50%);
+	cursor: pointer;
 }

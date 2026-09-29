@@ -13,7 +13,7 @@ import {
   mapPortalFinanceiroDetailToDTO,
   mapPortalFinanceiroListItemToDTO,
 } from '@/features/portal/mappers';
-import { mapCentroCustoToDTO } from '@/features/financeiro/centros-custo/mappers';
+import { mapCostCenterToDTO } from '@/features/finance/operations/cost-centers/mappers';
 import {
   mapAdminFinancialHealthResultToDTO,
   mapAppHealthResultToDTO,
@@ -183,7 +183,7 @@ describe('DTO Refactor Wave 3', () => {
   });
 
   it('maps centro de custo and health contracts', () => {
-    const centro = mapCentroCustoToDTO({
+    const centro = mapCostCenterToDTO({
       id: 'cc-1',
       contaId: 'conta-1',
       nome: 'Administrativo',

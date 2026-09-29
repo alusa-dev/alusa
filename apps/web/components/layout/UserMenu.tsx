@@ -47,7 +47,7 @@ export function UserMenuPanel({ onClose }: { onClose: () => void }) {
         </MenuDisabledItem>
       ) : (
         <MenuLink
-          href="/conta"
+          href="/account"
           icon={<UserCircleIcon className="h-5 w-5" />}
           onClick={onClose}
         >
@@ -57,7 +57,7 @@ export function UserMenuPanel({ onClose }: { onClose: () => void }) {
 
       {showPlatformBilling ? (
         <MenuLink
-          href="/conta/plano-faturamento"
+          href="/account/billing-plan"
           icon={<CreditCard className="h-5 w-5" />}
           onClick={onClose}
           trailing={
@@ -72,7 +72,7 @@ export function UserMenuPanel({ onClose }: { onClose: () => void }) {
         </MenuLink>
       ) : null}
 
-      <MenuLink href="/ajuda" icon={<QuestionMarkCircleIcon className="h-5 w-5" />} onClick={onClose}>
+      <MenuLink href="/help" icon={<QuestionMarkCircleIcon className="h-5 w-5" />} onClick={onClose}>
         Ajuda
       </MenuLink>
 

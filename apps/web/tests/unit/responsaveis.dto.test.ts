@@ -4,12 +4,12 @@ import {
   createResponsavelInputDTOSchema,
   linkAlunoResponsavelInputDTOSchema,
   listResponsaveisQueryDTOSchema,
-} from '@/features/responsaveis/dtos';
+} from '@/features/responsibles/dtos';
 import {
   mapCreateResponsavelDTOToData,
   mapListResponsaveisQueryToFilters,
   mapResponsavelRecordToSummaryDTO,
-} from '@/features/responsaveis/mappers';
+} from '@/features/responsibles/mappers';
 
 describe('responsaveis DTOs', () => {
   it('normaliza query de listagem', () => {

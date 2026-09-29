@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { contaFormaPagamentoResultDTOSchema } from '@/features/conta/dtos';
-import { mapContaFormaPagamentoResultToDTO } from '@/features/conta/mappers';
+import { contaFormaPagamentoResultDTOSchema } from '@/features/account/dtos';
+import { mapContaFormaPagamentoResultToDTO } from '@/features/account/mappers';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getAccountPaymentMethodView } from '@/src/server/finance/account-payment-method.service';
 

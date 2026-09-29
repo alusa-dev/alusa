@@ -24,7 +24,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { toast } from '@/components/ui/toast';
-import { ConfirmDeleteDialog } from '@/components/dialogs/ConfirmDeleteDialog';
+import { ActionConfirmationDialog } from '@/components/dialogs/ActionConfirmationDialog';
 import { CreatorIcon } from '@/components/icons/hugeicons';
 
 const eventMapQueryKeys = {
@@ -318,7 +318,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
       ) : null}
 
       {mapToDelete && deleteDialog ? (
-        <ConfirmDeleteDialog
+        <ActionConfirmationDialog
           open={!!mapToDelete}
           onOpenChange={(open) => {
             if (!open) setMapToDelete(null);
@@ -335,7 +335,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
       ) : null}
 
       {mapToPublish && publishDialog ? (
-        <ConfirmDeleteDialog
+        <ActionConfirmationDialog
           open={!!mapToPublish}
           onOpenChange={(open) => {
             if (!open) setMapToPublish(null);

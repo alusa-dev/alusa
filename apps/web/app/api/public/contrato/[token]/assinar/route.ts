@@ -4,7 +4,7 @@ import {
   contratoPublicTokenParamsDTOSchema,
   publicAssinarContratoInputDTOSchema,
   publicAssinarContratoResultDTOSchema,
-} from '@/features/contratos/dtos';
+} from '@/features/contracts/dtos';
 import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { signPublicContract } from '@alusa/lib/contracts/use-cases/sign-contract';

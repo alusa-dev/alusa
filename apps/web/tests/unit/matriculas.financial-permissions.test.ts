@@ -36,21 +36,21 @@ vi.mock('@alusa/finance', () => ({
   updateSubscription: mocks.updateSubscription,
   projectConfirmedBillingAgreementSnapshot: mocks.project,
 }));
-vi.mock('@/features/cadastro/matriculas/mappers', () => ({
+vi.mock('@/features/enrollments/mappers', () => ({
   mapMatriculaNotificationChannelsResultToDTO: (input: unknown) => input,
   mapMatriculaSubscriptionValueUpdateResultToDTO: (input: unknown) => input,
   mapMatriculaSubscriptionBillingTypeUpdateResultToDTO: (input: unknown) => input,
 }));
-vi.mock('@/src/server/matriculas/financial-context.service', () => ({
+vi.mock('@/src/server/enrollments/financial-context.service', () => ({
   resolveMatriculaFinancialContext: mocks.context,
   isFinancialContextEditable: mocks.editable,
   updateFamilyFinancialLocalState: mocks.align,
 }));
-vi.mock('@/src/server/matriculas/enrollment-finance-consistency.service', () => ({
+vi.mock('@/src/server/enrollments/enrollment-finance-consistency.service', () => ({
   alignLocalPendingEnrollmentCharges: mocks.align,
 }));
-vi.mock('@/src/server/matriculas/subscription-snapshot', () => ({ deriveLocalAssinaturaSnapshot: vi.fn() }));
-vi.mock('@/src/server/matriculas/recurring-billing', () => ({ mapBillingTypeToFormaPagamento: () => 'PIX' }));
+vi.mock('@/src/server/enrollments/subscription-snapshot', () => ({ deriveLocalAssinaturaSnapshot: vi.fn() }));
+vi.mock('@/src/server/enrollments/recurring-billing', () => ({ mapBillingTypeToFormaPagamento: () => 'PIX' }));
 
 import { PUT as updateValue } from '@/app/api/matriculas/[id]/valor/route';
 import { PUT as updateBillingType } from '@/app/api/matriculas/[id]/forma-pagamento/route';

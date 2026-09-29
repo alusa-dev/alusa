@@ -6,7 +6,7 @@ export function resolvePaymentHistoryDetailHref(item: {
   category: PaymentHistoryCategory;
   eventId?: string | null;
 }): string {
-  if (item.sourceKind === 'sale') return `/vendas/${item.sourceId}`;
+  if (item.sourceKind === 'sale') return `/sales/${item.sourceId}`;
 
   if (
     item.sourceKind.startsWith('event') ||
@@ -16,5 +16,5 @@ export function resolvePaymentHistoryDetailHref(item: {
     return '/events';
   }
 
-  return `/cobrancas/${item.sourceId}`;
+  return `/charges/${item.sourceId}`;
 }

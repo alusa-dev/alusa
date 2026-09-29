@@ -8,7 +8,7 @@ import {
 } from '@/features/mobile/dtos';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
-import { normalizeAccountTimeZone } from '@/src/server/aulas/calendar/account-timezone';
+import { normalizeAccountTimeZone } from '@/src/server/lessons/calendar/account-timezone';
 import {
   getActiveMobileMembership,
   getMobileProfile,

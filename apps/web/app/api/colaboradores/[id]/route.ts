@@ -10,7 +10,7 @@ import {
   remove as removeColab,
 } from '../../../../../../packages/lib/src/server/services/colaborador-service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
-import { getColaborador } from '@/src/server/colaboradores/colaborador-read.service';
+import { getColaborador } from '@/src/server/employees/employee-read.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

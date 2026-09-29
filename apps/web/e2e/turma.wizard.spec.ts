@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 // Pré-condição: servidor em execução e usuário autenticado (se auth ativa). Caso contrário, adaptar com fluxo de login.
 
 test('Fluxo criar turma via wizard e aparecer na lista', async ({ page }) => {
-  await page.goto('/turmas');
+  await page.goto('/classes');
   await page.waitForLoadState('domcontentloaded');
   await page.getByRole('button', { name: /Nova turma/i }).click();
   // Step 1 básicos

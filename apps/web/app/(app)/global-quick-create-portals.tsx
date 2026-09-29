@@ -5,23 +5,23 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
-import { createModalidade } from '@/features/cadastro/modalidades/services/modalidades-service';
-import { createSala } from '@/features/cadastro/salas/services/salas-service';
+import { createModality } from '@/features/modalities/services/modalities-service';
+import { createRoom } from '@/features/rooms/services/rooms-service';
 import useCurrentUser from '@/hooks/use-current-user';
 
 const DEBOUNCE_MS = 500;
 
-const ModalidadeDialog = dynamic(
+const ModalityDialog = dynamic(
   () =>
-    import('@/components/modalidades/ModalidadeDialog').then((m) => ({
+    import('@/features/modalities/components/ModalityDialog').then((m) => ({
       default: m.default,
     })),
   { ssr: false },
 );
 
-const SalaDialog = dynamic(
+const RoomDialog = dynamic(
   () =>
-    import('@/components/salas/SalaDialog').then((m) => ({
+    import('@/features/rooms/components/RoomDialog').then((m) => ({
       default: m.default,
     })),
   { ssr: false },
@@ -89,7 +89,7 @@ export function GlobalQuickCreatePortals() {
     if (submitting) return;
     try {
       setSubmitting(true);
-      const created = await createModalidade({
+      const created = await createModality({
         contaId,
         nome: vals.nome.trim(),
         descricao: vals.descricao.trim() || undefined,
@@ -142,7 +142,7 @@ export function GlobalQuickCreatePortals() {
     if (submitting) return;
     try {
       setSubmitting(true);
-      const created = await createSala({
+      const created = await createRoom({
         contaId,
         nome: vals.nome.trim(),
         descricao: vals.descricao.trim() || undefined,
@@ -178,7 +178,7 @@ export function GlobalQuickCreatePortals() {
 
   return (
     <>
-      <ModalidadeDialog
+      <ModalityDialog
         open={openModalidade}
         creating
         modalidade={null}
@@ -189,7 +189,7 @@ export function GlobalQuickCreatePortals() {
           await handleCreateModalidadeDirect(vals);
         }}
       />
-      <SalaDialog
+      <RoomDialog
         open={openSala}
         creating
         sala={null}

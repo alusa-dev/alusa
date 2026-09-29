@@ -4,8 +4,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { contaFinanceOnboardingResultDTOSchema } from '@/features/conta/dtos';
-import { mapContaFinanceOnboardingResultToDTO } from '@/features/conta/mappers';
+import { contaFinanceOnboardingResultDTOSchema } from '@/features/account/dtos';
+import { mapContaFinanceOnboardingResultToDTO } from '@/features/account/mappers';
 
 describe('conta finance onboarding dto', () => {
   it('aceita o payload real de myAccountStatus e documents retornado pelo Asaas', () => {

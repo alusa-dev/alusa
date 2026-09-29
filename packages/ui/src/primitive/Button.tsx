@@ -1,18 +1,53 @@
 import * as React from 'react';
+import { Slot } from '@radix-ui/react-slot';
+import { cva, type VariantProps } from 'class-variance-authority';
 
-export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'ghost';
+export const buttonVariants = cva('alusa-button', {
+  variants: {
+    variant: {
+      default: 'alusa-button--default',
+      primary: 'alusa-button--default',
+      destructive: 'alusa-button--destructive',
+      outline: 'alusa-button--outline',
+      secondary: 'alusa-button--secondary',
+      ghost: 'alusa-button--ghost',
+      link: 'alusa-button--link',
+      wizardPrimary: 'alusa-button--wizard-primary',
+      wizardSecondary: 'alusa-button--wizard-secondary',
+    },
+    size: {
+      default: 'alusa-button--default-size',
+      sm: 'alusa-button--small',
+      lg: 'alusa-button--large',
+      icon: 'alusa-button--icon',
+    },
+  },
+  defaultVariants: {
+    variant: 'default',
+    size: 'default',
+  },
+});
+
+export interface ButtonProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+    VariantProps<typeof buttonVariants> {
+  asChild?: boolean;
 }
 
-const base = 'inline-flex items-center justify-center rounded-md text-sm font-medium transition-all duration-200 focus:outline-none focus-visible:outline-none focus-visible:ring-0 disabled:opacity-50 disabled:pointer-events-none h-10 px-4 py-2';
-const variants: Record<string,string> = {
-  primary: 'bg-blue-600 text-white hover:bg-blue-500',
-  secondary: 'bg-gray-200 text-gray-900 hover:bg-purple-50 hover:text-purple-900 hover:border-purple-300',
-  ghost: 'bg-transparent hover:bg-purple-50 hover:text-purple-900 text-gray-900'
-};
+const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant, size, asChild = false, ...props }, ref) => {
+    const Component = asChild ? Slot : 'button';
 
-export const Button: React.FC<ButtonProps> = ({ variant = 'primary', className = '', ...props }) => (
-  <button className={`${base} ${variants[variant]} ${className}`} {...props} />
+    return (
+      <Component
+        className={[buttonVariants({ variant, size }), className].filter(Boolean).join(' ')}
+        ref={ref}
+        {...props}
+      />
+    );
+  },
 );
 
 Button.displayName = 'Button';
+
+export { Button };

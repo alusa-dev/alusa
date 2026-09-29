@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 
 import { getDelinquencyReport, validateFinancialReportDimensions } from '@alusa/finance';
-import { delinquencyReportDTOSchema } from '@/features/financeiro/relatorios/dtos';
+import { delinquencyReportDTOSchema } from '@/features/finance/operations/reports/dtos';
 import {
   financialReportJson,
   handleFinancialReportError,

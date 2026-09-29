@@ -5,8 +5,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 
-import { AulasError } from '@/src/server/aulas/aulas-error';
-import { handleAulasRouteError, json } from '@/src/server/aulas/route-utils';
+import { AulasError } from '@/src/server/lessons/lessons-error';
+import { handleAulasRouteError, json } from '@/src/server/lessons/route-utils';
 
 describe('AulasError', () => {
   it('mapeia código para status HTTP correto', () => {
@@ -97,7 +97,7 @@ describe('resolveAulasAccessScope', () => {
       },
     }));
 
-    const { resolveAulasAccessScope } = await import('@/src/server/aulas/session');
+    const { resolveAulasAccessScope } = await import('@/src/server/lessons/session');
 
     const scope = await resolveAulasAccessScope({
       id: 'user-1',
@@ -121,7 +121,7 @@ describe('resolveAulasAccessScope', () => {
       nome: 'Prof. Teste',
     } as never);
 
-    const { resolveAulasAccessScope } = await import('@/src/server/aulas/session');
+    const { resolveAulasAccessScope } = await import('@/src/server/lessons/session');
 
     const scope = await resolveAulasAccessScope({
       id: 'user-2',
@@ -147,7 +147,7 @@ describe('resolveAulasAccessScope', () => {
     const { prisma } = await import('@/src/prisma');
     vi.mocked(prisma.professor.findFirst).mockResolvedValueOnce(null);
 
-    const { resolveAulasAccessScope } = await import('@/src/server/aulas/session');
+    const { resolveAulasAccessScope } = await import('@/src/server/lessons/session');
 
     const scope = await resolveAulasAccessScope({
       id: 'user-3',

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { billingAgreementPreviewRequestSchema } from '@/features/cadastro/matriculas/billing-agreements/contracts';
+import { billingAgreementPreviewRequestSchema } from '@/features/enrollments/billing-agreements/contracts';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import {
   billingAgreementJsonError,

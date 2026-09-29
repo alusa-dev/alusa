@@ -3,9 +3,9 @@ import { buildSeatOccupancyWhereClause } from '@alusa/lib/services/matricula-occ
 
 import { runWithTenant, type TenantTransactionClient } from '@/lib/prisma-tenant';
 import { PrismaClient } from '@prisma/client';
-import { editarMatricula, atualizarDetalhesMatricula } from '@/src/server/matriculas/matricula.service';
-import { pausarMatricula, reativarMatricula } from '@/src/server/matriculas/matricula-pausa.service';
-import { syncMatriculaStatus } from '@/src/server/matriculas/matricula-sync.service';
+import { editarMatricula, atualizarDetalhesMatricula } from '@/src/server/enrollments/enrollment.service';
+import { pausarMatricula, reativarMatricula } from '@/src/server/enrollments/enrollment-pause.service';
+import { syncMatriculaStatus } from '@/src/server/enrollments/enrollment-sync.service';
 import prisma from '@/lib/prisma';
 
 export type MobileEnrollmentActor = {

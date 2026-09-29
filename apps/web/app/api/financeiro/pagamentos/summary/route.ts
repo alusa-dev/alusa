@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   listFinanceiroPagamentoPessoaIndexResultDTOSchema,
-} from '@/features/financeiro/dtos';
-import { mapFinanceiroPagamentoPessoaIndexItemToDTO } from '@/features/financeiro/mappers';
+} from '@/features/finance/operations/dtos';
+import { mapFinanceiroPagamentoPessoaIndexItemToDTO } from '@/features/finance/operations/mappers';
 import { financeInternalError, financeJsonError, logFinanceApiRequest, stableQueryFingerprint } from '@/lib/api/finance-api-response';
 import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
 import {

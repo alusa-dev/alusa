@@ -26,9 +26,9 @@ describe('AccountSettingsNav', () => {
 
   it('mostra "Desativar conta" para ADMIN e mantém ordem após Segurança', async () => {
     useSessionMock.mockReturnValue({ data: { user: { role: 'ADMIN' } } });
-    usePathnameMock.mockReturnValue('/conta/excluir-conta');
+    usePathnameMock.mockReturnValue('/account/delete');
 
-    const { default: AccountSettingsNav } = await import('@/components/settings/AccountSettingsNav');
+    const { default: AccountSettingsNav } = await import('@/features/settings/components/AccountSettingsNav');
 
     render(<AccountSettingsNav />);
 
@@ -52,9 +52,9 @@ describe('AccountSettingsNav', () => {
 
   it('não mostra "Desativar conta" para não ADMIN', async () => {
     useSessionMock.mockReturnValue({ data: { user: { role: 'FINANCEIRO' } } });
-    usePathnameMock.mockReturnValue('/conta/seguranca');
+    usePathnameMock.mockReturnValue('/account/security');
 
-    const { default: AccountSettingsNav } = await import('@/components/settings/AccountSettingsNav');
+    const { default: AccountSettingsNav } = await import('@/features/settings/components/AccountSettingsNav');
 
     render(<AccountSettingsNav />);
 
@@ -72,9 +72,9 @@ describe('AccountSettingsNav', () => {
         },
       },
     });
-    usePathnameMock.mockReturnValue('/conta/perfil');
+    usePathnameMock.mockReturnValue('/account/profile');
 
-    const { default: AccountSettingsNav } = await import('@/components/settings/AccountSettingsNav');
+    const { default: AccountSettingsNav } = await import('@/features/settings/components/AccountSettingsNav');
 
     render(<AccountSettingsNav />);
 
@@ -91,9 +91,9 @@ describe('AccountSettingsNav', () => {
         },
       },
     });
-    usePathnameMock.mockReturnValue('/conta/verificacao');
+    usePathnameMock.mockReturnValue('/account/verification');
 
-    const { default: AccountSettingsNav } = await import('@/components/settings/AccountSettingsNav');
+    const { default: AccountSettingsNav } = await import('@/features/settings/components/AccountSettingsNav');
 
     render(<AccountSettingsNav />);
 

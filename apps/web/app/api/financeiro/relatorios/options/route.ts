@@ -1,7 +1,7 @@
 import {
   getFinancialReportFilterOptions,
 } from '@alusa/finance';
-import { financialReportOptionsDTOSchema } from '@/features/financeiro/relatorios/dtos';
+import { financialReportOptionsDTOSchema } from '@/features/finance/operations/reports/dtos';
 import {
   financialReportJson,
   handleFinancialReportError,

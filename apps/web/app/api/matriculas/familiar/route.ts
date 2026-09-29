@@ -4,8 +4,8 @@ import { z } from 'zod';
 import { getSessionUser } from '@/lib/auth/session';
 import {
   executeCreateFamilyEnrollment,
-} from '@/src/server/matriculas/create-family-enrollment.use-case';
-import { createMatriculaFamiliarInputSchema } from '@/src/server/matriculas/family-enrollment.schema';
+} from '@/src/server/enrollments/create-family-enrollment.use-case';
+import { createMatriculaFamiliarInputSchema } from '@/src/server/enrollments/family-enrollment.schema';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,

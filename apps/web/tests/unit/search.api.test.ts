@@ -76,7 +76,7 @@ describe('GET /api/search', () => {
       expect.objectContaining({
         key: 'alunos',
         items: [
-          expect.objectContaining({ title: 'Maria Silva', href: '/alunos/aluno-1', type: 'aluno' }),
+          expect.objectContaining({ title: 'Maria Silva', href: '/students/aluno-1', type: 'aluno' }),
         ],
       }),
     ]);
@@ -133,7 +133,7 @@ describe('GET /api/search', () => {
             title: 'Guilherme Araújo Souza',
             description: 'pay_123',
             badgeLabel: 'Taxa de matrícula',
-            href: '/cobrancas/cob-1',
+            href: '/charges/cob-1',
           }),
         ],
       }),

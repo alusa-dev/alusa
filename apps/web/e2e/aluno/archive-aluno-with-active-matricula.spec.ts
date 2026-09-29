@@ -1,0 +1,42 @@
+import { test, expect } from '@playwright/test';
+import { resetDb } from '../utils/reset-db';
+import { prisma, registerAndLogin, getContaId, createAlunoWithMatriculaAndSubscription } from '../utils/fixtures';
+
+test.describe('Arquivar aluno com matrícula ativa + assinatura ativa', () => {
+  test.beforeEach(async ({ page }) => {
+    await resetDb();
+    await registerAndLogin(page);
+  });
+
+  test.afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  test('bloqueia arquivamento sem alterar matrícula ou assinatura', async ({ page }) => {
+    const contaId = await getContaId();
+
+    const { alunoId, alunoNome, matriculaId, subscriptionDbId } = await createAlunoWithMatriculaAndSubscription({
+      contaId,
+      alunoNome: 'Aluno Arquivar',
+      asaasSubscriptionId: 'sub-ok-1',
+    });
+
+    await page.goto(`/test/students/archive?alunoId=${alunoId}`);
+    await expect(page.getByTestId('test-aluno-archive-page')).toBeVisible();
+
+    await page.getByTestId('test-open-archive-dialog').click();
+    await page.getByRole('button', { name: /^Arquivar$/ }).click();
+
+    await expect(page.getByText(/Resolva as matrículas no fluxo de Matrículas/)).toBeVisible();
+
+    const aluno = await prisma.aluno.findUnique({ where: { id: alunoId }, select: { status: true } });
+    const matricula = await prisma.matricula.findUnique({ where: { id: matriculaId }, select: { status: true } });
+    const subscription = await prisma.subscription.findUnique({ where: { id: subscriptionDbId }, select: { status: true } });
+    const cobrancasCount = await prisma.cobranca.count({ where: { matriculaId } });
+
+    expect(aluno?.status).toBe('ATIVO');
+    expect(matricula?.status).toBe('ATIVA');
+    expect(subscription?.status).toBe('ACTIVE');
+    expect(cobrancasCount).toBeGreaterThanOrEqual(0);
+  });
+});

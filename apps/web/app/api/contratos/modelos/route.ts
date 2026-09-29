@@ -4,8 +4,8 @@ import { getSessionUser } from '@/lib/auth/session';
 import {
   createContratoModeloInputDTOSchema,
   listContratoModelosResultDTOSchema,
-} from '@/features/contratos/dtos';
-import { mapContratoModeloRecordToDTO } from '@/features/contratos/mappers';
+} from '@/features/contracts/dtos';
+import { mapContratoModeloRecordToDTO } from '@/features/contracts/mappers';
 import { createContractModelForTenant, listContractModelsForTenant } from '@/src/server/contracts/contract-model.service';
 
 export async function GET(request: NextRequest) {

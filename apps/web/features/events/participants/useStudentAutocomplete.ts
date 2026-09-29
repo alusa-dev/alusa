@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import type { AutocompleteOption } from '@/components/matriculas/wizard/shared/AutocompleteList';
+import type { AutocompleteOption } from '@/components/shared/AutocompleteList';
 
 type StudentSearchItem = {
   id: string;

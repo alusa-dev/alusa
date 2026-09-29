@@ -31,7 +31,7 @@ test.describe('Wizard de Aluno', () => {
   });
 
   test('cadastro de aluno completo', async ({ page }) => {
-    await page.goto('/alunos');
+    await page.goto('/students');
 
     // Aguarda carregamento da página e botão estar visível
     await expect(page.getByRole('heading', { name: 'Gestão de Alunos' }).first()).toBeVisible();
@@ -137,7 +137,7 @@ test.describe('Wizard de Aluno', () => {
   });
 
   test('fechar wizard sem confirmação', async ({ page }) => {
-    await page.goto('/alunos');
+    await page.goto('/students');
     await expect(page.getByRole('heading', { name: 'Gestão de Alunos' })).toBeVisible();
     await page.getByRole('button', { name: 'Cadastrar aluno' }).click();
     

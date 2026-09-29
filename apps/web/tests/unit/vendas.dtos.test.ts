@@ -5,7 +5,7 @@ import {
   listInventoryMovementsQueryDTOSchema,
   listRestockOrdersQueryDTOSchema,
   vendasClienteDocumentoQueryDTOSchema,
-} from '@/features/vendas/dtos';
+} from '@/features/sales/dtos';
 
 describe('DTOs de vendas', () => {
   it('normaliza e valida CPF/CNPJ para consulta de cliente avulso', () => {

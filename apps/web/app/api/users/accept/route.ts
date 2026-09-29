@@ -9,10 +9,13 @@ import {
   validateInviteQueryDTOSchema,
   validateInviteResultDTOSchema,
 } from '@/features/users/dtos';
-import { findPendingInviteForAcceptance } from '@/src/server/users/invite-acceptance.service';
+import {
+  findExistingUserForInvite,
+  findPendingInviteForAcceptance,
+  findUserMembershipForInvite,
+} from '@/src/server/users/invite-acceptance.service';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import prisma from '@/lib/prisma';
 
 export async function GET(req: Request) {
   try {
@@ -98,18 +101,12 @@ export async function POST(req: Request) {
           return NextResponse.json({ error: 'Informe o e-mail que deseja usar na conta.' }, { status: 400 });
         }
         if (finalEmail) {
-          const existingUser = await prisma.usuario.findFirst({
-            where: { email: { equals: finalEmail, mode: 'insensitive' } },
-            select: { id: true, status: true, contaId: true },
-          });
+          const existingUser = await findExistingUserForInvite(finalEmail);
           if (existingUser && String(existingUser.status).toUpperCase() !== 'ATIVO') {
             return NextResponse.json({ error: 'Esta conta está desativada. Solicite a um administrador a reativação antes de aceitar o convite.', code: 'ACCOUNT_INACTIVE' }, { status: 409 });
           }
           if (existingUser && invite.contaId) {
-            const membership = await prisma.usuarioConta.findUnique({
-              where: { usuarioId_contaId: { usuarioId: existingUser.id, contaId: invite.contaId } },
-              select: { status: true },
-            });
+            const membership = await findUserMembershipForInvite(existingUser.id, invite.contaId);
             if (membership?.status === 'ATIVO' || existingUser.contaId === invite.contaId) {
               return NextResponse.json({
                 error: 'Esta conta já está vinculada a esta escola. Fale com o administrador.',

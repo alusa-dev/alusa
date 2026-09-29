@@ -3,14 +3,14 @@ import {
   createProfessorInputDTOSchema,
   listProfessoresResultDTOSchema,
   professorMutationResultDTOSchema,
-} from '@/features/cadastro/professores/dtos';
-import { mapProfessorRecordToDTO } from '@/features/cadastro/professores/mappers';
+} from '@/features/teachers/dtos';
+import { mapProfessorRecordToDTO } from '@/features/teachers/mappers';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   createProfessor,
   listProfessores,
   syncProfessoresFromColaboradores,
-} from '@/src/server/professores/professor.service';
+} from '@/src/server/teachers/teacher.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

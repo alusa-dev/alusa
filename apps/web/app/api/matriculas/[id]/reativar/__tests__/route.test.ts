@@ -12,10 +12,10 @@ vi.mock('@/src/server/platform-billing/capacity', () => ({
   isPlatformBillingCapacityError: vi.fn(() => false),
 }));
 
-vi.mock('@/src/server/matriculas/matricula-pausa.service', async () => {
+vi.mock('@/src/server/enrollments/enrollment-pause.service', async () => {
   const actual = await vi.importActual<
-    typeof import('@/src/server/matriculas/matricula-pausa.service')
-  >('@/src/server/matriculas/matricula-pausa.service');
+    typeof import('@/src/server/enrollments/enrollment-pause.service')
+  >('@/src/server/enrollments/enrollment-pause.service');
   return {
     ...actual,
     reativarMatricula: vi.fn(),
@@ -77,7 +77,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
 
   it('deve reativar matrícula com sucesso', async () => {
     const { getServerSession } = await import('next-auth');
-    const { reativarMatricula } = await import('@/src/server/matriculas/matricula-pausa.service');
+    const { reativarMatricula } = await import('@/src/server/enrollments/enrollment-pause.service');
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
     vi.mocked(reativarMatricula).mockResolvedValue({
@@ -114,7 +114,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
   it('deve retornar erro se matrícula não está pausada', async () => {
     const { getServerSession } = await import('next-auth');
     const { reativarMatricula, PausaBusinessError } = await import(
-      '@/src/server/matriculas/matricula-pausa.service'
+      '@/src/server/enrollments/enrollment-pause.service'
     );
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
@@ -135,7 +135,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
   it('deve retornar erro se sem vaga para reativação', async () => {
     const { getServerSession } = await import('next-auth');
     const { reativarMatricula, PausaBusinessError } = await import(
-      '@/src/server/matriculas/matricula-pausa.service'
+      '@/src/server/enrollments/enrollment-pause.service'
     );
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
@@ -156,7 +156,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
   it('deve retornar 409 para operação duplicada', async () => {
     const { getServerSession } = await import('next-auth');
     const { reativarMatricula, PausaBusinessError } = await import(
-      '@/src/server/matriculas/matricula-pausa.service'
+      '@/src/server/enrollments/enrollment-pause.service'
     );
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
@@ -171,7 +171,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
   it('deve retornar 404 se matrícula não encontrada', async () => {
     const { getServerSession } = await import('next-auth');
     const { reativarMatricula, PausaBusinessError } = await import(
-      '@/src/server/matriculas/matricula-pausa.service'
+      '@/src/server/enrollments/enrollment-pause.service'
     );
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
@@ -186,7 +186,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
   it('deve retornar 502 para erro de integração financeira', async () => {
     const { getServerSession } = await import('next-auth');
     const { reativarMatricula, PausaBusinessError } = await import(
-      '@/src/server/matriculas/matricula-pausa.service'
+      '@/src/server/enrollments/enrollment-pause.service'
     );
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
@@ -207,7 +207,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
 
   it('deve retornar 500 para erros não tratados', async () => {
     const { getServerSession } = await import('next-auth');
-    const { reativarMatricula } = await import('@/src/server/matriculas/matricula-pausa.service');
+    const { reativarMatricula } = await import('@/src/server/enrollments/enrollment-pause.service');
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
     vi.mocked(reativarMatricula).mockRejectedValue(new Error('Unexpected'));

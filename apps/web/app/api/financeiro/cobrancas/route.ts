@@ -5,8 +5,8 @@ import type { ChargeOrigin } from '@alusa/finance';
 import {
   financeiroCobrancasQueryDTOSchema,
   listFinanceiroCobrancasResultDTOSchema,
-} from '@/features/financeiro/cobrancas/dtos';
-import { mapFinanceiroCobrancaListItemToDTO } from '@/features/financeiro/cobrancas/mappers';
+} from '@/features/finance/operations/charges/dtos';
+import { mapFinanceiroCobrancaListItemToDTO } from '@/features/finance/operations/charges/mappers';
 import { financeInternalError, financeJsonError } from '@/lib/api/finance-api-response';
 
 export const dynamic = 'force-dynamic';

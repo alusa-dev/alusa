@@ -35,12 +35,12 @@ vi.mock('@/src/prisma', () => ({
   },
 }));
 
-vi.mock('@/src/server/matriculas/matricula-sync.service', () => ({
+vi.mock('@/src/server/enrollments/enrollment-sync.service', () => ({
   reconcilePendingMatriculaCancellations: vi.fn(),
   listContasWithPendingMatriculaCancellations: vi.fn(),
 }));
 
-vi.mock('@/src/server/matriculas/enrollment-closure.service', () => ({
+vi.mock('@/src/server/enrollments/enrollment-closure.service', () => ({
   finalizeExpiredFamilyEnrollments: vi.fn(async () => ({ processed: 0, updated: 0, errors: [] })),
   listContasWithExpiredEnrollments: vi.fn(),
 }));
@@ -66,8 +66,8 @@ import { prisma } from '@/src/prisma';
 import {
   listContasWithPendingMatriculaCancellations,
   reconcilePendingMatriculaCancellations,
-} from '@/src/server/matriculas/matricula-sync.service';
-import { listContasWithExpiredEnrollments } from '@/src/server/matriculas/enrollment-closure.service';
+} from '@/src/server/enrollments/enrollment-sync.service';
+import { listContasWithExpiredEnrollments } from '@/src/server/enrollments/enrollment-closure.service';
 
 import { POST as postArchiveWebhooks } from '@/app/api/jobs/archive-finance-webhooks/route';
 import { POST as postEncerrarContratos } from '@/app/api/jobs/encerrar-contratos/route';

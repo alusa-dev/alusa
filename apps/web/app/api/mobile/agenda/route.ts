@@ -3,14 +3,14 @@ import { NextResponse } from 'next/server';
 import {
   createCalendarEventInputSchema,
   listCalendarEventsQuerySchema,
-} from '@/features/aulas/dtos';
+} from '@/features/lessons/dtos';
 import {
   createMobileAgendaEvent,
   listMobileAgendaEvents,
   MobileAgendaForbiddenError,
   MobileAgendaUnauthorizedError,
-} from '@/features/aulas/server/mobile-agenda.service';
-import { knownMobileAgendaError } from '@/features/aulas/server/mobile-agenda-route-utils';
+} from '@/features/lessons/server/mobile-agenda.service';
+import { knownMobileAgendaError } from '@/features/lessons/server/mobile-agenda-route-utils';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 

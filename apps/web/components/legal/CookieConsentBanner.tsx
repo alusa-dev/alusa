@@ -29,7 +29,7 @@ const publicPrefixes = [
   '/privacidade',
   '/termos',
   '/cookies',
-  '/seguranca',
+  '/security',
   '/suboperadores',
   '/dpa',
   '/direitos-lgpd',
@@ -39,13 +39,13 @@ const publicPrefixes = [
 const authenticatedPrefixes = [
   '/dashboard',
   '/admin',
-  '/alunos',
-  '/responsaveis',
-  '/matriculas',
-  '/cobrancas',
+  '/students',
+  '/responsibles',
+  '/enrollments',
+  '/charges',
   '/finance',
-  '/financeiro',
-  '/conta',
+  '/finance',
+  '/account',
   '/portal',
 ];
 

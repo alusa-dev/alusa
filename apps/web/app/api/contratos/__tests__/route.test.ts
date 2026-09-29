@@ -75,7 +75,7 @@ vi.mock('@alusa/finance', () => ({
   buildSubscriptionExternalReference: vi.fn(({ matriculaId, planoId }) => `alusa:subscription:${matriculaId}:${planoId}`),
 }));
 
-vi.mock('@/src/server/matriculas/subscription-payment-materialization', () => ({
+vi.mock('@/src/server/enrollments/subscription-payment-materialization', () => ({
   materializeSubscriptionPaymentForCharge: materializeSubscriptionPaymentForChargeMock,
 }));
 

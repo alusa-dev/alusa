@@ -11,10 +11,10 @@ vi.mock('@/src/server/platform-billing/capacity', () => ({
   platformBillingAccessResponse: vi.fn(() => null),
 }));
 
-vi.mock('@/src/server/matriculas/matricula-pausa.service', async () => {
+vi.mock('@/src/server/enrollments/enrollment-pause.service', async () => {
   const actual = await vi.importActual<
-    typeof import('@/src/server/matriculas/matricula-pausa.service')
-  >('@/src/server/matriculas/matricula-pausa.service');
+    typeof import('@/src/server/enrollments/enrollment-pause.service')
+  >('@/src/server/enrollments/enrollment-pause.service');
   return {
     ...actual,
     pausarMatricula: vi.fn(),
@@ -92,7 +92,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
 
   it('deve pausar matrícula com sucesso', async () => {
     const { getServerSession } = await import('next-auth');
-    const { pausarMatricula } = await import('@/src/server/matriculas/matricula-pausa.service');
+    const { pausarMatricula } = await import('@/src/server/enrollments/enrollment-pause.service');
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
     vi.mocked(pausarMatricula).mockResolvedValue({
@@ -133,7 +133,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
   it('deve retornar erro de negócio quando matrícula já pausada', async () => {
     const { getServerSession } = await import('next-auth');
     const { pausarMatricula, PausaBusinessError } = await import(
-      '@/src/server/matriculas/matricula-pausa.service'
+      '@/src/server/enrollments/enrollment-pause.service'
     );
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
@@ -151,7 +151,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
   it('deve retornar 409 para operação duplicada', async () => {
     const { getServerSession } = await import('next-auth');
     const { pausarMatricula, PausaBusinessError } = await import(
-      '@/src/server/matriculas/matricula-pausa.service'
+      '@/src/server/enrollments/enrollment-pause.service'
     );
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
@@ -173,7 +173,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
   it('deve retornar 404 se matrícula não encontrada', async () => {
     const { getServerSession } = await import('next-auth');
     const { pausarMatricula, PausaBusinessError } = await import(
-      '@/src/server/matriculas/matricula-pausa.service'
+      '@/src/server/enrollments/enrollment-pause.service'
     );
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
@@ -188,7 +188,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
   it('deve retornar 502 para erro de integração financeira', async () => {
     const { getServerSession } = await import('next-auth');
     const { pausarMatricula, PausaBusinessError } = await import(
-      '@/src/server/matriculas/matricula-pausa.service'
+      '@/src/server/enrollments/enrollment-pause.service'
     );
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
@@ -209,7 +209,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
 
   it('deve retornar 500 para erros não tratados', async () => {
     const { getServerSession } = await import('next-auth');
-    const { pausarMatricula } = await import('@/src/server/matriculas/matricula-pausa.service');
+    const { pausarMatricula } = await import('@/src/server/enrollments/enrollment-pause.service');
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
     vi.mocked(pausarMatricula).mockRejectedValue(new Error('TypeError'));

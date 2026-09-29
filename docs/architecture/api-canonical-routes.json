@@ -21,7 +21,7 @@
         "/api/students": "retired"
       },
       "status": "migration",
-      "owner": "apps/web/src/server/alunos"
+      "owner": "apps/web/src/server/students"
     },
     {
       "context": "responsibles",
@@ -31,7 +31,7 @@
         "/api/responsibles": "retired"
       },
       "status": "migration",
-      "owner": "apps/web/src/server/alunos"
+      "owner": "apps/web/src/server/students"
     },
     {
       "context": "enrollments",
@@ -41,7 +41,7 @@
         "/api/enrollments": "retired"
       },
       "status": "migration",
-      "owner": "apps/web/src/server/matriculas"
+      "owner": "apps/web/src/server/enrollments"
     },
     {
       "context": "contracts",

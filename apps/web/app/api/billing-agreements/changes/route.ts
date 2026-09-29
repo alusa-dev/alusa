@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { billingAgreementCommitRequestSchema } from '@/features/cadastro/matriculas/billing-agreements/contracts';
+import { billingAgreementCommitRequestSchema } from '@/features/enrollments/billing-agreements/contracts';
 import { invalidateChargesCache } from '@/lib/cache/invalidation';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import {

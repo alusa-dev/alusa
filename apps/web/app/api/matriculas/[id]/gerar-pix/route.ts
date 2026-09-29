@@ -3,9 +3,9 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   KycNotApprovedError,
 } from '@alusa/finance';
-import { matriculaGerarPixResultDTOSchema, matriculaRouteParamsDTOSchema } from '@/features/cadastro/matriculas/dtos';
-import { mapMatriculaGerarPixResultToDTO } from '@/features/cadastro/matriculas/mappers';
-import { generateMatriculaPix } from '@/src/server/matriculas/matricula-pix.service';
+import { matriculaGerarPixResultDTOSchema, matriculaRouteParamsDTOSchema } from '@/features/enrollments/dtos';
+import { mapMatriculaGerarPixResultToDTO } from '@/features/enrollments/mappers';
+import { generateMatriculaPix } from '@/src/server/enrollments/enrollment-pix.service';
 
 export async function POST(
   _request: NextRequest,

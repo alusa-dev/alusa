@@ -984,6 +984,12 @@ enum MatriculaBillingOutboxStatus {
   PROCESSED
   FAILED
   REQUIRES_RECONCILIATION
+  CANCELLED
+}
+
+enum MatriculaBillingTerminalIntent {
+  RECUSADA
+  CANCELADA
 }
 
 enum MatriculaBillingProvisionStatus {
@@ -2406,6 +2412,7 @@ model MatriculaBillingOutbox {
   availableAt       DateTime                     @default(now())
   lockedAt          DateTime?
   leaseExpiresAt    DateTime?
+  claimToken        String?
   processedAt       DateTime?
   lastAttemptAt     DateTime?
   lastError         String?
@@ -2413,6 +2420,10 @@ model MatriculaBillingOutbox {
   idempotencyKey    String?
   externalReference String?
   correlationId     String?
+  terminalIntent    MatriculaBillingTerminalIntent?
+  terminalIntentReason String?
+  terminalIntentActorId String?
+  terminalIntentAt DateTime?
   createdAt         DateTime                     @default(now())
   updatedAt         DateTime                     @updatedAt
 

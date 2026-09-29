@@ -10,13 +10,13 @@ import {
   syncPaymentStateFromAsaas,
   undoCashPayment,
 } from '@alusa/finance';
-import { cobrancaActionResultDTOSchema } from '@/features/financeiro/cobrancas/dtos';
-import { mapCobrancaActionResultToDTO } from '@/features/financeiro/cobrancas/mappers';
+import { cobrancaActionResultDTOSchema } from '@/features/finance/operations/charges/dtos';
+import { mapCobrancaActionResultToDTO } from '@/features/finance/operations/charges/mappers';
 import {
   loadCobrancaActionRecords,
   recordCobrancaFinancialLog,
   resolveCobrancaPaymentLookupForTenant,
-} from './resolve-cobranca-payment-lookup';
+} from './resolve-charge-payment-lookup';
 
 const CASH_UNDO_ALREADY_APPLIED_STATUSES = new Set(['PENDING', 'OVERDUE']);
 

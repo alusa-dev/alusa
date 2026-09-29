@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import useCurrentUser from '@/hooks/use-current-user';
-import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
+import { useFinanceListLoad } from '@/features/finance/operations/hooks/use-finance-list-load';
 import { formatCurrency } from './utils';
 
 interface SaldoData {

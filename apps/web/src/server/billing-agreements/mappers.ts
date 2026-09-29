@@ -15,7 +15,7 @@ import type {
   BillingAgreementView,
   BillingEffectivePolicy,
   BillingPaidPaymentAdjustment,
-} from '@/features/cadastro/matriculas/billing-agreements/contracts';
+} from '@/features/enrollments/billing-agreements/contracts';
 
 export function toFinanceEffectivePolicy(policy: BillingEffectivePolicy): FinanceEffectivePolicy {
   if (policy === 'CURRENT_CYCLE') return 'CURRENT_CYCLE_FULL';

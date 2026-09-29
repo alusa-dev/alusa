@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
-import { listContratoConsentimentoTemplatesResultDTOSchema } from '@/features/contratos/dtos';
+import { listContratoConsentimentoTemplatesResultDTOSchema } from '@/features/contracts/dtos';
 import { listActiveConsentimentoTemplates } from '@/src/server/contracts/consentimento-template.service';
 
 export const dynamic = 'force-dynamic';

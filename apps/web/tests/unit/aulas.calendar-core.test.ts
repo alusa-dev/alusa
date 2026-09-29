@@ -4,8 +4,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { combineWallClockOnZonedCalendarDay } from '@/src/server/aulas/calendar/account-timezone';
-import { buildConflictMap } from '@/src/server/aulas/calendar/calendar-core.service';
+import { combineWallClockOnZonedCalendarDay } from '@/src/server/lessons/calendar/account-timezone';
+import { buildConflictMap } from '@/src/server/lessons/calendar/calendar-core.service';
 
 describe('calendar-core.service', () => {
   it('converte horário de parede em America/Sao_Paulo para o instante UTC esperado', () => {

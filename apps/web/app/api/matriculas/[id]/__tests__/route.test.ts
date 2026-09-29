@@ -41,9 +41,9 @@ vi.mock('@/src/prisma', () => ({
   prisma: prismaMock,
 }));
 
-vi.mock('@/src/server/matriculas/matricula-sync.service', async () => {
-  const actual = await vi.importActual<typeof import('@/src/server/matriculas/matricula-sync.service')>(
-    '@/src/server/matriculas/matricula-sync.service',
+vi.mock('@/src/server/enrollments/enrollment-sync.service', async () => {
+  const actual = await vi.importActual<typeof import('@/src/server/enrollments/enrollment-sync.service')>(
+    '@/src/server/enrollments/enrollment-sync.service',
   );
 
   return {
@@ -64,7 +64,7 @@ describe('DELETE /api/matriculas/[id]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getServerSession).mockResolvedValue({
-      user: { id: 'user-1', contaId: 'conta-1' },
+      user: { id: 'user-1', contaId: 'conta-1', role: 'ADMIN' },
     } as never);
     prismaMock.$transaction.mockImplementation(async (callback: (_tx: typeof prismaMock) => Promise<unknown>) =>
       callback(prismaMock as never),

@@ -28,7 +28,7 @@ function row(label: string, value: string | number | null | undefined) {
 export default async function AdminFinanceAsaasHealthPage() {
   const session = await getServerSession(authOptions).catch(() => null);
   const user = session?.user;
-  if (!user?.contaId || !['ADMIN', 'SUPER_ADMIN'].includes(user.role ?? '')) redirect('/admin/configuracoes');
+  if (!user?.contaId || !['ADMIN', 'SUPER_ADMIN'].includes(user.role ?? '')) redirect('/admin/settings');
 
   const [tenantHealth, drift, diagnostics] = await Promise.all([
     getAsaasTenantHealth(user.contaId),

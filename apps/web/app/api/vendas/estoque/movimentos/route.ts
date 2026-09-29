@@ -6,7 +6,7 @@ import {
 } from '@alusa/finance';
 
 import { getStoreRequestContext, jsonError } from '../../_helpers';
-import { listInventoryMovementsQueryDTOSchema } from '@/features/vendas/dtos';
+import { listInventoryMovementsQueryDTOSchema } from '@/features/sales/dtos';
 
 export async function GET(request: Request) {
   try {

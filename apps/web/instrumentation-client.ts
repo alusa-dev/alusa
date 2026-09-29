@@ -9,7 +9,7 @@ const replayAllowed =
   pathname.startsWith('/privacidade') ||
   pathname.startsWith('/termos') ||
   pathname.startsWith('/cookies') ||
-  pathname.startsWith('/seguranca') ||
+  pathname.startsWith('/security') ||
   pathname.startsWith('/suboperadores') ||
   pathname.startsWith('/dpa') ||
   pathname.startsWith('/direitos-lgpd');

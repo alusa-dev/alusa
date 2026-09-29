@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   matriculaRouteParamsDTOSchema,
-} from '@/features/cadastro/matriculas/dtos';
+} from '@/features/enrollments/dtos';
 import {
   parseResendEnrollmentChargeResponse,
   resendEnrollmentCharge,
-} from '@/src/server/matriculas/resend-enrollment-charge.service';
+} from '@/src/server/enrollments/resend-enrollment-charge.service';
 
 export const dynamic = 'force-dynamic';
 
