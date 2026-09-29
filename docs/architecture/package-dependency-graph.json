@@ -1120,10 +1120,10 @@
       "declared": true,
       "compatibility": null,
       "files": [
-        "apps/web/app/(app)/colaboradores/new/page.tsx",
         "apps/web/app/(app)/dashboard/components/AniversariantesMesCard.tsx",
         "apps/web/app/(app)/dashboard/components/AulaExperimentalCard.tsx",
-        "apps/web/app/(app)/financeiro/pagamentos/page.tsx",
+        "apps/web/app/(app)/employees/new/page.tsx",
+        "apps/web/app/(app)/finance/payments/page.tsx",
         "apps/web/app/(map-editor)/events/[eventId]/maps/[mapId]/preview/page.tsx",
         "apps/web/app/api/alunos/[id]/anonimizar/route.ts",
         "apps/web/app/api/alunos/[id]/reativar/route.ts",
