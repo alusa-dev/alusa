@@ -1,9 +1,9 @@
 {
   "generatedAt": "deterministic",
-  "routeCount": 521,
+  "routeCount": 524,
   "summary": {
     "byApp": {
-      "web": 494,
+      "web": 497,
       "admin": 27
     },
     "byCategory": {
@@ -17,12 +17,12 @@
       "contracts": 14,
       "development": 4,
       "events": 49,
-      "files": 3,
+      "files": 5,
       "finance": 78,
       "identity": 23,
       "integrations": 5,
       "mobile": 47,
-      "operations": 48,
+      "operations": 49,
       "platform-billing": 7,
       "portal": 8,
       "privacy": 4,
@@ -33,15 +33,15 @@
       "tenant": 7
     },
     "byProtection": {
-      "AUTH_USER": 273,
-      "CRON_SECRET": 45,
+      "AUTH_USER": 275,
+      "CRON_SECRET": 46,
       "MOBILE_ACCESS_TOKEN": 43,
       "PUBLIC": 41,
       "TENANT_ADMIN": 54,
       "TENANT_FINANCE": 61,
       "WEBHOOK_TOKEN": 4
     },
-    "withoutNearbyTest": 478,
+    "withoutNearbyTest": 481,
     "withoutAuthEvidence": 0,
     "directPrisma": 0,
     "directAsaas": 0
@@ -5467,6 +5467,26 @@
     },
     {
       "app": "web",
+      "file": "apps/web/app/api/jobs/cleanup-upload-reservations/route.ts",
+      "path": "/api/jobs/cleanup-upload-reservations",
+      "category": "operations",
+      "protection": "CRON_SECRET",
+      "tenantMode": "explicit-or-iterated",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantScope",
+        "getServerSession",
+        "requireAdmin",
+        "resolveSessionAccess",
+        "CRON_SECRET"
+      ],
+      "hasDTOValidation": false,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
       "file": "apps/web/app/api/jobs/encerrar-contratos/route.ts",
       "path": "/api/jobs/encerrar-contratos",
       "category": "operations",
@@ -9186,6 +9206,46 @@
         "authenticate"
       ],
       "hasDTOValidation": true,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
+      "file": "apps/web/app/api/upload/complete/route.ts",
+      "path": "/api/upload/complete",
+      "category": "files",
+      "protection": "AUTH_USER",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantSession",
+        "withTenantSession",
+        "getServerSession",
+        "resolveSessionAccess",
+        "authenticate"
+      ],
+      "hasDTOValidation": false,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
+      "file": "apps/web/app/api/upload/presign/route.ts",
+      "path": "/api/upload/presign",
+      "category": "files",
+      "protection": "AUTH_USER",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantSession",
+        "withTenantSession",
+        "getServerSession",
+        "resolveSessionAccess",
+        "authenticate"
+      ],
+      "hasDTOValidation": false,
       "hasNearbyTest": false,
       "directPrisma": false,
       "directAsaas": false
