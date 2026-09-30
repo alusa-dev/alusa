@@ -8,7 +8,7 @@ import {
   mobileProfileUpdateInputDTOSchema,
 } from '@/features/mobile/dtos';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
-import { ipFromRequest, rateLimit, strictRateLimitAsync } from '@/lib/rate-limit';
+import { ipFromRequest, rateLimit, rateLimitAsync } from '@/lib/rate-limit';
 import { normalizeAccountTimeZone } from '@/src/server/lessons/calendar/account-timezone';
 import {
   getActiveMobileMembership,
@@ -196,7 +196,7 @@ export async function POST(request: Request) {
   const actor = await getMobileActor(request);
   if (!actor) return unauthorized();
 
-  const limiter = await strictRateLimitAsync(`mobile-profile:avatar:${actor.contaId}:${actor.userId}:${ipFromRequest(request)}`, 10, 10 * 60 * 1000);
+  const limiter = await rateLimitAsync(`mobile-profile:avatar:${actor.contaId}:${actor.userId}:${ipFromRequest(request)}`, 10, 10 * 60 * 1000);
   if (!limiter.ok) {
     return NextResponse.json(
       { error: { code: 'RATE_LIMITED', message: 'Muitas tentativas. Aguarde alguns minutos.' } },

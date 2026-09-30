@@ -4,7 +4,7 @@ import { getEventMap, updateEventMapReferenceChart } from '@alusa/lib/events/map
 import { getEventsContext, handleEventsRouteError } from '../../../../_helpers';
 import { persistEventMapReferenceFile, removeEventMapReferenceFile, validateReferenceFile } from '@/src/server/media/event-map-reference-storage.service';
 import { readBoundedFormData } from '@/lib/upload-request';
-import { strictRateLimitAsync } from '@/lib/rate-limit';
+import { rateLimitAsync } from '@/lib/rate-limit';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import { validateUploadBuffer } from '@/lib/upload-security';
 import { randomUUID } from 'node:crypto';
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   try {
     const { eventId, mapId } = await params;
     const ctx = await getEventsContext('eventMaps.manage');
-    const rate = await strictRateLimitAsync(`event-reference-upload:${ctx.contaId}:${ctx.userId}`, 10, 10 * 60_000);
+    const rate = await rateLimitAsync(`event-reference-upload:${ctx.contaId}:${ctx.userId}`, 10, 10 * 60_000);
     if (!rate.ok) return NextResponse.json({ error: { message: 'Muitas tentativas.' } }, { status: 429 });
     const current = await getEventMap(ctx, eventId, mapId);
     const uploadBody = await readBoundedFormData(request);
@@ -70,7 +70,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
   try {
     const { eventId, mapId } = await params;
     const ctx = await getEventsContext('eventMaps.manage');
-    const rate = await strictRateLimitAsync(`event-reference-upload:${ctx.contaId}:${ctx.userId}`, 10, 10 * 60_000);
+    const rate = await rateLimitAsync(`event-reference-upload:${ctx.contaId}:${ctx.userId}`, 10, 10 * 60_000);
     if (!rate.ok) return NextResponse.json({ error: { message: 'Muitas tentativas.' } }, { status: 429 });
     const current = await getEventMap(ctx, eventId, mapId);
     const payload = updateEventMapReferenceChartSchema.parse(await request.json());

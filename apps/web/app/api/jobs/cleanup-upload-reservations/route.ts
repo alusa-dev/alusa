@@ -27,7 +27,10 @@ export async function GET(request: Request) {
     const expired = await runWithTenant(tenant.id, (tx) => tx.tenantUploadReservation.findMany({
       where: {
         contaId: tenant.id,
-        OR: [{ status: 'PENDING', expiresAt: { lte: new Date() } }, { status: 'COMPLETED', pendingCleanedAt: null }],
+        OR: [
+          { status: 'PENDING', expiresAt: { lte: new Date() } },
+          { status: 'COMPLETED', finalObjectKey: { not: null }, pendingCleanedAt: null },
+        ],
       },
       orderBy: { expiresAt: 'asc' },
       take: 100,
@@ -36,8 +39,12 @@ export async function GET(request: Request) {
     scanned += expired.length;
     for (const item of expired) {
       try {
-        await deleteStorageObject(item.objectKey);
-        if (item.status === 'PENDING') await deleteStorageObject(item.finalObjectKey ?? `uploads/confirmed/${item.contaId}/${item.id}`);
+        if (item.status === 'PENDING') {
+          await deleteStorageObject(item.objectKey);
+          await deleteStorageObject(item.finalObjectKey ?? `uploads/confirmed/${item.contaId}/${item.id}`);
+        } else if (item.finalObjectKey && item.objectKey !== item.finalObjectKey && item.objectKey.startsWith(`uploads/pending/${tenant.id}/`)) {
+          await deleteStorageObject(item.objectKey);
+        }
       } catch { deleteFailures += 1; continue; }
       if (item.status === 'PENDING') {
         const changed = await releaseTenantUpload(tenant.id, item.id, 'EXPIRED');

@@ -12,7 +12,7 @@ vi.mock('@/lib/auth/session', () => ({ getSessionUser: getSessionUserMock }));
 vi.mock('@/lib/rate-limit', () => ({
   ipFromRequest: () => '127.0.0.1',
   rateLimit: () => ({ ok: true }),
-  strictRateLimitAsync: () => Promise.resolve({ ok: true }),
+  rateLimitAsync: () => Promise.resolve({ ok: true }),
 }));
 vi.mock('@/lib/upload-request', () => ({ readBoundedFormData: boundedFormDataMock }));
 vi.mock('@/features/account/server/avatar-service', () => {

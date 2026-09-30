@@ -27,7 +27,7 @@ export type SnapshotResponse = {
   subaccountProvisioning?: SubaccountProvisioningHint;
 };
 
-export const UPLOAD_MAX_SIZE_MB = 10;
+export const UPLOAD_MAX_SIZE_MB = 3;
 export const UPLOAD_ACCEPT = '.pdf,.jpg,.jpeg,.png';
 export const SNAPSHOT_POLL_INTERVAL_MS = 10_000;
 

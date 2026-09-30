@@ -3,7 +3,7 @@ import { deleteKycDocumentFile, updateKycDocumentFile, viewKycDocumentFile } fro
 import { validateUploadBuffer } from '@/lib/upload-security';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { readBoundedFormData } from '@/lib/upload-request';
-import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import { randomUUID } from 'node:crypto';
 
@@ -89,13 +89,13 @@ export async function DELETE(_req: Request, context: RouteContext) {
  *
  * Atualiza/substitui um arquivo já enviado no Asaas.
  * Aceita multipart/form-data com:
- *   - documentFile: arquivo (PDF, JPG, PNG, max 10MB)
+ *   - documentFile: arquivo (PDF, JPG, PNG, max 3 MiB)
  */
 export async function POST(req: Request, context: RouteContext) {
   const user = await resolveAuth();
   if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
   if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
-  const rate = await strictRateLimitAsync(`kyc-upload:${user.contaId}:${user.id}:${ipFromRequest(req)}`, 12, 10 * 60_000);
+  const rate = await rateLimitAsync(`kyc-upload:${user.contaId}:${user.id}:${ipFromRequest(req)}`, 12, 10 * 60_000);
   if (!rate.ok) return json(429, { error: 'MUITAS_TENTATIVAS' });
 
 

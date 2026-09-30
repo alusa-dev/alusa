@@ -12,7 +12,7 @@ import {
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 import { getColaborador } from '@/src/server/employees/employee-read.service';
 import { readBoundedJson } from '@/lib/upload-request';
-import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { normalizeAvatarUpload } from '@/src/server/media/avatar-storage.service';
 
 export const dynamic = 'force-dynamic';
@@ -52,7 +52,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     const { contaId } = user;
     await assertPlatformAccessForConta({ contaId, capability: 'STAFF_WRITE' });
 
-    const rate = await strictRateLimitAsync(`employee-update:${contaId}:${user.id}:${ipFromRequest(req)}`, 20, 10 * 60_000);
+    const rate = await rateLimitAsync(`employee-update:${contaId}:${user.id}:${ipFromRequest(req)}`, 20, 10 * 60_000);
     if (!rate.ok) return jsonError(429, 'RATE_LIMITED', 'Muitas tentativas.');
     const parsedBody = await readBoundedJson(req);
     if (!parsedBody.ok) return jsonError(parsedBody.status, 'UPLOAD_BODY_LIMIT', parsedBody.error);

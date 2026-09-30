@@ -5,7 +5,7 @@ import path from 'path';
 import { getSessionUser } from '@/lib/auth/session';
 import { uploadContratoArquivoResultDTOSchema } from '@/features/contracts/dtos';
 import { jsonNoStore } from '@/lib/http-security';
-import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { readBoundedFormData } from '@/lib/upload-request';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import { validateUploadBuffer } from '@/lib/upload-security';
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
     }
 
     const ip = ipFromRequest(req);
-    const limiter = await strictRateLimitAsync(`contract-upload:${user.contaId}:${user.id}:${ip}`, 20, 10 * 60 * 1000);
+    const limiter = await rateLimitAsync(`contract-upload:${user.contaId}:${user.id}:${ip}`, 20, 10 * 60 * 1000);
     if (!limiter.ok) {
       return jsonNoStore(
         { error: { message: 'Muitas tentativas. Aguarde alguns minutos.' } },

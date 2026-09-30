@@ -1,6 +1,6 @@
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { jsonNoStore } from '@/lib/http-security';
-import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { createPresignedUpload, deleteStorageObject, isR2Configured } from '@/lib/r2-storage';
 import { expireTenantUploadReservations, reserveTenantUpload, releaseTenantUpload } from '@/lib/upload-quota.server';
 import { readBoundedJson } from '@/lib/upload-request';
@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   if (process.env.R2_PRESIGNED_UPLOADS_ENABLED !== 'true') {
     return jsonNoStore({ error: 'Upload direto de arquivos grandes ainda não está habilitado nesta implantação. Use o fluxo padrão para arquivos até 3 MiB.' }, { status: 503 });
   }
-  const limit = await strictRateLimitAsync(`upload:presign:${auth.contaId}:${auth.userId}:${ipFromRequest(request)}`, 10, 10 * 60_000);
+  const limit = await rateLimitAsync(`upload:presign:${auth.contaId}:${auth.userId}:${ipFromRequest(request)}`, 10, 10 * 60_000);
   if (!limit.ok) return jsonNoStore({ error: 'Muitas tentativas.' }, { status: 429 });
   const parsed = await readBoundedJson<{ size?: unknown; contentType?: unknown }>(request, 8 * 1024);
   if (!parsed.ok) return jsonNoStore({ error: parsed.error }, { status: parsed.status });

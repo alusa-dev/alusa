@@ -4,7 +4,7 @@ import path from 'path';
 import { deleteUploadInputDTOSchema } from '@/features/storage/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { jsonNoStore } from '@/lib/http-security';
-import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { readBoundedFormData } from '@/lib/upload-request';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import { validateUploadBuffer } from '@/lib/upload-security';
@@ -56,7 +56,7 @@ export async function POST(req: Request) {
     const user = { id: auth.userId, contaId: auth.contaId };
 
     const ip = ipFromRequest(req);
-    const limiter = await strictRateLimitAsync(`upload:post:${user.contaId}:${user.id}:${ip}`, 30, 10 * 60 * 1000);
+    const limiter = await rateLimitAsync(`upload:post:${user.contaId}:${user.id}:${ip}`, 30, 10 * 60 * 1000);
     if (!limiter.ok) {
       return jsonNoStore({ error: 'Muitas tentativas. Aguarde alguns minutos.' }, { status: 429 });
     }
@@ -140,7 +140,7 @@ export async function DELETE(req: Request) {
     const user = { id: auth.userId, contaId: auth.contaId };
 
     const ip = ipFromRequest(req);
-    const limiter = await strictRateLimitAsync(`upload:delete:${user.contaId}:${user.id}:${ip}`, 60, 10 * 60 * 1000);
+    const limiter = await rateLimitAsync(`upload:delete:${user.contaId}:${user.id}:${ip}`, 60, 10 * 60 * 1000);
     if (!limiter.ok) {
       return jsonNoStore({ error: 'Muitas tentativas. Aguarde alguns minutos.' }, { status: 429 });
     }

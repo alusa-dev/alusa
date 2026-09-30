@@ -8,7 +8,7 @@ import {
 } from '@alusa/lib/server';
 import { validateUploadBuffer } from '@/lib/upload-security';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { readBoundedFormData } from '@/lib/upload-request';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import { randomUUID } from 'node:crypto';
@@ -44,7 +44,7 @@ export async function POST(req: Request, context: RouteContext) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     const { contaId } = auth;
-    const limiter = await strictRateLimitAsync(`product-image:${contaId}:${auth.userId}:${ipFromRequest(req)}`, 20, 10 * 60_000);
+    const limiter = await rateLimitAsync(`product-image:${contaId}:${auth.userId}:${ipFromRequest(req)}`, 20, 10 * 60_000);
     if (!limiter.ok) return jsonError(429, 'RATE_LIMITED', 'Muitas tentativas. Aguarde alguns minutos.');
 
     const { id: productId } = await Promise.resolve(context.params);

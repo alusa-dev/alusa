@@ -326,7 +326,7 @@ export function ChargeFilesSection({ cobrancaId, sectionClassName }: ChargeFiles
                 <p className="text-sm text-gray-600">
                   Formatos aceitos: PDF, JPG, PNG, DOC, DOCX, XLS, XLSX
                 </p>
-                <p className="mt-1 text-xs text-gray-500">Tamanho máximo: 10MB</p>
+                <p className="mt-1 text-xs text-gray-500">Tamanho máximo: 3 MiB</p>
               </>
             )}
           </div>

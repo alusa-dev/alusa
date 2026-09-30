@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { readBoundedJson } from '@/lib/upload-request';
-import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
-import { normalizeAvatarUpload } from '@/src/server/media/avatar-storage.service';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
+import { discardAvatarUpload, normalizeAvatarUpload } from '@/src/server/media/avatar-storage.service';
 // Import direto do source até a lib ser rebuildada
 import {
   colaboradorSchema,
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
     const { contaId } = auth;
     await assertPlatformAccessForConta({ contaId, capability: 'STAFF_WRITE' });
 
-    const rate = await strictRateLimitAsync(`employee-create:${contaId}:${auth.userId}:${ipFromRequest(req)}`, 20, 10 * 60_000);
+    const rate = await rateLimitAsync(`employee-create:${contaId}:${auth.userId}:${ipFromRequest(req)}`, 20, 10 * 60_000);
     if (!rate.ok) return NextResponse.json({ error: 'Muitas tentativas.' }, { status: 429 });
     const bounded = await readBoundedJson<Record<string, unknown>>(req);
     if (!bounded.ok) return NextResponse.json({ error: bounded.error }, { status: bounded.status });
@@ -73,12 +73,35 @@ export async function POST(req: NextRequest) {
     const hasDataUrlPhoto = typeof data.foto === 'string' && data.foto.startsWith('data:image/');
     const created = await createColab({ ...data, ...(hasDataUrlPhoto ? { foto: undefined } : {}), contaId });
     let saved = created;
+    let photoUploadWarning = false;
+    let photoUploaded = false;
     if (hasDataUrlPhoto) {
-      const foto = await normalizeAvatarUpload({ entity: 'colaborador', entityId: created.id, contaId, foto: data.foto, previousFoto: null });
-      saved = await updateColab(created.id, contaId, { foto } as any);
+      let foto: string | null | undefined;
+      try {
+        foto = await normalizeAvatarUpload({ entity: 'colaborador', entityId: created.id, contaId, foto: data.foto, previousFoto: null });
+        saved = await updateColab(created.id, contaId, { foto } as any);
+        photoUploaded = true;
+      } catch (error) {
+        photoUploadWarning = true;
+        await discardAvatarUpload(foto).catch((cleanupError) => {
+          console.error('[employee][photo-cleanup-failed]', {
+            contaId,
+            employeeId: created.id,
+            error: cleanupError instanceof Error ? cleanupError.message : 'unknown',
+          });
+        });
+        console.error('[employee][photo-upload-failed-after-create]', {
+          contaId,
+          employeeId: created.id,
+          error: error instanceof Error ? error.message : 'unknown',
+        });
+      }
     }
-    console.info('[employee][created]', { contaId, employeeId: created.id, photoUploaded: hasDataUrlPhoto });
-    return NextResponse.json({ data: saved }, { status: 201 });
+    console.info('[employee][created]', { contaId, employeeId: created.id, photoUploaded });
+    return NextResponse.json({
+      data: saved,
+      ...(photoUploadWarning ? { photoUploadWarning: 'Colaborador criado, mas não foi possível salvar a foto. Você pode adicioná-la pela edição do cadastro.' } : {}),
+    }, { status: 201 });
   } catch (e) {
     console.error('[employee][create-failed]', { error: e instanceof Error ? e.message : 'unknown' });
 

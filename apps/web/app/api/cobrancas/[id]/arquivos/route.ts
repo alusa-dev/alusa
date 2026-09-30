@@ -33,7 +33,7 @@ import {
 import { validateUploadBuffer } from '@/lib/upload-security';
 import { privateJson } from '@/lib/private-cache';
 import { readBoundedFormData } from '@/lib/upload-request';
-import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 
 const ROUTE_TAG = 'api.cobrancas.arquivos';
@@ -141,7 +141,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
     const cobrancaId = await parseCobrancaId(context.params);
 
     const result = await withTenantSession(async ({ contaId, userId, tx }) => {
-      const rate = await strictRateLimitAsync(`charge-file-upload:${contaId}:${userId}:${ipFromRequest(req)}`, 20, 10 * 60_000);
+      const rate = await rateLimitAsync(`charge-file-upload:${contaId}:${userId}:${ipFromRequest(req)}`, 20, 10 * 60_000);
       if (!rate.ok) return NextResponse.json({ error: 'Muitas tentativas.' }, { status: 429 });
 
       const ref = await resolveCobrancaRef(tx, contaId, cobrancaId);
@@ -159,7 +159,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
       }
 
       if (file.size > MAX_FILE_SIZE) {
-        return NextResponse.json({ error: 'Arquivo muito grande. Máximo: 10MB' }, { status: 400 });
+        return NextResponse.json({ error: 'Arquivo muito grande. Máximo: 3 MiB' }, { status: 400 });
       }
 
       if (!ALLOWED_TYPES.includes(file.type)) {

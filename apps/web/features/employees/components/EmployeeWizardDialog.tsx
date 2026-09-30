@@ -360,10 +360,12 @@ export default function EmployeeWizardDialog({
         notifyError(errorMessage);
         return;
       }
+      const response = await res.json().catch(() => null);
+      const photoWarning = typeof response?.photoUploadWarning === 'string' ? response.photoUploadWarning : null;
       try {
         window.dispatchEvent(
           new CustomEvent('toast:success', {
-            detail: { message: 'Colaborador cadastrado com sucesso' },
+            detail: { message: photoWarning ?? 'Colaborador cadastrado com sucesso' },
           }),
         );
       } catch {

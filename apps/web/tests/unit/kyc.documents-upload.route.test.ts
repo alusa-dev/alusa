@@ -7,7 +7,7 @@ vi.mock('@/lib/upload-request', () => ({ readBoundedFormData: boundedFormDataMoc
 
 vi.mock('@/lib/rate-limit', () => ({
   ipFromRequest: () => '127.0.0.1',
-  strictRateLimitAsync: () => Promise.resolve({ ok: true }),
+  rateLimitAsync: () => Promise.resolve({ ok: true }),
 }));
 vi.mock('@/lib/upload-quota.server', () => ({
   withTenantUploadQuota: async ({ action }: { action: () => Promise<unknown> }) => ({

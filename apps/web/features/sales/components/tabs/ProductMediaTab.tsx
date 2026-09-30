@@ -20,7 +20,7 @@ interface Props {
 }
 
 const ALLOWED = ['image/jpeg', 'image/png', 'image/webp'];
-const MAX_MB = 5;
+const MAX_MB = 3;
 
 export function ProductMediaTab({
   productId,

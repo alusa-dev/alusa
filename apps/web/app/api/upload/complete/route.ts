@@ -3,13 +3,13 @@ import { jsonNoStore } from '@/lib/http-security';
 import { deleteStorageObject, hashStorageObject, headStorageObject, promotePendingUpload, readStorageObjectPrefix, storageUrlForKey } from '@/lib/r2-storage';
 import { detectMimeTypeFromBuffer } from '@/lib/upload-security';
 import { completeTenantUpload, getTenantUploadReservation, releaseTenantUpload } from '@/lib/upload-quota.server';
-import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { readBoundedJson } from '@/lib/upload-request';
 
 export async function POST(request: Request) {
   const auth = await resolveTenantSession();
   if (!auth.ok) return jsonNoStore({ error: 'Nao autorizado.' }, { status: 401 });
-  const rate = await strictRateLimitAsync(`upload:complete:${auth.contaId}:${auth.userId}:${ipFromRequest(request)}`, 30, 10 * 60_000);
+  const rate = await rateLimitAsync(`upload:complete:${auth.contaId}:${auth.userId}:${ipFromRequest(request)}`, 30, 10 * 60_000);
   if (!rate.ok) return jsonNoStore({ error: 'Muitas tentativas.' }, { status: 429 });
   const body = await readBoundedJson<{ reservationId?: unknown }>(request);
   if (!body.ok) return jsonNoStore({ error: body.error }, { status: body.status });

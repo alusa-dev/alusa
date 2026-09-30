@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 
 import { getSessionUser } from '@/lib/auth/session';
 import { jsonNoStore } from '@/lib/http-security';
-import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { readBoundedFormData } from '@/lib/upload-request';
 import {
   AvatarServiceError,
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
       return jsonNoStore({ error: 'Não autorizado.', correlationId }, { status: 401 });
     }
 
-    const limiter = await strictRateLimitAsync(
+    const limiter = await rateLimitAsync(
       `avatar:post:${user.contaId}:${user.id}:${ipFromRequest(request)}`,
       15,
       10 * 60 * 1000,
@@ -76,7 +76,7 @@ export async function DELETE(request: Request) {
       return jsonNoStore({ error: 'Não autorizado.', correlationId }, { status: 401 });
     }
 
-    const limiter = await strictRateLimitAsync(
+    const limiter = await rateLimitAsync(
       `avatar:delete:${user.contaId}:${user.id}:${ipFromRequest(request)}`,
       20,
       10 * 60 * 1000,

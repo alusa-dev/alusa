@@ -66,6 +66,13 @@ async function deletePreviousAvatar(previousFoto?: string | null) {
   }
 }
 
+export async function discardAvatarUpload(foto?: string | null) {
+  if (!foto || !isR2Configured()) return;
+  const key = storageKeyFromUrl(foto);
+  if (!key) return;
+  await deleteStorageObject(key);
+}
+
 export async function persistAvatarFromDataUrl(params: {
   entity: AvatarEntity;
   entityId: string;

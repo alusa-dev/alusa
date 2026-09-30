@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { ZodError } from 'zod';
 import { readBoundedFormData } from '@/lib/upload-request';
-import { strictRateLimitAsync } from '@/lib/rate-limit';
+import { rateLimitAsync } from '@/lib/rate-limit';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import { randomUUID } from 'node:crypto';
 
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await requireFinanceUser();
     if (!auth.ok) return auth.response;
-    const rate = await strictRateLimitAsync(`anticipation-document:${auth.user.contaId}:${auth.user.id}`, 10, 10 * 60_000);
+    const rate = await rateLimitAsync(`anticipation-document:${auth.user.contaId}:${auth.user.id}`, 10, 10 * 60_000);
     if (!rate.ok) return json(429, { error: 'MUITAS_TENTATIVAS' });
 
     const { target, document, documentFilename } = await parseTargetAndDocument(req);
