@@ -39,6 +39,9 @@ export function ImportContractFeature() {
   const selectFile = useCallback(async (selectedFile: File) => {
     if (selectedFile.type !== 'application/pdf') return toast.error('Apenas arquivos PDF são permitidos.');
     if (selectedFile.size > 25 * 1024 * 1024) return toast.error('Arquivo muito grande. Máximo 25MB.');
+    if (selectedFile.size > 3 * 1024 * 1024 && process.env.NEXT_PUBLIC_R2_PRESIGNED_UPLOADS_ENABLED !== 'true') {
+      return toast.error('Arquivos acima de 3 MiB exigem upload direto ativado na conta.');
+    }
     setFile(selectedFile);
     setPreviewUrl(URL.createObjectURL(selectedFile));
     setUploadResult(null);

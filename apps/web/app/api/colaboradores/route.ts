@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { readBoundedJson } from '@/lib/upload-request';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
+import { discardAvatarUpload, normalizeAvatarUpload } from '@/src/server/media/avatar-storage.service';
 // Import direto do source até a lib ser rebuildada
 import {
   colaboradorSchema,
@@ -7,7 +10,7 @@ import {
   statusColabEnum,
   cargoEnum,
 } from '../../../../../packages/lib/src/schemas/colaborador';
-import { create as createColab } from '../../../../../packages/lib/src/server/services/colaborador-service';
+import { create as createColab, update as updateColab } from '../../../../../packages/lib/src/server/services/colaborador-service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 import { listColaboradores } from '@/src/server/employees/employee-read.service';
 
@@ -47,8 +50,11 @@ export async function POST(req: NextRequest) {
     const { contaId } = auth;
     await assertPlatformAccessForConta({ contaId, capability: 'STAFF_WRITE' });
 
-    const body = (await req.json()) as Record<string, unknown>;
-    console.log('📥 DADOS RECEBIDOS:', JSON.stringify(body, null, 2));
+    const rate = await rateLimitAsync(`employee-create:${contaId}:${auth.userId}:${ipFromRequest(req)}`, 20, 10 * 60_000);
+    if (!rate.ok) return NextResponse.json({ error: 'Muitas tentativas.' }, { status: 429 });
+    const bounded = await readBoundedJson<Record<string, unknown>>(req);
+    if (!bounded.ok) return NextResponse.json({ error: bounded.error }, { status: bounded.status });
+    const body = bounded.value;
     // Normalização defensiva de máscara -> dígitos (coerente com schema)
     const toDigits = (v: unknown) => (typeof v === 'string' ? v.replace(/\D/g, '') : v);
     const toDigitsOrNull = (v: unknown) => {
@@ -64,19 +70,45 @@ export async function POST(req: NextRequest) {
     } as Record<string, unknown>;
 
     const data = colaboradorSchema.parse(norm) as ColaboradorInput;
-    console.log('✅ DADOS VALIDADOS:', JSON.stringify(data, null, 2));
-
-    const created = await createColab({ ...data, contaId });
-    console.log('🎉 COLABORADOR CRIADO:', created.id, created.nome);
-
-    return NextResponse.json({ data: created }, { status: 201 });
+    const hasDataUrlPhoto = typeof data.foto === 'string' && data.foto.startsWith('data:image/');
+    const created = await createColab({ ...data, ...(hasDataUrlPhoto ? { foto: undefined } : {}), contaId });
+    let saved = created;
+    let photoUploadWarning = false;
+    let photoUploaded = false;
+    if (hasDataUrlPhoto) {
+      let foto: string | null | undefined;
+      try {
+        foto = await normalizeAvatarUpload({ entity: 'colaborador', entityId: created.id, contaId, foto: data.foto, previousFoto: null });
+        saved = await updateColab(created.id, contaId, { foto } as any);
+        photoUploaded = true;
+      } catch (error) {
+        photoUploadWarning = true;
+        await discardAvatarUpload(foto).catch((cleanupError) => {
+          console.error('[employee][photo-cleanup-failed]', {
+            contaId,
+            employeeId: created.id,
+            error: cleanupError instanceof Error ? cleanupError.message : 'unknown',
+          });
+        });
+        console.error('[employee][photo-upload-failed-after-create]', {
+          contaId,
+          employeeId: created.id,
+          error: error instanceof Error ? error.message : 'unknown',
+        });
+      }
+    }
+    console.info('[employee][created]', { contaId, employeeId: created.id, photoUploaded });
+    return NextResponse.json({
+      data: saved,
+      ...(photoUploadWarning ? { photoUploadWarning: 'Colaborador criado, mas não foi possível salvar a foto. Você pode adicioná-la pela edição do cadastro.' } : {}),
+    }, { status: 201 });
   } catch (e) {
-    console.error('❌ ERRO DETALHADO:', e);
+    console.error('[employee][create-failed]', { error: e instanceof Error ? e.message : 'unknown' });
 
     // Se for erro de validação do Zod, retornar detalhes específicos
     if (e && typeof e === 'object' && 'issues' in e) {
       const zodError = e as { issues: Array<{ path: string[]; message: string; code: string }> };
-      console.error('🔍 ERROS DE VALIDAÇÃO ZOD:', zodError.issues);
+      console.warn('[employee][validation-failed]', { issueCount: zodError.issues.length });
       const firstIssue = zodError.issues[0];
       if (firstIssue) {
         const fieldName = firstIssue.path.join('.');

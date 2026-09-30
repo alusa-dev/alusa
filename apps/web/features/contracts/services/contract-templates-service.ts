@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import {
   contratoModeloDTOSchema,
   createContratoModeloInputDTOSchema,
@@ -25,6 +26,51 @@ export type CreateContractTemplatePayload = CreateContratoModeloInputDTO;
 export type UpdateContractTemplatePayload = UpdateContratoModeloInputDTO;
 export type UploadContractFileResult = UploadContratoArquivoResultDTO;
 export type ConsentTemplate = ContratoConsentimentoTemplateDTO;
+
+export const CONTRACT_INLINE_UPLOAD_MAX_BYTES = 3 * 1024 * 1024;
+
+export function shouldUploadContractDirectly(size: number): boolean {
+  return size > CONTRACT_INLINE_UPLOAD_MAX_BYTES;
+}
+
+const presignUploadResponseSchema = z.object({
+  uploadUrl: z.string().url(),
+  reservationId: z.string().uuid(),
+  requiredHeaders: z.record(z.string()),
+  expectedContentLength: z.number().int().positive(),
+});
+const completedUploadResponseSchema = z.object({
+  url: z.string(),
+  size: z.number().int().nonnegative(),
+  type: z.string(),
+  hashSha256: z.string().length(64),
+});
+
+export function putFileWithXhr(
+  url: string,
+  file: File,
+  headers: Record<string, string>,
+  onProgress?: (_progress: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    for (const [name, value] of Object.entries(headers)) {
+      // Browsers forbid callers from setting Content-Length; XHR derives it from the File body.
+      if (name.toLowerCase() !== 'content-length') xhr.setRequestHeader(name, value);
+    }
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) onProgress?.(Math.min(95, Math.round((event.loaded / event.total) * 95)));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error('O armazenamento recusou o arquivo. Confira o tipo e tente novamente.'));
+    };
+    xhr.onerror = () => reject(new Error('Não foi possível enviar o arquivo ao armazenamento.'));
+    xhr.onabort = () => reject(new Error('Envio do arquivo cancelado.'));
+    xhr.send(file);
+  });
+}
 
 async function parseResponse<T>(res: Response, parser: { parse: (_value: unknown) => T }, fallback: string) {
   const json = await res.json().catch(() => null);
@@ -100,6 +146,38 @@ export async function uploadContractFile(
   file: File,
   onProgress?: (_progress: number) => void,
 ): Promise<UploadContractFileResult> {
+  if (shouldUploadContractDirectly(file.size)) {
+    const presignResponse = await fetch('/api/upload/presign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ size: file.size, contentType: file.type }),
+    });
+    const presign = await parseResponse(
+      presignResponse,
+      presignUploadResponseSchema,
+      'Não foi possível preparar o upload do arquivo',
+    );
+    if (presign.expectedContentLength !== file.size) throw new Error('O tamanho reservado para o arquivo não confere.');
+    await putFileWithXhr(presign.uploadUrl, file, presign.requiredHeaders, onProgress);
+    const complete = await fetch('/api/upload/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reservationId: presign.reservationId }),
+    });
+    const finalized = await parseResponse(
+      complete,
+      completedUploadResponseSchema,
+      'Não foi possível confirmar o arquivo enviado',
+    );
+    onProgress?.(100);
+    return uploadContratoArquivoResultDTOSchema.parse({
+      url: finalized.url,
+      hashSha256: finalized.hashSha256,
+      size: finalized.size,
+      mimeType: finalized.type,
+    });
+  }
+
   const formData = new FormData();
   formData.append('file', file);
 

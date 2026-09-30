@@ -2,13 +2,17 @@ import { NextResponse } from 'next/server';
 import { deleteKycDocumentFile, updateKycDocumentFile, viewKycDocumentFile } from '@alusa/finance';
 import { validateUploadBuffer } from '@/lib/upload-security';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { readBoundedFormData } from '@/lib/upload-request';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
+import { withTenantUploadQuota } from '@/lib/upload-quota.server';
+import { randomUUID } from 'node:crypto';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
 const allowedRoles = new Set(['ADMIN']);
 const MAX_ID_LEN = 200;
 
-const MAX_SIZE = 10 * 1024 * 1024;
+const MAX_SIZE = 3 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png'];
 
@@ -85,12 +89,15 @@ export async function DELETE(_req: Request, context: RouteContext) {
  *
  * Atualiza/substitui um arquivo já enviado no Asaas.
  * Aceita multipart/form-data com:
- *   - documentFile: arquivo (PDF, JPG, PNG, max 10MB)
+ *   - documentFile: arquivo (PDF, JPG, PNG, max 3 MiB)
  */
 export async function POST(req: Request, context: RouteContext) {
   const user = await resolveAuth();
   if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
   if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+  const rate = await rateLimitAsync(`kyc-upload:${user.contaId}:${user.id}:${ipFromRequest(req)}`, 12, 10 * 60_000);
+  if (!rate.ok) return json(429, { error: 'MUITAS_TENTATIVAS' });
+
 
   const { fileId } = await Promise.resolve(context.params);
   if (!isValidOpaqueId(fileId)) {
@@ -98,7 +105,9 @@ export async function POST(req: Request, context: RouteContext) {
   }
 
   try {
-    const formData = await req.formData();
+    const uploadBody = await readBoundedFormData(req);
+    if (!uploadBody.ok) return json(uploadBody.status, { error: uploadBody.error });
+    const formData = uploadBody.formData;
     const documentFile = formData.get('documentFile');
 
     if (!documentFile || !(documentFile instanceof File)) {
@@ -134,18 +143,20 @@ export async function POST(req: Request, context: RouteContext) {
       return json(422, { error: 'CONTEUDO_ARQUIVO_INVALIDO', message: binaryValidation.error });
     }
 
-    const data = await updateKycDocumentFile({
+    const quota = await withTenantUploadQuota({
       contaId: user.contaId,
-      fileId,
-      file: {
-        bytes,
-        filename: documentFile.name,
-        mimeType: binaryValidation.detectedMimeType,
-      },
-      actor: { type: 'USER', id: user.id },
+      fileSize: documentFile.size,
+      contentType: binaryValidation.detectedMimeType,
+      objectKey: `uploads/kyc-reservations/${user.contaId}/${randomUUID()}`,
+      cleanup: async () => undefined,
+      action: () => updateKycDocumentFile({
+        contaId: user.contaId!, fileId,
+        file: { bytes, filename: documentFile.name, mimeType: binaryValidation.detectedMimeType },
+        actor: { type: 'USER', id: user.id! },
+      }),
     });
-
-    return json(200, { data });
+    if (!quota.ok) return json(413, { error: 'QUOTA_UPLOAD_EXCEDIDA' });
+    return json(200, { data: quota.result });
   } catch (error) {
     const message = error instanceof Error ? error.message : undefined;
     if (message?.toLowerCase().includes('não encontrado')) {

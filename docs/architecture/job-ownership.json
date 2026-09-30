@@ -35,6 +35,7 @@
     { "id": "expire-contract-links", "route": "/api/jobs/expire-contract-links", "schedule": "*/15 * * * *", "owner": "finance", "criticality": "MAINTENANCE", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "contract-lifecycle" },
     { "id": "reconcile-matricula-cancellations", "route": "/api/jobs/reconcile-matricula-cancellations", "schedule": "*/5 * * * *", "owner": "domain", "criticality": "CRITICAL_FINANCE", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "matricula-cancellations" },
     { "id": "rematriculas-run", "route": "/api/jobs/rematriculas/run", "schedule": "*/5 * * * *", "owner": "domain", "criticality": "CRITICAL_FINANCE", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "rematriculas" },
-    { "id": "whatsapp", "route": "/api/jobs/whatsapp", "schedule": "*/5 * * * *", "owner": "whatsapp", "criticality": "NOTIFICATION", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "whatsapp" }
+    { "id": "whatsapp", "route": "/api/jobs/whatsapp", "schedule": "*/5 * * * *", "owner": "whatsapp", "criticality": "NOTIFICATION", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "whatsapp" },
+    { "id": "cleanup-upload-reservations", "route": "/api/jobs/cleanup-upload-reservations", "schedule": "*/10 * * * *", "owner": "uploads", "criticality": "MAINTENANCE", "retryStrategy": "bounded-backoff", "exclusiveGroup": "upload-cleanup" }
   ]
 }

@@ -6,12 +6,15 @@ const avatarMock = vi.hoisted(() => ({
   replaceCurrentAvatar: vi.fn(),
   removeCurrentAvatar: vi.fn(),
 }));
+const boundedFormDataMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/auth/session', () => ({ getSessionUser: getSessionUserMock }));
 vi.mock('@/lib/rate-limit', () => ({
   ipFromRequest: () => '127.0.0.1',
   rateLimit: () => ({ ok: true }),
+  rateLimitAsync: () => Promise.resolve({ ok: true }),
 }));
+vi.mock('@/lib/upload-request', () => ({ readBoundedFormData: boundedFormDataMock }));
 vi.mock('@/features/account/server/avatar-service', () => {
   class AvatarServiceError extends Error {
     readonly status: number;
@@ -57,10 +60,11 @@ describe('/api/users/me/avatar', () => {
   it('propaga usuário e conta ativa para a troca do avatar', async () => {
     const form = new FormData();
     form.append('file', new File([Uint8Array.from([1])], 'avatar.jpg', { type: 'image/jpeg' }));
-    const response = await POST({
-      headers: new Headers(),
-      formData: async () => form,
-    } as Request);
+    boundedFormDataMock.mockResolvedValueOnce({ ok: true, formData: form });
+    const response = await POST(new Request('http://localhost/api/users/me/avatar', {
+      method: 'POST',
+      body: form,
+    }));
 
     expect(response.status).toBe(200);
     expect(avatarMock.replaceCurrentAvatar).toHaveBeenCalledWith(

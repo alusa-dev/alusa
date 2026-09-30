@@ -9,12 +9,16 @@ import { InvalidKycGroupIdError } from '@alusa/finance/errors/invalid-kyc-group-
 import { OnboardingUrlRequiredError } from '@alusa/finance/errors/onboarding-url-required-error';
 import { ProviderPortalRequiredError } from '@alusa/finance/errors/provider-portal-required-error';
 import { validateUploadBuffer } from '@/lib/upload-security';
+import { readBoundedFormData } from '@/lib/upload-request';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
+import { withTenantUploadQuota } from '@/lib/upload-quota.server';
+import { randomUUID } from 'node:crypto';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
 const allowedRoles = new Set(['ADMIN']);
 
-const MAX_SIZE = 10 * 1024 * 1024;
+const MAX_SIZE = 3 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png'];
 const MAX_GROUP_ID_LEN = 200;
@@ -49,12 +53,14 @@ interface RouteContext {
  * 
  * Faz upload de documento para um grupo específico.
  * Aceita multipart/form-data com:
- *   - documentFile: arquivo (PDF, JPG, PNG, max 10MB)
+ *   - documentFile: arquivo (PDF, JPG, PNG, max 3 MiB)
  */
 export async function POST(req: Request, context: RouteContext) {
   const user = await resolveAuth();
   if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
   if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+  const rate = await rateLimitAsync(`kyc-upload:${user.contaId}:${user.id}:${ipFromRequest(req)}`, 12, 10 * 60_000);
+  if (!rate.ok) return json(429, { error: 'MUITAS_TENTATIVAS' });
 
   const { groupId } = await Promise.resolve(context.params);
 
@@ -67,7 +73,9 @@ export async function POST(req: Request, context: RouteContext) {
   }
 
   try {
-    const formData = await req.formData();
+    const uploadBody = await readBoundedFormData(req);
+    if (!uploadBody.ok) return json(uploadBody.status, { error: uploadBody.error });
+    const formData = uploadBody.formData;
     const documentFile = formData.get('documentFile');
     const documentType = formData.get('type');
     const slotId = formData.get('slotId');
@@ -162,30 +170,25 @@ export async function POST(req: Request, context: RouteContext) {
       return json(422, { error: 'CONTEUDO_ARQUIVO_INVALIDO', message: binaryValidation.error });
     }
 
-    if (normalizedSlotId) {
-      await updateKycDocumentFile({
-        contaId: user.contaId,
-        fileId: normalizedSlotId,
-        file: {
-          bytes,
-          filename: documentFile.name,
-          mimeType: binaryValidation.detectedMimeType,
-        },
-        actor: { type: 'USER', id: user.id },
-      });
-    } else {
-      await uploadKycDocumentByGroup({
-        contaId: user.contaId,
-        groupId,
-        type: typeof documentType === 'string' && documentType.trim() ? documentType.trim() : undefined,
-        file: {
-          bytes,
-          filename: documentFile.name,
-          mimeType: binaryValidation.detectedMimeType,
-        },
-        actor: { type: 'USER', id: user.id },
-      });
-    }
+    const quota = await withTenantUploadQuota({
+      contaId: user.contaId,
+      fileSize: documentFile.size,
+      contentType: binaryValidation.detectedMimeType,
+      objectKey: `uploads/kyc-reservations/${user.contaId}/${randomUUID()}`,
+      cleanup: async () => undefined,
+      action: async () => {
+        if (normalizedSlotId) {
+          return updateKycDocumentFile({ contaId: user.contaId!, fileId: normalizedSlotId, file: { bytes, filename: documentFile.name, mimeType: binaryValidation.detectedMimeType }, actor: { type: 'USER', id: user.id! } });
+        }
+        return uploadKycDocumentByGroup({
+          contaId: user.contaId!, groupId,
+          type: typeof documentType === 'string' && documentType.trim() ? documentType.trim() : undefined,
+          file: { bytes, filename: documentFile.name, mimeType: binaryValidation.detectedMimeType },
+          actor: { type: 'USER', id: user.id! },
+        });
+      },
+    });
+    if (!quota.ok) return json(413, { error: 'QUOTA_UPLOAD_EXCEDIDA' });
 
     const refreshed = await getKycSnapshotByContaId(user.contaId, { fresh: true });
 

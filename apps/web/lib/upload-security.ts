@@ -1,4 +1,8 @@
 import path from 'path';
+import { imageSize } from 'image-size';
+
+export const MAX_UPLOAD_IMAGE_PIXELS = 40_000_000;
+export const MAX_UPLOAD_IMAGE_SIDE = 16_384;
 
 type UploadValidationInput = {
   buffer: Uint8Array;
@@ -27,6 +31,10 @@ export function detectMimeTypeFromBuffer(buffer: Uint8Array): string | null {
     return 'image/jpeg';
   }
 
+  if (buffer.length >= 6 && String.fromCharCode(...buffer.subarray(0, 6)).match(/^GIF8[79]a$/)) {
+    return 'image/gif';
+  }
+
   if (
     buffer.length >= 8 &&
     hasPrefix(buffer, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -48,6 +56,25 @@ export function detectMimeTypeFromBuffer(buffer: Uint8Array): string | null {
   return null;
 }
 
+export function validateImageDimensions(buffer: Uint8Array):
+  | { ok: true; width: number; height: number }
+  | { ok: false; error: string } {
+  try {
+    const dimensions = imageSize(buffer);
+    const width = dimensions.width;
+    const height = dimensions.height;
+    if (!width || !height || !Number.isSafeInteger(width) || !Number.isSafeInteger(height)) {
+      return { ok: false, error: 'Dimensões da imagem inválidas.' };
+    }
+    if (width > MAX_UPLOAD_IMAGE_SIDE || height > MAX_UPLOAD_IMAGE_SIDE || width * height > MAX_UPLOAD_IMAGE_PIXELS) {
+      return { ok: false, error: 'Imagem excede o limite de dimensões permitido (máximo 40 megapixels e 16.384 px por lado).' };
+    }
+    return { ok: true, width, height };
+  } catch {
+    return { ok: false, error: 'Não foi possível validar as dimensões da imagem.' };
+  }
+}
+
 export function validateUploadBuffer(input: UploadValidationInput): UploadValidationResult {
   const extension = path.extname(input.fileName).toLowerCase();
 
@@ -62,6 +89,11 @@ export function validateUploadBuffer(input: UploadValidationInput): UploadValida
   const detectedMimeType = detectMimeTypeFromBuffer(input.buffer);
   if (!detectedMimeType || !input.allowedMimeTypes.includes(detectedMimeType)) {
     return { ok: false, error: 'Conteúdo do arquivo não permitido.' };
+  }
+
+  if (detectedMimeType.startsWith('image/')) {
+    const dimensions = validateImageDimensions(input.buffer);
+    if (!dimensions.ok) return dimensions;
   }
 
   const declaredMimeType = input.declaredMimeType.toLowerCase();

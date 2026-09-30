@@ -6,6 +6,10 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
+// O marcador do Next protege módulos exclusivos do servidor no bundle de
+// produção; em testes de rota, ele não precisa bloquear a importação.
+vi.mock('server-only', () => ({}));
+
 // Alguns componentes legados ainda são transformados pelo Vitest com o
 // runtime JSX clássico. Disponibilizar React no escopo global mantém esses
 // testes compatíveis sem alterar o runtime de produção.

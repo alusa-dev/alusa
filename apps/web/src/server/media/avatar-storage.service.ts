@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto';
+import { detectMimeTypeFromBuffer, validateImageDimensions } from '@/lib/upload-security';
+import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import {
   deleteStorageObject,
   isR2Configured,
@@ -31,8 +34,12 @@ function parseDataImageUrl(dataUrl: string): { mime: string; buffer: Buffer } | 
   const mime = match[1].toLowerCase();
   if (!ALLOWED_MIME_TYPES.has(mime)) return null;
 
-  const buffer = Buffer.from(match[2], 'base64');
-  if (!buffer.length || buffer.length > MAX_AVATAR_BYTES) return null;
+  const encoded = match[2];
+  if (encoded.length > Math.ceil(MAX_AVATAR_BYTES * 4 / 3) + 4 || encoded.length % 4 !== 0) return null;
+  const buffer = Buffer.from(encoded, 'base64');
+  if (!buffer.length || buffer.length > MAX_AVATAR_BYTES || buffer.toString('base64') !== encoded) return null;
+  if (detectMimeTypeFromBuffer(buffer) !== mime) return null;
+  if (!validateImageDimensions(buffer).ok) return null;
 
   return { mime, buffer };
 }
@@ -43,7 +50,7 @@ function avatarStorageKey(params: {
   entityId: string;
   extension: string;
 }): string {
-  return `uploads/${ENTITY_FOLDER[params.entity]}/${params.contaId}/${params.entityId}/avatar${params.extension}`;
+  return `uploads/${ENTITY_FOLDER[params.entity]}/${params.contaId}/${params.entityId}/avatar-${randomUUID()}${params.extension}`;
 }
 
 async function deletePreviousAvatar(previousFoto?: string | null) {
@@ -59,6 +66,13 @@ async function deletePreviousAvatar(previousFoto?: string | null) {
   }
 }
 
+export async function discardAvatarUpload(foto?: string | null) {
+  if (!foto || !isR2Configured()) return;
+  const key = storageKeyFromUrl(foto);
+  if (!key) return;
+  await deleteStorageObject(key);
+}
+
 export async function persistAvatarFromDataUrl(params: {
   entity: AvatarEntity;
   entityId: string;
@@ -68,11 +82,7 @@ export async function persistAvatarFromDataUrl(params: {
 }): Promise<string> {
   const parsed = parseDataImageUrl(params.dataUrl);
   if (!parsed) {
-    throw new Error('Formato de imagem inválido.');
-  }
-
-  if (!isR2Configured()) {
-    return params.dataUrl;
+    throw new Error('Formato, conteúdo ou dimensões da imagem inválidos ou excedem o limite permitido.');
   }
 
   const extension = EXT_BY_MIME[parsed.mime] ?? '.jpg';
@@ -83,16 +93,21 @@ export async function persistAvatarFromDataUrl(params: {
     extension,
   });
 
-  await putStorageObject({
-    key,
-    body: parsed.buffer,
+  const stored = await withTenantUploadQuota({
+    contaId: params.contaId,
+    fileSize: parsed.buffer.length,
     contentType: parsed.mime,
-    contentLength: parsed.buffer.length,
+    objectKey: key,
+    cleanup: async () => { if (isR2Configured()) await deleteStorageObject(key).catch(() => undefined); },
+    action: async () => {
+      if (!isR2Configured()) return params.dataUrl;
+      await putStorageObject({ key, body: parsed.buffer, contentType: parsed.mime, contentLength: parsed.buffer.length });
+      return storageUrlForKey(key);
+    },
   });
-
-  await deletePreviousAvatar(params.previousFoto);
-
-  return storageUrlForKey(key);
+  if (!stored.ok) throw new Error('Limite diário de uploads da conta excedido.');
+  if (isR2Configured()) await deletePreviousAvatar(params.previousFoto);
+  return stored.result;
 }
 
 export async function normalizeAvatarUpload(params: {

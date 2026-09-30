@@ -4,13 +4,18 @@ import {
   listProductImages,
   addProductImage,
   reorderProductImages,
+  deleteProductImage,
 } from '@alusa/lib/server';
 import { validateUploadBuffer } from '@/lib/upload-security';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
+import { readBoundedFormData } from '@/lib/upload-request';
+import { withTenantUploadQuota } from '@/lib/upload-quota.server';
+import { randomUUID } from 'node:crypto';
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'] as const;
-const MAX_SIZE_BYTES = 5 * 1024 * 1024;
+const MAX_SIZE_BYTES = 3 * 1024 * 1024;
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -39,10 +44,14 @@ export async function POST(req: Request, context: RouteContext) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     const { contaId } = auth;
+    const limiter = await rateLimitAsync(`product-image:${contaId}:${auth.userId}:${ipFromRequest(req)}`, 20, 10 * 60_000);
+    if (!limiter.ok) return jsonError(429, 'RATE_LIMITED', 'Muitas tentativas. Aguarde alguns minutos.');
 
     const { id: productId } = await Promise.resolve(context.params);
 
-    const formData = await req.formData();
+    const parsedBody = await readBoundedFormData(req);
+    if (!parsedBody.ok) return jsonError(parsedBody.status, 'UPLOAD_BODY_LIMIT', parsedBody.error);
+    const formData = parsedBody.formData;
     const file = formData.get('file');
 
     if (!file || !(file instanceof File)) {
@@ -67,16 +76,21 @@ export async function POST(req: Request, context: RouteContext) {
       return jsonError(422, 'ARQUIVO_INVALIDO', validation.error);
     }
 
-    const image = await addProductImage({
-      productId,
+    let imageId: string | null = null;
+    const quota = await withTenantUploadQuota({
       contaId,
-      fileBuffer: buffer,
-      fileName: file.name,
-      mimeType: validation.detectedMimeType,
       fileSize: file.size,
+      contentType: validation.detectedMimeType,
+      objectKey: `uploads/product-image-reservations/${contaId}/${randomUUID()}`,
+      cleanup: async () => { if (imageId) await deleteProductImage(imageId, productId, contaId).catch(() => undefined); },
+      action: async () => {
+        const created = await addProductImage({ productId, contaId, fileBuffer: buffer, fileName: file.name, mimeType: validation.detectedMimeType, fileSize: file.size });
+        imageId = created.id;
+        return created;
+      },
     });
-
-    return NextResponse.json({ data: image }, { status: 201 });
+    if (!quota.ok) return jsonError(413, 'UPLOAD_QUOTA_EXCEEDED', 'Limite diário de upload da conta excedido.');
+    return NextResponse.json({ data: quota.result }, { status: 201 });
   } catch (e) {
     return jsonError(400, 'ERRO_UPLOAD_IMAGEM', (e as Error).message);
   }

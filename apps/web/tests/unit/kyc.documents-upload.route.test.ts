@@ -2,6 +2,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { POST } from '@/app/api/kyc/documents/[groupId]/upload/route';
 
+const { boundedFormDataMock } = vi.hoisted(() => ({ boundedFormDataMock: vi.fn() }));
+vi.mock('@/lib/upload-request', () => ({ readBoundedFormData: boundedFormDataMock }));
+
+vi.mock('@/lib/rate-limit', () => ({
+  ipFromRequest: () => '127.0.0.1',
+  rateLimitAsync: () => Promise.resolve({ ok: true }),
+}));
+vi.mock('@/lib/upload-quota.server', () => ({
+  withTenantUploadQuota: async ({ action }: { action: () => Promise<unknown> }) => ({
+    ok: true,
+    result: await action(),
+  }),
+}));
+
+function parsedFormData(fields: Record<string, unknown>) {
+  return { get: (name: string) => fields[name] ?? null } as FormData;
+}
+
 vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
 }));
@@ -33,9 +51,10 @@ describe('POST /api/kyc/documents/[groupId]/upload', () => {
     } as never);
 
     const formData = new FormData();
-    const req = {
-      formData: async () => formData,
-    } as unknown as Request;
+    const req = new Request('http://localhost/api/kyc/documents/group/upload', {
+      method: 'POST',
+      body: formData,
+    });
 
     const res = await POST(req, { params: Promise.resolve({ groupId: ZERO_UUID }) });
     const body = await res.json();
@@ -103,10 +122,9 @@ describe('POST /api/kyc/documents/[groupId]/upload', () => {
       value: async () => documentBytes.buffer,
     });
     formData.append('documentFile', documentFile);
+    boundedFormDataMock.mockResolvedValueOnce({ ok: true, formData: parsedFormData({ type: 'IDENTIFICATION', documentFile: formData.get('documentFile') }) });
 
-    const req = {
-      formData: async () => formData,
-    } as unknown as Request;
+    const req = new Request('http://localhost/api/kyc/documents/group/upload', { method: 'POST' });
 
     const res = await POST(req, { params: Promise.resolve({ groupId: VALID_GROUP_ID }) });
     const body = await res.json();
@@ -158,10 +176,9 @@ describe('POST /api/kyc/documents/[groupId]/upload', () => {
       value: async () => documentBytes.buffer,
     });
     formData.append('documentFile', documentFile);
+    boundedFormDataMock.mockResolvedValueOnce({ ok: true, formData: parsedFormData({ documentFile: formData.get('documentFile') }) });
 
-    const req = {
-      formData: async () => formData,
-    } as unknown as Request;
+    const req = new Request('http://localhost/api/kyc/documents/group/upload', { method: 'POST' });
 
     const res = await POST(req, { params: Promise.resolve({ groupId: VALID_GROUP_ID }) });
     const body = await res.json();
@@ -211,10 +228,9 @@ describe('POST /api/kyc/documents/[groupId]/upload', () => {
       value: async () => documentBytes.buffer,
     });
     formData.append('documentFile', documentFile);
+    boundedFormDataMock.mockResolvedValueOnce({ ok: true, formData: parsedFormData({ documentFile: formData.get('documentFile') }) });
 
-    const req = {
-      formData: async () => formData,
-    } as unknown as Request;
+    const req = new Request('http://localhost/api/kyc/documents/group/upload', { method: 'POST' });
 
     const res = await POST(req, { params: Promise.resolve({ groupId: VALID_GROUP_ID }) });
     const body = await res.json();
@@ -269,10 +285,9 @@ describe('POST /api/kyc/documents/[groupId]/upload', () => {
       value: async () => documentBytes.buffer,
     });
     formData.append('documentFile', documentFile);
+    boundedFormDataMock.mockResolvedValueOnce({ ok: true, formData: parsedFormData({ slotId, documentFile: formData.get('documentFile') }) });
 
-    const req = {
-      formData: async () => formData,
-    } as unknown as Request;
+    const req = new Request('http://localhost/api/kyc/documents/group/upload', { method: 'POST' });
 
     const res = await POST(req, { params: Promise.resolve({ groupId: VALID_GROUP_ID }) });
     expect(res.status).toBe(200);
