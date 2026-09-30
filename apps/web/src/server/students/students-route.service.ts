@@ -266,19 +266,14 @@ export function prepareAlunoCreateInput(rawInput: unknown, contaId: string) {
 
 export async function createAlunoForTenant(params: { rawInput: unknown; contaId: string }) {
   const parsed = prepareAlunoCreateInput(params.rawInput, params.contaId);
-  let aluno = await createAluno(parsed);
+  const dataUrlPhoto = parsed.foto?.startsWith('data:image/') ? parsed.foto : null;
+  let aluno = await createAluno(dataUrlPhoto ? { ...parsed, foto: undefined } : parsed);
 
-  if (parsed.foto?.startsWith('data:image/')) {
+  if (dataUrlPhoto) {
     const normalizedFoto = await normalizeAvatarUpload({
-      entity: 'aluno',
-      entityId: aluno.id,
-      contaId: params.contaId,
-      foto: parsed.foto,
-      previousFoto: null,
+      entity: 'aluno', entityId: aluno.id, contaId: params.contaId, foto: dataUrlPhoto, previousFoto: null,
     });
-    if (normalizedFoto && normalizedFoto !== parsed.foto) {
-      aluno = await updateAluno({ id: aluno.id, contaId: params.contaId, foto: normalizedFoto });
-    }
+    if (normalizedFoto) aluno = await updateAluno({ id: aluno.id, contaId: params.contaId, foto: normalizedFoto });
   }
 
   return aluno;

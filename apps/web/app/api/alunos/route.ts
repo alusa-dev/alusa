@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { resolveTenantSession, withTenantSession } from '@/lib/api/with-tenant-session';
+import { readBoundedJson } from '@/lib/upload-request';
+import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
 import { AsaasCustomerEnsureError } from '@alusa/finance';
 import { alunoDetailDTOSchema, listAlunosResultDTOSchema } from '@/features/students/dtos';
 import { mapAlunoDetailToDTO, mapAlunoListItemToDTO } from '@/features/students/mappers';
@@ -54,8 +56,12 @@ export async function POST(request: NextRequest) {
       throw error;
     }
 
+    const rate = await strictRateLimitAsync(`student-create:${auth.contaId}:${auth.userId}:${ipFromRequest(request)}`, 20, 10 * 60_000);
+    if (!rate.ok) return NextResponse.json({ error: 'Muitas tentativas.' }, { status: 429 });
+    const parsedBody = await readBoundedJson(request);
+    if (!parsedBody.ok) return NextResponse.json({ error: parsedBody.error }, { status: parsedBody.status });
     const aluno = await createAlunoForTenant({
-      rawInput: await request.json(),
+      rawInput: parsedBody.value,
       contaId: auth.contaId,
     });
     return NextResponse.json(alunoDetailDTOSchema.parse(mapAlunoDetailToDTO(aluno)), { status: 201 });

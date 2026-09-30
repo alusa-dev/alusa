@@ -12,6 +12,7 @@ import {
   storageUrlForKey,
 } from '@/lib/r2-storage';
 import { validateUploadBuffer } from '@/lib/upload-security';
+import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 
 const AVATAR_SIDE_PX = 512;
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
@@ -97,20 +98,28 @@ async function requireActiveMembership(actor: AvatarActor) {
 async function storeAvatar(actor: AvatarActor, avatar: PreparedAvatar) {
   const fileName = `${actor.contaId}-${actor.userId}-${randomUUID()}${avatar.extension}`;
 
-  if (isR2Configured()) {
-    const key = `uploads/avatars/${fileName}`;
-    await putStorageObject({
-      key,
-      body: avatar.bytes,
-      contentType: avatar.mimeType,
-      contentLength: avatar.bytes.byteLength,
-    });
-    return storageUrlForKey(key);
-  }
-
-  await fs.mkdir(AVATAR_UPLOAD_DIR, { recursive: true });
-  await fs.writeFile(path.join(AVATAR_UPLOAD_DIR, fileName), avatar.bytes);
-  return `/uploads/${fileName}`;
+  const key = `uploads/avatars/${fileName}`;
+  const stored = await withTenantUploadQuota({
+    contaId: actor.contaId,
+    fileSize: avatar.bytes.byteLength,
+    contentType: avatar.mimeType,
+    objectKey: key,
+    cleanup: async () => {
+      if (isR2Configured()) await deleteStorageObject(key).catch(() => undefined);
+      else await fs.unlink(path.join(AVATAR_UPLOAD_DIR, fileName)).catch(() => undefined);
+    },
+    action: async () => {
+      if (isR2Configured()) {
+        await putStorageObject({ key, body: avatar.bytes, contentType: avatar.mimeType, contentLength: avatar.bytes.byteLength });
+        return storageUrlForKey(key);
+      }
+      await fs.mkdir(AVATAR_UPLOAD_DIR, { recursive: true });
+      await fs.writeFile(path.join(AVATAR_UPLOAD_DIR, fileName), avatar.bytes);
+      return `/uploads/${fileName}`;
+    },
+  });
+  if (!stored.ok) throw new AvatarServiceError('Limite diário de uploads da conta excedido.', 413, 'UPLOAD_QUOTA_EXCEEDED');
+  return stored.result;
 }
 
 export async function prepareAvatarFile(file: File): Promise<PreparedAvatar> {

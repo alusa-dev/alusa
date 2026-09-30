@@ -11,6 +11,9 @@ import {
 } from '../../../../../../packages/lib/src/server/services/colaborador-service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 import { getColaborador } from '@/src/server/employees/employee-read.service';
+import { readBoundedJson } from '@/lib/upload-request';
+import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { normalizeAvatarUpload } from '@/src/server/media/avatar-storage.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -49,7 +52,11 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     const { contaId } = user;
     await assertPlatformAccessForConta({ contaId, capability: 'STAFF_WRITE' });
 
-    const json = await req.json();
+    const rate = await strictRateLimitAsync(`employee-update:${contaId}:${user.id}:${ipFromRequest(req)}`, 20, 10 * 60_000);
+    if (!rate.ok) return jsonError(429, 'RATE_LIMITED', 'Muitas tentativas.');
+    const parsedBody = await readBoundedJson(req);
+    if (!parsedBody.ok) return jsonError(parsedBody.status, 'UPLOAD_BODY_LIMIT', parsedBody.error);
+    const json = parsedBody.value;
     if (json && typeof json === 'object' && 'cpf' in json) {
       return jsonError(400, 'REGRA_NEGOCIO', 'Não é permitido alterar o CPF do colaborador.');
     }
@@ -94,7 +101,12 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
 
     // MULTI-TENANT: usar contaId da sessão, não do registro
     try {
-      const updated = await updateColab(ctxParams.id, contaId, parsed.data as any);
+      const current = await getColaborador({ id: ctxParams.id, contaId });
+      if (!current) return jsonError(404, 'NAO_ENCONTRADO', 'Colaborador não encontrado');
+      const foto = typeof parsed.data.foto === 'string' && parsed.data.foto.startsWith('data:image/')
+        ? await normalizeAvatarUpload({ entity: 'colaborador', entityId: ctxParams.id, contaId, foto: parsed.data.foto, previousFoto: typeof current.foto === 'string' ? current.foto : null })
+        : parsed.data.foto;
+      const updated = await updateColab(ctxParams.id, contaId, { ...parsed.data, foto: foto as string | null | undefined } as any);
       return NextResponse.json({ data: updated });
     } catch (e: unknown) {
       const msg = (e as Error)?.message || 'Falha ao atualizar colaborador';

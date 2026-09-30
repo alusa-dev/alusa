@@ -1351,6 +1351,8 @@ model Conta {
   // Dono (owner) da conta — imutável na lógica de negócio
   ownerUserId                       String?
   ownerUser                         Usuario?                            @relation("ContaOwner", fields: [ownerUserId], references: [id])
+  uploadQuotas                      TenantUploadQuota[]
+  uploadReservations                TenantUploadReservation[]
   usuarios                          Usuario[]                           @relation("ContaUsuarios")
   usuariosConta                     UsuarioConta[]
   invites                           Invite[]
@@ -8107,4 +8109,45 @@ model ProductVariantOption {
   optionValue ProductOptionValue @relation(fields: [optionValueId], references: [id], onDelete: Cascade)
 
   @@id([variantId, optionValueId])
+}
+
+
+model TenantUploadQuota {
+  id            String   @id @default(cuid())
+  contaId       String
+  periodStart   DateTime @db.Date
+  usedBytes     BigInt   @default(0)
+  reservedBytes BigInt   @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  conta        Conta                     @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  reservations TenantUploadReservation[]
+
+  @@unique([id, contaId])
+  @@unique([contaId, periodStart])
+  @@index([contaId, periodStart])
+}
+
+model TenantUploadReservation {
+  id           String    @id @default(cuid())
+  contaId      String
+  createdByUserId String?
+  quotaId      String
+  objectKey    String
+  expectedSize BigInt
+  contentType  String
+  finalObjectKey String?
+  pendingCleanedAt DateTime?
+  status       String    @default("PENDING")
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  conta Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  quota TenantUploadQuota @relation(fields: [quotaId, contaId], references: [id, contaId], onDelete: Cascade)
+
+  @@index([contaId, objectKey])
+  @@index([contaId, status, expiresAt])
+  @@index([quotaId, status])
 }

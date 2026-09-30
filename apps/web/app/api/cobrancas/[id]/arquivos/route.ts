@@ -32,10 +32,13 @@ import {
 } from '@/lib/r2-storage';
 import { validateUploadBuffer } from '@/lib/upload-security';
 import { privateJson } from '@/lib/private-cache';
+import { readBoundedFormData } from '@/lib/upload-request';
+import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 
 const ROUTE_TAG = 'api.cobrancas.arquivos';
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_FILE_SIZE = 3 * 1024 * 1024;
 const ALLOWED_TYPES = [
   'application/pdf',
   'image/jpeg',
@@ -138,12 +141,17 @@ export async function POST(req: NextRequest, context: RouteContext) {
     const cobrancaId = await parseCobrancaId(context.params);
 
     const result = await withTenantSession(async ({ contaId, userId, tx }) => {
+      const rate = await strictRateLimitAsync(`charge-file-upload:${contaId}:${userId}:${ipFromRequest(req)}`, 20, 10 * 60_000);
+      if (!rate.ok) return NextResponse.json({ error: 'Muitas tentativas.' }, { status: 429 });
+
       const ref = await resolveCobrancaRef(tx, contaId, cobrancaId);
       if (!ref) {
         return NextResponse.json({ error: 'Cobrança não encontrada' }, { status: 404 });
       }
 
-      const formData = await req.formData();
+      const uploadBody = await readBoundedFormData(req);
+      if (!uploadBody.ok) return NextResponse.json({ error: uploadBody.error }, { status: uploadBody.status });
+      const formData = uploadBody.formData;
       const file = formData.get('file') as File | null;
 
       if (!file) {
@@ -189,36 +197,32 @@ export async function POST(req: NextRequest, context: RouteContext) {
       const storageKey = `uploads/cobrancas/${nomeArquivo}`;
       const storageUrl = storageUrlForKey(storageKey);
 
-      if (isR2Configured()) {
-        await putStorageObject({
-          key: storageKey,
-          body: bytes,
-          contentType: binaryValidation.detectedMimeType,
-          contentLength: file.size,
-        });
-      } else {
-        if (!existsSync(UPLOAD_DIR)) {
-          await mkdir(UPLOAD_DIR, { recursive: true });
-        }
-        await writeFile(join(UPLOAD_DIR, nomeArquivo), bytes);
-      }
-
-      const body = await createArquivoForCobranca(tx, ref, {
-        nomeOriginal: file.name,
-        nomeArquivo,
-        mimetype: binaryValidation.detectedMimeType,
-        tamanho: file.size,
-        url: isR2Configured() ? storageUrl : `/uploads/charges/${nomeArquivo}`,
-        uploadPor: userId,
+      const quota = await withTenantUploadQuota({
+        contaId, fileSize: file.size, contentType: binaryValidation.detectedMimeType, objectKey: storageKey,
+        cleanup: async () => {
+          if (isR2Configured()) await deleteStorageObject(storageKey).catch(() => undefined);
+          else await unlink(join(UPLOAD_DIR, nomeArquivo)).catch(() => undefined);
+        },
+        action: async () => {
+          if (isR2Configured()) await putStorageObject({ key: storageKey, body: bytes, contentType: binaryValidation.detectedMimeType, contentLength: file.size });
+          else {
+            if (!existsSync(UPLOAD_DIR)) await mkdir(UPLOAD_DIR, { recursive: true });
+            await writeFile(join(UPLOAD_DIR, nomeArquivo), bytes);
+          }
+          const body = await createArquivoForCobranca(tx, ref, {
+            nomeOriginal: file.name,
+            nomeArquivo,
+            mimetype: binaryValidation.detectedMimeType,
+            tamanho: file.size,
+            url: isR2Configured() ? storageUrl : `/uploads/charges/${nomeArquivo}`,
+            uploadPor: userId,
+          });
+          await invalidateChargeResourceCache({ contaId, cobrancaId, reason: 'charge-file-upload' });
+          return body;
+        },
       });
-
-      await invalidateChargeResourceCache({
-        contaId,
-        cobrancaId,
-        reason: 'charge-file-upload',
-      });
-
-      return NextResponse.json(body, { status: 201 });
+      if (!quota.ok) return NextResponse.json({ error: 'Limite diário de upload da conta excedido.' }, { status: 413 });
+      return NextResponse.json(quota.result, { status: 201 });
     });
 
     return result;

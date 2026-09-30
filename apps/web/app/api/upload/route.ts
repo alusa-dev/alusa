@@ -4,7 +4,9 @@ import path from 'path';
 import { deleteUploadInputDTOSchema } from '@/features/storage/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { jsonNoStore } from '@/lib/http-security';
-import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
+import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { readBoundedFormData } from '@/lib/upload-request';
+import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import { validateUploadBuffer } from '@/lib/upload-security';
 import {
   deleteStorageObject,
@@ -16,8 +18,7 @@ import {
 import { userOwnsLegacyAvatar } from '@/src/server/media/storage-access.service';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
-const DEFAULT_MAX_MB = 15;
-const MAX_SIZE = (Number(process.env.NEXT_UPLOAD_MAX_MB || process.env.NEXT_PUBLIC_UPLOAD_MAX_MB) || DEFAULT_MAX_MB) * 1024 * 1024;
+const MAX_SIZE = 3 * 1024 * 1024; // 1 MB reservado para multipart/headers dentro do limite Vercel.
 const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/pdf'];
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.pdf'];
 
@@ -55,12 +56,14 @@ export async function POST(req: Request) {
     const user = { id: auth.userId, contaId: auth.contaId };
 
     const ip = ipFromRequest(req);
-    const limiter = rateLimit(`upload:post:${user.id}:${ip}`, 30, 10 * 60 * 1000);
+    const limiter = await strictRateLimitAsync(`upload:post:${user.contaId}:${user.id}:${ip}`, 30, 10 * 60 * 1000);
     if (!limiter.ok) {
       return jsonNoStore({ error: 'Muitas tentativas. Aguarde alguns minutos.' }, { status: 429 });
     }
 
-    const formData = await req.formData();
+    const parsedBody = await readBoundedFormData(req);
+    if (!parsedBody.ok) return jsonNoStore({ error: parsedBody.error }, { status: parsedBody.status });
+    const formData = parsedBody.formData;
     const file = formData.get('file');
 
     if (!file || !(file instanceof File)) {
@@ -89,22 +92,28 @@ export async function POST(req: Request) {
     }
 
     const filename = `${user.contaId}-${user.id}-${randomUUID()}${binaryValidation.extension}`;
-    let url: string;
-    if (isR2Configured()) {
-      const key = `uploads/avatars/${filename}`;
-      await putStorageObject({
-        key,
-        body: bytes,
-        contentType: binaryValidation.detectedMimeType,
-        contentLength: file.size,
-      });
-      url = storageUrlForKey(key);
-    } else {
-      await ensureDir();
-      const filePath = path.join(UPLOAD_DIR, filename);
-      await fs.writeFile(filePath, bytes);
-      url = `/uploads/${filename}`;
-    }
+    const storageKey = `uploads/avatars/${filename}`;
+    const stored = await withTenantUploadQuota({
+      contaId: user.contaId,
+      fileSize: file.size,
+      contentType: binaryValidation.detectedMimeType,
+      objectKey: storageKey,
+      cleanup: async () => {
+        if (isR2Configured()) await deleteStorageObject(storageKey).catch(() => undefined);
+        else await fs.unlink(path.join(UPLOAD_DIR, filename)).catch(() => undefined);
+      },
+      action: async () => {
+        if (isR2Configured()) {
+          await putStorageObject({ key: storageKey, body: bytes, contentType: binaryValidation.detectedMimeType, contentLength: file.size });
+          return storageUrlForKey(storageKey);
+        }
+        await ensureDir();
+        await fs.writeFile(path.join(UPLOAD_DIR, filename), bytes);
+        return `/uploads/${filename}`;
+      },
+    });
+    if (!stored.ok) return jsonNoStore({ error: 'Limite diário de upload da conta excedido.' }, { status: 413 });
+    const url = stored.result;
 
     const result = {
       url,
@@ -131,7 +140,7 @@ export async function DELETE(req: Request) {
     const user = { id: auth.userId, contaId: auth.contaId };
 
     const ip = ipFromRequest(req);
-    const limiter = rateLimit(`upload:delete:${user.id}:${ip}`, 60, 10 * 60 * 1000);
+    const limiter = await strictRateLimitAsync(`upload:delete:${user.contaId}:${user.id}:${ip}`, 60, 10 * 60 * 1000);
     if (!limiter.ok) {
       return jsonNoStore({ error: 'Muitas tentativas. Aguarde alguns minutos.' }, { status: 429 });
     }

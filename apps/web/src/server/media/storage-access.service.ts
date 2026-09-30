@@ -28,6 +28,20 @@ export async function canReadStorageKey(input: {
     if (folder === 'responsaveis') return Boolean(await prisma.responsavel.findFirst({ where: { id: entityId, contaId, foto: url }, select: { id: true } }));
     return Boolean(await prisma.colaborador.findFirst({ where: { id: entityId, contaId, foto: url }, select: { id: true } }));
   }
+  if (key.startsWith('uploads/confirmed/')) {
+    const reservation = await prisma.tenantUploadReservation.findFirst({
+      where: { contaId, createdByUserId: userId, finalObjectKey: key, status: 'COMPLETED' },
+      select: { id: true },
+    });
+    if (reservation) return true;
+    const confirmed = await prisma.tenantUploadReservation.findFirst({
+      where: { contaId, finalObjectKey: key, status: 'COMPLETED' },
+      select: { id: true },
+    });
+    if (!confirmed) return false;
+    if (await prisma.contratoModelo.findFirst({ where: { contaId, OR: [{ arquivoPdfUrl: url }, { arquivoOriginalUrl: url }] }, select: { id: true } })) return true;
+    return Boolean(await prisma.contrato.findFirst({ where: { arquivoPdfUrl: url, matricula: { contaId } }, select: { id: true } }));
+  }
   if (key.startsWith('uploads/avatars/')) {
     if (filename.startsWith(`${contaId}-${userId}-`)) return true;
     return userOwnsLegacyAvatar({ userId, contaId, url });

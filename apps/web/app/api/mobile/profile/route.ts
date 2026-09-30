@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
+import { readBoundedFormData } from '@/lib/upload-request';
 
 import { prepareAvatarFile, replaceCurrentAvatar } from '@/features/account/server/avatar-service';
 import {
@@ -7,7 +8,7 @@ import {
   mobileProfileUpdateInputDTOSchema,
 } from '@/features/mobile/dtos';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
-import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
+import { ipFromRequest, rateLimit, strictRateLimitAsync } from '@/lib/rate-limit';
 import { normalizeAccountTimeZone } from '@/src/server/lessons/calendar/account-timezone';
 import {
   getActiveMobileMembership,
@@ -195,7 +196,7 @@ export async function POST(request: Request) {
   const actor = await getMobileActor(request);
   if (!actor) return unauthorized();
 
-  const limiter = rateLimit(`mobile-profile:avatar:${actor.userId}:${ipFromRequest(request)}`, 10, 10 * 60 * 1000);
+  const limiter = await strictRateLimitAsync(`mobile-profile:avatar:${actor.contaId}:${actor.userId}:${ipFromRequest(request)}`, 10, 10 * 60 * 1000);
   if (!limiter.ok) {
     return NextResponse.json(
       { error: { code: 'RATE_LIMITED', message: 'Muitas tentativas. Aguarde alguns minutos.' } },
@@ -203,8 +204,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const formData = await request.formData().catch(() => null);
-  const file = formData?.get('file');
+  const uploadBody = await readBoundedFormData(request);
+  if (!uploadBody.ok) return NextResponse.json({ error: { code: 'UPLOAD_BODY_LIMIT', message: uploadBody.error } }, { status: uploadBody.status });
+  const file = uploadBody.formData.get('file');
   if (!(file instanceof File)) {
     return NextResponse.json(
       { error: { code: 'VALIDATION_ERROR', message: 'Nenhuma foto foi enviada.' } },

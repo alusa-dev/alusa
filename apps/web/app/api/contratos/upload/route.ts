@@ -5,12 +5,14 @@ import path from 'path';
 import { getSessionUser } from '@/lib/auth/session';
 import { uploadContratoArquivoResultDTOSchema } from '@/features/contracts/dtos';
 import { jsonNoStore } from '@/lib/http-security';
-import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
+import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { readBoundedFormData } from '@/lib/upload-request';
+import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import { validateUploadBuffer } from '@/lib/upload-security';
-import { isR2Configured, putStorageObject, storageUrlForKey } from '@/lib/r2-storage';
+import { deleteStorageObject, isR2Configured, putStorageObject, storageUrlForKey } from '@/lib/r2-storage';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads', 'contratos');
-const MAX_SIZE = 25 * 1024 * 1024; // 25MB
+const MAX_SIZE = 3 * 1024 * 1024; // limit Vercel com margem multipart
 const ALLOWED_TYPES = ['application/pdf'];
 const ALLOWED_EXTENSIONS = ['.pdf'];
 
@@ -32,7 +34,7 @@ function validateFile(file: File): { valid: boolean; error?: string } {
   }
 
   if (file.size > MAX_SIZE) {
-    return { valid: false, error: 'Arquivo muito grande. Máximo 25MB.' };
+    return { valid: false, error: 'Arquivo muito grande. O envio inline aceita até 3 MiB; arquivos maiores usam upload direto ao armazenamento.' };
   }
 
   const ext = path.extname(file.name).toLowerCase();
@@ -54,7 +56,7 @@ export async function POST(req: NextRequest) {
     }
 
     const ip = ipFromRequest(req);
-    const limiter = rateLimit(`contract-upload:${user.id}:${ip}`, 20, 10 * 60 * 1000);
+    const limiter = await strictRateLimitAsync(`contract-upload:${user.contaId}:${user.id}:${ip}`, 20, 10 * 60 * 1000);
     if (!limiter.ok) {
       return jsonNoStore(
         { error: { message: 'Muitas tentativas. Aguarde alguns minutos.' } },
@@ -62,7 +64,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const formData = await req.formData();
+    const parsedBody = await readBoundedFormData(req);
+    if (!parsedBody.ok) return jsonNoStore({ error: { message: parsedBody.error } }, { status: parsedBody.status });
+    const formData = parsedBody.formData;
     const file = formData.get('file');
 
     if (!file || !(file instanceof File)) {
@@ -103,22 +107,28 @@ export async function POST(req: NextRequest) {
     const hashSha256 = generateSha256(buffer);
 
     const filename = `${user.contaId}-${user.id}-${randomUUID()}${binaryValidation.extension}`;
-    let url: string;
-    if (isR2Configured()) {
-      const key = `uploads/contratos/${filename}`;
-      await putStorageObject({
-        key,
-        body: bytes,
-        contentType: binaryValidation.detectedMimeType,
-        contentLength: file.size,
-      });
-      url = storageUrlForKey(key);
-    } else {
-      await ensureDir();
-      const filePath = path.join(UPLOAD_DIR, filename);
-      await fs.writeFile(filePath, bytes);
-      url = `/uploads/contracts/${filename}`;
-    }
+    const storageKey = `uploads/contratos/${filename}`;
+    const stored = await withTenantUploadQuota({
+      contaId: user.contaId,
+      fileSize: file.size,
+      contentType: binaryValidation.detectedMimeType,
+      objectKey: storageKey,
+      cleanup: async () => {
+        if (isR2Configured()) await deleteStorageObject(storageKey).catch(() => undefined);
+        else await fs.unlink(path.join(UPLOAD_DIR, filename)).catch(() => undefined);
+      },
+      action: async () => {
+        if (isR2Configured()) {
+          await putStorageObject({ key: storageKey, body: bytes, contentType: binaryValidation.detectedMimeType, contentLength: file.size });
+          return storageUrlForKey(storageKey);
+        }
+        await ensureDir();
+        await fs.writeFile(path.join(UPLOAD_DIR, filename), bytes);
+        return `/uploads/contracts/${filename}`;
+      },
+    });
+    if (!stored.ok) return jsonNoStore({ error: { message: 'Limite diário de upload da conta excedido.' } }, { status: 413 });
+    const url = stored.result;
 
     const result = {
       url,
