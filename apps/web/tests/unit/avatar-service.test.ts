@@ -13,6 +13,12 @@ const storageMock = vi.hoisted(() => ({
 const imageSizeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/prisma', () => ({ default: prismaMock }));
+vi.mock('@/lib/upload-quota.server', () => ({
+  withTenantUploadQuota: async ({ action }: { action: () => Promise<unknown> }) => ({
+    ok: true,
+    result: await action(),
+  }),
+}));
 vi.mock('image-size', () => ({ imageSize: imageSizeMock }));
 vi.mock('@/lib/r2-storage', () => ({
   isR2Configured: () => true,
@@ -54,7 +60,7 @@ describe('avatar-service', () => {
     expect(avatar.mimeType).toBe('image/jpeg');
     expect(avatar.extension).toBe('.jpg');
 
-    imageSizeMock.mockReturnValueOnce({ width: 640, height: 480, type: 'jpg' });
+    imageSizeMock.mockReturnValue({ width: 640, height: 480, type: 'jpg' });
     await expect(prepareAvatarFile(validJpegFile())).rejects.toMatchObject({
       status: 400,
       code: 'INVALID_DIMENSIONS',

@@ -7,6 +7,7 @@ vi.mock('@/lib/api/with-tenant-session', () => ({ resolveTenantSession: resolveT
 vi.mock('@/lib/rate-limit', () => ({
   ipFromRequest: () => '127.0.0.1',
   rateLimit: () => ({ ok: true }),
+  strictRateLimitAsync: () => Promise.resolve({ ok: true }),
 }));
 vi.mock('@/lib/prisma', () => ({
   default: { usuario: { findFirst: vi.fn() } },
