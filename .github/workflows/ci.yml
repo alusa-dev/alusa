@@ -155,7 +155,9 @@ jobs:
           npx prisma migrate status --schema prisma/schema.prisma
           npx prisma generate --schema prisma/schema.prisma
       - name: Build shared package for mandatory web regressions
-        run: pnpm --filter @alusa/shared build
+        run: |
+          pnpm --filter @alusa/shared build
+          pnpm --filter @alusa/domain build
       - name: Mandatory auth and contaId regression tests
         run: pnpm --filter @alusa/web exec vitest run tests/unit/auth tests/unit/with-tenant-session.test.ts tests/unit/prisma-tenant.test.ts tests/unit/password-change-otp.rls.integration.test.ts
 
