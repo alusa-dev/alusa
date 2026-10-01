@@ -42,12 +42,38 @@ passar”.
 
 ### 2. PR e CI
 
-O CI deve estar verde antes da promoção. Falhas conhecidas de seed, Prisma,
-testes financeiros ou E2E devem ser corrigidas, não mascaradas com `skip`,
-`only`, `any` ou relaxamento de TypeScript.
+O workflow `CI` valida PRs antes do merge. O check estável para exigir na
+proteção de branch é **`CI required`** (job `required-gate`); ele também passa
+em PRs somente de documentação, quando os jobs de código são corretamente
+ignorados. A validação pesada não é repetida em `push` para `main`.
 
-Na proteção do GitHub, exigir checks de lint, typecheck, testes unitários,
-build e E2E, aprovação de revisão e proibição de push direto em `main`.
+Os jobs paralelos selecionam lint, typecheck, build e testes pelas mudanças
+afetadas. O Turbo coordena a ordem dos builds de dependências e executa tarefas
+independentes em paralelo. Falha ao determinar escopo executa a validação
+completa. Auditorias
+de segurança/workspace e testes de auth, RLS e `contaId` seguem obrigatórios
+para PRs com código; Playwright crítico cobre mudanças de web, auth, tenant e
+financeiro. O workflow noturno `E2E Full` mantém os quatro shards completos.
+Falhas em Prisma, testes financeiros ou E2E devem ser corrigidas, não
+mascaradas com `skip`, `only`, `any` ou relaxamento de TypeScript.
+
+Na proteção do GitHub, exigir `CI required` e impedir push direto em `main`.
+Não exigir aprovação de revisão enquanto houver apenas uma pessoa revisora;
+o PR pode ser mesclado pelo próprio autor após o check ficar verde.
+
+### Projetos Vercel
+
+Os comandos `ignoreCommand` em `apps/web/vercel.json` e
+`apps/admin/vercel.json` são relativos aos Root Directories `apps/web` e
+`apps/admin`, respectivamente. Esses Root Directories estão configurados nos
+projetos no dashboard; a opção nativa para ignorar deploys quando não há
+mudanças no diretório raiz ou em suas dependências também está habilitada nos
+dois. O `ignoreCommand` do `vercel.json` ignora mudanças somente em
+documentação/Markdown e mantém o deploy seletivo para alterações limitadas a
+um único app, mesmo quando acompanhadas de documentação. Mudanças em packages
+ou configurações globais consultam o grafo Turbo para considerar dependências
+consumidas. Se faltarem commits, caminhos ou dados do Turbo no checkout raso,
+o build continua por segurança.
 
 ### 3. Validar e publicar o artefato Vercel
 
