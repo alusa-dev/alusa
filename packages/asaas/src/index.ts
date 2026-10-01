@@ -75,7 +75,6 @@ export type {
   AsaasInvoiceTaxes,
   AsaasInvoiceTaxesRequest,
   AsaasInvoiceTaxesResponse,
-  AsaasInvoiceIbsCbsRequest,
   CreateInvoiceInput,
   PaymentStatus,
   SubscriptionStatus,

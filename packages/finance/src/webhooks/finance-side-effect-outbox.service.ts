@@ -19,6 +19,8 @@ const MAX_RETRY_DELAY_MS = 30 * 60_000;
 const SIDE_EFFECT_LEASE_MS = 10 * 60 * 1000;
 const EVENT_TICKET_TEMPLATE_ID =
   process.env.RESEND_EVENT_TICKET_TEMPLATE_ID || 'c395cbe5-b1fb-4d2d-ae3f-825e1e0d94e0';
+const RESEND_EVENT_ORDER_CREATED_TEMPLATE_ID =
+  process.env.RESEND_EVENT_ORDER_CREATED_TEMPLATE_ID || '6549cc63-ff14-401d-b0be-7fefc26405dc';
 const EVENT_TIME_ZONE = process.env.APP_TIMEZONE || 'America/Manaus';
 
 class SideEffectDeliveryError extends Error {
@@ -179,51 +181,8 @@ function formatEventTemplateDateParts(value: string) {
   };
 }
 
-async function sendResendEmail(params: {
-  to: string;
-  subject: string;
-  html: string;
-  text: string;
-  idempotencyKey: string;
-  tags?: Array<{ name: string; value: string }>;
-}) {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    throw new Error('RESEND_API_KEY ausente; e-mail não foi enviado.');
-  }
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'Idempotency-Key': params.idempotencyKey,
-    },
-    body: JSON.stringify({
-      from: process.env.EMAIL_FROM_EVENTS || process.env.EMAIL_FROM_AUTH || 'Alusa <onboarding@resend.dev>',
-      to: [params.to],
-      subject: params.subject,
-      html: params.html,
-      text: params.text,
-      tags: params.tags,
-    }),
-  });
-
-  const json = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message =
-      typeof json?.message === 'string'
-        ? json.message
-        : Array.isArray(json?.errors)
-          ? JSON.stringify(json.errors)
-          : `Falha ao enviar e-mail (${response.status}).`;
-    throw new SideEffectDeliveryError(message, response.status === 429 || response.status >= 500);
-  }
-
-  return { id: typeof json?.id === 'string' ? json.id : null, delivery: 'sent' as const };
-}
-
 async function sendResendTemplateEmail(params: {
+  templateId?: string;
   to: string;
   variables: Record<string, string>;
   idempotencyKey: string;
@@ -245,7 +204,7 @@ async function sendResendTemplateEmail(params: {
       from: process.env.EMAIL_FROM_EVENTS || process.env.EMAIL_FROM_INVITES || process.env.EMAIL_FROM_AUTH || 'Alusa <onboarding@resend.dev>',
       to: [params.to],
       template: {
-        id: EVENT_TICKET_TEMPLATE_ID,
+        id: params.templateId ?? EVENT_TICKET_TEMPLATE_ID,
         variables: params.variables,
       },
       tags: params.tags,
@@ -301,39 +260,35 @@ function paymentMethodLabel(method: string): string {
 
 async function sendEventPublicOrderCreatedEmail(payload: EventPublicOrderCreatedEmailPayload) {
   const statusUrl = buildAppUrl(payload.statusPath);
-  const eventName = escapeHtml(payload.eventName);
-  const buyerName = escapeHtml(payload.buyerName);
-  const eventDate = escapeHtml(formatEventDate(payload.eventStartsAt));
-  const expiresAt = escapeHtml(formatEventDate(payload.expiresAt));
-  const methodLabel = escapeHtml(paymentMethodLabel(payload.paymentMethod));
-
-  const subject = `Pedido criado — ${payload.eventName}`;
-  const paymentCta = payload.invoiceUrl
-    ? `<a href="${escapeHtml(payload.invoiceUrl)}" style="display:inline-block;padding:13px 20px;border-radius:10px;background:#3e1f63;color:#ffffff;text-decoration:none;font-weight:700;">Ir para o pagamento</a>`
-    : '';
-
-  const html = `
-    <div style="font-family:Arial,Helvetica,sans-serif;background:#f6f3ee;padding:32px;color:#1f2937;">
-      <div style="max-width:580px;margin:0 auto;background:#ffffff;border:1px solid #e7ddd0;border-radius:18px;padding:30px;">
-        <p style="margin:0 0 10px;font-size:13px;color:#7c6f60;font-weight:700;text-transform:uppercase;letter-spacing:.08em;">alusa eventos</p>
-        <h1 style="margin:0 0 14px;font-size:26px;line-height:1.2;color:#271a10;">Reserva confirmada</h1>
-        <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">Olá, ${buyerName}. Sua reserva para <strong>${eventName}</strong> foi criada. Complete o pagamento via <strong>${methodLabel}</strong> até <strong>${expiresAt}</strong>.</p>
-        <p style="margin:0 0 20px;font-size:14px;line-height:1.5;color:#475569;">Data do evento: <strong>${eventDate}</strong></p>
-        ${paymentCta}
-        <p style="margin:20px 0 0;font-size:13px;line-height:1.6;color:#64748b;">Guarde este link para acompanhar o pedido: <a href="${statusUrl}" style="color:#3e1f63;">status do pedido</a>.</p>
-        <p style="margin:18px 0 0;font-size:12px;line-height:1.6;color:#8b8378;word-break:break-all;">Link de status:<br />${statusUrl}</p>
-      </div>
-    </div>
-  `;
-
-  const text = `Olá, ${payload.buyerName}.\n\nSua reserva para ${payload.eventName} foi criada. Pague via ${paymentMethodLabel(payload.paymentMethod)} até ${formatEventDate(payload.expiresAt)}.\n\nAcompanhe: ${statusUrl}${payload.invoiceUrl ? `\n\nPagamento: ${payload.invoiceUrl}` : ''}`;
-
-  return sendResendEmail({
+  const supportUrl = process.env.EMAIL_SUPPORT_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://alusa.app';
+  return sendResendTemplateEmail({
+    templateId: RESEND_EVENT_ORDER_CREATED_TEMPLATE_ID,
     to: payload.buyerEmail,
-    subject,
-    html,
-    text,
     idempotencyKey: `event-order-created-email:${payload.orderId}`,
+    variables: {
+      TITLE: 'Reserva confirmada',
+      TITLE_HTML: escapeHtml('Reserva confirmada'),
+      BUYER_NAME: payload.buyerName,
+      BUYER_NAME_HTML: escapeHtml(payload.buyerName),
+      EVENT_NAME: payload.eventName,
+      EVENT_NAME_HTML: escapeHtml(payload.eventName),
+      PAYMENT_METHOD: paymentMethodLabel(payload.paymentMethod),
+      PAYMENT_METHOD_HTML: escapeHtml(paymentMethodLabel(payload.paymentMethod)),
+      EXPIRES_AT: formatEventDate(payload.expiresAt),
+      EXPIRES_AT_HTML: escapeHtml(formatEventDate(payload.expiresAt)),
+      EVENT_DATE: formatEventDate(payload.eventStartsAt),
+      EVENT_DATE_HTML: escapeHtml(formatEventDate(payload.eventStartsAt)),
+      PAYMENT_URL: payload.invoiceUrl || statusUrl,
+      PAYMENT_URL_HTML: escapeHtml(payload.invoiceUrl || statusUrl),
+      PAYMENT_CTA_LABEL: payload.invoiceUrl ? 'Ir para o pagamento' : 'Acompanhar pedido',
+      PAYMENT_CTA_LABEL_HTML: escapeHtml(
+        payload.invoiceUrl ? 'Ir para o pagamento' : 'Acompanhar pedido',
+      ),
+      STATUS_URL: statusUrl,
+      STATUS_URL_HTML: escapeHtml(statusUrl),
+      SUPPORT_URL: supportUrl,
+      SUPPORT_URL_HTML: escapeHtml(supportUrl),
+    },
     tags: [
       { name: 'category', value: 'event_order_created' },
       { name: 'order_id', value: payload.orderId },

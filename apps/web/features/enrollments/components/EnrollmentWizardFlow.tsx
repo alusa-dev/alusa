@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Progress } from '@/components/ui/progress';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Button } from '@/components/ui/button';
 import { StepStudent } from './wizard/steps/StepStudent';
 import { StepEnrollmentMode } from './wizard/steps/StepEnrollmentMode';
@@ -308,12 +309,14 @@ export function EnrollmentWizardFlow({
     <div
       className={
         variant === 'page'
-          ? 'enrollment-wizard-flow flex w-full flex-col rounded-2xl border border-slate-200 bg-slate-50 shadow-sm'
-          : 'enrollment-wizard-flow flex min-h-0 flex-1 flex-col bg-[#f8fafc] alusa-dark:bg-[color:var(--color-bg-card)]'
+          ? 'enrollment-wizard-flow relative flex w-full flex-col rounded-2xl border border-slate-200 bg-slate-50 shadow-sm'
+          : 'enrollment-wizard-flow relative flex min-h-0 flex-1 flex-col bg-[#f8fafc] alusa-dark:bg-[color:var(--color-bg-card)]'
       }
       data-testid="matricula-wizard-flow"
+      aria-busy={isSubmitting}
     >
       <div
+        inert={isSubmitting || undefined}
         className={
           variant === 'dialog'
             ? 'relative bg-[#f8fafc] px-4 pb-3 pt-4 alusa-dark:bg-[color:var(--color-bg-card)] max-md:pb-3 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5'
@@ -350,6 +353,7 @@ export function EnrollmentWizardFlow({
       </div>
 
       <div
+        inert={isSubmitting || undefined}
         className={
           variant === 'dialog' ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'flex flex-col'
         }
@@ -419,6 +423,11 @@ export function EnrollmentWizardFlow({
           </div>
         </div>
       </div>
+      {isSubmitting && (
+        <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/15">
+          <LoadingDots label="Processando matrícula e configurando cobranças" />
+        </div>
+      )}
     </div>
   );
 }

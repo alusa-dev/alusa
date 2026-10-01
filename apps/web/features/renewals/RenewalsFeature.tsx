@@ -15,6 +15,7 @@ import { RenewalDialog } from '@/features/enrollments/components/RenewalDialog';
 import { FamilyRenewalDialog } from '@/features/enrollments/components/FamilyRenewalDialog';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
 import {
@@ -1526,16 +1527,25 @@ export default function RematriculasFeature() {
       <Dialog
         open={campaignFormOpen}
         onOpenChange={(open) => {
+          if (!open && campaignSaving) return;
           setCampaignFormOpen(open);
           if (!open && !campaignSaving) resetCampaignForm();
         }}
       >
         <DialogContent
           fullScreenMobile
+          aria-busy={campaignSaving}
+          closeDisabled={campaignSaving}
+          onEscapeKeyDown={(event) => {
+            if (campaignSaving) event.preventDefault();
+          }}
+          onPointerDownOutside={(event) => {
+            if (campaignSaving) event.preventDefault();
+          }}
           overlayClass="alusa-registration-wizard-overlay"
           className="campaign-registration-dialog alusa-wizard-corner-smoothing flex h-[min(620px,calc(100dvh-3rem))] w-[calc(100vw-2rem)] max-w-[820px] min-h-0 flex-col gap-0 overflow-hidden rounded-[20px] bg-[#f8fafc] p-0 max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0"
         >
-          <form onSubmit={handleCreateCampaign} className="flex h-full min-h-0 flex-col max-md:max-h-none max-md:flex-1">
+          <form onSubmit={handleCreateCampaign} inert={campaignSaving || undefined} className="flex h-full min-h-0 flex-col max-md:max-h-none max-md:flex-1">
             <div className="shrink-0 bg-[#f8fafc] px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
               <DialogTitle className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0">
                 {editingCampaign ? 'Editar campanha' : 'Criar campanha'}
@@ -1630,16 +1640,15 @@ export default function RematriculasFeature() {
                 variant="wizardPrimary"
                 className="h-10 min-h-10 w-full min-w-0 rounded-[10px] bg-[#512a82] px-5 font-normal text-white shadow-none hover:bg-[#512a82] md:w-[160px]"
               >
-                {campaignSaving
-                  ? editingCampaign
-                    ? 'Salvando...'
-                    : 'Criando...'
-                  : editingCampaign
-                    ? 'Salvar alterações'
-                    : 'Criar campanha'}
+                {editingCampaign ? 'Salvar alterações' : 'Criar campanha'}
               </Button>
             </DialogFooter>
           </form>
+          {campaignSaving && (
+            <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/15" aria-busy="true">
+              <LoadingDots label={editingCampaign ? 'Salvando campanha de rematrícula' : 'Criando campanha de rematrícula'} />
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

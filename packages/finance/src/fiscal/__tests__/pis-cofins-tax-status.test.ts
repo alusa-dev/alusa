@@ -114,9 +114,10 @@ describe('pis-cofins-tax-status', () => {
     );
   });
 
-  it('não envia pisCofinsRetentionType e ativa NT-007 para Regime Normal', () => {
+  it('mapeia apenas os campos aceitos no objeto taxes e omite retenção calculada', () => {
     const taxes = buildAsaasInvoiceTaxes({
       simplesNacional: false,
+      effectiveDate: '2026-10-01',
       retainIss: false,
       iss: 2,
       pis: null,
@@ -127,20 +128,29 @@ describe('pis-cofins-tax-status', () => {
       pisCofinsTaxStatus: 'STANDARD_TAXABLE_OPERATION',
       operationPis: 0.65,
       operationCofins: 3,
+      nbsCode: '1.0901.21.00',
+      taxSituationCode: '200001',
+      taxClassificationCode: '011001',
+      operationIndicatorCode: '020101',
     });
 
     expect(taxes).toMatchObject({
       pisCofinsTaxStatus: 'STANDARD_TAXABLE_OPERATION',
       operationPis: 0.65,
       operationCofins: 3,
-      useTaxSystemReformNT007: true,
+      nbsCode: '1.0901.21.00',
+      taxSituationCode: '200001',
+      taxClassificationCode: '011001',
+      operationIndicatorCode: '020101',
     });
     expect('pisCofinsRetentionType' in taxes).toBe(false);
+    expect('useTaxSystemReformNT007' in taxes).toBe(false);
   });
 
   it('envia payload tributário completo e explícito para Simples Nacional', () => {
     const taxes = buildAsaasInvoiceTaxes({
       simplesNacional: true,
+      effectiveDate: '2026-12-31',
       retainIss: false,
       iss: 2,
       pis: null,
@@ -156,7 +166,30 @@ describe('pis-cofins-tax-status', () => {
     expect(taxes.pisCofinsTaxStatus).toBeNull();
     expect(taxes.operationPis).toBeNull();
     expect(taxes.operationCofins).toBeNull();
-    expect(taxes.nbsCode).toBeNull();
-    expect(taxes.useTaxSystemReformNT007).toBe(false);
+    expect(taxes).not.toHaveProperty('nbsCode');
+    expect('useTaxSystemReformNT007' in taxes).toBe(false);
+  });
+
+  it('omite todos os campos da reforma antes da data de obrigatoriedade', () => {
+    const taxes = buildAsaasInvoiceTaxes({
+      simplesNacional: false,
+      effectiveDate: '2026-09-30',
+      retainIss: false,
+      iss: 2,
+      pis: null,
+      cofins: null,
+      csll: 0,
+      inss: 0,
+      ir: 0,
+      nbsCode: '1.0901.21.00',
+      taxSituationCode: '200001',
+      taxClassificationCode: '011001',
+      operationIndicatorCode: '020101',
+    });
+
+    expect(taxes).not.toHaveProperty('nbsCode');
+    expect(taxes).not.toHaveProperty('taxSituationCode');
+    expect(taxes).not.toHaveProperty('taxClassificationCode');
+    expect(taxes).not.toHaveProperty('operationIndicatorCode');
   });
 });

@@ -22,7 +22,7 @@ describe('updateInvoice taxes replacement contract', () => {
         retainIss: false, cofins: 3, csll: 0, inss: 0, ir: 0, pis: 0.65, iss: 2,
         nbsCode: '109012100', taxSituationCode: '200001', taxClassificationCode: '011001',
         operationIndicatorCode: '020101', pisCofinsTaxStatus: 'STANDARD_TAXABLE_OPERATION',
-        operationPis: 0.65, operationCofins: 3, useTaxSystemReformNT007: true,
+        operationPis: 0.65, operationCofins: 3,
         pisCofinsRetentionType: 'CALCULATED_BY_ASAAS', stateIbs: 0.1, cbsValue: 12.34,
       },
     });
@@ -41,7 +41,6 @@ describe('updateInvoice taxes replacement contract', () => {
         pis: 0.65,
         cofins: 3,
         nbsCode: '109012100',
-        useTaxSystemReformNT007: true,
       }),
     });
     const sentTaxes = http.put.mock.calls[0]![1].taxes;

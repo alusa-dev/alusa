@@ -3,7 +3,6 @@ import { err, ok } from '@alusa/shared';
 
 import { isInvoiceProviderSyncPending } from '../mappers/invoice-status.mapper';
 import { evaluateChargeInvoiceEligibility } from '../fiscal/charge-invoice-eligibility';
-import { authorizeChargeInvoice } from './authorize-charge-invoice';
 import {
   getChargeInvoiceDetail,
   type ChargeInvoiceDetailOutput,
@@ -70,44 +69,9 @@ export async function emitChargeInvoice(
     chargeId: input.chargeId,
   });
 
-  let detail = await getChargeInvoiceDetail({ contaId: input.contaId, routeRef });
+  const detail = await getChargeInvoiceDetail({ contaId: input.contaId, routeRef });
   if (!detail.success) {
     return ok(fallbackPendingDetail());
-  }
-
-  if (
-    detail.data.invoice?.status === 'SCHEDULED' &&
-    detail.data.invoice.hasProviderInvoice &&
-    isSyncPending(detail.data)
-  ) {
-    const authorized = await authorizeChargeInvoice({
-      contaId: input.contaId,
-      chargeId: input.chargeId,
-      actor: input.actor,
-    });
-
-    if (!authorized.success) {
-      const failure = authorized.error;
-      const isAlreadyProcessing =
-        typeof failure === 'object' &&
-        failure !== null &&
-        'status' in failure &&
-        failure.status === 409;
-
-      if (!isAlreadyProcessing) {
-        return err(failure as EmitChargeInvoiceError);
-      }
-    }
-
-    await syncInvoiceFromProvider({
-      contaId: input.contaId,
-      chargeId: input.chargeId,
-    });
-
-    detail = await getChargeInvoiceDetail({ contaId: input.contaId, routeRef });
-    if (!detail.success) {
-      return ok(fallbackPendingDetail());
-    }
   }
 
   return ok({

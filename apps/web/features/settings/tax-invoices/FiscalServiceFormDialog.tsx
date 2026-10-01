@@ -727,14 +727,7 @@ export function FiscalServiceFormDialog({
               !form.name ||
               (form.source === 'MUNICIPAL_LIST'
                 ? !form.asaasMunicipalServiceId
-                : !form.municipalServiceCode) ||
-              (!simplesNacional &&
-                (!form.nationalTaxCode ||
-                  !form.nbsCode ||
-                  !form.pisCofinsTaxStatus ||
-                  !form.taxSituationCode ||
-                  !form.taxClassificationCode ||
-                  !form.operationIndicatorCode))
+                : !form.municipalServiceCode)
             }
           >
             {saving ? 'Salvando…' : 'Salvar serviço'}

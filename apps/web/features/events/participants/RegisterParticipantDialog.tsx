@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { InfoCallout } from '@/components/ui/info-callout';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import { cn } from '@/lib/utils';
 import {
   wizardSoftCheckboxClass,
@@ -318,14 +319,15 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
         fullScreenMobile
         overlayClass="alusa-registration-wizard-overlay"
         className={cn(
-          'event-registration-dialog alusa-wizard-corner-smoothing flex w-[calc(100vw-2rem)] max-w-md min-h-0 flex-col gap-0 overflow-hidden rounded-[20px] bg-white p-0 transition-[height] duration-200 ease-out',
+          'event-registration-dialog alusa-wizard-corner-smoothing relative flex w-[calc(100vw-2rem)] max-w-md min-h-0 flex-col gap-0 overflow-hidden rounded-[20px] bg-white p-0 transition-[height] duration-200 ease-out',
           billingMethod === 'MANUAL_RECEIVED' || billingMethod === 'ISSUE_CHARGE'
             ? 'h-[min(760px,calc(100dvh-3rem))]'
             : 'h-[min(488px,calc(100dvh-3rem))]',
           'max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0',
         )}
+        aria-busy={registerMutation.isPending}
       >
-        <form key={open ? 'open' : 'closed'} action={handleRegisterParticipant} className="flex h-full min-h-0 flex-col overflow-hidden">
+        <form key={open ? 'open' : 'closed'} action={handleRegisterParticipant} inert={registerMutation.isPending || undefined} className="flex h-full min-h-0 flex-col overflow-hidden">
           <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-4 pr-14 max-md:pb-4 max-md:pl-4 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
             <DialogTitle className="text-xl font-semibold tracking-tight text-slate-900">Inscrever aluno no evento</DialogTitle>
             <DialogDescription className="mt-2 max-w-2xl text-sm text-slate-600">Selecione um aluno cadastrado e especifique a taxa cobrada.</DialogDescription>
@@ -518,10 +520,15 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
               Cancelar
             </Button>
             <Button type="submit" disabled={registerMutation.isPending} variant="wizardPrimary" className="h-10 min-h-10 w-full min-w-0 rounded-[10px] bg-[#512a82] px-5 font-normal text-white shadow-none hover:bg-[#512a82] md:w-[160px]">
-              {registerMutation.isPending ? 'Inscrevendo...' : 'Confirmar inscrição'}
+              Confirmar inscrição
             </Button>
           </DialogFooter>
         </form>
+        {registerMutation.isPending && (
+          <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/15" aria-busy="true">
+            <LoadingDots label="Inscrevendo aluno no evento" />
+          </div>
+        )}
       </DialogContent>
     </Dialog>
     <ConfirmDialog

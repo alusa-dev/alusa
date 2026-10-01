@@ -49,10 +49,15 @@ export async function updateInvoice(params: UpdateInvoiceParams): Promise<AsaasI
     operationPis: supplied(requested, 'operationPis') ? requested.operationPis : currentTaxes?.operationPis ?? null,
     operationCofins:
       supplied(requested, 'operationCofins') ? requested.operationCofins : currentTaxes?.operationCofins ?? null,
-    useTaxSystemReformNT007:
-      supplied(requested, 'useTaxSystemReformNT007')
-        ? requested.useTaxSystemReformNT007
-        : currentTaxes?.useTaxSystemReformNT007 ?? false,
+    operationTypeCode: supplied(requested, 'operationTypeCode')
+      ? requested.operationTypeCode
+      : currentTaxes?.operationTypeCode,
+    referencedInvoiceAccessKeyList: supplied(requested, 'referencedInvoiceAccessKeyList')
+      ? requested.referencedInvoiceAccessKeyList
+      : currentTaxes?.referencedInvoiceAccessKeyList,
+    realEstateInfo: supplied(requested, 'realEstateInfo')
+      ? requested.realEstateInfo
+      : currentTaxes?.realEstateInfo,
   };
 
   return client.put<AsaasInvoice>(`/invoices/${params.id}`, { ...params.data, taxes });

@@ -1,4 +1,5 @@
 import type { AsaasInvoiceTaxesRequest } from '@alusa/asaas';
+import { isTaxReformApplicable } from './ibs-cbs';
 
 import {
   normalizeOperationPisCofinsRates,
@@ -10,6 +11,7 @@ import {
 
 export type BuildAsaasInvoiceTaxesInput = {
   simplesNacional: boolean;
+  effectiveDate?: string;
   useNationalPortal?: boolean | null;
   retainIss: boolean;
   iss: number;
@@ -25,7 +27,6 @@ export type BuildAsaasInvoiceTaxesInput = {
   pisCofinsTaxStatus?: string | null;
   operationPis?: number | null;
   operationCofins?: number | null;
-  useTaxSystemReformNT007?: boolean;
 };
 
 function optionalString(value: string | null | undefined): string | null {
@@ -50,6 +51,12 @@ export function validateAsaasInvoiceTaxesInput(
 export function buildAsaasInvoiceTaxes(
   input: BuildAsaasInvoiceTaxesInput,
 ): AsaasInvoiceTaxesRequest {
+  const includeTaxReformFields = input.effectiveDate
+    ? isTaxReformApplicable({
+        simplesNacional: input.simplesNacional,
+        effectiveDate: input.effectiveDate,
+      })
+    : false;
   const retainedRates = normalizePisCofinsTaxRates({
     pis: input.pis,
     cofins: input.cofins,
@@ -64,8 +71,10 @@ export function buildAsaasInvoiceTaxes(
         operationPis: input.operationPis,
         operationCofins: input.operationCofins,
       });
-  const useTaxSystemReformNT007 = !input.simplesNacional;
-
+  const nbsCode = optionalString(input.nbsCode);
+  const taxSituationCode = optionalString(input.taxSituationCode);
+  const taxClassificationCode = optionalString(input.taxClassificationCode);
+  const operationIndicatorCode = optionalString(input.operationIndicatorCode);
   return {
     retainIss: input.retainIss,
     iss: input.iss,
@@ -74,13 +83,16 @@ export function buildAsaasInvoiceTaxes(
     csll: input.csll,
     inss: input.inss,
     ir: input.ir,
-    nbsCode: optionalString(input.nbsCode),
-    taxSituationCode: optionalString(input.taxSituationCode),
-    taxClassificationCode: optionalString(input.taxClassificationCode),
-    operationIndicatorCode: optionalString(input.operationIndicatorCode),
+    ...(includeTaxReformFields
+      ? {
+          ...(nbsCode ? { nbsCode } : {}),
+          ...(taxSituationCode ? { taxSituationCode } : {}),
+          ...(taxClassificationCode ? { taxClassificationCode } : {}),
+          ...(operationIndicatorCode ? { operationIndicatorCode } : {}),
+        }
+      : {}),
     pisCofinsTaxStatus,
     operationPis: operationRates.operationPis,
     operationCofins: operationRates.operationCofins,
-    useTaxSystemReformNT007,
   };
 }

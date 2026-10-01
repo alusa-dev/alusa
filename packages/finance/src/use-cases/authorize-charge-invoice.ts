@@ -13,6 +13,7 @@ import {
 } from '../fiscal/provider-invoice-snapshot';
 import { mapAsaasInvoiceStatusToInternal } from '../mappers/invoice-status.mapper';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
+import { todayInBrazil } from '../fiscal/invoice-effective-date';
 
 export type AuthorizeChargeInvoiceInput = {
   contaId: string;
@@ -195,6 +196,16 @@ export async function authorizeChargeInvoice(
       return err({
         kind: 'ASAAS',
         message: authorizeBlockedMessage(remoteStatus),
+        status: 409,
+      });
+    }
+
+    const effectiveDate = remoteInvoice.effectiveDate ?? invoice.effectiveDate?.toISOString().slice(0, 10);
+    const today = todayInBrazil();
+    if (!effectiveDate || effectiveDate <= today) {
+      return err({
+        kind: 'ASAAS',
+        message: 'A autorização antecipada só está disponível para uma NFS-e agendada para uma data futura.',
         status: 409,
       });
     }

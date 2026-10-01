@@ -1,4 +1,8 @@
 import { NextResponse } from 'next/server';
+import { readBoundedFormData } from '@/lib/upload-request';
+import { withTenantUploadQuota } from '@/lib/upload-quota.server';
+import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
+import { randomUUID } from 'node:crypto';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
@@ -62,7 +66,9 @@ export async function PUT(request: Request) {
     let certificateFile: File | undefined;
 
     if (contentType.includes('multipart/form-data')) {
-      const form = await request.formData();
+      const uploadBody = await readBoundedFormData(request);
+      if (!uploadBody.ok) return json(uploadBody.status, { error: uploadBody.error });
+      const form = uploadBody.formData;
       form.forEach((value, key) => {
         if (key === 'certificateFile' && value instanceof File) {
           certificateFile = value;
@@ -83,12 +89,24 @@ export async function PUT(request: Request) {
       return json(422, { error: 'PAYLOAD_INVALIDO', details: parsed.error.flatten() });
     }
 
-    const result = await saveFiscalInvoiceSettings({
+    const rate = await strictRateLimitAsync(`fiscal-invoice-certificate:${auth.contaId}:${auth.userId}:${ipFromRequest(request)}`, 10, 10 * 60_000);
+    if (!rate.ok) return json(429, { error: 'MUITAS_TENTATIVAS' });
+    const save = () => saveFiscalInvoiceSettings({
       contaId: auth.contaId,
       actor: { type: 'USER', id: auth.userId },
       ...parsed.data,
       certificateFile,
     });
+    let result: Awaited<ReturnType<typeof saveFiscalInvoiceSettings>>;
+    if (certificateFile) {
+      if (certificateFile.size > 3 * 1024 * 1024) return json(413, { error: 'ARQUIVO_MUITO_GRANDE' });
+      const quota = await withTenantUploadQuota({
+        contaId: auth.contaId, fileSize: certificateFile.size, contentType: certificateFile.type || 'application/octet-stream',
+        objectKey: `uploads/fiscal-reservations/${auth.contaId}/${randomUUID()}`, cleanup: async () => undefined, action: save,
+      });
+      if (!quota.ok) return json(413, { error: 'QUOTA_UPLOAD_EXCEDIDA' });
+      result = quota.result;
+    } else result = await save();
 
     if (!result.success) {
       if (isStructuredSaveError(result.error)) {

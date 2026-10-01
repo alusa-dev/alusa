@@ -18,7 +18,7 @@ import { requireKycApproved } from '../foundation/kyc-guard';
 import { buildChargeInvoiceTexts, resolveChargeInvoiceContext } from '../fiscal/charge-invoice-context';
 import { evaluateChargeInvoiceEligibility } from '../fiscal/charge-invoice-eligibility';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
-import { buildAsaasInvoiceIbsCbs, validateFiscalIbsCbs } from '../fiscal/ibs-cbs';
+import { isTaxReformApplicable, validateFiscalIbsCbs } from '../fiscal/ibs-cbs';
 import {
   buildAsaasInvoiceTaxes,
   validateAsaasInvoiceTaxesInput,
@@ -540,13 +540,6 @@ export async function scheduleChargeInvoice(
     const defaultService = services.find((service) => service.isDefault);
     if (!settings || !defaultService) return err('FISCAL_NOT_READY');
 
-    if (!settings.simplesNacional) {
-      const issues = validateFiscalIbsCbs(defaultService);
-      if (issues.length > 0) {
-        return err({ kind: 'VALIDATION', message: issues[0]!.message });
-      }
-    }
-
     const retainedPis = Number(defaultService.pis);
     const retainedCofins = Number(defaultService.cofins);
     const operationPis = defaultService.operationPis == null ? null : Number(defaultService.operationPis);
@@ -576,6 +569,18 @@ export async function scheduleChargeInvoice(
     const chargeContext = await resolveChargeInvoiceContext(input.chargeId, input.contaId);
     if (!chargeContext) return err('CHARGE_NAO_ENCONTRADO');
     if (!chargeContext.charge.asaasPaymentId) return err('CHARGE_SEM_PAGAMENTO_ASAAS');
+
+    const effectiveDate = resolveInvoiceEffectiveDate(
+      chargeContext.charge.cobranca?.vencimento ?? chargeContext.charge.dueDate ?? null,
+      input.effectiveDate,
+    );
+    const taxReformApplicable = isTaxReformApplicable({ simplesNacional: settings.simplesNacional, effectiveDate });
+    if (taxReformApplicable) {
+      const issues = validateFiscalIbsCbs(defaultService);
+      if (issues.length > 0) {
+        return err({ kind: 'VALIDATION', message: issues[0]!.message });
+      }
+    }
 
     const payerReadiness = await evaluateChargePayerFiscalReadiness({
       contaId: input.contaId,
@@ -613,11 +618,6 @@ export async function scheduleChargeInvoice(
     });
 
     const value = chargeContext.value;
-    const effectiveDate = resolveInvoiceEffectiveDate(
-      chargeContext.charge.cobranca?.vencimento ?? chargeContext.charge.dueDate ?? null,
-      input.effectiveDate,
-    );
-
     if (!isInvoiceEffectiveDateValid(effectiveDate, todayInBrazil())) {
       return err({
         kind: 'VALIDATION',
@@ -689,8 +689,12 @@ export async function scheduleChargeInvoice(
 
     const invoiceId = chargeContext.charge.id;
     const externalReference = buildCanonicalInvoiceExternalReference(invoiceId);
+    // The current fiscal-service model has no operationTypeCode or property
+    // address/access-key fields. Do not infer real-estate operation data from
+    // opaque service codes; that scenario needs an explicit product model.
     const taxes = buildAsaasInvoiceTaxes({
       simplesNacional: settings.simplesNacional,
+      effectiveDate,
       useNationalPortal: settings.useNationalPortal,
       retainIss: defaultService.retainIss,
       cofins: retainedCofins,
@@ -706,7 +710,6 @@ export async function scheduleChargeInvoice(
       pisCofinsTaxStatus: defaultService.pisCofinsTaxStatus,
       operationPis,
       operationCofins,
-      useTaxSystemReformNT007: defaultService.useTaxSystemReformNT007,
     });
     const usesProviderMunicipalService = Boolean(defaultService.asaasMunicipalServiceId);
     const municipalServiceId = usesProviderMunicipalService
@@ -715,10 +718,6 @@ export async function scheduleChargeInvoice(
     const municipalServiceCode = usesProviderMunicipalService
       ? null
       : defaultService.municipalServiceCode;
-    const ibsCbs = !settings.simplesNacional
-      ? buildAsaasInvoiceIbsCbs(defaultService) ?? undefined
-      : undefined;
-
     if (existing && !existing.asaasInvoiceId) {
       const recovered = await recoverInvoiceByExternalReference({
         contaId: input.contaId,
@@ -799,7 +798,6 @@ export async function scheduleChargeInvoice(
           municipalServiceCode,
           municipalServiceName: defaultService.name,
           taxes,
-          ibsCbs,
         },
       });
 

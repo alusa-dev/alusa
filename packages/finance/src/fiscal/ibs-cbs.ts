@@ -1,8 +1,5 @@
-import type { AsaasInvoiceIbsCbsRequest } from '@alusa/asaas';
-
 export type FiscalIbsCbsSource = {
   nbsCode?: string | null;
-  nationalTaxCode?: string | null;
   taxSituationCode?: string | null;
   taxClassificationCode?: string | null;
   operationIndicatorCode?: string | null;
@@ -12,7 +9,6 @@ export type FiscalIbsCbsIssue = { field: keyof FiscalIbsCbsSource; message: stri
 
 const requiredFields: Array<keyof FiscalIbsCbsSource> = [
   'nbsCode',
-  'nationalTaxCode',
   'taxSituationCode',
   'taxClassificationCode',
   'operationIndicatorCode',
@@ -26,15 +22,12 @@ export function validateFiscalIbsCbs(source: FiscalIbsCbsSource): FiscalIbsCbsIs
   );
 }
 
-export function buildAsaasInvoiceIbsCbs(
-  source: FiscalIbsCbsSource,
-): AsaasInvoiceIbsCbsRequest | null {
-  if (validateFiscalIbsCbs(source).length > 0) return null;
-  return {
-    nbsCode: source.nbsCode!.trim(),
-    nationalServiceCode: source.nationalTaxCode!.trim(),
-    taxSituation: source.taxSituationCode!.trim(),
-    taxClassification: source.taxClassificationCode!.trim(),
-    operationIndicatorCode: source.operationIndicatorCode!.trim(),
-  };
+/** Uses only the tenant-declared regime and invoice date. Activity-specific
+ * scenarios are not inferred from codes the current model does not classify. */
+export function isTaxReformApplicable(input: {
+  simplesNacional: boolean;
+  effectiveDate: string;
+}): boolean {
+  const startDate = input.simplesNacional ? '2027-01-01' : '2026-10-01';
+  return input.effectiveDate >= startDate;
 }

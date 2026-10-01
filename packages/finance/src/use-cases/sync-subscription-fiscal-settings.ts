@@ -16,10 +16,10 @@ import { featureFlagsService } from '../foundation/feature-flags.service';
 import { requireKycApproved } from '../foundation/kyc-guard';
 import { computeFiscalReadiness } from '../fiscal/fiscal-readiness';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
-import {
-  buildAsaasInvoiceTaxes,
-  validateAsaasInvoiceTaxesInput,
-} from '../fiscal/invoice-taxes';
+import { isTaxReformApplicable, validateFiscalIbsCbs } from '../fiscal/ibs-cbs';
+import { validateAsaasInvoiceTaxesInput } from '../fiscal/invoice-taxes';
+import { todayInBrazil } from '../fiscal/invoice-effective-date';
+import { buildSubscriptionInvoiceTaxes } from '../fiscal/subscription-invoice-taxes';
 import {
   buildFinanceReconciliationIssueDedupeKey,
   resolveFinanceReconciliationIssueByDedupe,
@@ -67,46 +67,6 @@ async function resolveFiscalSettingsIssue(input: SyncSubscriptionFiscalSettingsI
     contaId: input.contaId,
     dedupeKey: fiscalSettingsIssueDedupe(input),
     resolution: 'Configuração fiscal da assinatura reconciliada com o Asaas.',
-  });
-}
-
-function buildTaxes(service: {
-  simplesNacional: boolean;
-  useNationalPortal?: boolean | null;
-  retainIss: boolean;
-  iss: unknown;
-  pis: unknown;
-  cofins: unknown;
-  csll: unknown;
-  inss: unknown;
-  ir: unknown;
-  nbsCode: string | null;
-  taxSituationCode: string | null;
-  taxClassificationCode: string | null;
-  operationIndicatorCode: string | null;
-  pisCofinsTaxStatus: string | null;
-  operationPis: unknown;
-  operationCofins: unknown;
-  useTaxSystemReformNT007: boolean;
-}): NonNullable<UpsertSubscriptionInvoiceSettingsInput['taxes']> {
-  return buildAsaasInvoiceTaxes({
-    simplesNacional: service.simplesNacional,
-    useNationalPortal: service.useNationalPortal,
-    retainIss: service.retainIss,
-    iss: asNumber(service.iss),
-    pis: service.pis == null ? null : asNumber(service.pis),
-    cofins: service.cofins == null ? null : asNumber(service.cofins),
-    csll: asNumber(service.csll),
-    inss: asNumber(service.inss),
-    ir: asNumber(service.ir),
-    nbsCode: service.nbsCode,
-    taxSituationCode: service.taxSituationCode,
-    taxClassificationCode: service.taxClassificationCode,
-    operationIndicatorCode: service.operationIndicatorCode,
-    pisCofinsTaxStatus: service.pisCofinsTaxStatus,
-    operationPis: service.operationPis == null ? null : asNumber(service.operationPis),
-    operationCofins: service.operationCofins == null ? null : asNumber(service.operationCofins),
-    useTaxSystemReformNT007: service.useTaxSystemReformNT007,
   });
 }
 
@@ -190,7 +150,6 @@ export async function syncSubscriptionFiscalSettings(
 
     const shouldDelete =
       input.action === 'DELETE' ||
-      settings?.simplesNacional === false ||
       !invoicesEnabled ||
       !readiness.ready ||
       settings?.emissionMode !== 'ON_PAYMENT';
@@ -219,15 +178,31 @@ export async function syncSubscriptionFiscalSettings(
       return ok({
         configured: false,
         action: 'DELETED',
-        reason: settings?.simplesNacional === false
-          ? 'IBS_CBS_REQUIRES_LOCAL_EMISSION'
-          : 'NOT_ELIGIBLE',
+        reason: input.action === 'DELETE' ? 'REQUESTED' : 'NOT_ELIGIBLE',
       });
     }
 
     const defaultService = services.find((service) => service.isDefault);
     if (!settings || !defaultService) {
       return ok({ configured: false, action: 'SKIPPED', reason: 'FISCAL_NOT_READY' });
+    }
+
+    if (isTaxReformApplicable({
+      simplesNacional: settings.simplesNacional,
+      effectiveDate: todayInBrazil(),
+    })) {
+      const reformIssues = validateFiscalIbsCbs(defaultService);
+      if (reformIssues.length > 0) {
+        const message = reformIssues[0]?.message ?? 'Revise a classificação fiscal da reforma tributária.';
+        deletionOutcomeUnknown = true;
+        await deleteSubscriptionInvoiceSettingsIfConfigured({
+          apiKey: credentials.apiKey,
+          subscriptionId: input.asaasSubscriptionId,
+        });
+        deletionOutcomeUnknown = false;
+        await markLocal({ ...input, configured: false, error: message });
+        return ok({ configured: false, action: 'SKIPPED', reason: 'CLASSIFICACAO_REFORMA_TRIBUTARIA_INVALIDA' });
+      }
     }
 
     const pisCofinsIssues = validateAsaasInvoiceTaxesInput({
@@ -274,11 +249,11 @@ export async function syncSubscriptionFiscalSettings(
           ? settings.invoiceReceivedOnly
           : undefined,
       observations: settings.defaultObservations ?? undefined,
-      taxes: buildTaxes({
+      taxes: buildSubscriptionInvoiceTaxes({
         ...defaultService,
         simplesNacional: settings.simplesNacional,
         useNationalPortal: settings.useNationalPortal,
-      }),
+      }, todayInBrazil()),
     };
 
     const existingSettings = await findSubscriptionInvoiceSettings({

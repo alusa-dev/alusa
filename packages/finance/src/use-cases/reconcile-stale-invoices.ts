@@ -4,6 +4,7 @@ import type { InvoiceOperationStatus, InvoiceStatus, Prisma } from '@prisma/clie
 
 import { resolveChargeInvoiceEmissionPath } from '../fiscal/charge-invoice-emission-path';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
+import { todayInBrazil } from '../fiscal/invoice-effective-date';
 import { recordInvoiceAuditEvent } from '../fiscal/invoice-audit.service';
 import {
   buildInvoiceProviderSnapshotUpdate,
@@ -416,6 +417,7 @@ export async function reconcileStaleInvoices(
   );
   const now = new Date();
   const staleBefore = new Date(now.getTime() - staleOlderThanMinutes * 60 * 1000);
+  const today = todayInBrazil();
 
   const candidates = await prisma.invoice.findMany({
     where: {
@@ -519,25 +521,48 @@ export async function reconcileStaleInvoices(
     take: limit,
   });
 
+  // Static Asaas subscription settings must be refreshed once each regime's
+  // reform-tax effective date arrives. The last successful sync timestamp
+  // makes this a bounded transition sync rather than a recurring full rewrite.
+  const reformTransitionSync = [
+    ...(today >= '2026-10-01'
+      ? [{
+          asaasInvoiceSettingsConfigured: true,
+          conta: { contaFiscalSettings: { is: { simplesNacional: false } } },
+          OR: [
+            { fiscalInvoiceSettingsSyncedAt: null },
+            { fiscalInvoiceSettingsSyncedAt: { lt: new Date('2026-10-01T03:00:00.000Z') } },
+          ],
+        }]
+      : []),
+    ...(today >= '2027-01-01'
+      ? [{
+          asaasInvoiceSettingsConfigured: true,
+          conta: { contaFiscalSettings: { is: { simplesNacional: true } } },
+          OR: [
+            { fiscalInvoiceSettingsSyncedAt: null },
+            { fiscalInvoiceSettingsSyncedAt: { lt: new Date('2027-01-01T03:00:00.000Z') } },
+          ],
+        }]
+      : []),
+  ];
+  const subscriptionFiscalSyncWhere = {
+    contaId: input.contaId,
+    asaasSubscriptionId: { not: null },
+    OR: [{ fiscalInvoiceSettingsError: { not: null } }, ...reformTransitionSync],
+  };
+
   const [academicFiscalSync, standaloneFiscalSync] = await Promise.all([
     prisma.subscription.findMany({
-      where: {
-        contaId: input.contaId,
-        asaasSubscriptionId: { not: null },
-        fiscalInvoiceSettingsError: { not: null },
-        status: { in: ['REQUESTED', 'ACTIVE'] },
-      },
+      where: { ...subscriptionFiscalSyncWhere, status: { in: ['REQUESTED', 'ACTIVE'] } },
       select: { id: true, contaId: true, asaasSubscriptionId: true },
+      orderBy: { fiscalInvoiceSettingsSyncedAt: 'asc' },
       take: limit,
     }),
     prisma.standaloneSubscription.findMany({
-      where: {
-        contaId: input.contaId,
-        asaasSubscriptionId: { not: null },
-        fiscalInvoiceSettingsError: { not: null },
-        status: { in: ['REQUESTED', 'ACTIVE'] },
-      },
+      where: { ...subscriptionFiscalSyncWhere, status: { in: ['REQUESTED', 'ACTIVE'] } },
       select: { id: true, contaId: true, asaasSubscriptionId: true },
+      orderBy: { fiscalInvoiceSettingsSyncedAt: 'asc' },
       take: limit,
     }),
   ]);

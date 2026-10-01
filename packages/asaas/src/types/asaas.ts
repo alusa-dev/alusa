@@ -30,14 +30,16 @@ export interface AsaasInvoiceTaxesRequest {
   ir: number;
   pis: number | null;
   iss: number;
-  nbsCode: string | null;
-  taxSituationCode: string | null;
-  taxClassificationCode: string | null;
-  operationIndicatorCode: string | null;
+  nbsCode?: string | null;
+  taxSituationCode?: string | null;
+  taxClassificationCode?: string | null;
+  operationIndicatorCode?: string | null;
   pisCofinsTaxStatus: string | null;
   operationPis: number | null;
   operationCofins: number | null;
-  useTaxSystemReformNT007: boolean;
+  operationTypeCode?: number;
+  referencedInvoiceAccessKeyList?: string[];
+  realEstateInfo?: AsaasInvoiceRealEstateInfoRequest;
 }
 
 export interface AsaasInvoiceTaxesResponse extends AsaasInvoiceTaxesRequest {
@@ -54,12 +56,15 @@ export interface AsaasInvoiceTaxesResponse extends AsaasInvoiceTaxesRequest {
   cbsValue?: number | null;
 }
 
-export interface AsaasInvoiceIbsCbsRequest {
-  nbsCode: string;
-  nationalServiceCode: string;
-  taxSituation: string;
-  taxClassification: string;
-  operationIndicatorCode: string;
+export interface AsaasInvoiceRealEstateInfoRequest {
+  fiscalPropertyRegistration?: string;
+  cibCode: string;
+  city?: number;
+  address: string;
+  addressNumber: string;
+  complement?: string;
+  province: string;
+  postalCode: string;
 }
 
 export type AsaasInvoiceTaxes = AsaasInvoiceTaxesResponse;
@@ -79,8 +84,6 @@ export interface CreateInvoiceInput {
   municipalServiceName: string;
   updatePayment?: boolean;
   taxes: AsaasInvoiceTaxesRequest;
-  /** Reforma tributária IBS/CBS. Habilitar somente para contas obrigadas. */
-  ibsCbs?: AsaasInvoiceIbsCbsRequest;
 }
 
 export interface AsaasInvoice {
@@ -106,7 +109,6 @@ export interface AsaasInvoice {
   estimatedTaxesDescription?: string | null;
   externalReference?: string | null;
   taxes?: AsaasInvoiceTaxesResponse;
-  ibsCbs?: AsaasInvoiceIbsCbsRequest | null;
   municipalServiceId?: string | null;
   municipalServiceCode?: string | null;
   municipalServiceName?: string | null;

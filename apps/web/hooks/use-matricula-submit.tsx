@@ -70,8 +70,6 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
     setLoading(true);
     setError(null);
     setData(null);
-    const processingToast = toast.message('Criando matrícula e configurando as cobranças...');
-
     const contaId = wizardState.contaId ?? '';
     try {
       const execute = async (): Promise<MatriculaResponse> => {
@@ -178,8 +176,6 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
       clearEnrollmentAttempt(contaId);
       setConfirmationState('IDLE');
       setData(result);
-
-      toast.dismiss(processingToast);
 
       if (result.notificationSync?.warnings?.length) {
         showNotificationSyncWarnings(result.notificationSync.warnings, {
@@ -309,7 +305,6 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
       // como erro de aplicação e esconda a mensagem útil do usuário.
       return null;
     } finally {
-      toast.dismiss(processingToast);
       inFlight.current = false;
       setLoading(false);
     }
