@@ -235,7 +235,6 @@
         "packages/finance/src/fiscal/charge-invoice-eligibility.ts",
         "packages/finance/src/fiscal/fiscal-readiness.ts",
         "packages/finance/src/fiscal/fiscal-settings-validation.ts",
-        "packages/finance/src/fiscal/ibs-cbs.ts",
         "packages/finance/src/fiscal/invoice-taxes.ts",
         "packages/finance/src/fiscal/persist-fiscal-core-settings.ts",
         "packages/finance/src/fiscal/provider-invoice-snapshot.ts",
