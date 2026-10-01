@@ -1,3 +1,4 @@
+import { logLibOperationalEvent } from '../observability/operational-log';
 import { prisma } from '../prisma';
 import { salaSchema } from '../schemas/sala.schema';
 import type { Sala } from '@prisma/client';
@@ -56,7 +57,9 @@ export async function createSala(input: {
   } catch (err: unknown) {
     const code =
       typeof err === 'object' && err && 'code' in err ? (err as { code?: string }).code : undefined;
-    if (process.env.NODE_ENV !== 'production') console.error('[createSala] erro', err);
+    if (process.env.NODE_ENV !== 'production') {
+      logLibOperationalEvent({ eventName: 'room.create.failed', error: err, severity: 'error' });
+    }
     if (code === 'P2002') throw new Error('Já existe uma sala com este nome nesta conta');
     if (code === 'P2003') throw new Error('Falha de integridade: conta vinculada não existe');
     throw err;

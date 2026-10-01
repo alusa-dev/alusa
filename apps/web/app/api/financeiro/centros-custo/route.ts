@@ -1,3 +1,4 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest) {
       ),
     );
   } catch (e) {
-    console.error('[API centro de custo][GET]', e);
+    logFinanceApiError('/api/financeiro/centros-custo', e);
     return err(500, 'ERRO_INTERNO', 'Não foi possível carregar os centros de custo');
   }
 }
@@ -85,7 +86,7 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (e) {
-    console.error('[API centro de custo][POST]', e);
+    logFinanceApiError('/api/financeiro/centros-custo', e);
     return err(500, 'ERRO_INTERNO', 'Não foi possível criar o centro de custo');
   }
 }

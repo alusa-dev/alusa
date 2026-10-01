@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { resolveTenantSession, withTenantSession } from '@/lib/api/with-tenant-session';
@@ -38,7 +39,14 @@ export async function GET(request: NextRequest) {
       { headers: { 'cache-control': 'private, max-age=20, stale-while-revalidate=60' } },
     );
   } catch (error) {
-    console.error('Erro ao listar alunos:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/alunos',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return NextResponse.json({ error: 'Erro ao carregar alunos' }, { status: 500 });
   }
 }
@@ -56,15 +64,22 @@ export async function POST(request: NextRequest) {
       throw error;
     }
 
-    const rate = await rateLimitAsync(`student-create:${auth.contaId}:${auth.userId}:${ipFromRequest(request)}`, 20, 10 * 60_000);
+    const rate = await rateLimitAsync(
+      `student-create:${auth.contaId}:${auth.userId}:${ipFromRequest(request)}`,
+      20,
+      10 * 60_000,
+    );
     if (!rate.ok) return NextResponse.json({ error: 'Muitas tentativas.' }, { status: 429 });
     const parsedBody = await readBoundedJson(request);
-    if (!parsedBody.ok) return NextResponse.json({ error: parsedBody.error }, { status: parsedBody.status });
+    if (!parsedBody.ok)
+      return NextResponse.json({ error: parsedBody.error }, { status: parsedBody.status });
     const aluno = await createAlunoForTenant({
       rawInput: parsedBody.value,
       contaId: auth.contaId,
     });
-    return NextResponse.json(alunoDetailDTOSchema.parse(mapAlunoDetailToDTO(aluno)), { status: 201 });
+    return NextResponse.json(alunoDetailDTOSchema.parse(mapAlunoDetailToDTO(aluno)), {
+      status: 201,
+    });
   } catch (error) {
     if (error instanceof ZodError) {
       const errors = formatZodErrors(error.issues);
@@ -75,31 +90,43 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    console.error('Erro ao criar aluno:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/alunos',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     if (error instanceof AsaasCustomerEnsureError) {
       const isConfigError = ['MISSING_KEY', 'DECRYPT_FAILED', 'INVALID_KEY'].includes(error.code);
       const providerStatus = error.providerStatus;
-      const status = error.code === 'PAYER_INVALID'
-        ? 400
-        : error.code === 'ASAAS_ERROR' && providerStatus
-          ? providerStatus
-          : isConfigError
-            ? 412
-            : 503;
-      const message = error.code === 'PAYER_INVALID'
-        ? error.message
-        : error.code === 'ASAAS_ERROR' && providerStatus && [400, 422].includes(providerStatus)
+      const status =
+        error.code === 'PAYER_INVALID'
+          ? 400
+          : error.code === 'ASAAS_ERROR' && providerStatus
+            ? providerStatus
+            : isConfigError
+              ? 412
+              : 503;
+      const message =
+        error.code === 'PAYER_INVALID'
           ? error.message
-          : isConfigError
-            ? 'Conta de pagamentos não configurada.'
-            : 'Serviço de pagamentos indisponível. Tente novamente.';
+          : error.code === 'ASAAS_ERROR' && providerStatus && [400, 422].includes(providerStatus)
+            ? error.message
+            : isConfigError
+              ? 'Conta de pagamentos não configurada.'
+              : 'Serviço de pagamentos indisponível. Tente novamente.';
       return NextResponse.json({ error: message }, { status });
     }
 
     const message = error instanceof Error ? error.message : '';
     const code = (error as { code?: string }).code;
     if (code === 'P2002') {
-      return NextResponse.json({ error: 'Já existe um cadastro com os mesmos dados nesta conta.' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'Já existe um cadastro com os mesmos dados nesta conta.' },
+        { status: 409 },
+      );
     }
     if (
       code === 'ALUNO_DUPLICADO' ||

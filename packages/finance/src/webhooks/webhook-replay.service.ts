@@ -23,6 +23,7 @@ import {
   createWebhookLogEntry,
 } from './webhook-observability.service';
 import { syncAsaasOperationalStatus } from '../foundation/asaas-operational-guard';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -348,7 +349,7 @@ async function processWebhookReplay(params: {
         recipientRoles: [Role.ADMIN, Role.FINANCEIRO],
         metadata: { webhookEvent: event, eventId: payload.id ?? null },
       }).catch((err: unknown) => {
-        console.warn('[finance][replayWebhook][balance-notify-failed]', { contaId, event, err });
+        logFinanceOperationalEvent({ severity: 'warn', eventName: 'finance.webhook.replay.notification.failed', error: err });
       });
 
       await auditLogService.record({
@@ -437,7 +438,7 @@ async function processWebhookReplay(params: {
           recipientRoles: [Role.ADMIN],
           metadata: { webhookEvent: event, eventId: payload.id ?? null },
         }).catch((err: unknown) => {
-          console.warn('[finance][replayWebhook][access-token-notify-failed]', { contaId, event, err });
+          logFinanceOperationalEvent({ severity: 'warn', eventName: 'finance.webhook.replay.notification.failed', error: err });
         });
       }
 

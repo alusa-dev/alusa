@@ -10,6 +10,7 @@ import {
   completePasswordChange,
 } from '@/lib/password-change-otp';
 import { passwordPolicyMessage, passwordPolicyRegex } from '@/lib/password-policy';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const bodySchema = z
   .object({
@@ -35,11 +36,11 @@ function isSameOriginRequest(req: Request): boolean {
   return origin === `${forwardedProto}://${host}`;
 }
 
-function errorResponse(error: unknown) {
+function errorResponse(error: unknown, req: Request) {
   if (error instanceof PasswordChangeOtpError) {
     return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
   }
-  console.error('[auth][password-change-otp][complete]', error);
+  logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me/password-change/complete', method: 'POST', requestId: getRequestId(req), error });
   return NextResponse.json({ error: 'Não foi possível atualizar a senha.' }, { status: 503 });
 }
 
@@ -74,6 +75,6 @@ export async function POST(req: Request) {
     });
     return NextResponse.json(result, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
-    return errorResponse(error);
+    return errorResponse(error, req);
   }
 }

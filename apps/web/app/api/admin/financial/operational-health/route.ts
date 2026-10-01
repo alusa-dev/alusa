@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import {
   evaluateFinancialOperationalHealth,
@@ -17,10 +18,13 @@ function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const auth = await resolveTenantSession();
-    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.ok)
+      return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, {
+        error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
+      });
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
@@ -39,7 +43,14 @@ export async function GET() {
       ),
     );
   } catch (error) {
-    console.error('[Admin Financial Operational Health][GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/financial/operational-health',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

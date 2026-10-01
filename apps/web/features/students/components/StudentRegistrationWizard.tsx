@@ -218,7 +218,6 @@ export default function StudentRegistrationWizard({
     const ok = await methods.trigger();
     if (!ok) {
       const errors = methods.formState.errors;
-      console.error('[AlunoWizard] Erros de validação:', errors);
 
       // Mostrar mensagem específica para erro de responsável
       if (errors.responsavel) {

@@ -1,3 +1,4 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest, NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 
@@ -77,7 +78,7 @@ export async function runFinancialReportRoute(
   );
 }
 
-export function handleFinancialReportError(error: unknown, label: string) {
+export function handleFinancialReportError(error: unknown, _label: string) {
   if (error instanceof FinancialReportRowLimitError) {
     return financialReportJson(413, {
       error: 'RELATORIO_MUITO_GRANDE',
@@ -90,6 +91,6 @@ export function handleFinancialReportError(error: unknown, label: string) {
       details: error.flatten(),
     });
   }
-  console.error(`[API relatórios financeiros][${label}]`, error);
+  logFinanceApiError('/api/financeiro/relatorios', error);
   return financialReportJson(500, { error: 'ERRO_INTERNO' });
 }

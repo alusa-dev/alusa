@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
@@ -44,10 +45,19 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     }
 
     try {
-      await assertPlatformAccessForConta({ contaId: contaCtx.contaId, capability: 'ENROLLMENT_WRITE' });
+      await assertPlatformAccessForConta({
+        contaId: contaCtx.contaId,
+        capability: 'ENROLLMENT_WRITE',
+      });
     } catch (error) {
       const blocked = platformBillingAccessResponse(error);
-      if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
+      if (blocked)
+        return jsonError(
+          blocked.status,
+          blocked.body.error,
+          blocked.body.message,
+          blocked.body.details,
+        );
       throw error;
     }
 
@@ -59,10 +69,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     });
     return NextResponse.json(result.payload, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
-    console.error('[EDITAR_MATRICULA] Falha ao editar matrícula', {
-      code: error instanceof EditMatriculaHttpError || error instanceof MatriculaConflictError
-        ? error.code
-        : 'ERRO_EDITAR_MATRICULA',
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/matriculas/[id]/editar',
+      method: 'PATCH',
+      requestId: getRequestId(req),
+      error,
     });
     if (error instanceof EditMatriculaHttpError) {
       return jsonError(error.status, error.code, error.message, error.details);

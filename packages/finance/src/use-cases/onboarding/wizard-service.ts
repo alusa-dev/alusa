@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../../foundation/operational-log';
 import { prisma } from '@alusa/database';
 import type { AuditActorType } from '@prisma/client';
 
@@ -79,7 +80,10 @@ async function resolveImmediateProvisioningTerminalFailure(params: {
     return null;
   }
 
-  if (account.provisionLastError?.startsWith(RECOVERY_REQUIRED_PREFIX) || params.recoveryRequired > 0) {
+  if (
+    account.provisionLastError?.startsWith(RECOVERY_REQUIRED_PREFIX) ||
+    params.recoveryRequired > 0
+  ) {
     return {
       code: 'RECOVERY_REQUIRED',
       message:
@@ -91,7 +95,10 @@ async function resolveImmediateProvisioningTerminalFailure(params: {
     return { code: ASAAS_EMAIL_IN_USE_CODE, message: ASAAS_EMAIL_IN_USE_MESSAGE };
   }
 
-  if (account.status === 'PROVISIONING_FAILED' || account.operationalStatus === 'API_KEY_REQUIRED') {
+  if (
+    account.status === 'PROVISIONING_FAILED' ||
+    account.operationalStatus === 'API_KEY_REQUIRED'
+  ) {
     return {
       code: 'PROVISIONING_FAILED',
       message:
@@ -100,7 +107,11 @@ async function resolveImmediateProvisioningTerminalFailure(params: {
     };
   }
 
-  if (!account.asaasAccountId && account.provisionLastError && !isRetryableProvisioningErrorMessage(account.provisionLastError)) {
+  if (
+    !account.asaasAccountId &&
+    account.provisionLastError &&
+    !isRetryableProvisioningErrorMessage(account.provisionLastError)
+  ) {
     return {
       code: 'PROVISIONING_FAILED',
       message: account.provisionLastError,
@@ -582,17 +593,21 @@ export async function completeWizard(params: {
   }
 
   if (provisioning.status === 'QUEUED') {
-    let immediateProcessingResult:
-      | Awaited<ReturnType<typeof processAsaasProvisioningJobs>>
-      | null = null;
+    let immediateProcessingResult: Awaited<ReturnType<typeof processAsaasProvisioningJobs>> | null =
+      null;
 
     try {
-      immediateProcessingResult = await processAsaasProvisioningJobs({ contaId: params.contaId, limit: 1 });
+      immediateProcessingResult = await processAsaasProvisioningJobs({
+        contaId: params.contaId,
+        limit: 1,
+      });
     } catch (error) {
       try {
-        console.warn('[finance.completeWizard] Tentativa imediata de provisionamento falhou; cron processará', {
-          contaId: params.contaId,
-          error: error instanceof Error ? error.message : String(error),
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.onboarding.wizard_service.degraded',
+          error: error,
+          throttleMs: 60_000,
         });
       } catch {
         // noop
@@ -631,7 +646,9 @@ export async function completeWizard(params: {
 
   // Sucesso local do wizard: só promove financeStatus a "perfil completo" quando subconta já existe e está conectada.
   let financeStatusAfterComplete: 'FINANCE_PROFILE_COMPLETED' | 'FINANCE_ONBOARDING_STARTED' =
-    provisioning.status === 'CONNECTED' ? 'FINANCE_PROFILE_COMPLETED' : 'FINANCE_ONBOARDING_STARTED';
+    provisioning.status === 'CONNECTED'
+      ? 'FINANCE_PROFILE_COMPLETED'
+      : 'FINANCE_ONBOARDING_STARTED';
 
   if (financeStatusAfterComplete === 'FINANCE_ONBOARDING_STARTED') {
     const postAccount = await prisma.asaasAccount.findUnique({
@@ -698,7 +715,9 @@ export type WizardReadinessSnapshot = {
 /**
  * Carrega estado do wizard e requisitos da subconta sem efeitos colaterais.
  */
-export async function readWizardReadiness(contaId: string): Promise<WizardReadinessSnapshot | null> {
+export async function readWizardReadiness(
+  contaId: string,
+): Promise<WizardReadinessSnapshot | null> {
   const wizard = await loadWizardState(contaId);
   if (!wizard) return null;
   const missingFields = getMissingFieldsForSubaccount(wizard);

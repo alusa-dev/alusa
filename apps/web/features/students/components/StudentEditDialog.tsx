@@ -14,6 +14,7 @@ import {
 import { toast } from '@/components/ui/toast';
 import { InfoCircle } from '@/components/icons/icons';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { IMaskInput } from 'react-imask';
 import { ImageCropDialog } from '@/components/image/ImageCropDialog';
 import { wizardFieldInputClass, wizardTextareaFieldClass } from '@/components/shared/wizard/field-styles';
@@ -438,12 +439,13 @@ export function StudentEditDialog({ open, onOpenChange, aluno, onSaved }: Props)
       toast.success('Aluno atualizado');
       try {
         window.dispatchEvent(new CustomEvent('alunos:changed'));
-      } catch (e) {
-        if (process.env.NODE_ENV === 'development') console.debug(e);
+      } catch {
+        // Event dispatch is best effort; the saved state remains authoritative.
       }
       onSaved?.();
       onOpenChange(false);
-    } catch {
+    } catch (error) {
+      logClientOperationalEvent('student.update.failed', error);
       toast.error('Erro de comunicação');
     } finally {
       setSubmitting(false);

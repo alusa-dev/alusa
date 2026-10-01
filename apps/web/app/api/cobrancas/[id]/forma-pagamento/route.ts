@@ -8,6 +8,7 @@ import {
 import { mapCobrancaUpdateFormaPagamentoResultToDTO } from '@/features/finance/operations/charges/mappers';
 import { updateCobrancaFormaPagamento } from '@/src/server/finance/charge-payment-method.service';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 /** PUT /api/cobrancas/[id]/forma-pagamento */
@@ -53,7 +54,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       { status: 202 },
     );
   } catch (error) {
-    console.error('[PUT forma-pagamento] Erro:', error);
+    logFinanceApiError('/api/cobrancas/[id]/forma-pagamento', error);
     return NextResponse.json(
       { success: false, error: 'Erro ao atualizar a forma de pagamento.' },
       { status: 500 },

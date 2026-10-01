@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { logPersonDataOperationalEvent } from '@/lib/observability/api-logger';
 import { detectMimeTypeFromBuffer, validateImageDimensions } from '@/lib/upload-security';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import {
@@ -62,7 +63,7 @@ async function deletePreviousAvatar(previousFoto?: string | null) {
   try {
     await deleteStorageObject(key);
   } catch (error) {
-    console.warn('[avatar-storage] Falha ao remover avatar anterior', error);
+    logPersonDataOperationalEvent('api.avatar.cleanup.failed', error, 'warn');
   }
 }
 

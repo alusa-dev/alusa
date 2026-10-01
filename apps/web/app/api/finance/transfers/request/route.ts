@@ -12,6 +12,7 @@ import {
   mapRequestWithdrawOutputToDTO,
 } from '@alusa/finance';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 const requestSchema = requestWithdrawDTOSchema.extend({
   currentPassword: z.string().min(1, 'Senha atual obrigatória'),
@@ -89,7 +90,7 @@ export async function POST(req: NextRequest) {
     const dto = mapRequestWithdrawOutputToDTO(result.data, transferData.amount);
     return json(200, { data: dto });
   } catch (error) {
-    console.error('[Finance Transfers Request][POST]', error);
+    logFinanceApiError('/api/finance/transfers/request', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

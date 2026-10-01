@@ -1,3 +1,4 @@
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
 import {
   BillingMode,
   MatriculaBillingOutboxStatus,
@@ -196,6 +197,11 @@ export async function retryEnrollmentBillingProvisionJob(
     }
   }
 
-  console.info('[retry-enrollment-billing]', result);
+  if (result.errors.length > 0) {
+    logEnrollmentOperationalEvent('api.enrollment.retry.completed', undefined, {
+      itemCount: result.scanned,
+      failedCount: result.errors.length,
+    });
+  }
   return result;
 }

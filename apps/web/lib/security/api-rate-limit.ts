@@ -8,6 +8,7 @@ import {
   type RateLimitResult,
 } from '@/lib/rate-limit';
 import { rateLimitResponse } from '@/lib/security/rate-limit-response';
+import { logRuntimeOperationalEvent } from '@/lib/observability/runtime-operational-log';
 
 type TokenClaims = {
   id?: unknown;
@@ -88,6 +89,16 @@ const PUBLIC_WRITE_POLICY: RateLimitPolicy = {
   includeIp: true,
 };
 
+const PUBLIC_TELEMETRY_POLICY: RateLimitPolicy = {
+  name: 'public-telemetry',
+  limit: 60,
+  ipLimit: 60,
+  windowMs: 60_000,
+  failClosed: true,
+  includeTenant: false,
+  includeIp: true,
+};
+
 const PUBLIC_WRITE_PATHS = [
   '/api/public/early-access',
   '/api/users/register',
@@ -133,6 +144,9 @@ function isExcludedFromGlobalPolicy(pathname: string): boolean {
 
 function resolvePolicy(pathname: string, method: string): RateLimitPolicy | null {
   const normalizedMethod = method.toUpperCase();
+  if (pathname === '/api/observability/web-vitals') {
+    return normalizedMethod === 'POST' ? PUBLIC_TELEMETRY_POLICY : null;
+  }
   if (isExcludedFromGlobalPolicy(pathname)) return null;
 
   if (PUBLIC_WRITE_PATHS.some((path) => isPathOrChild(pathname, path))) {
@@ -218,12 +232,11 @@ export async function enforceApiRateLimit(
     const result = await check(`api:${policy.name}:${subject.kind}:${hashedSubject}`, subjectPolicy);
 
     if (result.source === 'unavailable') {
-      console.error('[api-rate-limit][unavailable]', { profile: policy.name, subject: subject.kind });
+      logRuntimeOperationalEvent({ eventName: 'security.rate_limit.unavailable', category: 'unavailable', severity: 'error' });
       return unavailableResponse();
     }
 
     if (!result.ok) {
-      console.warn('[api-rate-limit][blocked]', { profile: policy.name, subject: subject.kind });
       return limitedResponse(result, subjectPolicy);
     }
   }
@@ -238,4 +251,5 @@ export const apiRateLimitPolicyNames = [
   EXPENSIVE_POLICY.name,
   ADMIN_POLICY.name,
   PUBLIC_WRITE_POLICY.name,
+  PUBLIC_TELEMETRY_POLICY.name,
 ] as const;

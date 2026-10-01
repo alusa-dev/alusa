@@ -1,5 +1,6 @@
 import { Resend } from 'resend';
 import type { Role } from '@prisma/client';
+import { createStructuredLog } from '@alusa/observability';
 
 type Delivery = { delivery: 'sent' | 'logged'; emailId: string | null };
 
@@ -25,8 +26,16 @@ function formatInviteExpiration(expiresAt: Date | string): string {
   }).format(date);
 }
 
-function logEmail(input: { email: string; subject: string; inviteUrl: string }) {
-  console.info('[EMAIL][ADMIN_DEV_FALLBACK]', { to: input.email, subject: input.subject, actionUrl: input.inviteUrl });
+function logEmail() {
+  const log = createStructuredLog({
+    severity: 'info',
+    'service.name': 'alusa-admin',
+    'deployment.environment': process.env.VERCEL_ENV ?? process.env.NODE_ENV,
+    'event.name': 'admin.email.invite.fallback',
+    attributes: { category: 'invite_user', deliveryCount: 1 },
+    allowedAttributes: ['category', 'deliveryCount'],
+  });
+  console.info(JSON.stringify(log));
 }
 
 function getInviteSender(): string {
@@ -38,11 +47,10 @@ function getInviteSender(): string {
 }
 
 export async function sendInviteEmail(input: { inviteId: string; inviteUrl: string; email: string; role: Role; expiresAt: Date | string }): Promise<Delivery> {
-  const subject = 'Seu convite para acessar a Alusa';
   const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
   if (!resend) {
     if (process.env.NODE_ENV === 'production') throw new Error('RESEND_API_KEY ausente em produção.');
-    logEmail({ email: input.email, subject, inviteUrl: input.inviteUrl });
+    logEmail();
     return { delivery: 'logged', emailId: null };
   }
   try {
@@ -64,7 +72,7 @@ export async function sendInviteEmail(input: { inviteId: string; inviteUrl: stri
     return { delivery: 'sent', emailId: data?.id ?? null };
   } catch (error) {
     if (process.env.NODE_ENV !== 'production' && !process.env.RESEND_API_KEY) {
-      logEmail({ email: input.email, subject, inviteUrl: input.inviteUrl });
+      logEmail();
       return { delivery: 'logged', emailId: null };
     }
     throw error;

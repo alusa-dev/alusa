@@ -4,14 +4,13 @@ import { portalPerfilDTOSchema, portalPerfilInputDTOSchema } from '@/features/po
 import { mapPortalPerfilToDTO } from '@/features/portal/mappers';
 import { jsonNoStore } from '@/lib/http-security';
 import { getPortalProfile, updatePortalProfile } from '@/src/server/portal/portal-profile.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 function mapProfile(profile: { tipo: 'ALUNO' | 'RESPONSAVEL'; data: Record<string, unknown> }) {
-  return portalPerfilDTOSchema.parse(
-    mapPortalPerfilToDTO({ tipo: profile.tipo, ...profile.data }),
-  );
+  return portalPerfilDTOSchema.parse(mapPortalPerfilToDTO({ tipo: profile.tipo, ...profile.data }));
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const auth = await requirePortalUser();
     if ('response' in auth) return auth.response;
@@ -23,14 +22,23 @@ export async function GET() {
     });
     if (!result) {
       return jsonNoStore(
-        { error: auth.user.role === 'ALUNO' ? 'Aluno não encontrado' : 'Responsável não encontrado' },
+        {
+          error: auth.user.role === 'ALUNO' ? 'Aluno não encontrado' : 'Responsável não encontrado',
+        },
         { status: 404 },
       );
     }
     if (!result.ok) return jsonNoStore({ error: 'Tipo de usuário inválido' }, { status: 400 });
     return jsonNoStore(mapProfile(result));
   } catch (error) {
-    console.error('Erro ao buscar perfil:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.portal.request.failed',
+      route: '/api/portal/perfil',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return jsonNoStore({ error: 'Erro ao carregar perfil' }, { status: 500 });
   }
 }
@@ -65,7 +73,14 @@ export async function PATCH(req: NextRequest) {
     }
     return jsonNoStore(mapProfile(result));
   } catch (error) {
-    console.error('Erro ao atualizar perfil:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.portal.request.failed',
+      route: '/api/portal/perfil',
+      method: 'PATCH',
+      requestId: getRequestId(req),
+      error,
+    });
     return jsonNoStore({ error: 'Erro ao atualizar perfil' }, { status: 500 });
   }
 }

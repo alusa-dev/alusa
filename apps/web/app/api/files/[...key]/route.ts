@@ -4,6 +4,7 @@ import { storageFileRouteParamsDTOSchema } from '@/features/storage/dtos';
 import { getStorageObject, isAllowedStorageKey, isR2Configured } from '@/lib/r2-storage';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { canReadStorageKey } from '@/src/server/media/storage-access.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,7 +47,7 @@ export async function GET(_req: NextRequest, context: { params: Promise<{ key?: 
       return NextResponse.json({ error: 'Arquivo nao encontrado.' }, { status: 404 });
     }
 
-    console.error('[GET /api/files/[...key]]', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.files.read.failed', route: '/api/files/[...key]', method: 'GET', requestId: getRequestId(_req), error });
     return NextResponse.json({ error: 'Erro ao buscar arquivo.' }, { status: 500 });
   }
 }

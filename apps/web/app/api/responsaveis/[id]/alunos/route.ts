@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { resolveResponsavelRouteId } from '@/src/server/responsibles/resolve-responsible-route-id.service';
@@ -38,7 +39,14 @@ export async function GET(_req: NextRequest, context: { params: IdParams }) {
 
     return NextResponse.json({ items });
   } catch (error) {
-    console.error('[GET /api/responsaveis/[id]/alunos]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/responsaveis/[id]/alunos',
+      method: 'GET',
+      requestId: getRequestId(_req),
+      error,
+    });
     return NextResponse.json({ error: 'Erro ao buscar alunos do responsável' }, { status: 500 });
   }
 }

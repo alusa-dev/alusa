@@ -7,6 +7,7 @@ import { prisma } from '@alusa/database';
 import { credentialVault } from '../foundation/credential-vault';
 import { auditLogService } from '../foundation/audit-log.service';
 import { AsaasPaymentsProviderAdapter } from './AsaasPaymentsProviderAdapter';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 
 async function getApiKeyForConta(contaId: string): Promise<string> {
   const account = await prisma.asaasAccount.findFirst({
@@ -59,7 +60,12 @@ async function logIntegration(params: {
     });
   } catch (error) {
     // Log de auditoria não deve quebrar o fluxo principal
-    console.error('[AsaasAdapter] Erro ao registrar log:', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.adapters.create_asaas_payments_provider.audit_log.failed',
+      error,
+      throttleMs: 60_000,
+    });
   }
 }
 

@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-limit';
 import { clearAuthCookies } from '@/lib/auth-cookies';
 import { rateLimitResponse } from '@/lib/security/rate-limit-response';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -50,7 +51,14 @@ async function withRateLimit(
     return action === 'signout' ? clearAuthCookies(response, req.headers.get('cookie')) : response;
   } catch (err) {
     // Evita "Unexpected end of JSON input" no cliente
-    console.error('[nextauth][route-error]', err);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'auth.nextauth.route_failed',
+      route: '/api/auth/[...nextauth]',
+      method: req.method,
+      requestId: getRequestId(req),
+      error: err,
+    });
     return NextResponse.json({ error: 'Auth handler error' }, { status: 500 });
   }
 }

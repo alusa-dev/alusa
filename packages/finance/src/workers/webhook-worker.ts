@@ -19,6 +19,7 @@
  */
 
 import { processAsaasWebhookQueueWithInbox } from '../webhooks/process-webhook-queue-with-inbox';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { runWebhookScheduler } from '../webhooks/webhook-scheduler.service';
 
 // ── Config ───────────────────────────────────────────────────────────────
@@ -80,9 +81,11 @@ async function runCycle(config: WorkerConfig): Promise<WorkerCycleResult> {
     processedCount = result.processed;
     errors = result.failed;
   } catch (err) {
-    console.error('[webhook-worker] Erro no ciclo de drain', {
-      cycle: cycleCount,
-      error: err instanceof Error ? err.message : String(err),
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.workers.webhook_worker.drain.failed',
+      error: err,
+      throttleMs: 60_000,
     });
     errors++;
   }
@@ -100,21 +103,25 @@ async function runCycle(config: WorkerConfig): Promise<WorkerCycleResult> {
         skipArchive: false,
       });
     } catch (err) {
-      console.error('[webhook-worker] Erro no scheduler', {
-        cycle: cycleCount,
-        error: err instanceof Error ? err.message : String(err),
+      logFinanceOperationalEvent({
+        severity: 'error',
+        eventName: 'finance.workers.webhook_worker.scheduler.failed',
+        error: err,
+        throttleMs: 60_000,
       });
     }
   }
 
   const durationMs = Date.now() - start;
 
-  console.info('[webhook-worker] Ciclo concluído', {
-    cycle: cycleCount,
-    processedCount,
-    errors,
+  logFinanceOperationalEvent({
+    severity: errors > 0 ? 'warn' : 'info',
+    eventName: 'finance.workers.webhook_worker.cycle.completed',
+    itemCount: processedCount,
+    errorCount: errors,
     durationMs,
-    schedulerRan,
+    result: errors > 0 ? 'partial_failure' : 'success',
+    throttleMs: 60_000,
   });
 
   return { cycle: cycleCount, processedCount, errors, durationMs, schedulerRan };
@@ -126,20 +133,16 @@ function sleep(ms: number): Promise<void> {
 
 export async function startWorker(): Promise<void> {
   if (running) {
-    console.warn('[webhook-worker] Worker já está rodando');
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.workers.webhook_worker.already_running',
+      throttleMs: 60_000,
+    });
     return;
   }
 
   const config = loadConfig();
   running = true;
-
-  console.info('[webhook-worker] Iniciando', {
-    mode: config.mode,
-    intervalMs: config.intervalMs,
-    drainLimit: config.drainLimit,
-    contaId: config.contaId ?? 'ALL',
-    enableScheduler: config.enableScheduler,
-  });
 
   if (config.mode === 'once') {
     await runCycle(config);
@@ -149,7 +152,6 @@ export async function startWorker(): Promise<void> {
 
   // Loop mode
   const shutdown = () => {
-    console.info('[webhook-worker] Shutdown graceful iniciado');
     running = false;
   };
 
@@ -164,7 +166,6 @@ export async function startWorker(): Promise<void> {
     }
   }
 
-  console.info('[webhook-worker] Worker encerrado', { totalCycles: cycleCount });
 }
 
 export function stopWorker(): void {
@@ -180,7 +181,11 @@ const isDirectExecution =
 
 if (isDirectExecution) {
   startWorker().catch((err) => {
-    console.error('[webhook-worker] Falha fatal', err);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.workers.webhook_worker.fatal',
+      error: err,
+    });
     process.exit(1);
   });
 }

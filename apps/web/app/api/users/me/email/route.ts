@@ -6,6 +6,7 @@ import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { resolveUserId } from '@/src/server/identity/user-profile-http.helpers';
 import { changeEmailInputDTOSchema, changeEmailResultDTOSchema } from '@/features/users/dtos';
 import { changeUserEmail } from '@/src/server/users/user-account.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export async function PATCH(req: Request) {
   try {
@@ -54,7 +55,7 @@ export async function PATCH(req: Request) {
 
     return NextResponse.json(changeEmailResultDTOSchema.parse({ success: true, email: result.email }));
   } catch (error) {
-    console.error('Error updating email:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me/email', method: 'PATCH', requestId: getRequestId(req), error });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

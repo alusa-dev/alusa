@@ -1,3 +1,4 @@
+import { logLibOperationalEvent } from '../../observability/operational-log';
 import { FinanceWebhookSideEffectStatus, Prisma, PrismaClient, type EventMapPublicSeatStatus } from '@prisma/client';
 
 import {
@@ -1499,11 +1500,10 @@ async function expirePublicReservations(db: DbClient, contaId: string, now = new
   }
   const skipped = expired.length - expirable.length;
   if (skipped > 0) {
-    console.info('[events.finance]', {
-      action: 'eventMapReservation.expire.inline.skipped',
-      contaId,
-      skipped,
-      reason: 'external_payment_or_operational_history_requires_job_reconciliation',
+    logLibOperationalEvent({
+      eventName: 'event_map.reservation.expire.skipped',
+      severity: 'info',
+      count: skipped,
     });
   }
   if (expirable.length === 0) return;

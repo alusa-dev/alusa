@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 import type { AsaasIntegrationJobType, Prisma } from '@prisma/client';
 
@@ -94,11 +95,11 @@ export async function reconcilePendingPaymentCommands(
       }
     } catch (error) {
       syncFailed += 1;
-      console.warn('[reconcilePendingPaymentCommands] Falha ao sincronizar comando financeiro', {
-        contaId: job.contaId,
-        jobId: job.id,
-        asaasPaymentId: payload.asaasPaymentId,
-        message: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.reconcile_pending_payment_commands.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     }
   }

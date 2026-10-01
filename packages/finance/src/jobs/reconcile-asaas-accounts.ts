@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 import type { FinancialOnboardingStatus } from '@prisma/client';
 
@@ -23,7 +24,11 @@ const MAX_SYNC_STALENESS_MS = 24 * 60 * 60 * 1000; // 24 horas
 /**
  * Status que indicam que a conta pode precisar de reconciliação.
  */
-const RECONCILABLE_STATUSES: FinancialOnboardingStatus[] = ['UNDER_REVIEW', 'CREATED', 'IN_PROGRESS'];
+const RECONCILABLE_STATUSES: FinancialOnboardingStatus[] = [
+  'UNDER_REVIEW',
+  'CREATED',
+  'IN_PROGRESS',
+];
 
 const RECONCILABLE_COMMERCIAL_INFO_STATUSES = ['EXPIRING_SOON', 'EXPIRED'] as const;
 
@@ -66,9 +71,7 @@ export async function reconcileAsaasAccountsJob(params?: {
   const accounts = await prisma.asaasAccount.findMany({
     where: {
       asaasAccountId: { not: null },
-      ...(params?.contaId
-        ? { financeProfile: { contaId: params.contaId } }
-        : {}),
+      ...(params?.contaId ? { financeProfile: { contaId: params.contaId } } : {}),
       OR: [
         { status: { in: RECONCILABLE_STATUSES } },
         { commercialInfoStatus: { in: [...RECONCILABLE_COMMERCIAL_INFO_STATUSES] } },
@@ -84,9 +87,7 @@ export async function reconcileAsaasAccountsJob(params?: {
         },
       ],
       // Se não forçar, aplicar throttle
-      ...(params?.forceReconcile
-        ? {}
-        : { statusUpdatedAt: { lt: throttleThreshold } }),
+      ...(params?.forceReconcile ? {} : { statusUpdatedAt: { lt: throttleThreshold } }),
     },
     select: {
       id: true,
@@ -106,12 +107,6 @@ export async function reconcileAsaasAccountsJob(params?: {
   });
 
   result.processadas = accounts.length;
-
-  console.info('[finance.reconcileJob] Iniciando reconciliação', {
-    contasEncontradas: accounts.length,
-    throttleThreshold: throttleThreshold.toISOString(),
-    forceReconcile: params?.forceReconcile ?? false,
-  });
 
   for (const account of accounts) {
     const contaId = account.financeProfile.contaId;
@@ -134,15 +129,6 @@ export async function reconcileAsaasAccountsJob(params?: {
 
       if (reconciled.reconciled) {
         result.reconciliadas++;
-
-        console.info('[finance.reconcileJob] Conta reconciliada', {
-          contaId,
-          asaasAccountId: account.asaasAccountId,
-          previousStatus: reconciled.previousStatus,
-          updatedStatus: reconciled.updatedStatus,
-          previousCommercialInfoStatus: reconciled.previousCommercialInfoStatus,
-          updatedCommercialInfoStatus: reconciled.updatedCommercialInfoStatus,
-        });
       }
     } catch (error) {
       result.erros.push({
@@ -150,19 +136,21 @@ export async function reconcileAsaasAccountsJob(params?: {
         erro: error instanceof Error ? error.message : String(error),
       });
 
-      console.warn('[finance.reconcileJob] Erro ao reconciliar conta', {
-        contaId,
-        asaasAccountId: account.asaasAccountId,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.jobs.reconcile_asaas_accounts.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     }
   }
 
-  console.info('[finance.reconcileJob] Reconciliação concluída', {
-    processadas: result.processadas,
-    reconciliadas: result.reconciliadas,
-    skippedThrottle: result.skippedThrottle,
-    erros: result.erros.length,
+  logFinanceOperationalEvent({
+    severity: 'info',
+    eventName: 'finance.jobs.reconcile_asaas_accounts.completed',
+    itemCount: result.processadas,
+    result: result.erros.length > 0 ? 'partial_failure' : 'success',
+    throttleMs: 60_000,
   });
 
   return result;
@@ -206,7 +194,11 @@ export async function shouldReconcileNow(contaId: string): Promise<{
     account.financeProfile.lastAsaasSyncAt === null ||
     Date.now() - account.financeProfile.lastAsaasSyncAt.getTime() >= MAX_SYNC_STALENESS_MS;
 
-  if (!RECONCILABLE_STATUSES.includes(account.status) && !commercialInfoNeedsReconcile && !syncIsStale) {
+  if (
+    !RECONCILABLE_STATUSES.includes(account.status) &&
+    !commercialInfoNeedsReconcile &&
+    !syncIsStale
+  ) {
     return { should: false, reason: `status_${account.status.toLowerCase()}` };
   }
 

@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import type { InvoiceStatus } from '@prisma/client';
 
 import { isChargePaymentFullyRefunded } from '../fiscal/charge-invoice-eligibility';
@@ -73,10 +74,11 @@ export async function ensureChargeInvoiceAutoCancel(input: {
     chargeId: input.chargeId,
   });
   if (!initialSync.success) {
-    console.warn('[ensureChargeInvoiceAutoCancel] sync invoice failed', {
-      contaId: input.contaId,
-      chargeId: input.chargeId,
-      error: initialSync.error,
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.use_cases.ensure_charge_invoice_auto_cancel.degraded',
+      error: initialSync,
+      throttleMs: 60_000,
     });
   }
 
@@ -87,11 +89,11 @@ export async function ensureChargeInvoiceAutoCancel(input: {
   });
 
   if (!canceled.success) {
-    console.error('[ensureChargeInvoiceAutoCancel] cancel failed', {
-      contaId: input.contaId,
-      chargeId: input.chargeId,
-      invoiceId: invoice.id,
-      error: canceled.error,
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.ensure_charge_invoice_auto_cancel.failed',
+      error: canceled,
+      throttleMs: 60_000,
     });
     return { canceled: false, synced: false, skippedReason: 'AUTO_CANCEL_FAILED' };
   }
@@ -101,10 +103,11 @@ export async function ensureChargeInvoiceAutoCancel(input: {
     chargeId: input.chargeId,
   });
   if (!postCancelSync.success) {
-    console.warn('[ensureChargeInvoiceAutoCancel] post-cancel sync failed', {
-      contaId: input.contaId,
-      chargeId: input.chargeId,
-      error: postCancelSync.error,
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.use_cases.ensure_charge_invoice_auto_cancel.degraded',
+      error: postCancelSync,
+      throttleMs: 60_000,
     });
   }
 

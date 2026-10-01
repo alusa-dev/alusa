@@ -1,3 +1,4 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest } from 'next/server';
 import { ZodError } from 'zod';
 
@@ -87,7 +88,7 @@ export async function GET() {
       'x-alusa-cache': 'MISS',
     });
   } catch (error) {
-    console.error('[API antecipacoes configuracao][GET]', error);
+    logFinanceApiError('/api/financeiro/antecipacoes/configuracao', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }
@@ -120,7 +121,7 @@ export async function PUT(req: NextRequest) {
     if (error instanceof ZodError) {
       return json(422, { error: 'BODY_INVALIDO', details: error.flatten() });
     }
-    console.error('[API antecipacoes configuracao][PUT]', error);
+    logFinanceApiError('/api/financeiro/antecipacoes/configuracao', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

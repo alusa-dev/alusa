@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 
 import {
@@ -71,7 +72,14 @@ export async function GET(request: Request) {
     if (knownError) return response(knownError.body, knownError.status);
     if (error instanceof MobileAgendaUnauthorizedError) return unauthorized();
     if (error instanceof MobileAgendaForbiddenError) return forbidden(error.message);
-    console.error('[mobile-agenda][list]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/agenda',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível carregar a agenda.' } }, 500);
   }
 }
@@ -96,7 +104,14 @@ export async function POST(request: Request) {
     if (knownError) return response(knownError.body, knownError.status);
     if (error instanceof MobileAgendaUnauthorizedError) return unauthorized();
     if (error instanceof MobileAgendaForbiddenError) return forbidden(error.message);
-    console.error('[mobile-agenda][create]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/agenda',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'OPERATION_FAILED', message: 'Não foi possível criar o evento.' } }, 409);
   }
 }

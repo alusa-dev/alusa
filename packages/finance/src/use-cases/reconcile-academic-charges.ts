@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 import type { PaymentStatus as AsaasPaymentStatus } from '@alusa/asaas';
 import type { Cobranca, StatusCobranca } from '@prisma/client';
@@ -55,10 +56,7 @@ function parseAsaasDateTime(value: string | null | undefined): Date | null {
   return Number.isNaN(parsed.getTime()) ? parseAsaasDate(value) : parsed;
 }
 
-function resolveFinanceStatus(params: {
-  chargeType: string;
-  nextChargeStatus: StatusCobranca;
-}) {
+function resolveFinanceStatus(params: { chargeType: string; nextChargeStatus: StatusCobranca }) {
   if (params.chargeType !== 'TAXA_MATRICULA') return null;
   if (params.nextChargeStatus === 'PAGO') return 'ADIMPLENTE' as const;
   if (params.nextChargeStatus === 'ATRASADO') return 'INADIMPLENTE' as const;
@@ -142,10 +140,12 @@ export async function reconcileAcademicChargesWithAsaas(params: {
       });
       const liquidadoEm =
         liquidacaoStatus === 'DISPONIVEL'
-          ? parseAsaasDateTime(payment.creditDate) ?? paymentDate
+          ? (parseAsaasDateTime(payment.creditDate) ?? paymentDate)
           : null;
       const feeValue =
-        typeof payment.netValue === 'number' ? Number(payment.value) - Number(payment.netValue) : null;
+        typeof payment.netValue === 'number'
+          ? Number(payment.value) - Number(payment.netValue)
+          : null;
 
       const data = {
         status: nextStatus,
@@ -243,7 +243,9 @@ export async function reconcileAcademicChargesWithAsaas(params: {
         await prisma.charge.update({
           where: { id: cobranca.charge.id },
           data: {
-            ...(canUpdateChargeStatus ? { status: effectiveChargeStatus, statusUpdatedAt: new Date() } : {}),
+            ...(canUpdateChargeStatus
+              ? { status: effectiveChargeStatus, statusUpdatedAt: new Date() }
+              : {}),
             asaasPaymentId: cobranca.charge.asaasPaymentId ?? cobranca.asaasPaymentId,
             asaasStatus: effectiveAsaasStatus,
             asaasValue: payment.value,
@@ -258,17 +260,21 @@ export async function reconcileAcademicChargesWithAsaas(params: {
           },
         });
 
-        await chargeReadModelService.projectChargeReadModelByChargeId(cobranca.charge.id, params.contaId);
+        await chargeReadModelService.projectChargeReadModelByChargeId(
+          cobranca.charge.id,
+          params.contaId,
+        );
       }
 
       await chargeReadModelService.projectChargeReadModelByCobrancaId(cobranca.id, params.contaId);
       items.set(cobranca.id, nextCobranca);
     } catch (error) {
       if (process.env.NODE_ENV !== 'test') {
-        console.warn('[finance][reconcileAcademicChargesWithAsaas] falha ao reconciliar cobrança', {
-          cobrancaId: cobranca.id,
-          asaasPaymentId: cobranca.asaasPaymentId,
-          error: error instanceof Error ? error.message : String(error),
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.reconcile_academic_charges.degraded',
+          error: error,
+          throttleMs: 60_000,
         });
       }
     }

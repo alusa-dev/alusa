@@ -4,6 +4,7 @@
 
 import { prisma } from '../prisma';
 import { createEnrollmentLifecycleNotification } from './domain-notifications';
+import { logLibOperationalEvent } from '../observability/operational-log';
 
 export interface NotifyMatriculaActionInput {
   matriculaId: string;
@@ -58,7 +59,7 @@ export async function notifyMatriculaAction(
       message: 'Notificação interna registrada para a equipe.',
     };
   } catch (error) {
-    console.error('[NOTIFICACAO_MATRICULA] Erro ao enviar notificação:', error);
+    logLibOperationalEvent({ eventName: 'notification.matricula.create.failed', error });
     return {
       success: false,
       message: (error as Error).message || 'Erro ao enviar notificação',

@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { reativarAlunoCompleto } from '@alusa/lib/alunos/aluno.service';
@@ -7,7 +8,7 @@ import {
 } from '@/src/server/platform-billing/capacity';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const rawParams = await params;
+  const rawParams = await params;
   try {
     // 1. Autenticação
     const auth = await resolveTenantSession();
@@ -42,7 +43,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error('[API] Erro ao reativar aluno:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/alunos/[id]/reativar',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
 
     if (error instanceof Error) {
       return NextResponse.json({ error: 'Não foi possível reativar o aluno.' }, { status: 400 });

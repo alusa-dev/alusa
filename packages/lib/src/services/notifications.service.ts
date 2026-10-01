@@ -1265,11 +1265,7 @@ export async function createBillingWebhookNotification(params: {
 }): Promise<CreateNotificationResult> {
   const normalizedEvent = normalizeBillingNotificationEvent(params.eventName);
   if (!normalizedEvent) {
-    console.info('[Notifications] Evento financeiro sem suporte para inbox interna.', {
-      eventName: params.eventName,
-      asaasPaymentId: params.asaasPaymentId,
-      sourceType: params.sourceType ?? 'ASAAS_WEBHOOK',
-    });
+    logInboxMetric('inbox.skipped.unsupported_event', {});
     return { notificationId: null, created: false, recipientCount: 0 };
   }
 

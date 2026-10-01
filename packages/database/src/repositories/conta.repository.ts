@@ -4,6 +4,7 @@ import {
   encryptSecret,
   type DecryptedSecret,
 } from '../security/encryption.js';
+import { logCredentialOperationalEvent } from '../observability/operational-log.js';
 
 /**
  * Fonte de onde a API key foi carregada.
@@ -112,10 +113,10 @@ async function resolveAsaasCredentials(contaId: string): Promise<AsaasCredential
 
     const fallbackUsed = candidate.source !== 'asaasAccount';
     if (fallbackUsed) {
-      console.warn('[loadAsaasCredentials] Fallback de credencial utilizado', {
-        contaId,
+      logCredentialOperationalEvent({
+        eventName: 'asaas.credentials.fallback_used',
+        severity: 'warn',
         source: candidate.source,
-        canonicalApiKeyStatus,
       });
     }
 
@@ -212,11 +213,11 @@ export async function loadAsaasCredentials(contaId: string) {
   const resolution = await resolveAsaasCredentials(contaId);
 
   if (resolution.health === 'DECRYPTION_FAILED') {
-    console.error('[loadAsaasCredentials] Credencial criptografada não pôde ser descriptografada', {
-      contaId,
-      encryptedSources: resolution.encryptedSources,
-      unreadableSources: resolution.unreadableSources,
-      apiKeyStatus: resolution.apiKeyStatus,
+    logCredentialOperationalEvent({
+      eventName: 'asaas.credentials.decryption_failed',
+      severity: 'error',
+      sourceCount: resolution.encryptedSources.length,
+      unreadableCount: resolution.unreadableSources.length,
     });
   }
 
@@ -232,10 +233,11 @@ export async function loadAsaasCredentials(contaId: string) {
   } catch (error) {
     // A falha de rotação não invalida uma credencial já descriptografada.
     // O compare-and-set mantém a operação idempotente e permite nova tentativa.
-    console.warn('[loadAsaasCredentials] Rotação de credencial adiada', {
-      contaId,
+    logCredentialOperationalEvent({
+      eventName: 'asaas.credentials.rotation_deferred',
+      severity: 'warn',
       source: resolution.source,
-      error: error instanceof Error ? error.message : 'erro desconhecido',
+      error,
     });
   }
 

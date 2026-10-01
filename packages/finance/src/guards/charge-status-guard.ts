@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 /**
  * Charge Status Guard - Progressão Monotônica para Rotas Manuais
  *
@@ -44,9 +45,7 @@ const TERMINAL_STATUSES: readonly StatusCobranca[] = [
   'ESTORNADO_PARCIAL',
 ] as const;
 
-const INTERMEDIATE_STATUSES: readonly StatusCobranca[] = [
-  'CANCELAMENTO_PENDENTE',
-] as const;
+const INTERMEDIATE_STATUSES: readonly StatusCobranca[] = ['CANCELAMENTO_PENDENTE'] as const;
 
 export function isTerminalStatus(status: StatusCobranca): boolean {
   return TERMINAL_STATUSES.includes(status);
@@ -100,10 +99,13 @@ export function validateChargeStatusTransition(
  * Aplica status com validação de progressão monotônica.
  * Retorna o status que deve ser usado (pode ser o atual se transição inválida).
  */
-export function applyChargeStatusWithMonotonicity(
-  options: ApplyStatusOptions,
-): { status: StatusCobranca; changed: boolean; blocked: boolean; reason?: string } {
-  const { currentStatus, nextStatus, origin, forceOverride = false } = options;
+export function applyChargeStatusWithMonotonicity(options: ApplyStatusOptions): {
+  status: StatusCobranca;
+  changed: boolean;
+  blocked: boolean;
+  reason?: string;
+} {
+  const { currentStatus, nextStatus, forceOverride = false } = options;
 
   // Mesmo status = nada a fazer
   if (currentStatus === nextStatus) {
@@ -112,10 +114,10 @@ export function applyChargeStatusWithMonotonicity(
 
   // Se forceOverride, permitir qualquer transição (usar com cautela)
   if (forceOverride) {
-    console.warn('⚠️ Force override aplicado para transição de status:', {
-      from: currentStatus,
-      to: nextStatus,
-      origin,
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.guards.charge_status_guard.degraded',
+      throttleMs: 60_000,
     });
     return { status: nextStatus, changed: true, blocked: false };
   }
@@ -123,11 +125,10 @@ export function applyChargeStatusWithMonotonicity(
   const result = validateChargeStatusTransition(currentStatus, nextStatus);
 
   if (!result.allowed) {
-    console.warn('⚠️ Transição de status bloqueada:', {
-      from: currentStatus,
-      to: nextStatus,
-      origin,
-      reason: result.reason,
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.guards.charge_status_guard.degraded',
+      throttleMs: 60_000,
     });
     return {
       status: currentStatus,

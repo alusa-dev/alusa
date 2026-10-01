@@ -1,12 +1,19 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma, loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
-import { cancelTransfer as asaasCancelTransfer, getTransfer as asaasGetTransfer } from '@alusa/asaas';
+import {
+  cancelTransfer as asaasCancelTransfer,
+  getTransfer as asaasGetTransfer,
+} from '@alusa/asaas';
 import type { TransferStatus } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
-import { isCancellableAsaasTransfer, resolveTransferOperationFromAsaas } from './transfers/asaas-transfer-payload';
+import {
+  isCancellableAsaasTransfer,
+  resolveTransferOperationFromAsaas,
+} from './transfers/asaas-transfer-payload';
 import { mapAsaasTransferStatus } from './transfers/transfer-status';
 import { resolveOfficialFeeValue, resolveOfficialNetValue } from './transfers/transfer-metadata';
 
@@ -142,13 +149,10 @@ export async function cancelTransfer(
     }
 
     if (!isCancellableAsaasTransfer(currentRemote)) {
-      console.warn('[finance][cancelTransfer][not-cancellable]', {
-        contaId: input.contaId,
-        transferId: input.transferId,
-        asaasTransferId: transfer.asaasTransferId,
-        remoteStatus: currentRemote.status,
-        canBeCancelled: currentRemote.canBeCancelled,
-        authorized: currentRemote.authorized,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.cancel_transfer.degraded',
+        throttleMs: 60_000,
       });
       return err('TRANSFER_NAO_CANCELAVEL');
     }
@@ -177,10 +181,10 @@ export async function cancelTransfer(
 
     const mappedStatus = mapAsaasTransferStatus(confirmedRemote.status);
     if (!mappedStatus) {
-      console.warn('[finance][cancelTransfer][unknown-asaas-status]', {
-        contaId: input.contaId,
-        asaasTransferId: transfer.asaasTransferId,
-        rawStatus: confirmedRemote.status,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.cancel_transfer.degraded',
+        throttleMs: 60_000,
       });
     }
     const nextStatus: TransferStatus = mappedStatus ?? 'PENDING';
@@ -230,7 +234,12 @@ export async function cancelTransfer(
       statusUpdatedAt: updated.statusUpdatedAt.toISOString(),
     });
   } catch (error) {
-    console.error('[finance][cancelTransfer]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.cancel_transfer.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_AO_CANCELAR_TRANSFER');
   }
 }

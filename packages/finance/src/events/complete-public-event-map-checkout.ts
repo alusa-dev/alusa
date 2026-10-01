@@ -10,9 +10,13 @@ import {
   publicOrderStatusPath,
 } from '@alusa/lib/events/map/event-map.service';
 import type { PublicCheckoutInput } from '@alusa/lib/events/map/event-map.service';
-import { getEventAsaasPaymentProvider, type EventAsaasPayment } from '@alusa/lib/events/event-asaas-payment-provider';
+import {
+  getEventAsaasPaymentProvider,
+  type EventAsaasPayment,
+} from '@alusa/lib/events/event-asaas-payment-provider';
 import { EventsError } from '@alusa/lib/events/events.service';
 import { loadDecryptedAsaasCredentials } from '@alusa/lib/services/integracoes/asaas-credentials-service';
+import { logEventsFinance } from './events-finance-observability';
 
 const PAID_ASAAS_PAYMENT_STATUSES = new Set([
   'CONFIRMED',
@@ -37,7 +41,11 @@ function buildEventMapAsaasIdempotencyKey(scope: 'customer' | 'payment', orderId
 
 async function buildCheckoutResponse(
   order: Parameters<typeof buildPublicEventMapCheckoutResponse>[0],
-  params: { apiKey?: string | null; paymentMethod: PublicCheckoutInput['paymentMethod']; publicSlug: string | null },
+  params: {
+    apiKey?: string | null;
+    paymentMethod: PublicCheckoutInput['paymentMethod'];
+    publicSlug: string | null;
+  },
 ) {
   let pixQrCode: { encodedImage: string; payload: string; expirationDate: string } | null = null;
   let bankSlipCode: string | null = null;
@@ -49,7 +57,7 @@ async function buildCheckoutResponse(
         paymentId: order.asaasPaymentId,
       });
     } catch (error) {
-      console.warn('[event-map] Falha ao obter QR Code Pix:', { orderId: order.id, error });
+      logEventsFinance('finance.events.public_event_map.checkout.pix_qr.failed', { error }, 'warn');
     }
   }
   if (params.apiKey && order.asaasPaymentId && params.paymentMethod === 'BOLETO') {
@@ -61,7 +69,11 @@ async function buildCheckoutResponse(
       bankSlipCode = bankSlip?.identificationField ?? bankSlip?.barCode ?? null;
       bankSlipBarcode = bankSlip?.barCode ?? null;
     } catch (error) {
-      console.warn('[event-map] Falha ao obter código do boleto:', { orderId: order.id, error });
+      logEventsFinance(
+        'finance.events.public_event_map.checkout.bank_slip.failed',
+        { error },
+        'warn',
+      );
     }
   }
   return buildPublicEventMapCheckoutResponse(order, {
@@ -72,23 +84,22 @@ async function buildCheckoutResponse(
   });
 }
 
-export async function completePublicEventMapCheckout(publicSlug: string, input: PublicCheckoutInput) {
+export async function completePublicEventMapCheckout(
+  publicSlug: string,
+  input: PublicCheckoutInput,
+) {
   const buyerDocument = input.buyerDocument?.replace(/\D/g, '') ?? '';
   const pending = await preparePublicEventMapCheckout(publicSlug, input);
-  console.info('[events.finance]', {
-    action: 'eventMapOrder.checkout.prepared',
-    contaId: pending.map.contaId,
-    eventId: pending.map.eventId,
-    orderId: pending.order.id,
-    updated: Boolean(pending.order.asaasPaymentId),
-  });
-
   let paymentCreationClaimed = false;
   let paymentCreationStarted = false;
   try {
     const credentials = await loadDecryptedAsaasCredentials(pending.map.contaId);
     if (!credentials?.apiKey) {
-      throw new EventsError('ASAAS_NAO_CONFIGURADO', 'Configure a integração Asaas para vender ingressos no mapa público.', 409);
+      throw new EventsError(
+        'ASAAS_NAO_CONFIGURADO',
+        'Configure a integração Asaas para vender ingressos no mapa público.',
+        409,
+      );
     }
 
     if (pending.order.asaasPaymentId) {
@@ -119,7 +130,8 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
     const existingPayment = existingPayments[0];
     if (existingPayment) {
       const expectedValue = toMoney(pending.totalAmount);
-      const remoteValue = typeof existingPayment.value === 'number' ? toMoney(existingPayment.value) : null;
+      const remoteValue =
+        typeof existingPayment.value === 'number' ? toMoney(existingPayment.value) : null;
       const currentOrder = await prisma.eventMapOrder.findFirst({
         where: { id: pending.order.id, contaId: pending.map.contaId },
         select: { asaasCustomerId: true },
@@ -152,8 +164,10 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
       });
     }
 
-    if (pending.order.paymentStatus === 'PAYMENT_CREATION_IN_PROGRESS' ||
-        pending.order.paymentStatus === 'PAYMENT_CREATION_UNKNOWN') {
+    if (
+      pending.order.paymentStatus === 'PAYMENT_CREATION_IN_PROGRESS' ||
+      pending.order.paymentStatus === 'PAYMENT_CREATION_UNKNOWN'
+    ) {
       throw new EventsError(
         'PAGAMENTO_EM_VERIFICACAO',
         'Estamos verificando a cobrança com o provedor. Aguarde um pouco e tente consultar o pedido novamente.',
@@ -221,12 +235,6 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
 
     let payment: EventAsaasPayment;
     try {
-      console.info('[events.finance]', {
-        action: 'eventMapOrder.payment.create.start',
-        contaId: pending.map.contaId,
-        eventId: pending.map.eventId,
-        orderId: pending.order.id,
-      });
       const requestClaim = await prisma.eventMapOrder.updateMany({
         where: {
           id: pending.order.id,
@@ -242,7 +250,11 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
         },
       });
       if (requestClaim.count !== 1) {
-        throw new EventsError('PAGAMENTO_EM_VERIFICACAO', 'A tentativa de cobrança foi assumida por outra requisição.', 409);
+        throw new EventsError(
+          'PAGAMENTO_EM_VERIFICACAO',
+          'A tentativa de cobrança foi assumida por outra requisição.',
+          409,
+        );
       }
       paymentCreationStarted = true;
       payment = await getEventAsaasPaymentProvider().createPayment({
@@ -258,26 +270,24 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
         },
       });
     } catch (paymentError) {
-      const reconciled = await getEventAsaasPaymentProvider().listPayments({
-        apiKey: credentials.apiKey,
-        externalReference,
-        limit: 10,
-      }).catch((listError) => {
-        console.warn('[event-map] Falha ao reconciliar cobrança Asaas por externalReference:', listError);
-        return null;
-      });
+      const reconciled = await getEventAsaasPaymentProvider()
+        .listPayments({
+          apiKey: credentials.apiKey,
+          externalReference,
+          limit: 10,
+        })
+        .catch((listError) => {
+          logEventsFinance(
+            'finance.events.public_event_map.checkout.payment_reconciliation.failed',
+            { error: listError },
+            'warn',
+          );
+          return null;
+        });
       const existingPayment = reconciled?.data.find((candidate) => !candidate.deleted) ?? null;
       if (!existingPayment) throw paymentError;
       payment = existingPayment;
     }
-
-    console.info('[events.finance]', {
-      action: 'eventMapOrder.payment.create',
-      contaId: pending.map.contaId,
-      eventId: pending.map.eventId,
-      orderId: pending.order.id,
-      asaasPaymentId: payment.id,
-    });
 
     const attached = await prisma.eventMapOrder.updateMany({
       where: {
@@ -299,7 +309,12 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
       where: { id: pending.order.id, contaId: pending.map.contaId },
       include: { items: { include: { ticket: true } } },
     });
-    if (!updated) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido não encontrado após criar a cobrança.', 404);
+    if (!updated)
+      throw new EventsError(
+        'PEDIDO_NAO_ENCONTRADO',
+        'Pedido não encontrado após criar a cobrança.',
+        404,
+      );
 
     if (attached.count !== 1 && updated.asaasPaymentId !== payment.id) {
       // The hold expired while the provider request was in flight. Persist the
@@ -334,7 +349,9 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
           paidAmount: payment.value ?? null,
           allowReleasedReservation: true,
         };
-        const confirmed = await confirmPublicEventMapOrderPayment(latePaymentParams).catch(() => null);
+        const confirmed = await confirmPublicEventMapOrderPayment(latePaymentParams).catch(
+          () => null,
+        );
         if (!confirmed) {
           await reconcileEventMapOrderFinancialStateFromAsaas({
             ...latePaymentParams,
@@ -342,15 +359,15 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
           });
         }
       } else if (!payment.deleted && CANCELLABLE_ASAAS_PAYMENT_STATUSES.has(paymentStatus)) {
-        await getEventAsaasPaymentProvider().deletePayment({ apiKey: credentials.apiKey, paymentId: payment.id }).catch((deleteError) => {
-          console.error('[events.finance] Falha ao cancelar cobrança criada após expiração da reserva', {
-            contaId: pending.map.contaId,
-            eventId: pending.map.eventId,
-            orderId: updated.id,
-            asaasPaymentId: payment.id,
-            message: deleteError instanceof Error ? deleteError.message : String(deleteError),
+        await getEventAsaasPaymentProvider()
+          .deletePayment({ apiKey: credentials.apiKey, paymentId: payment.id })
+          .catch((deleteError) => {
+            logEventsFinance(
+              'finance.events.public_event_map.checkout.late_payment_cancel.failed',
+              { error: deleteError },
+              'error',
+            );
           });
-        });
       }
       throw new EventsError(
         'RESERVA_EXPIRADA',
@@ -398,9 +415,15 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
       where: { id: pending.order.id },
       select: { asaasPaymentId: true, paymentStatus: true },
     });
-    const unresolvedPaymentCreation = currentOrder?.paymentStatus === 'PAYMENT_CREATION_IN_PROGRESS'
-      || currentOrder?.paymentStatus === 'PAYMENT_CREATION_UNKNOWN';
-    if (!currentOrder?.asaasPaymentId && !unresolvedPaymentCreation && !paymentCreationClaimed && !paymentCreationStarted) {
+    const unresolvedPaymentCreation =
+      currentOrder?.paymentStatus === 'PAYMENT_CREATION_IN_PROGRESS' ||
+      currentOrder?.paymentStatus === 'PAYMENT_CREATION_UNKNOWN';
+    if (
+      !currentOrder?.asaasPaymentId &&
+      !unresolvedPaymentCreation &&
+      !paymentCreationClaimed &&
+      !paymentCreationStarted
+    ) {
       await cancelPublicEventMapOrder(pending.order.id, 'Falha ao gerar cobrança Asaas.');
     }
     throw error;

@@ -17,8 +17,8 @@ type FinanceRealtimeSubscriber = {
   cobrancaId?: string;
   pollIntervalMs: number;
   deliveredEventKeys: Set<string>;
-  onEvent?: (event: FinanceRealtimeClientEvent) => void;
-  onEvents?: (events: FinanceRealtimeClientEvent[]) => void;
+  onEvent?: (_event: FinanceRealtimeClientEvent) => void;
+  onEvents?: (_events: FinanceRealtimeClientEvent[]) => void;
 };
 
 type UseFinanceRealtimeOptions = {
@@ -26,9 +26,9 @@ type UseFinanceRealtimeOptions = {
   cobrancaId?: string;
   pollIntervalMs?: number;
   /** Chamado uma vez por evento (legado / detalhe). */
-  onEvent?: (event: FinanceRealtimeClientEvent) => void;
+  onEvent?: (_event: FinanceRealtimeClientEvent) => void;
   /** Chamado uma vez por poll com todos os eventos novos (preferir para invalidação em lote). */
-  onEvents?: (events: FinanceRealtimeClientEvent[]) => void;
+  onEvents?: (_events: FinanceRealtimeClientEvent[]) => void;
 };
 
 let sharedSince = Date.now();
@@ -40,29 +40,6 @@ let sharedIntervalId: number | null = null;
 let sharedVisibilityBound = false;
 let sharedSubscriberId = 0;
 const sharedSubscribers = new Map<number, FinanceRealtimeSubscriber>();
-
-let sharedFetchCount = 0;
-let sharedSessionFetchCount = 0;
-let sharedSessionStartedAt = 0;
-
-function resetRealtimeSessionMetrics() {
-  sharedSessionFetchCount = 0;
-  sharedSessionStartedAt = Date.now();
-}
-
-function recordRealtimeFetch() {
-  sharedFetchCount += 1;
-  sharedSessionFetchCount += 1;
-  if (process.env.NODE_ENV !== 'production' || process.env.NEXT_PUBLIC_PERF_LOGS === '1') {
-    console.info('[finance-realtime]', {
-      fetchCount: sharedFetchCount,
-      sessionFetchCount: sharedSessionFetchCount,
-      since: sharedSince,
-      subscribers: sharedSubscribers.size,
-      sessionMs: sharedSessionStartedAt ? Date.now() - sharedSessionStartedAt : 0,
-    });
-  }
-}
 
 function getActivePollIntervalMs() {
   let minInterval = 30_000;
@@ -141,7 +118,6 @@ async function fetchFinanceRealtimeEvents(dedupeWindowMs: number) {
       sharedLastFetchAt = Date.now();
       sharedLastEvents = events;
       sharedErrorStreak = 0;
-      recordRealtimeFetch();
       return events;
     })
     .catch(() => {
@@ -209,10 +185,6 @@ function stopSharedScheduler() {
 function startSharedScheduler() {
   if (typeof window === 'undefined') return;
   if (sharedSubscribers.size === 0) return;
-
-  if (sharedSessionStartedAt === 0) {
-    resetRealtimeSessionMetrics();
-  }
 
   if (!sharedVisibilityBound) {
     document.addEventListener('visibilitychange', handleSharedVisibilityChange);

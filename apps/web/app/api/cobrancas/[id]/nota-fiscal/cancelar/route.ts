@@ -5,6 +5,7 @@ import { resolveChargeFromRouteRef } from '@/lib/finance/resolve-charge-route-re
 import { cancelChargeInvoice } from '@alusa/finance';
 import { publicInvoiceProviderErrorMessage } from '@/lib/api/finance-invoice-errors';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function json(status: number, body: unknown) {
@@ -68,7 +69,7 @@ export async function POST(_req: Request, context: RouteContext) {
 
     return json(200, { data: result.data });
   } catch (error) {
-    console.error('[Cobranca NotaFiscal Cancelar][POST]', error);
+    logFinanceApiError('/api/cobrancas/[id]/nota-fiscal/cancelar', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

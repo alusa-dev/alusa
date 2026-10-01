@@ -8,19 +8,26 @@ describe('AlertService', () => {
   });
 
   describe('dispatch', () => {
-    it('deve enviar para console por padrão', async () => {
-      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    it('deve enviar um log estruturado e sem identificadores para console', async () => {
+      const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       await alertService.dispatch({
         severity: 'critical',
-        title: 'Teste',
-        message: 'Mensagem de teste',
+        title: 'Fila de webhook interrompida',
+        message: 'Detalhe interno com webhook-private',
+        contaId: 'conta-private',
+        metadata: { webhookIds: ['webhook-private'] },
       });
 
       expect(spy).toHaveBeenCalled();
       const logData = JSON.parse(spy.mock.calls[0][0]);
-      expect(logData.title).toBe('Teste');
-      expect(logData.level).toBe('critical');
+      expect(logData['service.name']).toBe('alusa-finance');
+      expect(logData['event.name']).toBe('finance.webhook_health.interrupted_alert');
+      expect(logData.severity).toBe('warn');
+      expect(logData.attributes).toEqual({ 'alert.severity': 'critical', 'alert.count': 1 });
+      expect(JSON.stringify(logData)).not.toContain('conta-private');
+      expect(JSON.stringify(logData)).not.toContain('webhook-private');
+      expect(JSON.stringify(logData)).not.toContain('Detalhe interno');
     });
 
     it('deve enviar para canais customizados registrados', async () => {
@@ -65,13 +72,25 @@ describe('AlertService', () => {
       expect(failedChannels[0].error).toContain('Canal falhou');
     });
 
-    it('deve usar console.warn para severidade info/warning', async () => {
-      const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    it('deve usar console.info para severidade info', async () => {
+      const spy = vi.spyOn(console, 'info').mockImplementation(() => {});
 
       await alertService.dispatch({
         severity: 'info',
         title: 'Info',
         message: 'Teste info',
+      });
+
+      expect(spy).toHaveBeenCalled();
+    });
+
+    it('deve usar console.warn para severidade warning', async () => {
+      const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await alertService.dispatch({
+        severity: 'warning',
+        title: 'Aviso',
+        message: 'Teste warning',
       });
 
       expect(spy).toHaveBeenCalled();
@@ -101,7 +120,7 @@ describe('AlertService', () => {
         send: vi.fn(async () => {}),
       };
       alertService.registerChannel(channel);
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       await alertService.alertInterruptedQueue('conta1', ['wh1', 'wh2']);
 
@@ -115,7 +134,7 @@ describe('AlertService', () => {
         send: vi.fn(async () => {}),
       };
       alertService.registerChannel(channel);
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       await alertService.alertCircuitOpen('conta1', 5);
 

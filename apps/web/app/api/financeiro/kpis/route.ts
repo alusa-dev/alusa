@@ -102,7 +102,6 @@ export async function GET(request: Request) {
     return financeInternalError('API Financeiro KPIs', e);
   } finally {
     logFinanceApiRequest('GET /api/financeiro/kpis', {
-      contaId,
       durationMs: Date.now() - startedAt,
       cacheHit: cacheState,
     });

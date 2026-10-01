@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../../foundation/operational-log';
 /**
  * Use-case: getAccountVerificationStatus
  *
@@ -35,11 +36,16 @@ import {
 
 function areaLabel(key: string): string {
   switch (key) {
-    case 'general': return 'Aprovação geral';
-    case 'documentation': return 'Documentação';
-    case 'bankAccount': return 'Conta bancária';
-    case 'commercialInfo': return 'Dados comerciais';
-    default: return key;
+    case 'general':
+      return 'Aprovação geral';
+    case 'documentation':
+      return 'Documentação';
+    case 'bankAccount':
+      return 'Conta bancária';
+    case 'commercialInfo':
+      return 'Dados comerciais';
+    default:
+      return key;
   }
 }
 
@@ -90,19 +96,21 @@ function buildActions(
 ): VerificationAction[] {
   return nextActions.map((action) => {
     if (
-      action.kind === 'WAITING_PROVIDER'
-      || action.kind === 'PROVISIONING_TIMEOUT'
-      || action.kind === 'PROVIDER_PORTAL_REQUIRED'
+      action.kind === 'WAITING_PROVIDER' ||
+      action.kind === 'PROVISIONING_TIMEOUT' ||
+      action.kind === 'PROVIDER_PORTAL_REQUIRED'
     ) {
-      const status: VerificationActionStatus = (action.groupStatus ?? '').toUpperCase() === 'REJECTED'
-        ? 'REJECTED'
-        : 'PENDING';
+      const status: VerificationActionStatus =
+        (action.groupStatus ?? '').toUpperCase() === 'REJECTED' ? 'REJECTED' : 'PENDING';
 
       return {
         id: action.groupId,
         label: deriveGroupLabel(action.title, action.type),
         description: action.description,
-        mode: action.kind as 'WAITING_PROVIDER' | 'PROVISIONING_TIMEOUT' | 'PROVIDER_PORTAL_REQUIRED',
+        mode: action.kind as
+          | 'WAITING_PROVIDER'
+          | 'PROVISIONING_TIMEOUT'
+          | 'PROVIDER_PORTAL_REQUIRED',
         status,
         documentType: action.type,
         responsible: action.responsible,
@@ -110,11 +118,11 @@ function buildActions(
       };
     }
 
-    const mode = action.kind === 'EXTERNAL_ONBOARDING' ? ('REDIRECT' as const) : ('UPLOAD' as const);
+    const mode =
+      action.kind === 'EXTERNAL_ONBOARDING' ? ('REDIRECT' as const) : ('UPLOAD' as const);
 
-    const status: VerificationActionStatus = (action.groupStatus ?? '').toUpperCase() === 'REJECTED'
-      ? 'REJECTED'
-      : 'PENDING';
+    const status: VerificationActionStatus =
+      (action.groupStatus ?? '').toUpperCase() === 'REJECTED' ? 'REJECTED' : 'PENDING';
 
     const slots: VerificationSlotInfo[] | undefined = action.slots?.map((s) => ({
       id: s.id,
@@ -155,10 +163,11 @@ function buildActions(
 function assertActionsInvariants(actions: VerificationAction[]): void {
   for (const a of actions) {
     if (
-      a.mode === 'WAITING_PROVIDER'
-      || a.mode === 'PROVISIONING_TIMEOUT'
-      || a.mode === 'PROVIDER_PORTAL_REQUIRED'
-    ) continue;
+      a.mode === 'WAITING_PROVIDER' ||
+      a.mode === 'PROVISIONING_TIMEOUT' ||
+      a.mode === 'PROVIDER_PORTAL_REQUIRED'
+    )
+      continue;
 
     if (a.mode === 'REDIRECT') {
       if (!a.redirectUrl || typeof a.redirectUrl !== 'string' || !a.redirectUrl.trim()) {
@@ -195,11 +204,15 @@ async function withProvisioningHint(
 }
 
 function isSandboxEnvironment(): boolean {
-  return (process.env.ASAAS_ENVIRONMENT ?? '').toLowerCase() === 'sandbox'
-    || (process.env.ASAAS_BASE_URL ?? '').toLowerCase().includes('api-sandbox.asaas.com');
+  return (
+    (process.env.ASAAS_ENVIRONMENT ?? '').toLowerCase() === 'sandbox' ||
+    (process.env.ASAAS_BASE_URL ?? '').toLowerCase().includes('api-sandbox.asaas.com')
+  );
 }
 
-async function getLocalApprovedVerification(contaId: string): Promise<AccountVerificationResponse | null> {
+async function getLocalApprovedVerification(
+  contaId: string,
+): Promise<AccountVerificationResponse | null> {
   if (!isSandboxEnvironment()) return null;
 
   const process = await prisma.kycProcess.findFirst({
@@ -257,9 +270,11 @@ export async function getAccountVerificationStatus(
       await ensureSubaccountEmailSynced({ contaId, actor: { type: 'SYSTEM' } });
     } catch (error) {
       try {
-        console.warn('[finance.getAccountVerificationStatus] Falha ao sincronizar email da subconta', {
-          contaId,
-          error: error instanceof Error ? error.message : String(error),
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.kyc.get_account_verification_status.degraded',
+          error: error,
+          throttleMs: 60_000,
         });
       } catch {
         // noop
@@ -297,9 +312,10 @@ export async function getAccountVerificationStatus(
     (a) => a.kind === 'EXTERNAL_ONBOARDING' && !a.onboardingUrl,
   );
 
-  const snapshotForActions = (!opts.fresh && hasRedirectWithoutUrl)
-    ? await getKycSnapshotByContaId(contaId, { ...opts, fresh: true })
-    : snapshot;
+  const snapshotForActions =
+    !opts.fresh && hasRedirectWithoutUrl
+      ? await getKycSnapshotByContaId(contaId, { ...opts, fresh: true })
+      : snapshot;
 
   if (!snapshotForActions) {
     return withProvisioningHint(contaId, { ready: false, reason: 'NOT_READY' });

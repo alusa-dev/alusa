@@ -20,6 +20,7 @@ import {
   getChargeInvoiceDetail,
 } from '@alusa/finance';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 const CHARGE_INVOICE_CACHE_SECONDS = 45;
 const CHARGE_INVOICE_STALE_SECONDS = 45;
@@ -146,7 +147,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
     const dto = chargeInvoiceResponseSchema.parse(result.data);
     return json(200, { data: dto });
   } catch (error) {
-    console.error('[Cobranca NotaFiscal][POST]', error);
+    logFinanceApiError('/api/cobrancas/[id]/nota-fiscal', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

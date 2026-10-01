@@ -1,3 +1,4 @@
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { type RematriculaElegivelItem } from '@/src/server/enrollments/renewal.service';
@@ -299,7 +300,7 @@ export async function getRematriculasRoute(req: Request) {
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
-    console.error('[API Rematrículas] Erro ao listar:', error);
+    logEnrollmentOperationalEvent('api.renewal.list.failed', error);
     return jsonError(500, 'ERRO_LISTAR_REMATRICULAS', 'Não foi possível carregar as rematrículas.');
   }
 }
@@ -683,7 +684,7 @@ export async function postRematriculasRoute(req: Request) {
       { status: 200, headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
-    console.error('[API Rematrículas] Erro ao criar:', error);
+    logEnrollmentOperationalEvent('api.renewal.create.failed', error);
     if (error instanceof Error && error.message === RENEWAL_IDEMPOTENCY_CONFLICT) {
       return jsonError(
         409,

@@ -4,6 +4,7 @@ import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-
 import { resetPasswordByToken } from '@/lib/auth-email-flow';
 import { passwordPolicyMessage, passwordPolicyRegex } from '@/lib/password-policy';
 import { rateLimitResponse } from '@/lib/security/rate-limit-response';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const bodySchema = z
   .object({
@@ -50,7 +51,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: message }, { status: 400 });
     }
   } catch (error) {
-    console.error('[auth][reset-password]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'auth.password_reset.reset_failed',
+      route: '/api/auth/reset',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     return NextResponse.json({ error: 'Não foi possível redefinir a senha.' }, { status: 500 });
   }
 }

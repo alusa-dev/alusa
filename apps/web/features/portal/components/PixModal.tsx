@@ -25,8 +25,8 @@ export function PixModal({ open, onClose, pixData }: PixModalProps) {
       await navigator.clipboard.writeText(pixData.payload);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (error) {
-      console.error('Erro ao copiar:', error);
+    } catch {
+      // Clipboard access is optional; the user can still copy the payload manually.
     }
   };
 
@@ -140,4 +140,3 @@ export function PixModal({ open, onClose, pixData }: PixModalProps) {
     </div>
   );
 }
-

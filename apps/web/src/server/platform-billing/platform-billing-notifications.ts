@@ -1,8 +1,15 @@
-import { NotificationCategory, NotificationSeverity, NotificationType, Role, Status } from '@prisma/client';
+import {
+  NotificationCategory,
+  NotificationSeverity,
+  NotificationType,
+  Role,
+  Status,
+} from '@prisma/client';
 import { createNotification } from '@alusa/lib/services/notifications.service';
 import { buildAppUrl } from '@/lib/app-url';
 import { sendTransactionalEmail } from '@/lib/email/transactional-email';
 import prisma from '@/lib/prisma';
+import { logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 type PlatformBillingNotification = {
   severity: NotificationSeverity;
@@ -54,11 +61,13 @@ export async function notifyPlatformBillingEvent(input: {
     eventType: input.eventType,
     notification,
   }).catch((error) => {
-    console.warn('[platform-billing][notification-email]', {
-      contaId: input.contaId,
-      eventId: input.eventId,
-      eventType: input.eventType,
-      error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+    logApiOperationalEvent({
+      severity: 'warn',
+      eventName: 'api.platform_billing.notification_email.failed',
+      route: '/api/webhooks/stripe',
+      method: 'WORKER',
+      requestId: crypto.randomUUID(),
+      error,
     });
   });
 }
@@ -145,7 +154,11 @@ function buildPlatformBillingEmailHtml(input: {
   ].join('');
 }
 
-function buildPlatformBillingEmailText(input: { title: string; message: string; actionUrl: string }): string {
+function buildPlatformBillingEmailText(input: {
+  title: string;
+  message: string;
+  actionUrl: string;
+}): string {
   return `${input.title}\n\n${input.message}\n\nAcesse: ${input.actionUrl}`;
 }
 
@@ -158,7 +171,9 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
-function mapPlatformBillingEventToNotification(eventType: string): PlatformBillingNotification | null {
+function mapPlatformBillingEventToNotification(
+  eventType: string,
+): PlatformBillingNotification | null {
   if (eventType === 'checkout.session.completed') {
     return {
       severity: NotificationSeverity.SUCCESS,
@@ -171,7 +186,8 @@ function mapPlatformBillingEventToNotification(eventType: string): PlatformBilli
     return {
       severity: NotificationSeverity.SUCCESS,
       title: 'Assinatura iniciada',
-      message: 'A assinatura da Alusa está ativa. Acompanhe o plano e o pagamento em Plano e faturamento.',
+      message:
+        'A assinatura da Alusa está ativa. Acompanhe o plano e o pagamento em Plano e faturamento.',
       email: {
         subject: 'Assinatura iniciada na Alusa',
         preview: 'A assinatura da conta está ativa.',
@@ -196,7 +212,8 @@ function mapPlatformBillingEventToNotification(eventType: string): PlatformBilli
     return {
       severity: NotificationSeverity.WARNING,
       title: 'Pagamento da assinatura pendente',
-      message: 'A conta entrou em período de regularização. Atualize o pagamento em Plano e faturamento.',
+      message:
+        'A conta entrou em período de regularização. Atualize o pagamento em Plano e faturamento.',
       email: {
         subject: 'Pagamento da assinatura pendente',
         preview: 'Atualize o pagamento para evitar restrições no acesso.',
@@ -209,7 +226,8 @@ function mapPlatformBillingEventToNotification(eventType: string): PlatformBilli
     return {
       severity: NotificationSeverity.WARNING,
       title: 'Teste gratuito terminando',
-      message: 'O teste gratuito está perto do fim. Cadastre um cartão para evitar pausa no acesso.',
+      message:
+        'O teste gratuito está perto do fim. Cadastre um cartão para evitar pausa no acesso.',
       email: {
         subject: 'Seu teste gratuito está terminando',
         preview: 'Cadastre um cartão para evitar pausa no acesso.',

@@ -3,8 +3,9 @@ import { requirePortalUser, resolvePortalAlunoIds } from '@/features/portal/api-
 import { portalMatriculasResultDTOSchema } from '@/features/portal/dtos';
 import { mapPortalMatriculaToDTO, mapPortalMatriculasResultToDTO } from '@/features/portal/mappers';
 import { listPortalMatriculas } from '@/src/server/portal/portal-read.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const auth = await requirePortalUser();
     if ('response' in auth) return auth.response;
@@ -61,7 +62,14 @@ export async function GET() {
       ),
     );
   } catch (error) {
-    console.error('Erro ao buscar matrículas:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.portal.request.failed',
+      route: '/api/portal/matriculas',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return NextResponse.json({ error: 'Erro ao carregar matrículas' }, { status: 500 });
   }
 }

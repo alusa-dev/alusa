@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import type { BillingType } from '@alusa/asaas';
 import { prisma } from '@alusa/database';
 import { isValidCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
@@ -1783,143 +1784,146 @@ async function createLocalSaleRecord(input: {
     attempts += 1;
 
     try {
-      const saleId = await prisma.$transaction(async (tx) => {
-        const existing = await tx.sale.findFirst({
-          where: {
-            contaId: input.contaId,
-            uiRequestId: input.uiRequestId,
-          },
-          select: { id: true },
-        });
+      const saleId = await prisma.$transaction(
+        async (tx) => {
+          const existing = await tx.sale.findFirst({
+            where: {
+              contaId: input.contaId,
+              uiRequestId: input.uiRequestId,
+            },
+            select: { id: true },
+          });
 
-        if (existing) return existing.id;
+          if (existing) return existing.id;
 
-        const lastSale = await tx.sale.findFirst({
-          where: { contaId: input.contaId },
-          select: { saleNumber: true },
-          orderBy: { saleNumber: 'desc' },
-        });
+          const lastSale = await tx.sale.findFirst({
+            where: { contaId: input.contaId },
+            select: { saleNumber: true },
+            orderBy: { saleNumber: 'desc' },
+          });
 
-        const saleNumber = (lastSale?.saleNumber ?? 0) + 1;
-        const walkInResponsavelId =
-          input.prepared.customer.type === 'AVULSO' &&
-          (Boolean(input.prepared.chargeConfig) || input.prepared.customer.saveAsCustomer)
-            ? await ensureWalkInResponsavel({
-                tx,
-                contaId: input.contaId,
-                customer: input.prepared.customer,
-                exposeInSearch: input.prepared.customer.saveAsCustomer,
-              })
-            : null;
+          const saleNumber = (lastSale?.saleNumber ?? 0) + 1;
+          const walkInResponsavelId =
+            input.prepared.customer.type === 'AVULSO' &&
+            (Boolean(input.prepared.chargeConfig) || input.prepared.customer.saveAsCustomer)
+              ? await ensureWalkInResponsavel({
+                  tx,
+                  contaId: input.contaId,
+                  customer: input.prepared.customer,
+                  exposeInSearch: input.prepared.customer.saveAsCustomer,
+                })
+              : null;
 
-        const createdSale = await tx.sale.create({
-          data: {
-            contaId: input.contaId,
-            uiRequestId: input.uiRequestId,
-            requestFingerprint: input.requestFingerprint,
-            saleNumber,
-            status:
-              input.prepared.finalizationType === SaleFinalizationType.RECEBIMENTO_PRESENCIAL
-                ? SaleStatus.CONCLUIDA
-                : SaleStatus.PENDENTE,
-            customerType: input.prepared.customer.type,
-            alunoId:
-              input.prepared.customer.type === 'ALUNO' ? input.prepared.customer.alunoId : null,
-            responsavelId:
-              input.prepared.customer.type === 'RESPONSAVEL'
-                ? input.prepared.customer.responsavelId
-                : input.prepared.customer.type === 'ALUNO'
-                  ? input.prepared.customer.responsavelId
-                  : walkInResponsavelId,
-            walkInName:
-              input.prepared.customer.type === 'AVULSO'
-                ? input.prepared.customer.displayName
-                : null,
-            walkInPhone:
-              input.prepared.customer.type === 'AVULSO'
-                ? input.prepared.customer.walkInPhone
-                : null,
-            walkInNotes:
-              input.prepared.customer.type === 'AVULSO'
-                ? input.prepared.customer.walkInNotes
-                : null,
-            subtotal: moneyToDecimal(input.prepared.subtotal),
-            discount: moneyToDecimal(input.prepared.discount),
-            total: moneyToDecimal(input.prepared.total),
-            totalCost: moneyToDecimal(input.prepared.totalCost),
-            grossProfit: moneyToDecimal(input.prepared.grossProfit),
-            grossMargin: numberToDecimal(input.prepared.grossMargin, 4),
-            finalizationType: input.prepared.finalizationType,
-            inventoryMode: input.prepared.inventoryMode,
-            inventoryStatus:
-              input.prepared.inventoryMode === SaleInventoryMode.RESERVE
-                ? SaleInventoryStatus.RESERVED
-                : SaleInventoryStatus.FULFILLED,
-            paymentMethod: input.prepared.paymentMethod,
-            amountReceived:
-              input.prepared.amountReceived != null
-                ? moneyToDecimal(input.prepared.amountReceived)
-                : null,
-            changeGiven:
-              input.prepared.changeGiven != null
-                ? moneyToDecimal(input.prepared.changeGiven)
-                : null,
-            matriculaId: input.prepared.chargeConfig?.matriculaId ?? null,
-            operadorId: input.operatorId,
-          },
-          select: { id: true },
-        });
-
-        const createdItems: CreatedSaleInventoryLine[] = [];
-        for (const item of input.prepared.items) {
-          const createdItem = await tx.saleItem.create({
+          const createdSale = await tx.sale.create({
             data: {
-              saleId: createdSale.id,
-              productId: item.productId,
-              variantId: item.variantId,
-              productName: item.productName,
-              quantity: item.quantity,
-              unitPrice: moneyToDecimal(item.unitPrice),
-              subtotal: moneyToDecimal(item.subtotal),
-              unitCostAtSale: numberToDecimal(item.unitCostAtSale, 4),
-              totalCostAtSale: moneyToDecimal(item.totalCostAtSale),
-              discountShareAtSale: moneyToDecimal(item.discountShareAtSale),
-              netSubtotalAtSale: moneyToDecimal(item.netSubtotalAtSale),
-              grossProfitAtSale: moneyToDecimal(item.grossProfitAtSale),
-              marginAtSale: numberToDecimal(item.marginAtSale, 4),
+              contaId: input.contaId,
+              uiRequestId: input.uiRequestId,
+              requestFingerprint: input.requestFingerprint,
+              saleNumber,
+              status:
+                input.prepared.finalizationType === SaleFinalizationType.RECEBIMENTO_PRESENCIAL
+                  ? SaleStatus.CONCLUIDA
+                  : SaleStatus.PENDENTE,
+              customerType: input.prepared.customer.type,
+              alunoId:
+                input.prepared.customer.type === 'ALUNO' ? input.prepared.customer.alunoId : null,
+              responsavelId:
+                input.prepared.customer.type === 'RESPONSAVEL'
+                  ? input.prepared.customer.responsavelId
+                  : input.prepared.customer.type === 'ALUNO'
+                    ? input.prepared.customer.responsavelId
+                    : walkInResponsavelId,
+              walkInName:
+                input.prepared.customer.type === 'AVULSO'
+                  ? input.prepared.customer.displayName
+                  : null,
+              walkInPhone:
+                input.prepared.customer.type === 'AVULSO'
+                  ? input.prepared.customer.walkInPhone
+                  : null,
+              walkInNotes:
+                input.prepared.customer.type === 'AVULSO'
+                  ? input.prepared.customer.walkInNotes
+                  : null,
+              subtotal: moneyToDecimal(input.prepared.subtotal),
+              discount: moneyToDecimal(input.prepared.discount),
+              total: moneyToDecimal(input.prepared.total),
+              totalCost: moneyToDecimal(input.prepared.totalCost),
+              grossProfit: moneyToDecimal(input.prepared.grossProfit),
+              grossMargin: numberToDecimal(input.prepared.grossMargin, 4),
+              finalizationType: input.prepared.finalizationType,
+              inventoryMode: input.prepared.inventoryMode,
+              inventoryStatus:
+                input.prepared.inventoryMode === SaleInventoryMode.RESERVE
+                  ? SaleInventoryStatus.RESERVED
+                  : SaleInventoryStatus.FULFILLED,
+              paymentMethod: input.prepared.paymentMethod,
+              amountReceived:
+                input.prepared.amountReceived != null
+                  ? moneyToDecimal(input.prepared.amountReceived)
+                  : null,
+              changeGiven:
+                input.prepared.changeGiven != null
+                  ? moneyToDecimal(input.prepared.changeGiven)
+                  : null,
+              matriculaId: input.prepared.chargeConfig?.matriculaId ?? null,
+              operadorId: input.operatorId,
             },
-            select: {
-              id: true,
-              productId: true,
-              variantId: true,
-              productName: true,
-              quantity: true,
-            },
+            select: { id: true },
           });
 
-          createdItems.push({
-            saleItemId: createdItem.id,
-            productId: createdItem.productId,
-            variantId: createdItem.variantId,
-            productName: createdItem.productName,
-            quantity: createdItem.quantity,
-            unitCostAtSale: item.unitCostAtSale,
+          const createdItems: CreatedSaleInventoryLine[] = [];
+          for (const item of input.prepared.items) {
+            const createdItem = await tx.saleItem.create({
+              data: {
+                saleId: createdSale.id,
+                productId: item.productId,
+                variantId: item.variantId,
+                productName: item.productName,
+                quantity: item.quantity,
+                unitPrice: moneyToDecimal(item.unitPrice),
+                subtotal: moneyToDecimal(item.subtotal),
+                unitCostAtSale: numberToDecimal(item.unitCostAtSale, 4),
+                totalCostAtSale: moneyToDecimal(item.totalCostAtSale),
+                discountShareAtSale: moneyToDecimal(item.discountShareAtSale),
+                netSubtotalAtSale: moneyToDecimal(item.netSubtotalAtSale),
+                grossProfitAtSale: moneyToDecimal(item.grossProfitAtSale),
+                marginAtSale: numberToDecimal(item.marginAtSale, 4),
+              },
+              select: {
+                id: true,
+                productId: true,
+                variantId: true,
+                productName: true,
+                quantity: true,
+              },
+            });
+
+            createdItems.push({
+              saleItemId: createdItem.id,
+              productId: createdItem.productId,
+              variantId: createdItem.variantId,
+              productName: createdItem.productName,
+              quantity: createdItem.quantity,
+              unitCostAtSale: item.unitCostAtSale,
+            });
+          }
+
+          await applySaleInventoryOnCreate(tx, {
+            contaId: input.contaId,
+            actorUserId: input.operatorId,
+            saleId: createdSale.id,
+            items: createdItems,
+            inventoryMode: input.prepared.inventoryMode,
           });
-        }
 
-        await applySaleInventoryOnCreate(tx, {
-          contaId: input.contaId,
-          actorUserId: input.operatorId,
-          saleId: createdSale.id,
-          items: createdItems,
-          inventoryMode: input.prepared.inventoryMode,
-        });
-
-        return createdSale.id;
-      }, {
-        maxWait: STORE_SALE_TRANSACTION_MAX_WAIT_MS,
-        timeout: STORE_SALE_TRANSACTION_TIMEOUT_MS,
-      });
+          return createdSale.id;
+        },
+        {
+          maxWait: STORE_SALE_TRANSACTION_MAX_WAIT_MS,
+          timeout: STORE_SALE_TRANSACTION_TIMEOUT_MS,
+        },
+      );
 
       const sale = await findSaleById(input.contaId, saleId);
       if (!sale) {
@@ -1941,7 +1945,10 @@ async function createLocalSaleRecord(input: {
       if (isPrismaUniqueViolation(error)) {
         const existing = await findSaleByUiRequestId(input.contaId, input.uiRequestId);
         if (existing) {
-          if (existing.requestFingerprint && existing.requestFingerprint !== input.requestFingerprint) {
+          if (
+            existing.requestFingerprint &&
+            existing.requestFingerprint !== input.requestFingerprint
+          ) {
             throw new StoreSaleError(
               'IDEMPOTENCY_CONFLICT',
               'A solicitação já foi usada para outra venda. Gere uma nova tentativa.',
@@ -2084,11 +2091,6 @@ async function ensureChargeForSale(input: {
     });
 
     if (!firstCharge) {
-      console.info('[store-sales][installment-payments-pending]', {
-        contaId: input.contaId,
-        saleId: input.sale.id,
-        standaloneInstallmentPlanId: chargeResult.data.chargeId,
-      });
     }
 
     return;
@@ -2233,7 +2235,6 @@ export async function listEligibleStoreSaleMatriculas(
 }
 
 export async function createStoreSale(input: CreateStoreSaleInput): Promise<StoreSaleDTO> {
-  const startedAt = Date.now();
   const requestFingerprint = buildSaleRequestFingerprint(input);
   const existing = await findSaleByUiRequestId(input.contaId, input.uiRequestId);
 
@@ -2317,27 +2318,13 @@ export async function createStoreSale(input: CreateStoreSaleInput): Promise<Stor
       },
     });
 
-    console.info('[store-sales][created]', {
-      contaId: input.contaId,
-      saleId: sale.id,
-      saleNumber: persisted.saleNumber,
-      finalizationType: persisted.finalizationType,
-      hasCharge: Boolean(persisted.chargeId),
-      hasInstallmentPlan: Boolean(persisted.standaloneInstallmentPlanId),
-      durationMs: Date.now() - startedAt,
-    });
-
     return mapSaleRecord(persisted);
   } catch (error) {
-    console.error('[store-sales][create-failed-after-local-sale]', {
-      contaId: input.contaId,
-      saleId: sale.id,
-      uiRequestId: input.uiRequestId,
-      finalizationType: prepared.finalizationType,
-      hasChargeConfig: Boolean(prepared.chargeConfig),
-      durationMs: Date.now() - startedAt,
-      errorName: error instanceof Error ? error.name : null,
-      errorMessage: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.store_sales.failed',
+      error: error,
+      throttleMs: 60_000,
     });
 
     throw error;

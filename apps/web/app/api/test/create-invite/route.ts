@@ -6,6 +6,7 @@ import {
 import { mapTestCreateInviteResultToDTO } from '@/features/system/mappers';
 import { isTestRouteEnabled } from '@/lib/security/runtime-guards';
 import { createTestInvite } from '@/src/server/system/test-fixtures.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export async function POST(req: Request) {
   try {
@@ -27,7 +28,7 @@ export async function POST(req: Request) {
       ),
     );
   } catch (error) {
-    console.error('[API test/create-invite] Erro', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.test_invite.request.failed', route: '/api/test/create-invite', method: 'POST', requestId: getRequestId(req), error });
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 }

@@ -3,6 +3,7 @@ import { getInstallment, listInstallmentPayments } from '@alusa/asaas';
 import type { InstallmentStatus } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { parseExternalReference } from '../core';
 import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
 import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
@@ -65,7 +66,11 @@ async function computeStatusViaAsaas(params: {
     apiKey: credentials.apiKey,
     installmentId: params.asaasInstallmentId,
   }).catch((error) => {
-    console.error('[finance][handleInstallmentWebhook][getInstallment]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.webhook.installment.asaas_lookup.failed',
+      error,
+    });
     return null;
   });
 
@@ -89,7 +94,11 @@ async function computeStatusViaAsaas(params: {
       limit: 100,
       offset,
     }).catch((error) => {
-      console.error('[finance][handleInstallmentWebhook][listInstallmentPayments]', error);
+      logFinanceOperationalEvent({
+        severity: 'error',
+        eventName: 'finance.webhook.installment.payments_lookup.failed',
+        error,
+      });
       return null;
     });
 
@@ -274,16 +283,16 @@ export async function handleInstallmentWebhook(
         revision: Date.now(),
       });
     } catch (publishError) {
-      console.warn('[finance][handleInstallmentWebhook][realtime-publish-failed]', {
-        contaId,
-        installmentPlanId: installmentPlan.id,
-        error: publishError instanceof Error ? publishError.message : String(publishError),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.webhook.installment.realtime_publish.failed',
+        error: publishError,
       });
     }
 
     return { success: true };
   } catch (error) {
-    console.error('[finance][handleInstallmentWebhook]', error);
+    logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.webhook.installment.processing.failed', error });
     return { success: false, error: error instanceof Error ? error.message : 'Erro desconhecido' };
   }
 }

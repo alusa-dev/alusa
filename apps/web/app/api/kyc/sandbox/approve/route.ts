@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { approveSandboxKyc } from '@alusa/finance/use-cases/kyc/approve-sandbox-kyc';
 import { getAccountVerificationStatus } from '@alusa/finance/use-cases/kyc/get-account-verification-status';
@@ -26,11 +27,14 @@ async function resolveAuth(): Promise<SessionUser | null> {
  * Aprova a conta no Asaas sandbox.
  * Disponível apenas em ambiente sandbox; retorna 403 em produção.
  */
-export async function POST() {
+export async function POST(
+  request: Request = new Request('http://localhost/api/kyc/sandbox/approve'),
+) {
   try {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const result = await approveSandboxKyc(user.contaId);
     invalidateAccountVerificationCache(user.contaId);
@@ -40,9 +44,10 @@ export async function POST() {
       return json(status, { error: result.reason, message: result.message });
     }
 
-    const verification = result.generalStatus.toUpperCase() === 'APPROVED'
-      ? await getAccountVerificationStatus(user.contaId)
-      : null;
+    const verification =
+      result.generalStatus.toUpperCase() === 'APPROVED'
+        ? await getAccountVerificationStatus(user.contaId)
+        : null;
     if (verification?.ready) {
       setAccountVerificationCache(user.contaId, { data: verification.data });
     }
@@ -55,7 +60,14 @@ export async function POST() {
       },
     });
   } catch (error) {
-    console.error('[KYC Sandbox Approve][POST]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.kyc.request.failed',
+      route: '/api/kyc/sandbox/approve',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

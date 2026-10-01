@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import {
   processDueBillingAgreementChanges,
@@ -11,6 +12,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const scope = await resolveTenantScope(req, {
@@ -35,9 +37,14 @@ async function run(req: Request) {
     });
     return NextResponse.json({ success: true, scheduled, expiredAllocations, adjustments });
   } catch (error) {
-    console.error('[jobs/process-billing-agreement-lifecycle]', error);
+    logJobFailure('process-billing-agreement-lifecycle', startedAt, error);
     return NextResponse.json(
-      { error: { code: 'BILLING_LIFECYCLE_JOB_FAILED', message: 'Não foi possível processar o ciclo de vida das cobranças.' } },
+      {
+        error: {
+          code: 'BILLING_LIFECYCLE_JOB_FAILED',
+          message: 'Não foi possível processar o ciclo de vida das cobranças.',
+        },
+      },
       { status: 500 },
     );
   }

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import {
   formatRematriculaFamiliarValidationMessage,
   parseRematriculaFamiliarDate,
@@ -289,7 +290,7 @@ export async function POST(request: Request) {
       );
     }
 
-    console.error('[POST /api/rematriculas/familiar]', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.family_renewal.request.failed', route: '/api/rematriculas/familiar', method: 'POST', requestId: getRequestId(request), error });
     return jsonError(
       500,
       'ERRO_REMATRICULA_FAMILIAR',

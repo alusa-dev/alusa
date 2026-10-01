@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
@@ -24,7 +25,7 @@ function json(status: number, body: unknown) {
 }
 
 /** Gera o plano tenant-scoped; nenhuma escrita é executada. */
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const auth = await requireAdmin();
     if ('error' in auth) return json(auth.status ?? 403, { error: auth.error });
@@ -34,7 +35,14 @@ export async function GET() {
     });
     return json(200, audit);
   } catch (error) {
-    console.error('[BillingAgreement integrity][GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/financial/billing-agreements/reconcile',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }
@@ -45,7 +53,8 @@ export async function POST(request: Request) {
     const auth = await requireAdmin();
     if ('error' in auth) return json(auth.status ?? 403, { error: auth.error });
     const parsed = executeSchema.safeParse(await request.json().catch(() => null));
-    if (!parsed.success) return json(400, { error: 'PAYLOAD_INVALIDO', issues: parsed.error.issues });
+    if (!parsed.success)
+      return json(400, { error: 'PAYLOAD_INVALIDO', issues: parsed.error.issues });
     const result = await reconcileBillingAgreementsForTenant({
       contaId: auth.user.contaId,
       dryRun: false,
@@ -53,7 +62,14 @@ export async function POST(request: Request) {
     });
     return json(200, result);
   } catch (error) {
-    console.error('[BillingAgreement integrity][POST]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/financial/billing-agreements/reconcile',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

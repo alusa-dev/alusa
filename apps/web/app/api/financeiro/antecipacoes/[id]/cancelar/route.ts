@@ -1,3 +1,4 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest } from 'next/server';
 
 import { cancelReceivableAnticipation } from '@alusa/finance';
@@ -23,7 +24,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (!result.success) return anticipationErrorResponse(result.error);
     return json(200, { data: result.data });
   } catch (error) {
-    console.error('[API antecipacoes cancelar][POST]', error);
+    logFinanceApiError('/api/financeiro/antecipacoes/[id]/cancelar', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

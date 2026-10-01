@@ -4,6 +4,7 @@ import { loadAsaasCredentials, prisma } from '@alusa/database';
 import type { AuditActorType } from '@prisma/client';
 
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import {
   buildExpectedWebhookConfig,
   hasRequiredWebhookEvents,
@@ -297,13 +298,10 @@ export async function repairWebhookConfigDrift(params: {
         ? 'REMOTE_NOT_FOUND'
         : 'PROVIDER_ERROR';
 
-    console.warn('[finance.webhook-config] Falha ao verificar/reparar webhook', {
-      contaId: params.contaId,
-      reason,
-      failureCategory: failure.category,
-      failureStatus: failure.status,
-      failureDetails: failure.details,
-      retryable: failure.retryable,
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.webhook.config.repair.failed',
+      error,
     });
 
     return {

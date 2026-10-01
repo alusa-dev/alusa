@@ -7,6 +7,7 @@ import {
 } from '@alusa/platform-billing';
 import { z } from 'zod';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import {
   assertCanManagePlatformBilling,
@@ -36,17 +37,27 @@ export async function POST(req: NextRequest) {
   const idempotencyKey = req.headers.get('idempotency-key')?.trim() || parsed.data.idempotencyKey;
   if (!idempotencyKey) {
     return NextResponse.json(
-      { error: 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED', message: 'A chave de idempotência é obrigatória.' },
+      {
+        error: 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED',
+        message: 'A chave de idempotência é obrigatória.',
+      },
       { status: 400 },
     );
   }
 
   return withTenantSession(async ({ contaId, userId, tx }) => {
-    const rate = await rateLimitAsync(`platform-billing:checkout:${contaId}:${userId}:${requestIp}`, 20, 10 * 60_000);
+    const rate = await rateLimitAsync(
+      `platform-billing:checkout:${contaId}:${userId}:${requestIp}`,
+      20,
+      10 * 60_000,
+    );
     if (!rate.ok) {
       return NextResponse.json(
         { error: 'RATE_LIMITED' },
-        { status: 429, headers: { 'Retry-After': String(Math.ceil((rate.resetAt - Date.now()) / 1000)) } },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil((rate.resetAt - Date.now()) / 1000)) },
+        },
       );
     }
 
@@ -83,13 +94,12 @@ export async function POST(req: NextRequest) {
       return billingActionErrorResponse(error);
     }
 
-    console.info('[platform-billing][checkout]', {
-      event: 'checkout_created',
-      contaId,
-      userId,
-      planCode: parsed.data.planCode,
-      reused: result.reused,
-      checkoutSessionId: result.checkoutSessionId,
+    logApiOperationalEvent({
+      severity: 'info',
+      eventName: 'api.platform_billing.checkout.created',
+      route: '/api/platform-billing/checkout',
+      method: 'POST',
+      requestId: getRequestId(req),
     });
 
     return NextResponse.json({
@@ -105,22 +115,28 @@ function billingActionErrorResponse(error: unknown): NextResponse {
     return NextResponse.json(
       {
         error: error.code,
-        message: error.code === 'PLATFORM_PRICE_MISSING'
-          ? 'Este plano ainda não está disponível para contratação.'
-          : 'Não foi possível abrir o pagamento.',
+        message:
+          error.code === 'PLATFORM_PRICE_MISSING'
+            ? 'Este plano ainda não está disponível para contratação.'
+            : 'Não foi possível abrir o pagamento.',
       },
       { status: error.code === 'PLATFORM_PRICE_MISSING' ? 503 : 400 },
     );
   }
 
   if (error instanceof StripeIntegrationError) {
-    return NextResponse.json({ error: error.code, message: 'O pagamento está temporariamente indisponível.' }, { status: 503 });
+    return NextResponse.json(
+      { error: error.code, message: 'O pagamento está temporariamente indisponível.' },
+      { status: 503 },
+    );
   }
 
   throw error;
 }
 
-async function readBody(req: NextRequest): Promise<{ success: true; data: unknown } | { success: false }> {
+async function readBody(
+  req: NextRequest,
+): Promise<{ success: true; data: unknown } | { success: false }> {
   try {
     return { success: true, data: await req.json() };
   } catch {

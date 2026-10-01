@@ -1,3 +1,4 @@
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
 import {
   channelPreferencesFromWizardSelection,
   recordNotificationSyncAudit,
@@ -101,11 +102,7 @@ export async function syncEnrollmentNotifications(
       },
     }));
   } catch {
-    console.warn('[enrollment-notifications] Audit persistence failed', {
-      contaId: input.contaId,
-      matriculaId: input.matriculaId,
-      correlationId: input.correlationId,
-    });
+    logEnrollmentOperationalEvent('api.enrollment.audit.write.failed');
   }
   return result;
 }

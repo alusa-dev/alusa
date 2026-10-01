@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { isValidKycGroupId } from '@/features/kyc/utils/group-id';
@@ -50,7 +51,7 @@ interface RouteContext {
 
 /**
  * POST /api/kyc/documents/[groupId]/upload
- * 
+ *
  * Faz upload de documento para um grupo específico.
  * Aceita multipart/form-data com:
  *   - documentFile: arquivo (PDF, JPG, PNG, max 3 MiB)
@@ -58,8 +59,13 @@ interface RouteContext {
 export async function POST(req: Request, context: RouteContext) {
   const user = await resolveAuth();
   if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-  if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
-  const rate = await rateLimitAsync(`kyc-upload:${user.contaId}:${user.id}:${ipFromRequest(req)}`, 12, 10 * 60_000);
+  if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    return json(403, { error: 'SEM_PERMISSAO' });
+  const rate = await rateLimitAsync(
+    `kyc-upload:${user.contaId}:${user.id}:${ipFromRequest(req)}`,
+    12,
+    10 * 60_000,
+  );
   if (!rate.ok) return json(429, { error: 'MUITAS_TENTATIVAS' });
 
   const { groupId } = await Promise.resolve(context.params);
@@ -104,7 +110,10 @@ export async function POST(req: Request, context: RouteContext) {
     if (!snapshot) {
       return json(
         409,
-        { code: 'WAITING_REQUIREMENTS', message: 'Os requisitos de verificação ainda estão sendo preparados.' },
+        {
+          code: 'WAITING_REQUIREMENTS',
+          message: 'Os requisitos de verificação ainda estão sendo preparados.',
+        },
         { 'Retry-After': '15' },
       );
     }
@@ -113,8 +122,8 @@ export async function POST(req: Request, context: RouteContext) {
     const action = snapshot.nextActions.find((nextAction) => nextAction.groupId === groupId);
 
     if (action?.kind === 'EXTERNAL_ONBOARDING') {
-      return json(409, { 
-        code: 'EXTERNAL_REQUIRED', 
+      return json(409, {
+        code: 'EXTERNAL_REQUIRED',
         message: 'Este documento deve ser enviado pelo fluxo externo.',
         data: { actionId: groupId },
       });
@@ -123,7 +132,8 @@ export async function POST(req: Request, context: RouteContext) {
     if (action?.kind === 'PROVIDER_PORTAL_REQUIRED') {
       return json(409, {
         code: 'PROVIDER_PORTAL_REQUIRED',
-        message: 'Esta etapa precisa ser concluída no ambiente de verificação configurado para a conta.',
+        message:
+          'Esta etapa precisa ser concluída no ambiente de verificação configurado para a conta.',
         data: { actionId: groupId },
       });
     }
@@ -150,7 +160,8 @@ export async function POST(req: Request, context: RouteContext) {
       if (!slotBelongsToGroup) {
         return json(409, {
           code: 'SLOT_NOT_ALLOWED',
-          message: 'Este arquivo não pertence ao grupo informado. Atualize a página e tente novamente.',
+          message:
+            'Este arquivo não pertence ao grupo informado. Atualize a página e tente novamente.',
         });
       }
     }
@@ -178,11 +189,24 @@ export async function POST(req: Request, context: RouteContext) {
       cleanup: async () => undefined,
       action: async () => {
         if (normalizedSlotId) {
-          return updateKycDocumentFile({ contaId: user.contaId!, fileId: normalizedSlotId, file: { bytes, filename: documentFile.name, mimeType: binaryValidation.detectedMimeType }, actor: { type: 'USER', id: user.id! } });
+          return updateKycDocumentFile({
+            contaId: user.contaId!,
+            fileId: normalizedSlotId,
+            file: {
+              bytes,
+              filename: documentFile.name,
+              mimeType: binaryValidation.detectedMimeType,
+            },
+            actor: { type: 'USER', id: user.id! },
+          });
         }
         return uploadKycDocumentByGroup({
-          contaId: user.contaId!, groupId,
-          type: typeof documentType === 'string' && documentType.trim() ? documentType.trim() : undefined,
+          contaId: user.contaId!,
+          groupId,
+          type:
+            typeof documentType === 'string' && documentType.trim()
+              ? documentType.trim()
+              : undefined,
           file: { bytes, filename: documentFile.name, mimeType: binaryValidation.detectedMimeType },
           actor: { type: 'USER', id: user.id! },
         });
@@ -192,7 +216,7 @@ export async function POST(req: Request, context: RouteContext) {
 
     const refreshed = await getKycSnapshotByContaId(user.contaId, { fresh: true });
 
-    return json(200, { 
+    return json(200, {
       data: {
         success: true,
         snapshot: refreshed,
@@ -237,17 +261,23 @@ export async function POST(req: Request, context: RouteContext) {
       });
     }
 
-    const message = error instanceof Error ? error.message ?? '' : '';
+    const message = error instanceof Error ? (error.message ?? '') : '';
     if (message.toLowerCase().includes('tipo do documento')) {
       return json(422, { error: 'TIPO_DOCUMENTO_INVALIDO', message });
     }
 
-    console.error('[Finance Documents Upload][POST]', {
-      error: error instanceof Error ? error.message : String(error),
-      groupId,
-      contaId: user.contaId,
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.kyc.request.failed',
+      route: '/api/kyc/documents/[groupId]/upload',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
     });
-    return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível enviar o documento KYC.' });
+    return json(500, {
+      error: 'ERRO_INTERNO',
+      message: 'Não foi possível enviar o documento KYC.',
+    });
   }
 }
 

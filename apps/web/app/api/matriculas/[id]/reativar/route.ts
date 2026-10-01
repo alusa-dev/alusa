@@ -1,9 +1,8 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { z } from 'zod';
-import {
-  PausaBusinessError,
-} from '@/src/server/enrollments/enrollment-pause.service';
+import { PausaBusinessError } from '@/src/server/enrollments/enrollment-pause.service';
 import { reactivateMatriculaFromHttp } from '@/src/server/enrollments/enrollment-http-commands.service';
 import { notifyMatriculaAction } from '@alusa/lib/notifications/matricula-notifications';
 import { isPlatformBillingCapacityError } from '@/src/server/platform-billing/capacity';
@@ -15,8 +14,12 @@ import {
 export const dynamic = 'force-dynamic';
 
 const reativarInputSchema = z.object({
-  dataRetornoEfetiva: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve estar no formato YYYY-MM-DD'),
-  nextDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data da próxima cobrança deve estar no formato YYYY-MM-DD'),
+  dataRetornoEfetiva: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve estar no formato YYYY-MM-DD'),
+  nextDueDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data da próxima cobrança deve estar no formato YYYY-MM-DD'),
   observacao: z.string().trim().optional(),
 });
 
@@ -84,7 +87,14 @@ export async function POST(
       );
     }
 
-    console.error('[REATIVAR_MATRICULA] Erro inesperado:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/matriculas/[id]/reativar',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     return NextResponse.json(
       { error: 'INTERNAL_ERROR', message: 'Erro interno do servidor' },
       { status: 500 },

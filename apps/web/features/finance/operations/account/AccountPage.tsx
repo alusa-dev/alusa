@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import {
   Select,
   SelectContent,
@@ -737,7 +738,7 @@ export function AccountPage() {
       await Promise.all([loadOverviewAndRecipients(), loadTransfers(nextPage)]);
     } catch (err) {
       setError('Não foi possível carregar a conta');
-      console.error('[ContaPage] loadInitialData', err);
+      logClientOperationalEvent('finance.account.initial_load.failed', err);
     } finally {
       setLoading(false);
       setTableLoading(false);
@@ -750,7 +751,7 @@ export function AccountPage() {
 
   useFinanceLiveRefresh(
     () => refreshOverview().catch((error) => {
-      console.error('[ContaPage] refreshOverview', error);
+      logClientOperationalEvent('finance.account.refresh.failed', error);
     }),
     { intervalMs: 30_000, minIntervalMs: 8_000 },
   );

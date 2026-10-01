@@ -19,6 +19,7 @@ import {
 import { recordAsaasReadDecision } from '@/src/server/finance/asaas-read-observability';
 import { resolveAcademicDisplayedStatus } from '@/src/server/finance/academic-payment-history';
 import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
+import { logApiOperationalEvent } from '@/lib/observability/api-logger';
 import {
   findPortalAcademicCobranca,
   findPortalPaymentId,
@@ -70,8 +71,9 @@ export async function getPortalFinanceDetail(params: {
 
   const asaasActive = isAsaasEnabled();
   const asaasPaymentId = cobranca?.asaasPaymentId ?? standaloneCharge?.asaasPaymentId ?? null;
-  const shouldFetchRemote = params.forceRefresh && (
-    cobranca
+  const shouldFetchRemote =
+    params.forceRefresh &&
+    (cobranca
       ? shouldFetchAcademicAsaasDetail({
           forceRefresh: params.forceRefresh,
           isAsaasActive: asaasActive,
@@ -83,19 +85,35 @@ export async function getPortalFinanceDetail(params: {
             isAsaasActive: asaasActive,
             charge: standaloneCharge as unknown as Record<string, unknown>,
           })
-        : false
-  );
+        : false);
 
   let asaasData: AsaasPayment | null = null;
   if (asaasActive && asaasPaymentId && shouldFetchRemote) {
-    recordAsaasReadDecision('portal_financeiro_detail', params.forceRefresh ? 'fresh_remote' : 'remote');
+    recordAsaasReadDecision(
+      'portal_financeiro_detail',
+      params.forceRefresh ? 'fresh_remote' : 'remote',
+    );
     try {
       asaasData = await getPayment(asaasPaymentId, { contaId: params.contaId });
     } catch (error: unknown) {
       if (error instanceof AsaasEnvError) {
-        console.warn('[Portal Financeiro] Integração Asaas indisponível:', error.message);
+        logApiOperationalEvent({
+          severity: 'warn',
+          eventName: 'api.portal.finance.asaas_unavailable',
+          route: '/api/portal/financeiro/[id]',
+          method: 'GET',
+          requestId: crypto.randomUUID(),
+          error,
+        });
       } else {
-        console.error('[Portal Financeiro] Erro ao consultar Asaas:', error);
+        logApiOperationalEvent({
+          severity: 'error',
+          eventName: 'api.portal.finance.asaas_read.failed',
+          route: '/api/portal/financeiro/[id]',
+          method: 'GET',
+          requestId: crypto.randomUUID(),
+          error,
+        });
       }
     }
   } else {
@@ -112,7 +130,9 @@ export async function getPortalFinanceDetail(params: {
     resolveInvoiceUrl(asaasData?.invoiceUrl) ??
     resolveInvoiceUrl(standaloneCharge?.invoiceUrl) ??
     resolveInvoiceUrl(
-      effectiveAsaasData && 'invoiceUrl' in effectiveAsaasData ? effectiveAsaasData.invoiceUrl : null,
+      effectiveAsaasData && 'invoiceUrl' in effectiveAsaasData
+        ? effectiveAsaasData.invoiceUrl
+        : null,
     );
   const transactionReceiptUrl = asaasData?.transactionReceiptUrl ?? null;
 
@@ -137,7 +157,9 @@ export async function getPortalFinanceDetail(params: {
         localStatus,
         asaasStatus: remoteStatus,
         liquidacaoStatus: cobranca.liquidacaoStatus,
-        hasAsaasLink: Boolean(cobranca.asaasPaymentId || cobranca.asaasStatus || cobranca.liquidacaoStatus),
+        hasAsaasLink: Boolean(
+          cobranca.asaasPaymentId || cobranca.asaasStatus || cobranca.liquidacaoStatus,
+        ),
       }),
       asaasStatus: remoteStatus,
       liquidacaoStatus: cobranca.liquidacaoStatus,
@@ -145,9 +167,17 @@ export async function getPortalFinanceDetail(params: {
       asaasId: cobranca.asaasId,
       asaasPaymentId: cobranca.asaasPaymentId,
       invoiceUrl,
-      bankSlipUrl: asaasData?.bankSlipUrl ?? (cobranca as unknown as { bankSlipUrl?: string | null }).bankSlipUrl ?? null,
-      bankSlipCancelledAt: (cobranca as unknown as { bankSlipCancelledAt?: Date | null }).bankSlipCancelledAt?.toISOString() ?? null,
-      identificationField: (cobranca as unknown as { identificationField?: string | null }).identificationField ?? null,
+      bankSlipUrl:
+        asaasData?.bankSlipUrl ??
+        (cobranca as unknown as { bankSlipUrl?: string | null }).bankSlipUrl ??
+        null,
+      bankSlipCancelledAt:
+        (
+          cobranca as unknown as { bankSlipCancelledAt?: Date | null }
+        ).bankSlipCancelledAt?.toISOString() ?? null,
+      identificationField:
+        (cobranca as unknown as { identificationField?: string | null }).identificationField ??
+        null,
       barCode: (cobranca as unknown as { barCode?: string | null }).barCode ?? null,
       nossoNumero: (cobranca as unknown as { nossoNumero?: string | null }).nossoNumero ?? null,
       transactionReceiptUrl,
@@ -164,13 +194,16 @@ export async function getPortalFinanceDetail(params: {
           telefone: cobranca.matricula.aluno.telefone,
         },
         turma: cobranca.matricula.turma
-          ? { nome: cobranca.matricula.turma.nome, modalidade: { nome: cobranca.matricula.turma.modalidade.nome } }
+          ? {
+              nome: cobranca.matricula.turma.nome,
+              modalidade: { nome: cobranca.matricula.turma.modalidade.nome },
+            }
           : null,
         responsavelFinanceiro: cobranca.matricula.responsavelFinanceiro
           ? {
               hasSavedCard: Boolean(
                 cobranca.matricula.responsavelFinanceiro.creditCardBrand &&
-                  cobranca.matricula.responsavelFinanceiro.creditCardLast4,
+                cobranca.matricula.responsavelFinanceiro.creditCardLast4,
               ),
               creditCardBrand: cobranca.matricula.responsavelFinanceiro.creditCardBrand,
               creditCardLast4: cobranca.matricula.responsavelFinanceiro.creditCardLast4,
@@ -262,7 +295,8 @@ export async function syncPortalFinanceDetail(params: {
     asaasPaymentId: paymentId,
     intent: 'UI_FALLBACK_SYNC',
   });
-  if (!result.success) return { ok: false as const, kind: 'PROVIDER_ERROR' as const, error: result.error };
+  if (!result.success)
+    return { ok: false as const, kind: 'PROVIDER_ERROR' as const, error: result.error };
   return {
     ok: true as const,
     asaasPaymentId: result.asaasPaymentId,

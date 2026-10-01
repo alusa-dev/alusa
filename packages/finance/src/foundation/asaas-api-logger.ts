@@ -14,6 +14,13 @@
  */
 
 import { getCorrelationId } from './correlation';
+import {
+  createStructuredLog,
+  normalizeHttpMethod,
+  normalizeHttpRoute,
+  normalizeMetricDimensions,
+  sharedTelemetry,
+} from '@alusa/observability';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -22,13 +29,10 @@ export interface AsaasApiLogEntry {
   correlationId: string | undefined;
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   endpoint: string;
-  contaId: string;
-  accountKey?: string;
   httpStatus: number | null;
   durationMs: number;
   success: boolean;
   expectedError?: boolean;
-  error?: string;
   retryCount?: number;
   circuitState?: string;
   rateLimitRemaining?: number;
@@ -88,20 +92,65 @@ export function logAsaasApiCall(params: {
   const entry: AsaasApiLogEntry = {
     timestamp: new Date().toISOString(),
     correlationId: getCorrelationId(),
-    ...params,
+    method: params.method,
+    endpoint: normalizeEndpoint(params.endpoint),
+    httpStatus: params.httpStatus,
+    durationMs: Number.isFinite(params.durationMs) ? Math.max(0, params.durationMs) : 0,
+    success: params.success,
+    ...(params.expectedError !== undefined ? { expectedError: params.expectedError } : {}),
+    ...(params.retryCount !== undefined ? { retryCount: params.retryCount } : {}),
+    ...(params.circuitState ? { circuitState: params.circuitState } : {}),
+    ...(params.rateLimitRemaining !== undefined ? { rateLimitRemaining: params.rateLimitRemaining } : {}),
+    ...(params.quotaRemaining !== undefined ? { quotaRemaining: params.quotaRemaining } : {}),
+    ...(params.attempts !== undefined ? { attempts: params.attempts } : {}),
+    ...(params.backoffMs !== undefined ? { backoffMs: params.backoffMs } : {}),
   };
 
   pushEntry(entry);
 
-  // Log estruturado para stdout (parseable por ferramentas)
-  try {
-    console.log(JSON.stringify({
-      level: params.success ? 'info' : 'error',
-      type: 'asaas_api_call',
-      ...entry,
-    }));
-  } catch {
-    // fail-safe
+  const route = normalizeHttpRoute(entry.endpoint);
+  const dimensions = normalizeMetricDimensions({
+    provider: 'asaas',
+    'http.request.method': normalizeHttpMethod(entry.method),
+    'http.route': route,
+    'http.response.status_class': entry.httpStatus === null ? 'unknown' : `${Math.floor(entry.httpStatus / 100)}xx`,
+    result: entry.success ? 'success' : 'error',
+  });
+  void sharedTelemetry.recordMetric({
+    kind: 'counter',
+    name: 'finance.asaas.api.calls',
+    value: 1,
+    dimensions,
+  });
+  void sharedTelemetry.recordMetric({
+    kind: 'distribution',
+    name: 'finance.asaas.api.duration',
+    value: entry.durationMs,
+    unit: 'millisecond',
+    dimensions,
+  });
+
+  // Keep routine successful API calls in aggregated metrics. Stdout/Sentry logs
+  // are reserved for errors and slow calls and never contain tenant/account IDs.
+  if (!entry.success || entry.durationMs >= 1_000) {
+    try {
+      const log = createStructuredLog({
+        severity: entry.success ? 'warn' : 'error',
+        'service.name': 'alusa-finance',
+        'event.name': entry.success ? 'finance.asaas.api.slow' : 'finance.asaas.api.failed',
+        correlationId: entry.correlationId,
+        'http.request.method': normalizeHttpMethod(entry.method),
+        'http.route': route,
+        'http.response.status_code': entry.httpStatus ?? undefined,
+        duration_ms: entry.durationMs,
+        attributes: { provider: 'asaas', result: entry.success ? 'success' : 'error' },
+        allowedAttributes: ['provider', 'result'],
+      });
+      (entry.success ? console.warn : console.error)(JSON.stringify(log));
+      void sharedTelemetry.publishLog(log);
+    } catch {
+      // Observability must not affect an integration request.
+    }
   }
 }
 
@@ -169,8 +218,14 @@ export function resetApiCallStats(): void {
 
 /** Normaliza endpoint removendo IDs para agrupamento. */
 function normalizeEndpoint(endpoint: string): string {
-  return endpoint
+  let pathname = endpoint.split(/[?#]/, 1)[0] || '/';
+  try {
+    pathname = new URL(pathname).pathname;
+  } catch {
+    // API clients normally provide path-only values; keep relative paths.
+  }
+  return pathname
     .replace(/\/[a-f0-9-]{36}/gi, '/:id')
-    .replace(/\/(pay|sub|cus|trn|inv|ins)_[a-zA-Z0-9]+/g, '/:id')
+    .replace(/\/(pay|sub|cus|trn|inv|ins)_[a-zA-Z0-9_-]+/g, '/:id')
     .replace(/\/\d+/g, '/:n');
 }

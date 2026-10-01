@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { reconcileOutboundFinancialOperations, reconcilePendingPaymentCommands } from '@alusa/finance';
+import {
+  reconcileOutboundFinancialOperations,
+  reconcilePendingPaymentCommands,
+} from '@alusa/finance';
 import { reconcileEnrollmentCreationOperations } from '@/src/server/enrollments/reconcile-enrollment-creation-operations';
 import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
@@ -14,28 +17,16 @@ type StageResult<T> =
   | { ok: true; value: T }
   | { ok: false; stage: ReconciliationStage; correlationId: string };
 
-function getSafeErrorMetadata(error: unknown): { errorName: string; errorCode?: string } {
-  const errorCode =
-    typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
-      ? error.code.slice(0, 64)
-      : undefined;
-  return {
-    errorName: error instanceof Error ? error.name : 'UnknownError',
-    ...(errorCode ? { errorCode } : {}),
-  };
-}
-
-async function runStage<T>(stage: ReconciliationStage, run: () => Promise<T>): Promise<StageResult<T>> {
+async function runStage<T>(
+  stage: ReconciliationStage,
+  startedAt: number,
+  run: () => Promise<T>,
+): Promise<StageResult<T>> {
   try {
     return { ok: true, value: await run() };
   } catch (error) {
     const correlationId = randomUUID();
-    console.error('[job:reconcile-payment-commands]', {
-      event: 'stage_failed',
-      stage,
-      correlationId,
-      ...getSafeErrorMetadata(error),
-    });
+    logJobFailure('reconcile-payment-commands', startedAt, error, { failedStages: 1 });
     return { ok: false, stage, correlationId };
   }
 }
@@ -73,27 +64,33 @@ async function run(req: Request) {
       limit: Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, limitRaw)) : 50,
     };
     const [commandsResult, creationsResult, enrollmentCreationsResult] = await Promise.all([
-      runStage('payment_commands', () => reconcilePendingPaymentCommands({
-        ...common,
-        pollOlderThanSeconds: Number.isFinite(pollOlderThanSecondsRaw)
-          ? Math.max(5, Math.min(60 * 60, pollOlderThanSecondsRaw))
-          : 30,
-        staleOlderThanMinutes: Number.isFinite(staleOlderThanMinutesRaw)
-          ? Math.max(1, Math.min(24 * 60, staleOlderThanMinutesRaw))
-          : 10,
-      })),
-      runStage('outbound_operations', () => reconcileOutboundFinancialOperations({
-        ...common,
-        olderThanSeconds: Number.isFinite(pollOlderThanSecondsRaw)
-          ? Math.max(5, Math.min(60 * 60, pollOlderThanSecondsRaw))
-          : 30,
-      })),
-      runStage('enrollment_creations', () => reconcileEnrollmentCreationOperations({
-        ...common,
-        olderThanSeconds: Number.isFinite(staleOlderThanMinutesRaw)
-          ? Math.max(1, Math.min(24 * 60, staleOlderThanMinutesRaw)) * 60
-          : 600,
-      })),
+      runStage('payment_commands', startedAt, () =>
+        reconcilePendingPaymentCommands({
+          ...common,
+          pollOlderThanSeconds: Number.isFinite(pollOlderThanSecondsRaw)
+            ? Math.max(5, Math.min(60 * 60, pollOlderThanSecondsRaw))
+            : 30,
+          staleOlderThanMinutes: Number.isFinite(staleOlderThanMinutesRaw)
+            ? Math.max(1, Math.min(24 * 60, staleOlderThanMinutesRaw))
+            : 10,
+        }),
+      ),
+      runStage('outbound_operations', startedAt, () =>
+        reconcileOutboundFinancialOperations({
+          ...common,
+          olderThanSeconds: Number.isFinite(pollOlderThanSecondsRaw)
+            ? Math.max(5, Math.min(60 * 60, pollOlderThanSecondsRaw))
+            : 30,
+        }),
+      ),
+      runStage('enrollment_creations', startedAt, () =>
+        reconcileEnrollmentCreationOperations({
+          ...common,
+          olderThanSeconds: Number.isFinite(staleOlderThanMinutesRaw)
+            ? Math.max(1, Math.min(24 * 60, staleOlderThanMinutesRaw)) * 60
+            : 600,
+        }),
+      ),
     ]);
     if (!commandsResult.ok || !creationsResult.ok || !enrollmentCreationsResult.ok) {
       const failures = [commandsResult, creationsResult, enrollmentCreationsResult]
@@ -128,13 +125,14 @@ async function run(req: Request) {
   } catch (error) {
     const correlationId = randomUUID();
     logJobFailure('reconcile-payment-commands', startedAt, error);
-    console.error('[job:reconcile-payment-commands]', {
-      event: 'request_failed',
-      correlationId,
-      ...getSafeErrorMetadata(error),
-    });
     return NextResponse.json(
-      { error: { code: 'ERRO_JOB', message: 'Não foi possível concluir a reconciliação.', correlationId } },
+      {
+        error: {
+          code: 'ERRO_JOB',
+          message: 'Não foi possível concluir a reconciliação.',
+          correlationId,
+        },
+      },
       { status: 500 },
     );
   }

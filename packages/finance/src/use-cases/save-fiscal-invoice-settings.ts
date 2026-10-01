@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { loadAsaasCredentials } from '@alusa/database';
 import type { FiscalEmissionMode, FiscalInvoiceEffectiveDatePeriod } from '@prisma/client';
 import type { Result } from '@alusa/shared';
@@ -144,15 +145,14 @@ export async function saveFiscalInvoiceSettings(
         defaultObservations: input.defaultObservations ?? null,
         defaultDeductions: input.defaultDeductions ?? null,
         emissionMode: input.emissionMode ?? 'MANUAL',
-        invoiceEffectiveDatePeriod:
-          input.invoiceEffectiveDatePeriod ?? 'ON_PAYMENT_CONFIRMATION',
+        invoiceEffectiveDatePeriod: input.invoiceEffectiveDatePeriod ?? 'ON_PAYMENT_CONFIRMATION',
         invoiceDaysBeforeDueDate:
           input.invoiceEffectiveDatePeriod === 'BEFORE_PAYMENT_DUE_DATE'
-            ? input.invoiceDaysBeforeDueDate ?? 5
+            ? (input.invoiceDaysBeforeDueDate ?? 5)
             : null,
         invoiceReceivedOnly:
           input.invoiceEffectiveDatePeriod === 'ON_NEXT_MONTH'
-            ? input.invoiceReceivedOnly ?? false
+            ? (input.invoiceReceivedOnly ?? false)
             : true,
       },
     });
@@ -203,7 +203,10 @@ export async function saveFiscalInvoiceSettings(
 
     const syncTargets = [
       ...subscriptions.map((subscription) => ({ ...subscription, kind: 'ACADEMIC' as const })),
-      ...standaloneSubscriptions.map((subscription) => ({ ...subscription, kind: 'STANDALONE' as const })),
+      ...standaloneSubscriptions.map((subscription) => ({
+        ...subscription,
+        kind: 'STANDALONE' as const,
+      })),
     ];
     const syncResults = await Promise.allSettled(
       syncTargets.map((subscription) =>
@@ -218,20 +221,25 @@ export async function saveFiscalInvoiceSettings(
     );
     const failures = syncResults.flatMap((result, index) => {
       if (result.status === 'rejected') {
-        return [{
-          subscriptionId: syncTargets[index]!.id,
-          kind: syncTargets[index]!.kind,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }];
+        return [
+          {
+            subscriptionId: syncTargets[index]!.id,
+            kind: syncTargets[index]!.kind,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          },
+        ];
       }
       if (!result.value.success) {
-        return [{
-          subscriptionId: syncTargets[index]!.id,
-          kind: syncTargets[index]!.kind,
-          error: typeof result.value.error === 'string'
-            ? result.value.error
-            : JSON.stringify(result.value.error),
-        }];
+        return [
+          {
+            subscriptionId: syncTargets[index]!.id,
+            kind: syncTargets[index]!.kind,
+            error:
+              typeof result.value.error === 'string'
+                ? result.value.error
+                : JSON.stringify(result.value.error),
+          },
+        ];
       }
       return [];
     });
@@ -258,7 +266,12 @@ export async function saveFiscalInvoiceSettings(
       },
     });
   } catch (error) {
-    console.error('[finance][saveFiscalInvoiceSettings]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.save_fiscal_invoice_settings.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     if (error instanceof AsaasHttpError) {
       return err(asaasFailure(error));
     }

@@ -1,6 +1,7 @@
 import { prisma } from '@alusa/database';
 import { getEventAsaasPaymentProvider } from '@alusa/lib/events/event-asaas-payment-provider';
 import { loadDecryptedAsaasCredentials } from '@alusa/lib/services/integracoes/asaas-credentials-service';
+import { logEventsFinance } from './events-finance-observability';
 
 /** Loads only the payment instrument the authenticated public order needs. */
 export async function getPublicEventMapPaymentInstruments(orderId: string, accessToken: string) {
@@ -21,7 +22,11 @@ export async function getPublicEventMapPaymentInstruments(orderId: string, acces
       });
       return { pixQrCode, bankSlipInfo: null };
     } catch (error) {
-      console.warn('[event-map] Falha ao obter QR Code Pix para pedido público:', { orderId, error });
+      logEventsFinance(
+        'finance.events.public_event_map.payment_instruments.pix_qr.failed',
+        { error },
+        'warn',
+      );
       return { pixQrCode: null, bankSlipInfo: null };
     }
   }
@@ -42,7 +47,11 @@ export async function getPublicEventMapPaymentInstruments(orderId: string, acces
           : null,
       };
     } catch (error) {
-      console.warn('[event-map] Falha ao obter código do boleto para pedido público:', { orderId, error });
+      logEventsFinance(
+        'finance.events.public_event_map.payment_instruments.bank_slip.failed',
+        { error },
+        'warn',
+      );
       return { pixQrCode: null, bankSlipInfo: null };
     }
   }

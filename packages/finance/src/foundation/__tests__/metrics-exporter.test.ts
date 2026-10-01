@@ -59,6 +59,7 @@ describe('MetricsExporter', () => {
       const metrics = collectOperationalMetrics();
 
       expect(metrics.generatedAt).toBeDefined();
+      expect(metrics.scope).toBe('instance-local');
       expect(metrics.circuitBreaker).toBeDefined();
       expect(metrics.quota).toBeDefined();
       expect(metrics.rateLimitTracker).toBeDefined();
@@ -141,6 +142,18 @@ describe('MetricsExporter', () => {
 
       expect(text).toContain('method="GET"');
       expect(text).toContain('method="POST"');
+    });
+
+    it('não exporta identificadores de conta como labels Prometheus', async () => {
+      const asaas = await import('@alusa/asaas');
+      const cb = asaas.globalCircuitBreaker as unknown as { _set: (k: string, v: unknown) => void };
+      cb._set('tenant-account-secret', { state: 'OPEN', failures: 2, lastFailureAt: Date.now() });
+      const qt = asaas.globalQuotaTracker as unknown as { _set: (k: string, v: unknown) => void };
+      qt._set('tenant-account-secret', { count: 3, limit: 10, remaining: 7, percentUsed: 30, warning: false, exceeded: false, windowEndsAt: Date.now() + 3600000, windowEndsIn: '1h' });
+
+      const text = toPrometheusText(collectOperationalMetrics());
+      expect(text).not.toContain('tenant-account-secret');
+      expect(text).not.toContain('account=');
     });
   });
 });

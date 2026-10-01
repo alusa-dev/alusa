@@ -27,6 +27,7 @@ import { inspectWebhookProcessingRuntimeStatus } from '../webhooks/webhook-runti
 // ── Types ────────────────────────────────────────────────────────────────
 
 export interface OperationalMetricsSnapshot {
+  scope: 'instance-local';
   generatedAt: string;
 
   circuitBreaker: {
@@ -108,6 +109,7 @@ export function collectOperationalMetrics(windowMinutes = 60): OperationalMetric
     .slice(0, 10);
 
   return {
+    scope: 'instance-local',
     generatedAt: new Date().toISOString(),
 
     circuitBreaker: { circuits, totalOpen },
@@ -145,28 +147,30 @@ export function collectOperationalMetrics(windowMinutes = 60): OperationalMetric
 
 export function toPrometheusText(metrics: OperationalMetricsSnapshot): string {
   const lines: string[] = [];
+  const declaredFamilies = new Set<string>();
 
   const g = (name: string, help: string, value: number, labels?: Record<string, string>) => {
-    lines.push(`# HELP ${name} ${help}`);
-    lines.push(`# TYPE ${name} gauge`);
+    if (!declaredFamilies.has(name)) {
+      lines.push(`# HELP ${name} ${help}`);
+      lines.push(`# TYPE ${name} gauge`);
+      declaredFamilies.add(name);
+    }
     const labelStr = labels
-      ? `{${Object.entries(labels).map(([k, v]) => `${k}="${v}"`).join(',')}}`
+      ? `{${Object.entries(labels).map(([k, v]) => `${k}="${escapePrometheusLabel(v)}"`).join(',')}}`
       : '';
     lines.push(`${name}${labelStr} ${value}`);
   };
 
+  g('alusa_observability_instance_local', 'Snapshot is local to the current application instance', 1);
+
   g('asaas_circuit_breaker_open_total', 'Total open circuits', metrics.circuitBreaker.totalOpen);
-  for (const [key, cb] of Object.entries(metrics.circuitBreaker.circuits)) {
-    const stateNum = cb.state === 'CLOSED' ? 0 : cb.state === 'OPEN' ? 1 : 2;
-    g('asaas_circuit_breaker_state', 'Circuit state (0=closed,1=open,2=half_open)', stateNum, { account: key });
-    g('asaas_circuit_breaker_failures', 'Failure count', cb.failures, { account: key });
-  }
+  g('asaas_circuit_breaker_total', 'Total circuit breakers in the current instance', Object.keys(metrics.circuitBreaker.circuits).length);
+  g('asaas_circuit_breaker_failures_total', 'Failure count across local circuit breakers', Object.values(metrics.circuitBreaker.circuits).reduce((sum, cb) => sum + cb.failures, 0));
 
   g('asaas_quota_limit', 'API quota limit', metrics.quota.globalLimit);
-  for (const [key, q] of Object.entries(metrics.quota.accounts)) {
-    g('asaas_quota_used', 'Quota used', q.used, { account: key });
-    g('asaas_quota_remaining', 'Quota remaining', q.remaining, { account: key });
-  }
+  g('asaas_quota_accounts_tracked', 'Number of accounts with local quota state', Object.keys(metrics.quota.accounts).length);
+  g('asaas_quota_warning_accounts', 'Number of local account quotas in warning state', Object.values(metrics.quota.accounts).filter((q) => q.warning).length);
+  g('asaas_quota_used_total', 'Quota usage summed across local account state', Object.values(metrics.quota.accounts).reduce((sum, q) => sum + q.used, 0));
 
   g('asaas_concurrency_active', 'Active concurrent requests', metrics.concurrency.active);
   g('asaas_concurrency_max', 'Max concurrent requests', metrics.concurrency.maxConcurrent);
@@ -184,4 +188,8 @@ export function toPrometheusText(metrics: OperationalMetricsSnapshot): string {
   }
 
   return lines.join('\n') + '\n';
+}
+
+function escapePrometheusLabel(value: string) {
+  return value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
 }

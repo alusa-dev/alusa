@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma';
 import { deriveCustomerNotificationChannelDefaults } from '@/features/settings/notifications/asaas/customer-channel-defaults';
 import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { apiJsonError } from '@/lib/api/standard-response';
+import { logPersonDataOperationalEvent } from '@/lib/observability/api-logger';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -782,7 +783,7 @@ export async function getAlunoDetalhesRoute(_req: Request, { params }: { params:
 
     return NextResponse.json(response, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
-    console.error('[alunos/detalhes][GET]', error);
+    logPersonDataOperationalEvent('api.students.detail.failed', error);
     return jsonError(500, 'ERRO_INTERNO', 'Não foi possível carregar os detalhes do aluno.');
   }
 }

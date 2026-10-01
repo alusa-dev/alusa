@@ -5,6 +5,7 @@ import { parseExternalReference } from '../core';
 import { resolveUnifiedChargeStatus } from '../dtos/unified-billing';
 import { resolveChargeDisplayStatus } from '../mappers/asaas-display-status';
 import type { ListStandaloneChargesInput, ListStandaloneChargesOutput, StandaloneChargeItem } from '../use-cases/list-standalone-charges';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 
 type ChargeType = 'ONE_TIME' | 'INSTALLMENT' | 'SUBSCRIPTION';
 type LinkStatus = 'LINKED' | 'UNLINKED' | 'NEEDS_REVIEW';
@@ -429,9 +430,13 @@ export async function backfillChargeReadModel(params?: {
   };
 
   if (process.env.PERF_LOGS === '1') {
-    console.log('[finance][read-model][backfill]', {
-      contaId: params?.contaId ?? null,
-      ...result,
+    logFinanceOperationalEvent({
+      severity: 'info',
+      eventName: 'finance.read_model.charge.backfill.completed',
+      itemCount: result.projected,
+      durationMs: result.durationMs,
+      result: 'success',
+      throttleMs: 60_000,
     });
   }
 

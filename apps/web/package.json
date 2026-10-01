@@ -40,6 +40,7 @@
     "finance:cleanup-materialized-grouped-event-entries": "dotenv -o -e ../../.env.vercel.production -- cross-env NODE_ENV=production tsx scripts/cleanup-materialized-grouped-event-entries.ts"
   },
   "dependencies": {
+    "@alusa/observability": "workspace:*",
     "@alusa/admin-auth": "workspace:*",
     "@alusa/database": "workspace:*",
     "@alusa/domain": "workspace:*",

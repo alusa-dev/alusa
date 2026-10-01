@@ -11,6 +11,7 @@ import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
 import { logRoutePerformance, createPerfTimer } from '@/lib/perf-logger';
 import { PrivateMemoryCache, privateJson } from '@/lib/private-cache';
 import { logRuntimeEnvironmentOnce } from '@/lib/runtime-environment';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 import {
   DASHBOARD_BLOCK_CACHE_SECONDS,
@@ -22,7 +23,7 @@ const dashboardMetricsCache = new PrivateMemoryCache<unknown>({
   staleWhileRevalidateSeconds: DASHBOARD_BLOCK_STALE_SECONDS,
 });
 
-export async function GET(_request: NextRequest) {
+export async function GET(request: NextRequest) {
   const startedAt = Date.now();
   const timer = createPerfTimer('api/dashboard/metrics');
   let contaIdForLog: string | null = null;
@@ -91,7 +92,7 @@ export async function GET(_request: NextRequest) {
     });
   } catch (error) {
     statusCodeForLog = 500;
-    console.error('[GET /api/dashboard/metrics] Erro:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.dashboard.request.failed', route: '/api/dashboard/metrics', method: 'GET', requestId: getRequestId(request), error });
     return NextResponse.json(
       {
         success: false,

@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import {
   listNotifications,
   markAllNotificationsAsRead,
@@ -93,7 +94,14 @@ export async function GET(request: Request) {
     });
     return response(serialize(result));
   } catch (error) {
-    console.error('[api/mobile/notifications][GET]', error instanceof Error ? error.message : String(error));
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/notifications',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível carregar as notificações.' } }, 500);
   }
 }
@@ -117,7 +125,14 @@ export async function PATCH(request: Request) {
     const updatedCount = await markAllNotificationsAsRead({ contaId: actor.contaId, userId: actor.userId });
     return response({ success: true, updatedCount });
   } catch (error) {
-    console.error('[api/mobile/notifications][PATCH]', error instanceof Error ? error.message : String(error));
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/notifications',
+      method: 'PATCH',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível atualizar as notificações.' } }, 500);
   }
 }

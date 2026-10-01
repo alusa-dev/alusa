@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { logPersonDataOperationalEvent } from '@/lib/observability/api-logger';
 
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 import { PasswordChangeOtpError } from '@/lib/password-change-otp';
@@ -43,7 +44,7 @@ export function unauthorized() {
   );
 }
 
-export function otpErrorResponse(error: unknown, fallback: string, scope: string) {
+export function otpErrorResponse(error: unknown, fallback: string, scope: 'challenge' | 'verify' | 'complete') {
   if (error instanceof PasswordChangeOtpError) {
     return NextResponse.json(
       { error: { code: error.code, message: error.message } },
@@ -51,9 +52,12 @@ export function otpErrorResponse(error: unknown, fallback: string, scope: string
     );
   }
 
-  console.error(`[mobile-auth][password-change][${scope}]`, {
-    error: error instanceof Error ? error.message : String(error),
-  });
+  const eventName = {
+    challenge: 'api.mobile.password_change.challenge.failed',
+    verify: 'api.mobile.password_change.verify.failed',
+    complete: 'api.mobile.password_change.complete.failed',
+  } as const;
+  logPersonDataOperationalEvent(eventName[scope], error);
   return NextResponse.json(
     { error: { code: 'INTERNAL_ERROR', message: fallback } },
     { status: 503, headers: { 'Cache-Control': 'no-store' } },

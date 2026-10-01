@@ -42,6 +42,7 @@ describe('conta.repository Asaas credentials', () => {
   });
 
   it('usa uma fonte de fallback quando a cifra canônica está ilegível', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const credentials = await loadAsaasCredentials('conta-1');
     const inspection = await inspectAsaasCredentials('conta-1');
 
@@ -56,9 +57,12 @@ describe('conta.repository Asaas credentials', () => {
       fallbackUsed: true,
       unreadableSources: ['asaasAccount'],
     });
+    expect(JSON.stringify(warning.mock.calls)).toContain('asaas.credentials.fallback_used');
+    expect(JSON.stringify(warning.mock.calls)).not.toContain('conta-1');
   });
 
   it('diferencia cifra ilegível de credencial ausente', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     mocks.decryptSecretWithMetadata.mockReturnValue(null);
 
     await expect(loadAsaasCredentials('conta-1')).resolves.toBeNull();
@@ -68,6 +72,8 @@ describe('conta.repository Asaas credentials', () => {
       encryptedSources: ['asaasAccount', 'asaasCredential'],
       unreadableSources: ['asaasAccount', 'asaasCredential'],
     });
+    expect(JSON.stringify(error.mock.calls)).toContain('asaas.credentials.decryption_failed');
+    expect(JSON.stringify(error.mock.calls)).not.toContain('conta-1');
   });
 
   it('não reativa uma credencial antiga quando a fonte canônica está desconectada', async () => {

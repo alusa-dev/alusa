@@ -1,6 +1,7 @@
 import type { Session } from 'next-auth';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
+import { logRuntimeOperationalEvent } from '@/lib/observability/runtime-operational-log';
 
 function isThenable<T = unknown>(value: unknown): value is PromiseLike<T> {
   return (
@@ -29,7 +30,7 @@ export async function safeGetServerSession(): Promise<Session | null> {
 
     return result;
   } catch (error) {
-    console.warn('[safeGetServerSession] Falha ao obter sessão', error);
+    logRuntimeOperationalEvent({ eventName: 'auth.session.lookup_failed', error, severity: 'warn' });
     return null;
   }
 }

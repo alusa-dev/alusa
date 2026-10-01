@@ -350,12 +350,9 @@ export function prepararPayloadMatricula(state: Record<string, unknown>): {
   payload?: Record<string, unknown>;
   erros: string[];
 } {
-  console.log('[prepararPayloadMatricula] Estado recebido:', JSON.stringify(state, null, 2));
-
   const validacao = validarMatriculaCompleta(state);
 
   if (!validacao.valido) {
-    console.log('[prepararPayloadMatricula] Validação falhou:', validacao.mensagens);
     return {
       valido: false,
       erros: validacao.mensagens,
@@ -423,8 +420,6 @@ export function prepararPayloadMatricula(state: Record<string, unknown>): {
     criarCobranca: state.criarCobranca ?? true,
     contaId: state.contaId,
   };
-
-  console.log('[prepararPayloadMatricula] Payload criado:', JSON.stringify(payload, null, 2));
 
   return {
     valido: true,

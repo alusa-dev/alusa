@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { prisma } from '../prisma';
 import { logInboxMetric } from './inbox-metrics';
+import { logLibOperationalEvent } from '../observability/operational-log';
 import {
   createBillingWebhookNotification,
   isBillingNotificationEvent,
@@ -113,9 +114,9 @@ export async function enqueuePendingBillingWebhookNotification(
       eventName: params.eventName,
     });
   } catch (error) {
-    console.warn('[Notifications] Falha ao enfileirar pending inbox', {
-      dedupeKey,
-      message: error instanceof Error ? error.message : String(error),
+    logLibOperationalEvent({
+      eventName: 'notification.pending_inbox.enqueue.failed',
+      error,
     });
   }
 }

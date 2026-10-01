@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { prisma } from '@alusa/database';
 import { Prisma } from '@prisma/client';
 import type { Prisma as PrismaTypes } from '@prisma/client';
+import { logFinanceOperationalEvent } from './operational-log';
 
 export type WebhookJobLockAcquireResult =
   | { acquired: true; jobName: string; workerId: string; lockedUntil: Date }
@@ -151,16 +152,18 @@ export async function withWebhookJobLock<T>(
       ttlMs: options.ttlMs,
     }).then((renewed) => {
       if (!renewed) {
-        console.warn('[webhook-job-lock] Lease perdido durante heartbeat', {
-          jobName: lock.jobName,
-          workerId: lock.workerId,
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.foundation.webhook_job_lock.lease_lost',
+          throttleMs: 60_000,
         });
       }
     }).catch((error: unknown) => {
-      console.warn('[webhook-job-lock] Falha no heartbeat', {
-        jobName: lock.jobName,
-        workerId: lock.workerId,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.foundation.webhook_job_lock.heartbeat.failed',
+        error,
+        throttleMs: 60_000,
       });
     });
   }, heartbeatEveryMs);
@@ -180,9 +183,11 @@ export async function withWebhookJobLock<T>(
       jobName: lock.jobName,
       workerId: lock.workerId,
     }).catch((error: unknown) => {
-      console.warn('[webhook-job-lock] Falha ao liberar lock', {
-        jobName: lock.jobName,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.foundation.webhook_job_lock.release.failed',
+        error,
+        throttleMs: 60_000,
       });
     });
   }

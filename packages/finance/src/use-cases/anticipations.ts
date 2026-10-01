@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import {
   AsaasHttpError,
   cancelAnticipation as asaasCancelAnticipation,
@@ -54,7 +55,12 @@ export type AnticipationTarget = {
 };
 
 export type AnticipationLocalContext = {
-  source: 'ACADEMIC' | 'STANDALONE' | 'ACADEMIC_INSTALLMENT' | 'STANDALONE_INSTALLMENT' | 'ASAAS_ONLY';
+  source:
+    | 'ACADEMIC'
+    | 'STANDALONE'
+    | 'ACADEMIC_INSTALLMENT'
+    | 'STANDALONE_INSTALLMENT'
+    | 'ASAAS_ONLY';
   localId: string | null;
   description: string | null;
   payerName: string | null;
@@ -131,9 +137,12 @@ export type ListAnticipationCandidatesOutput = {
 
 const DEFAULT_ANTICIPATIONS_SNAPSHOT_TTL_SECONDS = 300;
 
-function normalizeTarget(target: AnticipationTarget): { payment?: string; installment?: string } | null {
+function normalizeTarget(
+  target: AnticipationTarget,
+): { payment?: string; installment?: string } | null {
   if (target.targetType === 'PAYMENT' && target.payment) return { payment: target.payment };
-  if (target.targetType === 'INSTALLMENT' && target.installment) return { installment: target.installment };
+  if (target.targetType === 'INSTALLMENT' && target.installment)
+    return { installment: target.installment };
   return null;
 }
 
@@ -153,7 +162,9 @@ function normalizePersonType(value: string | null | undefined): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function buildAutomaticAnticipationEligibility(commercialInfo: AsaasMyAccountCommercialInfo): Pick<
+function buildAutomaticAnticipationEligibility(
+  commercialInfo: AsaasMyAccountCommercialInfo,
+): Pick<
   ReceivableAnticipationConfiguration,
   'automaticCreditCardEligible' | 'automaticCreditCardReason' | 'accountPersonType'
 > {
@@ -167,10 +178,14 @@ function buildAutomaticAnticipationEligibility(commercialInfo: AsaasMyAccountCom
   };
 }
 
-async function readAutomaticAnticipationEligibility(apiKey: string): Promise<Pick<
-  ReceivableAnticipationConfiguration,
-  'automaticCreditCardEligible' | 'automaticCreditCardReason' | 'accountPersonType'
->> {
+async function readAutomaticAnticipationEligibility(
+  apiKey: string,
+): Promise<
+  Pick<
+    ReceivableAnticipationConfiguration,
+    'automaticCreditCardEligible' | 'automaticCreditCardReason' | 'accountPersonType'
+  >
+> {
   try {
     const commercialInfo = await asaasGetMyAccountCommercialInfo({ apiKey });
     return buildAutomaticAnticipationEligibility(commercialInfo);
@@ -223,7 +238,10 @@ function isAutomaticAnticipationRestrictedToLegalEntities(error: unknown): boole
     const description =
       typeof record.description === 'string' ? record.description.toLowerCase() : '';
 
-    return code === 'invalid_action' && description.includes('apenas para contas do tipo pessoa jurídica');
+    return (
+      code === 'invalid_action' &&
+      description.includes('apenas para contas do tipo pessoa jurídica')
+    );
   });
 }
 
@@ -301,15 +319,22 @@ async function resolvePaymentContexts(contaId: string, paymentIds: string[]) {
   );
   const [alunos, responsaveis] = await Promise.all([
     alunoIds.length
-      ? prisma.aluno.findMany({ where: { contaId, id: { in: alunoIds } }, select: { id: true, nome: true } })
+      ? prisma.aluno.findMany({
+          where: { contaId, id: { in: alunoIds } },
+          select: { id: true, nome: true },
+        })
       : Promise.resolve([]),
     responsavelIds.length
-      ? prisma.responsavel.findMany({ where: { contaId, id: { in: responsavelIds } }, select: { id: true, nome: true } })
+      ? prisma.responsavel.findMany({
+          where: { contaId, id: { in: responsavelIds } },
+          select: { id: true, nome: true },
+        })
       : Promise.resolve([]),
   ]);
   const payerNameByKey = new Map<string, string>();
   for (const aluno of alunos) payerNameByKey.set(`ALUNO:${aluno.id}`, aluno.nome);
-  for (const responsavel of responsaveis) payerNameByKey.set(`RESPONSAVEL:${responsavel.id}`, responsavel.nome);
+  for (const responsavel of responsaveis)
+    payerNameByKey.set(`RESPONSAVEL:${responsavel.id}`, responsavel.nome);
 
   for (const charge of standaloneCharges) {
     if (!charge.asaasPaymentId) continue;
@@ -456,7 +481,11 @@ function fallbackContextFromAnticipation(item: AsaasAnticipation): AnticipationL
   return {
     source: 'ASAAS_ONLY',
     localId: null,
-    description: item.payment ? `Cobrança ${item.payment}` : item.installment ? `Parcelamento ${item.installment}` : null,
+    description: item.payment
+      ? `Cobrança ${item.payment}`
+      : item.installment
+        ? `Parcelamento ${item.installment}`
+        : null,
     payerName: null,
     billingType: null,
     dueDate: item.dueDate ?? null,
@@ -555,14 +584,14 @@ async function buildAnticipationsOutput(params: {
 
 function getAnticipationsSnapshotTtlMs(): number {
   const seconds = Number(
-    process.env.FINANCE_ANTICIPATIONS_SNAPSHOT_TTL_SECONDS
-      ?? DEFAULT_ANTICIPATIONS_SNAPSHOT_TTL_SECONDS,
+    process.env.FINANCE_ANTICIPATIONS_SNAPSHOT_TTL_SECONDS ??
+      DEFAULT_ANTICIPATIONS_SNAPSHOT_TTL_SECONDS,
   );
   return (
-    Number.isFinite(seconds) && seconds > 0
+    (Number.isFinite(seconds) && seconds > 0
       ? seconds
-      : DEFAULT_ANTICIPATIONS_SNAPSHOT_TTL_SECONDS
-  ) * 1000;
+      : DEFAULT_ANTICIPATIONS_SNAPSHOT_TTL_SECONDS) * 1000
+  );
 }
 
 export async function listReceivableAnticipations(
@@ -583,15 +612,17 @@ export async function listReceivableAnticipations(
     });
 
     if (cached) {
-      return ok(await buildAnticipationsOutput({
-        contaId: input.contaId,
-        page: input.page,
-        pageSize: input.pageSize,
-        data: cached.items,
-        total: cached.total,
-        hasMore: cached.hasMore,
-        fetchedAt: cached.fetchedAt,
-      }));
+      return ok(
+        await buildAnticipationsOutput({
+          contaId: input.contaId,
+          page: input.page,
+          pageSize: input.pageSize,
+          data: cached.items,
+          total: cached.total,
+          hasMore: cached.hasMore,
+          fetchedAt: cached.fetchedAt,
+        }),
+      );
     }
 
     const offset = (input.page - 1) * input.pageSize;
@@ -604,21 +635,27 @@ export async function listReceivableAnticipations(
       installment: input.installment,
     });
 
-    await Promise.allSettled(response.data.map((anticipation) => upsertReceivableAnticipationSnapshot({
-      contaId: input.contaId,
-      anticipation,
-      source: 'LIST',
-    })));
+    await Promise.allSettled(
+      response.data.map((anticipation) =>
+        upsertReceivableAnticipationSnapshot({
+          contaId: input.contaId,
+          anticipation,
+          source: 'LIST',
+        }),
+      ),
+    );
 
-    return ok(await buildAnticipationsOutput({
-      contaId: input.contaId,
-      data: response.data,
-      total: response.totalCount,
-      page: input.page,
-      pageSize: input.pageSize,
-      hasMore: response.hasMore,
-      fetchedAt: new Date().toISOString(),
-    }));
+    return ok(
+      await buildAnticipationsOutput({
+        contaId: input.contaId,
+        data: response.data,
+        total: response.totalCount,
+        page: input.page,
+        pageSize: input.pageSize,
+        hasMore: response.hasMore,
+        fetchedAt: new Date().toISOString(),
+      }),
+    );
   } catch {
     return err('ERRO_ASAAS');
   }
@@ -734,10 +771,11 @@ export async function requestReceivableAnticipation(params: {
       anticipation,
       source: 'REQUEST',
     }).catch((error) => {
-      console.warn('[finance.anticipation] Falha ao persistir snapshot após solicitação', {
-        contaId: params.contaId,
-        anticipationId: anticipation.id,
-        error: error instanceof Error ? error.message : 'unknown',
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.anticipations.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     });
 
@@ -780,10 +818,11 @@ export async function cancelReceivableAnticipation(params: {
       anticipation,
       source: 'CANCEL',
     }).catch((error) => {
-      console.warn('[finance.anticipation] Falha ao persistir snapshot após cancelamento', {
-        contaId: params.contaId,
-        anticipationId: anticipation.id,
-        error: error instanceof Error ? error.message : 'unknown',
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.anticipations.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     });
 

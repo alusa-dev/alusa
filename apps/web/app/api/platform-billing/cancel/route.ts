@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { PlatformBillingError } from '@alusa/platform-billing';
 import { z } from 'zod';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import {
   assertCanManagePlatformBilling,
@@ -25,17 +26,27 @@ export async function POST(req: NextRequest) {
   const idempotencyKey = req.headers.get('idempotency-key')?.trim() || parsed.data.idempotencyKey;
   if (!idempotencyKey) {
     return NextResponse.json(
-      { error: 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED', message: 'A chave de idempotência é obrigatória.' },
+      {
+        error: 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED',
+        message: 'A chave de idempotência é obrigatória.',
+      },
       { status: 400 },
     );
   }
 
   return withTenantSession(async ({ contaId, userId, tx }) => {
-    const rate = await rateLimitAsync(`platform-billing:cancel:${contaId}:${userId}:${requestIp}`, 20, 10 * 60_000);
+    const rate = await rateLimitAsync(
+      `platform-billing:cancel:${contaId}:${userId}:${requestIp}`,
+      20,
+      10 * 60_000,
+    );
     if (!rate.ok) {
       return NextResponse.json(
         { error: 'RATE_LIMITED' },
-        { status: 429, headers: { 'Retry-After': String(Math.ceil((rate.resetAt - Date.now()) / 1000)) } },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil((rate.resetAt - Date.now()) / 1000)) },
+        },
       );
     }
 
@@ -49,19 +60,29 @@ export async function POST(req: NextRequest) {
         actorUserId: userId,
         idempotencyKey,
       };
-      const result = parsed.data.action === 'undo_cancel'
-        ? await undoPlatformSubscriptionCancellationFromHttp(actionInput)
-        : await requestPlatformSubscriptionCancellationFromHttp(actionInput);
-      console.info('[platform-billing][cancel]', {
-        event: parsed.data.action === 'undo_cancel' ? 'cancel_reverted' : 'cancel_scheduled',
-        contaId,
-        userId,
+      const result =
+        parsed.data.action === 'undo_cancel'
+          ? await undoPlatformSubscriptionCancellationFromHttp(actionInput)
+          : await requestPlatformSubscriptionCancellationFromHttp(actionInput);
+      logApiOperationalEvent({
+        severity: 'info',
+        eventName:
+          parsed.data.action === 'undo_cancel'
+            ? 'api.platform_billing.cancel.reverted'
+            : 'api.platform_billing.cancel.scheduled',
+        route: '/api/platform-billing/cancel',
+        method: 'POST',
+        requestId: getRequestId(req),
       });
       return NextResponse.json(result);
     } catch (error) {
       if (error instanceof PlatformBillingError) {
         return NextResponse.json(
-          { error: error.code, message: 'Não foi possível atualizar o cancelamento agora.', details: error.details ?? null },
+          {
+            error: error.code,
+            message: 'Não foi possível atualizar o cancelamento agora.',
+            details: error.details ?? null,
+          },
           { status: 400 },
         );
       }

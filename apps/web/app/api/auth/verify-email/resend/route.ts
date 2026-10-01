@@ -6,6 +6,7 @@ import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-
 import { sendEmailVerificationForUser } from '@/lib/auth-email-flow';
 import { resolvePostVerificationRedirect } from '@/lib/safe-redirect';
 import { rateLimitResponse } from '@/lib/security/rate-limit-response';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const bodySchema = z.object({
   callbackUrl: z.string().trim().optional().nullable(),
@@ -48,7 +49,14 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error('[auth][verify-email-resend]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'auth.verify_email.resend_failed',
+      route: '/api/auth/verify-email/resend',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     return NextResponse.json({ error: 'Não foi possível reenviar o e-mail.' }, { status: 503 });
   }
 }

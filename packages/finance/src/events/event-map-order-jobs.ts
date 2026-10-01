@@ -23,8 +23,18 @@ import {
 
 type EventMapPublicSeatStatusValue = 'AVAILABLE' | 'HELD' | 'SOLD' | 'BLOCKED' | 'UNAVAILABLE';
 type EventMapReservationStatusValue = 'HELD' | 'EXPIRED' | 'CONSUMED' | 'CANCELLED';
-type EventMapOrderStatusValue = 'PAYMENT_PENDING' | 'CONFIRMED' | 'CANCELLED' | 'EXPIRED' | 'REFUNDED' | 'PARTIALLY_REFUNDED';
-type EventMapTicketFulfillmentStatusValue = 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
+type EventMapOrderStatusValue =
+  | 'PAYMENT_PENDING'
+  | 'CONFIRMED'
+  | 'CANCELLED'
+  | 'EXPIRED'
+  | 'REFUNDED'
+  | 'PARTIALLY_REFUNDED';
+type EventMapTicketFulfillmentStatusValue =
+  | 'PENDING'
+  | 'ISSUED'
+  | 'FAILED'
+  | 'REQUIRES_RECONCILIATION';
 type ExternalPaymentResolution = {
   decision: 'PAID' | 'DELETED' | 'NO_PAYMENT' | 'NOT_CANCELLABLE';
   paymentId?: string;
@@ -78,9 +88,7 @@ type RawExpirableEventMapReservationRecord = {
   } | null;
 };
 
-export type ExpiredReservationDecision =
-  | { expire: true }
-  | { expire: false; reason: string };
+export type ExpiredReservationDecision = { expire: true } | { expire: false; reason: string };
 
 class ReservationExpirationConflict extends Error {
   constructor(readonly reason: string) {
@@ -127,8 +135,9 @@ export function getExpiredReservationDecision(
     return { expire: false, reason: 'order_not_pending' };
   }
 
-  const paymentCreationUnresolved = reservation.order.paymentStatus === 'PAYMENT_CREATION_IN_PROGRESS'
-    || reservation.order.paymentStatus === 'PAYMENT_CREATION_UNKNOWN';
+  const paymentCreationUnresolved =
+    reservation.order.paymentStatus === 'PAYMENT_CREATION_IN_PROGRESS' ||
+    reservation.order.paymentStatus === 'PAYMENT_CREATION_UNKNOWN';
   if (
     paymentCreationUnresolved &&
     !options.deletedAsaasPaymentId &&
@@ -242,7 +251,10 @@ async function confirmExpiredOrderPayment(params: {
   }
 }
 
-async function resolveEventMapContaIds(input: { contaId?: string; maxAccounts: number }): Promise<string[]> {
+async function resolveEventMapContaIds(input: {
+  contaId?: string;
+  maxAccounts: number;
+}): Promise<string[]> {
   if (input.contaId) return [input.contaId];
 
   const [reservations, orders] = await Promise.all([
@@ -262,10 +274,15 @@ async function resolveEventMapContaIds(input: { contaId?: string; maxAccounts: n
     }),
   ]);
 
-  return [...new Set([...reservations, ...orders].map((entry) => entry.contaId))].slice(0, input.maxAccounts);
+  return [...new Set([...reservations, ...orders].map((entry) => entry.contaId))].slice(
+    0,
+    input.maxAccounts,
+  );
 }
 
-function mapReservationRecord(reservation: RawExpirableEventMapReservationRecord): ExpirableEventMapReservationRecord {
+function mapReservationRecord(
+  reservation: RawExpirableEventMapReservationRecord,
+): ExpirableEventMapReservationRecord {
   return {
     id: reservation.id,
     contaId: reservation.contaId,
@@ -292,11 +309,7 @@ function mapReservationRecord(reservation: RawExpirableEventMapReservationRecord
 
 const defaultExpireEventMapReservationsDependencies = {
   resolveTargetContaIds: resolveEventMapContaIds,
-  findExpiredReservations: async (input: {
-    contaId: string;
-    now: Date;
-    limit: number;
-  }) => {
+  findExpiredReservations: async (input: { contaId: string; now: Date; limit: number }) => {
     const reservations = await prisma.eventMapReservation.findMany({
       where: {
         contaId: input.contaId,
@@ -336,7 +349,8 @@ const defaultExpireEventMapReservationsDependencies = {
     if (
       input.paymentCreationUnresolved &&
       input.now.getTime() - input.paymentCreationUpdatedAt.getTime() < staleCreationMs
-    ) return { decision: 'NOT_CANCELLABLE' };
+    )
+      return { decision: 'NOT_CANCELLABLE' };
     const issueDedupeKey = `BILLING_OPERATION_UNCERTAIN:PAYMENT:${input.orderId}`;
     if (input.paymentCreationUnresolved) {
       const existingIssue = await prisma.financeReconciliationIssue.findFirst({
@@ -417,7 +431,11 @@ const defaultExpireEventMapReservationsDependencies = {
           severity: 'CRITICAL',
           localStatus: 'PAYMENT_CREATION_UNKNOWN',
           remoteStatus: 'PAYMENT_MISMATCH',
-          metadata: { orderId: input.orderId, reservationId: input.reservationId, paymentId: remotePayment.id },
+          metadata: {
+            orderId: input.orderId,
+            reservationId: input.reservationId,
+            paymentId: remotePayment.id,
+          },
         });
         return { decision: 'NOT_CANCELLABLE' };
       }
@@ -449,7 +467,10 @@ const defaultExpireEventMapReservationsDependencies = {
       }
     }
 
-    let payment = await getEventAsaasPaymentProvider().getPayment({ apiKey: credentials.apiKey, paymentId });
+    let payment = await getEventAsaasPaymentProvider().getPayment({
+      apiKey: credentials.apiKey,
+      paymentId,
+    });
     let status = (payment.status ?? '').trim().toUpperCase();
 
     if (PAID_ASAAS_PAYMENT_STATUSES.has(status)) {
@@ -464,9 +485,13 @@ const defaultExpireEventMapReservationsDependencies = {
     }
 
     if (payment.deleted || status === 'DELETED') return { decision: 'DELETED', paymentId };
-    if (!CANCELLABLE_ASAAS_PAYMENT_STATUSES.has(status)) return { decision: 'NOT_CANCELLABLE', paymentId };
+    if (!CANCELLABLE_ASAAS_PAYMENT_STATUSES.has(status))
+      return { decision: 'NOT_CANCELLABLE', paymentId };
 
-    const deletion = await getEventAsaasPaymentProvider().deletePayment({ apiKey: credentials.apiKey, paymentId });
+    const deletion = await getEventAsaasPaymentProvider().deletePayment({
+      apiKey: credentials.apiKey,
+      paymentId,
+    });
 
     // DELETE already returns whether the payment was deleted. Avoid a second
     // provider read for the common successful path; only close the race when
@@ -474,7 +499,10 @@ const defaultExpireEventMapReservationsDependencies = {
     if (deletion.deleted) return { decision: 'DELETED', paymentId };
 
     // Read after delete to close the race with a payment being confirmed at expiry.
-    payment = await getEventAsaasPaymentProvider().getPayment({ apiKey: credentials.apiKey, paymentId });
+    payment = await getEventAsaasPaymentProvider().getPayment({
+      apiKey: credentials.apiKey,
+      paymentId,
+    });
     status = (payment.status ?? '').trim().toUpperCase();
     if (PAID_ASAAS_PAYMENT_STATUSES.has(status)) {
       await confirmExpiredOrderPayment({
@@ -573,7 +601,10 @@ const defaultExpireEventMapReservationsDependencies = {
             data: {
               status: 'EXPIRED',
               cancelledAt: input.now,
-              paymentStatus: input.deletedAsaasPaymentId || input.noRemotePaymentConfirmed ? 'DELETED' : 'EXPIRED',
+              paymentStatus:
+                input.deletedAsaasPaymentId || input.noRemotePaymentConfirmed
+                  ? 'DELETED'
+                  : 'EXPIRED',
             },
           });
           if (orderUpdate.count !== 1) {
@@ -670,7 +701,10 @@ async function expireEventMapReservationsUnlocked(
   const now = input.now ?? new Date();
   const limit = Math.max(1, Math.min(500, input.limit ?? 100));
   const maxAccounts = Math.max(1, Math.min(50, input.maxAccounts ?? 20));
-  let remainingExternalPaymentChecks = Math.max(0, Math.min(100, input.maxExternalPaymentChecks ?? 25));
+  let remainingExternalPaymentChecks = Math.max(
+    0,
+    Math.min(100, input.maxExternalPaymentChecks ?? 25),
+  );
   const result: ExpireEventMapReservationsResult = {
     processed: 0,
     expired: 0,
@@ -679,7 +713,10 @@ async function expireEventMapReservationsUnlocked(
     generatedAt: now,
   };
 
-  const contaIds = await dependencies.resolveTargetContaIds({ contaId: input.contaId, maxAccounts });
+  const contaIds = await dependencies.resolveTargetContaIds({
+    contaId: input.contaId,
+    maxAccounts,
+  });
   for (const contaId of contaIds) {
     const reservations = await dependencies.findExpiredReservations({ contaId, now, limit });
     for (const reservation of reservations) {
@@ -690,11 +727,10 @@ async function expireEventMapReservationsUnlocked(
       if (
         !decision.expire &&
         decision.reason === 'external_payment_requires_reconciliation' &&
-        reservation.order && (
-          reservation.order.asaasPaymentId ||
+        reservation.order &&
+        (reservation.order.asaasPaymentId ||
           reservation.order.paymentStatus === 'PAYMENT_CREATION_IN_PROGRESS' ||
-          reservation.order.paymentStatus === 'PAYMENT_CREATION_UNKNOWN'
-        ) &&
+          reservation.order.paymentStatus === 'PAYMENT_CREATION_UNKNOWN') &&
         remainingExternalPaymentChecks > 0 &&
         dependencies.resolveExternalPaymentAtExpiry
       ) {
@@ -715,23 +751,25 @@ async function expireEventMapReservationsUnlocked(
 
           if (paymentDecision.decision === 'PAID') {
             result.skipped += 1;
-            logEventsFinance('eventMapReservation.expire.payment_confirmed', {
-              contaId,
-              eventId: reservation.eventId,
-              reservationId: reservation.id,
-              orderId: reservation.order.id,
-              asaasPaymentId: reservation.order.asaasPaymentId,
-            });
             continue;
           }
 
           if (paymentDecision.decision === 'NOT_CANCELLABLE') {
             result.skipped += 1;
-            result.errors.push({ reservationId: reservation.id, contaId, reason: 'external_payment_not_cancellable' });
+            result.errors.push({
+              reservationId: reservation.id,
+              contaId,
+              reason: 'external_payment_not_cancellable',
+            });
             continue;
           }
 
-          if (paymentDecision.decision === 'NO_PAYMENT' || (paymentDecision.decision === 'DELETED' && !paymentDecision.paymentId && !reservation.order.asaasPaymentId)) {
+          if (
+            paymentDecision.decision === 'NO_PAYMENT' ||
+            (paymentDecision.decision === 'DELETED' &&
+              !paymentDecision.paymentId &&
+              !reservation.order.asaasPaymentId)
+          ) {
             noRemotePaymentConfirmed = true;
           } else {
             deletedAsaasPaymentId = paymentDecision.paymentId ?? reservation.order.asaasPaymentId;
@@ -743,14 +781,6 @@ async function expireEventMapReservationsUnlocked(
             contaId,
             reason: error instanceof Error ? error.message : String(error),
           });
-          logEventsFinance('eventMapReservation.expire.payment_cancel.error', {
-            contaId,
-            eventId: reservation.eventId,
-            reservationId: reservation.id,
-            orderId: reservation.order.id,
-            asaasPaymentId: reservation.order.asaasPaymentId,
-            message: error instanceof Error ? error.message : String(error),
-          }, 'warn');
           continue;
         }
       } else if (!decision.expire) {
@@ -769,12 +799,6 @@ async function expireEventMapReservationsUnlocked(
         });
         if (expired.expired) {
           result.expired += 1;
-          logEventsFinance('eventMapReservation.expire', {
-            contaId,
-            eventId: reservation.eventId,
-            reservationId: reservation.id,
-            orderId: reservation.order?.id ?? null,
-          });
         } else {
           result.skipped += 1;
           result.errors.push({
@@ -794,11 +818,15 @@ async function expireEventMapReservationsUnlocked(
     }
   }
 
-  logEventsFinance('eventMapReservation.expire.job', {
-    processed: result.processed,
-    skipped: result.skipped,
-    errors: result.errors.length,
-  });
+  logEventsFinance(
+    'finance.events.public_event_map.reservation_expire.job.completed',
+    {
+      processed: result.processed,
+      skipped: result.skipped,
+      errors: result.errors.length,
+    },
+    result.errors.length > 0 ? 'warn' : 'info',
+  );
 
   return result;
 }
@@ -837,30 +865,34 @@ type ReconcilePendingEventMapOrdersDependencies = {
     createdBefore: Date;
     limit: number;
   }) => Promise<EventMapOrderReconciliationCandidate[]>;
-  reconcileOrder: (input: ReconcileEventMapOrderPaymentInput) => Promise<ReconcileEventMapOrderPaymentResult>;
+  reconcileOrder: (
+    input: ReconcileEventMapOrderPaymentInput,
+  ) => Promise<ReconcileEventMapOrderPaymentResult>;
 };
 
 const defaultReconcilePendingEventMapOrdersDependencies = {
   resolveTargetContaIds: resolveEventMapContaIds,
-  findOrders: async (input: { contaId: string; createdBefore: Date; limit: number }) => prisma.eventMapOrder.findMany({
-    where: {
-      contaId: input.contaId,
-      status: 'PAYMENT_PENDING',
-      asaasPaymentId: { not: null },
-      paymentMethod: null,
-      createdAt: { lt: input.createdBefore },
-    },
-    select: {
-      id: true,
-      contaId: true,
-      eventId: true,
-      asaasPaymentId: true,
-      paymentMethod: true,
-    },
-    orderBy: { createdAt: 'asc' },
-    take: input.limit,
-  }),
-  reconcileOrder: (input: ReconcileEventMapOrderPaymentInput) => reconcileEventMapOrderPayment(input),
+  findOrders: async (input: { contaId: string; createdBefore: Date; limit: number }) =>
+    prisma.eventMapOrder.findMany({
+      where: {
+        contaId: input.contaId,
+        status: 'PAYMENT_PENDING',
+        asaasPaymentId: { not: null },
+        paymentMethod: null,
+        createdAt: { lt: input.createdBefore },
+      },
+      select: {
+        id: true,
+        contaId: true,
+        eventId: true,
+        asaasPaymentId: true,
+        paymentMethod: true,
+      },
+      orderBy: { createdAt: 'asc' },
+      take: input.limit,
+    }),
+  reconcileOrder: (input: ReconcileEventMapOrderPaymentInput) =>
+    reconcileEventMapOrderPayment(input),
 } satisfies ReconcilePendingEventMapOrdersDependencies;
 
 export async function reconcilePendingEventMapOrders(
@@ -868,7 +900,8 @@ export async function reconcilePendingEventMapOrders(
   dependencies: ReconcilePendingEventMapOrdersDependencies = defaultReconcilePendingEventMapOrdersDependencies,
 ): Promise<ReconcilePendingEventMapOrdersResult> {
   const run = () => reconcilePendingEventMapOrdersUnlocked(input, dependencies);
-  const useLock = input.useLock ?? dependencies === defaultReconcilePendingEventMapOrdersDependencies;
+  const useLock =
+    input.useLock ?? dependencies === defaultReconcilePendingEventMapOrdersDependencies;
   if (!useLock) return run();
 
   const locked = await withWebhookJobLock(
@@ -910,7 +943,10 @@ async function reconcilePendingEventMapOrdersUnlocked(
     generatedAt: now,
   };
 
-  const contaIds = await dependencies.resolveTargetContaIds({ contaId: input.contaId, maxAccounts });
+  const contaIds = await dependencies.resolveTargetContaIds({
+    contaId: input.contaId,
+    maxAccounts,
+  });
   for (const contaId of contaIds) {
     const orders = await dependencies.findOrders({ contaId, createdBefore, limit });
     for (const order of orders) {
@@ -944,27 +980,19 @@ async function reconcilePendingEventMapOrdersUnlocked(
           contaId,
           reason: error instanceof Error ? error.message : String(error),
         });
-        logEventsFinance(
-          'eventMapOrder.reconcile.job.error',
-          {
-            contaId,
-            eventId: order.eventId,
-            orderId: order.id,
-            asaasPaymentId: order.asaasPaymentId,
-            message: error instanceof Error ? error.message : String(error),
-          },
-          'warn',
-        );
       }
     }
   }
 
-  logEventsFinance('eventMapOrder.reconcile.job', {
-    processed: result.processed,
-    skipped: result.skipped,
-    errors: result.errors.length,
-    updated: result.updated > 0,
-  });
+  logEventsFinance(
+    'finance.events.public_event_map.order_reconcile.job.completed',
+    {
+      processed: result.processed,
+      skipped: result.skipped,
+      errors: result.errors.length,
+    },
+    result.errors.length > 0 ? 'warn' : 'info',
+  );
 
   return result;
 }
@@ -1037,11 +1065,7 @@ async function resolveEventMapTicketFulfillmentContaIds(input: {
 
 const defaultReconcilePendingEventMapTicketFulfillmentDependencies = {
   resolveTargetContaIds: resolveEventMapTicketFulfillmentContaIds,
-  findOrders: async (input: {
-    contaId: string;
-    limit: number;
-    maxAttempts: number;
-  }) => {
+  findOrders: async (input: { contaId: string; limit: number; maxAttempts: number }) => {
     const orders = await prisma.eventMapOrder.findMany({
       where: {
         contaId: input.contaId,
@@ -1064,11 +1088,17 @@ const defaultReconcilePendingEventMapTicketFulfillmentDependencies = {
       take: input.limit,
     });
 
-    return orders.flatMap((order) => order.asaasPaymentId ? [{
-      ...order,
-      asaasPaymentId: order.asaasPaymentId,
-      totalAmount: Number(order.totalAmount),
-    }] : []);
+    return orders.flatMap((order) =>
+      order.asaasPaymentId
+        ? [
+            {
+              ...order,
+              asaasPaymentId: order.asaasPaymentId,
+              totalAmount: Number(order.totalAmount),
+            },
+          ]
+        : [],
+    );
   },
   fulfillOrder: async (input: EventMapTicketFulfillmentCandidate) => {
     const result = await confirmPublicEventMapOrderPayment({
@@ -1102,7 +1132,11 @@ export async function reconcilePendingEventMapTicketFulfillment(
       generatedAt: new Date(),
     };
 
-    const contaIds = await dependencies.resolveTargetContaIds({ contaId: input.contaId, maxAccounts, maxAttempts });
+    const contaIds = await dependencies.resolveTargetContaIds({
+      contaId: input.contaId,
+      maxAccounts,
+      maxAttempts,
+    });
     for (const contaId of contaIds) {
       const orders = await dependencies.findOrders({ contaId, limit, maxAttempts });
       for (const order of orders) {
@@ -1118,27 +1152,28 @@ export async function reconcilePendingEventMapTicketFulfillment(
           result.skipped += 1;
           const reason = error instanceof Error ? error.message : String(error);
           result.errors.push({ orderId: order.id, contaId, reason });
-          await dependencies.recordFailure({ contaId, orderId: order.id, reason }).catch(() => null);
-          logEventsFinance(
-            'eventMapOrder.ticketFulfillment.job.error',
-            { contaId, orderId: order.id, asaasPaymentId: order.asaasPaymentId, reason },
-            'warn',
-          );
+          await dependencies
+            .recordFailure({ contaId, orderId: order.id, reason })
+            .catch(() => null);
         }
       }
     }
 
-    logEventsFinance('eventMapOrder.ticketFulfillment.job', {
-      processed: result.processed,
-      skipped: result.skipped,
-      errors: result.errors.length,
-      message: `tickets_issued=${result.issued}`,
-    });
+    logEventsFinance(
+      'finance.events.public_event_map.ticket_fulfillment.job.completed',
+      {
+        processed: result.processed,
+        skipped: result.skipped,
+        errors: result.errors.length,
+      },
+      result.errors.length > 0 ? 'warn' : 'info',
+    );
 
     return result;
   };
 
-  const useLock = input.useLock ?? dependencies === defaultReconcilePendingEventMapTicketFulfillmentDependencies;
+  const useLock =
+    input.useLock ?? dependencies === defaultReconcilePendingEventMapTicketFulfillmentDependencies;
   if (!useLock) return run();
 
   const locked = await withWebhookJobLock(
@@ -1246,7 +1281,10 @@ export function classifyEventMapOrderInconsistencies(
     });
   }
 
-  if (order.status === 'CONFIRMED' && order.items.some((item) => item.publicSeat.status !== 'SOLD')) {
+  if (
+    order.status === 'CONFIRMED' &&
+    order.items.some((item) => item.publicSeat.status !== 'SOLD')
+  ) {
     findings.push({
       type: 'CONFIRMED_ORDER_WITH_UNSOLD_SEAT',
       severity: 'critical',
@@ -1387,7 +1425,8 @@ export async function inspectEventFinancialInconsistencies(
   dependencies: InspectEventFinancialInconsistenciesDependencies = defaultInspectEventFinancialInconsistenciesDependencies,
 ): Promise<InspectEventFinancialInconsistenciesResult> {
   const run = () => inspectEventFinancialInconsistenciesUnlocked(input, dependencies);
-  const useLock = input.useLock ?? dependencies === defaultInspectEventFinancialInconsistenciesDependencies;
+  const useLock =
+    input.useLock ?? dependencies === defaultInspectEventFinancialInconsistenciesDependencies;
   if (!useLock) return run();
 
   const locked = await withWebhookJobLock(
@@ -1415,7 +1454,10 @@ async function inspectEventFinancialInconsistenciesUnlocked(
   const now = input.now ?? new Date();
   const limit = Math.max(1, Math.min(1000, input.limit ?? 200));
   const maxAccounts = Math.max(1, Math.min(50, input.maxAccounts ?? 20));
-  const contaIds = await dependencies.resolveTargetContaIds({ contaId: input.contaId, maxAccounts });
+  const contaIds = await dependencies.resolveTargetContaIds({
+    contaId: input.contaId,
+    maxAccounts,
+  });
   const findings: EventFinancialInconsistency[] = [];
   let inspected = 0;
 
@@ -1429,11 +1471,8 @@ async function inspectEventFinancialInconsistenciesUnlocked(
 
   if (findings.length > 0) {
     logEventsFinance(
-      'eventMapOrder.financialInconsistencies.inspect',
-      {
-        processed: inspected,
-        errors: findings.length,
-      },
+      'finance.events.public_event_map.financial_inconsistencies.inspect',
+      { processed: inspected, errors: findings.length },
       'warn',
     );
   }

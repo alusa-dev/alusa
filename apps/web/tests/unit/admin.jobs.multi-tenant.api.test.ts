@@ -241,6 +241,27 @@ describe('admin jobs multi-tenant isolation', () => {
     });
   });
 
+  it('registra falha de webhook-maintenance sem conteúdo livre do erro', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(getServerSession).mockResolvedValue(null as never);
+    vi.mocked(runWebhookHealthAndDriftMaintenance).mockRejectedValue(
+      new Error('token=private-secret webhook=private-id'),
+    );
+
+    const response = await postWebhookMaintenance(
+      makeRequest('http://localhost/api/jobs/webhook-maintenance', {
+        'x-cron-token': 'cron-secret',
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    const output = JSON.stringify(errorSpy.mock.calls);
+    expect(output).toContain('api.webhook.maintenance.failed');
+    expect(output).toContain('requestId');
+    expect(output).not.toContain('private-secret');
+    expect(output).not.toContain('private-id');
+  });
+
   it('bloqueia archive-finance-webhooks para outra conta quando executado por admin humano', async () => {
     const response = await postArchiveWebhooks(
       makeRequest('http://localhost/api/jobs/archive-finance-webhooks?contaId=conta-2'),

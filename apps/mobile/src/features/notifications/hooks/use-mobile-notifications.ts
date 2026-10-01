@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { isAuthError } from '@/lib/api/errors';
 
+import { reportMobileNotificationFailure } from './notification-telemetry';
 import { notificationsService } from '../services/notifications-service';
 import type { MobileNotificationItem } from '../types/notifications';
 
@@ -22,7 +23,7 @@ export function useMobileNotifications(visible: boolean) {
       const response = await notificationsService.getUnreadCount();
       setUnreadCount(response.count);
     } catch (reason) {
-      if (!isAuthError(reason)) console.error('[MobileNotifications][unread-count]', reason);
+      if (!isAuthError(reason)) reportMobileNotificationFailure('mobile.notifications.unread_count.failed');
     } finally {
       setCountLoading(false);
     }
@@ -46,7 +47,7 @@ export function useMobileNotifications(visible: boolean) {
         setError('Você não tem permissão para acessar as notificações.');
       } else {
         setError(reason instanceof Error ? reason.message : 'Não foi possível carregar as notificações.');
-        console.error('[MobileNotifications][load]', reason);
+        reportMobileNotificationFailure('mobile.notifications.feed.load_failed');
       }
     } finally {
       setLoading(false);
@@ -73,7 +74,7 @@ export function useMobileNotifications(visible: boolean) {
     } catch (reason) {
       setItems((currentItems) => currentItems.map((item) => item.id === notificationId ? { ...item, readAt: current.readAt } : item));
       setUnreadCount((currentCount) => currentCount + 1);
-      console.error('[MobileNotifications][read]', reason);
+      reportMobileNotificationFailure('mobile.notifications.item.read_failed');
     }
   }, [items]);
 
@@ -89,7 +90,7 @@ export function useMobileNotifications(visible: boolean) {
     } catch (reason) {
       setItems(previousItems);
       setUnreadCount(previousItems.filter((item) => !item.readAt && !item.archivedAt).length);
-      console.error('[MobileNotifications][read-all]', reason);
+      reportMobileNotificationFailure('mobile.notifications.feed.read_all_failed');
     } finally {
       setSubmitting(false);
     }
@@ -108,7 +109,7 @@ export function useMobileNotifications(visible: boolean) {
     } catch (reason) {
       setItems(previousItems);
       setUnreadCount(previousItems.filter((item) => !item.readAt && !item.archivedAt).length);
-      console.error('[MobileNotifications][delete]', reason);
+      reportMobileNotificationFailure('mobile.notifications.item.delete_failed');
     } finally {
       setSubmitting(false);
     }

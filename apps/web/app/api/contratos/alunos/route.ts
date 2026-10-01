@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
 import {
@@ -55,7 +56,14 @@ export async function GET(request: NextRequest) {
       }),
     );
   } catch (error) {
-    console.error('[CONTRATOS_ALUNOS_GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/contratos/alunos',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return NextResponse.json(
       { error: { message: 'Erro ao listar alunos com contratos' } },
       { status: 500 },

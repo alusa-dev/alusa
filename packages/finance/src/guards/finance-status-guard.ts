@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 /**
  * Matricula Finance Status Guard
  *
@@ -63,9 +64,10 @@ export function isAuthorizedCategory(category: EventCategory | 'UNKNOWN'): boole
 /**
  * Valida se a alteração de financeStatus é permitida
  */
-export function validateFinanceStatusChange(
-  context: FinanceStatusGuardContext
-): { allowed: boolean; reason?: string } {
+export function validateFinanceStatusChange(context: FinanceStatusGuardContext): {
+  allowed: boolean;
+  reason?: string;
+} {
   if (!isAuthorizedCategory(context.eventCategory)) {
     return {
       allowed: false,
@@ -82,7 +84,7 @@ export function validateFinanceStatusChange(
 /**
  * Registra tentativa bloqueada de alteração de financeStatus
  */
-function logBlockedAttempt(params: {
+function logBlockedAttempt(_params: {
   matriculaId: string;
   eventCategory: EventCategory | 'UNKNOWN';
   eventName?: string;
@@ -90,43 +92,11 @@ function logBlockedAttempt(params: {
   reason: string;
 }): void {
   try {
-    console.error(
-      JSON.stringify({
-        level: 'security',
-        type: 'finance_status_change_blocked',
-        timestamp: new Date().toISOString(),
-        matriculaId: params.matriculaId,
-        eventCategory: params.eventCategory,
-        eventName: params.eventName,
-        requestedStatus: params.requestedStatus,
-        reason: params.reason,
-      })
-    );
-  } catch {
-    // Fail-safe
-  }
-}
-
-/**
- * Registra alteração bem-sucedida de financeStatus
- */
-function logStatusChange(params: {
-  matriculaId: string;
-  eventCategory: EventCategory | 'UNKNOWN';
-  eventName?: string;
-  previousStatus: StatusFinanceiro;
-  newStatus: StatusFinanceiro;
-  reason?: string;
-}): void {
-  try {
-    console.log(
-      JSON.stringify({
-        level: 'info',
-        type: 'finance_status_changed',
-        timestamp: new Date().toISOString(),
-        ...params,
-      })
-    );
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.guards.finance_status_guard.failed',
+      throttleMs: 60_000,
+    });
   } catch {
     // Fail-safe
   }
@@ -143,9 +113,9 @@ function logStatusChange(params: {
  * Handlers devem usar este serviço ao invés de update direto no Prisma.
  */
 export async function updateMatriculaFinanceStatus(
-  input: UpdateFinanceStatusInput
+  input: UpdateFinanceStatusInput,
 ): Promise<UpdateFinanceStatusResult> {
-  const { matriculaId, newStatus, eventCategory, eventName, reason } = input;
+  const { matriculaId, newStatus, eventCategory, eventName } = input;
 
   // 1. Validar categoria
   const validation = validateFinanceStatusChange({ eventCategory, eventName });
@@ -195,16 +165,6 @@ export async function updateMatriculaFinanceStatus(
   await prisma.matricula.update({
     where: { id: matriculaId },
     data: { statusFinanceiro: newStatus },
-  });
-
-  // 5. Log de alteração
-  logStatusChange({
-    matriculaId,
-    eventCategory,
-    eventName,
-    previousStatus,
-    newStatus,
-    reason,
   });
 
   return {

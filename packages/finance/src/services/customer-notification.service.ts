@@ -1,6 +1,7 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 /**
  * Customer Notification Service
- * 
+ *
  * Gerencia sincronização de canais de notificação do cliente no Asaas.
  * Implementa política de sincronização idempotente com degradação controlada:
  * - Tenta aplicar preferências do usuário
@@ -127,10 +128,7 @@ function supportsWhatsappForEvent(event: string): boolean {
 
 function toEventPreferenceMap(eventPreferences?: NotificationEventPreference[]) {
   return new Map(
-    (eventPreferences ?? []).map((pref) => [
-      capabilityKey(pref.event, pref.scheduleOffset),
-      pref,
-    ]),
+    (eventPreferences ?? []).map((pref) => [capabilityKey(pref.event, pref.scheduleOffset), pref]),
   );
 }
 
@@ -170,10 +168,7 @@ function resolveDesiredChannels(
   };
 }
 
-function needsUpdate(
-  current: AsaasNotification,
-  desired: DesiredNotificationChannels,
-): boolean {
+function needsUpdate(current: AsaasNotification, desired: DesiredNotificationChannels): boolean {
   return (
     current.enabled !== desired.enabled ||
     current.emailEnabledForProvider !== desired.emailEnabledForProvider ||
@@ -203,9 +198,12 @@ function buildUpdatePayload(
 
 function getAppliedFromTasks(
   tasks: NotificationUpdateTask[],
-  existingNotifications: Array<{ desired: DesiredNotificationChannels }>
+  existingNotifications: Array<{ desired: DesiredNotificationChannels }>,
 ): NotificationChannelPreferences {
-  const allDesired = [...tasks.map((task) => task.desired), ...existingNotifications.map((item) => item.desired)];
+  const allDesired = [
+    ...tasks.map((task) => task.desired),
+    ...existingNotifications.map((item) => item.desired),
+  ];
 
   return {
     email: allDesired.some((desired) => desired.enabled && desired.emailEnabledForCustomer),
@@ -277,11 +275,6 @@ async function rememberWhatsappCapability(input: {
   });
 }
 
-function isPrismaConnectionPoolTimeout(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes('connection pool') || message.includes('P2024');
-}
-
 /**
  * A capacidade de WhatsApp é um read model auxiliar. Ela nunca deve fazer a
  * sincronização principal de notificações falhar, especialmente em funções
@@ -292,24 +285,22 @@ async function rememberWhatsappCapabilitiesSafely(
   inputs: Array<Parameters<typeof rememberWhatsappCapability>[0]>,
 ): Promise<void> {
   const unique = new Map(
-    inputs.map((input) => [capabilityKey(input.notification.event, input.notification.scheduleOffset), input]),
+    inputs.map((input) => [
+      capabilityKey(input.notification.event, input.notification.scheduleOffset),
+      input,
+    ]),
   );
 
   for (const input of unique.values()) {
     try {
       await rememberWhatsappCapability(input);
     } catch (error) {
-      console.warn(JSON.stringify({
-        level: 'warning',
-        type: isPrismaConnectionPoolTimeout(error)
-          ? 'database_pool_timeout_non_critical'
-          : 'notification_capability_persist_failed',
-        operation: 'asaas_notification_preference.upsert',
-        contaId: input.contaId,
-        event: input.notification.event,
-        scheduleOffset: input.notification.scheduleOffset,
-        error: error instanceof Error ? error.message : String(error),
-      }));
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.services.customer_notification_service.degraded',
+        error: error,
+        throttleMs: 60_000,
+      });
     }
   }
 }
@@ -391,10 +382,10 @@ export async function ensureCustomerNotificationsEnabled(
     });
 
     if (!updateResponse.ok) {
-      console.warn('[ensureCustomerNotificationsEnabled] Asaas rejeitou habilitação', {
-        contaId,
-        customerId,
-        status: updateResponse.status,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.services.customer_notification_service.degraded',
+        throttleMs: 60_000,
       });
       return {
         success: false,
@@ -410,10 +401,10 @@ export async function ensureCustomerNotificationsEnabled(
     });
 
     if (!verifyResponse.ok) {
-      console.warn('[ensureCustomerNotificationsEnabled] Falha ao verificar habilitação', {
-        contaId,
-        customerId,
-        status: verifyResponse.status,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.services.customer_notification_service.degraded',
+        throttleMs: 60_000,
       });
       return {
         success: false,
@@ -421,14 +412,15 @@ export async function ensureCustomerNotificationsEnabled(
       };
     }
 
-    const customer = (await verifyResponse.json().catch(() => null)) as
-      | { notificationDisabled?: boolean }
-      | null;
+    const customer = (await verifyResponse.json().catch(() => null)) as {
+      notificationDisabled?: boolean;
+    } | null;
 
     if (customer?.notificationDisabled === true) {
-      console.warn('[ensureCustomerNotificationsEnabled] Customer permanece bloqueado', {
-        contaId,
-        customerId,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.services.customer_notification_service.degraded',
+        throttleMs: 60_000,
       });
       return {
         success: false,
@@ -438,10 +430,11 @@ export async function ensureCustomerNotificationsEnabled(
 
     return { success: true };
   } catch (error) {
-    console.warn('[ensureCustomerNotificationsEnabled] Falha inesperada', {
-      contaId,
-      customerId,
-      error: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.services.customer_notification_service.degraded',
+      error: error,
+      throttleMs: 60_000,
     });
     return {
       success: false,
@@ -461,7 +454,7 @@ export async function ensureCustomerNotificationsEnabled(
  * - Registra warnings para capacidades parciais e falha quando o estado não
  *   pode ser confirmado
  * - Máximo 1 retry
- * 
+ *
  * @param contaId - ID da conta (para buscar credenciais)
  * @param customerId - ID do customer no Asaas (ex: cus_xxx)
  * @param preferences - Preferências de canais do usuário
@@ -480,7 +473,11 @@ export async function syncCustomerNotificationChannels(
     // 1. Carregar credenciais
     const creds = await loadAsaasCredentials(contaId);
     if (!creds) {
-      console.warn('[syncCustomerNotificationChannels] Credenciais Asaas não encontradas', { contaId });
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.services.customer_notification_service.degraded',
+        throttleMs: 60_000,
+      });
       return { success: false, applied, warnings };
     }
 
@@ -499,10 +496,11 @@ export async function syncCustomerNotificationChannels(
 
     if (!listRes.ok) {
       const errorText = await listRes.text();
-      console.warn('[syncCustomerNotificationChannels] Falha ao listar notificações', {
-        customerId,
-        status: listRes.status,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.services.customer_notification_service.degraded',
         error: errorText,
+        throttleMs: 60_000,
       });
       return { success: false, applied, warnings };
     }
@@ -524,11 +522,11 @@ export async function syncCustomerNotificationChannels(
     if (sandboxEnv && preferences.whatsapp) {
       await rememberWhatsappCapabilitiesSafely(
         notifications.map((notification) => ({
-            contaId,
-            notification,
-            supported: false,
-            code: 'sandbox_unsupported',
-            environment: 'sandbox',
+          contaId,
+          notification,
+          supported: false,
+          code: 'sandbox_unsupported',
+          environment: 'sandbox',
         })),
       );
     }
@@ -540,7 +538,12 @@ export async function syncCustomerNotificationChannels(
     const alreadyMatching: Array<{ desired: DesiredNotificationChannels }> = [];
 
     for (const notification of notifications) {
-      const desired = resolveDesiredChannels(notification, preferences, eventPreferences, sandboxEnv);
+      const desired = resolveDesiredChannels(
+        notification,
+        preferences,
+        eventPreferences,
+        sandboxEnv,
+      );
 
       if (sandboxEnv && desired.whatsappEnabledForCustomer === false && preferences.whatsapp) {
         warnings.push({
@@ -589,11 +592,11 @@ export async function syncCustomerNotificationChannels(
         updatesNeeded
           .filter((task) => task.desired.whatsappEnabledForCustomer)
           .map((task) => ({
-              contaId,
-              notification: task.notification,
-              supported: true,
-              code: null,
-              environment,
+            contaId,
+            notification: task.notification,
+            supported: true,
+            code: null,
+            environment,
           })),
       );
 
@@ -614,10 +617,10 @@ export async function syncCustomerNotificationChannels(
     );
 
     if ((!hasWhatsappInvalidAction && !hasMissingCustomerPhone) || !hasWhatsappAttempt) {
-      console.warn('[syncCustomerNotificationChannels] Erro ao atualizar notificações', {
-        customerId,
-        status: batchRes.status,
-        errors,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.services.customer_notification_service.degraded',
+        throttleMs: 60_000,
       });
 
       for (const err of errors) {
@@ -637,9 +640,10 @@ export async function syncCustomerNotificationChannels(
       };
     }
 
-    console.warn('[syncCustomerNotificationChannels] Lote com WhatsApp falhou; aplicando fallback granular', {
-      customerId,
-      originalErrors: errors,
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.services.customer_notification_service.degraded',
+      throttleMs: 60_000,
     });
 
     const appliedDesired: Array<{ desired: DesiredNotificationChannels }> = [...alreadyMatching];
@@ -657,13 +661,15 @@ export async function syncCustomerNotificationChannels(
         appliedDesired.push({ desired: task.desired });
 
         if (task.desired.whatsappEnabledForCustomer) {
-          await rememberWhatsappCapabilitiesSafely([{
-            contaId,
-            notification: task.notification,
-            supported: true,
-            code: null,
-            environment,
-          }]);
+          await rememberWhatsappCapabilitiesSafely([
+            {
+              contaId,
+              notification: task.notification,
+              supported: true,
+              code: null,
+              environment,
+            },
+          ]);
         }
 
         continue;
@@ -673,10 +679,7 @@ export async function syncCustomerNotificationChannels(
       const itemWhatsappInvalid = isWhatsappInvalidAction(itemErrors);
       const itemMissingPhone = isMissingCustomerPhoneError(itemErrors);
 
-      if (
-        task.desired.whatsappEnabledForCustomer &&
-        (itemWhatsappInvalid || itemMissingPhone)
-      ) {
+      if (task.desired.whatsappEnabledForCustomer && (itemWhatsappInvalid || itemMissingPhone)) {
         const fallbackDesired = {
           ...task.desired,
           whatsappEnabledForCustomer: false,
@@ -692,13 +695,15 @@ export async function syncCustomerNotificationChannels(
           appliedDesired.push({ desired: fallbackDesired });
 
           if (itemWhatsappInvalid && !itemMissingPhone) {
-            await rememberWhatsappCapabilitiesSafely([{
-              contaId,
-              notification: task.notification,
-              supported: false,
-              code: 'invalid_action',
-              environment,
-            }]);
+            await rememberWhatsappCapabilitiesSafely([
+              {
+                contaId,
+                notification: task.notification,
+                supported: false,
+                code: 'invalid_action',
+                environment,
+              },
+            ]);
           }
 
           warnings.push({
@@ -734,10 +739,11 @@ export async function syncCustomerNotificationChannels(
     };
   } catch (error) {
     // Erro inesperado (rede, timeout, etc)
-    console.error('[syncCustomerNotificationChannels] Erro inesperado', {
-      contaId,
-      customerId,
-      error: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.services.customer_notification_service.failed',
+      error: error,
+      throttleMs: 60_000,
     });
 
     return { success: false, applied, warnings };

@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Search as MagnifyingGlassIcon, Plus as PlusIcon } from '@/components/icons/icons';
 import StudentRegistrationWizard from '@/features/students/components/StudentRegistrationWizard';
 import type { WizardContextValue, WizardAluno } from '../types';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import {
   alunoResponsavelSchema,
   type AlunoResponsavelFormData,
@@ -306,7 +307,7 @@ export function StepStudent({ ctx, contaId }: StepStudentProps) {
           onClose={() => toast.dismiss(t)}
         />
       ));
-      console.error('[StepStudent]', err);
+      logClientOperationalEvent('student.wizard.step_create.failed', err);
     } finally {
       setSubmitting(false);
     }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { useRouter } from 'next/navigation';
 import { CheckCircle, DocumentText, Eye } from '@/components/icons/icons';
 import { Button } from '@/components/ui/button';
@@ -45,7 +46,7 @@ export function ContractTemplateDetailsFeature({ modeloId }: ModeloDetalhesFeatu
       })
       .catch((error) => {
         toast.error('Erro ao carregar modelo');
-        console.error(error);
+        logClientOperationalEvent('contracts.template.details.load_failed', error);
       })
       .finally(() => setLoading(false));
   }, [modeloId]);

@@ -10,6 +10,7 @@ import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { signPublicContract } from '@alusa/lib/contracts/use-cases/sign-contract';
 import { createContractSignedNotification } from '@alusa/lib/notifications/domain-notifications';
 import { loadPublicContractPdf } from '@/src/server/contracts/load-public-contract-pdf';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 function statusForDomainError(error: Error) {
   switch (error.message) {
@@ -105,7 +106,14 @@ export async function POST(
       }),
     );
   } catch (error) {
-    console.error('[PUBLIC_CONTRATO_ASSINAR]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.public_contract.sign.failed',
+      route: '/api/public/contrato/[token]/assinar',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     if (error instanceof z.ZodError) {
       return jsonSensitive(
         { error: { message: 'Dados inválidos', details: error.errors } },

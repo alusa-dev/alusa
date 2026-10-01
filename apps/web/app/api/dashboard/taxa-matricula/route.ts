@@ -5,6 +5,7 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
 import { runWithTenant } from '@/lib/prisma-tenant';
 import { PrivateMemoryCache, privateJson } from '@/lib/private-cache';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const taxaMatriculaCache = new PrivateMemoryCache<unknown>({
   maxAgeSeconds: 30,
@@ -170,7 +171,7 @@ export async function GET(request: NextRequest) {
       cacheState: 'MISS',
     });
   } catch (error) {
-    console.error('[GET /api/dashboard/taxa-matricula] Erro:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.dashboard.request.failed', route: '/api/dashboard/taxa-matricula', method: 'GET', requestId: getRequestId(request), error });
     return NextResponse.json(
       { success: false, error: 'Não foi possível carregar a taxa de matrícula agora.' },
       { status: 500 },

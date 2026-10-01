@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { buildSubscriptionExternalReference, createSubscription } from '@alusa/finance';
 import { getSessionUser } from '@/lib/auth/session';
@@ -26,8 +27,15 @@ import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
 } from '@/src/server/platform-billing/capacity';
-import { getContractForTenant, listContractsForTenant } from '@/src/server/contracts/contract-read.service';
-import { getContractCreationContext, issueContractForTenant, syncContractSubscriptionForTenant } from '@/src/server/contracts/contract-creation.service';
+import {
+  getContractForTenant,
+  listContractsForTenant,
+} from '@/src/server/contracts/contract-read.service';
+import {
+  getContractCreationContext,
+  issueContractForTenant,
+  syncContractSubscriptionForTenant,
+} from '@/src/server/contracts/contract-creation.service';
 
 export function replaceMentionSpans(html: string) {
   const mentionRegex = /<span\s+[^>]*?data-type=["']mention["'][^>]*?>[^<]*?<\/span>/g;
@@ -61,17 +69,28 @@ export async function GET(request: NextRequest) {
   const { matriculaId, alunoId, status } = parsedQuery.data;
 
   try {
-    const contratos = await listContractsForTenant({ contaId: user.contaId, matriculaId, alunoId, status });
+    const contratos = await listContractsForTenant({
+      contaId: user.contaId,
+      matriculaId,
+      alunoId,
+      status,
+    });
 
     return NextResponse.json(
-      listContratosResultDTOSchema.parse(contratos.map((contrato) => mapContratoRecordToDTO(contrato))),
+      listContratosResultDTOSchema.parse(
+        contratos.map((contrato) => mapContratoRecordToDTO(contrato)),
+      ),
     );
   } catch (error) {
-    console.error('[CONTRATOS_GET]', error);
-    return NextResponse.json(
-      { error: { message: 'Erro ao listar contratos' } },
-      { status: 500 },
-    );
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/contratos',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
+    return NextResponse.json({ error: { message: 'Erro ao listar contratos' } }, { status: 500 });
   }
 }
 
@@ -94,14 +113,15 @@ export async function POST(request: NextRequest) {
       throw error;
     }
 
-    const context = await getContractCreationContext({ contaId, matriculaId: body.matriculaId, contratoOrigemId: body.contratoOrigemId });
+    const context = await getContractCreationContext({
+      contaId,
+      matriculaId: body.matriculaId,
+      contratoOrigemId: body.contratoOrigemId,
+    });
     const matricula = context?.matricula;
 
     if (!matricula) {
-      return NextResponse.json(
-        { error: { message: 'Matrícula não encontrada' } },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: { message: 'Matrícula não encontrada' } }, { status: 404 });
     }
 
     if (matricula.aluno.contaId !== user.contaId) {
@@ -179,7 +199,14 @@ export async function POST(request: NextRequest) {
       }),
     );
   } catch (error) {
-    console.error('[CONTRATOS_POST]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/contratos',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: { message: 'Dados inválidos', details: error.errors } },
@@ -195,10 +222,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (error instanceof PendingEnrollmentContractAlreadyExistsError) {
-      return NextResponse.json(
-        { error: { message: error.message } },
-        { status: 409 },
-      );
+      return NextResponse.json({ error: { message: error.message } }, { status: 409 });
     }
 
     if (error instanceof EnrollmentContractModelNotFoundError) {
@@ -209,15 +233,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (error instanceof EnrollmentContractModelSignatureFieldsError) {
-      return NextResponse.json(
-        { error: { message: error.message } },
-        { status: 422 },
-      );
+      return NextResponse.json({ error: { message: error.message } }, { status: 422 });
     }
 
-    return NextResponse.json(
-      { error: { message: 'Erro ao gerar contrato' } },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: { message: 'Erro ao gerar contrato' } }, { status: 500 });
   }
 }

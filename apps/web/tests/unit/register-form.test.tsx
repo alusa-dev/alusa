@@ -2,6 +2,8 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+Object.assign(globalThis, { React });
+
 const signInMock = vi.fn();
 const fetchMock = vi.fn();
 const toastCustomMock = vi.fn();
@@ -28,15 +30,15 @@ vi.mock('@/components/ui/toast', () => ({
   ),
 }));
 
-vi.mock('@/lib/debug-logger', () => ({
-  debugLog: vi.fn(),
-  isAuthDebug: false,
-}));
-
 describe('RegisterForm', () => {
   beforeEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({ user: { email: 'qa@example.com', contaId: 'conta_1' } }),
@@ -166,7 +168,7 @@ describe('RegisterForm', () => {
 
     await waitFor(() => expect(toastCustomMock).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId('register-error')).not.toBeInTheDocument();
-    const renderToast = toastCustomMock.mock.calls[0]?.[0] as (id: string) => React.ReactElement;
+    const renderToast = toastCustomMock.mock.calls[0]?.[0] as (_id: string) => React.ReactElement;
     const toastElement = renderToast('toast-id');
     expect(toastElement.props).toMatchObject({
       title: 'Conta já vinculada',

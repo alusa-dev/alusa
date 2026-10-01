@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { logPersonDataOperationalEvent } from '@/lib/observability/api-logger';
 
 import {
   eventParticipantScalarSelect,
@@ -238,11 +239,7 @@ export async function deleteEventParticipant(input: {
         now,
       });
     } catch (projectionError) {
-      console.error('[events][participant-cancel] read model projection failed', {
-        contaId: ctx.contaId,
-        participantId,
-        error: projectionError instanceof Error ? projectionError.message : 'projection_failed',
-      });
+      logPersonDataOperationalEvent('api.events.participant.projection.failed', projectionError);
     }
   }
   return { found: true, ok: result.ok, grouped: result.grouped === true };

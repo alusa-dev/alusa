@@ -10,6 +10,7 @@ import {
   mapFinanceSubscriptionEnrichedResultToDTO,
 } from '@/features/finance/mappers';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -78,7 +79,7 @@ export async function GET(req: NextRequest) {
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (e) {
-    console.error('[API Subscriptions Enriched] Erro', e);
+    logFinanceApiError('/api/finance/subscriptions/enriched', e);
     return err(500, 'ERRO_INTERNO', 'Não foi possível carregar as assinaturas.');
   }
 }

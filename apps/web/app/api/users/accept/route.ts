@@ -16,6 +16,7 @@ import {
 } from '@/src/server/users/invite-acceptance.service';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export async function GET(req: Request) {
   try {
@@ -47,7 +48,7 @@ export async function GET(req: Request) {
       validateInviteResultDTOSchema.parse({ email: invite.email, role: invite.role }),
     );
   } catch (error) {
-    console.error('Error validating invite:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/accept', method: 'GET', requestId: getRequestId(req), error });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -140,7 +141,7 @@ export async function POST(req: Request) {
           await sendEmailVerificationForUser(user.id, { ip, userAgent: req.headers.get('user-agent') }, { callbackUrl: '/dashboard' });
         } catch (error) {
           verificationEmailSent = false;
-          console.error('[invite][verification-email-failed]', { userId: user.id, error });
+          logApiOperationalEvent({ severity: 'warn', eventName: 'api.users.invite.delivery.failed', route: '/api/users/accept', method: 'POST', requestId: getRequestId(req), error });
         }
       }
 
@@ -179,7 +180,7 @@ export async function POST(req: Request) {
       throw e;
     }
   } catch (error) {
-    console.error('Error accepting invite:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/accept', method: 'POST', requestId: getRequestId(req), error });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -102,7 +102,6 @@ export async function GET(req: NextRequest) {
     return financeInternalError('API Financeiro Pagamentos Summary', e);
   } finally {
     logFinanceApiRequest('GET /api/financeiro/pagamentos/summary', {
-      contaId,
       durationMs: Date.now() - startedAt,
       cacheHit: cacheState,
     });

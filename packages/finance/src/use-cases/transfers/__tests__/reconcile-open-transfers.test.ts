@@ -131,7 +131,10 @@ describe('reconcileOpenTransfers', () => {
     expect(res.reconciled).toBe(1);
 
     // Deve ter atualizado authorized=true sem mudar status
-    const updateCall = vi.mocked(prisma.transferRequest.update).mock.calls[0]![0] as { where: unknown; data: Record<string, unknown> };
+    const updateCall = vi.mocked(prisma.transferRequest.update).mock.calls[0]![0] as {
+      where: unknown;
+      data: Record<string, unknown>;
+    };
     expect(updateCall.data.authorized).toBe(true);
     // status não deve estar no data ou deve ser undefined (não houve mudança)
     expect(updateCall.data.status).toBeUndefined();
@@ -142,9 +145,7 @@ describe('reconcileOpenTransfers', () => {
     const { getTransfer } = await import('@alusa/asaas');
 
     vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'key' } as never);
-    vi.mocked(prisma.transferRequest.findMany).mockResolvedValueOnce([
-      openTransfer(),
-    ] as never);
+    vi.mocked(prisma.transferRequest.findMany).mockResolvedValueOnce([openTransfer()] as never);
     vi.mocked(getTransfer).mockResolvedValueOnce({
       id: 'a1',
       status: 'PENDING',
@@ -212,10 +213,13 @@ describe('reconcileOpenTransfers', () => {
     const res = await reconcileOpenTransfers({ contaId: 'c1' });
     expect(res.reconciled).toBe(0);
     expect(prisma.transferRequest.update).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith(
-      '[finance][reconcileOpenTransfers][state-regression-blocked]',
-      expect.objectContaining({ currentStatus: 'PROCESSING', attemptedStatus: 'PENDING' }),
+    const [serializedEvent] = warnSpy.mock.calls[0] ?? [];
+    expect(typeof serializedEvent).toBe('string');
+    expect(serializedEvent).toContain(
+      'finance.use_cases.transfers.reconcile_open_transfers.state_regression_blocked',
     );
+    expect(serializedEvent).not.toContain('PROCESSING');
+    expect(serializedEvent).not.toContain('PENDING');
 
     warnSpy.mockRestore();
   });

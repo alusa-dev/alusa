@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
+import * as Sentry from '@sentry/nextjs';
 import {
   enqueueAsaasWebhookEvent,
   handleAsaasWebhookEvent,
@@ -7,18 +8,17 @@ import {
   processAsaasWebhookQueueWithInbox,
   resolveAsaasWebhookAccessToken,
   extractClientIps,
-  isAsaasWebhookIpAllowed,
   shouldBlockAsaasWebhookByIp,
   globalWebhookRateLimiter,
   buildWebhookRateLimitKey,
   getAsaasWebhookTokenHashPrefix,
   isWebhookRateLimitFailClosedEnabled,
-  redactWebhookLogObject,
   parseAsaasWebhookPayload,
 } from '@alusa/finance';
 import type { AsaasWebhookPayload } from '@alusa/finance';
 import { emitBillingNotificationCandidate } from '@/lib/notifications/emit-billing-notifications';
 import { invalidateChargesCache } from '@/lib/cache/invalidation';
+import { logApiOperationalEvent, recordApiResponseMetrics } from '@/lib/observability/api-logger';
 
 const MAX_BODY_BYTES = 512 * 1024;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -40,10 +40,17 @@ function resolveRequestId(headers: Headers): string {
 function jsonWithRequestId(
   body: unknown,
   requestId: string,
-  init: ResponseInit = {},
+  init: ResponseInit,
+  startedAt: number,
 ): NextResponse {
   const response = NextResponse.json(body, init);
   response.headers.set('x-request-id', requestId);
+  recordApiResponseMetrics({
+    route: '/api/webhooks/asaas',
+    method: 'POST',
+    status: response.status,
+    durationMs: Date.now() - startedAt,
+  });
   return response;
 }
 
@@ -65,31 +72,23 @@ function resolveWebhookResponseStatus(result: { status?: number; persisted?: boo
 }
 
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
   const requestId = resolveRequestId(req.headers);
 
   try {
-    // IP allowlist é diagnóstica por padrão. O authToken do webhook é a
-    // barreira primária; bloquear por IP em serverless pode pausar filas se
-    // o sandbox usar IP adicional ou a CDN alterar X-Forwarded-For.
+    // A allowlist de IP só bloqueia com strict mode; o authToken continua sendo
+    // a barreira primária, pois proxies/serverless podem alterar o IP encaminhado.
     const clientIps = extractClientIps(req.headers);
     const clientIp = clientIps[0] ?? null;
     const accessToken = resolveAsaasWebhookAccessToken(req.headers);
     const tokenHashPrefix = getAsaasWebhookTokenHashPrefix(accessToken);
-    const ipAllowed = isAsaasWebhookIpAllowed(clientIps.length > 0 ? clientIps : null);
-    if (!ipAllowed) {
-      console.warn('[Asaas Webhook] IP fora da allowlist diagnóstica', redactWebhookLogObject({
-        requestId,
-        clientIp,
-        candidateCount: clientIps.length,
-        strict: process.env.ASAAS_WEBHOOK_IP_CHECK === 'strict',
-      }));
-    }
 
     if (shouldBlockAsaasWebhookByIp(clientIps.length > 0 ? clientIps : null)) {
       return jsonWithRequestId(
         { success: false, error: 'FORBIDDEN' },
         requestId,
         { status: 403 },
+        startedAt,
       );
     }
 
@@ -98,15 +97,7 @@ export async function POST(req: NextRequest) {
     const rateCheck = await globalWebhookRateLimiter.checkAsync(rateLimitKey);
     if (rateCheck.degraded) {
       const failClosed = isWebhookRateLimitFailClosedEnabled();
-      const degradedLog = redactWebhookLogObject({
-        requestId,
-        clientIp,
-        tokenHashPrefix,
-        failClosed,
-        backend: rateCheck.backend,
-      });
       if (failClosed) {
-        console.error('[Asaas Webhook] Rate limit distribuído indisponível; webhook será reentregue pelo Asaas', degradedLog);
         return jsonWithRequestId(
           { success: false, error: 'RATE_LIMIT_UNAVAILABLE', message: 'Proteção distribuída temporariamente indisponível.' },
           requestId,
@@ -114,21 +105,16 @@ export async function POST(req: NextRequest) {
             status: 503,
             headers: { 'Retry-After': String(Math.max(1, Math.ceil(rateCheck.resetMs / 1000))) },
           },
+          startedAt,
         );
       }
-      console.warn('[Asaas Webhook] Rate limit distribuído indisponível; fallback local em ambiente não produtivo', degradedLog);
     }
     if (!rateCheck.allowed) {
-      console.warn('[Asaas Webhook] Rate limit aplicado', redactWebhookLogObject({
-        requestId,
-        clientIp,
-        tokenHashPrefix,
-        scoped: process.env.ASAAS_WEBHOOK_AUTH_SCOPED_RATE_LIMIT === 'true',
-      }));
       return jsonWithRequestId(
         { success: false, error: 'RATE_LIMITED' },
         requestId,
         { status: 429, headers: { 'Retry-After': String(Math.ceil(rateCheck.resetMs / 1000)) } },
+        startedAt,
       );
     }
 
@@ -137,6 +123,7 @@ export async function POST(req: NextRequest) {
         { success: false, error: 'UNSUPPORTED_MEDIA_TYPE', message: 'Content-Type deve ser application/json' },
         requestId,
         { status: 415 },
+        startedAt,
       );
     }
 
@@ -146,6 +133,7 @@ export async function POST(req: NextRequest) {
         { success: false, error: 'PAYLOAD_TOO_LARGE', message: 'Payload excede o tamanho máximo permitido.' },
         requestId,
         { status: 413 },
+        startedAt,
       );
     }
 
@@ -155,6 +143,7 @@ export async function POST(req: NextRequest) {
         { success: false, error: 'PAYLOAD_TOO_LARGE', message: 'Payload excede o tamanho máximo permitido.' },
         requestId,
         { status: 413 },
+        startedAt,
       );
     }
 
@@ -162,11 +151,18 @@ export async function POST(req: NextRequest) {
     // Em dev/staging, respeita FIN_WEBHOOK_ASYNC_ENABLED.
     const processingRuntime = inspectWebhookProcessingRuntimeStatus();
     const useAsyncQueue = processingRuntime.useAsyncQueue;
+    const parsedPayload = parseAsaasWebhookPayload(rawBody);
+    const correlationId = parsedPayload.success && parsedPayload.payload.id
+      ? `asaas-event:${parsedPayload.payload.id}`
+      : randomUUID();
     let result: Awaited<ReturnType<typeof handleAsaasWebhookEvent>>;
     let processedContaId: string | null = null;
 
     if (useAsyncQueue) {
-      const queued = await enqueueAsaasWebhookEvent({ rawBody, accessToken, correlationId: requestId });
+      const queued = await Sentry.startSpan(
+        { name: 'finance.webhook.enqueue', op: 'queue.submit', attributes: { 'messaging.system': 'asaas-webhook' } },
+        () => enqueueAsaasWebhookEvent({ rawBody, accessToken, correlationId }),
+      );
       result = queued;
       processedContaId = queued.success ? queued.contaId ?? null : null;
 
@@ -175,26 +171,34 @@ export async function POST(req: NextRequest) {
       const shouldInlineDrain = processingRuntime.inlineDrain;
       if (shouldInlineDrain && queued.success && queued.contaId) {
         try {
-          await processAsaasWebhookQueueWithInbox({
-            contaId: queued.contaId,
-            limit: 5,
-          statuses: ['PENDENTE', 'ERRO'],
-          source: 'WEBHOOK',
-          drainSideEffects: false,
-          });
+          await Sentry.startSpan(
+            { name: 'finance.webhook.inline_drain', op: 'queue.process', attributes: { 'messaging.system': 'asaas-webhook' } },
+            () => processAsaasWebhookQueueWithInbox({
+              contaId: queued.contaId,
+              limit: 5,
+              statuses: ['PENDENTE', 'ERRO'],
+              source: 'WEBHOOK',
+              drainSideEffects: false,
+            }),
+          );
         } catch (drainError) {
-          console.warn('[Asaas Webhook][inline-drain] Falha no processamento imediato da fila', redactWebhookLogObject({
+          logApiOperationalEvent({
+            severity: 'warn',
+            eventName: 'api.webhook.inline_drain.failed',
+            route: '/api/webhooks/asaas',
+            method: 'POST',
             requestId,
-            contaId: queued.contaId,
-            error: drainError instanceof Error ? drainError.message : String(drainError),
-          }));
+            error: drainError,
+          });
         }
       }
     } else {
-      result = await handleAsaasWebhookEvent({ rawBody, accessToken, correlationId: requestId });
+      result = await Sentry.startSpan(
+        { name: 'finance.webhook.process_sync', op: 'webhook.process', attributes: { 'messaging.system': 'asaas-webhook' } },
+        () => handleAsaasWebhookEvent({ rawBody, accessToken, correlationId }),
+      );
       processedContaId = (result as { contaId?: string | null }).contaId ?? null;
 
-      const parsedPayload = parseAsaasWebhookPayload(rawBody);
       const payload: AsaasWebhookPayload | null = parsedPayload.success ? parsedPayload.payload : null;
       const notificationContaId = processedContaId ?? result.contaId ?? null;
       if (result.success && notificationContaId && payload?.payment?.id) {
@@ -214,23 +218,28 @@ export async function POST(req: NextRequest) {
             'ASAAS_WEBHOOK',
           );
         } catch (notificationError) {
-          console.warn('[Asaas Webhook][notification-candidate] Falha ao emitir notificação', redactWebhookLogObject({
+          logApiOperationalEvent({
+            severity: 'warn',
+            eventName: 'api.webhook.notification_candidate.failed',
+            route: '/api/webhooks/asaas',
+            method: 'POST',
             requestId,
-            asaasPaymentId: payload.payment.id,
-            event: payload.event,
-            error: notificationError instanceof Error ? notificationError.message : String(notificationError),
-          }));
+            error: notificationError,
+          });
         }
       }
 
     }
     if (result.success && processedContaId) {
       void invalidateChargesCache(processedContaId, 'asaas-webhook').catch((cacheError) => {
-        console.warn('[Asaas Webhook][cache-invalidate] Falha não bloqueante', redactWebhookLogObject({
+        logApiOperationalEvent({
+          severity: 'warn',
+          eventName: 'api.webhook.cache_invalidation.failed',
+          route: '/api/webhooks/asaas',
+          method: 'POST',
           requestId,
-          contaId: processedContaId,
-          error: cacheError instanceof Error ? cacheError.message : String(cacheError),
-        }));
+          error: cacheError,
+        });
       });
     }
     // Depois de persistido, falhas de processamento viram retry/DLQ interno.
@@ -245,9 +254,18 @@ export async function POST(req: NextRequest) {
       },
       requestId,
       { status: resolveWebhookResponseStatus(result) },
+      startedAt,
     );
   } catch (error) {
     if (error instanceof Error && error.message.includes('ASAAS_WEBHOOK_AUTH_TOKEN_SECRET')) {
+      logApiOperationalEvent({
+        severity: 'error',
+        eventName: 'api.webhook.request.failed',
+        route: '/api/webhooks/asaas',
+        method: 'POST',
+        requestId,
+        error,
+      });
       return jsonWithRequestId(
         {
           success: false,
@@ -256,13 +274,18 @@ export async function POST(req: NextRequest) {
         },
         requestId,
         { status: 503 },
+        startedAt,
       );
     }
 
-    console.error('[Asaas Webhook][POST]', redactWebhookLogObject({
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.webhook.request.failed',
+      route: '/api/webhooks/asaas',
+      method: 'POST',
       requestId,
-      error: error instanceof Error ? error : String(error),
-    }));
+      error,
+    });
     return jsonWithRequestId(
       {
         success: false,
@@ -270,6 +293,7 @@ export async function POST(req: NextRequest) {
       },
       requestId,
       { status: 500 },
+      startedAt,
     );
   }
 }

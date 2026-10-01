@@ -22,7 +22,36 @@ import { createHash } from 'node:crypto';
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
 import { auditLogService } from '../foundation/audit-log.service';
 import { alertService } from '../foundation/alert-channel';
-import { redactWebhookLogObject } from './webhook-redaction';
+import {
+  createStructuredLog,
+  normalizeMetricDimensions,
+  sharedTelemetry,
+} from '@alusa/observability';
+
+function logWebhookHealthEvent(params: {
+  severity: 'warn' | 'error';
+  eventName: string;
+  operation: string;
+  error?: unknown;
+}): void {
+  const errorType = params.error instanceof Error && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(params.error.name)
+    ? params.error.name
+    : params.error === undefined
+      ? undefined
+      : 'unknown_error';
+  const log = createStructuredLog({
+    severity: params.severity,
+    'service.name': 'alusa-finance',
+    'event.name': params.eventName,
+    'error.type': errorType,
+    attributes: { operation: params.operation },
+    allowedAttributes: ['operation'],
+  });
+  const serialized = JSON.stringify(log);
+  if (params.severity === 'error') console.error(serialized);
+  else console.warn(serialized);
+  void sharedTelemetry.publishLog(log);
+}
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -70,6 +99,7 @@ export async function checkWebhookHealth(opts?: {
     errors: [],
     executedAt: new Date(),
   };
+  const startedAt = Date.now();
 
   const accounts = await prisma.asaasAccount.findMany({
     where: {
@@ -102,16 +132,15 @@ export async function checkWebhookHealth(opts?: {
 
       result.interruptedFound += interrupted.length;
 
-      console.warn('[webhook-health] Webhook interrompido detectado', redactWebhookLogObject({
-        contaId,
-        asaasAccountId: account.asaasAccountId,
-        webhookIds: interrupted.map((w) => w.id),
-      }));
-
       await alertService
         .alertInterruptedQueue(contaId, interrupted.map((w) => w.id))
         .catch((err: unknown) => {
-          console.warn('[webhook-health][alert-failed]', redactWebhookLogObject({ contaId, err }));
+          logWebhookHealthEvent({
+            severity: 'warn',
+            eventName: 'finance.webhook_health.alert.failed',
+            operation: 'notify_interrupted_queue',
+            error: err,
+          });
         });
 
       // Notificação interna para admins
@@ -135,7 +164,12 @@ export async function checkWebhookHealth(opts?: {
           asaasAccountId: account.asaasAccountId,
         },
       }).catch((err: unknown) => {
-        console.warn('[webhook-health][notify-failed]', redactWebhookLogObject({ contaId, err }));
+        logWebhookHealthEvent({
+          severity: 'warn',
+          eventName: 'finance.webhook_health.notification.failed',
+          operation: 'notify_account_admins',
+          error: err,
+        });
       });
 
       if (!autoRecover) continue;
@@ -162,11 +196,6 @@ export async function checkWebhookHealth(opts?: {
             });
           } else {
             result.recoveredSuccessfully++;
-
-            console.info('[webhook-health] Webhook recuperado', redactWebhookLogObject({
-              contaId,
-              webhookId: webhook.id,
-            }));
           }
 
           await auditLogService.record({
@@ -212,10 +241,12 @@ export async function checkWebhookHealth(opts?: {
             });
             transitionedToInvalid = updateResult.count > 0;
           } catch (updateError) {
-            console.warn('[webhook-health] Falha ao marcar credencial inválida', redactWebhookLogObject({
-              contaId,
+            logWebhookHealthEvent({
+              severity: 'warn',
+              eventName: 'finance.webhook_health.credential_status_update.failed',
+              operation: 'mark_invalid_credentials',
               error: updateError,
-            }));
+            });
           }
         }
 
@@ -238,13 +269,40 @@ export async function checkWebhookHealth(opts?: {
     }
   }
 
-  console.info('[webhook-health] Health check concluído', redactWebhookLogObject({
-    checkedAccounts: result.checkedAccounts,
-    interruptedFound: result.interruptedFound,
-    recoveredSuccessfully: result.recoveredSuccessfully,
-    recoveryFailed: result.recoveryFailed,
-    errors: result.errors.length,
-  }));
+  const dimensions = normalizeMetricDimensions({ provider: 'asaas', 'operation.name': 'health_check' });
+  const counters: Array<[string, number]> = [
+    ['finance.webhook_health.accounts_checked', result.checkedAccounts],
+    ['finance.webhook_health.interrupted', result.interruptedFound],
+    ['finance.webhook_health.recovered', result.recoveredSuccessfully],
+    ['finance.webhook_health.recovery_failed', result.recoveryFailed],
+    ['finance.webhook_health.errors', result.errors.length],
+  ];
+  for (const [name, value] of counters) {
+    void sharedTelemetry.recordMetric({ kind: 'counter', name, value, dimensions });
+  }
+  void sharedTelemetry.recordMetric({
+    kind: 'distribution',
+    name: 'finance.webhook_health.duration',
+    value: Math.max(0, Date.now() - startedAt),
+    unit: 'millisecond',
+    dimensions,
+  });
+
+  const summary = createStructuredLog({
+    severity: 'info',
+    'service.name': 'alusa-finance',
+    'event.name': 'finance.webhook_health.completed',
+    duration_ms: Math.max(0, Date.now() - startedAt),
+    attributes: {
+      accountsChecked: result.checkedAccounts,
+      interrupted: result.interruptedFound,
+      recovered: result.recoveredSuccessfully,
+      recoveryFailed: result.recoveryFailed,
+      errors: result.errors.length,
+    },
+    allowedAttributes: ['accountsChecked', 'interrupted', 'recovered', 'recoveryFailed', 'errors'],
+  });
+  console.info(JSON.stringify(summary));
 
   return result;
 }

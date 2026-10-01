@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { PlatformBillingError } from '@alusa/platform-billing';
 import { z } from 'zod';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import {
   assertCanManagePlatformBilling,
@@ -22,17 +23,27 @@ export async function POST(req: NextRequest) {
   const idempotencyKey = req.headers.get('idempotency-key')?.trim() || parsed.data.idempotencyKey;
   if (!idempotencyKey) {
     return NextResponse.json(
-      { error: 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED', message: 'A chave de idempotência é obrigatória.' },
+      {
+        error: 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED',
+        message: 'A chave de idempotência é obrigatória.',
+      },
       { status: 400 },
     );
   }
 
   return withTenantSession(async ({ contaId, userId, tx }) => {
-    const rate = await rateLimitAsync(`platform-billing:plan-change:${contaId}:${userId}:${requestIp}`, 20, 10 * 60_000);
+    const rate = await rateLimitAsync(
+      `platform-billing:plan-change:${contaId}:${userId}:${requestIp}`,
+      20,
+      10 * 60_000,
+    );
     if (!rate.ok) {
       return NextResponse.json(
         { error: 'RATE_LIMITED' },
-        { status: 429, headers: { 'Retry-After': String(Math.ceil((rate.resetAt - Date.now()) / 1000)) } },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil((rate.resetAt - Date.now()) / 1000)) },
+        },
       );
     }
 
@@ -47,12 +58,15 @@ export async function POST(req: NextRequest) {
         targetPlanCode: parsed.data.targetPlanCode,
         idempotencyKey,
       });
-      console.info('[platform-billing][plan-change]', {
-        event: result.type === 'UPGRADE' ? 'upgrade_requested' : 'downgrade_scheduled',
-        contaId,
-        userId,
-        targetPlanCode: parsed.data.targetPlanCode,
-        planChangeId: result.planChangeId,
+      logApiOperationalEvent({
+        severity: 'info',
+        eventName:
+          result.type === 'UPGRADE'
+            ? 'api.platform_billing.plan_change.upgrade_requested'
+            : 'api.platform_billing.plan_change.downgrade_scheduled',
+        route: '/api/platform-billing/plan-change',
+        method: 'POST',
+        requestId: getRequestId(req),
       });
       return NextResponse.json(result);
     } catch (error) {
@@ -60,9 +74,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           {
             error: error.code,
-            message: error.code === 'PLATFORM_BILLING_PLAN_CHANGE_INCOMPATIBLE'
-              ? 'Este plano não atende ao uso atual da conta.'
-              : 'Não foi possível alterar o plano agora.',
+            message:
+              error.code === 'PLATFORM_BILLING_PLAN_CHANGE_INCOMPATIBLE'
+                ? 'Este plano não atende ao uso atual da conta.'
+                : 'Não foi possível alterar o plano agora.',
             details: error.details ?? null,
           },
           { status: error.code === 'PLATFORM_BILLING_PLAN_CHANGE_INCOMPATIBLE' ? 422 : 400 },

@@ -6,6 +6,7 @@ import {
 } from '@/features/finance/operations/charges/dtos';
 import { executeCobrancaRefund } from '@/src/server/finance/refund-charge.service';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await resolveTenantSession();
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
     return NextResponse.json(response.body, { status: response.status });
   } catch (error) {
-    console.error('[API][cobrancas/refund] Erro:', error);
+    logFinanceApiError('/api/cobrancas/[id]/refund', error);
     return NextResponse.json(
       { error: 'Erro ao estornar cobrança' },
       { status: 500 },

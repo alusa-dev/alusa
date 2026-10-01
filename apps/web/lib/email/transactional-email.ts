@@ -1,13 +1,17 @@
 import { Resend } from 'resend';
+import { createStructuredLog } from '@alusa/observability';
 
-export type EmailCategory =
-  | 'invite_user'
-  | 'verify_email'
-  | 'reset_password'
-  | 'account_reactivation'
-  | 'platform_billing'
-  | 'contract_signature_otp'
-  | 'password_change_otp';
+const EMAIL_CATEGORIES = [
+  'invite_user',
+  'verify_email',
+  'reset_password',
+  'account_reactivation',
+  'platform_billing',
+  'contract_signature_otp',
+  'password_change_otp',
+] as const;
+
+export type EmailCategory = (typeof EMAIL_CATEGORIES)[number];
 
 export type SendTransactionalEmailInput = {
   to: string;
@@ -96,14 +100,18 @@ function canFallbackToLog(): boolean {
 }
 
 function logEmail(input: SendTransactionalEmailInput): void {
-  console.info('[EMAIL][DEV_FALLBACK]');
-  console.info(`category: ${input.category}`);
-  console.info(`to: ${input.to}`);
-  console.info(`subject: ${input.subject || input.template?.id || 'transactional-email'}`);
-  if (input.actionUrl) {
-    console.info(`actionUrl: ${input.actionUrl}`);
-  }
-  console.info(`idempotencyKey: ${input.idempotencyKey}`);
+  const category = EMAIL_CATEGORIES.some((allowedCategory) => allowedCategory === input.category)
+    ? input.category
+    : 'unknown';
+  const log = createStructuredLog({
+    severity: 'info',
+    'service.name': 'alusa-web',
+    'deployment.environment': process.env.VERCEL_ENV ?? process.env.NODE_ENV,
+    'event.name': 'email.delivery.fallback',
+    attributes: { category, deliveryCount: 1 },
+    allowedAttributes: ['category', 'deliveryCount'],
+  });
+  console.info(JSON.stringify(log));
 }
 
 export async function sendTransactionalEmail(

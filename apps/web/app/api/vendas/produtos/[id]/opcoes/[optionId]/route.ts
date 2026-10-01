@@ -5,6 +5,7 @@ import {
 } from '@alusa/lib/services/product-option.service';
 import { productOptionValueCreateInputDTOSchema } from '@/features/sales/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -57,7 +58,7 @@ export async function POST(req: Request, context: RouteContext) {
     const value = await addOptionValue({ optionId, productId, contaId, value: parsed.data.value });
     return NextResponse.json({ data: value }, { status: 201 });
   } catch (e) {
-    console.error('[vendas/produtos/opcoes/valores] Falha ao adicionar valor', e);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.store_sales.product_option.request.failed', route: '/api/vendas/produtos/[id]/opcoes/[optionId]', method: 'POST', requestId: getRequestId(req), error: e });
     return jsonError(400, 'ERRO_ADICIONAR_VALOR', publicOptionValueError(e, submittedValue));
   }
 }

@@ -28,6 +28,7 @@ import {
 } from './quota-tracker';
 import { globalAsaasHooks } from './asaas-hooks';
 import { createAsaasAccountKey } from './account-key';
+import { logAsaasOperationalEvent } from './operational-log';
 
 export interface AsaasHttpConfig {
   apiKey: string;
@@ -214,22 +215,6 @@ export class AsaasHttp {
     const rateLimitInfo = extractRateLimitHeaders(response.headers);
     const quotaStatus = latestQuotaStatus ?? globalQuotaTracker.getStatus(circuitKey);
 
-    if (process.env.ASAAS_HTTP_LOG === 'true') {
-      const elapsedMs = Date.now() - startedAt;
-      // Nunca logar apiKey/access_token.
-      console.info('[asaas.http]', {
-        method,
-        path: url.pathname,
-        status: response.status,
-        elapsedMs,
-        rateLimit: rateLimitInfo.remaining !== null ? {
-          limit: rateLimitInfo.limit,
-          remaining: rateLimitInfo.remaining,
-          resetSeconds: rateLimitInfo.resetSeconds,
-        } : undefined,
-      });
-    }
-
     const contentType = response.headers.get('content-type') ?? '';
     let data: unknown = null;
 
@@ -239,8 +224,6 @@ export class AsaasHttp {
     } catch {
       rawText = '';
     }
-
-    const isEmptyBody = rawText.length === 0;
 
     if (rawText.length > 0) {
       if (contentType.includes('application/json')) {
@@ -267,19 +250,16 @@ export class AsaasHttp {
       if (!isExpectedError) {
         globalCircuitBreaker.recordFailure(circuitKey, response.status);
 
-        if (isEmptyBody || response.status >= 400) {
-          console.warn('[asaas.http] Resposta de erro', {
-            method,
-            path: url.pathname,
-            status: response.status,
-            statusText: response.statusText,
-            contentType,
-            emptyBody: isEmptyBody,
-            responseDetails: buildSafeResponseErrorDetails(data),
-            requestBodyPreview: buildSafeRequestBodyPreview(body),
-            idempotencyKey: options?.headers?.['Idempotency-Key'] ?? undefined,
-          });
-        }
+        logAsaasOperationalEvent({
+          severity: 'warn',
+          eventName: 'asaas.http.request.failed',
+          method,
+          route: url.pathname,
+          status: response.status,
+          durationMs: Date.now() - startedAt,
+          errorType: 'AsaasHttpError',
+          category: 'provider_response',
+        });
 
         globalAsaasHooks.emitApiCall({
           method: method as 'GET' | 'POST' | 'PUT' | 'DELETE',
@@ -367,78 +347,6 @@ export class AsaasHttp {
     if (typeof obj.error === 'string') return obj.error;
 
     return null;
-  }
-}
-
-const SENSITIVE_BODY_KEYS = new Set([
-  'access_token',
-  'apikey',
-  'api_key',
-  'authtoken',
-  'auth_token',
-  'authorization',
-  'ccv',
-  'cvv',
-  'number',
-  'password',
-  'token',
-]);
-
-type SafeResponseErrorDetail = { code?: string; description?: string };
-
-const SENSITIVE_TEXT_PATTERN = /\b(auth[_-]?token|access[_-]?token|api[_-]?key|authorization|token)\s*[:=]\s*["']?[^,\s"'}]+/gi;
-
-function redactSensitiveText(value: string): string {
-  return value.replace(SENSITIVE_TEXT_PATTERN, '$1=[REDACTED]');
-}
-
-function buildSafeResponseErrorDetails(value: unknown): SafeResponseErrorDetail[] | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-
-  const rawErrors = (value as { errors?: unknown }).errors;
-  if (!Array.isArray(rawErrors)) {
-    const message = (value as { message?: unknown }).message;
-    return typeof message === 'string' ? [{ description: redactSensitiveText(message).slice(0, 300) }] : undefined;
-  }
-
-  const details = rawErrors.flatMap((entry): SafeResponseErrorDetail[] => {
-    if (!entry || typeof entry !== 'object') return [];
-    const record = entry as Record<string, unknown>;
-    const code = typeof record.code === 'string' ? record.code.slice(0, 120) : undefined;
-    const description = typeof record.description === 'string'
-      ? String(redactSensitiveBody(record.description)).slice(0, 300)
-      : undefined;
-    return code || description ? [{ ...(code ? { code } : {}), ...(description ? { description } : {}) }] : [];
-  });
-
-  return details.length > 0 ? details.slice(0, 10) : undefined;
-}
-
-function redactSensitiveBody(value: unknown, seen = new WeakSet<object>()): unknown {
-  if (typeof value === 'string') return redactSensitiveText(value);
-  if (!value || typeof value !== 'object') return value;
-  if (seen.has(value)) return '[Circular]';
-  seen.add(value);
-
-  if (Array.isArray(value)) {
-    return value.map((item) => redactSensitiveBody(item, seen));
-  }
-
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
-      key,
-      SENSITIVE_BODY_KEYS.has(key.toLowerCase()) ? '[REDACTED]' : redactSensitiveBody(item, seen),
-    ]),
-  );
-}
-
-function buildSafeRequestBodyPreview(body: unknown): string | undefined {
-  if (body === undefined || body === null) return undefined;
-
-  try {
-    return JSON.stringify(redactSensitiveBody(body)).slice(0, 500);
-  } catch {
-    return '[Unserializable request body]';
   }
 }
 

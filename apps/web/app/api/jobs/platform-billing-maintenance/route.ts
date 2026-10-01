@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { expirePlatformBillingGracePeriods } from '@/src/server/platform-billing/grace-period-jobs';
@@ -17,6 +18,7 @@ export async function POST(req: Request) {
 }
 
 async function run(req: Request) {
+  const startedAt = Date.now();
   const scope = await resolveTenantScope(req, { allowCron: true });
   if (!scope.ok) return scope.response;
 
@@ -38,11 +40,14 @@ async function run(req: Request) {
       reconciliation,
     });
   } catch (error) {
-    console.error('[platform-billing-maintenance] failed', {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logJobFailure('platform-billing-maintenance', startedAt, error);
     return NextResponse.json(
-      { error: { code: 'PLATFORM_BILLING_MAINTENANCE_FAILED', message: 'Falha na manutenção do faturamento.' } },
+      {
+        error: {
+          code: 'PLATFORM_BILLING_MAINTENANCE_FAILED',
+          message: 'Falha na manutenção do faturamento.',
+        },
+      },
       { status: 500 },
     );
   }

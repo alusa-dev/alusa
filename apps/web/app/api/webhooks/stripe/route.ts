@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  StripeIntegrationError,
-} from '@alusa/stripe';
+import { StripeIntegrationError } from '@alusa/stripe';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { processStripePlatformWebhook } from '@/src/server/platform-billing/stripe-webhook.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export const runtime = 'nodejs';
 
@@ -15,7 +14,10 @@ export async function POST(req: NextRequest) {
   if (!rate.ok) {
     return NextResponse.json(
       { error: 'RATE_LIMITED' },
-      { status: 429, headers: { 'Retry-After': String(Math.ceil((rate.resetAt - Date.now()) / 1000)) } },
+      {
+        status: 429,
+        headers: { 'Retry-After': String(Math.ceil((rate.resetAt - Date.now()) / 1000)) },
+      },
     );
   }
 
@@ -30,25 +32,35 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'WEBHOOK_BODY_TOO_LARGE' }, { status: 413 });
     }
 
-    const { config, result, drainResult } = await processStripePlatformWebhook({
+    const { result, drainResult } = await processStripePlatformWebhook({
       rawBody,
       signature: req.headers.get('stripe-signature'),
     });
 
-    console.info('[platform-billing][stripe-webhook]', {
-      event: result.status === 'duplicate' ? 'webhook_duplicate' : 'webhook_received',
-      eventId: result.eventId,
-      eventType: result.eventType,
-      inboxId: result.inboxId,
-      environment: config.environment,
+    logApiOperationalEvent({
+      severity: 'info',
+      eventName:
+        result.status === 'duplicate'
+          ? 'api.platform_billing.stripe_webhook.duplicate'
+          : 'api.platform_billing.stripe_webhook.received',
+      route: '/api/webhooks/stripe',
+      method: 'POST',
+      requestId: getRequestId(req),
     });
 
     if (drainResult) {
-      console.info('[platform-billing][stripe-webhook]', {
-        event: 'webhook_inline_drain_completed',
-        eventId: result.eventId,
-        inboxId: result.inboxId,
-        ...drainResult,
+      logApiOperationalEvent({
+        severity: drainResult.failed > 0 || drainResult.exhausted > 0 ? 'warn' : 'info',
+        eventName: 'api.platform_billing.stripe_webhook.inline_drain.completed',
+        route: '/api/webhooks/stripe',
+        method: 'POST',
+        requestId: getRequestId(req),
+        processedCount: drainResult.processed,
+        failedCount: drainResult.failed,
+        exhaustedCount: drainResult.exhausted,
+        ignoredCount: drainResult.ignored,
+        outcome:
+          drainResult.failed > 0 || drainResult.exhausted > 0 ? 'partial_failure' : 'success',
       });
     }
 
@@ -68,8 +80,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.code }, { status });
     }
 
-    console.error('[platform-billing][stripe-webhook]', {
-      error: error instanceof Error ? error.message : String(error),
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.platform_billing.stripe_webhook.request.failed',
+      route: '/api/webhooks/stripe',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
     });
     return NextResponse.json({ error: 'PLATFORM_BILLING_WEBHOOK_FAILED' }, { status: 500 });
   }

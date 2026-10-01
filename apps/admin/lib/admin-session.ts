@@ -6,6 +6,7 @@ import type { AdminRole } from '@alusa/admin-auth';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@alusa/database';
 import { ADMIN_SESSION_COOKIE } from './session';
+import { createStructuredLog, sharedTelemetry } from '@alusa/observability';
 
 export type AdminSession = {
   username: string;
@@ -56,7 +57,20 @@ export async function requireAdminSessionForPage(pathname: string) {
       metadata: { path: pathname },
     });
   } catch (error) {
-    console.error('[admin][audit-unavailable]', { reason: error instanceof Error ? error.name : 'unknown' });
+    const errorType = error instanceof Error && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(error.name)
+      ? error.name
+      : error instanceof Error
+        ? 'Error'
+        : undefined;
+    const log = createStructuredLog({
+      severity: 'error',
+      'service.name': 'alusa-admin',
+      'deployment.environment': process.env.VERCEL_ENV ?? process.env.NODE_ENV,
+      'event.name': 'admin.audit.write.failed',
+      'error.type': errorType,
+    });
+    console.error(JSON.stringify(log));
+    void sharedTelemetry.publishLog(log);
   }
   return session;
 }

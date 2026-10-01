@@ -1,4 +1,5 @@
 import type { BillingNotificationCandidate } from '@alusa/lib/notifications/emit-billing-notifications';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 
 import {
   drainFinanceWebhookSideEffectOutbox,
@@ -65,8 +66,10 @@ export async function processAsaasWebhookQueueWithInbox(
       });
     }
   } catch (error) {
-    console.error('[processAsaasWebhookQueueWithInbox] Falha ao enfileirar outbox; recuperação será tentada', {
-      message: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.webhook.outbox.enqueue.failed',
+      error,
     });
 
     // O webhook já pode ter sido confirmado pelo inbox. A reconciliação é a
@@ -78,8 +81,10 @@ export async function processAsaasWebhookQueueWithInbox(
         limit: Math.max(100, params?.limit ?? 100),
       });
     } catch (recoveryError) {
-      console.error('[processAsaasWebhookQueueWithInbox] Falha na recuperação do outbox', {
-        message: recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
+      logFinanceOperationalEvent({
+        severity: 'error',
+        eventName: 'finance.webhook.outbox.recovery.failed',
+        error: recoveryError,
       });
     }
   }

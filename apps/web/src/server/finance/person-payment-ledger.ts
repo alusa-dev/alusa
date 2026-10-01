@@ -11,17 +11,15 @@ import {
   shouldSkipStandaloneChargeInLedger,
   type PaymentHistoryCategory,
 } from '@alusa/finance';
+import { logFinanceOperationalEvent } from '@alusa/finance/foundation/operational-log';
 
 let paymentHistoryUnmappedLoggerConfigured = false;
 if (!paymentHistoryUnmappedLoggerConfigured) {
-  setPaymentHistoryUnmappedLogger((context) => {
-    console.warn('[payment-history:unmapped]', {
-      reason: context.reason,
-      sourceKind: context.sourceKind,
-      tipo: context.tipo,
-      origin: context.origin,
-      externalReference: context.externalReference,
-      description: context.description,
+  setPaymentHistoryUnmappedLogger(() => {
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.services.person_payment_ledger.unmapped',
+      throttleMs: 60_000,
     });
   });
   paymentHistoryUnmappedLoggerConfigured = true;

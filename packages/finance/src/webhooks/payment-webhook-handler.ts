@@ -62,6 +62,60 @@ import {
   type PaymentStateSource,
 } from '../state-machine/payment-state-machine';
 import { recordPaymentStateTransition } from '../state-machine/payment-state-transition.service';
+import {
+  createStructuredLog,
+  normalizeMetricDimensions,
+  sharedTelemetry,
+} from '@alusa/observability';
+
+type PaymentWebhookOperation =
+  | 'standalone_charge_updated'
+  | 'subscription_payment_linked'
+  | 'subscription_charge_created'
+  | 'installment_charge_created'
+  | 'payment_processed'
+  | 'payment_resolution_found';
+
+function recordPaymentWebhookOperation(operation: PaymentWebhookOperation): void {
+  const dimensions = normalizeMetricDimensions({
+    provider: 'asaas',
+    'operation.name': operation,
+  });
+  void sharedTelemetry.recordMetric({
+    kind: 'counter',
+    name: 'finance.payment_webhook.operation',
+    value: 1,
+    dimensions,
+  });
+}
+
+type DiagnosticSeverity = 'warn' | 'error' | 'info';
+
+function logPaymentWebhookDiagnostic(params: {
+  severity: DiagnosticSeverity;
+  eventName: string;
+  operation: string;
+  error?: unknown;
+  status?: string;
+}): void {
+  const log = createStructuredLog({
+    severity: params.severity,
+    'service.name': 'alusa-finance',
+    'event.name': params.eventName,
+    'error.type': params.error === undefined ? undefined : 'error',
+    attributes: {
+      operation: params.operation,
+      ...(params.status ? { status: params.status } : {}),
+      ...(params.error === undefined ? {} : { 'error.type': 'error' }),
+    },
+    allowedAttributes: ['operation', 'status', 'error.type'],
+  });
+  const output = JSON.stringify(log);
+  if (params.severity === 'error') console.error(output);
+  else if (params.severity === 'warn') console.warn(output);
+  else console.info(output);
+  void sharedTelemetry.publishLog(log);
+}
 
 export type PaymentWebhookPayload = {
   event: string;
@@ -370,12 +424,7 @@ async function refreshReadModel(params: {
       });
     }
   } catch (error) {
-    console.warn('[payment-webhook] falha ao atualizar read model', {
-      chargeId: params.chargeId ?? null,
-      cobrancaId: params.cobrancaId ?? null,
-      contaId: params.contaId ?? null,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.read_model_sync.failed', operation: 'refresh_read_model', error });
   }
 }
 
@@ -424,11 +473,7 @@ async function publishPaymentRealtimeUpdate(params: {
       revision: Date.now(),
     });
   } catch (error) {
-    console.warn('[payment-webhook] Falha ao publicar evento realtime', {
-      entityId: params.entityId,
-      asaasPaymentId: p.id,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.realtime_publish.failed', operation: 'publish_realtime_update', error });
   }
 }
 
@@ -641,15 +686,7 @@ async function applyChargeInvoicePaymentSideEffect(params: {
       asaasPaymentSubscription: params.asaasPaymentSubscription,
     });
   } catch (invoiceSideEffectError) {
-    console.error('[payment-webhook] Falha ao aplicar side effect fiscal:', {
-      chargeId: params.chargeId,
-      contaId: params.contaId,
-      event: params.event,
-      error:
-        invoiceSideEffectError instanceof Error
-          ? invoiceSideEffectError.message
-          : String(invoiceSideEffectError),
-    });
+    logPaymentWebhookDiagnostic({ severity: 'error', eventName: 'finance.payment_webhook.fiscal_side_effect.failed', operation: 'sync_invoice_payment', error: invoiceSideEffectError });
   }
 }
 
@@ -731,13 +768,7 @@ async function handleStandaloneChargeWebhook(
     now: new Date(),
   });
   if (stateDecision.kind !== 'APPLY' && charge.status !== attemptedStatusCharge) {
-    console.warn('⚠️ Regressão de status bloqueada (standalone charge):', {
-      chargeId: charge.id,
-      currentStatus: charge.status,
-      attemptedStatus: attemptedStatusCharge,
-      event: payload.event,
-      deleted: payload.payment.deleted ?? null,
-    });
+    logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.status_regression_blocked', operation: 'apply_standalone_charge_status', status: 'blocked' });
     await prisma.charge.update({
       where: { id: charge.id },
       data: {
@@ -854,11 +885,7 @@ async function handleStandaloneChargeWebhook(
       });
     } catch (fulfillError) {
       // Não falhar o webhook por erro de fulfillment — logar e seguir
-      console.error('[handleStandaloneChargeWebhook] Erro ao cumprir reserva de estoque:', {
-        chargeId: charge.id,
-        contaId,
-        error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
-      });
+      logPaymentWebhookDiagnostic({ severity: 'error', eventName: 'finance.payment_webhook.inventory_fulfillment.failed', operation: 'fulfill_reserved_sale', error: fulfillError });
       await auditLogService.record({
         contaId,
         action: 'loja.sale.fulfillment_failed',
@@ -869,7 +896,7 @@ async function handleStandaloneChargeWebhook(
           error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
         },
       }).catch((auditError) => {
-        console.error('[handleStandaloneChargeWebhook] Falha ao auditar fulfillment pendente:', auditError);
+        logPaymentWebhookDiagnostic({ severity: 'error', eventName: 'finance.payment_webhook.fulfillment_audit.failed', operation: 'record_pending_fulfillment_audit', error: auditError });
       });
     }
   }
@@ -913,11 +940,7 @@ async function handleStandaloneChargeWebhook(
     metadata: { asaasPaymentId: p.id },
   });
 
-  console.log('✅ Standalone charge atualizada via webhook:', {
-    chargeId: charge.id,
-    status: nextStatusCharge,
-    asaasPaymentId: p.id,
-  });
+  recordPaymentWebhookOperation('standalone_charge_updated');
 
   await publishPaymentRealtimeUpdate({
     contaId,
@@ -929,7 +952,7 @@ async function handleStandaloneChargeWebhook(
   try {
     await updateEventFinancialEntryFromWebhook(contaId, payload);
   } catch (err) {
-    console.error('[handleStandaloneChargeWebhook] Falha ao sincronizar EventFinancialEntry:', err);
+    logPaymentWebhookDiagnostic({ severity: 'error', eventName: 'finance.payment_webhook.event_financial_entry_sync.failed', operation: 'sync_event_financial_entry', error: err });
   }
 
   return {
@@ -1116,12 +1139,7 @@ async function handlePaymentWebhookCore(
         providerStatus: payload.payment.status,
       });
     } catch (commandError) {
-      console.warn('[payment-webhook] Falha não crítica ao confirmar comando financeiro pendente', {
-        contaId,
-        asaasPaymentId: payload.payment.id,
-        event: payload.event,
-        message: commandError instanceof Error ? commandError.message : String(commandError),
-      });
+      logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.command_confirmation.failed', operation: 'confirm_payment_command', error: commandError });
     }
 
     const paidAt =
@@ -1154,11 +1172,7 @@ async function handlePaymentWebhookCore(
         });
       } catch (error) {
         confirmationError = error;
-        console.warn('[payment-webhook] Confirmação completa do pedido público falhou; tentando reconciliação financeira', {
-          contaId,
-          asaasPaymentId: payload.payment.id,
-          message: error instanceof Error ? error.message : String(error),
-        });
+        logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.public_order_confirmation.failed', operation: 'reconcile_public_order', error });
       }
       if (!confirmed) {
         const reconciled = await reconcileEventMapOrderFinancialStateFromAsaas({
@@ -1277,12 +1291,7 @@ async function handlePaymentWebhookCore(
 
       // Se resolver encontrou algo, processar de forma determinística
       if (resolveResult.type !== 'not_found') {
-        console.log('[payment-webhook] resolver determinístico encontrou:', {
-          contaId,
-          asaasPaymentId: payload.payment.id,
-          resolveType: resolveResult.type,
-          resolveResult,
-        });
+        recordPaymentWebhookOperation('payment_resolution_found');
 
         // Processar como standalone somente quando a Charge não é espelho de Cobranca acadêmica.
         if (resolveResult.type === 'charge' && resolveResult.chargeId && !resolveResult.cobrancaId) {
@@ -1300,12 +1309,7 @@ async function handlePaymentWebhookCore(
         // e atualiza Cobranca + Charge espelho de forma consistente.
       } else {
         // Log para auditoria de fallback
-        console.warn('[payment-webhook] resolver determinístico não encontrou, usando fallback compatível:', {
-          contaId,
-          asaasPaymentId: payload.payment.id,
-          externalReference: payload.payment.externalReference,
-          reason: resolveResult.reason,
-        });
+        logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.resolution_fallback', operation: 'resolve_payment_fallback' });
       }
     }
 
@@ -1421,11 +1425,7 @@ async function handlePaymentWebhookCore(
             ...cobranca,
             asaasPaymentId: payload.payment.id,
           };
-          console.log('✅ Cobrança MENSALIDADE vinculada ao pagamento da assinatura:', {
-            cobrancaId: cobranca.id,
-            asaasPaymentId: payload.payment.id,
-            asaasSubscriptionId: subscriptionId,
-          });
+          recordPaymentWebhookOperation('subscription_payment_linked');
         }
       }
     }
@@ -1697,10 +1697,7 @@ async function handlePaymentWebhookCore(
         });
 
         if (!matriculaFromSub) {
-          console.warn('Cobrança não encontrada e subscription não mapeada para payment.id:', payload.payment.id, {
-            subscription: subscriptionId,
-            externalReference: paymentExternalReference,
-          });
+          logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.subscription_mapping_missing', operation: 'resolve_subscription_payment' });
         } else {
           // Criar cobrança automaticamente (via matrícula)
           const planoOuCombo = matriculaFromSub.combo ?? matriculaFromSub.plano;
@@ -1722,12 +1719,7 @@ async function handlePaymentWebhookCore(
           });
           cobranca = upserted;
 
-          console.log('✅ Cobrança criada via webhook PAYMENT_CREATED:', {
-            cobrancaId: cobranca.id,
-            matriculaId: matriculaFromSub.id,
-            asaasPaymentId: payload.payment.id,
-            subscriptionId,
-          });
+          recordPaymentWebhookOperation('subscription_charge_created');
 
           await auditLogService.record({
             contaId,
@@ -1764,12 +1756,7 @@ async function handlePaymentWebhookCore(
         });
         cobranca = upsertedSub;
 
-        console.log('✅ Cobrança criada via webhook PAYMENT_CREATED (subscription):', {
-          cobrancaId: cobranca.id,
-          matriculaId: matricula.id,
-          subscriptionId: subscription.id,
-          asaasPaymentId: payload.payment.id,
-        });
+        recordPaymentWebhookOperation('subscription_charge_created');
 
         await auditLogService.record({
           contaId,
@@ -1841,13 +1828,7 @@ async function handlePaymentWebhookCore(
         });
         cobranca = upsertedInstallment;
 
-        console.log('✅ Cobrança criada via webhook PAYMENT_CREATED (installment):', {
-          cobrancaId: cobranca.id,
-          matriculaId: matricula.id,
-          installmentPlanId: installmentPlan.id,
-          installmentNumber,
-          asaasPaymentId: payload.payment.id,
-        });
+        recordPaymentWebhookOperation('installment_charge_created');
 
         await auditLogService.record({
           contaId,
@@ -2032,12 +2013,7 @@ async function handlePaymentWebhookCore(
                 trigger: 'webhook_installment_payment_confirmed',
               });
             } catch (fulfillError) {
-              console.error('[payment-webhook] Falha ao cumprir venda parcelada via webhook:', {
-                contaId,
-                chargeId: standaloneInstallmentCharge.id,
-                standaloneInstallmentPlanId: standalonePlan.id,
-                error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
-              });
+              logPaymentWebhookDiagnostic({ severity: 'error', eventName: 'finance.payment_webhook.installment_fulfillment.failed', operation: 'fulfill_installment_sale', error: fulfillError });
               await auditLogService.record({
                 contaId,
                 action: 'loja.sale.fulfillment_failed',
@@ -2049,7 +2025,7 @@ async function handlePaymentWebhookCore(
                   error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
                 },
               }).catch((auditError) => {
-                console.error('[payment-webhook] Falha ao auditar fulfillment parcelado pendente:', auditError);
+                logPaymentWebhookDiagnostic({ severity: 'error', eventName: 'finance.payment_webhook.installment_fulfillment_audit.failed', operation: 'record_pending_installment_fulfillment_audit', error: auditError });
               });
             }
           }
@@ -2078,11 +2054,7 @@ async function handlePaymentWebhookCore(
           return { success: true, stateChanged: true };
         }
 
-        console.warn('InstallmentPlan não encontrado para payment.id:', payload.payment.id, {
-          installment: asaasInstallmentId,
-          installmentNumber,
-          externalReference: paymentExternalReference,
-        });
+        logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.installment_plan_missing', operation: 'resolve_installment_plan' });
       }
     }
 
@@ -2162,12 +2134,7 @@ async function handlePaymentWebhookCore(
         },
       });
 
-      console.warn('Cobrança não encontrada para payment.id:', payload.payment.id, {
-        subscription: payload.payment.subscription,
-        installment: payload.payment.installment,
-        installmentNumber: payload.payment.installmentNumber,
-        externalReference: paymentExternalReference,
-      });
+      logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.local_charge_missing', operation: 'resolve_local_charge' });
 
       await auditLogService.record({
         contaId,
@@ -2261,21 +2228,9 @@ async function handlePaymentWebhookCore(
         },
       });
 
-      console.warn('⚠️ Regressão de status bloqueada:', {
-        cobrancaId: cobranca.id,
-        currentStatus,
-        attemptedStatus: nextStatusCobranca,
-        event: payload.event,
-        decisionReason,
-      });
+      logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.status_regression_blocked', operation: 'apply_cobranca_status', status: 'blocked' });
     } else if (decisionReason === 'OUT_OF_ORDER_EVENT_IGNORED') {
-      console.info('[paymentWebhook] Evento fora de ordem ignorado', {
-        cobrancaId: cobranca.id,
-        currentStatus,
-        attemptedStatus: nextStatusCobranca,
-        event: payload.event,
-        decisionReason,
-      });
+      logPaymentWebhookDiagnostic({ severity: 'info', eventName: 'finance.payment_webhook.out_of_order_ignored', operation: 'apply_cobranca_status', status: 'ignored' });
     }
 
     // 3.5. PAYMENT_UPDATED: reconciliar vencimento, valor e forma de pagamento
@@ -2678,11 +2633,7 @@ async function handlePaymentWebhookCore(
           });
         } else {
           // Regressão em charge também é bloqueada — persiste snapshot Asaas mesmo assim
-          console.warn('⚠️ Regressão de status charge bloqueada:', {
-            chargeId: charge.id,
-            currentStatus: charge.status,
-            attemptedStatus: nextStatusChargeForThisCharge,
-          });
+          logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.status_regression_blocked', operation: 'apply_charge_status', status: 'blocked' });
           await prisma.charge.update({
             where: { id: charge.id },
             data: { ...baseChargeUpdate, statusUpdatedAt: new Date() },
@@ -2706,16 +2657,7 @@ async function handlePaymentWebhookCore(
         asaasPaymentSubscription: p.subscription,
       });
     } catch (invoiceSideEffectError) {
-      console.error('[payment-webhook] Falha ao aplicar side effect fiscal:', {
-        contaId,
-        cobrancaId: cobranca.id,
-        chargeId: charge?.id ?? null,
-        asaasPaymentId: p.id,
-        error:
-          invoiceSideEffectError instanceof Error
-            ? invoiceSideEffectError.message
-            : String(invoiceSideEffectError),
-      });
+      logPaymentWebhookDiagnostic({ severity: 'error', eventName: 'finance.payment_webhook.fiscal_side_effect.failed', operation: 'sync_invoice_payment', error: invoiceSideEffectError });
     }
 
     // 6. Materializar Pagamento ao confirmar; Lançamento somente quando liquidado
@@ -3063,14 +3005,7 @@ async function handlePaymentWebhookCore(
       });
     }
 
-    console.log('✅ Webhook processado:', {
-      cobrancaId: cobranca.id,
-      matriculaId: cobranca.matriculaId,
-      asaasStatus: effectiveAsaasStatus,
-      billingType: payload.payment.billingType ?? null,
-      internalStatus,
-      nextStatusCobranca,
-    });
+    recordPaymentWebhookOperation('payment_processed');
 
     await refreshReadModel({
       chargeId: charge?.id ?? null,
@@ -3122,7 +3057,7 @@ async function handlePaymentWebhookCore(
     try {
       await updateEventFinancialEntryFromWebhook(contaId, payload);
     } catch (err) {
-      console.error('[handlePaymentWebhookCore] Falha ao sincronizar EventFinancialEntry:', err);
+      logPaymentWebhookDiagnostic({ severity: 'error', eventName: 'finance.payment_webhook.event_financial_entry_sync.failed', operation: 'sync_event_financial_entry', error: err });
     }
 
     return {
@@ -3130,7 +3065,7 @@ async function handlePaymentWebhookCore(
       stateChanged: stateDecision.kind === 'APPLY' && currentStatus !== nextStatusCobranca,
     };
   } catch (error) {
-    console.error('❌ Erro ao processar webhook:', error);
+    logPaymentWebhookDiagnostic({ severity: 'error', eventName: 'finance.payment_webhook.processing.failed', operation: 'process_payment_webhook', error });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Erro desconhecido',

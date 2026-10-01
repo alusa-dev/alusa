@@ -11,6 +11,7 @@ import { ipFromRequest, strictRateLimitAsync } from '@/lib/rate-limit';
 import { publicSolicitarAssinaturaOtpInputDTOSchema } from '@/features/contracts/dtos';
 import { sendContractSignatureOtpEmail } from '@/lib/email/contract-signature-otp-email';
 import { recordPublicContractEvidence } from '@/src/server/contracts/public-contract-evidence.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 function maskEmail(email: string): string {
   const [local, domain] = email.split('@');
@@ -123,7 +124,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         payload: { otpId: otp.id, delivery: delivery.delivery, emailId: delivery.emailId },
       });
     } catch (error) {
-      console.error('[contract-signature-otp][post-delivery-persistence]', { otpId: otp.id, error: error instanceof Error ? error.message : String(error) });
+      logApiOperationalEvent({
+        severity: 'error',
+        eventName: 'api.public_contract.otp_persistence.failed',
+        route: '/api/public/contrato/[token]/otp',
+        method: 'POST',
+        requestId: getRequestId(request),
+        error,
+      });
     }
 
     return jsonSensitive({ success: true, maskedEmail: maskEmail(otp.email), expiresInSeconds: 600 });

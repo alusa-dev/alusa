@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { runWebhookHealthAndDriftMaintenance } from '@alusa/finance';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -33,7 +34,14 @@ async function run(req: Request) {
 
     return NextResponse.json({ success: true, result });
   } catch (error) {
-    console.error('[webhook-maintenance] Erro:', error instanceof Error ? error.message : String(error));
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.webhook.maintenance.failed',
+      route: '/api/jobs/webhook-maintenance',
+      method: req.method,
+      requestId: getRequestId(req),
+      error,
+    });
     return NextResponse.json(
       { error: { code: 'WEBHOOK_MAINTENANCE_ERROR', message: 'Erro na manutenção de webhooks.' } },
       { status: 500 },

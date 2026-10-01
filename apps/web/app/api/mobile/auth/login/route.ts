@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-limit';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import {
   loginMobile,
   mobileAuthErrorStatus,
@@ -41,7 +42,7 @@ export async function POST(request: Request) {
       : 'E-mail ou senha inválidos.';
 
     if (status >= 500) {
-      console.error('[mobile-auth][login]', { error: error instanceof Error ? error.message : String(error) });
+      logApiOperationalEvent({ severity: 'error', eventName: 'api.mobile_auth.request.failed', route: '/api/mobile/auth/login', method: 'POST', requestId: getRequestId(request), error });
     }
 
     return NextResponse.json(

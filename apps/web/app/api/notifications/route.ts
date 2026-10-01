@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
@@ -101,7 +102,14 @@ export async function GET(req: NextRequest) {
     timer.end('GET /notifications (cache miss)');
     return json(200, body);
   } catch (error) {
-    console.error('[Notifications][GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.notifications.request.failed',
+      route: '/api/notifications',
+      method: 'GET',
+      requestId: getRequestId(req),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível carregar as notificações.' });
   }
 }
@@ -140,7 +148,14 @@ export async function PATCH(req: NextRequest) {
     await clearNotificationCaches({ contaId: user.contaId, userId: user.id });
     return json(200, { success: true, updatedCount });
   } catch (error) {
-    console.error('[Notifications][PATCH]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.notifications.request.failed',
+      route: '/api/notifications',
+      method: 'PATCH',
+      requestId: getRequestId(req),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível atualizar as notificações.' });
   }
 }

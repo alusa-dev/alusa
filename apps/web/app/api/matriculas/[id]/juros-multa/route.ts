@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { KycNotApprovedError } from '@alusa/finance';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
@@ -13,7 +14,9 @@ function jsonError(status: number, body: unknown) {
 
 export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const parsedBody = updateMatriculaJurosMultaInputDTOSchema.safeParse(await req.json().catch(() => null));
+    const parsedBody = updateMatriculaJurosMultaInputDTOSchema.safeParse(
+      await req.json().catch(() => null),
+    );
     if (!parsedBody.success) {
       return jsonError(400, {
         error: {
@@ -29,9 +32,10 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       return jsonError(contaCtx.reason === 'CONTA_MISMATCH' ? 403 : 401, {
         error: {
           code: contaCtx.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
-          message: contaCtx.reason === 'CONTA_MISMATCH'
-            ? 'Conta informada não pertence ao usuário.'
-            : 'Usuário não autenticado',
+          message:
+            contaCtx.reason === 'CONTA_MISMATCH'
+              ? 'Conta informada não pertence ao usuário.'
+              : 'Usuário não autenticado',
         },
       });
     }
@@ -47,7 +51,14 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
 
     return NextResponse.json(result.data, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
-    console.error('[ASAAS_SYNC] Erro ao atualizar juros e multa:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/matriculas/[id]/juros-multa',
+      method: 'PUT',
+      requestId: getRequestId(req),
+      error,
+    });
     if (error instanceof KycNotApprovedError) {
       return jsonError(409, {
         error: {

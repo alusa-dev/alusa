@@ -1,3 +1,4 @@
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
 import { customerPayerWhere } from '@/src/server/finance/customer-payer-scope';
 import {
   BillingMode,
@@ -1419,12 +1420,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       }
     }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      console.error('[matricula][unique-conflict]', {
-        contaId: input.contaId,
-        operation: 'create_enrollment',
-        uiRequestId: input.uiRequestId ?? undefined,
-        constraint: error.meta?.target,
-      });
+      logEnrollmentOperationalEvent('api.enrollment.operation.unique_conflict', error);
     }
     throw error;
   }

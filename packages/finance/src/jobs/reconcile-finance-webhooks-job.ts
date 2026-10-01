@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 import { randomUUID } from 'node:crypto';
 
@@ -109,9 +110,11 @@ async function persistReconciliationRun(
       },
     });
   } catch (error) {
-    console.warn('[reconcile-finance-webhooks] falha ao persistir run', {
-      contaId,
-      error: error instanceof Error ? error.name : 'UNKNOWN_ERROR',
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.jobs.reconcile_finance_webhooks_job.degraded',
+      error: error,
+      throttleMs: 60_000,
     });
   }
 }
@@ -205,7 +208,7 @@ async function reconcileFinanceWebhooksJobUnlocked(
       const fallback = {
         contaId: targetContaId,
         dryRun,
-        mode: options.mode ?? 'targeted' as const,
+        mode: options.mode ?? ('targeted' as const),
         correlationId,
         startedAt: new Date(),
         completedAt: new Date(),
@@ -238,23 +241,24 @@ async function reconcileFinanceWebhooksJobUnlocked(
 
   const completedAt = new Date();
   const accountsFailed = results.filter((result) => Boolean(result.error)).length;
-  const errors = results.flatMap((result) => result.error ? [`${result.contaId}:${result.error}`] : result.reconcile.errors);
+  const errors = results.flatMap((result) =>
+    result.error ? [`${result.contaId}:${result.error}`] : result.reconcile.errors,
+  );
   const asaasCalls = results.reduce((total, result) => total + result.reconcile.asaasCalls, 0);
   const budgetExhausted = results.some((result) => result.reconcile.budgetExhausted);
-  const outcome = accountsFailed === results.length && accountsFailed > 0
-    ? 'failed'
-    : accountsFailed > 0 || errors.length > 0 || budgetExhausted
-      ? 'partial'
-      : 'completed';
+  const outcome =
+    accountsFailed === results.length && accountsFailed > 0
+      ? 'failed'
+      : accountsFailed > 0 || errors.length > 0 || budgetExhausted
+        ? 'partial'
+        : 'completed';
 
-  console.info('[reconcile-finance-webhooks] completed', {
-    correlationId,
-    outcome,
-    accountsProcessed: results.length,
-    accountsFailed,
-    asaasCalls,
-    budgetExhausted,
-    durationMs: completedAt.getTime() - startedAt.getTime(),
+  logFinanceOperationalEvent({
+    severity: 'info',
+    eventName: 'finance.jobs.reconcile_finance_webhooks_job.completed',
+    itemCount: results.length,
+    result: outcome === 'completed' ? 'success' : 'partial_failure',
+    throttleMs: 60_000,
   });
 
   return {

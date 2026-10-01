@@ -13,6 +13,7 @@ import { formatStatusLabel } from '@/components/ui/badge';
 import { ChargeDisplayStatusBadge } from '@/features/finance/operations/components/ChargeDisplayStatusBadge';
 import { StatusCobranca } from '@prisma/client';
 import { useChargeActions } from '@/hooks/use-charge-actions';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -442,7 +443,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
             headers: { Accept: 'application/json' },
           });
         } catch (syncError) {
-          console.warn('[CobrancaDetalhes] Falha ao sincronizar cobrança após alteração:', syncError);
+          logClientOperationalEvent('charge.detail.sync_failed', syncError);
         }
       }
 

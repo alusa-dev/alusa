@@ -130,10 +130,7 @@ export async function encerrarContaAlusa(input: {
           actor: { type: input.actor.type, id: input.actor.id },
         });
 
-        console.info('[conta.desativar] conta desativada', {
-          contaId: conta.id,
-          actorId: input.actor.id ?? null,
-        });
+
       }
 
       return {

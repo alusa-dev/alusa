@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import {
   enqueueAsaasNotificationPreferenceSyncForTenant,
@@ -25,6 +26,7 @@ function clampPositiveInt(value: string | null, fallback: number, max: number) {
  * Drena a outbox de preferências Asaas. Opcionalmente enfileira primeiro para uma conta.
  */
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -58,7 +60,7 @@ async function run(req: Request) {
       result,
     });
   } catch (error) {
-    console.error('[Job Apply Asaas Notification Preferences] Erro:', error);
+    logJobFailure('apply-asaas-notification-preferences', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível aplicar as preferências de notificação.');
   }
 }

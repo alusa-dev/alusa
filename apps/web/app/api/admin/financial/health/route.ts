@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
@@ -37,11 +38,12 @@ async function resolveAuth(): Promise<SessionUser | null> {
   return (session as { user?: SessionUser } | null)?.user ?? null;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const checks: HealthCheck[] = [];
     const [queueMetrics, remoteWebhookStatus] = await Promise.all([
@@ -58,16 +60,26 @@ export async function GET() {
       }
     })();
 
-    checks.push({ name: 'base_url', ok: baseUrlOk, message: baseUrlOk ? undefined : 'INVALID_OR_MISSING' });
+    checks.push({
+      name: 'base_url',
+      ok: baseUrlOk,
+      message: baseUrlOk ? undefined : 'INVALID_OR_MISSING',
+    });
 
     const credentialsOk = await hasAsaasCredentials(user.contaId);
-    checks.push({ name: 'credentials', ok: credentialsOk, message: credentialsOk ? undefined : 'MISSING' });
+    checks.push({
+      name: 'credentials',
+      ok: credentialsOk,
+      message: credentialsOk ? undefined : 'MISSING',
+    });
 
     const webhookSecretOk = Boolean(process.env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET);
     const webhookHashOk = await hasStoredAsaasWebhookAuthTokenHash(user.contaId);
-    const hasEnabledRemoteWebhook = remoteWebhookStatus?.webhooks.some((webhook) => webhook.enabled) ?? false;
+    const hasEnabledRemoteWebhook =
+      remoteWebhookStatus?.webhooks.some((webhook) => webhook.enabled) ?? false;
     const hasInterruptedRemoteWebhook = remoteWebhookStatus?.hasInterrupted ?? false;
-    const webhookOk = webhookSecretOk && webhookHashOk && hasEnabledRemoteWebhook && !hasInterruptedRemoteWebhook;
+    const webhookOk =
+      webhookSecretOk && webhookHashOk && hasEnabledRemoteWebhook && !hasInterruptedRemoteWebhook;
 
     checks.push({
       name: 'webhook',
@@ -86,9 +98,12 @@ export async function GET() {
     });
 
     const ok = checks.every((c) => c.ok);
-    const queueStatus = queueMetrics.backlog > 0
-      ? (queueMetrics.lagSeconds != null && queueMetrics.lagSeconds > 60 ? 'WARNING' : 'DEGRADED')
-      : 'OK';
+    const queueStatus =
+      queueMetrics.backlog > 0
+        ? queueMetrics.lagSeconds != null && queueMetrics.lagSeconds > 60
+          ? 'WARNING'
+          : 'DEGRADED'
+        : 'OK';
 
     return json(
       200,
@@ -110,7 +125,14 @@ export async function GET() {
       ),
     );
   } catch (error) {
-    console.error('[Admin Financial Health][GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/financial/health',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

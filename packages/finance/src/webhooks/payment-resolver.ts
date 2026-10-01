@@ -17,6 +17,7 @@
 import { prisma } from '@alusa/database';
 import { parseExternalReference as parseExternalReferenceV1 } from '@alusa/asaas-gateway';
 import { parseExternalReference as parseExternalReferenceV2 } from '../core';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 
 /**
  * Parse externalReference suportando V1 e V2
@@ -291,11 +292,9 @@ export async function resolvePaymentToLocalEntity(
 
     if (matriculaWithSub) {
       // Log para rastreamento de uso legado
-      console.warn('[payment-resolver] Fallback legado: matrícula com asaasSubscriptionId direto', {
-        contaId,
-        asaasPaymentId,
-        asaasSubscriptionId: input.asaasSubscriptionId,
-        matriculaId: matriculaWithSub.id,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.webhook.payment_resolver.legacy_subscription_fallback',
       });
 
       return {

@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { ZodError, z } from 'zod';
 
@@ -151,7 +152,14 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof MobileBillingUnauthorizedError) return responseError('FORBIDDEN', 'Você não tem permissão para criar cobranças.', 403);
     if (error instanceof ZodError) return responseError('INVALID_INPUT', 'Confira os dados informados.', 422, error.flatten());
-    console.error('[mobile-billing][create]', { contaId: actor.contaId, userId: actor.userId, error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/billing/charges/standalone',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     return responseError('SERVER_ERROR', 'Não foi possível criar a cobrança.', 500);
   }
 }

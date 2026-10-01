@@ -3,6 +3,7 @@ import { contaFormaPagamentoResultDTOSchema } from '@/features/account/dtos';
 import { mapContaFormaPagamentoResultToDTO } from '@/features/account/mappers';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getAccountPaymentMethodView } from '@/src/server/finance/account-payment-method.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export async function GET(_req: NextRequest) {
   try {
@@ -43,7 +44,14 @@ export async function GET(_req: NextRequest) {
       })),
     );
   } catch (error) {
-    console.error('Erro ao buscar forma de pagamento:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'conta.payment_method.read_failed',
+      route: '/api/conta/forma-pagamento',
+      method: 'GET',
+      requestId: getRequestId(_req),
+      error,
+    });
     return NextResponse.json(
       { error: 'Erro ao buscar forma de pagamento' }, 
       { status: 500 }

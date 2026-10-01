@@ -6,6 +6,7 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { deleteTransferRecipient, listTransferRecipients } from '@alusa/finance';
 import { financeTransferRecipientDeleteInputDTOSchema } from '@/features/finance/dtos';
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -28,7 +29,7 @@ export async function GET() {
     const result = await listTransferRecipients({ contaId: auth.contaId, limit: 8 });
     return json(200, { data: result });
   } catch (error) {
-    console.error('[Finance transfer recipients][GET]', error);
+    logFinanceApiError('/api/finance/transfers/recipients', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }
@@ -57,7 +58,7 @@ export async function DELETE(request: Request) {
     return json(200, { data: result });
   } catch (error) {
     if (error instanceof ZodError) return json(400, { error: 'RECIPIENT_ID_OBRIGATORIO' });
-    console.error('[Finance transfer recipients][DELETE]', error);
+    logFinanceApiError('/api/finance/transfers/recipients', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

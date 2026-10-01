@@ -7,6 +7,7 @@ import {
   type MobileEventsActor,
 } from './mobile-events.service';
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
+import { logRuntimeOperationalEvent } from '@/lib/observability/runtime-operational-log';
 
 export function bearerToken(request: Request) {
   const value = request.headers.get('authorization')?.trim();
@@ -40,6 +41,6 @@ export function handleMobileEventsError(error: unknown, fallbackMessage: string)
     return response({ error: { code: error.code, message: error.message, details: error.details } }, error.status);
   }
 
-  console.error('[api/mobile/events]', error instanceof Error ? error.message : String(error));
+  logRuntimeOperationalEvent({ eventName: 'api.mobile.events.request.failed', error });
   return response({ error: { code: 'SERVER_ERROR', message: fallbackMessage } }, 500);
 }

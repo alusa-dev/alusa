@@ -10,8 +10,9 @@ import { handleInternalTransferWebhook } from './internal-transfer-webhook-handl
 import { handleInvoiceWebhook } from './invoice-webhook-handler';
 import { confirmOutboundCreateByProviderEvent } from '../use-cases/outbound-financial-operation';
 import { auditLogService } from '../foundation/audit-log.service';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { computeNextRetryAt } from './webhook-backoff';
-import { withCorrelationId, generateCorrelationId } from '../foundation/correlation';
+import { withCorrelationId } from '../foundation/correlation';
 import {
   logWebhookProcessing,
   createWebhookLogEntry,
@@ -30,7 +31,6 @@ import {
   hashWebhookPayload,
   getAsaasWebhookTokenHashPrefix,
 } from './asaas-webhook-auth';
-import { redactWebhookLogObject } from './webhook-redaction';
 import { syncAsaasOperationalStatus } from '../foundation/asaas-operational-guard';
 import { shouldAlertUnknownWebhookEvent } from './asaas-event-registry';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
@@ -613,7 +613,7 @@ async function processAsaasWebhookForRecord(params: {
         recipientRoles: [Role.ADMIN, Role.FINANCEIRO],
         metadata: { webhookEvent: event, eventId: payload.id ?? null },
       }).catch((err: unknown) => {
-          console.warn('[finance][handleAsaasWebhook][balance-notify-failed]', redactWebhookLogObject({ contaId, event, err }));
+        logFinanceOperationalEvent({ severity: 'warn', eventName: 'finance.webhook.notification.failed', error: err });
       });
 
       await auditLogService.record({
@@ -702,7 +702,7 @@ async function processAsaasWebhookForRecord(params: {
           recipientRoles: [Role.ADMIN],
           metadata: { webhookEvent: event, eventId: payload.id ?? null },
         }).catch((err: unknown) => {
-          console.warn('[finance][handleAsaasWebhook][access-token-notify-failed]', redactWebhookLogObject({ contaId, event, err }));
+          logFinanceOperationalEvent({ severity: 'warn', eventName: 'finance.webhook.notification.failed', error: err });
         });
       }
 
@@ -1073,7 +1073,10 @@ export async function processAsaasWebhookQueue(params?: {
 
     const event = hook.evento;
     const payload = hook.payload as unknown as AsaasWebhookBody;
-    const correlationId = generateCorrelationId();
+    // The persisted webhook row/event is stable across retries. Use it for
+    // business correlation while Sentry/requestId continue to identify each
+    // technical attempt independently.
+    const correlationId = `asaas-event:${hook.eventId ?? hook.id}`;
 
     const result = await withCorrelationId(
       () => processAsaasWebhookForRecord({
@@ -1118,6 +1121,7 @@ export async function processAsaasWebhookQueue(params?: {
         durationMs: result.duracaoMs,
         error: result.error,
         source,
+        retry: hook.tentativas > 1,
       })
     );
 
@@ -1142,10 +1146,11 @@ export async function processAsaasWebhookQueue(params?: {
         limit: Math.min(Math.max(failed, 1), 500),
       });
     } catch (dlqError) {
-      console.warn('[Asaas Webhook Queue] Falha ao materializar DLQ pós-processamento', redactWebhookLogObject({
-        workerId,
-        error: dlqError instanceof Error ? dlqError.message : String(dlqError),
-      }));
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.webhook.dlq.materialize.failed',
+        error: dlqError,
+      });
     }
   }
 

@@ -6,6 +6,7 @@ import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { lookupExternalPixKey } from '@alusa/finance';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 const requestSchema = z.object({
   type: z.enum(['CPF', 'CNPJ', 'EMAIL', 'PHONE', 'EVP']),
@@ -39,7 +40,7 @@ export async function POST(request: Request) {
     if (!result.success) return json(errorStatus[result.error] ?? 500, { error: result.error });
     return json(200, { data: result.data });
   } catch (error) {
-    console.error('[Finance transfer pix-key][POST]', error);
+    logFinanceApiError('/api/finance/transfers/pix-key', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

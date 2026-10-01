@@ -12,6 +12,7 @@ import {
   updateAsaasNotificationPreferencesInputDTOSchema,
 } from '@/features/settings/notifications/asaas/dtos';
 import { deriveCustomerNotificationChannelDefaults } from '@/features/settings/notifications/asaas/customer-channel-defaults';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -19,7 +20,7 @@ function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
@@ -35,7 +36,7 @@ export async function GET() {
       }),
     );
   } catch (error) {
-    console.error('[Config Notificacoes Asaas][GET]', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.asaas_notification_preferences.request.failed', route: '/api/configuracoes/notificacoes/asaas', method: 'GET', requestId: getRequestId(request), error });
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível carregar as preferências Asaas.' });
   }
 }
@@ -60,12 +61,12 @@ export async function PUT(request: Request) {
       saveAsaasNotificationPreferencesResultDTOSchema.parse({ preferences }),
     );
   } catch (error) {
-    console.error('[Config Notificacoes Asaas][PUT]', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.asaas_notification_preferences.request.failed', route: '/api/configuracoes/notificacoes/asaas', method: 'PUT', requestId: getRequestId(request), error });
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível salvar as preferências Asaas.' });
   }
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
@@ -85,7 +86,7 @@ export async function POST() {
       message: 'Sincronização enfileirada. O job recorrente aplicará as preferências com retry controlado.',
     });
   } catch (error) {
-    console.error('[Config Notificacoes Asaas][POST]', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.asaas_notification_preferences.request.failed', route: '/api/configuracoes/notificacoes/asaas', method: 'POST', requestId: getRequestId(request), error });
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível restaurar as preferências Asaas.' });
   }
 }

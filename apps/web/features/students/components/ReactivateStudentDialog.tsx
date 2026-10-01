@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from '@/components/ui/toast';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 
 type Props = {
   open: boolean;
@@ -53,7 +54,7 @@ export function ReactivateStudentDialog({
       onReativado?.();
       onOpenChange(false);
     } catch (error) {
-      console.error('[ReactivateStudentDialog]', error);
+      logClientOperationalEvent('student.reactivate.failed', error);
       toast.error('Erro de comunicação');
     } finally {
       setSubmitting(false);

@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { detectWebhookGaps, reconcileAsaasAccountsJob, reconcileWithAsaas } from '@alusa/finance';
@@ -26,6 +27,7 @@ function jsonError(status: number, code: string, message: string) {
  * - includeGaps (opcional, mode=webhooks): inclui detecção de gaps locais
  */
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -51,7 +53,9 @@ async function run(req: Request) {
       const dryRun = url.searchParams.get('dryRun') === 'true';
       const includeGaps = url.searchParams.get('includeGaps') === 'true';
 
-      const windowHours = Number.isFinite(windowHoursRaw) ? Math.max(1, Math.min(24 * 30, windowHoursRaw)) : 24;
+      const windowHours = Number.isFinite(windowHoursRaw)
+        ? Math.max(1, Math.min(24 * 30, windowHoursRaw))
+        : 24;
       const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(1000, limitRaw)) : 200;
 
       const [reconcile, gaps] = await Promise.all([
@@ -62,7 +66,9 @@ async function run(req: Request) {
           dryRun,
         }),
         includeGaps
-          ? detectWebhookGaps(targetContaId, { windowDays: Math.max(1, Math.ceil(windowHours / 24)) })
+          ? detectWebhookGaps(targetContaId, {
+              windowDays: Math.max(1, Math.ceil(windowHours / 24)),
+            })
           : Promise.resolve(null),
       ]);
 
@@ -82,7 +88,7 @@ async function run(req: Request) {
       ...result,
     });
   } catch (error) {
-    console.error('[Job Reconcile Finance Accounts] Erro:', error);
+    logJobFailure('reconcile-finance-accounts', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconciliar as contas financeiras.');
   }
 }

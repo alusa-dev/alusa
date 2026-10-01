@@ -80,8 +80,6 @@ export const authOptions: NextAuthOptions = {
       async authorize(raw) {
         const parsed = creds.safeParse(raw);
         if (!parsed.success) {
-          if (process.env.AUTH_DEBUG === 'true')
-            console.debug('[auth] authorize zod fail', parsed.error.flatten());
           return null;
         }
         const result = await verifyCredentialsDetailed(
@@ -90,8 +88,6 @@ export const authOptions: NextAuthOptions = {
           parsed.data.contaId,
         );
         if (!result.ok) {
-          if (process.env.AUTH_DEBUG === 'true')
-            console.debug('[auth] authorize invalid credentials', { email: parsed.data.email, reason: result.reason });
           return null;
         }
         const u = result.user;

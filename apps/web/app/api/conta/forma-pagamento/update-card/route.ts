@@ -12,16 +12,10 @@ export async function POST(_req: NextRequest) {
     return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
   }
 
-  const { id, role } = session.user as { id: string; role?: string };
-  console.info(
-    `[FormaPagamento][update-card] Bloqueado para o usuário ${id} (role: ${role ?? 'unknown'})`,
-  );
-
   return NextResponse.json(contaBlockedActionResultDTOSchema.parse({ error: BLOCKED_MESSAGE }), {
     status: 403,
   });
 }
-
 
 
 

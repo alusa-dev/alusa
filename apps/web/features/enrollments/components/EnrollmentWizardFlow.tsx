@@ -16,6 +16,7 @@ import { StepNotifications } from './wizard/steps/StepNotifications';
 import { StepFinanceiro } from './wizard/steps/StepFinanceiro';
 import { StepSummary } from './wizard/steps/StepSummary';
 import { StepTaxa } from './wizard/steps/StepTaxa';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { useEnrollmentWizard } from './wizard/hooks/useEnrollmentWizard';
 import type { WizardContextValue, WizardState } from './wizard/types';
 import type { MatriculaCreatedPayload } from '@/features/enrollments/services/enrollments-service';
@@ -156,7 +157,7 @@ export function EnrollmentWizardFlow({
       onCompleted?.(result as unknown as MatriculaCreatedPayload);
     },
     onError: (error) => {
-      console.error('[EnrollmentWizardFlow] Erro ao criar matrícula:', error);
+      logClientOperationalEvent('enrollment.create.failed', error);
     },
   });
 
@@ -165,7 +166,7 @@ export function EnrollmentWizardFlow({
       setFamilyOutcome(outcome);
     },
     onError: (error) => {
-      console.error('[EnrollmentWizardFlow] Erro ao criar matrículas familiares:', error);
+      logClientOperationalEvent('enrollment.family_create.failed', error);
       toast.custom((t) => (
         <CustomToast
           variant="error"
@@ -269,8 +270,8 @@ export function EnrollmentWizardFlow({
       } else {
         await submit(wizard.state);
       }
-    } catch (error) {
-      console.error('Erro ao submeter matrícula:', error);
+    } catch {
+      // The submit hooks already surface and report the failure.
     }
   }, [submit, submitFamiliar, wizard.state]);
 

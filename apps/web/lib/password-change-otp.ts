@@ -5,6 +5,7 @@ import { auditLogService } from '@alusa/finance';
 import { hashPassword, assertPasswordPolicy } from '@/lib/auth-password';
 import { revokeUserSessions } from '@/lib/auth-service';
 import { sendPasswordChangeOtpEmail } from '@/lib/email/password-change-otp-email';
+import { logRuntimeOperationalEvent } from '@/lib/observability/runtime-operational-log';
 
 export const PASSWORD_CHANGE_OTP_COOLDOWN_SECONDS = 60;
 export const PASSWORD_CHANGE_OTP_TTL_MINUTES = 10;
@@ -434,10 +435,7 @@ export async function completePasswordChange(input: {
       },
     });
   } catch (error) {
-    console.error('[auth][password-change-otp][audit-failed]', {
-      userId: user.id,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logRuntimeOperationalEvent({ eventName: 'auth.password_change.audit_failed', error });
   }
 
   return { ok: true, revokedAllSessions: input.revokeAllSessions };

@@ -1,14 +1,15 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 /**
  * Job: apply-matricula-timeout.ts
- * 
+ *
  * PR3: Aplica timeout em matrículas pendentes que excedem o prazo configurado.
- * 
+ *
  * Fluxo:
  * 1. Busca matrículas em status AGUARDANDO_CONFIRMACAO/PENDENTE_TAXA com createdAt > X dias
  * 2. Atualiza status para CANCELADA e marca timeoutAppliedAt
  * 3. Cancela subscription pendente no gateway (se existir)
  * 4. Registra auditoria
- * 
+ *
  * Idempotência: matrículas com timeoutAppliedAt != null são ignoradas
  */
 
@@ -32,10 +33,7 @@ const MAX_MATRICULAS_PER_RUN = 100;
 /**
  * Status elegíveis para timeout
  */
-const TIMEOUT_ELIGIBLE_STATUSES: StatusMatricula[] = [
-  'AGUARDANDO_CONFIRMACAO',
-  'PENDENTE_TAXA',
-];
+const TIMEOUT_ELIGIBLE_STATUSES: StatusMatricula[] = ['AGUARDANDO_CONFIRMACAO', 'PENDENTE_TAXA'];
 
 export interface ApplyMatriculaTimeoutInput {
   contaId?: string;
@@ -108,12 +106,6 @@ export async function applyMatriculaTimeoutJob(
 
     try {
       if (dryRun) {
-        console.log('[timeout-job] DRY RUN - Would cancel:', {
-          matriculaId: matricula.id,
-          alunoNome: matricula.aluno.nome,
-          createdAt: matricula.createdAt,
-          daysPending: Math.floor((now.getTime() - matricula.createdAt.getTime()) / (24 * 60 * 60 * 1000)),
-        });
         result.canceladas++;
         continue;
       }
@@ -166,11 +158,12 @@ export async function applyMatriculaTimeoutJob(
   }
 
   // Log de métricas
-  console.log('[timeout-job] Resultado:', {
-    processadas: result.processadas,
-    canceladas: result.canceladas,
-    erros: result.erros.length,
-    dryRun,
+  logFinanceOperationalEvent({
+    severity: 'info',
+    eventName: 'finance.jobs.apply_matricula_timeout.completed',
+    itemCount: result.processadas,
+    result: result.erros.length > 0 ? 'partial_failure' : 'success',
+    throttleMs: 60_000,
   });
 
   return result;

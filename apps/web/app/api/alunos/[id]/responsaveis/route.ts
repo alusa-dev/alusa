@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
 import {
@@ -13,11 +14,8 @@ import {
   platformBillingAccessResponse,
 } from '@/src/server/platform-billing/capacity';
 
-export async function POST(
-  request: NextRequest,
-  ctx: { params: Promise<{ id: string }> }
-) {
-    const ctxParams = await ctx.params;
+export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const ctxParams = await ctx.params;
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
@@ -58,20 +56,22 @@ export async function POST(
       created: result.created,
     });
 
-    return NextResponse.json(
-      dto,
-      { status: result.created ? 201 : 200 },
-    );
+    return NextResponse.json(dto, { status: result.created ? 201 : 200 });
   } catch (error) {
     if (error instanceof VinculoAlunoResponsavelError) {
       const status =
-        error.code === 'ALUNO_NOT_FOUND' || error.code === 'RESPONSAVEL_NOT_FOUND'
-          ? 404
-          : 400;
+        error.code === 'ALUNO_NOT_FOUND' || error.code === 'RESPONSAVEL_NOT_FOUND' ? 404 : 400;
       return NextResponse.json({ error: { code: error.code, message: error.message } }, { status });
     }
 
-    console.error('[ALUNO_RESPONSAVEL_VINCULO]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/alunos/[id]/responsaveis',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     return NextResponse.json(
       { error: { message: 'Erro ao vincular responsável' } },
       { status: 500 },

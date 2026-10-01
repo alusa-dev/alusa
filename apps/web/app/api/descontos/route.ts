@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import {
   createDiscount,
   listActiveDiscounts,
@@ -28,7 +29,7 @@ const createDiscountInputDTOSchema = z.object({
   valor: z.number().positive(),
 });
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) {
@@ -51,7 +52,7 @@ export async function GET() {
       }),
     );
   } catch (error) {
-    console.error('[API Descontos] Erro ao listar descontos:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.discounts.request.failed', route: '/api/descontos', method: 'GET', requestId: getRequestId(request), error });
     return NextResponse.json(
       { error: { message: 'Erro ao carregar benefícios.' } },
       { status: 500 },
@@ -105,7 +106,7 @@ export async function POST(request: Request) {
       );
     }
 
-    console.error('[API Descontos] Erro ao criar desconto:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.discounts.request.failed', route: '/api/descontos', method: 'POST', requestId: getRequestId(request), error });
     return NextResponse.json(
       { error: { message: 'Erro ao cadastrar benefício.' } },
       { status: 500 },

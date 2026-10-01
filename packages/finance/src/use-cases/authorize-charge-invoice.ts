@@ -1,7 +1,12 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
-import { AsaasHttpError, authorizeInvoice as asaasAuthorizeInvoice, getInvoice as asaasGetInvoice } from '@alusa/asaas';
+import {
+  AsaasHttpError,
+  authorizeInvoice as asaasAuthorizeInvoice,
+  getInvoice as asaasGetInvoice,
+} from '@alusa/asaas';
 import type { InvoiceStatus } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
@@ -62,15 +67,13 @@ function authorizeBlockedMessage(status: InvoiceStatus): string {
   }
 }
 
-async function persistInvoiceFromAsaas(
-  input: {
-    contaId: string;
-    invoiceId: string;
-    currentStatus: InvoiceStatus;
-    asaasInvoice: Awaited<ReturnType<typeof asaasGetInvoice>>;
-    source: 'authorize' | 'sync';
-  },
-) {
+async function persistInvoiceFromAsaas(input: {
+  contaId: string;
+  invoiceId: string;
+  currentStatus: InvoiceStatus;
+  asaasInvoice: Awaited<ReturnType<typeof asaasGetInvoice>>;
+  source: 'authorize' | 'sync';
+}) {
   const prisma = getFiscalPrisma();
   const nextStatus = mapAsaasInvoiceStatusToInternal(input.asaasInvoice.status);
   const safeNextStatus = nextStatus ?? input.currentStatus;
@@ -86,7 +89,9 @@ async function persistInvoiceFromAsaas(
       number: input.asaasInvoice.number ?? null,
       fiscalDivergence: !nextStatus,
       errorMessage:
-        safeNextStatus === 'ERROR' ? input.asaasInvoice.statusDescription ?? 'Erro na emissão' : null,
+        safeNextStatus === 'ERROR'
+          ? (input.asaasInvoice.statusDescription ?? 'Erro na emissão')
+          : null,
     },
     select: {
       id: true,
@@ -118,7 +123,9 @@ async function resolveInvoice(input: AuthorizeChargeInvoiceInput) {
     return prisma.invoice.findFirst({ where: { id: input.invoiceId, contaId: input.contaId } });
   }
   if (input.chargeId) {
-    return prisma.invoice.findFirst({ where: { chargeId: input.chargeId, contaId: input.contaId } });
+    return prisma.invoice.findFirst({
+      where: { chargeId: input.chargeId, contaId: input.contaId },
+    });
   }
   if (input.cobrancaId) {
     const charge = await prisma.charge.findFirst({
@@ -200,12 +207,14 @@ export async function authorizeChargeInvoice(
       });
     }
 
-    const effectiveDate = remoteInvoice.effectiveDate ?? invoice.effectiveDate?.toISOString().slice(0, 10);
+    const effectiveDate =
+      remoteInvoice.effectiveDate ?? invoice.effectiveDate?.toISOString().slice(0, 10);
     const today = todayInBrazil();
     if (!effectiveDate || effectiveDate <= today) {
       return err({
         kind: 'ASAAS',
-        message: 'A autorização antecipada só está disponível para uma NFS-e agendada para uma data futura.',
+        message:
+          'A autorização antecipada só está disponível para uma NFS-e agendada para uma data futura.',
         status: 409,
       });
     }
@@ -252,7 +261,12 @@ export async function authorizeChargeInvoice(
       number: updated.number ?? null,
     });
   } catch (error) {
-    console.error('[finance][authorizeChargeInvoice]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.authorize_charge_invoice.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     if (error instanceof AsaasHttpError) {
       if (error.status === 409) {
         return err({

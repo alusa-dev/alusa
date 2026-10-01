@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
+import { logPersonDataOperationalEvent } from '@/lib/observability/api-logger';
 import { StatusCobranca, StatusMatricula } from '@prisma/client';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { prisma } from '@/lib/prisma';
@@ -403,7 +404,7 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
         : undefined;
       execution = await executeAlunoArchivePlan(plan, { paymentsProvider });
     } catch (err) {
-      console.error('[alunos][delete] Erro ao sincronizar com gateway:', err);
+      logPersonDataOperationalEvent('api.students.archive.gateway_sync.failed', err);
       execution = {
         alunoId: rawParams.id,
         ok: false,
@@ -432,12 +433,7 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
     }
 
     if (!execution.ok) {
-      console.warn('[alunos][delete] Sincronização incompleta; aluno não arquivado', {
-        alunoId: rawParams.id,
-        contaId,
-        correlationId,
-        errors: execution.errors.map(({ code, matriculaId }) => ({ code, matriculaId })),
-      });
+      logPersonDataOperationalEvent('api.students.archive.sync.incomplete', undefined, 'warn');
       return NextResponse.json(
         {
           error: 'Não foi possível concluir a sincronização financeira. O aluno não foi arquivado; repita a operação após verificar o processador.',
@@ -463,11 +459,6 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
       : 'HARD_DELETED';
 
     if (outcome === 'ARCHIVED' && hasDeletionBlockers(blockers)) {
-      console.info('[alunos][delete] Arquivado com vínculos ativos', {
-        alunoId: rawParams.id,
-        contaId,
-        blockers,
-      });
     }
 
     // 6) Extrair resultado da inativação do customer (se disponível)
@@ -551,11 +542,6 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
           paid: 0,
         },
       };
-      console.warn('[alunos][delete] Bloqueado por dependências ativas', {
-        alunoId: rawParams.id,
-        contaId,
-        blockers,
-      });
       return NextResponse.json(
         {
           error: 'Aluno possui vínculos ativos. Confirme para cancelar e excluir.',
@@ -579,11 +565,6 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
           paid: 0,
         },
       };
-      console.warn('[alunos][delete] Bloqueado por assinatura ativa', {
-        alunoId: rawParams.id,
-        contaId,
-        blockers,
-      });
       return NextResponse.json(
         {
           error: 'Aluno possui assinaturas ativas. Cancele as assinaturas antes de excluir.',
@@ -606,11 +587,6 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
           paid: 0,
         },
       };
-      console.warn('[alunos][delete] Bloqueado por matrícula ativa', {
-        alunoId: rawParams.id,
-        contaId,
-        blockers,
-      });
       return NextResponse.json(
         {
           error: 'Aluno possui matrículas ativas. Inative as matrículas antes de excluir.',

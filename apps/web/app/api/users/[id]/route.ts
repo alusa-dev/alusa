@@ -13,6 +13,7 @@ import {
   recordManagedUserAudit,
   updateManagedUser,
 } from '@/src/server/users/user-management.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const updateManagedUserResultSchema = z.object({
   user: z.object({ id: z.string(), name: z.string(), email: z.string().email(), role: z.string(), status: z.string() }),
@@ -49,7 +50,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return jsonError('Você não pode alterar o próprio status por esta tela.', 400);
     }
     if ((await getManagedUserOwnerId(auth.contaId)) === rawParams.id) {
-      console.warn(`[AUDIT] Tentativa de alterar role/status do Owner por ${auth.currentUserId}`);
+      logApiOperationalEvent({ severity: 'warn', eventName: 'api.users.request.rejected', route: '/api/users/[id]', method: 'PATCH', requestId: getRequestId(req) });
       return jsonError('Alterações no usuário Owner não são permitidas.', 403);
     }
 
@@ -81,7 +82,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     });
     return NextResponse.json(updateManagedUserResultSchema.parse({ user: mapManagedUser(current) }));
   } catch (error) {
-    console.error('Error updating user:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/[id]', method: 'PATCH', requestId: getRequestId(req), error });
     return jsonError('Internal server error', 500);
   }
 }
@@ -95,7 +96,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const exists = await findManagedUser({ userId: rawParams.id, contaId: auth.contaId });
     if (!exists) return jsonError('Usuário não encontrado', 404);
     if ((await getManagedUserOwnerId(auth.contaId)) === rawParams.id) {
-      console.warn(`[AUDIT] Tentativa de excluir Owner por ${auth.currentUserId}`);
+      logApiOperationalEvent({ severity: 'warn', eventName: 'api.users.request.rejected', route: '/api/users/[id]', method: 'DELETE', requestId: getRequestId(req) });
       return jsonError('Exclusão do usuário Owner não é permitida.', 403);
     }
     const parsed = deleteManagedUserInputDTOSchema.safeParse(await req.json().catch(() => ({})));
@@ -109,7 +110,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     if (!removal) return jsonError('Usuário não encontrado', 404);
     return NextResponse.json(deleteManagedUserResultSchema.parse({ ok: true, id: removal.id, hard: removal.hard }));
   } catch (error) {
-    console.error('Error deleting user:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/[id]', method: 'DELETE', requestId: getRequestId(req), error });
     return jsonError('Internal server error', 500);
   }
 }

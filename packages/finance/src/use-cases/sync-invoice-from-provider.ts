@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
@@ -63,7 +64,9 @@ async function resolveInvoice(input: SyncInvoiceFromProviderInput) {
     return prisma.invoice.findFirst({ where: { id: input.invoiceId, contaId: input.contaId } });
   }
   if (input.chargeId) {
-    return prisma.invoice.findFirst({ where: { chargeId: input.chargeId, contaId: input.contaId } });
+    return prisma.invoice.findFirst({
+      where: { chargeId: input.chargeId, contaId: input.contaId },
+    });
   }
   if (input.cobrancaId) {
     const charge = await prisma.charge.findFirst({
@@ -173,7 +176,8 @@ export async function syncInvoiceFromProvider(
         xmlUrl: asaasInvoice.xmlUrl ?? null,
         number: asaasInvoice.number ?? null,
         fiscalDivergence: false,
-        errorMessage: nextStatus === 'ERROR' ? asaasInvoice.statusDescription ?? 'Erro na emissão' : null,
+        errorMessage:
+          nextStatus === 'ERROR' ? (asaasInvoice.statusDescription ?? 'Erro na emissão') : null,
       },
       select: {
         id: true,
@@ -258,7 +262,12 @@ export async function syncInvoiceFromProvider(
           });
         }
       } else {
-        console.error('[finance][syncInvoiceFromProvider]', error);
+        logFinanceOperationalEvent({
+          severity: 'error',
+          eventName: 'finance.use_cases.sync_invoice_from_provider.failed',
+          error: error,
+          throttleMs: 60_000,
+        });
       }
       return err({
         kind: 'ASAAS',
@@ -270,10 +279,7 @@ export async function syncInvoiceFromProvider(
   }
 }
 
-export async function getChargeInvoiceByCobranca(input: {
-  contaId: string;
-  cobrancaId: string;
-}) {
+export async function getChargeInvoiceByCobranca(input: { contaId: string; cobrancaId: string }) {
   const prisma = getFiscalPrisma();
   const charge = await prisma.charge.findFirst({
     where: { cobrancaId: input.cobrancaId, contaId: input.contaId },

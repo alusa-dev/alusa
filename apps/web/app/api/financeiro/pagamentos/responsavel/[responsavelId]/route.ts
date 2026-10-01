@@ -1,3 +1,4 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { mapFinanceiroPagamentoPessoaHistoricoResultToDTO } from '@/features/finance/operations/mappers';
@@ -56,7 +57,7 @@ export async function GET(
       }),
     );
   } catch (error) {
-    console.error('[GET /api/financeiro/pagamentos/responsavel/[responsavelId]]', error);
+    logFinanceApiError('/api/financeiro/pagamentos/responsavel/[responsavelId]', error);
     return NextResponse.json(
       {
         success: false,

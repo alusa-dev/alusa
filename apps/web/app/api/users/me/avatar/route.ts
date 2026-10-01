@@ -10,8 +10,9 @@ import {
   removeCurrentAvatar,
   replaceCurrentAvatar,
 } from '@/features/account/server/avatar-service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
-function errorResponse(error: unknown, correlationId: string) {
+function errorResponse(error: unknown, correlationId: string, requestId: string, method: 'POST' | 'DELETE') {
   if (error instanceof AvatarServiceError) {
     return jsonNoStore(
       { error: error.message, code: error.code, correlationId },
@@ -19,7 +20,7 @@ function errorResponse(error: unknown, correlationId: string) {
     );
   }
 
-  console.error('[API /api/users/me/avatar] Erro inesperado.', { correlationId, error });
+  logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me/avatar', method, requestId, error });
   return jsonNoStore(
     { error: 'Não foi possível atualizar a foto agora.', correlationId },
     { status: 500 },
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
 
     return jsonNoStore({ ...result, correlationId });
   } catch (error) {
-    return errorResponse(error, correlationId);
+    return errorResponse(error, correlationId, getRequestId(request), 'POST');
   }
 }
 
@@ -94,6 +95,6 @@ export async function DELETE(request: Request) {
     );
     return jsonNoStore({ ...result, correlationId });
   } catch (error) {
-    return errorResponse(error, correlationId);
+    return errorResponse(error, correlationId, getRequestId(request), 'DELETE');
   }
 }

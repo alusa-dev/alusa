@@ -1,5 +1,10 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma, loadAsaasCredentials } from '@alusa/database';
-import { createInstallment as asaasCreateInstallment, listInstallmentPayments, type BillingType } from '@alusa/asaas';
+import {
+  createInstallment as asaasCreateInstallment,
+  listInstallmentPayments,
+  type BillingType,
+} from '@alusa/asaas';
 import type { InstallmentStatus } from '@prisma/client';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
@@ -12,8 +17,16 @@ import { requireKycApproved } from '../foundation/kyc-guard';
 import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 import { isPastDate } from '../foundation/date-guard';
 import { ensureCustomer } from './ensure-customer';
-import { buildInstallmentExternalReference, buildPaymentExternalReference, deriveDeterministicId, toFormaPagamento } from '../core';
-import { mapAsaasPaymentStatusToCobranca, mapAsaasPaymentStatusToCharge } from '../mappers/charge-status/asaas-to-internal';
+import {
+  buildInstallmentExternalReference,
+  buildPaymentExternalReference,
+  deriveDeterministicId,
+  toFormaPagamento,
+} from '../core';
+import {
+  mapAsaasPaymentStatusToCobranca,
+  mapAsaasPaymentStatusToCharge,
+} from '../mappers/charge-status/asaas-to-internal';
 import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
 import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
@@ -69,14 +82,15 @@ export type CreateInstallmentPlanError =
   | 'ERRO_INTERNO';
 
 export async function createInstallmentPlan(
-  input: CreateInstallmentPlanInput
+  input: CreateInstallmentPlanInput,
 ): Promise<Result<CreateInstallmentPlanOutput, CreateInstallmentPlanError>> {
   try {
     const enabled = await featureFlagsService.isEnabled(input.contaId, 'enableInstallments');
     if (!enabled) return err('FEATURE_DISABLED');
 
     const kyc = await requireKycApproved(input.contaId);
-    if (!kyc.success) return err(kyc.error === 'KYC_NAO_APROVADO' ? 'KYC_NAO_APROVADO' : 'ERRO_INTERNO');
+    if (!kyc.success)
+      return err(kyc.error === 'KYC_NAO_APROVADO' ? 'KYC_NAO_APROVADO' : 'ERRO_INTERNO');
 
     try {
       await assertAsaasTenantOperational(input.contaId);
@@ -120,7 +134,9 @@ export async function createInstallmentPlan(
     const existingByMatricula = existingByContrato
       ? null
       : await prisma.installmentPlan.findUnique({
-          where: { contaId_matriculaId: { contaId: input.contaId, matriculaId: input.matriculaId } },
+          where: {
+            contaId_matriculaId: { contaId: input.contaId, matriculaId: input.matriculaId },
+          },
           select: {
             id: true,
             contratoId: true,
@@ -173,7 +189,8 @@ export async function createInstallmentPlan(
       if (customerResult.error === 'PAGADOR_NAO_ENCONTRADO') return err('PAGADOR_NAO_ENCONTRADO');
       if (customerResult.error === 'PAGADOR_SEM_CPF') return err('PAGADOR_SEM_CPF');
       if (customerResult.error === 'ASAAS_CUSTOMER_INVALIDO') return err('ASAAS_CUSTOMER_INVALIDO');
-      if (customerResult.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS') return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+      if (customerResult.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS')
+        return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
       return err('ERRO_AO_CRIAR_CUSTOMER');
     }
 
@@ -181,7 +198,8 @@ export async function createInstallmentPlan(
     if (Number.isNaN(firstDueDate.getTime())) return err('DATA_INVALIDA');
     if (isPastDate(input.firstDueDate)) return err('DATA_INVALIDA');
 
-    const isRecreation = existing && (existing.status === 'COMPLETED' || existing.status === 'CANCELED');
+    const isRecreation =
+      existing && (existing.status === 'COMPLETED' || existing.status === 'CANCELED');
     // Retry: plano existe mas criação anterior falhou (sem asaasInstallmentId)
     const isRetry = existing && !existing.asaasInstallmentId && existing.status !== 'ACTIVE';
 
@@ -194,10 +212,13 @@ export async function createInstallmentPlan(
     // Usar sufixo curto (8 hex) para garantir unicidade sem estourar limite de 100 chars do Asaas
     const needsNewExternalRef = isRecreation || isRetry;
     const externalReference = needsNewExternalRef
-      ? buildInstallmentExternalReference({ installmentPlanId: `${installmentPlanId}:${crypto.randomBytes(4).toString('hex')}` })
-      : existing?.externalReference ?? buildInstallmentExternalReference({
+      ? buildInstallmentExternalReference({
+          installmentPlanId: `${installmentPlanId}:${crypto.randomBytes(4).toString('hex')}`,
+        })
+      : (existing?.externalReference ??
+        buildInstallmentExternalReference({
           installmentPlanId,
-        });
+        }));
 
     await ensureWebhookConfigOperational(input.contaId);
 
@@ -217,11 +238,6 @@ export async function createInstallmentPlan(
       ...(input.fine != null && { fine: input.fine }),
     };
 
-    console.log('[finance][createInstallmentPlan] Payload para Asaas:', {
-      ...asaasPayload,
-      idempotencyKey: externalReference,
-    });
-
     const asaasInstallment = await asaasCreateInstallment({
       apiKey: credentials.apiKey,
       idempotencyKey: externalReference,
@@ -229,9 +245,11 @@ export async function createInstallmentPlan(
     }).catch((e) => {
       // Extrair detalhes de erro do Asaas
       const asaasResponse = (e as { responseBody?: unknown })?.responseBody;
-      const asaasErrors = (asaasResponse as { errors?: Array<{ code?: string; description?: string }> })?.errors;
+      const asaasErrors = (
+        asaasResponse as { errors?: Array<{ code?: string; description?: string }> }
+      )?.errors;
       const errorDetails = asaasErrors?.[0];
-      
+
       const errorInfo = {
         contaId: input.contaId,
         contratoId: input.contratoId,
@@ -242,7 +260,12 @@ export async function createInstallmentPlan(
         externalReference,
         firstDueDate: input.firstDueDate,
       };
-      console.error('[finance][createInstallmentPlan][asaasCreateInstallment] Falha:', errorInfo);
+      logFinanceOperationalEvent({
+        severity: 'error',
+        eventName: 'finance.use_cases.create_installment_plan.failed',
+        error: errorInfo,
+        throttleMs: 60_000,
+      });
       return null;
     });
 
@@ -303,7 +326,12 @@ export async function createInstallmentPlan(
       limit: 100,
       offset: 0,
     }).catch((e) => {
-      console.error('[finance][createInstallmentPlan][listInstallmentPayments]', e);
+      logFinanceOperationalEvent({
+        severity: 'error',
+        eventName: 'finance.use_cases.create_installment_plan.failed',
+        error: e,
+        throttleMs: 60_000,
+      });
       return null;
     });
 
@@ -346,7 +374,9 @@ export async function createInstallmentPlan(
             tipo: 'PARCELADA',
             valor: payment.value,
             vencimento,
-            status: mapAsaasPaymentStatusToCobranca(effectivePaymentStatus, { dueDate: vencimento }),
+            status: mapAsaasPaymentStatusToCobranca(effectivePaymentStatus, {
+              dueDate: vencimento,
+            }),
             descricao,
             competenciaInicio,
             competenciaFim,
@@ -357,7 +387,9 @@ export async function createInstallmentPlan(
             asaasOriginalValue: payment.originalValue ?? null,
             asaasFeeValue: payment.value - payment.netValue,
             asaasCreditDate: payment.creditDate ? new Date(payment.creditDate) : null,
-            asaasEstimatedCreditDate: payment.estimatedCreditDate ? new Date(payment.estimatedCreditDate) : null,
+            asaasEstimatedCreditDate: payment.estimatedCreditDate
+              ? new Date(payment.estimatedCreditDate)
+              : null,
             lastAsaasFetchAt: new Date(),
             liquidacaoStatus: resolveLiquidacaoFromAsaasPayment({
               asaasStatus: effectivePaymentStatus,
@@ -371,7 +403,7 @@ export async function createInstallmentPlan(
 
         const paymentExternalReference = buildPaymentExternalReference(
           updated.externalReference,
-          payment.id
+          payment.id,
         );
         const chargeSnapshot = {
           asaasStatus: effectivePaymentStatus,
@@ -380,7 +412,9 @@ export async function createInstallmentPlan(
           asaasOriginalValue: payment.originalValue ?? null,
           asaasFeeValue: payment.value - payment.netValue,
           asaasCreditDate: payment.creditDate ? new Date(payment.creditDate) : null,
-          asaasEstimatedCreditDate: payment.estimatedCreditDate ? new Date(payment.estimatedCreditDate) : null,
+          asaasEstimatedCreditDate: payment.estimatedCreditDate
+            ? new Date(payment.estimatedCreditDate)
+            : null,
           lastAsaasFetchAt: new Date(),
           liquidacaoStatus: resolveLiquidacaoFromAsaasPayment({
             asaasStatus: effectivePaymentStatus,
@@ -463,7 +497,12 @@ export async function createInstallmentPlan(
       statusUpdatedAt: updated.statusUpdatedAt.toISOString(),
     });
   } catch (error) {
-    console.error('[finance][createInstallmentPlan]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.create_installment_plan.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }

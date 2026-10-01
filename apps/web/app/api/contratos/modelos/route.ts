@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { getSessionUser } from '@/lib/auth/session';
@@ -6,7 +7,10 @@ import {
   listContratoModelosResultDTOSchema,
 } from '@/features/contracts/dtos';
 import { mapContratoModeloRecordToDTO } from '@/features/contracts/mappers';
-import { createContractModelForTenant, listContractModelsForTenant } from '@/src/server/contracts/contract-model.service';
+import {
+  createContractModelForTenant,
+  listContractModelsForTenant,
+} from '@/src/server/contracts/contract-model.service';
 
 export async function GET(request: NextRequest) {
   const user = await getSessionUser();
@@ -17,10 +21,22 @@ export async function GET(request: NextRequest) {
       contaId: user.contaId,
       status: status === 'ATIVO' || status === 'INATIVO' ? status : undefined,
     });
-    return NextResponse.json(listContratoModelosResultDTOSchema.parse(models.map(mapContratoModeloRecordToDTO)));
+    return NextResponse.json(
+      listContratoModelosResultDTOSchema.parse(models.map(mapContratoModeloRecordToDTO)),
+    );
   } catch (error) {
-    console.error('[MODELOS_GET]', error);
-    return NextResponse.json({ error: { message: 'Erro ao listar modelos de contrato' } }, { status: 500 });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/contratos/modelos',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
+    return NextResponse.json(
+      { error: { message: 'Erro ao listar modelos de contrato' } },
+      { status: 500 },
+    );
   }
 }
 
@@ -31,17 +47,38 @@ export async function POST(request: NextRequest) {
     const body = createContratoModeloInputDTOSchema.parse(await request.json());
     const result = await createContractModelForTenant({ contaId: user.contaId, body });
     if (result.status === 'INVALID_TEMPLATE') {
-      return NextResponse.json({ error: { message: 'Template de consentimento inválido' } }, { status: 400 });
+      return NextResponse.json(
+        { error: { message: 'Template de consentimento inválido' } },
+        { status: 400 },
+      );
     }
     if (result.status === 'DUPLICATE_NAME') {
-      return NextResponse.json({ error: { message: 'Já existe um modelo ativo com esse nome' } }, { status: 409 });
+      return NextResponse.json(
+        { error: { message: 'Já existe um modelo ativo com esse nome' } },
+        { status: 409 },
+      );
     }
     return NextResponse.json(mapContratoModeloRecordToDTO(result.modelo), { status: 201 });
   } catch (error) {
     if (error instanceof ZodError) {
-      return NextResponse.json({ error: { message: error.errors[0]?.message ?? 'Dados inválidos', details: error.errors } }, { status: 400 });
+      return NextResponse.json(
+        {
+          error: { message: error.errors[0]?.message ?? 'Dados inválidos', details: error.errors },
+        },
+        { status: 400 },
+      );
     }
-    console.error('[MODELOS_POST]', error);
-    return NextResponse.json({ error: { message: 'Erro ao criar modelo de contrato' } }, { status: 500 });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/contratos/modelos',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
+    return NextResponse.json(
+      { error: { message: 'Erro ao criar modelo de contrato' } },
+      { status: 500 },
+    );
   }
 }

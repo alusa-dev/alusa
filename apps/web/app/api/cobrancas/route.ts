@@ -24,6 +24,7 @@ import {
 } from '@/features/finance/operations/charges/mappers';
 import { ZodError } from 'zod';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 /**
  * GET /api/cobrancas
  *
@@ -68,13 +69,13 @@ export async function GET(req: NextRequest) {
       }),
     );
   } catch (error) {
-    console.error('[API Cobranças] Erro ao listar cobranças:', error);
     if (error instanceof ZodError) {
       return NextResponse.json(
         { error: 'Parâmetros de consulta inválidos', code: 'ERRO_VALIDACAO' },
         { status: 422 },
       );
     }
+    logFinanceApiError('/api/cobrancas', error);
     return NextResponse.json(
       { error: 'Erro ao listar cobranças', code: 'ERRO_LISTAR_COBRANCAS' },
       { status: 500 },
@@ -121,9 +122,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    void invalidateChargesCache(auth.contaId, 'cobranca-created').catch((cacheError) => {
-      console.warn('[cache][invalidate] cobranca-created failed', cacheError);
-    });
+    void invalidateChargesCache(auth.contaId, 'cobranca-created').catch(() => undefined);
 
     return apiJsonCreated(
       createLegacyCobrancaResultDTOSchema.parse(
@@ -134,13 +133,13 @@ export async function POST(req: NextRequest) {
       ),
     );
   } catch (error) {
-    console.error('[API Cobranças] Erro ao criar cobrança:', error);
     if (error instanceof ZodError) {
       return NextResponse.json(
         { error: 'Dados da cobrança inválidos', code: 'ERRO_VALIDACAO' },
         { status: 422 },
       );
     }
+    logFinanceApiError('/api/cobrancas', error);
     return NextResponse.json(
       { error: 'Erro ao criar cobrança', code: 'ERRO_CRIAR_COBRANCA' },
       { status: 500 },

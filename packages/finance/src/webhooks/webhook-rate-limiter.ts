@@ -6,6 +6,7 @@
  */
 
 import { checkAsaasDistributedRateLimit } from '@alusa/asaas';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 
 interface WindowEntry {
   count: number;
@@ -65,8 +66,11 @@ export class WebhookRateLimiter {
       });
       if (distributed) return { ...distributed, degraded: false };
     } catch (error) {
-      console.warn('[webhook-rate-limiter] Redis indisponível; fallback local ativado', {
-        error: error instanceof Error ? error.message : 'unknown',
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.webhook.rate_limit.redis_fallback',
+        error,
+        throttleMs: 60_000,
       });
     }
 

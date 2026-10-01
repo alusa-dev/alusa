@@ -9,6 +9,12 @@
       "@/*": [
         "./src/*"
       ],
+      "@alusa/observability": [
+        "../../packages/observability/src/index.ts"
+      ],
+      "@alusa/observability/*": [
+        "../../packages/observability/src/*"
+      ],
       "@/assets/*": [
         "./assets/*"
       ]

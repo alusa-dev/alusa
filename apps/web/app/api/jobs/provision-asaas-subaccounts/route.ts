@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
@@ -12,6 +13,7 @@ function jsonError(status: number, code: string, message: string) {
 }
 
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -31,7 +33,7 @@ async function run(req: Request) {
 
     return NextResponse.json({ success: true, processed: result });
   } catch (error) {
-    console.error('[Job Provision Asaas Subaccounts] Erro:', error);
+    logJobFailure('provision-asaas-subaccounts', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível provisionar as subcontas financeiras.');
   }
 }

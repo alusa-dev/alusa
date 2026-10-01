@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
@@ -15,7 +16,10 @@ function json(status: number, body: unknown) {
 export async function POST(request: Request) {
   try {
     const auth = await resolveTenantSession();
-    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.ok)
+      return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, {
+        error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
+      });
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
@@ -34,15 +38,21 @@ export async function POST(request: Request) {
     });
 
     if (!result.success) {
-      return json(
-        result.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' ? 503 : 500,
-        { error: result.error },
-      );
+      return json(result.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' ? 503 : 500, {
+        error: result.error,
+      });
     }
 
     return json(200, { data: result.data });
   } catch (error) {
-    console.error('[Config NotaFiscal PortalNacional][POST]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.invoice_config.request.failed',
+      route: '/api/configuracoes/notafiscal/portal-nacional',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

@@ -1,6 +1,7 @@
 'use client';
 import React, { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -169,7 +170,7 @@ export default function ConfigUsuariosPage() {
           setAlunosList(data.alunos || []);
         }
       } catch (error) {
-        console.error('Erro ao carregar alunos:', error);
+        logClientOperationalEvent('admin.users.students.load_failed', error);
         setAlunosList([]);
       } finally {
         setLoadingAlunos(false);

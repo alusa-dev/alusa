@@ -12,6 +12,7 @@
  */
 
 import { globalAsaasHooks } from './asaas-hooks';
+import { logAsaasOperationalEvent } from './operational-log';
 
 export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 
@@ -118,11 +119,9 @@ export class CircuitBreaker {
       entry.state = 'OPEN';
       entry.openedAt = Date.now();
 
-      console.warn('[circuit-breaker] Circuito aberto', {
-        key,
-        failures: entry.failures,
-        threshold: this.config.failureThreshold,
-        cooldownMs: this.config.cooldownMs,
+      logAsaasOperationalEvent({
+        eventName: 'asaas.circuit.opened',
+        severity: 'warn',
       });
 
       globalAsaasHooks.emitCircuitOpen({

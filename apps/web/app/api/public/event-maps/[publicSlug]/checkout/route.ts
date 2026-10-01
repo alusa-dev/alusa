@@ -8,6 +8,7 @@ import { ensureEventAsaasPaymentProviderRegistered } from '@/src/server/events/r
 import { getPublicEventMapOrderCustomerContext } from '@/src/server/events/public-order.service';
 import { handleEventsRouteError } from '../../../../events/_helpers';
 import { enforcePublicEventMapRateLimit } from '@/src/server/events/public-event-map-rate-limit';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -45,13 +46,13 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         { email: true, sms: false, whatsapp: true },
       );
       if (!notificationSync.success || notificationSync.warnings.length > 0) {
-        console.warn('[event-map] Preferências de notificação do ticket aplicadas parcialmente', {
-          orderId: data.orderId,
-          warnings: notificationSync.warnings.map((warning) => ({
-            event: warning.event,
-            channel: warning.channel,
-            code: warning.code,
-          })),
+        logApiOperationalEvent({
+          severity: 'warn',
+          eventName: 'api.public_event_map.notification_sync.degraded',
+          route: '/api/public/event-maps/[publicSlug]/checkout',
+          method: 'POST',
+          requestId: getRequestId(request),
+          itemCount: notificationSync.warnings.length,
         });
       }
     }

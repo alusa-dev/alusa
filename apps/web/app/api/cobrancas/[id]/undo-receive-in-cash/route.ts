@@ -3,6 +3,7 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { cobrancaRouteParamsDTOSchema } from '@/features/finance/operations/charges/dtos';
 import { executeUndoCashPayment } from '@/src/server/finance/undo-cash-payment.service';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -22,7 +23,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     });
     return NextResponse.json(response.body, { status: response.status });
   } catch (error) {
-    console.error('[API][cobrancas/undo-receive-in-cash] Erro:', error);
+    logFinanceApiError('/api/cobrancas/[id]/undo-receive-in-cash', error);
     return NextResponse.json(
       { error: 'Erro ao desfazer recebimento em dinheiro' },
       { status: 500 },

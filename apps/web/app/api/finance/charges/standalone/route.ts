@@ -12,6 +12,7 @@ import {
   parseStandaloneChargeListQuery,
 } from '@/src/server/finance/standalone-charges-http.service';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
@@ -63,7 +64,7 @@ export async function GET(req: NextRequest) {
       totalPages: result.totalPages,
     });
   } catch (e) {
-    console.error('[Finance Charges Standalone][GET]', e);
+    logFinanceApiError('/api/finance/charges/standalone', e);
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível criar a cobrança avulsa.' });
   }
 }
@@ -96,10 +97,6 @@ export async function POST(req: NextRequest) {
     const { payload, value } = parseStandaloneChargePayload(body);
     const headerIdempotencyKey = req.headers.get('x-idempotency-key')?.trim() || undefined;
 
-    if (payload.amount != null && payload.value == null) {
-      console.warn('[finance][charges/standalone] payload legado "amount" utilizado; prefira "value"');
-    }
-
     const result = await createStandaloneCharge({
       ...buildStandaloneChargeInput({
         payload,
@@ -121,7 +118,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    console.error('[Finance Charges Standalone][POST]', error);
+    logFinanceApiError('/api/finance/charges/standalone', error);
     return json(500, {
       error: 'ERRO_INTERNO',
       message: 'Não foi possível carregar a cobrança.',

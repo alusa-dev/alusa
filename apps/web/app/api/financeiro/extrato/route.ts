@@ -1,3 +1,4 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest, NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 
@@ -48,7 +49,7 @@ export async function GET(req: NextRequest) {
     if (error instanceof ZodError) {
       return json(422, { error: 'QUERY_INVALIDA', details: error.flatten() });
     }
-    console.error('[API extrato][GET]', error);
+    logFinanceApiError('/api/financeiro/extrato', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

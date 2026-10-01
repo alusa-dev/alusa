@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
@@ -25,7 +26,14 @@ export async function GET(request: Request) {
     return response(await listMobileResponsibles({ userId: actor.userId, contaId: actor.contaId, query: parsed.data.q, status: parsed.data.status }));
   } catch (error) {
     if (error instanceof MobileResponsibleUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
-    console.error('[mobile-responsibles][list]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/responsibles',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível carregar os responsáveis.' } }, 500);
   }
 }

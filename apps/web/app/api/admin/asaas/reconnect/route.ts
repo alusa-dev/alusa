@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { ZodError } from 'zod';
@@ -40,7 +41,14 @@ export async function POST(request: Request) {
     if (e instanceof ZodError) {
       return json(400, { success: false, summary: 'API key é obrigatória.' });
     }
-    console.error('[API admin/asaas/reconnect][POST] Erro', e);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/asaas/reconnect',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error: e,
+    });
     return json(500, {
       success: false,
       summary: 'Erro interno ao reconectar conta Asaas.',

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { logPersonDataOperationalEvent } from '@/lib/observability/api-logger';
 import type { Prisma } from '@prisma/client';
 
 import { responsavelRouteParamsDTOSchema } from '@/features/responsibles/dtos';
@@ -639,7 +640,7 @@ export async function getResponsavelOverviewRoute(
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
-    console.error('[GET /api/responsaveis/[id]/overview]', error);
+    logPersonDataOperationalEvent('api.responsibles.overview.failed', error);
     return NextResponse.json(
       { error: { message: error instanceof Error ? error.message : 'Erro ao carregar visão 360.' } },
       { status: 500 },

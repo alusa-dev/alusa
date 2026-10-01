@@ -14,14 +14,30 @@ describe('sendTransactionalEmail', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     const { sendTransactionalEmail } = await import('@/lib/email/transactional-email');
 
+    const sensitiveRecipient = 'e2e-person@example.com';
+    const sensitiveSubject = 'Reset with secret token';
+    const sensitiveUrl = 'https://alusa.app/reset?token=secret-token-value';
+    const sensitiveKey = 'reset-password/secret-idempotency-value';
     await expect(sendTransactionalEmail({
-      to: 'e2e@example.com',
+      to: sensitiveRecipient,
       category: 'verify_email',
-      idempotencyKey: 'e2e-email-1',
-      subject: 'Teste',
+      idempotencyKey: sensitiveKey,
+      subject: sensitiveSubject,
+      actionUrl: sensitiveUrl,
+      html: 'payload-secret',
     })).resolves.toEqual({ delivery: 'logged', emailId: null });
 
-    expect(info).toHaveBeenCalledWith('[EMAIL][DEV_FALLBACK]');
+    expect(info).toHaveBeenCalledTimes(1);
+    const line = info.mock.calls[0]?.[0];
+    expect(typeof line).toBe('string');
+    const event = JSON.parse(line as string) as { 'event.name': string; attributes: Record<string, unknown> };
+    expect(event['event.name']).toBe('email.delivery.fallback');
+    expect(event.attributes).toEqual({ category: 'verify_email', deliveryCount: 1 });
+    expect(line).not.toContain(sensitiveRecipient);
+    expect(line).not.toContain(sensitiveSubject);
+    expect(line).not.toContain(sensitiveUrl);
+    expect(line).not.toContain(sensitiveKey);
+    expect(line).not.toContain('payload-secret');
   });
 
   it('não permite fallback silencioso em produção real', async () => {

@@ -60,6 +60,17 @@ describe('QuotaTracker', () => {
     });
   });
 
+  it('registra aviso agregado sem expor a chave de conta', () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const largerTracker = new QuotaTracker(500);
+    for (let index = 0; index < 400; index += 1) largerTracker.increment('tenant-secret-account-key');
+
+    expect(warning).toHaveBeenCalledTimes(1);
+    const serialized = JSON.stringify(warning.mock.calls);
+    expect(serialized).toContain('asaas.quota.near_limit');
+    expect(serialized).not.toContain('tenant-secret-account-key');
+  });
+
   describe('reserva distribuída em produção', () => {
     it('falha fechado sem Redis configurado', async () => {
       vi.stubEnv('NODE_ENV', 'production');

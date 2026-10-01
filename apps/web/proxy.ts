@@ -13,6 +13,7 @@ import {
   methodNotAllowedResponse,
 } from '@/lib/security/http-method-observability';
 import { enforceApiRateLimit } from '@/lib/security/api-rate-limit';
+import { getRequestId } from '@/lib/observability/api-logger';
 
 type WizardSnapshot = { completedAt?: string | null; step?: number | null };
 type WizardResponse = { data?: { wizard?: WizardSnapshot } };
@@ -69,14 +70,6 @@ function shouldValidateApiOrigin(pathname: string, method: string): boolean {
   }
 
   return !originCheckExemptApiPrefixes.some((prefix) => pathname.startsWith(prefix));
-}
-
-function logMiddlewareRedirect(pathname: string, reason: string, status: number) {
-  if (process.env.NODE_ENV === 'production' && process.env.PERF_LOGS !== 'true') {
-    return;
-  }
-
-  console.info('[middleware:redirect]', { pathname, reason, status });
 }
 
 const protectedPagePrefixes = [
@@ -161,7 +154,6 @@ function redirectToSignIn(req: NextRequest, params: Record<string, string>) {
     signInUrl.searchParams.set(key, value);
   }
 
-  logMiddlewareRedirect(req.nextUrl.pathname, 'unauthenticated_page', 307);
   return NextResponse.redirect(signInUrl);
 }
 
@@ -302,11 +294,6 @@ async function handleApiRequest(req: NextRequest): Promise<NextResponse | null> 
   const capability = platformBillingCapabilityForMutation(pathname, req.method);
   if (capability) {
     if (isLocalPlatformBillingBypass(req)) {
-      console.info('[middleware:billing]', {
-        pathname,
-        capability,
-        mode: 'local_bypass',
-      });
       return null;
     }
 
@@ -374,7 +361,6 @@ async function handleProtectedPage(req: NextRequest): Promise<NextResponse> {
   if (!isEmailVerified) {
     const confirmEmailUrl = new URL('/auth/confirm-email', req.nextUrl.origin);
     confirmEmailUrl.searchParams.set('callbackUrl', `${req.nextUrl.pathname}${req.nextUrl.search}`);
-    logMiddlewareRedirect(pathname, 'email_unverified', 307);
     return NextResponse.redirect(confirmEmailUrl);
   }
 
@@ -389,7 +375,6 @@ async function handleProtectedPage(req: NextRequest): Promise<NextResponse> {
 
   if (isOnboardingPath) {
     if (!isExternalFinanceMode && isExternalOnboardingPath) {
-      logMiddlewareRedirect(pathname, 'external_onboarding_mismatch', 307);
       return NextResponse.redirect(new URL('/finance/wizard', req.nextUrl.origin));
     }
 
@@ -398,7 +383,6 @@ async function handleProtectedPage(req: NextRequest): Promise<NextResponse> {
 
   const userRole = (token as { role?: string } | null)?.role;
   if (isFinanceiroPagePath(pathname) && !canAccessFinanceiroPages(userRole)) {
-    logMiddlewareRedirect(pathname, 'financeiro_role_forbidden', 307);
     return NextResponse.redirect(new URL('/dashboard', req.nextUrl.origin));
   }
 
@@ -410,7 +394,6 @@ async function handleProtectedPage(req: NextRequest): Promise<NextResponse> {
 
   if (isExternalFinanceMode) {
     if (isWhitelabelTreasuryPath(pathname)) {
-      logMiddlewareRedirect(pathname, 'external_finance_treasury_block', 307);
       return NextResponse.redirect(new URL('/dashboard', req.nextUrl.origin));
     }
 
@@ -434,7 +417,6 @@ async function handleProtectedPage(req: NextRequest): Promise<NextResponse> {
       const step = typeof wizard?.step === 'number' ? wizard.step : null;
       const isCompleted = Boolean(wizard?.completedAt) || step === 6;
       if (!isCompleted) {
-        logMiddlewareRedirect(pathname, 'finance_wizard_incomplete', 307);
         return NextResponse.redirect(new URL('/finance/wizard', req.nextUrl.origin));
       }
     }
@@ -460,7 +442,6 @@ export default async function proxy(req: NextRequest) {
   const host = req.headers.get('host')?.split(':')[0]?.toLowerCase();
   if (host === 'www.alusa.app') {
     const apexUrl = new URL(req.nextUrl.pathname + req.nextUrl.search, 'https://alusa.app');
-    logMiddlewareRedirect(req.nextUrl.pathname, 'www_to_apex', 308);
     return NextResponse.redirect(apexUrl, 308);
   }
 
@@ -468,17 +449,22 @@ export default async function proxy(req: NextRequest) {
   if (legacyPath) {
     const destination = req.nextUrl.clone();
     destination.pathname = legacyPath;
-    logMiddlewareRedirect(pathname, 'legacy_route_migration', 308);
     return NextResponse.redirect(destination, 308);
   }
 
   if (pathname.startsWith('/api/')) {
     const apiResponse = await handleApiRequest(req);
     if (apiResponse) {
+      apiResponse.headers.set('x-request-id', getRequestId(req));
       return apiResponse;
     }
 
-    return NextResponse.next();
+    const requestId = getRequestId(req);
+    const requestHeaders = new Headers(req.headers);
+    requestHeaders.set('x-request-id', requestId);
+    const response = NextResponse.next({ request: { headers: requestHeaders } });
+    response.headers.set('x-request-id', requestId);
+    return response;
   }
 
   if (!isProtectedPagePath(pathname)) {

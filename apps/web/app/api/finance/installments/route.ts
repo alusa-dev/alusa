@@ -14,6 +14,7 @@ import {
   mapListInstallmentPlansOutputToDTO,
 } from '@alusa/finance';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function json(status: number, body: unknown) {
@@ -79,7 +80,7 @@ export async function POST(req: NextRequest) {
     const dto = mapCreateStandaloneInstallmentOutputToDTO(result.data, parsed.data);
     return json(200, { data: dto });
   } catch (error) {
-    console.error('[Finance Installments][POST]', error);
+    logFinanceApiError('/api/finance/installments', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }
@@ -117,7 +118,7 @@ export async function GET(req: NextRequest) {
 
     return json(200, { data: dto });
   } catch (error) {
-    console.error('[Finance Installments][GET]', error);
+    logFinanceApiError('/api/finance/installments', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

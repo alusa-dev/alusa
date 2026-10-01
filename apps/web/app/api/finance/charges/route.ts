@@ -9,6 +9,7 @@ import {
   platformBillingAccessResponse,
 } from '@/src/server/platform-billing/capacity';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
     const data = await listCharges({ contaId: user.contaId, limit, offset });
     return json(200, { data });
   } catch (error) {
-    console.error('[Finance Charges][GET]', error);
+    logFinanceApiError('/api/finance/charges', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }
@@ -118,7 +119,7 @@ export async function POST(req: NextRequest) {
       return json(422, { error: 'PAYLOAD_INVALIDO', details: error.flatten() });
     }
 
-    console.error('[Finance Charges][POST]', error);
+    logFinanceApiError('/api/finance/charges', error);
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível criar a cobrança.' });
   }
 }

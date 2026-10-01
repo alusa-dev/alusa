@@ -6,6 +6,7 @@ import { NotificationCategory, NotificationSeverity, NotificationType } from '@p
 import { createNotification } from '@alusa/lib/services/notifications.service';
 
 import { auditLogService } from '../foundation/audit-log.service';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import type { WithdrawDestination } from '../use-cases/request-withdraw';
 import { mergePixRecipientMetadata, parseWithdrawDestination } from '../use-cases/transfers/recipient-utils';
 import { resolveTransferOperationFromAsaas } from '../use-cases/transfers/asaas-transfer-payload';
@@ -251,10 +252,10 @@ async function fetchOfficialTransfer(contaId: string, transferId: string): Promi
       id: transferId,
     });
   } catch (error) {
-    console.warn('[finance][handleTransferWebhook][official-transfer-fetch-failed]', {
-      contaId,
-      transferId,
-      error: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.webhook.transfer.official_fetch.failed',
+      error,
     });
     return null;
   }
@@ -316,26 +317,17 @@ export async function handleTransferWebhook(
 
     // Log proeminente para falhas — visibilidade operacional imediata
     if (nextStatus === 'FAILED') {
-      const failReason = officialTransfer?.failReason ?? payload.transfer.failReason;
-      console.error('[finance][handleTransferWebhook][transfer-failed]', {
-        contaId,
-        transferRequestId: transferRequest.id,
-        asaasTransferId: payload.transfer.id,
-        event: payload.event,
-        failReason: failReason ?? 'unknown',
-        rawAsaasStatus: effectiveTransfer.status,
+      logFinanceOperationalEvent({
+        severity: 'error',
+        eventName: 'finance.webhook.transfer.failed',
       });
     }
 
     // State regression guard: não permitir transições inválidas
     if (nextStatus && !isAllowedTransition(transferRequest.status as TransferStatus, nextStatus)) {
-      console.warn('[finance][handleTransferWebhook][state-regression-blocked]', {
-        contaId,
-        transferRequestId: transferRequest.id,
-        asaasTransferId: payload.transfer.id,
-        event: payload.event,
-        currentStatus: transferRequest.status,
-        attemptedStatus: nextStatus,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.webhook.transfer.state_regression_blocked',
       });
 
       await auditLogService.record({
@@ -545,7 +537,7 @@ export async function handleTransferWebhook(
             effectiveDate: updates.effectiveDate ?? null,
           },
         }).catch((err: unknown) => {
-          console.warn('[finance][handleTransferWebhook][notify-done-failed]', { contaId, transferId: transferRequest.id, err });
+          logFinanceOperationalEvent({ severity: 'warn', eventName: 'finance.webhook.transfer.notification.failed', error: err });
         });
       }
 
@@ -577,7 +569,7 @@ export async function handleTransferWebhook(
             failReason,
           },
         }).catch((err: unknown) => {
-          console.warn('[finance][handleTransferWebhook][notify-failed-failed]', { contaId, transferId: transferRequest.id, err });
+          logFinanceOperationalEvent({ severity: 'warn', eventName: 'finance.webhook.transfer.notification.failed', error: err });
         });
       }
 
@@ -606,14 +598,14 @@ export async function handleTransferWebhook(
             externalReference: transferRequest.externalReference,
           },
         }).catch((err: unknown) => {
-          console.warn('[finance][handleTransferWebhook][notify-cancelled-failed]', { contaId, transferId: transferRequest.id, err });
+          logFinanceOperationalEvent({ severity: 'warn', eventName: 'finance.webhook.transfer.notification.failed', error: err });
         });
       }
     }
 
     return { success: true };
   } catch (error) {
-    console.error('[finance][handleTransferWebhook]', error);
+    logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.webhook.transfer.processing.failed', error });
     return { success: false, error: error instanceof Error ? error.message : 'Erro desconhecido' };
   }
 }

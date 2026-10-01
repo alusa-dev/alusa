@@ -1,3 +1,4 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { getAutomaticAnticipationMenuVisibility } from '@alusa/finance';
 
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
@@ -50,7 +51,7 @@ export async function GET() {
       'x-alusa-cache': 'MISS',
     });
   } catch (error) {
-    console.error('[API antecipacoes visibilidade][GET]', error);
+    logFinanceApiError('/api/financeiro/antecipacoes/visibilidade', error);
     return json(500, {
       data: {
         showAutomaticAnticipationItem: true,

@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
@@ -17,18 +18,12 @@ export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.contaId) {
-      return NextResponse.json(
-        { success: false, error: 'Não autorizado' },
-        { status: 401 }
-      );
+      return NextResponse.json({ success: false, error: 'Não autorizado' }, { status: 401 });
     }
 
     const isAdmin = session.user.role === 'ADMIN' || session.user.role === 'SUPER_ADMIN';
     if (!isAdmin) {
-      return NextResponse.json(
-        { success: false, error: 'Acesso negado' },
-        { status: 403 }
-      );
+      return NextResponse.json({ success: false, error: 'Acesso negado' }, { status: 403 });
     }
 
     const contaId = session.user.contaId;
@@ -56,10 +51,14 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('[admin/webhooks/metrics] Erro:', error);
-    return NextResponse.json(
-      { success: false, error: 'Erro interno' },
-      { status: 500 }
-    );
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/webhooks/metrics',
+      method: 'GET',
+      requestId: getRequestId(req),
+      error,
+    });
+    return NextResponse.json({ success: false, error: 'Erro interno' }, { status: 500 });
   }
 }

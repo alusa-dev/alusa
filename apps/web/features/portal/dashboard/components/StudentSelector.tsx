@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { User, ChevronDown } from '@/components/icons/icons';
 import type { PortalResponsavelAlunoDTO } from '@/features/portal/dtos';
 import { DASHBOARD_SECTION_CARD_CLASSNAME } from '@/app/(app)/dashboard/components/utils';
@@ -31,7 +32,7 @@ export function StudentSelector({ onAlunoSelect }: StudentSelectorProps) {
           }
         }
       } catch (error) {
-        console.error('Erro ao carregar alunos:', error);
+        logClientOperationalEvent('portal.student_selector.load_failed', error);
       } finally {
         setLoading(false);
       }

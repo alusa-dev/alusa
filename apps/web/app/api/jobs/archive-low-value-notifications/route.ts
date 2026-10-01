@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { archiveLowValueNotifications } from '@alusa/lib/notifications/retention';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
@@ -22,6 +23,7 @@ function clamp(value: string | null, fallback: number, max: number) {
  * operacional atual. O histórico de auditoria permanece preservado.
  */
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -42,7 +44,7 @@ export async function POST(req: Request) {
       cutoff: result.cutoff.toISOString(),
     });
   } catch (error) {
-    console.error('[Job Archive Low Value Notifications] Erro:', error);
+    logJobFailure('archive-low-value-notifications', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível arquivar as notificações antigas.');
   }
 }

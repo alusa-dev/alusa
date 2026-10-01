@@ -13,6 +13,10 @@ import {
 import type { PlatformBillingEnvironment } from '@alusa/platform-billing';
 import { resolvePlatformBillingEnvironment } from './platform-billing-server';
 import { notifyPlatformBillingEvent } from './platform-billing-notifications';
+import {
+  logApiOperationalEvent,
+  type ApiOperationalEventName,
+} from '@/lib/observability/api-logger';
 
 type ClaimedStripeWebhookEvent = {
   id: string;
@@ -109,29 +113,14 @@ export async function drainStripeWebhookWorker(input: {
           eventId: event.eventId,
           eventType: event.eventType,
         }).catch((notificationError) => {
-          logStripeWebhookWorker('webhook_notification_failed', {
-            workerId,
-            eventId: event.eventId,
-            eventType: event.eventType,
-            contaId: processed.contaId,
-            error: notificationError instanceof Error
-              ? notificationError.message.slice(0, 300)
-              : String(notificationError).slice(0, 300),
-          });
+          logStripeWebhookWorker('webhook_notification_failed', { error: notificationError });
         });
       }
-
-      logStripeWebhookWorker('webhook_processed', {
-        workerId,
-        eventId: event.eventId,
-        eventType: event.eventType,
-        contaId: processed.contaId,
-      });
     } catch (error) {
       const failureKind = classifyPlatformBillingWebhookError(error);
       const attempts = event.attempts;
-      const exhausted = failureKind === 'PERMANENT' ||
-        hasExhaustedPlatformBillingWebhookAttempts({ attempts });
+      const exhausted =
+        failureKind === 'PERMANENT' || hasExhaustedPlatformBillingWebhookAttempts({ attempts });
       const nextAttemptAt = exhausted
         ? undefined
         : computePlatformBillingWebhookNextAttemptAt({ attempts });
@@ -153,13 +142,7 @@ export async function drainStripeWebhookWorker(input: {
       }
 
       logStripeWebhookWorker(exhausted ? 'webhook_exhausted' : 'webhook_retry_scheduled', {
-        workerId,
-        eventId: event.eventId,
-        eventType: event.eventType,
-        contaId: event.contaId,
-        attempts,
-        failureKind,
-        errorCode: sanitizedError.code,
+        error,
       });
     }
   }
@@ -196,9 +179,13 @@ export async function listStripeWebhookEvents(
   });
 }
 
-function orderStripeWebhookEventsForProcessing(events: ClaimedStripeWebhookEvent[]): ClaimedStripeWebhookEvent[] {
+function orderStripeWebhookEventsForProcessing(
+  events: ClaimedStripeWebhookEvent[],
+): ClaimedStripeWebhookEvent[] {
   return [...events].sort((left, right) => {
-    const priorityDiff = getStripeWebhookEventPriority(left.eventType) - getStripeWebhookEventPriority(right.eventType);
+    const priorityDiff =
+      getStripeWebhookEventPriority(left.eventType) -
+      getStripeWebhookEventPriority(right.eventType);
     if (priorityDiff !== 0) return priorityDiff;
     return left.eventId.localeCompare(right.eventId);
   });
@@ -276,11 +263,7 @@ export async function replayStripeWebhookEvents(input: {
     });
   }
 
-  logStripeWebhookWorker('webhook_replay_requested', {
-    actorUserId: input.actorUserId,
-    reason: input.reason,
-    count: updated.count,
-  });
+  logStripeWebhookWorker('webhook_replay_requested', { count: updated.count });
 
   return { replayed: updated.count };
 }
@@ -366,9 +349,35 @@ function sanitizeWebhookWorkerError(error: unknown): { code: string; message: st
   };
 }
 
-function logStripeWebhookWorker(event: string, metadata: Record<string, unknown>): void {
-  console.info('[platform-billing][stripe-webhook-worker]', {
-    event,
-    ...metadata,
+type StripeWebhookWorkerLogEvent =
+  | 'webhook_notification_failed'
+  | 'webhook_exhausted'
+  | 'webhook_retry_scheduled'
+  | 'webhook_replay_requested';
+
+const STRIPE_WEBHOOK_WORKER_EVENT_NAMES: Record<
+  StripeWebhookWorkerLogEvent,
+  ApiOperationalEventName
+> = {
+  webhook_notification_failed: 'api.platform_billing.stripe_webhook.worker.notification_failed',
+  webhook_exhausted: 'api.platform_billing.stripe_webhook.worker.exhausted',
+  webhook_retry_scheduled: 'api.platform_billing.stripe_webhook.worker.retry_scheduled',
+  webhook_replay_requested: 'api.platform_billing.stripe_webhook.worker.replay_requested',
+};
+
+function logStripeWebhookWorker(
+  event: StripeWebhookWorkerLogEvent,
+  fields: { error?: unknown; count?: number },
+): void {
+  const eventName = STRIPE_WEBHOOK_WORKER_EVENT_NAMES[event];
+
+  logApiOperationalEvent({
+    severity: event === 'webhook_replay_requested' ? 'info' : 'warn',
+    eventName,
+    route: '/api/webhooks/stripe',
+    method: 'WORKER',
+    requestId: randomUUID(),
+    error: fields.error,
+    replayedCount: event === 'webhook_replay_requested' ? fields.count : undefined,
   });
 }

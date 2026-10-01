@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
@@ -219,10 +220,11 @@ export async function cancelChargeInvoice(
       contaId: input.contaId,
       invoiceId: invoice.id,
     }).catch((error: unknown) => {
-      console.warn('[finance][cancelChargeInvoice] pre-cancel sync failed', {
-        contaId: input.contaId,
-        invoiceId: invoice?.id,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.cancel_charge_invoice.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     });
 
@@ -251,9 +253,11 @@ export async function cancelChargeInvoice(
         return err('INVOICE_CANCELAMENTO_NAO_SUPORTADO');
       }
     } catch (error) {
-      console.warn('[finance][cancelChargeInvoice] falha ao verificar suporte municipal', {
-        contaId: input.contaId,
-        error,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.cancel_charge_invoice.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     }
 
@@ -261,9 +265,11 @@ export async function cancelChargeInvoice(
       if (input.actor.type !== 'SYSTEM' || !(error instanceof FinanceBlockedError)) {
         throw error;
       }
-      console.warn('[finance][cancelChargeInvoice] webhook guard bypassed for system cancel', {
-        contaId: input.contaId,
-        code: error.code,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.cancel_charge_invoice.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     });
 
@@ -337,10 +343,11 @@ export async function cancelChargeInvoice(
         revision: Date.now(),
       });
     } catch (error) {
-      console.warn('[finance][cancelChargeInvoice][realtime-publish-failed]', {
-        contaId: input.contaId,
-        invoiceId: updated.id,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.cancel_charge_invoice.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     }
 
@@ -363,11 +370,10 @@ export async function cancelChargeInvoice(
           message,
         });
 
-        console.warn('[finance][cancelChargeInvoice] invoice provider not found; review required', {
-          contaId: input.contaId,
-          invoiceId: invoice.id,
-          asaasInvoiceId: invoice.asaasInvoiceId,
-          status: invoice.status,
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.cancel_charge_invoice.degraded',
+          throttleMs: 60_000,
         });
 
         return err({
@@ -387,17 +393,17 @@ export async function cancelChargeInvoice(
 
         const refreshed = await resolveInvoice(input);
         if (refreshed && INVOICE_CANCEL_ALREADY_REQUESTED_STATUSES.has(refreshed.status)) {
-          console.info('[finance][cancelChargeInvoice] cancel already in progress (idempotent)', {
-            contaId: input.contaId,
-            invoiceId: refreshed.id,
-            status: refreshed.status,
-          });
           return ok(toCancelOutput(refreshed));
         }
       }
     }
 
-    console.error('[finance][cancelChargeInvoice]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.cancel_charge_invoice.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     if (error instanceof AsaasHttpError) {
       return err({
         kind: 'ASAAS',

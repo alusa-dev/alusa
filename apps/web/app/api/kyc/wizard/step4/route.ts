@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 
@@ -23,7 +24,8 @@ export async function POST(req: Request) {
   try {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || user.role.toUpperCase() !== 'ADMIN') return json(403, { error: 'SEM_PERMISSAO' });
+    if (!user.role || user.role.toUpperCase() !== 'ADMIN')
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const payload = wizardStep4Schema.parse(await req.json());
 
@@ -44,7 +46,14 @@ export async function POST(req: Request) {
       });
     }
 
-    console.error('[Finance Wizard][Step4][POST]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.kyc.request.failed',
+      route: '/api/kyc/wizard/step4',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

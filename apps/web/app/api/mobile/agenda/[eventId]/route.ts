@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 
 import { updateCalendarEventInputSchema } from '@/features/lessons/dtos';
@@ -51,7 +52,14 @@ export async function GET(request: Request, context: { params: Promise<{ eventId
     if (knownError) return response(knownError.body, knownError.status);
     const handled = authError(error);
     if (handled) return handled;
-    console.error('[mobile-agenda][detail]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/agenda/[eventId]',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível carregar o evento.' } }, 500);
   }
 }
@@ -74,7 +82,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ event
     if (knownError) return response(knownError.body, knownError.status);
     const handled = authError(error);
     if (handled) return handled;
-    console.error('[mobile-agenda][update]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/agenda/[eventId]',
+      method: 'PATCH',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'OPERATION_FAILED', message: 'Não foi possível atualizar o evento.' } }, 409);
   }
 }

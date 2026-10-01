@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
@@ -10,23 +11,38 @@ function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-export async function GET() {
+export async function GET(
+  request: Request = new Request('http://localhost/api/configuracoes/notafiscal/municipal-options'),
+) {
   try {
     const auth = await resolveTenantSession();
-    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
-    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    if (!auth.ok)
+      return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, {
+        error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
+      });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
     const result = await getFiscalMunicipalOptions({ contaId: auth.contaId });
     if (!result.success) {
-      return json(result.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' ? 503 : 500, { error: result.error });
+      return json(result.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' ? 503 : 500, {
+        error: result.error,
+      });
     }
 
     return json(200, { data: result.data });
   } catch (error) {
-    console.error('[Config NotaFiscal MunicipalOptions][GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.invoice_config.request.failed',
+      route: '/api/configuracoes/notafiscal/municipal-options',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

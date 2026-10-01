@@ -7,6 +7,7 @@ import {
   setAccountVerificationCache,
 } from '@/src/server/kyc/account-verification-cache';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -78,7 +79,7 @@ export async function GET(req: Request) {
     timer.end('GET /verification-status (cache miss)', { fresh });
     return json(200, body, { 'x-alusa-cache': 'MISS' });
   } catch (error) {
-    console.error('[Account Verification Status][GET]', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.account.verification_status.failed', route: '/api/account/verification-status', method: 'GET', requestId: getRequestId(req), error });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

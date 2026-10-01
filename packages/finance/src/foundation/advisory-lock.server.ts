@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '@alusa/database';
+import { logFinanceOperationalEvent } from './operational-log';
 
 /**
  * Converte uma string de lock em um bigint de 63 bits (signed) usando SHA-256.
@@ -58,20 +59,12 @@ export async function withAdvisoryLock<T>(
       const acquired = result[0]?.locked ?? false;
 
       if (!acquired) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.debug('[advisory-lock] Lock ocupado (não adquirido)', {
-            lockKeyPrefix: lockKey.split(':')[0],
-            ...options?.logContext,
-          });
-        }
-        return { acquired: false };
-      }
-
-      if (process.env.NODE_ENV !== 'production') {
-        console.debug('[advisory-lock] Lock adquirido (xact)', {
-          lockKeyPrefix: lockKey.split(':')[0],
-          ...options?.logContext,
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.foundation.advisory_lock.busy',
+          throttleMs: 60_000,
         });
+        return { acquired: false };
       }
 
       // Executar a função protegida
@@ -84,10 +77,11 @@ export async function withAdvisoryLock<T>(
       maxWait: 5000,
     });
   } catch (error) {
-    console.error('[advisory-lock] Erro na execução protegida pelo lock', {
-      lockKeyPrefix: lockKey.split(':')[0],
-      error: error instanceof Error ? error.message : String(error),
-      ...options?.logContext,
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.foundation.advisory_lock.failed',
+      error,
+      throttleMs: 60_000,
     });
     throw error;
   }
@@ -97,7 +91,11 @@ export async function withAdvisoryLock<T>(
 // Mantidas apenas para compatibilidade se algum código legado depender, mas
 // redirecionando para avisar ou no-op no futuro.
 export async function tryAcquireAdvisoryLock(): Promise<boolean> {
-  console.warn('[advisory-lock] tryAcquireAdvisoryLock é inseguro com pooling e foi desativado. Use withAdvisoryLock.');
+  logFinanceOperationalEvent({
+    severity: 'warn',
+    eventName: 'finance.foundation.advisory_lock.legacy_api.disabled',
+    throttleMs: 60_000,
+  });
   return false;
 }
 

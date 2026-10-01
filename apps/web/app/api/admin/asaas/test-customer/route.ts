@@ -1,9 +1,6 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  asaasCreateCustomer,
-  asaasGetCustomer,
-  asaasListCustomers,
-} from '@alusa/finance';
+import { asaasCreateCustomer, asaasGetCustomer, asaasListCustomers } from '@alusa/finance';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import {
   adminTestCustomerQueryDTOSchema,
@@ -102,7 +99,14 @@ export async function GET(request: NextRequest) {
       ),
     );
   } catch (error) {
-    console.error('[admin/asaas/test-customer] Erro:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/asaas/test-customer',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return NextResponse.json(
       adminTestCustomerResultDTOSchema.parse(
         mapAdminTestCustomerResultToDTO({

@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth-options';
 import { clearAuthCookies } from '@/lib/auth-cookies';
 import { revokeUserSessions } from '@/lib/auth-service';
 import { jsonNoStore } from '@/lib/http-security';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 function hasTrustedOrigin(req: Request): boolean {
   const origin = req.headers.get('origin');
@@ -51,9 +52,13 @@ export async function POST(req: Request) {
           metadata: { scope: 'all_sessions', channel: 'self_service' },
         });
       } catch (error) {
-        console.error('[auth][revoke-all-sessions][audit-failed]', {
-          userId,
-          error: error instanceof Error ? error.message : String(error),
+        logApiOperationalEvent({
+          severity: 'warn',
+          eventName: 'auth.sessions.audit_failed',
+          route: '/api/auth/revoke-all-sessions',
+          method: 'POST',
+          requestId: getRequestId(req),
+          error,
         });
       }
     }
@@ -61,7 +66,14 @@ export async function POST(req: Request) {
     const response = jsonNoStore({ ok: true });
     return clearAuthCookies(response, req.headers.get('cookie'));
   } catch (error) {
-    console.error('[auth][revoke-all-sessions]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'auth.sessions.revoke_failed',
+      route: '/api/auth/revoke-all-sessions',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     return jsonNoStore(
       { ok: false, error: 'Não foi possível revogar as sessões.' },
       { status: 503 },

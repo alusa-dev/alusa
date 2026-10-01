@@ -53,6 +53,7 @@
     "test:watch": "dotenv -e ../../.env.test -- node ../../scripts/validate-db-env.mjs test && dotenv -e ../../.env.test -- vitest"
   },
   "dependencies": {
+    "@alusa/observability": "workspace:*",
     "@alusa/asaas": "workspace:*",
     "@alusa/asaas-gateway": "workspace:*",
     "@alusa/database": "workspace:*",

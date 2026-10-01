@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 
 import { auditLogService, type AuditActorRef } from '../foundation/audit-log.service';
@@ -80,9 +81,9 @@ function dedupeKey(input: EnqueueAsaasNotificationSyncInput, channels: Notificat
 function isUniqueViolation(error: unknown): boolean {
   return Boolean(
     error &&
-      typeof error === 'object' &&
-      'code' in error &&
-      (error as { code?: string }).code === 'P2002',
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code?: string }).code === 'P2002',
   );
 }
 
@@ -116,11 +117,11 @@ export async function recordNotificationSyncAudit(input: RecordNotificationSyncA
   } catch (error) {
     // Auditoria nunca deve esconder o erro financeiro original, mas a falha
     // fica visível no log para não transformar o registro em best-effort mudo.
-    console.error('[notification-sync] Falha ao persistir auditoria', {
-      contaId: input.contaId,
-      customerId: input.asaasCustomerId,
-      status: input.status,
-      error: safeErrorMessage(error),
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.services.asaas_notification_sync_outbox_service.failed',
+      error: safeErrorMessage,
+      throttleMs: 60_000,
     });
     return null;
   }
@@ -257,7 +258,8 @@ export async function processAsaasNotificationSyncOutbox(
       // um canal que precisa receber PAYMENT_CREATED.
       if (channels.length > 0) {
         const enabled = await ensureCustomerNotificationsEnabled(row.contaId, row.asaasCustomerId);
-        if (!enabled.success) throw new Error(enabled.reason ?? 'Customer com notificações bloqueadas');
+        if (!enabled.success)
+          throw new Error(enabled.reason ?? 'Customer com notificações bloqueadas');
       }
 
       const sync = await syncCustomerNotificationsForUserSelection(

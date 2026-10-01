@@ -19,6 +19,7 @@
  */
 
 import { auditLogService } from '../foundation/audit-log.service';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 
 export type InternalTransferWebhookPayload = {
   event: string;
@@ -60,15 +61,13 @@ export async function handleInternalTransferWebhook(
       actor: { type: 'SYSTEM' },
     });
 
-    console.log('📥 INTERNAL_TRANSFER registrado (observabilidade):', {
-      event,
-      asaasTransferId: transfer.id,
-      value: transfer.value,
-    });
-
     return { success: true };
   } catch (error) {
-    console.error('[finance][handleInternalTransferWebhook]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.webhook.internal_transfer.processing.failed',
+      error,
+    });
     return { success: false, error: error instanceof Error ? error.message : 'Erro desconhecido' };
   }
 }

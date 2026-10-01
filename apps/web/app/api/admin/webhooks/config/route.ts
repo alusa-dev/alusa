@@ -1,9 +1,14 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { ZodError } from 'zod';
 
 import { authOptions } from '@/lib/auth-options';
-import { getWebhookConfigDriftStatus, recordFinanceAdminAction, repairWebhookConfigDrift } from '@alusa/finance';
+import {
+  getWebhookConfigDriftStatus,
+  recordFinanceAdminAction,
+  repairWebhookConfigDrift,
+} from '@alusa/finance';
 import { adminWebhookConfigRepairInputDTOSchema } from '@/features/system/dtos';
 
 async function requireAdminSession() {
@@ -25,7 +30,9 @@ async function requireAdminSession() {
   return { session };
 }
 
-export async function GET() {
+export async function GET(
+  req: Request = new Request('http://localhost/api/admin/webhooks/config'),
+) {
   try {
     const auth = await requireAdminSession();
     if ('error' in auth) return auth.error;
@@ -42,7 +49,14 @@ export async function GET() {
       data: drift,
     });
   } catch (error) {
-    console.error('[admin/webhooks/config] Erro ao consultar drift:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/webhooks/config',
+      method: 'GET',
+      requestId: getRequestId(req),
+      error,
+    });
     return NextResponse.json({ success: false, error: 'Erro interno' }, { status: 500 });
   }
 }
@@ -57,7 +71,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Não autorizado' }, { status: 401 });
     }
 
-    const { reason } = adminWebhookConfigRepairInputDTOSchema.parse(await req.json().catch(() => ({})));
+    const { reason } = adminWebhookConfigRepairInputDTOSchema.parse(
+      await req.json().catch(() => ({})),
+    );
 
     await recordFinanceAdminAction({
       contaId,
@@ -77,9 +93,19 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     if (error instanceof ZodError) {
-      return NextResponse.json({ success: false, error: 'Justificativa obrigatória' }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: 'Justificativa obrigatória' },
+        { status: 400 },
+      );
     }
-    console.error('[admin/webhooks/config] Erro ao reparar drift:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/webhooks/config',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     return NextResponse.json({ success: false, error: 'Erro interno' }, { status: 500 });
   }
 }

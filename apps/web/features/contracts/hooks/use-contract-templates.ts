@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { toast } from '@/components/ui/toast';
 import {
   getContractTemplates,
@@ -32,7 +33,7 @@ export function useContractTemplates(options: UseContractTemplatesOptions = {}) 
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erro ao carregar modelos';
       setError(message);
-      console.error('[useModelos] Erro:', err);
+      logClientOperationalEvent('contracts.templates.load_failed', err);
     } finally {
       setLoading(false);
     }

@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
 import { expireContratosResultDTOSchema } from '@/features/contracts/dtos';
@@ -13,10 +14,14 @@ export async function POST(_request: NextRequest) {
     const result = await expireContractSignatureLinks({ contaId: user.contaId, limit: 500 });
     return NextResponse.json(expireContratosResultDTOSchema.parse({ updated: result.atualizados }));
   } catch (error) {
-    console.error('[CONTRATOS_EXPIRE]', error);
-    return NextResponse.json(
-      { error: { message: 'Erro ao expirar contratos' } },
-      { status: 500 },
-    );
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/contratos/expire',
+      method: 'POST',
+      requestId: getRequestId(_request),
+      error,
+    });
+    return NextResponse.json({ error: { message: 'Erro ao expirar contratos' } }, { status: 500 });
   }
 }

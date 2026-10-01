@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma, loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
@@ -7,7 +8,13 @@ import crypto from 'crypto';
 
 import { createAsaasPayment } from './create-payment';
 import { ensureCustomer } from './ensure-customer';
-import { getBillingInfo, getPayment, getSubscription, listPayments, listSubscriptions } from './asaas-ops';
+import {
+  getBillingInfo,
+  getPayment,
+  getSubscription,
+  listPayments,
+  listSubscriptions,
+} from './asaas-ops';
 import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
 import { createStandaloneInstallmentPlan } from './create-standalone-installment-plan';
 import { syncSubscriptionFiscalSettings } from './sync-subscription-fiscal-settings';
@@ -76,10 +83,6 @@ async function materializeFirstSubscriptionPayment(params: {
       payments?.data[0];
 
     if (!candidate?.id) {
-      console.info('[createStandaloneCharge] Assinatura criada sem payment listável imediatamente', {
-        contaId: params.contaId,
-        asaasSubscriptionId: params.subscriptionId,
-      });
       return;
     }
 
@@ -89,18 +92,19 @@ async function materializeFirstSubscriptionPayment(params: {
     });
 
     if (!syncResult.success) {
-      console.warn('[createStandaloneCharge] Falha ao materializar payment inicial da assinatura', {
-        contaId: params.contaId,
-        asaasSubscriptionId: params.subscriptionId,
-        asaasPaymentId: candidate.id,
-        error: syncResult.error,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.create_standalone_charge.degraded',
+        error: syncResult,
+        throttleMs: 60_000,
       });
     }
   } catch (error) {
-    console.warn('[createStandaloneCharge] Não foi possível consultar payments iniciais da assinatura', {
-      contaId: params.contaId,
-      asaasSubscriptionId: params.subscriptionId,
-      error: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.use_cases.create_standalone_charge.degraded',
+      error: error,
+      throttleMs: 60_000,
     });
   }
 }
@@ -201,7 +205,9 @@ export type CreateStandaloneChargeOutput = {
   };
 };
 
-function paymentRulesSnapshot(input: Pick<CreateStandaloneChargeInput, 'interest' | 'fine' | 'discount'>) {
+function paymentRulesSnapshot(
+  input: Pick<CreateStandaloneChargeInput, 'interest' | 'fine' | 'discount'>,
+) {
   return {
     interestValue: input.interest?.value ?? null,
     fineValue: input.fine?.value ?? null,
@@ -229,10 +235,11 @@ async function queueNotificationSyncRetry(input: {
       outboxId: outbox.id,
     });
   } catch (error) {
-    console.error('[createStandaloneCharge] Falha ao enfileirar retry de notificações', {
-      contaId: input.contaId,
-      customerId: input.asaasCustomerId,
-      error: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.create_standalone_charge.failed',
+      error: error,
+      throttleMs: 60_000,
     });
   }
 }
@@ -282,11 +289,9 @@ class StandaloneSubscriptionPayerDivergenceError extends Error {
 function computeIdempotencyKey(input: CreateStandaloneChargeInput): string {
   const payerKey =
     input.payer.type === 'customer'
-      ? [
-          `cust:${input.payer.customerId}`,
-          input.payer.payerType,
-          input.payer.payerId,
-        ].filter((part): part is string => Boolean(part)).join(':')
+      ? [`cust:${input.payer.customerId}`, input.payer.payerType, input.payer.payerId]
+          .filter((part): part is string => Boolean(part))
+          .join(':')
       : input.payer.type === 'aluno'
         ? `aluno:${input.payer.alunoId}`
         : `resp:${input.payer.responsavelId}`;
@@ -369,12 +374,17 @@ async function resolveStandaloneChargePayer(
     if (!customer) return err('PAGADOR_NAO_ENCONTRADO');
     if (!customer.asaasCustomerId) return err('CUSTOMER_SEM_ASAAS_ID');
 
-    const payer = input.payer.payerType && input.payer.payerId
-      ? { payerType: input.payer.payerType, payerId: input.payer.payerId }
-      : await findSolePayerForCustomer(input.contaId, input.payer.customerId);
+    const payer =
+      input.payer.payerType && input.payer.payerId
+        ? { payerType: input.payer.payerType, payerId: input.payer.payerId }
+        : await findSolePayerForCustomer(input.contaId, input.payer.customerId);
     if (!payer) return err('PAGADOR_AMBIGUO');
 
-    const linkedCustomer = await findCustomerForPayer(input.contaId, payer.payerType, payer.payerId);
+    const linkedCustomer = await findCustomerForPayer(
+      input.contaId,
+      payer.payerType,
+      payer.payerId,
+    );
     if (!linkedCustomer || linkedCustomer.id !== input.payer.customerId) {
       return err('PAGADOR_NAO_ENCONTRADO');
     }
@@ -557,7 +567,6 @@ export async function createStandaloneCharge(
           payerId: true,
         },
       });
-
     }
 
     // 5. Resolver pagador financeiro e nome exibido na UI
@@ -626,9 +635,7 @@ export async function createStandaloneCharge(
           (c): c is 'EMAIL' | 'SMS' | 'WHATSAPP' =>
             c === 'EMAIL' || c === 'SMS' || c === 'WHATSAPP',
         );
-        const channelPrefs = channelPreferencesFromWizardSelection(
-          selectedChannels,
-        );
+        const channelPrefs = channelPreferencesFromWizardSelection(selectedChannels);
         await recordNotificationSyncAudit({
           contaId: input.contaId,
           asaasCustomerId,
@@ -648,9 +655,10 @@ export async function createStandaloneCharge(
             asaasCustomerId,
           );
           if (!enabledResult.success) {
-            console.warn('[createStandaloneCharge] Não foi possível habilitar notificações', {
-              customerId: asaasCustomerId,
-              reason: enabledResult.reason,
+            logFinanceOperationalEvent({
+              severity: 'warn',
+              eventName: 'finance.use_cases.create_standalone_charge.degraded',
+              throttleMs: 60_000,
             });
             await queueNotificationSyncRetry({
               contaId: input.contaId,
@@ -687,9 +695,10 @@ export async function createStandaloneCharge(
         };
 
         if (!syncResult.success) {
-          console.warn('[createStandaloneCharge] Preferências de notificação não foram aplicadas', {
-            customerId: asaasCustomerId,
-            warningsCount: syncResult.warnings.length,
+          logFinanceOperationalEvent({
+            severity: 'warn',
+            eventName: 'finance.use_cases.create_standalone_charge.degraded',
+            throttleMs: 60_000,
           });
           await queueNotificationSyncRetry({
             contaId: input.contaId,
@@ -715,15 +724,10 @@ export async function createStandaloneCharge(
         }
 
         if (syncResult.warnings.length > 0) {
-          console.warn('[createStandaloneCharge] Notificações parcialmente configuradas', {
-            customerId: asaasCustomerId,
-            applied: syncResult.applied,
-            warningsCount: syncResult.warnings.length,
-            warnings: syncResult.warnings.map((w) => ({
-              event: w.event,
-              channel: w.channel,
-              code: w.code,
-            })),
+          logFinanceOperationalEvent({
+            severity: 'warn',
+            eventName: 'finance.use_cases.create_standalone_charge.degraded',
+            throttleMs: 60_000,
           });
         }
         await recordNotificationSyncAudit({
@@ -737,14 +741,15 @@ export async function createStandaloneCharge(
           actor: input.actor,
         });
       } catch (syncError) {
-        console.warn('[createStandaloneCharge] Falha ao sincronizar notificações', {
-          customerId: asaasCustomerId,
-          error: syncError instanceof Error ? syncError.message : String(syncError),
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.create_standalone_charge.degraded',
+          error: syncError,
+          throttleMs: 60_000,
         });
         const reason = syncError instanceof Error ? syncError.message : String(syncError);
         const selectedChannels = (input.notificationChannels ?? []).filter(
-          (c): c is NotificationSyncChannel =>
-            c === 'EMAIL' || c === 'SMS' || c === 'WHATSAPP',
+          (c): c is NotificationSyncChannel => c === 'EMAIL' || c === 'SMS' || c === 'WHATSAPP',
         );
         await queueNotificationSyncRetry({
           contaId: input.contaId,
@@ -787,30 +792,32 @@ export async function createStandaloneCharge(
       };
 
       if (!existingOneTimeCharge) {
-        await prisma.charge.create({
-          data: {
-            id: chargeId,
-            contaId: input.contaId,
-            externalReference,
-            status: 'PENDING_SYNC',
-            statusUpdatedAt: new Date(),
-            payerName: financialPayerName,
-            payerType,
-            payerId,
-            description: input.description ?? 'Cobrança avulsa',
-            value: input.value!,
-            dueDate: vencimentoDate,
-            billingType: input.billingType,
-            customerId: customerResult.data.localCustomerId,
-            ...paymentRulesSnapshot(input),
-          },
-        }).catch(async (reserveError) => {
-          const concurrent = await prisma.charge.findFirst({
-            where: { contaId: input.contaId, externalReference },
-            select: { id: true },
+        await prisma.charge
+          .create({
+            data: {
+              id: chargeId,
+              contaId: input.contaId,
+              externalReference,
+              status: 'PENDING_SYNC',
+              statusUpdatedAt: new Date(),
+              payerName: financialPayerName,
+              payerType,
+              payerId,
+              description: input.description ?? 'Cobrança avulsa',
+              value: input.value!,
+              dueDate: vencimentoDate,
+              billingType: input.billingType,
+              customerId: customerResult.data.localCustomerId,
+              ...paymentRulesSnapshot(input),
+            },
+          })
+          .catch(async (reserveError) => {
+            const concurrent = await prisma.charge.findFirst({
+              where: { contaId: input.contaId, externalReference },
+              select: { id: true },
+            });
+            if (!concurrent) throw reserveError;
           });
-          if (!concurrent) throw reserveError;
-        });
       }
 
       const operation = await reserveOutboundFinancialOperation({
@@ -836,14 +843,26 @@ export async function createStandaloneCharge(
       let remotePayment = mockMode
         ? mockRemotePayment
         : operation.payload.remoteId
-          ? await getPayment(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
+          ? await getPayment(operation.payload.remoteId, { contaId: input.contaId }).catch(
+              () => null,
+            )
           : null;
       if (!remotePayment && !mockMode) {
-        const matches = await listPayments({ externalReference, limit: 10, includeDeleted: true }, { contaId: input.contaId })
+        const matches = await listPayments(
+          { externalReference, limit: 10, includeDeleted: true },
+          { contaId: input.contaId },
+        )
           .then((result) => result.data)
           .catch(() => []);
         if (matches.length > 1) {
-          await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'PAYMENT', entityId: chargeId, externalReference, error: 'MULTIPLE_REMOTE_PAYMENTS_FOR_EXTERNAL_REFERENCE' });
+          await markOutboundResultUnknown({
+            jobId: operation.job.id,
+            contaId: input.contaId,
+            resource: 'PAYMENT',
+            entityId: chargeId,
+            externalReference,
+            error: 'MULTIPLE_REMOTE_PAYMENTS_FOR_EXTERNAL_REFERENCE',
+          });
           return err('ERRO_AO_CRIAR_PAGAMENTO');
         }
         remotePayment = matches[0] ?? null;
@@ -853,42 +872,68 @@ export async function createStandaloneCharge(
         if (!claimed) return err('ERRO_AO_CRIAR_PAGAMENTO');
         const payment = await createAsaasPayment(paymentInput);
         if (payment.success) {
-          remotePayment = await getPayment(payment.data.id, { contaId: input.contaId }).catch(() => ({ ...payment.data, status: 'PENDING' } as Awaited<ReturnType<typeof getPayment>>));
+          remotePayment = await getPayment(payment.data.id, { contaId: input.contaId }).catch(
+            () =>
+              ({ ...payment.data, status: 'PENDING' }) as Awaited<ReturnType<typeof getPayment>>,
+          );
         } else {
-          const recovered = await listPayments({ externalReference, limit: 10, includeDeleted: true }, { contaId: input.contaId })
+          const recovered = await listPayments(
+            { externalReference, limit: 10, includeDeleted: true },
+            { contaId: input.contaId },
+          )
             .then((result) => result.data)
             .catch(() => []);
           if (recovered.length === 1) remotePayment = recovered[0]!;
           else {
-            await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'PAYMENT', entityId: chargeId, externalReference, error: payment.error });
-            if (payment.error === 'Credenciais Asaas não configuradas') return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+            await markOutboundResultUnknown({
+              jobId: operation.job.id,
+              contaId: input.contaId,
+              resource: 'PAYMENT',
+              entityId: chargeId,
+              externalReference,
+              error: payment.error,
+            });
+            if (payment.error === 'Credenciais Asaas não configuradas')
+              return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
             return err('ERRO_AO_CRIAR_PAGAMENTO');
           }
         }
       }
       if (!remotePayment) return err('ERRO_AO_CRIAR_PAGAMENTO');
-      const paymentMismatch = !remotePayment?.id
-        || remotePayment.externalReference !== externalReference
-        || (remotePayment.customer != null && remotePayment.customer !== asaasCustomerId)
-        || (remotePayment.value != null && Math.abs(remotePayment.value - input.value!) > 0.001)
-        || (remotePayment.dueDate != null && remotePayment.dueDate !== input.dueDate);
+      const paymentMismatch =
+        !remotePayment?.id ||
+        remotePayment.externalReference !== externalReference ||
+        (remotePayment.customer != null && remotePayment.customer !== asaasCustomerId) ||
+        (remotePayment.value != null && Math.abs(remotePayment.value - input.value!) > 0.001) ||
+        (remotePayment.dueDate != null && remotePayment.dueDate !== input.dueDate);
       if (paymentMismatch) {
-        await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'PAYMENT', entityId: chargeId, externalReference, error: 'REMOTE_PAYMENT_CONFIRMATION_MISMATCH' });
+        await markOutboundResultUnknown({
+          jobId: operation.job.id,
+          contaId: input.contaId,
+          resource: 'PAYMENT',
+          entityId: chargeId,
+          externalReference,
+          error: 'REMOTE_PAYMENT_CONFIRMATION_MISMATCH',
+        });
         return err('ERRO_AO_CRIAR_PAGAMENTO');
       }
-      await markOutboundRemoteConfirmed(operation.job.id, remotePayment.id, { providerStatus: remotePayment.status });
+      await markOutboundRemoteConfirmed(operation.job.id, remotePayment.id, {
+        providerStatus: remotePayment.status,
+      });
 
-      const boletoInfo = input.billingType === 'BOLETO' && !mockMode
-        ? await getBillingInfo(remotePayment.id, { contaId: input.contaId }).catch(() => null)
-        : null;
-      const boletoData = input.billingType === 'BOLETO'
-        ? {
-            bankSlipUrl: remotePayment.bankSlipUrl ?? boletoInfo?.bankSlip?.bankSlipUrl ?? null,
-            identificationField: boletoInfo?.bankSlip?.identificationField ?? null,
-            barCode: boletoInfo?.bankSlip?.barCode ?? null,
-            nossoNumero: boletoInfo?.bankSlip?.nossoNumero ?? null,
-          }
-        : {};
+      const boletoInfo =
+        input.billingType === 'BOLETO' && !mockMode
+          ? await getBillingInfo(remotePayment.id, { contaId: input.contaId }).catch(() => null)
+          : null;
+      const boletoData =
+        input.billingType === 'BOLETO'
+          ? {
+              bankSlipUrl: remotePayment.bankSlipUrl ?? boletoInfo?.bankSlip?.bankSlipUrl ?? null,
+              identificationField: boletoInfo?.bankSlip?.identificationField ?? null,
+              barCode: boletoInfo?.bankSlip?.barCode ?? null,
+              nossoNumero: boletoInfo?.bankSlip?.nossoNumero ?? null,
+            }
+          : {};
 
       await prisma.charge.updateMany({
         where: { id: chargeId, contaId: input.contaId, externalReference },
@@ -900,11 +945,18 @@ export async function createStandaloneCharge(
           statusUpdatedAt: new Date(),
         },
       });
-      const persistedCharge = { id: chargeId, status: 'OPEN' as const, asaasPaymentId: remotePayment.id };
+      const persistedCharge = {
+        id: chargeId,
+        status: 'OPEN' as const,
+        asaasPaymentId: remotePayment.id,
+      };
 
       await markOutboundAwaitingWebhook(operation.job.id, remotePayment.id);
 
-      await chargeReadModelService.projectChargeReadModelByChargeId(persistedCharge.id, input.contaId);
+      await chargeReadModelService.projectChargeReadModelByChargeId(
+        persistedCharge.id,
+        input.contaId,
+      );
 
       await auditLogService.record({
         contaId: input.contaId,
@@ -936,9 +988,10 @@ export async function createStandaloneCharge(
       // rounded installment value can lose cents (e.g. 100 / 3 = 99.99).
       // The fallback keeps compatibility with callers that only provide the
       // installment value.
-      const totalInstallmentValue = input.value != null
-        ? Number(input.value.toFixed(2))
-        : Number((input.installmentValue! * input.installmentCount!).toFixed(2));
+      const totalInstallmentValue =
+        input.value != null
+          ? Number(input.value.toFixed(2))
+          : Number((input.installmentValue! * input.installmentCount!).toFixed(2));
 
       const installmentResult = await createStandaloneInstallmentPlan({
         contaId: input.contaId,
@@ -1008,7 +1061,11 @@ export async function createStandaloneCharge(
         return err('PAGADOR_DIVERGENTE');
       }
 
-      if (existingSubscription && existingSubscription.payerType == null && existingSubscription.payerId == null) {
+      if (
+        existingSubscription &&
+        existingSubscription.payerType == null &&
+        existingSubscription.payerId == null
+      ) {
         await prisma.standaloneSubscription?.update?.({
           where: { id: existingSubscription.id },
           data: { payerType, payerId },
@@ -1103,7 +1160,9 @@ export async function createStandaloneCharge(
       let subscription = mockMode
         ? mockSubscription
         : operation.payload.remoteId
-          ? await getSubscription(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
+          ? await getSubscription(operation.payload.remoteId, { contaId: input.contaId }).catch(
+              () => null,
+            )
           : null;
       if (!subscription && !mockMode) {
         const matches = await findRemoteSubscriptionWithRetry({
@@ -1111,7 +1170,14 @@ export async function createStandaloneCharge(
           externalReference: subscriptionExternalReference,
         });
         if (matches.length > 1) {
-          await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId, externalReference: subscriptionExternalReference, error: 'MULTIPLE_REMOTE_SUBSCRIPTIONS_FOR_EXTERNAL_REFERENCE' });
+          await markOutboundResultUnknown({
+            jobId: operation.job.id,
+            contaId: input.contaId,
+            resource: 'SUBSCRIPTION',
+            entityId: subscriptionId,
+            externalReference: subscriptionExternalReference,
+            error: 'MULTIPLE_REMOTE_SUBSCRIPTIONS_FOR_EXTERNAL_REFERENCE',
+          });
           return err('ERRO_AO_CRIAR_PAGAMENTO');
         }
         subscription = matches[0] ?? null;
@@ -1122,10 +1188,13 @@ export async function createStandaloneCharge(
           // Outro request pode estar concluindo o mesmo POST. Reconcile antes
           // de responder erro para não transformar uma operação já aceita em
           // falsa falha na tela.
-          subscription = (await findRemoteSubscriptionWithRetry({
-            contaId: input.contaId,
-            externalReference: subscriptionExternalReference,
-          }))[0] ?? null;
+          subscription =
+            (
+              await findRemoteSubscriptionWithRetry({
+                contaId: input.contaId,
+                externalReference: subscriptionExternalReference,
+              })
+            )[0] ?? null;
           if (!subscription) {
             return ok({
               chargeId: subscriptionId,
@@ -1135,75 +1204,87 @@ export async function createStandaloneCharge(
               notificationSync,
             });
           }
-        } else try {
-          const created = await createSubscription({
-            apiKey: creds.apiKey,
-            idempotencyKey: asaasIdempotencyKey,
-            data: subscriptionPayload,
-          });
-          // A criação já devolve o recurso confirmado. A consulta seguinte é
-          // apenas uma verificação eventual: o Asaas pode ainda não ter
-          // indexado a assinatura, embora ela já exista e já possa gerar o
-          // primeiro pagamento. Nunca transforme essa janela de consistência
-          // em erro depois de uma criação remota bem-sucedida.
-          subscription = created;
+        } else
           try {
-            subscription = await getSubscription(created.id, { contaId: input.contaId });
-          } catch (readError) {
-            console.warn('[createStandaloneCharge] Assinatura criada; leitura de confirmação adiada', {
-              contaId: input.contaId,
-              asaasSubscriptionId: created.id,
-              error: readError instanceof Error ? readError.message : String(readError),
+            const created = await createSubscription({
+              apiKey: creds.apiKey,
+              idempotencyKey: asaasIdempotencyKey,
+              data: subscriptionPayload,
             });
-          }
-        } catch (remoteError) {
-          // Respostas 4xx são rejeições determinísticas do provedor: não há
-          // recurso remoto a reconciliar e a intenção local permanece sem
-          // assinatura ativa. Somente timeout/5xx seguem como resultado
-          // incerto, pois o POST pode ter sido aceito antes da falha.
-          // Mesmo uma resposta 4xx pode ser uma resposta tardia/duplicada
-          // depois de o POST ter sido aceito (por exemplo, retry semântico do
-          // provedor). Sempre faça a reconciliação por externalReference antes
-          // de informar falha ao usuário.
-          const recovered = await findRemoteSubscriptionWithRetry({
-            contaId: input.contaId,
-            externalReference: subscriptionExternalReference,
-          });
-          if (recovered.length === 1) subscription = recovered[0]!;
-          else {
-            if (remoteError instanceof AsaasHttpError && remoteError.status >= 400 && remoteError.status < 500) {
-              return err('ERRO_AO_CRIAR_PAGAMENTO');
+            // A criação já devolve o recurso confirmado. A consulta seguinte é
+            // apenas uma verificação eventual: o Asaas pode ainda não ter
+            // indexado a assinatura, embora ela já exista e já possa gerar o
+            // primeiro pagamento. Nunca transforme essa janela de consistência
+            // em erro depois de uma criação remota bem-sucedida.
+            subscription = created;
+            try {
+              subscription = await getSubscription(created.id, { contaId: input.contaId });
+            } catch (readError) {
+              logFinanceOperationalEvent({
+                severity: 'warn',
+                eventName: 'finance.use_cases.create_standalone_charge.degraded',
+                error: readError,
+                throttleMs: 60_000,
+              });
             }
-            await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId, externalReference: subscriptionExternalReference, error: remoteError });
-            return ok({
-              chargeId: subscriptionId,
+          } catch (remoteError) {
+            // Respostas 4xx são rejeições determinísticas do provedor: não há
+            // recurso remoto a reconciliar e a intenção local permanece sem
+            // assinatura ativa. Somente timeout/5xx seguem como resultado
+            // incerto, pois o POST pode ter sido aceito antes da falha.
+            // Mesmo uma resposta 4xx pode ser uma resposta tardia/duplicada
+            // depois de o POST ter sido aceito (por exemplo, retry semântico do
+            // provedor). Sempre faça a reconciliação por externalReference antes
+            // de informar falha ao usuário.
+            const recovered = await findRemoteSubscriptionWithRetry({
+              contaId: input.contaId,
               externalReference: subscriptionExternalReference,
-              status: 'PENDING_RECONCILIATION',
-              expectedWebhooks: ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'],
-              notificationSync,
             });
+            if (recovered.length === 1) subscription = recovered[0]!;
+            else {
+              if (
+                remoteError instanceof AsaasHttpError &&
+                remoteError.status >= 400 &&
+                remoteError.status < 500
+              ) {
+                return err('ERRO_AO_CRIAR_PAGAMENTO');
+              }
+              await markOutboundResultUnknown({
+                jobId: operation.job.id,
+                contaId: input.contaId,
+                resource: 'SUBSCRIPTION',
+                entityId: subscriptionId,
+                externalReference: subscriptionExternalReference,
+                error: remoteError,
+              });
+              return ok({
+                chargeId: subscriptionId,
+                externalReference: subscriptionExternalReference,
+                status: 'PENDING_RECONCILIATION',
+                expectedWebhooks: ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'],
+                notificationSync,
+              });
+            }
           }
-        }
       }
-      const subscriptionMismatch = !subscription?.id
-        || (subscription.externalReference != null && subscription.externalReference !== subscriptionExternalReference)
-        || (subscription.customer != null && subscription.customer !== asaasCustomerId)
-        || (subscription.value != null && Math.abs(subscription.value - input.value!) > 0.001)
-        || !sameAsaasDate(subscription.nextDueDate, input.nextDueDate!);
+      const subscriptionMismatch =
+        !subscription?.id ||
+        (subscription.externalReference != null &&
+          subscription.externalReference !== subscriptionExternalReference) ||
+        (subscription.customer != null && subscription.customer !== asaasCustomerId) ||
+        (subscription.value != null && Math.abs(subscription.value - input.value!) > 0.001) ||
+        !sameAsaasDate(subscription.nextDueDate, input.nextDueDate!);
       if (subscriptionMismatch) {
-        const identityMismatch = !subscription?.id
-          || (subscription.externalReference != null && subscription.externalReference !== subscriptionExternalReference)
-          || (subscription.customer != null && subscription.customer !== asaasCustomerId);
+        const identityMismatch =
+          !subscription?.id ||
+          (subscription.externalReference != null &&
+            subscription.externalReference !== subscriptionExternalReference) ||
+          (subscription.customer != null && subscription.customer !== asaasCustomerId);
 
-        console.warn('[createStandaloneCharge] Divergência na confirmação da assinatura', {
-          contaId: input.contaId,
-          subscriptionId,
-          asaasSubscriptionId: subscription?.id,
-          identityMismatch,
-          providerValue: subscription?.value,
-          requestedValue: input.value,
-          providerNextDueDate: subscription?.nextDueDate,
-          requestedNextDueDate: input.nextDueDate,
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.create_standalone_charge.degraded',
+          throttleMs: 60_000,
         });
 
         // Se o identificador e o pagador são compatíveis, o recurso remoto
@@ -1236,7 +1317,9 @@ export async function createStandaloneCharge(
 
         return err('ERRO_AO_CRIAR_PAGAMENTO');
       }
-      await markOutboundRemoteConfirmed(operation.job.id, subscription.id, { providerStatus: subscription.status });
+      await markOutboundRemoteConfirmed(operation.job.id, subscription.id, {
+        providerStatus: subscription.status,
+      });
 
       const nextStatus = mapAsaasSubscriptionStatus({
         status: subscription.status,
@@ -1258,7 +1341,8 @@ export async function createStandaloneCharge(
             const existingHasPayerContext =
               existingByIdempotency.payerType != null || existingByIdempotency.payerId != null;
             const existingPayerIsDifferent =
-              existingByIdempotency.payerType !== payerType || existingByIdempotency.payerId !== payerId;
+              existingByIdempotency.payerType !== payerType ||
+              existingByIdempotency.payerId !== payerId;
             if (existingHasPayerContext && existingPayerIsDifferent) {
               throw new StandaloneSubscriptionPayerDivergenceError();
             }
@@ -1349,11 +1433,11 @@ export async function createStandaloneCharge(
           });
 
       if (!fiscalSync.success) {
-        console.warn('[createStandaloneCharge] Falha ao sincronizar invoiceSettings', {
-          contaId: input.contaId,
-          standaloneSubscriptionId: persisted.id,
-          asaasSubscriptionId: subscription.id,
-          error: fiscalSync.error,
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.create_standalone_charge.degraded',
+          error: fiscalSync,
+          throttleMs: 60_000,
         });
       }
 
@@ -1380,7 +1464,12 @@ export async function createStandaloneCharge(
     if (error instanceof StandaloneSubscriptionPayerDivergenceError) {
       return err('PAGADOR_DIVERGENTE');
     }
-    console.error('[createStandaloneCharge]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.create_standalone_charge.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }

@@ -133,7 +133,6 @@ export async function GET(req: NextRequest) {
     return financeInternalError('API Financeiro Nota Fiscal Summary', error);
   } finally {
     logFinanceApiRequest('GET /api/financeiro/nota-fiscal/summary', {
-      contaId,
       durationMs: Date.now() - startedAt,
       cacheHit: cacheState,
     });

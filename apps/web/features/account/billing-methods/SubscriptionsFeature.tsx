@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { maskCpf } from '@alusa/lib/client';
 import type { ContaFormaPagamentoResultDTO as AssinaturasPayload } from '@/features/account/dtos';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 
 const formaPagamentoLabels: Record<string, string> = {
   BOLETO: 'Boleto bancário',
@@ -41,7 +42,7 @@ export function SubscriptionsFeature() {
       try {
         await fetch('/api/conta/forma-pagamento/sync', { method: 'POST' });
       } catch (syncError) {
-        console.warn('Falha ao sincronizar assinaturas:', syncError);
+        logClientOperationalEvent('account.subscriptions.sync_failed', syncError);
       }
 
       const response = await fetch('/api/conta/forma-pagamento');

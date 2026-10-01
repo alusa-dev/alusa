@@ -11,6 +11,7 @@ import { ipFromRequest } from '@/lib/rate-limit';
 import { expireContractSignatureLinks } from '@/src/server/contracts/expire-contract-signature-links.service';
 import { recordPublicContractEvidence } from '@/src/server/contracts/public-contract-evidence.service';
 import { findPublicContractByToken } from '@/src/server/contracts/contract-read.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export async function GET(
   request: NextRequest,
@@ -53,7 +54,14 @@ export async function GET(
       contratoPublicoDTOSchema.parse(mapPublicContratoRecordToDTO(contrato)),
     );
   } catch (error) {
-    console.error('[PUBLIC_CONTRATO_GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.public_contract.read.failed',
+      route: '/api/public/contrato/[token]',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return jsonSensitive(
       { error: { message: 'Erro ao carregar contrato' } },
       { status: 500 },

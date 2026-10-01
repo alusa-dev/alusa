@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 import type { ChargeListItemDTO, UnifiedChargeStatus } from '../dtos/charge-list-item.dto';
 import {
@@ -18,7 +19,7 @@ export type ChargeOrigin = 'ACADEMIC' | 'STANDALONE' | 'all';
  */
 function extractInstallmentPlanId(externalReference: string | null): string | null {
   if (!externalReference) return null;
-  
+
   // Tentar V2 primeiro
   const parsed = parseExternalReference(externalReference);
   if (parsed && parsed.type === 'installment' && parsed.ids.installmentPlanId) {
@@ -27,7 +28,7 @@ function extractInstallmentPlanId(externalReference: string | null): string | nu
   if (parsed && parsed.type === 'payment' && parsed.ids.installmentPlanId) {
     return parsed.ids.installmentPlanId;
   }
-  
+
   // Fallback V1
   if (!externalReference.startsWith('installmentPlan:')) return null;
   const rest = externalReference.slice('installmentPlan:'.length);
@@ -107,19 +108,22 @@ function mapEventMapOrderStatus(status: string): UnifiedChargeStatus {
   }
 }
 
-function resolveEventFinancialPayerName(entry: {
-  payments?: Array<{
-    participant?: {
-      displayName: string | null;
-      aluno: { nome: string } | null;
-      responsavel: { nome: string } | null;
-    } | null;
-  }>;
-}, additionalCandidates: Array<{
-  responsibleName: string | null;
-  studentName: string | null;
-  displayName: string | null;
-}> = []) {
+function resolveEventFinancialPayerName(
+  entry: {
+    payments?: Array<{
+      participant?: {
+        displayName: string | null;
+        aluno: { nome: string } | null;
+        responsavel: { nome: string } | null;
+      } | null;
+    }>;
+  },
+  additionalCandidates: Array<{
+    responsibleName: string | null;
+    studentName: string | null;
+    displayName: string | null;
+  }> = [],
+) {
   const paymentCandidates = (entry.payments ?? []).map((payment) => ({
     responsibleName: payment.participant?.responsavel?.nome ?? null,
     studentName: payment.participant?.aluno?.nome ?? null,
@@ -219,17 +223,11 @@ export async function listChargesAggregated(
       ],
     });
     addAndCondition(academicWhere, {
-      OR: [
-        { asaasStatus: null },
-        { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } },
-      ],
+      OR: [{ asaasStatus: null }, { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } }],
     });
   } else if (statusView === 'paid') {
     addAndCondition(academicWhere, {
-      OR: [
-        { status: 'PAGO' },
-        { asaasStatus: { in: [...ASAAS_PAID_UNIFIED_STATUSES] } },
-      ],
+      OR: [{ status: 'PAGO' }, { asaasStatus: { in: [...ASAAS_PAID_UNIFIED_STATUSES] } }],
     });
   }
 
@@ -273,17 +271,11 @@ export async function listChargesAggregated(
   } else if (statusView === 'open') {
     standaloneWhere.status = { in: ['CREATED', 'OPEN', 'OVERDUE'] };
     addAndCondition(standaloneWhere, {
-      OR: [
-        { asaasStatus: null },
-        { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } },
-      ],
+      OR: [{ asaasStatus: null }, { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } }],
     });
   } else if (statusView === 'paid') {
     addAndCondition(standaloneWhere, {
-      OR: [
-        { status: 'PAID' },
-        { asaasStatus: { in: [...ASAAS_PAID_UNIFIED_STATUSES] } },
-      ],
+      OR: [{ status: 'PAID' }, { asaasStatus: { in: [...ASAAS_PAID_UNIFIED_STATUSES] } }],
     });
   }
 
@@ -314,9 +306,7 @@ export async function listChargesAggregated(
       { buyerName: { contains: search, mode: 'insensitive' } },
       { event: { is: { name: { contains: search, mode: 'insensitive' } } } },
     ];
-    standaloneSubscriptionWhere.OR = [
-      { description: { contains: search, mode: 'insensitive' } },
-    ];
+    standaloneSubscriptionWhere.OR = [{ description: { contains: search, mode: 'insensitive' } }];
   }
 
   const [
@@ -506,11 +496,14 @@ export async function listChargesAggregated(
         },
       })
     : [];
-  const eventPayerCandidatesByEntry = new Map<string, Array<{
-    responsibleName: string | null;
-    studentName: string | null;
-    displayName: string | null;
-  }>>();
+  const eventPayerCandidatesByEntry = new Map<
+    string,
+    Array<{
+      responsibleName: string | null;
+      studentName: string | null;
+      displayName: string | null;
+    }>
+  >();
   for (const participant of eventParticipants) {
     if (!participant.revenueEntryId) continue;
     const candidates = eventPayerCandidatesByEntry.get(participant.revenueEntryId) ?? [];
@@ -522,10 +515,13 @@ export async function listChargesAggregated(
     eventPayerCandidatesByEntry.set(participant.revenueEntryId, candidates);
   }
 
-  const eventPlanIds = Array.from(new Set(
-    eventParticipants
-      .flatMap((participant) => [participant.standaloneChargeId].filter((value): value is string => Boolean(value))),
-  ));
+  const eventPlanIds = Array.from(
+    new Set(
+      eventParticipants.flatMap((participant) =>
+        [participant.standaloneChargeId].filter((value): value is string => Boolean(value)),
+      ),
+    ),
+  );
   const eventPlans = eventPlanIds.length
     ? await _db.standaloneInstallmentPlan.findMany({
         where: { contaId, id: { in: eventPlanIds }, status: { in: ['ACTIVE', 'COMPLETED'] } },
@@ -533,15 +529,15 @@ export async function listChargesAggregated(
       })
     : [];
   const materializedEventPlanReferences = new Set(
-    eventPlans.flatMap((plan) => [plan.id, plan.asaasInstallmentId].filter((value): value is string => Boolean(value))),
+    eventPlans.flatMap((plan) =>
+      [plan.id, plan.asaasInstallmentId].filter((value): value is string => Boolean(value)),
+    ),
   );
   const eventFinancialEntries = rawEventFinancialEntries.filter((entry) => {
-    const participant = eventParticipants.find((candidate) => candidate.revenueEntryId === entry.id);
-    return !isMaterializedGroupedEventEntry(
-      entry,
-      participant,
-      materializedEventPlanReferences,
+    const participant = eventParticipants.find(
+      (candidate) => candidate.revenueEntryId === entry.id,
     );
+    return !isMaterializedGroupedEventEntry(entry, participant, materializedEventPlanReferences);
   });
 
   // Criar mapa de cobrancaId -> installmentPlanId
@@ -553,9 +549,10 @@ export async function listChargesAggregated(
         cobrancaToInstallmentPlan.set(charge.cobrancaId, planId);
       } else if (charge.externalReference && charge.externalReference.includes('installment')) {
         if (process.env.NODE_ENV !== 'test') {
-          console.warn('[finance][listChargesAggregated] installmentPlanId não resolvido', {
-            cobrancaId: charge.cobrancaId,
-            externalReference: charge.externalReference,
+          logFinanceOperationalEvent({
+            severity: 'warn',
+            eventName: 'finance.use_cases.list_charges_aggregated.degraded',
+            throttleMs: 60_000,
           });
         }
       }
@@ -668,7 +665,9 @@ export async function listChargesAggregated(
 
   const subscriptionPayerName = new Map<string, string>([
     ...subscriptionAlunos.map((aluno) => [`ALUNO:${aluno.id}`, aluno.nome] as const),
-    ...subscriptionResponsaveis.map((responsavel) => [`RESPONSAVEL:${responsavel.id}`, responsavel.nome] as const),
+    ...subscriptionResponsaveis.map(
+      (responsavel) => [`RESPONSAVEL:${responsavel.id}`, responsavel.nome] as const,
+    ),
   ]);
 
   const standaloneSubscriptionItems: ChargeListItemDTO[] = standaloneSubscriptions
@@ -681,9 +680,11 @@ export async function listChargesAggregated(
       id: `group:subscription:${subscription.id}`,
       origin: 'STANDALONE' as const,
       description: subscription.description ?? 'Assinatura recorrente',
-      payerName: subscription.payerType && subscription.payerId
-        ? subscriptionPayerName.get(`${subscription.payerType}:${subscription.payerId}`) ?? 'Cliente'
-        : 'Cliente',
+      payerName:
+        subscription.payerType && subscription.payerId
+          ? (subscriptionPayerName.get(`${subscription.payerType}:${subscription.payerId}`) ??
+            'Cliente')
+          : 'Cliente',
       value: Number(subscription.value),
       dueDate: subscription.nextDueDate.toISOString(),
       billingType: subscription.billingType,
@@ -886,7 +887,9 @@ export async function listChargesAggregated(
         status: groupStatus,
         asaasStatus: null,
         liquidacaoStatus: null,
-        displayStatus: resolveChargeDisplayStatus({ localStatus: groupStatus === 'PAID' ? 'PAGO' : groupStatus }),
+        displayStatus: resolveChargeDisplayStatus({
+          localStatus: groupStatus === 'PAID' ? 'PAGO' : groupStatus,
+        }),
         createdAt: plan.createdAt.toISOString(),
         sourceId: planId,
         matriculaId: plan.matricula.id,
@@ -939,10 +942,16 @@ export async function listChargesAggregated(
 
     const [responsaveis, alunos] = await Promise.all([
       responsavelIds.length
-        ? _db.responsavel.findMany({ where: { contaId, id: { in: responsavelIds } }, select: { id: true, nome: true } })
+        ? _db.responsavel.findMany({
+            where: { contaId, id: { in: responsavelIds } },
+            select: { id: true, nome: true },
+          })
         : Promise.resolve([]),
       alunoIds.length
-        ? _db.aluno.findMany({ where: { contaId, id: { in: alunoIds } }, select: { id: true, nome: true } })
+        ? _db.aluno.findMany({
+            where: { contaId, id: { in: alunoIds } },
+            select: { id: true, nome: true },
+          })
         : Promise.resolve([]),
     ]);
 
@@ -982,10 +991,10 @@ export async function listChargesAggregated(
 
       const payerName =
         plan.payerType === 'RESPONSAVEL'
-          ? responsavelMap.get(plan.payerId ?? '') ?? parcelas[0]?.payerName ?? 'Cliente'
+          ? (responsavelMap.get(plan.payerId ?? '') ?? parcelas[0]?.payerName ?? 'Cliente')
           : plan.payerType === 'ALUNO'
-            ? alunoMap.get(plan.payerId ?? '') ?? parcelas[0]?.payerName ?? 'Cliente'
-            : parcelas[0]?.payerName ?? 'Cliente';
+            ? (alunoMap.get(plan.payerId ?? '') ?? parcelas[0]?.payerName ?? 'Cliente')
+            : (parcelas[0]?.payerName ?? 'Cliente');
 
       const baseDescription = parcelas[0]?.description ?? 'Parcelamento';
 
@@ -995,12 +1004,17 @@ export async function listChargesAggregated(
         description: `Parcelamento ${plan.installmentCount}x - ${baseDescription}`,
         payerName,
         value: totalValue,
-        dueDate: nextDue?.dueDate ?? parcelas[parcelas.length - 1]?.dueDate ?? plan.firstDueDate.toISOString(),
+        dueDate:
+          nextDue?.dueDate ??
+          parcelas[parcelas.length - 1]?.dueDate ??
+          plan.firstDueDate.toISOString(),
         billingType: plan.billingType,
         status: groupStatus,
         asaasStatus: null,
         liquidacaoStatus: null,
-        displayStatus: resolveChargeDisplayStatus({ localStatus: groupStatus === 'PAID' ? 'PAGO' : groupStatus }),
+        displayStatus: resolveChargeDisplayStatus({
+          localStatus: groupStatus === 'PAID' ? 'PAGO' : groupStatus,
+        }),
         createdAt: plan.createdAt.toISOString(),
         sourceId: planId,
         matriculaId: null,
@@ -1029,7 +1043,12 @@ export async function listChargesAggregated(
     ];
   } else {
     // Sem agrupamento - retornar tudo individualmente
-    processedItems = [...academicItems, ...standaloneItems, ...standaloneSubscriptionItems, ...eventItems];
+    processedItems = [
+      ...academicItems,
+      ...standaloneItems,
+      ...standaloneSubscriptionItems,
+      ...eventItems,
+    ];
   }
 
   processedItems = processedItems.filter((item) => matchesStatusView(item.status, statusView));

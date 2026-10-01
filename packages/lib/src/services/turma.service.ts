@@ -1,4 +1,5 @@
 import type { Turma } from '@prisma/client';
+import { logLibOperationalEvent } from '../observability/operational-log';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../prisma';
 import { turmaSchema } from '../schemas/turma.schema';
@@ -203,14 +204,6 @@ async function ensureProfessorRecords(
 }
 
 export async function createTurma(input: TurmaCreateInput): Promise<Turma> {
-  // Logs de diagnóstico (podem ser removidos em produção)
-  console.log('[turma.service] createTurma init', {
-    contaId: input.contaId,
-    nome: input.nome,
-    modalidadeId: input.modalidadeId,
-    salaId: input.salaId,
-    diasSemana: input.diasSemana,
-  });
   const data = turmaSchema.parse(input);
   const exists = await prisma.turma.findFirst({
     where: { contaId: input.contaId, nome: data.nome },
@@ -219,10 +212,8 @@ export async function createTurma(input: TurmaCreateInput): Promise<Turma> {
   const modalidade = await prisma.modalidade.findFirst({
     where: { id: data.modalidadeId, contaId: input.contaId },
   });
-  if (!modalidade) console.warn('[turma.service] modalidade não encontrada', data.modalidadeId);
   if (!modalidade) throw new Error('Modalidade não encontrada');
   const sala = await prisma.sala.findFirst({ where: { id: data.salaId, contaId: input.contaId } });
-  if (!sala) console.warn('[turma.service] sala não encontrada', data.salaId);
   if (!sala) throw new Error('Sala não encontrada');
   await validarConflitosSala({
     salaId: data.salaId,
@@ -232,7 +223,6 @@ export async function createTurma(input: TurmaCreateInput): Promise<Turma> {
     contaId: input.contaId,
   });
   const professorIds = await ensureProfessorRecords(input.contaId, data.professoresIds ?? []);
-  console.log('[turma.service] criando turma no banco');
   const turma = await prisma.turma.create({
     data: {
       contaId: input.contaId,
@@ -249,7 +239,6 @@ export async function createTurma(input: TurmaCreateInput): Promise<Turma> {
       observacao: data.observacao,
     },
   });
-  console.log('[turma.service] turma criada', turma.id);
   if (professorIds.length) {
     await prisma.turmaProfessor.createMany({
       data: professorIds.map((profId) => ({

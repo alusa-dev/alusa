@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { expireContractLinksJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
@@ -10,6 +11,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const query = expireContractLinksJobQueryDTOSchema.parse({
@@ -35,7 +37,10 @@ export async function POST(req: Request) {
       try {
         results.push({ contaId, ...(await expireContractSignatureLinks({ contaId, limit })) });
       } catch (error) {
-        errors.push({ contaId, erro: error instanceof Error ? error.message : 'Erro desconhecido' });
+        errors.push({
+          contaId,
+          erro: error instanceof Error ? error.message : 'Erro desconhecido',
+        });
       }
     }
 
@@ -47,8 +52,11 @@ export async function POST(req: Request) {
       errors,
     });
   } catch (error) {
-    console.error('[JOB_EXPIRE_CONTRACT_LINKS]', error);
-    return NextResponse.json({ error: { code: 'ERRO_JOB', message: 'Erro ao expirar links de contratos' } }, { status: 500 });
+    logJobFailure('expire-contract-links', startedAt, error);
+    return NextResponse.json(
+      { error: { code: 'ERRO_JOB', message: 'Erro ao expirar links de contratos' } },
+      { status: 500 },
+    );
   }
 }
 

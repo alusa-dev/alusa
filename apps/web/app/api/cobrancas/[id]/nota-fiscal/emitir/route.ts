@@ -6,6 +6,7 @@ import { authorizeChargeInvoice, getChargeInvoiceDetail } from '@alusa/finance';
 import { chargeInvoiceResponseSchema } from '@/features/settings/tax-invoices/dtos';
 import { publicInvoiceProviderErrorMessage } from '@/lib/api/finance-invoice-errors';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function json(status: number, body: unknown) {
@@ -72,7 +73,7 @@ export async function POST(_req: Request, context: RouteContext) {
 
     return json(200, { data: chargeInvoiceResponseSchema.parse(detail.data) });
   } catch (error) {
-    console.error('[Cobranca NotaFiscal Emitir][POST]', error);
+    logFinanceApiError('/api/cobrancas/[id]/nota-fiscal/emitir', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

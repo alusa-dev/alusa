@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import {
   reconcileFinanceWebhooksJob,
@@ -55,11 +56,10 @@ async function run(req: Request) {
         return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório para pagamento específico.');
       }
 
-      const result = await syncPaymentStateFromAsaas({
-        contaId,
-        asaasPaymentId,
-        eventName,
-      });
+      const result = await Sentry.startSpan(
+        { name: 'finance.asaas.payment.reconcile', op: 'finance.reconcile' },
+        () => syncPaymentStateFromAsaas({ contaId, asaasPaymentId, eventName }),
+      );
 
       if (!result.success) {
         return jsonError(422, 'PAGAMENTO_NAO_RECONCILIADO', result.error);
@@ -115,11 +115,10 @@ async function run(req: Request) {
     };
 
     if (contaId) {
-      const job = await reconcileFinanceWebhooksJob({
-        contaId,
-        ...commonJobOptions,
-        maxAccounts: 1,
-      });
+      const job = await Sentry.startSpan(
+        { name: 'finance.webhook.reconcile', op: 'finance.reconcile' },
+        () => reconcileFinanceWebhooksJob({ contaId, ...commonJobOptions, maxAccounts: 1 }),
+      );
 
       const accountResult = job.results[0];
       logJobResult('reconcile-finance-webhooks', startedAt, job, {
@@ -135,10 +134,10 @@ async function run(req: Request) {
       }, { status: job.outcome === 'failed' ? 502 : job.outcome === 'partial' ? 207 : 200 });
     }
 
-    const job = await reconcileFinanceWebhooksJob({
-      ...commonJobOptions,
-      maxAccounts,
-    });
+    const job = await Sentry.startSpan(
+      { name: 'finance.webhook.reconcile', op: 'finance.reconcile' },
+      () => reconcileFinanceWebhooksJob({ ...commonJobOptions, maxAccounts }),
+    );
 
     logJobResult('reconcile-finance-webhooks', startedAt, job, {
       targetedAccount: false,

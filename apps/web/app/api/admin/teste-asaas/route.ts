@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
@@ -10,7 +11,7 @@ function json(status: number, body: unknown) {
   return NextResponse.json(body, { status });
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     const session = await getServerSession(authOptions).catch(() => null);
     type SessUser = { role?: string; contaId?: string };
@@ -29,7 +30,14 @@ export async function POST() {
 
     return json(result.success ? 200 : 400, result);
   } catch (e) {
-    console.error('[API admin/teste-asaas][POST] Erro', e);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/teste-asaas',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error: e,
+    });
     return json(500, {
       success: false,
       summary: 'Erro interno ao testar conexão com o Asaas.',

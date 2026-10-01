@@ -8,6 +8,8 @@
     "jsx": "preserve",
     "paths": {
       "@/*": ["./*"],
+      "@alusa/observability": ["../../packages/observability/src/index.ts"],
+      "@alusa/observability/*": ["../../packages/observability/src/*"],
       "@alusa/ui": ["../../packages/ui/src/index.ts"],
       "@alusa/ui/*": ["../../packages/ui/src/*"],
       "@alusa/admin-auth": ["../../packages/admin-auth/src/index.ts"],

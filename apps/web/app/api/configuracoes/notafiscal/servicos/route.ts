@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
@@ -24,11 +25,17 @@ function fiscalServiceErrorMessage(error: string): string | undefined {
   return undefined;
 }
 
-export async function GET() {
+export async function GET(
+  request: Request = new Request('http://localhost/api/configuracoes/notafiscal/servicos'),
+) {
   try {
     const auth = await resolveTenantSession();
-    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
-    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    if (!auth.ok)
+      return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, {
+        error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
+      });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const services = await listFiscalServices(auth.contaId);
     return json(200, {
@@ -59,7 +66,14 @@ export async function GET() {
       })),
     });
   } catch (error) {
-    console.error('[Config NotaFiscal Servicos][GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.invoice_config.request.failed',
+      route: '/api/configuracoes/notafiscal/servicos',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }
@@ -67,22 +81,26 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const auth = await resolveTenantSession();
-    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
-    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    if (!auth.ok)
+      return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, {
+        error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
+      });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
 
     const parsed = fiscalServiceInputSchema.safeParse(await request.json());
-    if (!parsed.success) return json(422, { error: 'PAYLOAD_INVALIDO', details: parsed.error.flatten() });
+    if (!parsed.success)
+      return json(422, { error: 'PAYLOAD_INVALIDO', details: parsed.error.flatten() });
 
     const result = await createFiscalService(auth.contaId, parsed.data);
     if (!result.success) {
       const status =
         result.error === 'FISCAL_CORE_NOT_SYNCED'
           ? 412
-          : result.error === 'SERVICO_MUNICIPAL_INVALIDO' ||
-              result.error === 'PIS_COFINS_INVALIDO'
+          : result.error === 'SERVICO_MUNICIPAL_INVALIDO' || result.error === 'PIS_COFINS_INVALIDO'
             ? 422
             : 500;
       return json(status, {
@@ -93,7 +111,14 @@ export async function POST(request: Request) {
 
     return json(201, { data: result.data });
   } catch (error) {
-    console.error('[Config NotaFiscal Servicos][POST]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.invoice_config.request.failed',
+      route: '/api/configuracoes/notafiscal/servicos',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

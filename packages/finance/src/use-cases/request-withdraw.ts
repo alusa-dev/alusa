@@ -1,7 +1,13 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma, loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
-import { AsaasHttpError, createBankTransfer, createPixTransfer, getTransfer as asaasGetTransfer } from '@alusa/asaas';
+import {
+  AsaasHttpError,
+  createBankTransfer,
+  createPixTransfer,
+  getTransfer as asaasGetTransfer,
+} from '@alusa/asaas';
 import type { TransferStatus } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
@@ -85,7 +91,10 @@ export type RequestWithdrawError =
   | 'ERRO_AO_CRIAR_TRANSFER'
   | 'ERRO_INTERNO';
 
-function mapWithdrawCreationError(error: unknown, destination: WithdrawDestination): RequestWithdrawError {
+function mapWithdrawCreationError(
+  error: unknown,
+  destination: WithdrawDestination,
+): RequestWithdrawError {
   if (error instanceof AsaasHttpError) {
     const failure = classifyAsaasOperationalError(error, 'subaccount');
     const detailsText = failure.details
@@ -101,11 +110,17 @@ function mapWithdrawCreationError(error: unknown, destination: WithdrawDestinati
       return 'TRANSFERENCIA_DUPLICADA';
     }
 
-    if (messageText.includes('autorização crítica habilitada') || messageText.includes('codigo de confirmação')) {
+    if (
+      messageText.includes('autorização crítica habilitada') ||
+      messageText.includes('codigo de confirmação')
+    ) {
       return 'AUTORIZACAO_CRITICA_NECESSARIA';
     }
 
-    if (destination.type === 'PIX' && messageText.includes('a chave informada não foi encontrada')) {
+    if (
+      destination.type === 'PIX' &&
+      messageText.includes('a chave informada não foi encontrada')
+    ) {
       return 'PIX_KEY_NAO_ENCONTRADA';
     }
   }
@@ -123,7 +138,9 @@ function buildCanonicalTransferExternalReference(transferRequestId: string): str
   return `transfer:${transferRequestId}`;
 }
 
-function resolveBankAccountLabel(destination: Extract<WithdrawDestination, { type: 'BANK_ACCOUNT' }>): string {
+function resolveBankAccountLabel(
+  destination: Extract<WithdrawDestination, { type: 'BANK_ACCOUNT' }>,
+): string {
   if (destination.accountName?.trim()) return destination.accountName.trim();
   if (destination.bankAccountType === 'CONTA_CORRENTE') return 'Conta corrente';
   if (destination.bankAccountType === 'CONTA_POUPANCA') return 'Conta poupanca';
@@ -146,20 +163,22 @@ async function resolveTenantCpfCnpj(contaId: string): Promise<string | null> {
 }
 
 export async function requestWithdraw(
-  input: RequestWithdrawInput
+  input: RequestWithdrawInput,
 ): Promise<Result<RequestWithdrawOutput, RequestWithdrawError>> {
   const normalizedDestination = normalizeWithdrawDestinationForAsaas(input.destination);
   let transferRequestForFailure: { id: string; externalReference: string } | null = null;
 
   try {
-
     await featureFlagsService.ensureTransferFeaturesForApprovedAccount({
       contaId: input.contaId,
       actor: input.actor,
       reason: 'requestWithdraw',
     });
 
-    const manualEnabled = await featureFlagsService.isEnabled(input.contaId, 'enableManualWithdraw');
+    const manualEnabled = await featureFlagsService.isEnabled(
+      input.contaId,
+      'enableManualWithdraw',
+    );
     if (!manualEnabled) return err('FEATURE_DISABLED');
 
     if (normalizedDestination.type === 'PIX') {
@@ -191,12 +210,12 @@ export async function requestWithdraw(
     ]);
 
     if (!balanceResult.success) {
-      if (balanceResult.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS') return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+      if (balanceResult.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS')
+        return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
       return err('ERRO_INTERNO');
     }
 
-    const estimatedOperation =
-      normalizedDestination.type === 'PIX' ? 'PIX' : 'TED';
+    const estimatedOperation = normalizedDestination.type === 'PIX' ? 'PIX' : 'TED';
     const estimatedDebit = estimateTransferDebitAmount(
       input.value,
       transferFeesResult.success ? transferFeesResult.data : null,
@@ -204,7 +223,11 @@ export async function requestWithdraw(
     );
 
     if (input.value <= 0 || estimatedDebit > balanceResult.data.balance) {
-      if (input.value > 0 && input.value <= balanceResult.data.balance && estimatedDebit > balanceResult.data.balance) {
+      if (
+        input.value > 0 &&
+        input.value <= balanceResult.data.balance &&
+        estimatedDebit > balanceResult.data.balance
+      ) {
         return err('SALDO_INSUFICIENTE_PARA_TAXA');
       }
       return err('SALDO_INSUFICIENTE');
@@ -218,7 +241,9 @@ export async function requestWithdraw(
     });
 
     const existing = await prisma.transferRequest.findUnique({
-      where: { contaId_idempotencyKey: { contaId: input.contaId, idempotencyKey: input.idempotencyKey } },
+      where: {
+        contaId_idempotencyKey: { contaId: input.contaId, idempotencyKey: input.idempotencyKey },
+      },
       select: {
         id: true,
         value: true,
@@ -232,7 +257,11 @@ export async function requestWithdraw(
     });
 
     const existingIntent = existing ? buildTransferRequestIntentFromRecord(existing) : null;
-    if (existing && existingIntent && !areTransferRequestIntentsEquivalent(existingIntent, incomingIntent)) {
+    if (
+      existing &&
+      existingIntent &&
+      !areTransferRequestIntentsEquivalent(existingIntent, incomingIntent)
+    ) {
       await auditLogService.record({
         contaId: input.contaId,
         actor: input.actor,
@@ -348,10 +377,10 @@ export async function requestWithdraw(
 
     const mappedStatus = mapAsaasTransferStatus(asaasTransfer.status);
     if (!mappedStatus) {
-      console.warn('[finance][requestWithdraw][unknown-asaas-status]', {
-        contaId: input.contaId,
-        asaasTransferId: asaasTransfer.id,
-        rawStatus: asaasTransfer.status,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.request_withdraw.degraded',
+        throttleMs: 60_000,
       });
     }
     let nextStatus: TransferStatus = mappedStatus ?? 'PENDING';
@@ -368,10 +397,11 @@ export async function requestWithdraw(
         nextStatus = confirmedStatus;
       }
     } catch (error) {
-      console.warn('[finance][requestWithdraw][post-creation-get-failed]', {
-        contaId: input.contaId,
-        asaasTransferId: asaasTransfer.id,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.request_withdraw.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     }
 
@@ -418,7 +448,12 @@ export async function requestWithdraw(
       status: nextStatus,
     });
   } catch (error) {
-    console.error('[finance][requestWithdraw]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.request_withdraw.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     const mappedError = mapWithdrawCreationError(error, normalizedDestination);
     if (transferRequestForFailure) {
       try {
@@ -432,7 +467,12 @@ export async function requestWithdraw(
           },
         });
       } catch (updateError) {
-        console.error('[finance][requestWithdraw][mark-failed]', updateError);
+        logFinanceOperationalEvent({
+          severity: 'error',
+          eventName: 'finance.use_cases.request_withdraw.failed',
+          error: updateError,
+          throttleMs: 60_000,
+        });
       }
 
       try {
@@ -448,7 +488,12 @@ export async function requestWithdraw(
           },
         });
       } catch (auditError) {
-        console.error('[finance][requestWithdraw][audit-failed]', auditError);
+        logFinanceOperationalEvent({
+          severity: 'error',
+          eventName: 'finance.use_cases.request_withdraw.failed',
+          error: auditError,
+          throttleMs: 60_000,
+        });
       }
     }
     return err(mappedError);

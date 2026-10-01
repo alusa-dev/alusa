@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../../foundation/operational-log';
 import { prisma, loadAsaasCredentials } from '@alusa/database';
 import { getTransfer as asaasGetTransfer } from '@alusa/asaas';
 import type { AsaasTransfer } from '@alusa/asaas';
@@ -6,10 +7,7 @@ import type { TransferStatus } from '@prisma/client';
 
 import { auditLogService } from '../../foundation/audit-log.service';
 import { resolveTransferOperationFromAsaas } from './asaas-transfer-payload';
-import {
-  resolveOfficialFeeValue,
-  resolveOfficialNetValue,
-} from './transfer-metadata';
+import { resolveOfficialFeeValue, resolveOfficialNetValue } from './transfer-metadata';
 import {
   isAllowedTransition,
   isOpenTransferStatus,
@@ -61,17 +59,25 @@ function numberChanged(current: unknown, next: number | null | undefined): boole
   return currentNumber === null || currentNumber !== Number(next.toFixed(2));
 }
 
-function stringChanged(current: string | null | undefined, next: string | null | undefined): boolean {
+function stringChanged(
+  current: string | null | undefined,
+  next: string | null | undefined,
+): boolean {
   if (!next) return false;
   return current !== next;
 }
 
-function booleanChanged(current: boolean | null | undefined, next: boolean | null | undefined): boolean {
+function booleanChanged(
+  current: boolean | null | undefined,
+  next: boolean | null | undefined,
+): boolean {
   if (typeof next !== 'boolean') return false;
   return current !== next;
 }
 
-export async function reconcileOpenTransfers(input: ReconcileOpenTransfersInput): Promise<ReconcileResult> {
+export async function reconcileOpenTransfers(
+  input: ReconcileOpenTransfersInput,
+): Promise<ReconcileResult> {
   const limit = input.limit ?? DEFAULT_LIMIT;
   const minAgeMs = input.minAgeMs ?? DEFAULT_MIN_AGE_MS;
 
@@ -112,7 +118,10 @@ export async function reconcileOpenTransfers(input: ReconcileOpenTransfersInput)
   let reconciled = 0;
 
   for (const openTransfer of openTransfers) {
-    if (!openTransfer.asaasTransferId || !isOpenTransferStatus(openTransfer.status as TransferStatus)) {
+    if (
+      !openTransfer.asaasTransferId ||
+      !isOpenTransferStatus(openTransfer.status as TransferStatus)
+    ) {
       continue;
     }
 
@@ -133,7 +142,8 @@ export async function reconcileOpenTransfers(input: ReconcileOpenTransfersInput)
 
       const hasStatusChange = nextStatus && nextStatus !== openTransfer.status;
       const localAmount = toNumber(openTransfer.value);
-      const officialAmount = typeof officialTransfer.value === 'number' ? officialTransfer.value : localAmount ?? 0;
+      const officialAmount =
+        typeof officialTransfer.value === 'number' ? officialTransfer.value : (localAmount ?? 0);
       const officialFeeValue = resolveOfficialFeeValue(officialTransfer, null, officialAmount);
       const officialNetValue =
         typeof officialTransfer.netValue === 'number'
@@ -145,9 +155,15 @@ export async function reconcileOpenTransfers(input: ReconcileOpenTransfersInput)
         stringChanged(openTransfer.resolvedOperation, resolvedOperation) ||
         booleanChanged(openTransfer.authorized, officialTransfer.authorized) ||
         stringChanged(openTransfer.failReason, officialTransfer.failReason ?? null) ||
-        stringChanged(openTransfer.transactionReceiptUrl, officialTransfer.transactionReceiptUrl ?? null) ||
+        stringChanged(
+          openTransfer.transactionReceiptUrl,
+          officialTransfer.transactionReceiptUrl ?? null,
+        ) ||
         stringChanged(openTransfer.effectiveDate, officialTransfer.effectiveDate ?? null) ||
-        stringChanged(openTransfer.endToEndIdentifier, officialTransfer.endToEndIdentifier ?? null) ||
+        stringChanged(
+          openTransfer.endToEndIdentifier,
+          officialTransfer.endToEndIdentifier ?? null,
+        ) ||
         numberChanged(openTransfer.feeValue, officialFeeValue) ||
         numberChanged(openTransfer.netValue, officialNetValue);
 
@@ -158,11 +174,11 @@ export async function reconcileOpenTransfers(input: ReconcileOpenTransfersInput)
         !hasStatusChange || isAllowedTransition(openTransfer.status as TransferStatus, nextStatus!);
 
       if (hasStatusChange && !transitionAllowed) {
-        console.warn('[finance][reconcileOpenTransfers][state-regression-blocked]', {
-          contaId: input.contaId,
-          transferRequestId: openTransfer.id,
-          currentStatus: openTransfer.status,
-          attemptedStatus: nextStatus,
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName:
+            'finance.use_cases.transfers.reconcile_open_transfers.state_regression_blocked',
+          throttleMs: 60_000,
         });
         // Ainda pode atualizar authorized mesmo que a transicao de status seja invalida
         if (!authorizedChanged) continue;
@@ -171,7 +187,10 @@ export async function reconcileOpenTransfers(input: ReconcileOpenTransfersInput)
       const updateData: Prisma.TransferRequestUpdateInput = {
         rawAsaasStatus: transitionAllowed ? officialTransfer.status : undefined,
         resolvedOperation: resolvedOperation ?? undefined,
-        authorized: typeof officialTransfer.authorized === 'boolean' ? officialTransfer.authorized : undefined,
+        authorized:
+          typeof officialTransfer.authorized === 'boolean'
+            ? officialTransfer.authorized
+            : undefined,
         failReason: officialTransfer.failReason ?? undefined,
         transactionReceiptUrl: officialTransfer.transactionReceiptUrl ?? undefined,
         effectiveDate: officialTransfer.effectiveDate ?? undefined,
@@ -190,8 +209,10 @@ export async function reconcileOpenTransfers(input: ReconcileOpenTransfersInput)
         data: updateData,
       });
 
-      const resolvedNextStatus = hasStatusChange && nextStatus ? nextStatus : (openTransfer.status as TransferStatus);
-      const nextPixTransferSessionStatus = mapTransferStatusToPixTransferSessionStatus(resolvedNextStatus);
+      const resolvedNextStatus =
+        hasStatusChange && nextStatus ? nextStatus : (openTransfer.status as TransferStatus);
+      const nextPixTransferSessionStatus =
+        mapTransferStatusToPixTransferSessionStatus(resolvedNextStatus);
       if (nextPixTransferSessionStatus) {
         await prisma.pixTransferSession.updateMany({
           where: {
@@ -222,11 +243,11 @@ export async function reconcileOpenTransfers(input: ReconcileOpenTransfersInput)
 
       reconciled++;
     } catch (error) {
-      console.warn('[finance][reconcileOpenTransfers]', {
-        contaId: input.contaId,
-        transferRequestId: openTransfer.id,
-        asaasTransferId: openTransfer.asaasTransferId,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.transfers.reconcile_open_transfers.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     }
   }

@@ -3,6 +3,7 @@ import { dashboardPeriodoDTOSchema } from '@/features/dashboard/dtos';
 import { mapDashboardSerieResultToDTO } from '@/features/dashboard/mappers';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { runWithTenant } from '@/lib/prisma-tenant';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export async function GET(request: NextRequest) {
   try {
@@ -135,7 +136,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(body);
   } catch (error) {
-    console.error('[GET /api/dashboard/receita] Erro:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.dashboard.request.failed', route: '/api/dashboard/receita', method: 'GET', requestId: getRequestId(request), error });
     return NextResponse.json(
       { success: false, error: 'Não foi possível carregar a receita agora.' },
       { status: 500 },
