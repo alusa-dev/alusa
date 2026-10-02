@@ -65,6 +65,8 @@ jobs:
               - 'apps/web/app/api/finance/**'
               - 'apps/web/app/api/financeiro/**'
               - 'apps/web/app/api/conta/**'
+              - 'apps/web/app/api/contratos/**'
+              - 'apps/web/app/api/public/contrato/**'
               - 'apps/web/features/auth/**'
               - 'apps/web/features/finance/**'
               - 'apps/web/features/responsibles/**'
