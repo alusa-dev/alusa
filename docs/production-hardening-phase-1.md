@@ -45,6 +45,30 @@ O modo estrito de IP deve ser habilitado somente quando a camada de proxy/CDN
 preservar o IP real do Asaas. A allowlist usa os IPs oficiais documentados pelo
 Asaas e deve ser revisada quando o provedor atualizar sua documentação.
 
+### Exceção temporária de IP para Sandbox Asaas
+
+`ASAAS_WEBHOOK_SANDBOX_IP_BYPASS_CONTA_IDS` aceita IDs de `Conta` separados por
+vírgula. Mantenha o valor vazio por padrão. Só configure um `contaId` depois de
+verificar que aquela Conta usa uma subconta Asaas Sandbox; não infira isso pela
+URL global do deployment, pois outros tenants podem usar produção. A exceção é
+avaliada somente depois que o token do webhook é validado e associado ao
+`contaId` exato. Todos os outros tenants continuam sujeitos à allowlist estrita;
+tokens ausentes ou inválidos nunca recebem exceção. Se o IP não estiver na
+allowlist oficial, a requisição recebe 403 antes de persistir. Se o IP estiver
+allowlisted, a rejeição do token segue o fluxo normal de persistência/auditoria.
+
+Esta configuração é temporária. Remova o `contaId` assim que o Asaas confirmar
+ou publicar os endereços IP adicionais de Sandbox e a allowlist oficial puder
+ser atualizada. Não inclua um IP observado em logs como se fosse oficial sem
+confirmação do provedor. A decisão de IP usa exclusivamente o primeiro endereço
+de `x-forwarded-for` sobrescrito pela Vercel; headers alternativos não são
+considerados. Os helpers legados que retornam candidatos de headers continuam
+disponíveis para diagnóstico/compatibilidade e não participam da autorização ou
+do rate limit desta rota.
+
+- [Vercel — Request Headers](https://vercel.com/docs/headers/request-headers)
+- [Asaas — Official IP Addresses](https://docs.asaas.com/docs/official-asaas-ips)
+
 ## Operação
 
 - `GET /api/internal/health` verifica banco, URL do Asaas, segredo de webhook

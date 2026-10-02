@@ -31,6 +31,7 @@ import {
   hashWebhookPayload,
   getAsaasWebhookTokenHashPrefix,
 } from './asaas-webhook-auth';
+import { shouldBlockAsaasWebhookByIpForTenant } from './webhook-ip-whitelist';
 import { syncAsaasOperationalStatus } from '../foundation/asaas-operational-guard';
 import { shouldAlertUnknownWebhookEvent } from './asaas-event-registry';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
@@ -209,6 +210,7 @@ export type HandleAsaasWebhookEventParams = {
   rawBody: string;
   accessToken?: string | null;
   correlationId?: string | null;
+  clientIp?: string | null;
 };
 
 export type QueueWebhookResult = {
@@ -775,6 +777,13 @@ export async function enqueueAsaasWebhookEvent(
 async function enqueueAsaasWebhookEventInternal(
   params: HandleAsaasWebhookEventParams
 ): Promise<QueueWebhookResult> {
+  const auth = params.accessToken
+    ? await authenticateAsaasWebhookToken(params.accessToken)
+    : null;
+  if (shouldBlockAsaasWebhookByIpForTenant(params.clientIp ?? null, auth?.contaId ?? null)) {
+    return { success: false, status: 403, persisted: false, error: 'IP fora da allowlist' };
+  }
+
   const parsedPayload = parseAsaasWebhookPayload(params.rawBody);
   if (!parsedPayload.success) {
     await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: parsedPayload.reason, event: null, eventId: null });
@@ -793,7 +802,6 @@ async function enqueueAsaasWebhookEventInternal(
     return { success: false, status: 401, persisted: false, error: 'Assinatura inválida' };
   }
 
-  const auth = await authenticateAsaasWebhookToken(params.accessToken);
   if (!auth) {
     alertTokenRejected({
       tokenHashPrefix: getAsaasWebhookTokenHashPrefix(params.accessToken) ?? 'invalid-format',
@@ -1220,6 +1228,13 @@ async function handleAsaasWebhookEventInternal(params: HandleAsaasWebhookEventPa
   event?: string;
   eventId?: string | null;
 }> {
+  const auth = params.accessToken
+    ? await authenticateAsaasWebhookToken(params.accessToken)
+    : null;
+  if (shouldBlockAsaasWebhookByIpForTenant(params.clientIp ?? null, auth?.contaId ?? null)) {
+    return { success: false, status: 403, persisted: false, error: 'IP fora da allowlist' };
+  }
+
   const parsedPayload = parseAsaasWebhookPayload(params.rawBody);
   if (!parsedPayload.success) {
     await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: parsedPayload.reason, event: null, eventId: null });
@@ -1235,7 +1250,6 @@ async function handleAsaasWebhookEventInternal(params: HandleAsaasWebhookEventPa
 
   // Prioridade: authToken por tenant (ADR-009 / Fase 2)
   if (params.accessToken) {
-    const auth = await authenticateAsaasWebhookToken(params.accessToken);
     if (!auth) {
       alertTokenRejected({
         tokenHashPrefix: getAsaasWebhookTokenHashPrefix(params.accessToken) ?? 'invalid-format',

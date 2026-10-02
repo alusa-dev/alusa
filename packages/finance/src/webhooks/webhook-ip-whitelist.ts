@@ -21,7 +21,7 @@ function isDevMode(): boolean {
   return process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
 }
 
-function parseIpList(value: string | null): string[] {
+function parseIpList(value: string | null | undefined): string[] {
   if (!value) return [];
 
   return value
@@ -30,23 +30,17 @@ function parseIpList(value: string | null): string[] {
     .filter(Boolean);
 }
 
-/**
- * Extrai os IPs candidatos de headers comuns de proxy/CDN.
- * Em serverless/CDN, o IP real pode estar em mais de uma posição do XFF.
- */
+/** Extrai IPs candidatos de headers comuns para diagnóstico/compatibilidade. */
 export function extractClientIps(headers: Headers): string[] {
   const ips = [
     ...parseIpList(headers.get('cf-connecting-ip')),
     ...parseIpList(headers.get('x-real-ip')),
     ...parseIpList(headers.get('x-forwarded-for')),
   ];
-
   return [...new Set(ips)];
 }
 
-/**
- * Extrai o IP principal do cliente de headers comuns de proxy/CDN.
- */
+/** Retorna o primeiro candidato para compatibilidade/diagnóstico; não autoriza IP. */
 export function extractClientIp(headers: Headers): string | null {
   return extractClientIps(headers)[0] ?? null;
 }
@@ -72,7 +66,27 @@ export function isAsaasWebhookIpAllowed(ip: string | string[] | null): boolean {
  * Asaas sandbox use IP adicional ou o proxy altere a cadeia X-Forwarded-For.
  */
 export function shouldBlockAsaasWebhookByIp(ip: string | string[] | null): boolean {
-  return process.env.ASAAS_WEBHOOK_IP_CHECK === 'strict' && !isAsaasWebhookIpAllowed(ip);
+  return shouldBlockAsaasWebhookByIpForTenant(ip, null);
+}
+
+/**
+ * Exceção temporária para Conta Sandbox explicitamente configurada pelo
+ * operador. Só deve ser chamada após autenticar o token e resolver contaId.
+ * O default vazio mantém strict IP checking para todos os tenants.
+ */
+function isAsaasSandboxWebhookIpExceptionTenant(contaId: string | null | undefined): boolean {
+  if (!contaId) return false;
+  const configuredTenantIds = parseIpList(process.env.ASAAS_WEBHOOK_SANDBOX_IP_BYPASS_CONTA_IDS);
+  return configuredTenantIds.includes(contaId);
+}
+
+export function shouldBlockAsaasWebhookByIpForTenant(
+  ip: string | string[] | null,
+  authenticatedContaId: string | null,
+): boolean {
+  if (process.env.ASAAS_WEBHOOK_IP_CHECK !== 'strict') return false;
+  if (isAsaasSandboxWebhookIpExceptionTenant(authenticatedContaId)) return false;
+  return !isAsaasWebhookIpAllowed(ip);
 }
 
 /**

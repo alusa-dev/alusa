@@ -7,8 +7,6 @@ import {
   inspectWebhookProcessingRuntimeStatus,
   processAsaasWebhookQueueWithInbox,
   resolveAsaasWebhookAccessToken,
-  extractClientIps,
-  shouldBlockAsaasWebhookByIp,
   globalWebhookRateLimiter,
   buildWebhookRateLimitKey,
   getAsaasWebhookTokenHashPrefix,
@@ -76,21 +74,10 @@ export async function POST(req: NextRequest) {
   const requestId = resolveRequestId(req.headers);
 
   try {
-    // A allowlist de IP só bloqueia com strict mode; o authToken continua sendo
-    // a barreira primária, pois proxies/serverless podem alterar o IP encaminhado.
-    const clientIps = extractClientIps(req.headers);
-    const clientIp = clientIps[0] ?? null;
+    // Vercel sobrescreve x-forwarded-for; headers alternativos não autorizam IP.
+    const clientIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
     const accessToken = resolveAsaasWebhookAccessToken(req.headers);
     const tokenHashPrefix = getAsaasWebhookTokenHashPrefix(accessToken);
-
-    if (shouldBlockAsaasWebhookByIp(clientIps.length > 0 ? clientIps : null)) {
-      return jsonWithRequestId(
-        { success: false, error: 'FORBIDDEN' },
-        requestId,
-        { status: 403 },
-        startedAt,
-      );
-    }
 
     // Rate limiting por IP
     const rateLimitKey = buildWebhookRateLimitKey({ ip: clientIp, tokenHashPrefix });
@@ -161,7 +148,7 @@ export async function POST(req: NextRequest) {
     if (useAsyncQueue) {
       const queued = await Sentry.startSpan(
         { name: 'finance.webhook.enqueue', op: 'queue.submit', attributes: { 'messaging.system': 'asaas-webhook' } },
-        () => enqueueAsaasWebhookEvent({ rawBody, accessToken, correlationId }),
+        () => enqueueAsaasWebhookEvent({ rawBody, accessToken, correlationId, clientIp }),
       );
       result = queued;
       processedContaId = queued.success ? queued.contaId ?? null : null;
@@ -195,7 +182,7 @@ export async function POST(req: NextRequest) {
     } else {
       result = await Sentry.startSpan(
         { name: 'finance.webhook.process_sync', op: 'webhook.process', attributes: { 'messaging.system': 'asaas-webhook' } },
-        () => handleAsaasWebhookEvent({ rawBody, accessToken, correlationId }),
+        () => handleAsaasWebhookEvent({ rawBody, accessToken, correlationId, clientIp }),
       );
       processedContaId = (result as { contaId?: string | null }).contaId ?? null;
 
