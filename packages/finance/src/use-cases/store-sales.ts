@@ -2090,9 +2090,6 @@ async function ensureChargeForSale(input: {
       },
     });
 
-    if (!firstCharge) {
-    }
-
     return;
   }
 

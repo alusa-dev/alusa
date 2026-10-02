@@ -244,11 +244,6 @@ async function resolveAsaasLink(params: {
   });
 
   if (repaired.repaired) {
-    try {
-    } catch {
-      // noop
-    }
-
     await auditLogService.record({
       contaId: params.contaId,
       action: 'finance.admin.asaas_link_repaired',
