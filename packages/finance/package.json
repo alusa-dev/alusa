@@ -46,7 +46,6 @@
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true}); require('fs').rmSync('tsconfig.build.tsbuildinfo',{force:true})\" && tsc -p tsconfig.build.json",
     "dev": "tsc -w -p tsconfig.build.json",
-    "pretypecheck": "pnpm -C ../asaas build && pnpm -C ../asaas-gateway build && pnpm -C ../shared build && pnpm -C ../domain build && pnpm -C ../lib build && pnpm -C ../platform-billing build",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "test": "pnpm run test:unit",
     "test:unit": "dotenv -e ../../.env.test -- env ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 node ../../scripts/validate-db-env.mjs test && dotenv -e ../../.env.test -- env ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 vitest run",
