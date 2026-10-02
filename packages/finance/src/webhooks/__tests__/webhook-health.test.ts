@@ -79,6 +79,11 @@ afterEach(() => {
   unsubscribeTelemetry = undefined;
 });
 
+afterEach(() => {
+  unsubscribeTelemetry?.();
+  unsubscribeTelemetry = undefined;
+});
+
 describe('checkWebhookHealth', () => {
   it('retorna resultado limpo quando nenhum webhook está interrompido', async () => {
     mockFindMany.mockResolvedValue([
