@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { collectOperationalMetrics } from '@alusa/finance';
-import { prisma } from '@alusa/database';
 import { createStructuredLog } from '@alusa/observability';
 import { getRequestId } from '@/lib/observability/api-logger';
+import { recordOperationalMetricsAccess } from '@/src/server/system/operational-metrics-audit.service';
 
 /**
  * GET /api/admin/webhooks/metrics/operational
@@ -50,20 +50,12 @@ export async function GET(req: NextRequest) {
     // Record the privileged read durably, without copying metric values or
     // account keys into the audit trail. Do not return the snapshot if auditing
     // is unavailable.
-    await prisma.supportAuditLog.create({
-      data: {
-        actorId: session.user.id,
-        actorUsername: session.user.email,
-        action: 'admin.observability.operational_metrics.viewed',
-        entityType: 'GLOBAL_OPERATIONAL_METRICS',
-        correlationId: getRequestId(req),
-        userAgent: req.headers.get('user-agent'),
-        metadata: {
-          actorRole: 'SUPER_ADMIN',
-          scope: 'instance-local',
-          windowMinutes,
-        },
-      },
+    await recordOperationalMetricsAccess({
+      actorId: session.user.id,
+      actorUsername: session.user.email,
+      correlationId: getRequestId(req),
+      userAgent: req.headers.get('user-agent'),
+      windowMinutes,
     });
 
     return NextResponse.json(
