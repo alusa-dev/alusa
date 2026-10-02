@@ -1,18 +1,115 @@
 name: CI
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
-    branches: [ "**" ]
+    branches: ["**"]
+
+permissions:
+  contents: read
+  pull-requests: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-test:
+  changes:
+    name: Change scope
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code || steps.failopen.outputs.code }}
+      web: ${{ steps.filter.outputs.web || steps.failopen.outputs.web }}
+      critical: ${{ steps.filter.outputs.critical || steps.failopen.outputs.critical }}
+      mobile: ${{ steps.filter.outputs.mobile || steps.failopen.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        continue-on-error: true
+        with:
+          filters: |
+            code:
+              - 'apps/**'
+              - 'packages/**'
+              - 'prisma/**'
+              - 'scripts/**'
+              - '.github/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'turbo.json'
+              - 'tsconfig*.json'
+              - '.npmrc'
+              - '.vercelignore'
+              - 'eslint.config.js'
+            web:
+              - 'apps/web/**'
+              - 'apps/admin/**'
+              - 'packages/**'
+              - 'prisma/**'
+              - 'scripts/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'turbo.json'
+              - 'tsconfig.base.json'
+              - '.npmrc'
+              - '.vercelignore'
+              - 'eslint.config.js'
+              - '.github/**'
+            critical:
+              - 'apps/web/app/api/auth/**'
+              - 'apps/web/app/api/finance/**'
+              - 'apps/web/app/api/financeiro/**'
+              - 'apps/web/app/api/conta/**'
+              - 'apps/web/app/api/contratos/**'
+              - 'apps/web/app/api/public/contrato/**'
+              - 'apps/web/features/auth/**'
+              - 'apps/web/features/finance/**'
+              - 'apps/web/features/responsibles/**'
+              - 'apps/web/features/students/**'
+              - 'apps/web/lib/auth/**'
+              - 'apps/web/lib/prisma-tenant.ts'
+              - 'apps/web/tests/unit/auth/**'
+              - 'apps/web/tests/unit/*tenant*'
+              - 'apps/web/e2e/smoke.spec.ts'
+              - 'apps/web/e2e/contratos-publico.spec.ts'
+              - 'apps/web/e2e/contratos-publico-avancado.spec.ts'
+              - 'packages/database/src/**'
+              - 'packages/domain/src/**'
+              - 'packages/finance/src/**'
+              - 'packages/asaas/src/**'
+              - 'packages/asaas-gateway/src/**'
+              - 'prisma/**'
+            mobile:
+              - 'apps/mobile/**'
+              - 'packages/shared/**'
+              - 'packages/observability/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'turbo.json'
+              - 'package.json'
+              - '.npmrc'
+              - 'tsconfig.base.json'
+              - 'eslint.config.js'
+      - name: Fail open to full PR validation if scope could not be calculated
+        if: steps.filter.outcome != 'success'
+        id: failopen
+        run: |
+          echo 'code=true' >> "$GITHUB_OUTPUT"
+          echo 'web=true' >> "$GITHUB_OUTPUT"
+          echo 'critical=true' >> "$GITHUB_OUTPUT"
+          echo 'mobile=true' >> "$GITHUB_OUTPUT"
+
+  required-checks:
+    name: Required security, tenancy and workspace checks
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.code == 'true' || needs.changes.result != 'success')
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16
@@ -20,36 +117,25 @@ jobs:
           POSTGRES_DB: alusa_test
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
+        ports: [5432:5432]
         options: >-
           --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
     env:
-      # Banco isolado de testes; não usar o nome do banco de desenvolvimento.
-      DATABASE_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa_test', 'postgresql') }}
-      DIRECT_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa_test', 'postgresql') }}
-      # Chave descartável e exclusiva do banco efêmero do CI; nunca usada fora dos testes.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/alusa_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/alusa_test
       ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
-      NEXTAUTH_SECRET: 'ci-only-nextauth-secret-not-for-production'
+      NEXTAUTH_SECRET: ci-only-nextauth-secret-not-for-production
       NODE_OPTIONS: '--max-old-space-size=4096'
       CI: true
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22.13.1
-          cache: 'pnpm'
-
-      - name: Install deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Workspace and route boundary checks
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Workspace, API and database safety audits
         run: |
           pnpm workspace:check
           pnpm audit:route-boundaries
@@ -58,19 +144,7 @@ jobs:
           pnpm audit:critical-route-coverage
           pnpm audit:package-graph
           pnpm audit:migration-safety
-
-      # Prisma — aplicar migrations e confirmar estado final
-      - name: Prisma migrate deploy
-        run: npx prisma migrate deploy --schema prisma/schema.prisma
-
-      - name: Prisma migrate status
-        run: npx prisma migrate status --schema prisma/schema.prisma
-
-      - name: Prisma generate
-        run: npx prisma generate --schema prisma/schema.prisma
-
-      - name: Security and cron configuration
-        run: |
+          pnpm audit:e2e-rls-bootstrap
           pnpm security:check
           pnpm validate:cron-config
           pnpm audit:dtos
@@ -78,79 +152,122 @@ jobs:
           pnpm audit:http-contracts
           pnpm audit:rate-limit
           pnpm audit:lib-boundaries
-
-      # Pipeline padrão do monorepo (fail-fast)
-      - name: Lint
-        run: pnpm lint:check
-
-      - name: Typecheck
-        run: pnpm -w typecheck
-
-      - name: Unit tests
+      - name: Apply and verify migrations
         run: |
-          pnpm -w test:unit
-          pnpm --filter @alusa/lib test
-          pnpm --filter @alusa/admin test
-
-      - name: Critical package tests
+          npx prisma migrate deploy --schema prisma/schema.prisma
+          npx prisma migrate status --schema prisma/schema.prisma
+          npx prisma generate --schema prisma/schema.prisma
+      - name: Build shared package for mandatory web regressions
         run: |
-          pnpm --filter @alusa/domain test:unit
-          pnpm --filter @alusa/database test:unit
-          pnpm --filter @alusa/asaas test
-          pnpm --filter @alusa/asaas-gateway test
-          pnpm --filter @alusa/finance test:unit
+          pnpm --filter @alusa/shared build
+          pnpm --filter @alusa/domain build
+      - name: Mandatory auth and contaId regression tests
+        run: pnpm --filter @alusa/web exec vitest run tests/unit/auth tests/unit/with-tenant-session.test.ts tests/unit/prisma-tenant.test.ts tests/unit/password-change-otp.rls.integration.test.ts
 
-      # Packages com contratos consumidos diretamente pelas aplicações.
-      # Mantidos separados do bloco crítico para deixar a causa da falha clara.
-      - name: Supporting package tests
+  app-quality:
+    name: Affected workspaces lint, typecheck and build
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.web == 'true' || needs.changes.result != 'success')
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: alusa_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: [5432:5432]
+        options: >-
+          --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/alusa_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/alusa_test
+      ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+      NEXTAUTH_SECRET: ci-only-nextauth-secret
+      NODE_OPTIONS: '--max-old-space-size=4096'
+      CI: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare Prisma and database for application build
         run: |
-          pnpm --filter @alusa/platform-billing test
-          pnpm --filter @alusa/stripe test
-          pnpm --filter @alusa/whatsapp test
-          pnpm --filter @alusa/shared test:unit
-          pnpm --filter @alusa/ui test
+          npx prisma migrate deploy --schema prisma/schema.prisma
+          npx prisma generate --schema prisma/schema.prisma
+      - name: Lint, typecheck and build affected workspaces
+        run: pnpm exec turbo run lint typecheck build --filter='...[${{ github.event.pull_request.base.sha }}]'
 
-      - name: Build
-        run: pnpm -w build
+  affected-tests:
+    name: Affected workspace tests
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.code == 'true' || needs.changes.result != 'success')
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: alusa_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: [5432:5432]
+        options: >-
+          --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/alusa_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/alusa_test
+      ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+      NEXTAUTH_SECRET: ci-only-nextauth-secret
+      NODE_OPTIONS: '--max-old-space-size=4096'
+      CI: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare database for affected tests
+        run: |
+          npx prisma migrate deploy --schema prisma/schema.prisma
+          npx prisma generate --schema prisma/schema.prisma
+      - name: Run affected workspace tests without database contention
+        run: pnpm exec turbo run test --filter='...[${{ github.event.pull_request.base.sha }}]' --concurrency=1
 
   mobile-health:
     name: Mobile SDK health
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.mobile == 'true' || needs.changes.result != 'success')
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22.13.1
-          cache: 'pnpm'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @alusa/mobile run doctor
+      - run: pnpm --filter @alusa/shared build
+      - run: pnpm --filter @alusa/mobile typecheck
+      - run: pnpm --filter @alusa/mobile lint
+      - run: pnpm --filter @alusa/mobile test
 
-      - name: Install deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Expo doctor
-        run: pnpm --filter @alusa/mobile run doctor
-
-      - name: Build shared workspace package
-        run: pnpm --filter @alusa/shared build
-
-      - name: Mobile typecheck
-        run: pnpm --filter @alusa/mobile typecheck
-
-      - name: Mobile lint
-        run: pnpm --filter @alusa/mobile lint
-
-      - name: Mobile tests
-        run: pnpm --filter @alusa/mobile test
-
-  # Gate rápido do PR: cobre o fluxo alterado e o smoke da aplicação.
   e2e-critical:
     name: E2E critical
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.critical == 'true' || needs.changes.result != 'success')
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -160,15 +277,14 @@ jobs:
           POSTGRES_DB: alusa_test
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
+        ports: [5432:5432]
         options: >-
           --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
     env:
-      DATABASE_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa_test', 'postgresql') }}
-      DIRECT_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa_test', 'postgresql') }}
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/alusa_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/alusa_test
       ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
-      NEXTAUTH_SECRET: ci-only-nextauth-secret-not-for-production
+      NEXTAUTH_SECRET: ci-only-nextauth-secret
       NODE_OPTIONS: '--max-old-space-size=4096'
       E2E_SERVER_MODE: production
       E2E_REDIS_EMULATOR: true
@@ -190,46 +306,24 @@ jobs:
       CRON_SECRET: ci-only-e2e-cron-secret
       CI: true
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22.13.1
-          cache: 'pnpm'
-
-      - name: Install deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Validate E2E RLS bootstrap order
-        run: pnpm audit:e2e-rls-bootstrap
-
-      - name: Prisma migrate deploy
-        run: npx prisma migrate deploy --schema prisma/schema.prisma
-
-      - name: Prisma generate
-        run: npx prisma generate --schema prisma/schema.prisma
-
-      - name: Prepare and verify least-privilege RLS role
-        run: pnpm e2e:prepare-rls
-
-      - name: Install Playwright deps
-        run: pnpm --filter @alusa/web exec playwright install --with-deps
-
-      - name: E2E tests
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit:e2e-rls-bootstrap
+      - run: npx prisma migrate deploy --schema prisma/schema.prisma
+      - run: npx prisma generate --schema prisma/schema.prisma
+      - run: pnpm e2e:prepare-rls
+      - run: pnpm --filter @alusa/web exec playwright install --with-deps
+      - name: Critical Playwright coverage
         run: |
           pnpm --filter @alusa/web exec node ../../scripts/validate-db-env.mjs test
           pnpm --filter @alusa/web exec playwright test \
-            e2e/smoke.spec.ts \
-            e2e/contratos-publico.spec.ts \
-            e2e/contratos-publico-avancado.spec.ts
-
-      - name: Upload Playwright diagnostics
-        if: ${{ !cancelled() }}
+            e2e/smoke.spec.ts e2e/contratos-publico.spec.ts e2e/contratos-publico-avancado.spec.ts
+      - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: e2e-critical-diagnostics
@@ -238,3 +332,23 @@ jobs:
             apps/web/playwright-report
           if-no-files-found: ignore
           retention-days: 7
+
+  required-gate:
+    name: CI required
+    if: always() && github.event_name == 'pull_request'
+    needs: [changes, required-checks, app-quality, affected-tests, mobile-health, e2e-critical]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce PR validation result
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          CORE: ${{ needs.required-checks.result }}
+          APP: ${{ needs.app-quality.result }}
+          TESTS: ${{ needs.affected-tests.result }}
+          MOBILE: ${{ needs.mobile-health.result }}
+          E2E: ${{ needs.e2e-critical.result }}
+        run: |
+          test "$CHANGES" = success || exit 1
+          for result in "$CORE" "$APP" "$TESTS" "$MOBILE" "$E2E"; do
+            test "$result" = success || test "$result" = skipped || exit 1
+          done
