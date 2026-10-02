@@ -78,11 +78,11 @@ describe('metric normalization', () => {
   });
 
   it('preserves long static route segments while normalizing known identifiers', () => {
-    expect(normalizeHttpRoute('/api/alunos/list-for-responsavel')).toBe('/api/alunos/list-for-responsavel');
+    expect(normalizeHttpRoute('/api/records/list-for-owner')).toBe('/api/records/list-for-owner');
     expect(normalizeHttpRoute('/api/jobs/retry-enrollment-billing')).toBe('/api/jobs/retry-enrollment-billing');
     expect(normalizeMetricDimensions({ 'http.route': normalizeHttpRoute('/api/jobs/retry-enrollment-billing') })).toEqual({ 'http.route': '/api/jobs/retry-enrollment-billing' });
-    expect(normalizeHttpRoute(`/api/alunos/${'z'.repeat(24)}`)).toBe('/api/alunos/:id');
-    expect(normalizeHttpRoute(`/api/alunos/${'c' + 'a'.repeat(24)}`)).toBe('/api/alunos/:id');
+    expect(normalizeHttpRoute(`/api/records/${'z'.repeat(24)}`)).toBe('/api/records/:id');
+    expect(normalizeHttpRoute(`/api/records/${'c' + 'a'.repeat(24)}`)).toBe('/api/records/:id');
   });
 });
 
