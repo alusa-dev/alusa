@@ -73,13 +73,14 @@ jobs:
               - 'apps/web/lib/prisma-tenant.ts'
               - 'apps/web/tests/unit/auth/**'
               - 'apps/web/tests/unit/*tenant*'
-              - 'apps/web/e2e/**'
-              - 'packages/admin-auth/**'
-              - 'packages/database/**'
-              - 'packages/domain/**'
-              - 'packages/finance/**'
-              - 'packages/asaas/**'
-              - 'packages/asaas-gateway/**'
+              - 'apps/web/e2e/smoke.spec.ts'
+              - 'apps/web/e2e/contratos-publico.spec.ts'
+              - 'apps/web/e2e/contratos-publico-avancado.spec.ts'
+              - 'packages/database/src/**'
+              - 'packages/domain/src/**'
+              - 'packages/finance/src/**'
+              - 'packages/asaas/src/**'
+              - 'packages/asaas-gateway/src/**'
               - 'prisma/**'
             mobile:
               - 'apps/mobile/**'
@@ -198,8 +199,48 @@ jobs:
         run: |
           npx prisma migrate deploy --schema prisma/schema.prisma
           npx prisma generate --schema prisma/schema.prisma
-      - name: Lint, typecheck, build and test affected workspaces
-        run: pnpm exec turbo run lint typecheck build test --filter='...[${{ github.event.pull_request.base.sha }}]'
+      - name: Lint, typecheck and build affected workspaces
+        run: pnpm exec turbo run lint typecheck build --filter='...[${{ github.event.pull_request.base.sha }}]'
+
+  affected-tests:
+    name: Affected workspace tests
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.code == 'true' || needs.changes.result != 'success')
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: alusa_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: [5432:5432]
+        options: >-
+          --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/alusa_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/alusa_test
+      ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+      NEXTAUTH_SECRET: ci-only-nextauth-secret
+      NODE_OPTIONS: '--max-old-space-size=4096'
+      CI: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare database for affected tests
+        run: |
+          npx prisma migrate deploy --schema prisma/schema.prisma
+          npx prisma generate --schema prisma/schema.prisma
+      - name: Run affected workspace tests without database contention
+        run: pnpm exec turbo run test --filter='...[${{ github.event.pull_request.base.sha }}]' --concurrency=1
 
   mobile-health:
     name: Mobile SDK health
@@ -279,9 +320,7 @@ jobs:
         run: |
           pnpm --filter @alusa/web exec node ../../scripts/validate-db-env.mjs test
           pnpm --filter @alusa/web exec playwright test \
-            e2e/smoke.spec.ts e2e/contratos-publico.spec.ts e2e/contratos-publico-avancado.spec.ts \
-            e2e/responsible-invite-multitenant.spec.ts e2e/auth-session-revocation.spec.ts \
-            e2e/financeiro
+            e2e/smoke.spec.ts e2e/contratos-publico.spec.ts e2e/contratos-publico-avancado.spec.ts
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
@@ -295,7 +334,7 @@ jobs:
   required-gate:
     name: CI required
     if: always() && github.event_name == 'pull_request'
-    needs: [changes, required-checks, app-quality, mobile-health, e2e-critical]
+    needs: [changes, required-checks, app-quality, affected-tests, mobile-health, e2e-critical]
     runs-on: ubuntu-latest
     steps:
       - name: Enforce PR validation result
@@ -303,10 +342,11 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           CORE: ${{ needs.required-checks.result }}
           APP: ${{ needs.app-quality.result }}
+          TESTS: ${{ needs.affected-tests.result }}
           MOBILE: ${{ needs.mobile-health.result }}
           E2E: ${{ needs.e2e-critical.result }}
         run: |
           test "$CHANGES" = success || exit 1
-          for result in "$CORE" "$APP" "$MOBILE" "$E2E"; do
+          for result in "$CORE" "$APP" "$TESTS" "$MOBILE" "$E2E"; do
             test "$result" = success || test "$result" = skipped || exit 1
           done

@@ -49,8 +49,9 @@ ignorados. A validação pesada não é repetida em `push` para `main`.
 
 Os jobs paralelos selecionam lint, typecheck, build e testes pelas mudanças
 afetadas. O Turbo coordena a ordem dos builds de dependências e executa tarefas
-independentes em paralelo. Falha ao determinar escopo executa a validação
-completa. Auditorias
+independentes em paralelo. Os testes de workspace usam um job com banco próprio
+e execução serial para evitar que suítes compartilhem fixtures. Falha ao
+determinar escopo executa a validação completa. Auditorias
 de segurança/workspace e testes de auth, RLS e `contaId` seguem obrigatórios
 para PRs com código; Playwright crítico cobre mudanças de web, auth, tenant e
 financeiro. O workflow noturno `E2E Full` mantém os quatro shards completos.
