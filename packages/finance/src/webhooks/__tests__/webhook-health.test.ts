@@ -12,6 +12,8 @@ const {
   mockAuditRecord,
   mockLoadCreds,
   mockCreateNotification,
+  mockNotificationFindFirst,
+  mockExecuteRaw,
 } = vi.hoisted(() => ({
   mockFindMany: vi.fn(),
   mockListWebhooks: vi.fn(),
@@ -19,11 +21,17 @@ const {
   mockAuditRecord: vi.fn().mockResolvedValue(undefined),
   mockLoadCreds: vi.fn(),
   mockCreateNotification: vi.fn(),
+  mockNotificationFindFirst: vi.fn(),
+  mockExecuteRaw: vi.fn(),
 }));
 
 vi.mock('@alusa/database', () => ({
   prisma: {
+    $executeRaw: mockExecuteRaw,
     asaasAccount: { findMany: mockFindMany, findFirst: vi.fn() },
+    notification: {
+      findFirst: mockNotificationFindFirst,
+    },
   },
   loadAsaasCredentials: mockLoadCreds,
 }));
@@ -47,6 +55,7 @@ vi.mock('../../foundation/audit-log.service', () => ({
 }));
 
 import { checkWebhookHealth } from '../webhook-health.service';
+import { alertService } from '../../foundation/alert-channel';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -61,6 +70,13 @@ beforeEach(() => {
     created: true,
     recipientCount: 1,
   });
+  mockNotificationFindFirst.mockResolvedValue({ metadata: {} });
+  mockExecuteRaw.mockResolvedValue(1);
+});
+
+afterEach(() => {
+  unsubscribeTelemetry?.();
+  unsubscribeTelemetry = undefined;
 });
 
 afterEach(() => {
@@ -199,6 +215,51 @@ describe('checkWebhookHealth', () => {
     expect(result.interruptedFound).toBe(1);
     expect(result.recoveredSuccessfully).toBe(0);
     expect(mockRemoveBackoff).not.toHaveBeenCalled();
+  });
+
+  it('repete alerta após falha de canal e para após persistir sucesso', async () => {
+    const alertSpy = vi.spyOn(alertService, 'alertInterruptedQueue')
+      .mockResolvedValueOnce({ channelResults: [
+        { channel: 'console', success: true },
+        { channel: 'slack', success: false },
+      ] })
+      .mockResolvedValueOnce({ channelResults: [
+        { channel: 'console', success: true },
+        { channel: 'slack', success: true },
+      ] });
+    mockFindMany.mockResolvedValue([{
+      id: 'acc-1',
+      asaasAccountId: 'ext-acc-1',
+      financeProfile: { contaId: 'conta-1' },
+    }]);
+    mockListWebhooks.mockResolvedValue({
+      data: [{ id: 'wh-1', url: 'https://example.com', enabled: true, interrupted: true }],
+    });
+    mockCreateNotification
+      .mockResolvedValueOnce({ notificationId: 'notification-1', created: true })
+      .mockResolvedValue({ notificationId: 'notification-1', created: false });
+    mockNotificationFindFirst
+      .mockResolvedValueOnce({ metadata: {} })
+      .mockResolvedValueOnce({ metadata: { externalAlertDelivery: { channels: [
+        { channel: 'console', success: true },
+        { channel: 'slack', success: false },
+      ] } } })
+      .mockResolvedValueOnce({ metadata: { externalAlertDelivery: { channels: [
+        { channel: 'console', success: true },
+        { channel: 'slack', success: true },
+      ] } } });
+
+    await checkWebhookHealth();
+    await checkWebhookHealth();
+    await checkWebhookHealth();
+
+    expect(alertSpy).toHaveBeenCalledTimes(2);
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(2);
+    const savedStateQuery = mockExecuteRaw.mock.calls[1]?.[0];
+    expect(savedStateQuery.sql).toContain('jsonb_set');
+    expect(savedStateQuery.sql).toContain('AND "contaId" =');
+    expect(savedStateQuery.values).toContain('notification-1');
+    expect(savedStateQuery.values).toContain('conta-1');
   });
 
   it('é fail-safe quando loadAsaasCredentials retorna null', async () => {

@@ -214,8 +214,8 @@ class AlertService {
     });
   }
 
-  async alertInterruptedQueue(contaId: string, webhookIds: string[]): Promise<void> {
-    await this.dispatch({
+  async alertInterruptedQueue(contaId: string, webhookIds: string[]): Promise<AlertDispatchResult> {
+    return this.dispatch({
       severity: 'critical',
       title: 'Fila de webhook interrompida',
       message: `${webhookIds.length} webhook(s) interrompido(s) no Asaas. Eventos financeiros podem não estar chegando.`,

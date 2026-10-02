@@ -25,7 +25,13 @@ function isEnabled(value: string | undefined): boolean {
 }
 
 export function isProductionDeployment(env: ProductionSecurityEnv = process.env): boolean {
-  return env.NODE_ENV === 'production' || env.VERCEL_ENV === 'production';
+  // NODE_ENV is `production` for both Vercel previews and production builds.
+  // Known Vercel targets are authoritative; unknown values fall back
+  // conservatively to NODE_ENV so a typo cannot bypass production checks.
+  const vercelEnv = env.VERCEL_ENV?.trim();
+  if (vercelEnv === 'production') return true;
+  if (vercelEnv === 'preview' || vercelEnv === 'development') return false;
+  return env.NODE_ENV === 'production';
 }
 
 export function assertProductionSecurityEnv(env: ProductionSecurityEnv = process.env): void {

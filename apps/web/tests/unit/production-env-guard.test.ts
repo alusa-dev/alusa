@@ -13,6 +13,20 @@ describe('production env guard', () => {
     ).toThrow(/RLS_RUNTIME_ENABLED=true/);
   });
 
+  it('não aplica exigências de produção em preview da Vercel mesmo com NODE_ENV production', () => {
+    expect(() => assertProductionSecurityEnv({
+      NODE_ENV: 'production',
+      VERCEL_ENV: 'preview',
+    })).not.toThrow();
+  });
+
+  it('continua aplicando exigências em produção quando o target da Vercel é production', () => {
+    expect(() => assertProductionSecurityEnv({
+      NODE_ENV: 'production',
+      VERCEL_ENV: 'production',
+    })).toThrow(/RLS_RUNTIME_ENABLED=true/);
+  });
+
   it('permite producao com RLS habilitado e URL dedicada', () => {
     expect(() =>
       assertProductionSecurityEnv({

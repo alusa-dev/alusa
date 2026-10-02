@@ -16,7 +16,7 @@ import { listWebhooks, removeWebhookBackoff } from '@alusa/asaas';
 import type { AsaasWebhookConfig } from '@alusa/asaas';
 import { loadAsaasCredentials, prisma } from '@alusa/database';
 import { createNotification } from '@alusa/lib/services/notifications.service';
-import { NotificationType, NotificationCategory, NotificationSeverity, Role } from '@prisma/client';
+import { NotificationType, NotificationCategory, NotificationSeverity, Prisma, Role } from '@prisma/client';
 import { createHash } from 'node:crypto';
 
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
@@ -132,22 +132,13 @@ export async function checkWebhookHealth(opts?: {
 
       result.interruptedFound += interrupted.length;
 
-      await alertService
-        .alertInterruptedQueue(contaId, interrupted.map((w) => w.id))
-        .catch((err: unknown) => {
-          logWebhookHealthEvent({
-            severity: 'warn',
-            eventName: 'finance.webhook_health.alert.failed',
-            operation: 'notify_interrupted_queue',
-            error: err,
-          });
-        });
-
       // Notificação interna para admins
       const interruptedFingerprint = createHash('sha256')
         .update(interrupted.map((webhook) => webhook.id).sort().join('|'))
         .digest('hex')
         .slice(0, 16);
+      let shouldDispatchAlert = true;
+      let notificationIdForAlert: string | null = null;
       await createNotification({
         contaId,
         type: NotificationType.WEBHOOK_INTERRUPTED,
@@ -163,6 +154,39 @@ export async function checkWebhookHealth(opts?: {
           webhookIds: interrupted.map((w) => w.id),
           asaasAccountId: account.asaasAccountId,
         },
+      }).then((notification) => {
+        notificationIdForAlert = notification.notificationId;
+        // The durable notification's dedupe key is also the alert transition
+        // boundary: repeated health checks for the same interrupted set must
+        // not page external channels on every scheduler run. If no internal
+        // notification could be persisted (for example, no recipients), keep
+        // the external alert as the fallback.
+        shouldDispatchAlert = notification.created || notification.notificationId === null;
+        if (notification.notificationId) {
+          return prisma.notification.findFirst({
+            where: { id: notification.notificationId, contaId },
+            select: { metadata: true },
+          }).then((stored) => {
+            shouldDispatchAlert = true;
+            const metadata = stored?.metadata;
+            if (metadata === null || metadata === undefined || typeof metadata !== 'object' || Array.isArray(metadata)) {
+              return;
+            }
+            const delivery = metadata.externalAlertDelivery;
+            if (delivery === null || typeof delivery !== 'object' || Array.isArray(delivery)) return;
+            const channels = delivery.channels;
+            if (Array.isArray(channels) && channels.length > 0 && channels.every((channel) =>
+              channel !== null && typeof channel === 'object' && !Array.isArray(channel) && channel.success === true,
+            )) {
+              shouldDispatchAlert = false;
+            }
+          }).catch((error: unknown) => {
+            // If we cannot read delivery state, retry the alert. A duplicate
+            // is safer than silently losing an operational notification.
+            shouldDispatchAlert = true;
+            throw error;
+          });
+        }
       }).catch((err: unknown) => {
         logWebhookHealthEvent({
           severity: 'warn',
@@ -171,6 +195,50 @@ export async function checkWebhookHealth(opts?: {
           error: err,
         });
       });
+
+      if (shouldDispatchAlert) {
+        const dispatch = await alertService
+          .alertInterruptedQueue(contaId, interrupted.map((w) => w.id))
+          .catch((err: unknown) => {
+            logWebhookHealthEvent({
+              severity: 'warn',
+              eventName: 'finance.webhook_health.alert.failed',
+              operation: 'notify_interrupted_queue',
+              error: err,
+            });
+            return null;
+          });
+
+        if (dispatch && notificationIdForAlert) {
+          // Save only low-cardinality delivery status; channel error strings
+          // can contain provider details and are not needed for retry.
+          await prisma.$executeRaw(Prisma.sql`
+            UPDATE "Notification"
+            SET "metadata" = jsonb_set(
+              CASE
+                WHEN jsonb_typeof("metadata") = 'object' THEN "metadata"
+                ELSE '{}'::jsonb
+              END,
+              '{externalAlertDelivery}',
+              ${JSON.stringify({
+                attemptedAt: new Date().toISOString(),
+                channels: dispatch.channelResults.map(({ channel, success }) => ({ channel, success })),
+              })}::jsonb,
+              true
+            ),
+            "updatedAt" = CURRENT_TIMESTAMP
+            WHERE "id" = ${notificationIdForAlert}
+              AND "contaId" = ${contaId}
+          `).catch((err: unknown) => {
+            logWebhookHealthEvent({
+              severity: 'warn',
+              eventName: 'finance.webhook_health.alert_state_update.failed',
+              operation: 'persist_alert_channel_results',
+              error: err,
+            });
+          });
+        }
+      }
 
       if (!autoRecover) continue;
 
