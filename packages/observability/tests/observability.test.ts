@@ -31,6 +31,13 @@ describe('redaction and logs', () => {
     expect(redactSensitiveData(value)).toEqual({ authorization: '[REDACTED]', safe: { email: '[REDACTED]' }, tenantId: '[REDACTED]', studentName: '[REDACTED]', self: '[CIRCULAR]' });
   });
 
+  it('redacts Portuguese password keys and assignment text', () => {
+    expect(redactSensitiveData({ senha: 'plain', confirmarSenha: 'again', novaSenha: 'new', senha_atual: 'old', safe: 'senha=plain confirmarSenha: "again" novaSenha=next senha_atual=older' })).toEqual({
+      senha: '[REDACTED]', confirmarSenha: '[REDACTED]', novaSenha: '[REDACTED]', senha_atual: '[REDACTED]',
+      safe: '[REDACTED] [REDACTED] [REDACTED] [REDACTED]',
+    });
+  });
+
   it('keeps only explicitly allowlisted non-sensitive attributes', () => {
     expect(allowlistedAttributes({ outcome: 'ok', email: 'a@b.com', detail: 'token=abc' }, ['outcome', 'detail'])).toEqual({ outcome: 'ok', detail: '[REDACTED]' });
     const log = createStructuredLog({ severity: 'info', 'service.name': 'web', 'event.name': 'http.completed', attributes: { outcome: 'ok', contaId: 'tenant-1', other: 'drop' }, allowedAttributes: ['outcome', 'other'], timestamp: '2026-01-01T00:00:00.000Z' });
@@ -68,6 +75,14 @@ describe('metric normalization', () => {
     expect(normalizeMetricDimensions({ 'http.route': normalizeHttpRoute('/api/alunos/[studentId]') })).toEqual({ 'http.route': '/api/alunos/:id' });
     expect(normalizeMetricDimensions({ 'http.route': '/api/alunos/ana%40example.com' })).toEqual({});
     expect(normalizeMetricDimensions({ 'http.route': `/api/alunos/${'x'.repeat(200)}` })).toEqual({ 'http.route': '/api/alunos/:id' });
+  });
+
+  it('preserves long static route segments while normalizing known identifiers', () => {
+    expect(normalizeHttpRoute('/api/alunos/list-for-responsavel')).toBe('/api/alunos/list-for-responsavel');
+    expect(normalizeHttpRoute('/api/jobs/retry-enrollment-billing')).toBe('/api/jobs/retry-enrollment-billing');
+    expect(normalizeMetricDimensions({ 'http.route': normalizeHttpRoute('/api/jobs/retry-enrollment-billing') })).toEqual({ 'http.route': '/api/jobs/retry-enrollment-billing' });
+    expect(normalizeHttpRoute(`/api/alunos/${'z'.repeat(24)}`)).toBe('/api/alunos/:id');
+    expect(normalizeHttpRoute(`/api/alunos/${'c' + 'a'.repeat(24)}`)).toBe('/api/alunos/:id');
   });
 });
 

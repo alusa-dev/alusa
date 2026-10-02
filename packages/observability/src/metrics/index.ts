@@ -44,7 +44,7 @@ export function normalizeHttpRoute(route: string): string {
       // still collapse recognizable identifiers without throwing.
     }
     if (/^\[\[?\.\.\..+\]\]?$/.test(decodedSegment) || /^\[[^\]]+\]$/.test(decodedSegment)) return ':id';
-    if (/^\d+$/.test(segment) || /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(segment) || /^[a-z0-9_-]{20,}$/i.test(segment)) return ':id';
+    if (/^\d+$/.test(segment) || /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(segment) || /^c[a-z0-9]{24,}$/i.test(segment) || /^[a-z0-9]{20,}$/i.test(segment)) return ':id';
     return segment;
   }).join('/');
   return normalized.startsWith('/') ? normalized : `/${normalized}`;

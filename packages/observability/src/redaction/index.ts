@@ -1,13 +1,13 @@
 export const REDACTED = '[REDACTED]';
 
-const SENSITIVE_KEY = /(?:password|passwd|secret|token|authorization|cookie|api[-_]?key|access[-_]?key|private[-_]?key|account.?key|account.?id|document|cpf|email|phone|telefone|address|endereco|payment|card|pix|webhook[-_]?payload|conta.?id|tenant.?id|user.?id|student.?id|responsible.?id|aluno.?id|responsavel.?id|student.?name|responsible.?name|full.?name)/i;
+const SENSITIVE_KEY = /(?:password|passwd|senha|secret|token|authorization|cookie|api[-_]?key|access[-_]?key|private[-_]?key|account.?key|account.?id|document|cpf|email|phone|telefone|address|endereco|payment|card|pix|webhook[-_]?payload|conta.?id|tenant.?id|user.?id|student.?id|responsible.?id|aluno.?id|responsavel.?id|student.?name|responsible.?name|full.?name)/i;
 const STRING_PATTERNS = [
   /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
   /\b(?:asaas_[A-Za-z0-9_-]{12,}|sk_live_[A-Za-z0-9]{12,})\b/g,
   /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
   /\b(?:\d{3}\.\d{3}\.\d{3}-\d{2}|\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{11}|\d{14})\b/g,
   /(?<!\w)(?:\+\d{1,3}[\s.-]?)?\(?\d{2,3}\)?[\s.-]\d{4,5}[\s.-]\d{4}(?!\w)/g,
-  /\b(?:password|passwd|secret|token|api[-_]?key|access[-_]?key|private[-_]?key)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}&]+)/gi,
+  /\b(?:password|passwd|[\w-]*senha[\w-]*|secret|token|api[-_]?key|access[-_]?key|private[-_]?key)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}&]+)/gi,
 ];
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
