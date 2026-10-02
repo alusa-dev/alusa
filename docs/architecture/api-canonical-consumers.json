@@ -8,10 +8,10 @@
         "path": "/api/finance",
         "owner": "packages/finance",
         "consumers": {
-          "total": 145,
+          "total": 169,
           "bySurface": {
             "scripts": 2,
-            "web": 143
+            "web": 167
           },
           "files": [
             {
@@ -36,11 +36,15 @@
             },
             {
               "file": "apps/web/app/api/finance/account-status/route.ts",
-              "occurrences": 1
+              "occurrences": 2
             },
             {
               "file": "apps/web/app/api/finance/balance/__tests__/route.test.ts",
               "occurrences": 5
+            },
+            {
+              "file": "apps/web/app/api/finance/balance/route.ts",
+              "occurrences": 1
             },
             {
               "file": "apps/web/app/api/finance/charges/__tests__/route.test.ts",
@@ -51,11 +55,19 @@
               "occurrences": 1
             },
             {
+              "file": "apps/web/app/api/finance/charges/route.ts",
+              "occurrences": 2
+            },
+            {
               "file": "apps/web/app/api/finance/charges/standalone/__tests__/route.test.ts",
               "occurrences": 2
             },
             {
               "file": "apps/web/app/api/finance/charges/standalone/route.ts",
+              "occurrences": 4
+            },
+            {
+              "file": "apps/web/app/api/finance/external-onboarding/route.ts",
               "occurrences": 2
             },
             {
@@ -68,7 +80,19 @@
             },
             {
               "file": "apps/web/app/api/finance/installments/aggregated/route.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/finance/installments/route.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/finance/invoices/[invoiceId]/cancel/route.ts",
               "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/finance/invoices/route.ts",
+              "occurrences": 2
             },
             {
               "file": "apps/web/app/api/finance/realtime/events/route.ts",
@@ -80,15 +104,43 @@
             },
             {
               "file": "apps/web/app/api/finance/subscriptions/enriched/route.ts",
-              "occurrences": 1
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/finance/subscriptions/route.ts",
+              "occurrences": 2
             },
             {
               "file": "apps/web/app/api/finance/transfers/__tests__/route.test.ts",
               "occurrences": 4
             },
             {
+              "file": "apps/web/app/api/finance/transfers/[transferId]/cancel/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/finance/transfers/[transferId]/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/finance/transfers/pix-key/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/finance/transfers/recipients/route.ts",
+              "occurrences": 2
+            },
+            {
               "file": "apps/web/app/api/finance/transfers/request/__tests__/route.test.ts",
               "occurrences": 7
+            },
+            {
+              "file": "apps/web/app/api/finance/transfers/request/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/finance/transfers/route.ts",
+              "occurrences": 1
             },
             {
               "file": "apps/web/e2e/financeiro/transfer-withdraw-flow.spec.ts",
@@ -215,11 +267,11 @@
           "lifecycle": "active-migration",
           "implemented": true,
           "consumers": {
-            "total": 143,
+            "total": 169,
             "bySurface": {
               "packages": 1,
               "scripts": 2,
-              "web": 140
+              "web": 166
             },
             "files": [
               {
@@ -247,12 +299,56 @@
                 "occurrences": 1
               },
               {
+                "file": "apps/web/app/api/financeiro/antecipacoes/[id]/cancelar/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/antecipacoes/candidatos/route.ts",
+                "occurrences": 1
+              },
+              {
                 "file": "apps/web/app/api/financeiro/antecipacoes/configuracao/__tests__/route.test.ts",
                 "occurrences": 3
               },
               {
+                "file": "apps/web/app/api/financeiro/antecipacoes/configuracao/route.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/app/api/financeiro/antecipacoes/limites/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/antecipacoes/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/antecipacoes/simular/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/antecipacoes/solicitar/route.ts",
+                "occurrences": 1
+              },
+              {
                 "file": "apps/web/app/api/financeiro/antecipacoes/visibilidade/__tests__/route.test.ts",
                 "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/antecipacoes/visibilidade/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/centros-custo/[id]/route.ts",
+                "occurrences": 3
+              },
+              {
+                "file": "apps/web/app/api/financeiro/centros-custo/[id]/status/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/centros-custo/route.ts",
+                "occurrences": 2
               },
               {
                 "file": "apps/web/app/api/financeiro/cobrancas/[id]/marcar-pago/route.ts",
@@ -264,6 +360,18 @@
               },
               {
                 "file": "apps/web/app/api/financeiro/cobrancas/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/conta/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/extrato/[paymentId]/comprovante/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/extrato/route.ts",
                 "occurrences": 1
               },
               {
@@ -303,12 +411,20 @@
                 "occurrences": 2
               },
               {
-                "file": "apps/web/app/api/financeiro/saldo/route.ts",
+                "file": "apps/web/app/api/financeiro/relatorios/_shared.ts",
                 "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/financeiro/saldo/route.ts",
+                "occurrences": 3
               },
               {
                 "file": "apps/web/app/api/financeiro/simulador-vendas/__tests__/route.test.ts",
                 "occurrences": 2
+              },
+              {
+                "file": "apps/web/app/api/financeiro/simulador-vendas/route.ts",
+                "occurrences": 1
               },
               {
                 "file": "apps/web/components/layout/use-sidebar-nav-access.ts",
@@ -416,7 +532,7 @@
               },
               {
                 "file": "apps/web/tests/unit/finance-api-response.test.ts",
-                "occurrences": 2
+                "occurrences": 6
               },
               {
                 "file": "apps/web/tests/unit/financeiro-conta-page.test.tsx",
@@ -498,11 +614,11 @@
           "lifecycle": "active-migration",
           "implemented": true,
           "consumers": {
-            "total": 165,
+            "total": 158,
             "bySurface": {
               "packages": 1,
               "scripts": 3,
-              "web": 161
+              "web": 154
             },
             "files": [
               {
@@ -515,6 +631,26 @@
               },
               {
                 "file": "apps/web/app/api/cobrancas/[id]/forma-pagamento/route.ts",
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/app/api/cobrancas/[id]/nota-fiscal/cancelar/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/cobrancas/[id]/nota-fiscal/emitir/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/cobrancas/[id]/nota-fiscal/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/cobrancas/[id]/nota-fiscal/sincronizar/route.ts",
+                "occurrences": 1
+              },
+              {
+                "file": "apps/web/app/api/cobrancas/[id]/refund/route.ts",
                 "occurrences": 1
               },
               {
@@ -523,15 +659,19 @@
               },
               {
                 "file": "apps/web/app/api/cobrancas/[id]/resend/route.ts",
-                "occurrences": 2
+                "occurrences": 3
               },
               {
                 "file": "apps/web/app/api/cobrancas/[id]/sync-asaas/route.ts",
                 "occurrences": 1
               },
               {
+                "file": "apps/web/app/api/cobrancas/[id]/undo-receive-in-cash/route.ts",
+                "occurrences": 1
+              },
+              {
                 "file": "apps/web/app/api/cobrancas/route.ts",
-                "occurrences": 2
+                "occurrences": 4
               },
               {
                 "file": "apps/web/app/api/configuracoes/notafiscal/__tests__/route.test.ts",
@@ -627,11 +767,11 @@
               },
               {
                 "file": "apps/web/src/server/finance/charge-command-http.service.ts",
-                "occurrences": 23
+                "occurrences": 11
               },
               {
                 "file": "apps/web/src/server/finance/charge-detail-http-route.service.ts",
-                "occurrences": 7
+                "occurrences": 2
               },
               {
                 "file": "apps/web/src/server/finance/refund-charge.service.ts",
@@ -708,15 +848,39 @@
         "path": "/api/alunos",
         "owner": "apps/web/src/server/students",
         "consumers": {
-          "total": 64,
+          "total": 90,
           "bySurface": {
-            "packages": 1,
-            "web": 63
+            "packages": 12,
+            "web": 78
           },
           "files": [
             {
               "file": "apps/web/app/(app)/admin/settings/users/page.tsx",
               "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/alunos/[id]/inativar/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/alunos/[id]/notificacoes/route.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/alunos/[id]/reativar/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/alunos/[id]/responsaveis/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/alunos/list-for-responsavel/route.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/alunos/route.ts",
+              "occurrences": 2
             },
             {
               "file": "apps/web/e2e/aluno-wizard-maior.spec.ts",
@@ -791,6 +955,10 @@
               "occurrences": 1
             },
             {
+              "file": "apps/web/lib/observability/api-logger.ts",
+              "occurrences": 3
+            },
+            {
               "file": "apps/web/proxy.ts",
               "occurrences": 2
             },
@@ -801,6 +969,10 @@
             {
               "file": "apps/web/tests/unit/alunos.responsaveis.api.test.ts",
               "occurrences": 8
+            },
+            {
+              "file": "apps/web/tests/unit/api-logger.test.ts",
+              "occurrences": 3
             },
             {
               "file": "apps/web/tests/unit/api-rate-limit.test.ts",
@@ -821,6 +993,10 @@
             {
               "file": "packages/lib/src/alunos/aluno.service.ts",
               "occurrences": 1
+            },
+            {
+              "file": "packages/observability/tests/observability.test.ts",
+              "occurrences": 11
             }
           ]
         }
@@ -844,14 +1020,18 @@
         "path": "/api/responsaveis",
         "owner": "apps/web/src/server/students",
         "consumers": {
-          "total": 33,
+          "total": 35,
           "bySurface": {
-            "web": 33
+            "web": 35
           },
           "files": [
             {
               "file": "apps/web/app/api/responsaveis/[id]/alunos/route.ts",
               "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/responsaveis/[id]/notificacoes/route.ts",
+              "occurrences": 2
             },
             {
               "file": "apps/web/app/api/responsaveis/route.ts",
@@ -882,16 +1062,12 @@
               "occurrences": 6
             },
             {
+              "file": "apps/web/lib/observability/api-logger.ts",
+              "occurrences": 4
+            },
+            {
               "file": "apps/web/proxy.ts",
               "occurrences": 2
-            },
-            {
-              "file": "apps/web/src/server/responsibles/responsible-http-route.service.ts",
-              "occurrences": 3
-            },
-            {
-              "file": "apps/web/src/server/responsibles/responsible-overview-http-route.service.ts",
-              "occurrences": 1
             },
             {
               "file": "apps/web/tests/unit/responsaveis.api.test.ts",
@@ -919,10 +1095,10 @@
         "path": "/api/matriculas",
         "owner": "apps/web/src/server/enrollments",
         "consumers": {
-          "total": 99,
+          "total": 121,
           "bySurface": {
             "packages": 1,
-            "web": 98
+            "web": 120
           },
           "files": [
             {
@@ -946,11 +1122,19 @@
               "occurrences": 2
             },
             {
-              "file": "apps/web/app/api/matriculas/[id]/forma-pagamento/route.ts",
+              "file": "apps/web/app/api/matriculas/[id]/editar/route.ts",
               "occurrences": 1
             },
             {
+              "file": "apps/web/app/api/matriculas/[id]/forma-pagamento/route.ts",
+              "occurrences": 2
+            },
+            {
               "file": "apps/web/app/api/matriculas/[id]/gerar-pix/__tests__/route.test.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/gerar-pix/route.ts",
               "occurrences": 1
             },
             {
@@ -958,19 +1142,43 @@
               "occurrences": 2
             },
             {
+              "file": "apps/web/app/api/matriculas/[id]/juros-multa/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/notificacoes/route.ts",
+              "occurrences": 2
+            },
+            {
               "file": "apps/web/app/api/matriculas/[id]/pausa-resumo/__tests__/route.test.ts",
               "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/pausa-resumo/route.ts",
+              "occurrences": 1
             },
             {
               "file": "apps/web/app/api/matriculas/[id]/pausar/__tests__/route.test.ts",
               "occurrences": 2
             },
             {
+              "file": "apps/web/app/api/matriculas/[id]/pausar/route.ts",
+              "occurrences": 1
+            },
+            {
               "file": "apps/web/app/api/matriculas/[id]/reativar/__tests__/route.test.ts",
               "occurrences": 2
             },
             {
+              "file": "apps/web/app/api/matriculas/[id]/reativar/route.ts",
+              "occurrences": 1
+            },
+            {
               "file": "apps/web/app/api/matriculas/[id]/reenviar-cobranca/__tests__/route.test.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/matriculas/[id]/reenviar-cobranca/route.ts",
               "occurrences": 1
             },
             {
@@ -979,7 +1187,7 @@
             },
             {
               "file": "apps/web/app/api/matriculas/[id]/status/route.ts",
-              "occurrences": 2
+              "occurrences": 4
             },
             {
               "file": "apps/web/app/api/matriculas/[id]/taxa/route.test.ts",
@@ -987,11 +1195,15 @@
             },
             {
               "file": "apps/web/app/api/matriculas/[id]/valor/route.ts",
-              "occurrences": 1
+              "occurrences": 2
             },
             {
               "file": "apps/web/app/api/matriculas/operacoes/[uiRequestId]/route.test.ts",
               "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/matriculas/route.ts",
+              "occurrences": 1
             },
             {
               "file": "apps/web/e2e/matricula-domain-rules.spec.ts",
@@ -1062,16 +1274,16 @@
               "occurrences": 1
             },
             {
+              "file": "apps/web/lib/observability/api-logger.ts",
+              "occurrences": 14
+            },
+            {
               "file": "apps/web/proxy.ts",
               "occurrences": 2
             },
             {
               "file": "apps/web/scripts/test-asaas-integration.mjs",
               "occurrences": 2
-            },
-            {
-              "file": "apps/web/src/server/enrollments/create-family-enrollment.use-case.ts",
-              "occurrences": 6
             },
             {
               "file": "apps/web/src/server/enrollments/enrollment-billing.orchestrator.ts",
@@ -1119,11 +1331,11 @@
         "path": "/api/contratos",
         "owner": "apps/web/src/server/contracts",
         "consumers": {
-          "total": 32,
+          "total": 47,
           "bySurface": {
             "packages": 1,
             "scripts": 1,
-            "web": 30
+            "web": 45
           },
           "files": [
             {
@@ -1131,8 +1343,44 @@
               "occurrences": 2
             },
             {
+              "file": "apps/web/app/api/contratos/[id]/regenerar/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/contratos/[id]/route.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/contratos/alunos/route.ts",
+              "occurrences": 1
+            },
+            {
+              "file": "apps/web/app/api/contratos/consentimentos/templates/route.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/contratos/expire/route.ts",
+              "occurrences": 1
+            },
+            {
               "file": "apps/web/app/api/contratos/modelos/__tests__/route.test.ts",
               "occurrences": 3
+            },
+            {
+              "file": "apps/web/app/api/contratos/modelos/[id]/route.ts",
+              "occurrences": 3
+            },
+            {
+              "file": "apps/web/app/api/contratos/modelos/route.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/contratos/route.ts",
+              "occurrences": 2
+            },
+            {
+              "file": "apps/web/app/api/contratos/upload/route.ts",
+              "occurrences": 1
             },
             {
               "file": "apps/web/e2e/contrato-detalhes-layout.spec.ts",

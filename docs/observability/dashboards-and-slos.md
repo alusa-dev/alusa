@@ -42,9 +42,9 @@ Defina os valores numéricos após baseline de pelo menos um ciclo representativ
 | Exportação de telemetria | ausência de eventos esperados, falha de envio e volume/custo | Plataforma | [provider e custo](runbooks/provider-and-cost.md) |
 | Experiência do usuário | distribuições de Web Vitals por categoria e release | Produto + Web | validar impacto antes de alertar |
 
-Os owners organizacionais desta matriz foram aceitos como padrão inicial. Titular individual, substituto e canal de notificação ainda precisam ser registrados durante a configuração de cada alerta.
+Os owners organizacionais desta matriz foram aceitos como padrão inicial. Durante a configuração de cada alerta, ainda é preciso registrar a pessoa titular, a substituta e o canal de notificação.
 
-Para cada alerta, registre: expressão/filtro final; janela e valor calibrados; serviço e ambiente; proprietário titular e substituto; canal de notificação; link do dashboard; runbook; data da última revisão. A lista de proprietários acima é uma sugestão organizacional, não uma atribuição confirmada.
+Para cada alerta, registre: expressão/filtro final; janela e valor calibrados; serviço e ambiente; pessoa titular e substituta dentro do owner organizacional definido acima; canal de notificação; link do dashboard; runbook; data da última revisão.
 
 ## Baseline e revisão
 

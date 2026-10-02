@@ -19,21 +19,21 @@ describe('API logger telemetry sink', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
     logApiError({
-      route: '/api/students/[id]',
+      route: '/api/alunos/[id]',
       method: 'GET',
       requestId: 'request-id-123',
       startedAt: Date.now(),
       error: new Error('private message must not be logged'),
     });
     logApiResponse({
-      route: '/api/students/[id]',
+      route: '/api/alunos/[id]',
       method: 'PATCH',
       requestId: 'request-id-456',
       status: 422,
       startedAt: Date.now(),
     });
     logApiResponse({
-      route: '/api/students/[id]',
+      route: '/api/alunos/[id]',
       method: 'GET',
       requestId: 'request-id-789',
       status: 503,

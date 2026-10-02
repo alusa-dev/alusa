@@ -55,7 +55,7 @@ describe('metric normalization', () => {
   });
 
   it('normalizes route identifiers and status classes', () => {
-    expect(normalizeHttpRoute('/api/students/123/profile?include=1')).toBe('/api/students/:id/profile');
+    expect(normalizeHttpRoute('/api/alunos/123/profile?include=1')).toBe('/api/alunos/:id/profile');
     expect(statusClass(204)).toBe('2xx');
     expect(statusClass(700)).toBe('unknown');
     expect(normalizeHttpMethod('GET')).toBe('get');
@@ -63,11 +63,11 @@ describe('metric normalization', () => {
   });
 
   it('normalizes Next.js dynamic and encoded dynamic route segments', () => {
-    expect(normalizeHttpRoute('/api/students/[studentId]/[...segments]')).toBe('/api/students/:id/:id');
-    expect(normalizeHttpRoute('/api/students/%5BstudentId%5D/%5B%5B...slug%5D%5D')).toBe('/api/students/:id/:id');
-    expect(normalizeMetricDimensions({ 'http.route': normalizeHttpRoute('/api/students/[studentId]') })).toEqual({ 'http.route': '/api/students/:id' });
-    expect(normalizeMetricDimensions({ 'http.route': '/api/students/ana%40example.com' })).toEqual({});
-    expect(normalizeMetricDimensions({ 'http.route': `/api/students/${'x'.repeat(200)}` })).toEqual({ 'http.route': '/api/students/:id' });
+    expect(normalizeHttpRoute('/api/alunos/[studentId]/[...segments]')).toBe('/api/alunos/:id/:id');
+    expect(normalizeHttpRoute('/api/alunos/%5BstudentId%5D/%5B%5B...slug%5D%5D')).toBe('/api/alunos/:id/:id');
+    expect(normalizeMetricDimensions({ 'http.route': normalizeHttpRoute('/api/alunos/[studentId]') })).toEqual({ 'http.route': '/api/alunos/:id' });
+    expect(normalizeMetricDimensions({ 'http.route': '/api/alunos/ana%40example.com' })).toEqual({});
+    expect(normalizeMetricDimensions({ 'http.route': `/api/alunos/${'x'.repeat(200)}` })).toEqual({ 'http.route': '/api/alunos/:id' });
   });
 });
 
