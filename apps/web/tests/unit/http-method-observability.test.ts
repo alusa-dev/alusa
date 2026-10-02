@@ -42,18 +42,24 @@ describe('http method observability', () => {
 
     const response = methodNotAllowedResponse(request, ['POST'], 'route_method_not_declared');
 
-    expect(response.status).toBe(405);
-    expect(response.headers.get('allow')).toBe('OPTIONS, POST');
-    const log = warn.mock.calls[0]?.[1] as Record<string, unknown>;
-    expect(log).toMatchObject({
-      route: '/api/webhooks/stripe',
-      method: 'GET',
-      origin: 'same-origin',
-      refererOrigin: 'same-origin',
-    });
-    expect(log).not.toHaveProperty('token');
-    expect(JSON.stringify(log)).not.toContain('secret');
-    warn.mockRestore();
+    try {
+      expect(response.status).toBe(405);
+      expect(response.headers.get('allow')).toBe('OPTIONS, POST');
+      expect(warn).toHaveBeenCalledTimes(1);
+      const log = JSON.parse(warn.mock.calls[0]?.[0] as string) as Record<string, unknown>;
+      expect(log).toMatchObject({
+        severity: 'warn',
+        'event.name': 'security.http_method.rejected',
+        'http.route': '/internal/operational-event',
+        'http.request.method': 'UNKNOWN',
+        attributes: { category: 'invalid_method' },
+      });
+      expect(log).not.toHaveProperty('token');
+      expect(JSON.stringify(log)).not.toContain('secret');
+      expect(JSON.stringify(log)).not.toContain('test-agent');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('permite apenas categoria, tipo de erro e contagens na telemetria operacional', () => {
