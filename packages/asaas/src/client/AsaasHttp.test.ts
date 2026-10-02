@@ -138,7 +138,7 @@ describe('AsaasHttp (idempotência + retry)', () => {
     expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
   });
 
-  it('remove cartão e CVV do log de falha do provedor', async () => {
+  it('registra apenas campos operacionais allowlisted em falha do provedor', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const client = new AsaasHttp({ apiKey: 'k' });
 
@@ -148,18 +148,23 @@ describe('AsaasHttp (idempotência + retry)', () => {
       client.post('/payments/pay_1/payWithCreditCard', {
         creditCard: { number: '4444444444444444', ccv: '123', holderName: 'Test Holder' },
         creditCardHolderInfo: { name: 'Test Holder' },
-      }),
+      }, { headers: { 'Idempotency-Key': 'idempotency-secret' } }),
     ).rejects.toMatchObject({ status: 400 });
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      '[asaas.http] Resposta de erro',
-      expect.objectContaining({
-        requestBodyPreview: expect.not.stringContaining('4444444444444444'),
-      }),
-    );
-    const details = warnSpy.mock.calls[0]?.[1] as { requestBodyPreview?: string };
-    expect(details.requestBodyPreview).not.toContain('"ccv":"123"');
-    expect(details.requestBodyPreview).toContain('[REDACTED]');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const record = JSON.parse(String(warnSpy.mock.calls[0]?.[0])) as Record<string, unknown>;
+    expect(record['event.name']).toBe('asaas.http.request.failed');
+    expect(record['http.request.method']).toBe('post');
+    expect(record['http.route']).toBe('/v3/payments');
+    expect(record['http.response.status_code']).toBe(400);
+    expect(record['error.type']).toBe('AsaasHttpError');
+    expect(typeof record.duration_ms).toBe('number');
+    const serialized = JSON.stringify(record);
+    expect(serialized).not.toContain('pay_1');
+    expect(serialized).not.toContain('4444444444444444');
+    expect(serialized).not.toContain('"ccv":"123"');
+    expect(serialized).not.toContain('idempotency-secret');
+    expect(serialized).not.toContain('payment refused');
   });
 
   it('remove authToken e credenciais aninhadas do log de falha do provedor', async () => {
@@ -177,11 +182,12 @@ describe('AsaasHttp (idempotência + retry)', () => {
       }),
     ).rejects.toMatchObject({ status: 400 });
 
-    const details = warnSpy.mock.calls[0]?.[1] as { requestBodyPreview?: string; responseDetails?: unknown };
-    expect(details.requestBodyPreview).not.toContain(authToken);
-    expect(details.requestBodyPreview).not.toContain(accessToken);
-    expect(details.requestBodyPreview).toContain('[REDACTED]');
-    expect(details.responseDetails).toEqual([{ code: 'invalid_webhook', description: 'Webhook inválido' }]);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const serialized = JSON.stringify(warnSpy.mock.calls);
+    expect(serialized).not.toContain(authToken);
+    expect(serialized).not.toContain(accessToken);
+    expect(serialized).not.toContain('wh_1');
+    expect(serialized).not.toContain('Webhook inválido');
   });
 
   it('404 esperado não emite log de erro e fica marcado como estado esperado no hook', async () => {

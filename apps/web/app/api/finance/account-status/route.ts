@@ -4,6 +4,7 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { financeAccountStatusQueryDTOSchema } from '@/features/finance/dtos';
 import { getKycCommercialInfo, getKycSummary, getKycSummaryFresh } from '@alusa/finance';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN']);
 
 function json(status: number, body: unknown) {
@@ -144,7 +145,7 @@ export async function GET(req: Request) {
       },
     });
   } catch (error) {
-    console.error('[Finance Account Status][GET]', error);
+    logFinanceApiError('/api/finance/account-status', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

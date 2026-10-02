@@ -1,9 +1,9 @@
 {
   "generatedAt": "deterministic",
   "summary": {
-    "packages": 15,
-    "declaredWorkspaceEdges": 31,
-    "runtimeWorkspaceEdges": 30,
+    "packages": 16,
+    "declaredWorkspaceEdges": 38,
+    "runtimeWorkspaceEdges": 37,
     "compatibilityEdges": 1,
     "cycles": 0,
     "violations": 0
@@ -17,6 +17,7 @@
         "@alusa/database",
         "@alusa/finance",
         "@alusa/lib",
+        "@alusa/observability",
         "@alusa/ui"
       ]
     },
@@ -30,7 +31,9 @@
     {
       "name": "@alusa/asaas",
       "directory": "packages/asaas",
-      "workspaceDependencies": []
+      "workspaceDependencies": [
+        "@alusa/observability"
+      ]
     },
     {
       "name": "@alusa/asaas-gateway",
@@ -43,6 +46,7 @@
       "name": "@alusa/database",
       "directory": "packages/database",
       "workspaceDependencies": [
+        "@alusa/observability",
         "@alusa/shared"
       ]
     },
@@ -62,6 +66,7 @@
         "@alusa/database",
         "@alusa/domain",
         "@alusa/lib",
+        "@alusa/observability",
         "@alusa/platform-billing",
         "@alusa/shared"
       ]
@@ -72,6 +77,7 @@
       "workspaceDependencies": [
         "@alusa/database",
         "@alusa/domain",
+        "@alusa/observability",
         "@alusa/shared"
       ]
     },
@@ -79,8 +85,14 @@
       "name": "@alusa/mobile",
       "directory": "apps/mobile",
       "workspaceDependencies": [
+        "@alusa/observability",
         "@alusa/shared"
       ]
+    },
+    {
+      "name": "@alusa/observability",
+      "directory": "packages/observability",
+      "workspaceDependencies": []
     },
     {
       "name": "@alusa/platform-billing",
@@ -113,6 +125,7 @@
         "@alusa/domain",
         "@alusa/finance",
         "@alusa/lib",
+        "@alusa/observability",
         "@alusa/platform-billing",
         "@alusa/shared",
         "@alusa/stripe",
@@ -193,6 +206,17 @@
     },
     {
       "from": "@alusa/admin",
+      "to": "@alusa/observability",
+      "declared": true,
+      "compatibility": null,
+      "files": [
+        "apps/admin/lib/admin-email-flow.ts",
+        "apps/admin/lib/admin-session.ts",
+        "apps/admin/lib/observability/sentry-telemetry.ts"
+      ]
+    },
+    {
+      "from": "@alusa/admin",
       "to": "@alusa/ui",
       "declared": true,
       "compatibility": null,
@@ -208,6 +232,24 @@
       "files": [
         "packages/asaas-gateway/src/types/asaas-payment-status.ts",
         "packages/asaas-gateway/src/types/asaas-webhook-dto.ts"
+      ]
+    },
+    {
+      "from": "@alusa/asaas",
+      "to": "@alusa/observability",
+      "declared": true,
+      "compatibility": null,
+      "files": [
+        "packages/asaas/src/client/operational-log.ts"
+      ]
+    },
+    {
+      "from": "@alusa/database",
+      "to": "@alusa/observability",
+      "declared": true,
+      "compatibility": null,
+      "files": [
+        "packages/database/src/observability/operational-log.ts"
       ]
     },
     {
@@ -590,6 +632,22 @@
     },
     {
       "from": "@alusa/finance",
+      "to": "@alusa/observability",
+      "declared": true,
+      "compatibility": null,
+      "files": [
+        "packages/finance/src/foundation/alert-channel.ts",
+        "packages/finance/src/foundation/asaas-api-logger.ts",
+        "packages/finance/src/foundation/operational-log.ts",
+        "packages/finance/src/webhooks/payment-webhook-handler.ts",
+        "packages/finance/src/webhooks/webhook-health.service.ts",
+        "packages/finance/src/webhooks/webhook-observability.service.ts",
+        "packages/finance/src/webhooks/webhook-queue-preflight.service.ts",
+        "packages/finance/src/webhooks/webhook-reconciliation.service.ts"
+      ]
+    },
+    {
+      "from": "@alusa/finance",
       "to": "@alusa/platform-billing",
       "declared": true,
       "compatibility": null,
@@ -692,6 +750,15 @@
     },
     {
       "from": "@alusa/lib",
+      "to": "@alusa/observability",
+      "declared": true,
+      "compatibility": null,
+      "files": [
+        "packages/lib/src/observability/operational-log.ts"
+      ]
+    },
+    {
+      "from": "@alusa/lib",
       "to": "@alusa/shared",
       "declared": true,
       "compatibility": null,
@@ -700,6 +767,15 @@
         "packages/lib/src/events/map/event-map.schema.ts",
         "packages/lib/src/utils/cpf-cnpj.ts",
         "packages/lib/src/utils/date-only.ts"
+      ]
+    },
+    {
+      "from": "@alusa/mobile",
+      "to": "@alusa/observability",
+      "declared": true,
+      "compatibility": null,
+      "files": [
+        "apps/mobile/src/lib/observability/sentry.ts"
       ]
     },
     {
@@ -739,6 +815,7 @@
         "apps/web/src/server/contracts/issue-enrollment-contract.service.ts",
         "apps/web/src/server/events/register-event-asaas-payment-provider.ts",
         "apps/web/src/server/finance/admin-integration.service.ts",
+        "apps/web/src/server/system/operational-metrics-audit.service.ts",
         "apps/web/src/server/whatsapp/outbox.service.ts"
       ]
     },
@@ -1295,6 +1372,26 @@
         "apps/web/src/server/students/student-archive.orchestrator.ts",
         "apps/web/src/server/students/student-http-route.service.ts",
         "apps/web/src/server/students/students-route.service.ts"
+      ]
+    },
+    {
+      "from": "@alusa/web",
+      "to": "@alusa/observability",
+      "declared": true,
+      "compatibility": null,
+      "files": [
+        "apps/web/app/api/admin/webhooks/metrics/operational/route.ts",
+        "apps/web/app/api/financeiro/saldo/route.ts",
+        "apps/web/app/api/observability/web-vitals/route.ts",
+        "apps/web/lib/api/finance-api-response.ts",
+        "apps/web/lib/email/transactional-email.ts",
+        "apps/web/lib/observability/api-logger.ts",
+        "apps/web/lib/observability/runtime-operational-log.ts",
+        "apps/web/lib/observability/sentry-telemetry.ts",
+        "apps/web/lib/perf-logger.ts",
+        "apps/web/lib/security/sensitive-redaction.ts",
+        "apps/web/lib/upload-quota.server.ts",
+        "apps/web/src/server/jobs/job-observability.ts"
       ]
     },
     {

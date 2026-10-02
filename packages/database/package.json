@@ -24,8 +24,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@prisma/client": "^5.18.0",
-    "@alusa/shared": "workspace:*"
+    "@alusa/observability": "workspace:^",
+    "@alusa/shared": "workspace:*",
+    "@prisma/client": "^5.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.5.1",

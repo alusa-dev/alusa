@@ -1,4 +1,5 @@
-﻿import { createHash } from 'crypto';
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
+import { createHash } from 'crypto';
 import { Prisma, StatusMatricula, type PrismaClient } from '@prisma/client';
 import {
   buildRenewalPreview,
@@ -2384,12 +2385,7 @@ export async function confirmRenewalProcess(
       }
     }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      console.error('[renewal][unique-conflict]', {
-        contaId: input.contaId,
-        operation: 'confirm_renewal_process',
-        idempotencyKey,
-        constraint: error.meta?.target,
-      });
+      logEnrollmentOperationalEvent('api.renewal.operation.unique_conflict', error);
     }
     throw error;
   }

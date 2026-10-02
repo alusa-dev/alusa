@@ -9,8 +9,12 @@ import {
   type PlatformBillingAccountRecord,
   type PlatformBillingInvoiceRecord,
 } from '@alusa/platform-billing';
-import { platformBillingSummaryDTOSchema, type PlatformBillingSummaryDTO } from '@/features/platform-billing/dtos/platform-billing-summary';
+import {
+  platformBillingSummaryDTOSchema,
+  type PlatformBillingSummaryDTO,
+} from '@/features/platform-billing/dtos/platform-billing-summary';
 import type { TenantTransactionClient } from '@/lib/prisma-tenant';
+import { logApiOperationalEvent } from '@/lib/observability/api-logger';
 import {
   countActivePlatformBillingStudents,
   resolvePlatformBillingActor,
@@ -37,7 +41,16 @@ export async function getPlatformBillingSummary(params: {
   if (!actor.canManagePlatformBilling) return { ok: false, reason: 'FORBIDDEN' };
 
   const store = createPrismaPlatformBillingStore(params.tx);
-  const [account, invoices, activeStudents, planChanges, issues, latestWebhook, webhookStats, latestReconciliation] = await Promise.all([
+  const [
+    account,
+    invoices,
+    activeStudents,
+    planChanges,
+    issues,
+    latestWebhook,
+    webhookStats,
+    latestReconciliation,
+  ] = await Promise.all([
     store.findAccount({ contaId: params.contaId, environment: params.environment }),
     store.listInvoices({ contaId: params.contaId, environment: params.environment, limit: 24 }),
     countActivePlatformBillingStudents({ tx: params.tx, contaId: params.contaId }),
@@ -142,9 +155,13 @@ export async function getPlatformBillingSummary(params: {
         acc[item.status] = item._count._all;
         return acc;
       }, {}),
-      lastReconciliation: account?.lastReconciledAt?.toISOString() ?? latestReconciliation?.createdAt.toISOString() ?? null,
-      pendingChanges: planChanges.filter((change) =>
-        change.status === 'PENDING_PAYMENT' || change.status === 'PENDING_EFFECTIVE_DATE',
+      lastReconciliation:
+        account?.lastReconciledAt?.toISOString() ??
+        latestReconciliation?.createdAt.toISOString() ??
+        null,
+      pendingChanges: planChanges.filter(
+        (change) =>
+          change.status === 'PENDING_PAYMENT' || change.status === 'PENDING_EFFECTIVE_DATE',
       ).length,
       openIssues: issues.length,
     },
@@ -170,13 +187,13 @@ export async function getPlatformBillingSummary(params: {
 
   const parsedSummary = platformBillingSummaryDTOSchema.safeParse(summaryPayload);
   if (!parsedSummary.success) {
-    console.error('[platform-billing][summary] invalid response DTO', {
-      contaId: params.contaId,
-      issues: parsedSummary.error.issues.map(({ path, code, message }) => ({
-        path: path.join('.'),
-        code,
-        message,
-      })),
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.platform_billing.summary.invalid_dto',
+      route: '/api/platform-billing/summary',
+      method: 'GET',
+      requestId: crypto.randomUUID(),
+      error: parsedSummary.error,
     });
     throw new Error('O resumo de faturamento retornou dados inválidos.');
   }
@@ -266,7 +283,11 @@ function normalizeAccountStatusForSummary(account: PlatformBillingAccountRecord)
   if (account.pendingChangeType === 'REACTIVATE' && account.status === 'CHECKOUT_PENDING') {
     return 'CANCELED' as const;
   }
-  if (account.status === 'ACTIVE' && account.trialEndsAt && account.trialEndsAt.getTime() > Date.now()) {
+  if (
+    account.status === 'ACTIVE' &&
+    account.trialEndsAt &&
+    account.trialEndsAt.getTime() > Date.now()
+  ) {
     return 'TRIALING' as const;
   }
   return account.status;

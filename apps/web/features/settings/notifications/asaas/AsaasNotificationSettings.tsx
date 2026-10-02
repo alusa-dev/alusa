@@ -103,7 +103,6 @@ export function AsaasNotificationSettings() {
 
   useEffect(() => {
     if (success) {
-      console.log('[Asaas Notifications] Preferências salvas automaticamente');
       setSuccess(null);
     }
   }, [success, setSuccess]);

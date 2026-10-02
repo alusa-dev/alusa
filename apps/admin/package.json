@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@alusa/observability": "workspace:*",
     "@alusa/admin-auth": "workspace:*",
     "@alusa/database": "workspace:*",
     "@alusa/finance": "workspace:*",
@@ -19,6 +20,7 @@
     "@alusa/ui": "workspace:*",
     "@heroicons/react": "2.1.5",
     "@prisma/client": "5.18.0",
+    "@sentry/nextjs": "^10.70.0",
     "bcryptjs": "^2.4.3",
     "next": "16.3.0",
     "react": "^19.2.8",

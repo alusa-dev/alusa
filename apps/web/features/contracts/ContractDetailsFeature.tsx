@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -110,7 +111,7 @@ export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: Co
       })
       .catch((err) => {
         toast.error('Erro ao carregar contrato');
-        console.error(err);
+        logClientOperationalEvent('contracts.details.load_failed', err);
       })
       .finally(() => setLoading(false));
   }, [contratoId, origem]);

@@ -22,6 +22,61 @@ import {
   type EventImpactLevel,
 } from './asaas-event-registry';
 import { getCorrelationId } from '../foundation/correlation';
+import {
+  createStructuredLog,
+  normalizeMetricDimensions,
+  sharedTelemetry,
+} from '@alusa/observability';
+
+type WebhookAlertEventName =
+  | 'finance.webhook.processing.failed'
+  | 'finance.webhook.event.unhandled_critical'
+  | 'finance.webhook.event.unknown'
+  | 'finance.webhook.auth.token_rejected'
+  | 'finance.webhook.queue.lag_alert';
+
+const WEBHOOK_ALERT_ATTRIBUTES = [
+  'event.category',
+  'webhook.result',
+  'webhook.critical',
+  'webhook.source',
+  'alert.level',
+  'alert.count',
+  'security.signal',
+  'queue.lag_seconds',
+  'queue.backlog',
+] as const;
+
+function emitWebhookAlertLog(params: {
+  severity: 'warn' | 'error';
+  eventName: WebhookAlertEventName;
+  attributes?: Record<string, string | number | boolean>;
+}): void {
+  try {
+    const log = createStructuredLog({
+      severity: params.severity,
+      'service.name': 'alusa-finance',
+      'event.name': params.eventName,
+      attributes: params.attributes,
+      allowedAttributes: WEBHOOK_ALERT_ATTRIBUTES,
+    });
+    (params.severity === 'error' ? console.error : console.warn)(JSON.stringify(log));
+    void sharedTelemetry.publishLog(log);
+  } catch {
+    // Falhas na telemetria nunca interrompem o fluxo financeiro.
+  }
+}
+
+const ALERT_LOG_INTERVAL_MS = 60_000;
+const lastAlertLogAt = new Map<WebhookAlertEventName, number>();
+
+function shouldEmitAlertLog(eventName: WebhookAlertEventName): boolean {
+  const now = Date.now();
+  const lastEmittedAt = lastAlertLogAt.get(eventName) ?? 0;
+  if (now - lastEmittedAt < ALERT_LOG_INTERVAL_MS) return false;
+  lastAlertLogAt.set(eventName, now);
+  return true;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -40,6 +95,7 @@ export interface WebhookLogEntry {
   contaId: string;
   error?: string;
   source?: 'WEBHOOK' | 'REPLAY' | 'REPROCESS';
+  retry?: boolean;
   correlationId?: string;
 }
 
@@ -73,14 +129,55 @@ export interface CategoryMetrics {
  */
 export function logWebhookProcessing(entry: WebhookLogEntry): void {
   try {
-    const logData = {
-      level: entry.result === 'ERROR' ? 'error' : 'info',
-      type: 'webhook_processing',
-      ...entry,
-    };
+    const result = entry.result.toLowerCase();
+    const dimensions = normalizeMetricDimensions({
+      provider: 'asaas',
+      result,
+      'operation.name': entry.category.toLowerCase(),
+    });
+    void sharedTelemetry.recordMetric({
+      kind: 'counter',
+      name: 'finance.webhook.processed',
+      value: 1,
+      dimensions,
+    });
+    if (entry.retry) {
+      void sharedTelemetry.recordMetric({
+        kind: 'counter',
+        name: 'finance.webhook.retries',
+        value: 1,
+        dimensions,
+      });
+    }
+    if (Number.isFinite(entry.durationMs) && entry.durationMs >= 0) {
+      void sharedTelemetry.recordMetric({
+        kind: 'distribution',
+        name: 'finance.webhook.duration',
+        value: entry.durationMs,
+        unit: 'millisecond',
+        dimensions,
+      });
+    }
 
-    // Usar console.log com JSON para facilitar parsing por ferramentas
-    console.log(JSON.stringify(logData));
+    // Successful per-event records create avoidable log volume. Keep full counts
+    // in aggregated metrics and emit structured logs only for failed processing.
+    if (entry.result !== 'ERROR') return;
+    const log = createStructuredLog({
+      severity: 'error',
+      'service.name': 'alusa-finance',
+      'event.name': 'finance.webhook.processing.failed',
+      correlationId: entry.correlationId,
+      duration_ms: Number.isFinite(entry.durationMs) ? Math.max(0, entry.durationMs) : undefined,
+      attributes: {
+        'event.category': entry.category,
+        'webhook.result': result,
+        'webhook.critical': entry.critical,
+        'webhook.source': entry.source ?? 'WEBHOOK',
+      },
+      allowedAttributes: ['event.category', 'webhook.result', 'webhook.critical', 'webhook.source'],
+    });
+    console.error(JSON.stringify(log));
+    void sharedTelemetry.publishLog(log);
   } catch {
     // Fail-safe: nunca bloquear processamento por erro de log
   }
@@ -97,6 +194,7 @@ export function createWebhookLogEntry(params: {
   durationMs: number;
   error?: string;
   source?: WebhookLogEntry['source'];
+  retry?: boolean;
 }): WebhookLogEntry {
   const definition = getEventDefinition(params.event);
 
@@ -113,6 +211,7 @@ export function createWebhookLogEntry(params: {
     contaId: params.contaId,
     error: params.error,
     source: params.source ?? 'WEBHOOK',
+    retry: params.retry,
     correlationId: getCorrelationId(),
   };
 }
@@ -270,19 +369,18 @@ export function alertIfUnhandledCritical(event: string): void {
   const definition = getEventDefinition(event);
 
   if (definition?.impactLevel === 'critical' && !definition.handled) {
-    try {
-      console.error(
-        JSON.stringify({
-          level: 'critical',
-          type: 'unhandled_critical_event',
-          event,
-          category: definition.category,
-          message: `Evento crítico ${event} recebido mas não possui handler!`,
-          timestamp: new Date().toISOString(),
-        })
-      );
-    } catch {
-      // Fail-safe
+    void sharedTelemetry.recordMetric({
+      kind: 'counter',
+      name: 'finance.webhook.unhandled_critical_events',
+      value: 1,
+      dimensions: normalizeMetricDimensions({ provider: 'asaas' }),
+    });
+    if (shouldEmitAlertLog('finance.webhook.event.unhandled_critical')) {
+      emitWebhookAlertLog({
+        severity: 'error',
+        eventName: 'finance.webhook.event.unhandled_critical',
+        attributes: { 'event.category': definition.category },
+      });
     }
   }
 }
@@ -294,18 +392,18 @@ export function alertIfUnknownEvent(event: string): void {
   const definition = getEventDefinition(event);
 
   if (!definition) {
-    try {
-      console.warn(
-        JSON.stringify({
-          level: 'warning',
-          type: 'unknown_event',
-          event,
-          message: `Evento desconhecido ${event} recebido. Considere adicionar ao registry.`,
-          timestamp: new Date().toISOString(),
-        })
-      );
-    } catch {
-      // Fail-safe
+    void sharedTelemetry.recordMetric({
+      kind: 'counter',
+      name: 'finance.webhook.unknown_events',
+      value: 1,
+      dimensions: normalizeMetricDimensions({ provider: 'asaas' }),
+    });
+    if (shouldEmitAlertLog('finance.webhook.event.unknown')) {
+      emitWebhookAlertLog({
+        severity: 'warn',
+        eventName: 'finance.webhook.event.unknown',
+        attributes: { 'event.category': 'unknown' },
+      });
     }
   }
 }
@@ -319,20 +417,23 @@ export function alertTokenRejected(params: {
   event: string;
   eventId: string | null;
 }): void {
-  try {
-    console.error(
-      JSON.stringify({
-        level: 'warning',
-        type: 'webhook_token_rejected',
-        event: params.event,
-        eventId: params.eventId,
-        tokenHashPrefix: params.tokenHashPrefix,
-        message: 'Webhook recebido com token não reconhecido.',
-        timestamp: new Date().toISOString(),
-      })
-    );
-  } catch {
-    // Fail-safe
+  // Inputs remain in the function signature for existing callers, but are
+  // deliberately excluded from telemetry because they may identify a secret
+  // or a single provider delivery.
+  void params;
+  void sharedTelemetry.recordMetric({
+    kind: 'counter',
+    name: 'finance.webhook.auth.token_rejected',
+    value: 1,
+    dimensions: normalizeMetricDimensions({ provider: 'asaas' }),
+  });
+
+  if (shouldEmitAlertLog('finance.webhook.auth.token_rejected')) {
+    emitWebhookAlertLog({
+      severity: 'warn',
+      eventName: 'finance.webhook.auth.token_rejected',
+      attributes: { 'security.signal': 'webhook_token_rejected' },
+    });
   }
 }
 
@@ -346,21 +447,30 @@ export function alertQueueLagCritical(params: {
   contaId: string;
   message: string;
 }): void {
-  try {
-    console.error(
-      JSON.stringify({
-        level: params.level === 'CRITICAL' || params.level === 'HIGH' ? 'error' : 'warning',
-        type: 'webhook_queue_lag',
-        alertLevel: params.level,
-        lagSeconds: params.lagSeconds,
-        backlog: params.backlog,
-        contaId: params.contaId,
-        message: params.message,
-        timestamp: new Date().toISOString(),
-      })
-    );
-  } catch {
-    // Fail-safe
+  const severity = params.level === 'CRITICAL' || params.level === 'HIGH' ? 'error' : 'warn';
+  const alertLevel = ['CRITICAL', 'HIGH', 'WARNING', 'MEDIUM'].includes(params.level.toUpperCase())
+    ? params.level.toLowerCase()
+    : 'unknown';
+  const attributes: Record<string, string | number | boolean> = { 'alert.level': alertLevel };
+  if (Number.isFinite(params.lagSeconds) && params.lagSeconds >= 0) {
+    attributes['queue.lag_seconds'] = params.lagSeconds;
+  }
+  if (Number.isFinite(params.backlog) && params.backlog >= 0) {
+    attributes['queue.backlog'] = params.backlog;
+  }
+
+  void sharedTelemetry.recordMetric({
+    kind: 'counter',
+    name: 'finance.webhook.queue.lag_alerts',
+    value: 1,
+    dimensions: normalizeMetricDimensions({ provider: 'asaas', result: alertLevel }),
+  });
+  if (shouldEmitAlertLog('finance.webhook.queue.lag_alert')) {
+    emitWebhookAlertLog({
+      severity,
+      eventName: 'finance.webhook.queue.lag_alert',
+      attributes,
+    });
   }
 }
 
@@ -394,7 +504,9 @@ export interface WebhookSLOViolation {
   message: string;
 }
 
-const DEFAULT_SLO_THRESHOLDS: WebhookSLOThresholds = {
+// These legacy values support diagnostic read models only. They are not a
+// calibrated production alert policy; external alerts require a baseline.
+const DEFAULT_DIAGNOSTIC_THRESHOLDS: WebhookSLOThresholds = {
   maxLagSeconds: 300,
   maxBacklog: 500,
   maxErrorRate: 0.05,
@@ -415,7 +527,7 @@ export function evaluateWebhookSLOs(
   },
   thresholds?: Partial<WebhookSLOThresholds>,
 ): WebhookSLOResult {
-  const t = { ...DEFAULT_SLO_THRESHOLDS, ...thresholds };
+  const t = { ...DEFAULT_DIAGNOSTIC_THRESHOLDS, ...thresholds };
   const violations: WebhookSLOViolation[] = [];
 
   // Lag SLO
@@ -472,23 +584,6 @@ export function evaluateWebhookSLOs(
     thresholds: t,
     evaluatedAt: new Date().toISOString(),
   };
-
-  // Emitir alerta se houver violação
-  if (violations.length > 0) {
-    try {
-      const hasCritical = violations.some((v) => v.severity === 'critical');
-      console.error(
-        JSON.stringify({
-          level: hasCritical ? 'error' : 'warning',
-          type: 'webhook_slo_violation',
-          violations: violations.map((v) => v.message),
-          timestamp: new Date().toISOString(),
-        })
-      );
-    } catch {
-      // Fail-safe
-    }
-  }
 
   return result;
 }

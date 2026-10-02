@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import type { Prisma } from '@prisma/client';
+import { logPersonDataOperationalEvent } from '@/lib/observability/api-logger';
 
 const professorListSelect = {
   id: true,
@@ -146,7 +147,7 @@ export async function syncProfessoresFromColaboradores(contaId: string) {
       byEmail.set(email, created.id);
     }
   } catch (error) {
-    console.error('[professor.service] sync colaboradores->professores falhou', error);
+    logPersonDataOperationalEvent('api.teachers.sync.degraded', error, 'warn');
   }
 }
 

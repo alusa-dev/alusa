@@ -13,6 +13,7 @@ import {
 import { create as createColab, update as updateColab } from '../../../../../packages/lib/src/server/services/colaborador-service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 import { listColaboradores } from '@/src/server/employees/employee-read.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export async function GET(req: NextRequest) {
   // MULTI-TENANT: validar sessão e usar contaId da sessão
@@ -74,41 +75,43 @@ export async function POST(req: NextRequest) {
     const created = await createColab({ ...data, ...(hasDataUrlPhoto ? { foto: undefined } : {}), contaId });
     let saved = created;
     let photoUploadWarning = false;
-    let photoUploaded = false;
     if (hasDataUrlPhoto) {
       let foto: string | null | undefined;
       try {
         foto = await normalizeAvatarUpload({ entity: 'colaborador', entityId: created.id, contaId, foto: data.foto, previousFoto: null });
         saved = await updateColab(created.id, contaId, { foto } as any);
-        photoUploaded = true;
       } catch (error) {
         photoUploadWarning = true;
         await discardAvatarUpload(foto).catch((cleanupError) => {
-          console.error('[employee][photo-cleanup-failed]', {
-            contaId,
-            employeeId: created.id,
-            error: cleanupError instanceof Error ? cleanupError.message : 'unknown',
+          logApiOperationalEvent({
+            severity: 'error',
+            eventName: 'api.employees.photo_cleanup.failed',
+            route: '/api/colaboradores',
+            method: 'POST',
+            requestId: getRequestId(req),
+            error: cleanupError,
           });
         });
-        console.error('[employee][photo-upload-failed-after-create]', {
-          contaId,
-          employeeId: created.id,
-          error: error instanceof Error ? error.message : 'unknown',
+        logApiOperationalEvent({
+          severity: 'error',
+          eventName: 'api.employees.photo_upload.failed',
+          route: '/api/colaboradores',
+          method: 'POST',
+          requestId: getRequestId(req),
+          error,
         });
       }
     }
-    console.info('[employee][created]', { contaId, employeeId: created.id, photoUploaded });
     return NextResponse.json({
       data: saved,
       ...(photoUploadWarning ? { photoUploadWarning: 'Colaborador criado, mas não foi possível salvar a foto. Você pode adicioná-la pela edição do cadastro.' } : {}),
     }, { status: 201 });
   } catch (e) {
-    console.error('[employee][create-failed]', { error: e instanceof Error ? e.message : 'unknown' });
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.employees.request.failed', route: '/api/colaboradores', method: 'POST', requestId: getRequestId(req), error: e });
 
     // Se for erro de validação do Zod, retornar detalhes específicos
     if (e && typeof e === 'object' && 'issues' in e) {
       const zodError = e as { issues: Array<{ path: string[]; message: string; code: string }> };
-      console.warn('[employee][validation-failed]', { issueCount: zodError.issues.length });
       const firstIssue = zodError.issues[0];
       if (firstIssue) {
         const fieldName = firstIssue.path.join('.');

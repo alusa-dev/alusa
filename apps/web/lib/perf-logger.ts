@@ -1,29 +1,28 @@
+import {
+  createStructuredLog,
+  normalizeMetricDimensions,
+  sharedTelemetry,
+} from '@alusa/observability';
+import { shouldSampleMetric } from '@/lib/observability/sampling';
+
 type PerfMetadata = Record<string, unknown>;
 
-function shouldLog(duration: number) {
-  return process.env.NODE_ENV === 'development' || duration > 500 || process.env.PERF_LOGS === '1';
-}
+const lastLoggedAt = new Map<string, number>();
 
-function sanitizeMetadata(metadata?: PerfMetadata) {
-  if (!metadata) return undefined;
-  const redactedKeys = new Set([
-    'authorization',
-    'cookie',
-    'cpf',
-    'email',
-    'password',
-    'senha',
-    'session',
-    'token',
-    'access_token',
-    'api_key',
-  ]);
-  return Object.fromEntries(
-    Object.entries(metadata).map(([key, value]) => [
-      key,
-      redactedKeys.has(key.toLowerCase()) ? '[redacted]' : value,
-    ]),
-  );
+const SAFE_METADATA = new Set([
+  'status', 'cacheState', 'statusCode', 'dbDurationMs', 'asaasDurationMs',
+]);
+
+function safeMetadata(metadata?: PerfMetadata) {
+  if (!metadata) return {};
+  const safe: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (!SAFE_METADATA.has(key)) continue;
+    if (key === 'status' && (value === 'success' || value === 'error')) safe[key] = value;
+    else if (key === 'cacheState' && ['HIT', 'MISS', 'STALE', 'BYPASS'].includes(String(value))) safe[key] = String(value);
+    else if (typeof value === 'number' && Number.isFinite(value) && value >= 0) safe[key] = value;
+  }
+  return safe;
 }
 
 export function logPerfMetric(
@@ -32,12 +31,42 @@ export function logPerfMetric(
   duration: number,
   metadata?: PerfMetadata,
 ) {
-  if (!shouldLog(duration)) return;
-
-  const safeMetadata = sanitizeMetadata(metadata);
-  const metaStr = safeMetadata ? ` | ${JSON.stringify(safeMetadata)}` : '';
+  void scope;
+  if (!Number.isFinite(duration)) return;
   const level = duration > 2000 ? 'critical' : duration > 500 ? 'slow' : 'ok';
-  console.log(`[PERF] [${level}] [${scope}] ${operation}: ${duration}ms${metaStr}`);
+  const safeOperation = /^[a-z][a-z0-9._-]{0,63}$/i.test(operation) && !/[-_]\d{2,}/.test(operation)
+    ? operation.toLowerCase()
+    : 'operation';
+  const dimensions = normalizeMetricDimensions({
+    'operation.name': safeOperation,
+    result: metadata?.status === 'error' ? 'error' : 'success',
+  });
+
+  if (shouldSampleMetric(process.env.OBSERVABILITY_METRIC_SAMPLE_RATE)) {
+    void sharedTelemetry.recordMetric({
+      kind: 'distribution',
+      name: 'alusa.operation.duration',
+      value: Math.max(0, duration),
+      unit: 'millisecond',
+      dimensions,
+    });
+  }
+
+  if (duration <= 500) return;
+  const lastLogged = lastLoggedAt.get(safeOperation);
+  if (lastLogged !== undefined && Date.now() - lastLogged < 60_000) return;
+  lastLoggedAt.set(safeOperation, Date.now());
+  const meta = safeMetadata(metadata);
+  const log = createStructuredLog({
+    severity: level === 'critical' ? 'error' : level === 'slow' ? 'warn' : 'info',
+    'service.name': 'alusa-web',
+    'event.name': 'performance.slow_operation',
+    duration_ms: Math.max(0, duration),
+    attributes: { operation: safeOperation, perfLevel: level, ...meta },
+    allowedAttributes: ['operation', 'perfLevel', ...SAFE_METADATA],
+  });
+  console.warn(JSON.stringify(log));
+  void sharedTelemetry.publishLog(log);
 }
 
 export function createPerfTimer(scope: string) {
@@ -64,7 +93,7 @@ export async function withPerfTimer<T>(
     timer.end(operation, { status: 'success', ...metadata });
     return result;
   } catch (error) {
-    timer.end(operation, { status: 'error', error: String(error), ...metadata });
+    timer.end(operation, { status: 'error', errorType: error instanceof Error ? error.name : 'unknown_error', ...metadata });
     throw error;
   }
 }
@@ -83,8 +112,9 @@ export function logRoutePerformance(metadata: {
   cacheState?: string;
   statusCode: number;
 }) {
-  logPerfMetric(metadata.route, `${metadata.method} route`, metadata.durationMs, {
-    contaId: metadata.contaId,
+  logPerfMetric(metadata.route, 'route', metadata.durationMs, {
+    route: metadata.route,
+    status: metadata.statusCode >= 500 ? 'error' : 'success',
     dbDurationMs: metadata.dbDurationMs,
     asaasDurationMs: metadata.asaasDurationMs,
     cacheState: metadata.cacheState,

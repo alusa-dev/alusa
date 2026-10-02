@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import {
   AsaasHttpError,
   createCustomer,
@@ -161,13 +162,11 @@ export async function createAsaasCustomer(
     return ok({ id: customer.id, externalReference: customer.externalReference! });
   } catch (error) {
     if (error instanceof AsaasHttpError) {
-      console.warn('[createAsaasCustomer] Asaas rejeitou criação/consulta de customer', {
-        contaId: input.contaId,
-        status: error.status,
-        message: error.message,
-        cpfCnpjLength: normalizeDocument(input.cpfCnpj).length,
-        externalReference: input.externalReference,
-        response: error.responseBody ?? error.response,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.create_customer.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     }
 

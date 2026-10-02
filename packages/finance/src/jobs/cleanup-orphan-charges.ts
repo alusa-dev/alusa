@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 /**
  * Job: cleanup-orphan-charges.ts
  *
@@ -28,7 +29,7 @@ export interface CleanupOrphanChargesResult {
 }
 
 export async function cleanupOrphanChargesJob(
-  input: CleanupOrphanChargesInput = {}
+  input: CleanupOrphanChargesInput = {},
 ): Promise<CleanupOrphanChargesResult> {
   const {
     contaId,
@@ -72,13 +73,6 @@ export async function cleanupOrphanChargesJob(
 
     try {
       if (dryRun) {
-        console.log('[cleanup-orphan-charges] DRY RUN - Would cancel:', {
-          chargeId: charge.id,
-          contaId: charge.contaId,
-          cobrancaId: charge.cobrancaId,
-          createdAt: charge.createdAt,
-          externalReference: charge.externalReference,
-        });
         result.canceladas++;
         continue;
       }
@@ -127,11 +121,12 @@ export async function cleanupOrphanChargesJob(
     }
   }
 
-  console.log('[cleanup-orphan-charges] Resultado:', {
-    processadas: result.processadas,
-    canceladas: result.canceladas,
-    erros: result.erros.length,
-    dryRun,
+  logFinanceOperationalEvent({
+    severity: 'info',
+    eventName: 'finance.jobs.cleanup_orphan_charges.completed',
+    itemCount: result.processadas,
+    result: result.erros.length > 0 ? 'partial_failure' : 'success',
+    throttleMs: 60_000,
   });
 
   return result;

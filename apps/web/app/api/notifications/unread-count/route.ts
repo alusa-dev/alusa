@@ -8,7 +8,7 @@ import {
 } from '@/lib/notifications/notification-cache';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { getRequestId } from '@/lib/observability/api-logger';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 const inFlightCounts = new Map<string, Promise<number>>();
@@ -23,7 +23,6 @@ function isDatabasePoolTimeout(error: unknown): boolean {
 
 export async function GET(req: NextRequest) {
   const timer = createPerfTimer('api/notifications/unread-count');
-  const requestId = getRequestId(req);
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) {
@@ -63,28 +62,29 @@ export async function GET(req: NextRequest) {
       ttlSeconds: 60,
       staleWhileRevalidateSeconds: 240,
     }).catch((cacheError) => {
-      console.warn(JSON.stringify({
-        level: 'warning',
-        type: 'notification_cache_write_failed',
-        route: 'api/notifications/unread-count',
-        contaId: user.contaId,
-        error: cacheError instanceof Error ? cacheError.message : String(cacheError),
-      }));
+      logApiOperationalEvent({
+        severity: 'warn',
+        eventName: 'api.notifications.cache_write.failed',
+        route: '/api/notifications/unread-count',
+        method: 'GET',
+        requestId: getRequestId(req),
+        error: cacheError,
+      });
     });
     timer.end('GET /notifications/unread-count (cache miss)');
 
     return json(200, body);
   } catch (error) {
-    console.error(JSON.stringify({
-      level: 'error',
-      type: isDatabasePoolTimeout(error)
-        ? 'database_pool_timeout'
-        : 'notification_unread_count_failed',
-      route: 'api/notifications/unread-count',
-      requestId,
-      errorName: error instanceof Error ? error.name : undefined,
-      error: error instanceof Error ? error.message : String(error),
-    }));
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: isDatabasePoolTimeout(error)
+        ? 'api.notifications.database_pool_timeout'
+        : 'api.notifications.request.failed',
+      route: '/api/notifications/unread-count',
+      method: 'GET',
+      requestId: getRequestId(req),
+      error,
+    });
     if (isDatabasePoolTimeout(error)) {
       return NextResponse.json(
         { error: 'BANCO_TEMPORARIAMENTE_INDISPONIVEL', message: 'O contador será atualizado novamente em instantes.' },

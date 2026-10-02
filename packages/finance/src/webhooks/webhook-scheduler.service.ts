@@ -32,6 +32,7 @@ import {
 } from './webhook-reconciliation.service';
 import { evaluateWebhookSLOs, type WebhookSLOResult } from './webhook-observability.service';
 import { withWebhookJobLock } from '../foundation/webhook-job-lock.service';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -353,13 +354,13 @@ async function runWebhookSchedulerUnlocked(
 
   const completedAt = new Date();
 
-  console.info('[webhook-scheduler] Execução concluída', {
-    totalDurationMs: completedAt.getTime() - executedAt.getTime(),
-    steps: steps.map((s) => ({ step: s.step, ok: s.ok, durationMs: s.durationMs })),
-    hasErrors: steps.some((s) => !s.ok),
-    retentionAlert,
-    sloOk: slo?.ok ?? null,
-    sloViolations: slo?.violations?.length ?? 0,
+  const hasErrors = steps.some((step) => !step.ok);
+  logFinanceOperationalEvent({
+    severity: hasErrors ? 'warn' : 'info',
+    eventName: 'finance.webhook.scheduler.completed',
+    durationMs: completedAt.getTime() - executedAt.getTime(),
+    itemCount: steps.length,
+    result: hasErrors ? 'partial_failure' : 'success',
   });
 
   return {

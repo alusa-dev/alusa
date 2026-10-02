@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { notifyContractsExpiringJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
@@ -20,6 +21,7 @@ function jsonError(status: number, code: string, message: string) {
  * Alerta contratos que vencem em 7, 3 ou 1 dia(s).
  */
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const query = notifyContractsExpiringJobQueryDTOSchema.parse({
@@ -57,8 +59,12 @@ export async function POST(req: Request) {
       notified,
     });
   } catch (error) {
-    console.error('[Job Notify Contracts Expiring] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', 'Não foi possível notificar contratos próximos do vencimento.');
+    logJobFailure('notify-contracts-expiring', startedAt, error);
+    return jsonError(
+      500,
+      'ERRO_JOB',
+      'Não foi possível notificar contratos próximos do vencimento.',
+    );
   }
 }
 

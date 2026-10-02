@@ -720,6 +720,12 @@ describe('handlePaymentWebhook', () => {
 
   it('deve atualizar charge standalone por asaasPaymentId mesmo sem externalReference', async () => {
     const { prisma } = await import('@alusa/database');
+    const { sharedTelemetry } = await import('@alusa/observability');
+    const metrics: Array<{ name: string; dimensions?: Record<string, unknown> }> = [];
+    const restoreTelemetry = sharedTelemetry.replaceSink({
+      metric: (metric) => metrics.push(metric),
+    });
+    const successLog = vi.spyOn(console, 'log');
 
     vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
       id: 'ch_1',
@@ -743,6 +749,16 @@ describe('handlePaymentWebhook', () => {
     });
 
     expect(result.success).toBe(true);
+    expect(metrics).toContainEqual({
+      kind: 'counter',
+      name: 'finance.payment_webhook.operation',
+      value: 1,
+      dimensions: {
+        provider: 'asaas',
+        'operation.name': 'standalone_charge_updated',
+      },
+    });
+    expect(successLog).not.toHaveBeenCalled();
     expect(prisma.charge.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'ch_1' },
@@ -753,6 +769,8 @@ describe('handlePaymentWebhook', () => {
         }),
       }),
     );
+    restoreTelemetry();
+    successLog.mockRestore();
   });
 
   it('normaliza recebimento em dinheiro mesmo quando o Asaas envia status RECEIVED', async () => {
@@ -1045,8 +1063,11 @@ describe('handlePaymentWebhook', () => {
   });
 
   it('retorna falha para retry da inbox quando confirmação e reconciliação do pedido de assentos falham', async () => {
-    mockConfirmEventMapOrderPayment.mockRejectedValueOnce(new Error('DB write failed'));
-    mockReconcileEventMapOrder.mockRejectedValueOnce(new Error('DB unavailable'));
+    const sensitiveDiagnostic = 'DB unavailable token=sk_live_secret paymentId=pay_secret contaId=tenant_secret';
+    mockConfirmEventMapOrderPayment.mockRejectedValueOnce(new Error('DB write failed token=sk_live_other'));
+    mockReconcileEventMapOrder.mockRejectedValueOnce(new Error(sensitiveDiagnostic));
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const result = await handlePaymentWebhook('conta-1', {
       event: 'PAYMENT_RECEIVED',
@@ -1068,7 +1089,18 @@ describe('handlePaymentWebhook', () => {
       }),
     );
     expect(mockReconcileEventMapOrder).toHaveBeenCalled();
-    expect(result).toMatchObject({ success: false, error: 'DB unavailable' });
+    expect(result).toMatchObject({ success: false, error: sensitiveDiagnostic });
+    const emittedLogs = [...consoleWarn.mock.calls, ...consoleError.mock.calls].flat().join(' ');
+    expect(emittedLogs).toContain('finance.payment_webhook.public_order_confirmation.failed');
+    expect(emittedLogs).toContain('finance.payment_webhook.processing.failed');
+    expect(emittedLogs).toContain('"error.type":"error"');
+    expect(emittedLogs).not.toContain('pay_event_map');
+    expect(emittedLogs).not.toContain('paymentId');
+    expect(emittedLogs).not.toContain('contaId');
+    expect(emittedLogs).not.toContain('sk_live');
+    expect(emittedLogs).not.toContain('DB unavailable');
+    consoleWarn.mockRestore();
+    consoleError.mockRestore();
   });
 
   it('não marca o webhook como sucesso quando o pedido ainda não pôde ser reconciliado', async () => {

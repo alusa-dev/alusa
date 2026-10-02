@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 import type { FinanceStatus, FinancialOnboardingStatus } from '@prisma/client';
 
@@ -27,7 +28,10 @@ export async function getOnboardingStatus(contaId: string): Promise<OnboardingSt
     throw new Error('Conta não encontrada');
   }
 
-  const profile = await prisma.financeProfile.findUnique({ where: { contaId }, select: { id: true } });
+  const profile = await prisma.financeProfile.findUnique({
+    where: { contaId },
+    select: { id: true },
+  });
   if (!profile) {
     return {
       financeProfileId: null,
@@ -59,7 +63,10 @@ export async function getOnboardingStatus(contaId: string): Promise<OnboardingSt
     if (account.status === 'IN_PROGRESS') return true;
 
     // Evitar bater no Asaas a cada refresh quando já está em estados pós-criação.
-    if (account.status === ('CREATED' as FinancialOnboardingStatus) || account.status === 'UNDER_REVIEW') {
+    if (
+      account.status === ('CREATED' as FinancialOnboardingStatus) ||
+      account.status === 'UNDER_REVIEW'
+    ) {
       const ageMs = Date.now() - account.statusUpdatedAt.getTime();
       return ageMs > 10 * 60 * 1000;
     }
@@ -102,15 +109,11 @@ export async function getOnboardingStatus(contaId: string): Promise<OnboardingSt
     } catch (error) {
       const failure = classifyAsaasOperationalError(error, 'subaccount');
 
-      console.warn('[Finance Onboarding] Falha ao reconciliar status com Asaas', {
-        category: failure.category,
-        status: failure.status,
-        contaId,
-        financeProfileId: profile.id,
-        asaasAccountId: account?.asaasAccountId,
-        error: failure.message,
-        retryable: failure.retryable,
-        details: failure.details,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.get_onboarding_status.degraded',
+        error: failure,
+        throttleMs: 60_000,
       });
     }
   }

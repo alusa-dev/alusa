@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
@@ -38,7 +39,7 @@ async function resolveAuth() {
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-    const rawParams = await params;
+  const rawParams = await params;
   try {
     const auth = await resolveAuth();
     if (!auth.ok) {
@@ -80,13 +81,24 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       customerChannelDefaults: deriveCustomerNotificationChannelDefaults(preferences),
     });
   } catch (error) {
-    console.error('[responsaveis/notificacoes][GET]', error);
-    return jsonError(500, 'ERRO_INTERNO', 'Não foi possível carregar as preferências de notificação.');
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/responsaveis/[id]/notificacoes',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
+    return jsonError(
+      500,
+      'ERRO_INTERNO',
+      'Não foi possível carregar as preferências de notificação.',
+    );
   }
 }
 
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
-    const rawParams = await params;
+  const rawParams = await params;
   try {
     const auth = await resolveAuth();
     if (!auth.ok) {
@@ -140,7 +152,18 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       customerChannelDefaults: deriveCustomerNotificationChannelDefaults(preferences),
     });
   } catch (error) {
-    console.error('[responsaveis/notificacoes][PUT]', error);
-    return jsonError(500, 'ERRO_INTERNO', 'Não foi possível salvar as preferências de notificação.');
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/responsaveis/[id]/notificacoes',
+      method: 'PUT',
+      requestId: getRequestId(request),
+      error,
+    });
+    return jsonError(
+      500,
+      'ERRO_INTERNO',
+      'Não foi possível salvar as preferências de notificação.',
+    );
   }
 }

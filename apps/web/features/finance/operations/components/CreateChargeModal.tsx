@@ -16,6 +16,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import {
   Select,
   SelectContent,
@@ -177,7 +178,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
       setNotificationChannelsTouched(false);
       setNotificationDefaultsError(null);
     } catch (error) {
-      console.warn('[CreateChargeModal] Falha ao carregar defaults de notificação', error);
+      logClientOperationalEvent('finance.charge.notification_defaults.load_failed', error);
       setNotificationChannels([]);
       setNotificationChannelsConfigured(false);
       setNotificationChannelsTouched(false);

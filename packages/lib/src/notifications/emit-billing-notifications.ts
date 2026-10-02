@@ -1,3 +1,4 @@
+import { logLibOperationalEvent } from '../observability/operational-log';
 import {
   createBillingWebhookNotification,
   isBillingNotificationEvent,
@@ -57,12 +58,9 @@ export async function emitBillingNotifications(
       emitBillingNotificationCandidate(candidate, sourceType).catch((error) => {
         if (options?.throwOnError) throw error;
 
-        console.error('[Notifications][billing] Falha não crítica ao criar notificação interna', {
-          sourceType,
-          event: candidate.event,
-          eventId: candidate.eventId ?? null,
-          asaasPaymentId: candidate.asaasPaymentId,
-          message: error instanceof Error ? error.message : String(error),
+        logLibOperationalEvent({
+          eventName: 'notification.billing.create.failed',
+          error,
         });
       }),
     ),

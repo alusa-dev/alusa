@@ -9,6 +9,7 @@ import {
   getEventPaymentBookLink,
 } from '@/src/server/events/event-payment-book.service';
 import { getEventsContext, handleEventsRouteError, jsonError } from '../../../../_helpers';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -21,9 +22,10 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     const ctx = await getEventsContext('events.view');
     const result = await getEventPaymentBookLink({ ctx, eventId, participantId });
     if (result.kind === 'error') {
-      const message = result.message === 'PARTICIPANTE_NAO_ENCONTRADO'
-        ? 'Inscrição não encontrada.'
-        : 'Nenhum parcelamento encontrado para esta inscrição.';
+      const message =
+        result.message === 'PARTICIPANTE_NAO_ENCONTRADO'
+          ? 'Inscrição não encontrada.'
+          : 'Nenhum parcelamento encontrado para esta inscrição.';
       return jsonError(result.status, result.message, message);
     }
     if (result.kind !== 'redirect') {
@@ -60,8 +62,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       },
     });
   } catch (error) {
-    console.error('[payment-book][get] Error generating PDF', {
-      error: error instanceof Error ? error.message : 'payment_book_generation_failed',
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.events.payment_book.failed',
+      route: '/api/events/[eventId]/participants/[participantId]/payment-book',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
     });
     return new NextResponse('Erro interno ao gerar o PDF.', { status: 500 });
   }

@@ -4,8 +4,15 @@ import { ZodError } from 'zod';
 import { EventsError, type EventsContext } from '@alusa/lib/events/events.service';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { assertPlatformAccessForConta, platformBillingAccessResponse } from '@/src/server/platform-billing/capacity';
-import { logApiError, logApiResponse } from '@/lib/observability/api-logger';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
+import {
+  logApiError,
+  logApiOperationalEvent,
+  logApiResponse,
+} from '@/lib/observability/api-logger';
 
 export type EventsPermission =
   | 'events.view'
@@ -114,7 +121,9 @@ export function jsonError(status: number, code: string, message: string, details
   return NextResponse.json({ error: { code, message, details } }, { status });
 }
 
-export async function getEventsContext(permission: EventsPermission): Promise<EventsContext & { role: string }> {
+export async function getEventsContext(
+  permission: EventsPermission,
+): Promise<EventsContext & { role: string }> {
   const auth = await resolveTenantSession();
   if (!auth.ok) {
     throw new EventsError(
@@ -151,12 +160,23 @@ export async function getEventsContext(permission: EventsPermission): Promise<Ev
 export function handleEventsRouteError(
   error: unknown,
   fallbackCode: string,
-  context?: { route: string; requestId: string; method: string; startedAt: number; tenantId?: string },
+  context?: {
+    route: string;
+    requestId: string;
+    method: string;
+    startedAt: number;
+    tenantId?: string;
+  },
 ) {
   const billing = platformBillingAccessResponse(error);
   if (billing) {
     const response = NextResponse.json(billing.body, { status: billing.status });
-    if (context) logApiResponse({ ...context, status: billing.status, errorCode: 'PLATFORM_BILLING_ACCESS_RESTRICTED' });
+    if (context)
+      logApiResponse({
+        ...context,
+        status: billing.status,
+        errorCode: 'PLATFORM_BILLING_ACCESS_RESTRICTED',
+      });
     return response;
   }
 
@@ -175,7 +195,14 @@ export function handleEventsRouteError(
   if (context) {
     logApiError({ ...context, status: 500, errorCode: fallbackCode, error });
   } else {
-    console.error('[api/events][error]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.events.request.failed',
+      route: '/api/events/[unknown]',
+      method: 'UNKNOWN',
+      requestId: crypto.randomUUID(),
+      error,
+    });
   }
   return jsonError(500, fallbackCode, 'Não foi possível concluir a operação agora.');
 }

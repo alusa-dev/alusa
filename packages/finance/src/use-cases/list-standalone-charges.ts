@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 import type { UnifiedChargeStatus } from '../dtos/charge-list-item.dto';
 import {
@@ -5,7 +6,10 @@ import {
   ASAAS_PAID_UNIFIED_STATUSES,
   resolveUnifiedChargeStatus,
 } from '../dtos/unified-billing';
-import { resolveChargeDisplayStatus, type ChargeDisplayStatus } from '../mappers/asaas-display-status';
+import {
+  resolveChargeDisplayStatus,
+  type ChargeDisplayStatus,
+} from '../mappers/asaas-display-status';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
 
 // ---------------------------------------------------------------------------
@@ -84,10 +88,7 @@ function buildStandaloneChargeWhere(input: {
       },
     ];
   } else if (input.statusView === 'paid') {
-    where.OR = [
-      { status: 'PAID' },
-      { asaasStatus: { in: [...ASAAS_PAID_UNIFIED_STATUSES] } },
-    ];
+    where.OR = [{ status: 'PAID' }, { asaasStatus: { in: [...ASAAS_PAID_UNIFIED_STATUSES] } }];
   }
 
   if (input.search) {
@@ -148,11 +149,10 @@ async function shadowCompareStandaloneReadModelWithDatabase(
     .map((item) => item.id);
 
   if (total !== readModelResult.total || onlyLegacy.length) {
-    console.warn('[finance][read-model][shadow][standalone]', {
-      contaId: input.contaId,
-      legacyTotal: total,
-      readModelTotal: readModelResult.total,
-      onlyLegacy,
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.use_cases.list_standalone_charges.degraded',
+      throttleMs: 60_000,
     });
   }
 }
@@ -183,12 +183,16 @@ export async function listStandaloneCharges(
   if (readModelEnabled) {
     const readModelResult = await chargeReadModelService.listStandaloneChargesFromReadModel(input);
     if (process.env.FIN_READMODEL_SHADOW_COMPARE === 'true') {
-      void shadowCompareStandaloneReadModelWithDatabase(input, _db, readModelResult).catch((shadowError) => {
-        console.warn('[finance][read-model][shadow][standalone] compare failed', {
-          contaId,
-          error: shadowError instanceof Error ? shadowError.message : String(shadowError),
-        });
-      });
+      void shadowCompareStandaloneReadModelWithDatabase(input, _db, readModelResult).catch(
+        (shadowError) => {
+          logFinanceOperationalEvent({
+            severity: 'warn',
+            eventName: 'finance.use_cases.list_standalone_charges.degraded',
+            error: shadowError,
+            throttleMs: 60_000,
+          });
+        },
+      );
     }
     return readModelResult;
   }
@@ -257,28 +261,36 @@ export async function listStandaloneCharges(
 
   if (process.env.FIN_READMODEL_SHADOW_COMPARE === 'true') {
     try {
-      const readModelResult = await chargeReadModelService.listStandaloneChargesFromReadModel(input);
+      const readModelResult =
+        await chargeReadModelService.listStandaloneChargesFromReadModel(input);
       const legacyIds = new Set(items.map((item) => item.id));
       const readModelIds = new Set(readModelResult.items.map((item) => item.id));
-      const onlyLegacy = items.filter((item) => !readModelIds.has(item.id)).slice(0, 10).map((item) => item.id);
+      const onlyLegacy = items
+        .filter((item) => !readModelIds.has(item.id))
+        .slice(0, 10)
+        .map((item) => item.id);
       const onlyReadModel = readModelResult.items
         .filter((item) => !legacyIds.has(item.id))
         .slice(0, 10)
         .map((item) => item.id);
 
-      if (items.length !== readModelResult.items.length || onlyLegacy.length || onlyReadModel.length) {
-        console.warn('[finance][read-model][shadow][standalone]', {
-          contaId,
-          legacyTotal: items.length,
-          readModelTotal: readModelResult.items.length,
-          onlyLegacy,
-          onlyReadModel,
+      if (
+        items.length !== readModelResult.items.length ||
+        onlyLegacy.length ||
+        onlyReadModel.length
+      ) {
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.list_standalone_charges.degraded',
+          throttleMs: 60_000,
         });
       }
     } catch (shadowError) {
-      console.warn('[finance][read-model][shadow][standalone] compare failed', {
-        contaId,
-        error: shadowError instanceof Error ? shadowError.message : String(shadowError),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.list_standalone_charges.degraded',
+        error: shadowError,
+        throttleMs: 60_000,
       });
     }
   }

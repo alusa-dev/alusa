@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { reconcileKycModels } from '@alusa/finance';
 
@@ -17,6 +18,7 @@ function jsonError(status: number, code: string, message: string) {
  * Reconcilia snapshots/modelos KYC locais com o estado oficial Asaas.
  */
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -36,7 +38,7 @@ async function run(req: Request) {
       result,
     });
   } catch (error) {
-    console.error('[Job Reconcile KYC Models] Erro:', error);
+    logJobFailure('reconcile-kyc-models', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconciliar os dados de KYC.');
   }
 }

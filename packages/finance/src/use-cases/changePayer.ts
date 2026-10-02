@@ -1,26 +1,27 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 /**
  * changePayerUseCase — Troca de pagador (responsável financeiro) de uma matrícula
- * 
+ *
  * PR4: Permite trocar o responsável financeiro de uma matrícula ativa.
- * 
+ *
  * Arquitetura SAGA/2-fases:
- * 
+ *
  * FASE 1 (Prepare):
  * 1. Validar matrícula (status ATIVA, não em operação)
  * 2. Validar novo pagador (responsável válido, CPF, etc)
  * 3. Criar operação (PayerChangeOperacao com status PENDING)
  * 4. Criar/garantir customer para novo pagador
- * 
+ *
  * FASE 2 (Execute):
  * 5. Cancelar assinatura antiga (se existir)
  * 6. Criar nova assinatura com novo pagador
  * 7. Atualizar matrícula com novo responsavelFinanceiroId
  * 8. Marcar operação como COMMITTED
- * 
+ *
  * Em caso de FALHA:
  * - Se falhar antes de cancelar antiga: permite retry
  * - Se falhar após cancelar antiga: tenta rollback ou marca para revisão manual
- * 
+ *
  * Invariantes:
  * - Aluno menor DEVE ter responsável financeiro
  * - Aluno maior SEM responsável explícito = ele próprio é pagador (não precisa deste fluxo)
@@ -164,7 +165,7 @@ async function finalizePayerChange(params: {
 // ============================================================================
 
 export async function changePayer(
-  input: ChangePayerInput
+  input: ChangePayerInput,
 ): Promise<Result<ChangePayerOutput, ChangePayerError>> {
   const correlationId = randomUUID();
   const idempotencyKey = input.idempotencyKey?.trim() ?? '';
@@ -176,7 +177,10 @@ export async function changePayer(
   });
 
   if (existingOp) {
-    if (existingOp.matriculaId !== input.matriculaId || existingOp.newPayerId !== input.newResponsavelId) {
+    if (
+      existingOp.matriculaId !== input.matriculaId ||
+      existingOp.newPayerId !== input.newResponsavelId
+    ) {
       return err('IDEMPOTENCY_CONFLICT');
     }
     if (existingOp.status === 'COMMITTED') {
@@ -260,7 +264,9 @@ export async function changePayer(
   }
 
   // 3. Determinar pagador atual
-  const oldPayerType: CustomerPayerType = matricula.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO';
+  const oldPayerType: CustomerPayerType = matricula.responsavelFinanceiroId
+    ? 'RESPONSAVEL'
+    : 'ALUNO';
   const oldPayerId = matricula.responsavelFinanceiroId ?? matricula.alunoId;
 
   // Verificar se é o mesmo pagador
@@ -295,12 +301,11 @@ export async function changePayer(
   } catch (error) {
     if (!isPayerChangeIdempotencyViolation(error)) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        console.error('[finance][change-payer][unique-conflict]', {
-          contaId: input.contaId,
-          operation: 'change_payer',
-          matriculaId: input.matriculaId,
-          idempotencyKey,
-          constraint: error.meta?.target,
+        logFinanceOperationalEvent({
+          severity: 'error',
+          eventName: 'finance.use_cases.changepayer.failed',
+          error: error,
+          throttleMs: 60_000,
         });
       }
       throw error;
@@ -309,7 +314,10 @@ export async function changePayer(
       where: { contaId: input.contaId, idempotencyKey },
     });
     if (!concurrent) throw error;
-    if (concurrent.matriculaId !== input.matriculaId || concurrent.newPayerId !== input.newResponsavelId) {
+    if (
+      concurrent.matriculaId !== input.matriculaId ||
+      concurrent.newPayerId !== input.newResponsavelId
+    ) {
       return err('IDEMPOTENCY_CONFLICT');
     }
     if (concurrent.status === 'COMMITTED') {
@@ -457,7 +465,8 @@ export async function retryPayerChange(
 }
 
 function isPayerChangeIdempotencyViolation(error: unknown): boolean {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') return false;
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002')
+    return false;
   const target = error.meta?.target;
   return Array.isArray(target) && target.some((field) => field === 'idempotencyKey');
 }

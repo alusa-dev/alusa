@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { encerrarContaAlusa, type CloseAccountErrorCode } from '@alusa/finance';
 import { PlatformBillingError } from '@alusa/platform-billing';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import {
   isContaOwner,
   requestContaPlanCancellation,
@@ -73,16 +74,26 @@ export async function POST(req: NextRequest) {
       });
       renewalCancellationScheduled = true;
     } catch (error) {
-      if (!(error instanceof PlatformBillingError && error.code === 'PLATFORM_BILLING_SUBSCRIPTION_MISSING')) {
-        console.error('[API conta/excluir][POST] Falha ao cancelar renovação do plano', {
-          contaId: user.contaId,
-          actorId: user.id,
-          requestId,
+      if (
+        !(
+          error instanceof PlatformBillingError &&
+          error.code === 'PLATFORM_BILLING_SUBSCRIPTION_MISSING'
+        )
+      ) {
+        logApiOperationalEvent({
+          severity: 'error',
+          eventName: 'api.account.close.subscription_cancel.failed',
+          route: '/api/conta/excluir',
+          method: 'POST',
+          requestId: getRequestId(req),
           error,
         });
-        return json(503, closeContaErrorResultDTOSchema.parse({
-          message: 'Não foi possível concluir a desativação agora. Tente novamente.',
-        }));
+        return json(
+          503,
+          closeContaErrorResultDTOSchema.parse({
+            message: 'Não foi possível concluir a desativação agora. Tente novamente.',
+          }),
+        );
       }
     }
 
@@ -118,7 +129,14 @@ export async function POST(req: NextRequest) {
     const status = mapErrorStatus(result.errorCode);
     return json(status, closeContaErrorResultDTOSchema.parse({ message: result.message }));
   } catch (error) {
-    console.error('[API conta/excluir][POST] Erro', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.account.close.failed',
+      route: '/api/conta/excluir',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     return json(
       500,
       closeContaErrorResultDTOSchema.parse({ message: 'Erro interno ao encerrar conta.' }),

@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 
 import { autoCloseAgendaEventsJobQueryDTOSchema } from '@/features/jobs/dtos';
@@ -12,7 +13,15 @@ export const maxDuration = 120;
 
 function dayBounds(reference = new Date()) {
   const start = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate());
-  const end = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate(), 23, 59, 59, 999);
+  const end = new Date(
+    reference.getFullYear(),
+    reference.getMonth(),
+    reference.getDate(),
+    23,
+    59,
+    59,
+    999,
+  );
   return { start, end };
 }
 
@@ -23,6 +32,7 @@ function dayBounds(reference = new Date()) {
  * Query: contaId (opcional) — sem contaId, processa contas com eventos no dia.
  */
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const query = autoCloseAgendaEventsJobQueryDTOSchema.parse({
@@ -62,7 +72,7 @@ export async function POST(req: Request) {
       closed,
     });
   } catch (error) {
-    console.error('[jobs/auto-close-agenda-events]', error);
+    logJobFailure('auto-close-agenda-events', startedAt, error);
     return NextResponse.json(
       { success: false, error: 'Não foi possível fechar automaticamente os eventos da agenda.' },
       { status: 500 },

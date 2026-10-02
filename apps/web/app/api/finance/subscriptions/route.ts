@@ -14,6 +14,7 @@ import {
   mapListSubscriptionsOutputToDTO,
 } from '@alusa/finance';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function json(status: number, body: unknown) {
@@ -49,10 +50,6 @@ export async function POST(req: NextRequest) {
     }
 
     const headerIdempotencyKey = req.headers.get('x-idempotency-key')?.trim() || undefined;
-
-    if (parsed.data.amount != null && parsed.data.value == null) {
-      console.warn('[finance][subscriptions] payload legado "amount" utilizado; prefira "value"');
-    }
 
     const input = mapCreateSubscriptionDTOToInput(parsed.data, {
       contaId: auth.contaId,
@@ -92,7 +89,7 @@ export async function POST(req: NextRequest) {
     const dto = mapCreateSubscriptionOutputToDTO(result.data, amountOut);
     return json(200, { data: dto });
   } catch (error) {
-    console.error('[Finance Subscriptions][POST]', error);
+    logFinanceApiError('/api/finance/subscriptions', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }
@@ -130,7 +127,7 @@ export async function GET(req: NextRequest) {
 
     return json(200, { data: dto });
   } catch (error) {
-    console.error('[Finance Subscriptions][GET]', error);
+    logFinanceApiError('/api/finance/subscriptions', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

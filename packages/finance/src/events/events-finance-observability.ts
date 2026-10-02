@@ -1,38 +1,37 @@
-type EventFinanceLogLevel = 'info' | 'warn' | 'error';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
+
+type EventsFinanceEventName = Extract<
+  import('../foundation/operational-log').FinanceOperationalEventName,
+  `finance.events.${string}`
+>;
 
 export type EventFinanceLogPayload = {
-  contaId?: string | null;
-  eventId?: string | null;
-  orderId?: string | null;
-  reservationId?: string | null;
-  asaasPaymentId?: string | null;
-  updated?: boolean;
   processed?: number;
   skipped?: number;
   errors?: number;
-  reason?: string | null;
-  message?: string | null;
+  error?: unknown;
 };
 
 export function logEventsFinance(
-  action: string,
+  eventName: EventsFinanceEventName,
   payload: EventFinanceLogPayload = {},
-  level: EventFinanceLogLevel = 'info',
+  severity: 'info' | 'warn' | 'error' = 'info',
 ) {
-  const entry = {
-    action,
-    ...payload,
-  };
-
-  if (level === 'error') {
-    console.error('[events.finance]', entry);
-    return;
-  }
-
-  if (level === 'warn') {
-    console.warn('[events.finance]', entry);
-    return;
-  }
-
-  console.info('[events.finance]', entry);
+  logFinanceOperationalEvent({
+    eventName,
+    severity,
+    itemCount: payload.processed,
+    skippedCount: payload.skipped,
+    errorCount: payload.errors,
+    error: payload.error,
+    result:
+      payload.errors !== undefined
+        ? payload.errors > 0
+          ? 'partial_failure'
+          : 'success'
+        : severity === 'info'
+          ? undefined
+          : 'partial_failure',
+    throttleMs: 60_000,
+  });
 }

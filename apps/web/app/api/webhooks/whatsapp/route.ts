@@ -6,6 +6,7 @@ import {
 } from '@alusa/whatsapp';
 import { ingestWhatsAppWebhook } from '@/src/server/whatsapp/outbox.service';
 import { getWhatsAppRuntimeConfig } from '@/src/server/whatsapp/config';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 10;
@@ -57,8 +58,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ received: true, eventId: result.id, status: result.status }, { status: 200 });
   } catch (error) {
-    console.error('[whatsapp-webhook] Falha ao persistir evento', {
-      error: error instanceof Error ? error.message : 'unknown',
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.whatsapp_webhook.persist.failed',
+      route: '/api/webhooks/whatsapp',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
     });
     return NextResponse.json({ error: 'Webhook could not be persisted.' }, { status: 500 });
   }

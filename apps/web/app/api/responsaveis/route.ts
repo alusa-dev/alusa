@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { syncResponsavelAsaasCustomer } from '@alusa/finance';
@@ -59,7 +60,14 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(dto);
   } catch (error) {
-    console.error('[API /api/responsaveis GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/responsaveis',
+      method: 'GET',
+      requestId: getRequestId(req),
+      error,
+    });
     return NextResponse.json({ error: 'Erro ao buscar responsáveis' }, { status: 500 });
   }
 }
@@ -136,7 +144,9 @@ export async function POST(req: NextRequest) {
       }),
     );
 
-    let asaasSync: { status: 'OK' | 'FAILED' | 'SKIPPED'; message?: string } = { status: 'SKIPPED' };
+    let asaasSync: { status: 'OK' | 'FAILED' | 'SKIPPED'; message?: string } = {
+      status: 'SKIPPED',
+    };
     if (data.financeiro ?? true) {
       const synced = await syncResponsavelAsaasCustomer({
         contaId,
@@ -144,14 +154,19 @@ export async function POST(req: NextRequest) {
         requireFiscalAddress: true,
         notificationSyncMode: 'deferred',
       });
-      asaasSync = synced.ok
-        ? { status: 'OK' }
-        : { status: 'FAILED', message: synced.message };
+      asaasSync = synced.ok ? { status: 'OK' } : { status: 'FAILED', message: synced.message };
     }
 
     return NextResponse.json({ ...dto, asaasSync }, { status: 201 });
   } catch (error) {
-    console.error('[API /api/responsaveis POST]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/responsaveis',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     if ((error as { code?: string }).code === 'P2002') {
       return NextResponse.json(
         { error: 'CPF ou email do responsável já está cadastrado nesta conta.' },

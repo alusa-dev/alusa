@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { reconcileFinanceWebhooksJob } from '@alusa/finance';
 
@@ -16,6 +17,7 @@ function clampPositiveInt(value: string | null, fallback: number, max: number) {
 }
 
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -42,17 +44,20 @@ async function run(req: Request) {
       accountConcurrency: 2,
     });
 
-    return NextResponse.json({
-      success: job.outcome === 'completed',
-      processedAccounts: job.accountsProcessed,
-      attempted: job.results.reduce((sum, item) => sum + item.reconcile.checkedPayments, 0),
-      successCount: job.results.reduce((sum, item) => sum + item.reconcile.reconciledPayments, 0),
-      failedCount: job.errors.length,
-      results: job.results,
-      job,
-    }, { status: job.outcome === 'failed' ? 502 : job.outcome === 'partial' ? 207 : 200 });
+    return NextResponse.json(
+      {
+        success: job.outcome === 'completed',
+        processedAccounts: job.accountsProcessed,
+        attempted: job.results.reduce((sum, item) => sum + item.reconcile.checkedPayments, 0),
+        successCount: job.results.reduce((sum, item) => sum + item.reconcile.reconciledPayments, 0),
+        failedCount: job.errors.length,
+        results: job.results,
+        job,
+      },
+      { status: job.outcome === 'failed' ? 502 : job.outcome === 'partial' ? 207 : 200 },
+    );
   } catch (error) {
-    console.error('[Job Reconcile Portal Finance] Erro não classificado:', error instanceof Error ? error.name : 'UNKNOWN_ERROR');
+    logJobFailure('reconcile-portal-finance', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível concluir a reconciliação financeira.');
   }
 }

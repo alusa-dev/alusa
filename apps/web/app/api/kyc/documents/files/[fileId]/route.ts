@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { deleteKycDocumentFile, updateKycDocumentFile, viewKycDocumentFile } from '@alusa/finance';
 import { validateUploadBuffer } from '@/lib/upload-security';
@@ -41,11 +42,16 @@ interface RouteContext {
 export async function GET(_req: Request, context: RouteContext) {
   const user = await resolveAuth();
   if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-  if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+  if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    return json(403, { error: 'SEM_PERMISSAO' });
 
   const { fileId } = await Promise.resolve(context.params);
   if (!isValidOpaqueId(fileId)) {
-    return json(400, { code: 'INVALID_FILE_ID', message: 'fileId inválido.', fileId: typeof fileId === 'string' ? fileId : null });
+    return json(400, {
+      code: 'INVALID_FILE_ID',
+      message: 'fileId inválido.',
+      fileId: typeof fileId === 'string' ? fileId : null,
+    });
   }
 
   try {
@@ -56,7 +62,14 @@ export async function GET(_req: Request, context: RouteContext) {
     if (message?.toLowerCase().includes('não encontrado')) {
       return json(404, { error: 'ARQUIVO_NAO_ENCONTRADO' });
     }
-    console.error('[Finance KYC Document File][GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.kyc.request.failed',
+      route: '/api/kyc/documents/files/[fileId]',
+      method: 'GET',
+      requestId: getRequestId(_req),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }
@@ -64,22 +77,38 @@ export async function GET(_req: Request, context: RouteContext) {
 export async function DELETE(_req: Request, context: RouteContext) {
   const user = await resolveAuth();
   if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-  if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+  if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    return json(403, { error: 'SEM_PERMISSAO' });
 
   const { fileId } = await Promise.resolve(context.params);
   if (!isValidOpaqueId(fileId)) {
-    return json(400, { code: 'INVALID_FILE_ID', message: 'fileId inválido.', fileId: typeof fileId === 'string' ? fileId : null });
+    return json(400, {
+      code: 'INVALID_FILE_ID',
+      message: 'fileId inválido.',
+      fileId: typeof fileId === 'string' ? fileId : null,
+    });
   }
 
   try {
-    const result = await deleteKycDocumentFile({ contaId: user.contaId, fileId, actor: { type: 'USER', id: user.id } });
+    const result = await deleteKycDocumentFile({
+      contaId: user.contaId,
+      fileId,
+      actor: { type: 'USER', id: user.id },
+    });
     return json(200, { data: result });
   } catch (error) {
     const message = error instanceof Error ? error.message : undefined;
     if (message?.toLowerCase().includes('não encontrado')) {
       return json(404, { error: 'ARQUIVO_NAO_ENCONTRADO' });
     }
-    console.error('[Finance KYC Document File][DELETE]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.kyc.request.failed',
+      route: '/api/kyc/documents/files/[fileId]',
+      method: 'DELETE',
+      requestId: getRequestId(_req),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }
@@ -94,14 +123,22 @@ export async function DELETE(_req: Request, context: RouteContext) {
 export async function POST(req: Request, context: RouteContext) {
   const user = await resolveAuth();
   if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-  if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
-  const rate = await rateLimitAsync(`kyc-upload:${user.contaId}:${user.id}:${ipFromRequest(req)}`, 12, 10 * 60_000);
+  if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+    return json(403, { error: 'SEM_PERMISSAO' });
+  const rate = await rateLimitAsync(
+    `kyc-upload:${user.contaId}:${user.id}:${ipFromRequest(req)}`,
+    12,
+    10 * 60_000,
+  );
   if (!rate.ok) return json(429, { error: 'MUITAS_TENTATIVAS' });
-
 
   const { fileId } = await Promise.resolve(context.params);
   if (!isValidOpaqueId(fileId)) {
-    return json(400, { code: 'INVALID_FILE_ID', message: 'fileId inválido.', fileId: typeof fileId === 'string' ? fileId : null });
+    return json(400, {
+      code: 'INVALID_FILE_ID',
+      message: 'fileId inválido.',
+      fileId: typeof fileId === 'string' ? fileId : null,
+    });
   }
 
   try {
@@ -149,11 +186,13 @@ export async function POST(req: Request, context: RouteContext) {
       contentType: binaryValidation.detectedMimeType,
       objectKey: `uploads/kyc-reservations/${user.contaId}/${randomUUID()}`,
       cleanup: async () => undefined,
-      action: () => updateKycDocumentFile({
-        contaId: user.contaId!, fileId,
-        file: { bytes, filename: documentFile.name, mimeType: binaryValidation.detectedMimeType },
-        actor: { type: 'USER', id: user.id! },
-      }),
+      action: () =>
+        updateKycDocumentFile({
+          contaId: user.contaId!,
+          fileId,
+          file: { bytes, filename: documentFile.name, mimeType: binaryValidation.detectedMimeType },
+          actor: { type: 'USER', id: user.id! },
+        }),
     });
     if (!quota.ok) return json(413, { error: 'QUOTA_UPLOAD_EXCEDIDA' });
     return json(200, { data: quota.result });
@@ -165,7 +204,14 @@ export async function POST(req: Request, context: RouteContext) {
     if (message?.toLowerCase().includes('aprovado')) {
       return json(409, { code: 'DOCUMENT_APPROVED', message });
     }
-    console.error('[Finance KYC Document File][POST]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.kyc.request.failed',
+      route: '/api/kyc/documents/files/[fileId]',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

@@ -9,6 +9,7 @@ import {
 } from '@alusa/finance';
 import type { AsaasCreatePaymentInput } from '@alusa/finance';
 import type { CobrancaUpdateFormaPagamentoInputDTO } from '@/features/finance/operations/charges/dtos';
+import { logFinanceOperationalEvent } from '@alusa/finance/foundation/operational-log';
 
 const ASAAS_EDITABLE_PAYMENT_STATUSES = new Set(['PENDING', 'OVERDUE']);
 const ASAAS_PAID_PAYMENT_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH']);
@@ -113,11 +114,11 @@ async function updateRemotePayment(
   } catch (error) {
     if (error instanceof KycNotApprovedError) return failure(409, 'KYC_NAO_APROVADO');
     if (error instanceof AsaasEnvError) {
-      console.error('[forma-pagamento] Configuração Asaas inválida:', error);
+      logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.services.charge_payment_method.asaas_configuration.failed', error });
       return failure(500, 'ASAAS_CONFIG_INVALIDA');
     }
 
-    console.error('[forma-pagamento] Erro ao atualizar cobrança no Asaas:', error);
+    logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.services.charge_payment_method.update.failed', error });
     return failure(500, 'Erro ao sincronizar com Asaas', {
       details: { paymentId: asaasPaymentId },
     });

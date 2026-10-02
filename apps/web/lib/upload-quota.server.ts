@@ -1,5 +1,6 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
+import { normalizeMetricDimensions, sharedTelemetry } from '@alusa/observability';
 import { runWithTenant } from '@/lib/prisma-tenant';
 
 const configuredDailyLimit = Number(process.env.TENANT_DAILY_UPLOAD_QUOTA_BYTES ?? 100 * 1024 * 1024);
@@ -7,6 +8,15 @@ const DAILY_UPLOAD_LIMIT_BYTES = Number.isSafeInteger(configuredDailyLimit) && c
   ? configuredDailyLimit
   : 100 * 1024 * 1024;
 const RESERVATION_TTL_MS = 15 * 60 * 1000;
+
+function recordUploadQuotaOperation(operation: 'reserved' | 'rejected' | 'committed' | 'released') {
+  void sharedTelemetry.recordMetric({
+    kind: 'counter',
+    name: 'alusa.upload.quota.operations',
+    value: 1,
+    dimensions: normalizeMetricDimensions({ 'operation.name': operation }),
+  });
+}
 
 function utcDayStart(now = new Date()) {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -40,10 +50,10 @@ export async function reserveTenantUpload(contaId: string, fileSize: number, con
     });
   });
   if (!reservation) {
-    console.warn('[upload-quota][rejected]', { contaId, requestedBytes: fileSize });
+    recordUploadQuotaOperation('rejected');
     return { ok: false as const, reason: 'QUOTA_EXCEEDED' as const };
   }
-  console.info('[upload-quota][reserved]', { contaId, reservationId: reservation.id, requestedBytes: fileSize });
+  recordUploadQuotaOperation('reserved');
   return { ok: true as const, reservation, expiresInSeconds: RESERVATION_TTL_MS / 1000 };
 }
 
@@ -52,27 +62,29 @@ export async function getTenantUploadReservation(contaId: string, reservationId:
 }
 
 export async function completeTenantUpload(contaId: string, reservationId: string, actualSize: number, finalObjectKey?: string) {
-  return runWithTenant(contaId, async (tx) => {
+  const completed = await runWithTenant(contaId, async (tx) => {
     const item = await tx.tenantUploadReservation.findFirst({ where: { id: reservationId, contaId, status: 'PENDING', expiresAt: { gt: new Date() } } });
     if (!item || !Number.isSafeInteger(actualSize) || actualSize < 1 || BigInt(actualSize) > item.expectedSize) return false;
     const changed = await tx.tenantUploadReservation.updateMany({ where: { id: item.id, contaId, status: 'PENDING' }, data: { status: 'COMPLETED', completedAt: new Date(), finalObjectKey: finalObjectKey ?? null } });
     if (changed.count !== 1) return false;
     await tx.tenantUploadQuota.update({ where: { id: item.quotaId, contaId }, data: { reservedBytes: { decrement: item.expectedSize }, usedBytes: { increment: BigInt(actualSize) } } });
-    console.info('[upload-quota][committed]', { contaId, reservationId, committedBytes: actualSize });
     return true;
   });
+  if (completed) recordUploadQuotaOperation('committed');
+  return completed;
 }
 
 export async function releaseTenantUpload(contaId: string, reservationId: string, status: 'CANCELLED' | 'EXPIRED' = 'CANCELLED') {
-  return runWithTenant(contaId, async (tx) => {
+  const released = await runWithTenant(contaId, async (tx) => {
     const item = await tx.tenantUploadReservation.findFirst({ where: { id: reservationId, contaId, status: 'PENDING' } });
     if (!item) return false;
     const changed = await tx.tenantUploadReservation.updateMany({ where: { id: item.id, contaId, status: 'PENDING' }, data: { status } });
     if (changed.count !== 1) return false;
     await tx.tenantUploadQuota.update({ where: { id: item.quotaId, contaId }, data: { reservedBytes: { decrement: item.expectedSize } } });
-    console.info('[upload-quota][released]', { contaId, reservationId, status });
     return true;
   });
+  if (released) recordUploadQuotaOperation('released');
+  return released;
 }
 
 export async function expireTenantUploadReservations(contaId: string) {

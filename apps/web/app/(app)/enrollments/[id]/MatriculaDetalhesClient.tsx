@@ -15,6 +15,7 @@ import { EnrollmentFeeSection } from '@/features/renewals/components/EnrollmentF
 import { PaymentSettings } from '@/features/renewals/components/PaymentSettings';
 import { EnrollmentActions } from '@/features/renewals/components/EnrollmentActions';
 import { cn } from '@/lib/utils';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 
 /** Largura máxima alinhada ao cabeçalho (detalhe de matrícula). */
 const DETAIL_SECTION_MAX = 'mx-auto w-full max-w-4xl';
@@ -164,12 +165,10 @@ export function MatriculaDetalhesClient({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
 
   const loadMatricula = useCallback(async () => {
-    console.log('🔵 [PAGE] loadMatricula chamado');
     setLoading(true);
     setError(null);
 
     try {
-      console.log('🔵 [PAGE] Buscando matrícula:', id);
       const [matriculaResponse, pausaResumoResponse] = await Promise.allSettled([
         fetch(`/api/matriculas/${id}`, { cache: 'no-store' }),
         fetch(`/api/matriculas/${id}/pausa-resumo`, { cache: 'no-store' }),
@@ -181,18 +180,12 @@ export function MatriculaDetalhesClient({ id }: { id: string }) {
 
       const res = matriculaResponse.value;
 
-      console.log('🔵 [PAGE] Resposta recebida:', { status: res.status, ok: res.ok });
-
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.error?.message || 'Erro ao carregar matrícula');
       }
 
       const data = await res.json();
-      console.log('🔵 [PAGE] Dados da matrícula recebidos:', {
-        jurosMensal: data.matricula.jurosMensal,
-        multaPercentual: data.matricula.multaPercentual,
-      });
       setMatricula(data.matricula);
 
       if (pausaResumoResponse.status === 'fulfilled' && pausaResumoResponse.value.ok) {
@@ -202,8 +195,8 @@ export function MatriculaDetalhesClient({ id }: { id: string }) {
         setPausaResumo(null);
       }
 
-      console.log('🟢 [PAGE] Matrícula atualizada no estado');
     } catch (err) {
+      logClientOperationalEvent('enrollment.detail.load_failed', err);
       const errorMessage = err instanceof Error ? err.message : 'Erro desconhecido';
       setError(errorMessage);
       pushToast({

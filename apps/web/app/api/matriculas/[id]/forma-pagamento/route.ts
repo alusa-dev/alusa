@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import {
   KycNotApprovedError,
@@ -42,7 +43,11 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     const contaId = auth.contaId;
     const actorId = auth.userId;
     if (!allowedRoles.has(String(auth.role ?? '').toUpperCase())) {
-      return jsonError(403, 'SEM_PERMISSAO', 'Usuário sem permissão para alterar condições financeiras.');
+      return jsonError(
+        403,
+        'SEM_PERMISSAO',
+        'Usuário sem permissão para alterar condições financeiras.',
+      );
     }
     const json = await req.json().catch(() => null);
     const parsedBody = updateMatriculaBillingTypeInputDTOSchema.safeParse(json);
@@ -64,46 +69,54 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     const { billingType } = parsedBody.data;
 
     // Buscar matrícula
-    const matricula = await runWithTenant(contaId, (tx) => tx.matricula.findFirst({
-      where: {
-        id: matriculaId,
-        aluno: { contaId },
-      },
-      select: {
-        id: true,
-        asaasSubscriptionId: true,
-        formaPagamento: true,
-        formaPagamentoTaxa: true,
-        updatedAt: true,
-        plano: { select: { valor: true } },
-        combo: { select: { valor: true } },
-        cobrancas: {
-          select: {
-            tipo: true,
-            status: true,
-            formaPagamento: true,
-            valor: true,
-            vencimento: true,
-            updatedAt: true,
+    const matricula = await runWithTenant(contaId, (tx) =>
+      tx.matricula.findFirst({
+        where: {
+          id: matriculaId,
+          aluno: { contaId },
+        },
+        select: {
+          id: true,
+          asaasSubscriptionId: true,
+          formaPagamento: true,
+          formaPagamentoTaxa: true,
+          updatedAt: true,
+          plano: { select: { valor: true } },
+          combo: { select: { valor: true } },
+          cobrancas: {
+            select: {
+              tipo: true,
+              status: true,
+              formaPagamento: true,
+              valor: true,
+              vencimento: true,
+              updatedAt: true,
+            },
           },
         },
-      },
-    }));
+      }),
+    );
 
     if (!matricula) {
       return jsonError(404, 'NAO_ENCONTRADO', 'Matrícula não encontrada');
     }
 
-    const financialContext = await runWithTenant(contaId, (tx) => resolveMatriculaFinancialContext({
-      db: tx,
-      matriculaId,
-      contaId,
-    }));
+    const financialContext = await runWithTenant(contaId, (tx) =>
+      resolveMatriculaFinancialContext({
+        db: tx,
+        matriculaId,
+        contaId,
+      }),
+    );
     const targetSubscriptionId =
       financialContext?.asaasSubscriptionId ?? matricula.asaasSubscriptionId;
 
     if (!financialContext || !targetSubscriptionId) {
-      return jsonError(400, 'ASSINATURA_NAO_ENCONTRADA', 'Esta matrícula não possui vínculo financeiro ativo');
+      return jsonError(
+        400,
+        'ASSINATURA_NAO_ENCONTRADA',
+        'Esta matrícula não possui vínculo financeiro ativo',
+      );
     }
 
     const localSnapshot =
@@ -111,20 +124,26 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
         ? financialContext.localSnapshot
         : deriveLocalAssinaturaSnapshot(
             matricula as unknown as Record<string, unknown>,
-            await runWithTenant(contaId, (tx) => tx.subscription.findFirst({
-              where: {
-                contaId,
-                matriculaId: matricula.id,
-              },
-              select: {
-                status: true,
-                updatedAt: true,
-              },
-            })),
+            await runWithTenant(contaId, (tx) =>
+              tx.subscription.findFirst({
+                where: {
+                  contaId,
+                  matriculaId: matricula.id,
+                },
+                select: {
+                  status: true,
+                  updatedAt: true,
+                },
+              }),
+            ),
           );
 
     if (!isFinancialContextEditable(financialContext)) {
-      return jsonError(409, 'ASSINATURA_NAO_EDITAVEL', 'O vínculo recorrente não pode ser atualizado no momento.');
+      return jsonError(
+        409,
+        'ASSINATURA_NAO_EDITAVEL',
+        'O vínculo recorrente não pode ser atualizado no momento.',
+      );
     }
 
     if (localSnapshot?.billingType === billingType) {
@@ -173,50 +192,57 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       billingType,
     });
 
-    await runWithTenant(contaId, (tx) => tx.matriculaLog.create({
-      data: {
-        matriculaId,
-        actorId,
-        action: 'MATRICULA_SUBSCRIPTION_BILLING_TYPE_UPDATED',
-        metadata: {
-          asaasSubscriptionId: targetSubscriptionId,
-          mode: financialContext.mode,
-          familyGroupId: financialContext.family?.id ?? null,
-          affectedMatriculaIds:
-            financialContext.family?.affectedMatriculaIds ??
-            financialContext.sharedAgreement?.affectedMatriculaIds ??
-            [matriculaId],
-          previousBillingType: localSnapshot?.billingType ?? null,
-          nextBillingType: billingType,
-          updatePendingPayments: true,
+    await runWithTenant(contaId, (tx) =>
+      tx.matriculaLog.create({
+        data: {
+          matriculaId,
+          actorId,
+          action: 'MATRICULA_SUBSCRIPTION_BILLING_TYPE_UPDATED',
+          metadata: {
+            asaasSubscriptionId: targetSubscriptionId,
+            mode: financialContext.mode,
+            familyGroupId: financialContext.family?.id ?? null,
+            affectedMatriculaIds: financialContext.family?.affectedMatriculaIds ??
+              financialContext.sharedAgreement?.affectedMatriculaIds ?? [matriculaId],
+            previousBillingType: localSnapshot?.billingType ?? null,
+            nextBillingType: billingType,
+            updatePendingPayments: true,
+          },
         },
-      },
-    }));
+      }),
+    );
 
     const nextFormaPagamento = mapBillingTypeToFormaPagamento(billingType);
     let localAlignment = null;
     if (financialContext.mode === 'FAMILY') {
-      localAlignment = await runWithTenant(contaId, (tx) => updateFamilyFinancialLocalState({
-        db: tx,
-        context: financialContext,
-        billingType,
-      }));
+      localAlignment = await runWithTenant(contaId, (tx) =>
+        updateFamilyFinancialLocalState({
+          db: tx,
+          context: financialContext,
+          billingType,
+        }),
+      );
     } else if (nextFormaPagamento) {
-      const affectedMatriculaIds =
-        financialContext.sharedAgreement?.affectedMatriculaIds ?? [matriculaId];
-      await runWithTenant(contaId, (tx) => tx.matricula.updateMany({
-        where: { contaId, id: { in: affectedMatriculaIds } },
-        data: { formaPagamento: nextFormaPagamento },
-      }));
+      const affectedMatriculaIds = financialContext.sharedAgreement?.affectedMatriculaIds ?? [
+        matriculaId,
+      ];
+      await runWithTenant(contaId, (tx) =>
+        tx.matricula.updateMany({
+          where: { contaId, id: { in: affectedMatriculaIds } },
+          data: { formaPagamento: nextFormaPagamento },
+        }),
+      );
       const alignments = await Promise.all(
         affectedMatriculaIds.map((affectedMatriculaId) =>
-          runWithTenant(contaId, (tx) => alignLocalPendingEnrollmentCharges({
-            db: tx,
-            matriculaId: affectedMatriculaId,
-            contaId,
-            billingType: nextFormaPagamento,
-            chargeBillingType: billingType,
-          })),
+          runWithTenant(contaId, (tx) =>
+            alignLocalPendingEnrollmentCharges({
+              db: tx,
+              matriculaId: affectedMatriculaId,
+              contaId,
+              billingType: nextFormaPagamento,
+              chargeBillingType: billingType,
+            }),
+          ),
         ),
       );
       localAlignment = {
@@ -230,7 +256,8 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       {
         ...mapMatriculaSubscriptionBillingTypeUpdateResultToDTO({
           billingType,
-          message: 'Forma de pagamento atualizada com sucesso para os próximos ciclos e para as pendências ainda editáveis.',
+          message:
+            'Forma de pagamento atualizada com sucesso para os próximos ciclos e para as pendências ainda editáveis.',
         }),
         asyncSync: {
           provider: 'ASAAS',
@@ -241,10 +268,21 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
-    console.error('[ASAAS_SYNC] Erro ao atualizar forma de pagamento:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/matriculas/[id]/forma-pagamento',
+      method: 'PUT',
+      requestId: getRequestId(req),
+      error,
+    });
     if (error instanceof KycNotApprovedError) {
       return jsonError(409, 'KYC_NAO_APROVADO', 'Conta não aprovada para operações financeiras');
     }
-    return jsonError(500, 'ERRO_ATUALIZAR_FORMA_PAGAMENTO', 'Não foi possível atualizar a forma de pagamento.');
+    return jsonError(
+      500,
+      'ERRO_ATUALIZAR_FORMA_PAGAMENTO',
+      'Não foi possível atualizar a forma de pagamento.',
+    );
   }
 }

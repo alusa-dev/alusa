@@ -1,9 +1,8 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { z } from 'zod';
-import {
-  PausaBusinessError,
-} from '@/src/server/enrollments/enrollment-pause.service';
+import { PausaBusinessError } from '@/src/server/enrollments/enrollment-pause.service';
 import { pauseMatriculaFromHttp } from '@/src/server/enrollments/enrollment-http-commands.service';
 import { notifyMatriculaAction } from '@alusa/lib/notifications/matricula-notifications';
 import {
@@ -13,22 +12,29 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-const pausarInputSchema = z.object({
-  motivoPausa: z.string().trim().min(1, 'Motivo é obrigatório'),
-  dataInicioPausa: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve estar no formato YYYY-MM-DD'),
-  dataRetornoPrevista: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  manterVaga: z.boolean(),
-  cobrarDurantePausa: z.boolean(),
-  observacao: z.string().trim().optional(),
-}).superRefine((value, ctx) => {
-  if (value.dataRetornoPrevista && value.dataRetornoPrevista <= value.dataInicioPausa) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['dataRetornoPrevista'],
-      message: 'A data de retorno deve ser posterior ao início da pausa.',
-    });
-  }
-});
+const pausarInputSchema = z
+  .object({
+    motivoPausa: z.string().trim().min(1, 'Motivo é obrigatório'),
+    dataInicioPausa: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve estar no formato YYYY-MM-DD'),
+    dataRetornoPrevista: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    manterVaga: z.boolean(),
+    cobrarDurantePausa: z.boolean(),
+    observacao: z.string().trim().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.dataRetornoPrevista && value.dataRetornoPrevista <= value.dataInicioPausa) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['dataRetornoPrevista'],
+        message: 'A data de retorno deve ser posterior ao início da pausa.',
+      });
+    }
+  });
 
 export async function POST(
   request: NextRequest,
@@ -83,7 +89,14 @@ export async function POST(
       );
     }
 
-    console.error('[PAUSAR_MATRICULA] Erro inesperado:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/matriculas/[id]/pausar',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     return NextResponse.json(
       { error: 'INTERNAL_ERROR', message: 'Erro interno do servidor' },
       { status: 500 },

@@ -5,6 +5,7 @@ import { ArrowUpTrayIcon, DocumentIcon, TrashIcon } from '@heroicons/react/24/ou
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 
 interface ChargeFile {
   id: string;
@@ -73,7 +74,7 @@ export function ChargeFilesSection({ cobrancaId, sectionClassName }: ChargeFiles
       setArquivos(arquivos);
     } catch (error) {
       arquivosLoadCache.delete(cobrancaId);
-      console.error('Error loading arquivos:', error);
+      logClientOperationalEvent('finance.charge.files.load_failed', error);
       toast.custom((t) => (
         <CustomToast
           variant="error"
@@ -126,7 +127,7 @@ export function ChargeFilesSection({ cobrancaId, sectionClassName }: ChargeFiles
         />
       ));
     } catch (error) {
-      console.error('Error uploading file:', error);
+      logClientOperationalEvent('finance.charge.files.upload_failed', error);
       toast.custom((t) => (
         <CustomToast
           variant="error"
@@ -175,7 +176,7 @@ export function ChargeFilesSection({ cobrancaId, sectionClassName }: ChargeFiles
         />
       ));
     } catch (error) {
-      console.error('Error deleting file:', error);
+      logClientOperationalEvent('finance.charge.files.delete_failed', error);
       toast.custom((t) => (
         <CustomToast
           variant="error"

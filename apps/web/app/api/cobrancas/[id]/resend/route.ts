@@ -11,6 +11,7 @@ import { cobrancaRouteParamsDTOSchema } from '@/features/finance/operations/char
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { ManualSyncError, resendTaxaMatricula } from '@alusa/finance';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 export const dynamic = 'force-dynamic';
 
 /**
@@ -25,7 +26,6 @@ export async function POST(
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) {
-      console.warn('[COBRANCA_RESEND] Usuário não autenticado');
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
 
@@ -64,7 +64,7 @@ export async function POST(
       );
     }
 
-    console.error('[COBRANCA_RESEND] Erro inesperado', error);
+    logFinanceApiError('/api/cobrancas/[id]/resend', error);
     return NextResponse.json(
       {
         error: 'INTERNAL_ERROR',

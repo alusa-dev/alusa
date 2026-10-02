@@ -1,7 +1,5 @@
-import type {
-  AsaasNotificationEvent,
-  AsaasNotificationPreference,
-} from '@prisma/client';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
+import type { AsaasNotificationEvent, AsaasNotificationPreference } from '@prisma/client';
 import { getAsaasBaseUrlForApiKeyOrThrow } from '@alusa/asaas';
 import { decryptSecret, prisma } from '@alusa/database';
 import { loadTenantNotificationEventPreferences } from '@alusa/lib/notifications/tenant-notification-preferences';
@@ -309,15 +307,9 @@ type NotificationUpdateSource = NotificationChannels & {
   enabled: boolean;
 };
 
-const EVENTS_WITH_SCHEDULE_OFFSET = new Set<string>([
-  'PAYMENT_DUEDATE_WARNING',
-  'PAYMENT_OVERDUE',
-]);
+const EVENTS_WITH_SCHEDULE_OFFSET = new Set<string>(['PAYMENT_DUEDATE_WARNING', 'PAYMENT_OVERDUE']);
 
-async function fetchCustomerNotifications(
-  contaId: string,
-  asaasCustomerId: string,
-) {
+async function fetchCustomerNotifications(contaId: string, asaasCustomerId: string) {
   const credentials = await loadDecryptedAsaasCredentials(contaId);
   if (!credentials?.apiKey) throw new Error('Conta sem credenciais Asaas configuradas');
 
@@ -369,12 +361,10 @@ function sanitizeCustomerNotificationInput(
     enabled: input.enabled ?? fallback?.enabled ?? true,
     emailEnabledForProvider:
       input.emailEnabledForProvider ?? fallback?.emailEnabledForProvider ?? false,
-    smsEnabledForProvider:
-      input.smsEnabledForProvider ?? fallback?.smsEnabledForProvider ?? false,
+    smsEnabledForProvider: input.smsEnabledForProvider ?? fallback?.smsEnabledForProvider ?? false,
     emailEnabledForCustomer:
       input.emailEnabledForCustomer ?? fallback?.emailEnabledForCustomer ?? true,
-    smsEnabledForCustomer:
-      input.smsEnabledForCustomer ?? fallback?.smsEnabledForCustomer ?? true,
+    smsEnabledForCustomer: input.smsEnabledForCustomer ?? fallback?.smsEnabledForCustomer ?? true,
     whatsappEnabledForCustomer:
       input.whatsappEnabledForCustomer ?? fallback?.whatsappEnabledForCustomer ?? false,
     phoneCallEnabledForCustomer:
@@ -406,10 +396,7 @@ function matchRemoteNotification(
  * - Preferência local com offset > 0 → Notificação remota com offset > 0
  * - Preferência local com offset = 0 → Notificação remota com offset = 0
  */
-function buildNotificationUpdates(
-  prefs: NotificationUpdateSource[],
-  remote: RemoteNotification[],
-) {
+function buildNotificationUpdates(prefs: NotificationUpdateSource[], remote: RemoteNotification[]) {
   const remoteByEvent = new Map<string, RemoteNotification[]>();
   for (const item of remote) {
     const list = remoteByEvent.get(item.event) || [];
@@ -421,15 +408,15 @@ function buildNotificationUpdates(
 
   for (const pref of prefs) {
     const remoteList = remoteByEvent.get(pref.event) || [];
-    
+
     let targetRemote: RemoteNotification | undefined = pref.id
       ? remote.find((item) => item.id === pref.id)
       : undefined;
 
     if (!targetRemote && pref.scheduleOffset > 0) {
-      targetRemote = remoteList.find(r => r.scheduleOffset > 0);
+      targetRemote = remoteList.find((r) => r.scheduleOffset > 0);
     } else if (!targetRemote) {
-      targetRemote = remoteList.find(r => r.scheduleOffset === 0);
+      targetRemote = remoteList.find((r) => r.scheduleOffset === 0);
     }
 
     if (!targetRemote) continue;
@@ -563,7 +550,8 @@ export async function saveAsaasCustomerNotificationPreferences(
     }
 
     if (failed > 0) {
-      const firstError = errors[0]?.description || errors[0]?.code || 'Falha ao atualizar notificações';
+      const firstError =
+        errors[0]?.description || errors[0]?.code || 'Falha ao atualizar notificações';
       throw new Error(firstError);
     }
   }
@@ -622,11 +610,11 @@ export async function applyAsaasNotificationPreferencesToCustomer(
     return { updated: true, total: notifications.length || updates.length };
   }
 
-  const batchBody = await batchResponse.text().catch(() => '');
-  console.error('[Asaas Notifications] Falha no lote, iniciando fallback unitário', {
-    customerId: asaasCustomerId,
-    status: batchResponse.status,
-    body: batchBody,
+  await batchResponse.text().catch(() => '');
+  logFinanceOperationalEvent({
+    severity: 'error',
+    eventName: 'finance.services.asaas_notification_preferences_service.failed',
+    throttleMs: 60_000,
   });
 
   let successCount = 0;
@@ -638,8 +626,12 @@ export async function applyAsaasNotificationPreferencesToCustomer(
     });
 
     if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      console.error(`[Asaas Notifications] Falha ao atualizar ${update.id}: ${body}`);
+      await response.text().catch(() => '');
+      logFinanceOperationalEvent({
+        severity: 'error',
+        eventName: 'finance.services.asaas_notification_preferences_service.failed',
+        throttleMs: 60_000,
+      });
       continue;
     }
 
@@ -679,7 +671,10 @@ export async function listCustomerIdsWithAsaas(contaId: string): Promise<string[
   const ids = new Set<string>();
   customers.forEach((customer) => customer.asaasCustomerId && ids.add(customer.asaasCustomerId));
   alunos.forEach((a) => a.asaasCustomerId && ids.add(a.asaasCustomerId));
-  matriculas.forEach((m) => m.responsavelFinanceiro?.asaasCustomerId && ids.add(m.responsavelFinanceiro.asaasCustomerId));
+  matriculas.forEach(
+    (m) =>
+      m.responsavelFinanceiro?.asaasCustomerId && ids.add(m.responsavelFinanceiro.asaasCustomerId),
+  );
   return Array.from(ids);
 }
 

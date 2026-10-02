@@ -8,6 +8,7 @@
  */
 
 import type { StatusCobranca, ChargeStatus } from '@prisma/client';
+import { logFinanceOperationalEvent } from '../../foundation/operational-log';
 
 /**
  * Status de pagamento do Asaas (todos os valores possíveis)
@@ -112,7 +113,11 @@ export function mapAsaasPaymentStatusToCobranca(
 
   // Status desconhecido → PENDENTE como fallback
   if (!mapped) {
-    console.warn(`[charge-status] Status desconhecido do Asaas: ${asaasStatus}, usando PENDENTE`);
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.mappers.charge_status.asaas.unknown',
+      throttleMs: 60_000,
+    });
     return 'PENDENTE';
   }
 
@@ -144,7 +149,11 @@ export function mapAsaasPaymentStatusToCharge(asaasStatus: AsaasPaymentStatus | 
   const mapped = ASAAS_TO_CHARGE_MAP[status];
 
   if (!mapped) {
-    console.warn(`[charge-status] Status desconhecido do Asaas: ${asaasStatus}, usando OPEN`);
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.mappers.charge_status.asaas.unknown',
+      throttleMs: 60_000,
+    });
     return 'OPEN';
   }
 

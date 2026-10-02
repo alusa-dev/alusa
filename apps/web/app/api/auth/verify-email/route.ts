@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-limit';
 import { verifyEmailByToken } from '@/lib/auth-email-flow';
 import { rateLimitResponse } from '@/lib/security/rate-limit-response';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const bodySchema = z.object({
   token: z.string().min(20),
@@ -41,7 +42,14 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, email: verified.email });
   } catch (error) {
-    console.error('[auth][verify-email]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'auth.verify_email.request_failed',
+      route: '/api/auth/verify-email',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     return NextResponse.json({ error: 'Não foi possível confirmar o e-mail.' }, { status: 500 });
   }
 }

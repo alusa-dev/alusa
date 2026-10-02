@@ -20,6 +20,15 @@ function parseErrorPayload(payload: unknown): ErrorPayload {
   return payload && typeof payload === 'object' ? (payload as ErrorPayload) : {};
 }
 
+function createRequestId() {
+  return globalThis.crypto?.randomUUID?.() ?? `mobile-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function requestIdFromHeaders(headers?: Record<string, string>) {
+  const existing = Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === 'x-request-id')?.[1]?.trim();
+  return existing && /^[a-zA-Z0-9._-]{8,128}$/.test(existing) ? existing : createRequestId();
+}
+
 export function createApiClient(options: ApiClientOptions) {
   const fetchImpl = options.fetchImpl ?? fetch;
   const defaultTimeoutMs = options.defaultTimeoutMs ?? 12000;
@@ -28,6 +37,7 @@ export function createApiClient(options: ApiClientOptions) {
     requestOptions: ApiRequestOptions<TBody>,
     canRefresh = true,
   ): Promise<TResponse> {
+    const requestId = requestIdFromHeaders(requestOptions.headers);
     const {
     method = 'GET',
     path,
@@ -57,12 +67,13 @@ export function createApiClient(options: ApiClientOptions) {
           Accept: 'application/json',
           ...(body == null || isFormData ? null : { 'Content-Type': 'application/json' }),
           ...(resolvedAccessToken ? { Authorization: `Bearer ${resolvedAccessToken}` } : null),
-          ...headers,
+          ...Object.fromEntries(Object.entries(headers ?? {}).filter(([key]) => key.toLowerCase() !== 'x-request-id')),
+          'x-request-id': requestId,
         },
         body: body == null ? undefined : isFormData ? body : JSON.stringify(body),
       });
 
-      const requestId = response.headers.get('x-request-id') ?? undefined;
+      const responseRequestId = response.headers.get('x-request-id') ?? requestId;
       const contentType = response.headers.get('content-type') ?? '';
       const hasJson = contentType.includes('application/json');
       const payload = hasJson ? await response.json().catch(() => null) : null;
@@ -73,7 +84,11 @@ export function createApiClient(options: ApiClientOptions) {
         if (code === 'UNAUTHORIZED' && canRefresh && options.refreshAccessToken) {
           const refreshedAccessToken = await options.refreshAccessToken();
           if (refreshedAccessToken) {
-            return request({ ...requestOptions, accessToken: refreshedAccessToken }, false);
+            return request({
+              ...requestOptions,
+              headers: { ...(requestOptions.headers ?? {}), 'x-request-id': requestId },
+              accessToken: refreshedAccessToken,
+            }, false);
           }
         }
         if (code === 'UNAUTHORIZED') {
@@ -83,7 +98,7 @@ export function createApiClient(options: ApiClientOptions) {
         throw new ApiError({
           code,
           status: response.status,
-          requestId,
+          requestId: responseRequestId,
           details: errorPayload.error?.details ?? payload,
           message:
             errorPayload.error?.message ??

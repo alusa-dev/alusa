@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
@@ -63,7 +64,14 @@ export async function PATCH(
     await clearNotificationCaches({ contaId: user.contaId, userId: user.id });
     return json(200, { success: true });
   } catch (error) {
-    console.error('[Notifications][Item][PATCH]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.notifications.request.failed',
+      route: '/api/notifications/[id]',
+      method: 'PATCH',
+      requestId: getRequestId(req),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível atualizar a notificação.' });
   }
 }
@@ -104,7 +112,14 @@ export async function DELETE(
     await clearNotificationCaches({ contaId: user.contaId, userId: user.id });
     return json(200, { success: true });
   } catch (error) {
-    console.error('[Notifications][Item][DELETE]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.notifications.request.failed',
+      route: '/api/notifications/[id]',
+      method: 'DELETE',
+      requestId: getRequestId(_req),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível excluir a notificação.' });
   }
 }

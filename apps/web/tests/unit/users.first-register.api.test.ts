@@ -87,6 +87,31 @@ describe('POST /api/users/first-register', () => {
     expect(sendEmailVerificationForUserMock).not.toHaveBeenCalled();
   });
 
+  it('não inclui dados do ZodError no log de rejeição', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { POST } = await import('@/app/api/users/first-register/route');
+    const secretEmail = 'private-person@example.com';
+    const secretPassword = 'Secret-Pass-123!';
+    const req = new Request('http://localhost/api/users/first-register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: secretEmail, senha: secretPassword, nome: 'Private Person' }),
+    });
+
+    const response = await POST(req);
+    expect(response.status).toBe(400);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const line = warn.mock.calls[0]?.[0];
+    expect(typeof line).toBe('string');
+    const event = JSON.parse(line as string) as { 'event.name': string; 'error.type': string };
+    expect(event['event.name']).toBe('api.users.request.rejected');
+    expect(event['error.type']).toBe('ZodError');
+    expect(line).not.toContain(secretEmail);
+    expect(line).not.toContain(secretPassword);
+    expect(line).not.toContain('Private Person');
+    warn.mockRestore();
+  });
+
   it('não bloqueia o cadastro Alusa por conflito de e-mail que só existe no Asaas', async () => {
     createFirstUserMock.mockResolvedValueOnce({
       id: 'user_finance',

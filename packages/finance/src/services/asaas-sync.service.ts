@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 /**
  * Asaas Sync Service
  *
@@ -151,7 +152,9 @@ function setCachedSnapshot(paymentId: string, snapshot: AsaasPaymentSnapshot): v
 // Throttle Check (DB-based)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function shouldThrottleFetch(cobrancaId: string): Promise<{ throttle: boolean; lastFetchAt: Date | null }> {
+export async function shouldThrottleFetch(
+  cobrancaId: string,
+): Promise<{ throttle: boolean; lastFetchAt: Date | null }> {
   const cobranca = await prisma.cobranca.findUnique({
     where: { id: cobrancaId },
     select: { lastAsaasFetchAt: true },
@@ -202,7 +205,7 @@ function computeSnapshotHash(payment: AsaasPayment): string {
  */
 export async function fetchAsaasPaymentSnapshot(
   cobrancaId: string,
-  opts: { contaId: string; asaasPaymentId: string; forceRefresh?: boolean }
+  opts: { contaId: string; asaasPaymentId: string; forceRefresh?: boolean },
 ): Promise<FetchAsaasPaymentSnapshotResult> {
   const { contaId, asaasPaymentId, forceRefresh = false } = opts;
 
@@ -256,7 +259,12 @@ export async function fetchAsaasPaymentSnapshot(
     return { success: true, snapshot, throttled: false };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    console.error('❌ Erro ao buscar pagamento do Asaas:', { asaasPaymentId, error: message });
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.services.asaas_sync_service.failed',
+      error: message,
+      throttleMs: 60_000,
+    });
     return { success: false, error: message, throttled: false };
   }
 }
@@ -321,7 +329,7 @@ function computeLiquidacaoStatus(snapshot: AsaasPaymentSnapshot): LiquidacaoStat
  */
 export async function persistAsaasPaymentSnapshot(
   cobrancaId: string,
-  snapshot: AsaasPaymentSnapshot
+  snapshot: AsaasPaymentSnapshot,
 ): Promise<PersistAsaasPaymentSnapshotResult> {
   try {
     // 1. Verificar hash atual para evitar write desnecessário
@@ -345,9 +353,8 @@ export async function persistAsaasPaymentSnapshot(
     const liquidacaoStatus = computeLiquidacaoStatus(snapshot);
     // Para RECEIVED_IN_CASH, creditDate é null - usar paymentDate como fallback
     const liquidacaoDateStr = snapshot.creditDate ?? snapshot.paymentDate;
-    const liquidadoEm = liquidacaoStatus === 'DISPONIVEL' && liquidacaoDateStr
-      ? new Date(liquidacaoDateStr)
-      : null;
+    const liquidadoEm =
+      liquidacaoStatus === 'DISPONIVEL' && liquidacaoDateStr ? new Date(liquidacaoDateStr) : null;
 
     // 3. Atualizar campos asaas*
     await prisma.cobranca.update({
@@ -359,7 +366,9 @@ export async function persistAsaasPaymentSnapshot(
         asaasOriginalValue: snapshot.originalValue,
         asaasFeeValue: snapshot.feeValue,
         asaasCreditDate: snapshot.creditDate ? new Date(snapshot.creditDate) : null,
-        asaasEstimatedCreditDate: snapshot.estimatedCreditDate ? new Date(snapshot.estimatedCreditDate) : null,
+        asaasEstimatedCreditDate: snapshot.estimatedCreditDate
+          ? new Date(snapshot.estimatedCreditDate)
+          : null,
         lastAsaasFetchAt: snapshot.fetchedAt,
         lastAsaasFetchHash: snapshot.snapshotHash,
         liquidacaoStatus,
@@ -381,7 +390,9 @@ export async function persistAsaasPaymentSnapshot(
           asaasOriginalValue: snapshot.originalValue,
           asaasFeeValue: snapshot.feeValue,
           asaasCreditDate: snapshot.creditDate ? new Date(snapshot.creditDate) : null,
-          asaasEstimatedCreditDate: snapshot.estimatedCreditDate ? new Date(snapshot.estimatedCreditDate) : null,
+          asaasEstimatedCreditDate: snapshot.estimatedCreditDate
+            ? new Date(snapshot.estimatedCreditDate)
+            : null,
           lastAsaasFetchAt: snapshot.fetchedAt,
           liquidacaoStatus,
           liquidadoEm,
@@ -389,16 +400,15 @@ export async function persistAsaasPaymentSnapshot(
       });
     }
 
-    console.log('✅ Snapshot Asaas persistido:', {
-      cobrancaId,
-      asaasPaymentId: snapshot.asaasPaymentId,
-      liquidacaoStatus,
-    });
-
     return { success: true, updated: true, liquidacaoStatus };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    console.error('❌ Erro ao persistir snapshot:', { cobrancaId, error: message });
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.services.asaas_sync_service.failed',
+      error: message,
+      throttleMs: 60_000,
+    });
     return { success: false, error: message };
   }
 }
@@ -430,7 +440,7 @@ export async function syncCobrancaWithAsaas(
     asaasPaymentId: string;
     forceRefresh?: boolean;
     source: 'webhook' | 'admin_reconcile' | 'get_endpoint';
-  }
+  },
 ): Promise<SyncCobrancaWithAsaasResult> {
   const { contaId, asaasPaymentId, forceRefresh = false, source } = opts;
 
@@ -440,7 +450,12 @@ export async function syncCobrancaWithAsaas(
   }
 
   if (source === 'admin_reconcile' && !isAdminReconcileAllowed()) {
-    return { success: false, throttled: false, updated: false, error: 'Reconciliação admin desabilitada' };
+    return {
+      success: false,
+      throttled: false,
+      updated: false,
+      error: 'Reconciliação admin desabilitada',
+    };
   }
 
   // 1. Fetch

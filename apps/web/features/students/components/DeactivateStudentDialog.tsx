@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 
 type Props = {
   open: boolean;
@@ -74,7 +75,7 @@ export function DeactivateStudentDialog({
       onInativado?.();
       onOpenChange(false);
     } catch (error) {
-      console.error('[DeactivateStudentDialog]', error);
+      logClientOperationalEvent('student.deactivate.failed', error);
       toast.error('Erro de comunicação');
     } finally {
       setSubmitting(false);

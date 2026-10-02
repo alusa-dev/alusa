@@ -5,8 +5,10 @@ import { detectMimeTypeFromBuffer } from '@/lib/upload-security';
 import { completeTenantUpload, getTenantUploadReservation, releaseTenantUpload } from '@/lib/upload-quota.server';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { readBoundedJson } from '@/lib/upload-request';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export async function POST(request: Request) {
+  const requestId = getRequestId(request);
   const auth = await resolveTenantSession();
   if (!auth.ok) return jsonNoStore({ error: 'Nao autorizado.' }, { status: 401 });
   const rate = await rateLimitAsync(`upload:complete:${auth.contaId}:${auth.userId}:${ipFromRequest(request)}`, 30, 10 * 60_000);
@@ -32,7 +34,6 @@ export async function POST(request: Request) {
       let deleted = false;
       try { await deleteStorageObject(reservation.objectKey); deleted = true; } catch { /* cron retries expired pending objects */ }
       if (deleted) await releaseTenantUpload(auth.contaId, reservation.id);
-      console.warn('[upload][verification-rejected]', { contaId: auth.contaId, reservationId: reservation.id, size });
       return jsonNoStore({ error: 'O arquivo enviado não corresponde à reserva.' }, { status: 422 });
     }
     const hashSha256 = await hashStorageObject(reservation.objectKey);
@@ -44,11 +45,26 @@ export async function POST(request: Request) {
       return jsonNoStore({ error: 'A reserva já foi concluída ou expirou.' }, { status: 409 });
     }
     try { await deleteStorageObject(reservation.objectKey); }
-    catch (error) { console.warn('[upload][pending-object-cleanup]', { contaId: auth.contaId, reservationId: reservation.id, error: error instanceof Error ? error.message : 'unknown' }); }
-    console.info('[upload][completed]', { contaId: auth.contaId, reservationId: reservation.id, bytes: size, mimeType: detectedMimeType });
+    catch (error) {
+      logApiOperationalEvent({
+        severity: 'warn',
+        eventName: 'api.upload.pending_cleanup.failed',
+        route: '/api/upload/complete',
+        method: 'POST',
+        requestId,
+        error,
+      });
+    }
     return jsonNoStore({ url: storageUrlForKey(finalObjectKey), size, type: detectedMimeType, hashSha256 });
   } catch (error) {
-    console.error('[upload][completion-failed]', { contaId: auth.contaId, reservationId: reservation.id, error: error instanceof Error ? error.message : 'unknown' });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.upload.complete.failed',
+      route: '/api/upload/complete',
+      method: 'POST',
+      requestId,
+      error,
+    });
     return jsonNoStore({ error: 'Não foi possível confirmar o upload.' }, { status: 502 });
   }
 }

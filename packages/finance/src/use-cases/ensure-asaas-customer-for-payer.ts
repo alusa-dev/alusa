@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import {
   AsaasHttpError,
   createCustomer,
@@ -64,7 +65,10 @@ export type EnsureAsaasCustomerResult =
       status?: number;
     };
 
-export { AsaasCustomerEnsureError, type EnsureAsaasCustomerError } from '../errors/asaas-customer-ensure-error';
+export {
+  AsaasCustomerEnsureError,
+  type EnsureAsaasCustomerError,
+} from '../errors/asaas-customer-ensure-error';
 
 type EnsureStep =
   | 'GET_LOCAL_CUSTOMER'
@@ -92,13 +96,6 @@ function isMockPaymentsMode() {
     process.env.PLAYWRIGHT_TEST === 'true' ||
     process.env.NODE_ENV === 'test'
   );
-}
-
-function maskCpfCnpj(value?: string | null): string {
-  if (!value) return '***';
-  const digitsOnly = digits(value) ?? '';
-  if (digitsOnly.length <= 4) return '***';
-  return `${digitsOnly.slice(0, 3)}***${digitsOnly.slice(-2)}`;
 }
 
 function compact<T extends Record<string, unknown>>(data: T): Partial<T> {
@@ -150,7 +147,10 @@ function buildCustomerAddress(payer: EnsureAsaasCustomerPayer): Partial<CreateCu
  * - phone: 10 dígitos (fixo)
  * - mobilePhone: 11 dígitos (celular)
  */
-function buildCustomerPhones(payer: EnsureAsaasCustomerPayer): { phone?: string; mobilePhone?: string } {
+function buildCustomerPhones(payer: EnsureAsaasCustomerPayer): {
+  phone?: string;
+  mobilePhone?: string;
+} {
   const phoneDigits = digits(payer.phone);
   const mobileDigits = digits(payer.mobilePhone);
 
@@ -185,7 +185,11 @@ function extractAsaasErrorDescription(response: unknown): string | null {
     return response.trim() ? response : null;
   }
   if (!response || typeof response !== 'object') return null;
-  const payload = response as { errors?: Array<{ description?: string }>; message?: string; error?: string };
+  const payload = response as {
+    errors?: Array<{ description?: string }>;
+    message?: string;
+    error?: string;
+  };
   if (Array.isArray(payload.errors) && payload.errors[0]?.description) {
     return String(payload.errors[0].description);
   }
@@ -225,9 +229,8 @@ async function updateApiKeyStatus(
   });
 
   if (status === 'REVOKED' && contaId) {
-    const { markExternalAsaasApiKeyUnhealthy } = await import(
-      './external-asaas/mark-external-asaas-api-key-unhealthy'
-    );
+    const { markExternalAsaasApiKeyUnhealthy } =
+      await import('./external-asaas/mark-external-asaas-api-key-unhealthy');
     await markExternalAsaasApiKeyUnhealthy(contaId);
   }
 }
@@ -236,10 +239,11 @@ async function applyGlobalNotificationPreferencesSafe(contaId: string, customerI
   try {
     await syncCustomerNotificationChannelsFromTenantPreferences(contaId, customerId);
   } catch (error) {
-    console.warn('[ensureAsaasCustomerForPayer] Falha ao aplicar preferências globais de notificação', {
-      contaId,
-      customerId,
-      message: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.use_cases.ensure_asaas_customer_for_payer.degraded',
+      error: error,
+      throttleMs: 60_000,
     });
   }
 }
@@ -269,15 +273,13 @@ async function pushExistingCustomerUpdate(params: {
     return { ok: true };
   } catch (updateError) {
     if (updateError instanceof AsaasHttpError && updateError.status === 400) {
-      const description = extractAsaasErrorDescription(updateError.responseBody ?? updateError.response);
-      console.warn('[ensureAsaasCustomerForPayer] Atualização rejeitada pelo provedor', {
-        contaId: params.logContext.contaId,
-        payerType: params.logContext.payerType,
-        payerId: params.logContext.payerId,
-        cpfCnpj: maskCpfCnpj(digits(params.payload.cpfCnpj) ?? ''),
-        step: params.step,
-        message: updateError.message,
-        response: updateError.responseBody ?? updateError.response,
+      const description = extractAsaasErrorDescription(
+        updateError.responseBody ?? updateError.response,
+      );
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.ensure_asaas_customer_for_payer.degraded',
+        throttleMs: 60_000,
       });
       if (params.strictUpdate) {
         return {
@@ -304,9 +306,7 @@ export async function loadAndValidateSubaccountKey(contaId: string): Promise<Loa
   });
 
   const encrypted =
-    profile?.asaasAccount?.apiKeyEncrypted ??
-    profile?.asaasCredential?.apiKeyEncrypted ??
-    null;
+    profile?.asaasAccount?.apiKeyEncrypted ?? profile?.asaasCredential?.apiKeyEncrypted ?? null;
 
   if (!encrypted) {
     return {
@@ -361,9 +361,7 @@ export async function loadAndValidateSubaccountKey(contaId: string): Promise<Loa
   return {
     ok: true,
     apiKey,
-    source: profile?.asaasAccount?.apiKeyEncrypted
-      ? 'ASAAS_ACCOUNT'
-      : 'ASAAS_CREDENTIAL',
+    source: profile?.asaasAccount?.apiKeyEncrypted ? 'ASAAS_ACCOUNT' : 'ASAAS_CREDENTIAL',
     asaasAccountId: profile?.asaasAccount?.id ?? null,
   };
 }
@@ -403,15 +401,13 @@ function assertCustomerIdentity(customer: AsaasCustomer, cpfCnpj: string): void 
   }
 }
 
-export async function ensureAsaasCustomerForPayer(
-  input: {
-    contaId: string;
-    payer: EnsureAsaasCustomerPayer;
-    persist?: boolean;
-    notificationSyncMode?: 'blocking' | 'deferred' | 'skip';
-    strictCustomerUpdate?: boolean;
-  },
-): Promise<EnsureAsaasCustomerResult> {
+export async function ensureAsaasCustomerForPayer(input: {
+  contaId: string;
+  payer: EnsureAsaasCustomerPayer;
+  persist?: boolean;
+  notificationSyncMode?: 'blocking' | 'deferred' | 'skip';
+  strictCustomerUpdate?: boolean;
+}): Promise<EnsureAsaasCustomerResult> {
   const cpfCnpj = digits(input.payer.cpfCnpj);
   const name = normalizeString(input.payer.name);
 
@@ -461,22 +457,33 @@ export async function ensureAsaasCustomerForPayer(
         message: 'O pagador está vinculado a duas identidades financeiras diferentes.',
       };
     }
-    const customerByRemote = !existingIdentity?.asaasCustomerId && requestedCustomerId
-      ? await prisma.customer.findFirst({
-          where: { contaId: input.contaId, asaasCustomerId: requestedCustomerId },
-          select: { asaasCustomerId: true, externalReference: true },
-        })
-      : null;
-    const existingRemoteId = existingIdentity?.asaasCustomerId ?? customerByRemote?.asaasCustomerId ?? requestedCustomerId;
-    const customerId = existingRemoteId ?? `mock-customer-${input.payer.type.toLowerCase()}-${input.payer.id}`;
+    const customerByRemote =
+      !existingIdentity?.asaasCustomerId && requestedCustomerId
+        ? await prisma.customer.findFirst({
+            where: { contaId: input.contaId, asaasCustomerId: requestedCustomerId },
+            select: { asaasCustomerId: true, externalReference: true },
+          })
+        : null;
+    const existingRemoteId =
+      existingIdentity?.asaasCustomerId ?? customerByRemote?.asaasCustomerId ?? requestedCustomerId;
+    const customerId =
+      existingRemoteId ?? `mock-customer-${input.payer.type.toLowerCase()}-${input.payer.id}`;
     const reused = Boolean(existingRemoteId);
     if (input.persist !== false) {
-      externalReference = await persistCustomerId(input.contaId, input.payer, customerId, externalReference);
+      externalReference = await persistCustomerId(
+        input.contaId,
+        input.payer,
+        customerId,
+        externalReference,
+      );
     }
     return {
       ok: true,
       customerId,
-      externalReference: existingIdentity?.externalReference ?? customerByRemote?.externalReference ?? externalReference,
+      externalReference:
+        existingIdentity?.externalReference ??
+        customerByRemote?.externalReference ??
+        externalReference,
       reused,
     };
   }
@@ -551,7 +558,12 @@ export async function ensureAsaasCustomerForPayer(
         }
         if (localCustomer.id && !localCustomer.deleted) {
           if (input.persist !== false) {
-            externalReference = await persistCustomerId(input.contaId, input.payer, localCustomer.id, externalReference);
+            externalReference = await persistCustomerId(
+              input.contaId,
+              input.payer,
+              localCustomer.id,
+              externalReference,
+            );
           } else {
             externalReference = localCustomer.externalReference || externalReference;
           }
@@ -610,13 +622,11 @@ export async function ensureAsaasCustomerForPayer(
       // Se externalReference der 400, é inválido - retornar erro claro
       if (error instanceof AsaasHttpError && error.status === 400) {
         const description = extractAsaasErrorDescription(error.responseBody ?? error.response);
-        console.error('[ensureAsaasCustomerForPayer] externalReference inválido', {
-          contaId: input.contaId,
-          payerType: input.payer.type,
-          payerId: input.payer.id,
-          externalReference,
-          step,
-          response: error.responseBody ?? error.response,
+        logFinanceOperationalEvent({
+          severity: 'error',
+          eventName: 'finance.use_cases.ensure_asaas_customer_for_payer.failed',
+          error: error,
+          throttleMs: 60_000,
         });
         return {
           ok: false,
@@ -636,14 +646,21 @@ export async function ensureAsaasCustomerForPayer(
         cpfCnpj,
         limit: 5,
       });
-      existingCustomer = pickExistingCustomer((byCpfCnpj.data ?? []).filter((customer) => digits(customer.cpfCnpj) === cpfCnpj));
+      existingCustomer = pickExistingCustomer(
+        (byCpfCnpj.data ?? []).filter((customer) => digits(customer.cpfCnpj) === cpfCnpj),
+      );
     }
 
     // 3) Se encontrou, atualizar via PUT
     if (existingCustomer?.id) {
       assertCustomerIdentity(existingCustomer, cpfCnpj);
       if (input.persist !== false) {
-        externalReference = await persistCustomerId(input.contaId, input.payer, existingCustomer.id, externalReference);
+        externalReference = await persistCustomerId(
+          input.contaId,
+          input.payer,
+          existingCustomer.id,
+          externalReference,
+        );
       } else {
         externalReference = existingCustomer.externalReference || externalReference;
       }
@@ -721,7 +738,12 @@ export async function ensureAsaasCustomerForPayer(
     }
 
     if (input.persist !== false) {
-      externalReference = await persistCustomerId(input.contaId, input.payer, created.id, externalReference);
+      externalReference = await persistCustomerId(
+        input.contaId,
+        input.payer,
+        created.id,
+        externalReference,
+      );
     }
 
     if (notificationSyncMode === 'blocking') {
@@ -737,7 +759,10 @@ export async function ensureAsaasCustomerForPayer(
       reused: false,
     };
   } catch (error) {
-    if (error instanceof CustomerIdentityConflictError || error instanceof AsaasCustomerEnsureError) {
+    if (
+      error instanceof CustomerIdentityConflictError ||
+      error instanceof AsaasCustomerEnsureError
+    ) {
       return { ok: false, error: 'PAYER_INVALID', message: error.message };
     }
     if (error instanceof AsaasHttpError && (error.status === 401 || error.status === 403)) {
@@ -754,14 +779,10 @@ export async function ensureAsaasCustomerForPayer(
       const description = extractAsaasErrorDescription(response);
       const isEmptyBody = typeof response === 'object' && response && '_emptyBody' in response;
 
-      console.error('[ensureAsaasCustomerForPayer] 400 ao criar/atualizar customer', {
-        contaId: input.contaId,
-        payerType: input.payer.type,
-        payerId: input.payer.id,
-        cpfCnpj: maskCpfCnpj(cpfCnpj),
-        step,
-        response,
-        payloadKeys: Object.keys(createPayload),
+      logFinanceOperationalEvent({
+        severity: 'error',
+        eventName: 'finance.use_cases.ensure_asaas_customer_for_payer.failed',
+        throttleMs: 60_000,
       });
 
       // Body vazio = problema de infra, não validação de payer
@@ -791,12 +812,11 @@ export async function ensureAsaasCustomerForPayer(
       };
     }
 
-    console.error('[ensureAsaasCustomerForPayer] Falha ao sincronizar customer', {
-      contaId: input.contaId,
-      payerType: input.payer.type,
-      payerId: input.payer.id,
-      cpfCnpj: maskCpfCnpj(cpfCnpj),
-      message: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.ensure_asaas_customer_for_payer.failed',
+      error: error,
+      throttleMs: 60_000,
     });
 
     return {

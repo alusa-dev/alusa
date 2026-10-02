@@ -5,6 +5,7 @@ import {
   readPaymentFullPreflight,
   syncPaymentStateFromAsaas,
 } from '@alusa/finance';
+import { logFinanceOperationalEvent } from '@alusa/finance/foundation/operational-log';
 
 function buildDeletedPaymentWebhookPayload(
   payment: Awaited<ReturnType<typeof deletePayment>>,
@@ -114,13 +115,13 @@ export async function cancelAcademicCobranca(input: {
       });
       localStateConverged = true;
     } catch (error) {
-      console.warn('[cobranca-cancellation] Falha ao cancelar no Asaas', error);
+      logFinanceOperationalEvent({ severity: 'warn', eventName: 'finance.services.charge_cancellation.asaas_cancel.failed', error, throttleMs: 60_000 });
       await syncPaymentStateFromAsaas({
         contaId: input.contaId,
         asaasPaymentId: cobranca.asaasPaymentId,
         eventName: 'PAYMENT_DELETED',
       }).catch((syncError) => {
-        console.warn('[cobranca-cancellation] Falha ao sincronizar estado local', syncError);
+        logFinanceOperationalEvent({ severity: 'warn', eventName: 'finance.services.charge_cancellation.state_sync.failed', error: syncError, throttleMs: 60_000 });
       });
     }
   }

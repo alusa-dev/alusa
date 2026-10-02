@@ -6,6 +6,8 @@
     "types": ["node", "next", "@types/react", "@types/react-dom"],
     "paths": {
       "@/*": ["./*"],
+      "@alusa/observability": ["../../packages/observability/src/index.ts"],
+      "@alusa/observability/*": ["../../packages/observability/src/*"],
       "@alusa/admin-auth": ["../../packages/admin-auth/src/index.ts"],
       "@alusa/admin-auth/*": ["../../packages/admin-auth/src/*"],
       "@alusa/database": ["../../packages/database/src/index.ts"],

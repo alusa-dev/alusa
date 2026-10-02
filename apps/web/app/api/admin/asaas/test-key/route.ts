@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { ZodError } from 'zod';
@@ -78,7 +79,14 @@ export async function POST(request: Request) {
       });
     }
 
-    console.error('[API admin/asaas/test-key][POST] Erro', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/asaas/test-key',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, {
       success: false,
       summary: 'Erro interno ao testar a conexão com o Asaas.',

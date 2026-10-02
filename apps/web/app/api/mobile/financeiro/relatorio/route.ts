@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
@@ -56,7 +57,14 @@ export async function GET(request: Request) {
     return NextResponse.json(report, { status: 200, headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     if (error instanceof MobileReportUnauthorizedError) return unauthorized();
-    console.error('[API relatório mobile]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/financeiro/relatorio',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return NextResponse.json(
       { error: { code: 'SERVER_ERROR', message: 'Não foi possível carregar o relatório agora.' } },
       { status: 500, headers: { 'Cache-Control': 'no-store' } },

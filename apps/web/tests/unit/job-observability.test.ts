@@ -16,13 +16,16 @@ describe('job observability', () => {
     expect(info).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(info.mock.calls[0]?.[0]));
     expect(payload).toMatchObject({
-      type: 'job_completed',
-      jobName: 'example-job',
-      processed: 3,
-      failed: 1,
-      dryRun: false,
+      severity: 'info',
+      'event.name': 'job.completed',
+      attributes: {
+        jobName: 'example-job',
+        processed: 3,
+        failed: 1,
+        dryRun: false,
+      },
     });
-    expect(payload.results).toBeUndefined();
+    expect(payload.attributes.results).toBeUndefined();
     info.mockRestore();
   });
 
@@ -33,11 +36,24 @@ describe('job observability', () => {
 
     const payload = JSON.parse(String(error.mock.calls[0]?.[0]));
     expect(payload).toMatchObject({
-      type: 'job_failed',
-      jobName: 'example-job',
-      errorType: 'unknown_error',
+      'event.name': 'job.failed',
+      'error.type': 'unknown_error',
+      attributes: { jobName: 'example-job' },
     });
     expect(JSON.stringify(payload)).not.toContain('not-logged');
     error.mockRestore();
+  });
+
+  it('limita error.type a nomes seguros de erro', () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const unsafeError = new Error('sensitive message');
+    unsafeError.name = 'Error: customer@example.com';
+
+    logJobFailure('example-job', Date.now(), unsafeError);
+
+    const payload = JSON.parse(String(errorLog.mock.calls[0]?.[0]));
+    expect(payload['error.type']).toBe('Error');
+    expect(JSON.stringify(payload)).not.toContain('customer@example.com');
+    errorLog.mockRestore();
   });
 });

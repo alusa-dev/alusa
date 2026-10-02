@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 
 import { searchFinancePayers } from '@/features/billing/server/finance-payers-search.service';
@@ -31,7 +32,14 @@ export async function GET(request: Request) {
     return NextResponse.json(result, { status: 200, headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     if (error instanceof MobileBillingUnauthorizedError) return errorResponse('FORBIDDEN', 'Você não tem permissão para consultar pagadores.', 403);
-    console.error('[mobile-billing][payers-search]', { contaId: verified.contaId, userId: verified.userId, error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/billing/payers/search',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return errorResponse('SERVER_ERROR', 'Não foi possível buscar os pagadores.', 500);
   }
 }

@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 import type { Prisma } from '@prisma/client';
 
@@ -11,7 +12,11 @@ import type { Prisma } from '@prisma/client';
 
 export type CustomerInactivationResult = {
   canInactivate: boolean;
-  reason: 'SAFE_TO_INACTIVATE' | 'SHARED_WITH_ACTIVE_ALUNOS' | 'NO_CUSTOMER_ID' | 'SHARED_WITH_ACTIVE_MATRICULAS';
+  reason:
+    | 'SAFE_TO_INACTIVATE'
+    | 'SHARED_WITH_ACTIVE_ALUNOS'
+    | 'NO_CUSTOMER_ID'
+    | 'SHARED_WITH_ACTIVE_MATRICULAS';
   sharedWith?: {
     alunos: number;
     matriculas: number;
@@ -21,7 +26,7 @@ export type CustomerInactivationResult = {
 
 /**
  * Verifica se um customer pode ser inativado no Asaas.
- * 
+ *
  * Regras:
  * - Customer pode ser compartilhado entre múltiplos alunos (ex.: pai de 3 filhos)
  * - Só inativar se não houver outros alunos/matrículas ativos usando o mesmo customer
@@ -55,7 +60,9 @@ export async function canInactivateCustomer(params: {
   const identityAlunoIds = new Set<string>();
   const identityResponsavelIds = new Set<string>();
   if (identity) {
-    (identity.payerType === 'ALUNO' ? identityAlunoIds : identityResponsavelIds).add(identity.payerId);
+    (identity.payerType === 'ALUNO' ? identityAlunoIds : identityResponsavelIds).add(
+      identity.payerId,
+    );
     for (const link of identity.payerLinks) {
       (link.payerType === 'ALUNO' ? identityAlunoIds : identityResponsavelIds).add(link.payerId);
     }
@@ -111,7 +118,7 @@ export async function canInactivateCustomer(params: {
             contaId,
             status: 'ATIVO',
             ...(excludeAlunoId ? { id: { not: excludeAlunoId } } : {}),
-              OR: [
+            OR: [
               ...alunoIdentityWhere,
               {
                 responsaveis: {
@@ -189,14 +196,6 @@ export async function inactivateCustomerIfSafe(params: {
   });
 
   if (!checkResult.canInactivate) {
-    console.info('[AsaasCustomer] Inativação ignorada - customer compartilhado:', {
-      asaasCustomerId,
-      contaId,
-      alunoId,
-      reason: checkResult.reason,
-      sharedWith: checkResult.sharedWith,
-    });
-
     return {
       success: true,
       action: 'SKIPPED',
@@ -207,19 +206,18 @@ export async function inactivateCustomerIfSafe(params: {
   try {
     await deleteCustomerFn(asaasCustomerId);
 
-    console.log('[AsaasCustomer] Customer inativado com sucesso:', {
-      asaasCustomerId,
-      contaId,
-      alunoId,
-    });
-
     return {
       success: true,
       action: 'INACTIVATED',
       reason: 'SAFE_TO_INACTIVATE',
     };
   } catch (error) {
-    console.error('[AsaasCustomer] Falha ao inativar customer:', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.customer.asaas_customer_service.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
 
     return {
       success: false,

@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { registerTelemetrySink, type StructuredLog, type TelemetryMetric } from '@alusa/observability';
+
+let unsubscribeTelemetry: (() => void) | undefined;
 
 vi.mock('@alusa/database', () => ({
   prisma: {
@@ -31,8 +34,10 @@ vi.mock('@alusa/database', () => ({
     webhookAsaas: {
       findFirst: vi.fn(),
       findMany: vi.fn(),
+      updateMany: vi.fn(),
       count: vi.fn(),
     },
+    $queryRaw: vi.fn(),
   },
   loadAsaasCredentials: vi.fn(),
 }));
@@ -72,12 +77,19 @@ import { upsertFinanceReconciliationIssue } from '../../reconciliation/finance-r
 import {
   detectWebhookGaps,
   getWebhookMetrics,
+  getWebhookQueueMetrics,
   isProviderCheckDue,
   listWebhooks,
+  markExhaustedWebhooks,
   reconcileWithAsaas,
 } from '../webhook-reconciliation.service';
 
 describe('webhook-reconciliation.service', () => {
+  afterEach(() => {
+    unsubscribeTelemetry?.();
+    unsubscribeTelemetry = undefined;
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.subscription.findMany).mockResolvedValue([]);
@@ -94,6 +106,80 @@ describe('webhook-reconciliation.service', () => {
     vi.mocked(loadAsaasCredentials).mockResolvedValue({ apiKey: 'test-key' } as never);
     vi.mocked(handlePaymentWebhook).mockResolvedValue({ success: true } as never);
     vi.mocked(handleSubscriptionWebhook).mockResolvedValue({ success: true });
+  });
+
+  describe('getWebhookQueueMetrics telemetry scope', () => {
+    it('does not publish global gauges for a tenant-scoped query', async () => {
+      const metrics: TelemetryMetric[] = [];
+      unsubscribeTelemetry = registerTelemetrySink({ metric: (metric) => metrics.push(metric) });
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{
+        pending: 1n,
+        processing: 0n,
+        errored: 0n,
+        processed: 4n,
+        exhausted: 0n,
+        highRetryBacklog: 0n,
+        stuckProcessing: 0n,
+        oldestPendingAt: new Date(),
+      }] as never);
+
+      await getWebhookQueueMetrics({ contaId: 'tenant-a' });
+
+      expect(metrics).toEqual([]);
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it('publishes global gauges only with the static provider dimension', async () => {
+      const metrics: TelemetryMetric[] = [];
+      unsubscribeTelemetry = registerTelemetrySink({ metric: (metric) => metrics.push(metric) });
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{
+        pending: 1n,
+        processing: 0n,
+        errored: 0n,
+        processed: 4n,
+        exhausted: 0n,
+        highRetryBacklog: 0n,
+        stuckProcessing: 0n,
+        oldestPendingAt: new Date(),
+      }] as never);
+
+      await getWebhookQueueMetrics();
+
+      expect(metrics).toHaveLength(8);
+      expect(metrics.every((metric) => JSON.stringify(metric.dimensions) === JSON.stringify({ provider: 'asaas' }))).toBe(true);
+      expect(JSON.stringify(metrics)).not.toContain('tenant-a');
+    });
+  });
+
+  describe('markExhaustedWebhooks telemetry', () => {
+    it('emite evento estruturado sem IDs de webhook ou tenant', async () => {
+      const logs: StructuredLog[] = [];
+      unsubscribeTelemetry = registerTelemetrySink({ log: (record) => logs.push(record) });
+      vi.mocked(prisma.webhookAsaas.findMany).mockResolvedValue([{
+        id: 'private-webhook-id',
+        contaId: 'private-tenant-id',
+      }] as never);
+      vi.mocked(prisma.webhookAsaas.updateMany).mockResolvedValue({ count: 1 } as never);
+
+      const result = await markExhaustedWebhooks();
+
+      expect(result).toMatchObject({ marked: 1, ids: ['private-webhook-id'] });
+      expect(logs).toHaveLength(2);
+      expect(logs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'error',
+          'event.name': 'finance.webhook.dlq.marked',
+          attributes: { operation: 'mark_exhausted', itemCount: 1, maxAttempts: 5 },
+        }),
+        expect.objectContaining({
+          severity: 'error',
+          'event.name': 'finance.webhook.dlq.alert',
+          attributes: { 'alert.severity': 'error', 'alert.count': 1 },
+        }),
+      ]));
+      expect(JSON.stringify(logs)).not.toContain('private-webhook-id');
+      expect(JSON.stringify(logs)).not.toContain('private-tenant-id');
+    });
   });
 
   describe('detectWebhookGaps', () => {

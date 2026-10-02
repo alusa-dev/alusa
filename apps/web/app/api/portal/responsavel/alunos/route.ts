@@ -1,23 +1,24 @@
 import { NextResponse } from 'next/server';
-import {
-  calculatePortalAge,
-  requirePortalUser,
-} from '@/features/portal/api-helpers';
+import { calculatePortalAge, requirePortalUser } from '@/features/portal/api-helpers';
 import { portalResponsavelAlunosResultDTOSchema } from '@/features/portal/dtos';
 import {
   mapPortalResponsavelAlunoToDTO,
   mapPortalResponsavelAlunosResultToDTO,
 } from '@/features/portal/mappers';
 import { findPortalResponsibleWithStudents } from '@/src/server/portal/portal-read.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const auth = await requirePortalUser('RESPONSAVEL');
     if ('response' in auth) return auth.response;
     const { user } = auth;
 
     // 3. Buscar alunos vinculados ao responsável - Multi-tenant: filtrar por contaId
-    const responsavel = await findPortalResponsibleWithStudents({ userId: user.id, contaId: user.contaId });
+    const responsavel = await findPortalResponsibleWithStudents({
+      userId: user.id,
+      contaId: user.contaId,
+    });
 
     if (!responsavel) {
       return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
@@ -40,11 +41,14 @@ export async function GET() {
       ),
     );
   } catch (error) {
-    console.error('Erro ao buscar alunos do responsável:', error);
-    return NextResponse.json(
-      { error: 'Erro ao carregar alunos' },
-      { status: 500 },
-    );
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.portal.request.failed',
+      route: '/api/portal/responsavel/alunos',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
+    return NextResponse.json({ error: 'Erro ao carregar alunos' }, { status: 500 });
   }
 }
-

@@ -1,3 +1,4 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest } from 'next/server';
 import { ZodError } from 'zod';
 import { readBoundedFormData } from '@/lib/upload-request';
@@ -83,7 +84,7 @@ export async function POST(req: NextRequest) {
     if (error instanceof ZodError) {
       return json(422, { error: 'BODY_INVALIDO', details: error.flatten() });
     }
-    console.error('[API antecipacoes solicitar][POST]', error);
+    logFinanceApiError('/api/financeiro/antecipacoes/solicitar', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

@@ -24,6 +24,7 @@ import {
   recordCobrancaFinancialLog,
   resolveCobrancaPaymentLookupForTenant,
 } from './resolve-charge-payment-lookup';
+import { logFinanceOperationalEvent } from '@alusa/finance/foundation/operational-log';
 
 type RefundCommandResult = { status: number; body: unknown };
 
@@ -150,11 +151,11 @@ async function executeRefundCommand(params: {
   try {
     await syncPaymentStateFromAsaas({ contaId: params.contaId, asaasPaymentId: params.asaasPayment.id });
   } catch (error) {
-    console.warn('[Refund] Falha ao sincronizar estado pós-comando', {
-      correlationId: params.correlationId,
-      commandJobId: command.id,
-      asaasPaymentId: params.asaasPayment.id,
-      error: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.services.refund_charge.reconciliation.failed',
+      error,
+      throttleMs: 60_000,
     });
   }
 
@@ -320,7 +321,7 @@ export async function executeCobrancaRefund(params: {
       financialLog: true,
     });
   } catch (error) {
-    console.error('[Refund] Erro:', error);
+    logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.services.refund_charge.failed', error });
     if (error instanceof KycNotApprovedError) {
       return result(409, { error: 'KYC_NAO_APROVADO', message: 'Conta não aprovada para operações financeiras', correlationId });
     }

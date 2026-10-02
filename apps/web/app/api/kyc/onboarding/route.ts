@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { AsaasHttpError, financeProfileOnboardingDataSchema } from '@alusa/finance';
@@ -56,7 +57,8 @@ export async function POST(req: Request) {
   try {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const payload = financeProfileOnboardingDataSchema.parse(await req.json());
 
@@ -76,7 +78,8 @@ export async function POST(req: Request) {
     ) {
       return json(503, {
         code: 'ENV_NOT_CONFIGURED',
-        message: 'Não foi possível continuar por um problema de configuração. Tente novamente em instantes.',
+        message:
+          'Não foi possível continuar por um problema de configuração. Tente novamente em instantes.',
       });
     }
 
@@ -117,14 +120,25 @@ export async function POST(req: Request) {
         const code = (item.code ?? '').toLowerCase();
         const desc = (item.description ?? '').toLowerCase();
         if (isLikelyConfigurationError(item)) {
-          formErrors.push('Não foi possível continuar por um problema de configuração. Tente novamente em instantes.');
+          formErrors.push(
+            'Não foi possível continuar por um problema de configuração. Tente novamente em instantes.',
+          );
           mappedStatus = 400;
           continue;
         }
 
-        const looksLikeCpfCnpj = code.includes('cpf') || code.includes('cnpj') || desc.includes('cpf') || desc.includes('cnpj');
-        const looksInvalid = code.includes('invalid') || desc.includes('invál') || desc.includes('invalid');
-        const looksDuplicate = desc.includes('já cadastrad') || desc.includes('ja cadastrad') || desc.includes('já existe') || desc.includes('ja existe');
+        const looksLikeCpfCnpj =
+          code.includes('cpf') ||
+          code.includes('cnpj') ||
+          desc.includes('cpf') ||
+          desc.includes('cnpj');
+        const looksInvalid =
+          code.includes('invalid') || desc.includes('invál') || desc.includes('invalid');
+        const looksDuplicate =
+          desc.includes('já cadastrad') ||
+          desc.includes('ja cadastrad') ||
+          desc.includes('já existe') ||
+          desc.includes('ja existe');
         if (looksLikeCpfCnpj && looksDuplicate) {
           fieldErrors.cpfCnpj = ['Este CPF/CNPJ já está cadastrado.'];
           mappedStatus = 409;
@@ -137,8 +151,13 @@ export async function POST(req: Request) {
           continue;
         }
 
-        const looksLikeEmail = code.includes('email') || desc.includes('e-mail') || desc.includes('email');
-        const looksInUse = desc.includes('uso') || desc.includes('em uso') || desc.includes('cadastrad') || code.includes('already');
+        const looksLikeEmail =
+          code.includes('email') || desc.includes('e-mail') || desc.includes('email');
+        const looksInUse =
+          desc.includes('uso') ||
+          desc.includes('em uso') ||
+          desc.includes('cadastrad') ||
+          code.includes('already');
         if (looksLikeEmail && looksInUse) {
           formErrors.push(
             'Este e-mail já está sendo usado. Atualize o e-mail da sua conta e tente novamente.',
@@ -150,14 +169,19 @@ export async function POST(req: Request) {
         // Outros erros: não expor mensagem técnica para usuário final.
         // Mantém apenas um fallback genérico.
         if (!formErrors.length) {
-          formErrors.push('Não foi possível concluir o cadastro. Revise seus dados e tente novamente.');
+          formErrors.push(
+            'Não foi possível concluir o cadastro. Revise seus dados e tente novamente.',
+          );
         }
       }
 
       if (Object.keys(fieldErrors).length > 0 || formErrors.length > 0) {
         return json(mappedStatus ?? error.status ?? 502, {
           code: 'FINANCIAL_PROVIDER_VALIDATION',
-          message: Object.keys(fieldErrors).length > 0 ? 'Verifique os campos destacados e tente novamente.' : formErrors[0],
+          message:
+            Object.keys(fieldErrors).length > 0
+              ? 'Verifique os campos destacados e tente novamente.'
+              : formErrors[0],
           details: {
             fieldErrors: Object.keys(fieldErrors).length > 0 ? fieldErrors : undefined,
             formErrors: formErrors.length > 0 ? formErrors : undefined,
@@ -174,8 +198,18 @@ export async function POST(req: Request) {
       });
     }
 
-    console.error('[Finance Onboarding][POST]', error);
-    return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível concluir o onboarding KYC.' });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.kyc.request.failed',
+      route: '/api/kyc/onboarding',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
+    return json(500, {
+      error: 'ERRO_INTERNO',
+      message: 'Não foi possível concluir o onboarding KYC.',
+    });
   }
 }
 

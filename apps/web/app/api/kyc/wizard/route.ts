@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getWizardState } from '@alusa/finance';
@@ -17,17 +18,25 @@ async function resolveAuth(): Promise<SessionUser | null> {
  * GET /api/kyc/wizard
  * Retorna o estado atual do wizard de onboarding.
  */
-export async function GET() {
+export async function GET(request: Request = new Request('http://localhost/api/kyc/wizard')) {
   try {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || user.role.toUpperCase() !== 'ADMIN') return json(403, { error: 'SEM_PERMISSAO' });
+    if (!user.role || user.role.toUpperCase() !== 'ADMIN')
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const result = await getWizardState(user.contaId);
 
     return json(200, { data: result });
   } catch (error) {
-    console.error('[Finance Wizard][GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.kyc.request.failed',
+      route: '/api/kyc/wizard',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

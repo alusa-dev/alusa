@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
@@ -45,7 +46,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ stud
   } catch (error) {
     if (error instanceof MobileStudentUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
     if (error instanceof MobileStudentNotFoundError) return response({ error: { code: 'NOT_FOUND', message: 'Aluno não encontrado.' } }, 404);
-    console.error('[mobile-students][detail]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/students/[studentId]',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível carregar os dados do aluno.' } }, 500);
   }
 }
@@ -77,7 +85,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ st
   } catch (error) {
     if (error instanceof MobileStudentUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
     if (error instanceof MobileStudentNotFoundError) return response({ error: { code: 'NOT_FOUND', message: 'Aluno não encontrado.' } }, 404);
-    console.error('[mobile-students][update]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/students/[studentId]',
+      method: 'PATCH',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível salvar os dados do aluno.' } }, 500);
   }
 }
@@ -113,7 +128,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ stu
     if (error instanceof MobileStudentUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
     if (error instanceof MobileStudentNotFoundError || (error as { code?: string })?.code === 'ALUNO_NOT_FOUND') return response({ error: { code: 'NOT_FOUND', message: 'Aluno não encontrado.' } }, 404);
     const message = error instanceof Error ? error.message : 'Não foi possível concluir a ação.';
-    console.error('[mobile-students][action]', { error: message });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/students/[studentId]',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({
       error: {
         code: 'ACTION_FAILED',

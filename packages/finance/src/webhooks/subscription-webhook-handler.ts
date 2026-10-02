@@ -2,6 +2,7 @@ import { prisma } from '@alusa/database';
 import type { StatusMatricula, SubscriptionStatus } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { parseExternalReference } from '../core';
 import { isTerminalStatus, canTransition } from '@alusa/domain';
 import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
@@ -349,10 +350,10 @@ export async function handleSubscriptionWebhook(
           revision: Date.now(),
         });
       } catch (publishError) {
-        console.warn('[finance][handleSubscriptionWebhook][standalone-realtime-publish-failed]', {
-          contaId,
-          subscriptionId: standaloneSubscription.id,
-          error: publishError instanceof Error ? publishError.message : String(publishError),
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.webhook.subscription.standalone_realtime_publish.failed',
+          error: publishError,
         });
       }
 
@@ -700,16 +701,16 @@ export async function handleSubscriptionWebhook(
         revision: Date.now(),
       });
     } catch (publishError) {
-      console.warn('[finance][handleSubscriptionWebhook][realtime-publish-failed]', {
-        contaId,
-        subscriptionId: subscription.id,
-        error: publishError instanceof Error ? publishError.message : String(publishError),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.webhook.subscription.realtime_publish.failed',
+        error: publishError,
       });
     }
 
     return { success: true };
   } catch (error) {
-    console.error('[finance][handleSubscriptionWebhook]', error);
+    logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.webhook.subscription.processing.failed', error });
     return { success: false, error: error instanceof Error ? error.message : 'Erro desconhecido' };
   }
 }

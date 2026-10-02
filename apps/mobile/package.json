@@ -3,6 +3,7 @@
   "main": "expo-router/entry",
   "version": "0.1.0",
   "dependencies": {
+    "@alusa/observability": "workspace:*",
     "@alusa/shared": "workspace:*",
     "@expo/metro-runtime": "~57.0.16",
     "@expo/ui": "~57.0.21",

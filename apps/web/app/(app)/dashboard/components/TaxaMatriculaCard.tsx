@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import useCurrentUser from '@/hooks/use-current-user';
 import { DASHBOARD_KPI_TILE_CLASSNAME } from './utils';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 
 export type PeriodoTaxaMatricula = "15d" | "30d" | "1a";
 
@@ -65,7 +66,7 @@ function useTaxaMatricula(periodo: PeriodoTaxaMatricula | null) {
       const result = await promise;
       if (result) setData(result);
     } catch (error) {
-      console.error('Erro ao buscar taxas de matrícula:', error);
+      logClientOperationalEvent('dashboard.enrollment_fee.load_failed', error);
     } finally {
       setLoading(false);
     }

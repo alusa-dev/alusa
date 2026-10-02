@@ -4,12 +4,14 @@ import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { createPresignedUpload, deleteStorageObject, isR2Configured } from '@/lib/r2-storage';
 import { expireTenantUploadReservations, reserveTenantUpload, releaseTenantUpload } from '@/lib/upload-quota.server';
 import { readBoundedJson } from '@/lib/upload-request';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 const URL_TTL_SECONDS = 60;
 
 export async function POST(request: Request) {
+  const requestId = getRequestId(request);
   const auth = await resolveTenantSession();
   if (!auth.ok) return jsonNoStore({ error: 'Nao autorizado.' }, { status: 401 });
   if (!isR2Configured()) return jsonNoStore({ error: 'Armazenamento direto indisponível.' }, { status: 503 });
@@ -27,7 +29,18 @@ export async function POST(request: Request) {
   }
 
   const expiredKeys = await expireTenantUploadReservations(auth.contaId);
-  await Promise.all(expiredKeys.map((key) => deleteStorageObject(key).catch((error) => console.warn('[upload][orphan-delete-failed]', { contaId: auth.contaId, error: error instanceof Error ? error.message : 'unknown' }))));
+  const orphanCleanup = await Promise.allSettled(expiredKeys.map((key) => deleteStorageObject(key)));
+  const failedOrphanCleanupCount = orphanCleanup.filter((result) => result.status === 'rejected').length;
+  if (failedOrphanCleanupCount > 0) {
+    logApiOperationalEvent({
+      severity: 'warn',
+      eventName: 'api.upload.orphan_cleanup.failed',
+      route: '/api/upload/presign',
+      method: 'POST',
+      requestId,
+      itemCount: failedOrphanCleanupCount,
+    });
+  }
   const reserved = await reserveTenantUpload(auth.contaId, body.size, body.contentType, undefined, auth.userId);
   if (!reserved.ok) return jsonNoStore({ error: 'Limite diário de upload da conta excedido.' }, { status: 413 });
   const reservation = reserved.reservation;
@@ -39,7 +52,6 @@ export async function POST(request: Request) {
       expectedSize: body.size,
       expiresInSeconds: Math.min(reserved.expiresInSeconds, URL_TTL_SECONDS),
     });
-    console.info('[upload][presign-issued]', { contaId: auth.contaId, reservationId: reservation.id, bytes: body.size });
     return jsonNoStore({
       uploadUrl,
       reservationId: reservation.id,
@@ -53,7 +65,14 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     await releaseTenantUpload(auth.contaId, reservation.id);
-    console.error('[upload][presign-failed]', { contaId: auth.contaId, reservationId: reservation.id, error: error instanceof Error ? error.message : 'unknown' });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.upload.presign.failed',
+      route: '/api/upload/presign',
+      method: 'POST',
+      requestId,
+      error,
+    });
     return jsonNoStore({ error: 'Não foi possível preparar o upload.' }, { status: 503 });
   }
 }

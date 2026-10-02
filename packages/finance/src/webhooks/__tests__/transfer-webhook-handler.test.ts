@@ -390,16 +390,17 @@ describe('handleTransferWebhook', () => {
     });
 
     expect(res.success).toBe(true);
-    expect(consoleSpy).toHaveBeenCalledWith(
-      '[finance][handleTransferWebhook][transfer-failed]',
-      expect.objectContaining({
-        contaId: 't1',
-        transferRequestId: 'tr1',
-        asaasTransferId: 'asaas_tr_1',
-        event: 'TRANSFER_FAILED',
-        failReason: 'Chave Pix inválida',
-      }),
-    );
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    const log = JSON.parse(consoleSpy.mock.calls[0][0]);
+    expect(log).toMatchObject({
+      severity: 'error',
+      'service.name': 'alusa-finance',
+      'event.name': 'finance.webhook.transfer.failed',
+    });
+    expect(log).not.toHaveProperty('contaId');
+    expect(JSON.stringify(log)).not.toContain('tr1');
+    expect(JSON.stringify(log)).not.toContain('asaas_tr_1');
+    expect(JSON.stringify(log)).not.toContain('Chave Pix inválida');
 
     consoleSpy.mockRestore();
   });

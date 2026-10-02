@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": false, "incremental": true, "tsBuildInfoFile": "./tsconfig.build.tsbuildinfo" }
+}

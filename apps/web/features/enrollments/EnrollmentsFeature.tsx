@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { Button } from '@/components/ui/button';
 import { CustomScrollArea } from '@/components/ui/custom-scroll-area';
 import {
@@ -259,7 +260,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         const response = await resendCobrancaRequest(taxaCobranca.id);
         setTaxaResendResult(response.data);
       } catch (error) {
-        console.error('[TAXA_LINKS] Erro ao carregar links:', error);
+        logClientOperationalEvent('enrollment.taxa_links.load_failed', error);
       } finally {
         setLoadingTaxaLinks(false);
       }
@@ -413,31 +414,19 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
   const handleDeletarMatricula = useCallback(
     async (matricula: MatriculaListItem) => {
       if (actionLoading) {
-        console.log('[DELETE] Ação já em andamento, ignorando...');
         return;
       }
-
-      console.log('[DELETE] Iniciando exclusão:', {
-        matriculaId: matricula.id,
-        alunoNome: matricula.aluno.nome,
-        totalCobrancas: matricula.cobrancas.length,
-        contaId,
-      });
 
       try {
         setActionLoading(true);
         const url = `/api/matriculas/${matricula.id}?contaId=${contaId}&hard=true`;
-        console.log('[DELETE] Chamando API:', url);
 
         const response = await fetch(url, {
           method: 'DELETE',
         });
 
-        console.log('[DELETE] Response status:', response.status);
-
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
-          console.error('[DELETE] Erro da API:', errorData);
           const errorCode = (
             errorData as { error?: { code?: string; message?: string; details?: unknown } }
           ).error?.code;
@@ -476,8 +465,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           );
         }
 
-        const result = await response.json();
-        console.log('[DELETE] Sucesso:', result);
+        await response.json();
 
         toast.custom((t) => (
           <CustomToast
@@ -489,7 +477,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         ));
         await reload();
       } catch (error) {
-        console.error('[DELETE] Erro ao excluir:', error);
+        logClientOperationalEvent('enrollment.list.delete_failed', error);
         toast.custom((t) => (
           <CustomToast
             variant="error"

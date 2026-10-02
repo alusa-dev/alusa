@@ -157,8 +157,9 @@ jobs:
           npx prisma migrate deploy --schema prisma/schema.prisma
           npx prisma migrate status --schema prisma/schema.prisma
           npx prisma generate --schema prisma/schema.prisma
-      - name: Build shared package for mandatory web regressions
+      - name: Build workspace packages for mandatory web regressions
         run: |
+          pnpm --filter @alusa/observability build
           pnpm --filter @alusa/shared build
           pnpm --filter @alusa/domain build
       - name: Mandatory auth and contaId regression tests

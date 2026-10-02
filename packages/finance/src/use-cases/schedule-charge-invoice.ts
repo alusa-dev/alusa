@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { loadAsaasCredentials } from '@alusa/database';
 import type { AsaasInvoice } from '@alusa/asaas';
 import {
@@ -15,21 +16,24 @@ import type { InvoiceOperationStatus, InvoiceStatus, Prisma } from '@prisma/clie
 import { auditLogService } from '../foundation/audit-log.service';
 import { featureFlagsService } from '../foundation/feature-flags.service';
 import { requireKycApproved } from '../foundation/kyc-guard';
-import { buildChargeInvoiceTexts, resolveChargeInvoiceContext } from '../fiscal/charge-invoice-context';
+import {
+  buildChargeInvoiceTexts,
+  resolveChargeInvoiceContext,
+} from '../fiscal/charge-invoice-context';
 import { evaluateChargeInvoiceEligibility } from '../fiscal/charge-invoice-eligibility';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
 import { isTaxReformApplicable, validateFiscalIbsCbs } from '../fiscal/ibs-cbs';
-import {
-  buildAsaasInvoiceTaxes,
-  validateAsaasInvoiceTaxesInput,
-} from '../fiscal/invoice-taxes';
+import { buildAsaasInvoiceTaxes, validateAsaasInvoiceTaxesInput } from '../fiscal/invoice-taxes';
 import { recordInvoiceAuditEvent } from '../fiscal/invoice-audit.service';
 import {
   buildInvoiceProviderSnapshotUpdate,
   recordUnknownInvoiceStatusIssue,
 } from '../fiscal/provider-invoice-snapshot';
 import { computeFiscalReadiness } from '../fiscal/fiscal-readiness';
-import { evaluateChargePayerFiscalReadiness, syncResponsavelAsaasCustomer } from '../fiscal/payer-fiscal-readiness';
+import {
+  evaluateChargePayerFiscalReadiness,
+  syncResponsavelAsaasCustomer,
+} from '../fiscal/payer-fiscal-readiness';
 import {
   isInvoiceEffectiveDateValid,
   resolveInvoiceEffectiveDate,
@@ -171,16 +175,34 @@ function classifyInvoiceAttemptError(error: unknown): ScheduleChargeInvoiceFailu
   if (error instanceof AsaasHttpError) {
     const message = extractAsaasErrorMessage(error);
     if (error.status === 400 || error.status === 404) {
-      return { kind: 'VALIDATION', message, status: error.status, retryable: false, ambiguous: false };
+      return {
+        kind: 'VALIDATION',
+        message,
+        status: error.status,
+        retryable: false,
+        ambiguous: false,
+      };
     }
     if (error.status === 401 || error.status === 403) {
-      return { kind: 'AUTH_CONFIG', message, status: error.status, retryable: false, ambiguous: false };
+      return {
+        kind: 'AUTH_CONFIG',
+        message,
+        status: error.status,
+        retryable: false,
+        ambiguous: false,
+      };
     }
     if (error.status === 409) {
       return { kind: 'CONFLICT', message, status: error.status, retryable: true, ambiguous: true };
     }
     if (error.status === 429) {
-      return { kind: 'RATE_LIMIT', message, status: error.status, retryable: true, ambiguous: false };
+      return {
+        kind: 'RATE_LIMIT',
+        message,
+        status: error.status,
+        retryable: true,
+        ambiguous: false,
+      };
     }
     if (error.status === 408 || error.status >= 500) {
       return { kind: 'AMBIGUOUS', message, status: error.status, retryable: true, ambiguous: true };
@@ -215,7 +237,9 @@ function classifyInvoiceAttemptError(error: unknown): ScheduleChargeInvoiceFailu
 }
 
 function nextAttemptDate(attempts: number, ambiguous: boolean): Date {
-  const baseMs = ambiguous ? AMBIGUOUS_SAFE_RETRY_MS : Math.min(60 * 60 * 1000, 2 ** attempts * 60 * 1000);
+  const baseMs = ambiguous
+    ? AMBIGUOUS_SAFE_RETRY_MS
+    : Math.min(60 * 60 * 1000, 2 ** attempts * 60 * 1000);
   return new Date(Date.now() + baseMs);
 }
 
@@ -226,16 +250,16 @@ async function markAttemptFailure(input: {
   failure: ReturnType<typeof classifyInvoiceAttemptError>;
 }) {
   const prisma = getFiscalPrisma();
-  const operationStatus: InvoiceOperationStatus = input.failure.ambiguous ? 'RECONCILING' : 'FAILED';
+  const operationStatus: InvoiceOperationStatus = input.failure.ambiguous
+    ? 'RECONCILING'
+    : 'FAILED';
   const status: InvoiceStatus = input.failure.ambiguous ? input.previousStatus : 'ERROR';
   const updated = await prisma.invoice.update({
     where: { id: input.invoiceId },
     data: {
       operationStatus,
       operationLeaseExpiresAt: null,
-      nextAttemptAt: input.failure.retryable
-        ? nextAttemptDate(1, input.failure.ambiguous)
-        : null,
+      nextAttemptAt: input.failure.retryable ? nextAttemptDate(1, input.failure.ambiguous) : null,
       lastErrorKind: input.failure.kind,
       lastErrorMessage: input.failure.message.slice(0, 1000),
       status,
@@ -249,9 +273,7 @@ async function markAttemptFailure(input: {
   await recordInvoiceAuditEvent({
     contaId: input.contaId,
     invoiceId: input.invoiceId,
-    action: input.failure.ambiguous
-      ? 'invoice.creation_ambiguous'
-      : 'invoice.creation_failed',
+    action: input.failure.ambiguous ? 'invoice.creation_ambiguous' : 'invoice.creation_failed',
     fromStatus: input.previousStatus,
     toStatus: status,
     metadata: {
@@ -262,10 +284,11 @@ async function markAttemptFailure(input: {
       operationAttempts: updated.operationAttempts,
     },
   }).catch((error: unknown) => {
-    console.warn('[finance][scheduleChargeInvoice][audit-failed]', {
-      contaId: input.contaId,
-      invoiceId: input.invoiceId,
-      error: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.use_cases.schedule_charge_invoice.degraded',
+      error: error,
+      throttleMs: 60_000,
     });
   });
 
@@ -286,10 +309,11 @@ async function markAttemptFailure(input: {
         message: input.failure.message,
       },
     }).catch((error: unknown) => {
-      console.warn('[finance][scheduleChargeInvoice][reconciliation-issue-failed]', {
-        contaId: input.contaId,
-        invoiceId: input.invoiceId,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.schedule_charge_invoice.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     });
   }
@@ -322,9 +346,10 @@ async function persistAsaasInvoiceResult(input: {
         xmlUrl: input.asaasInvoice.xmlUrl ?? null,
         number: input.asaasInvoice.number ?? null,
         fiscalDivergence: false,
-        errorMessage: nextStatus === 'ERROR'
-          ? input.asaasInvoice.statusDescription ?? 'Erro na emissão'
-          : null,
+        errorMessage:
+          nextStatus === 'ERROR'
+            ? (input.asaasInvoice.statusDescription ?? 'Erro na emissão')
+            : null,
       }
     : {
         ...snapshot,
@@ -542,7 +567,8 @@ export async function scheduleChargeInvoice(
 
     const retainedPis = Number(defaultService.pis);
     const retainedCofins = Number(defaultService.cofins);
-    const operationPis = defaultService.operationPis == null ? null : Number(defaultService.operationPis);
+    const operationPis =
+      defaultService.operationPis == null ? null : Number(defaultService.operationPis);
     const operationCofins =
       defaultService.operationCofins == null ? null : Number(defaultService.operationCofins);
     const taxIssues = validateAsaasInvoiceTaxesInput({
@@ -574,7 +600,10 @@ export async function scheduleChargeInvoice(
       chargeContext.charge.cobranca?.vencimento ?? chargeContext.charge.dueDate ?? null,
       input.effectiveDate,
     );
-    const taxReformApplicable = isTaxReformApplicable({ simplesNacional: settings.simplesNacional, effectiveDate });
+    const taxReformApplicable = isTaxReformApplicable({
+      simplesNacional: settings.simplesNacional,
+      effectiveDate,
+    });
     if (taxReformApplicable) {
       const issues = validateFiscalIbsCbs(defaultService);
       if (issues.length > 0) {
@@ -602,7 +631,9 @@ export async function scheduleChargeInvoice(
     } else if (!payerReadiness.ready && payerReadiness.issues.length > 0) {
       return err({
         kind: 'VALIDATION',
-        message: payerReadiness.issues[0]?.message ?? 'Endereço do pagador incompleto para emissão de NFS-e.',
+        message:
+          payerReadiness.issues[0]?.message ??
+          'Endereço do pagador incompleto para emissão de NFS-e.',
       });
     }
 
@@ -867,7 +898,12 @@ export async function scheduleChargeInvoice(
       });
     }
   } catch (error) {
-    console.error('[finance][scheduleChargeInvoice]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.schedule_charge_invoice.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_AO_AGENDAR_INVOICE');
   }
 }

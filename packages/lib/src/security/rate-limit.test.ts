@@ -21,9 +21,10 @@ describe('strictRateLimitAsync', () => {
     const result = await strictRateLimitAsync('tenant-key', 5, 60_000);
 
     expect(result).toMatchObject({ ok: false, source: 'unavailable', degraded: true });
-    expect(errorLog).toHaveBeenCalledWith('[rate-limit][strict-unavailable]', expect.objectContaining({
-      error: 'Redis REST rate limit failed with HTTP 400 [SCRIPT_REJECTED]',
-    }));
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    const logRecord = JSON.parse(String(errorLog.mock.calls[0]?.[0])) as Record<string, unknown>;
+    expect(logRecord['event.name']).toBe('rate_limit.strict.unavailable');
+    expect(logRecord['error.type']).toBe('Error');
     const loggedDetails = JSON.stringify(errorLog.mock.calls);
     expect(loggedDetails).not.toContain('sensitive detail');
     expect(loggedDetails).not.toContain('redis-test-secret');

@@ -4,8 +4,9 @@ import { ZodError } from 'zod';
 import { WhatsAppConfigurationError } from '@alusa/whatsapp';
 import { whatsappTestMessageInputDTOSchema } from '@/features/communications/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { assertTestRecipient, assertWhatsAppConfigured, getWhatsAppRuntimeConfig } from '@/src/server/whatsapp/config';
+import { assertTestRecipient, assertWhatsAppConfigured } from '@/src/server/whatsapp/config';
 import { drainWhatsAppOutbox, enqueueWhatsAppMessage } from '@/src/server/whatsapp/outbox.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,9 +60,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: getErrorMessage(error) }, { status: 400 });
     }
 
-    console.error('[whatsapp-test] Falha ao enviar mensagem', {
-      error: error instanceof Error ? error.message : 'unknown',
-      mode: getWhatsAppRuntimeConfig().testMode,
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.whatsapp_test.send.failed',
+      route: '/api/comunicacao/whatsapp/teste',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
     });
     return NextResponse.json({ error: 'Não foi possível enviar a mensagem de teste.' }, { status: 500 });
   }

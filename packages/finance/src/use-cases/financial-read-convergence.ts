@@ -1,12 +1,9 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 
 import { mapAsaasSubscriptionStatus } from '../mappers/asaas-subscription-status';
 import { handleSubscriptionWebhook } from '../webhooks/subscription-webhook-handler';
-import {
-  getSubscription,
-  listInstallmentPayments,
-  listSubscriptionPayments,
-} from './asaas-ops';
+import { getSubscription, listInstallmentPayments, listSubscriptionPayments } from './asaas-ops';
 import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
 
 const TERMINAL_CHARGE_STATUSES = new Set(['PAID', 'CANCELED', 'REFUNDED']);
@@ -23,8 +20,10 @@ type StandaloneSubscriptionMutableDelegate = {
 };
 
 function getStandaloneSubscriptionMutableDelegate(): StandaloneSubscriptionMutableDelegate | null {
-  return ((prisma as unknown as { standaloneSubscription?: StandaloneSubscriptionMutableDelegate })
-    .standaloneSubscription ?? null);
+  return (
+    (prisma as unknown as { standaloneSubscription?: StandaloneSubscriptionMutableDelegate })
+      .standaloneSubscription ?? null
+  );
 }
 
 function buildSyntheticSubscriptionEvent(params: {
@@ -59,10 +58,11 @@ async function convergePaymentIds(params: {
         converged = true;
       }
     } catch (error) {
-      console.warn('[finance][convergePaymentIds] falha ao sincronizar payment', {
-        contaId: params.contaId,
-        asaasPaymentId,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.financial_read_convergence.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     }
   }
@@ -78,11 +78,7 @@ export async function convergeStandaloneChargesWithAsaas(params: {
   }>;
 }): Promise<boolean> {
   const pendingPaymentIds = params.charges
-    .filter(
-      (charge) =>
-        charge.asaasPaymentId &&
-        !TERMINAL_CHARGE_STATUSES.has(charge.status),
-    )
+    .filter((charge) => charge.asaasPaymentId && !TERMINAL_CHARGE_STATUSES.has(charge.status))
     .map((charge) => charge.asaasPaymentId as string);
 
   if (pendingPaymentIds.length === 0) {
@@ -119,10 +115,11 @@ export async function convergeInstallmentPlansWithAsaas(params: {
 
       converged = synced || converged;
     } catch (error) {
-      console.warn('[finance][convergeInstallmentPlansWithAsaas] falha ao reconciliar parcelamento', {
-        contaId: params.contaId,
-        installmentId,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.financial_read_convergence.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     }
   }
@@ -222,10 +219,11 @@ export async function convergeSubscriptionsWithAsaas(params: {
 
       converged = syncedPayments || converged;
     } catch (error) {
-      console.warn('[finance][convergeSubscriptionsWithAsaas] falha ao reconciliar assinatura', {
-        contaId: params.contaId,
-        asaasSubscriptionId,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.financial_read_convergence.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     }
   }

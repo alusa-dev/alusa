@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logPersonDataOperationalEvent } from '@/lib/observability/api-logger';
 import { ChargeStatus, type Prisma } from '@prisma/client';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
@@ -140,7 +141,7 @@ export async function getResponsavelRoute(_req: NextRequest, context: { params: 
 
     return NextResponse.json(dto);
   } catch (error) {
-    console.error('[GET /api/responsaveis/[id]]', error);
+    logPersonDataOperationalEvent('api.responsibles.detail.failed', error);
     return NextResponse.json({ error: 'Erro ao buscar responsável' }, { status: 500 });
   }
 }
@@ -301,7 +302,7 @@ export async function patchResponsavelRoute(req: NextRequest, context: { params:
 
     return NextResponse.json({ ...dto, asaasSync });
   } catch (error) {
-    console.error('[PATCH /api/responsaveis/[id]]', error);
+    logPersonDataOperationalEvent('api.responsibles.update.failed', error);
     return NextResponse.json({ error: 'Erro ao atualizar responsável' }, { status: 500 });
   }
 }
@@ -532,7 +533,7 @@ export async function deleteResponsavelRoute(_req: NextRequest, context: { param
         { status: 409 },
       );
     }
-    console.error('[DELETE /api/responsaveis/[id]]', error);
+    logPersonDataOperationalEvent('api.responsibles.delete.failed', error);
     return NextResponse.json({ error: 'Erro ao excluir responsável' }, { status: 500 });
   }
 }

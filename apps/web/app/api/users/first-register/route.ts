@@ -12,6 +12,7 @@ import { firstRegisterInputDTOSchema, firstRegisterResultDTOSchema } from '@/fea
 import { sendEmailVerificationForUser } from '@/lib/auth-email-flow';
 import { isExternalAsaasOnboardingRolloutEnabled } from '@/lib/feature-flags/external-asaas-onboarding';
 import { requestEvidence } from '@/lib/privacy/evidence';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 
 const schema = firstRegisterInputDTOSchema;
@@ -28,7 +29,7 @@ export async function POST(req: Request) {
   const body: unknown = await req.json();
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
-    console.error('Registration validation failed:', JSON.stringify(parsed.error.flatten(), null, 2));
+    logApiOperationalEvent({ severity: 'warn', eventName: 'api.users.request.rejected', route: '/api/users/first-register', method: 'POST', requestId: getRequestId(req), error: parsed.error });
     return NextResponse.json({ error: 'Dados inválidos', details: parsed.error.flatten() }, { status: 400 });
   }
 

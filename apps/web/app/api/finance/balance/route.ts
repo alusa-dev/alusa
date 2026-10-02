@@ -5,6 +5,7 @@ import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capabil
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { getBalance } from '@alusa/finance';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function json(status: number, body: unknown) {
@@ -32,7 +33,7 @@ export async function GET(_req: NextRequest) {
 
     return json(200, { data: result.data });
   } catch (error) {
-    console.error('[Finance Balance][GET]', error);
+    logFinanceApiError('/api/finance/balance', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

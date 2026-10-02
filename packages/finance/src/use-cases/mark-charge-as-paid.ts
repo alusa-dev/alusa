@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 /**
  * @module mark-charge-as-paid
  * @description Use-case para marcar cobrança como paga manualmente (FASE 5):
@@ -90,7 +91,9 @@ export type MarkChargeAsPaidResult =
  *    b. Sinaliza como "recebido fora do Asaas"
  * 4. Auditoria
  */
-export async function markChargeAsPaid(input: MarkChargeAsPaidInput): Promise<MarkChargeAsPaidResult> {
+export async function markChargeAsPaid(
+  input: MarkChargeAsPaidInput,
+): Promise<MarkChargeAsPaidResult> {
   const correlationId = randomUUID();
   const {
     chargeId,
@@ -238,13 +241,9 @@ export async function markChargeAsPaid(input: MarkChargeAsPaidInput): Promise<Ma
 
       // Chamar confirmCashPayment no Asaas
       try {
-        await confirmCashPayment(
-          asaasPaymentId,
-          paymentDateStr,
-          amount,
-          notifyCustomer,
-          { contaId },
-        );
+        await confirmCashPayment(asaasPaymentId, paymentDateStr, amount, notifyCustomer, {
+          contaId,
+        });
         await markPaymentCommandSent({
           jobId: command.id,
           providerStatus: asaasPayment.status,
@@ -325,24 +324,32 @@ export async function markChargeAsPaid(input: MarkChargeAsPaidInput): Promise<Ma
           trigger: 'manual_offline_payment',
         });
       } catch (fulfillError) {
-        console.error('[mark-charge-as-paid] Falha ao cumprir estoque após baixa offline', {
-          contaId,
-          chargeId: standaloneCharge.id,
-          error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
+        logFinanceOperationalEvent({
+          severity: 'error',
+          eventName: 'finance.use_cases.mark_charge_as_paid.failed',
+          error: fulfillError,
+          throttleMs: 60_000,
         });
-        await auditLogService.record({
-          contaId,
-          actor: { type: 'USER', id: userId },
-          action: 'loja.sale.fulfillment_failed',
-          entity: { type: 'Charge', id: standaloneCharge.id },
-          metadata: {
-            chargeId: standaloneCharge.id,
-            trigger: 'manual_offline_payment',
-            error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
-          },
-        }).catch((auditError) => {
-          console.error('[mark-charge-as-paid] Falha ao auditar fulfillment pendente', auditError);
-        });
+        await auditLogService
+          .record({
+            contaId,
+            actor: { type: 'USER', id: userId },
+            action: 'loja.sale.fulfillment_failed',
+            entity: { type: 'Charge', id: standaloneCharge.id },
+            metadata: {
+              chargeId: standaloneCharge.id,
+              trigger: 'manual_offline_payment',
+              error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
+            },
+          })
+          .catch((auditError) => {
+            logFinanceOperationalEvent({
+              severity: 'error',
+              eventName: 'finance.use_cases.mark_charge_as_paid.failed',
+              error: auditError,
+              throttleMs: 60_000,
+            });
+          });
       }
     }
   }
@@ -350,7 +357,9 @@ export async function markChargeAsPaid(input: MarkChargeAsPaidInput): Promise<Ma
   // 4. Auditoria
   await auditLogService.record({
     contaId,
-    action: isOffline ? 'finance.charge.marked_paid_offline' : 'finance.charge.cash_payment_requested',
+    action: isOffline
+      ? 'finance.charge.marked_paid_offline'
+      : 'finance.charge.cash_payment_requested',
     entity: { type: entityType, id: entityId },
     actor: { type: 'USER', id: userId },
     metadata: {

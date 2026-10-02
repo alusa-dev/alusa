@@ -1,8 +1,16 @@
-import { Prisma, NotificationCategory, NotificationSeverity, NotificationType, Role, type PrismaClient } from '@prisma/client';
+import {
+  Prisma,
+  NotificationCategory,
+  NotificationSeverity,
+  NotificationType,
+  Role,
+  type PrismaClient,
+} from '@prisma/client';
 import { prisma as defaultPrisma } from '@/lib/prisma';
 import { createNotification } from '@alusa/lib/services/notifications.service';
 import type { PlatformBillingEnvironment } from '@alusa/platform-billing';
 import { resolvePlatformBillingEnvironment } from './platform-billing-server';
+import { logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export type ExpirePlatformBillingGracePeriodsResult = {
   checked: number;
@@ -42,6 +50,7 @@ export async function expirePlatformBillingGracePeriods(input: {
 
   let restricted = 0;
   let notified = 0;
+  let notificationFailures = 0;
 
   for (const account of accounts) {
     const updated = await db.$transaction(async (tx) => {
@@ -147,19 +156,19 @@ export async function expirePlatformBillingGracePeriods(input: {
         recipientRoles: [Role.ADMIN, Role.FINANCEIRO],
       });
       if (notification.notificationId) notified += 1;
-    } catch (error) {
-      console.warn('[platform-billing][grace-period] notification_failed', {
-        contaId: account.contaId,
-        accountId: account.id,
-        error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
-      });
+    } catch {
+      notificationFailures += 1;
     }
+  }
 
-    console.info('[platform-billing][grace-period]', {
-      event: 'grace_period_expired',
-      contaId: account.contaId,
-      accountId: account.id,
-      environment,
+  if (notificationFailures > 0) {
+    logApiOperationalEvent({
+      severity: 'warn',
+      eventName: 'api.platform_billing.grace_period.notification_failed',
+      route: '/api/jobs/platform-billing/grace-period',
+      method: 'JOB',
+      requestId: crypto.randomUUID(),
+      itemCount: notificationFailures,
     });
   }
 

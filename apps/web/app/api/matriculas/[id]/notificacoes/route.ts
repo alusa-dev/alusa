@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import {
   getCustomerNotificationChannels,
@@ -5,9 +6,7 @@ import {
 } from '@alusa/finance';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { runWithTenant } from '@/lib/prisma-tenant';
-import {
-  updateMatriculaNotificationChannelsInputDTOSchema,
-} from '@/features/enrollments/dtos';
+import { updateMatriculaNotificationChannelsInputDTOSchema } from '@/features/enrollments/dtos';
 import { mapMatriculaNotificationChannelsResultToDTO } from '@/features/enrollments/mappers';
 import { resolveMatriculaFinancialContext } from '@/src/server/enrollments/financial-context.service';
 
@@ -27,17 +26,25 @@ async function authorizeNotifications() {
     return { response: jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.') };
   }
   if (!allowedRoles.has(String(auth.role ?? '').toUpperCase())) {
-    return { response: jsonError(403, 'SEM_PERMISSAO', 'Usuário sem permissão para configurar notificações.') };
+    return {
+      response: jsonError(
+        403,
+        'SEM_PERMISSAO',
+        'Usuário sem permissão para configurar notificações.',
+      ),
+    };
   }
   return { contaId: auth.contaId, actorId: auth.userId };
 }
 
 async function resolveFinancialCustomer(matriculaId: string, contaId: string) {
-  const context = await runWithTenant(contaId, (tx) => resolveMatriculaFinancialContext({
-    db: tx,
-    matriculaId,
-    contaId,
-  }));
+  const context = await runWithTenant(contaId, (tx) =>
+    resolveMatriculaFinancialContext({
+      db: tx,
+      matriculaId,
+      contaId,
+    }),
+  );
 
   if (!context) return null;
 
@@ -75,10 +82,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       );
     }
 
-    const snapshot = await getCustomerNotificationChannels(
-      contaId,
-      financialCustomer.customerId,
-    );
+    const snapshot = await getCustomerNotificationChannels(contaId, financialCustomer.customerId);
 
     return NextResponse.json(
       mapMatriculaNotificationChannelsResultToDTO({
@@ -94,8 +98,19 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
-    console.error('[MATRICULA_NOTIFICACOES][GET]', error);
-    return jsonError(500, 'ERRO_LISTAR_NOTIFICACOES', 'Não foi possível consultar os canais de aviso.');
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/matriculas/[id]/notificacoes',
+      method: 'GET',
+      requestId: getRequestId(_req),
+      error,
+    });
+    return jsonError(
+      500,
+      'ERRO_LISTAR_NOTIFICACOES',
+      'Não foi possível consultar os canais de aviso.',
+    );
   }
 }
 
@@ -134,10 +149,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       );
     }
 
-    const current = await getCustomerNotificationChannels(
-      contaId,
-      financialCustomer.customerId,
-    );
+    const current = await getCustomerNotificationChannels(contaId, financialCustomer.customerId);
 
     const requested = parsed.data.channels;
     const unchanged =
@@ -178,41 +190,43 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       );
     }
 
-    await runWithTenant(contaId, (tx) => tx.matriculaLog.create({
-      data: {
-        matriculaId: financialCustomer.matriculaId,
-        actorId,
-        action: 'MATRICULA_NOTIFICATION_CHANNELS_UPDATED',
-        metadata: {
-          customerId: financialCustomer.customerId,
-          payerName: financialCustomer.payerName,
-          mode: financialCustomer.mode,
-          familyGroupId: financialCustomer.familyGroupId,
-          previousChannels: {
-            email: current.email,
-            sms: current.sms,
-            whatsapp: current.whatsapp,
+    await runWithTenant(contaId, (tx) =>
+      tx.matriculaLog.create({
+        data: {
+          matriculaId: financialCustomer.matriculaId,
+          actorId,
+          action: 'MATRICULA_NOTIFICATION_CHANNELS_UPDATED',
+          metadata: {
+            customerId: financialCustomer.customerId,
+            payerName: financialCustomer.payerName,
+            mode: financialCustomer.mode,
+            familyGroupId: financialCustomer.familyGroupId,
+            previousChannels: {
+              email: current.email,
+              sms: current.sms,
+              whatsapp: current.whatsapp,
+            },
+            requestedChannels: {
+              email: requested.email,
+              sms: requested.sms,
+              whatsapp: requested.whatsapp,
+            },
+            appliedChannels: {
+              email: result.applied.email,
+              sms: result.applied.sms,
+              whatsapp: result.applied.whatsapp,
+            },
+            warnings: result.warnings.map((warning) => ({
+              notificationId: warning.notificationId,
+              event: warning.event,
+              channel: warning.channel,
+              code: warning.code,
+              message: warning.message,
+            })),
           },
-          requestedChannels: {
-            email: requested.email,
-            sms: requested.sms,
-            whatsapp: requested.whatsapp,
-          },
-          appliedChannels: {
-            email: result.applied.email,
-            sms: result.applied.sms,
-            whatsapp: result.applied.whatsapp,
-          },
-          warnings: result.warnings.map((warning) => ({
-            notificationId: warning.notificationId,
-            event: warning.event,
-            channel: warning.channel,
-            code: warning.code,
-            message: warning.message,
-          })),
         },
-      },
-    }));
+      }),
+    );
 
     return NextResponse.json(
       mapMatriculaNotificationChannelsResultToDTO({
@@ -232,7 +246,18 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
-    console.error('[MATRICULA_NOTIFICACOES][PUT]', error);
-    return jsonError(500, 'ERRO_ATUALIZAR_NOTIFICACOES', 'Não foi possível atualizar os canais de aviso.');
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/matriculas/[id]/notificacoes',
+      method: 'PUT',
+      requestId: getRequestId(req),
+      error,
+    });
+    return jsonError(
+      500,
+      'ERRO_ATUALIZAR_NOTIFICACOES',
+      'Não foi possível atualizar os canais de aviso.',
+    );
   }
 }

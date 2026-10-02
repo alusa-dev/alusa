@@ -1,8 +1,16 @@
-import { Prisma, NotificationCategory, NotificationSeverity, NotificationType, Role, type PrismaClient } from '@prisma/client';
+import {
+  Prisma,
+  NotificationCategory,
+  NotificationSeverity,
+  NotificationType,
+  Role,
+  type PrismaClient,
+} from '@prisma/client';
 import { prisma as defaultPrisma } from '@/lib/prisma';
 import { createNotification } from '@alusa/lib/services/notifications.service';
 import type { PlatformBillingEnvironment } from '@alusa/platform-billing';
 import { resolvePlatformBillingEnvironment } from './platform-billing-server';
+import { logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export type ExpirePlatformBillingTrialsResult = {
   checked: number;
@@ -48,6 +56,7 @@ export async function expirePlatformBillingTrials(input: {
 
   let restricted = 0;
   let notified = 0;
+  let notificationFailures = 0;
 
   for (const account of accounts) {
     const changed = await db.$transaction(async (tx) => {
@@ -101,7 +110,8 @@ export async function expirePlatformBillingTrials(input: {
           status: 'OPEN',
           code: 'TRIAL_EXPIRED_WITHOUT_PAYMENT',
           title: 'Período gratuito encerrado',
-          message: 'O período gratuito terminou sem uma assinatura paga. A conta entrou em acesso restrito.',
+          message:
+            'O período gratuito terminou sem uma assinatura paga. A conta entrou em acesso restrito.',
           fingerprint: `${account.id}:trial-expired`,
           details: {
             planCode: account.planCode,
@@ -116,7 +126,8 @@ export async function expirePlatformBillingTrials(input: {
           resolvedAt: null,
           ignoredAt: null,
           title: 'Período gratuito encerrado',
-          message: 'O período gratuito terminou sem uma assinatura paga. A conta entrou em acesso restrito.',
+          message:
+            'O período gratuito terminou sem uma assinatura paga. A conta entrou em acesso restrito.',
           details: {
             planCode: account.planCode,
             trialEndsAt: account.trialEndsAt?.toISOString() ?? null,
@@ -154,13 +165,20 @@ export async function expirePlatformBillingTrials(input: {
         recipientRoles: [Role.ADMIN, Role.FINANCEIRO],
       });
       if (notification.notificationId) notified += 1;
-    } catch (error) {
-      console.warn('[platform-billing][trial] notification_failed', {
-        contaId: account.contaId,
-        accountId: account.id,
-        error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
-      });
+    } catch {
+      notificationFailures += 1;
     }
+  }
+
+  if (notificationFailures > 0) {
+    logApiOperationalEvent({
+      severity: 'warn',
+      eventName: 'api.platform_billing.trial.notification_failed',
+      route: '/api/jobs/platform-billing/trial',
+      method: 'JOB',
+      requestId: crypto.randomUUID(),
+      itemCount: notificationFailures,
+    });
   }
 
   return { checked: accounts.length, restricted, notified };

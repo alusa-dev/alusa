@@ -1,3 +1,5 @@
+import { logLibOperationalEvent } from '../observability/operational-log';
+
 type Bucket = { count: number; expiresAt: number };
 export type RateLimitSource = 'redis' | 'memory' | 'bypassed' | 'unavailable';
 export type RateLimitResult = {
@@ -109,14 +111,9 @@ export function rateLimit(key: string, limit: number, windowMs: number): RateLim
 export async function rateLimitAsync(key: string, limit: number, windowMs: number) {
   if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now(), source: 'bypassed' as const, degraded: false };
   if (!redisConfig()) return rateLimit(key, limit, windowMs);
-  const startedAt = Date.now();
   try { return await distributedRateLimit(key, limit, windowMs); }
   catch (error) {
-    console.warn('[rate-limit][redis-fallback]', {
-      error: error instanceof Error ? error.message : String(error),
-      durationMs: Date.now() - startedAt,
-      timeoutMs: rateLimitRedisTimeoutMs(),
-    });
+    logLibOperationalEvent({ eventName: 'rate_limit.redis.fallback', error, severity: 'warn' });
     return { ...rateLimit(key, limit, windowMs), degraded: true };
   }
 }
@@ -130,20 +127,15 @@ export async function strictRateLimitAsync(key: string, limit: number, windowMs:
   if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now(), source: 'bypassed', degraded: false };
   if (!redisConfig()) {
     if (process.env.NODE_ENV === 'production') {
-      console.error('[rate-limit][strict-unavailable]', { reason: 'redis_not_configured' });
+      logLibOperationalEvent({ eventName: 'rate_limit.strict.unavailable', severity: 'error' });
       return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, source: 'unavailable', degraded: true };
     }
     return rateLimit(key, limit, windowMs);
   }
-  const startedAt = Date.now();
   try {
     return await distributedRateLimit(key, limit, windowMs);
   } catch (error) {
-    console.error('[rate-limit][strict-unavailable]', {
-      error: error instanceof Error ? error.message : String(error),
-      durationMs: Date.now() - startedAt,
-      timeoutMs: rateLimitRedisTimeoutMs(),
-    });
+    logLibOperationalEvent({ eventName: 'rate_limit.strict.unavailable', error, severity: 'error' });
     return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, source: 'unavailable', degraded: true };
   }
 }
@@ -151,17 +143,12 @@ export async function strictRateLimitAsync(key: string, limit: number, windowMs:
 export async function authRateLimitAsync(key: string, limit: number, windowMs: number) {
   if (isRateLimitBypassedInDev()) return { ok: true, remaining: limit, resetAt: Date.now(), source: 'bypassed' as const, degraded: false };
   if (!redisConfig()) {
-    if (process.env.NODE_ENV === 'production') { console.error('[rate-limit][auth-unavailable]', { reason: 'redis_not_configured' }); return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, source: 'unavailable' as const, degraded: true }; }
+    if (process.env.NODE_ENV === 'production') { logLibOperationalEvent({ eventName: 'rate_limit.auth.unavailable', severity: 'error' }); return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, source: 'unavailable' as const, degraded: true }; }
     return rateLimit(key, limit, windowMs);
   }
-  const startedAt = Date.now();
   try { return await distributedRateLimit(key, limit, windowMs); }
   catch (error) {
-    console.error('[rate-limit][auth-unavailable]', {
-      error: error instanceof Error ? error.message : String(error),
-      durationMs: Date.now() - startedAt,
-      timeoutMs: rateLimitRedisTimeoutMs(),
-    });
+    logLibOperationalEvent({ eventName: 'rate_limit.auth.unavailable', error, severity: 'error' });
     return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, source: 'unavailable' as const, degraded: true };
   }
 }

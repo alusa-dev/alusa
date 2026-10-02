@@ -6,6 +6,7 @@ import {
 } from '@alusa/lib/services/product-variant.service';
 import { z } from 'zod';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -37,7 +38,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const { id: productId } = await Promise.resolve(context.params);
     const variants = await listProductVariants(productId, contaId);
     return NextResponse.json({ data: variants });
-  } catch (e) {
+  } catch {
     return jsonError(500, 'ERRO_LISTAR_VARIANTES', 'Não foi possível carregar as variantes.');
   }
 }
@@ -58,7 +59,7 @@ export async function POST(req: Request, context: RouteContext) {
 
     return jsonError(422, 'ACAO_INVALIDA', 'Use { "action": "gerar" } para gerar variantes');
   } catch (e) {
-    console.error('[vendas/produtos/variantes] Falha ao gerar variantes', e);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.store_sales.product_variants.request.failed', route: '/api/vendas/produtos/[id]/variantes', method: 'POST', requestId: getRequestId(req), error: e });
     return jsonError(400, 'ERRO_GERAR_VARIANTES', publicVariantError(e));
   }
 }

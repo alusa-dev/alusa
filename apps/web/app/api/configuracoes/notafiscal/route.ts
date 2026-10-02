@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { readBoundedFormData } from '@/lib/upload-request';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
@@ -22,11 +23,17 @@ function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-export async function GET() {
+export async function GET(
+  request: Request = new Request('http://localhost/api/configuracoes/notafiscal'),
+) {
   try {
     const auth = await resolveTenantSession();
-    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
-    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    if (!auth.ok)
+      return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, {
+        error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
+      });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
@@ -37,7 +44,14 @@ export async function GET() {
     const dto = fiscalSettingsResponseSchema.parse(result.data);
     return json(200, { data: dto });
   } catch (error) {
-    console.error('[Config NotaFiscal][GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.invoice_config.request.failed',
+      route: '/api/configuracoes/notafiscal',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }
@@ -55,8 +69,12 @@ function isStructuredSaveError(error: unknown): error is SaveFiscalInvoiceSettin
 export async function PUT(request: Request) {
   try {
     const auth = await resolveTenantSession();
-    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
-    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    if (!auth.ok)
+      return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, {
+        error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
+      });
+    if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;
@@ -89,20 +107,30 @@ export async function PUT(request: Request) {
       return json(422, { error: 'PAYLOAD_INVALIDO', details: parsed.error.flatten() });
     }
 
-    const rate = await strictRateLimitAsync(`fiscal-invoice-certificate:${auth.contaId}:${auth.userId}:${ipFromRequest(request)}`, 10, 10 * 60_000);
+    const rate = await strictRateLimitAsync(
+      `fiscal-invoice-certificate:${auth.contaId}:${auth.userId}:${ipFromRequest(request)}`,
+      10,
+      10 * 60_000,
+    );
     if (!rate.ok) return json(429, { error: 'MUITAS_TENTATIVAS' });
-    const save = () => saveFiscalInvoiceSettings({
-      contaId: auth.contaId,
-      actor: { type: 'USER', id: auth.userId },
-      ...parsed.data,
-      certificateFile,
-    });
+    const save = () =>
+      saveFiscalInvoiceSettings({
+        contaId: auth.contaId,
+        actor: { type: 'USER', id: auth.userId },
+        ...parsed.data,
+        certificateFile,
+      });
     let result: Awaited<ReturnType<typeof saveFiscalInvoiceSettings>>;
     if (certificateFile) {
-      if (certificateFile.size > 3 * 1024 * 1024) return json(413, { error: 'ARQUIVO_MUITO_GRANDE' });
+      if (certificateFile.size > 3 * 1024 * 1024)
+        return json(413, { error: 'ARQUIVO_MUITO_GRANDE' });
       const quota = await withTenantUploadQuota({
-        contaId: auth.contaId, fileSize: certificateFile.size, contentType: certificateFile.type || 'application/octet-stream',
-        objectKey: `uploads/fiscal-reservations/${auth.contaId}/${randomUUID()}`, cleanup: async () => undefined, action: save,
+        contaId: auth.contaId,
+        fileSize: certificateFile.size,
+        contentType: certificateFile.type || 'application/octet-stream',
+        objectKey: `uploads/fiscal-reservations/${auth.contaId}/${randomUUID()}`,
+        cleanup: async () => undefined,
+        action: save,
       });
       if (!quota.ok) return json(413, { error: 'QUOTA_UPLOAD_EXCEDIDA' });
       result = quota.result;
@@ -140,7 +168,14 @@ export async function PUT(request: Request) {
       },
     });
   } catch (error) {
-    console.error('[Config NotaFiscal][PUT]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.invoice_config.request.failed',
+      route: '/api/configuracoes/notafiscal',
+      method: 'PUT',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

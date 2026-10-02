@@ -14,11 +14,9 @@ import {
   getPortalFinanceDetail,
   syncPortalFinanceDetail,
 } from '@/src/server/portal/portal-finance-detail.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requirePortalUser();
     if ('response' in auth) return auth.response;
@@ -38,15 +36,19 @@ export async function GET(
       portalFinanceiroDetailDTOSchema.parse(mapPortalFinanceiroDetailToDTO(detail)),
     );
   } catch (error) {
-    console.error('Erro ao buscar cobrança:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.portal.request.failed',
+      route: '/api/portal/financeiro/[id]',
+      method: 'GET',
+      requestId: getRequestId(_req),
+      error,
+    });
     return jsonNoStore({ error: 'Erro ao buscar cobrança' }, { status: 500 });
   }
 }
 
-export async function POST(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requirePortalUser();
     if ('response' in auth) return auth.response;
@@ -76,7 +78,14 @@ export async function POST(
       appliedEvent: result.appliedEvent,
     });
   } catch (error) {
-    console.error('[Portal Financeiro][sync-asaas] Erro:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.portal.request.failed',
+      route: '/api/portal/financeiro/[id]',
+      method: 'POST',
+      requestId: getRequestId(_req),
+      error,
+    });
     return jsonNoStore({ success: false, error: 'Erro ao sincronizar cobrança' }, { status: 500 });
   }
 }

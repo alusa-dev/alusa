@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { listFinancialTransactions as asaasListFinancialTransactions } from '@alusa/asaas';
 import { loadAsaasCredentials, prisma } from '@alusa/database';
 import type { Result } from '@alusa/shared';
@@ -13,9 +14,7 @@ import type {
 import { mapToLedgerEntry } from '../mappers/ledger.mapper';
 import { enrichLedgerEntries } from '../services/ledger-enrichment.service';
 
-export type GetExtratoError =
-  | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
-  | 'ERRO_AO_LISTAR_EXTRATO';
+export type GetExtratoError = 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' | 'ERRO_AO_LISTAR_EXTRATO';
 
 export interface GetExtratoInput {
   contaId: string;
@@ -46,18 +45,22 @@ export async function getExtrato(
     // O extrato continua derivado exclusivamente do ledger oficial. O snapshot
     // local apenas evita refetch agressivo da mesma janela operacional.
     const cached = await readSnapshotWindow(input.contaId, query);
-    const fetched = cached ?? await fetchAllEntriesForPeriod(
-      credentials.apiKey,
-      query.startDate,
-      query.endDate,
-      query.direction,
-    );
+    const fetched =
+      cached ??
+      (await fetchAllEntriesForPeriod(
+        credentials.apiKey,
+        query.startDate,
+        query.endDate,
+        query.direction,
+      ));
 
     if (!cached) {
       await persistSnapshotWindow(input.contaId, query, fetched).catch((error) => {
-        console.warn('[finance.extrato] Falha ao persistir snapshot do ledger', {
-          contaId: input.contaId,
-          error: error instanceof Error ? error.message : 'unknown',
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.get_extrato.degraded',
+          error: error,
+          throttleMs: 60_000,
         });
       });
     }
@@ -189,52 +192,56 @@ async function persistSnapshotWindow(
 
   for (let offset = 0; offset < fetched.entries.length; offset += 100) {
     const chunk = fetched.entries.slice(offset, offset + 100);
-    await prisma.$transaction(chunk.map((entry) => prisma.financialTransactionSnapshot.upsert({
-      where: {
-        uq_fin_tx_snapshot_conta_asaas: {
-          contaId,
-          asaasTransactionId: entry.id,
-        },
-      },
-      create: {
-        contaId,
-        asaasTransactionId: entry.id,
-        value: entry.value,
-        balance: entry.balance,
-        type: entry.type,
-        date: parseLedgerDate(entry.date) ?? now,
-        description: entry.description,
-        externalReference: entry.externalReference ?? null,
-        paymentId: entry.paymentId ?? null,
-        splitId: entry.splitId ?? null,
-        transferId: entry.transferId ?? null,
-        anticipationId: entry.anticipationId ?? null,
-        billId: entry.billId ?? null,
-        invoiceId: entry.invoiceId ?? null,
-        paymentDunningId: entry.paymentDunningId ?? null,
-        creditBureauReportId: entry.creditBureauReportId ?? null,
-        raw: entry as unknown as object,
-        fetchedAt: now,
-      },
-      update: {
-        value: entry.value,
-        balance: entry.balance,
-        type: entry.type,
-        date: parseLedgerDate(entry.date) ?? now,
-        description: entry.description,
-        externalReference: entry.externalReference ?? null,
-        paymentId: entry.paymentId ?? null,
-        splitId: entry.splitId ?? null,
-        transferId: entry.transferId ?? null,
-        anticipationId: entry.anticipationId ?? null,
-        billId: entry.billId ?? null,
-        invoiceId: entry.invoiceId ?? null,
-        paymentDunningId: entry.paymentDunningId ?? null,
-        creditBureauReportId: entry.creditBureauReportId ?? null,
-        raw: entry as unknown as object,
-        fetchedAt: now,
-      },
-    })));
+    await prisma.$transaction(
+      chunk.map((entry) =>
+        prisma.financialTransactionSnapshot.upsert({
+          where: {
+            uq_fin_tx_snapshot_conta_asaas: {
+              contaId,
+              asaasTransactionId: entry.id,
+            },
+          },
+          create: {
+            contaId,
+            asaasTransactionId: entry.id,
+            value: entry.value,
+            balance: entry.balance,
+            type: entry.type,
+            date: parseLedgerDate(entry.date) ?? now,
+            description: entry.description,
+            externalReference: entry.externalReference ?? null,
+            paymentId: entry.paymentId ?? null,
+            splitId: entry.splitId ?? null,
+            transferId: entry.transferId ?? null,
+            anticipationId: entry.anticipationId ?? null,
+            billId: entry.billId ?? null,
+            invoiceId: entry.invoiceId ?? null,
+            paymentDunningId: entry.paymentDunningId ?? null,
+            creditBureauReportId: entry.creditBureauReportId ?? null,
+            raw: entry as unknown as object,
+            fetchedAt: now,
+          },
+          update: {
+            value: entry.value,
+            balance: entry.balance,
+            type: entry.type,
+            date: parseLedgerDate(entry.date) ?? now,
+            description: entry.description,
+            externalReference: entry.externalReference ?? null,
+            paymentId: entry.paymentId ?? null,
+            splitId: entry.splitId ?? null,
+            transferId: entry.transferId ?? null,
+            anticipationId: entry.anticipationId ?? null,
+            billId: entry.billId ?? null,
+            invoiceId: entry.invoiceId ?? null,
+            paymentDunningId: entry.paymentDunningId ?? null,
+            creditBureauReportId: entry.creditBureauReportId ?? null,
+            raw: entry as unknown as object,
+            fetchedAt: now,
+          },
+        }),
+      ),
+    );
   }
 
   await prisma.financialTransactionSyncWindow.upsert({
@@ -313,7 +320,9 @@ function buildSnapshotWindowKey(query: ExtratoQueryInput): string {
 }
 
 function getSnapshotTtlMs(): number {
-  const seconds = Number(process.env.FINANCE_EXTRATO_SNAPSHOT_TTL_SECONDS ?? DEFAULT_SNAPSHOT_TTL_SECONDS);
+  const seconds = Number(
+    process.env.FINANCE_EXTRATO_SNAPSHOT_TTL_SECONDS ?? DEFAULT_SNAPSHOT_TTL_SECONDS,
+  );
   return (Number.isFinite(seconds) && seconds > 0 ? seconds : DEFAULT_SNAPSHOT_TTL_SECONDS) * 1000;
 }
 
@@ -364,10 +373,7 @@ async function fetchAllEntriesForPeriod(
   };
 }
 
-function applyLocalFilters(
-  entries: LedgerEntry[],
-  query: ExtratoQueryInput,
-): LedgerEntry[] {
+function applyLocalFilters(entries: LedgerEntry[], query: ExtratoQueryInput): LedgerEntry[] {
   let result = entries;
 
   if (query.type && query.type.length > 0) {
@@ -382,20 +388,21 @@ function applyLocalFilters(
 
   if (query.search) {
     const term = query.search.toLowerCase();
-    result = result.filter((e) =>
-      e.description.toLowerCase().includes(term)
-      || (e.chargeName && e.chargeName.toLowerCase().includes(term))
-      || (e.customerName && e.customerName.toLowerCase().includes(term))
-      || (e.paymentId && e.paymentId.toLowerCase().includes(term))
-      || (e.transferId && e.transferId.toLowerCase().includes(term))
-      || (e.invoiceId && e.invoiceId.toLowerCase().includes(term))
-      || (e.billId && e.billId.toLowerCase().includes(term))
-      || (e.paymentDunningId && e.paymentDunningId.toLowerCase().includes(term))
-      || (e.creditBureauReportId && e.creditBureauReportId.toLowerCase().includes(term))
-      || (e.externalReference && e.externalReference.toLowerCase().includes(term))
-      || (e.metadata?.transferExternalReference
-        && e.metadata.transferExternalReference.toLowerCase().includes(term))
-      || false,
+    result = result.filter(
+      (e) =>
+        e.description.toLowerCase().includes(term) ||
+        (e.chargeName && e.chargeName.toLowerCase().includes(term)) ||
+        (e.customerName && e.customerName.toLowerCase().includes(term)) ||
+        (e.paymentId && e.paymentId.toLowerCase().includes(term)) ||
+        (e.transferId && e.transferId.toLowerCase().includes(term)) ||
+        (e.invoiceId && e.invoiceId.toLowerCase().includes(term)) ||
+        (e.billId && e.billId.toLowerCase().includes(term)) ||
+        (e.paymentDunningId && e.paymentDunningId.toLowerCase().includes(term)) ||
+        (e.creditBureauReportId && e.creditBureauReportId.toLowerCase().includes(term)) ||
+        (e.externalReference && e.externalReference.toLowerCase().includes(term)) ||
+        (e.metadata?.transferExternalReference &&
+          e.metadata.transferExternalReference.toLowerCase().includes(term)) ||
+        false,
     );
   }
 
@@ -437,11 +444,7 @@ function computeSummary(entries: LedgerEntry[]): ExtratoSummary {
   };
 }
 
-function applySort(
-  entries: LedgerEntry[],
-  sort: string,
-  direction: 'asc' | 'desc',
-): LedgerEntry[] {
+function applySort(entries: LedgerEntry[], sort: string, direction: 'asc' | 'desc'): LedgerEntry[] {
   const sorted = [...entries];
   const dir = direction === 'asc' ? 1 : -1;
 

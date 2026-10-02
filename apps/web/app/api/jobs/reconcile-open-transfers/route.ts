@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { listAccountsWithOpenTransfers, reconcileOpenTransfers } from '@alusa/finance';
 
@@ -18,6 +19,7 @@ function jsonError(status: number, code: string, message: string) {
  * Reconsulta transferências abertas no Asaas fora do caminho de leitura da UI.
  */
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const query = reconcileOpenTransfersJobQueryDTOSchema.parse({
@@ -60,7 +62,7 @@ async function run(req: Request) {
       results,
     });
   } catch (error) {
-    console.error('[Job Reconcile Open Transfers] Erro:', error);
+    logJobFailure('reconcile-open-transfers', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconciliar as transferências abertas.');
   }
 }

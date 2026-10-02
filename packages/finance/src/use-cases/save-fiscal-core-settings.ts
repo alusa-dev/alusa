@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
@@ -147,7 +148,12 @@ export async function saveFiscalCoreSettings(
       issues: readiness.issues,
     });
   } catch (error) {
-    console.error('[finance][saveFiscalCoreSettings]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.save_fiscal_core_settings.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     if (error instanceof AsaasHttpError) {
       return err(asaasFailure(error));
     }

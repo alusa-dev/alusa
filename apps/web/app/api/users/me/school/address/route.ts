@@ -3,8 +3,9 @@ import { jsonNoStore } from '@/lib/http-security';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getSchoolAddress, updateSchoolAddress } from '@/src/server/users/user-account.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 });
@@ -23,7 +24,7 @@ export async function GET() {
       }),
     );
   } catch (error) {
-    console.error('Error reading school address:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me/school/address', method: 'GET', requestId: getRequestId(req), error });
     return jsonNoStore({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -62,7 +63,7 @@ export async function PATCH(req: Request) {
       }),
     );
   } catch (error) {
-    console.error('Error updating school address:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me/school/address', method: 'PATCH', requestId: getRequestId(req), error });
     const msg = (error as Error)?.message || '';
     if (/Unknown arg|Unknown field|column .* does not exist/i.test(msg)) {
       return jsonNoStore(

@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import {
   reconcileAsaasCustomerSnapshots,
@@ -20,6 +21,7 @@ function clampPositiveInt(value: string | null, fallback: number, max: number) {
 }
 
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -50,7 +52,7 @@ async function run(req: Request) {
       addresses,
     });
   } catch (error) {
-    console.error('[Job Reconcile Asaas Customers] Erro:', error);
+    logJobFailure('reconcile-asaas-customers', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconciliar os clientes financeiros.');
   }
 }

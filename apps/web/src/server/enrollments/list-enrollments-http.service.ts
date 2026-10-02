@@ -1,3 +1,4 @@
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
 import { StatusMatricula } from '@prisma/client';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { apiJsonError } from '@/lib/api/standard-response';
@@ -76,7 +77,7 @@ export async function listMatriculasHttp(req: Request) {
     });
     return { kind: 'OK' as const, data: mapListMatriculasResultToDTO(result) };
   } catch (error) {
-    console.error('Erro ao listar matrículas:', error);
+    logEnrollmentOperationalEvent('api.enrollment.list.failed', error);
     return errorResult(500, 'ERRO_LISTAR_MATRICULAS', 'Não foi possível listar as matrículas.');
   }
 }

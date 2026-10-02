@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { logPersonDataOperationalEvent } from '@/lib/observability/api-logger';
 
 import { getTenantInstallmentPaymentBook } from '@alusa/finance';
 import { eventParticipantScalarSelect, type EventsContext } from '@alusa/lib/events/events.service';
@@ -293,11 +294,7 @@ export async function generateEventPaymentBook(input: {
       const pdfUrl = await getTenantInstallmentPaymentBook(input.ctx.contaId, plan.asaasInstallmentId);
       if (pdfUrl) return { kind: 'redirect', url: pdfUrl };
     } catch (error) {
-      console.error('[payment-book][get] Failed to fetch provider payment book', {
-        contaId: input.ctx.contaId,
-        participantId: input.participantId,
-        error: error instanceof Error ? error.message : 'provider_payment_book_failed',
-      });
+      logPersonDataOperationalEvent('api.events.payment_book.provider_failed', error, 'warn');
     }
   }
 

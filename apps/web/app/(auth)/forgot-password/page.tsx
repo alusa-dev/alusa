@@ -5,7 +5,7 @@ import { Mail } from '@/components/icons/icons';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import AuthPageContainer from '@/components/auth/AuthPageContainer';
-import { debugLog, isAuthDebug } from '@/lib/debug-logger';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import AuthShell from '@/components/auth/AuthShell';
 
 export default function ForgotPasswordPage() {
@@ -28,7 +28,6 @@ export default function ForgotPasswordPage() {
     if (loading) return;
     setLoading(true);
     try {
-      if (isAuthDebug) debugLog('forgot-password', 'request', { email });
       const res = await fetch('/api/auth/forgot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -37,7 +36,7 @@ export default function ForgotPasswordPage() {
 
       if (res.status === 501) {
         const body = await safeParse(res);
-        if (isAuthDebug) debugLog('forgot-password', 'unavailable', { status: res.status });
+        logClientOperationalEvent('auth.password_reset.request_failed');
         toast.custom((t) => (
           <CustomToast
             variant="error"
@@ -47,7 +46,6 @@ export default function ForgotPasswordPage() {
           />
         ));
       } else if (res.ok) {
-        if (isAuthDebug) debugLog('forgot-password', 'success');
         toast.custom((t) => (
           <CustomToast
             variant="info"
@@ -57,7 +55,7 @@ export default function ForgotPasswordPage() {
           />
         ));
       } else {
-        if (isAuthDebug) debugLog('forgot-password', 'error', { status: res.status });
+        logClientOperationalEvent('auth.password_reset.request_failed');
         toast.custom((t) => (
           <CustomToast
             variant="error"
@@ -67,8 +65,8 @@ export default function ForgotPasswordPage() {
           />
         ));
       }
-    } catch {
-      if (isAuthDebug) debugLog('forgot-password', 'network-error');
+    } catch (error) {
+      logClientOperationalEvent('auth.password_reset.request_failed', error);
       toast.custom((t) => (
         <CustomToast
           variant="error"

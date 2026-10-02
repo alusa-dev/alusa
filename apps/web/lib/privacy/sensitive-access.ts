@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 
 import { requestEvidence } from '@/lib/privacy/evidence';
+import { logRuntimeOperationalEvent } from '@/lib/observability/runtime-operational-log';
 
 type SensitiveAccessRole = string | null | undefined;
 
@@ -80,11 +81,6 @@ export async function auditSensitiveAccess(input: AuditSensitiveAccessInput) {
       },
     });
   } catch (error) {
-    console.error('[privacy][sensitive-access] audit failed', {
-      action: input.action,
-      entityType: input.entityType,
-      entityId: input.entityId,
-      error: error instanceof Error ? error.message : 'unknown',
-    });
+    logRuntimeOperationalEvent({ eventName: 'privacy.sensitive_access.audit_failed', error });
   }
 }

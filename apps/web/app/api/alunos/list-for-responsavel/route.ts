@@ -1,10 +1,13 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { listAlunosForResponsavelResultDTOSchema } from '@/features/students/dtos';
 import { mapAlunoForResponsavelToDTO } from '@/features/students/mappers';
 import { listAvailableStudentsForResponsible } from '@/src/server/students/available-for-responsible.service';
 
-export async function GET() {
+export async function GET(
+  request: Request = new Request('http://localhost/api/alunos/list-for-responsavel'),
+) {
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) {
@@ -35,7 +38,14 @@ export async function GET() {
       }),
     );
   } catch (error) {
-    console.error('[alunos/list-for-responsavel] Error:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/alunos/list-for-responsavel',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return NextResponse.json({ error: 'Erro ao buscar alunos' }, { status: 500 });
   }
 }

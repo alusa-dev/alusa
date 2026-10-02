@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../../foundation/operational-log';
 /**
  * KYC Reconciliation Service
  *
@@ -16,8 +17,7 @@
  * - Auditável: toda correção é registrada
  */
 
-import {
-} from '@alusa/asaas';
+import {} from '@alusa/asaas';
 import { loadAsaasCredentials, prisma } from '@alusa/database';
 
 import { auditLogService } from '../../foundation/audit-log.service';
@@ -74,9 +74,7 @@ export async function reconcileKycModels(opts?: {
   const accounts = await prisma.asaasAccount.findMany({
     where: {
       asaasAccountId: { not: null },
-      ...(opts?.contaId
-        ? { financeProfile: { contaId: opts.contaId } }
-        : {}),
+      ...(opts?.contaId ? { financeProfile: { contaId: opts.contaId } } : {}),
     },
     select: {
       id: true,
@@ -138,14 +136,6 @@ export async function reconcileKycModels(opts?: {
     }
   }
 
-  console.info('[kyc-reconciliation] Reconciliação concluída', {
-    checkedAccounts: result.checkedAccounts,
-    inconsistenciesFound: result.inconsistenciesFound,
-    reconciled: result.reconciled,
-    errors: result.errors.length,
-    dryRun,
-  });
-
   return result;
 }
 
@@ -182,7 +172,9 @@ async function detectKycInconsistencies(
   // Zero UUID em processo terminal
   for (const req of kycProcess.requirements) {
     if (req.groupId === ZERO_UUID && isTerminal) {
-      issues.push(`KycRequirement(${req.id}) com groupId=ZERO_UUID em processo ${kycProcess.status}`);
+      issues.push(
+        `KycRequirement(${req.id}) com groupId=ZERO_UUID em processo ${kycProcess.status}`,
+      );
     }
 
     // Slot NOT_SENT em processo APPROVED
@@ -228,8 +220,14 @@ async function reconcileSingleAccount(
 
   try {
     const [myAccountStatus, documents] = await Promise.all([
-      getMyAccountStatusCached({ apiKey: creds.apiKey }, { forceRefresh: true, intent: 'RECONCILIATION' }),
-      getMyAccountDocumentsCached({ apiKey: creds.apiKey }, { forceRefresh: true, intent: 'RECONCILIATION' }),
+      getMyAccountStatusCached(
+        { apiKey: creds.apiKey },
+        { forceRefresh: true, intent: 'RECONCILIATION' },
+      ),
+      getMyAccountDocumentsCached(
+        { apiKey: creds.apiKey },
+        { forceRefresh: true, intent: 'RECONCILIATION' },
+      ),
     ]);
 
     // Re-sync completo de modelos KYC com dados fresh
@@ -269,10 +267,11 @@ async function reconcileSingleAccount(
 
     return true;
   } catch (err) {
-    console.warn('[kyc-reconciliation] Falha ao reconciliar', {
-      contaId,
-      asaasAccountId,
-      error: err instanceof Error ? err.message : String(err),
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.use_cases.kyc.kyc_reconciliation_service.degraded',
+      error: err,
+      throttleMs: 60_000,
     });
     return false;
   }

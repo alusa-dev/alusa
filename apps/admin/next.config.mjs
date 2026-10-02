@@ -8,10 +8,12 @@ const workspaceRoot = resolve(appDir, '../..');
 const nextConfig = {
   output: 'standalone',
   poweredByHeader: false,
-  transpilePackages: ['@alusa/admin-auth', '@alusa/database', '@alusa/lib'],
+  transpilePackages: ['@alusa/observability', '@alusa/admin-auth', '@alusa/database', '@alusa/lib'],
   turbopack: {
     root: workspaceRoot,
     resolveAlias: {
+      '@alusa/observability': '../../packages/observability/src/index.ts',
+      '@alusa/observability/*': '../../packages/observability/src/*.ts',
       '@alusa/admin-auth': '../../packages/admin-auth/src/index.ts',
       '@alusa/admin-auth/*': '../../packages/admin-auth/src/*.ts',
       '@alusa/database': '../../packages/database/src/index.ts',
@@ -29,6 +31,8 @@ const nextConfig = {
     };
     config.resolve.alias = {
       ...config.resolve.alias,
+      '@alusa/observability$': resolve(workspaceRoot, 'packages/observability/src/index.ts'),
+      '@alusa/observability': resolve(workspaceRoot, 'packages/observability/src/index.ts'),
       '@alusa/database$': resolve(workspaceRoot, 'packages/database/src/index.ts'),
       '@alusa/database': resolve(workspaceRoot, 'packages/database/src/index.ts'),
       '@alusa/finance$': resolve(workspaceRoot, 'packages/finance/dist/index.js'),

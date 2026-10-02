@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -32,7 +33,7 @@ export function ContratoVisualizarFeature({ contratoId }: ContratoVisualizarFeat
       .then(setContrato)
       .catch((err) => {
         toast.error('Erro ao carregar contrato');
-        console.error(err);
+        logClientOperationalEvent('contracts.preview.load_failed', err);
       })
       .finally(() => setLoading(false));
   }, [contratoId]);

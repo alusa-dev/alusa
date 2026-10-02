@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { getUnreadNotificationCount } from '@alusa/lib/services/notifications.service';
 import { NextResponse } from 'next/server';
 
@@ -42,7 +43,14 @@ export async function GET(request: Request) {
     const count = await getUnreadNotificationCount({ contaId: actor.contaId, userId: actor.userId });
     return response({ count });
   } catch (error) {
-    console.error('[api/mobile/notifications][unread-count]', error instanceof Error ? error.message : String(error));
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/notifications/unread-count',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível consultar as notificações.' } }, 500);
   }
 }

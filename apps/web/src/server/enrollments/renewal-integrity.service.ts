@@ -1,3 +1,4 @@
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
 import {
   NotificationCategory,
   NotificationSeverity,
@@ -81,11 +82,7 @@ async function notifyCapacityIssue(
       actor: { type: 'SYSTEM', id: null },
     });
   } catch (error) {
-    console.warn('[RenewalIntegrity] Falha ao criar alerta operacional de capacidade', {
-      contaId: input.contaId,
-      code: input.issue.code,
-      message: error instanceof Error ? error.message : String(error),
-    });
+    logEnrollmentOperationalEvent('api.enrollment.capacity_alert.failed', error, { severity: 'warn' });
   }
 }
 

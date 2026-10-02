@@ -10,6 +10,7 @@
 
 import { prisma } from '@alusa/database';
 import type { Prisma } from '@prisma/client';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -177,10 +178,10 @@ export async function requeueDlqWebhooks(
     },
   });
 
-  console.info('[dlq-admin] Webhooks reenfileirados', {
-    contaId,
-    requeued: result.count,
-    ids: validIds,
+  logFinanceOperationalEvent({
+    severity: 'info',
+    eventName: 'finance.webhook.dlq.requeued',
+    itemCount: result.count,
   });
 
   return {

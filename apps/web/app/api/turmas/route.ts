@@ -4,6 +4,7 @@ import { createTurma, listTurmas } from '@alusa/lib/services/turma.service';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 import { apiErrorResponse } from '@/lib/api/report-api-error';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -51,9 +52,9 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const requestId = getRequestId(req);
   try {
     const json = await req.json();
-    console.log('[API /turmas] Payload recebido:', JSON.stringify(json, null, 2));
 
     const tenant = await resolveTenantSession(
       typeof json?.contaId === 'string' ? json.contaId : null,
@@ -70,17 +71,14 @@ export async function POST(req: Request) {
     const contaId = tenant.contaId;
     const parsed = turmaSchema.safeParse({ ...json, contaId });
     if (!parsed.success) {
-      console.error('[API /turmas] Erro de validação schema:', parsed.error.flatten());
       // Normaliza issues: array de { path, message }
       const issues = parsed.error.issues.map((i) => ({ path: i.path, message: i.message }));
       return apiError(422, 'VALIDACAO', 'Falha de validação', issues);
     }
     await assertPlatformAccessForConta({ contaId, capability: 'CLASS_WRITE' });
 
-    console.log('[API /turmas] Dados validados, tentando criar turma...');
     try {
       const turma = await createTurma({ ...parsed.data, contaId });
-      console.log('[API /turmas] Turma criada com sucesso:', turma.id);
       return NextResponse.json({ data: turma }, { status: 201 });
     } catch (err: unknown) {
       const msg = (err as Error).message || 'Erro desconhecido';
@@ -100,11 +98,25 @@ export async function POST(req: Request) {
       else if (/Idade mínima não pode ser maior/i.test(msg)) code = 'IDADE_INVALIDA';
       else if (/Já existe uma turma/i.test(msg)) code = 'DUPLICIDADE_NOME';
       else status = 400; // Erro genérico inesperado
-      console.error('[API /turmas] Falha ao criar turma:', { code, msg, raw: err });
+      logApiOperationalEvent({
+        severity: 'error',
+        eventName: 'api.classes.create.failed',
+        route: '/api/turmas',
+        method: 'POST',
+        requestId,
+        error: err,
+      });
       return apiError(status, code, msg);
     }
   } catch (e: unknown) {
-    console.error('[API /turmas] Erro ao parsear JSON:', e);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.classes.create.failed',
+      route: '/api/turmas',
+      method: 'POST',
+      requestId,
+      error: e,
+    });
     return apiError(400, 'REQUISICAO_INVALIDA', (e as Error).message);
   }
 }

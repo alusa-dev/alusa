@@ -237,7 +237,6 @@ export async function verifyCredentialsDetailed(
     if (!user) {
       // Equaliza o custo do caminho "usuário inexistente" para reduzir enumeração por timing.
       await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
-      if (process.env.AUTH_DEBUG === 'true') console.debug('[auth] user not found', { email: inputEmail });
       return { ok: false, reason: 'USER_NOT_FOUND' };
     }
 
@@ -245,15 +244,12 @@ export async function verifyCredentialsDetailed(
     let ok = await bcrypt.compare(password + pepper, user.senhaHash);
     if (!ok && process.env.NODE_ENV !== 'production') {
       ok = await bcrypt.compare(password, user.senhaHash);
-      if (process.env.AUTH_DEBUG === 'true') console.debug('[auth] pepper mismatch? tried without pepper', { email: inputEmail, ok });
     }
 
     if (user.status && String(user.status).toUpperCase() !== 'ATIVO') {
-      if (process.env.AUTH_DEBUG === 'true') console.debug('[auth] user inactive', { email: inputEmail, status: (user as unknown as { status?: string }).status });
       return { ok: false, reason: 'USER_INACTIVE' };
     }
     if (!ok) {
-      if (process.env.AUTH_DEBUG === 'true') console.debug('[auth] invalid password', { email: inputEmail });
       return { ok: false, reason: 'INVALID_PASSWORD' };
     }
 
@@ -264,13 +260,6 @@ export async function verifyCredentialsDetailed(
       legacyRole: user.role,
     });
     if (!access.ok) {
-      if (process.env.AUTH_DEBUG === 'true') {
-        console.debug('[auth] conta access unavailable', {
-          email: inputEmail,
-          contaId: preferredContaId ?? user.contaId,
-          reason: access.reason,
-        });
-      }
       return { ok: false, reason: access.reason };
     }
 

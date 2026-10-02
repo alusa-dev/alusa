@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 
 import {
@@ -34,7 +35,14 @@ export async function GET(request: Request) {
   } catch (error) {
     if (error instanceof MobileAgendaUnauthorizedError) return response({ error: { code: 'UNAUTHORIZED', message: 'Sessão inválida.' } }, 401);
     if (error instanceof MobileAgendaForbiddenError) return response({ error: { code: 'FORBIDDEN', message: error.message } }, 403);
-    console.error('[mobile-agenda][resources]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/agenda/resources',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível carregar os filtros da agenda.' } }, 500);
   }
 }

@@ -5,6 +5,7 @@ import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capabil
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { cancelTransfer } from '@alusa/finance';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function json(status: number, body: unknown) {
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ transferId
 
     return json(200, { data: result.data });
   } catch (error) {
-    console.error('[Finance Transfers Cancel][POST]', error);
+    logFinanceApiError('/api/finance/transfers/[id]/cancel', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

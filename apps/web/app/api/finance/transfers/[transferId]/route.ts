@@ -8,6 +8,7 @@ import {
   mapTransferDetailOutputToDTO,
 } from '@alusa/finance';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function json(status: number, body: unknown) {
@@ -42,7 +43,7 @@ export async function GET(_req: NextRequest, context: { params: Promise<{ transf
       return json(404, { error: 'TRANSFER_NAO_ENCONTRADA' });
     }
 
-    console.error('[Finance Transfer Detail][GET]', error);
+    logFinanceApiError('/api/finance/transfers/[id]', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

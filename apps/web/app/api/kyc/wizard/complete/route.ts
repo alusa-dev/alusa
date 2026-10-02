@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { completeWizard } from '@alusa/finance';
@@ -18,29 +19,32 @@ async function resolveAuth(): Promise<SessionUser | null> {
  * Finaliza o wizard de onboarding e enfileira (ou reaproveita) provisionamento da subconta Asaas no white-label.
  * Com `QUEUED`, a conta segue em FINANCE_ONBOARDING_STARTED até o job criar subconta + chave; ver `apps/web/vercel.json` crons.
  */
-export async function POST() {
+export async function POST(
+  request: Request = new Request('http://localhost/api/kyc/wizard/complete'),
+) {
   try {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || user.role.toUpperCase() !== 'ADMIN') return json(403, { error: 'SEM_PERMISSAO' });
+    if (!user.role || user.role.toUpperCase() !== 'ADMIN')
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const result = await completeWizard({
       contaId: user.contaId,
       actor: { type: 'USER', id: user.id },
     });
 
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('[Finance Wizard][Complete][POST] Result:', {
-        success: result.success,
-        canCreateSubaccount: result.canCreateSubaccount,
-        asaasAccountId: result.asaasAccountId,
-        error: result.error
-      });
-    }
-
-    return json(result.success && result.provisioningStatus === 'QUEUED' ? 202 : 200, { data: result });
+    return json(result.success && result.provisioningStatus === 'QUEUED' ? 202 : 200, {
+      data: result,
+    });
   } catch (error) {
-    console.error('[Finance Wizard][Complete][POST]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.kyc.request.failed',
+      route: '/api/kyc/wizard/complete',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, {
       error: 'ERRO_INTERNO',
       details: undefined,

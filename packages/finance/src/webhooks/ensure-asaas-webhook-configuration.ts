@@ -13,6 +13,7 @@ import { prisma } from '@alusa/database';
 import type { AuditActorType } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import {
   buildExpectedWebhookConfig,
   buildRecommendedWebhookName,
@@ -188,9 +189,10 @@ async function removeOwnedDuplicatesBestEffort(params: {
       await deleteWebhook({ apiKey: params.apiKey, webhookId: webhook.id });
       removed.push(webhook.id);
     } catch (error) {
-      console.warn('[asaas.webhook] Falha não bloqueante ao remover webhook duplicado', {
-        webhookId: webhook.id,
-        error: error instanceof Error ? error.message : 'unknown',
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.webhook.configuration.duplicate_removal.failed',
+        error,
       });
     }
   }

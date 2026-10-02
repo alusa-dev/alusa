@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
@@ -28,7 +29,14 @@ export async function GET(
       );
     }
 
-    console.error('[PAUSA_RESUMO] Erro inesperado:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/matriculas/[id]/pausa-resumo',
+      method: 'GET',
+      requestId: getRequestId(_request),
+      error,
+    });
     return NextResponse.json(
       { error: 'INTERNAL_ERROR', message: 'Erro interno do servidor' },
       { status: 500 },

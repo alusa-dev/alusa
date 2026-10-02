@@ -252,6 +252,7 @@
   "dependencies": {
     "@alusa/database": "workspace:*",
     "@alusa/domain": "workspace:*",
+    "@alusa/observability": "workspace:^",
     "@alusa/shared": "workspace:*",
     "@aws-sdk/client-s3": "^3.1107.0",
     "@prisma/client": "5.18.0",

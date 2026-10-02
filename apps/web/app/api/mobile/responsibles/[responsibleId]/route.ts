@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 
 import {
@@ -34,7 +35,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ resp
   } catch (error) {
     if (error instanceof MobileResponsibleUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
     if (error instanceof MobileResponsibleNotFoundError) return response({ error: { code: 'NOT_FOUND', message: 'Responsável não encontrado.' } }, 404);
-    console.error('[mobile-responsibles][detail]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/responsibles/[responsibleId]',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível carregar os dados do responsável.' } }, 500);
   }
 }
@@ -51,7 +59,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ re
     if (error instanceof MobileResponsibleUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
     if (error instanceof MobileResponsibleNotFoundError) return response({ error: { code: 'NOT_FOUND', message: 'Responsável não encontrado.' } }, 404);
     if (error instanceof Error && (error.name === 'ZodError' || error.message.includes('campo válido'))) return response({ error: { code: 'INVALID_INPUT', message: 'Confira os dados informados para o responsável.' } }, 422);
-    console.error('[mobile-responsibles][update]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/responsibles/[responsibleId]',
+      method: 'PATCH',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível salvar os dados do responsável.' } }, 500);
   }
 }
@@ -67,7 +82,14 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ r
     if (error instanceof MobileResponsibleUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
     if (error instanceof MobileResponsibleNotFoundError) return response({ error: { code: 'NOT_FOUND', message: 'Responsável não encontrado.' } }, 404);
     if (error instanceof Error && error.message.startsWith('Não é possível excluir')) return response({ error: { code: 'CONFLICT', message: 'Não é possível excluir este responsável enquanto houver vínculos ativos.' } }, 409);
-    console.error('[mobile-responsibles][delete]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/responsibles/[responsibleId]',
+      method: 'DELETE',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível excluir o responsável.' } }, 500);
   }
 }

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import { reenviarCobrancaMatricula } from '../services/enrollment-actions-service';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 
 export function useResendCharge() {
   const [loading, setLoading] = useState(false);
@@ -50,8 +51,7 @@ export function useResendCharge() {
           ),
           { duration: 5000 },
         );
-      } catch (clipboardError) {
-        console.warn('[useResendCharge] Erro ao copiar:', clipboardError);
+      } catch {
         toast.custom(
           (t) => (
             <CustomToast
@@ -67,7 +67,7 @@ export function useResendCharge() {
 
       return result;
     } catch (error) {
-      console.error('[useResendCharge] Erro:', error);
+      logClientOperationalEvent('enrollment.resend_charge.request_failed', error);
       toast.custom((t) => (
         <CustomToast
           variant="error"

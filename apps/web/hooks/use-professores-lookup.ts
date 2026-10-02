@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Professor } from '@/features/classes/components/types';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 
 interface CacheEntry<T> {
   data: T;
@@ -40,10 +41,7 @@ async function fetchProfessores(contaId: string): Promise<Professor[]> {
   }).toString();
   const res = await fetch(`/api/colaboradores?${qs}`, { cache: 'no-store' }).catch(() => null);
   if (!res || !res.ok) {
-    console.error('[useProfessoresLookup] falha ao carregar colaboradores professores', {
-      contaId,
-      status: res?.status,
-    });
+    logClientOperationalEvent('teacher.lookup.failed');
     return [];
   }
   const json = await res.json().catch(() => ({ items: [] }));

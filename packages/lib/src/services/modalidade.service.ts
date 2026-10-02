@@ -1,3 +1,4 @@
+import { logLibOperationalEvent } from '../observability/operational-log';
 import { prisma } from '../prisma';
 import { modalidadeSchema } from '../schemas/modalidade.schema';
 import type { Modalidade } from '@prisma/client';
@@ -58,7 +59,9 @@ export async function createModalidade(input: {
   } catch (err: unknown) {
     const code =
       typeof err === 'object' && err && 'code' in err ? (err as { code?: string }).code : undefined;
-    if (process.env.NODE_ENV !== 'production') console.error('[createModalidade] erro', err);
+    if (process.env.NODE_ENV !== 'production') {
+      logLibOperationalEvent({ eventName: 'modality.create.failed', error: err, severity: 'error' });
+    }
     if (code === 'P2002') {
       // unique constraint (duplicidade)
       throw new Error('Já existe uma modalidade com este nome nesta conta');

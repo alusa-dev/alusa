@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 
@@ -56,10 +57,13 @@ export async function POST(request: Request) {
     if (error instanceof ZodError) {
       return errorResponse('INVALID_INPUT', 'Confira o valor e o número de parcelas informados.', 422, error.flatten());
     }
-    console.error('[mobile-billing][simulate]', {
-      contaId: verified.contaId,
-      userId: verified.userId,
-      error: error instanceof Error ? error.message : String(error),
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/billing/simulate',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
     });
     return errorResponse('SERVER_ERROR', 'Não foi possível calcular a estimativa.', 500);
   }

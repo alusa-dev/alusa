@@ -27,6 +27,42 @@ import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-sn
 import { reconcileEnrollmentFeeProjections } from '../projections/enrollment-fee-projection.service';
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
 import { reconcilePaidReservedStoreSales } from '../use-cases/store-inventory';
+import {
+  createStructuredLog,
+  normalizeMetricDimensions,
+  sharedTelemetry,
+} from '@alusa/observability';
+
+function logWebhookReconciliationEvent(params: {
+  severity: 'warn' | 'error';
+  eventName: string;
+  operation: string;
+  itemCount?: number;
+  maxAttempts?: number;
+  error?: unknown;
+}): void {
+  const errorType = params.error instanceof Error && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(params.error.name)
+    ? params.error.name
+    : params.error === undefined
+      ? undefined
+      : 'unknown_error';
+  const log = createStructuredLog({
+    severity: params.severity,
+    'service.name': 'alusa-finance',
+    'event.name': params.eventName,
+    'error.type': errorType,
+    attributes: {
+      operation: params.operation,
+      ...(params.itemCount !== undefined ? { itemCount: params.itemCount } : {}),
+      ...(params.maxAttempts !== undefined ? { maxAttempts: params.maxAttempts } : {}),
+    },
+    allowedAttributes: ['operation', 'itemCount', 'maxAttempts'],
+  });
+  const serialized = JSON.stringify(log);
+  if (params.severity === 'error') console.error(serialized);
+  else console.warn(serialized);
+  void sharedTelemetry.publishLog(log);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -877,7 +913,7 @@ export async function getWebhookQueueMetrics(
   const oldestPendingAt = metrics.oldestPendingAt;
   const lagSeconds = oldestPendingAt ? Math.max(0, Math.floor((now.getTime() - oldestPendingAt.getTime()) / 1000)) : null;
 
-  return {
+  const result: QueueMetricsResult = {
     contaId: options.contaId ?? 'ALL',
     backlog,
     pending,
@@ -891,6 +927,31 @@ export async function getWebhookQueueMetrics(
     lagSeconds,
     generatedAt: now,
   };
+
+  // Reuse this existing aggregate query; never add telemetry writes or attach
+  // tenant identifiers to global dimensions.
+  if (!options.contaId) {
+    const dimensions = normalizeMetricDimensions({ provider: 'asaas' });
+    const gauges: Array<[string, number]> = [
+      ['finance.webhook.backlog', result.backlog],
+      ['finance.webhook.pending', result.pending],
+      ['finance.webhook.processing', result.processing],
+      ['finance.webhook.errored', result.errored],
+      ['finance.webhook.exhausted', result.exhausted],
+      ['finance.webhook.high_retry_backlog', result.highRetryBacklog],
+      ['finance.webhook.stuck_processing', result.stuckProcessing],
+    ];
+    for (const [name, value] of gauges) {
+      void sharedTelemetry.recordMetric({ kind: 'gauge', name, value, dimensions });
+    }
+    if (result.lagSeconds !== null) {
+      void sharedTelemetry.recordMetric({
+        kind: 'gauge', name: 'finance.webhook.oldest_pending_age', value: result.lagSeconds,
+        unit: 'second', dimensions,
+      });
+    }
+  }
+  return result;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1079,21 +1140,13 @@ export async function markExhaustedWebhooks(
   });
 
   if (result.count > 0) {
-    console.warn('[webhook-dlq] Webhooks marcados como EXAURIDO', {
-      count: result.count,
-      ids,
-    });
-
-    // Alerta estruturado para observabilidade (DLQ)
-    console.error(JSON.stringify({
-      level: 'error',
-      type: 'webhook_dlq_exhausted',
-      count: result.count,
-      ids,
+    logWebhookReconciliationEvent({
+      severity: 'error',
+      eventName: 'finance.webhook.dlq.marked',
+      operation: 'mark_exhausted',
+      itemCount: result.count,
       maxAttempts,
-      message: `${result.count} webhook(s) moved to DLQ after ${maxAttempts} failed attempts`,
-      timestamp: new Date().toISOString(),
-    }));
+    });
 
     const idsByConta = candidates.reduce<Record<string, string[]>>((acc, candidate) => {
       acc[candidate.contaId] ??= [];
@@ -1104,7 +1157,12 @@ export async function markExhaustedWebhooks(
     await Promise.all(
       Object.entries(idsByConta).map(([contaId, contaIds]) =>
         alertService.alertDLQ(contaId, contaIds.length, contaIds).catch((err: unknown) => {
-          console.warn('[webhook-dlq][alert-failed]', { contaId, err });
+          logWebhookReconciliationEvent({
+            severity: 'warn',
+            eventName: 'finance.webhook.dlq.alert.failed',
+            operation: 'send_dlq_alert',
+            error: err,
+          });
         }),
       ),
     );
@@ -1742,9 +1800,11 @@ export async function reconcileWithAsaas(
         installments: installmentDrift,
       })
       .catch((err: unknown) => {
-        console.warn('[reconciliation][alert-failed]', {
-          contaId: options.contaId,
-          error: err instanceof Error ? err.name : 'UNKNOWN_ERROR',
+        logWebhookReconciliationEvent({
+          severity: 'warn',
+          eventName: 'finance.webhook.reconciliation.alert.failed',
+          operation: 'send_reconciliation_drift_alert',
+          error: err,
         });
       });
   }
@@ -2025,7 +2085,12 @@ export async function reconcileBilateral(
         installments: 0,
       })
       .catch((err: unknown) => {
-        console.warn('[bilateral-reconciliation][alert-failed]', { contaId: options.contaId, err });
+        logWebhookReconciliationEvent({
+          severity: 'warn',
+          eventName: 'finance.webhook.bilateral_reconciliation.alert.failed',
+          operation: 'send_bilateral_drift_alert',
+          error: err,
+        });
       });
   }
 

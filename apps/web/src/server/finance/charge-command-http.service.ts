@@ -17,6 +17,7 @@ import {
 } from '@/features/finance/operations/charges/deleted-payment-webhook';
 import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { invalidateChargeResourceCache } from '@/lib/cache/invalidation';
+import { logFinanceOperationalEvent } from '@alusa/finance/foundation/operational-log';
 
 
 
@@ -757,10 +758,11 @@ export async function deleteCobrancaRoute(_req: NextRequest, { params }: { param
               });
               localStateConverged = true;
             } catch (webhookError) {
-              console.warn('[DELETE /api/cobrancas/[id]] Falha ao reconciliar cobrança já deletada (event)', {
-                operationalId: operationalCharge.operationalId,
-                asaasPaymentId: operationalCharge.asaasPaymentId,
-                error: webhookError instanceof Error ? webhookError.message : String(webhookError),
+              logFinanceOperationalEvent({
+                severity: 'warn',
+                eventName: 'finance.http.charge_delete.reconciliation.degraded',
+                error: webhookError,
+                throttleMs: 60_000,
               });
             }
 
@@ -779,9 +781,11 @@ export async function deleteCobrancaRoute(_req: NextRequest, { params }: { param
           }
         } catch (readErr) {
           if (readErr instanceof KycNotApprovedError) throw readErr;
-          console.warn('[DELETE /api/cobrancas/[id]] Read-before-write falhou (event), seguindo com delete', {
-            asaasPaymentId: operationalCharge.asaasPaymentId,
-            error: readErr instanceof Error ? readErr.message : String(readErr),
+          logFinanceOperationalEvent({
+            severity: 'warn',
+            eventName: 'finance.http.charge_delete.reconciliation.degraded',
+            error: readErr,
+            throttleMs: 60_000,
           });
         }
 
@@ -810,12 +814,13 @@ export async function deleteCobrancaRoute(_req: NextRequest, { params }: { param
             );
             localStateConverged = webhookResult.success;
           } catch (webhookError) {
-          console.warn('[DELETE /api/cobrancas/[id]] Falha ao aplicar convergência imediata (event)', {
-            operationalId: operationalCharge.operationalId,
-            asaasPaymentId: operationalCharge.asaasPaymentId,
-            error: webhookError instanceof Error ? webhookError.message : String(webhookError),
-          });
-        }
+            logFinanceOperationalEvent({
+              severity: 'warn',
+              eventName: 'finance.http.charge_delete.reconciliation.degraded',
+              error: webhookError,
+              throttleMs: 60_000,
+            });
+          }
 
         if (!localStateConverged) {
           try {
@@ -825,10 +830,11 @@ export async function deleteCobrancaRoute(_req: NextRequest, { params }: { param
               eventName: 'PAYMENT_DELETED',
             });
           } catch (syncError) {
-            console.warn('[DELETE /api/cobrancas/[id]] Falha ao sincronizar estado (event)', {
-              operationalId: operationalCharge.operationalId,
-              asaasPaymentId: operationalCharge.asaasPaymentId,
-              error: syncError instanceof Error ? syncError.message : String(syncError),
+            logFinanceOperationalEvent({
+              severity: 'warn',
+              eventName: 'finance.http.charge_delete.reconciliation.degraded',
+              error: syncError,
+              throttleMs: 60_000,
             });
           }
         }
@@ -956,12 +962,13 @@ export async function deleteCobrancaRoute(_req: NextRequest, { params }: { param
               });
               localStateConverged = true;
             } catch (webhookError) {
-              console.warn('[DELETE /api/cobrancas/[id]] Falha ao reconciliar cobrança já deletada (standalone)', {
-                chargeId: charge.id,
-                asaasPaymentId: charge.asaasPaymentId,
-              error: webhookError instanceof Error ? webhookError.message : String(webhookError),
-            });
-          }
+              logFinanceOperationalEvent({
+                severity: 'warn',
+                eventName: 'finance.http.charge_delete.reconciliation.degraded',
+                error: webhookError,
+                throttleMs: 60_000,
+              });
+            }
 
           return NextResponse.json(
             cobrancaMutationResultDTOSchema.parse(
@@ -978,9 +985,11 @@ export async function deleteCobrancaRoute(_req: NextRequest, { params }: { param
         }
       } catch (readErr) {
         if (readErr instanceof KycNotApprovedError) throw readErr;
-        console.warn('[DELETE /api/cobrancas/[id]] Read-before-write falhou (standalone), seguindo com delete', {
-          asaasPaymentId: charge.asaasPaymentId,
-          error: readErr instanceof Error ? readErr.message : String(readErr),
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.http.charge_delete.reconciliation.degraded',
+          error: readErr,
+          throttleMs: 60_000,
         });
       }
 
@@ -1013,12 +1022,13 @@ export async function deleteCobrancaRoute(_req: NextRequest, { params }: { param
           );
           localStateConverged = webhookResult.success;
         } catch (webhookError) {
-        console.warn('[DELETE /api/cobrancas/[id]] Falha ao aplicar convergência imediata (standalone)', {
-          chargeId: charge.id,
-          asaasPaymentId: charge.asaasPaymentId,
-          error: webhookError instanceof Error ? webhookError.message : String(webhookError),
-        });
-      }
+          logFinanceOperationalEvent({
+            severity: 'warn',
+            eventName: 'finance.http.charge_delete.reconciliation.degraded',
+            error: webhookError,
+            throttleMs: 60_000,
+          });
+        }
 
       if (!localStateConverged) {
         try {
@@ -1028,10 +1038,11 @@ export async function deleteCobrancaRoute(_req: NextRequest, { params }: { param
             eventName: 'PAYMENT_DELETED',
           });
         } catch (syncError) {
-          console.warn('[DELETE /api/cobrancas/[id]] Falha ao sincronizar estado (standalone)', {
-            chargeId: charge.id,
-            asaasPaymentId: charge.asaasPaymentId,
-            error: syncError instanceof Error ? syncError.message : String(syncError),
+          logFinanceOperationalEvent({
+            severity: 'warn',
+            eventName: 'finance.http.charge_delete.reconciliation.degraded',
+            error: syncError,
+            throttleMs: 60_000,
           });
         }
       }
@@ -1147,12 +1158,13 @@ export async function deleteCobrancaRoute(_req: NextRequest, { params }: { param
             });
             localStateConverged = true;
           } catch (webhookError) {
-            console.warn('[DELETE /api/cobrancas/[id]] Falha ao reconciliar cobrança já deletada (cobranca)', {
-              cobrancaId: cobranca.id,
-              asaasPaymentId: cobranca.asaasPaymentId,
-            error: webhookError instanceof Error ? webhookError.message : String(webhookError),
-          });
-        }
+            logFinanceOperationalEvent({
+              severity: 'warn',
+              eventName: 'finance.http.charge_delete.reconciliation.degraded',
+              error: webhookError,
+              throttleMs: 60_000,
+            });
+          }
 
         await invalidateChargeResourceCache({
           contaId: contaIdForDelete,
@@ -1176,9 +1188,11 @@ export async function deleteCobrancaRoute(_req: NextRequest, { params }: { param
     } catch (readErr) {
       // Se getPayment falhar (ex: rede), prosseguir com deletePayment
       // O deletePayment falhará com erro claro se o pagamento não puder ser cancelado
-      console.warn('[DELETE /api/cobrancas/[id]] Read-before-write falhou, seguindo com delete', {
-        asaasPaymentId: cobranca.asaasPaymentId,
-        error: readErr instanceof Error ? readErr.message : String(readErr),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.http.charge_delete.reconciliation.degraded',
+        error: readErr,
+        throttleMs: 60_000,
       });
     }
 
@@ -1208,10 +1222,11 @@ export async function deleteCobrancaRoute(_req: NextRequest, { params }: { param
         );
         localStateConverged = webhookResult.success;
       } catch (webhookError) {
-      console.warn('[DELETE /api/cobrancas/[id]] Falha ao aplicar convergência imediata (cobranca)', {
-        cobrancaId: cobranca.id,
-        asaasPaymentId: cobranca.asaasPaymentId,
-        error: webhookError instanceof Error ? webhookError.message : String(webhookError),
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.http.charge_delete.reconciliation.degraded',
+          error: webhookError,
+          throttleMs: 60_000,
         });
       }
 
@@ -1267,10 +1282,11 @@ export async function deleteCobrancaRoute(_req: NextRequest, { params }: { param
           eventName: 'PAYMENT_DELETED',
         });
       } catch (syncError) {
-        console.warn('[DELETE /api/cobrancas/[id]] Falha ao sincronizar estado (cobranca)', {
-          cobrancaId: cobranca.id,
-          asaasPaymentId: cobranca.asaasPaymentId,
-          error: syncError instanceof Error ? syncError.message : String(syncError),
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.http.charge_delete.reconciliation.degraded',
+          error: syncError,
+          throttleMs: 60_000,
         });
       }
     }

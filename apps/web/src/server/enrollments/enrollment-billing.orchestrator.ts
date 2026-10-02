@@ -1,3 +1,4 @@
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
 /**
  * Orquestração outbound pós-`criarMatricula` (taxa + assinatura + 1º ciclo).
  *
@@ -93,21 +94,12 @@ async function enrollmentIsTerminal(input: { contaId: string; matriculaId: strin
   return Boolean(enrollment);
 }
 
-function logEnrollmentBilling(step: string, meta: Record<string, unknown>) {
-  console.info('[enrollment-billing]', { step, ...meta });
-}
-
 export async function pushEnrollmentFeeToAsaas(input: {
   contaId: string;
   actorUserId: string;
   matriculaId: string;
   cobrancaTaxa: EnrollmentBillingCobrancaRef;
 }): Promise<MatriculaAsaasTaxaSyncDTO> {
-  logEnrollmentBilling('taxa.start', {
-    matriculaId: input.matriculaId,
-    cobrancaId: input.cobrancaTaxa.id,
-  });
-
   if (input.cobrancaTaxa.formaPagamento === FormaPagamento.INDEFINIDO) {
     return { success: false, error: 'FORMA_PAGAMENTO_INVALIDA' };
   }
@@ -158,17 +150,8 @@ export async function pushEnrollmentFeeToAsaas(input: {
       bankSlipUrl: details.payment.bankSlipUrl ?? null,
     };
   } catch (err) {
-    console.warn('[enrollment-billing] Falha ao obter invoiceUrl da taxa', {
-      cobrancaId: input.cobrancaTaxa.id,
-      asaasPaymentId,
-      message: err instanceof Error ? err.message : String(err),
-    });
+    logEnrollmentOperationalEvent('api.enrollment.asaas.read.failed', err, { severity: 'warn' });
   }
-
-  logEnrollmentBilling('taxa.done', {
-    matriculaId: input.matriculaId,
-    success: taxaSync.success,
-  });
 
   return taxaSync;
 }
@@ -183,7 +166,6 @@ export async function createEnrollmentSubscription(input: {
   asaasSubscriptionId: string | null;
   mensalidadeCobranca: EnrollmentBillingCobrancaRef | null;
 }> {
-  logEnrollmentBilling('subscription.start', { matriculaId: input.matriculaId });
 
   const recurringContext = await prisma.matricula.findFirst({
     where: { id: input.matriculaId, contaId: input.contaId },
@@ -408,12 +390,6 @@ export async function createEnrollmentSubscription(input: {
         ? undefined
         : (initialPaymentSync.error ?? 'ERRO_SINCRONIZAR_PRIMEIRO_CICLO'),
   };
-
-  logEnrollmentBilling('subscription.done', {
-    matriculaId: input.matriculaId,
-    success: subscriptionSync.success,
-    asaasSubscriptionId: subscriptionResult.data.asaasSubscriptionId,
-  });
 
   return {
     subscriptionSync,

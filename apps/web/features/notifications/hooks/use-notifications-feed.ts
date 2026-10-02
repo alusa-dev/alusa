@@ -2,6 +2,7 @@
 
 import { startTransition, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from '@/components/ui/toast';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import type {
   NotificationAction,
   NotificationItem,
@@ -130,7 +131,7 @@ export function useNotificationUnreadCount(params?: {
       setCount(data.count);
     } catch (error) {
       if (isAuthNotificationError(error) || isTransientNotificationFetchError(error)) return;
-      console.error('[Notifications][unread-count]', error);
+      logClientOperationalEvent('notifications.feed.unread_count.failed', error);
     } finally {
       setLoading(false);
     }
@@ -290,7 +291,7 @@ export function useNotificationsFeed(params?: {
       if (isTransientNotificationFetchError(error)) {
         return;
       }
-      console.error('[Notifications][load]', error);
+      logClientOperationalEvent('notifications.feed.load_failed', error);
       toast.error(error instanceof Error ? error.message : 'Não foi possível carregar as notificações.');
     } finally {
       setLoading(false);
@@ -355,7 +356,7 @@ export function useNotificationsFeed(params?: {
         applyLocalAction(notificationId, action);
       } catch (error) {
         if (isAuthNotificationError(error)) return;
-        console.error('[Notifications][update]', error);
+        logClientOperationalEvent('notifications.feed.update_failed', error);
         toast.error(error instanceof Error ? error.message : 'Não foi possível atualizar a notificação.');
         await load(true);
       } finally {
@@ -385,7 +386,7 @@ export function useNotificationsFeed(params?: {
       setUnreadCount(0);
     } catch (error) {
       if (isAuthNotificationError(error)) return;
-      console.error('[Notifications][markAllAsRead]', error);
+      logClientOperationalEvent('notifications.feed.mark_all_read.failed', error);
       toast.error(error instanceof Error ? error.message : 'Não foi possível marcar as notificações como lidas.');
       await load(true);
     } finally {
@@ -404,7 +405,7 @@ export function useNotificationsFeed(params?: {
         applyLocalDelete(notificationId);
       } catch (error) {
         if (isAuthNotificationError(error)) return;
-        console.error('[Notifications][delete]', error);
+        logClientOperationalEvent('notifications.feed.delete_failed', error);
         toast.error(error instanceof Error ? error.message : 'Não foi possível excluir a notificação.');
         await load(true);
       } finally {

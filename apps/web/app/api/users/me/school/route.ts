@@ -3,6 +3,7 @@ import { jsonNoStore } from '@/lib/http-security';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { normalizeAccountTimeZone } from '@/src/server/lessons/calendar/account-timezone';
 import { updateSchool } from '@/src/server/users/user-account.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export async function PATCH(req: Request) {
   try {
@@ -56,7 +57,7 @@ export async function PATCH(req: Request) {
       }),
     );
   } catch (error) {
-    console.error('Error updating school:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me/school', method: 'PATCH', requestId: getRequestId(req), error });
     return jsonNoStore({ error: 'Internal server error' }, { status: 500 });
   }
 }

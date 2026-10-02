@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-limit';
 import { sendPasswordResetForEmail } from '@/lib/auth-email-flow';
 import { rateLimitResponse } from '@/lib/security/rate-limit-response';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const bodySchema = z.object({
   email: z.string().email(),
@@ -31,12 +32,26 @@ export async function POST(req: Request) {
         userAgent: req.headers.get('user-agent'),
       });
     } catch (error) {
-      console.error('[auth][forgot-password-send-failed]', error);
+      logApiOperationalEvent({
+        severity: 'warn',
+        eventName: 'auth.password_reset.delivery_failed',
+        route: '/api/auth/forgot',
+        method: 'POST',
+        requestId: getRequestId(req),
+        error,
+      });
     }
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error('[auth][forgot-password]', error);
+    logApiOperationalEvent({
+      severity: 'warn',
+      eventName: 'auth.password_reset.request_failed',
+      route: '/api/auth/forgot',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     return NextResponse.json({ ok: true });
   }
 }

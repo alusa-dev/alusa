@@ -3,6 +3,7 @@ import { contaFormaPagamentoSyncResultDTOSchema } from '@/features/account/dtos'
 import { mapContaFormaPagamentoSyncResultToDTO } from '@/features/account/mappers';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { synchronizeAccountPaymentMethod } from '@/src/server/finance/account-payment-method.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 /**
  * API para sincronizar dados de cartão e forma de pagamento do Asaas
@@ -40,7 +41,14 @@ export async function POST(_req: NextRequest) {
     );
 
   } catch (error) {
-    console.error('[Sync] Erro ao sincronizar:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'conta.payment_method.sync_failed',
+      route: '/api/conta/forma-pagamento/sync',
+      method: 'POST',
+      requestId: getRequestId(_req),
+      error,
+    });
     return NextResponse.json(
       { error: 'Erro ao sincronizar dados do Asaas' }, 
       { status: 500 }

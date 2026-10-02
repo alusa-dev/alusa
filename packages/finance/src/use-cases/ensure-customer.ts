@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { loadAsaasCredentials, prisma } from '@alusa/database';
 import { isValidCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
 import type { Result } from '@alusa/shared';
@@ -85,9 +86,11 @@ async function syncExistingAsaasCustomerContact(input: {
   });
 
   if (!result.success) {
-    console.warn('[ensureCustomer] Aviso ao atualizar dados do customer:', {
-      customerId: input.customerId,
-      error: result.error,
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.use_cases.ensure_customer.degraded',
+      error: result,
+      throttleMs: 60_000,
     });
   }
 }
@@ -162,29 +165,33 @@ export async function ensureCustomer(
   // Customer row. A new educational alias must not create a second financial
   // identity when CustomerPayer already points to an existing Customer.
   const linkedCustomer = await findCustomerForPayer(input.contaId, payerType, input.payer.id);
-  const customerByRemoteId = !linkedCustomer && payerData.asaasCustomerId
-    ? await prisma.customer.findFirst({
-        where: { contaId: input.contaId, asaasCustomerId: payerData.asaasCustomerId },
-        select: { id: true, asaasCustomerId: true, externalReference: true },
-      })
-    : null;
-  const internalCustomer = linkedCustomer ?? customerByRemoteId ?? await prisma.customer.upsert({
-    where: {
-      contaId_payerType_payerId: {
+  const customerByRemoteId =
+    !linkedCustomer && payerData.asaasCustomerId
+      ? await prisma.customer.findFirst({
+          where: { contaId: input.contaId, asaasCustomerId: payerData.asaasCustomerId },
+          select: { id: true, asaasCustomerId: true, externalReference: true },
+        })
+      : null;
+  const internalCustomer =
+    linkedCustomer ??
+    customerByRemoteId ??
+    (await prisma.customer.upsert({
+      where: {
+        contaId_payerType_payerId: {
+          contaId: input.contaId,
+          payerType,
+          payerId: input.payer.id,
+        },
+      },
+      update: { externalReference },
+      create: {
         contaId: input.contaId,
         payerType,
         payerId: input.payer.id,
+        externalReference,
       },
-    },
-    update: { externalReference },
-    create: {
-      contaId: input.contaId,
-      payerType,
-      payerId: input.payer.id,
-      externalReference,
-    },
-    select: { id: true, asaasCustomerId: true, externalReference: true },
-  });
+      select: { id: true, asaasCustomerId: true, externalReference: true },
+    }));
 
   if (isMockPaymentsMode()) {
     const existingMockId = internalCustomer.asaasCustomerId ?? payerData.asaasCustomerId;
@@ -202,7 +209,6 @@ export async function ensureCustomer(
           data: { asaasCustomerId: mockId },
         });
       }
-
     }
 
     // Even in mock mode, linking is the operation that records a new
@@ -218,7 +224,8 @@ export async function ensureCustomer(
         cpfCnpj: payerData.cpf,
       });
     } catch (error) {
-      if (error instanceof CustomerIdentityConflictError) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
+      if (error instanceof CustomerIdentityConflictError)
+        return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
       throw error;
     }
 
@@ -282,7 +289,8 @@ export async function ensureCustomer(
         });
       }
     } catch (error) {
-      if (error instanceof CustomerIdentityConflictError) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
+      if (error instanceof CustomerIdentityConflictError)
+        return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
       return err('ASAAS_CUSTOMER_INVALIDO');
     }
 
@@ -325,7 +333,8 @@ export async function ensureCustomer(
         });
       }
     } catch (error) {
-      if (error instanceof CustomerIdentityConflictError) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
+      if (error instanceof CustomerIdentityConflictError)
+        return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
       return err('ASAAS_CUSTOMER_INVALIDO');
     }
 
@@ -381,7 +390,8 @@ export async function ensureCustomer(
       externalReference,
     });
   } catch (error) {
-    if (error instanceof CustomerIdentityConflictError) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
+    if (error instanceof CustomerIdentityConflictError)
+      return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
     throw error;
   }
 
@@ -421,17 +431,19 @@ async function syncCustomerNotificationChannelsFromTenant(
     });
 
     if (result.warnings.length > 0) {
-      console.warn('[ensureCustomer] Avisos ao sincronizar notificações:', {
-        asaasCustomerId,
-        warnings: result.warnings,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.ensure_customer.degraded',
+        throttleMs: 60_000,
       });
     }
   } catch (error) {
     // Best-effort: log e continua
-    console.error('[ensureCustomer] Erro ao sincronizar notificações (não crítico):', {
-      contaId,
-      asaasCustomerId,
-      error: error instanceof Error ? error.message : error,
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.ensure_customer.failed',
+      error: error,
+      throttleMs: 60_000,
     });
   }
 }

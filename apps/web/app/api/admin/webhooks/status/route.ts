@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
@@ -7,7 +8,10 @@ import { getAsaasWebhookOperationalStatus } from '@alusa/finance';
 export const dynamic = 'force-dynamic';
 
 function isCronRequest(req: NextRequest): boolean {
-  return Boolean(process.env.CRON_SECRET_TOKEN && req.headers.get('x-cron-token') === process.env.CRON_SECRET_TOKEN);
+  return Boolean(
+    process.env.CRON_SECRET_TOKEN &&
+    req.headers.get('x-cron-token') === process.env.CRON_SECRET_TOKEN,
+  );
 }
 
 export async function GET(req: NextRequest) {
@@ -45,7 +49,14 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ success: true, data });
   } catch (error) {
-    console.error('[admin/webhooks/status] Erro:', error instanceof Error ? error.message : String(error));
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/webhooks/status',
+      method: 'GET',
+      requestId: getRequestId(req),
+      error,
+    });
     return NextResponse.json({ success: false, error: 'Erro interno' }, { status: 500 });
   }
 }

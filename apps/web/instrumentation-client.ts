@@ -1,5 +1,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { redactSensitiveData } from '@/lib/security/sensitive-redaction';
+import { registerSentryTelemetry } from '@/lib/observability/sentry-telemetry';
+import { getTraceSampleRate } from '@/lib/observability/sampling';
 
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 const isProduction = process.env.NEXT_PUBLIC_VERCEL_ENV === 'production';
@@ -25,8 +27,12 @@ if (dsn && isProduction) {
       process.env.NEXT_PUBLIC_SENTRY_RELEASE,
 
     sendDefaultPii: false,
-
-    tracesSampleRate: process.env.NODE_ENV === 'development' ? 1.0 : 0.1,
+    enableLogs: true,
+    enableMetrics: true,
+    tracesSampleRate: getTraceSampleRate(
+      process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE,
+      process.env.NEXT_PUBLIC_VERCEL_ENV ?? process.env.NODE_ENV,
+    ),
 
     replaysSessionSampleRate: replayAllowed ? 0.05 : 0,
     replaysOnErrorSampleRate: replayAllowed ? 0.5 : 0,
@@ -34,11 +40,15 @@ if (dsn && isProduction) {
     beforeSend(event) {
       return redactSensitiveData(event);
     },
+    beforeSendLog(log) {
+      return redactSensitiveData(log) as typeof log;
+    },
 
     integrations: replayAllowed
       ? [Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true })]
       : [],
   });
+  registerSentryTelemetry();
 }
 
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;

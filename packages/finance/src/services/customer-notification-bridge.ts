@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { loadTenantNotificationEventPreferences } from '@alusa/lib/notifications/tenant-notification-preferences';
 import { syncCustomerNotificationChannels } from './customer-notification.service';
 
@@ -22,10 +23,11 @@ export async function syncCustomerNotificationChannelsFromTenantPreferences(
       eventPreferences: preferences,
     });
   } catch (error) {
-    console.warn('[ensureAsaasCustomerForPayer] Falha ao aplicar preferências globais', {
-      contaId,
-      customerId: asaasCustomerId,
-      message: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.services.customer_notification_bridge.degraded',
+      error: error,
+      throttleMs: 60_000,
     });
   }
 }

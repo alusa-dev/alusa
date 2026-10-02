@@ -188,42 +188,10 @@ function resolveFinancialAccountState(params: {
 
 type PerfMetadata = Record<string, unknown>;
 
-function shouldLogSummaryPerf(duration: number) {
-  return process.env.NODE_ENV === 'development' || duration > 500 || process.env.PERF_LOGS === '1';
-}
-
-function sanitizePerfMetadata(metadata?: PerfMetadata) {
-  if (!metadata) return undefined;
-  const redactedKeys = new Set(['email', 'cpf', 'password', 'senha', 'token', 'session', 'cookie']);
-  return Object.fromEntries(
-    Object.entries(metadata).map(([key, value]) => [
-      key,
-      redactedKeys.has(key.toLowerCase()) ? '[redacted]' : value,
-    ]),
-  );
-}
-
 async function withSummaryPerf<T>(
-  operation: string,
+  _operation: string,
   fn: () => Promise<T>,
-  metadata?: PerfMetadata,
+  _metadata?: PerfMetadata,
 ): Promise<T> {
-  const start = Date.now();
-  try {
-    const result = await fn();
-    logSummaryPerf(operation, Date.now() - start, { status: 'success', ...metadata });
-    return result;
-  } catch (error) {
-    logSummaryPerf(operation, Date.now() - start, { status: 'error', error: String(error), ...metadata });
-    throw error;
-  }
-}
-
-function logSummaryPerf(operation: string, duration: number, metadata?: PerfMetadata) {
-  if (!shouldLogSummaryPerf(duration)) return;
-
-  const safeMetadata = sanitizePerfMetadata(metadata);
-  const metaStr = safeMetadata ? ` | ${JSON.stringify(safeMetadata)}` : '';
-  const level = duration > 2000 ? 'critical' : duration > 500 ? 'slow' : 'ok';
-  console.log(`[PERF] [${level}] [financeiro/conta-summary] ${operation}: ${duration}ms${metaStr}`);
+  return fn();
 }

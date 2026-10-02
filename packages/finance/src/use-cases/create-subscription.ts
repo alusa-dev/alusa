@@ -1,5 +1,10 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma, loadAsaasCredentials } from '@alusa/database';
-import { createSubscription as asaasCreateSubscription, type BillingType, type Cycle } from '@alusa/asaas';
+import {
+  createSubscription as asaasCreateSubscription,
+  type BillingType,
+  type Cycle,
+} from '@alusa/asaas';
 import type { Prisma, SubscriptionStatus } from '@prisma/client';
 import { IntegrationSyncStatus, MatriculaBillingProvisionStatus } from '@prisma/client';
 import type { Result } from '@alusa/shared';
@@ -12,7 +17,12 @@ import { assertAsaasTenantOperational } from '../foundation/asaas-operational-gu
 import { isPastDate } from '../foundation/date-guard';
 import { ensureCustomer } from './ensure-customer';
 import { mapAsaasSubscriptionStatus } from '../mappers/asaas-subscription-status';
-import { deriveDeterministicId, buildSubscriptionExternalReference, buildSafeAsaasIdempotencyKey, hashPayload } from '../core';
+import {
+  deriveDeterministicId,
+  buildSubscriptionExternalReference,
+  buildSafeAsaasIdempotencyKey,
+  hashPayload,
+} from '../core';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
 import { syncSubscriptionFiscalSettings } from './sync-subscription-fiscal-settings';
 import { materializeBillingAgreement } from '../billing-agreements/materialize';
@@ -170,11 +180,12 @@ async function materializeIndividualAgreement(
 }
 
 export async function createSubscription(
-  input: CreateSubscriptionInput
+  input: CreateSubscriptionInput,
 ): Promise<Result<CreateSubscriptionOutput, CreateSubscriptionError>> {
   try {
     const kyc = await requireKycApproved(input.contaId);
-    if (!kyc.success) return err(kyc.error === 'KYC_NAO_APROVADO' ? 'KYC_NAO_APROVADO' : 'ERRO_INTERNO');
+    if (!kyc.success)
+      return err(kyc.error === 'KYC_NAO_APROVADO' ? 'KYC_NAO_APROVADO' : 'ERRO_INTERNO');
 
     try {
       await assertAsaasTenantOperational(input.contaId);
@@ -231,7 +242,9 @@ export async function createSubscription(
     const existingByMatricula = existingByContrato
       ? null
       : await prisma.subscription.findUnique({
-          where: { contaId_matriculaId: { contaId: input.contaId, matriculaId: input.matriculaId } },
+          where: {
+            contaId_matriculaId: { contaId: input.contaId, matriculaId: input.matriculaId },
+          },
           select: {
             id: true,
             contratoId: true,
@@ -287,7 +300,8 @@ export async function createSubscription(
       if (customerResult.error === 'PAGADOR_NAO_ENCONTRADO') return err('PAGADOR_NAO_ENCONTRADO');
       if (customerResult.error === 'PAGADOR_SEM_CPF') return err('PAGADOR_SEM_CPF');
       if (customerResult.error === 'ASAAS_CUSTOMER_INVALIDO') return err('ASAAS_CUSTOMER_INVALIDO');
-      if (customerResult.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS') return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+      if (customerResult.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS')
+        return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
       return err('ERRO_AO_CRIAR_CUSTOMER');
     }
 
@@ -300,10 +314,11 @@ export async function createSubscription(
       const nextDue = new Date(input.nextDueDate);
       const end = new Date(input.endDate);
       if (end < nextDue) {
-        console.warn(
-          '[finance][createSubscription] endDate antes de nextDueDate',
-          { nextDueDate: input.nextDueDate, endDate: input.endDate, subscriptionId: existing?.id ?? 'new' }
-        );
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.create_subscription.degraded',
+          throttleMs: 60_000,
+        });
         return err('END_DATE_ANTES_DA_PRIMEIRA_COBRANCA');
       }
     }
@@ -311,14 +326,13 @@ export async function createSubscription(
     const idempotencySeed = `subscription:${input.contaId}:${input.matriculaId}`;
     const subscriptionId = existing?.id ?? deriveDeterministicId('sub', idempotencySeed);
     const referencePlanId =
-      matricula.comboId ??
-      matricula.planoId ??
-      contratoId ??
-      input.matriculaId;
-    const externalReference = existing?.externalReference ?? buildSubscriptionExternalReference({
-      matriculaId: input.matriculaId,
-      planoId: referencePlanId,
-    });
+      matricula.comboId ?? matricula.planoId ?? contratoId ?? input.matriculaId;
+    const externalReference =
+      existing?.externalReference ??
+      buildSubscriptionExternalReference({
+        matriculaId: input.matriculaId,
+        planoId: referencePlanId,
+      });
 
     await ensureWebhookConfigOperational(input.contaId);
 
@@ -390,13 +404,17 @@ export async function createSubscription(
 
     let asaasSubscription = null as Awaited<ReturnType<typeof getSubscription>> | null;
     if (operation.payload.remoteId) {
-      asaasSubscription = await getSubscription(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null);
+      asaasSubscription = await getSubscription(operation.payload.remoteId, {
+        contaId: input.contaId,
+      }).catch(() => null);
     }
     if (!asaasSubscription) {
       const matches = await listSubscriptions(
         { externalReference, limit: 10, includeDeleted: true },
         { contaId: input.contaId },
-      ).then((result) => result.data).catch(() => []);
+      )
+        .then((result) => result.data)
+        .catch(() => []);
       if (matches.length > 1) {
         await markOutboundResultUnknown({
           jobId: operation.job.id,
@@ -425,9 +443,13 @@ export async function createSubscription(
         const recovered = await listSubscriptions(
           { externalReference, limit: 10, includeDeleted: true },
           { contaId: input.contaId },
-        ).then((result) => result.data).catch(() => []);
+        )
+          .then((result) => result.data)
+          .catch(() => []);
         if (recovered.length === 1) {
-          asaasSubscription = await getSubscription(recovered[0]!.id, { contaId: input.contaId }).catch(() => recovered[0]!);
+          asaasSubscription = await getSubscription(recovered[0]!.id, {
+            contaId: input.contaId,
+          }).catch(() => recovered[0]!);
         } else {
           await markOutboundResultUnknown({
             jobId: operation.job.id,
@@ -442,11 +464,14 @@ export async function createSubscription(
       }
     }
 
-    const subscriptionMismatch = !asaasSubscription?.id
-      || asaasSubscription.externalReference !== externalReference
-      || (asaasSubscription.customer != null && asaasSubscription.customer !== customerResult.data.customerId)
-      || (asaasSubscription.value != null && Math.abs(asaasSubscription.value - input.value) > 0.001)
-      || !isCompatibleSubscriptionNextDueDate({
+    const subscriptionMismatch =
+      !asaasSubscription?.id ||
+      asaasSubscription.externalReference !== externalReference ||
+      (asaasSubscription.customer != null &&
+        asaasSubscription.customer !== customerResult.data.customerId) ||
+      (asaasSubscription.value != null &&
+        Math.abs(asaasSubscription.value - input.value) > 0.001) ||
+      !isCompatibleSubscriptionNextDueDate({
         requestedNextDueDate: input.nextDueDate,
         remoteNextDueDate: asaasSubscription.nextDueDate,
         cycle: input.cycle,
@@ -466,7 +491,10 @@ export async function createSubscription(
       providerStatus: asaasSubscription.status,
     });
 
-    const nextStatus = mapAsaasSubscriptionStatus({ status: asaasSubscription.status, deleted: asaasSubscription.deleted });
+    const nextStatus = mapAsaasSubscriptionStatus({
+      status: asaasSubscription.status,
+      deleted: asaasSubscription.deleted,
+    });
 
     let updated: {
       id: string;
@@ -536,21 +564,15 @@ export async function createSubscription(
         return err('ASSINATURA_CONFLITANTE');
       }
 
-      const materializationFailed =
-        persistError instanceof BillingAgreementMaterializationError;
+      const materializationFailed = persistError instanceof BillingAgreementMaterializationError;
       const failureCode = materializationFailed
         ? 'BILLING_AGREEMENT_MATERIALIZATION_FAILED'
         : 'PERSISTENCIA_LOCAL_FALHOU';
 
-      console.error('[finance][createSubscription][persist] Falha após Asaas OK', {
-        matriculaId: matricula.id,
-        asaasSubscriptionId: asaasSubscription.id,
-        code: failureCode,
-        message: persistError instanceof Error ? persistError.message : String(persistError),
-        cause:
-          materializationFailed && persistError._originalError instanceof Error
-            ? persistError._originalError.message
-            : undefined,
+      logFinanceOperationalEvent({
+        severity: 'error',
+        eventName: 'finance.use_cases.create_subscription.failed',
+        throttleMs: 60_000,
       });
 
       await prisma.matricula
@@ -564,13 +586,11 @@ export async function createSubscription(
             billingProvisionAt: new Date(),
           },
         })
-        .catch((compensationError) => {
-          console.error('[finance][createSubscription][compensation] Falha ao registrar pendência', {
-            matriculaId: matricula.id,
-            message:
-              compensationError instanceof Error
-                ? compensationError.message
-                : String(compensationError),
+        .catch((_compensationError) => {
+          logFinanceOperationalEvent({
+            severity: 'error',
+            eventName: 'finance.use_cases.create_subscription.failed',
+            throttleMs: 60_000,
           });
         });
 
@@ -614,11 +634,11 @@ export async function createSubscription(
       });
 
       if (!fiscalSync.success) {
-        console.warn('[finance][createSubscription] falha ao sincronizar invoiceSettings', {
-          contaId: input.contaId,
-          subscriptionId: updated.id,
-          asaasSubscriptionId: updated.asaasSubscriptionId,
-          error: fiscalSync.error,
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.create_subscription.degraded',
+          error: fiscalSync,
+          throttleMs: 60_000,
         });
       }
     }
@@ -633,18 +653,20 @@ export async function createSubscription(
     });
   } catch (error) {
     if (error instanceof BillingAgreementMaterializationError) {
-      console.error('[finance][createSubscription][billingAgreement]', {
-        contaId: input.contaId,
-        matriculaId: input.matriculaId,
-        code: error.message,
-        message:
-          error._originalError instanceof Error
-            ? error._originalError.message
-            : String(error._originalError),
+      logFinanceOperationalEvent({
+        severity: 'error',
+        eventName: 'finance.use_cases.create_subscription.failed',
+        error: error,
+        throttleMs: 60_000,
       });
       return err('BILLING_AGREEMENT_MATERIALIZATION_FAILED');
     }
-    console.error('[finance][createSubscription]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.create_subscription.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }

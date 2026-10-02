@@ -28,6 +28,7 @@ import { buildChargeDetailCacheKey } from '@/lib/cache/invalidation';
 import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
 import { isCacheLayerEnabled } from '@/lib/cache/tenant-cache';
 import { privateJson } from '@/lib/private-cache';
+import { logFinanceOperationalEvent } from '@alusa/finance/foundation/operational-log';
 
 const CHARGE_DETAIL_CACHE_SECONDS = 20;
 const CHARGE_DETAIL_STALE_SECONDS = 40;
@@ -104,10 +105,11 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
           staleWhileRevalidateSeconds: CHARGE_DETAIL_STALE_SECONDS,
         })
         .catch((error) => {
-          console.warn('[GET /api/cobrancas/[id]] Falha ao gravar cache de detalhe', {
-            contaId,
-            cobrancaId: id,
-            error: error instanceof Error ? error.message : String(error),
+          logFinanceOperationalEvent({
+            severity: 'warn',
+            eventName: 'finance.http.charge_detail.cache_write.failed',
+            error,
+            throttleMs: 60_000,
           });
         });
 
@@ -178,7 +180,7 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
             remoteAsaasData = await getPayment(standaloneAsaasPaymentId!, { contaId: charge.contaId });
           } catch (error) {
             if (!(error instanceof AsaasEnvError)) {
-              console.error('[GET /api/cobrancas/[id]] Erro ao buscar dados do Asaas (Charge):', error);
+              logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.http.charge_detail.asaas_read.failed', error, throttleMs: 60_000 });
             }
           }
         } else {
@@ -321,7 +323,7 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
             remoteAsaasData = await getPayment(eventAsaasPaymentId, { contaId });
           } catch (error) {
             if (!(error instanceof AsaasEnvError)) {
-              console.error('[GET /api/cobrancas/[id]] Erro ao buscar dados do Asaas (Event):', error);
+              logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.http.charge_detail.asaas_read.failed', error, throttleMs: 60_000 });
             }
           }
         } else {
@@ -460,9 +462,9 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
         remoteAsaasData = await getPayment(academicAsaasPaymentId!, { contaId: contaIdForAsaas! });
       } catch (error) {
         if (error instanceof AsaasEnvError) {
-          console.warn('[GET /api/cobrancas/[id]] Integração Asaas indisponível:', error.message);
+          logFinanceOperationalEvent({ severity: 'warn', eventName: 'finance.http.charge_detail.asaas_unavailable', error, throttleMs: 60_000 });
         } else {
-          console.error('[GET /api/cobrancas/[id]] Erro ao buscar dados do Asaas:', error);
+          logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.http.charge_detail.asaas_read.failed', error, throttleMs: 60_000 });
         }
       }
     } else {

@@ -1,13 +1,20 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
 
-import { buildChargeInvoiceTexts, resolveChargeInvoiceContext } from '../fiscal/charge-invoice-context';
+import {
+  buildChargeInvoiceTexts,
+  resolveChargeInvoiceContext,
+} from '../fiscal/charge-invoice-context';
 import { resolveChargeInvoiceEmissionPath } from '../fiscal/charge-invoice-emission-path';
 import {
   evaluateChargeInvoiceEligibility,
   type ChargeInvoiceEligibility,
 } from '../fiscal/charge-invoice-eligibility';
-import { evaluateChargePayerFiscalReadiness, mapPayerFiscalReadinessForApi } from '../fiscal/payer-fiscal-readiness';
+import {
+  evaluateChargePayerFiscalReadiness,
+  mapPayerFiscalReadinessForApi,
+} from '../fiscal/payer-fiscal-readiness';
 import { ensureAcademicChargeForCobranca } from '../fiscal/ensure-academic-charge-for-cobranca';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
 import { todayInBrazil } from '../fiscal/invoice-effective-date';
@@ -88,7 +95,9 @@ function mapReadinessFromSettings(result: FiscalSettingsLoadResult) {
 
 function mapSupportsCancellation(result: FiscalSettingsLoadResult): boolean | null {
   if (!result.success) return null;
-  const municipalOptions = result.data.municipalOptions as { supportsCancellation?: unknown } | null;
+  const municipalOptions = result.data.municipalOptions as {
+    supportsCancellation?: unknown;
+  } | null;
   return typeof municipalOptions?.supportsCancellation === 'boolean'
     ? municipalOptions.supportsCancellation
     : null;
@@ -449,12 +458,15 @@ export async function getChargeInvoiceDetail(input: {
         syncPending,
       }),
       preview,
-      payerReadiness: chargeContext
-        ? mapPayerFiscalReadinessForApi(payerReadiness)
-        : undefined,
+      payerReadiness: chargeContext ? mapPayerFiscalReadinessForApi(payerReadiness) : undefined,
     });
   } catch (error) {
-    console.error('[finance][getChargeInvoiceDetail]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.get_charge_invoice_detail.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }

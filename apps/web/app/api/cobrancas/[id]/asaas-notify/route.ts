@@ -9,6 +9,7 @@ import {
 import { mapCobrancaNotifyResultToDTO } from '@/features/finance/operations/charges/mappers';
 import { resolveCobrancaPaymentLookupForTenant } from '@/src/server/finance/resolve-charge-payment-lookup';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 /**
@@ -57,9 +58,6 @@ export async function POST(
     }
 
     const { tipo } = parsed.data;
-
-    console.log(`[Asaas Notify] Obtendo links oficiais para payment: ${paymentId}`);
-
     const result = await getAsaasPaymentDetails({
       contaId: auth.contaId,
       paymentId,
@@ -82,7 +80,7 @@ export async function POST(
       ),
     );
   } catch (error) {
-    console.error('[POST /api/cobrancas/[id]/asaas-notify] Error:', error);
+    logFinanceApiError('/api/cobrancas/[id]/asaas-notify', error);
     return NextResponse.json(
       { 
         success: false, 

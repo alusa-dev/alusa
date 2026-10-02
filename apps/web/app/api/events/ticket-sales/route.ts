@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { drainFinanceWebhookSideEffectOutbox } from '@alusa/finance';
 import { createTicketSaleSchema, listByEventQuerySchema } from '@alusa/lib/events/events.schema';
 import { createTicketSale, listTicketSales } from '@alusa/lib/events/events.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 import { getEventsContext, handleEventsRouteError, queryObject } from '../_helpers';
 
@@ -29,8 +30,13 @@ export async function POST(request: NextRequest) {
     // Drenamos somente depois do commit; se o Resend falhar, a venda continua
     // confirmada e a outbox permanece disponível para retry pelo job.
     await drainFinanceWebhookSideEffectOutbox({ contaId: ctx.contaId, limit: 5 }).catch((error) => {
-      console.warn('[Ticket Sale] Falha não crítica ao disparar e-mail do ingresso', {
-        message: error instanceof Error ? error.message : String(error),
+      logApiOperationalEvent({
+        severity: 'warn',
+        eventName: 'api.events.ticket_sale.email_outbox_drain.failed',
+        route: '/api/events/ticket-sales',
+        method: 'POST',
+        requestId: getRequestId(request),
+        error,
       });
     });
 

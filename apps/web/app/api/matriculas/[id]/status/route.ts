@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 /**
  * API Route: /api/matriculas/[id]/status
  *
@@ -37,12 +38,14 @@ export async function PATCH(
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) {
-      console.warn('[MATRICULA_STATUS] Usuário não autenticado');
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
     if (!auth.role || !allowedRoles.has(String(auth.role).toUpperCase())) {
       return NextResponse.json(
-        { error: 'PERMISSAO_NEGADA', message: 'Usuário não tem permissão para cancelar matrículas.' },
+        {
+          error: 'PERMISSAO_NEGADA',
+          message: 'Usuário não tem permissão para cancelar matrículas.',
+        },
         { status: 403 },
       );
     }
@@ -83,14 +86,18 @@ export async function PATCH(
     });
 
     if (result.deferred) {
-      return NextResponse.json({
-        success: true,
-        pending: true,
-        code: 'CANCELAMENTO_AGUARDANDO_PROVISIONAMENTO',
-        message: 'O cancelamento foi registrado e será concluído após a operação financeira em andamento.',
-        matriculaId,
-        status: result.previousStatus,
-      }, { status: 202, headers: { 'cache-control': 'no-store' } });
+      return NextResponse.json(
+        {
+          success: true,
+          pending: true,
+          code: 'CANCELAMENTO_AGUARDANDO_PROVISIONAMENTO',
+          message:
+            'O cancelamento foi registrado e será concluído após a operação financeira em andamento.',
+          matriculaId,
+          status: result.previousStatus,
+        },
+        { status: 202, headers: { 'cache-control': 'no-store' } },
+      );
     }
 
     const wasLocalOnly = result.asaasAction === 'LOCAL_ONLY';
@@ -119,11 +126,13 @@ export async function PATCH(
     });
   } catch (error) {
     if (error instanceof ManualSyncError) {
-      console.error('[MATRICULA_STATUS] ManualSyncError:', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        statusCode: error.statusCode,
+      logApiOperationalEvent({
+        severity: 'error',
+        eventName: 'api.academic.request.failed',
+        route: '/api/matriculas/[id]/status',
+        method: 'PATCH',
+        requestId: getRequestId(request),
+        error,
       });
 
       return NextResponse.json(
@@ -136,18 +145,20 @@ export async function PATCH(
       );
     }
 
-    const err = error instanceof Error ? error : new Error(String(error));
-
-    console.error('[MATRICULA_STATUS] Erro inesperado:', {
-      name: err.name,
-      message: err.message,
-      stack: err.stack,
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/matriculas/[id]/status',
+      method: 'PATCH',
+      requestId: getRequestId(request),
+      error,
     });
 
     return NextResponse.json(
       {
         error: 'INTERNAL_ERROR',
-        message: 'Não foi possível atualizar o status da matrícula. Tente novamente ou solicite uma reconciliação.',
+        message:
+          'Não foi possível atualizar o status da matrícula. Tente novamente ou solicite uma reconciliação.',
       },
       { status: 500 },
     );

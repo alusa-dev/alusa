@@ -17,6 +17,7 @@ import {
   recordCobrancaFinancialLog,
   resolveCobrancaPaymentLookupForTenant,
 } from './resolve-charge-payment-lookup';
+import { logFinanceOperationalEvent } from '@alusa/finance/foundation/operational-log';
 
 const CASH_UNDO_ALREADY_APPLIED_STATUSES = new Set(['PENDING', 'OVERDUE']);
 
@@ -61,7 +62,6 @@ async function reconcileAlreadyUndone(params: {
   contaId: string;
   asaasPaymentId: string;
   correlationId: string;
-  source: string;
 }) {
   try {
     await syncPaymentStateFromAsaas({
@@ -70,9 +70,11 @@ async function reconcileAlreadyUndone(params: {
       eventName: 'PAYMENT_RECEIVED_IN_CASH_UNDONE',
     });
   } catch (error) {
-    console.warn('[Undo Receive In Cash] Falha ao reconciliar recebimento já desfeito', {
-      ...params,
-      error: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.services.undo_cash_payment.reconciliation.failed',
+      error,
+      throttleMs: 60_000,
     });
   }
 }
@@ -120,11 +122,11 @@ async function executeUndo(params: {
       eventName: 'PAYMENT_RECEIVED_IN_CASH_UNDONE',
     });
   } catch (error) {
-    console.warn('[Undo Receive In Cash] Falha ao sincronizar estado pós-comando', {
-      correlationId: params.correlationId,
-      commandJobId,
-      asaasPaymentId: params.asaasPayment.id,
-      error: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.services.undo_cash_payment.reconciliation.failed',
+      error,
+      throttleMs: 60_000,
     });
   }
 
@@ -189,7 +191,7 @@ export async function executeUndoCashPayment(params: {
       const payment = await readPaymentFullPreflight(lookup.asaasPaymentId, { contaId: params.contaId });
       const effectiveStatus = getEffectiveAsaasStatus(payment);
       if (CASH_UNDO_ALREADY_APPLIED_STATUSES.has(effectiveStatus)) {
-        await reconcileAlreadyUndone({ contaId: params.contaId, asaasPaymentId: lookup.asaasPaymentId, correlationId, source: 'lookup' });
+        await reconcileAlreadyUndone({ contaId: params.contaId, asaasPaymentId: lookup.asaasPaymentId, correlationId });
         return result(200, mappedResponse('Recebimento em dinheiro já estava desfeito no Asaas. Estado local reconciliado.', correlationId, false));
       }
       const policy = evaluatePaymentActionPolicy({
@@ -216,7 +218,7 @@ export async function executeUndoCashPayment(params: {
     const effectiveStatus = getEffectiveAsaasStatus(payment);
 
     if (CASH_UNDO_ALREADY_APPLIED_STATUSES.has(effectiveStatus)) {
-      await reconcileAlreadyUndone({ contaId: params.contaId, asaasPaymentId, correlationId, source: records.cobranca ? 'cobranca' : 'charge' });
+      await reconcileAlreadyUndone({ contaId: params.contaId, asaasPaymentId, correlationId });
       await auditLogService.record({
         contaId: params.contaId,
         action: 'finance.charge.undo_cash_payment_already_applied',
@@ -261,7 +263,7 @@ export async function executeUndoCashPayment(params: {
       financialLog: true,
     });
   } catch (error) {
-    console.error('[Undo Receive In Cash] Erro:', error);
+    logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.services.undo_cash_payment.failed', error });
     if (error instanceof KycNotApprovedError) return result(409, { error: 'KYC_NAO_APROVADO', message: 'Conta não aprovada para operações financeiras', correlationId });
     return result(500, {
       error: 'Erro ao desfazer recebimento em dinheiro',

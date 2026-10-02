@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
@@ -65,7 +66,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ enro
     return response({ enrollment });
   } catch (error) {
     if (error instanceof MobileEnrollmentUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
-    console.error('[mobile-enrollments][detail]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/enrollment-details/[enrollmentId]',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível carregar a matrícula.' } }, 500);
   }
 }
@@ -86,7 +94,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ en
   } catch (error) {
     if (error instanceof MobileEnrollmentUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
     if (error instanceof MobileEnrollmentNotFoundError) return response({ error: { code: 'NOT_FOUND', message: 'Matrícula não encontrada.' } }, 404);
-    console.error('[mobile-enrollments][update]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/enrollment-details/[enrollmentId]',
+      method: 'PATCH',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'UPDATE_FAILED', message: 'Não foi possível salvar as alterações.' } }, 409);
   }
 }
@@ -105,7 +120,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ enr
   } catch (error) {
     if (error instanceof MobileEnrollmentUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
     if (error instanceof MobileEnrollmentNotFoundError) return response({ error: { code: 'NOT_FOUND', message: 'Matrícula não encontrada.' } }, 404);
-    console.error('[mobile-enrollments][action]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/enrollment-details/[enrollmentId]',
+      method: 'POST',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'ACTION_FAILED', message: 'Não foi possível concluir a ação.' } }, 409);
   }
 }

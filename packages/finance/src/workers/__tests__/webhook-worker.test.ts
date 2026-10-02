@@ -89,10 +89,13 @@ describe('webhook-worker', () => {
     const { startWorker } = await import('../webhook-worker');
     await startWorker();
 
-    expect(spyError).toHaveBeenCalledWith(
-      '[webhook-worker] Erro no ciclo de drain',
-      expect.objectContaining({ error: 'DB offline' }),
-    );
+    expect(spyError).toHaveBeenCalledTimes(1);
+    const errorLog = JSON.parse(String(spyError.mock.calls[0]?.[0])) as Record<string, unknown>;
+    expect(errorLog).toMatchObject({
+      'event.name': 'finance.workers.webhook_worker.drain.failed',
+      'error.type': 'Error',
+    });
+    expect(JSON.stringify(errorLog)).not.toContain('DB offline');
 
     spyError.mockRestore();
     spyLog.mockRestore();

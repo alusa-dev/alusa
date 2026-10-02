@@ -9,6 +9,7 @@ import {
   type PublicPlatformPlanCode,
 } from '@alusa/platform-billing';
 import { resolvePlatformBillingEnvironment } from './platform-billing-server';
+import { logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const PLAN_RANK: Record<PublicPlatformPlanCode, number> = {
   STARTER: 1,
@@ -134,7 +135,11 @@ export async function requestPlatformPlanChange(input: {
       idempotencyKey,
     });
     if (createdPlanChange.replayed) {
-      return replayPlatformPlanChange(createdPlanChange.record, input.targetPlanCode, idempotencyKey);
+      return replayPlatformPlanChange(
+        createdPlanChange.record,
+        input.targetPlanCode,
+        idempotencyKey,
+      );
     }
     const planChange = createdPlanChange.record;
 
@@ -204,7 +209,9 @@ export async function requestPlatformPlanChange(input: {
         status: 'APPLIED',
         effectiveAt: new Date().toISOString(),
         message: 'Plano alterado com sucesso.',
-        detail: trialEndsAt ? `Seu teste gratuito continua até ${formatDatePtBr(trialEndsAt)}.` : null,
+        detail: trialEndsAt
+          ? `Seu teste gratuito continua até ${formatDatePtBr(trialEndsAt)}.`
+          : null,
       };
     } catch (error) {
       await input.prisma.platformBillingPlanChange.update({
@@ -212,7 +219,8 @@ export async function requestPlatformPlanChange(input: {
         data: {
           status: 'FAILED',
           failedAt: new Date(),
-          lastError: error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
+          lastError:
+            error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
         },
       });
       throw error;
@@ -260,7 +268,11 @@ export async function requestPlatformPlanChange(input: {
       idempotencyKey,
     });
     if (createdPlanChange.replayed) {
-      return replayPlatformPlanChange(createdPlanChange.record, input.targetPlanCode, idempotencyKey);
+      return replayPlatformPlanChange(
+        createdPlanChange.record,
+        input.targetPlanCode,
+        idempotencyKey,
+      );
     }
     const planChange = createdPlanChange.record;
 
@@ -289,7 +301,9 @@ export async function requestPlatformPlanChange(input: {
       status: 'PENDING_EFFECTIVE_DATE',
       effectiveAt: account.currentPeriodEnd?.toISOString() ?? null,
       message: 'Plano alterado com sucesso.',
-      detail: account.currentPeriodEnd ? `A mudança entra em vigor em ${formatDatePtBr(account.currentPeriodEnd)}.` : 'A mudança entra em vigor no próximo ciclo.',
+      detail: account.currentPeriodEnd
+        ? `A mudança entra em vigor em ${formatDatePtBr(account.currentPeriodEnd)}.`
+        : 'A mudança entra em vigor no próximo ciclo.',
     };
   }
 
@@ -396,7 +410,8 @@ export async function requestPlatformPlanChange(input: {
       data: {
         status: 'FAILED',
         failedAt: new Date(),
-        lastError: error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
+        lastError:
+          error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
       },
     });
     throw error;
@@ -428,7 +443,11 @@ export async function requestPlatformSubscriptionCancellation(input: {
         { idempotencyKey, existingOperationType: existing.type },
       );
     }
-    if (existing.status === 'FAILED' || existing.status === 'CANCELED' || existing.status === 'SUPERSEDED') {
+    if (
+      existing.status === 'FAILED' ||
+      existing.status === 'CANCELED' ||
+      existing.status === 'SUPERSEDED'
+    ) {
       throw new PlatformBillingError(
         'The previous cancellation request did not complete. Start a new request to try again.',
         'PLATFORM_BILLING_REPLAY_INVALID',
@@ -499,11 +518,13 @@ export async function requestPlatformSubscriptionCancellation(input: {
   } catch (error) {
     if (!isPlanChangeIdempotencyViolation(error)) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        console.error('[platform-billing][cancel][unique-conflict]', {
-          contaId: input.contaId,
-          operation: 'cancel_at_period_end',
-          idempotencyKey,
-          constraint: error.meta?.target,
+        logApiOperationalEvent({
+          severity: 'error',
+          eventName: 'api.platform_billing.plan_change.cancel.unique_conflict',
+          route: '/api/platform-billing/cancel',
+          method: 'SERVICE',
+          requestId: crypto.randomUUID(),
+          error,
         });
       }
       throw error;
@@ -645,11 +666,13 @@ export async function undoPlatformSubscriptionCancellation(input: {
   } catch (error) {
     if (!isPlanChangeIdempotencyViolation(error)) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        console.error('[platform-billing][undo-cancel][unique-conflict]', {
-          contaId: input.contaId,
-          operation: 'undo_cancel',
-          idempotencyKey,
-          constraint: error.meta?.target,
+        logApiOperationalEvent({
+          severity: 'error',
+          eventName: 'api.platform_billing.plan_change.undo_cancel.unique_conflict',
+          route: '/api/platform-billing/cancel',
+          method: 'SERVICE',
+          requestId: crypto.randomUUID(),
+          error,
         });
       }
       throw error;
@@ -706,7 +729,11 @@ export async function applyDuePlatformPlanChanges(input: {
     const targetPlanCode = change.toPlanCode as PublicPlatformPlanCode | null;
     const account = change.billingAccount;
     if (!targetPlanCode || !account.stripeSubscriptionId) {
-      await markPlanChangeFailed(input.prisma, change.id, 'Plan change missing target plan or Stripe subscription.');
+      await markPlanChangeFailed(
+        input.prisma,
+        change.id,
+        'Plan change missing target plan or Stripe subscription.',
+      );
       failed += 1;
       continue;
     }
@@ -719,7 +746,11 @@ export async function applyDuePlatformPlanChanges(input: {
       additionalActiveStudents: 0,
     });
     if (!capacity.allowed) {
-      await markPlanChangeFailed(input.prisma, change.id, 'Account is no longer eligible for the requested plan change.');
+      await markPlanChangeFailed(
+        input.prisma,
+        change.id,
+        'Account is no longer eligible for the requested plan change.',
+      );
       const issueData = {
         contaId: change.contaId,
         billingAccountId: account.id,
@@ -799,7 +830,11 @@ export async function applyDuePlatformPlanChanges(input: {
   };
 }
 
-async function markPlanChangeFailed(prisma: PrismaClient, id: string, message: string): Promise<void> {
+async function markPlanChangeFailed(
+  prisma: PrismaClient,
+  id: string,
+  message: string,
+): Promise<void> {
   await prisma.platformBillingPlanChange.update({
     where: { id },
     data: {
@@ -828,11 +863,13 @@ async function createPlatformPlanChangeWithIdempotency(
   } catch (error) {
     if (!isPlanChangeIdempotencyViolation(error)) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        console.error('[platform-billing][plan-change][unique-conflict]', {
-          contaId: input.contaId,
-          operation: 'request_plan_change',
-          idempotencyKey: input.idempotencyKey,
-          constraint: error.meta?.target,
+        logApiOperationalEvent({
+          severity: 'error',
+          eventName: 'api.platform_billing.plan_change.request.unique_conflict',
+          route: '/api/platform-billing/plan-change',
+          method: 'SERVICE',
+          requestId: crypto.randomUUID(),
+          error,
         });
       }
       throw error;
@@ -864,7 +901,11 @@ function replayPlatformPlanChange(
       { idempotencyKey, existingPlanCode: existing.toPlanCode, requestedPlanCode: targetPlanCode },
     );
   }
-  if (existing.status === 'FAILED' || existing.status === 'CANCELED' || existing.status === 'SUPERSEDED') {
+  if (
+    existing.status === 'FAILED' ||
+    existing.status === 'CANCELED' ||
+    existing.status === 'SUPERSEDED'
+  ) {
     throw new PlatformBillingError(
       'The previous plan change did not complete. Start a new request to try again.',
       'PLATFORM_BILLING_REPLAY_INVALID',
@@ -877,7 +918,11 @@ function replayPlatformPlanChange(
     status: existing.status as 'PENDING_PAYMENT' | 'PENDING_EFFECTIVE_DATE' | 'APPLIED',
     effectiveAt: existing.effectiveAt?.toISOString() ?? null,
     message: getPlanChangeSuccessMessage(existing.status),
-    detail: getPlanChangeDetail(existing.status, existing.effectiveAt, accountTrialEndsAt(existing.metadata)),
+    detail: getPlanChangeDetail(
+      existing.status,
+      existing.effectiveAt,
+      accountTrialEndsAt(existing.metadata),
+    ),
   };
 }
 
@@ -893,17 +938,23 @@ function requirePlatformBillingIdempotencyKey(value: string | null | undefined):
 }
 
 function isPlanChangeIdempotencyViolation(error: unknown): boolean {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') return false;
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002')
+    return false;
   const target = error.meta?.target;
   return Array.isArray(target) && target.some((field) => field === 'idempotencyKey');
 }
 
 function getPlanChangeSuccessMessage(status: string): string {
-  if (status === 'APPLIED' || status === 'PENDING_EFFECTIVE_DATE') return 'Plano alterado com sucesso.';
+  if (status === 'APPLIED' || status === 'PENDING_EFFECTIVE_DATE')
+    return 'Plano alterado com sucesso.';
   return 'Plano alterado com sucesso.';
 }
 
-function getPlanChangeDetail(status: string, effectiveAt: Date | null, trialEndsAt: Date | null): string | null {
+function getPlanChangeDetail(
+  status: string,
+  effectiveAt: Date | null,
+  trialEndsAt: Date | null,
+): string | null {
   if (status === 'APPLIED' && trialEndsAt) {
     return `Seu teste gratuito continua até ${formatDatePtBr(trialEndsAt)}.`;
   }
@@ -912,7 +963,8 @@ function getPlanChangeDetail(status: string, effectiveAt: Date | null, trialEnds
       ? `A mudança entra em vigor em ${formatDatePtBr(effectiveAt)}.`
       : 'A mudança entra em vigor no próximo ciclo.';
   }
-  if (status === 'PENDING_PAYMENT') return 'A alteração será concluída após a confirmação do pagamento.';
+  if (status === 'PENDING_PAYMENT')
+    return 'A alteração será concluída após a confirmação do pagamento.';
   return null;
 }
 
@@ -971,5 +1023,3 @@ async function countActiveStudents(prisma: PrismaClient, contaId: string): Promi
 
   return rows.length;
 }
-
-

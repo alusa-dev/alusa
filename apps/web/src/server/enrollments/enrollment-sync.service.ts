@@ -1,3 +1,4 @@
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
 import type { PrismaClient } from '@prisma/client';
 import { Prisma, StatusCobranca, StatusMatricula } from '@prisma/client';
 import { prisma as defaultPrisma } from '@/src/prisma';
@@ -924,10 +925,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
             processedAt: new Date(),
           },
         }).catch((operationError) => {
-          console.error('[MATRICULA_CANCELAMENTO] Falha ao registrar divergência da operação', {
-            operationId: cancellationOperation.id,
-            error: operationError instanceof Error ? operationError.message : String(operationError),
-          });
+          logEnrollmentOperationalEvent('api.enrollment.finance.divergence_audit.failed', operationError);
         });
       }
       throw mappedError;
@@ -1004,10 +1002,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
             processedAt: new Date(),
           },
         }).catch((operationError) => {
-          console.error('[MATRICULA_CANCELAMENTO] Falha ao registrar divergência da operação', {
-            operationId: cancellationOperation.id,
-            error: operationError instanceof Error ? operationError.message : String(operationError),
-          });
+          logEnrollmentOperationalEvent('api.enrollment.finance.divergence_audit.failed', operationError);
         });
       }
       throw mappedError;

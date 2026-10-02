@@ -60,6 +60,25 @@ describe('createApiClient', () => {
     );
   });
 
+  it('envia request id e mantém o mesmo id ao renovar o token', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(response({}, { status: 401 }))
+      .mockResolvedValueOnce(response({ ok: true }));
+    const api = createApiClient({
+      baseUrl: 'https://api.alusa.test',
+      fetchImpl,
+      getAccessToken: () => 'expired_token',
+      refreshAccessToken: async () => 'new_token',
+    });
+
+    await expect(api.request({ path: '/me' })).resolves.toEqual({ ok: true });
+    const firstHeaders = fetchImpl.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const secondHeaders = fetchImpl.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(firstHeaders['x-request-id']).toMatch(/^mobile-|^[0-9a-f-]{36}$/i);
+    expect(secondHeaders['x-request-id']).toBe(firstHeaders['x-request-id']);
+  });
+
   it('dispara callback ao receber 401', async () => {
     const onUnauthorized = jest.fn();
     const fetchImpl = jest.fn().mockResolvedValue(response({}, { status: 401 }));

@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { archiveProcessedWebhooks } from '@alusa/finance';
@@ -21,6 +22,7 @@ function jsonError(status: number, code: string, message: string) {
  * - limit (opcional): máximo por execução (default 500)
  */
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -49,7 +51,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true, result });
   } catch (error) {
-    console.error('[Job Archive Finance Webhooks] Erro:', error);
+    logJobFailure('archive-finance-webhooks', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível arquivar os webhooks agora.');
   }
 }

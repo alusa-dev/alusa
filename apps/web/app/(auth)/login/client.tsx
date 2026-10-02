@@ -11,7 +11,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { User, Eye, EyeOff } from '@/components/icons/icons';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
-import { debugLog, isAuthDebug } from '@/lib/debug-logger';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { nextParamToRedirect } from '@/lib/safe-redirect';
 import AuthShell from '@/components/auth/AuthShell';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -249,19 +249,15 @@ export default function LoginClient() {
 
   const onSubmit = (data: FormData) => {
     void (async () => {
-      if (isAuthDebug) debugLog('login', 'attempt', { email: data.email });
       const validation = await validateLoginCredentials(data);
       if (!validation.ok) {
-        if (isAuthDebug) debugLog('login', 'validation error', { email: data.email, reason: validation.reason });
         showLoginErrorToast(validation.reason);
         return;
       }
 
       const res = await signIn('credentials', { email: data.email, password: data.password, redirect: false, callbackUrl });
-      if (isAuthDebug) debugLog('login', 'signIn response', res);
       if (res?.error) {
-        const code = typeof res.error === 'string' ? res.error : 'UNEXPECTED_ERROR';
-        if (isAuthDebug) debugLog('login', 'error', { code });
+        logClientOperationalEvent('auth.login.sign_in.failed');
         showLoginErrorToast('UNEXPECTED_ERROR');
         return;
       }

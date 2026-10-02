@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { getKycViewModel, getKycViewModelFresh } from '@alusa/finance';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
@@ -17,7 +18,7 @@ async function resolveAuth(): Promise<SessionUser | null> {
 
 /**
  * GET /api/kyc/documents
- * 
+ *
  * Retorna grupos de documentos KYC pendentes/aprovados/rejeitados.
  * Query params:
  *   - groupId?: string — filtra apenas um grupo específico
@@ -27,7 +28,8 @@ export async function GET(req: Request) {
   try {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const url = new URL(req.url);
     const groupId = url.searchParams.get('groupId');
@@ -45,9 +47,7 @@ export async function GET(req: Request) {
     ];
 
     // Filtra por groupId se fornecido
-    const groups = groupId
-      ? allGroups.filter((g) => g.id === groupId)
-      : allGroups;
+    const groups = groupId ? allGroups.filter((g) => g.id === groupId) : allGroups;
 
     return json(200, {
       data: {
@@ -61,7 +61,14 @@ export async function GET(req: Request) {
       },
     });
   } catch (error) {
-    console.error('[Finance Documents][GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.kyc.request.failed',
+      route: '/api/kyc/documents',
+      method: 'GET',
+      requestId: getRequestId(req),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

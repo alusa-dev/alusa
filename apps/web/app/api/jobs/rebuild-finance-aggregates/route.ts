@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { rebuildFinanceAggregates } from '@alusa/finance';
 
@@ -23,6 +24,7 @@ function parseDate(value: string | null): Date | undefined {
 }
 
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -41,7 +43,7 @@ async function run(req: Request) {
 
     return NextResponse.json({ success: true, result });
   } catch (error) {
-    console.error('[Job Rebuild Finance Aggregates] Erro:', error);
+    logJobFailure('rebuild-finance-aggregates', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconstruir os agregados financeiros.');
   }
 }

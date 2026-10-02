@@ -4,6 +4,7 @@ import {
   type MarkExhaustedResult,
   type RecoverStuckResult,
 } from './webhook-reconciliation.service';
+import { normalizeMetricDimensions, sharedTelemetry } from '@alusa/observability';
 
 export interface WebhookQueuePreflightOptions {
   contaId?: string;
@@ -38,6 +39,15 @@ export async function runWebhookQueuePreflight(
       limit: options.exhaustedLimit ?? 200,
     }),
   ]);
+
+  if (!options.contaId) {
+    const dimensions = normalizeMetricDimensions({ provider: 'asaas', result: 'recovered' });
+    void sharedTelemetry.recordMetric({ kind: 'counter', name: 'finance.webhook.stuck_recovered', value: stuck.recovered, dimensions });
+    void sharedTelemetry.recordMetric({
+      kind: 'counter', name: 'finance.webhook.dlq_marked', value: exhausted.marked,
+      dimensions: normalizeMetricDimensions({ provider: 'asaas', result: 'marked' }),
+    });
+  }
 
   return {
     stuck,

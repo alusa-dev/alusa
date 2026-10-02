@@ -14,6 +14,8 @@
  * Fail-safe: erros de envio nunca bloqueiam o fluxo principal.
  */
 
+import { createStructuredLog, sharedTelemetry } from '@alusa/observability';
+
 // ── Types ────────────────────────────────────────────────────────────────
 
 export type AlertSeverity = 'info' | 'warning' | 'error' | 'critical';
@@ -41,24 +43,68 @@ export interface AlertDispatchResult {
 
 // ── Console Channel ──────────────────────────────────────────────────────
 
+const ALERT_EVENTS: Readonly<Record<string, string>> = {
+  'Webhooks movidos para DLQ': 'finance.webhook.dlq.alert',
+  'Fila de webhook interrompida': 'finance.webhook_health.interrupted_alert',
+  'Circuit breaker aberto': 'finance.asaas.circuit_breaker.alert',
+  'Rate limit Asaas atingido': 'finance.asaas.rate_limit.alert',
+  'Quota de API próxima do limite': 'finance.asaas.quota.alert',
+  'Drift detectado na reconciliação': 'finance.reconciliation.drift.alert',
+};
+
+function getAlertCount(payload: AlertPayload): number | undefined {
+  const metadata = payload.metadata;
+  if (!metadata) return undefined;
+
+  if (typeof metadata.count === 'number' && Number.isFinite(metadata.count)) {
+    return metadata.count;
+  }
+  if (typeof metadata.failureCount === 'number' && Number.isFinite(metadata.failureCount)) {
+    return metadata.failureCount;
+  }
+  if (Array.isArray(metadata.webhookIds)) return metadata.webhookIds.length;
+
+  const driftFields = ['payments', 'subscriptions', 'installments'] as const;
+  if (driftFields.every((field) => typeof metadata[field] === 'number' && Number.isFinite(metadata[field]))) {
+    return driftFields.reduce((total, field) => total + (metadata[field] as number), 0);
+  }
+
+  return undefined;
+}
+
 const consoleChannel: AlertChannel = {
   name: 'console',
   async send(payload) {
-    const logData = {
-      level: payload.severity,
-      type: 'operational_alert',
-      title: payload.title,
-      message: payload.message,
-      contaId: payload.contaId,
-      metadata: payload.metadata,
-      timestamp: new Date().toISOString(),
-    };
+    const alertSeverity = payload.severity;
+    const alertCount = getAlertCount(payload);
+    // An operational alert can be critical without representing an application
+    // exception. Keep its explicit alert.severity attribute while logging it at
+    // warning level so provider error-rate views remain about failed software.
+    const logSeverity = alertSeverity === 'critical'
+      ? 'warn'
+      : alertSeverity === 'warning'
+        ? 'warn'
+        : alertSeverity;
+    const log = createStructuredLog({
+      severity: logSeverity,
+      'service.name': 'alusa-finance',
+      'event.name': ALERT_EVENTS[payload.title] ?? 'finance.operational.alert',
+      attributes: {
+        'alert.severity': alertSeverity,
+        ...(alertCount !== undefined ? { 'alert.count': alertCount } : {}),
+      },
+      allowedAttributes: ['alert.severity', 'alert.count'],
+    });
 
-    if (payload.severity === 'critical' || payload.severity === 'error') {
-      console.error(JSON.stringify(logData));
+    if (alertSeverity === 'error') {
+      console.error(JSON.stringify(log));
+    } else if (alertSeverity === 'critical' || alertSeverity === 'warning') {
+      console.warn(JSON.stringify(log));
     } else {
-      console.warn(JSON.stringify(logData));
+      console.info(JSON.stringify(log));
     }
+
+    await sharedTelemetry.publishLog(log);
   },
 };
 

@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { processOverdueBillingNotificationsJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
@@ -20,6 +21,7 @@ function jsonError(status: number, code: string, message: string) {
  * Emite notificações de cobrança vencida (fallback local ao webhook PAYMENT_OVERDUE).
  */
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const query = processOverdueBillingNotificationsJobQueryDTOSchema.parse({
@@ -64,8 +66,12 @@ export async function POST(req: Request) {
       skipped,
     });
   } catch (error) {
-    console.error('[Job Process Overdue Billing] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', 'Não foi possível processar as notificações de cobrança vencida.');
+    logJobFailure('process-overdue-billing-notifications', startedAt, error);
+    return jsonError(
+      500,
+      'ERRO_JOB',
+      'Não foi possível processar as notificações de cobrança vencida.',
+    );
   }
 }
 

@@ -16,6 +16,7 @@ import {
   platformBillingAccessResponse,
 } from '@/src/server/platform-billing/capacity';
 import { apiJsonError } from '@/lib/api/standard-response';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return apiJsonError(status, code, message, details);
@@ -63,7 +64,14 @@ export async function GET(req: Request) {
     const planos = await listPlanos(filtersParse.data);
     return NextResponse.json({ data: planos });
   } catch (error) {
-    console.error('[planos][GET] erro ao listar planos', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.plans.list.failed',
+      route: '/api/planos',
+      method: 'GET',
+      requestId: getRequestId(req),
+      error,
+    });
     return jsonError(500, 'ERRO_LISTAR_PLANOS', 'Não foi possível carregar os planos.');
   }
 }
@@ -83,7 +91,13 @@ export async function POST(req: Request) {
       await assertPlatformAccessForConta({ contaId, capability: 'ADMIN_WRITE' });
     } catch (error) {
       const blocked = platformBillingAccessResponse(error);
-      if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
+      if (blocked)
+        return jsonError(
+          blocked.status,
+          blocked.body.error,
+          blocked.body.message,
+          blocked.body.details,
+        );
       throw error;
     }
 
@@ -96,10 +110,21 @@ export async function POST(req: Request) {
       const plano = await createPlano(parsed.data);
       return NextResponse.json({ data: plano }, { status: 201 });
     } catch (error) {
-      return jsonError(400, 'ERRO_CRIAR_PLANO', planoOperationMessage(error, 'Não foi possível criar o plano.'));
+      return jsonError(
+        400,
+        'ERRO_CRIAR_PLANO',
+        planoOperationMessage(error, 'Não foi possível criar o plano.'),
+      );
     }
   } catch (error) {
-    console.error('[planos][POST] erro inesperado', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.plans.create.failed',
+      route: '/api/planos',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     return jsonError(500, 'ERRO_CRIAR_PLANO', 'Não foi possível criar o plano.');
   }
 }
@@ -124,7 +149,13 @@ export async function PATCH(req: Request) {
       await assertPlatformAccessForConta({ contaId, capability: 'ADMIN_WRITE' });
     } catch (error) {
       const blocked = platformBillingAccessResponse(error);
-      if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
+      if (blocked)
+        return jsonError(
+          blocked.status,
+          blocked.body.error,
+          blocked.body.message,
+          blocked.body.details,
+        );
       throw error;
     }
 
@@ -137,10 +168,21 @@ export async function PATCH(req: Request) {
       const plano = await updatePlano(parsed.data);
       return NextResponse.json({ data: plano });
     } catch (error) {
-      return jsonError(400, 'ERRO_ATUALIZAR_PLANO', planoOperationMessage(error, 'Não foi possível atualizar o plano.'));
+      return jsonError(
+        400,
+        'ERRO_ATUALIZAR_PLANO',
+        planoOperationMessage(error, 'Não foi possível atualizar o plano.'),
+      );
     }
   } catch (error) {
-    console.error('[planos][PATCH] erro inesperado', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.plans.update.failed',
+      route: '/api/planos',
+      method: 'PATCH',
+      requestId: getRequestId(req),
+      error,
+    });
     return jsonError(500, 'ERRO_ATUALIZAR_PLANO', 'Não foi possível atualizar o plano.');
   }
 }
@@ -165,7 +207,13 @@ export async function DELETE(req: Request) {
       await assertPlatformAccessForConta({ contaId, capability: 'ADMIN_WRITE' });
     } catch (error) {
       const blocked = platformBillingAccessResponse(error);
-      if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
+      if (blocked)
+        return jsonError(
+          blocked.status,
+          blocked.body.error,
+          blocked.body.message,
+          blocked.body.details,
+        );
       throw error;
     }
 
@@ -173,10 +221,21 @@ export async function DELETE(req: Request) {
       const plano = await deletePlano(id, contaId);
       return NextResponse.json({ data: plano });
     } catch (error) {
-      return jsonError(400, 'ERRO_EXCLUIR_PLANO', planoOperationMessage(error, 'Não foi possível excluir o plano.'));
+      return jsonError(
+        400,
+        'ERRO_EXCLUIR_PLANO',
+        planoOperationMessage(error, 'Não foi possível excluir o plano.'),
+      );
     }
   } catch (error) {
-    console.error('[planos][DELETE] erro inesperado', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.plans.delete.failed',
+      route: '/api/planos',
+      method: 'DELETE',
+      requestId: getRequestId(req),
+      error,
+    });
     return jsonError(500, 'ERRO_EXCLUIR_PLANO', 'Não foi possível excluir o plano.');
   }
 }

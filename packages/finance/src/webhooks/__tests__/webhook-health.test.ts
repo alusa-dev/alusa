@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
+import { registerTelemetrySink, type TelemetryMetric } from '@alusa/observability';
+
+let unsubscribeTelemetry: (() => void) | undefined;
 
 // ── Hoisted mocks ────────────────────────────────────────────────────────
 
@@ -60,6 +63,11 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => {
+  unsubscribeTelemetry?.();
+  unsubscribeTelemetry = undefined;
+});
+
 describe('checkWebhookHealth', () => {
   it('retorna resultado limpo quando nenhum webhook está interrompido', async () => {
     mockFindMany.mockResolvedValue([
@@ -82,6 +90,27 @@ describe('checkWebhookHealth', () => {
     expect(result.interruptedFound).toBe(0);
     expect(result.recoveredSuccessfully).toBe(0);
     expect(result.errors).toHaveLength(0);
+  });
+
+  it('emite métricas agregadas sem identificadores de conta', async () => {
+    const metrics: TelemetryMetric[] = [];
+    unsubscribeTelemetry = registerTelemetrySink({ metric: (metric) => metrics.push(metric) });
+    mockFindMany.mockResolvedValue([
+      {
+        id: 'internal-account-id',
+        asaasAccountId: 'asaas-account-secret-id',
+        financeProfile: { contaId: 'tenant-sensitive-id' },
+      },
+    ]);
+    mockListWebhooks.mockResolvedValue({ data: [] });
+
+    await checkWebhookHealth();
+
+    expect(metrics.map((metric) => metric.name)).toContain('finance.webhook_health.accounts_checked');
+    expect(metrics.every((metric) => metric.dimensions?.provider === 'asaas')).toBe(true);
+    expect(metrics.every((metric) => metric.dimensions?.['operation.name'] === 'health_check')).toBe(true);
+    expect(JSON.stringify(metrics)).not.toContain('tenant-sensitive-id');
+    expect(JSON.stringify(metrics)).not.toContain('asaas-account-secret-id');
   });
 
   it('detecta webhook interrompido e tenta recovery', async () => {

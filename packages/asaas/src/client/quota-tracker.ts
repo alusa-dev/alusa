@@ -9,6 +9,7 @@
 
 import { globalAsaasHooks } from './asaas-hooks';
 import { asaasRedisEval, getAsaasRedisConfig, sanitizeAsaasRedisKeyPart } from './redis-rest';
+import { logAsaasOperationalEvent } from './operational-log';
 
 const DEFAULT_QUOTA_LIMIT = 25_000;
 const WINDOW_MS = 12 * 60 * 60 * 1000; // 12 horas
@@ -167,8 +168,11 @@ return {1, nextCount, start, math.max(0, redis.call('PTTL', KEYS[1]))}
       return enriched;
     } catch (error) {
       if (process.env.NODE_ENV === 'production') throw new AsaasQuotaStoreUnavailableError();
-      console.warn('[quota-tracker] Redis indisponível para reserva de quota; usando fallback em memória fora de produção', {
-        error: error instanceof Error ? error.message : 'unknown',
+      logAsaasOperationalEvent({
+        eventName: 'asaas.quota.redis_fallback',
+        severity: 'warn',
+        errorType: error instanceof Error ? 'Error' : undefined,
+        category: 'redis_unavailable',
       });
       return this.reserve(accountKey);
     }
@@ -178,12 +182,9 @@ return {1, nextCount, start, math.max(0, redis.call('PTTL', KEYS[1]))}
     const shouldEmitWarning = status.warning && !status.exceeded && currentCount % 100 === 0;
 
     if (shouldEmitWarning) {
-      console.warn('[quota-tracker] Quota API próxima do limite', {
-        accountKey: accountKey.slice(0, 12),
-        count: status.count,
-        limit: status.limit,
-        remaining: status.remaining,
-        percentUsed: status.percentUsed,
+      logAsaasOperationalEvent({
+        eventName: 'asaas.quota.near_limit',
+        severity: 'warn',
       });
 
       globalAsaasHooks.emitQuotaWarning({
@@ -197,10 +198,9 @@ return {1, nextCount, start, math.max(0, redis.call('PTTL', KEYS[1]))}
 
     if (status.exceeded && !this.exceededAlerts.has(accountKey)) {
       this.exceededAlerts.add(accountKey);
-      console.error('[quota-tracker] Quota API excedida', {
-        accountKey: accountKey.slice(0, 12),
-        count: status.count,
-        limit: status.limit,
+      logAsaasOperationalEvent({
+        eventName: 'asaas.quota.exceeded',
+        severity: 'error',
       });
 
       globalAsaasHooks.emitQuotaWarning({

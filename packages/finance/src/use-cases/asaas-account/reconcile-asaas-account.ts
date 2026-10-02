@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../../foundation/operational-log';
 import { getMyAccountStatus, getSubaccount, type AsaasMyAccountStatus } from '@alusa/asaas';
 import { prisma, loadAsaasCredentials } from '@alusa/database';
 import type { AuditActorType, FinanceStatus, FinancialOnboardingStatus } from '@prisma/client';
@@ -24,9 +25,10 @@ type ReconcileResult = {
   myAccountStatus: AsaasMyAccountStatus | null;
 };
 
-function mapMyAccountStatusToInternal(
-  myAccountStatus: AsaasMyAccountStatus,
-): { onboardingStatus: FinancialOnboardingStatus; financeStatus: FinanceStatus } {
+function mapMyAccountStatusToInternal(myAccountStatus: AsaasMyAccountStatus): {
+  onboardingStatus: FinancialOnboardingStatus;
+  financeStatus: FinanceStatus;
+} {
   const general = myAccountStatus.general;
 
   if (general === 'APPROVED') {
@@ -46,12 +48,18 @@ export async function reconcileAsaasAccount(params: {
   actor?: { type: AuditActorType; id?: string };
   reason?: string;
 }): Promise<ReconcileResult> {
-  const conta = await prisma.conta.findUnique({ where: { id: params.contaId }, select: { financeStatus: true } });
+  const conta = await prisma.conta.findUnique({
+    where: { id: params.contaId },
+    select: { financeStatus: true },
+  });
   if (!conta) {
     throw new Error('Conta não encontrada');
   }
 
-  const profile = await prisma.financeProfile.findUnique({ where: { contaId: params.contaId }, select: { id: true } });
+  const profile = await prisma.financeProfile.findUnique({
+    where: { contaId: params.contaId },
+    select: { id: true },
+  });
   if (!profile) {
     throw new Error('FinanceProfile não encontrado');
   }
@@ -97,16 +105,11 @@ export async function reconcileAsaasAccount(params: {
       const failure = classifyAsaasOperationalError(error, 'master');
 
       try {
-        console.warn('[finance.reconcileAsaasAccount] Falha ao consultar subconta no Asaas', {
-          category: failure.category,
-          status: failure.status,
-          contaId: params.contaId,
-          financeProfileId: profile.id,
-          asaasAccountId: asaasAccount.asaasAccountId,
-          reason: params.reason,
-          error: failure.message,
-          retryable: failure.retryable,
-          details: failure.details,
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.asaas_account.reconcile_asaas_account.degraded',
+          error: failure,
+          throttleMs: 60_000,
         });
       } catch {
         // noop
@@ -125,12 +128,11 @@ export async function reconcileAsaasAccount(params: {
       });
     } catch (error) {
       try {
-        console.warn('[finance.reconcileAsaasAccount] Falha ao sincronizar email da subconta', {
-          contaId: params.contaId,
-          financeProfileId: profile.id,
-          asaasAccountId: asaasAccount.asaasAccountId,
-          reason: params.reason,
-          error: error instanceof Error ? error.message : String(error),
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.asaas_account.reconcile_asaas_account.degraded',
+          error: error,
+          throttleMs: 60_000,
         });
       } catch {
         // noop
@@ -146,16 +148,11 @@ export async function reconcileAsaasAccount(params: {
       const failure = classifyAsaasOperationalError(error, 'subaccount');
 
       try {
-        console.warn('[finance.reconcileAsaasAccount] Falha ao consultar myAccount/status no Asaas', {
-          category: failure.category,
-          status: failure.status,
-          contaId: params.contaId,
-          financeProfileId: profile.id,
-          asaasAccountId: asaasAccount.asaasAccountId,
-          reason: params.reason,
-          error: failure.message,
-          retryable: failure.retryable,
-          details: failure.details,
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.asaas_account.reconcile_asaas_account.degraded',
+          error: failure,
+          throttleMs: 60_000,
         });
       } catch {
         // noop
@@ -181,9 +178,13 @@ export async function reconcileAsaasAccount(params: {
     persistedScheduledDate: asaasAccount.commercialInfoScheduledDate ?? null,
   });
 
-  const mapped: { onboardingStatus: FinancialOnboardingStatus; financeStatus: FinanceStatus } = myAccountStatus
-    ? mapMyAccountStatusToInternal(myAccountStatus)
-    : { onboardingStatus: 'CREATED' as FinancialOnboardingStatus, financeStatus: 'FINANCE_PROFILE_COMPLETED' };
+  const mapped: { onboardingStatus: FinancialOnboardingStatus; financeStatus: FinanceStatus } =
+    myAccountStatus
+      ? mapMyAccountStatusToInternal(myAccountStatus)
+      : {
+          onboardingStatus: 'CREATED' as FinancialOnboardingStatus,
+          financeStatus: 'FINANCE_PROFILE_COMPLETED',
+        };
 
   const previousStatus = asaasAccount.status;
   const previousFinanceStatus = conta.financeStatus;
@@ -193,7 +194,8 @@ export async function reconcileAsaasAccount(params: {
   const shouldUpdateFinanceStatus = previousFinanceStatus !== mapped.financeStatus;
   const shouldUpdateCommercialInfo =
     previousCommercialInfoStatus !== commercialInfoState.commercialInfoStatus ||
-    (asaasAccount.commercialInfoScheduledDate ?? null) !== commercialInfoState.commercialInfoScheduledDate;
+    (asaasAccount.commercialInfoScheduledDate ?? null) !==
+      commercialInfoState.commercialInfoScheduledDate;
 
   if (!shouldUpdateStatus && !shouldUpdateFinanceStatus && !shouldUpdateCommercialInfo) {
     await prisma.asaasAccount.update({
@@ -234,7 +236,9 @@ export async function reconcileAsaasAccount(params: {
           oldStatus: previousStatus,
           newStatus: mapped.onboardingStatus,
           event: 'RECONCILE',
-          payloadId: myAccountStatus?.general ? `general:${myAccountStatus.general}` : params.reason ?? null,
+          payloadId: myAccountStatus?.general
+            ? `general:${myAccountStatus.general}`
+            : (params.reason ?? null),
         },
         select: { id: true },
       });

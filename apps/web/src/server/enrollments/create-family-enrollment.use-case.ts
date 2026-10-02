@@ -1,3 +1,4 @@
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { createHash } from 'crypto';
 import {
@@ -1032,14 +1033,7 @@ export async function executeCreateFamilyEnrollment(params: {
       });
       if (collisionResponse) return collisionResponse;
       if (isPrismaP2002(error)) {
-        const target = (error as { meta?: { target?: unknown } }).meta?.target;
-        console.error('[POST /api/matriculas/familiar][unique-conflict]', {
-          contaId,
-          operation: 'create_family_enrollment_operation',
-          uiRequestId: body.uiRequestId,
-          familyGroupId: family.id,
-          constraint: Array.isArray(target) ? target : undefined,
-        });
+        logEnrollmentOperationalEvent('api.enrollment.operation.unique_conflict', error);
       }
       throw error;
     }
@@ -1349,10 +1343,7 @@ export async function executeCreateFamilyEnrollment(params: {
           uiRequestId: body.uiRequestId,
           message: `Payload financeiro inválido: ${message}`,
         });
-        console.error('[POST /api/matriculas/familiar] Payload financeiro inválido', {
-          familyId: family.id,
-          message,
-        });
+        logEnrollmentOperationalEvent('api.enrollment.billing.invalid_payload');
         return NextResponse.json(
           {
             familyId: family.id,
@@ -1394,10 +1385,7 @@ export async function executeCreateFamilyEnrollment(params: {
         financialError = message;
         financialStatus = FamilyBillingStatus.FALHO;
         await markFamilyBillingFailed(payload, message);
-        console.error('[POST /api/matriculas/familiar] Falha ao gerar cobrança consolidada', {
-          familyId: family.id,
-          message,
-        });
+        logEnrollmentOperationalEvent('api.enrollment.billing.provision.failed', error);
       }
     } else {
       financialStatus = FamilyBillingStatus.ATIVO;
@@ -1554,7 +1542,7 @@ export async function executeCreateFamilyEnrollment(params: {
       headers: { 'cache-control': 'no-store' },
     });
   } catch (error) {
-    console.error('[POST /api/matriculas/familiar]', error);
+    logEnrollmentOperationalEvent('api.enrollment.billing.provision.failed', error);
     if (rollbackContext && !financialConfirmed) {
       await rollbackFamilyEnrollmentDraft({
         contaId,
@@ -1565,23 +1553,11 @@ export async function executeCreateFamilyEnrollment(params: {
         preserveOutbox: financialAttempted,
         preserveFamilyState: body.billingStrategy.kind === 'JOIN_EXISTING_CURRENT_CYCLE',
       }).catch((rollbackError) => {
-        console.error('[POST /api/matriculas/familiar] Falha ao compensar draft local', {
-          familyId: rollbackContext?.familyId,
-          operationId: rollbackContext?.operationId,
-          error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-        });
+        logEnrollmentOperationalEvent('api.enrollment.compensation.failed', rollbackError);
       });
     }
     if (isPrismaP2002(error)) {
-      const target = (error as { meta?: { target?: unknown } }).meta?.target;
-      console.error('[POST /api/matriculas/familiar][unique-conflict]', {
-        contaId,
-        operation: 'create_family_enrollment',
-        uiRequestId: body.uiRequestId,
-        operationId: rollbackContext?.operationId,
-        status: rollbackContext ? 'PROCESSING_OR_COMPENSATING' : 'PRE_OPERATION',
-        constraint: Array.isArray(target) ? target : undefined,
-      });
+      logEnrollmentOperationalEvent('api.enrollment.operation.unique_conflict', error);
       // A colisão da operação é tratada no ponto exato da criação, onde a
       // constraint pode ser relacionada ao request ou ao agrupamento. Um
       // P2002 posterior (por exemplo, em allocation) não pode virar replay.

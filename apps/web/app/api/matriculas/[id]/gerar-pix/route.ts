@@ -1,9 +1,11 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { KycNotApprovedError } from '@alusa/finance';
 import {
-  KycNotApprovedError,
-} from '@alusa/finance';
-import { matriculaGerarPixResultDTOSchema, matriculaRouteParamsDTOSchema } from '@/features/enrollments/dtos';
+  matriculaGerarPixResultDTOSchema,
+  matriculaRouteParamsDTOSchema,
+} from '@/features/enrollments/dtos';
 import { mapMatriculaGerarPixResultToDTO } from '@/features/enrollments/mappers';
 import { generateMatriculaPix } from '@/src/server/enrollments/enrollment-pix.service';
 
@@ -21,7 +23,11 @@ export async function POST(
     const { contaId } = auth;
 
     const result = await generateMatriculaPix({ matriculaId, contaId });
-    if (!result.ok) return NextResponse.json({ error: result.error, ...(result.message ? { message: result.message } : {}) }, { status: result.status });
+    if (!result.ok)
+      return NextResponse.json(
+        { error: result.error, ...(result.message ? { message: result.message } : {}) },
+        { status: result.status },
+      );
 
     return NextResponse.json(
       matriculaGerarPixResultDTOSchema.parse(
@@ -45,10 +51,14 @@ export async function POST(
       );
     }
 
-    console.error('[Gerar PIX] Erro:', error);
-    return NextResponse.json(
-      { error: 'Erro ao gerar PIX' },
-      { status: 500 },
-    );
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/matriculas/[id]/gerar-pix',
+      method: 'POST',
+      requestId: getRequestId(_request),
+      error,
+    });
+    return NextResponse.json({ error: 'Erro ao gerar PIX' }, { status: 500 });
   }
 }

@@ -1,3 +1,4 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { financeiroPagamentoAlunoParamsDTOSchema } from '@/features/finance/operations/dtos';
@@ -86,7 +87,7 @@ export async function GET(
 
     return NextResponse.json(payload);
   } catch (error) {
-    console.error('[GET /api/financeiro/pagamentos/aluno/[alunoId]]', error);
+    logFinanceApiError('/api/financeiro/pagamentos/aluno/[alunoId]', error);
     return NextResponse.json(
       {
         success: false,

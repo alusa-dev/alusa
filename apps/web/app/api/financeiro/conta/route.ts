@@ -1,3 +1,4 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
@@ -160,7 +161,7 @@ export async function GET(req?: NextRequest) {
     timer.end('GET /conta overview');
     return json(200, { data: result.data });
   } catch (error) {
-    console.error('[API conta][GET]', error);
+    logFinanceApiError('/api/financeiro/conta', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

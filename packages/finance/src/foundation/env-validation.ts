@@ -1,3 +1,5 @@
+import { logFinanceOperationalEvent } from './operational-log';
+
 /**
  * Validação de variáveis de ambiente de segurança.
  *
@@ -105,16 +107,20 @@ export function validateFinanceEnv(): EnvValidationResult {
  */
 export function assertFinanceEnvOnBoot(): void {
   const result = validateFinanceEnv();
-
-  for (const w of result.warnings) {
-    console.warn(`[finance-env] ⚠️ ${w}`);
-  }
-
-  for (const e of result.errors) {
-    console.error(`[finance-env] ❌ ${e}`);
-  }
-
-  if (!result.valid) {
-    console.error('[finance-env] Variáveis de ambiente críticas ausentes ou inválidas. Verifique a configuração.');
+  if (result.errors.length > 0) {
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.foundation.env_validation.invalid',
+      errorCount: result.errors.length,
+      itemCount: result.warnings.length,
+      throttleMs: 60_000,
+    });
+  } else if (result.warnings.length > 0) {
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.foundation.env_validation.warning',
+      itemCount: result.warnings.length,
+      throttleMs: 60_000,
+    });
   }
 }

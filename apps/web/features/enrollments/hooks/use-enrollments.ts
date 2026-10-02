@@ -6,6 +6,7 @@ import {
   type MatriculaStatus,
   cancelarMatriculaRequest,
 } from '../services/enrollments-service';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 
 export interface UseMatriculasOptions {
   contaId: string | null | undefined;
@@ -40,11 +41,8 @@ export function useMatriculas({ contaId, status, excludeStatus, search, turmaId 
   const load = useCallback(
     async (overrides?: Partial<Omit<ListMatriculasParams, 'contaId'>>) => {
       if (!contaId) {
-        console.log('[useMatriculas] contaId ainda não disponível, aguardando...');
         return; // não limpar para manter qualquer estado anterior enquanto aguardamos
       }
-
-      console.log('[useMatriculas] Carregando matrículas:', { contaId, status, excludeStatus, search, turmaId, overrides });
 
       if (abortRef.current) abortRef.current.abort();
       const controller = new AbortController();
@@ -62,12 +60,6 @@ export function useMatriculas({ contaId, status, excludeStatus, search, turmaId 
           signal: controller.signal,
         });
 
-        console.log('[useMatriculas] Matrículas carregadas:', {
-          total: result.total,
-          items: result.data.length,
-          page: result.page,
-        });
-
         setState({
           items: result.data,
           loading: false,
@@ -78,6 +70,7 @@ export function useMatriculas({ contaId, status, excludeStatus, search, turmaId 
         });
       } catch (error) {
         if ((error as { name?: string }).name === 'AbortError') return;
+        logClientOperationalEvent('enrollment.list.load_failed', error);
         setState((prev) => ({
           ...prev,
           loading: false,
@@ -97,7 +90,6 @@ export function useMatriculas({ contaId, status, excludeStatus, search, turmaId 
   }, [load]);
 
   const reload = useCallback(() => {
-    console.log('[useMatriculas] Reload solicitado, página atual:', state.page);
     void load({ page: state.page, pageSize: state.pageSize });
   }, [load, state.page, state.pageSize]);
 

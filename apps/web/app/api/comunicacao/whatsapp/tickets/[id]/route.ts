@@ -7,6 +7,7 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { assertTestRecipient, assertWhatsAppConfigured } from '@/src/server/whatsapp/config';
 import { drainWhatsAppOutbox, enqueueWhatsAppMessage } from '@/src/server/whatsapp/outbox.service';
 import { getSupportCaseWhatsAppMessage } from '@/src/server/whatsapp/whatsapp-resource.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,7 +56,7 @@ export async function POST(
     if (error instanceof ZodError || error instanceof WhatsAppConfigurationError) {
       return NextResponse.json({ error: getErrorMessage(error) }, { status: 400 });
     }
-    console.error('[whatsapp-ticket] Falha ao enviar ticket', { error: error instanceof Error ? error.message : 'unknown' });
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.whatsapp_ticket.send.failed', route: '/api/comunicacao/whatsapp/tickets/[id]', method: 'POST', requestId: getRequestId(request), error });
     return NextResponse.json({ error: 'Não foi possível enviar o ticket.' }, { status: 500 });
   }
 }

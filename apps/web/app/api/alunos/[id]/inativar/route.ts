@@ -1,7 +1,11 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
-export async function POST(_req: NextRequest, { params: _params }: { params: Promise<{ id: string }> }) {
+export async function POST(
+  _req: NextRequest,
+  { params: _params }: { params: Promise<{ id: string }> },
+) {
   try {
     // 1. Autenticação
     const auth = await resolveTenantSession();
@@ -24,12 +28,20 @@ export async function POST(_req: NextRequest, { params: _params }: { params: Pro
       {
         error: 'FLUXO_DEPRECADO',
         code: 'ALUNO_STATUS_USE_DELETE',
-        message: 'Use a operação de arquivamento do aluno. Matrículas são gerenciadas no fluxo de Matrículas.',
+        message:
+          'Use a operação de arquivamento do aluno. Matrículas são gerenciadas no fluxo de Matrículas.',
       },
       { status: 410 },
     );
   } catch (error) {
-    console.error('[API] Erro ao inativar aluno:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/alunos/[id]/inativar',
+      method: 'POST',
+      requestId: getRequestId(_req),
+      error,
+    });
 
     if (error instanceof Error) {
       return NextResponse.json({ error: 'Não foi possível inativar o aluno.' }, { status: 400 });

@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma, loadAsaasCredentials } from '@alusa/database';
 import { getTransfer as asaasGetTransfer } from '@alusa/asaas';
 
@@ -164,8 +165,14 @@ function buildTransferTimeline(input: {
     {
       key: 'provider-created',
       label: 'Transferência encaminhada',
-      at: asaasCreatedAt ?? (input.transfer.asaasTransferId ? input.transfer.createdAt.toISOString() : null),
-      status: input.transfer.asaasTransferId ? 'DONE' : input.status === 'FAILED' ? 'FAILED' : 'PENDING',
+      at:
+        asaasCreatedAt ??
+        (input.transfer.asaasTransferId ? input.transfer.createdAt.toISOString() : null),
+      status: input.transfer.asaasTransferId
+        ? 'DONE'
+        : input.status === 'FAILED'
+          ? 'FAILED'
+          : 'PENDING',
       detail: input.transfer.asaasTransferId
         ? 'Transferência enviada para processamento.'
         : 'A transferência ainda aguarda envio para processamento.',
@@ -186,7 +193,11 @@ function buildTransferTimeline(input: {
     key: 'webhook',
     label: 'Processamento atualizado',
     at: latestWebhook?.recebidoEm.toISOString() ?? null,
-    status: latestWebhook ? (latestWebhook.status === 'PROCESSADO' ? 'DONE' : 'CURRENT') : 'PENDING',
+    status: latestWebhook
+      ? latestWebhook.status === 'PROCESSADO'
+        ? 'DONE'
+        : 'CURRENT'
+      : 'PENDING',
     detail: latestWebhook
       ? `Atualização do processamento recebida${latestWebhook.processadoEm ? ' e processada' : ''}.`
       : 'Aguardando atualização do processamento.',
@@ -227,13 +238,16 @@ function buildOperationalAlerts(input: {
   const alerts: TransferOperationalAlert[] = [];
   const now = input.now ?? new Date();
   const ageMs = now.getTime() - input.createdAt.getTime();
-  const latestWebhookAgeMs = input.latestWebhook ? now.getTime() - input.latestWebhook.recebidoEm.getTime() : null;
+  const latestWebhookAgeMs = input.latestWebhook
+    ? now.getTime() - input.latestWebhook.recebidoEm.getTime()
+    : null;
 
   if (input.credentialsMissing && input.asaasTransferId) {
     alerts.push({
       severity: 'warning',
       code: 'CREDENCIAIS_PROVEDOR_AUSENTES',
-      message: 'A consulta oficial não foi executada porque a conta financeira não possui credenciais ativas.',
+      message:
+        'A consulta oficial não foi executada porque a conta financeira não possui credenciais ativas.',
     });
   }
 
@@ -241,7 +255,8 @@ function buildOperationalAlerts(input: {
     alerts.push({
       severity: 'warning',
       code: 'CONSULTA_PROVEDOR_INDISPONIVEL',
-      message: 'Não foi possível confirmar o estado mais recente no provedor financeiro nesta leitura.',
+      message:
+        'Não foi possível confirmar o estado mais recente no provedor financeiro nesta leitura.',
     });
   }
 
@@ -257,15 +272,22 @@ function buildOperationalAlerts(input: {
     alerts.push({
       severity: 'warning',
       code: 'COMPROVANTE_INDISPONIVEL',
-      message: 'A transferência foi concluída, mas o comprovante oficial ainda não está disponível.',
+      message:
+        'A transferência foi concluída, mas o comprovante oficial ainda não está disponível.',
     });
   }
 
-  if (OPEN_TRANSFER_STATUSES.has(input.status) && input.asaasTransferId && !input.latestWebhook && ageMs > STALE_WEBHOOK_MS) {
+  if (
+    OPEN_TRANSFER_STATUSES.has(input.status) &&
+    input.asaasTransferId &&
+    !input.latestWebhook &&
+    ageMs > STALE_WEBHOOK_MS
+  ) {
     alerts.push({
       severity: 'warning',
       code: 'WEBHOOK_NAO_RECEBIDO',
-      message: 'Ainda não há evento do provedor para esta transferência. A reconciliação deve continuar ativa.',
+      message:
+        'Ainda não há evento do provedor para esta transferência. A reconciliação deve continuar ativa.',
     });
   }
 
@@ -279,7 +301,8 @@ function buildOperationalAlerts(input: {
     alerts.push({
       severity: input.latestWebhook.status === 'EXAURIDO' ? 'error' : 'warning',
       code: 'WEBHOOK_PENDENTE_PROCESSAMENTO',
-      message: 'Existe evento do provedor pendente ou com falha de processamento para esta transferência.',
+      message:
+        'Existe evento do provedor pendente ou com falha de processamento para esta transferência.',
     });
   }
 
@@ -287,14 +310,17 @@ function buildOperationalAlerts(input: {
     alerts.push({
       severity: 'warning',
       code: 'TRANSFERENCIA_ABERTA_ANTIGA',
-      message: 'A transferência está aberta há mais tempo que o esperado. Revise webhook, autorização e reconciliação.',
+      message:
+        'A transferência está aberta há mais tempo que o esperado. Revise webhook, autorização e reconciliação.',
     });
   }
 
   return alerts;
 }
 
-export async function getTransferDetail(input: GetTransferDetailInput): Promise<GetTransferDetailOutput> {
+export async function getTransferDetail(
+  input: GetTransferDetailInput,
+): Promise<GetTransferDetailOutput> {
   const transfer = await prisma.transferRequest.findFirst({
     where: {
       id: input.transferId,
@@ -378,11 +404,11 @@ export async function getTransferDetail(input: GetTransferDetailInput): Promise<
           id: transfer.asaasTransferId,
         });
       } catch (error) {
-        console.warn('[finance][getTransferDetail][official-transfer]', {
-          contaId: input.contaId,
-          transferId: transfer.id,
-          asaasTransferId: transfer.asaasTransferId,
-          error: error instanceof Error ? error.message : String(error),
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.get_transfer_detail.degraded',
+          error: error,
+          throttleMs: 60_000,
         });
         officialLookupFailed = true;
       }
@@ -407,14 +433,21 @@ export async function getTransferDetail(input: GetTransferDetailInput): Promise<
   const latestWebhook = webhookLogs[0] ?? null;
   const webhookMetadata = extractWebhookTransferMetadata(latestWebhook?.payload ?? null);
   const officialMetadata = extractOfficialTransferMetadata(officialTransfer);
-  const metadata = mergeTransferMetadata(baseMetadata, sessionMetadata, webhookMetadata, officialMetadata);
+  const metadata = mergeTransferMetadata(
+    baseMetadata,
+    sessionMetadata,
+    webhookMetadata,
+    officialMetadata,
+  );
   const amount = officialTransfer?.value ?? Number(transfer.value);
   const canCancel = officialTransfer
     ? isCancellableAsaasTransfer(officialTransfer)
     : transfer.status === 'REQUESTED' || transfer.status === 'PENDING';
 
-  const resolvedStatus = resolveTransferStatus({ asaasStatus: officialTransfer?.status }) ?? transfer.status;
-  const transactionReceiptUrl = officialTransfer?.transactionReceiptUrl ?? transfer.transactionReceiptUrl ?? null;
+  const resolvedStatus =
+    resolveTransferStatus({ asaasStatus: officialTransfer?.status }) ?? transfer.status;
+  const transactionReceiptUrl =
+    officialTransfer?.transactionReceiptUrl ?? transfer.transactionReceiptUrl ?? null;
   const failReason = officialTransfer?.failReason?.trim() ?? transfer.failReason ?? null;
   const lastReconciledAt = findFirstAuditAt(auditLogs, ['finance.transfer.reconciled_from_asaas']);
 
@@ -423,20 +456,31 @@ export async function getTransferDetail(input: GetTransferDetailInput): Promise<
     externalReference: officialTransfer?.externalReference ?? transfer.externalReference,
     asaasTransferId: transfer.asaasTransferId ?? officialTransfer?.id ?? null,
     amount,
-    feeAmount: resolveOfficialFeeValue(officialTransfer, webhookMetadata, amount) ?? (transfer.feeValue !== null ? Number(transfer.feeValue) : null),
-    netAmount: resolveOfficialNetValue(officialTransfer, webhookMetadata, amount) ?? (transfer.netValue !== null ? Number(transfer.netValue) : amount),
+    feeAmount:
+      resolveOfficialFeeValue(officialTransfer, webhookMetadata, amount) ??
+      (transfer.feeValue !== null ? Number(transfer.feeValue) : null),
+    netAmount:
+      resolveOfficialNetValue(officialTransfer, webhookMetadata, amount) ??
+      (transfer.netValue !== null ? Number(transfer.netValue) : amount),
     status: resolvedStatus,
     operation: metadata.operation,
     requestedDestinationType: resolveRequestedTransferDestinationType(transfer.destination),
     description: officialTransfer?.description?.trim() || transfer.description || null,
     scheduleDate: officialTransfer?.scheduleDate ?? transfer.scheduleDate?.toISOString() ?? null,
-    transferDate: officialTransfer?.effectiveDate ?? transfer.effectiveDate ?? transfer.statusUpdatedAt?.toISOString() ?? null,
+    transferDate:
+      officialTransfer?.effectiveDate ??
+      transfer.effectiveDate ??
+      transfer.statusUpdatedAt?.toISOString() ??
+      null,
     createdAt: transfer.createdAt.toISOString(),
     statusUpdatedAt: transfer.statusUpdatedAt?.toISOString() ?? null,
     transactionReceiptUrl,
     endToEndIdentifier: officialTransfer?.endToEndIdentifier ?? transfer.endToEndIdentifier ?? null,
     failReason,
-    authorized: typeof officialTransfer?.authorized === 'boolean' ? officialTransfer.authorized : transfer.authorized ?? null,
+    authorized:
+      typeof officialTransfer?.authorized === 'boolean'
+        ? officialTransfer.authorized
+        : (transfer.authorized ?? null),
     canCancel,
     lastWebhookAt: latestWebhook?.recebidoEm.toISOString() ?? null,
     lastReconciledAt,
@@ -446,7 +490,10 @@ export async function getTransferDetail(input: GetTransferDetailInput): Promise<
         createdAt: transfer.createdAt,
         statusUpdatedAt: transfer.statusUpdatedAt,
         effectiveDate: officialTransfer?.effectiveDate ?? transfer.effectiveDate ?? null,
-        authorized: typeof officialTransfer?.authorized === 'boolean' ? officialTransfer.authorized : transfer.authorized ?? null,
+        authorized:
+          typeof officialTransfer?.authorized === 'boolean'
+            ? officialTransfer.authorized
+            : (transfer.authorized ?? null),
       },
       status: resolvedStatus,
       auditLogs,

@@ -1,3 +1,4 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
@@ -55,7 +56,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }),
     );
   } catch (e) {
-    console.error('[API centro de custo][PATCH status]', e);
+    logFinanceApiError('/api/financeiro/centros-custo/[id]/status', e);
     return err(500, 'ERRO_INTERNO', 'Não foi possível atualizar o status do centro de custo');
   }
 }

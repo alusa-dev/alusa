@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
@@ -67,7 +68,7 @@ function toDueDateISO(date: Date): string {
 }
 
 export async function createCharge(
-  input: CreateChargeInput
+  input: CreateChargeInput,
 ): Promise<Result<CreateChargeOutput, CreateChargeError>> {
   try {
     const kyc = await requireKycApproved(input.contaId);
@@ -172,7 +173,8 @@ export async function createCharge(
       if (customer.error === 'PAGADOR_NAO_ENCONTRADO') return err('PAGADOR_NAO_ENCONTRADO');
       if (customer.error === 'PAGADOR_SEM_CPF') return err('PAGADOR_SEM_CPF');
       if (customer.error === 'PAGADOR_CPF_INVALIDO') return err('PAGADOR_CPF_INVALIDO');
-      if (customer.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS') return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+      if (customer.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS')
+        return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
       return err('ERRO_AO_CRIAR_CUSTOMER');
     }
 
@@ -181,25 +183,36 @@ export async function createCharge(
 
     // Mapeamento de Juros (Asaas aceita apenas mensal percentual para pagamentos unicos?)
     // O type definition diz que interest tem apenas { value: number }. O texto diz "Percentage per month".
-    // Se o banco tem jurosValorFixo, não podemos usar diretamente a menos que convertamos. 
+    // Se o banco tem jurosValorFixo, não podemos usar diretamente a menos que convertamos.
     // Por hora, usamos apenas jurosPercentual se disponível.
-    const interest = cobranca.jurosPercentual 
-      ? { value: Number(cobranca.jurosPercentual) } 
+    const interest = cobranca.jurosPercentual
+      ? { value: Number(cobranca.jurosPercentual) }
       : undefined;
 
     // Mapeamento de Multa
     let fine: { value: number; type: 'FIXED' | 'PERCENTAGE' } | undefined;
-    if (cobranca.multaTipo === 'VALOR_FIXO' && cobranca.multaValorFixo && Number(cobranca.multaValorFixo) > 0) {
+    if (
+      cobranca.multaTipo === 'VALOR_FIXO' &&
+      cobranca.multaValorFixo &&
+      Number(cobranca.multaValorFixo) > 0
+    ) {
       fine = { value: Number(cobranca.multaValorFixo), type: 'FIXED' };
-    } else if (cobranca.multaTipo === 'PERCENTUAL' && cobranca.multaPercentual && Number(cobranca.multaPercentual) > 0) {
+    } else if (
+      cobranca.multaTipo === 'PERCENTUAL' &&
+      cobranca.multaPercentual &&
+      Number(cobranca.multaPercentual) > 0
+    ) {
       fine = { value: Number(cobranca.multaPercentual), type: 'PERCENTAGE' };
     }
 
     // Mapeamento de Desconto
-    let discount: { value: number; type: 'FIXED' | 'PERCENTAGE'; dueDateLimitDays: number } | undefined;
-    const discountValue = cobranca.descontoTipo === 'VALOR_FIXO' 
-      ? Number(cobranca.descontoValorFixo) 
-      : Number(cobranca.descontoPercentual);
+    let discount:
+      | { value: number; type: 'FIXED' | 'PERCENTAGE'; dueDateLimitDays: number }
+      | undefined;
+    const discountValue =
+      cobranca.descontoTipo === 'VALOR_FIXO'
+        ? Number(cobranca.descontoValorFixo)
+        : Number(cobranca.descontoPercentual);
 
     if (discountValue > 0) {
       discount = {
@@ -209,9 +222,10 @@ export async function createCharge(
       };
     }
 
-    const dueDateIso = typeof input.dueDateOverride === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.dueDateOverride)
-      ? input.dueDateOverride
-      : toDueDateISO(cobranca.vencimento);
+    const dueDateIso =
+      typeof input.dueDateOverride === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.dueDateOverride)
+        ? input.dueDateOverride
+        : toDueDateISO(cobranca.vencimento);
     if (isPastDate(dueDateIso)) {
       return err('DATA_INVALIDA');
     }
@@ -230,31 +244,34 @@ export async function createCharge(
       discount,
     };
 
-    const chargeId = existingCharge?.id ?? deriveDeterministicId('ch', `${input.contaId}:${cobranca.id}`);
+    const chargeId =
+      existingCharge?.id ?? deriveDeterministicId('ch', `${input.contaId}:${cobranca.id}`);
     if (!existingCharge) {
-      await prisma.charge.create({
-        data: {
-          id: chargeId,
-          contaId: input.contaId,
-          cobrancaId: cobranca.id,
-          externalReference,
-          status: 'PENDING_SYNC',
-          statusUpdatedAt: new Date(),
-          description: cobranca.descricao,
-          value: cobranca.valor,
-          dueDate: new Date(`${dueDateIso}T00:00:00.000Z`),
-          billingType,
-          customerId: customer.data.localCustomerId,
-          payerType: payer.type,
-          payerId: payer.id,
-        },
-      }).catch(async (reserveError) => {
-        const concurrent = await prisma.charge.findFirst({
-          where: { contaId: input.contaId, cobrancaId: cobranca.id, externalReference },
-          select: { id: true },
+      await prisma.charge
+        .create({
+          data: {
+            id: chargeId,
+            contaId: input.contaId,
+            cobrancaId: cobranca.id,
+            externalReference,
+            status: 'PENDING_SYNC',
+            statusUpdatedAt: new Date(),
+            description: cobranca.descricao,
+            value: cobranca.valor,
+            dueDate: new Date(`${dueDateIso}T00:00:00.000Z`),
+            billingType,
+            customerId: customer.data.localCustomerId,
+            payerType: payer.type,
+            payerId: payer.id,
+          },
+        })
+        .catch(async (reserveError) => {
+          const concurrent = await prisma.charge.findFirst({
+            where: { contaId: input.contaId, cobrancaId: cobranca.id, externalReference },
+            select: { id: true },
+          });
+          if (!concurrent) throw reserveError;
         });
-        if (!concurrent) throw reserveError;
-      });
     }
 
     const operation = await reserveOutboundFinancialOperation({
@@ -272,7 +289,10 @@ export async function createCharge(
       ? await getPayment(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
       : null;
     if (!remotePayment) {
-      const matches = await listPayments({ externalReference, limit: 10, includeDeleted: true }, { contaId: input.contaId })
+      const matches = await listPayments(
+        { externalReference, limit: 10, includeDeleted: true },
+        { contaId: input.contaId },
+      )
         .then((result) => result.data)
         .catch(() => []);
       if (matches.length > 1) {
@@ -293,12 +313,18 @@ export async function createCharge(
       if (!claimed) return err('ERRO_AO_CRIAR_PAGAMENTO');
       const payment = await createAsaasPayment(paymentInput);
       if (payment.success) {
-        remotePayment = await getPayment(payment.data.id, { contaId: input.contaId }).catch(() => ({
-          ...payment.data,
-          status: 'PENDING',
-        } as Awaited<ReturnType<typeof getPayment>>));
+        remotePayment = await getPayment(payment.data.id, { contaId: input.contaId }).catch(
+          () =>
+            ({
+              ...payment.data,
+              status: 'PENDING',
+            }) as Awaited<ReturnType<typeof getPayment>>,
+        );
       } else {
-        const recovered = await listPayments({ externalReference, limit: 10, includeDeleted: true }, { contaId: input.contaId })
+        const recovered = await listPayments(
+          { externalReference, limit: 10, includeDeleted: true },
+          { contaId: input.contaId },
+        )
           .then((result) => result.data)
           .catch(() => []);
         if (recovered.length === 1) remotePayment = recovered[0]!;
@@ -312,16 +338,19 @@ export async function createCharge(
             error: payment.error,
           });
           if (payment.error === 'KYC_NAO_APROVADO') return err('KYC_NAO_APROVADO');
-          if (payment.error === 'Credenciais Asaas não configuradas') return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+          if (payment.error === 'Credenciais Asaas não configuradas')
+            return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
           return err('ERRO_AO_CRIAR_PAGAMENTO');
         }
       }
     }
-    const paymentMismatch = !remotePayment?.id
-      || remotePayment.externalReference !== externalReference
-      || (remotePayment.customer != null && remotePayment.customer !== customer.data.customerId)
-      || (remotePayment.value != null && Math.abs(remotePayment.value - Number(cobranca.valor)) > 0.001)
-      || (remotePayment.dueDate != null && remotePayment.dueDate !== dueDateIso);
+    const paymentMismatch =
+      !remotePayment?.id ||
+      remotePayment.externalReference !== externalReference ||
+      (remotePayment.customer != null && remotePayment.customer !== customer.data.customerId) ||
+      (remotePayment.value != null &&
+        Math.abs(remotePayment.value - Number(cobranca.valor)) > 0.001) ||
+      (remotePayment.dueDate != null && remotePayment.dueDate !== dueDateIso);
     if (paymentMismatch) {
       await markOutboundResultUnknown({
         jobId: operation.job.id,
@@ -333,18 +362,22 @@ export async function createCharge(
       });
       return err('ERRO_AO_CRIAR_PAGAMENTO');
     }
-    await markOutboundRemoteConfirmed(operation.job.id, remotePayment.id, { providerStatus: remotePayment.status });
-    const boletoInfo = billingType === 'BOLETO'
-      ? await getBillingInfo(remotePayment.id, { contaId: input.contaId }).catch(() => null)
-      : null;
-    const boletoData = billingType === 'BOLETO'
-      ? {
-          bankSlipUrl: remotePayment.bankSlipUrl ?? boletoInfo?.bankSlip?.bankSlipUrl ?? null,
-          identificationField: boletoInfo?.bankSlip?.identificationField ?? null,
-          barCode: boletoInfo?.bankSlip?.barCode ?? null,
-          nossoNumero: boletoInfo?.bankSlip?.nossoNumero ?? null,
-        }
-      : {};
+    await markOutboundRemoteConfirmed(operation.job.id, remotePayment.id, {
+      providerStatus: remotePayment.status,
+    });
+    const boletoInfo =
+      billingType === 'BOLETO'
+        ? await getBillingInfo(remotePayment.id, { contaId: input.contaId }).catch(() => null)
+        : null;
+    const boletoData =
+      billingType === 'BOLETO'
+        ? {
+            bankSlipUrl: remotePayment.bankSlipUrl ?? boletoInfo?.bankSlip?.bankSlipUrl ?? null,
+            identificationField: boletoInfo?.bankSlip?.identificationField ?? null,
+            barCode: boletoInfo?.bankSlip?.barCode ?? null,
+            nossoNumero: boletoInfo?.bankSlip?.nossoNumero ?? null,
+          }
+        : {};
     await prisma.charge.updateMany({
       where: { id: chargeId, contaId: input.contaId },
       data: {
@@ -380,7 +413,12 @@ export async function createCharge(
       externalReference,
     });
   } catch (error) {
-    console.error('[finance][createCharge]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.create_charge.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }

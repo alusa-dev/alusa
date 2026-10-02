@@ -5,8 +5,9 @@ import { welcomeWizardStatusDTOSchema } from '@/features/users/dtos';
 import { resolveUserId } from '@/src/server/identity/user-profile-http.helpers';
 import { jsonNoStore } from '@/lib/http-security';
 import { getWelcomeWizardStatus, markWelcomeWizardSeen } from '@/src/server/users/user-account.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const session = await getServerSession(authOptions);
     const userId = await resolveUserId(session?.user?.id);
@@ -28,12 +29,12 @@ export async function GET() {
       }),
     );
   } catch (error) {
-    console.error('Error fetching welcome wizard status:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me/welcome-wizard', method: 'GET', requestId: getRequestId(req), error });
     return jsonNoStore({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
-export async function PATCH() {
+export async function PATCH(req: Request) {
   try {
     const session = await getServerSession(authOptions);
     const userId = await resolveUserId(session?.user?.id);
@@ -51,7 +52,7 @@ export async function PATCH() {
       }),
     );
   } catch (error) {
-    console.error('Error updating welcome wizard status:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me/welcome-wizard', method: 'PATCH', requestId: getRequestId(req), error });
     return jsonNoStore({ error: 'Internal server error' }, { status: 500 });
   }
 }

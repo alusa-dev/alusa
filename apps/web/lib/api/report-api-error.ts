@@ -1,22 +1,16 @@
-import * as Sentry from '@sentry/nextjs';
 import { Prisma } from '@prisma/client';
 import { ZodError } from 'zod';
 
 import { apiJsonError } from './standard-response';
+import { logRuntimeOperationalEvent } from '@/lib/observability/runtime-operational-log';
 
 export type ApiErrorContext = {
   route: string;
   extra?: Record<string, unknown>;
 };
 
-export function reportApiError(error: unknown, context: ApiErrorContext): void {
-  console.error(`[${context.route}]`, error);
-  if (process.env.VERCEL_ENV === 'production') {
-    Sentry.captureException(error, {
-      tags: { route: context.route },
-      extra: context.extra,
-    });
-  }
+export function reportApiError(error: unknown, _context: ApiErrorContext): void {
+  logRuntimeOperationalEvent({ eventName: 'api.error.reported', error });
 }
 
 export function apiErrorResponse(

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { listStoreSaleOperationalIssues } from '@alusa/finance';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const querySchema = z.object({
   staleAfterMinutes: z.coerce.number().int().min(1).max(24 * 60).optional(),
@@ -31,9 +32,13 @@ export async function GET(request: Request) {
     const data = await listStoreSaleOperationalIssues({ contaId, ...parsed.data });
     return NextResponse.json({ data });
   } catch (error) {
-    console.error('[api/vendas/operacional][GET][error]', {
-      errorName: error instanceof Error ? error.name : null,
-      errorMessage: error instanceof Error ? error.message : String(error),
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.store_sales.request.failed',
+      route: '/api/vendas/operacional',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
     });
     return jsonError(
       500,

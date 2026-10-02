@@ -16,6 +16,7 @@ import { useFinanceRealtimeSync } from '@/hooks/use-finance-realtime-sync';
 import { DashboardSecondaryChunkSkeleton } from './dashboard-secondary-skeletons';
 import WelcomeWizardDialog from './WelcomeWizardDialog';
 import { dismissWelcomeWizard, fetchWelcomeWizardStatus } from './welcome-wizard-service';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { isExternalAsaasApiKeyHealthy } from '@/lib/external-asaas-api-key-health';
 import type { SerializableDashboardPrefetch } from '@/lib/dashboard/prefetch-dashboard-data-serializable';
 import {
@@ -153,7 +154,7 @@ export default function DashboardClient({ initialData = null }: DashboardClientP
       })
       .catch((error) => {
         if ((error as Error).name === 'AbortError') return;
-        console.warn('[DashboardClient] Falha ao carregar wizard de boas-vindas', error);
+        logClientOperationalEvent('dashboard.welcome_wizard.load_failed', error);
         setWelcomeWizardCheckedForUserId(user.id);
       });
 

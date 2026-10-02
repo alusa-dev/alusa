@@ -113,7 +113,6 @@ export async function GET() {
     return financeInternalError('API Financeiro Indicadores', e);
   } finally {
     logFinanceApiRequest('GET /api/financeiro/indicadores', {
-      contaId,
       durationMs: Date.now() - startedAt,
       cacheHit: cacheState,
     });

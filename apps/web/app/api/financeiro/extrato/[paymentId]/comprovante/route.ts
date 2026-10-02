@@ -1,3 +1,4 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getPayment, recordAsaasReadIntent } from '@alusa/finance';
@@ -39,7 +40,7 @@ export async function GET(
       headers: { 'cache-control': 'no-store' },
     });
   } catch (error) {
-    console.error('[API extrato comprovante][GET]', error);
+    logFinanceApiError('/api/financeiro/extrato/[paymentId]/comprovante', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

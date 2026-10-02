@@ -1,3 +1,4 @@
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
 import { createHash } from 'crypto';
 import { BillingMode, EnrollmentCreationOperationStatus, PeriodicidadePlano, Prisma } from '@prisma/client';
 import {
@@ -258,15 +259,7 @@ function logUnexpectedEnrollmentOperationCollision(params: {
   error: unknown;
   existingOperationId?: string;
 }) {
-  console.error('[enrollment-create] Colisão inesperada ao reservar operação', {
-    contaId: params.contaId,
-    operation: 'create-immediate-enrollment',
-    correlationId: params.uiRequestId,
-    uiRequestId: params.uiRequestId,
-    requestFingerprint: params.requestFingerprint,
-    existingOperationId: params.existingOperationId ?? null,
-    uniqueConstraintTarget: uniqueConstraintTarget(params.error),
-  });
+  logEnrollmentOperationalEvent('api.enrollment.operation.unique_conflict', params.error);
 }
 
 async function classifyEnrollmentOperationCreateCollision(params: {
@@ -800,14 +793,7 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
     const safelyCompensated = compensationProvesExpectedResourcesRemoved(input, compensation);
     const requiresReconciliation = !safelyCompensated;
     const localCommitFailure = classifyLocalCommitFailure(error);
-    console.warn('[enrollment-create] Falha no commit local após provisionamento remoto', {
-      contaId: input.contaId,
-      operationId: operation.id,
-      correlationId: uiRequestId,
-      failureCode: localCommitFailure.code,
-      compensated: safelyCompensated,
-      requiresReconciliation,
-    });
+    logEnrollmentOperationalEvent('api.enrollment.saga.reconciliation_required', error);
     await withEnrollmentOperationTenant(input.contaId, (operations) =>
       operations.updateMany({
         where: { id: operation.id, contaId: input.contaId, version: leaseVersion },
@@ -858,12 +844,7 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
     }))
     .catch(() => ({ count: 0 }));
   if (committedState.count !== 1) {
-    console.error('[enrollment-create] Matrícula confirmada; saga aguarda convergência', {
-      contaId: input.contaId,
-      operationId: operation.id,
-      matriculaId: result.matricula.id,
-      correlationId: uiRequestId,
-    });
+    logEnrollmentOperationalEvent('api.enrollment.saga.reconciliation_required');
   }
 
   return {

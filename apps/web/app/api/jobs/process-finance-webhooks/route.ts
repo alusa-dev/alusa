@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import {
   drainFinanceWebhookSideEffectOutbox,
@@ -57,23 +58,30 @@ async function run(req: Request) {
 
     const preflight = skipPreflight
       ? null
-      : await runWebhookQueuePreflight({
-          contaId,
-        });
+      : await Sentry.startSpan(
+          { name: 'finance.webhook.preflight', op: 'queue.preflight', attributes: { 'messaging.system': 'asaas-webhook' } },
+          () => runWebhookQueuePreflight({ contaId }),
+        );
 
-    const processed = await processAsaasWebhookQueueWithInbox({
-      contaId,
-      limit,
-      statuses: onlyErrored ? ['ERRO'] : ['PENDENTE', 'ERRO'],
-      source: tenantScope.isCron ? 'WEBHOOK' : 'REPROCESS',
-      drainSideEffects: false,
-    });
+    const processed = await Sentry.startSpan(
+      { name: 'finance.webhook.queue.process', op: 'queue.process', attributes: { 'messaging.system': 'asaas-webhook' } },
+      () => processAsaasWebhookQueueWithInbox({
+        contaId,
+        limit,
+        statuses: onlyErrored ? ['ERRO'] : ['PENDENTE', 'ERRO'],
+        source: tenantScope.isCron ? 'WEBHOOK' : 'REPROCESS',
+        drainSideEffects: false,
+      }),
+    );
 
-    const sideEffects = await drainFinanceWebhookSideEffectOutbox({
-      contaId,
-      limit: Math.max(50, limit),
-      effectTypes,
-    });
+    const sideEffects = await Sentry.startSpan(
+      { name: 'finance.webhook.side_effects.drain', op: 'queue.process', attributes: { 'messaging.system': 'finance-outbox' } },
+      () => drainFinanceWebhookSideEffectOutbox({
+        contaId,
+        limit: Math.max(50, limit),
+        effectTypes,
+      }),
+    );
 
     const response = {
       success: true,

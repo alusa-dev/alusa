@@ -1,3 +1,4 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
@@ -52,7 +53,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       data: mapCostCenterToDTO(centro as unknown as Record<string, unknown>),
     });
   } catch (e) {
-    console.error('[API centro de custo][GET id]', e);
+    logFinanceApiError('/api/financeiro/centros-custo/[id]', e);
     return err(500, 'ERRO_INTERNO', 'Não foi possível carregar o centro de custo');
   }
 }
@@ -92,7 +93,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       }),
     );
   } catch (e) {
-    console.error('[API centro de custo][PUT]', e);
+    logFinanceApiError('/api/financeiro/centros-custo/[id]', e);
     return err(500, 'ERRO_INTERNO', 'Não foi possível atualizar o centro de custo');
   }
 }
@@ -121,7 +122,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       ),
     );
   } catch (e) {
-    console.error('[API centro de custo][DELETE]', e);
+    logFinanceApiError('/api/financeiro/centros-custo/[id]', e);
     return err(500, 'ERRO_INTERNO', 'Não foi possível excluir o centro de custo');
   }
 }

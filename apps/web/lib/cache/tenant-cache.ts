@@ -1,4 +1,5 @@
 import type { CacheState } from '@/lib/private-cache';
+import { logRuntimeOperationalEvent } from '@/lib/observability/runtime-operational-log';
 
 type CacheEntry<T> = {
   body: T;
@@ -274,15 +275,12 @@ export class ResilientCacheAdapter implements TenantCacheAdapter {
   constructor(
     private readonly primary: TenantCacheAdapter,
     private readonly fallback: TenantCacheAdapter,
-    private readonly options: { label: string },
+    _options: { label: string },
   ) {}
 
   private warn(operation: string, error: unknown) {
-    console.warn('[cache][fallback]', {
-      adapter: this.options.label,
-      operation,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    const category = operation === 'get' ? 'get' : operation === 'set' ? 'set' : operation === 'delete' || operation === 'deleteByPrefix' ? 'delete' : 'lock';
+    logRuntimeOperationalEvent({ eventName: 'cache.primary.fallback', error, category, severity: 'warn' });
   }
 
   async get<T>(key: string): Promise<{ state: CacheState; body?: T }> {
@@ -396,15 +394,7 @@ export async function withTenantCache<T>({
 export async function invalidateTenantCache(
   adapter: TenantCacheAdapter,
   keys: string[],
-  metadata?: { contaId?: string; reason?: string; areas?: string[] },
+  _metadata?: { contaId?: string; reason?: string; areas?: string[] },
 ) {
   await Promise.allSettled(keys.map((key) => adapter.delete(key)));
-  if (process.env.PERF_LOGS === '1') {
-    console.log('[cache][invalidate]', {
-      contaId: metadata?.contaId,
-      reason: metadata?.reason,
-      areas: metadata?.areas,
-      count: keys.length,
-    });
-  }
 }

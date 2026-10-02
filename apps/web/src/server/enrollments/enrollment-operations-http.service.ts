@@ -1,3 +1,4 @@
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import {
   getSubscription,
@@ -392,7 +393,7 @@ export async function getMatriculaRoute(req: Request, ctx: { params: Promise<{ i
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
-    console.error('Erro ao buscar matrícula:', error);
+    logEnrollmentOperationalEvent('api.enrollment.read.failed', error);
     return jsonError(
       500,
       'ERRO_BUSCAR_MATRICULA',
@@ -874,7 +875,7 @@ export async function patchMatriculaRoute(req: Request, ctx: { params: Promise<{
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
-    console.error('Erro ao atualizar matrícula:', error);
+    logEnrollmentOperationalEvent('api.enrollment.update.failed', error);
     if ((error as { name?: string }).name === 'ZodError') {
       const issues = (error as { issues?: unknown }).issues;
       return jsonError(422, 'ERRO_VALIDACAO', 'Dados da matrícula inválidos.', issues);
@@ -1028,7 +1029,7 @@ export async function deleteMatriculaRoute(req: Request, ctx: { params: Promise<
     if (error instanceof ManualSyncError) {
       return jsonError(error.statusCode, error.code, error.message, error.details);
     }
-    console.error('[MATRICULA_DELETE] Erro ao processar exclusão:', error);
+    logEnrollmentOperationalEvent('api.enrollment.delete.failed', error);
     return jsonError(500, 'ERRO_DELETAR_MATRICULA', 'Não foi possível excluir a matrícula.');
   }
 }

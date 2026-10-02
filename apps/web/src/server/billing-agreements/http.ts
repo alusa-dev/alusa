@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { ZodError } from 'zod';
+import { logPersonDataOperationalEvent } from '@/lib/observability/api-logger';
 
 import { getSessionUser, type SessionUser } from '@/lib/auth/session';
 
@@ -134,11 +135,7 @@ export function billingAgreementUnexpectedError(error: unknown) {
     );
   }
 
-  console.error('[billing-agreements][http] unexpected error', {
-    name: financeError?.name ?? 'UnknownError',
-    code: code ?? null,
-    message: financeError?.message ?? 'Unknown billing agreement error',
-  });
+  logPersonDataOperationalEvent('api.billing_agreements.request.failed', financeError);
   return billingAgreementJsonError(
     500,
     'ERRO_ACORDO_FINANCEIRO',

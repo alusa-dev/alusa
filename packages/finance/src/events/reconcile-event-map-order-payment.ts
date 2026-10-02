@@ -48,7 +48,9 @@ type RecordReconciliationAuditInput = {
 };
 
 export type ReconcileEventMapOrderPaymentDependencies = {
-  findOrder: (input: ReconcileEventMapOrderPaymentInput) => Promise<EventMapOrderPaymentRecord | null>;
+  findOrder: (
+    input: ReconcileEventMapOrderPaymentInput,
+  ) => Promise<EventMapOrderPaymentRecord | null>;
   loadCredentials: (contaId: string) => Promise<AsaasCredentials>;
   getPayment: (params: { apiKey: string; paymentId: string }) => Promise<AsaasPaymentSnapshot>;
   updateOrderPaymentMethod: (params: {
@@ -65,20 +67,21 @@ function toAuditJson(value: unknown): Prisma.InputJsonValue {
 }
 
 const defaultDependencies: ReconcileEventMapOrderPaymentDependencies = {
-  findOrder: async (input) => prisma.eventMapOrder.findFirst({
-    where: {
-      id: input.orderId,
-      contaId: input.contaId,
-      eventId: input.eventId,
-    },
-    select: {
-      id: true,
-      contaId: true,
-      eventId: true,
-      asaasPaymentId: true,
-      paymentMethod: true,
-    },
-  }),
+  findOrder: async (input) =>
+    prisma.eventMapOrder.findFirst({
+      where: {
+        id: input.orderId,
+        contaId: input.contaId,
+        eventId: input.eventId,
+      },
+      select: {
+        id: true,
+        contaId: true,
+        eventId: true,
+        asaasPaymentId: true,
+        paymentMethod: true,
+      },
+    }),
   loadCredentials: (contaId) => loadDecryptedAsaasCredentials(contaId),
   getPayment: (params) => getPayment(params),
   updateOrderPaymentMethod: async (params) => {
@@ -210,14 +213,8 @@ export async function reconcileEventMapOrderPayment(
     });
   } catch (error) {
     logEventsFinance(
-      'eventMapOrder.reconcile.failed',
-      {
-        contaId: input.contaId,
-        eventId: input.eventId,
-        orderId: input.orderId,
-        asaasPaymentId: order.asaasPaymentId,
-        message: error instanceof Error ? error.message : String(error),
-      },
+      'finance.events.public_event_map.order_payment.reconcile.failed',
+      { error },
       'warn',
     );
 
@@ -266,14 +263,6 @@ export async function reconcileEventMapOrderPayment(
     order,
     previousPaymentMethod: order.paymentMethod,
     paymentMethod: updatedOrder.paymentMethod,
-  });
-
-  logEventsFinance('eventMapOrder.reconcile', {
-    contaId: input.contaId,
-    eventId: input.eventId,
-    orderId: order.id,
-    asaasPaymentId: order.asaasPaymentId,
-    updated: true,
   });
 
   return {

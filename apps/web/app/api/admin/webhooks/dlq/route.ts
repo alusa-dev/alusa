@@ -1,18 +1,28 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { ZodError } from 'zod';
 import { authOptions } from '@/lib/auth-options';
-import { listDlqWebhooks, getDlqStats, requeueDlqWebhooks, requeueAllDlqWebhooks } from '@alusa/finance';
+import {
+  listDlqWebhooks,
+  getDlqStats,
+  requeueDlqWebhooks,
+  requeueAllDlqWebhooks,
+} from '@alusa/finance';
 import { adminWebhookDlqInputDTOSchema } from '@/features/system/dtos';
 
 async function requireAdmin() {
   const session = await getServerSession(authOptions);
   if (!session?.user?.contaId) {
-    return { error: NextResponse.json({ success: false, error: 'Não autorizado' }, { status: 401 }) };
+    return {
+      error: NextResponse.json({ success: false, error: 'Não autorizado' }, { status: 401 }),
+    };
   }
   const isAdmin = session.user.role === 'ADMIN' || session.user.role === 'SUPER_ADMIN';
   if (!isAdmin) {
-    return { error: NextResponse.json({ success: false, error: 'Acesso negado' }, { status: 403 }) };
+    return {
+      error: NextResponse.json({ success: false, error: 'Acesso negado' }, { status: 403 }),
+    };
   }
   return { contaId: session.user.contaId };
 }
@@ -43,7 +53,14 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ success: true, data: { list, stats } });
   } catch (error) {
-    console.error('[admin/webhooks/dlq] GET error:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/webhooks/dlq',
+      method: 'GET',
+      requestId: getRequestId(req),
+      error,
+    });
     return NextResponse.json({ success: false, error: 'Erro interno' }, { status: 500 });
   }
 }
@@ -78,9 +95,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
     if (error instanceof ZodError) {
-      return NextResponse.json({ success: false, error: 'Envie "ids" ou "all: true"' }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: 'Envie "ids" ou "all: true"' },
+        { status: 400 },
+      );
     }
-    console.error('[admin/webhooks/dlq] POST error:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/webhooks/dlq',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     return NextResponse.json({ success: false, error: 'Erro interno' }, { status: 500 });
   }
 }

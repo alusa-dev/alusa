@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
@@ -27,6 +28,7 @@ function clampPositiveInt(value: string | null, fallback: number, max: number) {
  * - staleOlderThanMinutes (opcional): idade mínima, default 60.
  */
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -49,7 +51,7 @@ async function run(req: Request) {
 
     return NextResponse.json({ success: result.failed === 0, result });
   } catch (error) {
-    console.error('[Job Reconcile Stale Invoices] Erro:', error);
+    logJobFailure('reconcile-stale-invoices', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconciliar as notas fiscais pendentes.');
   }
 }

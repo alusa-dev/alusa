@@ -12,6 +12,7 @@ import { CustomScrollArea } from '@/components/ui/custom-scroll-area';
 import { cn } from '@/lib/cn';
 import { useNotificationsFeed } from './hooks/use-notifications-feed';
 import type { NotificationItem, NotificationSeverity, NotificationView } from './types';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 
 type CobrancaActionResponse = {
   data?: {
@@ -245,7 +246,7 @@ export function NotificationsInboxPage() {
 
       router.push(`/charges/${selectedItem.entityId}`);
     } catch (error) {
-      console.error('[Notifications][openContext]', error);
+      logClientOperationalEvent('notifications.context.open_failed', error);
       const relatedPath = resolveNotificationPath(selectedItem.relatedPath);
       if (relatedPath) {
         router.push(relatedPath);

@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSession } from 'next-auth/react';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import {
   platformBillingAccessDTOSchema,
   platformBillingSummaryDTOSchema,
@@ -67,7 +68,7 @@ export function PlatformBillingProvider({ children }: { children: ReactNode }) {
         setAccess(parsed.access);
         lastFetchedAtRef.current = Date.now();
       } catch (error) {
-        console.warn('[PlatformBillingProvider] failed to load summary', error);
+        logClientOperationalEvent('platform_billing.summary.load_failed', error);
         setSummary(null);
         setAccess(null);
       } finally {

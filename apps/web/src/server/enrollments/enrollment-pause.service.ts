@@ -1,3 +1,4 @@
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
 import type { PrismaClient } from '@prisma/client';
 import { StatusMatricula } from '@prisma/client';
 import { prisma as defaultPrisma } from '@/src/prisma';
@@ -752,7 +753,7 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
         },
       });
     } catch (error) {
-      console.error('[MATRICULA_PAUSA] Falha ao registrar divergência financeira:', error);
+      logEnrollmentOperationalEvent('api.enrollment.finance.divergence_audit.failed', error);
     }
   }
 

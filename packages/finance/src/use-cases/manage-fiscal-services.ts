@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
@@ -91,14 +92,17 @@ export async function listFiscalServices(contaId: string) {
   });
 }
 
-export async function listProviderMunicipalServices(
-  input: ListMunicipalServicesInput,
-): Promise<Result<{
-  data: AsaasMunicipalService[];
-  totalCount: number;
-  hasMore: boolean;
-  portalManualMode: boolean;
-}, ManageFiscalServiceError>> {
+export async function listProviderMunicipalServices(input: ListMunicipalServicesInput): Promise<
+  Result<
+    {
+      data: AsaasMunicipalService[];
+      totalCount: number;
+      hasMore: boolean;
+      portalManualMode: boolean;
+    },
+    ManageFiscalServiceError
+  >
+> {
   try {
     const prisma = getFiscalPrisma();
     const fiscalSettings = await prisma.contaFiscalSettings.findUnique({
@@ -140,14 +144,17 @@ export async function listProviderMunicipalServices(
       });
     }
 
-    console.error('[finance][listProviderMunicipalServices]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.manage_fiscal_services.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }
 
-export async function listProviderNbsCodes(
-  input: ListNbsCodesInput,
-): Promise<
+export async function listProviderNbsCodes(input: ListNbsCodesInput): Promise<
   Result<
     {
       data: AsaasNbsCode[];
@@ -174,7 +181,12 @@ export async function listProviderNbsCodes(
       hasMore: response.hasMore ?? false,
     });
   } catch (error) {
-    console.error('[finance][listProviderNbsCodes]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.manage_fiscal_services.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }
@@ -199,7 +211,12 @@ export async function listFiscalReferenceCodes(input: ListFiscalReferenceCodesIn
       hasMore: response.hasMore ?? false,
     });
   } catch (error) {
-    console.error('[finance][listFiscalReferenceCodes]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.manage_fiscal_services.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }
@@ -210,7 +227,7 @@ function normalizeServiceInput(input: FiscalServiceInput): FiscalServiceInput & 
 } {
   const source: FiscalServiceSource = input.asaasMunicipalServiceId
     ? 'MUNICIPAL_LIST'
-    : input.source ?? 'MANUAL';
+    : (input.source ?? 'MANUAL');
 
   return {
     ...input,
@@ -320,7 +337,12 @@ export async function createFiscalService(
 
     return ok({ id: created.id });
   } catch (error) {
-    console.error('[finance][createFiscalService]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.manage_fiscal_services.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }
@@ -374,7 +396,9 @@ export async function updateFiscalService(
         pisCofinsTaxStatus,
         operationPis: operationRates.operationPis,
         operationCofins: operationRates.operationCofins,
-        useTaxSystemReformNT007: settings ? !settings.simplesNacional : existing.useTaxSystemReformNT007,
+        useTaxSystemReformNT007: settings
+          ? !settings.simplesNacional
+          : existing.useTaxSystemReformNT007,
       },
     });
 
@@ -384,7 +408,12 @@ export async function updateFiscalService(
 
     return ok({ id: updated.id });
   } catch (error) {
-    console.error('[finance][updateFiscalService]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.manage_fiscal_services.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }
@@ -417,7 +446,12 @@ export async function deleteFiscalService(
 
     return ok({ id: serviceId });
   } catch (error) {
-    console.error('[finance][deleteFiscalService]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.manage_fiscal_services.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }

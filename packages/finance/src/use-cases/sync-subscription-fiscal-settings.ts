@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
@@ -70,10 +71,12 @@ async function resolveFiscalSettingsIssue(input: SyncSubscriptionFiscalSettingsI
   });
 }
 
-async function markLocal(input: SyncSubscriptionFiscalSettingsInput & {
-  configured?: boolean;
-  error?: string | null;
-}) {
+async function markLocal(
+  input: SyncSubscriptionFiscalSettingsInput & {
+    configured?: boolean;
+    error?: string | null;
+  },
+) {
   const prisma = getFiscalPrisma();
   const data = {
     asaasInvoiceSettingsConfigured: input.configured,
@@ -168,7 +171,10 @@ export async function syncSubscriptionFiscalSettings(
         contaId: input.contaId,
         actor,
         action: 'finance.subscription.invoice_settings.deleted',
-        entity: { type: input.kind === 'STANDALONE' ? 'StandaloneSubscription' : 'Subscription', id: input.subscriptionId },
+        entity: {
+          type: input.kind === 'STANDALONE' ? 'StandaloneSubscription' : 'Subscription',
+          id: input.subscriptionId,
+        },
         metadata: {
           asaasSubscriptionId: input.asaasSubscriptionId,
           reason: input.action === 'DELETE' ? 'REQUESTED' : 'NOT_ELIGIBLE',
@@ -187,13 +193,16 @@ export async function syncSubscriptionFiscalSettings(
       return ok({ configured: false, action: 'SKIPPED', reason: 'FISCAL_NOT_READY' });
     }
 
-    if (isTaxReformApplicable({
-      simplesNacional: settings.simplesNacional,
-      effectiveDate: todayInBrazil(),
-    })) {
+    if (
+      isTaxReformApplicable({
+        simplesNacional: settings.simplesNacional,
+        effectiveDate: todayInBrazil(),
+      })
+    ) {
       const reformIssues = validateFiscalIbsCbs(defaultService);
       if (reformIssues.length > 0) {
-        const message = reformIssues[0]?.message ?? 'Revise a classificação fiscal da reforma tributária.';
+        const message =
+          reformIssues[0]?.message ?? 'Revise a classificação fiscal da reforma tributária.';
         deletionOutcomeUnknown = true;
         await deleteSubscriptionInvoiceSettingsIfConfigured({
           apiKey: credentials.apiKey,
@@ -201,7 +210,11 @@ export async function syncSubscriptionFiscalSettings(
         });
         deletionOutcomeUnknown = false;
         await markLocal({ ...input, configured: false, error: message });
-        return ok({ configured: false, action: 'SKIPPED', reason: 'CLASSIFICACAO_REFORMA_TRIBUTARIA_INVALIDA' });
+        return ok({
+          configured: false,
+          action: 'SKIPPED',
+          reason: 'CLASSIFICACAO_REFORMA_TRIBUTARIA_INVALIDA',
+        });
       }
     }
 
@@ -211,7 +224,8 @@ export async function syncSubscriptionFiscalSettings(
       pisCofinsTaxStatus: defaultService.pisCofinsTaxStatus,
       pis: asNumber(defaultService.pis),
       cofins: asNumber(defaultService.cofins),
-      operationPis: defaultService.operationPis == null ? null : asNumber(defaultService.operationPis),
+      operationPis:
+        defaultService.operationPis == null ? null : asNumber(defaultService.operationPis),
       operationCofins:
         defaultService.operationCofins == null ? null : asNumber(defaultService.operationCofins),
       retainIss: defaultService.retainIss,
@@ -221,18 +235,16 @@ export async function syncSubscriptionFiscalSettings(
       ir: asNumber(defaultService.ir),
     });
     if (pisCofinsIssues.length > 0) {
-      const message =
-        pisCofinsIssues[0]?.message ?? 'Revise PIS/COFINS do serviço fiscal padrão.';
+      const message = pisCofinsIssues[0]?.message ?? 'Revise PIS/COFINS do serviço fiscal padrão.';
       await markLocal({ ...input, configured: false, error: message });
       return ok({ configured: false, action: 'SKIPPED', reason: 'PIS_COFINS_INVALIDO' });
     }
 
     const usesProviderMunicipalService = Boolean(defaultService.asaasMunicipalServiceId);
-    const effectiveDatePeriod =
-      settings.invoiceEffectiveDatePeriod ?? 'ON_PAYMENT_CONFIRMATION';
+    const effectiveDatePeriod = settings.invoiceEffectiveDatePeriod ?? 'ON_PAYMENT_CONFIRMATION';
     const payload: UpsertSubscriptionInvoiceSettingsInput = {
       municipalServiceId: usesProviderMunicipalService
-        ? defaultService.asaasMunicipalServiceId ?? undefined
+        ? (defaultService.asaasMunicipalServiceId ?? undefined)
         : undefined,
       municipalServiceCode: usesProviderMunicipalService
         ? undefined
@@ -242,18 +254,19 @@ export async function syncSubscriptionFiscalSettings(
       effectiveDatePeriod,
       daysBeforeDueDate:
         effectiveDatePeriod === 'BEFORE_PAYMENT_DUE_DATE'
-          ? settings.invoiceDaysBeforeDueDate ?? 5
+          ? (settings.invoiceDaysBeforeDueDate ?? 5)
           : undefined,
       receivedOnly:
-        effectiveDatePeriod === 'ON_NEXT_MONTH'
-          ? settings.invoiceReceivedOnly
-          : undefined,
+        effectiveDatePeriod === 'ON_NEXT_MONTH' ? settings.invoiceReceivedOnly : undefined,
       observations: settings.defaultObservations ?? undefined,
-      taxes: buildSubscriptionInvoiceTaxes({
-        ...defaultService,
-        simplesNacional: settings.simplesNacional,
-        useNationalPortal: settings.useNationalPortal,
-      }, todayInBrazil()),
+      taxes: buildSubscriptionInvoiceTaxes(
+        {
+          ...defaultService,
+          simplesNacional: settings.simplesNacional,
+          useNationalPortal: settings.useNationalPortal,
+        },
+        todayInBrazil(),
+      ),
     };
 
     const existingSettings = await findSubscriptionInvoiceSettings({
@@ -281,7 +294,10 @@ export async function syncSubscriptionFiscalSettings(
       contaId: input.contaId,
       actor,
       action: 'finance.subscription.invoice_settings.upserted',
-      entity: { type: input.kind === 'STANDALONE' ? 'StandaloneSubscription' : 'Subscription', id: input.subscriptionId },
+      entity: {
+        type: input.kind === 'STANDALONE' ? 'StandaloneSubscription' : 'Subscription',
+        id: input.subscriptionId,
+      },
       metadata: {
         asaasSubscriptionId: input.asaasSubscriptionId,
         effectiveDatePeriod: payload.effectiveDatePeriod,
@@ -292,7 +308,12 @@ export async function syncSubscriptionFiscalSettings(
 
     return ok({ configured: true, action: 'UPSERTED' });
   } catch (error) {
-    console.error('[finance][syncSubscriptionFiscalSettings]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.sync_subscription_fiscal_settings.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     await markLocal({
       ...input,
       configured: deletionOutcomeUnknown ? true : undefined,

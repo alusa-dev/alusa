@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import type { AutocompleteOption } from '@/components/shared/AutocompleteList';
 
 type StudentSearchItem = {
@@ -65,7 +66,7 @@ export function useStudentAutocomplete({ enabled }: { enabled: boolean }) {
         setHighlightedIndex(0);
       } catch (err) {
         if ((err as Error).name !== 'AbortError') {
-          console.error(err);
+          logClientOperationalEvent('public_event.participant.student_lookup.failed', err);
         }
       } finally {
         setSearchLoading(false);

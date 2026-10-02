@@ -1,6 +1,7 @@
 import type { InvoiceStatus, Prisma } from '@prisma/client';
 
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { recordInvoiceAuditEvent } from '../fiscal/invoice-audit.service';
 import { recordUnknownInvoiceStatusIssue } from '../fiscal/provider-invoice-snapshot';
 import {
@@ -68,10 +69,10 @@ async function publishInvoiceRealtimeUpdate(params: {
       revision: params.revision ?? Date.now(),
     });
   } catch (error) {
-    console.warn('[finance][handleInvoiceWebhook][realtime-publish-failed]', {
-      contaId: params.contaId,
-      invoiceId: params.invoiceId,
-      error: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.webhook.invoice.realtime_publish.failed',
+      error,
     });
   }
 }
@@ -381,12 +382,9 @@ export async function handleInvoiceWebhook(
 
   if (!isAllowedInvoiceStatusTransition(invoice.status, nextStatus)) {
     const invoiceId = invoice.id;
-    console.warn('[finance][handleInvoiceWebhook][state-regression-blocked]', {
-      contaId,
-      invoiceId,
-      from: invoice.status,
-      to: nextStatus,
-      event: payload.event,
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.webhook.invoice.state_regression_blocked',
     });
     await prisma.invoice.update({
       where: { id: invoice.id },
@@ -415,10 +413,10 @@ export async function handleInvoiceWebhook(
       invoiceId: invoice.id,
       correlationId: payload.id,
     }).catch((error: unknown) => {
-      console.warn('[finance][handleInvoiceWebhook][conflict-reconciliation-failed]', {
-        contaId,
-        invoiceId,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.webhook.invoice.conflict_reconciliation.failed',
+        error,
       });
     });
     return {

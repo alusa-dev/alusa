@@ -1,3 +1,4 @@
+import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
 import {
   createCharge,
   getAsaasPaymentDetails,
@@ -165,7 +166,7 @@ export async function resendEnrollmentCharge(params: {
         pixQrCode,
       });
     } catch (error) {
-      console.error('[Reenviar Cobrança] Erro ao buscar via Asaas:', error);
+      logEnrollmentOperationalEvent('api.enrollment.asaas.read.failed', error);
       return failure(500, { error: 'Erro ao buscar cobrança via Asaas', details: undefined });
     }
   }
@@ -231,7 +232,7 @@ export async function resendEnrollmentCharge(params: {
       asaasPaymentId,
       eventName: 'PAYMENT_CREATED',
     }).catch((syncError) => {
-      console.warn('[Reenviar Cobrança] syncPaymentStateFromAsaas falhou (não crítico)', syncError);
+      logEnrollmentOperationalEvent('api.enrollment.asaas.sync.degraded', syncError, { severity: 'warn' });
     });
     const { payment, pixQrCode } = await getAsaasPaymentDetails({
       paymentId: asaasPaymentId,
@@ -250,7 +251,7 @@ export async function resendEnrollmentCharge(params: {
     if (error instanceof KycNotApprovedError) {
       return failure(409, { error: 'KYC_NAO_APROVADO', message: 'Conta não aprovada para operações financeiras' });
     }
-    console.error('[Reenviar Cobrança] Erro ao provisionar cobrança via createCharge:', error);
+    logEnrollmentOperationalEvent('api.enrollment.asaas.provision.failed', error);
     return failure(500, { error: 'Erro ao criar cobrança no Asaas', details: undefined });
   }
 }

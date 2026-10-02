@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
@@ -42,15 +43,16 @@ export async function POST(req: NextRequest) {
       removeReason: parsed.data.removeReason,
       actor: { type: 'ADMIN', id: user.id },
       requestId:
-        req.headers.get('x-request-id') ??
-        req.headers.get('x-correlation-id') ??
-        undefined,
+        req.headers.get('x-request-id') ?? req.headers.get('x-correlation-id') ?? undefined,
     });
 
     if (result.success) return json(200, result);
 
     // erros de validação
-    if (result.errorCode === 'CONFIRM_TEXT_INVALID' || result.errorCode === 'REMOVE_REASON_REQUIRED') {
+    if (
+      result.errorCode === 'CONFIRM_TEXT_INVALID' ||
+      result.errorCode === 'REMOVE_REASON_REQUIRED'
+    ) {
       return json(400, result);
     }
 
@@ -71,7 +73,14 @@ export async function POST(req: NextRequest) {
 
     return json(400, result);
   } catch (e) {
-    console.error('[API admin/asaas/delete-account][POST] Erro', e);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/asaas/delete-account',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error: e,
+    });
     return json(500, {
       success: false,
       summary: 'Erro interno ao excluir conta (Asaas + Alusa).',

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   validarMatriculaCompleta,
   calcularIdadeAluno,
@@ -307,6 +307,7 @@ describe('Validações Resumo', () => {
     });
 
     it('gera payload válido quando dados completos', () => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
       const state = {
         aluno: {
           id: 'aluno-1',
@@ -335,6 +336,8 @@ describe('Validações Resumo', () => {
       expect(resultado.payload?.turmaId).toBe('turma-1');
       expect(resultado.payload?.planoId).toBe('plano-1');
       expect(resultado.payload?.modeloId).toBe('modelo-1');
+      expect(log).not.toHaveBeenCalled();
+      log.mockRestore();
     });
   });
 

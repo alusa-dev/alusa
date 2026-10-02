@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 
 interface NotificationData {
   cobrancasPendentes: number;
@@ -34,7 +35,7 @@ export function usePortalNotifications() {
           setNotifications(data);
         }
       } catch (error) {
-        console.error('Erro ao carregar notificações:', error);
+        logClientOperationalEvent('portal.notifications.load_failed', error);
       } finally {
         setLoading(false);
       }
@@ -58,7 +59,6 @@ export function usePortalNotifications() {
       notifications.proximosEventos,
   };
 }
-
 
 
 

@@ -15,6 +15,7 @@
     { "path": "../shared" },
     { "path": "../database" },
     { "path": "../domain" },
-    { "path": "../lib" }
+    { "path": "../lib" },
+    { "path": "../observability" }
   ]
 }

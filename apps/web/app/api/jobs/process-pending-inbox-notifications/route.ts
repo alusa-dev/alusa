@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { processPendingInboxNotifications } from '@alusa/lib/notifications/pending-inbox-notifications';
@@ -15,6 +16,7 @@ function jsonError(status: number, code: string, message: string) {
  * Reprocessa notificações internas enfileiradas (ex.: webhook antes da entidade local).
  */
 async function runProcessPendingInboxNotifications(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -39,7 +41,7 @@ async function runProcessPendingInboxNotifications(req: Request) {
       ...result,
     });
   } catch (error) {
-    console.error('[Job Process Pending Inbox] Erro:', error instanceof Error ? error.message : String(error));
+    logJobFailure('process-pending-inbox-notifications', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível processar a fila de notificações.');
   }
 }

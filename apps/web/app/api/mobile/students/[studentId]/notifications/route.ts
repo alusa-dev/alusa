@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 
 import {
@@ -35,7 +36,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ stud
   } catch (error) {
     if (error instanceof MobileStudentUnauthorizedError) return result({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
     if (error instanceof MobileStudentNotFoundError) return result({ error: { code: 'NOT_FOUND', message: 'Aluno não encontrado.' } }, 404);
-    console.error('[mobile-students][notifications-get]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/students/[studentId]/notifications',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return result({ error: { code: 'SERVER_ERROR', message: 'Não foi possível carregar as configurações de avisos.' } }, 500);
   }
 }
@@ -54,7 +62,14 @@ export async function PUT(request: Request, { params }: { params: Promise<{ stud
   } catch (error) {
     if (error instanceof MobileStudentUnauthorizedError) return result({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);
     if (error instanceof MobileStudentNotFoundError) return result({ error: { code: 'NOT_FOUND', message: 'Aluno não encontrado.' } }, 404);
-    console.error('[mobile-students][notifications-save]', { error: error instanceof Error ? error.message : String(error) });
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/students/[studentId]/notifications',
+      method: 'PUT',
+      requestId: getRequestId(request),
+      error,
+    });
     return result({ error: { code: 'SERVER_ERROR', message: 'Não foi possível salvar as configurações de avisos.' } }, 500);
   }
 }

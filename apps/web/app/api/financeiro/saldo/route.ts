@@ -1,3 +1,5 @@
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
+import { createStructuredLog, sharedTelemetry } from '@alusa/observability';
 /**
  * @module GET /api/financeiro/saldo
  * @description Consulta saldo disponível
@@ -49,7 +51,16 @@ export async function GET(request: Request) {
 
       if (!result.success) {
         // Fallback para local se Asaas indisponível
-        console.warn('[API Financeiro Saldo] Asaas indisponível, usando fallback local');
+        const log = createStructuredLog({
+          severity: 'warn',
+          'service.name': 'alusa-web',
+          'service.version': process.env.VERCEL_GIT_COMMIT_SHA,
+          'deployment.environment': process.env.VERCEL_ENV ?? process.env.NODE_ENV,
+          'event.name': 'finance.balance.asaas_fallback',
+          'http.route': '/api/financeiro/saldo',
+        });
+        console.warn(JSON.stringify(log));
+        void sharedTelemetry.publishLog(log);
         return getSaldoLocal(auth.contaId);
       }
 
@@ -68,7 +79,7 @@ export async function GET(request: Request) {
     // Saldo local (cache sincronizado via webhooks)
     return getSaldoLocal(auth.contaId);
   } catch (error) {
-    console.error('[API Financeiro Saldo] Erro ao consultar saldo:', error);
+    logFinanceApiError('/api/financeiro/saldo', error);
     return err(500, 'ERRO_INTERNO', 'Erro ao processar saldo');
   }
 }

@@ -5,6 +5,7 @@ import {
 } from '@prisma/client';
 import { prisma } from '../prisma';
 import { createNotification } from '../services/notifications.service';
+import { logLibOperationalEvent } from '../observability/operational-log';
 
 function formatDateBr(value: Date): string {
   return new Intl.DateTimeFormat('pt-BR', {
@@ -41,10 +42,7 @@ export async function createEnrollmentRenewedNotification(params: {
       id: params.actorUserId ?? null,
     },
   }).catch((error) => {
-    console.warn('[Notifications] Falha ao criar notificação de rematrícula', {
-      matriculaId: params.matriculaId,
-      message: error instanceof Error ? error.message : String(error),
-    });
+    logLibOperationalEvent({ eventName: 'notification.enrollment.renewed.failed', error });
   });
 }
 
@@ -98,11 +96,7 @@ export async function createEnrollmentLifecycleNotification(params: {
       id: params.actorUserId ?? null,
     },
   }).catch((error) => {
-    console.warn('[Notifications] Falha ao criar notificação de ciclo de matrícula', {
-      matriculaId: params.matriculaId,
-      action: params.action,
-      message: error instanceof Error ? error.message : String(error),
-    });
+    logLibOperationalEvent({ eventName: 'notification.enrollment.lifecycle.failed', error });
   });
 }
 
@@ -131,10 +125,7 @@ export async function createContractSignedNotification(params: {
     },
     actor: { type: 'SYSTEM' },
   }).catch((error) => {
-    console.warn('[Notifications] Falha ao criar notificação de contrato assinado', {
-      contratoId: params.contratoId,
-      message: error instanceof Error ? error.message : String(error),
-    });
+    logLibOperationalEvent({ eventName: 'notification.contract.signed.failed', error });
   });
 }
 
@@ -158,10 +149,7 @@ export async function createContractCancelledNotification(params: {
     metadata: { matriculaId: params.matriculaId, alunoNome: params.alunoNome },
     actor: { type: 'SYSTEM' },
   }).catch((error) => {
-    console.warn('[Notifications] Falha ao criar notificação de contrato cancelado', {
-      contratoId: params.contratoId,
-      message: error instanceof Error ? error.message : String(error),
-    });
+    logLibOperationalEvent({ eventName: 'notification.contract.cancelled.failed', error });
   });
 }
 
@@ -189,10 +177,7 @@ export async function createContractExpiredNotification(params: {
     },
     actor: { type: 'SYSTEM' },
   }).catch((error) => {
-    console.warn('[Notifications] Falha ao criar notificação de contrato expirado', {
-      matriculaId: params.matriculaId,
-      message: error instanceof Error ? error.message : String(error),
-    });
+    logLibOperationalEvent({ eventName: 'notification.contract.expired.failed', error });
   });
 }
 
@@ -225,10 +210,7 @@ export async function createContractExpiringNotification(params: {
     },
     actor: { type: 'SYSTEM' },
   }).catch((error) => {
-    console.warn('[Notifications] Falha ao criar notificação de contrato expirando', {
-      matriculaId: params.matriculaId,
-      message: error instanceof Error ? error.message : String(error),
-    });
+    logLibOperationalEvent({ eventName: 'notification.contract.expiring.failed', error });
   });
 }
 
@@ -292,11 +274,7 @@ export async function createExperimentalClassNotification(params: {
       id: params.actorUserId ?? null,
     },
   }).catch((error) => {
-    console.warn('[Notifications] Falha ao criar notificação de aula experimental', {
-      experimentalId: params.experimentalId,
-      variant: params.variant,
-      message: error instanceof Error ? error.message : String(error),
-    });
+    logLibOperationalEvent({ eventName: 'notification.experimental.failed', error });
   });
 }
 

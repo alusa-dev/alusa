@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 import {
   createStandaloneCharge,
@@ -28,12 +29,7 @@ import { deriveDeterministicId } from '../core/index';
 
 export type SupportedNotificationChannel = 'EMAIL' | 'SMS' | 'WHATSAPP';
 export type SupportedBillingType = 'BOLETO' | 'PIX' | 'CREDIT_CARD';
-export type SupportedCycle =
-  | 'WEEKLY'
-  | 'BIWEEKLY'
-  | 'MONTHLY'
-  | 'QUARTERLY'
-  | 'YEARLY';
+export type SupportedCycle = 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY' | 'QUARTERLY' | 'YEARLY';
 
 export type DiscountPayload = {
   value: number;
@@ -158,7 +154,8 @@ async function compensateFamilyCreationRemoteEffects(payload: FamilyBillingPaylo
   const subscriptionIds = new Set<string>();
   if (family?.standaloneSubscriptionId) subscriptionIds.add(family.standaloneSubscriptionId);
   for (const allocation of allocations) {
-    if (allocation.standaloneSubscriptionId) subscriptionIds.add(allocation.standaloneSubscriptionId);
+    if (allocation.standaloneSubscriptionId)
+      subscriptionIds.add(allocation.standaloneSubscriptionId);
   }
   if (payload.monthlyValue > 0 && payload.uiRequestId) {
     subscriptionIds.add(
@@ -207,7 +204,8 @@ async function compensateFamilyCreationRemoteEffects(payload: FamilyBillingPaylo
     } catch (error) {
       // Um payment já removido é um resultado idempotentemente compensado.
       const message = error instanceof Error ? error.message : String(error);
-      if (!/not found|não encontrado|404/i.test(message)) errors.push(`PAYMENT:${paymentId}:${message}`);
+      if (!/not found|não encontrado|404/i.test(message))
+        errors.push(`PAYMENT:${paymentId}:${message}`);
     }
   };
 
@@ -380,16 +378,15 @@ export function parseFamilyBillingPayload(raw: unknown): FamilyBillingPayload {
         : null,
     scheduledEffectiveAt:
       typeof payload.scheduledEffectiveAt === 'string' ? payload.scheduledEffectiveAt : null,
-    expectedBillingVersion:
-      Number.isInteger(payload.expectedBillingVersion) ? Number(payload.expectedBillingVersion) : null,
-    previousMonthlyValue:
-      Number.isFinite(Number(payload.previousMonthlyValue))
-        ? Number(payload.previousMonthlyValue)
-        : null,
-    resultingMonthlyValue:
-      Number.isFinite(Number(payload.resultingMonthlyValue))
-        ? Number(payload.resultingMonthlyValue)
-        : null,
+    expectedBillingVersion: Number.isInteger(payload.expectedBillingVersion)
+      ? Number(payload.expectedBillingVersion)
+      : null,
+    previousMonthlyValue: Number.isFinite(Number(payload.previousMonthlyValue))
+      ? Number(payload.previousMonthlyValue)
+      : null,
+    resultingMonthlyValue: Number.isFinite(Number(payload.resultingMonthlyValue))
+      ? Number(payload.resultingMonthlyValue)
+      : null,
     notificationChannels: Array.isArray(payload.notificationChannels)
       ? payload.notificationChannels.filter(
           (channel): channel is SupportedNotificationChannel =>
@@ -466,10 +463,7 @@ async function updateGroupMetadata(params: {
   }
 }
 
-async function linkFamilyEnrollmentCharge(
-  payload: FamilyBillingPayload,
-  chargeId: string,
-) {
+async function linkFamilyEnrollmentCharge(payload: FamilyBillingPayload, chargeId: string) {
   if (payload.aggregateType !== 'MATRICULA_FAMILIAR') return;
 
   await updateGroupMetadata({
@@ -538,13 +532,8 @@ async function persistAggregateFailure(payload: FamilyBillingPayload, message: s
             where: {
               contaId: payload.contaId,
               familyGroupId: payload.aggregateId,
-              ...(payload.operationId
-                ? { familyEnrollmentOperationId: payload.operationId }
-                : {}),
-              OR: [
-                { sourceChargeId: { not: null } },
-                { standaloneSubscriptionId: { not: null } },
-              ],
+              ...(payload.operationId ? { familyEnrollmentOperationId: payload.operationId } : {}),
+              OR: [{ sourceChargeId: { not: null } }, { standaloneSubscriptionId: { not: null } }],
             },
             select: { id: true },
           }),
@@ -853,7 +842,8 @@ export async function executeFamilyBilling(
       },
       orderBy: { createdAt: 'asc' },
     });
-    if (pendingAllocations.length === 0) throw new Error('ALOCACOES_FAMILIARES_PENDENTES_NAO_ENCONTRADAS');
+    if (pendingAllocations.length === 0)
+      throw new Error('ALOCACOES_FAMILIARES_PENDENTES_NAO_ENCONTRADAS');
     const dayAfter = (value: Date) => {
       const date = new Date(value);
       date.setUTCDate(date.getUTCDate() + 1);
@@ -877,7 +867,9 @@ export async function executeFamilyBilling(
         discountAmountCents: Math.round(Number(allocation.discountAmount ?? 0) * 100),
         netAmountCents: Math.round(Number(allocation.amount) * 100),
         validFrom: allocation.competenceStart.toISOString().slice(0, 10),
-        validUntil: dayAfter(allocation.competenceEnd ?? new Date(`${payload.endDate}T00:00:00.000Z`)),
+        validUntil: dayAfter(
+          allocation.competenceEnd ?? new Date(`${payload.endDate}T00:00:00.000Z`),
+        ),
         prorationPolicy: 'FULL_CURRENT_CYCLE' as const,
       })),
     };
@@ -903,20 +895,39 @@ export async function executeFamilyBilling(
       canonicalOperationId = result.operationId;
     }
     const pendingCanonicalAdjustment = await prisma.billingAdjustment.findFirst({
-      where: { contaId: payload.contaId, operationId: canonicalOperationId, status: { not: 'APPLIED' } },
+      where: {
+        contaId: payload.contaId,
+        operationId: canonicalOperationId,
+        status: { not: 'APPLIED' },
+      },
       select: { id: true },
     });
     if (pendingCanonicalAdjustment) {
-      await processPendingBillingAdjustments({ contaId: payload.contaId, operationId: canonicalOperationId });
+      await processPendingBillingAdjustments({
+        contaId: payload.contaId,
+        operationId: canonicalOperationId,
+      });
       const unresolved = await prisma.billingAdjustment.findFirst({
-        where: { contaId: payload.contaId, operationId: canonicalOperationId, status: { not: 'APPLIED' } },
+        where: {
+          contaId: payload.contaId,
+          operationId: canonicalOperationId,
+          status: { not: 'APPLIED' },
+        },
         select: { status: true, lastError: true },
       });
       if (unresolved) {
-        if (unresolved.status === 'PENDING' || unresolved.status === 'FAILED' || unresolved.status === 'PROCESSING') {
-          throw new Error(`AJUSTE_FAMILIAR_RETRY_PENDENTE:${unresolved.status}:${unresolved.lastError ?? ''}`);
+        if (
+          unresolved.status === 'PENDING' ||
+          unresolved.status === 'FAILED' ||
+          unresolved.status === 'PROCESSING'
+        ) {
+          throw new Error(
+            `AJUSTE_FAMILIAR_RETRY_PENDENTE:${unresolved.status}:${unresolved.lastError ?? ''}`,
+          );
         }
-        throw new Error(`RESULTADO_INCERTO:AJUSTE_FAMILIAR_${unresolved.status}:${unresolved.lastError ?? ''}`);
+        throw new Error(
+          `RESULTADO_INCERTO:AJUSTE_FAMILIAR_${unresolved.status}:${unresolved.lastError ?? ''}`,
+        );
       }
     }
     const canonicalAllocationCount = await prisma.billingAllocation.count({
@@ -929,31 +940,37 @@ export async function executeFamilyBilling(
       },
     });
     if (canonicalAllocationCount !== pendingAllocations.length) {
-      throw new Error(`RESULTADO_INCERTO:PROJECAO_CANONICA_FAMILIAR_INCOMPLETA:${canonicalOperationId}`);
+      throw new Error(
+        `RESULTADO_INCERTO:PROJECAO_CANONICA_FAMILIAR_INCOMPLETA:${canonicalOperationId}`,
+      );
     }
     canonicalJoin = { agreementId: targetAgreement.id, operationId: canonicalOperationId };
     standaloneSubscriptionId = joinTarget.id;
   } else if (monthlyValue > 0) {
     const shortContract = payload.endDate < payload.nextDueDate;
-    const subscriptionResult = await createStandaloneCharge(shortContract
-      ? {
-          ...buildStandaloneBaseInput(payload, { description: `${payload.description} · contrato curto` }),
-          ...buildBillingAdjustments(payload),
-          chargeType: 'ONE_TIME',
-          value: monthlyValue,
-          dueDate: payload.endDate,
-          uiRequestId: `${payload.aggregateId}:short-tuition:${payload.uiRequestId ?? 'shared'}`,
-        }
-      : {
-          ...buildStandaloneBaseInput(payload),
-          ...buildBillingAdjustments(payload),
-          chargeType: 'SUBSCRIPTION',
-          value: monthlyValue,
-          nextDueDate: payload.nextDueDate,
-          endDate: payload.endDate,
-          cycle: payload.cycle,
-          uiRequestId: `${payload.aggregateId}:subscription:${payload.uiRequestId ?? 'shared'}`,
-        });
+    const subscriptionResult = await createStandaloneCharge(
+      shortContract
+        ? {
+            ...buildStandaloneBaseInput(payload, {
+              description: `${payload.description} · contrato curto`,
+            }),
+            ...buildBillingAdjustments(payload),
+            chargeType: 'ONE_TIME',
+            value: monthlyValue,
+            dueDate: payload.endDate,
+            uiRequestId: `${payload.aggregateId}:short-tuition:${payload.uiRequestId ?? 'shared'}`,
+          }
+        : {
+            ...buildStandaloneBaseInput(payload),
+            ...buildBillingAdjustments(payload),
+            chargeType: 'SUBSCRIPTION',
+            value: monthlyValue,
+            nextDueDate: payload.nextDueDate,
+            endDate: payload.endDate,
+            cycle: payload.cycle,
+            uiRequestId: `${payload.aggregateId}:subscription:${payload.uiRequestId ?? 'shared'}`,
+          },
+    );
 
     if (!subscriptionResult.success) {
       throw new Error(`Falha ao criar assinatura familiar: ${subscriptionResult.error}`);
@@ -984,9 +1001,7 @@ export async function executeFamilyBilling(
         sourceChargeId: standaloneTuitionChargeId,
         sourceAgreementId: canonicalJoin?.agreementId ?? standaloneSubscriptionId,
         status:
-          payload.strategy === 'JOIN_EXISTING_CURRENT_CYCLE'
-            ? 'PROCESSING'
-            : 'AWAITING_WEBHOOK',
+          payload.strategy === 'JOIN_EXISTING_CURRENT_CYCLE' ? 'PROCESSING' : 'AWAITING_WEBHOOK',
       },
     });
   }
@@ -1079,8 +1094,7 @@ export async function executeFamilyBilling(
         select: { matriculaActivationPolicy: true },
       });
       const pendingFeeStatus =
-        account?.matriculaActivationPolicy === 'REQUIRES_PAYMENT' &&
-        payload.enrollmentFeeValue > 0
+        account?.matriculaActivationPolicy === 'REQUIRES_PAYMENT' && payload.enrollmentFeeValue > 0
           ? StatusMatricula.PENDENTE_TAXA
           : StatusMatricula.ATIVA;
       await tx.matricula.updateMany({
@@ -1160,10 +1174,7 @@ export async function executeFamilyBilling(
  * já estão criadas; o cliente recebe uma resposta com status FALHO ao invés
  * de um 500.
  */
-export async function markFamilyBillingFailed(
-  payload: FamilyBillingPayload,
-  message: string,
-) {
+export async function markFamilyBillingFailed(payload: FamilyBillingPayload, message: string) {
   await persistAggregateFailure(payload, message);
 }
 
@@ -1308,7 +1319,9 @@ export async function processFamilyBillingOutboxEvent(
             select: {
               status: true,
               rematriculasDerivadas: {
-                where: { status: { in: ['PENDENTE_TAXA', 'AGUARDANDO_CONFIRMACAO', 'ATIVA', 'PAUSADA'] } },
+                where: {
+                  status: { in: ['PENDENTE_TAXA', 'AGUARDANDO_CONFIRMACAO', 'ATIVA', 'PAUSADA'] },
+                },
                 select: { id: true },
                 take: 1,
               },
@@ -1325,7 +1338,11 @@ export async function processFamilyBillingOutboxEvent(
         StatusMatricula.CANCELADA,
         StatusMatricula.RECUSADA,
       ];
-      if (family.matriculas.length === 0 || family.matriculas.some((item) => !terminalStatuses.includes(item.status)) || family.matriculas.some((item) => item.rematriculasDerivadas.length > 0)) {
+      if (
+        family.matriculas.length === 0 ||
+        family.matriculas.some((item) => !terminalStatuses.includes(item.status)) ||
+        family.matriculas.some((item) => item.rematriculasDerivadas.length > 0)
+      ) {
         throw new Error('MATRICULA_FAMILIAR_AINDA_POSSUI_MEMBRO_ATIVO');
       }
 
@@ -1363,8 +1380,13 @@ export async function processFamilyBillingOutboxEvent(
           effectiveDate,
         };
         const preview = await previewBillingAgreementChange(change);
-        if (preview.blockers.length > 0 || preview.adjustments.some((item) => item.type === 'MANUAL_REVIEW')) {
-          throw new Error(`ENCERRAMENTO_FAMILIAR_REQUER_REVISAO:${preview.blockers.join('|') || 'MANUAL_REVIEW'}`);
+        if (
+          preview.blockers.length > 0 ||
+          preview.adjustments.some((item) => item.type === 'MANUAL_REVIEW')
+        ) {
+          throw new Error(
+            `ENCERRAMENTO_FAMILIAR_REQUER_REVISAO:${preview.blockers.join('|') || 'MANUAL_REVIEW'}`,
+          );
         }
         const committed = await commitBillingAgreementChange({
           ...change,
@@ -1391,22 +1413,42 @@ export async function processFamilyBillingOutboxEvent(
             select: { status: true, lastError: true },
           });
           if (unresolved) {
-            throw new Error(`AJUSTE_ENCERRAMENTO_FAMILIAR_PENDENTE:${unresolved.status}:${unresolved.lastError ?? ''}`);
+            throw new Error(
+              `AJUSTE_ENCERRAMENTO_FAMILIAR_PENDENTE:${unresolved.status}:${unresolved.lastError ?? ''}`,
+            );
           }
         }
       }
 
       await prisma.matriculaFamiliar.updateMany({
-        where: { id: aggregateId, contaId: event.contaId, status: { in: [FamilyBillingStatus.ATIVO, FamilyBillingStatus.PARCIAL] } },
+        where: {
+          id: aggregateId,
+          contaId: event.contaId,
+          status: { in: [FamilyBillingStatus.ATIVO, FamilyBillingStatus.PARCIAL] },
+        },
         data: { status: FamilyBillingStatus.CANCELADO, academicStatus: 'COMPLETO' },
       });
       await prisma.standaloneSubscription.updateMany({
         where: { id: sourceFinancialAgreementId, contaId: event.contaId },
-        data: { closureScheduledAt: new Date(), validUntil: new Date(`${effectiveDate}T00:00:00.000Z`) },
+        data: {
+          closureScheduledAt: new Date(),
+          validUntil: new Date(`${effectiveDate}T00:00:00.000Z`),
+        },
       });
       await prisma.familyBillingOutbox.updateMany({
-        where: { id: eventId, contaId: event.contaId, status: FamilyBillingOutboxStatus.PROCESSING, lockedAt: claimedAt },
-        data: { status: FamilyBillingOutboxStatus.PROCESSED, processedAt: new Date(), lockedAt: null, leaseExpiresAt: null, lastError: null },
+        where: {
+          id: eventId,
+          contaId: event.contaId,
+          status: FamilyBillingOutboxStatus.PROCESSING,
+          lockedAt: claimedAt,
+        },
+        data: {
+          status: FamilyBillingOutboxStatus.PROCESSED,
+          processedAt: new Date(),
+          lockedAt: null,
+          leaseExpiresAt: null,
+          lastError: null,
+        },
       });
       return { processed: true as const };
     }
@@ -1477,10 +1519,18 @@ export async function processFamilyBillingOutboxEvent(
             select: { status: true, lastError: true },
           });
           if (unresolved) {
-            if (unresolved.status === 'PENDING' || unresolved.status === 'FAILED' || unresolved.status === 'PROCESSING') {
-              throw new Error(`AJUSTE_ENCERRAMENTO_RETRY_PENDENTE:${unresolved.status}:${unresolved.lastError ?? ''}`);
+            if (
+              unresolved.status === 'PENDING' ||
+              unresolved.status === 'FAILED' ||
+              unresolved.status === 'PROCESSING'
+            ) {
+              throw new Error(
+                `AJUSTE_ENCERRAMENTO_RETRY_PENDENTE:${unresolved.status}:${unresolved.lastError ?? ''}`,
+              );
             }
-            throw new Error(`RESULTADO_INCERTO:AJUSTE_ENCERRAMENTO_${unresolved.status}:${unresolved.lastError ?? ''}`);
+            throw new Error(
+              `RESULTADO_INCERTO:AJUSTE_ENCERRAMENTO_${unresolved.status}:${unresolved.lastError ?? ''}`,
+            );
           }
         }
       }
@@ -1540,8 +1590,13 @@ export async function processFamilyBillingOutboxEvent(
           })),
         };
         const closurePreview = await previewBillingAgreementChange(closureChange);
-        if (closurePreview.blockers.length > 0 || closurePreview.adjustments.some((item) => item.type === 'MANUAL_REVIEW')) {
-          throw new Error(`ENCERRAMENTO_CANONICO_BLOQUEADO:${closurePreview.blockers.join('|') || 'MANUAL_REVIEW'}`);
+        if (
+          closurePreview.blockers.length > 0 ||
+          closurePreview.adjustments.some((item) => item.type === 'MANUAL_REVIEW')
+        ) {
+          throw new Error(
+            `ENCERRAMENTO_CANONICO_BLOQUEADO:${closurePreview.blockers.join('|') || 'MANUAL_REVIEW'}`,
+          );
         }
         const closureResult = await commitBillingAgreementChange({
           ...closureChange,
@@ -1554,20 +1609,39 @@ export async function processFamilyBillingOutboxEvent(
           throw new Error(`RESULTADO_INCERTO:ENCERRAMENTO_CANONICO:${closureResult.operationId}`);
         }
         const pendingClosureAdjustment = await prisma.billingAdjustment.findFirst({
-          where: { contaId: event.contaId, operationId: closureResult.operationId, status: { not: 'APPLIED' } },
+          where: {
+            contaId: event.contaId,
+            operationId: closureResult.operationId,
+            status: { not: 'APPLIED' },
+          },
           select: { id: true },
         });
         if (pendingClosureAdjustment) {
-          await processPendingBillingAdjustments({ contaId: event.contaId, operationId: closureResult.operationId });
+          await processPendingBillingAdjustments({
+            contaId: event.contaId,
+            operationId: closureResult.operationId,
+          });
           const unresolved = await prisma.billingAdjustment.findFirst({
-            where: { contaId: event.contaId, operationId: closureResult.operationId, status: { not: 'APPLIED' } },
+            where: {
+              contaId: event.contaId,
+              operationId: closureResult.operationId,
+              status: { not: 'APPLIED' },
+            },
             select: { status: true, lastError: true },
           });
           if (unresolved) {
-            if (unresolved.status === 'PENDING' || unresolved.status === 'FAILED' || unresolved.status === 'PROCESSING') {
-              throw new Error(`AJUSTE_ENCERRAMENTO_RETRY_PENDENTE:${unresolved.status}:${unresolved.lastError ?? ''}`);
+            if (
+              unresolved.status === 'PENDING' ||
+              unresolved.status === 'FAILED' ||
+              unresolved.status === 'PROCESSING'
+            ) {
+              throw new Error(
+                `AJUSTE_ENCERRAMENTO_RETRY_PENDENTE:${unresolved.status}:${unresolved.lastError ?? ''}`,
+              );
             }
-            throw new Error(`RESULTADO_INCERTO:AJUSTE_ENCERRAMENTO_${unresolved.status}:${unresolved.lastError ?? ''}`);
+            throw new Error(
+              `RESULTADO_INCERTO:AJUSTE_ENCERRAMENTO_${unresolved.status}:${unresolved.lastError ?? ''}`,
+            );
           }
         }
       }
@@ -1756,7 +1830,12 @@ export async function diagnoseFamilyBillingIntegrity(params?: {
     total: groups.length + matriculas.length + pendingGroups.length,
   };
   if (result.total > 0) {
-    console.warn('[family-billing][integrity-diagnostic]', result);
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.family_billing.processor.degraded',
+      error: result,
+      throttleMs: 60_000,
+    });
   }
   return result;
 }

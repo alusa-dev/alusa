@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
@@ -34,7 +35,14 @@ export async function GET(req: NextRequest) {
       data: diagnostics,
     });
   } catch (error) {
-    console.error('[admin/webhooks/diagnostics] Erro:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/webhooks/diagnostics',
+      method: 'GET',
+      requestId: getRequestId(req),
+      error,
+    });
     return NextResponse.json({ success: false, error: 'Erro interno' }, { status: 500 });
   }
 }

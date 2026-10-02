@@ -16,8 +16,9 @@ import {
   getCurrentUserProfile,
   updateCurrentUserProfile,
 } from '@/src/server/users/user-account.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const session = await getServerSession(authOptions);
     const userId = await resolveUserId(session?.user?.id);
@@ -33,7 +34,7 @@ export async function GET() {
 
     return jsonNoStore(userProfileWithSchoolDTOSchema.parse(mapUserWithConta(user)));
   } catch (error) {
-    console.error('Error fetching user info:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me', method: 'GET', requestId: getRequestId(req), error });
     return jsonNoStore({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -114,11 +115,11 @@ export async function PATCH(req: Request) {
       if (error && typeof error === 'object' && 'code' in error && error.code === 'P2025') {
         return jsonNoStore({ error: 'Usuario nao encontrado' }, { status: 404 });
       }
-      console.error('[API /api/users/me] Erro ao atualizar usuário:', error);
+      logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me', method: 'PATCH', requestId: getRequestId(req), error });
       return jsonNoStore({ error: 'Internal server error' }, { status: 500 });
     }
   } catch (error) {
-    console.error('Error in PATCH /api/users/me:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me', method: 'PATCH', requestId: getRequestId(req), error });
     return jsonNoStore({ error: 'Internal server error' }, { status: 500 });
   }
 }

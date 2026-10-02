@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { emitBillingNotificationCandidate } from '@alusa/lib/notifications/emit-billing-notifications';
 import { getPayment, isAsaasEnabled } from './asaas-ops';
 import { recordAsaasReadIntent, type AsaasReadIntent } from '../foundation/asaas-read-intent';
@@ -31,7 +32,7 @@ export type SyncPaymentStateFromAsaasOutput =
  * e reaplicando o pipeline de webhook internamente (idempotente).
  */
 export async function syncPaymentStateFromAsaas(
-  input: SyncPaymentStateFromAsaasInput
+  input: SyncPaymentStateFromAsaasInput,
 ): Promise<SyncPaymentStateFromAsaasOutput> {
   if (!isAsaasEnabled()) {
     return { success: false, error: 'ASAAS_DISABLED' };
@@ -68,11 +69,11 @@ export async function syncPaymentStateFromAsaas(
       },
       'ASAAS_SYNC',
     ).catch((error: unknown) => {
-      console.warn('[syncPaymentStateFromAsaas] Falha não crítica ao emitir inbox', {
-        contaId: input.contaId,
-        asaasPaymentId: payment.id,
-        appliedEvent: snapshotResult.appliedEvent,
-        message: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.sync_payment_state_from_asaas.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     });
   }

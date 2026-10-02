@@ -8,6 +8,7 @@ import {
   type ConnectExternalAsaasAccountResult,
 } from '@alusa/finance';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -39,7 +40,7 @@ export async function GET() {
     const state = await getExternalAsaasOnboardingState(auth.contaId);
     return json(200, { data: state });
   } catch (error) {
-    console.error('[External Asaas Onboarding][GET]', error);
+    logFinanceApiError('/api/finance/external-onboarding', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }
@@ -67,14 +68,6 @@ export async function POST(request: Request) {
       actor: { id: auth.userId, type: 'ADMIN' },
     });
 
-    if (!result.success) {
-      console.warn('[External Asaas Onboarding][RESULT]', {
-        contaId: auth.contaId,
-        errorCode: result.errorCode,
-        retryable: result.retryable ?? false,
-      });
-    }
-
     const status = result.success
       ? 200
       : result.errorCode === 'ACCOUNT_ALREADY_LINKED'
@@ -90,7 +83,7 @@ export async function POST(request: Request) {
                 : 400;
     return json(status, result);
   } catch (error) {
-    console.error('[External Asaas Onboarding][POST]', error);
+    logFinanceApiError('/api/finance/external-onboarding', error);
     return json(500, {
       success: false,
       summary: 'Erro interno ao conectar a conta do Asaas.',

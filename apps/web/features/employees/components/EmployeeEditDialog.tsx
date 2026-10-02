@@ -16,6 +16,7 @@ import { IMaskInput } from 'react-imask';
 import { toast } from '@/components/ui/toast';
 import { useSession } from 'next-auth/react';
 import { ImageCropDialog } from '@/components/image/ImageCropDialog';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 
 export type Status = 'ATIVO' | 'INATIVO';
 export type Cargo = 'PROFESSOR' | 'RECEPCAO' | 'FINANCEIRO' | 'ADMINISTRATIVO' | 'OUTRO';
@@ -294,7 +295,7 @@ export default function EmployeeEditDialog({
         hydrateFrom(json?.data as Partial<ColaboradorEdit>);
       } catch (error) {
         if (!cancelled) {
-          console.error(error);
+          logClientOperationalEvent('employee.detail.load_failed', error);
           toast.error('Não foi possível carregar os dados completos do colaborador.');
         }
       } finally {
@@ -534,13 +535,13 @@ export default function EmployeeEditDialog({
       toast.success(mode === 'create' ? 'Colaborador criado!' : 'Colaborador atualizado!');
       try {
         window.dispatchEvent(new CustomEvent('colaboradores:changed'));
-      } catch (error) {
-        console.debug(error);
+      } catch {
+        // Event dispatch is best effort; the saved state remains authoritative.
       }
       onSaved?.(json?.data ?? json);
       handleClose(false);
     } catch (error) {
-      console.error(error);
+      logClientOperationalEvent('employee.update.failed', error);
       toast.error('Erro de comunicação com o servidor.');
     } finally {
       setSubmitting(false);

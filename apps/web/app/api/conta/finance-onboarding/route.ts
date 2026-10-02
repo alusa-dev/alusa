@@ -6,6 +6,7 @@ import { getKycSummary } from '@alusa/finance';
 import { contaFinanceOnboardingResultDTOSchema } from '@/features/account/dtos';
 import { mapContaFinanceOnboardingResultToDTO } from '@/features/account/mappers';
 import { getFinanceOnboardingContext } from '@/src/server/finance/admin-integration.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const allowedRoles = new Set(['ADMIN']);
 
@@ -13,7 +14,7 @@ function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) return json(401, { error: 'NAO_AUTENTICADO' });
@@ -27,7 +28,14 @@ export async function GET() {
       try {
         return await getKycSummary(contaId);
       } catch (error) {
-        console.warn('[Conta Finance Onboarding][GET][KYC_FALLBACK]', error);
+        logApiOperationalEvent({
+          severity: 'warn',
+          eventName: 'conta.finance_onboarding.kyc_fallback',
+          route: '/api/conta/finance-onboarding',
+          method: 'GET',
+          requestId: getRequestId(req),
+          error,
+        });
         return null;
       }
     })();
@@ -68,7 +76,14 @@ export async function GET() {
 
     return json(200, contaFinanceOnboardingResultDTOSchema.parse(responseBody));
   } catch (error) {
-    console.error('[Conta Finance Onboarding][GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'conta.finance_onboarding.request_failed',
+      route: '/api/conta/finance-onboarding',
+      method: 'GET',
+      requestId: getRequestId(req),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

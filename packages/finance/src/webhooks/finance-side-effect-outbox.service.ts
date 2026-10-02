@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { prisma } from '@alusa/database';
 import { FinanceWebhookSideEffectStatus, Prisma } from '@prisma/client';
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import {
   buildBillingNotificationDedupeKey,
   normalizeBillingNotificationEvent,
@@ -477,9 +478,10 @@ export async function markExhaustedFinanceWebhookSideEffects(params?: {
   });
 
   if (result.count > 0) {
-    console.error('[finance-side-effect-outbox] Efeitos legados movidos para EXHAUSTED', {
-      count: result.count,
-      contaId: params?.contaId ?? null,
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.webhook.outbox.legacy_events.exhausted',
+      itemCount: result.count,
     });
   }
 
@@ -774,12 +776,11 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
     }
 
     if (exhausted) {
-      console.error('[finance-side-effect-outbox] Efeito exaurido; requer observabilidade/reprocessamento', {
-        eventId,
-        effectType: event.effectType,
-        contaId: event.contaId,
-        attempts,
-        message,
+      logFinanceOperationalEvent({
+        severity: 'error',
+        eventName: 'finance.webhook.outbox.effect.exhausted',
+        error: new Error(message),
+        itemCount: attempts,
       });
     }
 

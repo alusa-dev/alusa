@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../../foundation/operational-log';
 import {
   createSubaccount,
   createSubaccountAccessToken,
@@ -36,9 +37,7 @@ import {
   resolveSubaccountEmail,
 } from './subaccount-email';
 import { resolveWebhookNotificationEmail } from './webhook-notification-email.server';
-import {
-  classifyAsaasProvisioningError,
-} from './provisioning-error';
+import { classifyAsaasProvisioningError } from './provisioning-error';
 
 // ============================================================================
 // Helpers: Error detection
@@ -437,11 +436,11 @@ async function revokeProvisioningAccessToken(params: {
       accessTokenId,
     });
   } catch (error) {
-    console.error('[finance.createAsaasAccount] Falha ao revogar token não persistido', {
-      accountId: params.accountId,
-      accessTokenId,
-      reason: params.reason,
-      error: extractErrorInfo(error).message,
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.asaas_account.create_asaas_account.failed',
+      error,
+      throttleMs: 60_000,
     });
   }
 }
@@ -708,13 +707,6 @@ async function tryRecoverExistingRemoteSubaccount(params: {
   if (!recoveredAccount) {
     return null;
   }
-
-  console.info('[finance.createAsaasAccount] Subconta remota reconciliada por identidade', {
-    contaId: params.contaId,
-    financeProfileId: params.financeProfileId,
-    asaasAccountId: recoveredAccount.id,
-    recoveryReason: params.recoveryReason,
-  });
 
   return persistRecoveredSubaccount({
     contaId: params.contaId,
@@ -986,24 +978,12 @@ export async function createAsaasAccount(params: {
         actor: params.actor,
       });
     } catch (error) {
-      console.warn('[finance.createAsaasAccount] Falha nao bloqueante ao reparar webhook', {
-        contaId: params.contaId,
-        financeProfileId: financeProfile.id,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.asaas_account.create_asaas_account.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
-    }
-
-    console.info('[finance.createAsaasAccount] Subconta já conectada (idempotente)', {
-      contaId: params.contaId,
-      financeProfileId: financeProfile.id,
-    });
-
-    // AVISO DE DEBUG: Se o usuário reclama que "não criou no Asaas", é provável que
-    // exista um registro aqui (banco local) mas não no Asaas (sandbox resetado?).
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn(
-        '⚠️ [finance.createAsaasAccount] Retornando conta existente LOCALMENTE. Verifique se ela existe no painel do Asaas Sandbox!',
-      );
     }
 
     return {
@@ -1031,10 +1011,11 @@ export async function createAsaasAccount(params: {
             actor: params.actor,
           });
         } catch (error) {
-          console.warn('[finance.createAsaasAccount] Falha nao bloqueante ao reparar webhook', {
-            contaId: params.contaId,
-            financeProfileId: financeProfile.id,
-            error: error instanceof Error ? error.message : String(error),
+          logFinanceOperationalEvent({
+            severity: 'warn',
+            eventName: 'finance.use_cases.asaas_account.create_asaas_account.degraded',
+            error: error,
+            throttleMs: 60_000,
           });
         }
 
@@ -1056,11 +1037,6 @@ export async function createAsaasAccount(params: {
   if (!lockResult.acquired) {
     // Não conseguiu o lock - outra requisição está criando
     // Aguardar brevemente e retornar estado atual
-    console.debug('[finance.createAsaasAccount] Lock não adquirido, verificando estado atual', {
-      contaId: params.contaId,
-      financeProfileId: financeProfile.id,
-    });
-
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     const afterLockCheck = await findExistingAccountSnapshot(financeProfile.id);
@@ -1116,10 +1092,11 @@ async function createAsaasAccountInternal(params: {
         actor: params.actor,
       });
     } catch (error) {
-      console.warn('[finance.createAsaasAccount] Falha nao bloqueante ao reparar webhook', {
-        contaId: params.contaId,
-        financeProfileId: financeProfile.id,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.asaas_account.create_asaas_account.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     }
 
@@ -1307,17 +1284,6 @@ async function createAsaasAccountInternal(params: {
     profileData.incomeValue !== undefined;
 
   if (!canProvision) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn('[finance.createAsaasAccount] Falha em canProvision. Dados faltantes:', {
-        mobilePhone: Boolean(profileData.mobilePhone),
-        address: Boolean(mergedAddress.address),
-        addressNumber: Boolean(mergedAddress.addressNumber),
-        province: Boolean(mergedAddress.province),
-        postalCode: Boolean(mergedAddress.postalCode),
-        incomeValue: profileData.incomeValue !== null && profileData.incomeValue !== undefined,
-      });
-    }
-
     const placeholder = await prisma.asaasAccount.findUnique({
       where: { financeProfileId: financeProfile.id },
       select: { status: true },
@@ -1344,16 +1310,6 @@ async function createAsaasAccountInternal(params: {
   const identity = await tryResolveContaIdentity(params.contaId, financeProfile.id);
 
   if (!identity) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn(
-        '[finance.createAsaasAccount] Falha em identity. Usuário dono não encontrado ou sem email.',
-        {
-          contaId: params.contaId,
-          financeProfileId: financeProfile.id,
-        },
-      );
-    }
-
     const placeholder = await prisma.asaasAccount.findUnique({
       where: { financeProfileId: financeProfile.id },
       select: { status: true },
@@ -1561,15 +1517,11 @@ async function createAsaasAccountInternal(params: {
     // Recovery: reconciliar subconta remota quando a criação pode ter acontecido
     // ou quando o provedor informa conflito por conta já existente.
     if (shouldTryRemoteRecovery) {
-      console.warn(
-        '[finance.createAsaasAccount] Tentando reconciliar subconta remota após falha de criação',
-        {
-          contaId: params.contaId,
-          financeProfileId: financeProfile.id,
-          errorCode: errorInfo.code,
-          httpStatus: errorInfo.status,
-        },
-      );
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.asaas_account.create_asaas_account.degraded',
+        throttleMs: 60_000,
+      });
 
       try {
         const recovered = await tryRecoverExistingRemoteSubaccount({
@@ -1589,9 +1541,10 @@ async function createAsaasAccountInternal(params: {
         }
       } catch (recoveryError) {
         // Recovery falhou, propagar erro original
-        console.error('[finance.createAsaasAccount] Falha no recovery', {
-          contaId: params.contaId,
-          recoveryError: extractErrorInfo(recoveryError).message,
+        logFinanceOperationalEvent({
+          severity: 'error',
+          eventName: 'finance.use_cases.asaas_account.create_asaas_account.failed',
+          throttleMs: 60_000,
         });
       }
     }
@@ -1722,14 +1675,12 @@ async function createAsaasAccountInternal(params: {
     try {
       await ensureWebhookReady(params.contaId);
     } catch (webhookError) {
-      console.warn(
-        '[finance.createAsaasAccount] Webhook ainda nao operacional apos criacao da subconta',
-        {
-          contaId: params.contaId,
-          financeProfileId: financeProfile.id,
-          error: webhookError instanceof Error ? webhookError.message : String(webhookError),
-        },
-      );
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.asaas_account.create_asaas_account.degraded',
+        error: webhookError,
+        throttleMs: 60_000,
+      });
       await syncAsaasOperationalStatus(params.contaId);
     }
 
@@ -1740,29 +1691,23 @@ async function createAsaasAccountInternal(params: {
         reason: 'post-create-subaccount',
       });
     } catch (reconcileError) {
-      console.warn(
-        '[finance.createAsaasAccount] Falha nao bloqueante ao reconciliar status apos criacao',
-        {
-          contaId: params.contaId,
-          financeProfileId: financeProfile.id,
-          asaasAccountId: created.asaasAccountId,
-          error: reconcileError instanceof Error ? reconcileError.message : String(reconcileError),
-        },
-      );
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.asaas_account.create_asaas_account.degraded',
+        error: reconcileError,
+        throttleMs: 60_000,
+      });
     }
 
     try {
       await refreshKycReadModel(params.contaId);
     } catch (refreshError) {
-      console.warn(
-        '[finance.createAsaasAccount] Falha nao bloqueante ao atualizar read model KYC apos criacao',
-        {
-          contaId: params.contaId,
-          financeProfileId: financeProfile.id,
-          asaasAccountId: created.asaasAccountId,
-          error: refreshError instanceof Error ? refreshError.message : String(refreshError),
-        },
-      );
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.asaas_account.create_asaas_account.degraded',
+        error: refreshError,
+        throttleMs: 60_000,
+      });
     }
 
     const latest = await prisma.asaasAccount.findUnique({

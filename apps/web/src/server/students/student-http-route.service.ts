@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
+import { logPersonDataOperationalEvent } from '@/lib/observability/api-logger';
 import { StatusCobranca, StatusMatricula } from '@prisma/client';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { prisma } from '@/lib/prisma';
@@ -50,16 +51,6 @@ type AlunoDeletionBlockers = {
     paid: number;
   };
 };
-
-function hasDeletionBlockers(blockers: AlunoDeletionBlockers) {
-  return (
-    blockers.activeMatriculas > 0 ||
-    blockers.activeSubscriptions > 0 ||
-    blockers.cobrancas.pending > 0 ||
-    blockers.cobrancas.processing > 0 ||
-    blockers.cobrancas.overdue > 0
-  );
-}
 
 async function getAlunoDeletionBlockers(params: {
   alunoId: string;
@@ -403,7 +394,7 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
         : undefined;
       execution = await executeAlunoArchivePlan(plan, { paymentsProvider });
     } catch (err) {
-      console.error('[alunos][delete] Erro ao sincronizar com gateway:', err);
+      logPersonDataOperationalEvent('api.students.archive.gateway_sync.failed', err);
       execution = {
         alunoId: rawParams.id,
         ok: false,
@@ -432,12 +423,7 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
     }
 
     if (!execution.ok) {
-      console.warn('[alunos][delete] Sincronização incompleta; aluno não arquivado', {
-        alunoId: rawParams.id,
-        contaId,
-        correlationId,
-        errors: execution.errors.map(({ code, matriculaId }) => ({ code, matriculaId })),
-      });
+      logPersonDataOperationalEvent('api.students.archive.sync.incomplete', undefined, 'warn');
       return NextResponse.json(
         {
           error: 'Não foi possível concluir a sincronização financeira. O aluno não foi arquivado; repita a operação após verificar o processador.',
@@ -461,14 +447,6 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
     const outcome = (await prisma.aluno.findFirst({ where: { id: rawParams.id, contaId }, select: { id: true } }))
       ? 'ARCHIVED'
       : 'HARD_DELETED';
-
-    if (outcome === 'ARCHIVED' && hasDeletionBlockers(blockers)) {
-      console.info('[alunos][delete] Arquivado com vínculos ativos', {
-        alunoId: rawParams.id,
-        contaId,
-        blockers,
-      });
-    }
 
     // 6) Extrair resultado da inativação do customer (se disponível)
     const customerInactivation = (alunoResult as { _customerInactivation?: { action: string; reason?: string } })
@@ -551,11 +529,6 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
           paid: 0,
         },
       };
-      console.warn('[alunos][delete] Bloqueado por dependências ativas', {
-        alunoId: rawParams.id,
-        contaId,
-        blockers,
-      });
       return NextResponse.json(
         {
           error: 'Aluno possui vínculos ativos. Confirme para cancelar e excluir.',
@@ -579,11 +552,6 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
           paid: 0,
         },
       };
-      console.warn('[alunos][delete] Bloqueado por assinatura ativa', {
-        alunoId: rawParams.id,
-        contaId,
-        blockers,
-      });
       return NextResponse.json(
         {
           error: 'Aluno possui assinaturas ativas. Cancele as assinaturas antes de excluir.',
@@ -606,11 +574,6 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
           paid: 0,
         },
       };
-      console.warn('[alunos][delete] Bloqueado por matrícula ativa', {
-        alunoId: rawParams.id,
-        contaId,
-        blockers,
-      });
       return NextResponse.json(
         {
           error: 'Aluno possui matrículas ativas. Inative as matrículas antes de excluir.',

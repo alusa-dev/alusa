@@ -16,6 +16,7 @@ import {
   storageUrlForKey,
 } from '@/lib/r2-storage';
 import { userOwnsLegacyAvatar } from '@/src/server/media/storage-access.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
 const MAX_SIZE = 3 * 1024 * 1024; // 1 MB reservado para multipart/headers dentro do limite Vercel.
@@ -123,7 +124,14 @@ export async function POST(req: Request) {
 
     return jsonNoStore(result);
   } catch (error) {
-    console.error('[API /api/upload] Erro no upload:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.upload.failed',
+      route: '/api/upload',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     return jsonNoStore(
       { error: 'Erro interno do servidor. Tente novamente.' },
       { status: 500 },
@@ -196,7 +204,14 @@ export async function DELETE(req: Request) {
 
     return jsonNoStore({ success: true });
   } catch (error) {
-    console.error('[API /api/upload] Erro ao deletar arquivo:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.upload.delete.failed',
+      route: '/api/upload',
+      method: 'DELETE',
+      requestId: getRequestId(req),
+      error,
+    });
     return jsonNoStore(
       { error: 'Erro interno do servidor.' },
       { status: 500 },

@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { ZodError } from 'zod';
@@ -27,7 +28,8 @@ export async function POST(req: NextRequest) {
   try {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const body = adminWebhookReprocessInputDTOSchema.parse(await req.json().catch(() => ({})));
     const { reason } = body;
@@ -73,7 +75,14 @@ export async function POST(req: NextRequest) {
     return json(200, { ok: true, mode: 'queue', result });
   } catch (error) {
     if (error instanceof ZodError) return json(400, { error: 'JUSTIFICATIVA_OBRIGATORIA' });
-    console.error('[Admin Financial Webhooks Reprocess][POST]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.admin.request.failed',
+      route: '/api/admin/financial/webhooks/reprocess',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

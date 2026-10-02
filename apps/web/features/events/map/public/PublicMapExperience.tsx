@@ -1,6 +1,7 @@
 'use client';
 
 import type { PublicMapViewModel } from './public-map-adapter';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { MAP_ARTBOARD_STROKE, MAP_ARTBOARD_STROKE_WIDTH } from '@alusa/domain';
 import bwipjs from '@bwip-js/browser';
 
@@ -471,7 +472,7 @@ export function PublicMapExperience({
         }
       } catch (pollError) {
         if (!cancelled && !(pollError instanceof DOMException && pollError.name === 'AbortError')) {
-          console.warn('Falha ao atualizar status do pedido público', pollError);
+          logClientOperationalEvent('public_event_map.order_poll.failed', pollError);
           const baseDelay = Math.min(30_000, 12_000 * (2 ** Math.min(pollAttempt, 2)));
           pollAttempt += 1;
           schedulePoll(nextPollDelay(baseDelay));

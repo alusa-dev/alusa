@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import {
   rebuildFinanceBillingReadModels,
@@ -20,6 +21,7 @@ function clampPositiveInt(value: string | null, fallback: number, max: number) {
 }
 
 async function run(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -56,7 +58,7 @@ async function run(req: Request) {
       remote,
     });
   } catch (error) {
-    console.error('[Job Rebuild Billing Read Models] Erro:', error);
+    logJobFailure('rebuild-billing-read-models', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconstruir os read models financeiros.');
   }
 }

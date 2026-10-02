@@ -8,7 +8,7 @@ import { signIn } from 'next-auth/react';
 import { Eye, EyeOff, Mail } from '@/components/icons/icons';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
-import { debugLog, isAuthDebug } from '@/lib/debug-logger';
+import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import AuthShell from '@/components/auth/AuthShell';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -136,7 +136,6 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
     const escolaNome = `${data.firstName} ${data.lastName}`.trim();
 
     try {
-      if (isAuthDebug) debugLog('register', 'submit', { mode, email: data.email });
       let endpoint = '/api/users/first-register';
       let payload: Record<string, unknown> = {
         nome: `${data.firstName} ${data.lastName}`.trim(),
@@ -174,8 +173,6 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (isAuthDebug) debugLog('register', 'response', { status: res.status });
-
       const responsePayload = (await res.json().catch(() => ({}))) as Partial<{
         error: string;
         code: string;
@@ -183,6 +180,9 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
       }>;
 
       if (!res.ok) {
+        if (res.status >= 500) {
+          logClientOperationalEvent('auth.registration.server_failed');
+        }
         const isConflict = res.status === 409;
         const isExistingInviteAccount = mode === 'invite' && responsePayload.code === 'ACCOUNT_EXISTS' && Boolean(inviteData?.token);
         const isAlreadyLinked = mode === 'invite' && responsePayload.code === 'USER_ALREADY_LINKED';
@@ -197,7 +197,6 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
           ? 'Já existe uma conta desativada para este e-mail. Faça login para iniciar a reativação.'
           : responsePayload.error ?? (isConflict ? 'E-mail já cadastrado.' : 'Falha ao criar conta.');
         setGlobalError(isAlreadyLinked ? null : descText);
-        if (isAuthDebug) debugLog('register', 'error', { status: res.status, error: responsePayload.error });
         const descNode = isAlreadyLinked ? descText : isInactiveInviteAccount ? (
           <span>{descText}</span>
         ) : isExistingInviteAccount ? (
@@ -238,8 +237,8 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
         password: data.senha,
         contaId: responsePayload.user?.contaId,
       });
-      if (isAuthDebug) debugLog('register', 'auto-login response', login);
       if (login?.error) {
+        logClientOperationalEvent('auth.registration.auto_login.failed');
         const desc = 'Conta criada, mas não foi possível autenticar.';
         setGlobalError(desc);
         toast.custom((t) => (
@@ -261,16 +260,15 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
           onClose={() => { toast.dismiss(t); }}
         />
       ), { duration: 3000 });
-      if (isAuthDebug) debugLog('register', 'success', { email: loginEmail });
       setTimeout(() => {
         window.location.href =
           mode === 'invite' && responsePayload.user?.emailVerified
             ? targetAfterVerification
             : postRegisterRedirect;
       }, 450);
-    } catch {
+    } catch (error) {
       setGlobalError('Erro inesperado. Tente novamente.');
-      if (isAuthDebug) debugLog('register', 'unexpected');
+      logClientOperationalEvent('auth.registration.unexpected_failed', error);
       toast.custom((t) => (
         <CustomToast
           variant="error"
@@ -288,7 +286,6 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
       const err = errors[key];
       if (!err) continue;
       const base = (err.message as string) || 'Campo inválido';
-      if (isAuthDebug) debugLog('register', 'validation-error', { field: key, message: base });
       let title = 'Campo inválido';
       let desc = 'Revise o valor informado.';
       switch (key) {

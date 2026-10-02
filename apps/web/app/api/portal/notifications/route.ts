@@ -6,10 +6,14 @@ import {
 } from '@/features/portal/api-helpers';
 import { portalNotificationsResultDTOSchema } from '@/features/portal/dtos';
 import { mapPortalNotificationsResultToDTO } from '@/features/portal/mappers';
-import { isPortalPendingStatus, listPortalStandaloneCharges } from '@/features/portal/finance-standalone';
+import {
+  isPortalPendingStatus,
+  listPortalStandaloneCharges,
+} from '@/features/portal/finance-standalone';
 import { getPortalNotificationData } from '@/src/server/portal/portal-read.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const auth = await requirePortalUser();
     if ('response' in auth) return auth.response;
@@ -60,10 +64,14 @@ export async function GET() {
       ),
     );
   } catch (error) {
-    console.error('Erro ao buscar notificações:', error);
-    return NextResponse.json(
-      { error: 'Erro ao carregar notificações' },
-      { status: 500 },
-    );
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.portal.request.failed',
+      route: '/api/portal/notifications',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
+    return NextResponse.json({ error: 'Erro ao carregar notificações' }, { status: 500 });
   }
 }

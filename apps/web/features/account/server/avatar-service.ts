@@ -13,6 +13,7 @@ import {
 } from '@/lib/r2-storage';
 import { validateUploadBuffer } from '@/lib/upload-security';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
+import { logRuntimeOperationalEvent } from '@/lib/observability/runtime-operational-log';
 
 const AVATAR_SIDE_PX = 512;
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
@@ -170,7 +171,7 @@ export async function prepareAvatarFile(file: File): Promise<PreparedAvatar> {
 export async function replaceCurrentAvatar(
   actor: AvatarActor,
   avatar: PreparedAvatar,
-  correlationId: string,
+  _correlationId: string,
 ) {
   const previousUrl = await requireActiveMembership(actor);
   const nextUrl = await storeAvatar(actor, avatar);
@@ -190,19 +191,19 @@ export async function replaceCurrentAvatar(
     }
   } catch (error) {
     await deleteOwnedAvatar(nextUrl, actor.userId).catch((cleanupError) => {
-      console.error('[avatar] Falha ao compensar arquivo novo.', { correlationId, cleanupError });
+      logRuntimeOperationalEvent({ eventName: 'api.avatar.cleanup.failed', error: cleanupError, category: 'cleanup_new' });
     });
     throw error;
   }
 
   await deleteOwnedAvatar(previousUrl, actor.userId).catch((cleanupError) => {
-    console.error('[avatar] Falha ao remover arquivo anterior.', { correlationId, cleanupError });
+    logRuntimeOperationalEvent({ eventName: 'api.avatar.cleanup.failed', error: cleanupError, category: 'cleanup_previous' });
   });
 
   return { url: nextUrl };
 }
 
-export async function removeCurrentAvatar(actor: AvatarActor, correlationId: string) {
+export async function removeCurrentAvatar(actor: AvatarActor, _correlationId: string) {
   const previousUrl = await requireActiveMembership(actor);
   if (!previousUrl) return { url: null };
 
@@ -220,7 +221,7 @@ export async function removeCurrentAvatar(actor: AvatarActor, correlationId: str
   }
 
   await deleteOwnedAvatar(previousUrl, actor.userId).catch((cleanupError) => {
-    console.error('[avatar] Falha ao remover arquivo excluído.', { correlationId, cleanupError });
+    logRuntimeOperationalEvent({ eventName: 'api.avatar.cleanup.failed', error: cleanupError, category: 'cleanup_previous' });
   });
 
   return { url: null };

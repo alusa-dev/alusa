@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { logRuntimeOperationalEvent } from '@/lib/observability/runtime-operational-log';
 
 type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
 
@@ -58,27 +59,6 @@ const knownMethodOverrides = new Map<string, readonly ApiMethod[]>([
   ['/api/webhooks/whatsapp', ['GET', 'POST']],
 ]);
 
-function cleanHeader(value: string | null, maxLength: number): string | null {
-  if (!value) return null;
-  return [...value]
-    .map((character) => {
-      const code = character.charCodeAt(0);
-      return code <= 0x1f || code === 0x7f ? ' ' : character;
-    })
-    .join('')
-    .slice(0, maxLength);
-}
-
-function safeOrigin(value: string | null, requestOrigin: string): string {
-  if (!value) return 'none';
-  try {
-    const origin = new URL(value);
-    return origin.origin === requestOrigin ? 'same-origin' : origin.host || 'external';
-  } catch {
-    return 'invalid';
-  }
-}
-
 export function getKnownApiMethods(pathname: string): readonly ApiMethod[] | null {
   const override = knownMethodOverrides.get(pathname);
   if (override) return override;
@@ -107,28 +87,11 @@ export function isKnownApiMethodAllowed(method: string, allowedMethods: readonly
 }
 
 export function logMethodNotAllowed(
-  request: Request,
-  allowedMethods: readonly ApiMethod[],
-  reason: string,
+  _request: Request,
+  _allowedMethods: readonly ApiMethod[],
+  _reason: string,
 ): void {
-  let requestOrigin = 'unknown';
-  try {
-    requestOrigin = new URL(request.url).origin;
-  } catch {
-    // Keep the log useful even for malformed requests without logging the URL.
-  }
-
-  const requestUrl = new URL(request.url, 'http://invalid.local');
-  console.warn('[http:405]', {
-    route: requestUrl.pathname,
-    method: request.method.toUpperCase(),
-    allowedMethods: [...allowedMethods],
-    reason,
-    userAgent: cleanHeader(request.headers.get('user-agent'), 256),
-    origin: safeOrigin(request.headers.get('origin'), requestOrigin),
-    refererOrigin: safeOrigin(request.headers.get('referer'), requestOrigin),
-    source: request.headers.get('user-agent')?.startsWith('vercel-cron/') ? 'vercel-cron' : 'http-client',
-  });
+  logRuntimeOperationalEvent({ eventName: 'security.http_method.rejected', category: 'invalid_method', severity: 'warn' });
 }
 
 export function methodNotAllowedResponse(

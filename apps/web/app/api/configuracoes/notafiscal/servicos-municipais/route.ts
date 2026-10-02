@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
@@ -14,7 +15,10 @@ function json(status: number, body: unknown) {
 export async function GET(request: NextRequest) {
   try {
     const auth = await resolveTenantSession();
-    if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
+    if (!auth.ok)
+      return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, {
+        error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO',
+      });
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
@@ -53,7 +57,14 @@ export async function GET(request: NextRequest) {
 
     return json(200, { data: result.data });
   } catch (error) {
-    console.error('[Config NotaFiscal ServicosMunicipais][GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.invoice_config.request.failed',
+      route: '/api/configuracoes/notafiscal/servicos-municipais',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

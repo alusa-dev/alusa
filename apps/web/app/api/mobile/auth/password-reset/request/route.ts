@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { sendPasswordResetForEmail } from '@/lib/auth-email-flow';
 import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-limit';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export const runtime = 'nodejs';
 
@@ -42,9 +43,7 @@ export async function POST(request: Request) {
       userAgent: request.headers.get('user-agent'),
     });
   } catch (error) {
-    console.error('[mobile-auth][password-reset]', {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.mobile_auth.request.failed', route: '/api/mobile/auth/password-reset/request', method: 'POST', requestId: getRequestId(request), error });
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: 'Não foi possível enviar as instruções agora.' } },
       { status: 500, headers: { 'Cache-Control': 'no-store' } },

@@ -9,14 +9,13 @@ import {
   mapPortalFinanceiroListResultToDTO,
 } from '@/features/portal/mappers';
 import { listPortalStandaloneCharges } from '@/features/portal/finance-standalone';
-import {
-  resolveAcademicDisplayedStatus,
-} from '@/src/server/finance/academic-payment-history';
+import { resolveAcademicDisplayedStatus } from '@/src/server/finance/academic-payment-history';
 import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { jsonNoStore } from '@/lib/http-security';
 import { listPortalAcademicCobrancas } from '@/src/server/portal/portal-read.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const auth = await requirePortalUser();
     if ('response' in auth) return auth.response;
@@ -67,20 +66,24 @@ export async function GET() {
           aluno: {
             nome: c.matricula.aluno.nome,
           },
-          turma: c.matricula.turma ? {
-            nome: c.matricula.turma.nome,
-            modalidade: {
-              nome: c.matricula.turma.modalidade.nome,
-            },
-          } : null,
-          responsavelFinanceiro: c.matricula.responsavelFinanceiro ? {
-            hasSavedCard: Boolean(
-              c.matricula.responsavelFinanceiro.creditCardBrand &&
-              c.matricula.responsavelFinanceiro.creditCardLast4,
-            ),
-            creditCardBrand: c.matricula.responsavelFinanceiro.creditCardBrand,
-            creditCardLast4: c.matricula.responsavelFinanceiro.creditCardLast4,
-          } : null,
+          turma: c.matricula.turma
+            ? {
+                nome: c.matricula.turma.nome,
+                modalidade: {
+                  nome: c.matricula.turma.modalidade.nome,
+                },
+              }
+            : null,
+          responsavelFinanceiro: c.matricula.responsavelFinanceiro
+            ? {
+                hasSavedCard: Boolean(
+                  c.matricula.responsavelFinanceiro.creditCardBrand &&
+                  c.matricula.responsavelFinanceiro.creditCardLast4,
+                ),
+                creditCardBrand: c.matricula.responsavelFinanceiro.creditCardBrand,
+                creditCardLast4: c.matricula.responsavelFinanceiro.creditCardLast4,
+              }
+            : null,
         },
         pagamentos: c.pagamentos.map((p) => ({
           id: p.id,
@@ -91,8 +94,9 @@ export async function GET() {
       };
     });
 
-    const cobrancasFormatadas = [...cobrancasAcademicas, ...standaloneCharges]
-      .sort((a, b) => new Date(b.vencimento).getTime() - new Date(a.vencimento).getTime());
+    const cobrancasFormatadas = [...cobrancasAcademicas, ...standaloneCharges].sort(
+      (a, b) => new Date(b.vencimento).getTime() - new Date(a.vencimento).getTime(),
+    );
 
     // 6. Retornar dados
     return jsonNoStore(
@@ -105,7 +109,14 @@ export async function GET() {
       ),
     );
   } catch (error) {
-    console.error('Erro ao buscar cobranças:', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.portal.request.failed',
+      route: '/api/portal/financeiro',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return jsonNoStore({ error: 'Erro ao carregar cobranças' }, { status: 500 });
   }
 }

@@ -1,3 +1,4 @@
+import { logLibOperationalEvent } from '../observability/operational-log';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { prisma as shared } from '../prisma';
 import type { AlunoCreateInput, AlunoUpdateInput } from './aluno.schema';
@@ -359,15 +360,6 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       }
       : undefined,
   };
-
-  console.log('🏗️ Criando aluno:', {
-    nome: normalizedData.nome,
-    cpf: normalizedData.cpf ? `${normalizedData.cpf.slice(0, 3)}***` : 'não informado',
-    idade,
-    temResponsavel: !!(
-      isMenor && (normalizedData.responsavelExistenteId || normalizedData.responsavel?.cpf)
-    ),
-  });
 
   if (
     responsavelObrigatorio &&
@@ -742,7 +734,6 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
           },
         });
         createdAlunoResponsavelId = vinculo.id;
-        console.log('🔗 Responsável vinculado ao aluno');
       }
     }
 
@@ -778,11 +769,6 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       });
     }
 
-    console.log('✅ Aluno criado com sucesso:', {
-      id: aluno.id,
-      codigo: aluno.codigoInterno,
-      nome: aluno.nome,
-    });
 
     return {
       aluno,
@@ -865,13 +851,11 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
   }
 
   try {
-    const ensureStartedAt = Date.now();
     const ensureResult = await ensureAsaasCustomerForPayer({
       contaId: normalizedData.contaId,
       payer: payerForEnsure,
       notificationSyncMode: 'deferred',
     });
-
     if (!ensureResult.ok) {
       throw new AsaasCustomerEnsureError(
         ensureResult.error,
@@ -879,12 +863,6 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
         ensureResult.status,
       );
     }
-
-    console.log('✅ Customer ensured', {
-      customerId: ensureResult.customerId,
-      reused: ensureResult.reused,
-      durationMs: Date.now() - ensureStartedAt,
-    });
   } catch (error) {
     await prisma.$transaction(async (tx) => {
       if (alunoExistenteId && alunoAnterior) {
@@ -1137,7 +1115,7 @@ export async function updateAluno(data: UpdateAlunoWithResponsavel) {
 
     // Sincronizar atualização com Asaas (fire-and-forget, não bloqueia)
     syncAlunoToAsaasProvider({ alunoId: id, contaId }).catch((err) => {
-      console.error('⚠️ [Asaas Sync] Erro não capturado:', err);
+      logLibOperationalEvent({ eventName: 'student.asaas.sync.failed', error: err });
     });
 
     return aluno;
@@ -1160,7 +1138,6 @@ export async function deleteAluno(
   forceDelete = false,
   actorId?: string,
 ) {
-  console.log('🗑️ Solicitacao de exclusao de aluno', { id, motivo: motivo?.slice(0, 120), forceDelete });
 
   const aluno = await prisma.aluno.findFirst({
     where: { id, contaId },
@@ -1186,7 +1163,7 @@ export async function deleteAluno(
   // (soft delete) antes de remover o registro local.
   if (canHardDelete) {
     const inativacaoResult = await syncAlunoInativacaoToAsaas({ alunoId: id, contaId }).catch((err) => {
-      console.error('⚠️ [Asaas Inativação] Erro não capturado:', err);
+      logLibOperationalEvent({ eventName: 'student.archive.asaas_deactivation.failed', error: err });
       return { success: false, action: 'ERROR' as const, error: err instanceof Error ? err.message : 'UNKNOWN' };
     });
 
@@ -1268,18 +1245,8 @@ export async function deleteAluno(
       // Para cancelamento com sync Asaas, usar a rota DELETE /api/alunos/:id
     });
 
-    if (archiveResult.totalMatriculasCancelled > 0) {
-      console.log(
-        `📋 [Aluno Archive] ${archiveResult.totalMatriculasCancelled} matrícula(s) cancelada(s)`,
-        archiveResult.matriculasCancelled.map((m) => ({
-          id: m.matriculaId,
-          from: m.previousStatus,
-          action: m.asaasAction,
-        })),
-      );
-    }
   } catch (err) {
-    console.error('⚠️ [Aluno Archive] Erro ao cancelar matrículas:', err);
+    logLibOperationalEvent({ eventName: 'student.archive.enrollments.failed', error: err });
     // Continua com o arquivamento mesmo se falhar o cancelamento
   }
 
@@ -1374,7 +1341,7 @@ export async function deleteAluno(
 
   const inativacaoResult = shouldInactivateCustomer
     ? await syncAlunoInativacaoToAsaas({ alunoId: id, contaId }).catch((err) => {
-        console.error('⚠️ [Asaas Inativação] Erro não capturado:', err);
+        logLibOperationalEvent({ eventName: 'student.archive.asaas_deactivation.failed', error: err });
         return { success: false, action: 'ERROR' as const, error: err instanceof Error ? err.message : 'UNKNOWN' };
       })
     : {

@@ -8,6 +8,7 @@ import {
   updateNotificationPreferencesResultDTOSchema,
 } from '@/features/users/dtos';
 import { updateUserNotificationPreferences } from '@/src/server/users/user-account.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export async function PATCH(req: Request) {
   try {
@@ -30,7 +31,7 @@ export async function PATCH(req: Request) {
       }),
     );
   } catch (error) {
-    console.error('Error updating notification preferences:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me/notifications', method: 'PATCH', requestId: getRequestId(req), error });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

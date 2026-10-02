@@ -4,8 +4,9 @@ import { isRemovedUserEmail } from '@/features/users/managed-user-access';
 import { jsonNoStore } from '@/lib/http-security';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { listManagedUsers } from '@/src/server/users/user-management.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const isTest = process.env.NODE_ENV === 'test' ||
       (process.env.NODE_ENV !== 'production' && process.env.TEST_ROUTES_ENABLED === 'true');
@@ -58,7 +59,7 @@ export async function GET() {
       items: items.map((item) => mapListUserRecordToDTO(item)),
     }));
   } catch (error) {
-    console.error('Error listing users:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/list', method: 'GET', requestId: getRequestId(req), error });
     return jsonNoStore({ error: 'Internal server error' }, { status: 500 });
   }
 }

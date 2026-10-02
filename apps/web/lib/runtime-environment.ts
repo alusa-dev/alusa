@@ -23,17 +23,5 @@ export function getRuntimeEnvironmentSnapshot() {
 }
 
 export function logRuntimeEnvironmentOnce(scope: string) {
-  if (process.env.PERF_LOGS !== '1') return;
-
-  const globalForRuntime = globalThis as typeof globalThis & {
-    __alusaRuntimeEnvironmentLogged?: Set<string>;
-  };
-  globalForRuntime.__alusaRuntimeEnvironmentLogged ??= new Set<string>();
-  if (globalForRuntime.__alusaRuntimeEnvironmentLogged.has(scope)) return;
-
-  globalForRuntime.__alusaRuntimeEnvironmentLogged.add(scope);
-  console.log('[runtime][environment]', {
-    scope,
-    ...getRuntimeEnvironmentSnapshot(),
-  });
+  void scope;
 }

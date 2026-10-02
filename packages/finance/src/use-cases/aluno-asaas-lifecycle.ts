@@ -1,9 +1,8 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 import { deleteCustomer } from '@alusa/asaas';
 import { calcIdade } from '@alusa/lib/alunos/aluno.schema';
-import {
-  inactivateCustomerIfSafe,
-} from '../customer/asaas-customer.service';
+import { inactivateCustomerIfSafe } from '../customer/asaas-customer.service';
 import {
   ensureAsaasCustomerForPayer,
   loadAndValidateSubaccountKey,
@@ -78,9 +77,10 @@ export async function syncAlunoInativacaoToAsaas(params: {
     const identity = await findCustomerForPayer(
       contaId,
       isMenor ? 'RESPONSAVEL' : 'ALUNO',
-      isMenor ? responsavel?.id ?? '' : aluno.id,
+      isMenor ? (responsavel?.id ?? '') : aluno.id,
     );
-    const customerId = identity?.asaasCustomerId ?? (isMenor ? responsavel?.asaasCustomerId : aluno.asaasCustomerId);
+    const customerId =
+      identity?.asaasCustomerId ?? (isMenor ? responsavel?.asaasCustomerId : aluno.asaasCustomerId);
     if (!customerId) {
       return { success: true, action: 'SKIPPED', reason: 'NO_CUSTOMER_ID' };
     }
@@ -185,6 +185,11 @@ export async function syncAlunoToAsaasProvider(params: {
       payer: payerForEnsure,
     });
   } catch (error) {
-    console.error('[syncAlunoToAsaasProvider] Falha não-bloqueante:', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.aluno_asaas_lifecycle.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
   }
 }

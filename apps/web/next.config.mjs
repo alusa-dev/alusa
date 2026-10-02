@@ -70,6 +70,7 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_VERCEL_ENV: process.env.VERCEL_ENV ?? '',
     NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA: process.env.VERCEL_GIT_COMMIT_SHA ?? '',
+    NEXT_PUBLIC_OBSERVABILITY_METRIC_SAMPLE_RATE: process.env.OBSERVABILITY_METRIC_SAMPLE_RATE ?? '',
   },
   // Permite que o Playwright use um diretório de desenvolvimento isolado sem
   // disputar o lock do servidor local do workspace.
@@ -93,6 +94,7 @@ const nextConfig = {
     'zod',
   ],
   transpilePackages: [
+    '@alusa/observability',
     '@alusa/admin-auth',
     '@alusa/database',
     '@alusa/lib',
@@ -110,6 +112,8 @@ const nextConfig = {
     // Turbopack even when their dist files exist.
     root: turbopackRoot,
     resolveAlias: {
+      '@alusa/observability': packageSourcePath('observability', 'index.ts'),
+      '@alusa/observability/*': packageSourcePath('observability', '*'),
       '@alusa/admin-auth': packageSourcePath('admin-auth', 'index.ts'),
       '@alusa/admin-auth/*': packageSourcePath('admin-auth', '*'),
       '@alusa/asaas': packageDistPath('asaas', 'index.js'),
@@ -255,6 +259,14 @@ const nextConfig = {
       '.js': ['.ts', '.tsx', '.js', '.jsx'],
     };
     config.resolve.alias = config.resolve.alias || {};
+    config.resolve.alias['@alusa/observability$'] = resolvePath(
+      __dirname,
+      '../../packages/observability/src/index.ts',
+    );
+    config.resolve.alias['@alusa/observability'] = resolvePath(
+      __dirname,
+      '../../packages/observability/src/index.ts',
+    );
     config.resolve.alias['@alusa/asaas'] = resolvePath(__dirname, '../../packages/asaas/dist/index.js');
     const platformBillingEntry = resolvePath(
       __dirname,

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import * as InviteUserService from '@alusa/lib/server/services/invite-user-service';
 import { deleteInviteResultDTOSchema } from '@/features/users/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 const ParamsSchema = z.object({ id: z.string().min(1) });
 type RouteContext = { params: Promise<{ id: string }> };
@@ -45,7 +46,7 @@ export async function DELETE(_req: Request, ctx: RouteContext) {
     }
     return NextResponse.json(deleteInviteResultDTOSchema.parse({ ok: true }));
   } catch (error) {
-    console.error('Error deleting invite:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/invite/[id]', method: 'DELETE', requestId: getRequestId(_req), error });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

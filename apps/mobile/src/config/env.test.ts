@@ -13,6 +13,7 @@ describe('loadMobileEnv', () => {
       apiUrl: 'https://app.alusa.test',
       environment: 'staging',
       sentryDsn: 'https://public@example.ingest.sentry.io/1',
+      sentryTracesSampleRate: 0.05,
       mobileAuthEnabled: true,
     });
   });
@@ -36,5 +37,12 @@ describe('loadMobileEnv', () => {
         EXPO_PUBLIC_ENVIRONMENT: 'development',
       }).sentryDsn,
     ).toBeUndefined();
+  });
+
+  it('valida a taxa configurável de tracing dentro do intervalo permitido', () => {
+    expect(() => loadMobileEnv({
+      EXPO_PUBLIC_API_URL: 'https://app.alusa.test',
+      EXPO_PUBLIC_SENTRY_TRACES_SAMPLE_RATE: '1.2',
+    })).toThrow('Configuração mobile inválida');
   });
 });

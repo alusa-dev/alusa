@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { createPayment, AsaasHttpError } from '@alusa/asaas';
 import { loadAsaasCredentials } from '@alusa/database';
 import type { BillingType as AsaasBillingType } from '@alusa/asaas';
@@ -41,14 +42,17 @@ export type CreateAsaasPaymentFailure = {
   httpStatus?: number;
 };
 
-export async function createAsaasPaymentDetailed(
-  input: CreatePaymentInput,
-): Promise<Result<{
-  id: string;
-  externalReference: string;
-  invoiceUrl?: string;
-  bankSlipUrl?: string;
-}, CreateAsaasPaymentFailure>> {
+export async function createAsaasPaymentDetailed(input: CreatePaymentInput): Promise<
+  Result<
+    {
+      id: string;
+      externalReference: string;
+      invoiceUrl?: string;
+      bankSlipUrl?: string;
+    },
+    CreateAsaasPaymentFailure
+  >
+> {
   try {
     const kyc = await requireKycApproved(input.contaId, { allowPendingBankAccount: true });
     if (!kyc.success) {
@@ -94,16 +98,14 @@ export async function createAsaasPaymentDetailed(
     });
   } catch (error) {
     if (error instanceof AsaasHttpError) {
-      const providerRejected = error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status);
+      const providerRejected =
+        error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status);
       if (providerRejected) {
-        console.warn('[finance][createAsaasPayment] payload rejeitado pelo Asaas', {
-          contaId: input.contaId,
-          billingType: input.billingType,
-          customer: input.customer,
-          value: input.value,
-          dueDate: input.dueDate,
-          externalReference: input.externalReference,
-          response: error.responseBody ?? error.response,
+        logFinanceOperationalEvent({
+          severity: 'warn',
+          eventName: 'finance.use_cases.create_payment.degraded',
+          error: error,
+          throttleMs: 60_000,
         });
       }
       return err({
@@ -128,14 +130,17 @@ export async function createAsaasPaymentDetailed(
   }
 }
 
-export async function createAsaasPayment(
-  input: CreatePaymentInput,
-): Promise<Result<{
-  id: string;
-  externalReference: string;
-  invoiceUrl?: string;
-  bankSlipUrl?: string;
-}, string>> {
+export async function createAsaasPayment(input: CreatePaymentInput): Promise<
+  Result<
+    {
+      id: string;
+      externalReference: string;
+      invoiceUrl?: string;
+      bankSlipUrl?: string;
+    },
+    string
+  >
+> {
   const result = await createAsaasPaymentDetailed(input);
   return result.success ? result : err(result.error.message);
 }

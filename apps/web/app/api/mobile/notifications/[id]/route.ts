@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import {
   deleteNotificationRecipient,
   updateNotificationRecipientState,
@@ -70,7 +71,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (!updated) return response({ error: { code: 'NOT_FOUND', message: 'Notificação não encontrada.' } }, 404);
     return response({ success: true });
   } catch (error) {
-    console.error('[api/mobile/notifications][PATCH item]', error instanceof Error ? error.message : String(error));
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/notifications/[id]',
+      method: 'PATCH',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível atualizar a notificação.' } }, 500);
   }
 }
@@ -97,7 +105,14 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     if (!deleted) return response({ error: { code: 'NOT_FOUND', message: 'Notificação não encontrada.' } }, 404);
     return response({ success: true });
   } catch (error) {
-    console.error('[api/mobile/notifications][DELETE]', error instanceof Error ? error.message : String(error));
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.mobile.request.failed',
+      route: '/api/mobile/notifications/[id]',
+      method: 'DELETE',
+      requestId: getRequestId(request),
+      error,
+    });
     return response({ error: { code: 'SERVER_ERROR', message: 'Não foi possível excluir a notificação.' } }, 500);
   }
 }

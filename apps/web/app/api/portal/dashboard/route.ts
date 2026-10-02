@@ -10,10 +10,12 @@ import {
   portalDashboardResultDTOSchema,
 } from '@/features/portal/dtos';
 import { mapPortalDashboardResultToDTO } from '@/features/portal/mappers';
-import { isPortalPendingStatus, listPortalStandaloneCharges } from '@/features/portal/finance-standalone';
 import {
-  resolveAcademicDisplayedStatus,
-} from '@/src/server/finance/academic-payment-history';
+  isPortalPendingStatus,
+  listPortalStandaloneCharges,
+} from '@/features/portal/finance-standalone';
+import { resolveAcademicDisplayedStatus } from '@/src/server/finance/academic-payment-history';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -21,10 +23,7 @@ export async function GET(req: NextRequest) {
     if ('response' in auth) return auth.response;
     const portalUser = auth.user;
     if (!portalUser?.contaId) {
-      return NextResponse.json(
-        { error: 'Usuário do portal não autenticado' },
-        { status: 401 },
-      );
+      return NextResponse.json({ error: 'Usuário do portal não autenticado' }, { status: 401 });
     }
     const query = portalDashboardQueryDTOSchema.parse({
       alunoId: req.nextUrl.searchParams.get('alunoId') || undefined,
@@ -127,10 +126,14 @@ export async function GET(req: NextRequest) {
       ),
     );
   } catch (error) {
-    console.error('Erro ao buscar dados do dashboard:', error);
-    return NextResponse.json(
-      { error: 'Erro ao carregar dados do dashboard' },
-      { status: 500 },
-    );
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.portal.request.failed',
+      route: '/api/portal/dashboard',
+      method: 'GET',
+      requestId: getRequestId(req),
+      error,
+    });
+    return NextResponse.json({ error: 'Erro ao carregar dados do dashboard' }, { status: 500 });
   }
 }

@@ -1,5 +1,11 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma, loadAsaasCredentials } from '@alusa/database';
-import { createInstallment, listInstallmentPayments, listPayments, type BillingType } from '@alusa/asaas';
+import {
+  createInstallment,
+  listInstallmentPayments,
+  listPayments,
+  type BillingType,
+} from '@alusa/asaas';
 import { resolvePayer } from '@alusa/domain';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
@@ -33,9 +39,7 @@ import {
 
 export type CreateStandaloneInstallmentInput = {
   contaId: string;
-  payer:
-    | { type: 'aluno'; alunoId: string }
-    | { type: 'responsavel'; responsavelId: string };
+  payer: { type: 'aluno'; alunoId: string } | { type: 'responsavel'; responsavelId: string };
   installmentCount: number;
   billingType: BillingType;
   value: number;
@@ -94,7 +98,9 @@ class StandaloneInstallmentPayerDivergenceError extends Error {
   }
 }
 
-function paymentRulesSnapshot(input: Pick<CreateStandaloneInstallmentInput, 'interest' | 'fine' | 'discount'>) {
+function paymentRulesSnapshot(
+  input: Pick<CreateStandaloneInstallmentInput, 'interest' | 'fine' | 'discount'>,
+) {
   return {
     interestValue: input.interest?.value ?? null,
     fineValue: input.fine?.value ?? null,
@@ -106,7 +112,7 @@ function paymentRulesSnapshot(input: Pick<CreateStandaloneInstallmentInput, 'int
 }
 
 export async function createStandaloneInstallmentPlan(
-  input: CreateStandaloneInstallmentInput
+  input: CreateStandaloneInstallmentInput,
 ): Promise<Result<CreateStandaloneInstallmentOutput, CreateStandaloneInstallmentError>> {
   try {
     const enabled = await featureFlagsService.isEnabled(input.contaId, 'enableInstallments');
@@ -131,7 +137,11 @@ export async function createStandaloneInstallmentPlan(
     const payerResolved = await resolvePayerFromInput(input);
     if (!payerResolved) return err('PAGADOR_NAO_ENCONTRADO');
 
-    const customer = await findCustomerForPayer(input.contaId, payerResolved.payerType, payerResolved.payerId);
+    const customer = await findCustomerForPayer(
+      input.contaId,
+      payerResolved.payerType,
+      payerResolved.payerId,
+    );
 
     if (!customer?.asaasCustomerId) return err('CUSTOMER_SEM_ASAAS_ID');
 
@@ -197,9 +207,11 @@ export async function createStandaloneInstallmentPlan(
     }
 
     const installmentPlanId = existing?.id ?? deriveDeterministicId('sip', idempotencyKey);
-    const externalReference = existing?.externalReference ?? buildInstallmentExternalReference({
-      installmentPlanId,
-    });
+    const externalReference =
+      existing?.externalReference ??
+      buildInstallmentExternalReference({
+        installmentPlanId,
+      });
 
     const credentials = await loadAsaasCredentials(input.contaId);
     if (!credentials) return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
@@ -232,7 +244,9 @@ export async function createStandaloneInstallmentPlan(
       requestFingerprint: hashPayload(asaasPayload),
     });
     let asaasInstallment = operation.payload.remoteId
-      ? await getInstallment(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
+      ? await getInstallment(operation.payload.remoteId, { contaId: input.contaId }).catch(
+          () => null,
+        )
       : null;
 
     if (!asaasInstallment) {
@@ -241,14 +255,31 @@ export async function createStandaloneInstallmentPlan(
         externalReference,
         limit: 100,
         includeDeleted: true,
-      }).then((result) => result.data).catch(() => []);
-      const installmentIds = [...new Set(recoveredPayments.map((payment) => payment.installment).filter((id): id is string => Boolean(id)))];
+      })
+        .then((result) => result.data)
+        .catch(() => []);
+      const installmentIds = [
+        ...new Set(
+          recoveredPayments
+            .map((payment) => payment.installment)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
       if (installmentIds.length > 1) {
-        await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'INSTALLMENT_PLAN', entityId: installmentPlanId, externalReference, error: 'MULTIPLE_REMOTE_INSTALLMENTS_FOR_EXTERNAL_REFERENCE' });
+        await markOutboundResultUnknown({
+          jobId: operation.job.id,
+          contaId: input.contaId,
+          resource: 'INSTALLMENT_PLAN',
+          entityId: installmentPlanId,
+          externalReference,
+          error: 'MULTIPLE_REMOTE_INSTALLMENTS_FOR_EXTERNAL_REFERENCE',
+        });
         return err('ERRO_AO_CRIAR_PARCELAMENTO');
       }
       if (installmentIds[0]) {
-        asaasInstallment = await getInstallment(installmentIds[0], { contaId: input.contaId }).catch(() => null);
+        asaasInstallment = await getInstallment(installmentIds[0], {
+          contaId: input.contaId,
+        }).catch(() => null);
       }
     }
 
@@ -261,30 +292,59 @@ export async function createStandaloneInstallmentPlan(
           idempotencyKey: externalReference,
           data: asaasPayload,
         });
-        asaasInstallment = await getInstallment(created.id, { contaId: input.contaId }).catch(() => created);
+        asaasInstallment = await getInstallment(created.id, { contaId: input.contaId }).catch(
+          () => created,
+        );
       } catch (remoteError) {
         const recoveredPayments = await listPayments({
           apiKey: credentials.apiKey,
           externalReference,
           limit: 100,
           includeDeleted: true,
-        }).then((result) => result.data).catch(() => []);
-        const installmentIds = [...new Set(recoveredPayments.map((payment) => payment.installment).filter((id): id is string => Boolean(id)))];
+        })
+          .then((result) => result.data)
+          .catch(() => []);
+        const installmentIds = [
+          ...new Set(
+            recoveredPayments
+              .map((payment) => payment.installment)
+              .filter((id): id is string => Boolean(id)),
+          ),
+        ];
         if (installmentIds.length === 1) {
-          asaasInstallment = await getInstallment(installmentIds[0]!, { contaId: input.contaId }).catch(() => null);
+          asaasInstallment = await getInstallment(installmentIds[0]!, {
+            contaId: input.contaId,
+          }).catch(() => null);
         }
         if (!asaasInstallment) {
-          await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'INSTALLMENT_PLAN', entityId: installmentPlanId, externalReference, error: remoteError });
+          await markOutboundResultUnknown({
+            jobId: operation.job.id,
+            contaId: input.contaId,
+            resource: 'INSTALLMENT_PLAN',
+            entityId: installmentPlanId,
+            externalReference,
+            error: remoteError,
+          });
           return err('ERRO_AO_CRIAR_PARCELAMENTO');
         }
       }
     }
-    const installmentMismatch = !asaasInstallment?.id
-      || (asaasInstallment.customer != null && asaasInstallment.customer !== customer.asaasCustomerId)
-      || (asaasInstallment.installmentCount != null && asaasInstallment.installmentCount !== input.installmentCount)
-      || (asaasInstallment.value != null && Math.abs(asaasInstallment.value - input.value) > 0.001);
+    const installmentMismatch =
+      !asaasInstallment?.id ||
+      (asaasInstallment.customer != null &&
+        asaasInstallment.customer !== customer.asaasCustomerId) ||
+      (asaasInstallment.installmentCount != null &&
+        asaasInstallment.installmentCount !== input.installmentCount) ||
+      (asaasInstallment.value != null && Math.abs(asaasInstallment.value - input.value) > 0.001);
     if (installmentMismatch) {
-      await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'INSTALLMENT_PLAN', entityId: installmentPlanId, externalReference, error: 'REMOTE_INSTALLMENT_CONFIRMATION_MISMATCH' });
+      await markOutboundResultUnknown({
+        jobId: operation.job.id,
+        contaId: input.contaId,
+        resource: 'INSTALLMENT_PLAN',
+        entityId: installmentPlanId,
+        externalReference,
+        error: 'REMOTE_INSTALLMENT_CONFIRMATION_MISMATCH',
+      });
       return err('ERRO_AO_CRIAR_PARCELAMENTO');
     }
     await markOutboundRemoteConfirmed(operation.job.id, asaasInstallment.id);
@@ -313,7 +373,8 @@ export async function createStandaloneInstallmentPlan(
         if (current) {
           const currentHasPayerContext = current.payerType != null || current.payerId != null;
           const currentPayerIsDifferent =
-            current.payerType !== payerResolved.payerType || current.payerId !== payerResolved.payerId;
+            current.payerType !== payerResolved.payerType ||
+            current.payerId !== payerResolved.payerId;
           if (currentHasPayerContext && currentPayerIsDifferent) {
             throw new StandaloneInstallmentPayerDivergenceError();
           }
@@ -430,12 +491,19 @@ export async function createStandaloneInstallmentPlan(
     if (error instanceof StandaloneInstallmentPayerDivergenceError) {
       return err('PAGADOR_DIVERGENTE');
     }
-    console.error('[finance][createStandaloneInstallmentPlan]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.create_standalone_installment_plan.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }
 
-async function resolvePayerFromInput(input: CreateStandaloneInstallmentInput): Promise<ResolvedStandaloneInstallmentPayer | null> {
+async function resolvePayerFromInput(
+  input: CreateStandaloneInstallmentInput,
+): Promise<ResolvedStandaloneInstallmentPayer | null> {
   if (input.payer.type === 'responsavel') {
     const responsavel = await prisma.responsavel.findFirst({
       where: { id: input.payer.responsavelId, contaId: input.contaId },
@@ -532,7 +600,19 @@ async function syncInstallmentPayments(params: {
   description: string | null;
   paymentRules: ReturnType<typeof paymentRulesSnapshot>;
 }) {
-  const { contaId, customerId, payerType, payerId, payerName, installmentPlanId, externalReference, asaasInstallmentId, billingType, description, paymentRules } = params;
+  const {
+    contaId,
+    customerId,
+    payerType,
+    payerId,
+    payerName,
+    installmentPlanId,
+    externalReference,
+    asaasInstallmentId,
+    billingType,
+    description,
+    paymentRules,
+  } = params;
   const credentials = await loadAsaasCredentials(contaId);
   if (!credentials) return;
 
@@ -542,7 +622,12 @@ async function syncInstallmentPayments(params: {
     limit: 100,
     offset: 0,
   }).catch((e) => {
-    console.error('[finance][createStandaloneInstallmentPlan][listInstallmentPayments]', e);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.create_standalone_installment_plan.failed',
+      error: e,
+      throttleMs: 60_000,
+    });
     return null;
   });
 
@@ -567,7 +652,9 @@ async function syncInstallmentPayments(params: {
       asaasOriginalValue: payment.originalValue ?? null,
       asaasFeeValue: payment.value - payment.netValue,
       asaasCreditDate: payment.creditDate ? new Date(payment.creditDate) : null,
-      asaasEstimatedCreditDate: payment.estimatedCreditDate ? new Date(payment.estimatedCreditDate) : null,
+      asaasEstimatedCreditDate: payment.estimatedCreditDate
+        ? new Date(payment.estimatedCreditDate)
+        : null,
       lastAsaasFetchAt: new Date(),
       liquidacaoStatus: resolveLiquidacaoFromAsaasPayment({
         asaasStatus: effectivePaymentStatus,

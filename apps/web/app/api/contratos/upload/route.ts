@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest } from 'next/server';
 import { randomUUID, createHash } from 'crypto';
 import { promises as fs } from 'fs';
@@ -9,7 +10,12 @@ import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { readBoundedFormData } from '@/lib/upload-request';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import { validateUploadBuffer } from '@/lib/upload-security';
-import { deleteStorageObject, isR2Configured, putStorageObject, storageUrlForKey } from '@/lib/r2-storage';
+import {
+  deleteStorageObject,
+  isR2Configured,
+  putStorageObject,
+  storageUrlForKey,
+} from '@/lib/r2-storage';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads', 'contratos');
 const MAX_SIZE = 3 * 1024 * 1024; // limit Vercel com margem multipart
@@ -34,7 +40,11 @@ function validateFile(file: File): { valid: boolean; error?: string } {
   }
 
   if (file.size > MAX_SIZE) {
-    return { valid: false, error: 'Arquivo muito grande. O envio inline aceita até 3 MiB; arquivos maiores usam upload direto ao armazenamento.' };
+    return {
+      valid: false,
+      error:
+        'Arquivo muito grande. O envio inline aceita até 3 MiB; arquivos maiores usam upload direto ao armazenamento.',
+    };
   }
 
   const ext = path.extname(file.name).toLowerCase();
@@ -49,14 +59,15 @@ export async function POST(req: NextRequest) {
   try {
     const user = await getSessionUser();
     if (!user) {
-      return jsonNoStore(
-        { error: { message: 'Não autorizado' } },
-        { status: 401 }
-      );
+      return jsonNoStore({ error: { message: 'Não autorizado' } }, { status: 401 });
     }
 
     const ip = ipFromRequest(req);
-    const limiter = await rateLimitAsync(`contract-upload:${user.contaId}:${user.id}:${ip}`, 20, 10 * 60 * 1000);
+    const limiter = await rateLimitAsync(
+      `contract-upload:${user.contaId}:${user.id}:${ip}`,
+      20,
+      10 * 60 * 1000,
+    );
     if (!limiter.ok) {
       return jsonNoStore(
         { error: { message: 'Muitas tentativas. Aguarde alguns minutos.' } },
@@ -65,23 +76,18 @@ export async function POST(req: NextRequest) {
     }
 
     const parsedBody = await readBoundedFormData(req);
-    if (!parsedBody.ok) return jsonNoStore({ error: { message: parsedBody.error } }, { status: parsedBody.status });
+    if (!parsedBody.ok)
+      return jsonNoStore({ error: { message: parsedBody.error } }, { status: parsedBody.status });
     const formData = parsedBody.formData;
     const file = formData.get('file');
 
     if (!file || !(file instanceof File)) {
-      return jsonNoStore(
-        { error: { message: 'Nenhum arquivo enviado.' } },
-        { status: 400 }
-      );
+      return jsonNoStore({ error: { message: 'Nenhum arquivo enviado.' } }, { status: 400 });
     }
 
     const validation = validateFile(file);
     if (!validation.valid) {
-      return jsonNoStore(
-        { error: { message: validation.error } },
-        { status: 400 }
-      );
+      return jsonNoStore({ error: { message: validation.error } }, { status: 400 });
     }
 
     const arrayBuffer = await file.arrayBuffer();
@@ -98,10 +104,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!binaryValidation.ok) {
-      return jsonNoStore(
-        { error: { message: binaryValidation.error } },
-        { status: 400 },
-      );
+      return jsonNoStore({ error: { message: binaryValidation.error } }, { status: 400 });
     }
 
     const hashSha256 = generateSha256(buffer);
@@ -119,7 +122,12 @@ export async function POST(req: NextRequest) {
       },
       action: async () => {
         if (isR2Configured()) {
-          await putStorageObject({ key: storageKey, body: bytes, contentType: binaryValidation.detectedMimeType, contentLength: file.size });
+          await putStorageObject({
+            key: storageKey,
+            body: bytes,
+            contentType: binaryValidation.detectedMimeType,
+            contentLength: file.size,
+          });
           return storageUrlForKey(storageKey);
         }
         await ensureDir();
@@ -127,7 +135,11 @@ export async function POST(req: NextRequest) {
         return `/uploads/contracts/${filename}`;
       },
     });
-    if (!stored.ok) return jsonNoStore({ error: { message: 'Limite diário de upload da conta excedido.' } }, { status: 413 });
+    if (!stored.ok)
+      return jsonNoStore(
+        { error: { message: 'Limite diário de upload da conta excedido.' } },
+        { status: 413 },
+      );
     const url = stored.result;
 
     const result = {
@@ -137,19 +149,16 @@ export async function POST(req: NextRequest) {
       mimeType: binaryValidation.detectedMimeType,
     };
 
-    console.log('[CONTRATO_UPLOAD] Arquivo salvo:', {
-      contaId: user.contaId,
-      filename,
-      hashSha256,
-      size: file.size,
-    });
-
     return jsonNoStore(uploadContratoArquivoResultDTOSchema.parse(result));
   } catch (error) {
-    console.error('[CONTRATO_UPLOAD] Erro:', error);
-    return jsonNoStore(
-      { error: { message: 'Erro interno do servidor.' } },
-      { status: 500 }
-    );
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.academic.request.failed',
+      route: '/api/contratos/upload',
+      method: 'POST',
+      requestId: getRequestId(req),
+      error,
+    });
+    return jsonNoStore({ error: { message: 'Erro interno do servidor.' } }, { status: 500 });
   }
 }

@@ -1,3 +1,4 @@
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { getKycViewModel } from '@alusa/finance';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
@@ -15,16 +16,24 @@ async function resolveAuth(): Promise<SessionUser | null> {
   return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role } : null;
 }
 
-export async function GET() {
+export async function GET(request: Request = new Request('http://localhost/api/kyc')) {
   try {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
-    if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
+      return json(403, { error: 'SEM_PERMISSAO' });
 
     const viewModel = await getKycViewModel(user.contaId);
     return json(200, { data: viewModel });
   } catch (error) {
-    console.error('[Finance KYC][GET]', error);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.kyc.request.failed',
+      route: '/api/kyc',
+      method: 'GET',
+      requestId: getRequestId(request),
+      error,
+    });
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }

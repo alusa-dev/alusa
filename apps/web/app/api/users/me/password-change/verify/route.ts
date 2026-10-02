@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth-options';
 import { authRateLimitAsync, ipFromRequest } from '@/lib/rate-limit';
 import { resolveUserId } from '@/src/server/identity/user-profile-http.helpers';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import {
   PasswordChangeOtpError,
   verifyPasswordChangeOtp,
@@ -26,11 +27,11 @@ function isSameOriginRequest(req: Request): boolean {
   return origin === `${forwardedProto}://${host}`;
 }
 
-function errorResponse(error: unknown) {
+function errorResponse(error: unknown, req: Request) {
   if (error instanceof PasswordChangeOtpError) {
     return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
   }
-  console.error('[auth][password-change-otp][verify]', error);
+  logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me/password-change/verify', method: 'POST', requestId: getRequestId(req), error });
   return NextResponse.json({ error: 'Não foi possível validar o código.' }, { status: 503 });
 }
 
@@ -60,6 +61,6 @@ export async function POST(req: Request) {
     const result = await verifyPasswordChangeOtp({ userId, ...parsed.data });
     return NextResponse.json(result, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
-    return errorResponse(error);
+    return errorResponse(error, req);
   }
 }

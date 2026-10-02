@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 import { calculateInventoryCostBasis } from '@alusa/lib/services/inventory-balance.service';
 import {
@@ -15,10 +16,7 @@ import {
 } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
-import {
-  calculateInventoryValue,
-  computeWeightedAverageCost,
-} from './inventory-cost';
+import { calculateInventoryValue, computeWeightedAverageCost } from './inventory-cost';
 
 const DEFAULT_MOVEMENTS_LIMIT = 100;
 
@@ -126,8 +124,12 @@ const RESTOCK_ORDER_INCLUDE = {
   },
 } satisfies Prisma.RestockOrderInclude;
 
-type InventoryBalanceRecord = Prisma.InventoryBalanceGetPayload<{ include: typeof INVENTORY_BALANCE_INCLUDE }>;
-type InventoryMovementRecord = Prisma.InventoryMovementGetPayload<{ include: typeof INVENTORY_MOVEMENT_INCLUDE }>;
+type InventoryBalanceRecord = Prisma.InventoryBalanceGetPayload<{
+  include: typeof INVENTORY_BALANCE_INCLUDE;
+}>;
+type InventoryMovementRecord = Prisma.InventoryMovementGetPayload<{
+  include: typeof INVENTORY_MOVEMENT_INCLUDE;
+}>;
 type RestockOrderRecord = Prisma.RestockOrderGetPayload<{ include: typeof RESTOCK_ORDER_INCLUDE }>;
 
 type SaleInventoryLineInput = {
@@ -372,14 +374,15 @@ function calculateAvailable(balance: { onHand: number; reserved: number }): numb
   return balance.onHand - balance.reserved;
 }
 
-function calculateProjected(balance: { onHand: number; reserved: number; incoming: number }): number {
+function calculateProjected(balance: {
+  onHand: number;
+  reserved: number;
+  incoming: number;
+}): number {
   return calculateAvailable(balance) + balance.incoming;
 }
 
-function calculateAlertState(
-  available: number,
-  threshold: number,
-): InventoryAlertState {
+function calculateAlertState(available: number, threshold: number): InventoryAlertState {
   if (available <= 0) return 'OUT';
   if (available <= Math.max(threshold, 0)) return 'LOW';
   return 'OK';
@@ -392,7 +395,8 @@ function buildMovementTotalCost(input: {
   incomingDelta: number;
 }): Prisma.Decimal | null {
   if (input.unitCost == null) return null;
-  const quantityBase = Math.abs(input.onHandDelta) > 0 ? Math.abs(input.onHandDelta) : Math.abs(input.incomingDelta);
+  const quantityBase =
+    Math.abs(input.onHandDelta) > 0 ? Math.abs(input.onHandDelta) : Math.abs(input.incomingDelta);
   if (quantityBase <= 0) return null;
   return input.unitCost.mul(quantityBase);
 }
@@ -522,7 +526,8 @@ function formatRestockOrder(record: RestockOrderRecord): RestockOrderDTO {
       quantityExpected: item.quantityExpected,
       quantityReceived: item.quantityReceived,
       quantityPending: Math.max(item.quantityExpected - item.quantityReceived, 0),
-      estimatedUnitCost: item.estimatedUnitCost != null ? moneyToNumber(item.estimatedUnitCost) : null,
+      estimatedUnitCost:
+        item.estimatedUnitCost != null ? moneyToNumber(item.estimatedUnitCost) : null,
     })),
   };
 }
@@ -564,16 +569,14 @@ async function loadInventoryTarget(
     throw new StoreInventoryError('PRODUTO_NAO_ENCONTRADO', 'Produto não encontrado.', 404);
   }
 
-  let variant:
-    | {
-        id: string;
-        title: string;
-        sku: string | null;
-        stock: number;
-        lowStockThreshold: number;
-        isActive: boolean;
-      }
-    | null = null;
+  let variant: {
+    id: string;
+    title: string;
+    sku: string | null;
+    stock: number;
+    lowStockThreshold: number;
+    isActive: boolean;
+  } | null = null;
 
   if (input.variantId) {
     variant = await tx.productVariant.findFirst({
@@ -594,7 +597,10 @@ async function loadInventoryTarget(
     if (!variant) {
       throw new StoreInventoryError('VARIANTE_NAO_ENCONTRADA', 'Variante não encontrada.', 404);
     }
-  } else if (!input.allowProductWithVariants && (product.hasVariants || product.variants.length > 0)) {
+  } else if (
+    !input.allowProductWithVariants &&
+    (product.hasVariants || product.variants.length > 0)
+  ) {
     throw new StoreInventoryError(
       'VARIANTE_OBRIGATORIA_ESTOQUE',
       `Selecione uma variante para movimentar o estoque de ${product.name}.`,
@@ -835,13 +841,19 @@ async function applyInventoryChange(
 
   const updated = await findInventoryBalance(tx, input.contaId, input.productId, input.variantId);
   if (!updated) {
-    throw new StoreInventoryError('SALDO_INVENTARIO_NAO_ENCONTRADO', 'Saldo de estoque não encontrado.', 404);
+    throw new StoreInventoryError(
+      'SALDO_INVENTARIO_NAO_ENCONTRADO',
+      'Saldo de estoque não encontrado.',
+      404,
+    );
   }
 
   return updated;
 }
 
-function computeRestockStatus(items: Array<{ quantityExpected: number; quantityReceived: number }>): RestockOrderStatus {
+function computeRestockStatus(
+  items: Array<{ quantityExpected: number; quantityReceived: number }>,
+): RestockOrderStatus {
   const totalExpected = items.reduce((sum, item) => sum + item.quantityExpected, 0);
   const totalReceived = items.reduce((sum, item) => sum + item.quantityReceived, 0);
 
@@ -919,7 +931,10 @@ export async function listInventoryBalances(
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       })
     : [];
-  const movementsByItem = new Map<string, Array<{ onHandDelta: number; unitCost: number | null }>>();
+  const movementsByItem = new Map<
+    string,
+    Array<{ onHandDelta: number; unitCost: number | null }>
+  >();
   for (const movement of movements) {
     const itemMovements = movementsByItem.get(movement.inventoryItemKey) ?? [];
     itemMovements.push({
@@ -974,8 +989,12 @@ export async function listInventoryMovements(
       ...(input.fromDate || input.toDate
         ? {
             createdAt: {
-              ...(input.fromDate ? { gte: new Date(`${normalizeDateInput(input.fromDate)}T00:00:00.000Z`) } : {}),
-              ...(input.toDate ? { lte: new Date(`${normalizeDateInput(input.toDate)}T23:59:59.999Z`) } : {}),
+              ...(input.fromDate
+                ? { gte: new Date(`${normalizeDateInput(input.fromDate)}T00:00:00.000Z`) }
+                : {}),
+              ...(input.toDate
+                ? { lte: new Date(`${normalizeDateInput(input.toDate)}T23:59:59.999Z`) }
+                : {}),
             },
           }
         : {}),
@@ -1050,7 +1069,9 @@ export async function registerInventoryEntry(
       originType: 'MANUAL_ENTRY',
       originId: input.requestId,
       originActionKey: 'create',
-      reason: [normalizeText(input.supplierName), normalizeText(input.reason)].filter(Boolean).join(' · '),
+      reason: [normalizeText(input.supplierName), normalizeText(input.reason)]
+        .filter(Boolean)
+        .join(' · '),
     });
   });
 
@@ -1075,9 +1096,7 @@ export async function registerInventoryEntry(
   return formatBalanceRecord(balance);
 }
 
-export async function adjustInventory(
-  input: AdjustInventoryInput,
-): Promise<InventoryBalanceDTO> {
+export async function adjustInventory(input: AdjustInventoryInput): Promise<InventoryBalanceDTO> {
   if (!normalizeText(input.requestId)) {
     throw new StoreInventoryError('REQUEST_ID_OBRIGATORIO', 'requestId é obrigatório.', 422);
   }
@@ -1101,7 +1120,11 @@ export async function adjustInventory(
 
     const delta = input.mode === 'SET' ? input.quantity - current.onHand : input.quantity;
     if (!Number.isInteger(delta)) {
-      throw new StoreInventoryError('QUANTIDADE_INVALIDA', 'O ajuste deve resultar em quantidade inteira.', 422);
+      throw new StoreInventoryError(
+        'QUANTIDADE_INVALIDA',
+        'O ajuste deve resultar em quantidade inteira.',
+        422,
+      );
     }
 
     const movementType =
@@ -1149,9 +1172,7 @@ export async function adjustInventory(
   return formatBalanceRecord(balance);
 }
 
-export async function listRestockOrders(
-  input: ListRestockOrdersInput,
-): Promise<RestockOrderDTO[]> {
+export async function listRestockOrders(input: ListRestockOrdersInput): Promise<RestockOrderDTO[]> {
   const search = normalizeText(input.search);
   const records = await prisma.restockOrder.findMany({
     where: {
@@ -1201,15 +1222,17 @@ export async function listRestockOrders(
   return records.map(formatRestockOrder);
 }
 
-export async function createRestockOrder(
-  input: CreateRestockOrderInput,
-): Promise<RestockOrderDTO> {
+export async function createRestockOrder(input: CreateRestockOrderInput): Promise<RestockOrderDTO> {
   if (!normalizeText(input.requestId)) {
     throw new StoreInventoryError('REQUEST_ID_OBRIGATORIO', 'requestId é obrigatório.', 422);
   }
 
   if (!Array.isArray(input.items) || input.items.length === 0) {
-    throw new StoreInventoryError('ITENS_OBRIGATORIOS', 'Adicione ao menos um item para reposição.', 422);
+    throw new StoreInventoryError(
+      'ITENS_OBRIGATORIOS',
+      'Adicione ao menos um item para reposição.',
+      422,
+    );
   }
 
   const expectedAt = normalizeDateInput(input.expectedAt);
@@ -1228,7 +1251,11 @@ export async function createRestockOrder(
 
     for (const rawItem of input.items) {
       if (!Number.isInteger(rawItem.quantity) || rawItem.quantity <= 0) {
-        throw new StoreInventoryError('QUANTIDADE_INVALIDA', 'A quantidade esperada deve ser positiva.', 422);
+        throw new StoreInventoryError(
+          'QUANTIDADE_INVALIDA',
+          'A quantidade esperada deve ser positiva.',
+          422,
+        );
       }
 
       if (!Number.isFinite(rawItem.unitCost) || rawItem.unitCost < 0) {
@@ -1264,7 +1291,9 @@ export async function createRestockOrder(
         originId: createdOrder.id,
         originLineId: createdItem.id,
         originActionKey: 'planned',
-        reason: [normalizeText(input.supplierName), normalizeText(input.notes)].filter(Boolean).join(' · '),
+        reason: [normalizeText(input.supplierName), normalizeText(input.notes)]
+          .filter(Boolean)
+          .join(' · '),
       });
     }
 
@@ -1319,11 +1348,19 @@ export async function receiveRestockOrder(
     for (const receipt of input.items) {
       const orderItem = currentOrder.items.find((item) => item.id === receipt.itemId);
       if (!orderItem) {
-        throw new StoreInventoryError('ITEM_REPOSICAO_NAO_ENCONTRADO', 'Item da reposição não encontrado.', 404);
+        throw new StoreInventoryError(
+          'ITEM_REPOSICAO_NAO_ENCONTRADO',
+          'Item da reposição não encontrado.',
+          404,
+        );
       }
 
       if (!Number.isInteger(receipt.quantityReceived) || receipt.quantityReceived <= 0) {
-        throw new StoreInventoryError('QUANTIDADE_INVALIDA', 'A quantidade recebida deve ser positiva.', 422);
+        throw new StoreInventoryError(
+          'QUANTIDADE_INVALIDA',
+          'A quantidade recebida deve ser positiva.',
+          422,
+        );
       }
 
       const pending = orderItem.quantityExpected - orderItem.quantityReceived;
@@ -1336,7 +1373,11 @@ export async function receiveRestockOrder(
       }
 
       const unitCost =
-        receipt.unitCost != null ? receipt.unitCost : orderItem.estimatedUnitCost != null ? moneyToNumber(orderItem.estimatedUnitCost) : null;
+        receipt.unitCost != null
+          ? receipt.unitCost
+          : orderItem.estimatedUnitCost != null
+            ? moneyToNumber(orderItem.estimatedUnitCost)
+            : null;
 
       if (unitCost == null || !Number.isFinite(unitCost) || unitCost < 0) {
         throw new StoreInventoryError(
@@ -1370,7 +1411,9 @@ export async function receiveRestockOrder(
         originId: currentOrder.id,
         originLineId: orderItem.id,
         originActionKey: `receive:${orderItem.quantityReceived + receipt.quantityReceived}`,
-        reason: [normalizeText(currentOrder.supplierName), 'recebimento'].filter(Boolean).join(' · '),
+        reason: [normalizeText(currentOrder.supplierName), 'recebimento']
+          .filter(Boolean)
+          .join(' · '),
       });
     }
 
@@ -1416,9 +1459,7 @@ export async function receiveRestockOrder(
   return formatRestockOrder(order);
 }
 
-export async function cancelRestockOrder(
-  input: CancelRestockOrderInput,
-): Promise<RestockOrderDTO> {
+export async function cancelRestockOrder(input: CancelRestockOrderInput): Promise<RestockOrderDTO> {
   const order = await prisma.$transaction(async (tx) => {
     const currentOrder = await tx.restockOrder.findFirst({
       where: {
@@ -1536,7 +1577,7 @@ export async function applySaleInventoryOnCreate(
       reservedDelta: input.inventoryMode === SaleInventoryMode.RESERVE ? item.quantity : 0,
       unitCost:
         input.inventoryMode === SaleInventoryMode.IMMEDIATE
-          ? item.unitCostAtSale ?? moneyToNumber(balance.averageCost)
+          ? (item.unitCostAtSale ?? moneyToNumber(balance.averageCost))
           : null,
       averageCostMode: 'keep',
       originType: 'SALE',
@@ -1611,9 +1652,7 @@ async function restoreInventoryForCanceledSale(
   }
 }
 
-export async function fulfillReservedSale(
-  input: FulfillReservedSaleInput,
-): Promise<{
+export async function fulfillReservedSale(input: FulfillReservedSaleInput): Promise<{
   inventoryStatus: SaleInventoryStatus;
 }> {
   const sale = await prisma.$transaction(async (tx) => {
@@ -1676,8 +1715,7 @@ export async function fulfillReservedSale(
         movementType: InventoryMovementType.SALE_OUT,
         onHandDelta: -outstanding,
         reservedDelta: -outstanding,
-        unitCost:
-          item.unitCostAtSale != null ? moneyToNumber(item.unitCostAtSale) : null,
+        unitCost: item.unitCostAtSale != null ? moneyToNumber(item.unitCostAtSale) : null,
         averageCostMode: 'keep',
         originType: 'SALE',
         originId: currentSale.id,
@@ -1716,9 +1754,7 @@ export async function fulfillReservedSale(
   };
 }
 
-export async function registerSaleReturn(
-  input: RegisterSaleReturnInput,
-): Promise<{
+export async function registerSaleReturn(input: RegisterSaleReturnInput): Promise<{
   inventoryStatus: SaleInventoryStatus;
 }> {
   if (!Array.isArray(input.items) || input.items.length === 0) {
@@ -1755,7 +1791,11 @@ export async function registerSaleReturn(
     }
 
     if (currentSale.status === SaleStatus.CANCELADA) {
-      throw new StoreInventoryError('VENDA_CANCELADA', 'Não é possível devolver uma venda cancelada.', 409);
+      throw new StoreInventoryError(
+        'VENDA_CANCELADA',
+        'Não é possível devolver uma venda cancelada.',
+        409,
+      );
     }
 
     if (
@@ -1772,11 +1812,19 @@ export async function registerSaleReturn(
     for (const rawItem of input.items) {
       const saleItem = currentSale.items.find((item) => item.id === rawItem.saleItemId);
       if (!saleItem || !saleItem.productId) {
-        throw new StoreInventoryError('ITEM_VENDA_NAO_ENCONTRADO', 'Item da venda não encontrado.', 404);
+        throw new StoreInventoryError(
+          'ITEM_VENDA_NAO_ENCONTRADO',
+          'Item da venda não encontrado.',
+          404,
+        );
       }
 
       if (!Number.isInteger(rawItem.quantity) || rawItem.quantity <= 0) {
-        throw new StoreInventoryError('QUANTIDADE_INVALIDA', 'A quantidade devolvida deve ser positiva.', 422);
+        throw new StoreInventoryError(
+          'QUANTIDADE_INVALIDA',
+          'A quantidade devolvida deve ser positiva.',
+          422,
+        );
       }
 
       const remaining = saleItem.quantity - saleItem.returnedQuantity;
@@ -1804,8 +1852,7 @@ export async function registerSaleReturn(
         variantId: saleItem.variantId,
         movementType: InventoryMovementType.RETURN_IN,
         onHandDelta: rawItem.quantity,
-        unitCost:
-          saleItem.unitCostAtSale != null ? moneyToNumber(saleItem.unitCostAtSale) : null,
+        unitCost: saleItem.unitCostAtSale != null ? moneyToNumber(saleItem.unitCostAtSale) : null,
         averageCostMode: saleItem.unitCostAtSale != null ? 'recalculate' : 'keep',
         originType: 'SALE',
         originId: currentSale.id,
@@ -1863,13 +1910,11 @@ export async function registerSaleReturn(
   };
 }
 
-export async function cancelSaleInventory(
-  input: {
-    contaId: string;
-    actorUserId: string;
-    saleId: string;
-  },
-): Promise<{
+export async function cancelSaleInventory(input: {
+  contaId: string;
+  actorUserId: string;
+  saleId: string;
+}): Promise<{
   inventoryStatus: SaleInventoryStatus;
 }> {
   const sale = await prisma.$transaction(async (tx) => {
@@ -2034,18 +2079,25 @@ export async function reconcilePaidReservedStoreSales(input: {
         saleId: sale.id,
         error: error instanceof Error ? error.message : String(error),
       });
-      await auditLogService.record({
-        contaId: input.contaId,
-        action: 'loja.sale.fulfillment_failed',
-        entity: { type: 'Sale', id: sale.id },
-        metadata: {
-          trigger: 'financial_reconciliation',
-          chargeId: paidChargeId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      }).catch((auditError) => {
-        console.error('[store-inventory] Falha ao auditar fulfillment pendente', auditError);
-      });
+      await auditLogService
+        .record({
+          contaId: input.contaId,
+          action: 'loja.sale.fulfillment_failed',
+          entity: { type: 'Sale', id: sale.id },
+          metadata: {
+            trigger: 'financial_reconciliation',
+            chargeId: paidChargeId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        })
+        .catch((auditError) => {
+          logFinanceOperationalEvent({
+            severity: 'error',
+            eventName: 'finance.use_cases.store_inventory.failed',
+            error: auditError,
+            throttleMs: 60_000,
+          });
+        });
     }
   }
 
@@ -2156,8 +2208,7 @@ export async function fulfillReservedSaleOnPayment(input: {
         movementType: InventoryMovementType.SALE_OUT,
         onHandDelta: -outstanding,
         reservedDelta: -outstanding,
-        unitCost:
-          item.unitCostAtSale != null ? moneyToNumber(item.unitCostAtSale) : null,
+        unitCost: item.unitCostAtSale != null ? moneyToNumber(item.unitCostAtSale) : null,
         averageCostMode: 'keep',
         originType: 'SALE',
         originId: sale.id,

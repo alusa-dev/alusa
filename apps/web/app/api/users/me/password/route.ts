@@ -8,6 +8,7 @@ import { simpleSuccessResultDTOSchema } from '@/features/users/dtos/index';
 import { changePasswordInputDTOSchema } from '@/features/users/dtos/password';
 import { auditLogService } from '@alusa/finance';
 import { changeUserPassword } from '@/src/server/users/user-account.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 function isSameOriginRequest(req: Request): boolean {
   const origin = req.headers.get('origin');
@@ -29,6 +30,7 @@ async function recordPasswordAudit(params: {
   ip: string;
   userAgent: string | null;
   result: 'success' | 'invalid_current_password';
+  requestId: string;
 }) {
   try {
     await auditLogService.record({
@@ -43,10 +45,13 @@ async function recordPasswordAudit(params: {
       },
     });
   } catch (error) {
-    console.error('[auth][password][audit-failed]', {
-      userId: params.userId,
-      action: params.action,
-      error: error instanceof Error ? error.message : String(error),
+    logApiOperationalEvent({
+      severity: 'warn',
+      eventName: 'api.users.audit.write.failed',
+      route: '/api/users/me/password',
+      method: 'PATCH',
+      requestId: params.requestId,
+      error,
     });
   }
 }
@@ -90,6 +95,7 @@ export async function PATCH(req: Request) {
         ip,
         userAgent: req.headers.get('user-agent'),
         result: 'invalid_current_password',
+        requestId: getRequestId(req),
       });
       return NextResponse.json(
         { error: { fieldErrors: { currentPassword: ['Senha atual incorreta'] } } },
@@ -104,11 +110,12 @@ export async function PATCH(req: Request) {
       ip,
       userAgent: req.headers.get('user-agent'),
       result: 'success',
+      requestId: getRequestId(req),
     });
 
     return NextResponse.json(simpleSuccessResultDTOSchema.parse({ success: true }));
   } catch (error) {
-    console.error('Error updating password:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/me/password', method: 'PATCH', requestId: getRequestId(req), error });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

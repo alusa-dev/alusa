@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../../foundation/operational-log';
 import {
   getMyAccountCommercialInfo,
   getMyAccountDocuments,
@@ -408,10 +409,11 @@ export async function connectExternalAsaasAccount(input: {
   } catch (error) {
     // A conexão da API/webhook já foi validada. Se o endpoint de documentos
     // estiver temporariamente indisponível, o snapshot fresh fará retry depois.
-    console.warn('[connectExternalAsaasAccount] Falha ao sincronizar documentos iniciais', {
-      contaId: input.contaId,
-      asaasAccountId,
-      error: error instanceof Error ? error.message : String(error),
+    logFinanceOperationalEvent({
+      severity: 'warn',
+      eventName: 'finance.use_cases.external_asaas.connect_external_asaas_account.degraded',
+      error: error,
+      throttleMs: 60_000,
     });
   }
 
@@ -510,10 +512,11 @@ export async function connectExternalAsaasAccount(input: {
       documents,
       source: 'READ_MODEL',
     }).catch((error) => {
-      console.warn('[connectExternalAsaasAccount] Falha ao persistir modelos KYC iniciais', {
-        contaId: input.contaId,
-        asaasAccountId,
-        error: error instanceof Error ? error.message : String(error),
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.external_asaas.connect_external_asaas_account.degraded',
+        error: error,
+        throttleMs: 60_000,
       });
     });
   }

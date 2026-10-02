@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
@@ -12,7 +13,10 @@ import {
 import { featureFlagsService } from '../foundation/feature-flags.service';
 import { auditLogService } from '../foundation/audit-log.service';
 import { requireKycApproved } from '../foundation/kyc-guard';
-import { computeFiscalReadiness, mapAuthenticationTypeToAccessMethod } from '../fiscal/fiscal-readiness';
+import {
+  computeFiscalReadiness,
+  mapAuthenticationTypeToAccessMethod,
+} from '../fiscal/fiscal-readiness';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
 
 export type FiscalServiceOutput = {
@@ -86,9 +90,7 @@ export type FiscalInvoiceSettingsOutput = {
   };
 };
 
-export type GetFiscalInvoiceSettingsError =
-  | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
-  | 'ERRO_INTERNO';
+export type GetFiscalInvoiceSettingsError = 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' | 'ERRO_INTERNO';
 
 export type FiscalRemoteSyncMode = 'always' | 'if_stale' | 'never';
 
@@ -116,28 +118,30 @@ async function markFiscalInfoAsNotConfigured(contaId: string) {
   });
 }
 
-function hasFiscalConfiguration(settings: {
-  readinessStatus: string;
-  fiscalEmail: string | null;
-  municipalInscription: string | null;
-  stateInscription: string | null;
-  accessConfiguredAt: Date | null;
-  passwordConfigured: boolean;
-  accessTokenConfigured: boolean;
-  certificateConfigured: boolean;
-  useNationalPortal: boolean | null;
-} | null): boolean {
+function hasFiscalConfiguration(
+  settings: {
+    readinessStatus: string;
+    fiscalEmail: string | null;
+    municipalInscription: string | null;
+    stateInscription: string | null;
+    accessConfiguredAt: Date | null;
+    passwordConfigured: boolean;
+    accessTokenConfigured: boolean;
+    certificateConfigured: boolean;
+    useNationalPortal: boolean | null;
+  } | null,
+): boolean {
   if (!settings) return false;
   return Boolean(
     settings.readinessStatus !== 'NOT_CONFIGURED' ||
-      settings.fiscalEmail ||
-      settings.municipalInscription ||
-      settings.stateInscription ||
-      settings.accessConfiguredAt ||
-      settings.passwordConfigured ||
-      settings.accessTokenConfigured ||
-      settings.certificateConfigured ||
-      settings.useNationalPortal !== null,
+    settings.fiscalEmail ||
+    settings.municipalInscription ||
+    settings.stateInscription ||
+    settings.accessConfiguredAt ||
+    settings.passwordConfigured ||
+    settings.accessTokenConfigured ||
+    settings.certificateConfigured ||
+    settings.useNationalPortal !== null,
   );
 }
 
@@ -327,7 +331,12 @@ export async function getFiscalInvoiceSettings(input: {
               where: { contaId: input.contaId },
             });
           } catch (cacheError) {
-            console.error('[finance][getFiscalInvoiceSettings][remoteCache]', cacheError);
+            logFinanceOperationalEvent({
+              severity: 'error',
+              eventName: 'finance.use_cases.get_fiscal_invoice_settings.failed',
+              error: cacheError,
+              throttleMs: 60_000,
+            });
           }
         } else if (remoteResult.notConfigured) {
           // O 404 do fiscalInfo representa uma conta ainda não configurada.
@@ -386,7 +395,9 @@ export async function getFiscalInvoiceSettings(input: {
             certificateConfigured: settings.certificateConfigured,
             defaultDescriptionTemplate: settings.defaultDescriptionTemplate,
             defaultObservations: settings.defaultObservations,
-            defaultDeductions: settings.defaultDeductions ? Number(settings.defaultDeductions) : null,
+            defaultDeductions: settings.defaultDeductions
+              ? Number(settings.defaultDeductions)
+              : null,
             emissionMode: settings.emissionMode,
             invoiceEffectiveDatePeriod: settings.invoiceEffectiveDatePeriod,
             invoiceDaysBeforeDueDate: settings.invoiceDaysBeforeDueDate,
@@ -408,7 +419,12 @@ export async function getFiscalInvoiceSettings(input: {
       },
     });
   } catch (error) {
-    console.error('[finance][getFiscalInvoiceSettings]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.get_fiscal_invoice_settings.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }
@@ -425,14 +441,17 @@ export async function getFiscalMunicipalOptions(input: {
       suggestedAccessMethod: mapAuthenticationTypeToAccessMethod(options.authenticationType),
     });
   } catch (error) {
-    console.error('[finance][getFiscalMunicipalOptions]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.get_fiscal_invoice_settings.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }
 
-export async function syncFiscalSettingsFromProvider(input: {
-  contaId: string;
-}): Promise<
+export async function syncFiscalSettingsFromProvider(input: { contaId: string }): Promise<
   Result<
     {
       syncedAt: string;
@@ -470,19 +489,19 @@ export async function syncFiscalSettingsFromProvider(input: {
         nbsCode: remote.nbsCode ?? null,
         rpsSerie: remote.rpsSerie ?? null,
         rpsNumber: remote.rpsNumber ?? null,
-      loteNumber: remote.loteNumber ?? null,
-      nationalPortalTaxCalculationRegime: remote.nationalPortalTaxCalculationRegime ?? null,
-      useNationalPortal: remote.useNationalPortal ?? null,
-      accessMethod,
+        loteNumber: remote.loteNumber ?? null,
+        nationalPortalTaxCalculationRegime: remote.nationalPortalTaxCalculationRegime ?? null,
+        useNationalPortal: remote.useNationalPortal ?? null,
+        accessMethod,
         accessConfiguredAt:
           remote.passwordSent || remote.accessTokenSent || remote.certificateSent ? now : null,
-      passwordConfigured: remote.passwordSent ?? false,
-      accessTokenConfigured: remote.accessTokenSent ?? false,
-      certificateConfigured: remote.certificateSent ?? false,
-      syncStatus: 'SYNCED',
-      lastSyncError: null,
-      lastSyncedAt: now,
-      asaasFiscalSyncedAt: now,
+        passwordConfigured: remote.passwordSent ?? false,
+        accessTokenConfigured: remote.accessTokenSent ?? false,
+        certificateConfigured: remote.certificateSent ?? false,
+        syncStatus: 'SYNCED',
+        lastSyncError: null,
+        lastSyncedAt: now,
+        asaasFiscalSyncedAt: now,
       },
       update: {
         fiscalEmail: remote.email ?? undefined,
@@ -497,23 +516,21 @@ export async function syncFiscalSettingsFromProvider(input: {
         nbsCode: remote.nbsCode ?? undefined,
         rpsSerie: remote.rpsSerie ?? undefined,
         rpsNumber: remote.rpsNumber ?? undefined,
-      loteNumber: remote.loteNumber ?? undefined,
-      nationalPortalTaxCalculationRegime: remote.nationalPortalTaxCalculationRegime ?? undefined,
-      useNationalPortal: remote.useNationalPortal ?? undefined,
-      accessMethod: accessMethod ?? undefined,
+        loteNumber: remote.loteNumber ?? undefined,
+        nationalPortalTaxCalculationRegime: remote.nationalPortalTaxCalculationRegime ?? undefined,
+        useNationalPortal: remote.useNationalPortal ?? undefined,
+        accessMethod: accessMethod ?? undefined,
         accessConfiguredAt:
-          remote.passwordSent || remote.accessTokenSent || remote.certificateSent
-            ? now
-            : undefined,
-      passwordConfigured: remote.passwordSent ?? undefined,
-      accessTokenConfigured: remote.accessTokenSent ?? undefined,
-      certificateConfigured: remote.certificateSent ?? undefined,
-      syncStatus: 'SYNCED',
-      lastSyncError: null,
-      lastSyncedAt: now,
-      asaasFiscalSyncedAt: now,
-    },
-  });
+          remote.passwordSent || remote.accessTokenSent || remote.certificateSent ? now : undefined,
+        passwordConfigured: remote.passwordSent ?? undefined,
+        accessTokenConfigured: remote.accessTokenSent ?? undefined,
+        certificateConfigured: remote.certificateSent ?? undefined,
+        syncStatus: 'SYNCED',
+        lastSyncError: null,
+        lastSyncedAt: now,
+        asaasFiscalSyncedAt: now,
+      },
+    });
 
     const [settings, services, invoicesEnabled, kyc] = await Promise.all([
       prisma.contaFiscalSettings.findUnique({ where: { contaId: input.contaId } }),
@@ -564,7 +581,12 @@ export async function syncFiscalSettingsFromProvider(input: {
       },
     });
   } catch (error) {
-    console.error('[finance][syncFiscalSettingsFromProvider]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.get_fiscal_invoice_settings.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     await getFiscalPrisma()
       .contaFiscalSettings.update({
         where: { contaId: input.contaId },
@@ -593,7 +615,9 @@ export async function listFiscalAccountsForReconciliation(maxAccounts: number) {
 export async function configureFiscalNationalPortal(input: {
   contaId: string;
   enabled: boolean;
-}): Promise<Result<{ success: boolean; useNationalPortal: boolean }, GetFiscalInvoiceSettingsError>> {
+}): Promise<
+  Result<{ success: boolean; useNationalPortal: boolean }, GetFiscalInvoiceSettingsError>
+> {
   try {
     const prisma = getFiscalPrisma();
     const credentials = await loadAsaasCredentials(input.contaId);
@@ -634,7 +658,12 @@ export async function configureFiscalNationalPortal(input: {
 
     return ok({ success: result.success ?? true, useNationalPortal: input.enabled });
   } catch (error) {
-    console.error('[finance][configureFiscalNationalPortal]', error);
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.use_cases.get_fiscal_invoice_settings.failed',
+      error: error,
+      throttleMs: 60_000,
+    });
     return err('ERRO_INTERNO');
   }
 }

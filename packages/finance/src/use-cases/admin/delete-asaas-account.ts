@@ -1,3 +1,4 @@
+import { logFinanceOperationalEvent } from '../../foundation/operational-log';
 import {
   AsaasHttpError,
   createSubaccountAccessToken,
@@ -58,26 +59,28 @@ export type DeleteAsaasAccountStep = {
 
 export type DeleteAsaasAccountResult =
   | {
-    success: true;
-    status: DeleteAsaasAccountStatus;
-    summary: string;
-    asaasDeleted: boolean;
-    localDeleted: boolean;
-    steps: DeleteAsaasAccountStep[];
-    debugSafe: Record<string, unknown>;
-  }
+      success: true;
+      status: DeleteAsaasAccountStatus;
+      summary: string;
+      asaasDeleted: boolean;
+      localDeleted: boolean;
+      steps: DeleteAsaasAccountStep[];
+      debugSafe: Record<string, unknown>;
+    }
   | {
-    success: false;
-    status: DeleteAsaasAccountStatus;
-    summary: string;
-    errorCode: DeleteAsaasAccountErrorCode;
-    asaasDeleted: boolean;
-    localDeleted: boolean;
-    steps: DeleteAsaasAccountStep[];
-    debugSafe?: Record<string, unknown>;
-  };
+      success: false;
+      status: DeleteAsaasAccountStatus;
+      summary: string;
+      errorCode: DeleteAsaasAccountErrorCode;
+      asaasDeleted: boolean;
+      localDeleted: boolean;
+      steps: DeleteAsaasAccountStep[];
+      debugSafe?: Record<string, unknown>;
+    };
 
-type ResolveAsaasLinkErrorCode = 'MISSING_LOCAL_ASAAS_ACCOUNT_ID' | 'INVALID_LOCAL_ASAAS_ACCOUNT_ID';
+type ResolveAsaasLinkErrorCode =
+  | 'MISSING_LOCAL_ASAAS_ACCOUNT_ID'
+  | 'INVALID_LOCAL_ASAAS_ACCOUNT_ID';
 
 type ResolveAsaasLinkProbe = {
   attempted: true;
@@ -118,8 +121,9 @@ async function resolveAsaasLink(params: {
   // para reparar o vínculo quando estiver no formato esperado (acc_*). Não chama o Asaas aqui e não
   // altera a regra external-first; apenas evita um falso "não vinculado" quando o dado está em coluna legada.
   let candidate = toTrimmed(params.financeProfileAsaasAccountId);
-  let source: 'FINANCE_PROFILE.asaasAccountId' | 'SUBACCOUNT_API_KEY' | null =
-    candidate ? 'FINANCE_PROFILE.asaasAccountId' : null;
+  let source: 'FINANCE_PROFILE.asaasAccountId' | 'SUBACCOUNT_API_KEY' | null = candidate
+    ? 'FINANCE_PROFILE.asaasAccountId'
+    : null;
   const current = params.asaasAccount;
   const currentAsaasId = current?.asaasAccountId ?? current?.deletedAsaasAccountId ?? null;
 
@@ -188,18 +192,14 @@ async function resolveAsaasLink(params: {
         if (wallets.data && wallets.data.length > 0) {
           candidate = wallets.data[0].id;
           source = 'SUBACCOUNT_API_KEY';
-
-          console.info('[admin.delete-account][asaas] WALLET_RECOVERED_VIA_MASTER', {
-            requestId: params.requestId,
-            contaId: params.contaId,
-            recoveredIdMasked: maskToken(candidate),
-          });
         }
       }
     } catch (err) {
-      console.warn('[admin.delete-account][asaas] WALLET_RECOVERY_FAILED', {
-        error: err instanceof Error ? err.message : String(err),
-        contaId: params.contaId,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.admin.delete_asaas_account.degraded',
+        error: err,
+        throttleMs: 60_000,
       });
     }
   }
@@ -244,18 +244,6 @@ async function resolveAsaasLink(params: {
   });
 
   if (repaired.repaired) {
-    try {
-      console.info('[admin.delete-account][asaas] ASAAS_LINK_REPAIRED', {
-        requestId: params.requestId ?? null,
-        contaId: params.contaId,
-        financeProfileId: params.financeProfileId,
-        asaasAccountIdMasked: maskToken(candidate),
-        source: source ?? 'unknown',
-      });
-    } catch {
-      // noop
-    }
-
     await auditLogService.record({
       contaId: params.contaId,
       action: 'finance.admin.asaas_link_repaired',
@@ -373,32 +361,6 @@ async function withAsaasRetry<T>(
   return { error: lastError, attempts: opts.maxAttempts, elapsedMs: Date.now() - startedAt };
 }
 
-function safeAsaasLogContext(input: {
-  financeProfileId: string;
-  contaId: string;
-  asaasAccountId: string | null;
-  accessTokenId: string | null;
-  requestId?: string;
-  operation: 'REVOKE_KEY' | 'DELETE_SUBACCOUNT';
-  httpStatus?: number | null;
-  errors?: Array<{ code?: string; description?: string }>;
-  attempts?: number;
-  elapsedMs?: number;
-}) {
-  return {
-    requestId: input.requestId ?? null,
-    contaId: input.contaId,
-    financeProfileId: input.financeProfileId,
-    asaasAccountIdMasked: maskToken(input.asaasAccountId),
-    accessTokenIdMasked: maskToken(input.accessTokenId),
-    operation: input.operation,
-    httpStatus: input.httpStatus ?? null,
-    errors: input.errors ?? [],
-    retries: typeof input.attempts === 'number' ? Math.max(0, input.attempts - 1) : null,
-    elapsedMs: input.elapsedMs ?? null,
-  };
-}
-
 async function confirmMyAccountDisabled(params: {
   apiKey: string;
   maxAttempts: number;
@@ -484,7 +446,8 @@ export async function excluirContaAlusaEAsaas(input: {
   const steps: DeleteAsaasAccountStep[] = [];
 
   const baseUrl = toTrimmed(process.env.ASAAS_BASE_URL);
-  const allowDestructive = process.env.ALLOW_DESTRUCTIVE_ACTIONS === 'true' || isSandboxBaseUrl(baseUrl);
+  const allowDestructive =
+    process.env.ALLOW_DESTRUCTIVE_ACTIONS === 'true' || isSandboxBaseUrl(baseUrl);
 
   if (input.confirmText !== 'DELETAR') {
     pushStep(steps, 'validate', 'error', 'Confirmação inválida.');
@@ -536,14 +499,14 @@ export async function excluirContaAlusaEAsaas(input: {
 
   const profile = input.financeProfileId
     ? await prisma.financeProfile.findUnique({
-      where: { id: input.financeProfileId },
-      select: { id: true, contaId: true, asaasAccountId: true },
-    })
-    : input.contaId
-      ? await prisma.financeProfile.findUnique({
-        where: { contaId: input.contaId },
+        where: { id: input.financeProfileId },
         select: { id: true, contaId: true, asaasAccountId: true },
       })
+    : input.contaId
+      ? await prisma.financeProfile.findUnique({
+          where: { contaId: input.contaId },
+          select: { id: true, contaId: true, asaasAccountId: true },
+        })
       : null;
 
   if (!profile) {
@@ -593,7 +556,8 @@ export async function excluirContaAlusaEAsaas(input: {
     },
   });
 
-  let resolveFailure: { code: ResolveAsaasLinkErrorCode; probe?: ResolveAsaasLinkProbe } | null = null;
+  let resolveFailure: { code: ResolveAsaasLinkErrorCode; probe?: ResolveAsaasLinkProbe } | null =
+    null;
   let resolved: { id: string; asaasAccountId: string; repaired: boolean } | null = null;
   try {
     resolved = await resolveAsaasLink({
@@ -602,10 +566,10 @@ export async function excluirContaAlusaEAsaas(input: {
       financeProfileAsaasAccountId: profile.asaasAccountId ?? null,
       asaasAccount: asaasAccount
         ? {
-          id: asaasAccount.id,
-          asaasAccountId: asaasAccount.asaasAccountId,
-          deletedAsaasAccountId: asaasAccount.deletedAsaasAccountId,
-        }
+            id: asaasAccount.id,
+            asaasAccountId: asaasAccount.asaasAccountId,
+            deletedAsaasAccountId: asaasAccount.deletedAsaasAccountId,
+          }
         : null,
       actor: input.actor,
       requestId: input.requestId,
@@ -620,7 +584,8 @@ export async function excluirContaAlusaEAsaas(input: {
   }
 
   if (!resolved) {
-    const asaasAccountId = asaasAccount?.asaasAccountId ?? asaasAccount?.deletedAsaasAccountId ?? null;
+    const asaasAccountId =
+      asaasAccount?.asaasAccountId ?? asaasAccount?.deletedAsaasAccountId ?? null;
     const failureCode = resolveFailure ? resolveFailure.code : null;
     const probe = resolveFailure?.probe;
     const details =
@@ -657,19 +622,19 @@ export async function excluirContaAlusaEAsaas(input: {
 
   const asaasAccountAfterRepair = resolved.repaired
     ? await prisma.asaasAccount.findUnique({
-      where: { financeProfileId: profile.id },
-      select: {
-        id: true,
-        asaasAccountId: true,
-        deletedAsaasAccountId: true,
-        externalReference: true,
-        status: true,
-        deletionState: true,
-        deletedExternallyAt: true,
-        deletedLocallyAt: true,
-        deletionAttempts: true,
-      },
-    })
+        where: { financeProfileId: profile.id },
+        select: {
+          id: true,
+          asaasAccountId: true,
+          deletedAsaasAccountId: true,
+          externalReference: true,
+          status: true,
+          deletionState: true,
+          deletedExternallyAt: true,
+          deletedLocallyAt: true,
+          deletionAttempts: true,
+        },
+      })
     : asaasAccount;
 
   if (!asaasAccountAfterRepair?.id) {
@@ -713,7 +678,12 @@ export async function excluirContaAlusaEAsaas(input: {
     Boolean(asaasAccountResolved.deletedExternallyAt);
 
   if (localDeleted && externalDeleted) {
-    pushStep(steps, 'load', 'ok', 'Conta já está deletada localmente e externamente (idempotente).');
+    pushStep(
+      steps,
+      'load',
+      'ok',
+      'Conta já está deletada localmente e externamente (idempotente).',
+    );
     return {
       success: true,
       status: 'deleted',
@@ -754,7 +724,8 @@ export async function excluirContaAlusaEAsaas(input: {
     },
     data: {
       deletionState: 'DELETING',
-      deletionRequestedAt: asaasAccountResolved.deletionState === 'NOT_REQUESTED' ? nowLock : undefined,
+      deletionRequestedAt:
+        asaasAccountResolved.deletionState === 'NOT_REQUESTED' ? nowLock : undefined,
       deletionLastAttemptAt: nowLock,
       deletionAttempts: { increment: 1 },
       deletionLastHttpStatus: null,
@@ -798,7 +769,12 @@ export async function excluirContaAlusaEAsaas(input: {
       const myStatus = await getMyAccountStatus({ apiKey: existingCreds.apiKey });
       if (myStatus.id && myStatus.id === asaasAccountId) {
         subaccountApiKey = existingCreds.apiKey;
-        pushStep(steps, 'subaccount_apikey', 'ok', 'API key da subconta encontrada e validada localmente.');
+        pushStep(
+          steps,
+          'subaccount_apikey',
+          'ok',
+          'API key da subconta encontrada e validada localmente.',
+        );
       } else {
         pushStep(
           steps,
@@ -856,12 +832,10 @@ export async function excluirContaAlusaEAsaas(input: {
       const asaasMsg = firstDescriptions.length ? ` Asaas: ${firstDescriptions.join(' | ')}` : '';
 
       // Log server-side (seguro): sem tokens
-      console.warn('[admin.delete-account][subaccount_apikey] falha ao criar access token', {
-        status,
-        errorsCount: errors.length,
-        firstDescriptions,
-        asaasAccountIdMasked: maskToken(asaasAccountId),
-        financeProfileId: profile.id,
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.admin.delete_asaas_account.degraded',
+        throttleMs: 60_000,
       });
 
       pushStep(
@@ -902,7 +876,10 @@ export async function excluirContaAlusaEAsaas(input: {
         asaasDeleted: false,
         localDeleted: false,
         steps,
-        debugSafe: { financeProfileId: profile.id, asaasAccountIdMasked: maskToken(asaasAccountId) },
+        debugSafe: {
+          financeProfileId: profile.id,
+          asaasAccountIdMasked: maskToken(asaasAccountId),
+        },
       };
     }
   }
@@ -1001,26 +978,22 @@ export async function excluirContaAlusaEAsaas(input: {
           durationMs: deleteAttempt.elapsedMs,
         });
 
-        console.error(
-          '[admin.delete-account][asaas] 404 inconsistente (não assumir sucesso)',
-          safeAsaasLogContext({
-            financeProfileId: profile.id,
-            contaId: profile.contaId,
-            asaasAccountId,
-            accessTokenId: createdAccessTokenId,
-            requestId: input.requestId,
-            operation: 'DELETE_SUBACCOUNT',
-            httpStatus: status,
-            errors,
-            attempts: deleteAttempt.attempts,
-            elapsedMs: deleteAttempt.elapsedMs,
-          }),
-        );
-
-        pushStep(steps, 'delete_asaas', 'error', 'Asaas retornou 404 e o estado local não confirma deleção externa.', {
-          status,
-          errors,
+        logFinanceOperationalEvent({
+          severity: 'error',
+          eventName: 'finance.use_cases.admin.delete_asaas_account.failed',
+          throttleMs: 60_000,
         });
+
+        pushStep(
+          steps,
+          'delete_asaas',
+          'error',
+          'Asaas retornou 404 e o estado local não confirma deleção externa.',
+          {
+            status,
+            errors,
+          },
+        );
 
         return {
           success: false,
@@ -1031,7 +1004,10 @@ export async function excluirContaAlusaEAsaas(input: {
           asaasDeleted: false,
           localDeleted,
           steps,
-          debugSafe: { financeProfileId: profile.id, asaasAccountIdMasked: maskToken(asaasAccountId) },
+          debugSafe: {
+            financeProfileId: profile.id,
+            asaasAccountIdMasked: maskToken(asaasAccountId),
+          },
         };
       }
 
@@ -1066,7 +1042,9 @@ export async function excluirContaAlusaEAsaas(input: {
       await prisma.asaasAccount.update({
         where: { id: asaasAccount.id },
         data: {
-          deletionState: shouldRetryAsaasStatus(status) ? 'PENDING_EXTERNAL_DELETE' : 'DELETION_FAILED',
+          deletionState: shouldRetryAsaasStatus(status)
+            ? 'PENDING_EXTERNAL_DELETE'
+            : 'DELETION_FAILED',
           deletionLastHttpStatus: status,
           deletionLastErrors: errors as unknown as object,
           deletionLastAttemptAt: new Date(),
@@ -1094,21 +1072,11 @@ export async function excluirContaAlusaEAsaas(input: {
         durationMs: deleteAttempt.elapsedMs,
       });
 
-      console.error(
-        '[admin.delete-account][asaas] falha ao excluir subconta',
-        safeAsaasLogContext({
-          financeProfileId: profile.id,
-          contaId: profile.contaId,
-          asaasAccountId,
-          accessTokenId: createdAccessTokenId,
-          requestId: input.requestId,
-          operation: 'DELETE_SUBACCOUNT',
-          httpStatus: status,
-          errors,
-          attempts: deleteAttempt.attempts,
-          elapsedMs: deleteAttempt.elapsedMs,
-        }),
-      );
+      logFinanceOperationalEvent({
+        severity: 'error',
+        eventName: 'finance.use_cases.admin.delete_asaas_account.failed',
+        throttleMs: 60_000,
+      });
     }
 
     // Best-effort cleanup de token temporário (se criamos um)
@@ -1127,7 +1095,8 @@ export async function excluirContaAlusaEAsaas(input: {
         if (revokeAttempt.error) {
           const revokeErr = revokeAttempt.error;
           const revokeStatus = revokeErr instanceof AsaasHttpError ? revokeErr.status : null;
-          const revokeErrors = revokeErr instanceof AsaasHttpError ? extractAsaasErrors(revokeErr.response) : [];
+          const revokeErrors =
+            revokeErr instanceof AsaasHttpError ? extractAsaasErrors(revokeErr.response) : [];
 
           await persistIntegrationLog({
             contaId: profile.contaId,
@@ -1170,7 +1139,9 @@ export async function excluirContaAlusaEAsaas(input: {
       }
     }
 
-    const combined = [message, ...errors.map((e) => e.description).filter(Boolean)].join(' | ').toLowerCase();
+    const combined = [message, ...errors.map((e) => e.description).filter(Boolean)]
+      .join(' | ')
+      .toLowerCase();
 
     const notAllowedByApi =
       status === 400 ||
@@ -1215,7 +1186,10 @@ export async function excluirContaAlusaEAsaas(input: {
         asaasDeleted: false,
         localDeleted,
         steps,
-        debugSafe: { financeProfileId: profile.id, asaasAccountIdMasked: maskToken(asaasAccountId) },
+        debugSafe: {
+          financeProfileId: profile.id,
+          asaasAccountIdMasked: maskToken(asaasAccountId),
+        },
       };
     }
   } else {
@@ -1259,7 +1233,8 @@ export async function excluirContaAlusaEAsaas(input: {
           note: 'Asaas returned 200 but postcheck indicates still active',
         },
         response: { postcheck: { ok: false, lastHttpStatus: confirm.lastHttpStatus } },
-        errorMessage: 'Asaas deletion returned success but could not be confirmed via /myAccount/status',
+        errorMessage:
+          'Asaas deletion returned success but could not be confirmed via /myAccount/status',
         durationMs: deleteAttempt.elapsedMs,
       });
 
@@ -1324,7 +1299,8 @@ export async function excluirContaAlusaEAsaas(input: {
       if (revokeAttempt.error) {
         const revokeErr = revokeAttempt.error;
         const revokeStatus = revokeErr instanceof AsaasHttpError ? revokeErr.status : null;
-        const revokeErrors = revokeErr instanceof AsaasHttpError ? extractAsaasErrors(revokeErr.response) : [];
+        const revokeErrors =
+          revokeErr instanceof AsaasHttpError ? extractAsaasErrors(revokeErr.response) : [];
 
         await persistIntegrationLog({
           contaId: profile.contaId,
@@ -1402,7 +1378,8 @@ export async function excluirContaAlusaEAsaas(input: {
     return {
       success: false,
       status: 'deletion_failed_needs_admin',
-      summary: 'A subconta foi excluída no Asaas, mas falhamos ao desativar na Alusa. Verifique logs.',
+      summary:
+        'A subconta foi excluída no Asaas, mas falhamos ao desativar na Alusa. Verifique logs.',
       errorCode: 'LOCAL_DELETE_FAILED',
       asaasDeleted: true,
       localDeleted: false,

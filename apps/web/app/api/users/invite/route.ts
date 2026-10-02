@@ -12,6 +12,7 @@ import { sendInviteEmail } from '@/lib/auth-email-flow';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getInviteBaseUrl } from '@/lib/app-url';
 import { findStudentsInContaForInvite } from '@/src/server/users/invite-scope.service';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export async function POST(req: Request) {
   try {
@@ -37,7 +38,7 @@ export async function POST(req: Request) {
     
     // Bloquear convites para ADMIN — primeiro admin só via first-register
     if (role === 'ADMIN') {
-      console.warn(`[AUDIT] Convite ADMIN bloqueado para ${email || 'unknown'}`);
+      logApiOperationalEvent({ severity: 'warn', eventName: 'api.users.request.rejected', route: '/api/users/invite', method: 'POST', requestId: getRequestId(req) });
       return NextResponse.json({ error: 'Convites para ADMIN não são permitidos.' }, { status: 403 });
     }
     
@@ -83,7 +84,7 @@ export async function POST(req: Request) {
     try {
       inviteBaseUrl = getInviteBaseUrl();
     } catch (error) {
-      console.error('[invite][base-url-unavailable]', error);
+      logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/invite', method: 'POST', requestId: getRequestId(req), error });
       return NextResponse.json(
         { error: 'Não foi possível gerar o convite agora. Tente novamente mais tarde.' },
         { status: 503 },
@@ -132,7 +133,7 @@ export async function POST(req: Request) {
           });
           emailDelivery = delivery.delivery;
         } catch (emailError) {
-          console.error('[invite][email-send-failed]', emailError);
+          logApiOperationalEvent({ severity: 'warn', eventName: 'api.users.invite.delivery.failed', route: '/api/users/invite', method: 'POST', requestId: getRequestId(req), error: emailError });
           emailDelivery = 'failed';
         }
       }
@@ -154,7 +155,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: msg, code: 'STUDENT_ALREADY_LINKED' }, { status: 409 });
       }
       if (normalizedMessage.includes('já existe') || normalizedMessage.includes('cadastrado') || normalizedMessage.includes('vinculado')) {
-        console.warn(`[AUDIT] Convite duplicado bloqueado para ${email}`);
+        logApiOperationalEvent({ severity: 'warn', eventName: 'api.users.request.rejected', route: '/api/users/invite', method: 'POST', requestId: getRequestId(req) });
         return NextResponse.json({ error: msg }, { status: 409 });
       }
       if (normalizedMessage.includes('admin')) {
@@ -163,12 +164,12 @@ export async function POST(req: Request) {
       throw e;
     }
   } catch (error) {
-    console.error('Error sending invite:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/invite', method: 'POST', requestId: getRequestId(req), error });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -185,7 +186,7 @@ export async function GET() {
       }),
     );
   } catch (error) {
-    console.error('Error listing invites:', error);
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/invite', method: 'GET', requestId: getRequestId(req), error });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

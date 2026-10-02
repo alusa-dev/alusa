@@ -1,3 +1,4 @@
+import { logJobFailure } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { encerrarContratosJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
@@ -26,6 +27,7 @@ function jsonError(status: number, code: string, message: string) {
  * - maxAccounts (opcional): limite do cron multi-tenant, default 25, máximo 100
  */
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url);
     const query = encerrarContratosJobQueryDTOSchema.parse({
@@ -73,7 +75,7 @@ export async function POST(req: Request) {
       errors,
     });
   } catch (error) {
-    console.error('[Job Encerrar Contratos] Erro:', error);
+    logJobFailure('encerrar-contratos', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível encerrar os contratos expirados.');
   }
 }

@@ -4,6 +4,7 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { cancelInvoice } from '@alusa/finance';
 
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function json(status: number, body: unknown) {
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ invoiceId:
 
     return json(200, { data: result.data });
   } catch (error) {
-    console.error('[Finance Invoices Cancel][POST]', error);
+    logFinanceApiError('/api/finance/invoices/[id]/cancel', error);
     return json(500, { error: 'ERRO_INTERNO' });
   }
 }
