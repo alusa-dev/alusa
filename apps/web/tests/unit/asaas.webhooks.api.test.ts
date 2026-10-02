@@ -65,11 +65,13 @@ describe('POST /api/webhooks/asaas', () => {
   function createRequest(params: {
     body: unknown;
     signatureHeader?: { name: string; value: string };
+    forwardedFor?: string;
   }): NextRequest {
     const headers = new Headers({ 'Content-Type': 'application/json' });
     if (params.signatureHeader) {
       headers.set(params.signatureHeader.name, params.signatureHeader.value);
     }
+    if (params.forwardedFor) headers.set('x-forwarded-for', params.forwardedFor);
 
     const url = new URL('http://localhost:3001/api/webhooks/asaas');
 
@@ -237,6 +239,27 @@ describe('POST /api/webhooks/asaas', () => {
 
     expect(vi.mocked(handleAsaasWebhookEvent)).toHaveBeenCalledWith(
       expect.objectContaining({ accessToken: 'token-official' }),
+    );
+  });
+
+  it('passa somente o primeiro IP de x-forwarded-for ao handler financeiro', async () => {
+    vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
+      success: true,
+      status: 200,
+      persisted: true,
+      message: 'ok',
+    });
+
+    const req = createRequest({
+      body: { event: 'PAYMENT_RECEIVED', payment: { id: 'pay_123' } },
+      forwardedFor: '198.51.100.12, 52.67.211.226',
+    });
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(200);
+    expect(handleAsaasWebhookEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ clientIp: '198.51.100.12' }),
     );
   });
 

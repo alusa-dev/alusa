@@ -5,11 +5,13 @@ import {
   extractClientIps,
   isAsaasWebhookIpAllowed,
   shouldBlockAsaasWebhookByIp,
+  shouldBlockAsaasWebhookByIpForTenant,
 } from '../webhook-ip-whitelist';
 
 describe('webhook-ip-whitelist', () => {
   const originalNodeEnv = process.env.NODE_ENV;
   const originalIpCheck = process.env.ASAAS_WEBHOOK_IP_CHECK;
+  const originalSandboxBypassContaIds = process.env.ASAAS_WEBHOOK_SANDBOX_IP_BYPASS_CONTA_IDS;
 
   afterEach(() => {
     process.env.NODE_ENV = originalNodeEnv;
@@ -17,6 +19,11 @@ describe('webhook-ip-whitelist', () => {
       delete process.env.ASAAS_WEBHOOK_IP_CHECK;
     } else {
       process.env.ASAAS_WEBHOOK_IP_CHECK = originalIpCheck;
+    }
+    if (originalSandboxBypassContaIds === undefined) {
+      delete process.env.ASAAS_WEBHOOK_SANDBOX_IP_BYPASS_CONTA_IDS;
+    } else {
+      process.env.ASAAS_WEBHOOK_SANDBOX_IP_BYPASS_CONTA_IDS = originalSandboxBypassContaIds;
     }
   });
 
@@ -49,5 +56,31 @@ describe('webhook-ip-whitelist', () => {
 
     process.env.ASAAS_WEBHOOK_IP_CHECK = 'strict';
     expect(shouldBlockAsaasWebhookByIp('203.0.113.10')).toBe(true);
+  });
+
+  it('mantém a exceção Sandbox vazia por padrão e bloqueia IP não permitido', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.ASAAS_WEBHOOK_IP_CHECK = 'strict';
+    delete process.env.ASAAS_WEBHOOK_SANDBOX_IP_BYPASS_CONTA_IDS;
+
+    expect(shouldBlockAsaasWebhookByIpForTenant('203.0.113.10', 'conta-sandbox-a')).toBe(true);
+    expect(shouldBlockAsaasWebhookByIpForTenant('52.67.211.226', 'conta-sandbox-a')).toBe(false);
+  });
+
+  it('aplica exceção somente à Conta autenticada explicitamente configurada', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.ASAAS_WEBHOOK_IP_CHECK = 'strict';
+    process.env.ASAAS_WEBHOOK_SANDBOX_IP_BYPASS_CONTA_IDS = 'conta-sandbox-a';
+
+    expect(shouldBlockAsaasWebhookByIpForTenant('203.0.113.10', 'conta-sandbox-a')).toBe(false);
+    expect(shouldBlockAsaasWebhookByIpForTenant('203.0.113.10', 'conta-sandbox-b')).toBe(true);
+  });
+
+  it('não concede bypass sem Conta autenticada, incluindo token ausente ou inválido', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.ASAAS_WEBHOOK_IP_CHECK = 'strict';
+    process.env.ASAAS_WEBHOOK_SANDBOX_IP_BYPASS_CONTA_IDS = 'conta-sandbox-a';
+
+    expect(shouldBlockAsaasWebhookByIpForTenant('203.0.113.10', null)).toBe(true);
   });
 });
