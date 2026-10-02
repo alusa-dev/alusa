@@ -33,9 +33,6 @@ export async function POST(
       actor: { type: 'USER', id: user.id },
     });
 
-    if (process.env.NODE_ENV !== 'production') {
-    }
-
     return json(result.success && result.provisioningStatus === 'QUEUED' ? 202 : 200, {
       data: result,
     });

@@ -52,16 +52,6 @@ type AlunoDeletionBlockers = {
   };
 };
 
-function hasDeletionBlockers(blockers: AlunoDeletionBlockers) {
-  return (
-    blockers.activeMatriculas > 0 ||
-    blockers.activeSubscriptions > 0 ||
-    blockers.cobrancas.pending > 0 ||
-    blockers.cobrancas.processing > 0 ||
-    blockers.cobrancas.overdue > 0
-  );
-}
-
 async function getAlunoDeletionBlockers(params: {
   alunoId: string;
   contaId: string;
@@ -457,9 +447,6 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
     const outcome = (await prisma.aluno.findFirst({ where: { id: rawParams.id, contaId }, select: { id: true } }))
       ? 'ARCHIVED'
       : 'HARD_DELETED';
-
-    if (outcome === 'ARCHIVED' && hasDeletionBlockers(blockers)) {
-    }
 
     // 6) Extrair resultado da inativação do customer (se disponível)
     const customerInactivation = (alunoResult as { _customerInactivation?: { action: string; reason?: string } })

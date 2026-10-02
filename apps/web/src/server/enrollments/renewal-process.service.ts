@@ -1,5 +1,5 @@
 import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
-﻿import { createHash } from 'crypto';
+import { createHash } from 'crypto';
 import { Prisma, StatusMatricula, type PrismaClient } from '@prisma/client';
 import {
   buildRenewalPreview,
