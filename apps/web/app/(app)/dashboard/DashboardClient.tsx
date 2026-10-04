@@ -63,9 +63,10 @@ const TaxaMatriculaCard = dynamic(
 
 type DashboardClientProps = {
   initialData?: SerializableDashboardPrefetch | null;
+  prefetchContaId?: string | null;
 };
 
-export default function DashboardClient({ initialData = null }: DashboardClientProps) {
+export default function DashboardClient({ initialData = null, prefetchContaId = null }: DashboardClientProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useCurrentUser();
@@ -80,8 +81,9 @@ export default function DashboardClient({ initialData = null }: DashboardClientP
     billingSummary?.account?.accessStatus === 'RESTRICTED' ||
     billingSummary?.account?.accessStatus === 'CANCELED';
 
-  const metricsQuery = useDashboardMetricsQuery(initialData?.metrics ?? null);
-  const financeKpisQuery = useDashboardFinanceKpisQuery(initialData?.financeKpis ?? null);
+  const scopedInitialData = prefetchContaId && prefetchContaId === user?.contaId ? initialData : null;
+  const metricsQuery = useDashboardMetricsQuery(user?.contaId ?? null, scopedInitialData?.metrics ?? null);
+  const financeKpisQuery = useDashboardFinanceKpisQuery(user?.contaId ?? null, scopedInitialData?.financeKpis ?? null);
 
   const metrics = metricsQuery.data ?? null;
   const financeKpis = financeKpisQuery.data ?? null;

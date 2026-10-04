@@ -1,6 +1,6 @@
-# Dashboards e SLOs: especificação de rollout
+# Dashboards e SLOs de observabilidade
 
-Este documento prepara a configuração do projeto Sentry depois que o acesso e o baseline de produção forem confirmados. Ele não declara dashboards, alertas ou SLOs ativos.
+Este documento registra a configuração ativa de observabilidade, os baselines observados e os próximos ajustes necessários. Os targets numéricos de SLO permanecem pendentes de um ciclo de produção representativo e revisão com os owners.
 
 ## Dashboards sugeridos
 
@@ -42,7 +42,7 @@ Defina os valores numéricos após baseline de pelo menos um ciclo representativ
 | Exportação de telemetria | ausência de eventos esperados, falha de envio e volume/custo | Plataforma | [provider e custo](runbooks/provider-and-cost.md) |
 | Experiência do usuário | distribuições de Web Vitals por categoria e release | Produto + Web | validar impacto antes de alertar |
 
-Os owners organizacionais desta matriz foram aceitos como padrão inicial. Durante a configuração de cada alerta, ainda é preciso registrar a pessoa titular, a substituta e o canal de notificação.
+Os owners organizacionais desta matriz foram aceitos como padrão inicial. A regra de issues de alta prioridade do projeto Sentry foi atribuída ao time disponível `alusa`; ainda é preciso criar ou identificar os times de Plataforma Web e Operações Financeiras e registrar pessoas titulares, substitutas e canais de notificação.
 
 Para cada alerta, registre: expressão/filtro final; janela e valor calibrados; serviço e ambiente; pessoa titular e substituta dentro do owner organizacional definido acima; canal de notificação; link do dashboard; runbook; data da última revisão.
 
@@ -114,6 +114,32 @@ O Vercel informou oito valores distintos de status e exibiu apenas os sete mais 
 ## Estado
 
 - As convenções e nomes acima existem no workspace, mas a existência de um nome não comprova que a métrica esteja chegando ao projeto Sentry.
-- A avaliação local da fila não cria alertas a partir dos limites heurísticos atuais; alertas de produção ficam pendentes de baseline representativo e configuração explícita.
-- Nenhum dashboard/alerta externo foi criado. Ainda faltam métricas pós-promoção e atribuição individual de titulares/substitutos. Os owners organizacionais foram aceitos conforme a matriz. O Vercel permite consulta read-only de deployments e runtime logs; o conector `get_project` retorna erro de validação e não há conector/sessão Sentry autenticada disponível para consultar ingestão ou configurar dashboards.
 - A topologia e os snapshots locais em memória não devem ser usados como totais globais de produção.
+- A avaliação local da fila não cria alertas a partir dos limites heurísticos atuais; alertas de produção ficam pendentes de baseline representativo e configuração explícita.
+- Os owners organizacionais foram aceitos conforme a matriz. Ainda faltam mapear titulares, substitutos e canais de notificação para cada owner.
+
+### Snapshot Sentry após a promoção
+
+Consulta autenticada ao projeto Sentry `javascript-nextjs`, ambiente `production`, em 02/10/2026 às 13:39 UTC:
+
+| Janela | Sinal | Resultado |
+|---|---|---:|
+| 24 horas | spans de produção | 25.660 |
+| 24 horas | spans do release `30cec7e33838c7c3a740961adebaa9e37d999603` | 200 |
+| 24 horas | eventos de erro | 0 |
+| 7 dias | spans de produção | 170.090 |
+| 7 dias | eventos de erro | 1 |
+| 7 dias | registros no dataset de logs | 0 |
+| 7 dias | amostras retornadas no dataset de métricas | 36 |
+
+Os spans confirmam ingestão do release promovido. O volume de sete dias é somente um baseline inicial, ainda curto para representar ciclo escolar, fechamento financeiro ou pico de matrículas. As amostras de métricas não comprovam cobertura dos sinais financeiros individuais; a tela Application Metrics do Sentry ainda apresenta a opção de iniciar um trial, que não foi ativado. Nenhum poller, uptime check ou consulta adicional à aplicação/banco foi configurado.
+
+As consultas por nome ao dataset `metrics` retornaram zero amostras na janela de 7 dias para `finance.webhook.processed`, `finance.webhook.retries`, `finance.webhook.oldest_pending_age`, `alusa.http.server.requests`, `alusa.job.completed` e `finance.asaas.api.calls`. O código de produção inicializa o SDK com `enableMetrics: true` e registra um adapter para o sink compartilhado, então a ausência por nome precisa ser investigada entre emissão, exportação, release e disponibilidade do produto. Isso não prova ausência de toda a telemetria: os 36 resultados agregados podem corresponder a outros nomes ou formatos. Antes de criar monitores financeiros, validar a ingestão/exportação desses sinais e os requisitos de plano do Sentry. A ativação do trial de Application Metrics não foi feita.
+
+Uma trace de `POST /api/webhooks/asaas` mostrou a rota concluída em aproximadamente 161 ms, enquanto spans HTTP filhos do Upstash apareciam com cerca de 131 s. Essa duração inconsistente não comprova latência da rota nem do Redis em produção. Manter esses spans fora de targets de SLO até validar a instrumentação com uma medição independente de parede no adaptador; evitar suprimir ou alterar spans do SDK sem confirmar a causa.
+
+Foi criado e favoritado o dashboard [Alusa | Saúde de Produção](https://alusa.sentry.io/dashboard/10283240/?project=4511312339468288&statsPeriod=7d), restrito ao projeto `javascript-nextjs` e ambiente `production`, com período padrão de 7 dias e atualização automática a cada 30 minutos. Ele contém widgets para issues não resolvidas, erros não tratados, distribuição de duração p50/p75/p95 e transações de maior volume. As consultas são agregações no Sentry; não executam consultas no banco da Alusa.
+
+O Sentry já possui duas regras de notificação por issues e nenhum Metric Monitor. A regra de issues de alta prioridade está atribuída ao time genérico `alusa` e envia e-mail aos donos das issues, com fallback para membros ativos. A regra “pull requests are ready” continua sem owner e cobre todos os projetos, portanto não foi alterada a partir do escopo do projeto Alusa. A organização tem somente o time genérico `alusa`, sem times específicos para Plataforma Web e Operações Financeiras. Não foram criadas regras numéricas ou paging: os limites permanecem pendentes de baseline representativo, titulares/substitutos e canal aprovado.
+
+O alerta local de fila de webhook interrompida observado nos logs do deployment anterior deve ser acompanhado por Operações Financeiras. Os totais do Vercel e do Sentry são datasets distintos e não devem ser somados.

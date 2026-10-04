@@ -40,4 +40,24 @@ describe('logLibOperationalEvent', () => {
     const summary = JSON.parse(String(info.mock.calls[1]?.[0])) as { attributes?: { count?: number } };
     expect(summary.attributes?.count).toBe(3);
   });
+
+  it('keeps inbox failure aggregates separated by bounded reason without request data', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let now = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+
+    logLibOperationalEvent({ eventName: 'inbox.pending.failed', severity: 'error', failureReason: 'entity_missing' });
+    logLibOperationalEvent({ eventName: 'inbox.pending.failed', severity: 'error', failureReason: 'payload_integrity' });
+    now += 60_000;
+    logLibOperationalEvent({ eventName: 'inbox.pending.failed', severity: 'error', failureReason: 'entity_missing' });
+    logLibOperationalEvent({ eventName: 'inbox.pending.failed', severity: 'error', failureReason: 'payload_integrity' });
+
+    const records = error.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>);
+    expect(records).toHaveLength(4);
+    expect(records.map((record) => (record.attributes as { failureReason: string }).failureReason)).toEqual([
+      'entity_missing', 'payload_integrity', 'entity_missing', 'payload_integrity',
+    ]);
+    expect(records.every((record) => record['event.name'] === 'inbox.pending.failed')).toBe(true);
+    expect(JSON.stringify(records)).not.toMatch(/dedupe|conta|customer|payment|message|student-secret/i);
+  });
 });

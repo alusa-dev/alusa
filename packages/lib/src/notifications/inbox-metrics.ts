@@ -15,9 +15,15 @@ export type InboxMetricEvent =
   | 'inbox.overdue.skipped'
   | 'inbox.retention.archived';
 
-export function logInboxMetric(event: InboxMetricEvent, _context: Record<string, unknown>): void {
+export function logInboxMetric(event: InboxMetricEvent, context: Record<string, unknown>): void {
   logLibOperationalEvent({
     eventName: event,
-    severity: event.endsWith('.failed') ? 'error' : event.startsWith('inbox.skipped.') ? 'warn' : 'info',
+    severity: event.includes('.failed') ? 'error' : event.startsWith('inbox.skipped.') ? 'warn' : 'info',
+    failureReason:
+      context.failureReason === 'entity_missing' ||
+      context.failureReason === 'payload_integrity' ||
+      context.failureReason === 'retry_exhausted'
+        ? context.failureReason
+        : undefined,
   });
 }

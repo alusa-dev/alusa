@@ -36,7 +36,7 @@ export type LibOperationalEventName =
   | 'inbox.retention.archived';
 
 const EMIT_INTERVAL_MS = 60_000;
-const buckets = new Map<LibOperationalEventName, { count: number; lastEmittedAt: number }>();
+const buckets = new Map<string, { count: number; lastEmittedAt: number }>();
 const SAFE_ERROR_NAMES = new Set([
   'Error',
   'TypeError',
@@ -62,14 +62,16 @@ export function logLibOperationalEvent(params: {
   error?: unknown;
   severity?: 'info' | 'warn' | 'error';
   count?: number;
+  failureReason?: 'entity_missing' | 'payload_integrity' | 'retry_exhausted';
 }): void {
   const now = Date.now();
-  const bucket = buckets.get(params.eventName) ?? { count: 0, lastEmittedAt: 0 };
+  const bucketKey = `${params.eventName}:${params.failureReason ?? ''}`;
+  const bucket = buckets.get(bucketKey) ?? { count: 0, lastEmittedAt: 0 };
   const increment = Number.isSafeInteger(params.count) && (params.count ?? -1) >= 0
     ? params.count ?? 1
     : 1;
   bucket.count += increment;
-  buckets.set(params.eventName, bucket);
+  buckets.set(bucketKey, bucket);
   if (bucket.lastEmittedAt > 0 && now - bucket.lastEmittedAt < EMIT_INTERVAL_MS) return;
 
   const log = createStructuredLog({
@@ -78,8 +80,8 @@ export function logLibOperationalEvent(params: {
     'deployment.environment': process.env.VERCEL_ENV ?? process.env.NODE_ENV,
     'event.name': params.eventName,
     'error.type': safeErrorType(params.error),
-    attributes: { count: bucket.count },
-    allowedAttributes: ['count'],
+    attributes: { count: bucket.count, ...(params.failureReason ? { failureReason: params.failureReason } : {}) },
+    allowedAttributes: ['count', 'failureReason'],
   });
   bucket.count = 0;
   bucket.lastEmittedAt = now;

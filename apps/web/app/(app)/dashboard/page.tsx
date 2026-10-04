@@ -21,5 +21,5 @@ export default async function DashboardPage() {
   const contaId = (session?.user as { contaId?: string | null } | undefined)?.contaId;
   const initialData = contaId ? serializeDashboardPrefetch(await prefetchDashboardData(contaId)) : null;
 
-  return <DashboardClient initialData={initialData} />;
+  return <DashboardClient initialData={initialData} prefetchContaId={contaId ?? null} />;
 }

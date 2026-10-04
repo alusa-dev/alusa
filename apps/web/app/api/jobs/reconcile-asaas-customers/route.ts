@@ -1,4 +1,4 @@
-import { logJobFailure } from '@/src/server/jobs/job-observability';
+import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import {
   reconcileAsaasCustomerSnapshots,
@@ -45,6 +45,21 @@ async function run(req: Request) {
         maxAccounts,
       }),
     ]);
+
+    logJobResult(
+      'reconcile-asaas-customers',
+      startedAt,
+      {
+        scanned: snapshots.scanned + addresses.scanned,
+        updated: snapshots.updated,
+        deleted: snapshots.deleted,
+        missingCredentials: snapshots.missingCredentials,
+        addressSynced: addresses.synced,
+        skipped: addresses.skipped,
+        failed: snapshots.failed + addresses.failed,
+      },
+      { partialFailure: snapshots.failed > 0 || addresses.failed > 0 },
+    );
 
     return NextResponse.json({
       success: snapshots.failed === 0 && addresses.failed === 0,

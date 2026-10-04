@@ -303,7 +303,7 @@ export async function processPendingInboxNotifications(params?: {
           leaseUntil: null,
         })) {
           failed += 1;
-          logInboxMetric('inbox.pending.failed', { dedupeKey: row.dedupeKey, attempts });
+          logInboxMetric('inbox.pending.failed', { failureReason: 'entity_missing' });
         }
       } else {
         await updateClaimedPendingRow(row, {
@@ -327,7 +327,9 @@ export async function processPendingInboxNotifications(params?: {
           leaseUntil: null,
         })) {
           failed += 1;
-          logInboxMetric('inbox.pending.failed', { dedupeKey: row.dedupeKey, attempts });
+          logInboxMetric('inbox.pending.failed', {
+            failureReason: error instanceof PendingInboxPayloadIntegrityError ? 'payload_integrity' : 'retry_exhausted',
+          });
         }
       } else {
         await updateClaimedPendingRow(row, {

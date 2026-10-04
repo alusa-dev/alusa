@@ -19,6 +19,11 @@ const SAFE_EXTRA_FIELDS = new Set([
 ]);
 const COUNT_FIELDS = new Set([
   'processed',
+  'scanned',
+  'addressSynced',
+  'updated',
+  'deleted',
+  'missingCredentials',
   'failed',
   'skipped',
   'retried',
@@ -92,8 +97,9 @@ export function logJobResult(
   const durationMs = Math.max(0, Date.now() - startedAt);
   const name = safeJobName(jobName);
   const safeExtras = safeExtraFields(extra);
+  const outcome = safeExtras.partialFailure === true ? 'partial_failure' : 'success';
   const counts = { ...numericFields(result), ...numericExtraFields(extra) };
-  const dimensions = normalizeMetricDimensions({ 'job.name': name, result: 'success' });
+  const dimensions = normalizeMetricDimensions({ 'job.name': name, result: outcome });
   void sharedTelemetry.recordMetric({
     kind: 'counter',
     name: 'alusa.job.completed',
@@ -118,14 +124,15 @@ export function logJobResult(
     }
   }
   const log = createStructuredLog({
-    severity: 'info',
+    severity: outcome === 'partial_failure' ? 'warn' : 'info',
     'service.name': 'alusa-web',
-    'event.name': 'job.completed',
+    'event.name': outcome === 'partial_failure' ? 'job.partial_failure' : 'job.completed',
     duration_ms: durationMs,
     attributes: { jobName: name, ...counts, ...safeExtras },
     allowedAttributes: ['jobName', ...Object.keys(counts), ...Object.keys(safeExtras)],
   });
-  console.info(JSON.stringify(log));
+  if (outcome === 'partial_failure') console.warn(JSON.stringify(log));
+  else console.info(JSON.stringify(log));
 }
 
 export function logJobFailure(

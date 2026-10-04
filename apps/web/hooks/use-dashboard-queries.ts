@@ -95,21 +95,26 @@ async function fetchFinanceKpis(): Promise<DashboardFinanceKpisDataDTO> {
   return parsed.data;
 }
 
-export function useDashboardMetricsQuery(initialData?: DashboardMetricsDataDTO | null) {
+export function useDashboardMetricsQuery(contaId: string | null, initialData?: DashboardMetricsDataDTO | null) {
   return useQuery({
-    queryKey: ['dashboard', 'metrics', DASHBOARD_BLOCKS_ENABLED],
+    queryKey: ['dashboard', 'metrics', contaId, DASHBOARD_BLOCKS_ENABLED],
     queryFn: fetchDashboardMetrics,
-    enabled: true,
+    enabled: Boolean(contaId),
     initialData: initialData ?? undefined,
-    staleTime: 15_000,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
 
-export function useDashboardFinanceKpisQuery(initialData?: DashboardFinanceKpisDataDTO | null) {
+export function useDashboardFinanceKpisQuery(contaId: string | null, initialData?: DashboardFinanceKpisDataDTO | null) {
   return useQuery({
-    queryKey: ['dashboard', 'finance-kpis'],
+    queryKey: ['dashboard', 'finance-kpis', contaId],
     queryFn: fetchFinanceKpis,
+    enabled: Boolean(contaId),
     initialData: initialData ?? undefined,
-    staleTime: 15_000,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
