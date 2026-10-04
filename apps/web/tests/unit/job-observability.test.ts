@@ -45,16 +45,20 @@ describe('job observability', () => {
   });
 
   it('identifica falha parcial como resultado distinto de sucesso', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
     logJobResult('reconcile-asaas-customers', Date.now() - 10, { scanned: 2, failed: 1 }, { partialFailure: true });
 
-    const payload = JSON.parse(String(info.mock.calls[0]?.[0]));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(info).not.toHaveBeenCalled();
+    const payload = JSON.parse(String(warn.mock.calls[0]?.[0]));
     expect(payload).toMatchObject({
       severity: 'warn',
       'event.name': 'job.partial_failure',
       attributes: { jobName: 'reconcile-asaas-customers', failed: 1, partialFailure: true },
     });
+    warn.mockRestore();
     info.mockRestore();
   });
 

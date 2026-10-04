@@ -131,7 +131,8 @@ export function logJobResult(
     attributes: { jobName: name, ...counts, ...safeExtras },
     allowedAttributes: ['jobName', ...Object.keys(counts), ...Object.keys(safeExtras)],
   });
-  console.info(JSON.stringify(log));
+  if (outcome === 'partial_failure') console.warn(JSON.stringify(log));
+  else console.info(JSON.stringify(log));
 }
 
 export function logJobFailure(
