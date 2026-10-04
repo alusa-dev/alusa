@@ -177,6 +177,57 @@ describe('ensureAsaasCustomerForPayer', () => {
 
   afterEach(() => vi.unstubAllEnvs());
 
+  it.each([
+    { lookup: 'known ID', changed: false, shouldUpdate: false },
+    { lookup: 'known ID', changed: true, shouldUpdate: true },
+    { lookup: 'CPF result', changed: false, shouldUpdate: false },
+    { lookup: 'CPF result', changed: true, shouldUpdate: true },
+  ])('$lookup: PUT only when a synchronized field differs (changed=$changed)', async ({ lookup, changed, shouldUpdate }) => {
+    const aluno = await prisma.aluno.create({
+      data: {
+        contaId,
+        nome: `Reconciliação ${lookup} ${changed}`,
+        dataNasc: new Date('2000-01-01'),
+        cpf: changed ? '15350946056' : '11144477735',
+        email: 'reconciliation@example.com',
+        telefone: '11999999999',
+        ...(lookup === 'known ID' ? { asaasCustomerId: 'cust_reconciliation' } : {}),
+      },
+    });
+    const externalReference = `alusa_${contaId}_aluno_${aluno.id}`;
+    const currentCustomer = {
+      id: 'cust_reconciliation',
+      object: 'customer' as const,
+      dateCreated: '2026-01-01',
+      name: aluno.nome,
+      cpfCnpj: aluno.cpf!,
+      email: changed ? 'old@example.com' : aluno.email!,
+      mobilePhone: '11999999999',
+      externalReference,
+      deleted: false,
+      notificationDisabled: false,
+    };
+    if (lookup === 'known ID') {
+      getCustomerMock.mockResolvedValueOnce(currentCustomer);
+    } else {
+      listCustomersMock.mockResolvedValueOnce({
+        object: 'list', hasMore: false, totalCount: 1, limit: 1, offset: 0, data: [currentCustomer],
+      });
+    }
+
+    const result = await ensureAsaasCustomerForPayer({
+      contaId,
+      payer: {
+        type: 'ALUNO', id: aluno.id, name: aluno.nome, cpfCnpj: aluno.cpf!,
+        email: aluno.email, phone: aluno.telefone,
+        ...(lookup === 'known ID' ? { asaasCustomerId: aluno.asaasCustomerId } : {}),
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, customerId: 'cust_reconciliation' });
+    expect(updateCustomerMock).toHaveBeenCalledTimes(shouldUpdate ? 1 : 0);
+  });
+
   afterAll(async () => {
     await prisma.$disconnect();
   });

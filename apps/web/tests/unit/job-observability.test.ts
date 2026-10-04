@@ -44,6 +44,20 @@ describe('job observability', () => {
     error.mockRestore();
   });
 
+  it('identifica falha parcial como resultado distinto de sucesso', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    logJobResult('reconcile-asaas-customers', Date.now() - 10, { scanned: 2, failed: 1 }, { partialFailure: true });
+
+    const payload = JSON.parse(String(info.mock.calls[0]?.[0]));
+    expect(payload).toMatchObject({
+      severity: 'warn',
+      'event.name': 'job.partial_failure',
+      attributes: { jobName: 'reconcile-asaas-customers', failed: 1, partialFailure: true },
+    });
+    info.mockRestore();
+  });
+
   it('limita error.type a nomes seguros de erro', () => {
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const unsafeError = new Error('sensitive message');

@@ -108,6 +108,19 @@ function compact<T extends Record<string, unknown>>(data: T): Partial<T> {
   ) as Partial<T>;
 }
 
+function customerNeedsUpdate(customer: AsaasCustomer, payload: CreateCustomerInput): boolean {
+  return Object.entries(payload).some(([key, requested]) => {
+    if (requested === undefined || requested === null || requested === '') return false;
+    const current = (customer as unknown as Record<string, unknown>)[key];
+    if (current === undefined || current === null || current === '') return true;
+    if (key === 'email') return normalizeEmail(String(current)) !== normalizeEmail(String(requested));
+    if (['cpfCnpj', 'phone', 'mobilePhone', 'postalCode'].includes(key)) {
+      return digits(current) !== digits(requested);
+    }
+    return normalizeString(String(current)) !== normalizeString(String(requested));
+  });
+}
+
 function buildExternalReference(contaId: string, payer: EnsureAsaasCustomerPayer): string {
   if (!payer.id) {
     throw new AsaasCustomerEnsureError('PAYER_INVALID', 'Pagador sem identificador interno.');
@@ -568,10 +581,12 @@ export async function ensureAsaasCustomerForPayer(input: {
             externalReference = localCustomer.externalReference || externalReference;
           }
           step = 'UPDATE_EXISTING_BY_ID';
-          const updateResult = await pushExistingCustomerUpdate({
+          const updatePayloadWithReference = { ...updatePayload, externalReference };
+          const updateResult = customerNeedsUpdate(localCustomer, updatePayloadWithReference)
+            ? await pushExistingCustomerUpdate({
             apiKey,
             customerId: localCustomer.id,
-            payload: { ...updatePayload, externalReference },
+            payload: updatePayloadWithReference,
             strictUpdate: input.strictCustomerUpdate,
             step,
             logContext: {
@@ -579,7 +594,8 @@ export async function ensureAsaasCustomerForPayer(input: {
               payerType: input.payer.type,
               payerId: input.payer.id,
             },
-          });
+          })
+            : { ok: true as const };
           if (!updateResult.ok) {
             return updateResult;
           }
@@ -692,10 +708,12 @@ export async function ensureAsaasCustomerForPayer(input: {
         }
       }
 
-      const updateResult = await pushExistingCustomerUpdate({
+      const updatePayloadWithReference = { ...updatePayload, externalReference };
+      const updateResult = existingCustomer.deleted || customerNeedsUpdate(existingCustomer, updatePayloadWithReference)
+        ? await pushExistingCustomerUpdate({
         apiKey,
         customerId: existingCustomer.id,
-        payload: { ...updatePayload, externalReference },
+        payload: updatePayloadWithReference,
         strictUpdate: input.strictCustomerUpdate,
         step,
         logContext: {
@@ -703,7 +721,8 @@ export async function ensureAsaasCustomerForPayer(input: {
           payerType: input.payer.type,
           payerId: input.payer.id,
         },
-      });
+      })
+        : { ok: true as const };
       if (!updateResult.ok) {
         return updateResult;
       }
