@@ -793,6 +793,7 @@ describe('handlePaymentWebhook', () => {
         value: 150,
         netValue: 150,
         paymentDate: '2026-06-21',
+        clientPaymentDate: '2026-06-20',
         billingType: 'RECEIVED_IN_CASH',
       },
     });
@@ -803,6 +804,7 @@ describe('handlePaymentWebhook', () => {
         where: { id: 'ch_cash_1' },
         data: expect.objectContaining({
           status: 'PAID',
+          paidAt: new Date('2026-06-20'),
           asaasStatus: 'RECEIVED_IN_CASH',
           liquidacaoStatus: 'DISPONIVEL',
         }),
@@ -836,7 +838,239 @@ describe('handlePaymentWebhook', () => {
     expect(prisma.charge.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'ch_cash_undo' },
-        data: expect.objectContaining({ status: 'OVERDUE' }),
+        data: expect.objectContaining({ status: 'OVERDUE', paidAt: null }),
+      }),
+    );
+  });
+
+  it('não inventa paidAt quando o webhook confirmado não informa data de pagamento', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+      id: 'ch_no_date',
+      cobrancaId: null,
+      status: 'OPEN',
+      asaasPaymentId: 'pay_no_date',
+      paidAt: null,
+    } as never);
+    vi.mocked(prisma.charge.update).mockResolvedValueOnce({ id: 'ch_no_date', status: 'PAID' } as never);
+
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay_no_date',
+        status: 'CONFIRMED',
+        value: 150,
+        netValue: 150,
+      },
+    });
+
+    const call = vi.mocked(prisma.charge.update).mock.calls[0]?.[0];
+    expect(call?.data).not.toHaveProperty('paidAt');
+  });
+
+  it('usa paymentDate como fallback quando clientPaymentDate não foi informado', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+      id: 'ch_payment_date',
+      cobrancaId: null,
+      status: 'OPEN',
+      asaasPaymentId: 'pay_payment_date',
+      paidAt: null,
+    } as never);
+    vi.mocked(prisma.charge.update).mockResolvedValueOnce({ id: 'ch_payment_date', status: 'PAID' } as never);
+
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay_payment_date',
+        status: 'CONFIRMED',
+        value: 150,
+        netValue: 150,
+        paymentDate: '2026-06-21',
+      },
+    });
+
+    expect(prisma.charge.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'ch_payment_date' },
+        data: expect.objectContaining({ paidAt: new Date('2026-06-21') }),
+      }),
+    );
+  });
+
+  it('preserva o primeiro paidAt canônico em retries confirmados', async () => {
+    const { prisma } = await import('@alusa/database');
+    const originalPaidAt = new Date('2026-06-20T00:00:00.000Z');
+
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+      id: 'ch_retry',
+      cobrancaId: null,
+      status: 'OPEN',
+      asaasPaymentId: 'pay_retry',
+      paidAt: originalPaidAt,
+    } as never);
+    vi.mocked(prisma.charge.update).mockResolvedValueOnce({ id: 'ch_retry', status: 'PAID' } as never);
+
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay_retry',
+        status: 'CONFIRMED',
+        value: 150,
+        netValue: 150,
+        paymentDate: '2026-06-21',
+      },
+    });
+
+    expect(prisma.charge.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'ch_retry' },
+        data: expect.objectContaining({ paidAt: originalPaidAt }),
+      }),
+    );
+  });
+
+  it('preserva paidAt depois de CONFIRMED repetido com outra data', async () => {
+    const { prisma } = await import('@alusa/database');
+    const canonicalPaidAt = new Date('2026-06-20T00:00:00.000Z');
+    vi.mocked(prisma.charge.findFirst)
+      .mockResolvedValueOnce({
+        id: 'ch_repeated_confirmation',
+        cobrancaId: null,
+        status: 'OPEN',
+        asaasPaymentId: 'pay_repeated_confirmation',
+        paidAt: null,
+        asaasStatus: 'PENDING',
+      } as never)
+      .mockResolvedValueOnce({
+        id: 'ch_repeated_confirmation',
+        cobrancaId: null,
+        status: 'PAID',
+        asaasPaymentId: 'pay_repeated_confirmation',
+        paidAt: canonicalPaidAt,
+        asaasStatus: 'CONFIRMED',
+      } as never);
+    vi.mocked(prisma.charge.update).mockResolvedValue({ status: 'PAID' } as never);
+
+    for (const paymentDate of ['2026-06-20', '2026-06-21']) {
+      await handlePaymentWebhook('conta-1', {
+        event: 'PAYMENT_CONFIRMED',
+        payment: {
+          id: 'pay_repeated_confirmation',
+          status: 'CONFIRMED',
+          value: 150,
+          netValue: 150,
+          paymentDate,
+        },
+      });
+    }
+
+    const updates = vi.mocked(prisma.charge.update).mock.calls.map(([call]) => call.data);
+    expect(updates[0]).toEqual(expect.objectContaining({ paidAt: canonicalPaidAt }));
+    expect(updates[1]).not.toHaveProperty('paidAt');
+  });
+
+  it('não deixa evento de undo atrasado regredir confirmação mais nova no snapshot', async () => {
+    const { prisma } = await import('@alusa/database');
+    const canonicalPaidAt = new Date('2026-06-20T00:00:00.000Z');
+    vi.mocked(prisma.charge.findFirst)
+      .mockResolvedValueOnce({
+        id: 'ch_late_undo',
+        cobrancaId: null,
+        status: 'OPEN',
+        asaasPaymentId: 'pay_late_undo',
+        paidAt: null,
+        asaasStatus: 'PENDING',
+      } as never)
+      .mockResolvedValueOnce({
+        id: 'ch_late_undo',
+        cobrancaId: null,
+        status: 'PAID',
+        asaasPaymentId: 'pay_late_undo',
+        paidAt: canonicalPaidAt,
+        asaasStatus: 'RECEIVED_IN_CASH',
+      } as never);
+    vi.mocked(prisma.charge.update).mockResolvedValue({ status: 'PAID' } as never);
+
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay_late_undo',
+        status: 'RECEIVED_IN_CASH',
+        value: 150,
+        netValue: 150,
+        paymentDate: '2026-06-20',
+      },
+    });
+    const lateUndo = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED_IN_CASH_UNDONE',
+      payment: {
+        id: 'pay_late_undo',
+        status: 'RECEIVED_IN_CASH',
+        value: 150,
+        netValue: 150,
+      },
+    });
+
+    expect(lateUndo.stateChanged).toBe(false);
+    const updates = vi.mocked(prisma.charge.update).mock.calls.map(([call]) => call.data);
+    expect(updates[0]).toEqual(expect.objectContaining({ status: 'PAID', paidAt: canonicalPaidAt }));
+    expect(updates[1]).not.toHaveProperty('paidAt');
+    expect(updates[1]).toEqual(expect.objectContaining({ status: 'PAID' }));
+  });
+
+  it('limpa paidAt também ao desfazer recebimento de cobrança acadêmica', async () => {
+    const { prisma } = await import('@alusa/database');
+    const { isPaymentResolutionPolicyEnabled } = await import('../../foundation/payment-resolution-policy');
+    vi.mocked(isPaymentResolutionPolicyEnabled).mockReturnValue(true);
+    mockResolvePaymentToLocalEntity.mockResolvedValueOnce({
+      type: 'charge',
+      chargeId: 'charge_academic_undo',
+      cobrancaId: 'c_academic_undo',
+    });
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+      id: 'charge_academic_undo',
+      cobrancaId: 'c_academic_undo',
+      status: 'PAID',
+      asaasPaymentId: 'pay_academic_undo',
+      paidAt: new Date('2026-06-20T00:00:00.000Z'),
+      asaasStatus: 'RECEIVED_IN_CASH',
+    } as never);
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
+      id: 'c_academic_undo',
+      matriculaId: 'm_academic_undo',
+      status: 'PAGO',
+      asaasPaymentId: 'pay_academic_undo',
+      tipo: 'MENSALIDADE',
+      formaPagamento: 'RECEIVED_IN_CASH',
+    } as never);
+    vi.mocked(prisma.charge.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.cobranca.update).mockResolvedValue({} as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED_IN_CASH_UNDONE',
+      payment: {
+        id: 'pay_academic_undo',
+        status: 'OVERDUE',
+        value: 150,
+        netValue: 150,
+        billingType: 'RECEIVED_IN_CASH',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(prisma.cobranca.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'c_academic_undo' },
+        data: expect.objectContaining({ dataPagamento: null, pagoEm: null }),
+      }),
+    );
+    expect(prisma.charge.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'charge_academic_undo' },
+        data: expect.objectContaining({ paidAt: null }),
       }),
     );
   });

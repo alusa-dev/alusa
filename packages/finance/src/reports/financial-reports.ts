@@ -122,6 +122,9 @@ export type FinancialReportProjection = {
   grossAmount: number;
   receivedAmount: number;
   outstandingAmount: number;
+  processingAmount: number;
+  toSettleAmount: number;
+  availableAmount: number;
   feeAmount: number;
   refundedAmount: number;
   netAmount: number;
@@ -235,6 +238,8 @@ export type FinancialOverviewReport = {
   generatedAt: string;
   timeZone: string;
   dateBasis: FinancialReportQuery['dateBasis'];
+  obligationDateBasis: 'DUE_DATE';
+  cashDateBasis: FinancialReportQuery['dateBasis'];
   summary: FinancialMetricSummary;
   series: FinancialReportSeriesItem[];
   enrollmentSeries: FinancialEnrollmentSeriesItem[];
@@ -649,19 +654,40 @@ function breakdown(
 }
 
 function series(
-  rows: FinancialReportProjection[],
+  obligationRows: FinancialReportProjection[],
+  cashRows: FinancialReportProjection[],
   timeZone: string,
   basis: FinancialReportQuery['dateBasis'],
+  startDate: string,
+  endDate: string,
 ): FinancialReportSeriesItem[] {
   const groups = new Map<string, FinancialReportSeriesItem>();
+  const cursor = new Date(`${startDate.slice(0, 7)}-01T00:00:00.000Z`);
+  const finalMonth = endDate.slice(0, 7);
+  while (cursor.toISOString().slice(0, 7) <= finalMonth) {
+    const key = cursor.toISOString().slice(0, 7);
+    groups.set(key, {
+      key,
+      label: new Intl.DateTimeFormat('pt-BR', {
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'UTC',
+      }).format(cursor),
+      charged: 0,
+      received: 0,
+      overdue: 0,
+      net: 0,
+    });
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
   const chargedSources = new Set<string>();
-  const orderedRows = [...rows].sort((left, right) => {
-    const leftDate = effectiveDate(left, basis)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-    const rightDate = effectiveDate(right, basis)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+  const orderedObligations = [...obligationRows].sort((left, right) => {
+    const leftDate = effectiveDate(left, 'DUE_DATE')?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    const rightDate = effectiveDate(right, 'DUE_DATE')?.getTime() ?? Number.MAX_SAFE_INTEGER;
     return leftDate - rightDate || left.id.localeCompare(right.id);
   });
-  for (const row of orderedRows) {
-    const date = effectiveDate(row, basis);
+  for (const row of orderedObligations) {
+    const date = effectiveDate(row, 'DUE_DATE');
     if (!date) continue;
     const key = localMonthKey(date, timeZone);
     const current = groups.get(key) ?? {
@@ -681,12 +707,22 @@ function series(
       current.charged += row.grossAmount;
       chargedSources.add(sourceKey);
     }
-    if (row.receivedAmount > 0) {
-      current.received += row.receivedAmount;
-      current.net += row.netAmount;
-    }
     if (row.status === 'OVERDUE') current.overdue += row.outstandingAmount;
     groups.set(key, current);
+  }
+  const orderedCashRows = [...cashRows].sort((left, right) => {
+    const leftDate = effectiveDate(left, basis)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    const rightDate = effectiveDate(right, basis)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    return leftDate - rightDate || left.id.localeCompare(right.id);
+  });
+  for (const row of orderedCashRows) {
+    const date = effectiveDate(row, basis);
+    if (!date || row.receivedAmount <= 0) continue;
+    const key = localMonthKey(date, timeZone);
+    const current = groups.get(key);
+    if (!current) continue;
+    current.received += row.receivedAmount;
+    current.net += row.netAmount;
   }
   return [...groups.values()]
     .sort((a, b) => a.key.localeCompare(b.key))
@@ -830,6 +866,7 @@ async function loadEnrollmentSeries(params: {
   series: FinancialEnrollmentSeriesItem[];
   health: FinancialEnrollmentHealth;
   cancellationsByClass: FinancialCancellationRankingItem[];
+  unresolvedCancellationDates: number;
 }> {
   const start = zonedDayStart(params.query.startDate, params.timeZone);
   const end = zonedDayStart(nextDay(params.query.endDate), params.timeZone);
@@ -837,8 +874,15 @@ async function loadEnrollmentSeries(params: {
     ...(params.query.turmaId
       ? {
           OR: [
-            { turmaId: params.query.turmaId },
-            { matriculaTurmas: { some: { turmaId: params.query.turmaId } } },
+            { turma: { is: { id: params.query.turmaId, contaId: params.contaId } } },
+            {
+              matriculaTurmas: {
+                some: {
+                  contaId: params.contaId,
+                  turma: { is: { id: params.query.turmaId, contaId: params.contaId } },
+                },
+              },
+            },
           ],
         }
       : {}),
@@ -853,7 +897,7 @@ async function loadEnrollmentSeries(params: {
           OR: [
             { status: { in: ['ATIVA', 'PAUSADA'] } },
             { createdAt: { gte: start, lt: end } },
-            { status: 'CANCELADA', updatedAt: { gte: start, lt: end } },
+            { status: 'CANCELADA', cancelledAt: { gte: start, lt: end } },
           ],
         },
       ],
@@ -862,11 +906,26 @@ async function loadEnrollmentSeries(params: {
       id: true,
       status: true,
       createdAt: true,
-      updatedAt: true,
-      turma: { select: { id: true, nome: true } },
+      cancelledAt: true,
+      turma: { select: { id: true, nome: true, contaId: true } },
       matriculaTurmas: {
-        select: { turma: { select: { id: true, nome: true } } },
+        where: {
+          contaId: params.contaId,
+          turma: { is: { contaId: params.contaId } },
+        },
+        select: {
+          contaId: true,
+          turma: { select: { id: true, nome: true, contaId: true } },
+        },
       },
+    },
+  });
+  const unresolvedCancellationDates = await params.db.matricula.count({
+    where: {
+      contaId: params.contaId,
+      status: 'CANCELADA',
+      cancelledAt: null,
+      ...dimensionWhere,
     },
   });
   const groups = new Map<string, FinancialEnrollmentSeriesItem>();
@@ -894,10 +953,11 @@ async function loadEnrollmentSeries(params: {
     }
     if (
       enrollment.status === 'CANCELADA' &&
-      enrollment.updatedAt >= start &&
-      enrollment.updatedAt < end
+      enrollment.cancelledAt &&
+      enrollment.cancelledAt >= start &&
+      enrollment.cancelledAt < end
     ) {
-      const key = localMonthKey(enrollment.updatedAt, params.timeZone);
+      const key = localMonthKey(enrollment.cancelledAt, params.timeZone);
       const item = groups.get(key);
       if (item) item.cancellations += 1;
     }
@@ -907,16 +967,21 @@ async function loadEnrollmentSeries(params: {
   for (const enrollment of enrollments) {
     if (
       enrollment.status !== 'CANCELADA' ||
-      enrollment.updatedAt < start ||
-      enrollment.updatedAt >= end
+      !enrollment.cancelledAt ||
+      enrollment.cancelledAt < start ||
+      enrollment.cancelledAt >= end
     ) {
       continue;
     }
 
     const classes = new Map<string, string>();
-    if (enrollment.turma) classes.set(enrollment.turma.id, enrollment.turma.nome);
+    if (enrollment.turma?.contaId === params.contaId) {
+      classes.set(enrollment.turma.id, enrollment.turma.nome);
+    }
     for (const relation of enrollment.matriculaTurmas) {
-      classes.set(relation.turma.id, relation.turma.nome);
+      if (relation.contaId === params.contaId && relation.turma.contaId === params.contaId) {
+        classes.set(relation.turma.id, relation.turma.nome);
+      }
     }
     for (const [id, name] of classes) {
       const current = cancellationsByClassMap.get(id) ?? { id, name, cancellations: 0 };
@@ -951,6 +1016,7 @@ async function loadEnrollmentSeries(params: {
       retentionRate,
     },
     cancellationsByClass,
+    unresolvedCancellationDates,
   };
 }
 
@@ -1087,6 +1153,7 @@ type StandaloneRecord = {
   description: string | null;
   value: unknown;
   dueDate: Date | null;
+  paidAt: Date | null;
   billingType: string | null;
   payerName: string | null;
   status: string;
@@ -1190,6 +1257,7 @@ function mapAcademicProjection(params: {
   const refundedAmount = paymentEvent
     ? allocateAcrossPayments(totalRefunded, paymentEvent.id, payments)
     : totalRefunded;
+  const netAmount = money(eventReceived - feeAmount - refundedAmount);
   const payer = item.matricula.responsavelFinanceiro;
   const canonicalPaidAt =
     paymentEvent?.dataPagamento ??
@@ -1228,9 +1296,14 @@ function mapAcademicProjection(params: {
     grossAmount,
     receivedAmount: eventReceived,
     outstandingAmount,
+    processingAmount: status === 'PROCESSING' ? outstandingAmount : 0,
+    toSettleAmount:
+      eventReceived > 0 && item.liquidacaoStatus === 'PENDENTE' ? netAmount : 0,
+    availableAmount:
+      eventReceived > 0 && item.liquidacaoStatus === 'DISPONIVEL' ? netAmount : 0,
     feeAmount,
     refundedAmount,
-    netAmount: money(eventReceived - feeAmount - refundedAmount),
+    netAmount,
     dueDate: item.vencimento,
     paidAt: canonicalPaidAt,
     settledAt: item.liquidadoEm ?? item.asaasCreditDate,
@@ -1245,6 +1318,7 @@ function buildDataQuality(params: {
   duplicateStandalone: number;
   standaloneWithoutCanonicalPaidAt: number;
   academicWithoutCanonicalPaidAt: number;
+  standaloneWithoutCompetenceAt: number;
 }): FinancialReportDataQuality {
   const warnings: string[] = [];
   if (params.inconsistentOwnership > 0) {
@@ -1267,12 +1341,18 @@ function buildDataQuality(params: {
       `${params.academicWithoutCanonicalPaidAt} cobrança(s) acadêmica(s) legadas recebidas foram excluídas porque não possuem pagoEm nem dataPagamento.`,
     );
   }
+  if (params.standaloneWithoutCompetenceAt > 0) {
+    warnings.push(
+      `${params.standaloneWithoutCompetenceAt} cobrança(s) avulsa(s) foram excluídas da visão por competência porque não possuem data de competência registrada.`,
+    );
+  }
   return {
     excludedRecords:
       params.inconsistentOwnership +
       params.duplicateStandalone +
       params.standaloneWithoutCanonicalPaidAt +
-      params.academicWithoutCanonicalPaidAt,
+      params.academicWithoutCanonicalPaidAt +
+      params.standaloneWithoutCompetenceAt,
     warnings,
   };
 }
@@ -1538,6 +1618,7 @@ export async function loadFinancialReportProjections(params: {
 
   const remainingRows = Math.max(0, maxRows - academicRows.length);
   let standaloneWithoutCanonicalPaidAt = 0;
+  let standaloneWithoutCompetenceAt = 0;
   let standalone: StandaloneRecord[] = [];
   const standaloneIsInScope =
     (params.query.origin.length === 0 || params.query.origin.includes('STANDALONE')) &&
@@ -1572,27 +1653,31 @@ export async function loadFinancialReportProjections(params: {
       where: {
         ...standaloneBaseWhere,
         status: { in: ['PAID', 'REFUNDED'] },
+        paidAt: null,
       },
+    });
+  }
+  if (standaloneIsInScope && params.query.dateBasis === 'COMPETENCE') {
+    standaloneWithoutCompetenceAt = await params.db.charge.count({
+      where: standaloneBaseWhere,
     });
   }
   if (
     standaloneIsInScope &&
-    params.query.dateBasis !== 'PAID_AT' &&
     params.query.dateBasis !== 'COMPETENCE'
   ) {
-    const standaloneDateWhere =
+    const standaloneDateWhere: Prisma.ChargeWhereInput =
       params.query.dateBasis === 'SETTLED_AT'
         ? {
             OR: [
               { liquidadoEm: { gte: start, lt: endExclusive } },
-              {
-                liquidadoEm: null,
-                asaasCreditDate: { gte: start, lt: endExclusive },
-              },
+              { liquidadoEm: null, asaasCreditDate: { gte: start, lt: endExclusive } },
             ],
           }
-        : { dueDate: { gte: start, lt: endExclusive } };
-    standalone = (await params.db.charge.findMany({
+        : params.query.dateBasis === 'PAID_AT'
+          ? { paidAt: { gte: start, lt: endExclusive } }
+          : { dueDate: { gte: start, lt: endExclusive } };
+    standalone = ((await params.db.charge.findMany({
       where: {
         ...standaloneBaseWhere,
         ...standaloneDateWhere,
@@ -1604,6 +1689,7 @@ export async function loadFinancialReportProjections(params: {
         description: true,
         value: true,
         dueDate: true,
+        paidAt: true,
         billingType: true,
         payerName: true,
         status: true,
@@ -1618,7 +1704,15 @@ export async function loadFinancialReportProjections(params: {
       },
       orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
       take: remainingRows + 1,
-    })) as StandaloneRecord[];
+    })) as StandaloneRecord[]).filter((item) => {
+      const date =
+        params.query.dateBasis === 'PAID_AT'
+          ? item.paidAt
+          : params.query.dateBasis === 'SETTLED_AT'
+            ? item.liquidadoEm ?? item.asaasCreditDate
+            : item.dueDate;
+      return date !== null && date >= start && date < endExclusive;
+    });
     if (standalone.length > remainingRows) throw new FinancialReportRowLimitError(maxRows);
   }
 
@@ -1706,11 +1800,20 @@ export async function loadFinancialReportProjections(params: {
       receivedAmount,
       outstandingAmount:
         status === 'OPEN' || status === 'OVERDUE' || status === 'PROCESSING' ? grossAmount : 0,
+      processingAmount: status === 'PROCESSING' ? grossAmount : 0,
+      toSettleAmount:
+        receivedAmount > 0 && item.liquidacaoStatus === 'PENDENTE'
+          ? money(receivedAmount - feeAmount - refundedAmount)
+          : 0,
+      availableAmount:
+        receivedAmount > 0 && item.liquidacaoStatus === 'DISPONIVEL'
+          ? money(receivedAmount - feeAmount - refundedAmount)
+          : 0,
       feeAmount,
       refundedAmount,
       netAmount: money(receivedAmount - feeAmount - refundedAmount),
       dueDate: item.dueDate,
-      paidAt: null,
+      paidAt: item.paidAt ?? null,
       settledAt: item.liquidadoEm ?? item.asaasCreditDate,
       competenceAt: null,
       settlementStatus: item.liquidacaoStatus,
@@ -1724,6 +1827,7 @@ export async function loadFinancialReportProjections(params: {
     duplicateStandalone,
     standaloneWithoutCanonicalPaidAt,
     academicWithoutCanonicalPaidAt,
+    standaloneWithoutCompetenceAt,
   });
   const rows = [...academicRows, ...standaloneRows].filter((row) =>
     matchesFilters(row, params.query),
@@ -1744,6 +1848,18 @@ export async function getFinancialOverviewReport(params: {
 }): Promise<FinancialOverviewReport> {
   const loaded = await loadFinancialReportProjections(params);
   const sorted = sortRows(loaded.rows, params.query);
+  const usesSeparateCashCohort =
+    params.query.dateBasis === 'PAID_AT' || params.query.dateBasis === 'SETTLED_AT';
+  const obligationLoaded = usesSeparateCashCohort
+    ? await loadFinancialReportProjections({
+        ...params,
+        query: { ...params.query, dateBasis: 'DUE_DATE' },
+      })
+    : loaded;
+  const obligationRows = sortRows(obligationLoaded.rows, {
+    ...params.query,
+    dateBasis: 'DUE_DATE',
+  });
   const classOccupancy = await loadClassOccupancy({
     contaId: params.contaId,
     turmaId: params.query.turmaId,
@@ -1763,18 +1879,57 @@ export async function getFinancialOverviewReport(params: {
     referenceDate: params.now ?? new Date(),
     timeZone: loaded.timeZone,
   });
-  const summary = calculateSummary(sorted, loaded.nowStart);
+  const obligationSummary = calculateSummary(obligationRows, obligationLoaded.nowStart);
+  const cashSummary = usesSeparateCashCohort
+    ? calculateSummary(sorted, loaded.nowStart)
+    : obligationSummary;
+  const summary: FinancialMetricSummary = {
+    ...obligationSummary,
+    received: cashSummary.received,
+    fees: cashSummary.fees,
+    refunds: cashSummary.refunds,
+    net: cashSummary.net,
+    toSettle: cashSummary.toSettle,
+    available: cashSummary.available,
+    receivedCount: cashSummary.receivedCount,
+    averageTicket: cashSummary.averageTicket,
+  };
+  const unresolvedCancellationDateWarning = enrollment.unresolvedCancellationDates
+    ? `${enrollment.unresolvedCancellationDates} matrícula(s) cancelada(s) sem data confiável de cancelamento foram excluídas da série e do ranking de cancelamentos.`
+    : null;
+  const reportDataQuality: FinancialReportDataQuality = {
+    excludedRecords:
+      loaded.dataQuality.excludedRecords +
+      (usesSeparateCashCohort ? obligationLoaded.dataQuality.excludedRecords : 0) +
+      enrollment.unresolvedCancellationDates,
+    warnings: [
+      ...new Set([
+        ...loaded.dataQuality.warnings,
+        ...(usesSeparateCashCohort ? obligationLoaded.dataQuality.warnings : []),
+        ...(unresolvedCancellationDateWarning ? [unresolvedCancellationDateWarning] : []),
+      ]),
+    ],
+  };
   return {
     view: 'overview',
     generatedAt: (params.now ?? new Date()).toISOString(),
     timeZone: loaded.timeZone,
     dateBasis: params.query.dateBasis,
+    obligationDateBasis: 'DUE_DATE',
+    cashDateBasis: params.query.dateBasis,
     summary: { ...summary, averageTicket: currentAverageTicket },
-    series: series(sorted, loaded.timeZone, params.query.dateBasis),
+    series: series(
+      obligationRows,
+      sorted,
+      loaded.timeZone,
+      params.query.dateBasis,
+      params.query.startDate,
+      params.query.endDate,
+    ),
     enrollmentSeries: enrollment.series,
     enrollmentHealth: enrollment.health,
     statusBreakdown: breakdown(
-      sorted,
+      obligationRows,
       (row) => row.status,
       (row) => {
         if (row.status === 'OPEN' || row.status === 'OVERDUE' || row.status === 'PROCESSING') {
@@ -1787,7 +1942,7 @@ export async function getFinancialOverviewReport(params: {
       },
     ),
     typeBreakdown: breakdown(
-      sorted.filter((row) => row.status !== 'CANCELED'),
+      obligationRows.filter((row) => row.status !== 'CANCELED'),
       (row) => row.type,
     ),
     paymentMethodBreakdown: breakdown(
@@ -1795,12 +1950,12 @@ export async function getFinancialOverviewReport(params: {
       (row) => row.paymentMethod ?? 'UNKNOWN',
       (row) => row.receivedAmount,
     ),
-    rankingByClass: ranking(sorted, 'class', loaded.nowStart),
-    rankingByPlan: ranking(sorted, 'plan', loaded.nowStart),
+    rankingByClass: ranking(obligationRows, 'class', obligationLoaded.nowStart),
+    rankingByPlan: ranking(obligationRows, 'plan', obligationLoaded.nowStart),
     cancellationsByClass: enrollment.cancellationsByClass,
     classOccupancy,
     details: paginate(sorted.map(serialize), params.query.page, params.query.pageSize),
-    dataQuality: loaded.dataQuality,
+    dataQuality: reportDataQuality,
   };
 }
 
@@ -1926,7 +2081,14 @@ export async function getReceiptsReport(params: {
     timeZone: loaded.timeZone,
     dateBasis: effectiveBasis,
     summary: calculateSummary(sorted, loaded.nowStart),
-    series: series(sorted, loaded.timeZone, effectiveBasis),
+    series: series(
+      sorted,
+      sorted,
+      loaded.timeZone,
+      effectiveBasis,
+      params.query.startDate,
+      params.query.endDate,
+    ),
     paymentMethodBreakdown: breakdown(
       sorted,
       (row) => row.paymentMethod ?? 'UNKNOWN',

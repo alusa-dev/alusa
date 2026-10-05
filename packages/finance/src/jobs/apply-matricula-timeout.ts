@@ -129,6 +129,7 @@ export async function applyMatriculaTimeoutJob(
         where: { id: matricula.id },
         data: {
           status: 'CANCELADA',
+          cancelledAt: now,
           timeoutAppliedAt: now,
         },
       });

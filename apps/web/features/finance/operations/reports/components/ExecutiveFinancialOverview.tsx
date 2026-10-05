@@ -83,19 +83,19 @@ export function ExecutiveFinancialOverview({
   loading,
   businessHealthData,
   businessHealthLoading,
-  annualEnrollmentData,
-  annualEnrollmentLoading,
+  periodData,
+  periodLoading,
 }: {
   data: FinancialOverviewReport | null;
   loading: boolean;
   businessHealthData?: FinancialOverviewReport | null;
   businessHealthLoading?: boolean;
-  annualEnrollmentData?: FinancialOverviewReport | null;
-  annualEnrollmentLoading?: boolean;
+  periodData?: FinancialOverviewReport | null;
+  periodLoading?: boolean;
 }): React.JSX.Element {
   const summary = data?.summary ?? EMPTY_SUMMARY;
   const healthSource = businessHealthData === undefined ? data : businessHealthData;
-  const annualEnrollmentSource = annualEnrollmentData === undefined ? data : annualEnrollmentData;
+  const periodSource = periodData === undefined ? data : periodData;
   const health = calculateBusinessHealthScore({
     summary: healthSource?.summary ?? EMPTY_SUMMARY,
     classOccupancy: healthSource?.classOccupancy ?? [],
@@ -151,7 +151,7 @@ export function ExecutiveFinancialOverview({
             loading={loading}
           />
           <FinancialMetricCard
-            label="Ticket médio"
+            label="Mensalidade média vigente"
             value={summary.averageTicket}
             description="Valor mensal médio vigente por matrícula ativa."
             loading={loading}
@@ -171,13 +171,13 @@ export function ExecutiveFinancialOverview({
         <div className="grid items-stretch gap-4 xl:grid-cols-2">
           <FinancialTrendChart
             title="Total em cobranças × recebido"
-            description="Evolução mensal do total cobrado e recebido no ano atual."
-            data={annualEnrollmentSource?.series ?? []}
-            loading={annualEnrollmentLoading === undefined ? loading : annualEnrollmentLoading}
+            description="Evolução mensal do total cobrado e recebido no período selecionado."
+            data={periodSource?.series ?? []}
+            loading={periodLoading === undefined ? loading : periodLoading}
           />
           <EnrollmentCancellationChart
-            data={annualEnrollmentSource?.enrollmentSeries ?? []}
-            loading={annualEnrollmentLoading === undefined ? loading : annualEnrollmentLoading}
+            data={periodSource?.enrollmentSeries ?? []}
+            loading={periodLoading === undefined ? loading : periodLoading}
           />
         </div>
 
@@ -698,12 +698,12 @@ const QUICK_REPORTS = [
   {
     title: 'Cobranças em atraso',
     description: 'Acompanhe responsáveis e valores vencidos.',
-    href: '/finance/charges?statusView=overdue',
+    href: '/finance/reports?view=delinquency',
   },
   {
-    title: 'Pagamentos por aluno',
-    description: 'Consulte o histórico financeiro acadêmico.',
-    href: '/finance/payments',
+    title: 'Recebimentos',
+    description: 'Consulte os pagamentos confirmados no período.',
+    href: '/finance/reports?view=receipts',
   },
   {
     title: 'Extrato financeiro',

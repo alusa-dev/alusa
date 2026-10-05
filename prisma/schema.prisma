@@ -2251,6 +2251,7 @@ model Matricula {
   dataFim                    DateTime?
   dataFimContrato            DateTime
   status                     StatusMatricula                 @default(ATIVA)
+  cancelledAt                DateTime?
   statusFinanceiro           StatusFinanceiro                @default(PENDENTE_TAXA)
   statusContrato             StatusContrato                  @default(AGUARDANDO_ASSINATURA)
   contratoAtualId            String?                         @unique
@@ -2331,6 +2332,7 @@ model Matricula {
   @@unique([contaId, id], name: "uq_matricula_conta_id")
   @@index([contaId], name: "idx_matricula_conta")
   @@index([contaId, status], name: "idx_matricula_conta_status")
+  @@index([contaId, status, cancelledAt], name: "idx_matricula_conta_status_cancelled_at")
   @@index([contaId, statusFinanceiro], name: "idx_matricula_conta_status_financeiro")
   @@index([contaId, alunoId], name: "idx_matricula_conta_aluno")
   @@index([contaId, turmaId], name: "idx_matricula_conta_turma")
@@ -6204,6 +6206,7 @@ model Charge {
 
   status          ChargeStatus @default(CREATED)
   statusUpdatedAt DateTime     @default(now())
+  paidAt          DateTime?
 
   asaasPaymentId String? @unique
 
@@ -6285,6 +6288,7 @@ model Charge {
   @@index([contaId])
   @@index([status])
   @@index([contaId, status, dueDate], name: "idx_charge_conta_status_due")
+  @@index([contaId, paidAt], name: "idx_charge_conta_paid_at")
   @@index([contaId, standaloneInstallmentPlanId, dueDate], name: "idx_charge_conta_plan_due")
   @@index([contaId, createdAt], name: "idx_charge_conta_created")
   @@index([contaId, status, createdAt], name: "idx_charge_conta_status_created")

@@ -348,6 +348,18 @@ export function ReportDetailsDrawer({
                 <DrawerValue label="Valor da cobrança" value={formatReportMoney(item.grossAmount)} />
                 <DrawerValue label="Valor recebido" value={formatReportMoney(item.receivedAmount)} />
                 <DrawerValue label="Saldo em aberto" value={formatReportMoney(item.outstandingAmount)} />
+                <DrawerValue
+                  label="Em processamento"
+                  value={formatReportMoney(item.processingAmount)}
+                />
+                <DrawerValue
+                  label="A liquidar"
+                  value={formatReportMoney(item.toSettleAmount)}
+                />
+                <DrawerValue
+                  label="Disponível"
+                  value={formatReportMoney(item.availableAmount)}
+                />
                 <DrawerValue label="Taxas" value={formatReportMoney(item.feeAmount)} />
                 <DrawerValue label="Estornos" value={formatReportMoney(item.refundedAmount)} />
                 <DrawerValue label="Valor líquido" value={formatReportMoney(item.netAmount)} strong />
