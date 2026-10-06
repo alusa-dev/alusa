@@ -1849,7 +1849,7 @@ export async function getFinancialOverviewReport(params: {
   const loaded = await loadFinancialReportProjections(params);
   const sorted = sortRows(loaded.rows, params.query);
   const usesSeparateCashCohort =
-    params.query.dateBasis === 'PAID_AT' || params.query.dateBasis === 'SETTLED_AT';
+    params.query.dateBasis !== 'DUE_DATE';
   const obligationLoaded = usesSeparateCashCohort
     ? await loadFinancialReportProjections({
         ...params,
@@ -2058,12 +2058,13 @@ export async function getReceiptsReport(params: {
   db: ReportDb;
   now?: Date;
 }): Promise<ReceiptsReport> {
+  const effectiveBasis = resolveReceiptsReportDateBasis(params.query.dateBasis);
   const loaded = await loadFinancialReportProjections({
     ...params,
     paymentEventMode: true,
     query: {
       ...params.query,
-      dateBasis: params.query.dateBasis === 'DUE_DATE' ? 'PAID_AT' : params.query.dateBasis,
+      dateBasis: effectiveBasis,
       status: [],
     },
   });
@@ -2074,7 +2075,6 @@ export async function getReceiptsReport(params: {
       sort: params.query.sort === 'dueDate' ? 'paidAt' : params.query.sort,
     },
   );
-  const effectiveBasis = params.query.dateBasis === 'DUE_DATE' ? 'PAID_AT' : params.query.dateBasis;
   return {
     view: 'receipts',
     generatedAt: (params.now ?? new Date()).toISOString(),
@@ -2097,6 +2097,12 @@ export async function getReceiptsReport(params: {
     details: paginate(sorted.map(serialize), params.query.page, params.query.pageSize),
     dataQuality: loaded.dataQuality,
   };
+}
+
+export function resolveReceiptsReportDateBasis(
+  basis: FinancialReportQuery['dateBasis'],
+): FinancialReportQuery['dateBasis'] {
+  return basis === 'DUE_DATE' ? 'PAID_AT' : basis;
 }
 
 export async function getFinancialReportFilterOptions(params: { contaId: string; db: ReportDb }) {

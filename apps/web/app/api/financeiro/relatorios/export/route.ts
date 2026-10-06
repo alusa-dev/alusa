@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   financialReportViewSchema,
   loadFinancialReportProjections,
+  resolveReceiptsReportDateBasis,
   validateFinancialReportDimensions,
 } from '@alusa/finance';
 import {
@@ -50,7 +51,12 @@ export async function GET(request: NextRequest) {
 
       const effectiveQuery = {
         ...query,
-        dateBasis: view === 'delinquency' ? ('DUE_DATE' as const) : query.dateBasis,
+        dateBasis:
+          view === 'delinquency'
+            ? ('DUE_DATE' as const)
+            : view === 'receipts'
+              ? resolveReceiptsReportDateBasis(query.dateBasis)
+              : query.dateBasis,
         status:
           view === 'delinquency'
             ? (['OVERDUE'] as const)

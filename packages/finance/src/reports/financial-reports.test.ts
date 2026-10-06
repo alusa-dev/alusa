@@ -6,6 +6,7 @@ import {
   getFinancialOverviewReport,
   getReceiptsReport,
   loadFinancialReportProjections,
+  resolveReceiptsReportDateBasis,
   validateFinancialReportDimensions,
   zonedDayStart,
 } from './financial-reports';
@@ -431,6 +432,12 @@ describe('financial reports', () => {
       '2026-06',
       '2026-07',
     ]);
+    expect(competenceDb.cobranca.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('usa pagamento como critério efetivo para recibos mesmo quando vencimento foi solicitado', () => {
+    expect(resolveReceiptsReportDateBasis('DUE_DATE')).toBe('PAID_AT');
+    expect(resolveReceiptsReportDateBasis('COMPETENCE')).toBe('COMPETENCE');
   });
 
   it('pagina a última página e retorna vazio quando a página excede o total', async () => {

@@ -15,6 +15,7 @@ import { ReportsErrorState } from './components/ReportsStates';
 import { useReportFilters } from './hooks/useReportFilters';
 import { useReportsQuery } from './hooks/useReportsQuery';
 import type { FinancialReportDetailItem } from './dtos';
+import { nextReportSortDirection } from './utils/report-behavior';
 
 export function ReportsPage() {
   const { filters, setFilters } = useReportFilters();
@@ -139,7 +140,12 @@ export function ReportsPage() {
               timeZone={selectedReport.timeZone}
               receipts
               onPageChange={(page) => setFilters({ page })}
-              onSortChange={(sort) => setFilters({ sort })}
+              onSortChange={(sort) =>
+                setFilters({
+                  sort,
+                  direction: nextReportSortDirection(filters.sort, filters.direction, sort),
+                })
+              }
               sort={{ columnId: filters.sort, direction: filters.direction.toUpperCase() as 'ASC' | 'DESC' }}
               onSelect={setSelectedItem}
             />
