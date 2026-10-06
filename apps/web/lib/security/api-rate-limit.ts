@@ -157,6 +157,7 @@ function isExcludedFromGlobalPolicy(pathname: string): boolean {
 
 function resolvePolicy(pathname: string, method: string): RateLimitPolicy | null {
   const normalizedMethod = method.toUpperCase();
+  const pathSegments = pathname.split('/').filter(Boolean);
   if (pathname === '/api/observability/web-vitals') {
     return normalizedMethod === 'POST' ? PUBLIC_TELEMETRY_POLICY : null;
   }
@@ -168,8 +169,10 @@ function resolvePolicy(pathname: string, method: string): RateLimitPolicy | null
 
   if (
     normalizedMethod === 'GET' &&
-    pathname.startsWith('/api/financeiro/relatorios/') &&
-    !pathname.endsWith('/export')
+    pathSegments[0] === 'api' &&
+    pathSegments[1] === 'financeiro' &&
+    pathSegments[2] === 'relatorios' &&
+    pathSegments[3] !== 'export'
   ) {
     return REPORT_POLICY;
   }
