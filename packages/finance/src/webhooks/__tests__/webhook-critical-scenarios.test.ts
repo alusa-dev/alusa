@@ -2,14 +2,17 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 
 import { prisma } from '@alusa/database';
+import { getPayment } from '@alusa/asaas';
 
 import { enqueueAsaasWebhookEvent, handleAsaasWebhookEvent } from '../asaas-webhook-handler';
+import { reconcileWithAsaas } from '../webhook-reconciliation.service';
 
 vi.mock('@alusa/asaas', async () => {
   const actual = await vi.importActual<typeof import('@alusa/asaas')>('@alusa/asaas');
   return {
     ...actual,
     getMyAccountDocuments: vi.fn(),
+    getPayment: vi.fn(),
   };
 });
 
@@ -341,6 +344,86 @@ describe('Webhook Critical Tests - Idempotência', () => {
       expect(currentTenantCount).toBe(1);
       expect(otherTenantCount).toBe(1);
     } finally {
+      await cleanupTestAccount(other.contaId);
+    }
+  });
+
+  it('reconcilia pagamentos liquidados somente no tenant solicitado', async () => {
+    const other = await setupTestAccount();
+    const paymentA = `pay_${randomUUID()}`;
+    const paymentB = `pay_${randomUUID()}`;
+    try {
+      const chargeA = await prisma.charge.create({
+        data: {
+          contaId: ctx.contaId,
+          externalReference: `reconciliation:${randomUUID()}`,
+          asaasPaymentId: paymentA,
+          status: 'PAID',
+          asaasStatus: 'CONFIRMED',
+          value: 100,
+          dueDate: new Date('2026-01-01T00:00:00.000Z'),
+        },
+      });
+      const chargeB = await prisma.charge.create({
+        data: {
+          contaId: other.contaId,
+          externalReference: `reconciliation:${randomUUID()}`,
+          asaasPaymentId: paymentB,
+          status: 'PAID',
+          asaasStatus: 'CONFIRMED',
+          value: 100,
+          dueDate: new Date('2026-01-01T00:00:00.000Z'),
+        },
+      });
+      const oldDriftIssue = await prisma.financeReconciliationIssue.create({
+        data: {
+          contaId: ctx.contaId,
+          entityType: 'CHARGE',
+          entityId: chargeA.id,
+          asaasId: paymentA,
+          issueType: 'PAYMENT_STATUS_DRIFT',
+          severity: 'HIGH',
+          dedupeKey: `PAYMENT_STATUS_DRIFT:CHARGE:${chargeA.id}`,
+          localStatus: 'PAID',
+          remoteStatus: 'OPEN',
+        },
+      });
+
+      vi.mocked(getPayment).mockReset().mockImplementation(async ({ paymentId }) => ({
+        id: paymentId,
+        status: 'PENDING',
+        value: 100,
+        netValue: 100,
+      } as never));
+
+      const result = await reconcileWithAsaas({ contaId: ctx.contaId, maxAsaasCalls: 1 });
+
+      expect(result.asaasCalls).toBe(1);
+      expect(getPayment).toHaveBeenCalledTimes(1);
+      expect(getPayment).toHaveBeenCalledWith(expect.objectContaining({ paymentId: paymentA }));
+      expect(getPayment).not.toHaveBeenCalledWith(expect.objectContaining({ paymentId: paymentB }));
+
+      const [updatedA, unchangedB, issueA, issueB, resolvedOldIssue] = await Promise.all([
+        prisma.charge.findFirst({ where: { id: chargeA.id, contaId: ctx.contaId } }),
+        prisma.charge.findFirst({ where: { id: chargeB.id, contaId: other.contaId } }),
+        prisma.financeReconciliationIssue.findFirst({
+          where: { contaId: ctx.contaId, entityId: chargeA.id, issueType: 'ASAAS_SNAPSHOT_STALE' },
+        }),
+        prisma.financeReconciliationIssue.findFirst({
+          where: { contaId: other.contaId, entityId: chargeB.id, issueType: 'ASAAS_SNAPSHOT_STALE' },
+        }),
+        prisma.financeReconciliationIssue.findFirst({
+          where: { id: oldDriftIssue.id, contaId: ctx.contaId },
+        }),
+      ]);
+
+      expect(updatedA?.lastProviderCheckAt).toBeInstanceOf(Date);
+      expect(unchangedB?.lastProviderCheckAt).toBeNull();
+      expect(issueA?.status).toBe('OPEN');
+      expect(issueB).toBeNull();
+      expect(resolvedOldIssue?.status).toBe('RESOLVED');
+    } finally {
+      vi.mocked(getPayment).mockReset();
       await cleanupTestAccount(other.contaId);
     }
   });

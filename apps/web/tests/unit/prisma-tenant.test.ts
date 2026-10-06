@@ -37,6 +37,16 @@ describe('prisma-tenant', () => {
     expect(executeRaw).toHaveBeenCalled();
   });
 
+  it('encaminha opções de isolamento para a transação tenant-scoped', async () => {
+    vi.stubEnv('RLS_RUNTIME_ENABLED', 'false');
+    const { runWithTenant } = await import('@/lib/prisma-tenant');
+    const options = { isolationLevel: 'Serializable' as const };
+
+    await runWithTenant('conta-abc', async () => 'ok', options);
+
+    expect(transaction).toHaveBeenCalledWith(expect.any(Function), options);
+  });
+
   it('exige DATABASE_RLS_URL quando RLS runtime está ligado', async () => {
     vi.stubEnv('RLS_RUNTIME_ENABLED', 'true');
     vi.stubEnv('DATABASE_RLS_URL', '');

@@ -24,6 +24,18 @@ export type {
 export { recordPaymentStateTransition } from './state-machine/payment-state-transition.service';
 export { eventAsaasPaymentProvider } from './events/event-asaas-payment-provider';
 export { resolveEventPayerName, type EventPayerCandidate } from './mappers/event-payer';
+export {
+  AsaasResourceOriginClassificationError,
+  classifyAsaasResourceOrigin,
+  classifyPreviewedExternalInstallment,
+  classifyPreviewedExternalPayment,
+  classifyPreviewedExternalSubscription,
+  previewExternalInstallmentCandidates,
+  previewExternalPaymentCandidates,
+  previewExternalSubscriptionCandidates,
+  type AsaasOriginClassification,
+  type ExternalInstallmentPreview,
+} from './reconciliation/asaas-resource-origin.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Integration contracts — Asaas (fachada para apps/web e packages/lib)

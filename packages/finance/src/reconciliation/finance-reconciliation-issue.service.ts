@@ -19,6 +19,8 @@ export type UpsertFinanceReconciliationIssueInput = {
   localStatus?: string | null;
   remoteStatus?: string | null;
   metadata?: Prisma.InputJsonValue;
+  /** Provider event/occurrence identity. Same cause is idempotent; a new cause may reopen. */
+  causeId?: string | null;
 };
 
 export type ListFinanceReconciliationIssuesOptions = {
@@ -43,8 +45,27 @@ export function buildFinanceReconciliationIssueDedupeKey(input: {
 export async function upsertFinanceReconciliationIssue(input: UpsertFinanceReconciliationIssueInput) {
   const now = new Date();
   const dedupeKey = buildFinanceReconciliationIssueDedupeKey(input);
-
-  return prisma.financeReconciliationIssue.upsert({
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.financeReconciliationIssue.findUnique({
+      where: { uq_fin_recon_issue_conta_dedupe: { contaId: input.contaId, dedupeKey } },
+      select: { id: true, status: true, metadata: true },
+    });
+    const previousMetadata = existing?.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+      ? existing.metadata as Prisma.JsonObject
+      : {};
+    const previousCauseId = typeof previousMetadata.lastCauseId === 'string' ? previousMetadata.lastCauseId : null;
+    // Callers without an occurrence identity represent a fresh observation on each upsert.
+    // Event-driven callers provide causeId so retries of the same webhook remain idempotent.
+    const newCause = input.causeId ? input.causeId !== previousCauseId : true;
+    const inputMetadata = input.metadata && typeof input.metadata === 'object' && !Array.isArray(input.metadata)
+      ? input.metadata as Prisma.JsonObject
+      : {};
+    const metadata = {
+      ...previousMetadata,
+      ...inputMetadata,
+      ...(input.causeId ? { lastCauseId: input.causeId } : {}),
+    } as Prisma.InputJsonObject;
+    return tx.financeReconciliationIssue.upsert({
     where: {
       uq_fin_recon_issue_conta_dedupe: {
         contaId: input.contaId,
@@ -63,21 +84,20 @@ export async function upsertFinanceReconciliationIssue(input: UpsertFinanceRecon
       remoteStatus: input.remoteStatus ?? null,
       detectedAt: now,
       lastSeenAt: now,
-      metadata: input.metadata ?? undefined,
+      metadata,
     },
     update: {
-      status: 'OPEN',
+      ...(newCause && existing?.status !== 'OPEN' ? { status: 'OPEN' as const, resolvedAt: null, resolution: null } : {}),
       severity: input.severity,
       entityId: input.entityId ?? undefined,
       asaasId: input.asaasId ?? undefined,
       localStatus: input.localStatus ?? null,
       remoteStatus: input.remoteStatus ?? null,
       lastSeenAt: now,
-      resolvedAt: null,
-      resolution: null,
-      metadata: input.metadata ?? undefined,
+      metadata,
     },
-  });
+    });
+  }, { isolationLevel: 'Serializable' });
 }
 
 export async function resolveFinanceReconciliationIssue(input: {
@@ -192,7 +212,7 @@ export async function getFinanceReconciliationIssueSummary(contaId: string) {
       _count: { _all: true },
     }),
     prisma.financeReconciliationIssue.count({
-      where: { contaId, status: 'OPEN', issueType: 'PAYMENT_NEEDS_REVIEW' },
+      where: { contaId, status: 'OPEN', issueType: { in: ['PAYMENT_NEEDS_REVIEW', 'SUBSCRIPTION_NEEDS_REVIEW'] } },
     }),
     prisma.financeReconciliationIssue.count({
       where: { contaId, status: 'OPEN', issueType: 'WEBHOOK_CONFIG_DRIFT' },

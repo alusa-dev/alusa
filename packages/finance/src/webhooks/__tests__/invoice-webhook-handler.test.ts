@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 const prismaMock = vi.hoisted(() => ({
+  $transaction: vi.fn(),
   invoice: {
     findFirst: vi.fn(),
     update: vi.fn(),
@@ -13,7 +14,7 @@ const prismaMock = vi.hoisted(() => ({
   contaFiscalSettings: {},
   fiscalService: {},
   invoiceAuditEvent: { create: vi.fn() },
-  financeReconciliationIssue: { upsert: vi.fn() },
+  financeReconciliationIssue: { findUnique: vi.fn(), upsert: vi.fn() },
 }));
 
 vi.mock('@alusa/database', () => ({
@@ -28,7 +29,11 @@ import { prisma } from '@alusa/database';
 import { handleInvoiceWebhook } from '../invoice-webhook-handler';
 
 describe('handleInvoiceWebhook', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback) => callback(prismaMock as never) as never);
+    vi.mocked(prisma.financeReconciliationIssue.findUnique).mockResolvedValue(null as never);
+  });
 
   it('atualiza status monotonicamente', async () => {
     vi.mocked(prisma.invoice.findFirst)

@@ -48,6 +48,7 @@ export function isRlsRuntimeEnabled() {
 export async function runWithTenant<T>(
   contaId: string,
   callback: (_tx: TenantTransactionClient) => Promise<T>,
+  options?: { isolationLevel?: Prisma.TransactionIsolationLevel },
 ): Promise<T> {
   const tenantId = normalizeTenantId(contaId);
   const client = shouldUseRlsRuntime() ? getRlsPrismaClient() : prisma;
@@ -55,7 +56,7 @@ export async function runWithTenant<T>(
   return client.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.current_conta_id', ${tenantId}, true)`;
     return callback(tx);
-  });
+  }, options);
 }
 
 export async function getTenantRuntimeHealth(contaId: string) {

@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const issueMocks = vi.hoisted(() => ({ upsertFinanceReconciliationIssue: vi.fn(async () => ({ id: 'issue-subscription' })) }));
+
+vi.mock('../../reconciliation/finance-reconciliation-issue.service', () => issueMocks);
+
 import { handleSubscriptionWebhook } from '../subscription-webhook-handler';
 
 vi.mock('@alusa/database', () => {
@@ -9,6 +13,7 @@ vi.mock('@alusa/database', () => {
         findFirst: vi.fn(),
         update: vi.fn(),
       },
+      asaasResourceOrigin: { findUnique: vi.fn(async () => null) },
       standaloneSubscription: {
         findFirst: vi.fn(),
         update: vi.fn(),
@@ -48,6 +53,54 @@ vi.mock('../../realtime/finance-realtime-publisher', () => ({
 describe('handleSubscriptionWebhook', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('persiste triagem idempotente quando assinatura UNKNOWN não possui referência local', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValueOnce(null as never);
+
+    const result = await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_CREATED',
+      eventId: 'evt-sub-unknown',
+      subscription: { id: 'sub-unknown', status: 'ACTIVE', externalReference: 'school-reference-unknown' },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(issueMocks.upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-a', entityType: 'SUBSCRIPTION', asaasId: 'sub-unknown',
+      issueType: 'SUBSCRIPTION_NEEDS_REVIEW', severity: 'MEDIUM', causeId: 'evt-sub-unknown',
+      metadata: expect.objectContaining({ reason: 'resource_origin_unknown' }),
+    }));
+  });
+
+  it('mantém alerta HIGH para referência Alusa sem entidade local', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValueOnce(null as never);
+
+    await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_CREATED',
+      eventId: 'evt-sub-broken-link',
+      subscription: { id: 'sub-broken-link', status: 'ACTIVE', externalReference: 'alusa:subscription:mat-a:plan-a' },
+    });
+
+    expect(issueMocks.upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-a', entityType: 'SUBSCRIPTION', asaasId: 'sub-broken-link',
+      issueType: 'SUBSCRIPTION_NEEDS_REVIEW', severity: 'HIGH', causeId: 'evt-sub-broken-link',
+      metadata: expect.objectContaining({ reason: 'alusa_reference_without_local_entity' }),
+    }));
+  });
+
+  it('não cria pendência para assinatura já classificada como EXTERNAL', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValueOnce({ origin: 'EXTERNAL' } as never);
+
+    await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_UPDATED',
+      eventId: 'evt-sub-external',
+      subscription: { id: 'sub-external', status: 'ACTIVE' },
+    });
+
+    expect(issueMocks.upsertFinanceReconciliationIssue).not.toHaveBeenCalled();
   });
 
   it('registra assinatura na saga sem publicar entidade quando webhook chega antes do commit', async () => {
