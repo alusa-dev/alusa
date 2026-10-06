@@ -19,6 +19,7 @@ const requiredPolicies = [
   'mutation',
   'financial-mutation',
   'expensive-operation',
+  'financial-report-read',
   'tenant-admin',
   'public-write',
 ];
