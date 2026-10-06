@@ -99,4 +99,48 @@ describe('API rate limit policy', () => {
       },
     });
   });
+
+  it('gives report reads their own budget and keeps exports on the expensive-operation limit', async () => {
+    process.env.RATE_LIMIT_DISABLE_IN_DEV = 'false';
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    delete process.env.REDIS_URL;
+    delete process.env.REDIS_TOKEN;
+
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const token = { contaId: `reports-conta-${suffix}`, id: `reports-user-${suffix}` };
+    const overviewPath = ['', 'api', 'financeiro', 'relatorios', 'overview'].join('/');
+    const overviewRequest = () => new Request(
+      `https://app.example.com${overviewPath}`,
+    );
+
+    let overviewResponse: Response | null = null;
+    for (let index = 0; index < 61; index += 1) {
+      overviewResponse = await enforceApiRateLimit(
+        overviewRequest(),
+        overviewPath,
+        token,
+      );
+    }
+
+    expect(overviewResponse?.status).toBe(429);
+    expect(overviewResponse?.headers.get('ratelimit-limit')).toBe('60');
+
+    const exportToken = { contaId: `export-conta-${suffix}`, id: `export-user-${suffix}` };
+    const exportPath = ['', 'api', 'financeiro', 'relatorios', 'export'].join('/');
+    const exportRequest = () => new Request(
+      `https://app.example.com${exportPath}`,
+    );
+    let exportResponse: Response | null = null;
+    for (let index = 0; index < 11; index += 1) {
+      exportResponse = await enforceApiRateLimit(
+        exportRequest(),
+        exportPath,
+        exportToken,
+      );
+    }
+
+    expect(exportResponse?.status).toBe(429);
+    expect(exportResponse?.headers.get('ratelimit-limit')).toBe('10');
+  });
 });
