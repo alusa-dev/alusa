@@ -1,14 +1,14 @@
 {
   "generatedAt": "deterministic",
-  "routeCount": 524,
+  "routeCount": 525,
   "summary": {
     "byApp": {
-      "web": 497,
+      "web": 498,
       "admin": 27
     },
     "byCategory": {
       "academic": 71,
-      "administration": 54,
+      "administration": 55,
       "authentication": 11,
       "catalog": 3,
       "communications": 7,
@@ -37,11 +37,11 @@
       "CRON_SECRET": 46,
       "MOBILE_ACCESS_TOKEN": 43,
       "PUBLIC": 41,
-      "TENANT_ADMIN": 54,
+      "TENANT_ADMIN": 55,
       "TENANT_FINANCE": 61,
       "WEBHOOK_TOKEN": 4
     },
-    "withoutNearbyTest": 481,
+    "withoutNearbyTest": 482,
     "withoutAuthEvidence": 0,
     "directPrisma": 0,
     "directAsaas": 0
@@ -453,6 +453,25 @@
       "app": "web",
       "file": "apps/web/app/api/admin/finance/reconciliation/[id]/resolve/route.ts",
       "path": "/api/admin/finance/reconciliation/:id/resolve",
+      "category": "administration",
+      "protection": "TENANT_ADMIN",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantScope",
+        "getServerSession",
+        "requireAdmin",
+        "resolveSessionAccess"
+      ],
+      "hasDTOValidation": true,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
+      "file": "apps/web/app/api/admin/finance/reconciliation/resources/route.ts",
+      "path": "/api/admin/finance/reconciliation/resources",
       "category": "administration",
       "protection": "TENANT_ADMIN",
       "tenantMode": "authenticated-tenant",
