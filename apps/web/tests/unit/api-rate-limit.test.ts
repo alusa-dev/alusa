@@ -109,15 +109,16 @@ describe('API rate limit policy', () => {
 
     const suffix = `${Date.now()}-${Math.random()}`;
     const token = { contaId: `reports-conta-${suffix}`, id: `reports-user-${suffix}` };
+    const overviewPath = ['', 'api', 'financeiro', 'relatorios', 'overview'].join('/');
     const overviewRequest = () => new Request(
-      'https://app.example.com/api/financeiro/relatorios/overview',
+      `https://app.example.com${overviewPath}`,
     );
 
     let overviewResponse: Response | null = null;
     for (let index = 0; index < 61; index += 1) {
       overviewResponse = await enforceApiRateLimit(
         overviewRequest(),
-        '/api/financeiro/relatorios/overview',
+        overviewPath,
         token,
       );
     }
@@ -126,14 +127,15 @@ describe('API rate limit policy', () => {
     expect(overviewResponse?.headers.get('ratelimit-limit')).toBe('60');
 
     const exportToken = { contaId: `export-conta-${suffix}`, id: `export-user-${suffix}` };
+    const exportPath = ['', 'api', 'financeiro', 'relatorios', 'export'].join('/');
     const exportRequest = () => new Request(
-      'https://app.example.com/api/financeiro/relatorios/export',
+      `https://app.example.com${exportPath}`,
     );
     let exportResponse: Response | null = null;
     for (let index = 0; index < 11; index += 1) {
       exportResponse = await enforceApiRateLimit(
         exportRequest(),
-        '/api/financeiro/relatorios/export',
+        exportPath,
         exportToken,
       );
     }
