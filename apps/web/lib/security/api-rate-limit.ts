@@ -68,6 +68,19 @@ const EXPENSIVE_POLICY: RateLimitPolicy = {
   includeIp: false,
 };
 
+const REPORT_POLICY: RateLimitPolicy = {
+  name: 'financial-report-read',
+  // A report page loads its selected view and a separate 90-day health
+  // overview. Leave room for navigation and filter changes while retaining a
+  // bounded per-user and per-tenant budget for these database-heavy reads.
+  limit: 60,
+  tenantLimit: 300,
+  windowMs: 10 * 60_000,
+  failClosed: true,
+  includeTenant: true,
+  includeIp: false,
+};
+
 const ADMIN_POLICY: RateLimitPolicy = {
   name: 'tenant-admin',
   limit: 60,
@@ -151,6 +164,14 @@ function resolvePolicy(pathname: string, method: string): RateLimitPolicy | null
 
   if (PUBLIC_WRITE_PATHS.some((path) => isPathOrChild(pathname, path))) {
     return ['POST', 'PUT', 'PATCH', 'DELETE'].includes(normalizedMethod) ? PUBLIC_WRITE_POLICY : null;
+  }
+
+  if (
+    normalizedMethod === 'GET' &&
+    pathname.startsWith('/api/financeiro/relatorios/') &&
+    !pathname.endsWith('/export')
+  ) {
+    return REPORT_POLICY;
   }
 
   const isUnsafe = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(normalizedMethod);
