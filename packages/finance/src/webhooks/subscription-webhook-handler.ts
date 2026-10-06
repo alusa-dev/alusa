@@ -7,6 +7,7 @@ import { parseExternalReference } from '../core';
 import { isTerminalStatus, canTransition } from '@alusa/domain';
 import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
 import { confirmOutboundCreateByProviderEvent } from '../use-cases/outbound-financial-operation';
+import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 
 /**
  * Verifica se uma atualização de status de matrícula deve ser aplicada,
@@ -39,6 +40,7 @@ function shouldApplyMatriculaUpdate(
 
 export type SubscriptionWebhookPayload = {
   event: string;
+  eventId?: string | null;
   subscription: {
     id: string;
     status?: string;
@@ -375,6 +377,42 @@ export async function handleSubscriptionWebhook(
     });
 
     if (!subscription) {
+      const origin = await prisma.asaasResourceOrigin.findUnique({
+        where: { uq_asaas_resource_origin_tenant_resource: {
+          contaId, resourceType: 'SUBSCRIPTION', asaasId: payload.subscription.id,
+        } },
+        select: { origin: true },
+      });
+      if (origin?.origin === 'EXTERNAL') {
+        logFinanceOperationalEvent({ severity: 'info', eventName: 'finance.webhook.subscription.external_resource_observed' });
+      } else {
+        const alusaReference = Boolean(externalReference && (
+          externalReference.startsWith('alusa:') || externalReference.startsWith('subscription:') ||
+          externalReference.startsWith('standalone-subscription:') || externalReference.startsWith('enrollment-op:')
+        ));
+        await upsertFinanceReconciliationIssue({
+          contaId,
+          entityType: 'SUBSCRIPTION',
+          entityId: null,
+          asaasId: payload.subscription.id,
+          issueType: 'SUBSCRIPTION_NEEDS_REVIEW',
+          severity: alusaReference ? 'HIGH' : 'MEDIUM',
+          localStatus: null,
+          remoteStatus: payload.subscription.status ?? null,
+          causeId: payload.eventId,
+          metadata: {
+            source: 'subscription-webhook-handler',
+            reason: alusaReference ? 'alusa_reference_without_local_entity' : 'resource_origin_unknown',
+            event: payload.event,
+          },
+        });
+        logFinanceOperationalEvent({
+          severity: alusaReference ? 'error' : 'warn',
+          eventName: alusaReference
+            ? 'finance.webhook.subscription.local_entity_missing'
+            : 'finance.webhook.subscription.resource_origin_unknown',
+        });
+      }
       return { success: true };
     }
 

@@ -452,6 +452,7 @@ async function processAsaasWebhookForRecord(params: {
 
       const result = await handleSubscriptionWebhook(contaId, {
         event,
+        eventId: payload.id ?? null,
         subscription: {
           id: subscriptionId,
           status: payload.subscription?.status as never,

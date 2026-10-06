@@ -177,6 +177,7 @@ export async function convergeSubscriptionsWithAsaas(params: {
               status: remoteSubscription.status,
               deleted: remoteSubscription.deleted,
             }),
+            eventId: `read-convergence:${remoteSubscription.id}:${remoteSubscription.status ?? 'unknown'}:${remoteSubscription.deleted ? 'deleted' : 'active'}`,
             subscription: {
               id: remoteSubscription.id,
               status: remoteSubscription.status,

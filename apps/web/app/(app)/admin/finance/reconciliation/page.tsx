@@ -43,6 +43,9 @@ export default async function AdminFinanceReconciliationPage() {
         <Link className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800" href="/admin/finance/webhooks">
           Webhooks
         </Link>
+        <Link className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800" href="/admin/finance/reconciliation/origins">
+          Origem de assinaturas
+        </Link>
       </header>
 
       <section className="grid gap-3 md:grid-cols-5">

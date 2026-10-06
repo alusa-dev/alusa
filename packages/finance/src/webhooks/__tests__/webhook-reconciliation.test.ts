@@ -10,6 +10,7 @@ vi.mock('@alusa/database', () => ({
       updateMany: vi.fn(),
     },
     cobranca: {
+      findFirst: vi.fn(),
       findMany: vi.fn(),
       updateMany: vi.fn(),
     },
@@ -37,6 +38,7 @@ vi.mock('@alusa/database', () => ({
       updateMany: vi.fn(),
       count: vi.fn(),
     },
+    financeReconciliationIssue: { updateMany: vi.fn() },
     $queryRaw: vi.fn(),
   },
   loadAsaasCredentials: vi.fn(),
@@ -63,6 +65,10 @@ vi.mock('../subscription-webhook-handler', () => ({
 
 vi.mock('../../reconciliation/finance-reconciliation-issue.service', () => ({
   upsertFinanceReconciliationIssue: vi.fn(),
+  resolveFinanceReconciliationIssueByDedupe: vi.fn(),
+  buildFinanceReconciliationIssueDedupeKey: ({ entityType, entityId, asaasId, issueType }: {
+    entityType: string; entityId?: string | null; asaasId?: string | null; issueType: string;
+  }) => `${issueType}:${entityType}:${entityId?.trim() || asaasId?.trim() || 'unknown'}`,
 }));
 
 vi.mock('../../foundation/asaas-read-intent', () => ({
@@ -73,9 +79,13 @@ import { prisma, loadAsaasCredentials } from '@alusa/database';
 import { getPayment, getSubscription } from '@alusa/asaas';
 import { handlePaymentWebhook } from '../payment-webhook-handler';
 import { handleSubscriptionWebhook } from '../subscription-webhook-handler';
-import { upsertFinanceReconciliationIssue } from '../../reconciliation/finance-reconciliation-issue.service';
+import {
+  upsertFinanceReconciliationIssue,
+  resolveFinanceReconciliationIssueByDedupe,
+} from '../../reconciliation/finance-reconciliation-issue.service';
 import {
   detectWebhookGaps,
+  getWebhookDetails,
   getWebhookMetrics,
   getWebhookQueueMetrics,
   isProviderCheckDue,
@@ -210,6 +220,12 @@ describe('webhook-reconciliation.service', () => {
 
       expect(result.chargesWithMissingFinalStatus).toHaveLength(2);
       expect(result.chargesWithMissingFinalStatus.map((item) => item.id)).toEqual(['cob-1', 'ch-1']);
+      expect(prisma.cobranca.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          contaId: 'conta-1',
+          matricula: { contaId: 'conta-1', aluno: { contaId: 'conta-1' } },
+        }),
+      }));
     });
 
     it('deve filtrar cobranças com webhook recente', async () => {
@@ -256,10 +272,24 @@ describe('webhook-reconciliation.service', () => {
       expect(getPayment).not.toHaveBeenCalled();
       expect(prisma.charge.findMany).toHaveBeenCalledWith(expect.objectContaining({
         where: expect.objectContaining({
-          OR: [
-            { lastProviderCheckAt: null },
-            { lastProviderCheckAt: expect.objectContaining({ lte: expect.any(Date) }) },
-          ],
+          AND: expect.arrayContaining([
+            expect.objectContaining({
+              OR: expect.arrayContaining([
+                expect.objectContaining({ status: { in: expect.any(Array) } }),
+                { status: 'PAID' },
+              ]),
+            }),
+            expect.objectContaining({ OR: [
+              { lastProviderCheckAt: null },
+              { lastProviderCheckAt: expect.objectContaining({ lte: expect.any(Date) }) },
+            ] }),
+          ]),
+        }),
+      }));
+      expect(prisma.cobranca.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          contaId: 'conta-1',
+          matricula: { contaId: 'conta-1', aluno: { contaId: 'conta-1' } },
         }),
       }));
     });
@@ -301,6 +331,59 @@ describe('webhook-reconciliation.service', () => {
         }),
       );
       expect(upsertFinanceReconciliationIssue).toHaveBeenCalled();
+    });
+
+    it('mantém issue stale para pagamento liquidado com snapshot Asaas aberto sem chamar webhook', async () => {
+      vi.mocked(prisma.charge.findMany).mockResolvedValue([{
+        id: 'ch-paid', asaasPaymentId: 'pay-paid', status: 'PAID', asaasStatus: 'CONFIRMED',
+        externalReference: null,
+      }] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
+      vi.mocked(getPayment).mockResolvedValue({
+        id: 'pay-paid', status: 'PENDING', value: 100, netValue: 100,
+      } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'conta-a', limit: 10 });
+
+      expect(result.paymentDrift).toBe(1);
+      expect(upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+        contaId: 'conta-a', issueType: 'ASAAS_SNAPSHOT_STALE', localStatus: 'PAID', remoteStatus: 'OPEN',
+      }));
+      expect(resolveFinanceReconciliationIssueByDedupe).toHaveBeenCalledWith(expect.objectContaining({
+        contaId: 'conta-a',
+        dedupeKey: 'PAYMENT_STATUS_DRIFT:CHARGE:ch-paid',
+        resolution: expect.stringContaining('substituída'),
+      }));
+      const chargeWhere = vi.mocked(prisma.charge.findMany).mock.calls[0]?.[0].where as unknown as {
+        contaId?: string;
+        AND?: Array<{ OR?: Array<Record<string, unknown>> }>;
+      };
+      const settledCandidateBranches = chargeWhere.AND?.flatMap((clause) => clause.OR ?? []) ?? [];
+      expect(chargeWhere.contaId).toBe('conta-a');
+      expect(settledCandidateBranches).toContainEqual({ status: 'PAID' });
+      expect(settledCandidateBranches).not.toContainEqual(expect.objectContaining({
+        status: 'PAID',
+        asaasStatus: expect.anything(),
+      }));
+      const cobrancaWhere = vi.mocked(prisma.cobranca.findMany).mock.calls[0]?.[0].where as unknown as {
+        contaId?: string;
+        matricula?: { contaId?: string; aluno?: { contaId?: string } };
+        AND?: Array<{ OR?: Array<Record<string, unknown>> }>;
+      };
+      const settledCobrancaBranches = cobrancaWhere.AND?.flatMap((clause) => clause.OR ?? []) ?? [];
+      expect(cobrancaWhere.contaId).toBe('conta-a');
+      expect(cobrancaWhere.matricula).toEqual({ contaId: 'conta-a', aluno: { contaId: 'conta-a' } });
+      expect(settledCobrancaBranches).toContainEqual({ status: 'PAGO' });
+      expect(settledCobrancaBranches).not.toContainEqual(expect.objectContaining({
+        status: 'PAGO',
+        asaasStatus: expect.anything(),
+      }));
+      expect(prisma.charge.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'ch-paid', contaId: 'conta-a' },
+        data: expect.objectContaining({ lastProviderCheckAt: expect.any(Date), lastAsaasFetchAt: expect.any(Date) }),
+      }));
+      expect(handlePaymentWebhook).not.toHaveBeenCalled();
     });
 
     it('não avança o cursor quando o handler local falha após consulta ao Asaas', async () => {
@@ -403,6 +486,36 @@ describe('webhook-reconciliation.service', () => {
       expect(result.paymentDrift).toBe(0);
       expect(result.reconciledPayments).toBe(0);
       expect(handlePaymentWebhook).not.toHaveBeenCalled();
+      expect(resolveFinanceReconciliationIssueByDedupe).toHaveBeenCalledWith(expect.objectContaining({
+        contaId: 'conta-1', dedupeKey: 'ASAAS_SNAPSHOT_STALE:CHARGE:ch-1',
+      }));
+      expect(resolveFinanceReconciliationIssueByDedupe).toHaveBeenCalledWith(expect.objectContaining({
+        contaId: 'conta-1', dedupeKey: 'PAYMENT_STATUS_DRIFT:CHARGE:ch-1',
+      }));
+    });
+  });
+
+  describe('getWebhookDetails tenant scope', () => {
+    it('escopa a cobrança relacionada por conta e matrícula', async () => {
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValueOnce({
+        id: 'webhook-a',
+        contaId: 'conta-a',
+        asaasPaymentId: 'pay-a',
+        asaasSubscriptionId: null,
+      } as never);
+      vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({ id: 'cobranca-a', status: 'PAGO' } as never);
+
+      const result = await getWebhookDetails('conta-a', 'webhook-a');
+
+      expect(result.relatedCharge).toEqual({ id: 'cobranca-a', status: 'PAGO' });
+      expect(prisma.cobranca.findFirst).toHaveBeenCalledWith({
+        where: {
+          contaId: 'conta-a',
+          asaasPaymentId: 'pay-a',
+          matricula: { contaId: 'conta-a', aluno: { contaId: 'conta-a' } },
+        },
+        select: { id: true, status: true },
+      });
     });
   });
 

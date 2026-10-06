@@ -22,7 +22,12 @@ import { mapAsaasToChargeStatus } from '../core';
 import { mapAsaasSubscriptionStatus } from '../mappers/asaas-subscription-status';
 import { handlePaymentWebhook } from './payment-webhook-handler';
 import { handleSubscriptionWebhook } from './subscription-webhook-handler';
-import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
+import {
+  buildFinanceReconciliationIssueDedupeKey,
+  resolveFinanceReconciliationIssueByDedupe,
+  upsertFinanceReconciliationIssue,
+} from '../reconciliation/finance-reconciliation-issue.service';
+import { hasAsaasSnapshotDrift } from '../mappers/asaas-snapshot-monotonicity';
 import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
 import { reconcileEnrollmentFeeProjections } from '../projections/enrollment-fee-projection.service';
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
@@ -308,7 +313,8 @@ async function hasInflightWebhookForPayment(contaId: string, asaasPaymentId: str
 }
 
 /**
- * Lista pagamentos locais em status não-final com integração Asaas.
+ * Lista pagamentos locais não-finais e pagamentos liquidados elegíveis para
+ * rechecagem periódica do snapshot Asaas.
  * Dedupe por asaasPaymentId (Charge avulsa + Cobranca acadêmica).
  */
 async function listPaymentReconciliationCandidates(
@@ -321,8 +327,13 @@ async function listPaymentReconciliationCandidates(
       where: {
         contaId,
         asaasPaymentId: { not: null },
-        status: { in: NON_FINAL_CHARGE_STATUSES },
-        ...providerCheckDueWhere(cutoff),
+        AND: [
+          { OR: [
+            { status: { in: NON_FINAL_CHARGE_STATUSES } },
+            { status: 'PAID' },
+          ] },
+          providerCheckDueWhere(cutoff),
+        ],
       },
       orderBy: [{ dueDate: 'asc' }, { updatedAt: 'asc' }],
       take: limit,
@@ -338,10 +349,15 @@ async function listPaymentReconciliationCandidates(
     prisma.cobranca.findMany({
       where: {
         contaId,
-        matricula: { aluno: { contaId } },
+        matricula: { contaId, aluno: { contaId } },
         asaasPaymentId: { not: null },
-        status: { in: NON_FINAL_STATUSES as Prisma.EnumStatusCobrancaFilter['in'] },
-        ...providerCheckDueWhere(cutoff),
+        AND: [
+          { OR: [
+            { status: { in: NON_FINAL_STATUSES as Prisma.EnumStatusCobrancaFilter['in'] } },
+            { status: 'PAGO' },
+          ] },
+          providerCheckDueWhere(cutoff),
+        ],
       },
       orderBy: { vencimento: 'asc' },
       take: limit,
@@ -512,6 +528,7 @@ export async function detectWebhookGaps(
       where: {
         contaId,
         matricula: {
+          contaId,
           aluno: { contaId },
         },
         status: { in: NON_FINAL_STATUSES as Prisma.EnumStatusCobrancaFilter['in'] },
@@ -830,7 +847,7 @@ export async function getWebhookDetails(
         where: {
           contaId,
           asaasPaymentId: webhook.asaasPaymentId,
-          matricula: { aluno: { contaId } },
+          matricula: { contaId, aluno: { contaId } },
         },
         select: { id: true, status: true },
       })
@@ -1283,8 +1300,9 @@ function chooseSyntheticSubscriptionEvent(remote: {
 
 /**
  * Reconciliação ativa com Asaas:
- * - Pagamentos: cobranças locais em status não-final → 1× getPayment por candidato;
- *   aplica webhook sintético (PAYMENT_RECEIVED/CONFIRMED/…) quando há drift.
+ * - Pagamentos: cobranças não-finais e liquidadas elegíveis pelo intervalo de provider check
+ *   → 1× getPayment por candidato; snapshots abertos stale em cobranças liquidadas geram issue
+ *   sem webhook sintético, enquanto outros drifts seguem pelo handler existente.
  * - Assinaturas/parcelamentos: janela por updatedAt (windowHours).
  * - Ignora pagamentos com webhook ainda na fila (PENDENTE/PROCESSANDO).
  */
@@ -1462,18 +1480,35 @@ export async function reconcileWithAsaas(
               data: { lastProviderCheckAt: providerCheckAt, lastAsaasFetchAt: providerCheckAt },
             });
           }
+          for (const issueType of ['ASAAS_SNAPSHOT_STALE', 'PAYMENT_STATUS_DRIFT'] as const) {
+            await resolveFinanceReconciliationIssueByDedupe({
+              contaId: options.contaId,
+              dedupeKey: buildFinanceReconciliationIssueDedupeKey({
+                entityType: 'CHARGE',
+                entityId: candidate.entityId,
+                asaasId: candidate.asaasPaymentId,
+                issueType,
+              }),
+              resolution: 'O snapshot Asaas e o estado local convergiram durante a reconciliação.',
+            });
+          }
         }
         continue;
       }
 
       paymentDrift += 1;
+      const staleSnapshot = hasAsaasSnapshotDrift({
+        asaasStatus: remoteStatus,
+        localChargeStatus: candidate.source === 'charge' ? candidate.localStatus : null,
+        localCobrancaStatus: candidate.source === 'cobranca' ? candidate.localStatus : null,
+      });
       if (!dryRun) {
         await upsertFinanceReconciliationIssue({
           contaId: options.contaId,
           entityType: 'CHARGE',
           entityId: candidate.entityId,
           asaasId: candidate.asaasPaymentId,
-          issueType: resolvePaymentDriftIssueType(candidate, remoteStatus),
+          issueType: staleSnapshot ? 'ASAAS_SNAPSHOT_STALE' : resolvePaymentDriftIssueType(candidate, remoteStatus),
           severity: 'HIGH',
           localStatus: candidate.localStatus,
           remoteStatus: remoteLocalStatus,
@@ -1485,6 +1520,31 @@ export async function reconcileWithAsaas(
             candidateSource: candidate.source,
           },
         });
+        if (staleSnapshot) {
+          await resolveFinanceReconciliationIssueByDedupe({
+            contaId: options.contaId,
+            dedupeKey: buildFinanceReconciliationIssueDedupeKey({
+              entityType: 'CHARGE',
+              entityId: candidate.entityId,
+              asaasId: candidate.asaasPaymentId,
+              issueType: 'PAYMENT_STATUS_DRIFT',
+            }),
+            resolution: 'Issue substituída por divergência de snapshot Asaas stale em pagamento liquidado.',
+          });
+          const providerCheckAt = new Date();
+          if (candidate.source === 'charge') {
+            await prisma.charge.updateMany({
+              where: { id: candidate.entityId, contaId: options.contaId },
+              data: { lastProviderCheckAt: providerCheckAt, lastAsaasFetchAt: providerCheckAt },
+            });
+          } else {
+            await prisma.cobranca.updateMany({
+              where: { id: candidate.entityId, contaId: options.contaId },
+              data: { lastProviderCheckAt: providerCheckAt, lastAsaasFetchAt: providerCheckAt },
+            });
+          }
+          continue;
+        }
         const event = PAYMENT_EVENT_BY_STATUS[remoteStatus] ?? 'PAYMENT_UPDATED';
         const handlerResult = await handlePaymentWebhook(options.contaId, {
           event,
@@ -1578,6 +1638,7 @@ export async function reconcileWithAsaas(
           });
           const result = await handleSubscriptionWebhook(options.contaId, {
             event,
+            eventId: `reconciliation:${remote.id}:${remote.status ?? 'unknown'}:${remote.deleted ? 'deleted' : 'active'}`,
             subscription: {
               id: remote.id,
               status: remote.status,
@@ -1664,6 +1725,7 @@ export async function reconcileWithAsaas(
         const event = chooseSyntheticSubscriptionEvent({ status: remote.status, deleted: remote.deleted });
         const handlerResult = await handleSubscriptionWebhook(options.contaId, {
           event,
+          eventId: `convergence:${remote.id}:${remote.status ?? 'unknown'}:${remote.deleted ? 'deleted' : 'active'}`,
           subscription: {
             id: remote.id,
             status: remote.status,

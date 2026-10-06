@@ -270,6 +270,7 @@ async function processWebhookReplay(params: {
 
       const result = await handlers.handleSubscriptionWebhook(contaId, {
         event,
+        eventId: payload.id ?? null,
         subscription: {
           id: subscriptionId,
           status: payload.subscription?.status as never,

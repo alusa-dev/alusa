@@ -387,6 +387,24 @@ function resolveChargeDueDateUpdate(dueDate?: string | null): Date | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
+function resolveAsaasDueDateUtcRange(value?: string | null): { start: Date; end: Date } | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const [, year, month, day] = match;
+  const start = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  if (
+    start.getUTCFullYear() !== Number(year) ||
+    start.getUTCMonth() !== Number(month) - 1 ||
+    start.getUTCDate() !== Number(day)
+  ) {
+    return null;
+  }
+
+  return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
+}
+
 function resolveMatriculaFinanceStatusForCharge(params: {
   chargeType: string;
   nextChargeStatus: string;
@@ -1131,7 +1149,11 @@ export async function handlePaymentWebhook(
   return withSessionAdvisoryLock({
     contaId,
     scope: 'webhook-process',
-    key: `payment:${paymentId}`,
+    key: payload.payment.subscription
+      ? `subscription-cycle:${payload.payment.subscription}:${payload.payment.dueDate ?? 'unknown'}`
+      : payload.payment.externalReference?.startsWith('alusa:subscription:')
+        ? `subscription-cycle:${payload.payment.externalReference}:${payload.payment.dueDate ?? 'unknown'}`
+        : `payment:${paymentId}`,
     fn: () => handlePaymentWebhookCore(contaId, payload),
   });
 }
@@ -1142,6 +1164,112 @@ async function handlePaymentWebhookCore(
 ): Promise<PaymentWebhookResult> {
   try {
     const effectiveAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload) ?? payload.payment.status;
+    // Resolve tenant-scoped identity before confirming commands, processing
+    // event-map payments, or applying any financial side effect. Reuse this
+    // result below so conflict detection and normal routing share one snapshot.
+    const earlyCanonicalResolution = await resolvePaymentToLocalEntity({
+      contaId,
+      asaasPaymentId: payload.payment.id,
+      externalReference: payload.payment.externalReference,
+      asaasSubscriptionId: payload.payment.subscription,
+      asaasInstallmentId: payload.payment.installment,
+      dueDate: payload.payment.dueDate,
+      installmentNumber: payload.payment.installmentNumber,
+    });
+    const isCanonicalSubscriptionReference =
+      payload.payment.externalReference?.startsWith('alusa:subscription:') ?? false;
+    const eventMapOrderReference = payload.payment.externalReference?.startsWith('event-map-order:')
+      ? payload.payment.externalReference.slice('event-map-order:'.length)
+      : null;
+    // Check both directions of the provider link. Looking up only the order
+    // named by externalReference lets a payment already bound to order A
+    // mutate order B (or an unrelated finance entity) when its reference drifts.
+    const [eventMapOrder, eventMapOrdersByPayment] = await Promise.all([
+      eventMapOrderReference
+        ? prisma.eventMapOrder.findFirst({
+            where: { id: eventMapOrderReference, contaId },
+            select: { id: true, asaasPaymentId: true },
+          })
+        : Promise.resolve(null),
+      prisma.eventMapOrder.findMany({
+        where: { contaId, asaasPaymentId: payload.payment.id },
+        select: { id: true, asaasPaymentId: true },
+        take: 2,
+      }),
+    ]);
+    const eventMapOrderByPayment = eventMapOrdersByPayment[0] ?? null;
+    const unresolvedEventMapOrderReference = Boolean(eventMapOrderReference && !eventMapOrder);
+    // Event-map orders are a separate financial domain. An event-map payment
+    // cannot also be bound to an academic/standalone Charge, and the order may
+    // only be claimed when it is unbound or already linked to this payment.
+    const eventMapPaymentConflict = Boolean(
+      (eventMapOrderReference && (
+        earlyCanonicalResolution.type === 'conflict' ||
+        earlyCanonicalResolution.type === 'cobranca' ||
+        earlyCanonicalResolution.type === 'charge' ||
+        earlyCanonicalResolution.type === 'subscription' ||
+        earlyCanonicalResolution.type === 'installmentPlan' ||
+        (eventMapOrder?.asaasPaymentId && eventMapOrder.asaasPaymentId !== payload.payment.id)
+      )) ||
+      (eventMapOrdersByPayment.length > 1) ||
+      (eventMapOrderByPayment && (
+        (eventMapOrderReference !== null && eventMapOrderByPayment.id !== eventMapOrderReference) ||
+        earlyCanonicalResolution.type === 'conflict' ||
+        earlyCanonicalResolution.type === 'cobranca' ||
+        earlyCanonicalResolution.type === 'charge' ||
+        earlyCanonicalResolution.type === 'subscription' ||
+        earlyCanonicalResolution.type === 'installmentPlan'
+      )),
+    );
+    const unresolvedCanonicalSubscription = isCanonicalSubscriptionReference &&
+      (earlyCanonicalResolution.type === 'not_found' ||
+        (earlyCanonicalResolution.type !== 'conflict' &&
+          (!('cobrancaId' in earlyCanonicalResolution) || !earlyCanonicalResolution.cobrancaId)));
+    if (earlyCanonicalResolution.type === 'conflict' || unresolvedCanonicalSubscription || eventMapPaymentConflict || unresolvedEventMapOrderReference) {
+      await upsertFinanceReconciliationIssue({
+        contaId,
+        entityType: 'PAYMENT',
+        entityId: null,
+        asaasId: payload.payment.id,
+        issueType: 'PAYMENT_MISSING_LOCAL_ENTITY',
+        severity: 'HIGH',
+        localStatus: null,
+        remoteStatus: payload.payment.status || null,
+        causeId: payload.eventId,
+        metadata: {
+          event: payload.event,
+          externalReference: payload.payment.externalReference,
+          source: 'payment-webhook-handler',
+          reason: eventMapPaymentConflict
+            ? 'event_map_payment_mapping_conflict'
+            : unresolvedEventMapOrderReference
+              ? 'event_map_order_reference_not_found'
+            : earlyCanonicalResolution.type === 'conflict'
+            ? 'provider_payment_id_already_linked_to_different_local_entity'
+            : earlyCanonicalResolution.type === 'not_found'
+              ? earlyCanonicalResolution.reason
+              : 'canonical_subscription_reference_without_local_charge',
+        },
+      });
+      // The order can be concurrently created by the checkout flow. Keep this
+      // webhook retryable, but do not confirm commands or mutate any domain
+      // until the referenced tenant-scoped order exists.
+      if (unresolvedEventMapOrderReference) {
+        throw new Error('EVENT_MAP_ORDER_PAYMENT_REFERENCE_NOT_FOUND');
+      }
+      logPaymentWebhookDiagnostic({
+        severity: 'warn',
+        eventName: 'finance.payment_webhook.local_charge_missing',
+        operation: 'resolve_local_charge',
+      });
+      return {
+        success: true,
+        stateChanged: false,
+        skipped: true,
+        skipReason: 'UNMATCHED_PAYMENT_REQUIRES_RECONCILIATION',
+        localEntityType: 'Payment',
+      };
+    }
 
     try {
       await confirmPaymentCommandsByProviderEvent({
@@ -1265,7 +1393,7 @@ async function handlePaymentWebhookCore(
     // stop before the legacy resolver opens false PAYMENT_MISSING_LOCAL_ENTITY
     // issues for a valid public ticket purchase. Unknown provider states still
     // update the pending order's payment snapshot through the same guarded CAS.
-    if (payload.payment.externalReference?.startsWith('event-map-order:')) {
+    if (payload.payment.externalReference?.startsWith('event-map-order:') || eventMapOrderByPayment) {
       await syncPublicEventMapOrderPaymentCreated({
         contaId,
         asaasPaymentId: payload.payment.id,
@@ -1273,14 +1401,41 @@ async function handlePaymentWebhookCore(
         paymentStatus: effectiveAsaasStatus,
         invoiceUrl: payload.payment.invoiceUrl ?? null,
       });
-      const orderId = payload.payment.externalReference.slice('event-map-order:'.length);
-      const order = await prisma.eventMapOrder.findFirst({
-        where: { id: orderId, contaId },
-        select: { id: true, asaasPaymentId: true },
-      });
-      if (!order || (order.asaasPaymentId && order.asaasPaymentId !== payload.payment.id)) {
+      if (eventMapOrderReference && (!eventMapOrder || (eventMapOrder.asaasPaymentId && eventMapOrder.asaasPaymentId !== payload.payment.id))) {
         throw new Error('EVENT_MAP_ORDER_PAYMENT_REFERENCE_NOT_FOUND');
       }
+      return { success: true };
+    }
+
+    // Known external resources are observed in the inbox but never projected
+    // into student, enrollment, contract, or charge records. Unknown resources
+    // remain triageable without inventing a financial association.
+    if (earlyCanonicalResolution.type === 'external') {
+      logPaymentWebhookDiagnostic({
+        severity: 'info',
+        eventName: 'finance.payment_webhook.external_resource_observed',
+        operation: 'resolve_payment_origin',
+      });
+      return { success: true };
+    }
+    if (earlyCanonicalResolution.type === 'unknown') {
+      await upsertFinanceReconciliationIssue({
+        contaId,
+        entityType: 'PAYMENT',
+        entityId: null,
+        asaasId: payload.payment.id,
+        issueType: 'PAYMENT_NEEDS_REVIEW',
+        severity: 'MEDIUM',
+        localStatus: null,
+        remoteStatus: payload.payment.status ?? null,
+        causeId: payload.eventId,
+        metadata: { source: 'payment-webhook-handler', reason: 'resource_origin_unknown', event: payload.event },
+      });
+      logPaymentWebhookDiagnostic({
+        severity: 'warn',
+        eventName: 'finance.payment_webhook.resource_origin_unknown',
+        operation: 'resolve_payment_origin',
+      });
       return { success: true };
     }
 
@@ -1290,16 +1445,20 @@ async function handlePaymentWebhookCore(
     // ─────────────────────────────────────────────────────────────────────────
     // Linkagem determinística oficial via resolver
     // ─────────────────────────────────────────────────────────────────────────
-    if (isPaymentResolutionPolicyEnabled('payment.webhook_deterministic_resolution')) {
-      const resolveResult = await resolvePaymentToLocalEntity({
-        contaId,
-        asaasPaymentId: payload.payment.id,
-        externalReference: payload.payment.externalReference,
-        asaasSubscriptionId: payload.payment.subscription,
-        asaasInstallmentId: payload.payment.installment,
-        dueDate: payload.payment.dueDate,
-        installmentNumber: payload.payment.installmentNumber,
-      });
+    let resolvedCobrancaId: string | null = null;
+    let resolvedStandaloneChargeId: string | null = null;
+    let unresolvedCanonicalSubscriptionReference =
+      payload.payment.externalReference?.startsWith('alusa:subscription:') ?? false;
+    const deterministicResolutionEnabled = isPaymentResolutionPolicyEnabled('payment.webhook_deterministic_resolution');
+    const resolveResult = earlyCanonicalResolution;
+
+    if (deterministicResolutionEnabled) {
+      if ('cobrancaId' in resolveResult && resolveResult.cobrancaId) {
+        resolvedCobrancaId = resolveResult.cobrancaId;
+      }
+      unresolvedCanonicalSubscriptionReference =
+        (payload.payment.externalReference?.startsWith('alusa:subscription:') ?? false) &&
+        !resolvedCobrancaId;
 
       // Se resolver encontrou algo, processar de forma determinística
       if (resolveResult.type !== 'not_found') {
@@ -1307,20 +1466,7 @@ async function handlePaymentWebhookCore(
 
         // Processar como standalone somente quando a Charge não é espelho de Cobranca acadêmica.
         if (resolveResult.type === 'charge' && resolveResult.chargeId && !resolveResult.cobrancaId) {
-          const charge = await prisma.charge.findUnique({
-            where: { id: resolveResult.chargeId },
-            select: {
-              id: true,
-              status: true,
-              asaasPaymentId: true,
-              asaasStatus: true,
-              providerStatus: true,
-              paidAt: true,
-            },
-          });
-          if (charge) {
-            return handleStandaloneChargeWebhook(contaId, payload, charge);
-          }
+          resolvedStandaloneChargeId = resolveResult.chargeId;
         }
 
         // Para cobranca, subscription, installmentPlan ou Charge acadêmica,
@@ -1355,6 +1501,13 @@ async function handlePaymentWebhookCore(
       { asaasPaymentId: payload.payment.id },
     ];
 
+    const chargesByPaymentId = await prisma.charge.findMany({
+      where: { contaId, asaasPaymentId: payload.payment.id },
+      select: { id: true, cobrancaId: true },
+      take: 2,
+    });
+    const chargeByPaymentId = chargesByPaymentId[0] ?? null;
+
     const chargeFromExternalRef = await prisma.charge.findFirst({
       where: {
         contaId,
@@ -1362,70 +1515,205 @@ async function handlePaymentWebhookCore(
       },
       select: { id: true, cobrancaId: true, status: true, asaasPaymentId: true, asaasStatus: true, providerStatus: true, paidAt: true },
     });
+    const chargeMappingConflict = Boolean(
+      chargeFromExternalRef?.asaasPaymentId &&
+      chargeFromExternalRef.asaasPaymentId !== payload.payment.id,
+    );
 
     // Para cobranças standalone (sem cobrancaId), processar apenas o Charge
-    if (chargeFromExternalRef && !chargeFromExternalRef.cobrancaId) {
-      return handleStandaloneChargeWebhook(contaId, payload, chargeFromExternalRef);
-    }
-
     const cobrancaIdFromExternalRef = chargeFromExternalRef?.cobrancaId ?? null;
 
     // Construir queries de busca de cobrança
-    const baseOrConditions = [
-      ...(externalRefId ? [{ id: externalRefId }] : []),
-      ...(cobrancaIdFromExternalRef ? [{ id: cobrancaIdFromExternalRef }] : []),
-      { asaasPaymentId: payload.payment.id },
-      { asaasId: payload.payment.id },
-    ].filter(Boolean);
-
-    let cobranca = await prisma.cobranca.findFirst({
+    const paymentIdSelect = {
+      id: true, matriculaId: true, status: true, asaasPaymentId: true, asaasId: true,
+      asaasStatus: true, providerStatus: true, version: true, tipo: true, formaPagamento: true,
+    } as const;
+    const cobrancaByAsaasPaymentId = await prisma.cobranca.findFirst({
       where: {
-        AND: [
-          { matricula: { aluno: { contaId } } },
-          { OR: baseOrConditions },
-        ],
+        contaId,
+        matricula: { contaId, aluno: { contaId } },
+        asaasPaymentId: payload.payment.id,
       },
-      select: {
-        id: true,
-        matriculaId: true,
-        status: true,
-        asaasPaymentId: true,
-        asaasStatus: true,
-        providerStatus: true,
-        version: true,
-        tipo: true,
-        formaPagamento: true,
-      },
+      select: paymentIdSelect,
     });
+    const cobrancaByLegacyAsaasId = await prisma.cobranca.findFirst({
+      where: {
+        contaId,
+        matricula: { contaId, aluno: { contaId } },
+        asaasId: payload.payment.id,
+      },
+      select: paymentIdSelect,
+    });
+    const referenceCobrancaIds = [...new Set([
+      resolvedCobrancaId,
+      cobrancaIdFromExternalRef,
+      externalRefId,
+    ].filter((id): id is string => Boolean(id)))];
+    const cobrancaByAsaasPaymentIdMatches = cobrancaByAsaasPaymentId?.asaasPaymentId === payload.payment.id
+      ? cobrancaByAsaasPaymentId
+      : null;
+    const cobrancaByLegacyAsaasIdMatches = cobrancaByLegacyAsaasId?.asaasId === payload.payment.id
+      ? cobrancaByLegacyAsaasId
+      : null;
+    let cobrancaMappingConflict = chargeMappingConflict || chargesByPaymentId.length > 1 || Boolean(
+      cobrancaByAsaasPaymentIdMatches &&
+      cobrancaByLegacyAsaasIdMatches &&
+      cobrancaByAsaasPaymentIdMatches.id !== cobrancaByLegacyAsaasIdMatches.id
+    );
+    const paymentIdCobranca = cobrancaByAsaasPaymentIdMatches ?? cobrancaByLegacyAsaasIdMatches;
+    if (paymentIdCobranca && resolvedCobrancaId && paymentIdCobranca.id !== resolvedCobrancaId) {
+      cobrancaMappingConflict = true;
+    }
+    if (paymentIdCobranca && cobrancaIdFromExternalRef && paymentIdCobranca.id !== cobrancaIdFromExternalRef) {
+      cobrancaMappingConflict = true;
+    }
+    if (paymentIdCobranca && chargeFromExternalRef && !cobrancaIdFromExternalRef) {
+      cobrancaMappingConflict = true;
+    }
+    if (paymentIdCobranca && isChargeRef && externalRefId && !cobrancaIdFromExternalRef && paymentIdCobranca.id !== externalRefId) {
+      cobrancaMappingConflict = true;
+    }
+    let referenceMatriculaId: string | null = null;
+    if (payload.payment.externalReference?.startsWith('alusa:subscription:')) {
+      const encodedMatriculaId = payload.payment.externalReference.split(':')[2];
+      const authoritativeSubscription = await prisma.subscription.findFirst({
+        where: {
+          contaId,
+          externalReference: payload.payment.externalReference,
+          matricula: { contaId, aluno: { contaId } },
+        },
+        select: { matriculaId: true },
+      });
+      referenceMatriculaId = authoritativeSubscription?.matriculaId ?? encodedMatriculaId ?? null;
+      if (paymentIdCobranca && referenceMatriculaId && paymentIdCobranca.matriculaId !== referenceMatriculaId) {
+        cobrancaMappingConflict = true;
+      }
+    }
+    let providerSubscriptionMatriculaId: string | null = null;
+    if (payload.payment.subscription && (paymentIdCobranca || referenceMatriculaId)) {
+      const authoritativeSubscription = await prisma.subscription.findFirst({
+        where: {
+          contaId,
+          asaasSubscriptionId: payload.payment.subscription,
+          matricula: { contaId, aluno: { contaId } },
+        },
+        select: { matriculaId: true },
+      });
+      const authoritativeMatricula = authoritativeSubscription
+        ? null
+        : await prisma.matricula.findFirst({
+            where: { contaId, aluno: { contaId }, asaasSubscriptionId: payload.payment.subscription },
+            select: { id: true },
+          });
+      const expectedMatriculaId = authoritativeSubscription?.matriculaId ?? authoritativeMatricula?.id;
+      providerSubscriptionMatriculaId = expectedMatriculaId ?? null;
+      if (referenceMatriculaId && providerSubscriptionMatriculaId && referenceMatriculaId !== providerSubscriptionMatriculaId) {
+        cobrancaMappingConflict = true;
+      }
+      if (paymentIdCobranca && providerSubscriptionMatriculaId && paymentIdCobranca.matriculaId !== providerSubscriptionMatriculaId) {
+        cobrancaMappingConflict = true;
+      }
+    }
+
+    let cobranca = paymentIdCobranca;
+    if (!cobranca && !cobrancaMappingConflict && referenceCobrancaIds.length === 1) {
+      cobranca = await prisma.cobranca.findFirst({
+        where: {
+          id: referenceCobrancaIds[0],
+          contaId,
+          matricula: { contaId, aluno: { contaId } },
+        },
+        select: {
+          id: true, matriculaId: true, status: true, asaasPaymentId: true, asaasId: true,
+          asaasStatus: true, providerStatus: true, version: true, tipo: true, formaPagamento: true,
+        },
+      });
+    } else if (!cobranca && !cobrancaMappingConflict && referenceCobrancaIds.length > 1) {
+      const referenceCandidates = await prisma.cobranca.findMany({
+        where: {
+          contaId,
+          id: { in: referenceCobrancaIds },
+          matricula: { contaId, aluno: { contaId } },
+        },
+        select: {
+          id: true, matriculaId: true, status: true, asaasPaymentId: true, asaasId: true,
+          asaasStatus: true, providerStatus: true, version: true, tipo: true, formaPagamento: true,
+        },
+        take: 2,
+      });
+      if (referenceCandidates.length === 1) cobranca = referenceCandidates[0];
+      else if (referenceCandidates.length > 1) cobrancaMappingConflict = true;
+    }
+
+    cobrancaMappingConflict = cobrancaMappingConflict || Boolean(
+      cobranca && (
+        (cobranca.asaasPaymentId && cobranca.asaasPaymentId !== payload.payment.id) ||
+        (cobranca.asaasId && cobranca.asaasId !== payload.payment.id)
+      ),
+    );
+    if (chargeByPaymentId && cobranca && chargeByPaymentId.cobrancaId !== cobranca.id) {
+      cobrancaMappingConflict = true;
+    }
+    if (
+      chargeByPaymentId &&
+      referenceCobrancaIds.length > 0 &&
+      (chargeByPaymentId.cobrancaId === null || referenceCobrancaIds.some((id) => id !== chargeByPaymentId.cobrancaId))
+    ) {
+      cobrancaMappingConflict = true;
+    }
+    if (cobrancaMappingConflict) cobranca = null;
+
+    if (!cobrancaMappingConflict && !cobranca && resolvedStandaloneChargeId) {
+      const standaloneCharge = await prisma.charge.findUnique({
+        where: { id: resolvedStandaloneChargeId },
+        select: { id: true, status: true, asaasPaymentId: true, asaasStatus: true, providerStatus: true, paidAt: true },
+      });
+      if (standaloneCharge) return handleStandaloneChargeWebhook(contaId, payload, standaloneCharge);
+    }
+    if (!cobrancaMappingConflict && !cobranca && chargeFromExternalRef && !chargeFromExternalRef.cobrancaId) {
+      return handleStandaloneChargeWebhook(contaId, payload, chargeFromExternalRef);
+    }
+    const subscriptionPaymentDueDate = resolveAsaasDueDateUtcRange(payload.payment.dueDate);
+    let subscriptionChargeMappingBlocked = !subscriptionPaymentDueDate;
 
     // 1.1. Se não encontrou e o pagamento é de uma assinatura, buscar via asaasSubscriptionId
-    if (!cobranca && payload.payment.subscription) {
+    if (!cobranca && !cobrancaMappingConflict && payload.payment.subscription && !unresolvedCanonicalSubscriptionReference) {
       const subscriptionId = payload.payment.subscription;
       
       // Encontrar a matrícula via asaasSubscriptionId e buscar cobrança MENSALIDADE sem asaasPaymentId
       const matriculaFromSubscription = await prisma.matricula.findFirst({
         where: {
+          contaId,
           aluno: { contaId },
           asaasSubscriptionId: subscriptionId,
         },
-        select: { id: true },
+        select: { id: true, contaId: true, aluno: { select: { contaId: true } } },
       });
 
-      if (matriculaFromSubscription) {
-        // Buscar a cobrança de MENSALIDADE mais próxima do vencimento sem asaasPaymentId
-        cobranca = await prisma.cobranca.findFirst({
+      if (
+        matriculaFromSubscription?.contaId === contaId &&
+        matriculaFromSubscription.aluno.contaId === contaId &&
+        subscriptionPaymentDueDate
+      ) {
+        // Associar somente uma mensalidade aberta única com vencimento UTC exato.
+        const matchingCobrancas = await prisma.cobranca.findMany({
           where: {
+            contaId,
             matriculaId: matriculaFromSubscription.id,
+            matricula: { contaId, aluno: { contaId } },
             tipo: 'MENSALIDADE',
-            asaasPaymentId: null,
-            status: { in: ['PENDENTE', 'A_VENCER'] },
+            vencimento: {
+              gte: subscriptionPaymentDueDate.start,
+              lt: subscriptionPaymentDueDate.end,
+            },
           },
-          orderBy: { vencimento: 'asc' },
+          take: 2,
           select: {
             id: true,
             matriculaId: true,
             status: true,
             asaasPaymentId: true,
+            asaasId: true,
             asaasStatus: true,
             providerStatus: true,
             version: true,
@@ -1434,23 +1722,68 @@ async function handlePaymentWebhookCore(
           },
         });
 
-        if (cobranca) {
-          // Atualizar a cobrança com o asaasPaymentId da assinatura
-          await prisma.cobranca.update({
-            where: { id: cobranca.id },
+        if (
+          matchingCobrancas.length === 1 &&
+          matchingCobrancas[0].asaasPaymentId === null &&
+          matchingCobrancas[0].asaasId === null &&
+          ['PENDENTE', 'A_VENCER', 'ATRASADO'].includes(matchingCobrancas[0].status)
+        ) {
+          const candidate = matchingCobrancas[0];
+          const claim = await prisma.cobranca.updateMany({
+            where: {
+              id: candidate.id,
+              contaId,
+              asaasPaymentId: null,
+              asaasId: null,
+              status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO'] },
+            },
             data: { asaasPaymentId: payload.payment.id },
           });
-          cobranca = {
-            ...cobranca,
-            asaasPaymentId: payload.payment.id,
-          };
-          recordPaymentWebhookOperation('subscription_payment_linked');
+          if (claim.count === 1) {
+            cobranca = { ...candidate, asaasPaymentId: payload.payment.id };
+            recordPaymentWebhookOperation('subscription_payment_linked');
+          } else {
+            const linkedToPayment = await prisma.cobranca.findFirst({
+              where: {
+                contaId,
+                id: candidate.id,
+                OR: [{ asaasPaymentId: payload.payment.id }, { asaasId: payload.payment.id }],
+              },
+              select: {
+                id: true,
+                matriculaId: true,
+                status: true,
+                asaasPaymentId: true,
+                asaasId: true,
+                asaasStatus: true,
+                providerStatus: true,
+                version: true,
+                tipo: true,
+                formaPagamento: true,
+              },
+            });
+            if (linkedToPayment) {
+              cobranca = linkedToPayment;
+            } else {
+              subscriptionChargeMappingBlocked = true;
+              cobrancaMappingConflict = true;
+            }
+          }
+        } else if (matchingCobrancas.length > 0) {
+          subscriptionChargeMappingBlocked = true;
         }
       }
     }
 
     // 1.2 Se não encontrou cobrança e é de uma assinatura, criar cobrança automaticamente
-    if (!cobranca && payload.payment.subscription) {
+    if (
+      !cobranca &&
+      !cobrancaMappingConflict &&
+      payload.payment.subscription &&
+      subscriptionPaymentDueDate &&
+      !subscriptionChargeMappingBlocked &&
+      !unresolvedCanonicalSubscriptionReference
+    ) {
       const subscriptionId = payload.payment.subscription;
       
       // Buscar matrícula e subscription para obter dados necessários
@@ -1458,6 +1791,7 @@ async function handlePaymentWebhookCore(
         where: {
           contaId,
           asaasSubscriptionId: subscriptionId,
+          matricula: { contaId, aluno: { contaId } },
         },
         select: {
           id: true,
@@ -1466,6 +1800,8 @@ async function handlePaymentWebhookCore(
           matricula: {
             select: {
               id: true,
+              contaId: true,
+              aluno: { select: { contaId: true } },
               alunoId: true,
               responsavelFinanceiroId: true,
               planoId: true,
@@ -1477,22 +1813,30 @@ async function handlePaymentWebhookCore(
           },
         },
       });
-      subscriptionRecord = subscription
-        ? { id: subscription.id, externalReference: subscription.externalReference }
+      const tenantScopedSubscription =
+        subscription?.matricula.contaId === contaId &&
+        subscription.matricula.aluno.contaId === contaId
+          ? subscription
+          : null;
+      const hasInvalidSubscriptionTenantLink = Boolean(subscription && !tenantScopedSubscription);
+      subscriptionRecord = tenantScopedSubscription
+        ? { id: tenantScopedSubscription.id, externalReference: tenantScopedSubscription.externalReference }
         : null;
 
-      if (!subscription) {
+      if (!tenantScopedSubscription) {
         // Buscar na tabela StandaloneSubscription
-        let standaloneSubRecord = await findStandaloneSubscription(prisma, {
-          contaId,
-          asaasSubscriptionId: subscriptionId,
-        });
+        let standaloneSubRecord = hasInvalidSubscriptionTenantLink
+          ? null
+          : await findStandaloneSubscription(prisma, {
+              contaId,
+              asaasSubscriptionId: subscriptionId,
+            });
 
         // PAYMENT_CREATED pode chegar imediatamente após a criação remota,
         // antes de a transação local da assinatura terminar. Aguarde uma
         // janela curta e determinística antes de criar um placeholder sem
         // vínculo; o webhook continua sendo idempotente.
-        if (!standaloneSubRecord) {
+        if (!standaloneSubRecord && !hasInvalidSubscriptionTenantLink) {
           for (const delayMs of [150, 400, 900]) {
             await new Promise((resolve) => setTimeout(resolve, delayMs));
             standaloneSubRecord = await findStandaloneSubscription(prisma, {
@@ -1699,13 +2043,16 @@ async function handlePaymentWebhookCore(
         }
 
         // Fallback: buscar matrícula via asaasSubscriptionId diretamente
-        const matriculaFromSub = await prisma.matricula.findFirst({
+        const matriculaFromSub = hasInvalidSubscriptionTenantLink ? null : await prisma.matricula.findFirst({
           where: {
+            contaId,
             aluno: { contaId },
             asaasSubscriptionId: subscriptionId,
           },
           select: {
             id: true,
+            contaId: true,
+            aluno: { select: { contaId: true } },
             alunoId: true,
             planoId: true,
             comboId: true,
@@ -1715,14 +2062,16 @@ async function handlePaymentWebhookCore(
           },
         });
 
-        if (!matriculaFromSub) {
+        if (
+          matriculaFromSub?.contaId !== contaId ||
+          matriculaFromSub.aluno.contaId !== contaId
+        ) {
           logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.subscription_mapping_missing', operation: 'resolve_subscription_payment' });
         } else {
           // Criar cobrança automaticamente (via matrícula)
           const planoOuCombo = matriculaFromSub.combo ?? matriculaFromSub.plano;
           const descricao = planoOuCombo?.nome ? `Mensalidade - ${planoOuCombo.nome}` : 'Mensalidade';
-          const parsedDueDate = (payload.payment as { dueDate?: string }).dueDate;
-          const vencimento = parsedDueDate ? new Date(parsedDueDate) : new Date();
+          const vencimento = subscriptionPaymentDueDate.start;
 
           const { cobranca: upserted } = await upsertCobrancaByAsaasPaymentId({
             contaId,
@@ -1736,14 +2085,14 @@ async function handlePaymentWebhookCore(
             asaasNetValue: payload.payment.netValue,
             formaPagamento: mapBillingTypeToFormaPagamento(payload.payment.billingType ?? '') ?? null,
           });
-          cobranca = upserted;
+          cobranca = { ...upserted, asaasId: null };
 
           recordPaymentWebhookOperation('subscription_charge_created');
 
           await auditLogService.record({
             contaId,
             action: 'finance.webhook.cobranca_created_from_subscription',
-            entity: { type: 'Cobranca', id: cobranca.id },
+            entity: { type: 'Cobranca', id: upserted.id },
             metadata: {
               event: payload.event,
               asaasPaymentId: payload.payment.id,
@@ -1755,11 +2104,10 @@ async function handlePaymentWebhookCore(
         }
       } else {
         // Criar cobrança usando dados da Subscription
-        const matricula = subscription.matricula;
+        const matricula = tenantScopedSubscription.matricula;
         const planoOuCombo = matricula.combo ?? matricula.plano;
         const descricao = planoOuCombo?.nome ? `Mensalidade - ${planoOuCombo.nome}` : 'Mensalidade';
-        const parsedDueDate = (payload.payment as { dueDate?: string }).dueDate;
-        const vencimento = parsedDueDate ? new Date(parsedDueDate) : new Date();
+        const vencimento = subscriptionPaymentDueDate.start;
 
         const { cobranca: upsertedSub } = await upsertCobrancaByAsaasPaymentId({
           contaId,
@@ -1773,19 +2121,19 @@ async function handlePaymentWebhookCore(
           asaasNetValue: payload.payment.netValue,
           formaPagamento: mapBillingTypeToFormaPagamento(payload.payment.billingType ?? '') ?? null,
         });
-        cobranca = upsertedSub;
+        cobranca = { ...upsertedSub, asaasId: null };
 
         recordPaymentWebhookOperation('subscription_charge_created');
 
         await auditLogService.record({
           contaId,
           action: 'finance.webhook.cobranca_created_from_subscription',
-          entity: { type: 'Cobranca', id: cobranca.id },
+          entity: { type: 'Cobranca', id: upsertedSub.id },
           metadata: {
             event: payload.event,
             asaasPaymentId: payload.payment.id,
             asaasSubscriptionId: subscriptionId,
-            subscriptionId: subscription.id,
+            subscriptionId: tenantScopedSubscription.id,
             matriculaId: matricula.id,
             valor: payload.payment.value,
           },
@@ -1794,7 +2142,13 @@ async function handlePaymentWebhookCore(
     }
 
     // 1.3 Se não encontrou cobrança e é de um parcelamento, criar cobrança automaticamente
-    if (!cobranca && payload.payment.installment) {
+    if (
+      !cobranca &&
+      !cobrancaMappingConflict &&
+      payload.payment.installment &&
+      subscriptionPaymentDueDate &&
+      !unresolvedCanonicalSubscriptionReference
+    ) {
       const asaasInstallmentId = payload.payment.installment;
       const installmentNumber = payload.payment.installmentNumber ?? 1;
 
@@ -1803,6 +2157,7 @@ async function handlePaymentWebhookCore(
         where: {
           contaId,
           asaasInstallmentId,
+          matricula: { contaId, aluno: { contaId } },
         },
         select: {
           id: true,
@@ -1813,6 +2168,8 @@ async function handlePaymentWebhookCore(
           matricula: {
             select: {
               id: true,
+              contaId: true,
+              aluno: { select: { contaId: true } },
               alunoId: true,
               responsavelFinanceiroId: true,
               planoId: true,
@@ -1824,14 +2181,16 @@ async function handlePaymentWebhookCore(
         },
       });
 
-      if (installmentPlan) {
+      if (
+        installmentPlan?.matricula.contaId === contaId &&
+        installmentPlan.matricula.aluno.contaId === contaId
+      ) {
         const matricula = installmentPlan.matricula;
         const planoOuCombo = matricula.combo ?? matricula.plano;
         const descricao = planoOuCombo?.nome
           ? `Parcela ${installmentNumber}/${installmentPlan.installmentCount} - ${planoOuCombo.nome}`
           : `Parcela ${installmentNumber}/${installmentPlan.installmentCount}`;
-        const parsedDueDate = payload.payment.dueDate;
-        const vencimento = parsedDueDate ? new Date(parsedDueDate) : new Date();
+        const vencimento = subscriptionPaymentDueDate.start;
 
         const { cobranca: upsertedInstallment } = await upsertCobrancaByAsaasPaymentId({
           contaId,
@@ -1845,14 +2204,14 @@ async function handlePaymentWebhookCore(
           asaasNetValue: payload.payment.netValue,
           formaPagamento: mapBillingTypeToFormaPagamento(payload.payment.billingType ?? '') ?? null,
         });
-        cobranca = upsertedInstallment;
+        cobranca = { ...upsertedInstallment, asaasId: null };
 
         recordPaymentWebhookOperation('installment_charge_created');
 
         await auditLogService.record({
           contaId,
           action: 'finance.webhook.cobranca_created_from_installment',
-          entity: { type: 'Cobranca', id: cobranca.id },
+          entity: { type: 'Cobranca', id: upsertedInstallment.id },
           metadata: {
             event: payload.event,
             asaasPaymentId: payload.payment.id,
@@ -1871,7 +2230,7 @@ async function handlePaymentWebhookCore(
         );
 
         const installmentCharge = await prisma.charge.upsert({
-          where: { cobrancaId: cobranca.id },
+          where: { cobrancaId: upsertedInstallment.id },
           update: {
             externalReference: installmentChargeExternalRef,
             asaasPaymentId: payload.payment.id,
@@ -1884,16 +2243,16 @@ async function handlePaymentWebhookCore(
             invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
           },
           create: {
-            id: cobranca.id,
+            id: upsertedInstallment.id,
             contaId,
-            cobrancaId: cobranca.id,
+            cobrancaId: upsertedInstallment.id,
             externalReference: installmentChargeExternalRef,
             status: 'CREATED',
             statusUpdatedAt: new Date(),
             asaasPaymentId: payload.payment.id,
             description: payload.payment.description ?? null,
             value: payload.payment.value,
-            dueDate: payload.payment.dueDate ? new Date(payload.payment.dueDate) : null,
+            dueDate: subscriptionPaymentDueDate.start,
             billingType: payload.payment.billingType ?? null,
             payerType: matricula.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO',
             payerId: matricula.responsavelFinanceiroId ?? matricula.alunoId,
@@ -1902,8 +2261,8 @@ async function handlePaymentWebhookCore(
           select: { id: true },
         });
 
-        await refreshReadModel({ chargeId: installmentCharge.id, cobrancaId: cobranca.id, contaId });
-      } else {
+        await refreshReadModel({ chargeId: installmentCharge.id, cobrancaId: upsertedInstallment.id, contaId });
+      } else if (!installmentPlan) {
         const standalonePlan = await prisma.standaloneInstallmentPlan.findFirst({
           where: { contaId, asaasInstallmentId },
           select: {
@@ -1939,8 +2298,7 @@ async function handlePaymentWebhookCore(
           const rawStatus = typeof payload.payment.status === 'string' ? payload.payment.status : '';
           const normalizedStatus = rawStatus.trim().toUpperCase();
           const chargeStatus = mapAsaasToChargeStatus(normalizedStatus);
-          const parsedDueDate = payload.payment.dueDate;
-          const vencimento = parsedDueDate ? new Date(parsedDueDate) : new Date();
+          const vencimento = subscriptionPaymentDueDate.start;
           const explicitPayerContext =
             standalonePlan.payerType && standalonePlan.payerId
               ? { payerType: standalonePlan.payerType, payerId: standalonePlan.payerId }
@@ -2077,21 +2435,55 @@ async function handlePaymentWebhookCore(
       }
     }
 
-    if (cobranca && !cobranca.asaasPaymentId) {
-      await prisma.cobranca.update({
-        where: { id: cobranca.id },
+    if (cobranca && !cobranca.asaasPaymentId && cobranca.asaasId === payload.payment.id) {
+      // O ID legado já é o vínculo deste payment; manter processamento idempotente.
+      cobranca = { ...cobranca, asaasPaymentId: payload.payment.id };
+    } else if (cobranca && !cobranca.asaasPaymentId) {
+      const claim = await prisma.cobranca.updateMany({
+        where: {
+          id: cobranca.id,
+          contaId,
+          asaasPaymentId: null,
+          asaasId: null,
+          status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO'] },
+        },
         data: { asaasPaymentId: payload.payment.id },
       });
-      cobranca = {
-        ...cobranca,
-        asaasPaymentId: payload.payment.id,
-      };
+      if (claim.count === 1) {
+        cobranca = { ...cobranca, asaasPaymentId: payload.payment.id };
+      } else {
+        const linkedToPayment = await prisma.cobranca.findFirst({
+          where: {
+            contaId,
+            id: cobranca.id,
+            OR: [{ asaasPaymentId: payload.payment.id }, { asaasId: payload.payment.id }],
+          },
+          select: {
+            id: true,
+            matriculaId: true,
+            status: true,
+            asaasPaymentId: true,
+            asaasId: true,
+            asaasStatus: true,
+            providerStatus: true,
+            version: true,
+            tipo: true,
+            formaPagamento: true,
+          },
+        });
+        if (linkedToPayment) {
+          cobranca = linkedToPayment;
+        } else {
+          cobranca = null;
+          cobrancaMappingConflict = true;
+        }
+      }
     }
 
     if (!cobranca) {
-      const stagedReference = paymentExternalReference?.match(
+      const stagedReference = !cobrancaMappingConflict ? paymentExternalReference?.match(
         /^enrollment-op:([^:]+):(subscription|fee)$/,
-      );
+      ) : null;
       if (stagedReference) {
         const [, operationId, kind] = stagedReference;
         const operation = await prisma.enrollmentCreationOperation.findFirst({
@@ -2143,6 +2535,7 @@ async function handlePaymentWebhookCore(
         severity: 'HIGH',
         localStatus: null,
         remoteStatus: normalizedStatus || null,
+        causeId: payload.eventId,
         metadata: {
           event: payload.event,
           subscription: payload.payment.subscription ?? null,

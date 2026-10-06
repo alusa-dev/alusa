@@ -1026,6 +1026,7 @@ enum FinanceReconciliationIssueType {
   PAYMENT_STATUS_DRIFT
   PAYMENT_MISSING_LOCAL_ENTITY
   PAYMENT_NEEDS_REVIEW
+  SUBSCRIPTION_NEEDS_REVIEW
   SUBSCRIPTION_STATUS_DRIFT
   INVOICE_STATUS_DRIFT
   INVOICE_UNKNOWN_STATUS
@@ -1368,6 +1369,7 @@ model Conta {
   sensitiveAccessLogs               SensitiveAccessLog[]
   consentRecords                    ConsentRecord[]
   financeReconciliationIssues       FinanceReconciliationIssue[]
+  asaasResourceOrigins              AsaasResourceOrigin[]
   financeWebhookSideEffectOutbox    FinanceWebhookSideEffectOutbox[]
   platformBillingAccounts           PlatformBillingAccount[]
   platformBillingCheckoutSessions   PlatformBillingCheckoutSession[]
@@ -3651,6 +3653,8 @@ model WebhookAsaas {
   @@index([contaId, recebidoEm], name: "idx_webhookasaas_conta_recebido")
   @@index([asaasPaymentId], name: "idx_webhookasaas_payment")
   @@index([asaasSubscriptionId], name: "idx_webhookasaas_subscription")
+  @@index([contaId, asaasSubscriptionId, recebidoEm], name: "idx_webhookasaas_conta_subscription_recebido")
+  @@index([contaId, asaasSubscriptionId, asaasPaymentId], name: "idx_webhookasaas_conta_subscription_payment")
   @@index([asaasTransferId], name: "idx_webhookasaas_transfer")
   @@index([processadoEm], name: "idx_webhookasaas_processado")
   @@index([status, sideEffectsReconciledAt, recebidoEm], name: "idx_webhookasaas_side_effect_reconciliation")
@@ -3685,6 +3689,8 @@ model WebhookAsaasArchive {
   @@index([contaId], name: "idx_webhookasaas_archive_conta")
   @@index([contaId, recebidoEm], name: "idx_webhookasaas_archive_conta_recebido")
   @@index([contaId, evento, recebidoEm], name: "idx_webhookasaas_archive_conta_evento_recebido")
+  @@index([contaId, asaasSubscriptionId, recebidoEm], name: "idx_webhookasaas_archive_conta_subscription_recebido")
+  @@index([contaId, asaasSubscriptionId, asaasPaymentId], name: "idx_webhookasaas_archive_conta_subscription_payment")
   @@index([status], name: "idx_webhookasaas_archive_status")
   @@index([eventId], name: "idx_webhookasaas_archive_event_id")
   @@index([payloadHash], name: "idx_webhookasaas_archive_payload_hash")
@@ -3863,6 +3869,38 @@ model FinanceReconciliationIssue {
   @@index([contaId, entityType, entityId], name: "idx_fin_recon_issue_entity")
   @@index([contaId, asaasId], name: "idx_fin_recon_issue_asaas")
   @@index([status, severity, detectedAt], name: "idx_fin_recon_issue_global_status")
+}
+
+enum AsaasResourceOriginType {
+  SUBSCRIPTION
+  PAYMENT
+  INSTALLMENT
+}
+
+enum AsaasResourceOriginValue {
+  ALUSA
+  EXTERNAL
+}
+
+/// Persistent operator decision about ownership of an Asaas resource.
+/// UNKNOWN is represented by the absence of a decision; issues remain independent.
+model AsaasResourceOrigin {
+  id             String                  @id @default(cuid())
+  contaId        String
+  resourceType   AsaasResourceOriginType
+  asaasId        String
+  origin         AsaasResourceOriginValue
+  reason         String
+  actorId        String
+  classifiedAt   DateTime                @default(now())
+  history        Json?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, resourceType, asaasId], name: "uq_asaas_resource_origin_tenant_resource")
+  @@index([contaId, origin, resourceType, classifiedAt], name: "idx_asaas_resource_origin_tenant_origin")
 }
 
 model WebhookJobLock {

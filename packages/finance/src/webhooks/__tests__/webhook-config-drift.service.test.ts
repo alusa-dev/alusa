@@ -7,13 +7,17 @@ const mocks = vi.hoisted(() => ({
   listWebhooks: vi.fn(),
   ensureWebhook: vi.fn(),
   issueUpsert: vi.fn(),
+  issueFindUnique: vi.fn(),
   issueUpdateMany: vi.fn(),
+  transaction: vi.fn(),
 }));
 
 vi.mock('@alusa/database', () => ({
   prisma: {
+    $transaction: mocks.transaction,
     asaasAccount: { findFirst: mocks.findFirst },
     financeReconciliationIssue: {
+      findUnique: mocks.issueFindUnique,
       upsert: mocks.issueUpsert,
       updateMany: mocks.issueUpdateMany,
     },
@@ -93,6 +97,10 @@ describe('webhook-config-drift.service', () => {
     });
     mocks.loadCredentials.mockResolvedValue({ apiKey: 'key_1' });
     mocks.issueUpsert.mockResolvedValue({ id: 'issue_1' });
+    mocks.issueFindUnique.mockResolvedValue(null);
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => callback({
+      financeReconciliationIssue: { findUnique: mocks.issueFindUnique, upsert: mocks.issueUpsert },
+    }));
     mocks.issueUpdateMany.mockResolvedValue({ count: 1 });
     mocks.ensureWebhook.mockResolvedValue({ webhookId: 'wh_1' });
   });
