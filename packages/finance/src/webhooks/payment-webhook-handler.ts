@@ -701,6 +701,7 @@ async function handleStandaloneChargeWebhook(
     id: string;
     status: ChargeStatus;
     asaasPaymentId: string | null;
+    paidAt?: Date | null;
     asaasStatus?: string | null;
     providerStatus?: string | null;
   }
@@ -845,6 +846,17 @@ async function handleStandaloneChargeWebhook(
     }),
     ...stateDimensionUpdate,
   };
+  if (stateDecision.kind === 'APPLY') {
+    if (payload.event === 'PAYMENT_RECEIVED_IN_CASH_UNDONE') {
+      updateData.paidAt = null;
+    } else if (['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(internalStatus)) {
+      const providerPaidAtValue = p.clientPaymentDate ?? p.paymentDate ?? null;
+      const providerPaidAt = providerPaidAtValue ? new Date(providerPaidAtValue) : null;
+      if (providerPaidAt && !Number.isNaN(providerPaidAt.getTime())) {
+        updateData.paidAt = charge.paidAt ?? providerPaidAt;
+      }
+    }
+  }
 
   const dueDateUpdate = resolveChargeDueDateUpdate(p.dueDate);
   if (dueDateUpdate) {
@@ -1297,7 +1309,14 @@ async function handlePaymentWebhookCore(
         if (resolveResult.type === 'charge' && resolveResult.chargeId && !resolveResult.cobrancaId) {
           const charge = await prisma.charge.findUnique({
             where: { id: resolveResult.chargeId },
-            select: { id: true, status: true, asaasPaymentId: true, asaasStatus: true, providerStatus: true },
+            select: {
+              id: true,
+              status: true,
+              asaasPaymentId: true,
+              asaasStatus: true,
+              providerStatus: true,
+              paidAt: true,
+            },
           });
           if (charge) {
             return handleStandaloneChargeWebhook(contaId, payload, charge);
@@ -1341,7 +1360,7 @@ async function handlePaymentWebhookCore(
         contaId,
         OR: chargeLookupOr,
       },
-      select: { id: true, cobrancaId: true, status: true, asaasPaymentId: true, asaasStatus: true, providerStatus: true },
+      select: { id: true, cobrancaId: true, status: true, asaasPaymentId: true, asaasStatus: true, providerStatus: true, paidAt: true },
     });
 
     // Para cobranças standalone (sem cobrancaId), processar apenas o Charge
@@ -2310,7 +2329,7 @@ async function handlePaymentWebhookCore(
         ? chargeFromExternalRef
         : await prisma.charge.findFirst({
             where: { contaId, OR: [{ asaasPaymentId: payload.payment.id }, { cobrancaId: cobranca.id }] },
-            select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true, providerStatus: true },
+            select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true, providerStatus: true, paidAt: true },
           });
 
       if (riskCharge) {
@@ -2370,7 +2389,7 @@ async function handlePaymentWebhookCore(
           ? chargeFromExternalRef
           : await prisma.charge.findFirst({
               where: { contaId, OR: [{ asaasPaymentId: payload.payment.id }, { cobrancaId: cobranca.id }] },
-              select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true, providerStatus: true },
+              select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true, providerStatus: true, paidAt: true },
             });
 
         if (restoredCharge && restoredCharge.status === 'CANCELED') {
@@ -2596,7 +2615,7 @@ async function handlePaymentWebhookCore(
               contaId,
               OR: [{ asaasPaymentId: payload.payment.id }, { cobrancaId: cobranca.id }],
             },
-            select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true, providerStatus: true },
+            select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true, providerStatus: true, paidAt: true },
           });
 
     let chargeStateDecision: ChargeStateDecision | null = null;
@@ -2615,6 +2634,16 @@ async function handlePaymentWebhookCore(
         decision: chargeStateDecision,
         now: occurredAt,
       });
+      const providerPaidAtValue = p.clientPaymentDate ?? p.paymentDate ?? null;
+      const parsedProviderPaidAt = providerPaidAtValue ? new Date(providerPaidAtValue) : null;
+      const chargePaidAtUpdate =
+        chargeStateDecision.kind !== 'APPLY'
+          ? {}
+          : payload.event === 'PAYMENT_RECEIVED_IN_CASH_UNDONE'
+            ? { paidAt: null }
+            : isConfirmed && parsedProviderPaidAt && !Number.isNaN(parsedProviderPaidAt.getTime())
+              ? { paidAt: charge.paidAt ?? parsedProviderPaidAt }
+              : {};
       const baseChargeUpdate = {
         ...buildChargeAsaasSnapshotUpdate(payload, {
           currentAsaasStatus: charge.providerStatus ?? charge.asaasStatus,
@@ -2622,6 +2651,7 @@ async function handlePaymentWebhookCore(
           localCobrancaStatus: cobranca.status,
         }),
         ...chargeStateDimensionUpdate,
+        ...chargePaidAtUpdate,
         ...(charge.asaasPaymentId ? {} : { asaasPaymentId: payload.payment.id }),
       };
 

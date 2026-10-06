@@ -36,6 +36,8 @@ const report = {
   generatedAt: '2026-07-30T12:00:00.000Z',
   timeZone: 'America/Manaus',
   dateBasis: 'DUE_DATE',
+  obligationDateBasis: 'DUE_DATE',
+  cashDateBasis: 'DUE_DATE',
   summary: {
     totalCharges: 100,
     received: 0,
@@ -203,6 +205,9 @@ describe('GET /api/financeiro/relatorios/export', () => {
           grossAmount: 100,
           receivedAmount: 100,
           outstandingAmount: 0,
+          processingAmount: 0,
+          toSettleAmount: 0,
+          availableAmount: 98,
           feeAmount: 2,
           refundedAmount: 0,
           netAmount: 98,

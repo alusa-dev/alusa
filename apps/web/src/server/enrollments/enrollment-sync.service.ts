@@ -1116,6 +1116,9 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
       data: input.targetStatus === 'CANCELADA'
         ? {
             status: newStatus,
+            ...(newStatus === StatusMatricula.CANCELADA && verify.status !== StatusMatricula.CANCELADA
+              ? { cancelledAt: new Date() }
+              : {}),
             statusFinanceiro: 'SUSPENSO',
             statusContrato: 'CANCELADO',
             billingProvisionStatus: 'CANCELADO',

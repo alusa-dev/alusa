@@ -23,8 +23,8 @@ vi.mock('@alusa/database', () => {
         updateMany: vi.fn(async () => ({ count: 0 })),
       },
       matricula: {
-        findUnique: vi.fn(),
-        update: vi.fn(),
+        findFirst: vi.fn(),
+        updateMany: vi.fn(async () => ({ count: 1 })),
       },
       matriculaOperacao: {
         updateMany: vi.fn(async () => ({ count: 0 })),
@@ -140,7 +140,7 @@ describe('handleSubscriptionWebhook', () => {
 
     expect(res.success).toBe(true);
     expect(prisma.subscription.findFirst).not.toHaveBeenCalled();
-    expect(prisma.matricula.update).not.toHaveBeenCalled();
+    expect(prisma.matricula.updateMany).not.toHaveBeenCalled();
     expect(prisma.rematriculaFamiliar.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
@@ -172,7 +172,7 @@ describe('handleSubscriptionWebhook', () => {
     } as never);
 
     vi.mocked(prisma.subscription.update).mockResolvedValueOnce({} as never);
-    vi.mocked(prisma.matricula.update).mockResolvedValueOnce({} as never);
+    vi.mocked(prisma.matricula.updateMany).mockResolvedValueOnce({ count: 1 } as never);
 
     const res = await handleSubscriptionWebhook('t1', {
       event: 'SUBSCRIPTION_UPDATED',
@@ -190,8 +190,8 @@ describe('handleSubscriptionWebhook', () => {
       }),
     });
 
-    expect(prisma.matricula.update).toHaveBeenCalledWith({
-      where: { id: 'm1' },
+    expect(prisma.matricula.updateMany).toHaveBeenCalledWith({
+      where: { id: 'm1', contaId: 't1' },
       data: { asaasSubscriptionId: 'asaas_sub_1' },
     });
 
@@ -217,8 +217,8 @@ describe('handleSubscriptionWebhook', () => {
     } as never);
 
     vi.mocked(prisma.subscription.update).mockResolvedValueOnce({} as never);
-    vi.mocked(prisma.matricula.update).mockResolvedValue({} as never);
-    vi.mocked(prisma.matricula.findUnique).mockResolvedValue({ status: 'ATIVA' } as never);
+    vi.mocked(prisma.matricula.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.matricula.findFirst).mockResolvedValue({ status: 'ATIVA' } as never);
 
     const res = await handleSubscriptionWebhook('t1', {
       event: 'SUBSCRIPTION_DELETED',
@@ -228,10 +228,10 @@ describe('handleSubscriptionWebhook', () => {
     expect(res.success).toBe(true);
 
     // Verifica que matrícula foi atualizada para CANCELADA (segunda chamada)
-    expect(prisma.matricula.update).toHaveBeenCalledWith(
+    expect(prisma.matricula.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'm1' },
-        data: { status: 'CANCELADA' },
+        where: expect.objectContaining({ id: 'm1', contaId: 't1', status: 'ATIVA' }),
+        data: expect.objectContaining({ status: 'CANCELADA', cancelledAt: expect.any(Date) }),
       }),
     );
 
@@ -240,6 +240,39 @@ describe('handleSubscriptionWebhook', () => {
       expect.objectContaining({
         action: 'finance.webhook.matricula_cancelada_via_subscription',
         entity: { type: 'Matricula', id: 'm1' },
+      }),
+    );
+  });
+
+  it('não atualiza nem audita matrícula de outro tenant vinculada à assinatura', async () => {
+    const { prisma } = await import('@alusa/database');
+    const { auditLogService } = await import('../../foundation/audit-log.service');
+
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({
+      id: 's-tenant-a',
+      status: 'ACTIVE',
+      asaasSubscriptionId: 'asaas_sub_1',
+      externalReference: 'subscription:s1',
+      matriculaId: 'm-tenant-b',
+    } as never);
+    vi.mocked(prisma.subscription.update).mockResolvedValueOnce({} as never);
+    vi.mocked(prisma.matricula.updateMany).mockResolvedValueOnce({ count: 0 } as never);
+
+    const res = await handleSubscriptionWebhook('t1', {
+      event: 'SUBSCRIPTION_DELETED',
+      subscription: { id: 'asaas_sub_1', deleted: true },
+    });
+
+    expect(res.success).toBe(true);
+    expect(prisma.matricula.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.matricula.updateMany).toHaveBeenCalledWith({
+      where: { id: 'm-tenant-b', contaId: 't1' },
+      data: { asaasSubscriptionId: 'asaas_sub_1' },
+    });
+    expect(prisma.matricula.findFirst).not.toHaveBeenCalled();
+    expect(auditLogService.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        entity: { type: 'Matricula', id: 'm-tenant-b' },
       }),
     );
   });
@@ -257,8 +290,8 @@ describe('handleSubscriptionWebhook', () => {
     } as never);
 
     vi.mocked(prisma.subscription.update).mockResolvedValueOnce({} as never);
-    vi.mocked(prisma.matricula.findUnique).mockResolvedValueOnce({ status: 'ATIVA', pausaAtiva: false, integrationStatus: 'SINCRONIZADO' } as never);
-    vi.mocked(prisma.matricula.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.matricula.findFirst).mockResolvedValueOnce({ status: 'ATIVA', pausaAtiva: false, integrationStatus: 'SINCRONIZADO' } as never);
+    vi.mocked(prisma.matricula.updateMany).mockResolvedValue({ count: 1 } as never);
 
     const res = await handleSubscriptionWebhook('t1', {
       event: 'SUBSCRIPTION_INACTIVATED',
@@ -268,9 +301,9 @@ describe('handleSubscriptionWebhook', () => {
     expect(res.success).toBe(true);
 
     // Verifica que matrícula foi pausada com todos os campos novos
-    expect(prisma.matricula.update).toHaveBeenCalledWith(
+    expect(prisma.matricula.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'm1' },
+        where: expect.objectContaining({ id: 'm1', contaId: 't1', status: 'ATIVA' }),
         data: expect.objectContaining({
           status: 'PAUSADA',
           pausaAtiva: true,
@@ -314,8 +347,8 @@ describe('handleSubscriptionWebhook', () => {
     } as never);
 
     vi.mocked(prisma.subscription.update).mockResolvedValueOnce({} as never);
-    vi.mocked(prisma.matricula.findUnique).mockResolvedValueOnce({ status: 'PAUSADA', pausaAtiva: true, integrationStatus: 'PENDENTE_SINCRONISMO' } as never);
-    vi.mocked(prisma.matricula.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.matricula.findFirst).mockResolvedValueOnce({ status: 'PAUSADA', pausaAtiva: true, integrationStatus: 'PENDENTE_SINCRONISMO' } as never);
+    vi.mocked(prisma.matricula.updateMany).mockResolvedValue({ count: 1 } as never);
 
     const res = await handleSubscriptionWebhook('t1', {
       event: 'SUBSCRIPTION_UPDATED',
@@ -325,9 +358,9 @@ describe('handleSubscriptionWebhook', () => {
     expect(res.success).toBe(true);
 
     // Verifica que matrícula foi reativada com todos os campos novos
-    expect(prisma.matricula.update).toHaveBeenCalledWith(
+    expect(prisma.matricula.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'm1' },
+        where: expect.objectContaining({ id: 'm1', contaId: 't1', status: 'PAUSADA' }),
         data: expect.objectContaining({
           status: 'ATIVA',
           pausaAtiva: false,
@@ -371,8 +404,8 @@ describe('handleSubscriptionWebhook', () => {
 
     vi.mocked(prisma.subscription.update).mockResolvedValueOnce({} as never);
     // Matrícula já está cancelada - não deve ser reativada
-    vi.mocked(prisma.matricula.findUnique).mockResolvedValueOnce({ status: 'CANCELADA' } as never);
-    vi.mocked(prisma.matricula.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.matricula.findFirst).mockResolvedValueOnce({ status: 'CANCELADA' } as never);
+    vi.mocked(prisma.matricula.updateMany).mockResolvedValue({ count: 1 } as never);
 
     await handleSubscriptionWebhook('t1', {
       event: 'SUBSCRIPTION_UPDATED',
@@ -380,7 +413,7 @@ describe('handleSubscriptionWebhook', () => {
     });
 
     // Só deve ter sido chamado 1x (para setar asaasSubscriptionId), não para mudar status
-    const updateCalls = vi.mocked(prisma.matricula.update).mock.calls;
+    const updateCalls = vi.mocked(prisma.matricula.updateMany).mock.calls;
     const statusChangeCalls = updateCalls.filter((call) => 'status' in (call[0].data as Record<string, unknown>));
     expect(statusChangeCalls).toHaveLength(0);
   });
@@ -398,12 +431,12 @@ describe('handleSubscriptionWebhook', () => {
     } as never);
 
     vi.mocked(prisma.subscription.update).mockResolvedValueOnce({} as never);
-    vi.mocked(prisma.matricula.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.matricula.findFirst).mockResolvedValueOnce({
       status: 'PAUSADA',
       pausaAtiva: true,
       integrationStatus: 'PENDENTE_SINCRONISMO',
     } as never);
-    vi.mocked(prisma.matricula.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.matricula.updateMany).mockResolvedValue({ count: 1 } as never);
 
     const res = await handleSubscriptionWebhook('t1', {
       event: 'SUBSCRIPTION_INACTIVATED',
@@ -413,9 +446,9 @@ describe('handleSubscriptionWebhook', () => {
     expect(res.success).toBe(true);
 
     // Deve apenas confirmar integrationStatus sem mudar status da matrícula
-    expect(prisma.matricula.update).toHaveBeenCalledWith(
+    expect(prisma.matricula.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'm1' },
+        where: expect.objectContaining({ id: 'm1', contaId: 't1', status: 'PAUSADA' }),
         data: { integrationStatus: 'SINCRONIZADO', warningCode: null },
       }),
     );
@@ -450,12 +483,12 @@ describe('handleSubscriptionWebhook', () => {
     } as never);
 
     vi.mocked(prisma.subscription.update).mockResolvedValueOnce({} as never);
-    vi.mocked(prisma.matricula.findUnique).mockResolvedValueOnce({
+    vi.mocked(prisma.matricula.findFirst).mockResolvedValueOnce({
       status: 'ATIVA',
       pausaAtiva: false,
       integrationStatus: 'PENDENTE_SINCRONISMO',
     } as never);
-    vi.mocked(prisma.matricula.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.matricula.updateMany).mockResolvedValue({ count: 1 } as never);
 
     const res = await handleSubscriptionWebhook('t1', {
       event: 'SUBSCRIPTION_UPDATED',
@@ -464,9 +497,9 @@ describe('handleSubscriptionWebhook', () => {
 
     expect(res.success).toBe(true);
 
-    expect(prisma.matricula.update).toHaveBeenCalledWith(
+    expect(prisma.matricula.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'm1' },
+        where: expect.objectContaining({ id: 'm1', contaId: 't1', status: 'ATIVA' }),
         data: { integrationStatus: 'SINCRONIZADO', warningCode: null },
       }),
     );

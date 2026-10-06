@@ -2508,8 +2508,12 @@ export async function cancelRenewalProcess(
 
     if (futureIds.length > 0) {
       await tx.matricula.updateMany({
-        where: { contaId: input.contaId, id: { in: futureIds } },
-        data: { status: 'CANCELADA', statusFinanceiro: 'SUSPENSO', billingProvisionStatus: 'CANCELADO' },
+        where: { contaId: input.contaId, id: { in: futureIds }, status: { not: 'CANCELADA' } },
+        data: { status: 'CANCELADA', cancelledAt: new Date() },
+      });
+      await tx.matricula.updateMany({
+        where: { contaId: input.contaId, id: { in: futureIds }, status: 'CANCELADA' },
+        data: { statusFinanceiro: 'SUSPENSO', billingProvisionStatus: 'CANCELADO' },
       });
     }
     await tx.rematriculaItem.updateMany({

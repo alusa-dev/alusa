@@ -67,7 +67,7 @@ export function EnrollmentCancellationChart({
             Matrículas × Cancelamentos
           </h3>
           <p className="mt-1 text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">
-            Evolução mensal de matrículas e cancelamentos no ano atual.
+            Evolução mensal de matrículas e cancelamentos no período selecionado.
           </p>
         </div>
         <div className="flex items-center gap-4 text-xs text-gray-500">
@@ -84,7 +84,7 @@ export function EnrollmentCancellationChart({
         <Skeleton className="mt-6 h-60 w-full" />
       ) : !hasData ? (
         <p className="grid h-60 place-items-center text-sm text-gray-500">
-          Sem movimentações de matrícula no ano atual.
+          Sem movimentações de matrícula no período selecionado.
         </p>
       ) : (
         <div className="mt-5 overflow-x-auto">

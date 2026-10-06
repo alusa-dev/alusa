@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 import { DASHBOARD_SECTION_CARD_CLASSNAME } from '@/app/(app)/dashboard/components/utils';
 import { Download, Refresh } from '@/components/icons/icons';
@@ -8,14 +8,18 @@ import { TableLayout } from '@/components/layout/TableLayout';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import { Button } from '@/components/ui/button';
 import { ExecutiveFinancialOverview } from './components/ExecutiveFinancialOverview';
+import { DelinquencyDetailsTable, ReportDetailsDrawer, ReportDetailsTable } from './components/ReportDetails';
 import { ReportsDataQualityNotice } from './components/ReportsDataQualityNotice';
 import { ReportsFiltersBar } from './components/ReportsFiltersBar';
 import { ReportsErrorState } from './components/ReportsStates';
 import { useReportFilters } from './hooks/useReportFilters';
 import { useReportsQuery } from './hooks/useReportsQuery';
+import type { FinancialReportDetailItem } from './dtos';
+import { nextReportSortDirection } from './utils/report-behavior';
 
 export function ReportsPage() {
   const { filters, setFilters } = useReportFilters();
+  const [selectedItem, setSelectedItem] = useState<FinancialReportDetailItem | null>(null);
   const overviewFilters = useMemo(
     () => ({
       ...filters,
@@ -31,8 +35,12 @@ export function ReportsPage() {
     }),
     [filters],
   );
-  const { data, loading, error, refresh, queryString } = useReportsQuery(overviewFilters);
-  const overview = data?.view === 'overview' ? data : null;
+  const queryFilters = useMemo(
+    () => (filters.view === 'overview' ? overviewFilters : filters),
+    [filters, overviewFilters],
+  );
+  const { data: selectedReport, loading, error, refresh, queryString } = useReportsQuery(queryFilters);
+  const overview = selectedReport?.view === 'overview' ? selectedReport : null;
   const businessHealthFilters = useMemo(() => {
     const end = new Date();
     const start = new Date(end);
@@ -50,27 +58,11 @@ export function ReportsPage() {
     refresh: refreshBusinessHealth,
   } = useReportsQuery(businessHealthFilters);
   const businessHealth = businessHealthData?.view === 'overview' ? businessHealthData : null;
-  const annualEnrollmentFilters = useMemo(() => {
-    const end = new Date();
-    return {
-      ...overviewFilters,
-      startDate: `${end.getUTCFullYear()}-01-01`,
-      endDate: end.toISOString().slice(0, 10),
-      dateBasis: 'DUE_DATE' as const,
-    };
-  }, [overviewFilters]);
-  const {
-    data: annualEnrollmentData,
-    loading: annualEnrollmentLoading,
-    refresh: refreshAnnualEnrollment,
-  } = useReportsQuery(annualEnrollmentFilters);
-  const annualEnrollment = annualEnrollmentData?.view === 'overview' ? annualEnrollmentData : null;
   const refreshAll = () => {
     refresh();
     refreshBusinessHealth();
-    refreshAnnualEnrollment();
   };
-  const refreshing = loading || businessHealthLoading || annualEnrollmentLoading;
+  const refreshing = loading || businessHealthLoading;
 
   const generatedLabel = useMemo(() => {
     if (!overview?.generatedAt) return 'Aguardando atualização';
@@ -80,6 +72,7 @@ export function ReportsPage() {
       timeZone: overview.timeZone,
     }).format(new Date(overview.generatedAt))}`;
   }, [overview]);
+  const reportError = error;
 
   return (
     <TableLayout
@@ -96,7 +89,7 @@ export function ReportsPage() {
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
               Filtros do relatório
             </p>
-            <ReportsFiltersBar filters={overviewFilters} onChange={setFilters} />
+            <ReportsFiltersBar filters={filters} onChange={setFilters} />
           </div>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center lg:mt-0 lg:justify-end">
             <p className="text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">
@@ -107,10 +100,10 @@ export function ReportsPage() {
                 <Refresh className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
                 Atualizar
               </Button>
-              <Button asChild={!loading && !error} size="sm" disabled={loading || Boolean(error)}>
-                {!loading && !error ? (
+              <Button asChild={!loading && !reportError} size="sm" disabled={loading || Boolean(reportError)}>
+                {!loading && !reportError ? (
                   <a
-                    href={`/api/financeiro/relatorios/export?view=overview&${queryString}`}
+                    href={`/api/financeiro/relatorios/export?view=${filters.view}&${queryString}`}
                     download
                   >
                     <Download className="h-4 w-4" />
@@ -127,20 +120,54 @@ export function ReportsPage() {
           </div>
         </section>
 
-        {error ? (
-          <ReportsErrorState message={error} onRetry={refreshAll} />
-        ) : (
+        {reportError ? (
+          <ReportsErrorState message={reportError} onRetry={refreshAll} />
+        ) : filters.view === 'overview' ? (
           <ExecutiveFinancialOverview
             data={overview}
             loading={loading}
             businessHealthData={businessHealth}
             businessHealthLoading={businessHealthLoading}
-            annualEnrollmentData={annualEnrollment}
-            annualEnrollmentLoading={annualEnrollmentLoading}
+            periodData={overview}
+            periodLoading={loading}
           />
-        )}
+        ) : selectedReport?.view === 'receipts' ? (
+          <>
+            <ReportsDataQualityNotice dataQuality={selectedReport.dataQuality} />
+            <ReportDetailsTable
+              data={selectedReport.details}
+              loading={loading}
+              timeZone={selectedReport.timeZone}
+              receipts
+              onPageChange={(page) => setFilters({ page })}
+              onSortChange={(sort) =>
+                setFilters({
+                  sort,
+                  direction: nextReportSortDirection(filters.sort, filters.direction, sort),
+                })
+              }
+              sort={{ columnId: filters.sort, direction: filters.direction.toUpperCase() as 'ASC' | 'DESC' }}
+              onSelect={setSelectedItem}
+            />
+            <ReportDetailsDrawer
+              item={selectedItem}
+              timeZone={selectedReport.timeZone}
+              onClose={() => setSelectedItem(null)}
+            />
+          </>
+        ) : selectedReport?.view === 'delinquency' ? (
+          <>
+            <ReportsDataQualityNotice dataQuality={selectedReport.dataQuality} />
+            <DelinquencyDetailsTable
+              data={selectedReport.details}
+              loading={loading}
+              timeZone={selectedReport.timeZone}
+              onPageChange={(page) => setFilters({ page })}
+            />
+          </>
+        ) : null}
 
-        <ReportsDataQualityNotice dataQuality={overview?.dataQuality} />
+        {filters.view === 'overview' && <ReportsDataQualityNotice dataQuality={overview?.dataQuality} />}
 
         <div className="flex justify-center pt-1">
           <AsaasSeal variant="negativo-preto" />

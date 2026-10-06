@@ -1467,7 +1467,7 @@ export async function atualizarStatusMatricula(input: {
   // Buscar matrícula atual para validar transição
   const atual = await prisma.matricula.findFirst({
     where: { id: input.id, aluno: { contaId: input.contaId } },
-    select: { id: true, status: true },
+    select: { id: true, status: true, cancelledAt: true },
   });
 
   if (!atual) {
@@ -1491,7 +1491,12 @@ export async function atualizarStatusMatricula(input: {
 
   await prisma.matricula.update({
     where: { id: input.id },
-    data: { status: input.status },
+    data: {
+      status: input.status,
+      ...(input.status === 'CANCELADA'
+        ? { cancelledAt: atual.cancelledAt ?? new Date() }
+        : {}),
+    },
   });
 
   return prisma.matricula.findFirst({ where: { id: input.id } });

@@ -96,10 +96,11 @@ async function projectCanonicalSubscriptionWebhook(input: {
 
 async function markMatriculaDivergence(params: {
   matriculaId: string;
+  contaId: string;
   warningCode: string;
 }) {
-  await prisma.matricula.update({
-    where: { id: params.matriculaId },
+  await prisma.matricula.updateMany({
+    where: { id: params.matriculaId, contaId: params.contaId },
     data: {
       integrationStatus: 'DIVERGENTE',
       warningCode: params.warningCode,
@@ -109,6 +110,7 @@ async function markMatriculaDivergence(params: {
   await prisma.matriculaOperacao.updateMany({
     where: {
       matriculaId: params.matriculaId,
+      contaId: params.contaId,
       status: 'PENDENTE_SINCRONISMO',
       tipo: { in: ['PAUSA', 'REATIVACAO'] },
     },
@@ -413,17 +415,17 @@ export async function handleSubscriptionWebhook(
       }
 
       // Compat: manter matricula.asaasSubscriptionId como fallback de resolução
-      await prisma.matricula.update({
-        where: { id: subscription.matriculaId },
+      const ownedMatricula = await prisma.matricula.updateMany({
+        where: { id: subscription.matriculaId, contaId },
         data: { asaasSubscriptionId: payload.subscription.id },
       });
 
       // Se assinatura foi deletada/inativada, atualizar status da matrícula correspondente
       // IMPORTANTE: Isso garante que matrículas não fiquem "órfãs" com status ativo
       // quando a assinatura foi cancelada no Asaas
-      if (nextStatus === 'DELETED') {
-        const matricula = await prisma.matricula.findUnique({
-          where: { id: subscription.matriculaId },
+      if (ownedMatricula.count > 0 && nextStatus === 'DELETED') {
+        const matricula = await prisma.matricula.findFirst({
+          where: { id: subscription.matriculaId, contaId },
           select: { status: true },
         });
 
@@ -431,24 +433,30 @@ export async function handleSubscriptionWebhook(
           ? shouldApplyMatriculaUpdate(matricula.status, 'CANCELADA')
           : { allowed: false, reason: 'Matrícula não encontrada' };
 
-        if (guard.allowed) {
-          await prisma.matricula.update({
-            where: { id: subscription.matriculaId },
-            data: { status: 'CANCELADA' },
+        if (guard.allowed && matricula) {
+          const cancelledAt = new Date();
+          const update = await prisma.matricula.updateMany({
+            where: {
+              id: subscription.matriculaId,
+              contaId,
+              status: matricula.status,
+            },
+            data: { status: 'CANCELADA', cancelledAt },
           });
 
-          await auditLogService.record({
+          if (update.count > 0) await auditLogService.record({
             contaId,
             action: 'finance.webhook.matricula_cancelada_via_subscription',
             entity: { type: 'Matricula', id: subscription.matriculaId },
             metadata: {
               event: payload.event,
+              cancelledAt: cancelledAt.toISOString(),
               subscriptionId: subscription.id,
               asaasSubscriptionId: payload.subscription.id,
               reason: 'Assinatura deletada no Asaas',
             },
           });
-        } else {
+        } else if (matricula) {
           // Registrar anomalia se transição deveria ter ocorrido mas foi bloqueada
           await auditLogService.record({
             contaId,
@@ -467,10 +475,10 @@ export async function handleSubscriptionWebhook(
             },
           });
         }
-      } else if (nextStatus === 'INACTIVE') {
+      } else if (ownedMatricula.count > 0 && nextStatus === 'INACTIVE') {
         // Se assinatura inativada, confirmar pausa da matrícula
-        const matricula = await prisma.matricula.findUnique({
-          where: { id: subscription.matriculaId },
+        const matricula = await prisma.matricula.findFirst({
+          where: { id: subscription.matriculaId, contaId },
           select: { status: true, pausaAtiva: true, integrationStatus: true },
         });
 
@@ -479,8 +487,8 @@ export async function handleSubscriptionWebhook(
           : { allowed: false, reason: 'Matrícula não encontrada' };
 
         if (guard.allowed && matricula?.status === 'ATIVA') {
-          await prisma.matricula.update({
-            where: { id: subscription.matriculaId },
+          await prisma.matricula.updateMany({
+            where: { id: subscription.matriculaId, contaId, status: matricula.status },
             data: {
               status: 'PAUSADA',
               pausaAtiva: true,
@@ -493,6 +501,7 @@ export async function handleSubscriptionWebhook(
           await prisma.matriculaOperacao.updateMany({
             where: {
               matriculaId: subscription.matriculaId,
+              contaId,
               tipo: 'PAUSA',
               status: 'PENDENTE_SINCRONISMO',
             },
@@ -512,14 +521,15 @@ export async function handleSubscriptionWebhook(
           });
         } else if (matricula?.status === 'PAUSADA' && matricula.integrationStatus === 'PENDENTE_SINCRONISMO') {
           // Matrícula já está pausada localmente, apenas confirmar sincronização
-          await prisma.matricula.update({
-            where: { id: subscription.matriculaId },
+          await prisma.matricula.updateMany({
+            where: { id: subscription.matriculaId, contaId, status: matricula.status },
             data: { integrationStatus: 'SINCRONIZADO', warningCode: null },
           });
 
           await prisma.matriculaOperacao.updateMany({
             where: {
               matriculaId: subscription.matriculaId,
+              contaId,
               tipo: 'PAUSA',
               status: 'PENDENTE_SINCRONISMO',
             },
@@ -537,10 +547,11 @@ export async function handleSubscriptionWebhook(
               reason: 'Webhook confirmou pausa já aplicada localmente',
             },
           });
-        } else if (!guard.allowed) {
+        } else if (!guard.allowed && matricula) {
           if (guard.anomaly || matricula?.integrationStatus === 'PENDENTE_SINCRONISMO') {
             await markMatriculaDivergence({
               matriculaId: subscription.matriculaId,
+              contaId,
               warningCode: 'DIVERGENCIA_STATUS_ASSINATURA',
             });
           }
@@ -562,10 +573,10 @@ export async function handleSubscriptionWebhook(
             },
           });
         }
-      } else if (nextStatus === 'ACTIVE') {
+      } else if (ownedMatricula.count > 0 && nextStatus === 'ACTIVE') {
         // Se assinatura reativada, confirmar reativação da matrícula
-        const matricula = await prisma.matricula.findUnique({
-          where: { id: subscription.matriculaId },
+        const matricula = await prisma.matricula.findFirst({
+          where: { id: subscription.matriculaId, contaId },
           select: { status: true, pausaAtiva: true, integrationStatus: true },
         });
 
@@ -574,8 +585,8 @@ export async function handleSubscriptionWebhook(
           : { allowed: false, reason: 'Matrícula não encontrada' };
 
         if (guard.allowed && matricula?.status === 'PAUSADA') {
-          await prisma.matricula.update({
-            where: { id: subscription.matriculaId },
+          await prisma.matricula.updateMany({
+            where: { id: subscription.matriculaId, contaId, status: matricula.status },
             data: {
               status: 'ATIVA',
               pausaAtiva: false,
@@ -591,6 +602,7 @@ export async function handleSubscriptionWebhook(
           await prisma.matriculaOperacao.updateMany({
             where: {
               matriculaId: subscription.matriculaId,
+              contaId,
               tipo: 'REATIVACAO',
               status: 'PENDENTE_SINCRONISMO',
             },
@@ -610,14 +622,15 @@ export async function handleSubscriptionWebhook(
           });
         } else if (matricula?.status === 'ATIVA' && matricula.integrationStatus === 'PENDENTE_SINCRONISMO') {
           // Matrícula já está ativa localmente, apenas confirmar sincronização
-          await prisma.matricula.update({
-            where: { id: subscription.matriculaId },
+          await prisma.matricula.updateMany({
+            where: { id: subscription.matriculaId, contaId, status: matricula.status },
             data: { integrationStatus: 'SINCRONIZADO', warningCode: null },
           });
 
           await prisma.matriculaOperacao.updateMany({
             where: {
               matriculaId: subscription.matriculaId,
+              contaId,
               tipo: 'REATIVACAO',
               status: 'PENDENTE_SINCRONISMO',
             },
@@ -635,10 +648,11 @@ export async function handleSubscriptionWebhook(
               reason: 'Webhook confirmou reativação já aplicada localmente',
             },
           });
-        } else if (!guard.allowed) {
+        } else if (!guard.allowed && matricula) {
           if (guard.anomaly || matricula?.integrationStatus === 'PENDENTE_SINCRONISMO') {
             await markMatriculaDivergence({
               matriculaId: subscription.matriculaId,
+              contaId,
               warningCode: 'DIVERGENCIA_STATUS_ASSINATURA',
             });
           }

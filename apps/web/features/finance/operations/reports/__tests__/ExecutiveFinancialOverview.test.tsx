@@ -2,8 +2,9 @@ import * as React from 'react';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { FinancialOverviewReport } from '../dtos';
+import type { FinancialOverviewReport, FinancialReportDetailItem } from '../dtos';
 import { ExecutiveFinancialOverview } from '../components/ExecutiveFinancialOverview';
+import { ReportDetailsDrawer } from '../components/ReportDetails';
 
 function buildReport(
   summary: Partial<FinancialOverviewReport['summary']> = {},
@@ -13,6 +14,8 @@ function buildReport(
     generatedAt: '2026-07-30T20:00:00.000Z',
     timeZone: 'America/Sao_Paulo',
     dateBasis: 'DUE_DATE',
+    obligationDateBasis: 'DUE_DATE',
+    cashDateBasis: 'DUE_DATE',
     summary: {
       totalCharges: 1000,
       received: 800,
@@ -54,6 +57,66 @@ function buildReport(
 
 describe('ExecutiveFinancialOverview', () => {
   afterEach(() => cleanup());
+
+  it('identifica a média mensal vigente como baseada nas matrículas ativas', () => {
+    render(
+      React.createElement(ExecutiveFinancialOverview, { data: buildReport(), loading: false }),
+    );
+
+    expect(screen.getByText('Mensalidade média vigente')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('Como calculamos Mensalidade média vigente'),
+    ).toBeInTheDocument();
+  });
+
+  it('expõe processamento e liquidação na composição do detalhe financeiro', () => {
+    const item: FinancialReportDetailItem = {
+      id: 'charge-1',
+      sourceId: 'charge-1',
+      source: 'CHARGE',
+      origin: 'STANDALONE',
+      type: 'AVULSA',
+      description: 'Cobrança',
+      status: 'PROCESSING',
+      payerId: null,
+      payerName: 'Responsável',
+      payerEmail: null,
+      payerPhone: null,
+      studentId: null,
+      studentName: null,
+      matriculaId: null,
+      turmaId: null,
+      turmaName: null,
+      planoId: null,
+      planoName: null,
+      paymentMethod: 'PIX',
+      grossAmount: 200,
+      receivedAmount: 120,
+      outstandingAmount: 80,
+      processingAmount: 80,
+      toSettleAmount: 115,
+      availableAmount: 0,
+      feeAmount: 5,
+      refundedAmount: 0,
+      netAmount: 115,
+      dueDate: null,
+      paidAt: null,
+      settledAt: null,
+      competenceAt: null,
+      settlementStatus: 'PENDENTE',
+      daysOverdue: 0,
+    };
+    render(
+      React.createElement(ReportDetailsDrawer, {
+        item,
+        onClose: () => undefined,
+      }),
+    );
+
+    expect(screen.getAllByText('Em processamento')[1]?.parentElement).toHaveTextContent('R$ 80,00');
+    expect(screen.getByText('A liquidar').parentElement).toHaveTextContent('R$ 115,00');
+    expect(screen.getByText('Disponível').parentElement).toHaveTextContent('R$ 0,00');
+  });
 
   it('apresenta diagnóstico saudável quando a inadimplência está controlada', () => {
     render(
@@ -115,13 +178,13 @@ describe('ExecutiveFinancialOverview', () => {
     expect(screen.getByText('Estado operacional atual da escola.')).toBeInTheDocument();
   });
 
-  it('mantém matrículas e cancelamentos no recorte anual independente do relatório', () => {
-    const annualReport = buildReport();
-    annualReport.enrollmentSeries = [
+  it('mostra matrículas e cobranças no período selecionado do relatório', () => {
+    const periodReport = buildReport();
+    periodReport.enrollmentSeries = [
       { key: '2026-01', label: 'jan. de 26', enrollments: 4, cancellations: 1 },
       { key: '2026-02', label: 'fev. de 26', enrollments: 6, cancellations: 0 },
     ];
-    annualReport.series = [
+    periodReport.series = [
       {
         key: '2026-01',
         label: 'jan. de 26',
@@ -136,16 +199,16 @@ describe('ExecutiveFinancialOverview', () => {
       React.createElement(ExecutiveFinancialOverview, {
         data: buildReport(),
         loading: false,
-        annualEnrollmentData: annualReport,
-        annualEnrollmentLoading: false,
+        periodData: periodReport,
+        periodLoading: false,
       }),
     );
 
     expect(
-      screen.getByText('Evolução mensal de matrículas e cancelamentos no ano atual.'),
+      screen.getByText('Evolução mensal de matrículas e cancelamentos no período selecionado.'),
     ).toBeInTheDocument();
     expect(
-      screen.getByText('Evolução mensal do total cobrado e recebido no ano atual.'),
+      screen.getByText('Evolução mensal do total cobrado e recebido no período selecionado.'),
     ).toBeInTheDocument();
     const financialTable = screen.getByRole('table', {
       name: 'Total em cobranças e recebido por mês',
@@ -153,7 +216,7 @@ describe('ExecutiveFinancialOverview', () => {
     expect(financialTable).toHaveTextContent('R$ 600,00');
     expect(financialTable).toHaveTextContent('R$ 450,00');
     expect(
-      screen.queryByText('Sem movimentações de matrícula no ano atual.'),
+      screen.queryByText('Sem movimentações de matrícula no período selecionado.'),
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole('table', { name: 'Matrículas e cancelamentos por mês' }),

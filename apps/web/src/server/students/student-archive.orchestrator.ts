@@ -219,12 +219,22 @@ async function commitMatriculaLocalAction(
     }
 
     const updateResult = await prisma.matricula.updateMany({
-      where: { id: matriculaId, aluno: { contaId: plan.contaId } },
-      data: { status: 'CANCELADA' },
+      where: {
+        id: matriculaId,
+        aluno: { contaId: plan.contaId },
+        status: { not: 'CANCELADA' },
+      },
+      data: { status: 'CANCELADA', cancelledAt: new Date() },
     });
 
     if (updateResult.count === 0) {
-      throw new Error('Matrícula não encontrada ou não pertence à conta do plano de arquivamento.');
+      const alreadyCancelled = await prisma.matricula.findFirst({
+        where: { id: matriculaId, aluno: { contaId: plan.contaId }, status: 'CANCELADA' },
+        select: { id: true },
+      });
+      if (!alreadyCancelled) {
+        throw new Error('Matrícula não encontrada ou não pertence à conta do plano de arquivamento.');
+      }
     }
 
     await prisma.auditLog.create({

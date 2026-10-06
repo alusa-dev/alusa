@@ -6,6 +6,7 @@ import {
   getFinancialOverviewReport,
   getReceiptsReport,
   loadFinancialReportProjections,
+  resolveReceiptsReportDateBasis,
   validateFinancialReportDimensions,
   zonedDayStart,
 } from './financial-reports';
@@ -22,7 +23,7 @@ function dbFixture() {
     },
     turma: { findFirst: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     plano: { findFirst: vi.fn(), findMany: vi.fn() },
-    matricula: { findMany: vi.fn().mockResolvedValue([]) },
+    matricula: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
     pagamento: {
       findMany: vi.fn().mockResolvedValue([]),
     },
@@ -138,6 +139,27 @@ describe('financial reports', () => {
     expect(result.summary.delinquencyRate).toBeCloseTo(66.67);
   });
 
+  it('mantém meses sem movimento na série financeira do período com valores nos meses ativos', async () => {
+    const result = await getFinancialOverviewReport({
+      contaId: 'tenant-a',
+      query: { ...query, startDate: '2026-05-01', endDate: '2026-07-31' },
+      db: dbFixture() as never,
+      now: new Date('2026-07-30T12:00:00.000Z'),
+    });
+
+    expect(result.series.map(({ key, charged, received, overdue, net }) => ({
+      key,
+      charged,
+      received,
+      overdue,
+      net,
+    }))).toEqual([
+      { key: '2026-05', charged: 0, received: 0, overdue: 0, net: 0 },
+      { key: '2026-06', charged: 0, received: 0, overdue: 0, net: 0 },
+      { key: '2026-07', charged: 150, received: 50, overdue: 100, net: 48 },
+    ]);
+  });
+
   it('calcula ocupação atual das turmas com a regra canônica de vagas e escopo tenant', async () => {
     const db = dbFixture();
     db.turma.findMany.mockResolvedValue([
@@ -181,6 +203,7 @@ describe('financial reports', () => {
         status: 'CANCELADA',
         createdAt: new Date('2026-06-10T12:00:00.000Z'),
         updatedAt: new Date('2026-07-15T12:00:00.000Z'),
+        cancelledAt: new Date('2026-07-15T12:00:00.000Z'),
         turma: null,
         matriculaTurmas: [],
       },
@@ -213,6 +236,80 @@ describe('financial reports', () => {
       openingActiveEnrollments: 1,
       retentionRate: 0,
     });
+  });
+
+  it('avisa sobre matrículas canceladas históricas sem data confiável', async () => {
+    const db = dbFixture();
+    db.matricula.count.mockResolvedValueOnce(3);
+
+    const result = await getFinancialOverviewReport({
+      contaId: 'tenant-a',
+      query,
+      db: db as never,
+      now: new Date('2026-07-30T12:00:00.000Z'),
+    });
+
+    expect(result.dataQuality.excludedRecords).toBe(3);
+    expect(result.dataQuality.warnings).toContain(
+      '3 matrícula(s) cancelada(s) sem data confiável de cancelamento foram excluídas da série e do ranking de cancelamentos.',
+    );
+    expect(result.enrollmentSeries).toEqual([
+      expect.objectContaining({ key: '2026-07', cancellations: 0 }),
+    ]);
+  });
+
+  it('não inclui turmas de outro tenant no ranking de cancelamentos', async () => {
+    const db = dbFixture();
+    db.matricula.findMany.mockResolvedValueOnce([
+      {
+        id: 'm-foreign-direct',
+        status: 'CANCELADA',
+        createdAt: new Date('2026-06-10T12:00:00.000Z'),
+        cancelledAt: new Date('2026-07-15T12:00:00.000Z'),
+        turma: { id: 't-foreign-direct', nome: 'Turma externa', contaId: 'tenant-b' },
+        matriculaTurmas: [],
+      },
+      {
+        id: 'm-foreign-join',
+        status: 'CANCELADA',
+        createdAt: new Date('2026-06-10T12:00:00.000Z'),
+        cancelledAt: new Date('2026-07-16T12:00:00.000Z'),
+        turma: null,
+        matriculaTurmas: [
+          {
+            contaId: 'tenant-b',
+            turma: { id: 't-foreign-join', nome: 'Vínculo externo', contaId: 'tenant-b' },
+          },
+          {
+            contaId: 'tenant-a',
+            turma: { id: 't-mismatched-class', nome: 'Turma externa', contaId: 'tenant-b' },
+          },
+        ],
+      },
+    ] as never);
+
+    const result = await getFinancialOverviewReport({
+      contaId: 'tenant-a',
+      query,
+      db: db as never,
+      now: new Date('2026-07-30T12:00:00.000Z'),
+    });
+
+    expect(result.cancellationsByClass).toEqual([]);
+    expect(db.matricula.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          turma: { select: { id: true, nome: true, contaId: true } },
+          matriculaTurmas: expect.objectContaining({
+            where: {
+              contaId: 'tenant-a',
+              turma: { is: { contaId: 'tenant-a' } },
+            },
+            select: expect.objectContaining({ contaId: true }),
+          }),
+        }),
+      }),
+    );
   });
 
   it('calcula o ticket médio atual sem depender do período do relatório', async () => {
@@ -330,7 +427,26 @@ describe('financial reports', () => {
       },
       db: competenceDb as never,
     });
-    expect(competenceReport.series.map((item) => item.key)).toEqual(['2026-05']);
+    expect(competenceReport.series.map((item) => item.key)).toEqual([
+      '2026-05',
+      '2026-06',
+      '2026-07',
+    ]);
+    expect(competenceDb.cobranca.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          vencimento: expect.objectContaining({
+            gte: expect.any(Date),
+            lt: expect.any(Date),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('usa pagamento como critério efetivo para recibos mesmo quando vencimento foi solicitado', () => {
+    expect(resolveReceiptsReportDateBasis('DUE_DATE')).toBe('PAID_AT');
+    expect(resolveReceiptsReportDateBasis('COMPETENCE')).toBe('COMPETENCE');
   });
 
   it('pagina a última página e retorna vazio quando a página excede o total', async () => {
@@ -707,6 +823,9 @@ describe('financial reports', () => {
     });
     expect(paidResult.rows).toEqual([]);
     expect(paidResult.dataQuality.excludedRecords).toBe(2);
+    expect(paidResult.dataQuality.warnings).toContain(
+      '2 cobrança(s) avulsa(s) recebidas não entraram na visão por pagamento porque não possuem data canônica de recebimento.',
+    );
 
     const settledDb = dbFixture();
     const standalone = (await settledDb.charge.findMany())[0];

@@ -97,6 +97,7 @@ export async function executeAlunoArchivePolicy(
   const matriculasAtivas = await db.matricula.findMany({
     where: {
       alunoId,
+      aluno: { contaId },
       status: { in: MATRICULA_STATUSES_TO_CANCEL },
     },
     select: {
@@ -141,7 +142,7 @@ export async function executeAlunoArchivePolicy(
         // Fallback: apenas atualiza status local (sem sync Asaas)
         await db.matricula.update({
           where: { id: matricula.id },
-          data: { status: 'CANCELADA' },
+          data: { status: 'CANCELADA', cancelledAt: new Date() },
         });
         results.push({
           matriculaId: matricula.id,
