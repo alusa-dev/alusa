@@ -432,7 +432,16 @@ describe('financial reports', () => {
       '2026-06',
       '2026-07',
     ]);
-    expect(competenceDb.cobranca.findMany).toHaveBeenCalledTimes(2);
+    expect(competenceDb.cobranca.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          vencimento: expect.objectContaining({
+            gte: expect.any(Date),
+            lt: expect.any(Date),
+          }),
+        }),
+      }),
+    );
   });
 
   it('usa pagamento como critério efetivo para recibos mesmo quando vencimento foi solicitado', () => {
