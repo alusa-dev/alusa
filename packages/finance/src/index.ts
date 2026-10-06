@@ -25,6 +25,7 @@ export { recordPaymentStateTransition } from './state-machine/payment-state-tran
 export { eventAsaasPaymentProvider } from './events/event-asaas-payment-provider';
 export { resolveEventPayerName, type EventPayerCandidate } from './mappers/event-payer';
 export {
+  AsaasResourceOriginClassificationError,
   classifyAsaasResourceOrigin,
   classifyPreviewedExternalInstallment,
   classifyPreviewedExternalPayment,

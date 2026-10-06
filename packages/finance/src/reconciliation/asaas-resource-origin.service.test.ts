@@ -83,6 +83,15 @@ describe('Asaas resource origin preview and classification', () => {
     expect(txMock.auditLog.create).not.toHaveBeenCalled();
   });
 
+  it('treats legacy standalone-subscription external references as Alusa-owned evidence', async () => {
+    vi.mocked(txMock.$queryRaw).mockResolvedValueOnce([{ ...eligibleRow, hasCanonicalReference: true }] as never)
+      .mockResolvedValueOnce([{ total: 1n }] as never);
+
+    const preview = await previewExternalSubscriptionCandidates({ contaId: 'conta-a', db: txMock as never });
+
+    expect(preview.items[0]).toMatchObject({ eligible: false, conflict: 'CANONICAL_ALUSA_REFERENCE' });
+  });
+
   it('prioritizes a local Alusa link over a prior EXTERNAL subscription classification', async () => {
     vi.mocked(txMock.$queryRaw).mockResolvedValueOnce([{ ...eligibleRow, hasBillingAgreement: true, priorOrigin: 'EXTERNAL' }] as never)
       .mockResolvedValueOnce([{ total: 1n }] as never);

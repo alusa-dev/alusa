@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { runWithTenant } from '@/lib/prisma-tenant';
-import { classifyAsaasResourceOrigin, classifyPreviewedExternalInstallment, classifyPreviewedExternalPayment, classifyPreviewedExternalSubscription, previewExternalInstallmentCandidates, previewExternalPaymentCandidates, previewExternalSubscriptionCandidates } from '@alusa/finance';
+import { AsaasResourceOriginClassificationError, classifyAsaasResourceOrigin, classifyPreviewedExternalInstallment, classifyPreviewedExternalPayment, classifyPreviewedExternalSubscription, previewExternalInstallmentCandidates, previewExternalPaymentCandidates, previewExternalSubscriptionCandidates } from '@alusa/finance';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,7 +67,15 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Não foi possível classificar o recurso.';
-    return NextResponse.json({ error: { code: 'CLASSIFICACAO_REJEITADA', message } }, { status: 409 });
+    if (error instanceof AsaasResourceOriginClassificationError) {
+      return NextResponse.json({ error: { code: 'CLASSIFICACAO_REJEITADA', message: error.message } }, { status: 409 });
+    }
+    const errorType = error instanceof Error && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(error.name)
+      ? error.name
+      : 'unknown_error';
+    console.error('[admin][asaas-resource-origin] classification_failed', { errorType });
+    return NextResponse.json({
+      error: { code: 'ERRO_INTERNO', message: 'Não foi possível classificar o recurso. Tente novamente.' },
+    }, { status: 500 });
   }
 }

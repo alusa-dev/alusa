@@ -270,28 +270,57 @@ describe('webhook-reconciliation.service', () => {
 
       expect(result.asaasCalls).toBe(0);
       expect(getPayment).not.toHaveBeenCalled();
-      expect(prisma.charge.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      expect(prisma.charge.findMany.mock.calls[0]?.[0]).toMatchObject({
         where: expect.objectContaining({
           AND: expect.arrayContaining([
-            expect.objectContaining({
-              OR: expect.arrayContaining([
-                expect.objectContaining({ status: { in: expect.any(Array) } }),
-                { status: 'PAID' },
-              ]),
-            }),
+            expect.objectContaining({ status: { in: expect.any(Array) } }),
             expect.objectContaining({ OR: [
               { lastProviderCheckAt: null },
               { lastProviderCheckAt: expect.objectContaining({ lte: expect.any(Date) }) },
             ] }),
           ]),
         }),
-      }));
+      });
+      expect(prisma.charge.findMany.mock.calls[1]?.[0]).toMatchObject({
+        where: expect.objectContaining({ status: 'PAID' }),
+      });
       expect(prisma.cobranca.findMany).toHaveBeenCalledWith(expect.objectContaining({
         where: expect.objectContaining({
           contaId: 'conta-1',
           matricula: { contaId: 'conta-1', aluno: { contaId: 'conta-1' } },
         }),
       }));
+    });
+
+    it('prioriza cobranças em aberto antes da rechecagem de cobranças pagas dentro do limite', async () => {
+      vi.mocked(prisma.charge.findMany)
+        .mockResolvedValueOnce([
+          { id: 'ch-open-1', asaasPaymentId: 'pay-open-1', status: 'OPEN', asaasStatus: 'PENDING', externalReference: null, lastProviderCheckAt: null },
+          { id: 'ch-open-2', asaasPaymentId: 'pay-open-2', status: 'OPEN', asaasStatus: 'PENDING', externalReference: null, lastProviderCheckAt: null },
+        ] as never)
+        .mockResolvedValueOnce([
+          { id: 'ch-paid-1', asaasPaymentId: 'pay-paid-1', status: 'PAID', asaasStatus: 'CONFIRMED', externalReference: null, lastProviderCheckAt: null },
+          { id: 'ch-paid-2', asaasPaymentId: 'pay-paid-2', status: 'PAID', asaasStatus: 'CONFIRMED', externalReference: null, lastProviderCheckAt: null },
+        ] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValueOnce([] as never).mockResolvedValueOnce([] as never);
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
+      vi.mocked(getPayment).mockImplementation(async ({ paymentId }) => ({
+        id: paymentId,
+        status: 'PENDING',
+        value: 100,
+        netValue: 100,
+      } as never));
+
+      const result = await reconcileWithAsaas({ contaId: 'conta-a', limit: 2, maxAsaasCalls: 2, dryRun: true });
+
+      expect(result.checkedPayments).toBe(2);
+      expect(getPayment).toHaveBeenNthCalledWith(1, { apiKey: 'test-key', paymentId: 'pay-open-1' });
+      expect(getPayment).toHaveBeenNthCalledWith(2, { apiKey: 'test-key', paymentId: 'pay-open-2' });
+      expect(getPayment).not.toHaveBeenCalledWith(expect.objectContaining({ paymentId: 'pay-paid-1' }));
+      expect(prisma.charge.findMany.mock.calls[0]?.[0].where).toMatchObject({
+        AND: expect.arrayContaining([expect.objectContaining({ status: { in: expect.any(Array) } })]),
+      });
+      expect(prisma.charge.findMany.mock.calls[1]?.[0].where).toMatchObject({ status: 'PAID' });
     });
 
     it('reconcilia charge avulsa em status não-final quando Asaas está pago', async () => {
@@ -334,11 +363,11 @@ describe('webhook-reconciliation.service', () => {
     });
 
     it('mantém issue stale para pagamento liquidado com snapshot Asaas aberto sem chamar webhook', async () => {
-      vi.mocked(prisma.charge.findMany).mockResolvedValue([{
+      vi.mocked(prisma.charge.findMany).mockResolvedValueOnce([] as never).mockResolvedValueOnce([{
         id: 'ch-paid', asaasPaymentId: 'pay-paid', status: 'PAID', asaasStatus: 'CONFIRMED',
         externalReference: null,
       }] as never);
-      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValueOnce([] as never).mockResolvedValueOnce([] as never);
       vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
       vi.mocked(getPayment).mockResolvedValue({
         id: 'pay-paid', status: 'PENDING', value: 100, netValue: 100,
@@ -355,28 +384,26 @@ describe('webhook-reconciliation.service', () => {
         dedupeKey: 'PAYMENT_STATUS_DRIFT:CHARGE:ch-paid',
         resolution: expect.stringContaining('substituída'),
       }));
-      const chargeWhere = vi.mocked(prisma.charge.findMany).mock.calls[0]?.[0].where as unknown as {
+      const chargeWhere = vi.mocked(prisma.charge.findMany).mock.calls[1]?.[0].where as unknown as {
         contaId?: string;
-        AND?: Array<{ OR?: Array<Record<string, unknown>> }>;
+        status?: string;
+        OR?: Array<Record<string, unknown>>;
       };
-      const settledCandidateBranches = chargeWhere.AND?.flatMap((clause) => clause.OR ?? []) ?? [];
       expect(chargeWhere.contaId).toBe('conta-a');
-      expect(settledCandidateBranches).toContainEqual({ status: 'PAID' });
-      expect(settledCandidateBranches).not.toContainEqual(expect.objectContaining({
-        status: 'PAID',
+      expect(chargeWhere.status).toBe('PAID');
+      expect(chargeWhere.OR).not.toContainEqual(expect.objectContaining({
         asaasStatus: expect.anything(),
       }));
-      const cobrancaWhere = vi.mocked(prisma.cobranca.findMany).mock.calls[0]?.[0].where as unknown as {
+      const cobrancaWhere = vi.mocked(prisma.cobranca.findMany).mock.calls[1]?.[0].where as unknown as {
         contaId?: string;
         matricula?: { contaId?: string; aluno?: { contaId?: string } };
-        AND?: Array<{ OR?: Array<Record<string, unknown>> }>;
+        status?: string;
+        OR?: Array<Record<string, unknown>>;
       };
-      const settledCobrancaBranches = cobrancaWhere.AND?.flatMap((clause) => clause.OR ?? []) ?? [];
       expect(cobrancaWhere.contaId).toBe('conta-a');
       expect(cobrancaWhere.matricula).toEqual({ contaId: 'conta-a', aluno: { contaId: 'conta-a' } });
-      expect(settledCobrancaBranches).toContainEqual({ status: 'PAGO' });
-      expect(settledCobrancaBranches).not.toContainEqual(expect.objectContaining({
-        status: 'PAGO',
+      expect(cobrancaWhere.status).toBe('PAGO');
+      expect(cobrancaWhere.OR).not.toContainEqual(expect.objectContaining({
         asaasStatus: expect.anything(),
       }));
       expect(prisma.charge.updateMany).toHaveBeenCalledWith(expect.objectContaining({

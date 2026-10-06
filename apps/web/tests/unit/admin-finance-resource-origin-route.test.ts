@@ -10,10 +10,12 @@ const mocks = vi.hoisted(() => ({
   classifyPreviewedExternalInstallment: vi.fn(),
   previewExternalInstallmentCandidates: vi.fn(),
   classifyAsaasResourceOrigin: vi.fn(),
+  ClassificationError: class extends Error {},
 }));
 vi.mock('@/lib/auth/tenant-scope', () => ({ resolveTenantScope: mocks.resolveTenantScope }));
 vi.mock('@/lib/prisma-tenant', () => ({ runWithTenant: mocks.runWithTenant }));
 vi.mock('@alusa/finance', () => ({
+  AsaasResourceOriginClassificationError: mocks.ClassificationError,
   classifyPreviewedExternalSubscription: mocks.classifyPreviewedExternalSubscription,
   classifyPreviewedExternalPayment: mocks.classifyPreviewedExternalPayment,
   classifyPreviewedExternalInstallment: mocks.classifyPreviewedExternalInstallment,
@@ -101,5 +103,34 @@ describe('admin Asaas resource origin API', () => {
     expect(mocks.classifyAsaasResourceOrigin).toHaveBeenCalledWith(expect.objectContaining({
       contaId: 'conta-a', resourceType: 'SUBSCRIPTION', asaasId: 'sub-a', origin: 'ALUSA', actorId: 'admin-a',
     }));
+  });
+
+  it('preserves safe domain conflicts while rejecting external reclassification', async () => {
+    const message = 'O recurso já possui vínculo local nesta conta.';
+    mocks.runWithTenant.mockRejectedValueOnce(new mocks.ClassificationError(message));
+    const response = await POST(new Request('http://localhost/api/admin/finance/reconciliation/resources', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resourceType: 'SUBSCRIPTION', asaasId: 'sub-a', origin: 'EXTERNAL', reason: 'Conferido pela escola' }),
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: { code: 'CLASSIFICACAO_REJEITADA', message } });
+  });
+
+  it('does not expose unexpected database errors in the response', async () => {
+    const privateDatabaseMessage = 'column secret_customer_table does not exist';
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mocks.runWithTenant.mockRejectedValueOnce(new Error(privateDatabaseMessage));
+    const response = await POST(new Request('http://localhost/api/admin/finance/reconciliation/resources', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resourceType: 'SUBSCRIPTION', asaasId: 'sub-a', origin: 'ALUSA', reason: 'Vínculo local confirmado' }),
+    }));
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body).toEqual({ error: { code: 'ERRO_INTERNO', message: 'Não foi possível classificar o recurso. Tente novamente.' } });
+    expect(JSON.stringify(body)).not.toContain(privateDatabaseMessage);
+    expect(errorLog).toHaveBeenCalledWith('[admin][asaas-resource-origin] classification_failed', { errorType: 'Error' });
+    errorLog.mockRestore();
   });
 });

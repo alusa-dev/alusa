@@ -322,18 +322,33 @@ async function listPaymentReconciliationCandidates(
   limit: number,
   cutoff: Date,
 ): Promise<PaymentReconciliationCandidate[]> {
-  const [standaloneCharges, academicCobrancas] = await Promise.all([
+  const [openCharges, settledCharges, openCobrancas, settledCobrancas] = await Promise.all([
     prisma.charge.findMany({
       where: {
         contaId,
         asaasPaymentId: { not: null },
         AND: [
-          { OR: [
-            { status: { in: NON_FINAL_CHARGE_STATUSES } },
-            { status: 'PAID' },
-          ] },
+          { status: { in: NON_FINAL_CHARGE_STATUSES } },
           providerCheckDueWhere(cutoff),
         ],
+      },
+      orderBy: [{ dueDate: 'asc' }, { updatedAt: 'asc' }],
+      take: limit,
+      select: {
+        id: true,
+        asaasPaymentId: true,
+        status: true,
+        asaasStatus: true,
+        lastProviderCheckAt: true,
+        externalReference: true,
+      },
+    }),
+    prisma.charge.findMany({
+      where: {
+        contaId,
+        asaasPaymentId: { not: null },
+        status: 'PAID',
+        ...providerCheckDueWhere(cutoff),
       },
       orderBy: [{ dueDate: 'asc' }, { updatedAt: 'asc' }],
       take: limit,
@@ -352,10 +367,7 @@ async function listPaymentReconciliationCandidates(
         matricula: { contaId, aluno: { contaId } },
         asaasPaymentId: { not: null },
         AND: [
-          { OR: [
-            { status: { in: NON_FINAL_STATUSES as Prisma.EnumStatusCobrancaFilter['in'] } },
-            { status: 'PAGO' },
-          ] },
+          { status: { in: NON_FINAL_STATUSES as Prisma.EnumStatusCobrancaFilter['in'] } },
           providerCheckDueWhere(cutoff),
         ],
       },
@@ -370,12 +382,31 @@ async function listPaymentReconciliationCandidates(
         charge: { select: { externalReference: true } },
       },
     }),
+    prisma.cobranca.findMany({
+      where: {
+        contaId,
+        matricula: { contaId, aluno: { contaId } },
+        asaasPaymentId: { not: null },
+        status: 'PAGO',
+        ...providerCheckDueWhere(cutoff),
+      },
+      orderBy: [{ vencimento: 'asc' }, { updatedAt: 'asc' }],
+      take: limit,
+      select: {
+        id: true,
+        asaasPaymentId: true,
+        status: true,
+        asaasStatus: true,
+        lastProviderCheckAt: true,
+        charge: { select: { externalReference: true } },
+      },
+    }),
   ]);
 
   const byPaymentId = new Map<string, PaymentReconciliationCandidate>();
 
-  for (const charge of standaloneCharges) {
-    if (!charge.asaasPaymentId) continue;
+  const addCharge = (charge: (typeof openCharges)[number]) => {
+    if (!charge.asaasPaymentId || byPaymentId.has(charge.asaasPaymentId)) return;
     byPaymentId.set(charge.asaasPaymentId, {
       entityId: charge.id,
       asaasPaymentId: charge.asaasPaymentId,
@@ -385,10 +416,10 @@ async function listPaymentReconciliationCandidates(
       source: 'charge',
       lastProviderCheckAt: charge.lastProviderCheckAt,
     });
-  }
+  };
 
-  for (const cobranca of academicCobrancas) {
-    if (!cobranca.asaasPaymentId || byPaymentId.has(cobranca.asaasPaymentId)) continue;
+  const addCobranca = (cobranca: (typeof openCobrancas)[number]) => {
+    if (!cobranca.asaasPaymentId || byPaymentId.has(cobranca.asaasPaymentId)) return;
     byPaymentId.set(cobranca.asaasPaymentId, {
       entityId: cobranca.id,
       asaasPaymentId: cobranca.asaasPaymentId,
@@ -398,6 +429,20 @@ async function listPaymentReconciliationCandidates(
       source: 'cobranca',
       lastProviderCheckAt: cobranca.lastProviderCheckAt,
     });
+  };
+
+  // Open/overdue work always claims the bounded reconciliation budget first.
+  // Settled snapshots use only the remaining capacity, so old paid history
+  // cannot hide current financial work from each cron run.
+  for (const charge of openCharges) addCharge(charge);
+  for (const cobranca of openCobrancas) addCobranca(cobranca);
+  for (const charge of settledCharges) {
+    if (byPaymentId.size >= limit) break;
+    addCharge(charge);
+  }
+  for (const cobranca of settledCobrancas) {
+    if (byPaymentId.size >= limit) break;
+    addCobranca(cobranca);
   }
 
   return Array.from(byPaymentId.values()).slice(0, limit);

@@ -10,9 +10,17 @@ export type AsaasOriginClassification = {
   actorId: string;
 };
 
+export class AsaasResourceOriginClassificationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AsaasResourceOriginClassificationError';
+  }
+}
+
 type Db = Prisma.TransactionClient;
 const CANONICAL_REF_SQL = [
   "COALESCE(w.payload #>> '{subscription,externalReference}', '') LIKE 'alusa:%'",
+  "COALESCE(w.payload #>> '{subscription,externalReference}', '') LIKE 'standalone-subscription:%'",
   "COALESCE(w.payload #>> '{subscription,externalReference}', '') LIKE 'subscription:%'",
   "COALESCE(w.payload #>> '{subscription,externalReference}', '') LIKE 'enrollment-op:%'",
   "COALESCE(w.payload #>> '{subscription,externalReference}', '') LIKE 'installmentPlan:%'",
@@ -449,8 +457,8 @@ export async function previewExternalInstallmentCandidates(input: {
 
 async function classifyInTransaction(db: Db, input: AsaasOriginClassification) {
   const reason = input.reason.trim();
-  if (reason.length < 8) throw new Error('Informe uma justificativa com pelo menos 8 caracteres.');
-  if (!input.asaasId.trim() || !input.actorId.trim()) throw new Error('Identificador e ator são obrigatórios.');
+  if (reason.length < 8) throw new AsaasResourceOriginClassificationError('Informe uma justificativa com pelo menos 8 caracteres.');
+  if (!input.asaasId.trim() || !input.actorId.trim()) throw new AsaasResourceOriginClassificationError('Identificador e ator são obrigatórios.');
 
   const localResource = input.resourceType === 'SUBSCRIPTION'
     ? await db.subscription.findFirst({ where: { contaId: input.contaId, asaasSubscriptionId: input.asaasId }, select: { id: true } })
@@ -476,30 +484,30 @@ async function classifyInTransaction(db: Db, input: AsaasOriginClassification) {
     uq_asaas_resource_origin_tenant_resource: { contaId: input.contaId, resourceType: input.resourceType, asaasId: input.asaasId.trim() },
   } });
 
-  if (input.origin === 'ALUSA' && !localResource) throw new Error('A origem ALUSA exige vínculo local confiável nesta conta.');
+  if (input.origin === 'ALUSA' && !localResource) throw new AsaasResourceOriginClassificationError('A origem ALUSA exige vínculo local confiável nesta conta.');
   if (input.origin === 'EXTERNAL') {
-    if (localResource) throw new Error('O recurso já possui vínculo local nesta conta.');
+    if (localResource) throw new AsaasResourceOriginClassificationError('O recurso já possui vínculo local nesta conta.');
     if (input.resourceType === 'SUBSCRIPTION') {
       const candidate = await getCandidate(db, input.contaId, input.asaasId);
-      if (!candidate) throw new Error('Assinatura não encontrada na prévia desta conta.');
+      if (!candidate) throw new AsaasResourceOriginClassificationError('Assinatura não encontrada na prévia desta conta.');
       const state = candidateState({ ...candidate, priorOrigin: prior?.origin === 'EXTERNAL' ? null : candidate.priorOrigin });
-      if (!state.eligible) throw new Error(state.conflict ?? 'Assinatura não elegível para classificação externa.');
+      if (!state.eligible) throw new AsaasResourceOriginClassificationError(state.conflict ?? 'Assinatura não elegível para classificação externa.');
     } else if (input.resourceType === 'PAYMENT') {
       const candidate = await getPaymentCandidate(db, input.contaId, input.asaasId);
-      if (!candidate) throw new Error('Pagamento avulso não encontrado na prévia desta conta.');
+      if (!candidate) throw new AsaasResourceOriginClassificationError('Pagamento avulso não encontrado na prévia desta conta.');
       const state = paymentCandidateState({ ...candidate, priorOrigin: prior?.origin === 'EXTERNAL' ? null : candidate.priorOrigin });
-      if (!state.eligible) throw new Error(state.conflict ?? 'Pagamento não elegível para classificação externa.');
+      if (!state.eligible) throw new AsaasResourceOriginClassificationError(state.conflict ?? 'Pagamento não elegível para classificação externa.');
     } else {
       const candidate = await getInstallmentCandidate(db, input.contaId, input.asaasId);
-      if (!candidate) throw new Error('Parcelamento não encontrado na prévia desta conta.');
+      if (!candidate) throw new AsaasResourceOriginClassificationError('Parcelamento não encontrado na prévia desta conta.');
       const state = installmentCandidateState({ ...candidate, priorOrigin: prior?.origin === 'EXTERNAL' ? null : candidate.priorOrigin });
-      if (!state.eligible) throw new Error(state.conflict ?? 'Parcelamento não elegível para classificação externa.');
+      if (!state.eligible) throw new AsaasResourceOriginClassificationError(state.conflict ?? 'Parcelamento não elegível para classificação externa.');
     }
   }
 
   if (prior?.origin === input.origin && prior.reason === reason) return { record: prior, changed: false, reclassified: false };
   if (prior && prior.origin !== input.origin && input.origin === 'EXTERNAL' && prior.origin === 'ALUSA') {
-    throw new Error('Reclassificação para EXTERNAL não é permitida enquanto houver decisão ALUSA.');
+    throw new AsaasResourceOriginClassificationError('Reclassificação para EXTERNAL não é permitida enquanto houver decisão ALUSA.');
   }
 
   const now = new Date();
