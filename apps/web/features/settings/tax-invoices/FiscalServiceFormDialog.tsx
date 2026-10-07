@@ -126,11 +126,16 @@ export function FiscalServiceFormDialog({
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [services, setServices] = useState<ProviderMunicipalService[]>([]);
   const [loadingServices, setLoadingServices] = useState(false);
+  const [formInitialized, setFormInitialized] = useState(false);
   const [portalManualMode, setPortalManualMode] = useState(false);
+  const [servicesError, setServicesError] = useState(false);
+  const [servicesRetry, setServicesRetry] = useState(0);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const nameInputAnchorRef = useRef<HTMLDivElement>(null);
+  const wasOpenRef = useRef(false);
+  const initialManualLookupRef = useRef(false);
 
   const searchFederalServiceCodes = useCallback(
     async (query?: string) => {
@@ -179,6 +184,9 @@ export function FiscalServiceFormDialog({
 
   useEffect(() => {
     if (open) {
+      if (!wasOpenRef.current) initialManualLookupRef.current = true;
+      wasOpenRef.current = true;
+      setFormInitialized(false);
       const nextForm = {
         ...emptyForm,
         ...initial,
@@ -210,6 +218,7 @@ export function FiscalServiceFormDialog({
       setDebouncedSearch(initial?.name ?? '');
       setSuggestionsOpen(false);
       setPortalManualMode(false);
+      setServicesError(false);
       setShowAdvanced(
         Boolean(
           initial?.pisCofinsTaxStatus ||
@@ -222,6 +231,10 @@ export function FiscalServiceFormDialog({
             !simplesNacional,
         ),
       );
+      setFormInitialized(true);
+    } else {
+      wasOpenRef.current = false;
+      setFormInitialized(false);
     }
   }, [open, initial, useNationalPortal, simplesNacional]);
 
@@ -251,42 +264,22 @@ export function FiscalServiceFormDialog({
     });
   }, [open, simplesNacional]);
 
-  // Detecta Portal Nacional / indisponibilidade da lista municipal assim que o modal abre.
   useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    onSearchMunicipalServices(undefined)
-      .then((result) => {
-        if (cancelled) return;
-        setPortalManualMode(result.portalManualMode);
-        if (result.portalManualMode) {
-          setForm((f) => ({ ...f, source: 'MANUAL', asaasMunicipalServiceId: undefined }));
-          setSuggestionsOpen(false);
-        } else {
-          setServices(result.data);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setPortalManualMode(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, onSearchMunicipalServices]);
-
-  useEffect(() => {
-    if (!open) return;
+    if (!open || form.name.trim() === debouncedSearch) return;
     const timer = window.setTimeout(() => {
       setDebouncedSearch(form.name.trim());
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [open, form.name]);
+  }, [open, form.name, debouncedSearch]);
 
   useEffect(() => {
-    if (!open || portalManualMode || form.source === 'MANUAL') return;
+    const isInitialManualLookup = form.source === 'MANUAL' && initialManualLookupRef.current;
+    if (!open || !formInitialized || portalManualMode || (form.source === 'MANUAL' && !isInitialManualLookup)) return;
     let cancelled = false;
+    initialManualLookupRef.current = false;
     setLoadingServices(true);
-    onSearchMunicipalServices(debouncedSearch || undefined)
+    setServicesError(false);
+    onSearchMunicipalServices(form.source === 'MANUAL' ? undefined : debouncedSearch || undefined)
       .then((result) => {
         if (cancelled) return;
         setServices(result.data);
@@ -296,13 +289,16 @@ export function FiscalServiceFormDialog({
           setSuggestionsOpen(false);
         }
       })
+      .catch(() => {
+        if (!cancelled) setServicesError(true);
+      })
       .finally(() => {
         if (!cancelled) setLoadingServices(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [open, debouncedSearch, form.source, portalManualMode, onSearchMunicipalServices]);
+  }, [open, formInitialized, debouncedSearch, form.source, portalManualMode, servicesRetry, onSearchMunicipalServices]);
 
   function selectProviderService(service: ProviderMunicipalService) {
     setForm((f) => ({
@@ -439,6 +435,27 @@ export function FiscalServiceFormDialog({
             <InfoCallout variant="warning" size="sm">
               <InfoCalloutItem label="Revise o serviço fiscal" labelTone="danger">
                 {submitError}
+              </InfoCalloutItem>
+            </InfoCallout>
+          ) : null}
+
+          {servicesError ? (
+            <InfoCallout variant="warning" size="sm">
+              <InfoCalloutItem label="Não foi possível carregar a lista municipal" labelTone="danger">
+                A consulta falhou. Tente novamente ou use o modo manual.
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="ml-2 h-7"
+                  disabled={loadingServices}
+                  onClick={() => {
+                    if (form.source === 'MANUAL') initialManualLookupRef.current = true;
+                    setServicesRetry((attempt) => attempt + 1);
+                  }}
+                >
+                  Tentar novamente
+                </Button>
               </InfoCalloutItem>
             </InfoCallout>
           ) : null}
