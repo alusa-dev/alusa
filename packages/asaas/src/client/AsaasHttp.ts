@@ -249,6 +249,10 @@ export class AsaasHttp {
 
       if (!isExpectedError) {
         globalCircuitBreaker.recordFailure(circuitKey, response.status);
+        const providerError = this.extractProviderError(data);
+        const correlationId = response.headers.get('x-correlation-id')
+          ?? response.headers.get('correlation-id')
+          ?? response.headers.get('x-request-id');
 
         logAsaasOperationalEvent({
           severity: 'warn',
@@ -259,6 +263,8 @@ export class AsaasHttp {
           durationMs: Date.now() - startedAt,
           errorType: 'AsaasHttpError',
           category: 'provider_response',
+          providerErrorCode: providerError.code,
+          correlationId,
         });
 
         globalAsaasHooks.emitApiCall({
@@ -347,6 +353,16 @@ export class AsaasHttp {
     if (typeof obj.error === 'string') return obj.error;
 
     return null;
+  }
+
+  private extractProviderError(data: unknown): { code?: unknown } {
+    if (!data || typeof data !== 'object') return {};
+    const errors = (data as Record<string, unknown>).errors;
+    if (!Array.isArray(errors)) return {};
+    const first = errors[0];
+    if (!first || typeof first !== 'object') return {};
+    const error = first as Record<string, unknown>;
+    return { code: error.code };
   }
 }
 

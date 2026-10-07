@@ -25,6 +25,15 @@ const ASAAS_RESOURCES = new Set([
   'fiscalinfo', 'finance', 'installments', 'invoices', 'myaccount', 'payments',
   'pix', 'subscriptions', 'transfers', 'wallets', 'webhooks', 'sandbox',
 ]);
+const SAFE_PROVIDER_ERROR_CODES = new Set([
+  'invalid_access_token',
+]);
+const CORRELATION_PATTERN = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+const SAFE_ROUTE_SUFFIXES = new Set(['services', 'balance', 'subaccounts', 'accessTokens', 'invoiceSettings']);
+
+function safeProviderCode(value: unknown): string | undefined {
+  return typeof value === 'string' && SAFE_PROVIDER_ERROR_CODES.has(value) ? value : undefined;
+}
 
 export function normalizeAsaasRoute(pathname: string): string {
   const segments = pathname.split('/').filter(Boolean);
@@ -33,7 +42,9 @@ export function normalizeAsaasRoute(pathname: string): string {
   const safeResource = resource && ASAAS_RESOURCES.has(resource.toLowerCase())
     ? resource.toLowerCase()
     : 'other';
-  return normalizeHttpRoute(`/${version}/${safeResource}`);
+  const suffix = segments.slice(segments[0] === version ? 2 : 1)
+    .find((segment) => SAFE_ROUTE_SUFFIXES.has(segment));
+  return normalizeHttpRoute(`/${version}/${safeResource}${suffix ? `/${suffix.toLowerCase()}` : ''}`);
 }
 
 export function logAsaasOperationalEvent(params: {
@@ -46,6 +57,8 @@ export function logAsaasOperationalEvent(params: {
   durationMs?: number;
   category?: 'provider_response' | 'redis_unavailable';
   count?: number;
+  providerErrorCode?: unknown;
+  correlationId?: unknown;
 }): void {
   let count = Number.isSafeInteger(params.count) && (params.count ?? -1) >= 0 ? params.count ?? 1 : 1;
   if (THROTTLED_EVENTS.has(params.eventName)) {
@@ -72,8 +85,12 @@ export function logAsaasOperationalEvent(params: {
     attributes: {
       ...(params.category ? { category: params.category } : {}),
       ...(THROTTLED_EVENTS.has(params.eventName) ? { count } : {}),
+      ...(safeProviderCode(params.providerErrorCode) ? { provider_error_code: safeProviderCode(params.providerErrorCode) } : {}),
+      ...(typeof params.correlationId === 'string' && CORRELATION_PATTERN.test(params.correlationId)
+        ? { correlation_id: params.correlationId }
+        : {}),
     },
-    allowedAttributes: ['category', 'count'],
+    allowedAttributes: ['category', 'count', 'provider_error_code', 'correlation_id'],
   });
 
   if (params.severity === 'error') console.error(JSON.stringify(log));
