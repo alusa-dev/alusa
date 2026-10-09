@@ -424,6 +424,7 @@
         "packages/finance/src/events/get-public-event-map-payment-instruments.ts",
         "packages/finance/src/events/reactivate-event-participant-with-charge.ts",
         "packages/finance/src/events/reconcile-event-map-order-payment.ts",
+        "packages/finance/src/events/reconcile-event-registration-charge.ts",
         "packages/finance/src/events/record-public-order-ticket-fulfillment-failure.ts",
         "packages/finance/src/events/refund-event-ticket-sales-by-payment.ts",
         "packages/finance/src/events/register-event-participant-persistence.ts",
