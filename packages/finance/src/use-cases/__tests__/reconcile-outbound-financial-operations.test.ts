@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(async (items: unknown[]) => Promise.all(items)),
   listPayments: vi.fn(),
   syncPayment: vi.fn(),
+  linkEventRegistrationCharge: vi.fn(),
+  settleEventRegistrationCharge: vi.fn(),
   markConfirmed: vi.fn(),
   markSynchronized: vi.fn(),
   markUnknown: vi.fn(),
@@ -35,6 +37,10 @@ vi.mock('../asaas-ops', () => ({
 }));
 vi.mock('../sync-payment-state-from-asaas', () => ({
   syncPaymentStateFromAsaas: mocks.syncPayment,
+}));
+vi.mock('../../events/reconcile-event-registration-charge', () => ({
+  linkReconciledEventRegistrationCharge: mocks.linkEventRegistrationCharge,
+  settleReconciledEventRegistrationCharge: mocks.settleEventRegistrationCharge,
 }));
 vi.mock('../outbound-financial-operation', async () => {
   const actual = await vi.importActual<typeof import('../outbound-financial-operation')>('../outbound-financial-operation');
@@ -74,7 +80,7 @@ describe('reconcileOutboundFinancialOperations', () => {
     mocks.listPayments.mockResolvedValueOnce({
       data: [{ id: 'pay-1', externalReference: operationPayload.externalReference, status: 'PENDING', invoiceUrl: 'https://invoice' }],
     });
-    mocks.syncPayment.mockResolvedValueOnce({ success: true });
+    mocks.syncPayment.mockResolvedValueOnce({ success: true, paymentStatus: 'PENDING' });
 
     const result = await reconcileOutboundFinancialOperations({ contaId: 'tenant-a' });
 
@@ -89,7 +95,37 @@ describe('reconcileOutboundFinancialOperations', () => {
     expect(mocks.syncPayment).toHaveBeenCalledWith({
       contaId: 'tenant-a', asaasPaymentId: 'pay-1', intent: 'RECONCILIATION',
     });
+    expect(mocks.linkEventRegistrationCharge).toHaveBeenCalledWith({
+      contaId: 'tenant-a',
+      chargeId: 'charge-1',
+      asaasPaymentId: 'pay-1',
+      asaasInstallmentId: undefined,
+    });
+    expect(mocks.settleEventRegistrationCharge).toHaveBeenCalledWith({
+      contaId: 'tenant-a', chargeId: 'charge-1', paymentStatus: 'PENDING',
+    });
     expect(mocks.markSynchronized).toHaveBeenCalledWith('job-1', 'pay-1', expect.any(Object));
+  });
+
+  it('não encerra a reconciliação se a projeção local do pagamento falhar', async () => {
+    mocks.jobs.findMany.mockResolvedValueOnce([{
+      id: 'job-1', contaId: 'tenant-a', type: 'CREATE_PAYMENT', status: 'PROCESSING',
+      attempts: 1, chargeId: 'charge-1', payload: operationPayload,
+    }]);
+    mocks.listPayments.mockResolvedValueOnce({
+      data: [{ id: 'pay-1', externalReference: operationPayload.externalReference, status: 'PENDING' }],
+    });
+    mocks.syncPayment.mockResolvedValueOnce({ success: false, error: 'WEBHOOK_APPLY_FAILED' });
+
+    const result = await reconcileOutboundFinancialOperations({ contaId: 'tenant-a' });
+
+    expect(result).toEqual({ scanned: 1, recovered: 0, missing: 0, divergent: 1 });
+    expect(mocks.markRequires).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'tenant-a',
+      error: expect.objectContaining({ message: 'PAYMENT_STATE_SYNC_FAILED:WEBHOOK_APPLY_FAILED' }),
+    }));
+    expect(mocks.markSynchronized).not.toHaveBeenCalled();
+    expect(mocks.settleEventRegistrationCharge).not.toHaveBeenCalled();
   });
 
   it('não escolhe arbitrariamente quando o Asaas contém duplicidade', async () => {
