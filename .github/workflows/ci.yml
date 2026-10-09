@@ -260,6 +260,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @alusa/mobile run doctor
+      - run: pnpm prisma:generate
       - run: pnpm exec turbo run build --filter='@alusa/mobile^...'
       - run: pnpm --filter @alusa/mobile typecheck
       - run: pnpm --filter @alusa/mobile lint
