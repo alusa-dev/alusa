@@ -338,7 +338,7 @@ describe('Aluno Service', () => {
 
     const updated = await prisma.aluno.findUnique({ where: { id: aluno.id } });
     expect(updated).toBeNull();
-    expect(syncAlunoInativacaoToAsaasMock).toHaveBeenCalledWith({ alunoId: aluno.id, contaId });
+    expect(syncAlunoInativacaoToAsaasMock).toHaveBeenCalledWith({ studentId: aluno.id, tenantId: contaId });
   });
 
   it('arquiva aluno mesmo com assinaturas ativas', async () => {

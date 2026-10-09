@@ -1,4 +1,5 @@
 const appJson = require('./app.json');
+const { withAndroidManifest } = require('expo/config-plugins');
 
 function isDevelopmentBuild() {
   if (process.env.EAS_BUILD_PROFILE) {
@@ -13,7 +14,7 @@ module.exports = ({ config }) => {
   const infoPlist = base.ios?.infoPlist ?? {};
   const transportSecurity = infoPlist.NSAppTransportSecurity ?? {};
 
-  return {
+  const appConfig = {
     ...base,
     ios: {
       ...base.ios,
@@ -30,9 +31,20 @@ module.exports = ({ config }) => {
         },
       },
     },
-    android: {
-      ...base.android,
-      usesCleartextTraffic: developmentBuild,
-    },
+    android: { ...base.android },
   };
+
+  return withAndroidManifest(appConfig, (modConfig) => {
+    const application = modConfig.modResults.manifest.application?.[0];
+    if (!application) throw new Error('Android manifest is missing its application node.');
+
+    application.$ ??= {};
+    if (developmentBuild) {
+      application.$['android:usesCleartextTraffic'] = 'true';
+    } else {
+      delete application.$['android:usesCleartextTraffic'];
+    }
+
+    return modConfig;
+  });
 };

@@ -267,11 +267,11 @@
           "lifecycle": "active-migration",
           "implemented": true,
           "consumers": {
-            "total": 169,
+            "total": 170,
             "bySurface": {
               "packages": 1,
               "scripts": 2,
-              "web": 166
+              "web": 167
             },
             "files": [
               {
@@ -595,6 +595,10 @@
                 "occurrences": 1
               },
               {
+                "file": "apps/web/tests/unit/use-sidebar-nav-access.test.tsx",
+                "occurrences": 1
+              },
+              {
                 "file": "packages/finance/src/__tests__/architecture-boundaries.test.ts",
                 "occurrences": 1
               },
@@ -614,11 +618,11 @@
           "lifecycle": "active-migration",
           "implemented": true,
           "consumers": {
-            "total": 158,
+            "total": 161,
             "bySurface": {
               "packages": 1,
               "scripts": 3,
-              "web": 154
+              "web": 157
             },
             "files": [
               {
@@ -676,10 +680,6 @@
               {
                 "file": "apps/web/app/api/configuracoes/notafiscal/__tests__/route.test.ts",
                 "occurrences": 5
-              },
-              {
-                "file": "apps/web/app/api/events/public-orders/[orderId]/refund/route.ts",
-                "occurrences": 1
               },
               {
                 "file": "apps/web/e2e/matriculas-sync.spec.ts",
@@ -775,7 +775,7 @@
               },
               {
                 "file": "apps/web/src/server/finance/refund-charge.service.ts",
-                "occurrences": 1
+                "occurrences": 2
               },
               {
                 "file": "apps/web/src/server/finance/undo-cash-payment.service.ts",
@@ -811,7 +811,7 @@
               },
               {
                 "file": "apps/web/tests/unit/cobrancas.refund.post.test.ts",
-                "occurrences": 4
+                "occurrences": 7
               },
               {
                 "file": "apps/web/tests/unit/cobrancas.sync-asaas.post.test.ts",
