@@ -9,6 +9,8 @@ Orquestração financeira, casos de uso, mappers e webhook handlers.
 - ✅ Webhook handlers (payment, subscription)
 - ✅ Lógica de idempotência e retry
 - ✅ Auditoria de operações financeiras
+- ✅ Casos de uso financeiros do módulo de eventos: checkout público, vendas,
+  cobranças de inscrições, emissão/reconciliação, cancelamentos e estornos.
 
 ## Princípios (ADRs 001-009)
 
@@ -51,3 +53,9 @@ finance/
 ├── webhooks/         # Handlers de webhooks (payment, subscription)
 └── index.ts          # Exports públicos
 ```
+
+`@alusa/finance` pode compor contratos estreitos de persistência e domínio de
+`@alusa/lib`. A dependência segue em uma direção: `apps/web → finance → lib`;
+`lib` não importa casos de uso financeiros. Mudanças financeiras de eventos
+devem entrar por um caso de uso de `finance`, mantendo validação HTTP e
+apresentação na aplicação web.

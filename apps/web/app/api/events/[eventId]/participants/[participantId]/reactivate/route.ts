@@ -1,48 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { createStandaloneCharge } from '@alusa/finance';
-import { reactivateEventParticipantRequestSchema, reactivateEventParticipantSchema } from '@alusa/lib/events/events.schema';
-import {
-  EventsError,
-  eventParticipantScalarSelect,
-  getEventParticipantRemovalDecision,
-  reactivateEventParticipant,
-} from '@alusa/lib/events/events.service';
-import {
-  eventPaymentRulesFromRecord,
-  eventPaymentRulesToAsaas,
-  validateEventPaymentRulesForCharge,
-} from '@alusa/lib/events/events-payment-rules';
-
+import { reactivateEventParticipantWithCharge } from '@alusa/finance';
+import { reactivateEventParticipantRequestSchema } from '@alusa/lib/events/events.schema';
 import { eventParticipantRouteParamsDTOSchema } from '@/features/events/dtos';
 import { getEventsContext, handleEventsRouteError } from '../../../../_helpers';
-import { getEventParticipantForReactivation } from '@/src/server/events/event-route-read.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 type RouteParams = { params: Promise<{ eventId: string; participantId: string }> };
 
-const billingErrorMap: Record<string, { status: number; message: string }> = {
-  FEATURE_DISABLED: { status: 403, message: 'Funcionalidade financeira desabilitada para esta conta' },
-  KYC_NAO_APROVADO: { status: 409, message: 'Conta financeira não aprovada' },
-  PAGADOR_NAO_ENCONTRADO: { status: 404, message: 'Pagador não encontrado' },
-  PAGADOR_SEM_CPF: { status: 422, message: 'Pagador sem CPF cadastrado' },
-  CREDENCIAIS_ASAAS_NAO_CONFIGURADAS: { status: 503, message: 'Integração financeira não configurada' },
-  CUSTOMER_SEM_ASAAS_ID: { status: 409, message: 'Cadastro financeiro do pagador incompleto' },
-  FORMA_PAGAMENTO_INVALIDA: { status: 422, message: 'Forma de pagamento inválida' },
-  VALOR_INVALIDO: { status: 422, message: 'Valor inválido' },
-  DATA_INVALIDA: { status: 422, message: 'Data inválida' },
-  PARCELAS_INVALIDAS: { status: 422, message: 'Número de parcelas inválido (mínimo 2)' },
-  RESPONSAVEL_OBRIGATORIO_MENOR: { status: 422, message: 'Aluno menor exige responsável financeiro vinculado' },
-  ERRO_AO_CRIAR_PAGAMENTO: { status: 502, message: 'Erro ao criar pagamento no provedor' },
-  COBRANCA_DUPLICADA: { status: 409, message: 'Cobrança duplicada' },
-};
-
-function parseDueDate(value: string | undefined) {
-  if (!value) return undefined;
-  return new Date(`${value}T00:00:00.000`);
-}
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
@@ -50,101 +17,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const ctx = await getEventsContext('events.update');
     const body = reactivateEventParticipantRequestSchema.parse(await request.json());
 
-    const participant = await getEventParticipantForReactivation({ eventId, participantId, contaId: ctx.contaId });
-    if (!participant) {
-      throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
+    const result = await reactivateEventParticipantWithCharge(ctx, eventId, participantId, body);
+    if (!result.success) {
+      return NextResponse.json({ error: { code: result.error, message: result.message } }, { status: result.status });
     }
-    if (!participant.cancelledAt) {
-      throw new EventsError('PARTICIPANTE_NAO_CANCELADO', 'Somente inscrições canceladas podem ser reinscritas.', 409);
-    }
-
-    const decision = await getEventParticipantRemovalDecision(ctx, eventId, participantId);
-    if (!decision.canRemove) {
-      throw new EventsError(
-        'PARTICIPANTE_REINSCRICAO_BLOQUEADA',
-        'Este aluno possui histórico financeiro ou operacional neste evento. A reinscrição automática não está disponível para este caso.',
-        409,
-        { reasons: decision.reasons },
-      );
-    }
-
-    const isFeePaid = !body.hasEntry && body.billingMethod === 'MANUAL_RECEIVED';
-    const feePaymentMethod = body.hasEntry ? body.billingMethod : isFeePaid ? body.feePaymentMethod : body.billingMethod;
-    const entryAmount = body.hasEntry ? body.entryAmount : isFeePaid ? body.registrationFeeCharged : 0;
-    const balanceAmount = Math.max(body.registrationFeeCharged - entryAmount, 0);
-    const billingMode = body.hasEntry
-      ? 'ENTRY_INSTALLMENT'
-      : body.chargeType === 'INSTALLMENT'
-        ? 'INSTALLMENT'
-        : 'FULL';
-    const paymentRules = eventPaymentRulesFromRecord(participant.event);
-    const paymentRulesError = isFeePaid
-      ? null
-      : validateEventPaymentRulesForCharge(paymentRules, balanceAmount);
-    if (paymentRulesError) {
-      throw new EventsError('REGRAS_COBRANCA_INVALIDAS', paymentRulesError, 422);
-    }
-    let asaasPaymentId: string | null = null;
-    let asaasInstallmentId: string | null = null;
-    let standaloneChargeId: string | null = null;
-
-    if (balanceAmount > 0 && !isFeePaid) {
-      if (!participant.alunoId) {
-        throw new EventsError('ALUNO_NAO_ENCONTRADO', 'Aluno não encontrado para gerar nova cobrança.', 404);
-      }
-
-      const billingResult = await createStandaloneCharge({
-        contaId: ctx.contaId,
-        actor: { type: 'USER', id: ctx.userId },
-        payer: { type: 'aluno', alunoId: participant.alunoId },
-        chargeType: body.chargeType || 'ONE_TIME',
-        billingType: body.billingMethod as 'BOLETO' | 'PIX' | 'CREDIT_CARD',
-        description: body.hasEntry
-          ? `Saldo da taxa de inscrição no evento - ${participant.event.name}`
-          : `Taxa de inscrição no evento - ${participant.event.name}`,
-        value: balanceAmount,
-        dueDate: body.dueDate,
-        installmentCount: body.installmentCount,
-        installmentValue: body.chargeType === 'INSTALLMENT' && body.installmentCount
-          ? Number((balanceAmount / body.installmentCount).toFixed(2))
-          : undefined,
-        notificationChannels: body.notificationChannels,
-        notificationChannelsConfigured: body.notificationChannelsConfigured,
-        uiRequestId: `event-participant:${participant.id}:reactivation:balance`,
-        ...eventPaymentRulesToAsaas(paymentRules),
-      });
-
-      if (!billingResult.success) {
-        const errInfo = billingErrorMap[billingResult.error] ?? { status: 500, message: `Erro ao gerar cobrança: ${billingResult.error}` };
-        return NextResponse.json({ error: { code: billingResult.error, message: errInfo.message } }, { status: errInfo.status });
-      }
-
-      asaasPaymentId = billingResult.data.asaasPaymentId || billingResult.data.asaasInstallmentId || null;
-      asaasInstallmentId = billingResult.data.asaasInstallmentId ?? null;
-      standaloneChargeId = billingResult.data.chargeId;
-    }
-
-    const input = reactivateEventParticipantSchema.parse({
-      registrationFeeCharged: body.registrationFeeCharged,
-      billingMode,
-      entryAmount,
-      entryPaymentMethod: body.hasEntry ? body.entryPaymentMethod : isFeePaid ? body.feePaymentMethod : undefined,
-      isFeePaid,
-      feePaymentMethod: body.registrationFeeCharged > 0 ? feePaymentMethod : undefined,
-      notes: body.notes,
-      dueDate: parseDueDate(body.dueDate),
-      paymentProvider: asaasPaymentId ? 'ASAAS' : null,
-      asaasPaymentId,
-      asaasInstallmentId,
-      standaloneChargeId,
-      paymentStatus: asaasPaymentId ? 'PENDING' : null,
-      billingMethod: body.billingMethod,
-      chargeType: body.chargeType,
-      installmentCount: body.installmentCount,
-    });
-
-    const result = await reactivateEventParticipant(ctx, eventId, participantId, input);
-    return NextResponse.json({ data: result });
+    return NextResponse.json({ data: result.data });
   } catch (error) {
     return handleEventsRouteError(error, 'ERRO_REINSCREVER_PARTICIPANTE');
   }

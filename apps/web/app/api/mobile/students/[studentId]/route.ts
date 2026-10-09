@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { deleteAluno, reativarAlunoCompleto } from '@alusa/lib/alunos/aluno.service';
+import { studentFinancePort } from '@/src/server/students/student-finance-port';
 import { updateAlunoInputDTOSchema } from '@/features/students/dtos';
 import {
   assertMobileStudentAccess,
@@ -122,7 +123,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ stu
       return response({ success: true });
     }
 
-    const result = await deleteAluno(studentId, actor.contaId, parsed.data.reason, false, actor.userId);
+    const result = await deleteAluno(
+      studentId,
+      actor.contaId,
+      parsed.data.reason,
+      false,
+      actor.userId,
+      studentFinancePort,
+    );
     return response({ success: true, outcome: result ? 'ARCHIVED_OR_DELETED' : 'ARCHIVED' });
   } catch (error) {
     if (error instanceof MobileStudentUnauthorizedError) return response({ error: { code: 'FORBIDDEN', message: 'Você não tem acesso a esta conta.' } }, 403);

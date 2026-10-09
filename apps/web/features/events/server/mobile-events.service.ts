@@ -1,6 +1,5 @@
 import {
   createCostumeAssignment,
-  createFinancialEntry,
   EventsError,
   getEventScopedResources,
   getSchoolEvent,
@@ -8,9 +7,9 @@ import {
   listFinancialEntriesPage,
   listEventParticipantsPage,
   listSchoolEvents,
-  updateFinancialEntry,
   updateSchoolEventStatus,
 } from '@alusa/lib/events/events.service';
+import { createFinancialEntry, updateFinancialEntry } from '@alusa/finance';
 import {
   markEventTicketUsed,
   markEventTicketUsedAcrossEvents,

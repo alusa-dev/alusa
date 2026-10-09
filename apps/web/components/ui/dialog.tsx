@@ -13,29 +13,40 @@ const DialogPortal = DialogPrimitive.Portal;
 
 const DialogClose = DialogPrimitive.Close;
 
+type DialogOverlayProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay> & {
+  disableBackdropBlur?: boolean;
+};
+
 const DialogOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
->(({ className, ...props }, ref) => (
-  <DialogPrimitive.Overlay
-    ref={ref}
-    className={cn(
-      // Fullscreen backdrop + flex para centralizar o conteúdo sem depender de translate
-      'fixed inset-0 z-50 flex items-center justify-center alusa-overlay-heavy bg-black/80 p-4 md:p-6',
-      // Blur suave (fallback para navegadores sem suporte)
-      'backdrop-blur-sm supports-[backdrop-filter]:backdrop-blur-md',
-      // Fade animations
-      'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
-      className,
-    )}
-    {...props}
-  />
-));
+  DialogOverlayProps
+>(({ className, disableBackdropBlur = false, ...props }, ref) => {
+  // Keep the prop for call-site compatibility; all modal backdrops now share one treatment.
+  void disableBackdropBlur;
+  return (
+    <DialogPrimitive.Overlay
+      ref={ref}
+      className={cn(
+        // Fullscreen backdrop + flex para centralizar o conteúdo sem depender de translate
+        'fixed inset-0 z-50 flex items-center justify-center alusa-overlay-heavy bg-black/80 p-4 md:p-6',
+        // Fade animations
+        'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+        className,
+        'bg-black/80 !bg-black/80 backdrop-blur-none !backdrop-blur-none',
+      )}
+      {...props}
+    />
+  );
+});
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
   /** Conteúdo ocupa a viewport no mobile (sem margens); desktop inalterado. */
   fullScreenMobile?: boolean;
+  /** Mantido para compatibilidade; todos os overlays modais seguem o mesmo padrão sem blur. */
+  disableBackdropBlur?: boolean;
+  /** Evita escala de abertura/fechamento em conteúdos que dependem de medidas estáveis. */
+  disableScaleAnimation?: boolean;
   /** Impede fechar pelo botão enquanto uma operação crítica está em andamento. */
   closeDisabled?: boolean;
   /** Classes visuais específicas para o overlay deste diálogo. */
@@ -56,6 +67,8 @@ const DialogContent = React.forwardRef<
       className,
       children,
       fullScreenMobile,
+      disableBackdropBlur = false,
+      disableScaleAnimation = false,
       closeDisabled = false,
       overlayClass,
       unstyled = false,
@@ -64,7 +77,10 @@ const DialogContent = React.forwardRef<
     ref,
   ) => (
   <DialogPortal>
-    <DialogOverlay className={cn(fullScreenMobile && 'max-md:p-0', overlayClass)} />
+    <DialogOverlay
+      disableBackdropBlur={disableBackdropBlur}
+      className={cn(fullScreenMobile && 'max-md:p-0', overlayClass)}
+    />
     {/* Wrapper flex para centralização perfeita e suportar scroll em telas baixas */}
     <div
       className={cn(
@@ -78,7 +94,8 @@ const DialogContent = React.forwardRef<
           'relative z-50 w-full outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0',
           !unstyled &&
             'grid max-w-lg gap-4 border border-gray-200 bg-white p-6 alusa-modal-surface shadow-lg sm:rounded-xl',
-          'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
+          'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+          !disableScaleAnimation && 'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
           fullScreenMobile &&
             'max-md:box-border max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:w-full max-md:max-w-none max-md:min-h-0 max-md:rounded-none max-md:border-x-0 max-md:border-t-0 max-md:border-b-0 max-md:shadow-none max-md:pb-[env(safe-area-inset-bottom,0px)] max-md:pl-[env(safe-area-inset-left,0px)] max-md:pr-[env(safe-area-inset-right,0px)]',
           className,

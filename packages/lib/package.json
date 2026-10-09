@@ -30,17 +30,69 @@
       "types": "./dist/events/map/event-map.service.d.ts",
       "default": "./dist/events/map/event-map.service.js"
     },
+    "./events/map/event-map.schema": {
+      "types": "./dist/events/map/event-map.schema.d.ts",
+      "default": "./dist/events/map/event-map.schema.js"
+    },
+    "./events/map/event-map-order-operations": {
+      "types": "./dist/events/map/event-map-order-operations.d.ts",
+      "default": "./dist/events/map/event-map-order-operations.js"
+    },
+    "./events/map/public-event-map-checkout-persistence": {
+      "types": "./dist/events/map/public-event-map-checkout-persistence.d.ts",
+      "default": "./dist/events/map/public-event-map-checkout-persistence.js"
+    },
+    "./events/map/public-event-map-order-status.service": {
+      "types": "./dist/events/map/public-event-map-order-status.service.d.ts",
+      "default": "./dist/events/map/public-event-map-order-status.service.js"
+    },
+    "./events/map/event-map-payment-guard": {
+      "types": "./dist/events/map/event-map-payment-guard.d.ts",
+      "default": "./dist/events/map/event-map-payment-guard.js"
+    },
+    "./events/map/public-order-links": {
+      "types": "./dist/events/map/public-order-links.d.ts",
+      "default": "./dist/events/map/public-order-links.js"
+    },
     "./events/map/ticket-code": {
       "types": "./dist/events/map/ticket-code.d.ts",
       "default": "./dist/events/map/ticket-code.js"
+    },
+    "./events/map/public-order-refund-action": {
+      "types": "./dist/events/map/public-order-refund-action.d.ts",
+      "default": "./dist/events/map/public-order-refund-action.js"
     },
     "./events/events.service": {
       "types": "./dist/events/events.service.d.ts",
       "default": "./dist/events/events.service.js"
     },
-    "./events/event-asaas-payment-provider": {
-      "types": "./dist/events/event-asaas-payment-provider.d.ts",
-      "default": "./dist/events/event-asaas-payment-provider.js"
+    "./events/events-payment-rules": {
+      "types": "./dist/events/events-payment-rules.d.ts",
+      "default": "./dist/events/events-payment-rules.js"
+    },
+    "./events/event-financial-read-models": {
+      "types": "./dist/events/event-financial-read-models.d.ts",
+      "default": "./dist/events/event-financial-read-models.js"
+    },
+    "./events/event-audit.service": {
+      "types": "./dist/events/event-audit.service.d.ts",
+      "default": "./dist/events/event-audit.service.js"
+    },
+    "./events/event-participant-removal-decision.service": {
+      "types": "./dist/events/event-participant-removal-decision.service.d.ts",
+      "default": "./dist/events/event-participant-removal-decision.service.js"
+    },
+    "./events/event-participant-discount": {
+      "types": "./dist/events/event-participant-discount.d.ts",
+      "default": "./dist/events/event-participant-discount.js"
+    },
+    "./events/event-participant-scope": {
+      "types": "./dist/events/event-participant-scope.d.ts",
+      "default": "./dist/events/event-participant-scope.js"
+    },
+    "./events/map/staff-map-sales.service": {
+      "types": "./dist/events/map/staff-map-sales.service.d.ts",
+      "default": "./dist/events/map/staff-map-sales.service.js"
     },
     "./services/standalone-installment-plan-status.service": {
       "types": "./dist/services/standalone-installment-plan-status.service.d.ts",
@@ -65,6 +117,10 @@
     "./alunos/aluno.schema": {
       "types": "./dist/alunos/aluno.schema.d.ts",
       "default": "./dist/alunos/aluno.schema.js"
+    },
+    "./alunos/aluno-finance-port": {
+      "types": "./dist/alunos/aluno-finance-port.d.ts",
+      "default": "./dist/alunos/aluno-finance-port.js"
     },
     "./alunos/aluno.service": {
       "types": "./dist/alunos/aluno.service.d.ts",
@@ -201,6 +257,10 @@
     "./events/ticket-checkin.service": {
       "types": "./dist/events/ticket-checkin.service.d.ts",
       "default": "./dist/events/ticket-checkin.service.js"
+    },
+    "./events/ticket-email-outbox": {
+      "types": "./dist/events/ticket-email-outbox.d.ts",
+      "default": "./dist/events/ticket-email-outbox.js"
     },
     "./notifications/domain-notifications": {
       "types": "./dist/notifications/domain-notifications.d.ts",

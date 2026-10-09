@@ -1,25 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
-
 import { markEventMapTicketUsed, verifyEventMapTicketForCheckIn } from '@alusa/lib/events/map/event-map.service';
+import { eventPublicTicketCheckInInputDTOSchema, eventRouteParamsDTOSchema } from '@/features/events/dtos';
 
 import { getEventsContext, handleEventsRouteError } from '../../../_helpers';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-const bodySchema = z.object({
-  ticketCode: z.string().min(4).max(64),
-  confirm: z.boolean().optional(),
-});
-
 type RouteParams = { params: Promise<{ eventId: string }> };
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
-    const { eventId } = await params;
+    const { eventId } = eventRouteParamsDTOSchema.parse(await params);
     const ctx = await getEventsContext('eventTickets.checkIn');
-    const body = bodySchema.parse(await request.json());
+    const body = eventPublicTicketCheckInInputDTOSchema.parse(await request.json());
 
     if (body.confirm) {
       const result = await markEventMapTicketUsed(ctx.contaId, eventId, body.ticketCode, ctx.userId);

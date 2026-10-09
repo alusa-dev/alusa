@@ -29,7 +29,7 @@ export function PlatformBillingNoticeModal({
       <DialogContent
         fullScreenMobile
         unstyled
-        overlayClass="bg-black/80 backdrop-blur-sm supports-[backdrop-filter]:backdrop-blur-md"
+        overlayClass="bg-black/80 backdrop-blur-none"
         className="max-w-[640px] !transition-none data-[state=closed]:!animate-none data-[state=open]:!animate-none [&>button.absolute]:z-20 [&>button.absolute]:text-white [&>button.absolute:hover]:opacity-100"
       >
         <div className="flex min-h-[500px] select-none flex-col overflow-hidden rounded-[24px] bg-white shadow-[0_12px_32px_rgba(0,0,0,0.28),0_2px_8px_rgba(0,0,0,0.16)]">

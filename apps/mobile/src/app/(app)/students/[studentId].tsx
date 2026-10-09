@@ -219,7 +219,7 @@ function EnrollmentRow({ enrollment, onPress }: { enrollment: StudentEnrollment;
 }
 
 function ChargeRow({ charge }: { charge: StudentCharge }) {
-  return <View style={styles.listRow}><View style={styles.flexCopy}><AppText weight="medium">{charge.description}</AppText><AppText variant="small" tone="muted">Vencimento: {formatDate(charge.dueDate)} · {labelFor(charge.status)}</AppText><AppText variant="tiny" tone="subtle">{paymentMethodFor(charge.paymentMethod)} · Criada em {formatDate(charge.createdAt)}</AppText></View><AppText variant="body" weight="medium">{formatCurrency(charge.amount)}</AppText></View>;
+  return <Pressable accessibilityRole="button" accessibilityLabel={`Abrir cobrança: ${charge.description}, ${formatCurrency(charge.amount)}, ${labelFor(charge.status)}`} onPress={() => router.push({ pathname: '/(app)/billing/[chargeId]', params: { chargeId: charge.id } })} style={({ pressed }) => [styles.listRow, pressed ? styles.pressed : null]}><View style={styles.flexCopy}><AppText weight="medium" numberOfLines={1}>{charge.description}</AppText><AppText variant="small" tone="muted" numberOfLines={1}>Vencimento: {formatDate(charge.dueDate)} · {labelFor(charge.status)}</AppText><AppText variant="tiny" tone="subtle" numberOfLines={1}>{paymentMethodFor(charge.paymentMethod)} · Criada em {formatDate(charge.createdAt)}</AppText></View><View style={styles.trailing}><AppText variant="body" weight="medium">{formatCurrency(charge.amount)}</AppText><ChevronRightIcon color={colors.inkMuted} size={20} strokeWidth={1.8} /></View></Pressable>;
 }
 
 function NotificationSummary({ notifications, onEdit }: { notifications: StudentNotifications; onEdit: () => void }) {
@@ -264,6 +264,7 @@ const styles = StyleSheet.create({
   booleanRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   longValue: { gap: spacing.xs },
   listRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingBottom: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  trailing: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   notificationNotice: { padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surface },
   notificationList: { gap: spacing.md },
   notificationRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingBottom: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },

@@ -111,7 +111,6 @@ export * from './events/events.schema';
 export * from './events/events.service';
 export * from './events/events-payment-rules';
 export * from './events/event-contracts.service';
-export * from './events/event-asaas-payment-provider';
 export * from './events/ticket-checkin.service';
 export * from './events/map/event-map.schema';
 export * from './events/map/event-map.service';

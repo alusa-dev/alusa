@@ -455,6 +455,7 @@ export function StudentEditDialog({ open, onOpenChange, aluno, onSaved }: Props)
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="edit-aluno-dialog"
+        disableBackdropBlur
         overlayClass="alusa-registration-wizard-overlay"
         fullScreenMobile
         className="aluno-registration-wizard student-edit-dialog alusa-wizard-corner-smoothing [--wizard-field-background:#eff3f8] alusa-dark:[--wizard-field-background:var(--color-bg-elevated)] max-w-4xl w-full gap-0 overflow-hidden bg-[#f8fafc] p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"

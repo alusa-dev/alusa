@@ -1,7 +1,7 @@
 import { getPayment } from '@alusa/asaas';
 import { prisma } from '@alusa/database';
-import { EventsError } from '@alusa/lib/events/events.service';
-import { loadDecryptedAsaasCredentials } from '@alusa/lib/services/integracoes/asaas-credentials-service';
+import { EventsError } from '@alusa/domain/events';
+import { loadDecryptedAsaasCredentials } from '../foundation/load-decrypted-asaas-credentials';
 import { Prisma } from '@prisma/client';
 
 import { logEventsFinance } from './events-finance-observability';
@@ -180,7 +180,7 @@ export async function reconcileEventMapOrderPayment(
       asaasPaymentId: null,
       previousPaymentMethod: order.paymentMethod,
       paymentMethod: order.paymentMethod,
-      message: 'Pedido sem cobrança Asaas vinculada.',
+      message: 'Pedido sem cobrança vinculada.',
     };
   }
 
@@ -200,7 +200,7 @@ export async function reconcileEventMapOrderPayment(
   if (!credentials?.apiKey) {
     throw new EventsError(
       'ASAAS_CREDENTIALS_NOT_FOUND',
-      'Conta sem credenciais Asaas configuradas.',
+      'Integração de pagamentos não configurada para esta conta.',
       409,
     );
   }
@@ -220,7 +220,7 @@ export async function reconcileEventMapOrderPayment(
 
     throw new EventsError(
       'ASAAS_PAYMENT_RECONCILE_FAILED',
-      'Falha ao consultar Asaas. Tente novamente.',
+      'Não foi possível verificar o pagamento. Tente novamente.',
       502,
       { orderId: order.id, asaasPaymentId: order.asaasPaymentId },
     );
@@ -235,7 +235,7 @@ export async function reconcileEventMapOrderPayment(
       asaasPaymentId: order.asaasPaymentId,
       previousPaymentMethod: order.paymentMethod,
       paymentMethod: order.paymentMethod,
-      message: 'Cobrança Asaas não retornou forma de pagamento.',
+      message: 'A cobrança não retornou a forma de pagamento.',
     };
   }
 

@@ -1,17 +1,16 @@
 import { prisma } from '@alusa/database';
 import { convergeStandaloneInstallmentPlanStatus } from '@alusa/lib/services/standalone-installment-plan-status.service';
 import type { PaymentStatus } from '@alusa/asaas';
-import {
-  refundTicketSalesByAsaasPayment,
-} from '@alusa/lib/events/events.service';
+import { confirmPublicEventMapOrderPayment } from '../events/confirm-public-event-map-order-payment';
+import { refundEventTicketSalesByPayment } from '../events/refund-event-ticket-sales-by-payment';
 import {
   cancelPublicEventMapOrderByPayment,
-  confirmPublicEventMapOrderPayment,
   markPublicEventMapOrderRefundProcessingByPayment,
   reconcileEventMapOrderFinancialStateFromAsaas,
   refundPublicEventMapOrderByPayment,
   syncPublicEventMapOrderPaymentCreated,
-} from '@alusa/lib/events/map/event-map.service';
+} from '../events/event-map-payment-transitions';
+import { isEventMapOrderRefundFinalized, isTicketPaymentBlocked } from '@alusa/domain/events';
 import { isPaymentResolutionPolicyEnabled } from '../foundation/payment-resolution-policy';
 import { resolvePaymentToLocalEntity } from './payment-resolver';
 import {
@@ -19,6 +18,7 @@ import {
   resolveInternalPaymentStatus,
 } from '../mappers/status-precedence';
 import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
+import { normalizeEventMapChargebackStatus, resolveEventMapChargebackStatus } from './event-map-chargeback-status';
 import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
 import { buildPaymentExternalReference, mapAsaasToChargeStatus } from '../core';
 import { ensureAcademicChargeForCobranca } from '../fiscal/ensure-academic-charge-for-cobranca';
@@ -163,6 +163,7 @@ export type PaymentWebhookPayload = {
     nossoNumero?: string | null;
     /** Indica remoção lógica do payment no Asaas */
     deleted?: boolean | null;
+    chargeback?: { status?: string | null; reason?: string | null } | null;
   };
 };
 
@@ -194,6 +195,7 @@ const SENSITIVE_PAYMENT_EVENTS = new Set([
   'PAYMENT_SPLIT_DIVERGENCE_BLOCK',
   'PAYMENT_SPLIT_DIVERGENCE_BLOCK_FINISHED',
 ]);
+
 
 async function resolveObligationPayerName(
   contaId: string,
@@ -1188,12 +1190,12 @@ async function handlePaymentWebhookCore(
       eventMapOrderReference
         ? prisma.eventMapOrder.findFirst({
             where: { id: eventMapOrderReference, contaId },
-            select: { id: true, asaasPaymentId: true },
+            select: { id: true, asaasPaymentId: true, status: true, paymentStatus: true },
           })
         : Promise.resolve(null),
       prisma.eventMapOrder.findMany({
         where: { contaId, asaasPaymentId: payload.payment.id },
-        select: { id: true, asaasPaymentId: true },
+        select: { id: true, asaasPaymentId: true, status: true, paymentStatus: true },
         take: 2,
       }),
     ]);
@@ -1287,10 +1289,81 @@ async function handlePaymentWebhookCore(
       payload.payment.paymentDate ??
       payload.payment.creditDate ??
       new Date().toISOString();
-    if (
+    const chargebackStatusByEvent: Record<string, string> = {
+      PAYMENT_CHARGEBACK_REQUESTED: 'REQUESTED',
+      PAYMENT_CHARGEBACK_DISPUTE: 'IN_DISPUTE',
+      PAYMENT_AWAITING_CHARGEBACK_REVERSAL: 'AWAITING_CHARGEBACK_REVERSAL',
+    };
+    const rawIncomingChargebackStatus = payload.payment.chargeback?.status?.trim() || null;
+    const incomingChargeback = rawIncomingChargebackStatus
+      ? normalizeEventMapChargebackStatus(rawIncomingChargebackStatus)
+      : null;
+    const incomingChargebackStatus = incomingChargeback?.paymentStatus
+      ?? chargebackStatusByEvent[payload.event]
+      ?? null;
+    const isFinalRefundEvent = payload.event === 'PAYMENT_REFUNDED' || effectiveAsaasStatus === 'REFUNDED';
+    const knownEventMapOrder = eventMapOrderByPayment ?? eventMapOrder;
+    const normalizedOrderPaymentStatus = knownEventMapOrder?.paymentStatus?.trim().toUpperCase() ?? null;
+    const orderAlreadyRefunded = isEventMapOrderRefundFinalized(
+      knownEventMapOrder?.status,
+      knownEventMapOrder?.paymentStatus,
+    );
+    const orderPaymentBlocked = normalizedOrderPaymentStatus !== 'REFUND_DENIED' &&
+      isTicketPaymentBlocked(normalizedOrderPaymentStatus);
+    const refundDenialCanResolveCurrentHold = payload.event === 'PAYMENT_REFUND_DENIED' &&
+      ['REFUND_REQUESTED', 'REFUND_IN_PROGRESS', 'PAYMENT_REFUND_IN_PROGRESS'].includes(normalizedOrderPaymentStatus ?? '');
+    const isPaidEvent =
       ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH'].includes(payload.event) ||
-      ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(effectiveAsaasStatus)
+      ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(effectiveAsaasStatus);
+
+    if (orderAlreadyRefunded && !isFinalRefundEvent) {
+      // A final refund is monotonic. Delayed chargeback/refund-progress/denial
+      // events must not restore tickets or replace the terminal payment state.
+    } else if (isFinalRefundEvent) {
+      await refundPublicEventMapOrderByPayment({
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        externalReference: payload.payment.externalReference,
+        refundedAmount: payload.payment.value,
+      });
+      await refundEventTicketSalesByPayment({
+        contaId,
+        paymentId: payload.payment.id,
+        paymentStatus: effectiveAsaasStatus,
+        isFinalRefund: true,
+        refundedAmount: payload.payment.value,
+      });
+    } else if (
+      orderPaymentBlocked &&
+      incomingChargebackStatus !== 'REVERSED' &&
+      !refundDenialCanResolveCurrentHold
     ) {
+      // A delayed generic paid snapshot cannot override an already persisted
+      // refund/dispute hold or issue tickets. Only a denial or explicit
+      // chargeback reversal can remove that hold.
+    } else if (incomingChargebackStatus && incomingChargebackStatus !== 'REVERSED') {
+      // Provider chargeback data takes precedence over a generic RECEIVED
+      // snapshot. Never issue/re-enable tickets while the dispute is unresolved.
+      await markPublicEventMapOrderRefundProcessingByPayment({
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        externalReference: payload.payment.externalReference,
+        paymentStatus: resolveEventMapChargebackStatus(
+          knownEventMapOrder?.paymentStatus,
+          incomingChargebackStatus,
+        ),
+        rawChargebackStatus: incomingChargeback && !incomingChargeback.known
+          ? incomingChargeback.rawStatus
+          : undefined,
+      });
+    } else if (incomingChargebackStatus === 'REVERSED' && !isPaidEvent) {
+      await markPublicEventMapOrderRefundProcessingByPayment({
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        externalReference: payload.payment.externalReference,
+        paymentStatus: 'REVERSED',
+      });
+    } else if (isPaidEvent) {
       const eventPaymentParams = {
         contaId,
         asaasPaymentId: payload.payment.id,
@@ -1299,6 +1372,7 @@ async function handlePaymentWebhookCore(
         invoiceUrl: payload.payment.invoiceUrl ?? null,
         paidAt,
         paidAmount: payload.payment.value,
+        chargebackStatus: incomingChargebackStatus,
       };
       let confirmed: Awaited<ReturnType<typeof confirmPublicEventMapOrderPayment>> = null;
       let confirmationError: unknown = null;
@@ -1309,6 +1383,7 @@ async function handlePaymentWebhookCore(
           // expired but every seat is still available. The service atomically
           // reclaims the complete set, or rejects without issuing any ticket.
           allowReleasedReservation: true,
+          chargebackStatus: incomingChargebackStatus,
         });
       } catch (error) {
         confirmationError = error;
@@ -1329,6 +1404,16 @@ async function handlePaymentWebhookCore(
           throw new Error('EVENT_MAP_PAID_PAYMENT_REQUIRES_RETRY', confirmationError ? { cause: confirmationError } : undefined);
         }
       }
+      if (confirmed && incomingChargebackStatus === 'REVERSED') {
+        // Only the provider's explicit terminal reversal removes the ticket
+        // block. A generic/older payment confirmation cannot settle a dispute.
+        await markPublicEventMapOrderRefundProcessingByPayment({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+          externalReference: payload.payment.externalReference,
+          paymentStatus: 'REVERSED',
+        });
+      }
     } else if (payload.event === 'PAYMENT_CREATED' || payload.payment.status === 'PENDING') {
       await syncPublicEventMapOrderPaymentCreated({
         contaId,
@@ -1336,20 +1421,6 @@ async function handlePaymentWebhookCore(
         externalReference: payload.payment.externalReference,
         paymentStatus: effectiveAsaasStatus,
         invoiceUrl: payload.payment.invoiceUrl ?? null,
-      });
-    } else if (payload.event === 'PAYMENT_REFUNDED' || effectiveAsaasStatus === 'REFUNDED') {
-      await refundPublicEventMapOrderByPayment({
-        contaId,
-        asaasPaymentId: payload.payment.id,
-        externalReference: payload.payment.externalReference,
-        refundedAmount: payload.payment.value,
-      });
-      await refundTicketSalesByAsaasPayment({
-        contaId,
-        asaasPaymentId: payload.payment.id,
-        paymentStatus: effectiveAsaasStatus,
-        isFinalRefund: true,
-        refundedAmount: payload.payment.value,
       });
     } else if (payload.event === 'PAYMENT_PARTIALLY_REFUNDED') {
       await refundPublicEventMapOrderByPayment({
@@ -1359,9 +1430,9 @@ async function handlePaymentWebhookCore(
         refundedAmount: payload.payment.value,
         partial: true,
       });
-      await refundTicketSalesByAsaasPayment({
+      await refundEventTicketSalesByPayment({
         contaId,
-        asaasPaymentId: payload.payment.id,
+        paymentId: payload.payment.id,
         paymentStatus: effectiveAsaasStatus,
         isFinalRefund: false,
         refundedAmount: payload.payment.value,
@@ -1373,9 +1444,9 @@ async function handlePaymentWebhookCore(
         externalReference: payload.payment.externalReference,
         paymentStatus: payload.event === 'PAYMENT_REFUND_DENIED' ? 'REFUND_DENIED' : payload.payment.status,
       });
-      await refundTicketSalesByAsaasPayment({
+      await refundEventTicketSalesByPayment({
         contaId,
-        asaasPaymentId: payload.payment.id,
+        paymentId: payload.payment.id,
         paymentStatus: payload.event === 'PAYMENT_REFUND_DENIED' ? 'REFUND_DENIED' : payload.payment.status,
         isFinalRefund: false,
       });

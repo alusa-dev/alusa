@@ -1,68 +1,45 @@
-import { Prisma, PrismaClient, EventFinancialEntryStatus, EventPaymentMethod } from '@prisma/client';
-
-const mapToEventPaymentMethod = (method?: string | null): EventPaymentMethod => {
-  if (!method) return 'OTHER';
-  const allowed = ['CASH', 'MANUAL_PIX', 'EXTERNAL_CARD', 'TRANSFER', 'COMPLIMENTARY', 'OTHER'];
-  if (allowed.includes(method)) return method as EventPaymentMethod;
-  return 'OTHER';
-};
+import { buildEventParticipantRemovalDecision } from './event-participant-removal-decision.service';
+export { getEventParticipantRemovalDecision } from './event-participant-removal-decision.service';
+import { eventParticipantScalarSelect, mapFinancialEntry, mapTicketSale } from './event-financial-read-models';
+import { recordEventAudit } from './event-audit.service';
+export { eventParticipantScalarSelect, mapFinancialEntry, mapTicketSale } from './event-financial-read-models';
+export { recordEventAudit } from './event-audit.service';
+import { Prisma, PrismaClient, EventFinancialEntryStatus } from '@prisma/client';
 
 import {
+  EventsError,
   buildStaffSaleTicketsUrl,
   calculateEventMetrics,
-  normalizeEventFinancialLine,
-  normalizeEventFinancialPayment,
   resolveEventParticipantPayment,
   validateCostumeAssignmentStatusTransition,
   validateSchoolEventStatusTransition,
   validateTicketLotStatusTransition,
-  validateTicketSaleStatusTransition,
   type EventMetrics,
 } from '@alusa/domain/events';
 
+export { EventsError } from '@alusa/domain/events';
+
 import { prisma } from '../prisma';
-import { loadDecryptedAsaasCredentials } from '../services/integracoes/asaas-credentials-service';
 import {
   convergeStandaloneInstallmentPlanStatus,
   listStandaloneInstallmentPlanIdsForParticipant,
 } from '../services/standalone-installment-plan-status.service';
-import { getEventAsaasPaymentProvider } from './event-asaas-payment-provider';
-import { createCheckInCode } from './map/ticket-code';
-import { createEventContractForParticipant } from './event-contracts.service';
-import {
-  buildPublicEventTicketSalePath,
-  enqueueEventTicketEmail,
-} from './ticket-email-outbox';
-import {
-  canRemoveEventParticipant,
-  type EventParticipantRemovalDecision,
-  type EventParticipantRemovalFacts,
-} from './event-participant-lifecycle';
 import {
   assertEventScopedAssignmentLinks,
-  assertEventScopedTicketSaleLinks,
   listEventScopedResources,
   type EventScopedResources,
 } from './event-participant-scope';
 import type {
   CreateCostumeAssignmentInput,
   CreateCostumeInput,
-  CreateEventFinancialEntryInput,
   CreateSchoolEventInput,
   CreateTicketLotInput,
-  CreateTicketSaleInput,
-  UpdateTicketSaleInput,
   ListSchoolEventsQuery,
   UpdateCostumeAssignmentInput,
   UpdateCostumeInput,
-  UpdateEventFinancialEntryInput,
   UpdateSchoolEventInput,
   UpdateTicketLotInput,
-  CreateEventParticipantInput,
   ListEventParticipantsQuery,
-  ReactivateEventParticipantInput,
-  QuitarParticipantFeeInput,
-  ManualEventParticipantPaymentInput,
 } from './events.schema';
 import {
   eventPaymentRulesFromRecord,
@@ -71,18 +48,6 @@ import {
 } from './events-payment-rules';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
-
-export class EventsError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-    public readonly status = 400,
-    public readonly details?: unknown,
-  ) {
-    super(message);
-    this.name = 'EventsError';
-  }
-}
 
 export type EventsContext = {
   contaId: string;
@@ -106,46 +71,12 @@ export type EventsListMeta = {
   pageCount: number;
 };
 
-export const eventParticipantScalarSelect = {
-  id: true,
-  contaId: true,
-  eventId: true,
-  type: true,
-  alunoId: true,
-  turmaId: true,
-  responsavelId: true,
-  displayName: true,
-  notes: true,
-  registrationFeeCharged: true,
-  registrationFeeOriginal: true,
-  registrationFeeDiscount: true,
-  registrationFeeDiscountType: true,
-  billingMode: true,
-  entryAmount: true,
-  balanceAmount: true,
-  entryPaymentMethod: true,
-  billingGroupId: true,
-  registrationPaymentRules: true,
-  isFeePaid: true,
-  isFeeExempt: true,
-  feePaymentMethod: true,
-  revenueEntryId: true,
-  financialStatusSnapshot: true,
-  feePaidAmount: true,
-  feeRefundedAmount: true,
-  standaloneChargeId: true,
-  asaasPaymentId: true,
-  asaasInstallmentId: true,
-  cancelledAt: true,
-  cancelledReason: true,
-  createdAt: true,
-  updatedAt: true,
-} satisfies Prisma.EventParticipantSelect;
 
 const eventInclude = {
   responsibleUser: { select: { id: true, nome: true, email: true } },
   createdBy: { select: { id: true, nome: true, email: true } },
   ticketLots: true,
+  // Ticket artwork is optional and tenant-owned through SchoolEvent.
   ticketSales: true,
   costumes: true,
   assignments: true,
@@ -176,45 +107,8 @@ function toMoney(value: Prisma.Decimal | number | string | null | undefined): nu
   return Math.round((toNumber(value) + Number.EPSILON) * 100) / 100;
 }
 
-function normalizeOptionalEmail(value: string | null | undefined) {
-  const email = value?.trim().toLowerCase();
-  return email || null;
-}
-
-async function resolveTicketBuyerEmail(
-  tx: Prisma.TransactionClient,
-  contaId: string,
-  input: Pick<CreateTicketSaleInput, 'buyerEmail' | 'alunoId' | 'responsavelId'>,
-) {
-  const explicitEmail = normalizeOptionalEmail(input.buyerEmail);
-  if (explicitEmail) return explicitEmail;
-
-  if (input.responsavelId) {
-    const responsavel = await tx.responsavel.findFirst({
-      where: { id: input.responsavelId, contaId },
-      select: { email: true },
-    });
-    const email = normalizeOptionalEmail(responsavel?.email);
-    if (email) return email;
-  }
-
-  if (input.alunoId) {
-    const aluno = await tx.aluno.findFirst({
-      where: { id: input.alunoId, contaId },
-      select: { email: true },
-    });
-    return normalizeOptionalEmail(aluno?.email);
-  }
-
-  return null;
-}
-
 function decimal(value: number): Prisma.Decimal {
   return new Prisma.Decimal(value);
-}
-
-function createPublicToken(prefix: string) {
-  return `${prefix}_${globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`;
 }
 
 function pageMeta(total: number, page = 1, pageSize = 25): EventsListMeta {
@@ -226,50 +120,7 @@ function pageMeta(total: number, page = 1, pageSize = 25): EventsListMeta {
   };
 }
 
-function toAuditJson(value: unknown): Prisma.InputJsonValue {
-  return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;
-}
 
-export async function recordEventAudit(
-  tx: Prisma.TransactionClient,
-  params: {
-    contaId: string;
-    actorUserId: string;
-    action: string;
-    entityType: string;
-    entityId: string;
-    eventId?: string | null;
-    before?: unknown;
-    after?: unknown;
-    metadata?: unknown;
-  },
-) {
-  await tx.eventAudit.create({
-    data: {
-      contaId: params.contaId,
-      eventId: params.eventId ?? null,
-      actorUserId: params.actorUserId,
-      action: params.action,
-      entityType: params.entityType,
-      entityId: params.entityId,
-      before: params.before === undefined ? undefined : toAuditJson(params.before),
-      after: params.after === undefined ? undefined : toAuditJson(params.after),
-      metadata: params.metadata === undefined ? undefined : toAuditJson(params.metadata),
-    },
-  });
-
-  await tx.auditLog.create({
-    data: {
-      contaId: params.contaId,
-      actorType: 'USER',
-      actorId: params.actorUserId,
-      action: params.action,
-      entityType: params.entityType,
-      entityId: params.entityId,
-      metadata: params.metadata === undefined ? undefined : toAuditJson(params.metadata),
-    },
-  });
-}
 
 type ParticipantPaymentSnapshot = {
   percentPaid: number;
@@ -401,6 +252,7 @@ export function mapSchoolEvent(record: SchoolEventRecord, paymentSnapshots?: Map
     id: record.id,
     contaId: record.contaId,
     name: record.name,
+    ticketArtworkUrl: record.ticketArtworkUrl,
     description: record.description,
     type: record.type,
     status: record.status,
@@ -687,31 +539,6 @@ export type EventFinancialConsistencyReport = {
 
 function moneyDifference(left: number, right: number) {
   return toMoney(Math.abs(left - right));
-}
-
-function normalizeFinancialLineOrThrow(input: Parameters<typeof normalizeEventFinancialLine>[0]) {
-  try {
-    return normalizeEventFinancialLine(input);
-  } catch (error) {
-    throw new EventsError('LANCAMENTO_INCONSISTENTE', error instanceof Error ? error.message : 'Valores financeiros inconsistentes.', 422);
-  }
-}
-
-function normalizeFinancialPaymentOrThrow(input: Parameters<typeof normalizeEventFinancialPayment>[0]) {
-  try {
-    return normalizeEventFinancialPayment(input);
-  } catch (error) {
-    throw new EventsError('PAGAMENTO_INCONSISTENTE', error instanceof Error ? error.message : 'Pagamento financeiro inconsistente.', 422);
-  }
-}
-
-function assertFinancialEntryState(type: string, status: string, actualAmount: number | null) {
-  const requiresPayment = type === 'COST'
-    ? status === 'PAID'
-    : ['RECEIVED', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(status);
-  if (requiresPayment && actualAmount == null) {
-    throw new EventsError('STATUS_FINANCEIRO_INCONSISTENTE', 'Um lançamento realizado precisa possuir valor efetivamente recebido ou pago.', 422);
-  }
 }
 
 /**
@@ -1017,11 +844,20 @@ export async function listEventResources(ctx: Pick<EventsContext, 'contaId'>) {
   };
 }
 
-export function mapTicketLot(lot: Prisma.EventTicketLotGetPayload<{ include: { event: { select: { id: true; name: true; startsAt: true } } } }>) {
+const ticketLotInclude = {
+  event: { select: { id: true, name: true, startsAt: true } },
+  eventMap: { select: { id: true, name: true, startsAt: true } },
+} satisfies Prisma.EventTicketLotInclude;
+
+export function mapTicketLot(lot: Prisma.EventTicketLotGetPayload<{ include: typeof ticketLotInclude }>) {
   return {
     id: lot.id,
     contaId: lot.contaId,
     eventId: lot.eventId,
+    eventMapId: lot.eventMapId,
+    eventMap: lot.eventMap
+      ? { ...lot.eventMap, startsAt: toIso(lot.eventMap.startsAt) }
+      : null,
     event: { ...lot.event, startsAt: lot.event.startsAt.toISOString() },
     name: lot.name,
     ticketType: lot.ticketType,
@@ -1041,7 +877,7 @@ export function mapTicketLot(lot: Prisma.EventTicketLotGetPayload<{ include: { e
 export async function listTicketLots(ctx: Pick<EventsContext, 'contaId'>, input: { eventId?: string } = {}) {
   const lots = await prisma.eventTicketLot.findMany({
     where: { contaId: ctx.contaId, ...(input.eventId ? { eventId: input.eventId } : {}) },
-    include: { event: { select: { id: true, name: true, startsAt: true } } },
+    include: ticketLotInclude,
     orderBy: [{ createdAt: 'desc' }],
   });
   return lots.map(mapTicketLot);
@@ -1050,7 +886,7 @@ export async function listTicketLots(ctx: Pick<EventsContext, 'contaId'>, input:
 async function getTicketLotDto(db: DbClient, contaId: string, lotId: string) {
   const lot = await db.eventTicketLot.findFirst({
     where: { id: lotId, contaId },
-    include: { event: { select: { id: true, name: true, startsAt: true } } },
+    include: ticketLotInclude,
   });
   if (!lot) throw new EventsError('LOTE_NAO_ENCONTRADO', 'Lote não encontrado.', 404);
   return mapTicketLot(lot);
@@ -1062,8 +898,18 @@ export async function createTicketLot(ctx: EventsContext, input: CreateTicketLot
     if (!event) throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
     assertEventTicketSalesOpen(event);
 
+    // Coordinate same-name lot creation with map creation and concurrent lot
+    // edits for this event. The partial unique index remains the final guard.
+    await tx.$queryRaw(Prisma.sql`
+      SELECT "id" FROM "SchoolEvent"
+      WHERE "id" = ${input.eventId} AND "contaId" = ${ctx.contaId}
+      FOR UPDATE
+    `);
+
+    // Generic lots are event-wide. Map-owned lots may reuse the same name in
+    // another session, so only event-wide lots participate in this check.
     const existing = await tx.eventTicketLot.findFirst({
-      where: { contaId: ctx.contaId, eventId: input.eventId, name: input.name },
+      where: { contaId: ctx.contaId, eventId: input.eventId, eventMapId: null, name: input.name },
     });
     if (existing) {
       throw new EventsError('LOTE_JA_EXISTE', 'Já existe um lote com este nome neste evento.', 409);
@@ -1116,8 +962,21 @@ export async function updateTicketLot(ctx: EventsContext, lotId: string, input: 
     assertOperationalEvent(current.event.status);
 
     if (input.name && input.name !== current.name) {
+      await tx.$queryRaw(Prisma.sql`
+        SELECT "id" FROM "SchoolEvent"
+        WHERE "id" = ${current.eventId} AND "contaId" = ${ctx.contaId}
+        FOR UPDATE
+      `);
+    }
+
+    if (input.name && input.name !== current.name) {
       const existing = await tx.eventTicketLot.findFirst({
-        where: { contaId: ctx.contaId, eventId: current.eventId, name: input.name },
+        where: {
+          contaId: ctx.contaId,
+          eventId: current.eventId,
+          eventMapId: current.eventMapId,
+          name: input.name,
+        },
       });
       if (existing) {
         throw new EventsError('LOTE_JA_EXISTE', 'Já existe um lote com este nome neste evento.', 409);
@@ -1178,59 +1037,12 @@ export async function updateTicketLot(ctx: EventsContext, lotId: string, input: 
   });
 }
 
-export function mapTicketSale(
-  sale: Prisma.EventTicketSaleGetPayload<{
-    include: {
-      event: { select: { id: true; name: true; startsAt: true } };
-      lot: { select: { id: true; name: true; ticketType: true } };
-      aluno: { select: { id: true; nome: true } };
-      responsavel: { select: { id: true; nome: true } };
-      createdBy: { select: { id: true; nome: true } };
-    };
-  }>,
-) {
-  const source = sale.eventMapOrderId ? ('PUBLIC_ORDER' as const) : ('MANUAL_SALE' as const);
-  const chargeDetailUrl = sale.eventMapOrderId
-    ? `/cobrancas/event-map-order:${sale.eventMapOrderId}`
-    : `/cobrancas/event-ticket-sale:${sale.id}`;
-
-  return {
-    id: sale.id,
-    contaId: sale.contaId,
-    eventId: sale.eventId,
-    event: { ...sale.event, startsAt: sale.event.startsAt.toISOString() },
-    lotId: sale.lotId,
-    lot: sale.lot,
-    buyerName: sale.buyerName,
-    aluno: sale.aluno,
-    responsavel: sale.responsavel,
-    quantity: sale.quantity,
-    unitPriceSnapshot: toMoney(sale.unitPriceSnapshot),
-    totalAmount: toMoney(sale.totalAmount),
-    paymentMethod: sale.paymentMethod,
-    status: sale.status,
-    soldAt: sale.soldAt.toISOString(),
-    paidAt: toIso(sale.paidAt),
-    cancelledAt: toIso(sale.cancelledAt),
-    refundedAt: toIso(sale.refundedAt),
-    createdBy: sale.createdBy,
-    notes: sale.notes,
-    revenueEntryId: sale.revenueEntryId,
-    createdAt: sale.createdAt.toISOString(),
-    updatedAt: sale.updatedAt.toISOString(),
-    source,
-    eventMapOrderId: sale.eventMapOrderId,
-    paymentProvider: sale.paymentProvider,
-    asaasPaymentId: sale.asaasPaymentId,
-    paymentStatus: sale.paymentStatus,
-    chargeDetailUrl,
-  };
-}
 
 function mapPendingPublicOrderAsTicketSale(
   order: Prisma.EventMapOrderGetPayload<{
     include: {
       event: { select: { id: true; name: true; startsAt: true } };
+      map: { select: { name: true; startsAt: true } };
       reservation: {
         include: {
           seats: {
@@ -1267,7 +1079,8 @@ function mapPendingPublicOrderAsTicketSale(
     id: order.id,
     contaId: order.contaId,
     eventId: order.eventId,
-    event: { ...order.event, startsAt: order.event.startsAt.toISOString() },
+    event: { ...order.event, startsAt: (order.map.startsAt ?? order.event.startsAt).toISOString() },
+    sessionName: order.map.name,
     lotId: primaryLot?.id ?? `public-order:${order.id}`,
     lot: {
       id: primaryLot?.id ?? `public-order:${order.id}`,
@@ -1314,12 +1127,7 @@ export async function listTicketSales(ctx: Pick<EventsContext, 'contaId'>, input
         responsavel: { select: { id: true, nome: true } },
         createdBy: { select: { id: true, nome: true } },
         saleSeats: {
-          select: {
-            id: true,
-            sectionName: true,
-            seatLabel: true,
-            unitPriceSnapshot: true,
-          },
+          include: { publicSeat: { select: { map: { select: { name: true } } } } },
           orderBy: [{ sectionName: 'asc' }, { seatLabel: 'asc' }],
         },
       },
@@ -1333,6 +1141,7 @@ export async function listTicketSales(ctx: Pick<EventsContext, 'contaId'>, input
       },
       include: {
         event: { select: { id: true, name: true, startsAt: true } },
+        map: { select: { name: true, startsAt: true } },
         reservation: {
           include: {
             seats: {
@@ -1353,10 +1162,28 @@ export async function listTicketSales(ctx: Pick<EventsContext, 'contaId'>, input
   const publicOrders = publicOrderIds.length
     ? await prisma.eventMapOrder.findMany({
         where: { contaId: ctx.contaId, id: { in: publicOrderIds } },
-        select: { id: true, status: true, accessToken: true, invoiceUrl: true, asaasPaymentId: true, paymentStatus: true },
+        select: {
+          id: true,
+          status: true,
+          accessToken: true,
+          invoiceUrl: true,
+          asaasPaymentId: true,
+          paymentStatus: true,
+          ticketFulfillmentStatus: true,
+          map: { select: { name: true } },
+          _count: { select: { tickets: true, items: true } },
+        },
       })
     : [];
   const publicOrdersById = new Map(publicOrders.map((order) => [order.id, order]));
+  const usedTicketGroups = publicOrderIds.length
+    ? await prisma.eventTicket.groupBy({
+        by: ['eventMapOrderId'],
+        where: { contaId: ctx.contaId, eventMapOrderId: { in: publicOrderIds }, status: 'USED' },
+        _count: { _all: true },
+      })
+    : [];
+  const usedTicketCountByOrder = new Map(usedTicketGroups.map((group) => [group.eventMapOrderId, group._count._all]));
 
   const mappedSales = sales.map((sale) => {
     const dto = mapTicketSale(sale);
@@ -1368,11 +1195,19 @@ export async function listTicketSales(ctx: Pick<EventsContext, 'contaId'>, input
         asaasPaymentId: dto.asaasPaymentId ?? order?.asaasPaymentId ?? null,
         paymentStatus: dto.paymentStatus ?? order?.paymentStatus ?? null,
         invoiceUrl: order?.invoiceUrl ?? null,
+        ticketFulfillmentStatus: order?.ticketFulfillmentStatus ?? null,
+        ticketCount: order?._count.tickets ?? 0,
+        seatCount: order?._count.items ?? 0,
+        ticketsUsed: usedTicketCountByOrder.get(sale.eventMapOrderId) ?? 0,
         chargeDetailUrl: order ? `/cobrancas/event-map-order:${order.id}` : dto.chargeDetailUrl,
         ticketsUrl:
-          order?.status === 'CONFIRMED'
+          order?.status === 'CONFIRMED' && ![
+            'REFUND_REQUESTED', 'REFUND_IN_PROGRESS', 'PAYMENT_REFUND_IN_PROGRESS', 'REFUNDED', 'PAYMENT_REFUNDED',
+            'CHARGEBACK_REQUESTED', 'CHARGEBACK_DISPUTE', 'IN_DISPUTE', 'AWAITING_CHARGEBACK_REVERSAL', 'DISPUTE_LOST', 'CHARGEBACK',
+          ].includes(order.paymentStatus ?? '')
             ? `/api/events/public-orders/${order.id}/tickets`
             : null,
+        sessionName: order?.map.name ?? null,
       };
     }
 
@@ -1380,6 +1215,7 @@ export async function listTicketSales(ctx: Pick<EventsContext, 'contaId'>, input
       return {
         ...dto,
         source: 'MANUAL_SALE' as const,
+        sessionName: sale.saleSeats[0]?.publicSeat.map.name ?? null,
         hasSeatedTickets: true,
         seats: sale.saleSeats.map((seat) => ({
           id: seat.id,
@@ -1399,417 +1235,6 @@ export async function listTicketSales(ctx: Pick<EventsContext, 'contaId'>, input
   );
 }
 
-async function getTicketSaleDto(db: DbClient, contaId: string, saleId: string) {
-  const sale = await db.eventTicketSale.findFirst({
-    where: { id: saleId, contaId },
-    include: {
-      event: { select: { id: true, name: true, startsAt: true } },
-      lot: { select: { id: true, name: true, ticketType: true } },
-      aluno: { select: { id: true, nome: true } },
-      responsavel: { select: { id: true, nome: true } },
-      createdBy: { select: { id: true, nome: true } },
-    },
-  });
-  if (!sale) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
-  return mapTicketSale(sale);
-}
-
-async function syncLotQuantity(tx: Prisma.TransactionClient, contaId: string, lotId: string) {
-  const [aggregate, lot] = await Promise.all([
-    tx.eventTicketSale.aggregate({
-      where: { contaId, lotId, status: { in: ['PENDING', 'PAID', 'COMPLIMENTARY'] } },
-      _sum: { quantity: true },
-    }),
-    tx.eventTicketLot.findFirst({ where: { id: lotId, contaId } }),
-  ]);
-  if (!lot) return;
-
-  const quantitySold = aggregate._sum.quantity ?? 0;
-  const nextStatus =
-    lot.status === 'ACTIVE' && quantitySold >= lot.quantityTotal
-      ? 'SOLD_OUT'
-      : lot.status === 'SOLD_OUT' && quantitySold < lot.quantityTotal
-        ? 'ACTIVE'
-        : lot.status;
-
-  await tx.eventTicketLot.update({
-    where: { id: lotId },
-    data: { quantitySold, status: nextStatus },
-  });
-}
-
-export async function createTicketSale(ctx: EventsContext, input: CreateTicketSaleInput) {
-  const event = await prisma.schoolEvent.findFirst({
-    where: { id: input.eventId, contaId: ctx.contaId },
-    select: { ticketMode: true, status: true, finishedAt: true },
-  });
-  if (!event) throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
-  assertEventTicketSalesOpen(event);
-
-  if (input.holdToken) {
-    const { createSeatedTicketSale } = await import('./map/staff-map-sales.service');
-    const result = await createSeatedTicketSale(ctx, { ...input, holdToken: input.holdToken });
-    const primary = await getTicketSaleDto(prisma, ctx.contaId, result.primarySaleId);
-    return { ...primary, groupedSaleIds: result.saleIds };
-  }
-
-  if (!input.lotId || !input.quantity) {
-    throw new EventsError('DADOS_VENDA_INVALIDOS', 'Informe lote e quantidade para venda simples.', 422);
-  }
-
-  if (event.ticketMode === 'NUMBERED_SEATS') {
-    throw new EventsError(
-      'VENDA_ASSENTO_OBRIGATORIA',
-      'Este evento usa assentos numerados. Selecione os assentos no mapa antes de registrar a venda.',
-      409,
-    );
-  }
-
-  const lotId = input.lotId;
-  const quantity = input.quantity;
-
-  return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "EventTicketLot" WHERE id = ${lotId} AND "contaId" = ${ctx.contaId} FOR UPDATE`;
-
-    const lot = await tx.eventTicketLot.findFirst({
-      where: { id: lotId, contaId: ctx.contaId, eventId: input.eventId },
-      include: { event: true },
-    });
-    if (!lot) throw new EventsError('LOTE_NAO_ENCONTRADO', 'Lote não encontrado.', 404);
-    assertEventTicketSalesOpen(lot.event);
-
-    if (lot.status !== 'ACTIVE') {
-      throw new EventsError('LOTE_INATIVO', 'Somente lotes ativos podem receber vendas.', 409);
-    }
-
-    const now = new Date();
-    if (lot.saleStartsAt && lot.saleStartsAt > now) {
-      throw new EventsError('VENDA_FORA_DO_PERIODO', 'As vendas deste lote ainda não começaram.', 409);
-    }
-    if (lot.saleEndsAt && lot.saleEndsAt < now) {
-      throw new EventsError('VENDA_FORA_DO_PERIODO', 'As vendas deste lote já encerraram.', 409);
-    }
-
-    const sold = await tx.eventTicketSale.aggregate({
-      where: { contaId: ctx.contaId, lotId: lot.id, status: { in: ['PENDING', 'PAID', 'COMPLIMENTARY'] } },
-      _sum: { quantity: true },
-    });
-    const quantitySold = sold._sum.quantity ?? 0;
-    if (quantitySold + quantity > lot.quantityTotal) {
-      throw new EventsError('ESTOQUE_INSUFICIENTE', 'Não há ingressos suficientes neste lote.', 409);
-    }
-
-    const saleStatus = input.paymentMethod === 'COMPLIMENTARY' ? 'COMPLIMENTARY' : input.status;
-    if (!['PENDING', 'PAID', 'COMPLIMENTARY'].includes(saleStatus)) {
-      throw new EventsError('STATUS_VENDA_INVALIDO', 'Use pendente, pago ou cortesia ao criar venda.', 422);
-    }
-
-    await assertEventScopedTicketSaleLinks(tx, ctx.contaId, input.eventId, {
-      alunoId: input.alunoId,
-      responsavelId: input.responsavelId,
-    });
-
-    const buyerEmail = await resolveTicketBuyerEmail(tx, ctx.contaId, input);
-
-    const unitPrice = toMoney(lot.unitPrice);
-    const totalAmount = saleStatus === 'COMPLIMENTARY' ? 0 : unitPrice * quantity;
-    const sale = await tx.eventTicketSale.create({
-      data: {
-        contaId: ctx.contaId,
-        eventId: lot.eventId,
-        lotId: lot.id,
-        buyerName: input.buyerName,
-        buyerEmail,
-        accessToken: createPublicToken('sale'),
-        alunoId: input.alunoId,
-        responsavelId: input.responsavelId,
-        quantity,
-        unitPriceSnapshot: decimal(unitPrice),
-        totalAmount: decimal(totalAmount),
-        paymentMethod: input.paymentMethod,
-        status: saleStatus,
-        soldAt: input.soldAt ?? now,
-        paidAt: saleStatus === 'PAID' ? now : null,
-        createdByUserId: ctx.userId,
-        notes: input.notes,
-      },
-    });
-
-    if (saleStatus !== 'COMPLIMENTARY' && totalAmount > 0) {
-      const entry = await tx.eventFinancialEntry.create({
-        data: {
-          contaId: ctx.contaId,
-          eventId: lot.eventId,
-          type: 'REVENUE',
-          category: 'Venda de ingresso',
-          description: `Venda de ingresso - ${lot.name}`,
-          originType: 'TICKET_SALE',
-          originId: sale.id,
-          expectedAmount: decimal(totalAmount),
-          actualAmount: saleStatus === 'PAID' ? decimal(totalAmount) : null,
-          status: saleStatus === 'PAID' ? 'RECEIVED' : 'PENDING',
-          paymentMethod: input.paymentMethod,
-          realizedAt: saleStatus === 'PAID' ? now : null,
-          createdByUserId: ctx.userId,
-        },
-      });
-
-      await tx.eventTicketSale.update({ where: { id: sale.id }, data: { revenueEntryId: entry.id } });
-    }
-
-    await tx.eventTicket.createMany({
-      data: Array.from({ length: quantity }, () => ({
-        contaId: ctx.contaId,
-        eventId: lot.eventId,
-        eventTicketSaleId: sale.id,
-        ticketCode: createPublicToken('ticket').toUpperCase(),
-        checkInCode: createCheckInCode(),
-      })),
-    });
-
-    await syncLotQuantity(tx, ctx.contaId, lot.id);
-
-    if (buyerEmail && (saleStatus === 'PAID' || saleStatus === 'COMPLIMENTARY') && sale.accessToken) {
-      await enqueueEventTicketEmail(tx, {
-        contaId: ctx.contaId,
-        purchaseId: sale.id,
-        buyerEmail,
-        buyerName: sale.buyerName,
-        eventName: lot.event.name,
-        eventStartsAt: lot.event.startsAt,
-        eventLocation: [lot.event.locationName, lot.event.locationAddress].filter(Boolean).join(' — ') || null,
-        ticketType: lot.name,
-        ticketCount: quantity,
-        ticketsPath: buildPublicEventTicketSalePath(sale.id, sale.accessToken),
-      });
-    }
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.ticketSale.create',
-      entityType: 'EventTicketSale',
-      entityId: sale.id,
-      eventId: lot.eventId,
-      after: sale,
-      metadata: { lotId: lot.id },
-    });
-
-    return getTicketSaleDto(tx, ctx.contaId, sale.id);
-  });
-}
-
-export async function markTicketSalePaid(ctx: EventsContext, saleId: string) {
-  return prisma.$transaction(async (tx) => {
-    const current = await tx.eventTicketSale.findFirst({
-      where: { id: saleId, contaId: ctx.contaId },
-      include: {
-        event: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } },
-        lot: { select: { name: true } },
-        aluno: { select: { email: true } },
-        responsavel: { select: { email: true } },
-        tickets: { where: { status: 'VALID' }, select: { id: true } },
-      },
-    });
-    if (!current) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
-
-    const transition = validateTicketSaleStatusTransition(current.status, 'PAID');
-    if (!transition.ok) throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
-
-    const now = new Date();
-    const accessToken = current.accessToken ?? createPublicToken('sale');
-    const buyerEmail =
-      normalizeOptionalEmail(current.buyerEmail) ??
-      normalizeOptionalEmail(current.responsavel?.email) ??
-      normalizeOptionalEmail(current.aluno?.email);
-    const updated = await tx.eventTicketSale.update({
-      where: { id: saleId },
-      data: { status: 'PAID', paidAt: now, accessToken },
-    });
-
-    await tx.eventFinancialEntry.updateMany({
-      where: { contaId: ctx.contaId, originType: 'TICKET_SALE', originId: saleId },
-      data: { status: 'RECEIVED', actualAmount: current.totalAmount, realizedAt: now },
-    });
-
-    if (buyerEmail && current.tickets.length > 0) {
-      await enqueueEventTicketEmail(tx, {
-        contaId: ctx.contaId,
-        purchaseId: current.id,
-        buyerEmail,
-        buyerName: current.buyerName,
-        eventName: current.event.name,
-        eventStartsAt: current.event.startsAt,
-        eventLocation: [current.event.locationName, current.event.locationAddress].filter(Boolean).join(' — ') || null,
-        ticketType: current.lot.name,
-        ticketCount: current.tickets.length,
-        ticketsPath: buildPublicEventTicketSalePath(current.id, accessToken),
-      });
-    }
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.ticketSale.markPaid',
-      entityType: 'EventTicketSale',
-      entityId: saleId,
-      eventId: current.eventId,
-      before: current,
-      after: updated,
-    });
-
-    return getTicketSaleDto(tx, ctx.contaId, saleId);
-  });
-}
-
-export async function cancelTicketSale(ctx: EventsContext, saleId: string, reason?: string | null) {
-  return prisma.$transaction(async (tx) => {
-    const current = await tx.eventTicketSale.findFirst({ where: { id: saleId, contaId: ctx.contaId } });
-    if (!current) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
-
-    const transition = validateTicketSaleStatusTransition(current.status, 'CANCELLED');
-    if (!transition.ok) throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
-
-    const updated = await tx.eventTicketSale.update({
-      where: { id: saleId },
-      data: { status: 'CANCELLED', cancelledAt: new Date(), notes: reason ?? current.notes },
-    });
-    await tx.eventFinancialEntry.updateMany({
-      where: { contaId: ctx.contaId, originType: 'TICKET_SALE', originId: saleId },
-      data: { status: 'CANCELLED', cancelledAt: new Date() },
-    });
-    await syncLotQuantity(tx, ctx.contaId, current.lotId);
-    const { releaseSeatsForTicketSale } = await import('./map/staff-map-sales.service');
-    await releaseSeatsForTicketSale(tx, ctx.contaId, saleId);
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.ticketSale.cancel',
-      entityType: 'EventTicketSale',
-      entityId: saleId,
-      eventId: current.eventId,
-      before: current,
-      after: updated,
-      metadata: { reason },
-    });
-
-    return getTicketSaleDto(tx, ctx.contaId, saleId);
-  });
-}
-
-export async function refundTicketSale(ctx: EventsContext, saleId: string, reason?: string | null) {
-  return prisma.$transaction(async (tx) => {
-    const current = await tx.eventTicketSale.findFirst({ where: { id: saleId, contaId: ctx.contaId } });
-    if (!current) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
-
-    // A venda vinculada ao Asaas deve passar pelo endpoint financeiro. O
-    // webhook é a fonte da verdade para o estado final e também atualiza os
-    // ingressos/lançamentos relacionados. Nunca confirme o estorno localmente
-    // antes da confirmação do provedor.
-    if (current.asaasPaymentId || current.paymentProvider === 'ASAAS') {
-      throw new EventsError(
-        'ESTORNO_ASAAS_PENDENTE',
-        'Esta venda possui pagamento Asaas. Solicite o estorno pela cobrança para aguardar a confirmação do webhook.',
-        409,
-      );
-    }
-
-    const transition = validateTicketSaleStatusTransition(current.status, 'REFUNDED');
-    if (!transition.ok) throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
-
-    const now = new Date();
-    const updated = await tx.eventTicketSale.update({
-      where: { id: saleId },
-      data: { status: 'REFUNDED', refundedAt: now, refundedAmount: current.totalAmount, notes: reason ?? current.notes },
-    });
-    await tx.eventFinancialEntry.updateMany({
-      where: { contaId: ctx.contaId, originType: 'TICKET_SALE', originId: saleId },
-      data: { status: 'REFUNDED', refundedAt: now, actualAmount: current.totalAmount, refundedAmount: current.totalAmount, netAmount: decimal(0) },
-    });
-    await syncLotQuantity(tx, ctx.contaId, current.lotId);
-    const { releaseSeatsForTicketSale } = await import('./map/staff-map-sales.service');
-    await releaseSeatsForTicketSale(tx, ctx.contaId, saleId);
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.ticketSale.refund',
-      entityType: 'EventTicketSale',
-      entityId: saleId,
-      eventId: current.eventId,
-      before: current,
-      after: updated,
-      metadata: { reason },
-    });
-
-    return getTicketSaleDto(tx, ctx.contaId, saleId);
-  });
-}
-
-/**
- * Applies the final Asaas refund state to legacy/direct ticket-sale payments.
- * Public map orders are synchronized by the map-order webhook flow; this
- * fallback covers EventTicketSale records that have an Asaas payment but no
- * EventMapOrder relation.
- */
-export async function refundTicketSalesByAsaasPayment(params: {
-  contaId: string;
-  asaasPaymentId: string;
-  paymentStatus: string;
-  isFinalRefund: boolean;
-  refundedAmount?: number | null;
-}) {
-  return prisma.$transaction(async (tx) => {
-    const sales = await tx.eventTicketSale.findMany({
-      where: {
-        contaId: params.contaId,
-        asaasPaymentId: params.asaasPaymentId,
-        eventMapOrderId: null,
-      },
-    });
-    if (sales.length === 0) return null;
-
-    const now = new Date();
-    const { releaseSeatsForTicketSale } = await import('./map/staff-map-sales.service');
-    for (const sale of sales) {
-      if (!params.isFinalRefund) {
-        await tx.eventTicketSale.update({
-          where: { id: sale.id },
-          data: { paymentStatus: params.paymentStatus },
-        });
-        continue;
-      }
-
-      const refundedAmount = params.refundedAmount == null
-        ? toMoney(sale.totalAmount)
-        : Math.min(toMoney(sale.totalAmount), Math.max(params.refundedAmount, 0));
-      await tx.eventTicketSale.update({
-        where: { id: sale.id },
-        data: {
-          status: 'REFUNDED',
-          refundedAt: now,
-          refundedAmount: decimal(refundedAmount),
-          paymentStatus: params.paymentStatus,
-        },
-      });
-      await tx.eventFinancialEntry.updateMany({
-        where: { contaId: params.contaId, originType: 'TICKET_SALE', originId: sale.id },
-        data: {
-          status: 'REFUNDED',
-          refundedAt: now,
-          refundedAmount: decimal(refundedAmount),
-          netAmount: decimal(Math.max(toMoney(sale.totalAmount) - refundedAmount, 0)),
-          paymentStatus: params.paymentStatus,
-        },
-      });
-      await syncLotQuantity(tx, params.contaId, sale.lotId);
-      await releaseSeatsForTicketSale(tx, params.contaId, sale.id);
-    }
-
-    return { count: sales.length, status: params.isFinalRefund ? 'REFUNDED' : params.paymentStatus };
-  });
-}
 
 export function mapCostume(costume: Prisma.EventCostumeGetPayload<{ include: { event: { select: { id: true; name: true; startsAt: true } }; assignments: true } }>) {
   return {
@@ -2372,43 +1797,6 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
   });
 }
 
-export function mapFinancialEntry(
-  entry: Prisma.EventFinancialEntryGetPayload<{
-    include: {
-      event: { select: { id: true; name: true; startsAt: true } };
-      createdBy: { select: { id: true; nome: true } };
-    };
-  }>,
-) {
-  return {
-    id: entry.id,
-    contaId: entry.contaId,
-    eventId: entry.eventId,
-    event: { ...entry.event, startsAt: entry.event.startsAt.toISOString() },
-    type: entry.type,
-    category: entry.category,
-    description: entry.description,
-    supplier: entry.supplier,
-    originType: entry.originType,
-    originId: entry.originId,
-    costClass: entry.costClass,
-    expectedAmount: toMoney(entry.expectedAmount),
-    grossAmount: entry.grossAmount == null ? null : toMoney(entry.grossAmount),
-    discountAmount: toMoney(entry.discountAmount),
-    actualAmount: entry.actualAmount == null ? null : toMoney(entry.actualAmount),
-    refundedAmount: entry.refundedAmount == null ? 0 : toMoney(entry.refundedAmount),
-    netAmount: entry.netAmount == null ? null : toMoney(entry.netAmount),
-    dueDate: toIso(entry.dueDate),
-    realizedAt: toIso(entry.realizedAt),
-    status: entry.status,
-    paymentMethod: entry.paymentMethod,
-    proofUrl: entry.proofUrl,
-    notes: entry.notes,
-    createdBy: entry.createdBy,
-    createdAt: entry.createdAt.toISOString(),
-    updatedAt: entry.updatedAt.toISOString(),
-  };
-}
 
 export async function listFinancialEntries(
   ctx: Pick<EventsContext, 'contaId'>,
@@ -2476,164 +1864,6 @@ export async function listFinancialEntriesPage(
     entries: entries.map(mapFinancialEntry),
     meta: pageMeta(total, page, pageSize),
   };
-}
-
-async function getFinancialEntryDto(db: DbClient, contaId: string, entryId: string) {
-  const entry = await db.eventFinancialEntry.findFirst({
-    where: { id: entryId, contaId },
-    include: {
-      event: { select: { id: true, name: true, startsAt: true } },
-      createdBy: { select: { id: true, nome: true } },
-    },
-  });
-  if (!entry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
-  return mapFinancialEntry(entry);
-}
-
-export async function createFinancialEntry(ctx: EventsContext, input: CreateEventFinancialEntryInput) {
-  return prisma.$transaction(async (tx) => {
-    const event = await tx.schoolEvent.findFirst({ where: { id: input.eventId, contaId: ctx.contaId } });
-    if (!event) throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
-    assertFinancialAdjustmentEvent(event.status);
-
-    const line = normalizeFinancialLineOrThrow({
-      expectedAmount: input.expectedAmount,
-      grossAmount: input.grossAmount,
-      discountAmount: input.discountAmount,
-    });
-    const payment = normalizeFinancialPaymentOrThrow({
-      actualAmount: input.actualAmount,
-      refundedAmount: input.refundedAmount,
-      expectedAmount: line.netAmount,
-      enforceExpectedLimit: input.type === 'REVENUE',
-    });
-    if (input.type === 'REVENUE' && payment.actualAmount != null && payment.actualAmount > line.netAmount) {
-      throw new EventsError('VALOR_RECEBIDO_INVALIDO', 'O valor recebido não pode ser maior que o valor líquido esperado.', 422);
-    }
-    assertFinancialEntryState(input.type, input.status, payment.actualAmount);
-    const isRealized = input.type === 'COST' ? input.status === 'PAID' : input.status === 'RECEIVED';
-    const entry = await tx.eventFinancialEntry.create({
-      data: {
-        contaId: ctx.contaId,
-        eventId: input.eventId,
-        type: input.type,
-        costClass: input.costClass ?? 'DIRECT',
-        category: input.category,
-        description: input.description,
-        supplier: input.supplier,
-        originType: 'MANUAL',
-        expectedAmount: decimal(line.netAmount),
-        grossAmount: decimal(line.grossAmount),
-        discountAmount: decimal(line.discountAmount),
-        actualAmount: payment.actualAmount == null ? null : decimal(payment.actualAmount),
-        refundedAmount: decimal(payment.refundedAmount),
-        netAmount: payment.netAmount == null ? null : decimal(payment.netAmount),
-        dueDate: isRealized ? null : input.dueDate,
-        realizedAt: isRealized ? (input.realizedAt ?? new Date()) : null,
-        status: input.status,
-        paymentMethod: input.paymentMethod,
-        proofUrl: input.proofUrl,
-        notes: input.notes,
-        createdByUserId: ctx.userId,
-      },
-    });
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: input.type === 'COST' ? 'events.finance.cost.create' : 'events.finance.revenue.create',
-      entityType: 'EventFinancialEntry',
-      entityId: entry.id,
-      eventId: input.eventId,
-      after: entry,
-    });
-
-    return getFinancialEntryDto(tx, ctx.contaId, entry.id);
-  });
-}
-
-export async function updateFinancialEntry(
-  ctx: EventsContext,
-  entryId: string,
-  input: UpdateEventFinancialEntryInput,
-  expectedEventId?: string,
-) {
-  return prisma.$transaction(async (tx) => {
-    const current = await tx.eventFinancialEntry.findFirst({
-      where: {
-        id: entryId,
-        contaId: ctx.contaId,
-        ...(expectedEventId ? { eventId: expectedEventId } : {}),
-      },
-      include: { event: true },
-    });
-    if (!current) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
-    if (current.originType !== 'MANUAL') {
-      throw new EventsError(
-        'LANCAMENTO_AUTOMATICO',
-        'Lançamentos automáticos devem ser alterados pela venda ou figurino de origem.',
-        409,
-      );
-    }
-    assertFinancialAdjustmentEvent(current.event.status);
-
-    const line = normalizeFinancialLineOrThrow({
-      expectedAmount: input.expectedAmount ?? current.expectedAmount.toNumber(),
-      grossAmount: input.grossAmount ?? current.grossAmount?.toNumber(),
-      discountAmount: input.discountAmount ?? current.discountAmount.toNumber(),
-    });
-    const nextActual = input.actualAmount === undefined ? toMoney(current.actualAmount) : input.actualAmount;
-    const nextRefunded = input.refundedAmount === undefined ? toMoney(current.refundedAmount) : input.refundedAmount;
-    const nextType = input.type ?? current.type;
-    const payment = normalizeFinancialPaymentOrThrow({
-      actualAmount: nextActual,
-      refundedAmount: nextRefunded,
-      expectedAmount: line.netAmount,
-      enforceExpectedLimit: nextType === 'REVENUE',
-    });
-    if (nextType === 'REVENUE' && payment.actualAmount != null && payment.actualAmount > line.netAmount) {
-      throw new EventsError('VALOR_RECEBIDO_INVALIDO', 'O valor recebido não pode ser maior que o valor líquido esperado.', 422);
-    }
-    assertFinancialEntryState(nextType, input.status ?? current.status, payment.actualAmount);
-
-    const nextStatus = input.status ?? current.status;
-    const isRealized = nextType === 'COST' ? nextStatus === 'PAID' : nextStatus === 'RECEIVED';
-    const updated = await tx.eventFinancialEntry.update({
-      where: { id: entryId },
-      data: {
-        type: input.type,
-        costClass: input.costClass,
-        category: input.category,
-        description: input.description,
-        supplier: input.supplier,
-        expectedAmount: decimal(line.netAmount),
-        grossAmount: decimal(line.grossAmount),
-        discountAmount: decimal(line.discountAmount),
-        actualAmount: payment.actualAmount == null ? null : decimal(payment.actualAmount),
-        refundedAmount: decimal(payment.refundedAmount),
-        netAmount: payment.netAmount == null ? null : decimal(payment.netAmount),
-        dueDate: isRealized ? null : input.dueDate,
-        realizedAt: isRealized ? (input.realizedAt ?? current.realizedAt ?? new Date()) : null,
-        status: input.status,
-        paymentMethod: input.paymentMethod,
-        proofUrl: input.proofUrl,
-        notes: input.notes,
-      },
-    });
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.finance.entry.update',
-      entityType: 'EventFinancialEntry',
-      entityId: entryId,
-      eventId: current.eventId,
-      before: current,
-      after: updated,
-    });
-
-    return getFinancialEntryDto(tx, ctx.contaId, entryId);
-  });
 }
 
 export async function listEventAudit(ctx: Pick<EventsContext, 'contaId'>, eventId: string, limit = 50) {
@@ -2707,961 +1937,6 @@ export async function getEventReports(ctx: Pick<EventsContext, 'contaId'>, input
   };
 }
 
-type ParticipantLifecycleRecord = Prisma.EventParticipantGetPayload<{
-  include: {
-    aluno: { select: { email: true } };
-    responsavel: { select: { email: true } };
-  };
-}>;
-
-function normalizeParticipantEmails(participant: ParticipantLifecycleRecord) {
-  return [...new Set([
-    participant.aluno?.email?.trim().toLowerCase(),
-    participant.responsavel?.email?.trim().toLowerCase(),
-  ].filter((email): email is string => Boolean(email)))];
-}
-
-async function collectChargesForEntries(
-  db: DbClient,
-  ctx: Pick<EventsContext, 'contaId'>,
-  entries: Prisma.EventFinancialEntryGetPayload<Prisma.EventFinancialEntryDefaultArgs>[],
-  participantPaymentIds: string[] = [],
-) {
-  const asaasPaymentIds = [
-    ...entries.map((entry) => entry.asaasPaymentId),
-    ...participantPaymentIds,
-  ]
-    .filter((id): id is string => Boolean(id));
-
-  if (asaasPaymentIds.length === 0) return [];
-
-  const [plans, directCharges] = await Promise.all([
-    db.standaloneInstallmentPlan.findMany({
-      where: { contaId: ctx.contaId, asaasInstallmentId: { in: asaasPaymentIds } },
-      include: { charges: true },
-    }),
-    db.charge.findMany({
-      where: { contaId: ctx.contaId, asaasPaymentId: { in: asaasPaymentIds } },
-    }),
-  ]);
-
-  const planIds = Array.from(new Set([
-    ...plans.map((plan) => plan.id),
-    ...directCharges
-      .map((charge) => charge.standaloneInstallmentPlanId)
-      .filter((id): id is string => Boolean(id)),
-  ]));
-
-  const planCharges = planIds.length > 0
-    ? await db.charge.findMany({
-        where: { contaId: ctx.contaId, standaloneInstallmentPlanId: { in: planIds } },
-      })
-    : [];
-
-  const seen = new Set<string>();
-  return [
-    ...directCharges,
-    ...plans.flatMap((plan) => plan.charges),
-    ...planCharges,
-  ].filter((charge) => {
-    if (seen.has(charge.id)) return false;
-    seen.add(charge.id);
-    return true;
-  });
-}
-
-async function buildEventParticipantRemovalDecision(
-  db: DbClient,
-  ctx: Pick<EventsContext, 'contaId'>,
-  eventId: string,
-  participant: ParticipantLifecycleRecord,
-): Promise<EventParticipantRemovalDecision> {
-  const financialEntries = participant.revenueEntryId
-    ? await db.eventFinancialEntry.findMany({
-        where: { contaId: ctx.contaId, eventId, id: participant.revenueEntryId },
-      })
-    : [];
-  const charges = await collectChargesForEntries(db, ctx, financialEntries, [
-    participant.asaasPaymentId,
-    participant.asaasInstallmentId,
-  ].filter((id): id is string => Boolean(id)));
-
-  const ticketOwnerFilters = [
-    participant.alunoId ? { alunoId: participant.alunoId } : null,
-    participant.responsavelId ? { responsavelId: participant.responsavelId } : null,
-  ].filter((filter): filter is { alunoId: string } | { responsavelId: string } => Boolean(filter));
-
-  const costumeOwnerFilters = [
-    participant.alunoId ? { alunoId: participant.alunoId } : null,
-    participant.turmaId ? { turmaId: participant.turmaId } : null,
-  ].filter((filter): filter is { alunoId: string } | { turmaId: string } => Boolean(filter));
-
-  const buyerEmails = normalizeParticipantEmails(participant);
-
-  const [ticketSales, costumeAssignments, publicOrders, eventContractCount] = await Promise.all([
-    ticketOwnerFilters.length > 0
-      ? db.eventTicketSale.findMany({
-          where: {
-            contaId: ctx.contaId,
-            eventId,
-            OR: ticketOwnerFilters,
-          },
-          select: { status: true },
-        })
-      : Promise.resolve([]),
-    costumeOwnerFilters.length > 0
-      ? db.eventCostumeAssignment.findMany({
-          where: {
-            contaId: ctx.contaId,
-            eventId,
-            OR: costumeOwnerFilters,
-          },
-          select: { status: true, isPaid: true },
-        })
-      : Promise.resolve([]),
-    buyerEmails.length > 0
-      ? db.eventMapOrder.findMany({
-          where: {
-            contaId: ctx.contaId,
-            eventId,
-            OR: buyerEmails.map((email) => ({ buyerEmail: { equals: email, mode: 'insensitive' } })),
-          },
-          select: {
-            status: true,
-            refundedAmount: true,
-            items: {
-              select: {
-                ticket: {
-                  select: { id: true, status: true },
-                },
-              },
-            },
-            tickets: {
-              select: { id: true, status: true },
-            },
-          },
-        })
-      : Promise.resolve([]),
-    db.eventoContrato.count({
-      where: { contaId: ctx.contaId, eventId, participantId: participant.id },
-    }),
-  ]);
-
-  const facts: EventParticipantRemovalFacts = {
-    cancelledAt: participant.cancelledAt,
-    eventContractCount,
-    isFeePaid: participant.isFeePaid,
-    feePaidAmount: toMoney(participant.feePaidAmount),
-    feeRefundedAmount: toMoney(participant.feeRefundedAmount),
-    financialEntries: financialEntries.map((entry) => ({
-      status: entry.status,
-      actualAmount: entry.actualAmount == null ? null : toMoney(entry.actualAmount),
-      refundedAmount: entry.refundedAmount == null ? null : toMoney(entry.refundedAmount),
-      netAmount: entry.netAmount == null ? null : toMoney(entry.netAmount),
-    })),
-    charges: charges.map((charge) => ({ status: charge.status })),
-    ticketSales: ticketSales.map((sale) => ({ status: sale.status })),
-    costumeAssignments: costumeAssignments.map((assignment) => ({
-      status: assignment.status,
-      isPaid: assignment.isPaid,
-    })),
-    publicOrders: publicOrders.map((order) => ({
-      status: order.status,
-      refundedAmount: toMoney(order.refundedAmount),
-      itemsCount: order.items.length,
-      ticketsCount: order.tickets.length,
-    })),
-    tickets: publicOrders.flatMap((order) => [
-      ...order.tickets.map((ticket) => ({ status: ticket.status })),
-      ...order.items.flatMap((item) => (item.ticket ? [{ status: item.ticket.status }] : [])),
-    ]),
-  };
-
-  return canRemoveEventParticipant(facts);
-}
-
-export async function getEventParticipantRemovalDecision(
-  ctx: Pick<EventsContext, 'contaId'>,
-  eventId: string,
-  participantId: string,
-) {
-  const participant = await prisma.eventParticipant.findFirst({
-    where: { id: participantId, eventId, contaId: ctx.contaId },
-    select: {
-      ...eventParticipantScalarSelect,
-      aluno: { select: { email: true } },
-      responsavel: { select: { email: true } },
-    },
-  });
-
-  if (!participant) {
-    throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
-  }
-
-  return buildEventParticipantRemovalDecision(prisma, ctx, eventId, participant);
-}
-
-export async function registerEventParticipant(ctx: EventsContext, input: CreateEventParticipantInput) {
-  return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`event-participant:${ctx.contaId}:${input.eventId}:${input.alunoId}`}, 0))`;
-    const event = await tx.schoolEvent.findFirst({
-      where: { id: input.eventId, contaId: ctx.contaId },
-    });
-    if (!event) throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
-    assertOperationalEvent(event.status);
-
-    const existing = await tx.eventParticipant.findFirst({
-      where: {
-        contaId: ctx.contaId,
-        eventId: input.eventId,
-        alunoId: input.alunoId,
-      },
-      select: {
-        ...eventParticipantScalarSelect,
-        aluno: { select: { email: true } },
-        responsavel: { select: { email: true } },
-      },
-    });
-    if (existing) {
-      if (!existing.cancelledAt) {
-        throw new EventsError(
-          'PARTICIPANTE_JA_INSCRITO',
-          'Este aluno já está inscrito neste evento.',
-          409,
-        );
-      }
-
-      const decision = await buildEventParticipantRemovalDecision(tx, ctx, input.eventId, existing);
-      throw new EventsError(
-        'PARTICIPANTE_CANCELADO_EXISTENTE',
-        'Este aluno possui uma inscrição cancelada neste evento. Reative a inscrição para gerar uma nova cobrança.',
-        409,
-        {
-          participantId: existing.id,
-          canRemove: decision.canRemove,
-          canReactivate: decision.canRemove,
-          reasons: decision.canRemove ? [] : decision.reasons,
-        },
-      );
-    }
-
-    const aluno = await tx.aluno.findFirst({
-      where: { id: input.alunoId, contaId: ctx.contaId },
-    });
-    if (!aluno) throw new EventsError('ALUNO_NAO_ENCONTRADO', 'Aluno não encontrado.', 404);
-
-    const financialResponsible = await tx.alunoResponsavel.findFirst({
-      where: {
-        contaId: ctx.contaId,
-        alunoId: input.alunoId,
-        ...(input.responsavelId ? { responsavelId: input.responsavelId } : {}),
-        responsavel: { financeiro: true },
-      },
-      orderBy: { id: 'asc' },
-      select: { responsavelId: true },
-    });
-    if (input.responsavelId && !financialResponsible) {
-      throw new EventsError('RESPONSAVEL_FINANCEIRO_INVALIDO', 'O responsável financeiro não está vinculado ao aluno.', 422);
-    }
-
-    let revenueEntryId: string | null = null;
-    const feeLine = normalizeFinancialLineOrThrow({
-      expectedAmount: input.registrationFeeCharged,
-      grossAmount: input.registrationFeeOriginal,
-      discountAmount: input.registrationFeeDiscount,
-    });
-    const feeOriginal = feeLine.grossAmount;
-    const feeDiscount = feeLine.discountAmount;
-    const feeCharged = feeLine.netAmount;
-    const billingMode = input.billingMode ?? (input.isFeePaid ? 'FULL' : 'INSTALLMENT');
-    const entryAmount = input.billingMethod === 'MANUAL_RECEIVED'
-      ? toMoney(input.initialPaymentAmount ?? 0)
-      : input.entryAmount && input.entryAmount > 0
-        ? toMoney(input.entryAmount)
-        : input.isFeePaid
-          ? toMoney(feeCharged)
-          : 0;
-    const balanceAmount = toMoney(Math.max(feeCharged - entryAmount, 0));
-    const registrationPaymentRules = eventPaymentRulesFromRecord(event);
-
-    // Every billable registration has one local obligation. The Asaas charge
-    // is only the payment channel; keeping the obligation locally makes the
-    // event forecast complete and lets webhook snapshots update realization
-    // without creating a second revenue source.
-    if (feeCharged > 0) {
-      const entry = await tx.eventFinancialEntry.create({
-        data: {
-          contaId: ctx.contaId,
-          eventId: input.eventId,
-          type: 'REVENUE',
-          category: 'Taxa de inscrição',
-          description: billingMode === 'ENTRY_INSTALLMENT' ? 'Entrada da taxa de inscrição' : 'Taxa de inscrição',
-          expectedAmount: decimal(feeCharged),
-          grossAmount: decimal(feeOriginal),
-          discountAmount: decimal(feeDiscount),
-          actualAmount: entryAmount > 0 ? decimal(entryAmount) : null,
-          dueDate: new Date(),
-          realizedAt: entryAmount > 0 ? new Date() : null,
-          status: entryAmount > 0 && entryAmount >= feeCharged ? 'RECEIVED' : 'PENDING',
-          paymentMethod: entryAmount > 0 ? mapToEventPaymentMethod(input.initialPaymentMethod ?? input.entryPaymentMethod ?? input.feePaymentMethod) : null,
-          notes: input.notes,
-        },
-      });
-      revenueEntryId = entry.id;
-    }
-
-    const participant = await tx.eventParticipant.create({
-      data: {
-        contaId: ctx.contaId,
-        eventId: input.eventId,
-        type: 'STUDENT',
-        alunoId: input.alunoId,
-        responsavelId: financialResponsible?.responsavelId ?? input.responsavelId ?? null,
-        displayName: aluno.nome,
-        registrationFeeCharged: decimal(feeCharged),
-        registrationFeeOriginal: decimal(feeOriginal),
-        registrationFeeDiscount: decimal(feeDiscount),
-        registrationFeeDiscountType: input.registrationFeeDiscountType ?? null,
-        billingMode,
-        entryAmount: decimal(entryAmount),
-        balanceAmount: decimal(balanceAmount),
-        entryPaymentMethod: entryAmount > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
-        registrationPaymentRules: registrationPaymentRules ?? Prisma.JsonNull,
-        isFeePaid: input.isFeePaid ?? false,
-        isFeeExempt: input.isFeeExempt ?? false,
-        feePaymentMethod: input.entryPaymentMethod ?? input.feePaymentMethod ?? null,
-        revenueEntryId,
-        feePaidAmount: decimal(entryAmount),
-        notes: input.notes,
-      },
-      select: eventParticipantScalarSelect,
-    });
-
-    if (revenueEntryId && entryAmount > 0) {
-      await tx.eventFinancialPayment.create({
-        data: {
-          contaId: ctx.contaId,
-          eventId: input.eventId,
-          financialEntryId: revenueEntryId,
-          participantId: participant.id,
-          amount: decimal(entryAmount),
-          paymentMethod: mapToEventPaymentMethod(input.initialPaymentMethod ?? input.entryPaymentMethod ?? input.feePaymentMethod),
-          paidAt: new Date(),
-          netAmount: decimal(entryAmount),
-          createdByUserId: ctx.userId,
-        },
-      });
-    }
-
-    await createEventContractForParticipant(tx, {
-      contaId: ctx.contaId,
-      userId: ctx.userId,
-      eventId: input.eventId,
-      participantId: participant.id,
-      alunoId: input.alunoId,
-    });
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.participant.register',
-      entityType: 'EventParticipant',
-      entityId: participant.id,
-      eventId: input.eventId,
-      after: participant,
-    });
-
-    return participant;
-  });
-}
-
-type RegisterEventParticipantGroupInput = CreateEventParticipantInput & {
-  alunoIds: string[];
-  responsavelId: string;
-  registrationFeeOriginalTotal?: number;
-  registrationFeeDiscountTotal?: number;
-  registrationFeeChargedTotal?: number;
-  billingMethod?: string | null;
-  chargeType?: string | null;
-  installmentCount?: number | null;
-  dueDate?: Date | null;
-  uiRequestId?: string | null;
-};
-
-function allocateGroupAmount(total: number, values: number[]): number[] {
-  const normalizedTotal = toMoney(total);
-  const totalBase = values.reduce((sum, value) => sum + Math.max(value, 0), 0);
-  if (values.length === 0) return [];
-  if (totalBase <= 0) return values.map(() => 0);
-
-  const allocations: number[] = [];
-  let allocated = 0;
-  values.forEach((value, index) => {
-    if (index === values.length - 1) {
-      allocations.push(toMoney(normalizedTotal - allocated));
-      return;
-    }
-    const amount = toMoney(normalizedTotal * (Math.max(value, 0) / totalBase));
-    allocations.push(amount);
-    allocated = toMoney(allocated + amount);
-  });
-  return allocations;
-}
-
-export async function registerEventParticipantGroup(
-  ctx: EventsContext,
-  input: RegisterEventParticipantGroupInput,
-) {
-  return prisma.$transaction(async (tx) => {
-    const alunoIds = [...new Set(input.alunoIds.filter(Boolean))];
-    if (alunoIds.length < 2) {
-      throw new EventsError('GRUPO_COBRANCA_INCOMPLETO', 'Selecione pelo menos dois alunos para uma cobrança conjunta.', 422);
-    }
-
-    // Serialize registrations for the same event/student set. The locks are
-    // transaction-scoped and acquired in deterministic order to avoid races
-    // without relying on process-local state in serverless instances.
-    for (const alunoId of [...alunoIds].sort()) {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`event-participant:${ctx.contaId}:${input.eventId}:${alunoId}`}, 0))`;
-    }
-
-    if (input.uiRequestId) {
-      const existingGroup = await tx.eventBillingGroup.findFirst({
-        where: { contaId: ctx.contaId, uiRequestId: input.uiRequestId },
-        include: { participants: { select: eventParticipantScalarSelect } },
-      });
-      if (existingGroup) {
-        if (existingGroup.status === 'PENDING') {
-          throw new EventsError('COBRANCA_AGRUPADA_EM_PROCESSAMENTO', 'Esta cobrança agrupada já está sendo processada.', 409);
-        }
-        if (existingGroup.status === 'REQUIRES_RECONCILIATION') {
-          throw new EventsError('COBRANCA_AGRUPADA_REQUER_RECONCILIACAO', 'Esta cobrança agrupada precisa ser reconciliada antes de uma nova tentativa.', 409);
-        }
-        return { group: existingGroup, participants: existingGroup.participants, reused: true };
-      }
-    }
-
-    const event = await tx.schoolEvent.findFirst({ where: { id: input.eventId, contaId: ctx.contaId } });
-    if (!event) throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
-    assertOperationalEvent(event.status);
-
-    const alunos = await tx.aluno.findMany({
-      where: { contaId: ctx.contaId, id: { in: alunoIds } },
-      select: {
-        id: true,
-        nome: true,
-        responsaveis: {
-          where: { contaId: ctx.contaId, responsavel: { financeiro: true } },
-          select: { responsavelId: true },
-        },
-      },
-    });
-    if (alunos.length !== alunoIds.length) {
-      throw new EventsError('ALUNO_NAO_ENCONTRADO', 'Um ou mais alunos selecionados não foram encontrados.', 404);
-    }
-
-    const selectedResponsible = await tx.responsavel.findFirst({
-      where: {
-        id: input.responsavelId,
-        contaId: ctx.contaId,
-        financeiro: true,
-      },
-      select: { id: true, nome: true },
-    });
-    if (!selectedResponsible) {
-      throw new EventsError('RESPONSAVEL_FINANCEIRO_INVALIDO', 'Responsável financeiro inválido para esta conta.', 422);
-    }
-
-    const notLinked = alunos.find((aluno) => !aluno.responsaveis.some((link) => link.responsavelId === input.responsavelId));
-    if (notLinked) {
-      throw new EventsError('RESPONSAVEL_DIVERGENTE', `O responsável financeiro não está vinculado ao aluno ${notLinked.nome}.`, 422);
-    }
-
-    const existingParticipants = await tx.eventParticipant.findMany({
-      where: { contaId: ctx.contaId, eventId: input.eventId, alunoId: { in: alunoIds } },
-      select: { id: true, alunoId: true, cancelledAt: true },
-    });
-    if (existingParticipants.length > 0) {
-      const active = existingParticipants.find((participant) => !participant.cancelledAt);
-      if (active) throw new EventsError('PARTICIPANTE_JA_INSCRITO', 'Um dos alunos selecionados já está inscrito neste evento.', 409);
-      throw new EventsError('PARTICIPANTE_CANCELADO_EXISTENTE', 'Um dos alunos possui uma inscrição cancelada neste evento. Reative-a separadamente.', 409);
-    }
-
-    const feeOriginalPerParticipant = toMoney(input.registrationFeeOriginal ?? input.registrationFeeCharged ?? 0);
-    const totalOriginalAmount = toMoney(input.registrationFeeOriginalTotal ?? feeOriginalPerParticipant * alunoIds.length);
-    const totalAmount = toMoney(input.registrationFeeChargedTotal ?? toMoney(input.registrationFeeCharged ?? feeOriginalPerParticipant) * alunoIds.length);
-    const totalDiscountAmount = toMoney(input.registrationFeeDiscountTotal ?? input.registrationFeeDiscount ?? Math.max(totalOriginalAmount - totalAmount, 0));
-    const totalLine = normalizeFinancialLineOrThrow({
-      expectedAmount: totalAmount,
-      grossAmount: totalOriginalAmount,
-      discountAmount: totalDiscountAmount,
-    });
-    const normalizedTotalOriginalAmount = totalLine.grossAmount;
-    const normalizedTotalAmount = totalLine.netAmount;
-    const normalizedTotalDiscountAmount = totalLine.discountAmount;
-    const originalAllocations = allocateGroupAmount(normalizedTotalOriginalAmount, alunoIds.map(() => feeOriginalPerParticipant));
-    const chargedAllocations = allocateGroupAmount(normalizedTotalAmount, originalAllocations);
-    const discountAllocations = originalAllocations.map((original, index) => toMoney(original - (chargedAllocations[index] ?? 0)));
-    const isFeePaid = input.isFeePaid ?? false;
-    const billingMode = input.billingMode ?? (isFeePaid ? 'FULL' : 'INSTALLMENT');
-    const requestedEntryAmount = input.billingMethod === 'MANUAL_RECEIVED'
-      ? toMoney(input.initialPaymentAmount ?? 0)
-      : input.entryAmount && input.entryAmount > 0
-        ? toMoney(input.entryAmount)
-        : isFeePaid
-          ? totalAmount
-          : 0;
-    const entryAmount = Math.min(requestedEntryAmount, totalAmount);
-    const balanceAmount = toMoney(Math.max(totalAmount - entryAmount, 0));
-    const entryAllocations = allocateGroupAmount(entryAmount, chargedAllocations);
-    const group = await tx.eventBillingGroup.create({
-      data: {
-        contaId: ctx.contaId,
-        eventId: input.eventId,
-        responsavelId: input.responsavelId,
-        status: entryAmount >= totalAmount && totalAmount > 0 ? 'PAID' : entryAmount > 0 ? 'PARTIALLY_PAID' : 'PENDING',
-        billingMode,
-        totalAmount: decimal(normalizedTotalAmount),
-        originalAmount: decimal(normalizedTotalOriginalAmount),
-        discountAmount: decimal(normalizedTotalDiscountAmount),
-        entryAmount: decimal(entryAmount),
-        balanceAmount: decimal(balanceAmount),
-        entryPaymentMethod: entryAmount > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
-        billingMethod: input.billingMethod ?? null,
-        chargeType: input.chargeType ?? (billingMode === 'ENTRY_INSTALLMENT' || billingMode === 'INSTALLMENT' ? 'INSTALLMENT' : 'ONE_TIME'),
-        installmentCount: input.installmentCount ?? null,
-        dueDate: input.dueDate ?? null,
-        uiRequestId: input.uiRequestId ?? null,
-        createdByUserId: ctx.userId,
-      },
-    });
-
-    const registrationPaymentRules = eventPaymentRulesFromRecord(event);
-    const participants: Prisma.EventParticipantGetPayload<Prisma.EventParticipantDefaultArgs>[] = [];
-    for (const [index, aluno] of alunos.entries()) {
-      const allocatedEntry = entryAllocations[index] ?? 0;
-      // Persist one obligation per participant. For digital grouped charges,
-      // the payment is reconciled later from the group charge; for manual
-      // registrations, allocatedEntry is the amount received now.
-      const participantEntry = (chargedAllocations[index] ?? 0) > 0
-        ? await tx.eventFinancialEntry.create({
-            data: {
-              contaId: ctx.contaId,
-              eventId: input.eventId,
-              type: 'REVENUE',
-              category: 'Taxa de inscrição',
-              description: input.billingMethod === 'MANUAL_RECEIVED' && allocatedEntry > 0
-                ? 'Entrada manual da cobrança agrupada do evento'
-                : 'Taxa de inscrição agrupada do evento',
-              // The entry represents the participant's full obligation. The
-              // payment amount is only the amount received now; otherwise a
-              // grouped registration with an entry would disappear from the
-              // event forecast after creation.
-              expectedAmount: decimal(chargedAllocations[index] ?? 0),
-              grossAmount: decimal(originalAllocations[index] ?? 0),
-              discountAmount: decimal(discountAllocations[index] ?? 0),
-              actualAmount: allocatedEntry > 0 ? decimal(allocatedEntry) : null,
-              dueDate: input.dueDate ?? new Date(),
-              realizedAt: allocatedEntry > 0 ? new Date() : null,
-              status: allocatedEntry >= (chargedAllocations[index] ?? 0) ? 'RECEIVED' : 'PENDING',
-              paymentMethod: allocatedEntry > 0 ? mapToEventPaymentMethod(input.entryPaymentMethod ?? input.feePaymentMethod) : null,
-              notes: input.notes,
-            },
-          })
-        : null;
-
-      const participant = await tx.eventParticipant.create({
-        data: {
-          contaId: ctx.contaId,
-          eventId: input.eventId,
-          type: 'STUDENT',
-          alunoId: aluno.id,
-          responsavelId: input.responsavelId,
-          billingGroupId: group.id,
-          displayName: aluno.nome,
-          registrationFeeCharged: decimal(chargedAllocations[index] ?? 0),
-          registrationFeeOriginal: decimal(originalAllocations[index] ?? 0),
-          registrationFeeDiscount: decimal(discountAllocations[index] ?? 0),
-          registrationFeeDiscountType: input.registrationFeeDiscountType ?? null,
-          billingMode,
-          entryAmount: decimal(allocatedEntry),
-          balanceAmount: decimal(Math.max((chargedAllocations[index] ?? 0) - allocatedEntry, 0)),
-          entryPaymentMethod: allocatedEntry > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
-          registrationPaymentRules: registrationPaymentRules ?? Prisma.JsonNull,
-          isFeePaid,
-          isFeeExempt: input.isFeeExempt ?? false,
-          feePaymentMethod: input.entryPaymentMethod ?? input.feePaymentMethod ?? null,
-          revenueEntryId: participantEntry?.id ?? null,
-          feePaidAmount: decimal(allocatedEntry),
-          notes: input.notes,
-        },
-        select: eventParticipantScalarSelect,
-      });
-
-      if (participantEntry) {
-        await tx.eventFinancialPayment.create({
-          data: {
-            contaId: ctx.contaId,
-            eventId: input.eventId,
-            financialEntryId: participantEntry.id,
-            participantId: participant.id,
-            amount: decimal(allocatedEntry),
-            paymentMethod: mapToEventPaymentMethod(input.initialPaymentMethod ?? input.entryPaymentMethod ?? input.feePaymentMethod),
-            paidAt: new Date(),
-            netAmount: decimal(allocatedEntry),
-            createdByUserId: ctx.userId,
-          },
-        });
-      }
-
-      await createEventContractForParticipant(tx, {
-        contaId: ctx.contaId,
-        userId: ctx.userId,
-        eventId: input.eventId,
-        participantId: participant.id,
-        alunoId: aluno.id,
-      });
-      participants.push(participant);
-    }
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.participant.group_register',
-      entityType: 'EventBillingGroup',
-      entityId: group.id,
-      eventId: input.eventId,
-      after: { group, participantIds: participants.map((participant) => participant.id) },
-      metadata: { responsavelId: selectedResponsible.id, alunoIds },
-    });
-
-    return { group, participants, reused: false };
-  });
-}
-
-export async function unregisterEventParticipant(ctx: EventsContext, eventId: string, participantId: string) {
-  const participant = await prisma.eventParticipant.findFirst({
-    where: { id: participantId, eventId, contaId: ctx.contaId },
-    select: { ...eventParticipantScalarSelect, event: true },
-  });
-  if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
-  assertOperationalEvent(participant.event.status);
-
-  if (participant.cancelledAt) {
-    return { ok: true, canceledChargeIds: [] as string[], grouped: false };
-  }
-
-  if (participant.billingGroupId) {
-    const activeGroupParticipants = await prisma.eventParticipant.count({
-      where: { contaId: ctx.contaId, billingGroupId: participant.billingGroupId, cancelledAt: null },
-    });
-    if (activeGroupParticipants > 1) {
-      return unregisterEventParticipantGroup(ctx, eventId, participant.billingGroupId);
-    }
-  }
-
-  const entry = participant.revenueEntryId
-    ? await prisma.eventFinancialEntry.findFirst({
-        where: { id: participant.revenueEntryId, contaId: ctx.contaId },
-      })
-    : null;
-
-  const linkedChargeFilters: Prisma.ChargeWhereInput[] = [];
-  if (entry?.asaasPaymentId) linkedChargeFilters.push({ asaasPaymentId: entry.asaasPaymentId });
-  if (participant.asaasPaymentId) linkedChargeFilters.push({ asaasPaymentId: participant.asaasPaymentId });
-  if (participant.asaasInstallmentId) {
-    linkedChargeFilters.push({
-      standaloneInstallmentPlan: { asaasInstallmentId: participant.asaasInstallmentId },
-    });
-  }
-  if (participant.standaloneChargeId) {
-    linkedChargeFilters.push({ standaloneInstallmentPlanId: participant.standaloneChargeId });
-    linkedChargeFilters.push({ id: participant.standaloneChargeId });
-  }
-
-  const linkedCharges = linkedChargeFilters.length > 0
-    ? await prisma.charge.findMany({
-        where: { contaId: ctx.contaId, OR: linkedChargeFilters },
-      })
-    : [];
-
-  const standaloneInstallmentPlanIds = new Set(
-    linkedCharges
-      .map((charge) => charge.standaloneInstallmentPlanId)
-      .filter((id): id is string => Boolean(id)),
-  );
-  for (const planId of await listStandaloneInstallmentPlanIdsForParticipant({
-    contaId: ctx.contaId,
-    standaloneChargeId: participant.standaloneChargeId,
-    asaasInstallmentId: participant.asaasInstallmentId,
-  })) {
-    standaloneInstallmentPlanIds.add(planId);
-  }
-
-  const openCharges = linkedCharges.filter((charge) =>
-    ['CREATED', 'PENDING_SYNC', 'OPEN', 'OVERDUE'].includes(charge.status),
-  );
-  if (openCharges.length > 0) {
-    const credentials = await loadDecryptedAsaasCredentials(ctx.contaId);
-    if (credentials?.apiKey) {
-      for (const charge of openCharges) {
-        if (!charge.asaasPaymentId) continue;
-        await getEventAsaasPaymentProvider().deletePayment({
-          apiKey: credentials.apiKey,
-          paymentId: charge.asaasPaymentId,
-        });
-      }
-    }
-  }
-
-  return prisma.$transaction(async (tx) => {
-    const payment = calculateParticipantPayment(
-      participant.registrationFeeCharged.toNumber(),
-      participant.isFeePaid,
-      entry,
-      linkedCharges,
-      participant.isFeeExempt,
-    );
-
-    const updated = await tx.eventParticipant.update({
-      where: { id: participantId },
-      data: {
-        isFeePaid: false,
-        financialStatusSnapshot: 'CANCELADO',
-        feePaidAmount: decimal(payment.totalPaid),
-        feeRefundedAmount: decimal(payment.totalRefunded),
-        cancelledAt: new Date(),
-      },
-      select: eventParticipantScalarSelect,
-    });
-
-    if (participant.alunoId) {
-      await createEventContractForParticipant(tx, {
-        contaId: ctx.contaId,
-        userId: ctx.userId,
-        eventId,
-        participantId,
-        alunoId: participant.alunoId,
-      });
-    }
-
-    if (openCharges.length > 0) {
-      await tx.charge.updateMany({
-        where: { contaId: ctx.contaId, id: { in: openCharges.map((charge) => charge.id) } },
-        data: { status: 'CANCELED', statusUpdatedAt: new Date() },
-      });
-    }
-
-    for (const planId of standaloneInstallmentPlanIds) {
-      await convergeStandaloneInstallmentPlanStatus({
-        contaId: ctx.contaId,
-        planId,
-        db: tx,
-      });
-    }
-
-    if (entry) {
-      const actualAmount = payment.totalPaid > 0 ? decimal(payment.totalPaid) : null;
-      await tx.eventFinancialEntry.update({
-        where: { id: entry.id },
-        data: {
-          // A inscrição pode ser cancelada, mas um pagamento manual já
-          // realizado continua sendo uma receita histórica. Reabri-lo como
-          // PENDING faria a taxa voltar indevidamente à fila de cobranças.
-          status: payment.totalPaid > 0 ? 'RECEIVED' : 'CANCELLED',
-          actualAmount,
-          refundedAmount: decimal(payment.totalRefunded),
-          netAmount: payment.netPaid > 0 ? decimal(payment.netPaid) : null,
-          cancelledAt: payment.totalPaid > 0 ? null : new Date(),
-          notes: [entry.notes, 'Inscrição cancelada; histórico financeiro preservado.'].filter(Boolean).join('\n'),
-        },
-      });
-    }
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.participant.unregister',
-      entityType: 'EventParticipant',
-      entityId: participantId,
-      eventId: participant.eventId,
-      before: participant,
-      after: updated,
-      metadata: {
-        cancelledOpenCharges: openCharges.map((charge) => charge.id),
-        paidAmount: payment.totalPaid,
-        refundedAmount: payment.totalRefunded,
-      },
-    });
-
-    return { ok: true, canceledChargeIds: openCharges.map((charge) => charge.id), grouped: false };
-  });
-}
-
-export async function unregisterEventParticipantGroup(ctx: EventsContext, eventId: string, billingGroupId: string) {
-  const group = await prisma.eventBillingGroup.findFirst({
-    where: { id: billingGroupId, contaId: ctx.contaId, eventId },
-    include: { event: true, participants: { select: eventParticipantScalarSelect } },
-  });
-  if (!group) throw new EventsError('COBRANCA_AGRUPADA_NAO_ENCONTRADA', 'Cobrança agrupada não encontrada.', 404);
-  assertOperationalEvent(group.event.status);
-
-  const activeParticipants = group.participants.filter((participant) => !participant.cancelledAt);
-  if (activeParticipants.length === 0) {
-    return { ok: true, canceledChargeIds: [] as string[], grouped: true };
-  }
-
-  const groupCharges = await loadEventBillingGroupCharges(prisma, ctx.contaId, [group]);
-  const charges = groupCharges.get(group.id) ?? [];
-  const standaloneInstallmentPlanIds = new Set(
-    charges
-      .map((charge) => charge.standaloneInstallmentPlanId)
-      .filter((id): id is string => Boolean(id)),
-  );
-  for (const planId of await listStandaloneInstallmentPlanIdsForParticipant({
-    contaId: ctx.contaId,
-    standaloneChargeId: group.standaloneChargeId,
-    asaasInstallmentId: group.asaasInstallmentId,
-  })) {
-    standaloneInstallmentPlanIds.add(planId);
-  }
-  const openCharges = charges.filter((charge) => ['CREATED', 'PENDING_SYNC', 'OPEN', 'OVERDUE'].includes(charge.status));
-  if (openCharges.length > 0) {
-    const credentials = await loadDecryptedAsaasCredentials(ctx.contaId);
-    if (credentials?.apiKey) {
-      for (const charge of openCharges) {
-        if (!charge.asaasPaymentId) continue;
-        await getEventAsaasPaymentProvider().deletePayment({
-          apiKey: credentials.apiKey,
-          paymentId: charge.asaasPaymentId,
-        });
-      }
-    }
-  }
-
-  return prisma.$transaction(async (tx) => {
-    const entryById = new Map(
-      (
-        await tx.eventFinancialEntry.findMany({
-          where: {
-            contaId: ctx.contaId,
-            id: { in: activeParticipants.map((participant) => participant.revenueEntryId).filter((id): id is string => Boolean(id)) },
-          },
-        })
-      ).map((entry) => [entry.id, entry]),
-    );
-
-    const cancelledParticipantIds: string[] = [];
-    for (const participant of activeParticipants) {
-      const entry = participant.revenueEntryId ? entryById.get(participant.revenueEntryId) : null;
-      const participantCharges = allocateChargesToParticipant(
-        charges,
-        participant.balanceAmount.toNumber(),
-        group.balanceAmount.toNumber(),
-      );
-      const payment = calculateParticipantPayment(
-        participant.registrationFeeCharged.toNumber(),
-        participant.isFeePaid,
-        entry,
-        participantCharges,
-        participant.isFeeExempt,
-      );
-
-      const updated = await tx.eventParticipant.update({
-        where: { id: participant.id },
-        data: {
-          isFeePaid: false,
-          financialStatusSnapshot: 'CANCELADO',
-          feePaidAmount: decimal(payment.totalPaid),
-          feeRefundedAmount: decimal(payment.totalRefunded),
-          cancelledAt: new Date(),
-        },
-        select: eventParticipantScalarSelect,
-      });
-
-      if (participant.alunoId) {
-        await createEventContractForParticipant(tx, {
-          contaId: ctx.contaId,
-          userId: ctx.userId,
-          eventId,
-          participantId: participant.id,
-          alunoId: participant.alunoId,
-        });
-      }
-
-      if (entry) {
-        await tx.eventFinancialEntry.update({
-          where: { id: entry.id },
-          data: {
-            status: payment.totalPaid > 0 ? 'RECEIVED' : 'CANCELLED',
-            actualAmount: payment.totalPaid > 0 ? decimal(payment.totalPaid) : null,
-            refundedAmount: decimal(payment.totalRefunded),
-            netAmount: payment.netPaid > 0 ? decimal(payment.netPaid) : null,
-            cancelledAt: payment.totalPaid > 0 ? null : new Date(),
-            notes: [entry.notes, 'Cobrança agrupada cancelada; histórico financeiro preservado.'].filter(Boolean).join('\n'),
-          },
-        });
-      }
-
-      await recordEventAudit(tx, {
-        contaId: ctx.contaId,
-        actorUserId: ctx.userId,
-        action: 'events.participant.unregister',
-        entityType: 'EventParticipant',
-        entityId: participant.id,
-        eventId,
-        before: participant,
-        after: updated,
-        metadata: {
-          grouped: true,
-          billingGroupId: group.id,
-          cancelledOpenCharges: openCharges.map((charge) => charge.id),
-          paidAmount: payment.totalPaid,
-          refundedAmount: payment.totalRefunded,
-        },
-      });
-      cancelledParticipantIds.push(participant.id);
-    }
-
-    if (openCharges.length > 0) {
-      await tx.charge.updateMany({
-        where: { contaId: ctx.contaId, id: { in: openCharges.map((charge) => charge.id) } },
-        data: { status: 'CANCELED', statusUpdatedAt: new Date() },
-      });
-    }
-
-    for (const planId of standaloneInstallmentPlanIds) {
-      await convergeStandaloneInstallmentPlanStatus({
-        contaId: ctx.contaId,
-        planId,
-        db: tx,
-      });
-    }
-
-    const updatedGroup = await tx.eventBillingGroup.update({
-      where: { id: group.id, contaId: ctx.contaId },
-      data: { status: 'CANCELLED' },
-    });
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.participant.group_unregister',
-      entityType: 'EventBillingGroup',
-      entityId: group.id,
-      eventId,
-      before: group,
-      after: updatedGroup,
-      metadata: { cancelledParticipantIds, cancelledOpenCharges: openCharges.map((charge) => charge.id) },
-    });
-
-    return {
-      ok: true,
-      grouped: true,
-      canceledChargeIds: openCharges.map((charge) => charge.id),
-      cancelledParticipantIds,
-    };
-  });
-}
 
 export async function removeCancelledEventParticipant(ctx: EventsContext, eventId: string, participantId: string) {
   const participant = await prisma.eventParticipant.findFirst({
@@ -3837,528 +2112,6 @@ export async function permanentlyDeleteEventParticipant(
   });
 }
 
-export async function reactivateEventParticipant(
-  ctx: EventsContext,
-  eventId: string,
-  participantId: string,
-  input: ReactivateEventParticipantInput,
-) {
-  return prisma.$transaction(async (tx) => {
-    const participant = await tx.eventParticipant.findFirst({
-      where: { id: participantId, eventId, contaId: ctx.contaId },
-      select: {
-        ...eventParticipantScalarSelect,
-        event: true,
-        aluno: { select: { email: true } },
-        responsavel: { select: { email: true } },
-      },
-    });
-    if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
-    assertOperationalEvent(participant.event.status);
-
-    if (!participant.cancelledAt) {
-      throw new EventsError(
-        'PARTICIPANTE_NAO_CANCELADO',
-        'Somente inscrições canceladas podem ser reinscritas.',
-        409,
-      );
-    }
-
-    const decision = await buildEventParticipantRemovalDecision(tx, ctx, eventId, participant);
-    if (!decision.canRemove) {
-      throw new EventsError(
-        'PARTICIPANTE_REINSCRICAO_BLOQUEADA',
-        'Este aluno possui histórico financeiro ou operacional neste evento. A reinscrição automática não está disponível para este caso.',
-        409,
-        { reasons: decision.reasons },
-      );
-    }
-
-    const before = participant;
-    const feeCharged = input.registrationFeeCharged ?? participant.registrationFeeCharged.toNumber();
-    const isFeePaid = input.isFeePaid ?? false;
-    const dueDate = input.dueDate ?? new Date();
-    const billingMode = input.billingMode ?? (isFeePaid ? 'FULL' : 'INSTALLMENT');
-    const entryAmount = input.entryAmount && input.entryAmount > 0
-      ? toMoney(input.entryAmount)
-      : isFeePaid
-        ? toMoney(feeCharged)
-        : 0;
-    const balanceAmount = toMoney(Math.max(feeCharged - entryAmount, 0));
-    let revenueEntryId: string | null = null;
-    const registrationPaymentRules = eventPaymentRulesFromRecord(participant.event);
-
-    if (feeCharged > 0) {
-      const entry = await tx.eventFinancialEntry.create({
-        data: {
-          contaId: ctx.contaId,
-          eventId,
-          type: 'REVENUE',
-          category: 'Taxa de inscrição',
-          description: billingMode === 'ENTRY_INSTALLMENT' ? 'Entrada da taxa de inscrição' : 'Taxa de inscrição',
-          expectedAmount: decimal(feeCharged),
-          grossAmount: decimal(toMoney(participant.registrationFeeOriginal)),
-          discountAmount: decimal(toMoney(participant.registrationFeeDiscount)),
-          actualAmount: entryAmount > 0 ? decimal(entryAmount) : null,
-          dueDate,
-          realizedAt: entryAmount > 0 ? new Date() : null,
-          status: entryAmount >= feeCharged ? 'RECEIVED' : 'PENDING',
-          paymentMethod: entryAmount > 0 ? mapToEventPaymentMethod(input.entryPaymentMethod ?? input.feePaymentMethod) : null,
-          notes: input.notes,
-          paymentProvider: billingMode === 'ENTRY_INSTALLMENT' ? null : input.paymentProvider ?? null,
-          asaasPaymentId: billingMode === 'ENTRY_INSTALLMENT' ? null : input.asaasPaymentId ?? null,
-          paymentStatus: billingMode === 'ENTRY_INSTALLMENT' ? null : input.paymentStatus ?? null,
-        },
-      });
-      revenueEntryId = entry.id;
-    }
-
-    const updated = await tx.eventParticipant.update({
-      where: { id: participantId },
-      data: {
-        registrationFeeCharged: decimal(feeCharged),
-        billingMode,
-        entryAmount: decimal(entryAmount),
-        balanceAmount: decimal(balanceAmount),
-        entryPaymentMethod: entryAmount > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
-        registrationPaymentRules: registrationPaymentRules ?? Prisma.JsonNull,
-        isFeePaid,
-        feePaymentMethod: feeCharged > 0 ? (input.entryPaymentMethod ?? input.feePaymentMethod ?? null) : null,
-        revenueEntryId,
-        standaloneChargeId: input.standaloneChargeId ?? null,
-        asaasPaymentId: input.asaasPaymentId ?? null,
-        asaasInstallmentId: input.asaasInstallmentId ?? null,
-        financialStatusSnapshot: feeCharged <= 0 ? 'ISENTO' : isFeePaid ? 'QUITADO' : entryAmount > 0 ? 'EM_DIA' : 'PENDENTE',
-        feePaidAmount: decimal(entryAmount),
-        feeRefundedAmount: decimal(0),
-        cancelledAt: null,
-        cancelledReason: null,
-        notes: input.notes ?? participant.notes,
-      },
-      select: eventParticipantScalarSelect,
-    });
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.participant.reactivate',
-      entityType: 'EventParticipant',
-      entityId: participantId,
-      eventId,
-      before,
-      after: updated,
-      metadata: {
-        billingMethod: input.billingMethod,
-        chargeType: input.chargeType,
-        installmentCount: input.installmentCount,
-        previousRevenueEntryId: before.revenueEntryId,
-        newRevenueEntryId: revenueEntryId,
-      },
-    });
-
-    return updated;
-  });
-}
-
-export async function quitarEventParticipantFee(ctx: EventsContext, eventId: string, participantId: string, input: QuitarParticipantFeeInput) {
-  return prisma.$transaction(async (tx) => {
-    const participant = await tx.eventParticipant.findFirst({
-      where: { id: participantId, eventId, contaId: ctx.contaId },
-      select: { ...eventParticipantScalarSelect, event: true },
-    });
-    if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
-    assertFinancialAdjustmentEvent(participant.event.status);
-
-    if (participant.isFeePaid) {
-      throw new EventsError('TAXA_JA_PAGA', 'A taxa de inscrição deste aluno já está paga.', 409);
-    }
-
-    const value = participant.registrationFeeCharged.toNumber();
-    if (value <= 0) {
-      throw new EventsError('VALOR_INVALIDO', 'Esta inscrição não possui valor a ser cobrado.', 400);
-    }
-
-    let revenueEntryId = participant.revenueEntryId;
-    if (revenueEntryId) {
-      await tx.eventFinancialEntry.update({
-        where: { id: revenueEntryId },
-        data: {
-          status: 'RECEIVED',
-          actualAmount: decimal(value),
-          realizedAt: new Date(),
-          paymentMethod: mapToEventPaymentMethod(input.paymentMethod),
-        },
-      });
-    } else {
-      const entry = await tx.eventFinancialEntry.create({
-        data: {
-          contaId: ctx.contaId,
-          eventId: participant.eventId,
-          type: 'REVENUE',
-          category: 'Taxa de inscrição',
-          description: 'Taxa de inscrição',
-          expectedAmount: decimal(value),
-          actualAmount: decimal(value),
-          dueDate: new Date(),
-          realizedAt: new Date(),
-          status: 'RECEIVED',
-          paymentMethod: mapToEventPaymentMethod(input.paymentMethod),
-        },
-      });
-      revenueEntryId = entry.id;
-    }
-
-    const updated = await tx.eventParticipant.update({
-      where: { id: participantId },
-      data: {
-        isFeePaid: true,
-        feePaymentMethod: input.paymentMethod,
-        revenueEntryId,
-      },
-      select: eventParticipantScalarSelect,
-    });
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.participant.quitar',
-      entityType: 'EventParticipant',
-      entityId: participantId,
-      eventId: participant.eventId,
-      before: participant,
-      after: updated,
-    });
-
-    return updated;
-  });
-}
-
-type ManualPaymentTotals = {
-  received: number;
-  refunded: number;
-  net: number;
-};
-
-async function loadManualPaymentTotals(tx: Prisma.TransactionClient, contaId: string, entryId: string): Promise<ManualPaymentTotals> {
-  const payments = await tx.eventFinancialPayment.findMany({
-    where: { contaId, financialEntryId: entryId },
-    select: { amount: true, refundedAmount: true, status: true },
-  });
-  return payments.reduce<ManualPaymentTotals>((totals, payment) => {
-    const amount = toMoney(payment.amount);
-    const refunded = toMoney(payment.refundedAmount);
-    return {
-      received: toMoney(totals.received + amount),
-      refunded: toMoney(totals.refunded + refunded),
-      net: toMoney(totals.net + Math.max(amount - refunded, 0)),
-    };
-  }, { received: 0, refunded: 0, net: 0 });
-}
-
-async function refreshManualParticipantPaymentSnapshot(
-  tx: Prisma.TransactionClient,
-  participant: { id: string; contaId: string; registrationFeeCharged: Prisma.Decimal; revenueEntryId: string | null },
-  entryId: string,
-) {
-  const totals = await loadManualPaymentTotals(tx, participant.contaId, entryId);
-  const expected = toMoney(participant.registrationFeeCharged);
-  const status = totals.net <= 0 && totals.received > 0
-    ? 'REFUNDED'
-    : totals.net >= expected && expected > 0
-      ? 'RECEIVED'
-      : 'PENDING';
-  const entry = await tx.eventFinancialEntry.update({
-    where: { id: entryId },
-    data: {
-      actualAmount: totals.received > 0 ? decimal(totals.received) : null,
-      refundedAmount: decimal(totals.refunded),
-      netAmount: decimal(totals.net),
-      status,
-      realizedAt: totals.received > 0 ? new Date() : null,
-      refundedAt: totals.refunded > 0 ? new Date() : null,
-    },
-  });
-  const updatedParticipant = await tx.eventParticipant.update({
-    where: { id: participant.id },
-    data: {
-      isFeePaid: status === 'RECEIVED',
-      feePaidAmount: decimal(totals.net),
-      feeRefundedAmount: decimal(totals.refunded),
-      entryAmount: decimal(totals.net),
-      balanceAmount: decimal(Math.max(expected - totals.net, 0)),
-      financialStatusSnapshot: status === 'RECEIVED'
-        ? 'QUITADO'
-        : status === 'REFUNDED'
-          ? 'ESTORNADO'
-          : totals.net > 0
-              ? 'EM_DIA'
-              : 'PENDENTE',
-    },
-    select: eventParticipantScalarSelect,
-  });
-  return { entry, participant: updatedParticipant, totals };
-}
-
-export async function createManualEventParticipantPayment(
-  ctx: EventsContext,
-  eventId: string,
-  participantId: string,
-  input: ManualEventParticipantPaymentInput,
-) {
-  return prisma.$transaction(async (tx) => {
-    const participant = await tx.eventParticipant.findFirst({
-      where: { id: participantId, eventId, contaId: ctx.contaId },
-      select: { ...eventParticipantScalarSelect, event: true },
-    });
-    if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
-    assertFinancialAdjustmentEvent(participant.event.status);
-    if (participant.billingMode !== 'FULL' || participant.asaasPaymentId || participant.asaasInstallmentId) {
-      throw new EventsError('BAIXA_MANUAL_BLOQUEADA', 'A baixa manual está disponível apenas para inscrições manuais.', 409);
-    }
-
-    const amount = toMoney(input.amount);
-    const expected = toMoney(participant.registrationFeeCharged);
-    if (amount <= 0) throw new EventsError('VALOR_INVALIDO', 'Informe um valor maior que zero.', 422);
-
-    let entryId = participant.revenueEntryId;
-    if (entryId) {
-      const entry = await tx.eventFinancialEntry.findFirst({ where: { id: entryId, contaId: ctx.contaId } });
-      if (!entry) entryId = null;
-      if (entry?.asaasPaymentId || entry?.paymentProvider === 'ASAAS') {
-        throw new EventsError('BAIXA_MANUAL_BLOQUEADA', 'A inscrição possui uma cobrança gerenciada pelo Asaas.', 409);
-      }
-    }
-    if (!entryId) {
-      const entry = await tx.eventFinancialEntry.create({
-        data: {
-          contaId: ctx.contaId,
-          eventId,
-          type: 'REVENUE',
-          category: 'Taxa de inscrição',
-          description: 'Taxa de inscrição',
-          expectedAmount: decimal(expected),
-          grossAmount: decimal(toMoney(participant.registrationFeeOriginal)),
-          discountAmount: decimal(toMoney(participant.registrationFeeDiscount)),
-          status: 'PENDING',
-          dueDate: new Date(),
-          paymentMethod: null,
-        },
-      });
-      entryId = entry.id;
-      await tx.eventParticipant.update({
-        where: { id: participant.id },
-        data: { revenueEntryId: entryId },
-        select: { id: true },
-      });
-    }
-
-    const totalsBefore = await loadManualPaymentTotals(tx, ctx.contaId, entryId);
-    const remaining = toMoney(Math.max(expected - totalsBefore.net, 0));
-    if (amount > remaining) {
-      throw new EventsError('VALOR_ACIMA_DO_SALDO', `O valor máximo para baixa é ${remaining.toFixed(2)}.`, 422);
-    }
-
-    const payment = await tx.eventFinancialPayment.create({
-      data: {
-        contaId: ctx.contaId,
-        eventId,
-        financialEntryId: entryId,
-        participantId: participant.id,
-        amount: decimal(amount),
-        paymentMethod: mapToEventPaymentMethod(input.paymentMethod),
-        paidAt: input.paidAt ?? new Date(),
-        notes: input.notes,
-        netAmount: decimal(amount),
-        createdByUserId: ctx.userId,
-      },
-    });
-    const refreshed = await refreshManualParticipantPaymentSnapshot(tx, { ...participant, contaId: ctx.contaId }, entryId);
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.participant.manual_payment.create',
-      entityType: 'EventFinancialPayment',
-      entityId: payment.id,
-      eventId,
-      before: { participant, totals: totalsBefore },
-      after: { payment, participant: refreshed.participant, totals: refreshed.totals },
-    });
-    return { payment, ...refreshed };
-  });
-}
-
-export async function refundManualEventParticipantPayment(ctx: EventsContext, eventId: string, participantId: string, paymentId: string) {
-  return prisma.$transaction(async (tx) => {
-    const payment = await tx.eventFinancialPayment.findFirst({
-      where: { id: paymentId, participantId, eventId, contaId: ctx.contaId },
-      include: { participant: true },
-    });
-    if (!payment?.participant) throw new EventsError('PAGAMENTO_NAO_ENCONTRADO', 'Pagamento manual não encontrado.', 404);
-    if (payment.status === 'REFUNDED') throw new EventsError('PAGAMENTO_JA_ESTORNADO', 'Este pagamento já foi estornado.', 409);
-
-    const updatedPayment = await tx.eventFinancialPayment.update({
-      where: { id: payment.id },
-      data: { status: 'REFUNDED', refundedAt: new Date(), refundedAmount: payment.amount, netAmount: decimal(0) },
-    });
-    const refreshed = await refreshManualParticipantPaymentSnapshot(tx, { ...payment.participant, contaId: ctx.contaId }, payment.financialEntryId);
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.participant.manual_payment.refund',
-      entityType: 'EventFinancialPayment',
-      entityId: payment.id,
-      eventId,
-      before: payment,
-      after: { payment: updatedPayment, participant: refreshed.participant, entry: refreshed.entry },
-    });
-    return { payment: updatedPayment, ...refreshed };
-  });
-}
-
-export async function deleteManualEventParticipantPayment(ctx: EventsContext, eventId: string, participantId: string, paymentId: string) {
-  return prisma.$transaction(async (tx) => {
-    const payment = await tx.eventFinancialPayment.findFirst({
-      where: { id: paymentId, participantId, eventId, contaId: ctx.contaId },
-      include: { participant: true },
-    });
-    if (!payment?.participant) throw new EventsError('PAGAMENTO_NAO_ENCONTRADO', 'Pagamento manual não encontrado.', 404);
-    if (!['RECEIVED', 'REFUNDED'].includes(payment.status)) {
-      throw new EventsError('EXCLUSAO_PAGAMENTO_BLOQUEADA', 'Este pagamento não pode ser excluído.', 409);
-    }
-
-    const totalsBefore = await loadManualPaymentTotals(tx, ctx.contaId, payment.financialEntryId);
-    await tx.eventFinancialPayment.delete({ where: { id: payment.id } });
-    const refreshed = await refreshManualParticipantPaymentSnapshot(tx, { ...payment.participant, contaId: ctx.contaId }, payment.financialEntryId);
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.participant.manual_payment.delete',
-      entityType: 'EventFinancialPayment',
-      entityId: payment.id,
-      eventId,
-      before: { payment, totals: totalsBefore },
-      after: { participant: refreshed.participant, totals: refreshed.totals },
-    });
-    return { paymentId: payment.id, ...refreshed };
-  });
-}
-
-export async function refundManualEventParticipantFee(ctx: EventsContext, eventId: string, participantId: string) {
-  return prisma.$transaction(async (tx) => {
-    const participant = await tx.eventParticipant.findFirst({
-      where: { id: participantId, eventId, contaId: ctx.contaId },
-      select: { ...eventParticipantScalarSelect, event: true },
-    });
-    if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
-    assertFinancialAdjustmentEvent(participant.event.status);
-    if (!participant.revenueEntryId) {
-      throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'A inscrição não possui lançamento financeiro vinculado.', 404);
-    }
-
-    const entry = await tx.eventFinancialEntry.findFirst({
-      where: { id: participant.revenueEntryId, contaId: ctx.contaId },
-    });
-    if (!entry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
-    if (entry.asaasPaymentId || entry.paymentProvider === 'ASAAS') {
-      throw new EventsError('ESTORNO_ASAAS_BLOQUEADO', 'Use o fluxo de estorno do Asaas para cobranças intermediadas.', 409);
-    }
-    if (!['RECEIVED', 'PAID'].includes(entry.status)) {
-      throw new EventsError('ESTORNO_BLOQUEADO', 'Somente taxas manuais pagas podem ser estornadas.', 400);
-    }
-
-    const refundableAmount = toNumber(entry.actualAmount ?? participant.registrationFeeCharged);
-    if (refundableAmount <= 0) {
-      throw new EventsError('VALOR_INVALIDO', 'Não há valor pago para estornar.', 400);
-    }
-
-    const updatedEntry = await tx.eventFinancialEntry.update({
-      where: { id: entry.id },
-      data: {
-        status: 'REFUNDED',
-        refundedAt: new Date(),
-        refundedAmount: decimal(refundableAmount),
-        netAmount: decimal(0),
-      },
-    });
-
-    const updatedParticipant = await tx.eventParticipant.update({
-      where: { id: participant.id },
-      data: {
-        isFeePaid: false,
-        feeRefundedAmount: decimal(refundableAmount),
-        feePaidAmount: decimal(0),
-        financialStatusSnapshot: 'ESTORNADO',
-      },
-      select: eventParticipantScalarSelect,
-    });
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.participant.fee.refund',
-      entityType: 'EventFinancialEntry',
-      entityId: entry.id,
-      eventId: participant.eventId,
-      before: { participant, entry },
-      after: { participant: updatedParticipant, entry: updatedEntry },
-    });
-
-    return { success: true };
-  });
-}
-
-export async function deleteManualEventParticipantFee(ctx: EventsContext, eventId: string, participantId: string) {
-  return prisma.$transaction(async (tx) => {
-    const participant = await tx.eventParticipant.findFirst({
-      where: { id: participantId, eventId, contaId: ctx.contaId },
-      select: { ...eventParticipantScalarSelect, event: true },
-    });
-    if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
-    assertFinancialAdjustmentEvent(participant.event.status);
-    if (!participant.revenueEntryId) {
-      throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'A inscrição não possui lançamento financeiro vinculado.', 404);
-    }
-
-    const entry = await tx.eventFinancialEntry.findFirst({
-      where: { id: participant.revenueEntryId, contaId: ctx.contaId },
-    });
-    if (!entry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
-    if (entry.asaasPaymentId || entry.paymentProvider === 'ASAAS') {
-      throw new EventsError('EXCLUSAO_ASAAS_BLOQUEADA', 'Não é possível excluir cobrança intermediada pelo Asaas.', 409);
-    }
-    if (participant.isFeePaid || entry.actualAmount || ['RECEIVED', 'PAID', 'REFUNDED', 'PARTIALLY_REFUNDED'].includes(entry.status)) {
-      throw new EventsError('EXCLUSAO_BLOQUEADA', 'Não é possível excluir taxa paga ou estornada. Use estorno para preservar o histórico.', 400);
-    }
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.participant.fee.delete',
-      entityType: 'EventFinancialEntry',
-      entityId: entry.id,
-      eventId: participant.eventId,
-      before: { participant, entry },
-      after: null,
-    });
-
-    await tx.eventParticipant.update({
-      where: { id: participant.id },
-      data: {
-        revenueEntryId: null,
-        isFeePaid: false,
-        financialStatusSnapshot: null,
-      },
-      select: { id: true },
-    });
-
-    await tx.eventFinancialEntry.delete({
-      where: { id: entry.id },
-    });
-
-    return { success: true };
-  });
-}
-
 export function calculateParticipantPayment(
   registrationFeeCharged: number,
   isFeePaid: boolean,
@@ -4405,7 +2158,7 @@ export function calculateParticipantPayment(
   };
 }
 
-function allocateChargesToParticipant(charges: any[], participantBalance: number, groupBalance: number) {
+export function allocateChargesToParticipant(charges: any[], participantBalance: number, groupBalance: number) {
   const ratio = groupBalance > 0 ? Math.min(Math.max(participantBalance / groupBalance, 0), 1) : 0;
   return charges.map((charge) => ({
     ...charge,
@@ -4416,7 +2169,7 @@ function allocateChargesToParticipant(charges: any[], participantBalance: number
   }));
 }
 
-async function loadEventBillingGroupCharges(
+export async function loadEventBillingGroupCharges(
   db: DbClient,
   contaId: string,
   groups: Array<{ id: string; standaloneChargeId: string | null; asaasPaymentId: string | null; asaasInstallmentId: string | null }>,
@@ -4969,219 +2722,7 @@ export async function deleteCostumeAssignment(ctx: EventsContext, assignmentId: 
   return { success: true };
 }
 
-export async function updateTicketSale(ctx: EventsContext, saleId: string, input: UpdateTicketSaleInput) {
-  return prisma.$transaction(async (tx) => {
-    const current = await tx.eventTicketSale.findFirst({
-      where: { id: saleId, contaId: ctx.contaId },
-      include: { lot: { include: { event: true } } },
-    });
-    if (!current) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
-    assertOperationalEvent(current.lot.event.status);
 
-    const seatedSaleCount = await tx.eventTicketSaleSeat.count({
-      where: { contaId: ctx.contaId, saleId },
-    });
-    if (seatedSaleCount > 0 && (input.lotId != null || input.quantity != null)) {
-      throw new EventsError(
-        'VENDA_ASSENTO_BLOQUEADA',
-        'Vendas com assentos numerados não podem ter lote ou quantidade alterados. Cancele e registre novamente.',
-        409,
-      );
-    }
-
-    const lotId = input.lotId ?? current.lotId;
-    const lot = lotId === current.lotId ? current.lot : await tx.eventTicketLot.findFirst({
-      where: { id: lotId, contaId: ctx.contaId },
-    });
-    if (!lot) throw new EventsError('LOTE_NAO_ENCONTRADO', 'Lote não encontrado.', 404);
-
-    const quantity = input.quantity ?? current.quantity;
-
-    // Check stock if quantity or lot changed
-    if (lotId !== current.lotId || quantity !== current.quantity) {
-      const sold = await tx.eventTicketSale.aggregate({
-        where: {
-          contaId: ctx.contaId,
-          lotId: lot.id,
-          id: { not: saleId },
-          status: { in: ['PENDING', 'PAID', 'COMPLIMENTARY'] },
-        },
-        _sum: { quantity: true },
-      });
-      const quantitySoldOthers = sold._sum.quantity ?? 0;
-      if (quantitySoldOthers + quantity > lot.quantityTotal) {
-        throw new EventsError('ESTOQUE_INSUFICIENTE', 'Não há ingressos suficientes neste lote.', 409);
-      }
-    }
-
-    const newStatus = input.status ?? current.status;
-    const paymentMethod = input.paymentMethod ?? current.paymentMethod;
-
-    const resolvedStatus = paymentMethod === 'COMPLIMENTARY' ? 'COMPLIMENTARY' : newStatus;
-
-    const targetAlunoId = input.alunoId === undefined ? current.alunoId : input.alunoId;
-    const targetResponsavelId =
-      input.responsavelId === undefined ? current.responsavelId : input.responsavelId;
-
-    await assertEventScopedTicketSaleLinks(tx, ctx.contaId, current.eventId, {
-      alunoId: targetAlunoId,
-      responsavelId: targetResponsavelId,
-    });
-
-    const unitPrice = toMoney(lot.unitPrice);
-    const totalAmount = resolvedStatus === 'COMPLIMENTARY' ? 0 : unitPrice * quantity;
-
-    const now = new Date();
-    
-    // Status transition validation
-    if (resolvedStatus !== current.status) {
-      const transition = validateTicketSaleStatusTransition(current.status, resolvedStatus);
-      if (!transition.ok) throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
-    }
-
-    const updated = await tx.eventTicketSale.update({
-      where: { id: saleId },
-      data: {
-        buyerName: input.buyerName,
-        alunoId: input.alunoId === undefined ? undefined : input.alunoId,
-        responsavelId: input.responsavelId === undefined ? undefined : input.responsavelId,
-        lotId,
-        quantity,
-        unitPriceSnapshot: decimal(unitPrice),
-        totalAmount: decimal(totalAmount),
-        paymentMethod,
-        status: resolvedStatus,
-        notes: input.notes === undefined ? undefined : input.notes,
-        paidAt: resolvedStatus === 'PAID' ? (current.paidAt ?? now) : null,
-        cancelledAt: resolvedStatus === 'CANCELLED' ? (current.cancelledAt ?? now) : null,
-        refundedAt: resolvedStatus === 'REFUNDED' ? (current.refundedAt ?? now) : null,
-      },
-    });
-
-    // Sync financial entries
-    if (resolvedStatus === 'COMPLIMENTARY' || totalAmount === 0) {
-      // If it has financial entry, delete it
-      if (current.revenueEntryId) {
-        await tx.eventFinancialEntry.delete({
-          where: { id: current.revenueEntryId },
-        });
-        await tx.eventTicketSale.update({
-          where: { id: saleId },
-          data: { revenueEntryId: null },
-        });
-      }
-    } else {
-      if (current.revenueEntryId) {
-        // Update existing financial entry
-        const entryStatus = resolvedStatus === 'PAID' ? 'RECEIVED' : (resolvedStatus === 'CANCELLED' ? 'CANCELLED' : (resolvedStatus === 'REFUNDED' ? 'REFUNDED' : 'PENDING'));
-        await tx.eventFinancialEntry.update({
-          where: { id: current.revenueEntryId },
-          data: {
-            description: `Venda de ingresso - ${lot.name}`,
-            expectedAmount: decimal(totalAmount),
-            actualAmount: resolvedStatus === 'PAID' ? decimal(totalAmount) : (resolvedStatus === 'REFUNDED' ? decimal(totalAmount) : null),
-            status: entryStatus,
-            paymentMethod,
-            realizedAt: resolvedStatus === 'PAID' ? (current.paidAt ?? now) : null,
-            refundedAt: resolvedStatus === 'REFUNDED' ? (current.refundedAt ?? now) : null,
-            cancelledAt: resolvedStatus === 'CANCELLED' ? (current.cancelledAt ?? now) : null,
-          },
-        });
-      } else {
-        // Create new financial entry
-        const entryStatus = resolvedStatus === 'PAID' ? 'RECEIVED' : (resolvedStatus === 'CANCELLED' ? 'CANCELLED' : (resolvedStatus === 'REFUNDED' ? 'REFUNDED' : 'PENDING'));
-        const entry = await tx.eventFinancialEntry.create({
-          data: {
-            contaId: ctx.contaId,
-            eventId: lot.eventId,
-            type: 'REVENUE',
-            category: 'Venda de ingresso',
-            description: `Venda de ingresso - ${lot.name}`,
-            originType: 'TICKET_SALE',
-            originId: saleId,
-            expectedAmount: decimal(totalAmount),
-            actualAmount: resolvedStatus === 'PAID' ? decimal(totalAmount) : null,
-            status: entryStatus,
-            paymentMethod,
-            realizedAt: resolvedStatus === 'PAID' ? now : null,
-            createdByUserId: ctx.userId,
-          },
-        });
-        await tx.eventTicketSale.update({
-          where: { id: saleId },
-          data: { revenueEntryId: entry.id },
-        });
-      }
-    }
-
-    // Sync quantities
-    await syncLotQuantity(tx, ctx.contaId, current.lotId);
-    if (lotId !== current.lotId) {
-      await syncLotQuantity(tx, ctx.contaId, lotId);
-    }
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.ticketSale.update',
-      entityType: 'EventTicketSale',
-      entityId: saleId,
-      eventId: lot.eventId,
-      before: current,
-      after: updated,
-      metadata: { lotId },
-    });
-
-    return getTicketSaleDto(tx, ctx.contaId, saleId);
-  });
-}
-
-export async function deleteTicketSale(ctx: EventsContext, saleId: string) {
-  return prisma.$transaction(async (tx) => {
-    const current = await tx.eventTicketSale.findFirst({
-      where: { id: saleId, contaId: ctx.contaId },
-    });
-    if (!current) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
-
-    // Business rule: Prevent deletion of PAID sales to preserve financial audit trail
-    if (current.status === 'PAID') {
-      throw new EventsError(
-        'EXCLUSAO_BLOQUEADA_PAGO',
-        'Não é possível excluir uma venda de ingresso que já foi paga. Por favor, estorne a venda primeiro.',
-        400
-      );
-    }
-
-    // Delete associated financial entry if exists
-    if (current.revenueEntryId) {
-      await tx.eventFinancialEntry.delete({
-        where: { id: current.revenueEntryId },
-      });
-    }
-
-    const { releaseSeatsForTicketSale } = await import('./map/staff-map-sales.service');
-    await releaseSeatsForTicketSale(tx, ctx.contaId, saleId);
-
-    await tx.eventTicketSale.delete({
-      where: { id: saleId },
-    });
-
-    await syncLotQuantity(tx, ctx.contaId, current.lotId);
-
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.ticketSale.delete',
-      entityType: 'EventTicketSale',
-      entityId: saleId,
-      eventId: current.eventId,
-      before: current,
-      after: null,
-    });
-
-    return { success: true };
-  });
-}
 
 export async function deleteTicketLot(ctx: EventsContext, lotId: string) {
   return prisma.$transaction(async (tx) => {

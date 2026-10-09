@@ -45,7 +45,7 @@ export function MobileUserMenuDrawer({ open, onOpenChange }: MobileUserMenuDrawe
     <div className="fixed inset-0 z-[55] lg:hidden">
       <button
         type="button"
-        className="absolute inset-0 bg-black/40"
+        className="absolute inset-0 bg-black/80"
         onClick={() => onOpenChange(false)}
         aria-label="Fechar menu da conta"
       />

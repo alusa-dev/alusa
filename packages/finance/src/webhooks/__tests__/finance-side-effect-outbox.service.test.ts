@@ -4,6 +4,7 @@ const {
   outboxMock,
   webhookAsaasMock,
   eventMapOrderMock,
+  eventTicketMock,
   emitBillingNotificationsMock,
   listPaymentRefundsMock,
   refundCobrancaMock,
@@ -21,6 +22,7 @@ const {
     updateMany: vi.fn(),
   },
   eventMapOrderMock: { findFirst: vi.fn() },
+  eventTicketMock: { count: vi.fn() },
   emitBillingNotificationsMock: vi.fn(),
   listPaymentRefundsMock: vi.fn(),
   refundCobrancaMock: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock('@alusa/database', () => ({
     financeWebhookSideEffectOutbox: outboxMock,
     webhookAsaas: webhookAsaasMock,
     eventMapOrder: eventMapOrderMock,
+    eventTicket: eventTicketMock,
   },
 }));
 
@@ -112,7 +115,12 @@ describe('finance side-effect outbox leases', () => {
       buyerName: 'Comprador',
       paymentMethod: 'PIX',
       event: { name: 'Evento de teste' },
+      status: 'CONFIRMED',
+      paymentStatus: 'CONFIRMED',
+      ticketFulfillmentStatus: 'ISSUED',
+      _count: { items: 1 },
     });
+    eventTicketMock.count.mockResolvedValue(1);
     outboxMock.updateMany.mockResolvedValue({ count: 1 });
     outboxMock.create.mockResolvedValue({ id: 'effect-1' });
     webhookAsaasMock.findMany.mockResolvedValue([]);
@@ -499,6 +507,55 @@ describe('finance side-effect outbox leases', () => {
     } finally {
       if (previousApiKey === undefined) delete process.env.RESEND_API_KEY;
       else process.env.RESEND_API_KEY = previousApiKey;
+    }
+  });
+
+  it('ignora o envio quando o pedido foi cancelado ou estornado', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    outboxMock.findUnique.mockResolvedValue({
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
+      payload: {
+        orderId: 'order-refunded',
+        buyerEmail: 'buyer@example.com',
+        buyerName: 'Buyer',
+        eventName: 'Evento Alusa',
+        eventStartsAt: '2026-08-23T20:00:00.000Z',
+        ticketCount: 1,
+        ticketsPath: '/tickets',
+      },
+    } as never);
+    eventMapOrderMock.findFirst.mockResolvedValue({
+      status: 'CANCELLED',
+      paymentStatus: 'REFUNDED',
+      ticketFulfillmentStatus: 'CANCELLED',
+      _count: { items: 1 },
+    });
+    eventTicketMock.count.mockResolvedValue(0);
+    outboxMock.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    try {
+      const result = await processFinanceWebhookSideEffectOutboxEvent('effect-1');
+
+      expect(result).toEqual({ processed: true, reason: 'ticket_email_blocked_by_order_state' });
+      expect(eventMapOrderMock.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'order-refunded', contaId: 'conta-a' },
+      }));
+      expect(eventTicketMock.count).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ contaId: 'conta-a', eventMapOrderId: 'order-refunded' }),
+      }));
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(outboxMock.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        data: expect.objectContaining({
+          status: FinanceWebhookSideEffectStatus.PROCESSED,
+          deliveryStatus: 'SKIPPED',
+        }),
+      }));
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 

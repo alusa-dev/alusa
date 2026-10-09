@@ -1,6 +1,6 @@
 import { prisma } from '@alusa/database';
-import { getEventAsaasPaymentProvider } from '@alusa/lib/events/event-asaas-payment-provider';
-import { loadDecryptedAsaasCredentials } from '@alusa/lib/services/integracoes/asaas-credentials-service';
+import { getEventAsaasPaymentProvider } from './event-asaas-payment-provider';
+import { loadDecryptedAsaasCredentials } from '../foundation/load-decrypted-asaas-credentials';
 import { logEventsFinance } from './events-finance-observability';
 
 /** Loads only the payment instrument the authenticated public order needs. */

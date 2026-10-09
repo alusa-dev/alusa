@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { manualEventParticipantPaymentSchema } from '@alusa/lib/events/events.schema';
-import { createManualEventParticipantPayment } from '@alusa/lib/events/events.service';
+import { createManualEventParticipantPayment } from '@alusa/finance';
 import { getEventsContext, handleEventsRouteError } from '../../../../_helpers';
 
 export const dynamic = 'force-dynamic';

@@ -17,7 +17,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   try {
     ensureEventAsaasPaymentProviderRegistered();
     const { orderId } = await params;
-    const limited = await enforcePublicEventMapPaymentSyncRateLimit(request, orderId);
+    const limited = await enforcePublicEventMapPaymentSyncRateLimit(request);
     if (limited) return limited;
     const token = request.nextUrl.searchParams.get('token')?.trim();
     if (!token) {

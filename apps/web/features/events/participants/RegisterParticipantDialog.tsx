@@ -317,6 +317,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
       </DialogTrigger>
       <DialogContent
         fullScreenMobile
+        disableBackdropBlur
         overlayClass="alusa-registration-wizard-overlay"
         className={cn(
           'event-registration-dialog alusa-wizard-corner-smoothing relative flex w-[calc(100vw-2rem)] max-w-md min-h-0 flex-col gap-0 overflow-hidden rounded-[20px] bg-white p-0 transition-[height] duration-200 ease-out',

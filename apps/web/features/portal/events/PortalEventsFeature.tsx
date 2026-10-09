@@ -301,7 +301,7 @@ function QRCodeModal({ evento, onClose }: { evento: PortalEventoDTO; onClose: ()
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
       <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
         <div className="text-center">
           <h2 className="text-2xl font-bold text-gray-900 mb-2">{evento.nome}</h2>

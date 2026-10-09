@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   deleteManualEventParticipantFee,
   refundManualEventParticipantFee,
-} from '@alusa/lib/events/events.service';
+} from '@alusa/finance';
 
 import { getEventsContext, handleEventsRouteError } from '../../../../_helpers';
 

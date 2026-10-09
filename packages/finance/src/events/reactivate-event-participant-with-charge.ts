@@ -1,0 +1,133 @@
+import { prisma } from '@alusa/database';
+import {
+  eventParticipantScalarSelect,
+} from '@alusa/lib/events/event-financial-read-models';
+import { EventsError } from '@alusa/domain/events';
+import { getEventParticipantRemovalDecision } from '@alusa/lib/events/event-participant-removal-decision.service';
+import { reactivateEventParticipant } from './event-participant-lifecycle-operations';
+import {
+  eventPaymentRulesFromRecord,
+  eventPaymentRulesToAsaas,
+  validateEventPaymentRulesForCharge,
+} from '@alusa/lib/events/events-payment-rules';
+import {
+  reactivateEventParticipantRequestSchema,
+  reactivateEventParticipantSchema,
+} from '@alusa/lib/events/events.schema';
+import { createStandaloneCharge } from '../use-cases/create-standalone-charge';
+
+type EventsContext = { contaId: string; userId: string };
+type RequestInput = ReturnType<typeof reactivateEventParticipantRequestSchema.parse>;
+
+const billingErrorMap: Record<string, { status: number; message: string }> = {
+  FEATURE_DISABLED: { status: 403, message: 'Funcionalidade financeira desabilitada para esta conta' },
+  KYC_NAO_APROVADO: { status: 409, message: 'Conta financeira não aprovada' },
+  PAGADOR_NAO_ENCONTRADO: { status: 404, message: 'Pagador não encontrado' },
+  PAGADOR_SEM_CPF: { status: 422, message: 'Pagador sem CPF cadastrado' },
+  CREDENCIAIS_ASAAS_NAO_CONFIGURADAS: { status: 503, message: 'Integração financeira não configurada' },
+  CUSTOMER_SEM_ASAAS_ID: { status: 409, message: 'Cadastro financeiro do pagador incompleto' },
+  FORMA_PAGAMENTO_INVALIDA: { status: 422, message: 'Forma de pagamento inválida' },
+  VALOR_INVALIDO: { status: 422, message: 'Valor inválido' },
+  DATA_INVALIDA: { status: 422, message: 'Data inválida' },
+  PARCELAS_INVALIDAS: { status: 422, message: 'Número de parcelas inválido (mínimo 2)' },
+  RESPONSAVEL_OBRIGATORIO_MENOR: { status: 422, message: 'Aluno menor exige responsável financeiro vinculado' },
+  ERRO_AO_CRIAR_PAGAMENTO: { status: 502, message: 'Erro ao criar pagamento no provedor' },
+  COBRANCA_DUPLICADA: { status: 409, message: 'Cobrança duplicada' },
+};
+
+function parseDueDate(value: string | undefined) {
+  return value ? new Date(`${value}T00:00:00.000`) : undefined;
+}
+
+/**
+ * Owns event reactivation billing orchestration. Provider I/O stays outside the
+ * local transaction; the lib persistence operation rechecks lifecycle eligibility
+ * and commits participant, financial entry, and audit atomically.
+ */
+export async function reactivateEventParticipantWithCharge(
+  ctx: EventsContext,
+  eventId: string,
+  participantId: string,
+  body: RequestInput,
+) {
+  const participant = await prisma.eventParticipant.findFirst({
+    where: { id: participantId, eventId, contaId: ctx.contaId },
+    select: { ...eventParticipantScalarSelect, event: true },
+  });
+  if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
+  if (!participant.cancelledAt) throw new EventsError('PARTICIPANTE_NAO_CANCELADO', 'Somente inscrições canceladas podem ser reinscritas.', 409);
+
+  const decision = await getEventParticipantRemovalDecision(ctx, eventId, participantId);
+  if (!decision.canRemove) {
+    throw new EventsError(
+      'PARTICIPANTE_REINSCRICAO_BLOQUEADA',
+      'Este aluno possui histórico financeiro ou operacional neste evento. A reinscrição automática não está disponível para este caso.',
+      409,
+      { reasons: decision.reasons },
+    );
+  }
+
+  const isFeePaid = !body.hasEntry && body.billingMethod === 'MANUAL_RECEIVED';
+  const feePaymentMethod = body.hasEntry ? body.billingMethod : isFeePaid ? body.feePaymentMethod : body.billingMethod;
+  const entryAmount = body.hasEntry ? body.entryAmount : isFeePaid ? body.registrationFeeCharged : 0;
+  const balanceAmount = Math.max(body.registrationFeeCharged - entryAmount, 0);
+  const billingMode = body.hasEntry ? 'ENTRY_INSTALLMENT' : body.chargeType === 'INSTALLMENT' ? 'INSTALLMENT' : 'FULL';
+  const paymentRules = eventPaymentRulesFromRecord(participant.event);
+  const paymentRulesError = isFeePaid ? null : validateEventPaymentRulesForCharge(paymentRules, balanceAmount);
+  if (paymentRulesError) throw new EventsError('REGRAS_COBRANCA_INVALIDAS', paymentRulesError, 422);
+
+  let asaasPaymentId: string | null = null;
+  let asaasInstallmentId: string | null = null;
+  let standaloneChargeId: string | null = null;
+  if (balanceAmount > 0 && !isFeePaid) {
+    if (!participant.alunoId) throw new EventsError('ALUNO_NAO_ENCONTRADO', 'Aluno não encontrado para gerar nova cobrança.', 404);
+    const billingResult = await createStandaloneCharge({
+      contaId: ctx.contaId,
+      actor: { type: 'USER', id: ctx.userId },
+      payer: { type: 'aluno', alunoId: participant.alunoId },
+      chargeType: body.chargeType || 'ONE_TIME',
+      billingType: body.billingMethod as 'BOLETO' | 'PIX' | 'CREDIT_CARD',
+      description: body.hasEntry ? `Saldo da taxa de inscrição no evento - ${participant.event.name}` : `Taxa de inscrição no evento - ${participant.event.name}`,
+      value: balanceAmount,
+      dueDate: body.dueDate,
+      installmentCount: body.installmentCount,
+      installmentValue: body.chargeType === 'INSTALLMENT' && body.installmentCount
+        ? Number((balanceAmount / body.installmentCount).toFixed(2))
+        : undefined,
+      notificationChannels: body.notificationChannels,
+      notificationChannelsConfigured: body.notificationChannelsConfigured,
+      uiRequestId: `event-participant:${participant.id}:reactivation:balance`,
+      ...eventPaymentRulesToAsaas(paymentRules),
+    });
+    if (!billingResult.success) {
+      const error = billingErrorMap[billingResult.error] ?? { status: 500, message: 'Erro ao gerar cobrança.' };
+      return { success: false as const, error: billingResult.error, ...error };
+    }
+    asaasPaymentId = billingResult.data.asaasPaymentId || billingResult.data.asaasInstallmentId || null;
+    asaasInstallmentId = billingResult.data.asaasInstallmentId ?? null;
+    standaloneChargeId = billingResult.data.chargeId;
+  }
+
+  const input = reactivateEventParticipantSchema.parse({
+    registrationFeeCharged: body.registrationFeeCharged,
+    billingMode,
+    entryAmount,
+    entryPaymentMethod: body.hasEntry ? body.entryPaymentMethod : isFeePaid ? body.feePaymentMethod : undefined,
+    isFeePaid,
+    feePaymentMethod: body.registrationFeeCharged > 0 ? feePaymentMethod : undefined,
+    notes: body.notes,
+    dueDate: parseDueDate(body.dueDate),
+    paymentProvider: asaasPaymentId ? 'ASAAS' : null,
+    asaasPaymentId,
+    asaasInstallmentId,
+    standaloneChargeId,
+    paymentStatus: asaasPaymentId ? 'PENDING' : null,
+    billingMethod: body.billingMethod,
+    chargeType: body.chargeType,
+    installmentCount: body.installmentCount,
+  });
+
+  // A successful remote charge can outlive a later local transaction failure.
+  // Preserve the existing order and idempotency key; reconciliation handles it.
+  return { success: true as const, data: await reactivateEventParticipant(ctx, eventId, participantId, input) };
+}

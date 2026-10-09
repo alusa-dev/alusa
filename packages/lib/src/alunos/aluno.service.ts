@@ -9,12 +9,10 @@ import {
   flattenAlunoEndereco,
   flattenResponsavelEndereco,
 } from './map-flatten';
-import {
-  ensureAsaasCustomerForPayer,
-  syncAlunoInativacaoToAsaas,
-  syncAlunoToAsaasProvider,
-  type EnsureAsaasCustomerPayer,
-} from './asaas-finance-bridge';
+import type {
+  StudentFinancePort,
+  StudentPayerProfile,
+} from './aluno-finance-port';
 import { AsaasCustomerEnsureError } from '../errors/asaas-customer-ensure-error';
 import {
   evaluatePayerAddressFiscalReadiness,
@@ -296,7 +294,10 @@ function dataNascRange(dataNasc: Date) {
   return { gte: start, lt: end };
 }
 
-export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
+export async function createAluno(
+  data: AlunoCreateInput & AlunoExtraFields,
+  financeOperations: Pick<StudentFinancePort, 'ensurePayerProfile'>,
+) {
   const idade = calcIdade(data.dataNasc);
   const isMenor = idade < 18;
   // Menor de 18: responsável é obrigatório e será o pagador
@@ -810,7 +811,7 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       })
     : null;
 
-  let payerForEnsure: EnsureAsaasCustomerPayer;
+  let payerForEnsure: StudentPayerProfile;
   if (responsavelObrigatorio) {
     if (!responsavelPayer) {
       throw new AsaasCustomerEnsureError(
@@ -819,10 +820,10 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       );
     }
     payerForEnsure = {
-      type: 'RESPONSAVEL' as const,
+      role: 'RESPONSIBLE' as const,
       id: responsavelPayer.id,
       name: responsavelPayer.nome,
-      cpfCnpj: responsavelPayer.cpf ?? '',
+      taxId: responsavelPayer.cpf ?? '',
       email: responsavelPayer.email ?? undefined,
       phone: responsavelPayer.telefone ?? undefined,
       mobilePhone: responsavelPayer.telefone ?? undefined,
@@ -831,14 +832,14 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       addressNumber: responsavelPayer.enderecoNumero ?? undefined,
       complement: responsavelPayer.enderecoComplemento ?? undefined,
       province: responsavelPayer.enderecoBairro ?? undefined,
-      asaasCustomerId: responsavelPayer.asaasCustomerId ?? undefined,
+      existingCustomerReference: responsavelPayer.asaasCustomerId ?? undefined,
     };
   } else {
     payerForEnsure = {
-      type: 'ALUNO' as const,
+      role: 'STUDENT' as const,
       id: aluno.id,
       name: normalizedData.nome,
-      cpfCnpj: normalizedData.cpf ?? '',
+      taxId: normalizedData.cpf ?? '',
       email: normalizedData.email ?? undefined,
       phone: normalizedData.telefone ?? undefined,
       mobilePhone: normalizedData.telefone ?? undefined,
@@ -851,18 +852,10 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
   }
 
   try {
-    const ensureResult = await ensureAsaasCustomerForPayer({
-      contaId: normalizedData.contaId,
+    await financeOperations.ensurePayerProfile({
+      tenantId: normalizedData.contaId,
       payer: payerForEnsure,
-      notificationSyncMode: 'deferred',
     });
-    if (!ensureResult.ok) {
-      throw new AsaasCustomerEnsureError(
-        ensureResult.error,
-        ensureResult.message,
-        ensureResult.status,
-      );
-    }
   } catch (error) {
     await prisma.$transaction(async (tx) => {
       if (alunoExistenteId && alunoAnterior) {
@@ -922,7 +915,10 @@ type UpdateAlunoWithResponsavel = AlunoUpdateInput &
       }>;
     }>;
   };
-export async function updateAluno(data: UpdateAlunoWithResponsavel) {
+export async function updateAluno(
+  data: UpdateAlunoWithResponsavel,
+  financeOperations: Pick<StudentFinancePort, 'synchronizeStudentProfile'>,
+) {
   const { id, contaId, endereco, responsavel, ...rest } = data;
 
   // Normalizações leves
@@ -1114,7 +1110,7 @@ export async function updateAluno(data: UpdateAlunoWithResponsavel) {
     }
 
     // Sincronizar atualização com Asaas (fire-and-forget, não bloqueia)
-    syncAlunoToAsaasProvider({ alunoId: id, contaId }).catch((err) => {
+    financeOperations.synchronizeStudentProfile({ studentId: id, tenantId: contaId }).catch((err) => {
       logLibOperationalEvent({ eventName: 'student.asaas.sync.failed', error: err });
     });
 
@@ -1134,9 +1130,10 @@ export async function getAluno(id: string, contaId?: string) {
 export async function deleteAluno(
   id: string,
   contaId: string,
-  motivo?: string,
-  forceDelete = false,
-  actorId?: string,
+  motivo: string | undefined,
+  forceDelete: boolean,
+  actorId: string | undefined,
+  financeOperations: Pick<StudentFinancePort, 'deactivatePayerProfile'>,
 ) {
 
   const aluno = await prisma.aluno.findFirst({
@@ -1162,7 +1159,7 @@ export async function deleteAluno(
   // Ainda assim, mantemos a inativação do customer no Asaas como best-effort
   // (soft delete) antes de remover o registro local.
   if (canHardDelete) {
-    const inativacaoResult = await syncAlunoInativacaoToAsaas({ alunoId: id, contaId }).catch((err) => {
+    const inativacaoResult = await financeOperations.deactivatePayerProfile({ studentId: id, tenantId: contaId }).catch((err) => {
       logLibOperationalEvent({ eventName: 'student.archive.asaas_deactivation.failed', error: err });
       return { success: false, action: 'ERROR' as const, error: err instanceof Error ? err.message : 'UNKNOWN' };
     });
@@ -1340,7 +1337,7 @@ export async function deleteAluno(
     : false;
 
   const inativacaoResult = shouldInactivateCustomer
-    ? await syncAlunoInativacaoToAsaas({ alunoId: id, contaId }).catch((err) => {
+    ? await financeOperations.deactivatePayerProfile({ studentId: id, tenantId: contaId }).catch((err) => {
         logLibOperationalEvent({ eventName: 'student.archive.asaas_deactivation.failed', error: err });
         return { success: false, action: 'ERROR' as const, error: err instanceof Error ? err.message : 'UNKNOWN' };
       })
@@ -1571,8 +1568,8 @@ export interface ReativarAlunoCompletoInput {
   matriculasIds?: string[];
   actorId: string;
   beforeReactivate?: (
-    tx: Prisma.TransactionClient,
-    input: { id: string; contaId: string },
+    _tx: Prisma.TransactionClient,
+    _input: { id: string; contaId: string },
   ) => Promise<void>;
 }
 

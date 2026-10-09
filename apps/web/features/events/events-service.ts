@@ -51,6 +51,8 @@ export type EventScopedResources = {
 export type TicketLotDTO = {
   id: string;
   eventId: string;
+  eventMapId: string | null;
+  eventMap: { id: string; name: string; startsAt: string | null } | null;
   event: { id: string; name: string; startsAt: string };
   name: string;
   ticketType: EventTicketType;
@@ -91,6 +93,7 @@ export type TicketSaleDTO = {
   updatedAt?: string;
   source?: 'MANUAL_SALE' | 'PUBLIC_ORDER';
   eventMapOrderId?: string | null;
+  sessionName?: string | null;
   asaasPaymentId?: string | null;
   paymentProvider?: string | null;
   reservationExpiresAt?: string | null;
@@ -353,6 +356,24 @@ export async function deleteTicketLot(id: string) {
 export async function listTicketSales(eventId?: string) {
   const query = buildParams({ eventId });
   return (await parseResponse<JsonEnvelope<TicketSaleDTO[]>>(await fetch(`/api/events/ticket-sales?${query}`, { cache: 'no-store' }))).data;
+}
+
+export type EventCheckInDTO = {
+  id: string;
+  buyerName: string;
+  buyerEmail: string | null;
+  sessionName: string | null;
+  lotName: string | null;
+  seatLabel: string | null;
+  usedAt: string | null;
+  operatorName: string | null;
+};
+
+export async function listEventCheckIns(eventId: string, page: number, pageSize: number) {
+  const query = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return (await parseResponse<JsonEnvelope<{ items: EventCheckInDTO[]; total: number; page: number; pageSize: number }>>(
+    await fetch(`/api/events/${eventId}/check-ins?${query}`, { cache: 'no-store' }),
+  )).data;
 }
 
 export async function createTicketSale(payload: Record<string, unknown>) {

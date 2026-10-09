@@ -26,7 +26,7 @@ export function EventMapSection({ event }: { event: SchoolEventDTO }) {
         <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <CardHeader className="p-0 pb-4">
             <CardTitle className="text-base font-semibold text-slate-800">Bilheteria online</CardTitle>
-            <p className="text-xs text-slate-500 mt-1">Pedidos públicos, reconciliação e check-in de ingressos.</p>
+            <p className="text-xs text-slate-500 mt-1">Pedidos online, pagamentos e check-in de ingressos.</p>
           </CardHeader>
           <CardContent className="p-0">
             <EventPublicOrdersPanel event={event} />

@@ -3,8 +3,8 @@
   "summary": {
     "packages": 16,
     "declaredWorkspaceEdges": 38,
-    "runtimeWorkspaceEdges": 37,
-    "compatibilityEdges": 1,
+    "runtimeWorkspaceEdges": 36,
+    "compatibilityEdges": 0,
     "cycles": 0,
     "violations": 0
   },
@@ -412,10 +412,22 @@
         "packages/finance/src/core/idempotency.service.ts",
         "packages/finance/src/customer/asaas-customer.service.ts",
         "packages/finance/src/customer/customer-identity.ts",
+        "packages/finance/src/events/cancel-open-event-participant-charges.ts",
         "packages/finance/src/events/complete-public-event-map-checkout.ts",
+        "packages/finance/src/events/confirm-public-event-map-order-payment.ts",
+        "packages/finance/src/events/create-event-registration-charge.ts",
+        "packages/finance/src/events/event-financial-operations.ts",
         "packages/finance/src/events/event-map-order-jobs.ts",
+        "packages/finance/src/events/event-map-payment-transitions.ts",
+        "packages/finance/src/events/event-participant-lifecycle-operations.ts",
+        "packages/finance/src/events/event-ticket-sale-operations.ts",
         "packages/finance/src/events/get-public-event-map-payment-instruments.ts",
+        "packages/finance/src/events/reactivate-event-participant-with-charge.ts",
         "packages/finance/src/events/reconcile-event-map-order-payment.ts",
+        "packages/finance/src/events/reconcile-event-registration-charge.ts",
+        "packages/finance/src/events/record-public-order-ticket-fulfillment-failure.ts",
+        "packages/finance/src/events/refund-event-ticket-sales-by-payment.ts",
+        "packages/finance/src/events/register-event-participant-persistence.ts",
         "packages/finance/src/events/sync-public-event-map-order-payment.ts",
         "packages/finance/src/family-billing/processor.ts",
         "packages/finance/src/fiscal/payer-fiscal-readiness.ts",
@@ -427,6 +439,7 @@
         "packages/finance/src/foundation/feature-flags.service.ts",
         "packages/finance/src/foundation/finance-profile.service.ts",
         "packages/finance/src/foundation/kyc-guard.ts",
+        "packages/finance/src/foundation/load-decrypted-asaas-credentials.ts",
         "packages/finance/src/foundation/webhook-job-lock.service.ts",
         "packages/finance/src/guards/charge-guards.ts",
         "packages/finance/src/guards/finance-status-guard.ts",
@@ -587,6 +600,17 @@
       "compatibility": null,
       "files": [
         "packages/finance/src/billing-agreements/calculation.ts",
+        "packages/finance/src/events/complete-public-event-map-checkout.ts",
+        "packages/finance/src/events/confirm-public-event-map-order-payment.ts",
+        "packages/finance/src/events/event-financial-operations.ts",
+        "packages/finance/src/events/event-map-payment-transitions.ts",
+        "packages/finance/src/events/event-participant-lifecycle-operations.ts",
+        "packages/finance/src/events/event-ticket-sale-operations.ts",
+        "packages/finance/src/events/reactivate-event-participant-with-charge.ts",
+        "packages/finance/src/events/reconcile-event-map-order-payment.ts",
+        "packages/finance/src/events/register-event-participant-persistence.ts",
+        "packages/finance/src/events/sync-public-event-map-order-payment.ts",
+        "packages/finance/src/events/update-event-participant-fee.ts",
         "packages/finance/src/projections/enrollment-fee-projection.service.ts",
         "packages/finance/src/services/resolve-payer.service.ts",
         "packages/finance/src/use-cases/create-charge.ts",
@@ -595,6 +619,8 @@
         "packages/finance/src/use-cases/create-standalone-installment-plan.ts",
         "packages/finance/src/use-cases/create-subscription.ts",
         "packages/finance/src/use-cases/resolve-operational-charge-payment.ts",
+        "packages/finance/src/webhooks/finance-side-effect-outbox.service.ts",
+        "packages/finance/src/webhooks/payment-webhook-handler.ts",
         "packages/finance/src/webhooks/subscription-webhook-handler.ts"
       ]
     },
@@ -606,11 +632,20 @@
       "files": [
         "packages/finance/src/errors/asaas-customer-ensure-error.ts",
         "packages/finance/src/events/complete-public-event-map-checkout.ts",
-        "packages/finance/src/events/event-asaas-payment-provider.ts",
+        "packages/finance/src/events/confirm-public-event-map-order-payment.ts",
+        "packages/finance/src/events/event-financial-operations.ts",
         "packages/finance/src/events/event-map-order-jobs.ts",
-        "packages/finance/src/events/get-public-event-map-payment-instruments.ts",
-        "packages/finance/src/events/reconcile-event-map-order-payment.ts",
+        "packages/finance/src/events/event-map-payment-transitions.ts",
+        "packages/finance/src/events/event-participant-lifecycle-operations.ts",
+        "packages/finance/src/events/event-ticket-sale-operations.ts",
+        "packages/finance/src/events/public-event-map-checkout-response.ts",
+        "packages/finance/src/events/public-order-created-email.ts",
+        "packages/finance/src/events/reactivate-event-participant-with-charge.ts",
+        "packages/finance/src/events/record-public-order-ticket-fulfillment-failure.ts",
+        "packages/finance/src/events/refund-event-ticket-sales-by-payment.ts",
+        "packages/finance/src/events/register-event-participant-persistence.ts",
         "packages/finance/src/events/sync-public-event-map-order-payment.ts",
+        "packages/finance/src/events/update-event-participant-fee.ts",
         "packages/finance/src/fiscal/payer-fiscal-readiness.ts",
         "packages/finance/src/reports/financial-reports.ts",
         "packages/finance/src/services/asaas-notification-preferences.service.ts",
@@ -663,6 +698,7 @@
       "compatibility": null,
       "files": [
         "packages/finance/src/customer/customer-identity.ts",
+        "packages/finance/src/events/create-event-registration-charge.ts",
         "packages/finance/src/fiscal/payer-fiscal-readiness.ts",
         "packages/finance/src/foundation/kyc-guard.ts",
         "packages/finance/src/mappers/liquidacao-resolver.ts",
@@ -717,7 +753,8 @@
       "compatibility": null,
       "files": [
         "packages/lib/src/prisma.ts",
-        "packages/lib/src/prisma/client.ts"
+        "packages/lib/src/prisma/client.ts",
+        "packages/lib/src/services/integracoes/asaas-credentials-service.ts"
       ]
     },
     {
@@ -734,19 +771,14 @@
         "packages/lib/src/contracts/use-cases/signature-otp.ts",
         "packages/lib/src/events/event-contracts.service.ts",
         "packages/lib/src/events/event-participant-discount.ts",
+        "packages/lib/src/events/event-participant-removal-decision.service.ts",
         "packages/lib/src/events/events.service.ts",
+        "packages/lib/src/events/map/event-map-payment-guard.ts",
         "packages/lib/src/events/map/event-map.service.ts",
+        "packages/lib/src/events/map/public-event-map-checkout-persistence.ts",
         "packages/lib/src/events/map/staff-map-sales.service.ts",
+        "packages/lib/src/events/ticket-payment-eligibility.ts",
         "packages/lib/src/services/standalone-installment-plan-status.service.ts"
-      ]
-    },
-    {
-      "from": "@alusa/lib",
-      "to": "@alusa/finance",
-      "declared": false,
-      "compatibility": "ponte temporária do adapter de ciclo de vida de aluno; migrar para o bounded context de alunos antes de remover o barrel de compatibilidade",
-      "files": [
-        "packages/lib/src/alunos/asaas-finance-bridge.ts"
       ]
     },
     {
@@ -883,7 +915,6 @@
         "apps/web/features/events/map/public/public-map-level-view.ts",
         "apps/web/features/events/map/public/public-map-text-render.tsx",
         "apps/web/features/events/map/store/event-map-editor-store.ts",
-        "apps/web/features/events/tickets/EventTicketsPanel.tsx",
         "apps/web/features/events/tickets/StaffSeatPickerDialog.tsx",
         "apps/web/src/server/billing-agreements/service.ts",
         "apps/web/src/server/contracts/contract-read.service.ts",
@@ -957,10 +988,20 @@
         "apps/web/app/api/conta/finance-onboarding/route.ts",
         "apps/web/app/api/contratos/route.ts",
         "apps/web/app/api/dashboard/finance-kpis/route.ts",
+        "apps/web/app/api/events/[eventId]/participants/[participantId]/fee/route.ts",
+        "apps/web/app/api/events/[eventId]/participants/[participantId]/payments/[paymentId]/refund/route.ts",
+        "apps/web/app/api/events/[eventId]/participants/[participantId]/payments/[paymentId]/route.ts",
+        "apps/web/app/api/events/[eventId]/participants/[participantId]/payments/route.ts",
+        "apps/web/app/api/events/[eventId]/participants/[participantId]/quitar/route.ts",
         "apps/web/app/api/events/[eventId]/participants/[participantId]/reactivate/route.ts",
         "apps/web/app/api/events/[eventId]/public-orders/[orderId]/reconcile-payment/route.ts",
         "apps/web/app/api/events/[eventId]/public-orders/[orderId]/resend-ticket-email/route.ts",
+        "apps/web/app/api/events/financial-entries/[entryId]/route.ts",
+        "apps/web/app/api/events/financial-entries/route.ts",
+        "apps/web/app/api/events/ticket-sales/[saleId]/cancel/route.ts",
         "apps/web/app/api/events/ticket-sales/[saleId]/mark-paid/route.ts",
+        "apps/web/app/api/events/ticket-sales/[saleId]/refund/route.ts",
+        "apps/web/app/api/events/ticket-sales/[saleId]/route.ts",
         "apps/web/app/api/events/ticket-sales/route.ts",
         "apps/web/app/api/finance/account-status/route.ts",
         "apps/web/app/api/finance/balance/route.ts",
@@ -1021,6 +1062,7 @@
         "apps/web/app/api/jobs/events-fulfill-tickets/route.ts",
         "apps/web/app/api/jobs/events-inspect-financial-inconsistencies/route.ts",
         "apps/web/app/api/jobs/events-reconcile-orders/route.ts",
+        "apps/web/app/api/jobs/events-reconcile-refunds/route.ts",
         "apps/web/app/api/jobs/process-asaas-notification-sync/route.ts",
         "apps/web/app/api/jobs/process-billing-agreement-lifecycle/route.ts",
         "apps/web/app/api/jobs/process-finance-webhooks/route.ts",
@@ -1089,6 +1131,7 @@
         "apps/web/features/billing/server/mobile-installments.service.ts",
         "apps/web/features/billing/server/mobile-subscriptions.service.ts",
         "apps/web/features/enrollments/server/mobile-enrollments.service.ts",
+        "apps/web/features/events/server/mobile-events.service.ts",
         "apps/web/features/finance/operations/account/AccountPage.tsx",
         "apps/web/features/finance/operations/account/AccountTransferDetailPage.tsx",
         "apps/web/features/finance/operations/account/transfer-wizards.tsx",
@@ -1161,6 +1204,7 @@
         "apps/web/src/server/enrollments/update-enrollment-terms.service.ts",
         "apps/web/src/server/events/event-participant-mutation.service.ts",
         "apps/web/src/server/events/event-payment-book.service.ts",
+        "apps/web/src/server/events/public-order-cancellation.service.ts",
         "apps/web/src/server/events/register-event-asaas-payment-provider.ts",
         "apps/web/src/server/events/register-event-participant.service.ts",
         "apps/web/src/server/family-billing/processor.ts",
@@ -1189,6 +1233,7 @@
         "apps/web/src/server/responsibles/responsible-http-route.service.ts",
         "apps/web/src/server/students/student-archive.orchestrator.ts",
         "apps/web/src/server/students/student-detail-http-route.service.ts",
+        "apps/web/src/server/students/student-finance-port.ts",
         "apps/web/src/server/students/student-http-route.service.ts"
       ]
     },
@@ -1211,6 +1256,7 @@
         "apps/web/app/api/event-contracts/[id]/route.ts",
         "apps/web/app/api/event-contracts/route.ts",
         "apps/web/app/api/events/[eventId]/audit/route.ts",
+        "apps/web/app/api/events/[eventId]/check-ins/route.ts",
         "apps/web/app/api/events/[eventId]/financial-consistency/route.ts",
         "apps/web/app/api/events/[eventId]/maps/[mapId]/duplicate/route.ts",
         "apps/web/app/api/events/[eventId]/maps/[mapId]/publish/route.ts",
@@ -1220,9 +1266,6 @@
         "apps/web/app/api/events/[eventId]/maps/[mapId]/staff-reservations/route.ts",
         "apps/web/app/api/events/[eventId]/maps/[mapId]/staff-sales/route.ts",
         "apps/web/app/api/events/[eventId]/maps/route.ts",
-        "apps/web/app/api/events/[eventId]/participants/[participantId]/fee/route.ts",
-        "apps/web/app/api/events/[eventId]/participants/[participantId]/payments/[paymentId]/refund/route.ts",
-        "apps/web/app/api/events/[eventId]/participants/[participantId]/payments/[paymentId]/route.ts",
         "apps/web/app/api/events/[eventId]/participants/[participantId]/payments/route.ts",
         "apps/web/app/api/events/[eventId]/participants/[participantId]/permanent/route.ts",
         "apps/web/app/api/events/[eventId]/participants/[participantId]/quitar/route.ts",
@@ -1251,7 +1294,6 @@
         "apps/web/app/api/events/ticket-lots/[lotId]/route.ts",
         "apps/web/app/api/events/ticket-lots/route.ts",
         "apps/web/app/api/events/ticket-sales/[saleId]/cancel/route.ts",
-        "apps/web/app/api/events/ticket-sales/[saleId]/mark-paid/route.ts",
         "apps/web/app/api/events/ticket-sales/[saleId]/refund/route.ts",
         "apps/web/app/api/events/ticket-sales/[saleId]/route.ts",
         "apps/web/app/api/events/ticket-sales/[saleId]/tickets/route.ts",
@@ -1328,6 +1370,7 @@
         "apps/web/features/enrollments/components/wizard/steps/StepFamilyResponsibleParty.tsx",
         "apps/web/features/enrollments/server/mobile-enrollments.service.ts",
         "apps/web/features/events/events-service.ts",
+        "apps/web/features/events/map/public/PublicMapExperience.tsx",
         "apps/web/features/events/map/public/public-map-adapter.ts",
         "apps/web/features/events/server/mobile-events-route-utils.ts",
         "apps/web/features/events/server/mobile-events.service.ts",
@@ -1365,13 +1408,14 @@
         "apps/web/src/server/events/event-participant-mutation.service.ts",
         "apps/web/src/server/events/event-payment-book.service.ts",
         "apps/web/src/server/events/event-route-read.service.ts",
-        "apps/web/src/server/events/register-event-asaas-payment-provider.ts",
         "apps/web/src/server/events/register-event-participant.service.ts",
+        "apps/web/src/server/finance/refund-charge.service.ts",
         "apps/web/src/server/lessons/experimental-classes/experimental.service.ts",
         "apps/web/src/server/platform-billing/grace-period-jobs.ts",
         "apps/web/src/server/platform-billing/platform-billing-notifications.ts",
         "apps/web/src/server/platform-billing/trial-jobs.ts",
         "apps/web/src/server/students/student-archive.orchestrator.ts",
+        "apps/web/src/server/students/student-finance-port.ts",
         "apps/web/src/server/students/student-http-route.service.ts",
         "apps/web/src/server/students/students-route.service.ts"
       ]
@@ -1527,17 +1571,7 @@
       ]
     }
   ],
-  "compatibilityImports": [
-    {
-      "from": "@alusa/lib",
-      "to": "@alusa/finance",
-      "declared": false,
-      "compatibility": "ponte temporária do adapter de ciclo de vida de aluno; migrar para o bounded context de alunos antes de remover o barrel de compatibilidade",
-      "files": [
-        "packages/lib/src/alunos/asaas-finance-bridge.ts"
-      ]
-    }
-  ],
+  "compatibilityImports": [],
   "cycles": [],
   "violations": []
 }

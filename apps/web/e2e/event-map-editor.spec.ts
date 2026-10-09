@@ -132,6 +132,24 @@ test.describe('Event Map Editor', () => {
     await expect(page.getByText('Application error')).not.toBeVisible();
   });
 
+  test('map settings are grouped into compact sections', async ({ page }) => {
+    const { event, map } = await seedEditorScenario(page);
+    await page.goto(`/events/${event.id}/maps/${map.id}/editor`);
+    await expect(page.getByRole('heading', { name: map.name })).toBeVisible({ timeout: 15_000 });
+
+    await page.getByRole('button', { name: 'Configurações do mapa' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Sessão' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Venda pública' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Planta de referência' })).toBeVisible();
+
+    const bounds = await dialog.boundingBox();
+    const viewport = page.viewportSize();
+    expect(bounds).not.toBeNull();
+    expect(viewport).not.toBeNull();
+    expect(bounds!.height).toBeLessThanOrEqual(viewport!.height - 32);
+  });
+
   test('API GET /events/:eventId/maps/:mapId returns map data', async ({ page }) => {
     const { event, map } = await seedEditorScenario(page);
 
@@ -156,6 +174,83 @@ test.describe('Event Map Editor', () => {
     expect(maps.some((m) => m.id === map.id)).toBe(true);
   });
 
+  test('map creation flow creates independent sessions in one event', async ({ page }) => {
+    await resetDb(prisma);
+    const { contaId } = await seedAdminAndAuthenticate(page, {
+      email: `admin-map-sessions-${Date.now()}@e2e.test`,
+    });
+    const firstSessionDate = addDays(new Date(), 30);
+    firstSessionDate.setHours(19, 0, 0, 0);
+    const secondSessionDate = addDays(new Date(), 30);
+    secondSessionDate.setHours(20, 0, 0, 0);
+    const event = await prisma.schoolEvent.create({
+      data: {
+        id: randomUUID(),
+        contaId,
+        name: 'Festival de Dança E2E',
+        type: 'PRESENTATION',
+        status: 'PLANNING',
+        startsAt: firstSessionDate,
+        hasTickets: true,
+        ticketMode: 'NUMBERED_SEATS',
+      },
+      select: { id: true },
+    });
+    const firstSessionStartsAt = firstSessionDate.toISOString();
+    const secondSessionStartsAt = secondSessionDate.toISOString();
+
+    const lotsResponse = await page.request.get(`/api/events/ticket-lots?eventId=${event.id}`);
+    expect(lotsResponse.status()).toBe(200);
+
+    await page.goto(`/events/${event.id}/maps/new`);
+    const blankMapOption = page.getByRole('radio', { name: /Em branco/ });
+    await blankMapOption.check({ force: true });
+    await expect(blankMapOption).toBeChecked();
+    await page.getByLabel('Nome da sessão').fill('1ª Sessão - 19h00');
+    const localSessionStart = new Date(
+      firstSessionDate.getTime() - firstSessionDate.getTimezoneOffset() * 60_000,
+    ).toISOString().slice(0, 16);
+    await page.getByLabel('Início').fill(localSessionStart);
+    const continueButton = page.getByRole('button', { name: 'Continuar' });
+    await expect(continueButton).toBeEnabled();
+    const firstMapCreationResponse = page.waitForResponse((response) =>
+      response.url().includes(`/api/events/${event.id}/maps`) &&
+      response.request().method() === 'POST',
+    );
+    await continueButton.click();
+    expect((await firstMapCreationResponse).status()).toBe(201);
+    await expect(page).toHaveURL(new RegExp(`/events/${event.id}/maps/[^/]+/editor`), { timeout: 20_000 });
+    const firstMapId = page.url().match(/\/maps\/([^/]+)\/editor/)?.[1];
+    expect(firstMapId).toBeTruthy();
+    const firstMapResponse = await page.request.get(`/api/events/${event.id}/maps/${firstMapId}`);
+    expect(firstMapResponse.status()).toBe(200);
+    const firstMap = (await firstMapResponse.json()).data;
+    expect(firstMap.name).toBe('1ª Sessão - 19h00');
+    expect(firstMap.startsAt).toBe(firstSessionStartsAt);
+
+    const secondResponse = await page.request.post(`/api/events/${event.id}/maps`, {
+      data: {
+        name: '2ª Sessão - 20h00',
+        startsAt: secondSessionStartsAt,
+        locationName: 'Teatro E2E',
+      },
+    });
+    expect(secondResponse.status()).toBe(201);
+    const secondMap = (await secondResponse.json()).data;
+
+    expect(secondMap.id).not.toBe(firstMap.id);
+    expect(secondMap.name).toBe('2ª Sessão - 20h00');
+    expect(secondMap.startsAt).toBe(secondSessionStartsAt);
+    expect(secondMap.counts.seats).toBe(0);
+
+    const listResponse = await page.request.get(`/api/events/${event.id}/maps`);
+    expect(listResponse.status()).toBe(200);
+    const sessions = (await listResponse.json()).data;
+    expect(sessions.map((map: { name: string }) => map.name)).toEqual(
+      expect.arrayContaining(['1ª Sessão - 19h00', '2ª Sessão - 20h00']),
+    );
+  });
+
   test('text tool creates free text from a single click', async ({ page }) => {
     const { box } = await openEditorWithCanvas(page);
 
@@ -168,7 +263,7 @@ test.describe('Event Map Editor', () => {
     const singleLineBox = await editor.boundingBox();
     expect(singleLineBox).not.toBeNull();
 
-    await editor.press('Enter');
+    await editor.press('Shift+Enter');
     await editor.pressSequentially('segunda linha');
 
     await expect(editor).toBeFocused();
@@ -203,7 +298,7 @@ test.describe('Event Map Editor', () => {
     await expect(editor).toHaveValue('Texto em area E2E');
     await editor.evaluate((node) => node.blur());
 
-    await expect(page.getByRole('button', { name: 'Texto em area E2E' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Texto em area E2E', exact: true })).toBeVisible();
     await expect(page.locator('textarea').filter({ hasText: 'Texto em area E2E' })).toBeVisible();
   });
 });

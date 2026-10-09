@@ -36,6 +36,7 @@ const prismaMock = {
   $transaction: vi.fn(async (callback: (tx: typeof txMock) => unknown) => callback(txMock)),
   cobranca: {
     findUnique: vi.fn(),
+    findFirst: vi.fn(),
     findMany: vi.fn(),
   },
   charge: {
@@ -81,6 +82,7 @@ describe('notifications.service', () => {
     txMock.notificationRecipient.updateMany.mockResolvedValue({ count: 1 });
     txMock.auditLog.create.mockResolvedValue({ id: 'audit-1' });
     prismaMock.cobranca.findUnique.mockResolvedValue(null);
+    prismaMock.cobranca.findFirst.mockResolvedValue(null);
     prismaMock.cobranca.findMany.mockResolvedValue([]);
     prismaMock.charge.findUnique.mockResolvedValue(null);
     prismaMock.charge.findMany.mockResolvedValue([]);
@@ -323,6 +325,60 @@ describe('notifications.service', () => {
         skipDuplicates: true,
       }),
     );
+  });
+
+  it('cria notificação usando o identificador legado asaasId da cobrança', async () => {
+    txMock.usuario.findMany.mockResolvedValue([{ id: 'user-a' }]);
+    prismaMock.cobranca.findFirst.mockResolvedValue({
+      id: 'cobranca-legacy',
+      matriculaId: 'matricula-a',
+      valor: 75,
+      vencimento: new Date('2026-03-13T12:00:00.000Z'),
+      descricao: 'Mensalidade',
+      formaPagamento: 'PIX',
+      matricula: { id: 'matricula-a', aluno: { contaId: 'conta-a', id: 'aluno-a', nome: 'Aluno A' } },
+    });
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a',
+      eventName: 'PAYMENT_OVERDUE',
+      asaasPaymentId: 'pay-legacy',
+    });
+
+    expect(result.created).toBe(true);
+    expect(prismaMock.cobranca.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        contaId: 'conta-a',
+        OR: [{ asaasPaymentId: 'pay-legacy' }, { asaasId: 'pay-legacy' }],
+        matricula: { contaId: 'conta-a', aluno: { contaId: 'conta-a' } },
+      }),
+    }));
+    expect(txMock.notification.createMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        contaId: 'conta-a',
+        entityId: 'cobranca-legacy',
+        metadata: expect.objectContaining({ asaasPaymentId: 'pay-legacy', alunoId: 'aluno-a' }),
+      }),
+      skipDuplicates: true,
+    }));
+  });
+
+  it('mantém a busca da cobrança e da matrícula restrita à mesma conta', async () => {
+    prismaMock.cobranca.findFirst.mockResolvedValue(null);
+
+    await createBillingWebhookNotification({
+      contaId: 'conta-a',
+      eventName: 'PAYMENT_CONFIRMED',
+      asaasPaymentId: 'pay-b',
+    });
+
+    expect(prismaMock.cobranca.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        contaId: 'conta-a',
+        matricula: { contaId: 'conta-a', aluno: { contaId: 'conta-a' } },
+      }),
+    }));
+    expect(txMock.notification.createMany).not.toHaveBeenCalled();
   });
 
   it('agrupa confirmações de pagamento na mesma janela sem perder rastreabilidade', async () => {

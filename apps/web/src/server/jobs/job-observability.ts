@@ -19,6 +19,11 @@ const SAFE_EXTRA_FIELDS = new Set([
 ]);
 const COUNT_FIELDS = new Set([
   'processed',
+  'expired',
+  'consistent',
+  'issued',
+  'inspected',
+  'findingCount',
   'scanned',
   'addressSynced',
   'updated',

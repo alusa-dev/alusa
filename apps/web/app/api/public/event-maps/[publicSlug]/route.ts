@@ -7,6 +7,11 @@ import { handleEventsRouteError } from '../../../events/_helpers';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+function noStore(response: NextResponse) {
+  response.headers.set('Cache-Control', 'private, no-store, max-age=0');
+  return response;
+}
+
 type RouteContext = {
   params: Promise<{ publicSlug: string }>;
 };
@@ -14,8 +19,8 @@ type RouteContext = {
 export async function GET(_request: NextRequest, { params }: RouteContext) {
   try {
     const { publicSlug } = await params;
-    return NextResponse.json({ data: await getPublicEventMap(publicSlug) });
+    return noStore(NextResponse.json({ data: await getPublicEventMap(publicSlug) }));
   } catch (error) {
-    return handleEventsRouteError(error, 'ERRO_OBTER_MAPA_PUBLICO');
+    return noStore(handleEventsRouteError(error, 'ERRO_OBTER_MAPA_PUBLICO'));
   }
 }

@@ -33,7 +33,7 @@ export function PixModal({ open, onClose, pixData }: PixModalProps) {
   const expirationDate = new Date(pixData.expirationDate);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
         {/* Header */}
         <div className="bg-gradient-to-r from-violet-600 to-purple-600 p-6 text-white">

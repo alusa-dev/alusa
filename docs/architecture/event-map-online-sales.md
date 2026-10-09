@@ -17,6 +17,25 @@ webhook, emissão de ingressos e compensação de pagamento tardio. Ele compleme
   deduplicada por instituição e operação.
 - `FinanceReconciliationIssue` expõe operações ambíguas para análise financeira.
 
+## Sessões e isolamento de inventário
+
+Um `SchoolEvent` pode ter vários `EventMap` publicados ao mesmo tempo. Cada mapa
+representa uma sessão do evento e mantém nome, data/horário, local, slug público,
+versão publicada, assentos, reservas e pedidos próprios. O link público do mapa
+resolve apenas a sessão associada àquele slug.
+
+Lotes vinculados ao mapa usam `EventTicketLot.eventMapId`; lotes sem esse vínculo
+continuam sendo lotes gerais do evento. A gravação do mapa reivindica um lote
+geral ainda não usado ou cria uma cópia vinculada ao mapa quando ele já está
+associado a outra sessão. A duplicação copia o desenho e os lotes, mas zera as
+vendas e estados temporários para começar com inventário independente.
+
+Reservas e pedidos são sempre filtrados pelo mapa e pela versão publicada. Na
+venda manual de assentos, o atendente escolhe a sessão antes de abrir o seletor;
+quando há apenas um mapa publicado, ele é selecionado automaticamente. Nome,
+horário e local da sessão acompanham a página pública, a venda, os e-mails e os
+ingressos gerados.
+
 ## Fluxo normal
 
 ```text
@@ -88,13 +107,22 @@ Ao receber confirmação tardia:
 
 | Operação | Limite atual | Rotina / comportamento |
 | --- | --- | --- |
-| Reserva pública | 30 por mapa e 90 por origem, em 5 min | Redis distribuído |
-| Checkout público | 8 por mapa e 20 por origem, em 5 min | Redis distribuído |
-| Status do pedido | 20 por pedido e 120 por origem, em 5 min | Consulta somente banco local |
-| Verificação manual de pagamento | 3 por pedido e 20 por origem, em 15 min | GET Asaas somente sob ação explícita |
+| Reserva pública | 1.500 por subject, em 5 min | Redis distribuído; limite precisa ser validado no Preview |
+| Checkout público | 1.500 por subject, em 5 min | Redis distribuído; limite precisa ser validado no Preview |
+| Status do pedido | 60 por pedido e 15.000 por origem, em 5 min | Consulta somente banco local; limite agregado precede a consulta e o bucket individual só é criado após validar o token do pedido |
+| Sincronização manual de pagamento | 20 por subject, em 15 min | GET Asaas somente sob ação explícita |
 | Expiração/reconciliação | 25 consultas Asaas por job na configuração de produção | Cron a cada 5 min, lock de job e orçamento limitado |
 | Emissão de ingressos | lote de até 100 por execução | Cron a cada 5 min e emissão idempotente |
 | Inbox e efeitos financeiros | batch e leases existentes | scheduler de webhook, outbox e DLQ |
+
+Os buckets públicos são limitados a subjects estáveis; reserva/checkout não criam
+chaves por slug do mapa. O status aplica primeiro o teto agregado e só cria a
+chave por pedido depois que o token de acesso foi validado. A sincronização
+manual usa somente o limite por subject. Sem IP de proxy confiável, todos os
+clientes compartilham um subject fixo, o que pode causar `429` coletivo; valide
+`TRUST_PROXY_HEADERS=true` e os headers confiáveis no Preview. Os limites são
+orçamentos de proteção, não evidência de capacidade para mais de 500 jornadas
+completas, que ainda requerem ensaio de carga isolado.
 
 Em produção, os limites de quota e concorrência do cliente Asaas dependem de
 Redis distribuído. O cliente falha fechado com 503 antes do request externo se
@@ -139,11 +167,14 @@ ambiente antes de considerar as rotinas ativas.
 
 ## Estado da refatoração
 
-1. **Separação de camadas implementada no workspace.** A orquestração de
-   cobrança e leitura de instrumentos de pagamento fica em `@alusa/finance`;
-   `@alusa/lib` prepara checkout e persiste transições do pedido sem chamar o
-   provedor. A verificação pontual de pagamento também fica em
-   `packages/finance/src/events/sync-public-event-map-order-payment.ts`.
+1. **Fronteira de pagamentos organizada no workspace.** `@alusa/finance` é
+   responsável pelo provider, credenciais, checkout, confirmação de pagamento,
+   reconciliação, cancelamento/estorno e lançamentos financeiros. A confirmação
+   e emissão de ingressos continuam em uma única transação. `@alusa/lib` oferece
+   as operações estreitas de reserva, mapa e inventário usadas pelo caso de uso;
+   não chama o provider nem contém a reconciliação/estorno da venda.
+   Decisões puras de elegibilidade, erros e resolução de status compartilhada
+   ficam em `@alusa/domain/events`.
 2. **Matriz adversarial ampliada.** Playwright cobre isolamento de token entre
    instituições, PIX/cartão/boleto, resposta perdida depois da aceitação do POST,
    webhooks repetidos e fora de ordem sob entregas concorrentes, assento

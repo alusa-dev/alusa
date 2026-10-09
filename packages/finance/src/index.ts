@@ -22,7 +22,22 @@ export type {
   PaymentStateDecisionReason,
 } from './state-machine/payment-state-machine';
 export { recordPaymentStateTransition } from './state-machine/payment-state-transition.service';
-export { eventAsaasPaymentProvider } from './events/event-asaas-payment-provider';
+export {
+  eventAsaasPaymentProvider,
+  getEventAsaasPaymentProvider,
+  registerEventAsaasPaymentProvider,
+} from './events/event-asaas-payment-provider';
+export { cancelOpenEventParticipantCharges } from './events/cancel-open-event-participant-charges';
+export { confirmPublicEventMapOrderPayment } from './events/confirm-public-event-map-order-payment';
+export { refundEventTicketSalesByPayment } from './events/refund-event-ticket-sales-by-payment';
+export { loadDecryptedAsaasCredentials } from './foundation/load-decrypted-asaas-credentials';
+export type {
+  EventAsaasCustomer,
+  EventAsaasPayment,
+  EventAsaasPaymentProvider,
+  EventBankSlipBillingInfo,
+  EventPixQrCode,
+} from './events/event-asaas-payment-provider';
 export { resolveEventPayerName, type EventPayerCandidate } from './mappers/event-payer';
 export {
   AsaasResourceOriginClassificationError,
@@ -1888,6 +1903,7 @@ export {
   getExpiredReservationDecision,
   inspectEventFinancialInconsistencies,
   reconcilePendingEventMapOrders,
+  reconcileRefundingEventMapOrders,
   reconcilePendingEventMapTicketFulfillment,
 } from './events/event-map-order-jobs';
 export type {
@@ -1902,6 +1918,8 @@ export type {
   InspectEventFinancialInconsistenciesResult,
   ReconcilePendingEventMapOrdersInput,
   ReconcilePendingEventMapOrdersResult,
+  ReconcileRefundingEventMapOrdersInput,
+  ReconcileRefundingEventMapOrdersResult,
   ReconcilePendingEventMapTicketFulfillmentInput,
   ReconcilePendingEventMapTicketFulfillmentResult,
 } from './events/event-map-order-jobs';
@@ -1914,6 +1932,38 @@ export {
 export {
   completePublicEventMapCheckout,
 } from './events/complete-public-event-map-checkout';
+export {
+  createFinancialEntry,
+  createManualEventParticipantPayment,
+  deleteManualEventParticipantFee,
+  deleteManualEventParticipantPayment,
+  markTicketSalePaid,
+  quitarEventParticipantFee,
+  refundManualEventParticipantFee,
+  refundManualEventParticipantPayment,
+  refundTicketSale,
+  updateFinancialEntry,
+} from './events/event-financial-operations';
+export {
+  createTicketSale,
+  updateTicketSale,
+  cancelTicketSale,
+  deleteTicketSale,
+} from './events/event-ticket-sale-operations';
+export { reactivateEventParticipantWithCharge } from './events/reactivate-event-participant-with-charge';
+export {
+  unregisterEventParticipant,
+  unregisterEventParticipantGroup,
+  reactivateEventParticipant,
+} from './events/event-participant-lifecycle-operations';
+export {
+  cancelPublicEventMapOrderByPayment,
+  markPublicEventMapOrderRefundProcessingByPayment,
+  reconcileEventMapOrderFinancialStateFromAsaas,
+  refundPublicEventMapOrderByPayment,
+  syncPublicEventMapOrderPaymentCreated,
+  type EventMapPaymentReference,
+} from './events/event-map-payment-transitions';
 export {
   getPublicEventMapPaymentInstruments,
 } from './events/get-public-event-map-payment-instruments';
@@ -1932,3 +1982,15 @@ export type {
 export type {
   EventFinanceLogPayload,
 } from './events/events-finance-observability';
+
+export { updateEventParticipantFeeInTransaction } from './events/update-event-participant-fee';
+
+export { createEventRegistrationCharge } from './events/create-event-registration-charge';
+export {
+  registerEventParticipant,
+  registerEventParticipantGroup,
+  rollbackEventParticipantRegistration,
+  rollbackEventParticipantGroupRegistration,
+  markEventParticipantGroupForReconciliation,
+  markEventParticipantGroupPaid,
+} from './events/register-event-participant-persistence';

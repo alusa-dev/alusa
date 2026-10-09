@@ -1,8 +1,7 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { MapPin } from 'lucide-react';
 import {
   EVENT_PAYMENT_METHOD_LABELS,
   EVENT_PAYMENT_METHODS,
@@ -33,6 +32,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
+import { MapPin } from '@/components/icons/icons';
 
 import {
   createTicketSale,
@@ -59,14 +59,14 @@ export function SaleFormDialog({
   event,
   lots,
   scopedResources,
-  publishedMapId,
+  publishedMaps,
   trigger,
 }: {
   eventId: string;
   event: SchoolEventDTO;
   lots: TicketLotDTO[];
   scopedResources?: EventScopedResources;
-  publishedMapId?: string | null;
+  publishedMaps: Array<{ id: string; name: string; startsAt: string }>;
   trigger: React.ReactNode;
 }) {
   const queryClient = useQueryClient();
@@ -76,9 +76,18 @@ export function SaleFormDialog({
   const [discardAlertOpen, setDiscardAlertOpen] = useState(false);
   const [formKey, setFormKey] = useState(0);
   const [seatSelection, setSeatSelection] = useState<SeatSelectionState>(null);
+  const [selectedMapId, setSelectedMapId] = useState(() => (publishedMaps.length === 1 ? publishedMaps[0]!.id : ''));
 
   const ticketMode = event.ticketMode ?? (event.hasTickets ? 'SIMPLE' : 'NONE');
   const isSeatedSale = ticketMode === 'NUMBERED_SEATS';
+
+  useEffect(() => {
+    if (publishedMaps.length === 1 && !selectedMapId) setSelectedMapId(publishedMaps[0]!.id);
+    if (selectedMapId && !publishedMaps.some((map) => map.id === selectedMapId)) {
+      setSelectedMapId(publishedMaps.length === 1 ? publishedMaps[0]!.id : '');
+      setSeatSelection(null);
+    }
+  }, [publishedMaps, selectedMapId]);
 
   const mutation = useMutation({
     mutationFn: createTicketSale,
@@ -108,6 +117,10 @@ export function SaleFormDialog({
 
   function submit(formData: FormData) {
     if (isSeatedSale) {
+      if (!selectedMapId) {
+        toast.error({ title: 'Selecione a sessão', description: 'Escolha o mapa da sessão antes de selecionar os assentos.' });
+        return;
+      }
       if (!seatSelection?.holdToken) {
         toast.error({ title: 'Assentos obrigatórios', description: 'Escolha os assentos no mapa antes de registrar a venda.' });
         return;
@@ -154,7 +167,7 @@ export function SaleFormDialog({
   }
 
   async function removeSeatChip(seatId: string) {
-    if (!seatSelection || !publishedMapId) return;
+    if (!seatSelection || !selectedMapId) return;
     const nextSeatIds = seatSelection.seats.filter((seat) => seat.id !== seatId).map((seat) => seat.id);
     if (nextSeatIds.length === 0) {
       await clearSeatSelection();
@@ -162,7 +175,7 @@ export function SaleFormDialog({
     }
     try {
       const { reserveStaffSeats } = await import('../events-service');
-      const updated = await reserveStaffSeats(eventId, publishedMapId, {
+      const updated = await reserveStaffSeats(eventId, selectedMapId, {
         seatIds: nextSeatIds,
         holdToken: seatSelection.holdToken,
       });
@@ -237,6 +250,34 @@ export function SaleFormDialog({
           </DialogHeader>
           <form key={formKey} ref={formRef} action={submit} className="grid gap-4">
             {isSeatedSale ? (
+              <Field label="Sessão / mapa">
+                <NativeSelect
+                  name="eventMapId"
+                  value={selectedMapId}
+                  required
+                  placeholder="Selecione a sessão"
+                  options={publishedMaps.map((map) => ({
+                    value: map.id,
+                    label: `${map.name} · ${new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(map.startsAt))}`,
+                  }))}
+                  onValueChange={async (nextMapId) => {
+                    if (nextMapId === selectedMapId) return;
+                    const holdToken = seatSelection?.holdToken;
+                    setSelectedMapId(nextMapId);
+                    setSeatSelection(null);
+                    setPickerOpen(false);
+                    if (holdToken) {
+                      try {
+                        await releaseStaffSeatReservation(eventId, holdToken);
+                      } catch {
+                        toast.error({ title: 'A reserva anterior poderá ser liberada ao expirar.' });
+                      }
+                    }
+                  }}
+                />
+              </Field>
+            ) : null}
+            {isSeatedSale ? (
               <div className="grid gap-1.5">
                 <span className={LABEL_CLASS}>Assentos</span>
                 <div
@@ -275,7 +316,7 @@ export function SaleFormDialog({
                   </div>
                   <button
                     type="button"
-                    disabled={!publishedMapId}
+                    disabled={!selectedMapId}
                     onClick={() => setPickerOpen(true)}
                     className="inline-flex shrink-0 items-center gap-1.5 self-stretch border-l border-gray-300 px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 alusa-dark:border-[color:var(--color-input-border)] alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)]"
                   >
@@ -283,8 +324,12 @@ export function SaleFormDialog({
                     <span className="whitespace-nowrap">{seatChips.length > 0 ? 'Escolher mais' : 'Escolher assentos'}</span>
                   </button>
                 </div>
-                {!publishedMapId ? (
-                  <p className="text-sm text-amber-800">Publique o mapa do evento antes de vender assentos na secretaria.</p>
+                {!selectedMapId ? (
+                  <p className="text-sm text-amber-800">
+                    {publishedMaps.length === 0
+                      ? 'Publique um mapa antes de vender assentos na secretaria.'
+                      : 'Selecione a sessão para escolher os assentos.'}
+                  </p>
                 ) : null}
                 {seatSelection ? (
                   <p className="text-sm font-medium text-slate-900">
@@ -364,7 +409,7 @@ export function SaleFormDialog({
               ) : null}
               <Button
                 type="submit"
-                disabled={mutation.isPending || (isSeatedSale && (!publishedMapId || !seatSelection?.holdToken))}
+                disabled={mutation.isPending || (isSeatedSale && (!selectedMapId || !seatSelection?.holdToken))}
               >
                 Registrar venda
               </Button>
@@ -395,12 +440,12 @@ export function SaleFormDialog({
         </AlertDialogContent>
       </AlertDialog>
 
-      {publishedMapId ? (
+      {selectedMapId ? (
         <StaffSeatPickerDialog
           open={pickerOpen}
           onOpenChange={setPickerOpen}
           eventId={eventId}
-          mapId={publishedMapId}
+          mapId={selectedMapId}
           initialHoldToken={seatSelection?.holdToken}
           initialSeatIds={seatSelection?.seats.map((seat) => seat.id)}
           onConfirm={setSeatSelection}

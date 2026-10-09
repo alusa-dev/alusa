@@ -10,10 +10,12 @@ import {
   markPaymentCommandSent,
   normalizeAsaasPaymentSnapshotStatus,
   readPaymentFullPreflight,
+  requestBankSlipRefund,
   refundCobranca,
   registerPaymentCommand,
   syncPaymentStateFromAsaas,
 } from '@alusa/finance';
+import { prisma } from '@/src/prisma';
 import type { CobrancaRefundInputDTO } from '@/features/finance/operations/charges/dtos';
 import {
   cobrancaActionResultDTOSchema,
@@ -25,6 +27,7 @@ import {
   resolveCobrancaPaymentLookupForTenant,
 } from './resolve-charge-payment-lookup';
 import { logFinanceOperationalEvent } from '@alusa/finance/foundation/operational-log';
+import { isTicketPaymentBlocked } from '@alusa/lib/events/ticket-checkin.service';
 
 type RefundCommandResult = { status: number; body: unknown };
 
@@ -248,15 +251,159 @@ async function executeEventRefund(params: {
   const invalidValue = validateRefundValue({ value: params.body.value, paymentValue, correlationId: params.correlationId, event: true });
   if (invalidValue) return invalidValue;
 
-  return executeRefundCommand({
-    ...params,
-    asaasPayment,
-    effectiveAsaasStatus: effectiveStatus,
-    paymentValue,
-    entityType: 'CHARGE',
-    entityId: params.id,
-    origin: 'EVENT',
-  });
+  let claimedEventOrder: { id: string; paymentStatus: string | null } | null = null;
+  if (operationalKind === 'event-map-order') {
+    const orderId = paymentLookup.operational?.entityId;
+    if (!orderId) return result(404, { error: 'Pedido público não encontrado', correlationId: params.correlationId });
+    const providerChargebackStatus = (asaasPayment as {
+      chargeback?: { status?: string | null } | null;
+    }).chargeback?.status?.trim().toUpperCase();
+    claimedEventOrder = await prisma.$transaction(async (tx) => {
+      // Serialize with check-in, which takes the same row lock before marking a
+      // ticket USED. Re-read eligibility only after winning that lock.
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM "EventMapOrder"
+        WHERE id = ${orderId} AND "contaId" = ${params.contaId}
+        FOR UPDATE
+      `;
+      if (locked.length !== 1) return null;
+      const order = await tx.eventMapOrder.findFirst({
+        where: { id: orderId, contaId: params.contaId },
+        select: { id: true, status: true, paymentStatus: true, ticketFulfillmentStatus: true, _count: { select: { items: true } } },
+      });
+      if (!order || order.status !== 'CONFIRMED') return null;
+      const localPaymentStatus = order.paymentStatus?.trim().toUpperCase() ?? null;
+      // A denied request may be retried, but an unresolved refund/chargeback
+      // or final refund must never be overwritten with a new request.
+      if (
+        (localPaymentStatus !== 'REFUND_DENIED' && isTicketPaymentBlocked(localPaymentStatus)) ||
+        (providerChargebackStatus && providerChargebackStatus !== 'REVERSED' && isTicketPaymentBlocked(providerChargebackStatus))
+      ) return null;
+      if (order.ticketFulfillmentStatus !== 'ISSUED') return null;
+      const [issuedCount, usedCount] = await Promise.all([
+        tx.eventTicket.count({ where: { contaId: params.contaId, eventMapOrderId: order.id, status: 'VALID' } }),
+        tx.eventTicket.count({ where: { contaId: params.contaId, eventMapOrderId: order.id, status: 'USED' } }),
+      ]);
+      if (usedCount > 0 || issuedCount !== order._count.items || issuedCount === 0) return null;
+      const claimed = await tx.eventMapOrder.updateMany({
+        where: {
+          id: order.id,
+          contaId: params.contaId,
+          status: 'CONFIRMED',
+          paymentStatus: order.paymentStatus,
+          ticketFulfillmentStatus: 'ISSUED',
+          tickets: { none: { status: 'USED' } },
+        },
+        data: { paymentStatus: 'REFUND_REQUESTED', refundRequestUrl: null },
+      });
+      return claimed.count === 1 ? { id: order.id, paymentStatus: order.paymentStatus } : null;
+    });
+    if (!claimedEventOrder) {
+      return result(409, {
+        error: 'Pedido indisponível para estorno. Confirme que os ingressos foram emitidos e ainda não foram utilizados.',
+        code: 'EVENT_ORDER_REFUND_NOT_ELIGIBLE',
+        correlationId: params.correlationId,
+      });
+    }
+  }
+
+  const restoreEventOrderClaim = async () => {
+    if (!claimedEventOrder) return;
+    await prisma.eventMapOrder.updateMany({
+      where: { id: claimedEventOrder.id, contaId: params.contaId, paymentStatus: 'REFUND_REQUESTED' },
+      data: { paymentStatus: claimedEventOrder.paymentStatus },
+    });
+  };
+
+  if (claimedEventOrder && (asaasPayment.billingType ?? paymentLookup.billingType)?.toUpperCase() === 'BOLETO') {
+    const command = await registerPaymentCommand({
+      contaId: params.contaId,
+      type: 'PAYMENT_REFUND_COMMAND',
+      entityType: 'CHARGE',
+      entityId: params.id,
+      asaasPaymentId: asaasPayment.id,
+      expectedEvents: expectedEventsForPaymentCommand('PAYMENT_REFUND_COMMAND'),
+      correlationId: params.correlationId,
+      actorId: params.userId,
+      metadata: { source: 'POST /api/cobrancas/[id]/refund', origin: 'EVENT_MAP_ORDER', billingType: 'BOLETO' },
+    });
+    try {
+      const request = await requestBankSlipRefund({ paymentId: asaasPayment.id, contaId: params.contaId });
+      const requestUrl = new URL(request.requestUrl);
+      if (requestUrl.protocol !== 'https:' || !(requestUrl.hostname === 'asaas.com' || requestUrl.hostname.endsWith('.asaas.com'))) {
+        throw new Error('ASAAS_INVALID_BANK_SLIP_REFUND_URL');
+      }
+      const order = await prisma.eventMapOrder.findFirst({
+        where: { id: claimedEventOrder.id, contaId: params.contaId },
+        select: { totalAmount: true },
+      });
+      if (!order) throw new Error('EVENT_MAP_ORDER_NOT_FOUND_AFTER_REFUND_REQUEST');
+      await prisma.$transaction(async (tx) => {
+        await tx.eventMapOrder.updateMany({
+          where: { id: claimedEventOrder.id, contaId: params.contaId, paymentStatus: 'REFUND_REQUESTED' },
+          data: { refundRequestUrl: requestUrl.toString() },
+        });
+        await tx.financeWebhookSideEffectOutbox.createMany({
+          data: [{
+            contaId: params.contaId,
+            effectType: 'EVENT_MAP_LATE_PAYMENT_REFUND',
+            dedupeKey: `${params.contaId}:EVENT_MAP_MANUAL_REFUND_NOTICE:${claimedEventOrder.id}`,
+            payload: {
+              orderId: claimedEventOrder.id,
+              asaasPaymentId: asaasPayment.id,
+              value: Number(order.totalAmount),
+              description: `Estorno solicitado pelo organizador - pedido ${claimedEventOrder.id}`,
+              requestState: 'AWAITING_CUSTOMER_ACTION',
+              bankSlipRefundRequestUrl: requestUrl.toString(),
+            },
+            status: 'PENDING',
+          }],
+          skipDuplicates: true,
+        });
+      });
+      await markPaymentCommandSent({ jobId: command.id, providerStatus: 'REFUND_REQUESTED' });
+      await auditLogService.record({
+        contaId: params.contaId,
+        action: 'events.public_order.refund_requested',
+        entity: { type: 'EventMapOrder', id: claimedEventOrder.id },
+        metadata: { correlationId: params.correlationId, paymentMethod: 'BOLETO', buyerActionRequired: true, requestedBy: params.userId },
+      });
+      return result(202, {
+        success: true,
+        pending: true,
+        message: 'Solicitação de estorno criada. O comprador precisa preencher os dados bancários para continuar.',
+        requestUrl: requestUrl.toString(),
+        correlationId: params.correlationId,
+      });
+    } catch (error) {
+      if (error instanceof AsaasHttpError && error.status >= 400 && error.status < 500) {
+        await failPaymentCommand({ jobId: command.id, error });
+        await restoreEventOrderClaim();
+      } else {
+        // Outcome unknown: preserve the claim so a retry cannot send a second
+        // refund request. Reconciliation/support must inspect the provider.
+        await markPaymentCommandSent({ jobId: command.id, providerStatus: 'UNKNOWN' });
+      }
+      throw error;
+    }
+  }
+
+  try {
+    return await executeRefundCommand({
+      ...params,
+      asaasPayment,
+      effectiveAsaasStatus: effectiveStatus,
+      paymentValue,
+      entityType: 'CHARGE',
+      entityId: params.id,
+      origin: 'EVENT',
+    });
+  } catch (error) {
+    if (error instanceof AsaasHttpError && error.status >= 400 && error.status < 500) {
+      await restoreEventOrderClaim();
+    }
+    throw error;
+  }
 }
 
 export async function executeCobrancaRefund(params: {

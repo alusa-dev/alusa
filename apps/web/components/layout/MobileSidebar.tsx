@@ -41,7 +41,7 @@ export function MobileSidebar({ open, onOpenChange }: MobileSidebarProps) {
     <div className="fixed inset-0 z-50 lg:hidden">
       <button
         type="button"
-        className="absolute inset-0 bg-black/40"
+        className="absolute inset-0 bg-black/80"
         onClick={() => onOpenChange(false)}
         aria-label="Fechar menu"
       />

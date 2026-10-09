@@ -13,6 +13,11 @@ import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-lo
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+function noStore(response: NextResponse) {
+  response.headers.set('Cache-Control', 'private, no-store, max-age=0');
+  return response;
+}
+
 type RouteContext = {
   params: Promise<{ publicSlug: string }>;
 };
@@ -22,14 +27,14 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     ensureEventAsaasPaymentProviderRegistered();
     const parsedParams = publicEventMapCheckoutRouteParamsDTOSchema.safeParse(await params);
     if (!parsedParams.success) {
-      return NextResponse.json(
+      return noStore(NextResponse.json(
         { error: { code: 'ERRO_CHECKOUT_MAPA_PUBLICO', message: 'Mapa público inválido.' } },
         { status: 400 },
-      );
+      ));
     }
     const { publicSlug } = parsedParams.data;
-    const limited = await enforcePublicEventMapRateLimit(request, 'checkout', publicSlug);
-    if (limited) return limited;
+    const limited = await enforcePublicEventMapRateLimit(request, 'checkout');
+    if (limited) return noStore(limited);
     // Malformed/empty JSON is a client validation error, not an unexpected
     // server exception (and should not produce an error stack in the logs).
     const body = publicCheckoutSchema.parse(await request.json().catch(() => null));
@@ -38,7 +43,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     // O checkout público não oferece seleção de canais. Portanto, o contrato
     // do ticket é aplicar explicitamente WhatsApp + e-mail ao customer usado
     // pela cobrança, independentemente dos defaults globais da conta.
-    const order = await getPublicEventMapOrderCustomerContext(data.orderId);
+    const order = await getPublicEventMapOrderCustomerContext(publicSlug, data.orderId);
     if (order?.asaasCustomerId && process.env.PLAYWRIGHT_TEST !== 'true') {
       const notificationSync = await syncCustomerNotificationChannels(
         order.contaId,
@@ -57,8 +62,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       }
     }
 
-    return NextResponse.json({ data });
+    return noStore(NextResponse.json({ data }));
   } catch (error) {
-    return handleEventsRouteError(error, 'ERRO_CHECKOUT_MAPA_PUBLICO');
+    return noStore(handleEventsRouteError(error, 'ERRO_CHECKOUT_MAPA_PUBLICO'));
   }
 }

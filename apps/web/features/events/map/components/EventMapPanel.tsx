@@ -1,5 +1,6 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { formatDateTime } from '../../events-service';
 import type { SchoolEventDTO } from '../../events-service';
 import { deleteEventMap, listEventMaps, publishEventMap } from '../api/event-map-service';
@@ -14,8 +15,6 @@ import {
   canCreateEventMap,
   decideEventMapDeletion,
   MAX_EVENT_MAPS_PER_EVENT,
-  resolveActivePublishedEventMap,
-  resolvePublishedMapReplacement,
 } from '@alusa/domain/events';
 
 import { EVENT_TICKET_MODE_LABELS } from '@alusa/shared';
@@ -80,36 +79,18 @@ function describeMapDeletion(map: EventMapDTO) {
   };
 }
 
-function describeMapPublish(map: EventMapDTO, activePublishedMap: EventMapDTO | null) {
-  if (!activePublishedMap || activePublishedMap.id === map.id) {
-    return {
-      title: 'Publicar template',
-      description:
-        'O mapa ficará ativo para venda pública e vendas internas. Revise setores, lotes e assentos antes de confirmar.',
-      confirmLabel: 'Publicar',
-      loadingLabel: 'Publicando...',
-    };
-  }
-
-  const replacement = resolvePublishedMapReplacement(activePublishedMap.counts.orders ?? 0);
-  if (replacement === 'ARCHIVE') {
-    return {
-      title: 'Publicar template',
-      description: `O mapa ativo "${activePublishedMap.name}" será arquivado automaticamente e "${map.name}" passará a ser o mapa de venda.`,
-      confirmLabel: 'Publicar e arquivar ativo',
-      loadingLabel: 'Publicando...',
-    };
-  }
-
+function describeMapPublish() {
   return {
     title: 'Publicar template',
-    description: `O mapa ativo "${activePublishedMap.name}" voltará para template e "${map.name}" passará a ser o mapa de venda.`,
-    confirmLabel: 'Publicar e substituir ativo',
+    description:
+      'Este mapa ficará disponível para a sessão informada. Os demais mapas publicados continuarão ativos em seus próprios links.',
+    confirmLabel: 'Publicar mapa',
     loadingLabel: 'Publicando...',
   };
 }
 
 export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [mapToDelete, setMapToDelete] = useState<EventMapDTO | null>(null);
   const [mapToPublish, setMapToPublish] = useState<EventMapDTO | null>(null);
@@ -126,7 +107,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
       await queryClient.invalidateQueries({ queryKey: eventMapQueryKeys.maps(event.id) });
       toast.success({
         title: 'Mapa publicado',
-        description: 'O template agora é o mapa ativo de venda pública e interna.',
+        description: 'A sessão está disponível no link próprio. Os outros mapas publicados continuam ativos.',
       });
       setMapToPublish(null);
     },
@@ -158,10 +139,9 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
   const ticketMode = event.ticketMode ?? (event.hasTickets ? 'SIMPLE' : 'NONE');
   const canUseMaps = ticketMode === 'NUMBERED_SEATS';
   const maps = mapsQuery.data ?? [];
-  const activePublishedMap = useMemo(() => resolveActivePublishedEventMap(maps), [maps]);
   const canAddMap = canCreateEventMap(maps.length);
   const deleteDialog = mapToDelete ? describeMapDeletion(mapToDelete) : null;
-  const publishDialog = mapToPublish ? describeMapPublish(mapToPublish, activePublishedMap) : null;
+  const publishDialog = mapToPublish ? describeMapPublish() : null;
 
   return (
     <div className="space-y-5">
@@ -204,7 +184,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
                 Criar Mapa
               </span>
               <span className="mt-2 max-w-64 text-sm text-slate-500">
-                Escolha começar em branco ou importar a planta do local.
+                Crie um mapa para uma sessão do evento. Cada sessão terá seu próprio link e disponibilidade de assentos.
               </span>
             </Link>
           ) : null}
@@ -223,7 +203,10 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
                     <CreatorIcon name="layers" size={16} className="text-brand-accent" />
                     <h3 className="truncate text-base font-semibold text-slate-950">{map.name}</h3>
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">Atualizado em {formatDateTime(map.updatedAt)}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {formatDateTime(map.startsAt ?? map.event.startsAt)}
+                    {map.locationName ? ` · ${map.locationName}` : ''}
+                  </p>
                 </div>
                 <Badge variant={mapStatusVariant(map.status)}>{MAP_PANEL_STATUS_LABELS[map.status]}</Badge>
               </div>
@@ -243,7 +226,19 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
                 </div>
               </div>
 
-              <div className="mt-auto grid grid-cols-3 gap-2 pt-5">
+              <div className="mt-auto grid grid-cols-2 gap-2 pt-5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={cn('border-slate-200 bg-white text-slate-700', MAP_ACTION_BUTTON_CLASS)}
+                  disabled={!canAddMap}
+                  title={!canAddMap ? `Limite de ${MAX_EVENT_MAPS_PER_EVENT} mapas por evento.` : 'Copiar o desenho para uma nova sessão'}
+                  onClick={() => router.push(`/events/${event.id}/maps/new?templateMapId=${encodeURIComponent(map.id)}`)}
+                >
+                  <CreatorIcon name="copy" size={14} className="shrink-0" />
+                  Duplicar
+                </Button>
                 <Button asChild variant="outline" size="sm" className={cn('border-slate-200 bg-white text-slate-700', MAP_ACTION_BUTTON_CLASS)}>
                   <Link href={`/events/${event.id}/maps/${map.id}/editor`}>
                     <CreatorIcon name="edit" size={14} className="shrink-0" />

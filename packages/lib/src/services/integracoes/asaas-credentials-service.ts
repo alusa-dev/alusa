@@ -1,5 +1,6 @@
 import { prisma } from '../../prisma';
 import { encryptSecret, decryptSecret } from '../../security/encryption';
+import { loadAsaasCredentials } from '@alusa/database';
 
 export interface AsaasCredentialsInput {
   apiKey: string;
@@ -72,35 +73,7 @@ export async function saveAsaasTokenOnly(contaId: string, token: string): Promis
 export async function loadDecryptedAsaasCredentials(
   contaId: string,
 ): Promise<{ apiKey: string; webhookSecret: string | null } | null> {
-  const [profile, conta] = await Promise.all([
-    prisma.financeProfile.findUnique({
-      where: { contaId },
-      select: {
-        asaasCredential: { select: { apiKeyEncrypted: true } },
-        asaasAccount: { select: { apiKeyEncrypted: true, apiKeyStatus: true } },
-      },
-    }),
-    prisma.conta.findUnique({
-      where: { id: contaId },
-      select: {
-        asaasApiKeyEncrypted: true,
-        asaasWebhookSecretEncrypted: true,
-      },
-    }),
-  ]);
-
-  if (!conta) return null;
-
-  const apiKeyEncrypted =
-    profile?.asaasAccount?.apiKeyEncrypted ??
-    profile?.asaasCredential?.apiKeyEncrypted ??
-    conta.asaasApiKeyEncrypted;
-
-  const apiKey = decryptSecret(apiKeyEncrypted);
-  const apiKeyStatus = profile?.asaasAccount?.apiKeyStatus ?? (apiKey ? 'CONNECTED' : 'MISSING');
-  const webhookSecret = decryptSecret(conta.asaasWebhookSecretEncrypted);
-
-  if (!apiKey || apiKeyStatus !== 'CONNECTED') return null;
-
-  return { apiKey, webhookSecret };
+  const credentials = await loadAsaasCredentials(contaId);
+  if (!credentials) return null;
+  return { apiKey: credentials.apiKey, webhookSecret: credentials.webhookSecret };
 }

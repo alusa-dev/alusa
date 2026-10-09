@@ -130,6 +130,12 @@ export default [
       'no-restricted-imports': [
         'error',
         {
+          patterns: [
+            {
+              group: ['@alusa/finance', '@alusa/finance/*'],
+              message: 'Casos de uso financeiros pertencem a @alusa/finance. Injete uma porta pela camada de aplicação.',
+            },
+          ],
           paths: [
             {
               name: '@alusa/asaas',

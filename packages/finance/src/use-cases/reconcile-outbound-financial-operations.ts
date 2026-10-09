@@ -15,6 +15,10 @@ import {
   parseOutboundFinancialOperation,
 } from './outbound-financial-operation';
 import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
+import {
+  linkReconciledEventRegistrationCharge,
+  settleReconciledEventRegistrationCharge,
+} from '../events/reconcile-event-registration-charge';
 
 const CREATE_TYPES = ['CREATE_PAYMENT', 'CREATE_SUBSCRIPTION', 'CREATE_INSTALLMENT'] as AsaasIntegrationJobType[];
 
@@ -55,11 +59,29 @@ export async function reconcileOutboundFinancialOperations(input: {
         if (payment) {
           remoteId = payment.id;
           remoteStatus = payment.status;
+          const localChargeId = job.chargeId ?? payload.entityId;
           await prisma.charge.updateMany({
-            where: { contaId: job.contaId, OR: [{ id: job.chargeId ?? payload.entityId }, { externalReference: payload.externalReference }] },
+            where: { contaId: job.contaId, OR: [{ id: localChargeId }, { externalReference: payload.externalReference }] },
             data: { asaasPaymentId: payment.id, invoiceUrl: payment.invoiceUrl ?? null },
           });
-          await syncPaymentStateFromAsaas({ contaId: job.contaId, asaasPaymentId: payment.id, intent: 'RECONCILIATION' });
+          await linkReconciledEventRegistrationCharge({
+            contaId: job.contaId,
+            chargeId: localChargeId,
+            asaasPaymentId: payment.id,
+            asaasInstallmentId: payment.installment,
+          });
+          const syncResult = await syncPaymentStateFromAsaas({
+            contaId: job.contaId,
+            asaasPaymentId: payment.id,
+            intent: 'RECONCILIATION',
+          });
+          if (!syncResult.success) throw new Error(`PAYMENT_STATE_SYNC_FAILED:${syncResult.error}`);
+          remoteStatus = syncResult.paymentStatus;
+          await settleReconciledEventRegistrationCharge({
+            contaId: job.contaId,
+            chargeId: localChargeId,
+            paymentStatus: syncResult.paymentStatus,
+          });
         }
       } else if (payload.resource === 'SUBSCRIPTION') {
         const matches = remoteId

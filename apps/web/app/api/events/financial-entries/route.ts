@@ -4,7 +4,8 @@ import {
   createEventFinancialEntrySchema,
   listFinancialEntriesQuerySchema,
 } from '@alusa/lib/events/events.schema';
-import { createFinancialEntry, listFinancialEntries } from '@alusa/lib/events/events.service';
+import { createFinancialEntry } from '@alusa/finance';
+import { listFinancialEntries } from '@alusa/lib/events/events.service';
 
 import { getEventsContext, handleEventsRouteError, queryObject } from '../_helpers';
 

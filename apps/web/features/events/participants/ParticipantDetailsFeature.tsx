@@ -58,6 +58,7 @@ import { Receipt, RotateCcw, Trash } from '@/components/icons/icons';
 import { exportPaidReceiptsPdf } from '@/features/finance/operations/payments/paid-receipts-pdf';
 import { loadPaidReceiptSchoolProfile } from '@/features/finance/operations/payments/receipt-school-profile';
 import { buildEventFeeReceiptInput } from './event-fee-receipt';
+import { isPublicOrderPaymentBlocked } from '../map/components/public-order-admin-utils';
 import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
 import { ShareContractDialog } from '@/features/contracts/components/ShareContractDialog';
 
@@ -456,11 +457,14 @@ export function ParticipantDetailsFeature({
         queryClient.invalidateQueries({ queryKey: ['events', 'sales', eventId] }),
         queryClient.invalidateQueries({ queryKey: ['events', 'detail', eventId] }),
       ]);
-      toast.success({ title: 'Estorno solicitado', description: 'O status será atualizado automaticamente via webhook do Asaas.' });
+      toast.success({ title: 'Estorno solicitado', description: 'O status será atualizado assim que a solicitação for confirmada.' });
       setRefundOrderTarget(null);
     },
-    onError: (error) => {
-      toast.error({ title: 'Erro ao estornar pagamento', description: (error as Error).message });
+    onError: () => {
+      toast.error({
+        title: 'Não foi possível solicitar o estorno',
+        description: 'Tente novamente. Se o problema continuar, entre em contato com o suporte.',
+      });
     },
   });
 
@@ -839,9 +843,16 @@ export function ParticipantDetailsFeature({
   }, [participant]);
 
   const renderTicketActions = (sale: any) => {
-    const isRefundProcessing = sale.paymentStatus === 'REFUND_IN_PROGRESS' || sale.paymentStatus === 'REFUND_REQUESTED';
-    const canRefund = sale.source === 'PUBLIC_ORDER' && sale.status === 'PAID' && sale.eventMapOrderId && !isRefundProcessing;
-    const canViewTicket = sale.source === 'PUBLIC_ORDER' && sale.ticketsUrl;
+    const isFinanciallyBlocked = isPublicOrderPaymentBlocked(sale.paymentStatus);
+    const canRefund = sale.source === 'PUBLIC_ORDER' &&
+      sale.status === 'PAID' &&
+      sale.eventMapOrderId &&
+      sale.ticketFulfillmentStatus === 'ISSUED' &&
+      sale.ticketsUsed === 0 &&
+      sale.ticketCount > 0 &&
+      sale.ticketCount === sale.seatCount &&
+      !isFinanciallyBlocked;
+    const canViewTicket = sale.source === 'PUBLIC_ORDER' && sale.ticketsUrl && !isFinanciallyBlocked;
     const canViewCharge = sale.source === 'PUBLIC_ORDER' && sale.chargeDetailUrl;
     const canViewAsaasInvoice = sale.source === 'PUBLIC_ORDER' && sale.invoiceUrl;
 
@@ -871,7 +882,7 @@ export function ParticipantDetailsFeature({
           ) : null}
           {canViewAsaasInvoice ? (
             <DropdownMenuItem asChild>
-              <Link href={sale.invoiceUrl} target="_blank">Abrir fatura Asaas</Link>
+              <Link href={sale.invoiceUrl} target="_blank">Abrir cobrança</Link>
             </DropdownMenuItem>
           ) : null}
           {canViewTicket ? (
@@ -1272,6 +1283,7 @@ export function ParticipantDetailsFeature({
                           PARCIAL: 'warning',
                           QUITADO: 'success',
                           EM_DIA: 'info',
+                          EM_VERIFICACAO: 'warning',
                           ATRASADO: 'danger',
                           PENDENTE: 'warning',
                           ESTORNADO: 'neutral',
@@ -1282,6 +1294,7 @@ export function ParticipantDetailsFeature({
                           PARCIAL: 'Parcial',
                           QUITADO: 'Quitado',
                           EM_DIA: 'Em dia',
+                          EM_VERIFICACAO: 'Verificando',
                           ATRASADO: 'Atrasado',
                           PENDENTE: 'Pendente',
                           ESTORNADO: 'Estornado',
@@ -2230,7 +2243,7 @@ export function ParticipantDetailsFeature({
           if (!open) setRefundOrderTarget(null);
         }}
         title="Estornar pagamento?"
-        description={refundOrderTarget ? `O estorno de ${refundOrderTarget.buyerName} será solicitado no Asaas e o status final será confirmado via webhook.` : 'O estorno será solicitado no Asaas e o status final será confirmado via webhook.'}
+        description={refundOrderTarget ? `O estorno de ${refundOrderTarget.buyerName} será solicitado e o status será atualizado após a confirmação.` : 'O estorno será solicitado e o status será atualizado após a confirmação.'}
         confirmText="Solicitar estorno"
         cancelText="Cancelar"
         variant="destructive"

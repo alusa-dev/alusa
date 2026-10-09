@@ -379,6 +379,7 @@ export default function StudentRegistrationWizard({
       <DialogContent
         fullScreenMobile
         closeDisabled={submitting}
+        disableBackdropBlur
         overlayClass="alusa-registration-wizard-overlay"
         className={`aluno-registration-wizard flex max-w-[1020px] w-full flex-col rounded-[20px] gap-0 overflow-hidden bg-white p-0 alusa-dark:bg-[color:var(--color-bg-card)] sm:rounded-[20px] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0 ${activeStep === 'confirmar' ? 'md:h-[min(640px,calc(100dvh-2rem))] md:min-h-0' : 'md:min-h-[492px]'}`}
         data-testid="aluno-wizard"

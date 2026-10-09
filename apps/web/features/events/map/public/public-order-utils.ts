@@ -32,6 +32,42 @@ export function publicOrderStatusLabel(status: string): string {
   }
 }
 
+const BLOCKED_TICKET_PAYMENT_STATUSES = new Set([
+  'REFUND_REQUESTED', 'REFUND_IN_PROGRESS', 'PAYMENT_REFUND_IN_PROGRESS',
+  'REFUNDED', 'PAYMENT_REFUNDED', 'CHARGEBACK_REQUESTED', 'CHARGEBACK_DISPUTE',
+  'IN_DISPUTE', 'AWAITING_CHARGEBACK_REVERSAL', 'DISPUTE_LOST', 'CHARGEBACK',
+  'REQUESTED', 'DONE', 'CHARGEBACK_UNKNOWN',
+]);
+
+export function isPublicOrderTicketPaymentBlocked(status: string | null | undefined) {
+  return BLOCKED_TICKET_PAYMENT_STATUSES.has((status ?? '').trim().toUpperCase());
+}
+
+export function publicOrderPaymentStatusLabel(status: string | null | undefined) {
+  switch ((status ?? '').trim().toUpperCase()) {
+    case 'REFUND_REQUESTED':
+    case 'REFUND_IN_PROGRESS':
+    case 'PAYMENT_REFUND_IN_PROGRESS':
+      return 'Estornando';
+    case 'REQUESTED':
+    case 'CHARGEBACK_REQUESTED':
+    case 'IN_DISPUTE':
+    case 'CHARGEBACK_DISPUTE':
+    case 'AWAITING_CHARGEBACK_REVERSAL':
+    case 'CHARGEBACK':
+    case 'CHARGEBACK_UNKNOWN':
+      return 'Em disputa';
+    case 'DISPUTE_LOST':
+      return 'Contestação perdida';
+    case 'DONE':
+      return 'Contestação encerrada';
+    case 'REFUND_DENIED':
+      return 'Estorno recusado';
+    default:
+      return null;
+  }
+}
+
 export function publicSeatStatusLabel(status: string): string {
   switch (status) {
     case 'AVAILABLE':

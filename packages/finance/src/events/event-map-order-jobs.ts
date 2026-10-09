@@ -1,13 +1,16 @@
 import { prisma } from '@alusa/database';
 import { Prisma } from '@prisma/client';
-import { loadDecryptedAsaasCredentials } from '@alusa/lib/services/integracoes/asaas-credentials-service';
-import { getEventAsaasPaymentProvider } from '@alusa/lib/events/event-asaas-payment-provider';
-import type { EventAsaasPayment } from '@alusa/lib/events/event-asaas-payment-provider';
+import { loadDecryptedAsaasCredentials } from '../foundation/load-decrypted-asaas-credentials';
+import { getEventAsaasPaymentProvider, type EventAsaasPayment } from './event-asaas-payment-provider';
+import { recordPublicOrderTicketFulfillmentFailure } from './record-public-order-ticket-fulfillment-failure';
+import { lockPublicEventMapReservation } from '@alusa/lib/events/map/event-map-order-operations';
 import {
-  confirmPublicEventMapOrderPayment,
+  markPublicEventMapOrderRefundProcessingByPayment,
   reconcileEventMapOrderFinancialStateFromAsaas,
-  recordPublicOrderTicketFulfillmentFailure,
-} from '@alusa/lib/events/map/event-map.service';
+  refundPublicEventMapOrderByPayment,
+} from './event-map-payment-transitions';
+import { listPaymentRefunds } from '../use-cases/asaas-ops';
+import { confirmPublicEventMapOrderPayment } from './confirm-public-event-map-order-payment';
 
 import { withWebhookJobLock } from '../foundation/webhook-job-lock.service';
 import {
@@ -35,6 +38,12 @@ type EventMapTicketFulfillmentStatusValue =
   | 'ISSUED'
   | 'FAILED'
   | 'REQUIRES_RECONCILIATION';
+
+function toEventMapOrderMoney(value: Prisma.Decimal | number | string): number {
+  const amount = value instanceof Prisma.Decimal ? value.toNumber() : Number(value);
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
 type ExternalPaymentResolution = {
   decision: 'PAID' | 'DELETED' | 'NO_PAYMENT' | 'NOT_CANCELLABLE';
   paymentId?: string;
@@ -280,6 +289,33 @@ async function resolveEventMapContaIds(input: {
   );
 }
 
+const REFUNDING_EVENT_MAP_PAYMENT_STATUSES = [
+  'REFUND_REQUESTED',
+  'REFUND_IN_PROGRESS',
+  'PAYMENT_REFUND_IN_PROGRESS',
+] as const;
+
+async function resolveRefundingEventMapContaIds(input: {
+  contaId?: string;
+  maxAccounts: number;
+}): Promise<string[]> {
+  if (input.contaId) return [input.contaId];
+
+  const orders = await prisma.eventMapOrder.findMany({
+    where: {
+      status: 'CONFIRMED',
+      paymentStatus: { in: [...REFUNDING_EVENT_MAP_PAYMENT_STATUSES] },
+      asaasPaymentId: { not: null },
+    },
+    select: { contaId: true },
+    distinct: ['contaId'],
+    orderBy: { updatedAt: 'asc' },
+    take: input.maxAccounts,
+  });
+
+  return orders.map((order) => order.contaId);
+}
+
 function mapReservationRecord(
   reservation: RawExpirableEventMapReservationRecord,
 ): ExpirableEventMapReservationRecord {
@@ -462,7 +498,7 @@ const defaultExpireEventMapReservationsDependencies = {
         await resolveFinanceReconciliationIssueByDedupe({
           contaId: input.contaId,
           dedupeKey: issueDedupeKey,
-          resolution: 'Cobrança localizada no Asaas pela referência externa do pedido.',
+          resolution: 'Cobrança localizada pela referência externa do pedido.',
         });
       }
     }
@@ -528,6 +564,10 @@ const defaultExpireEventMapReservationsDependencies = {
   }) => {
     try {
       return await prisma.$transaction(async (tx) => {
+        await lockPublicEventMapReservation(tx, {
+          contaId: input.contaId,
+          reservationId: input.reservationId,
+        });
         const reservation = await tx.eventMapReservation.findFirst({
           where: { id: input.reservationId, contaId: input.contaId, status: 'HELD' },
           include: {
@@ -997,6 +1037,227 @@ async function reconcilePendingEventMapOrdersUnlocked(
   return result;
 }
 
+export type ReconcileRefundingEventMapOrdersInput = {
+  contaId?: string;
+  olderThanMinutes?: number;
+  /** Maximum number of remote refund checks across the whole run. */
+  limit?: number;
+  maxAccounts?: number;
+  now?: Date;
+  useLock?: boolean;
+};
+
+export type ReconcileRefundingEventMapOrdersResult = {
+  processed: number;
+  finalized: number;
+  denied: number;
+  stillProcessing: number;
+  unmatched: number;
+  skipped: number;
+  errors: Array<{ orderId: string; contaId: string; reason: string }>;
+  generatedAt: Date;
+  skippedDueToLock?: boolean;
+};
+
+type RefundingEventMapOrderCandidate = {
+  id: string;
+  contaId: string;
+  asaasPaymentId: string;
+  totalAmount: Prisma.Decimal | number | string;
+};
+
+type ReconcileRefundingEventMapOrdersDependencies = {
+  resolveTargetContaIds: (_input: { contaId?: string; maxAccounts: number }) => Promise<string[]>;
+  findOrders: (_input: {
+    contaId: string;
+    updatedBefore: Date;
+    limit: number;
+  }) => Promise<RefundingEventMapOrderCandidate[]>;
+  listRefunds: (_input: { contaId: string; paymentId: string }) => Promise<{
+    data: Array<{ dateCreated: string; status: string; value: number }>;
+  }>;
+  finalizeRefund: (_input: {
+    contaId: string;
+    paymentId: string;
+    orderId: string;
+    refundedAmount: number;
+  }) => Promise<unknown>;
+  denyRefund: (_input: {
+    contaId: string;
+    paymentId: string;
+    orderId: string;
+  }) => Promise<unknown>;
+};
+
+const defaultReconcileRefundingEventMapOrdersDependencies = {
+  resolveTargetContaIds: resolveRefundingEventMapContaIds,
+  findOrders: async (input: { contaId: string; updatedBefore: Date; limit: number }) =>
+    prisma.eventMapOrder.findMany({
+      where: {
+        contaId: input.contaId,
+        status: 'CONFIRMED',
+        paymentStatus: { in: [...REFUNDING_EVENT_MAP_PAYMENT_STATUSES] },
+        asaasPaymentId: { not: null },
+        updatedAt: { lt: input.updatedBefore },
+      },
+      select: {
+        id: true,
+        contaId: true,
+        asaasPaymentId: true,
+        totalAmount: true,
+      },
+      orderBy: { updatedAt: 'asc' },
+      take: input.limit,
+    }) as Promise<RefundingEventMapOrderCandidate[]>,
+  listRefunds: (input: { contaId: string; paymentId: string }) =>
+    listPaymentRefunds({ contaId: input.contaId, paymentId: input.paymentId }),
+  finalizeRefund: async (input: {
+    contaId: string;
+    paymentId: string;
+    orderId: string;
+    refundedAmount: number;
+  }) => refundPublicEventMapOrderByPayment({
+    contaId: input.contaId,
+    asaasPaymentId: input.paymentId,
+    externalReference: `event-map-order:${input.orderId}`,
+    refundedAmount: input.refundedAmount,
+  }),
+  denyRefund: async (input: {
+    contaId: string;
+    paymentId: string;
+    orderId: string;
+  }) => markPublicEventMapOrderRefundProcessingByPayment({
+    contaId: input.contaId,
+    asaasPaymentId: input.paymentId,
+    externalReference: `event-map-order:${input.orderId}`,
+    paymentStatus: 'REFUND_DENIED',
+  }),
+} satisfies ReconcileRefundingEventMapOrdersDependencies;
+
+export async function reconcileRefundingEventMapOrders(
+  input: ReconcileRefundingEventMapOrdersInput = {},
+  dependencies: ReconcileRefundingEventMapOrdersDependencies = defaultReconcileRefundingEventMapOrdersDependencies,
+): Promise<ReconcileRefundingEventMapOrdersResult> {
+  const run = () => reconcileRefundingEventMapOrdersUnlocked(input, dependencies);
+  const useLock = input.useLock ?? dependencies === defaultReconcileRefundingEventMapOrdersDependencies;
+  if (!useLock) return run();
+
+  const locked = await withWebhookJobLock(
+    `events-reconcile-refunds:${input.contaId ?? 'global'}`,
+    run,
+    { ttlMs: 10 * 60_000 },
+  );
+  if (!locked.acquired) {
+    return {
+      processed: 0,
+      finalized: 0,
+      denied: 0,
+      stillProcessing: 0,
+      unmatched: 0,
+      skipped: 0,
+      errors: [],
+      generatedAt: new Date(),
+      skippedDueToLock: true,
+    };
+  }
+  return locked.result;
+}
+
+async function reconcileRefundingEventMapOrdersUnlocked(
+  input: ReconcileRefundingEventMapOrdersInput,
+  dependencies: ReconcileRefundingEventMapOrdersDependencies,
+): Promise<ReconcileRefundingEventMapOrdersResult> {
+  const now = input.now ?? new Date();
+  const olderThanMinutes = Math.max(1, Math.min(24 * 60, input.olderThanMinutes ?? 5));
+  const updatedBefore = new Date(now.getTime() - olderThanMinutes * 60_000);
+  const limit = Math.max(1, Math.min(500, input.limit ?? 50));
+  const maxAccounts = Math.max(1, Math.min(50, input.maxAccounts ?? 20));
+  const result: ReconcileRefundingEventMapOrdersResult = {
+    processed: 0,
+    finalized: 0,
+    denied: 0,
+    stillProcessing: 0,
+    unmatched: 0,
+    skipped: 0,
+    errors: [],
+    generatedAt: now,
+  };
+  const contaIds = await dependencies.resolveTargetContaIds({ contaId: input.contaId, maxAccounts });
+
+  for (const [accountIndex, contaId] of contaIds.entries()) {
+    const remaining = limit - result.processed;
+    if (remaining <= 0) break;
+    const remainingAccounts = contaIds.length - accountIndex;
+    const accountLimit = Math.max(1, Math.ceil(remaining / remainingAccounts));
+    const orders = await dependencies.findOrders({
+      contaId,
+      updatedBefore,
+      limit: Math.min(remaining, accountLimit),
+    });
+    for (const order of orders) {
+      result.processed += 1;
+      try {
+        const response = await dependencies.listRefunds({ contaId, paymentId: order.asaasPaymentId });
+        const matchingRefunds = response.data
+          .filter(
+            (refund) =>
+              Number.isFinite(refund.value) &&
+              Math.abs(refund.value - toEventMapOrderMoney(order.totalAmount)) < 0.01,
+          )
+          .sort((left, right) => Date.parse(right.dateCreated) - Date.parse(left.dateCreated));
+        const latestRefund = matchingRefunds[0];
+
+        if (!latestRefund) {
+          // Do not release tickets or clear the payment hold without an authoritative refund outcome.
+          result.unmatched += 1;
+          continue;
+        }
+
+        if (latestRefund.status === 'DONE') {
+          const finalized = await dependencies.finalizeRefund({
+            contaId,
+            paymentId: order.asaasPaymentId,
+            orderId: order.id,
+            refundedAmount: toEventMapOrderMoney(order.totalAmount),
+          });
+          if (finalized) result.finalized += 1;
+          else result.skipped += 1;
+        } else if (latestRefund.status === 'CANCELLED') {
+          const denied = await dependencies.denyRefund({
+            contaId,
+            paymentId: order.asaasPaymentId,
+            orderId: order.id,
+          });
+          if (denied) result.denied += 1;
+          else result.skipped += 1;
+        } else {
+          // PENDING and authorization-required refunds keep tickets blocked until a final outcome.
+          result.stillProcessing += 1;
+        }
+      } catch (error) {
+        result.skipped += 1;
+        result.errors.push({
+          orderId: order.id,
+          contaId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  logEventsFinance(
+    'finance.events.public_event_map.refund_reconcile.job.completed',
+    {
+      processed: result.processed,
+      skipped: result.skipped,
+      errors: result.errors.length,
+    },
+    result.errors.length > 0 || result.unmatched > 0 ? 'warn' : 'info',
+  );
+
+  return result;
+}
+
 export type ReconcilePendingEventMapTicketFulfillmentInput = {
   contaId?: string;
   limit?: number;
@@ -1313,7 +1574,7 @@ export function classifyEventMapOrderInconsistencies(
       contaId: order.contaId,
       eventId: order.eventId,
       orderId: order.id,
-      message: 'Pedido com cobrança Asaas sem forma de pagamento local.',
+      message: 'Pedido com cobrança sem forma de pagamento registrada.',
     });
   }
 

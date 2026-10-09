@@ -1,9 +1,9 @@
 {
   "generatedAt": "deterministic",
-  "routeCount": 525,
+  "routeCount": 529,
   "summary": {
     "byApp": {
-      "web": 498,
+      "web": 502,
       "admin": 27
     },
     "byCategory": {
@@ -16,13 +16,13 @@
       "configuration": 11,
       "contracts": 14,
       "development": 4,
-      "events": 49,
+      "events": 52,
       "files": 5,
       "finance": 78,
       "identity": 23,
       "integrations": 5,
       "mobile": 47,
-      "operations": 49,
+      "operations": 50,
       "platform-billing": 7,
       "portal": 8,
       "privacy": 4,
@@ -33,15 +33,15 @@
       "tenant": 7
     },
     "byProtection": {
-      "AUTH_USER": 275,
-      "CRON_SECRET": 46,
+      "AUTH_USER": 278,
+      "CRON_SECRET": 47,
       "MOBILE_ACCESS_TOKEN": 43,
       "PUBLIC": 41,
       "TENANT_ADMIN": 55,
       "TENANT_FINANCE": 61,
       "WEBHOOK_TOKEN": 4
     },
-    "withoutNearbyTest": 482,
+    "withoutNearbyTest": 477,
     "withoutAuthEvidence": 0,
     "directPrisma": 0,
     "directAsaas": 0
@@ -3140,6 +3140,27 @@
     },
     {
       "app": "web",
+      "file": "apps/web/app/api/events/[eventId]/check-ins/route.ts",
+      "path": "/api/events/:eventId/check-ins",
+      "category": "events",
+      "protection": "AUTH_USER",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantSession",
+        "withTenantSession",
+        "getEventsContext",
+        "getServerSession",
+        "resolveSessionAccess",
+        "authenticate"
+      ],
+      "hasDTOValidation": true,
+      "hasNearbyTest": true,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
       "file": "apps/web/app/api/events/[eventId]/financial-consistency/route.ts",
       "path": "/api/events/:eventId/financial-consistency",
       "category": "events",
@@ -3595,8 +3616,8 @@
         "resolveSessionAccess",
         "authenticate"
       ],
-      "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasDTOValidation": true,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -3722,6 +3743,27 @@
         "authenticate"
       ],
       "hasDTOValidation": true,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
+      "file": "apps/web/app/api/events/[eventId]/ticket-artwork/route.ts",
+      "path": "/api/events/:eventId/ticket-artwork",
+      "category": "events",
+      "protection": "AUTH_USER",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantSession",
+        "withTenantSession",
+        "getEventsContext",
+        "getServerSession",
+        "resolveSessionAccess",
+        "authenticate"
+      ],
+      "hasDTOValidation": false,
       "hasNearbyTest": false,
       "directPrisma": false,
       "directAsaas": false
@@ -3854,6 +3896,27 @@
     },
     {
       "app": "web",
+      "file": "apps/web/app/api/events/public-orders/[orderId]/cancel/route.ts",
+      "path": "/api/events/public-orders/:orderId/cancel",
+      "category": "events",
+      "protection": "AUTH_USER",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantSession",
+        "withTenantSession",
+        "getEventsContext",
+        "getServerSession",
+        "resolveSessionAccess",
+        "authenticate"
+      ],
+      "hasDTOValidation": true,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
       "file": "apps/web/app/api/events/public-orders/[orderId]/refund/route.ts",
       "path": "/api/events/public-orders/:orderId/refund",
       "category": "events",
@@ -3869,7 +3932,7 @@
         "authenticate"
       ],
       "hasDTOValidation": true,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -5560,7 +5623,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -5600,7 +5663,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -5620,7 +5683,27 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
+      "file": "apps/web/app/api/jobs/events-reconcile-refunds/route.ts",
+      "path": "/api/jobs/events-reconcile-refunds",
+      "category": "operations",
+      "protection": "CRON_SECRET",
+      "tenantMode": "explicit-or-iterated",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantScope",
+        "getServerSession",
+        "requireAdmin",
+        "resolveSessionAccess",
+        "CRON_SECRET"
+      ],
+      "hasDTOValidation": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -8584,7 +8667,7 @@
         "PUBLIC_ROUTE"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -8632,7 +8715,7 @@
         "PUBLIC_ROUTE"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },

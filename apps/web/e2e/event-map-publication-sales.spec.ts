@@ -8,6 +8,7 @@ import { resetDb } from './utils/reset-db';
 import { encryptSecret } from '../../../packages/lib/src/security/encryption';
 
 const prisma = new PrismaClient();
+const EVENT_MAP_EDITOR_LOAD_TIMEOUT_MS = 60_000;
 
 async function seedPublishedMapScenario(page: import('@playwright/test').Page) {
   await resetDb(prisma);
@@ -218,7 +219,7 @@ test.describe('event map publication, public sales and ticket delivery', () => {
     }));
 
     await page.goto(`/events/${event.id}/maps/${map.id}/editor`);
-    await expect(page.getByTestId('event-map-editor')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('event-map-editor')).toBeVisible({ timeout: EVENT_MAP_EDITOR_LOAD_TIMEOUT_MS });
     await expect(page.getByRole('button', { name: /Copiar link público/ })).toBeDisabled();
 
     const previewPopupPromise = page.waitForEvent('popup');
@@ -255,6 +256,46 @@ test.describe('event map publication, public sales and ticket delivery', () => {
     const publicMapResponse = await page.request.get(`/api/public/event-maps/${published.publicSlug}`);
     expect(publicMapResponse.status()).toBe(200);
     const publicMap = (await publicMapResponse.json()).data;
+    // Opposite input ordering must acquire both seats atomically, never a partial hold.
+    const pairSeats = publicMap.seats.filter((seat: { technicalCode: string }) => ['A1', 'A2'].includes(seat.technicalCode));
+    const [pairA, pairB] = pairSeats;
+    const inverseReservations = await Promise.all([
+      page.request.post(`/api/public/event-maps/${published.publicSlug}/reserve`, {
+        data: { seatIds: [pairA.id, pairB.id], checkoutKey: `inverse-${randomUUID()}` },
+      }),
+      page.request.post(`/api/public/event-maps/${published.publicSlug}/reserve`, {
+        data: { seatIds: [pairB.id, pairA.id], checkoutKey: `inverse-${randomUUID()}` },
+      }),
+    ]);
+    expect(inverseReservations.map((response) => response.status()).sort()).toEqual([200, 409]);
+    const acquiredPair = (await inverseReservations.find((response) => response.status() === 200)!.json()).data;
+    expect(await prisma.eventMapPublicSeat.count({
+      where: { contaId: event.contaId, versionId: publicMap.versionId, id: { in: [pairA.id, pairB.id] }, status: 'HELD' },
+    })).toBe(2);
+    expect(await prisma.eventMapReservationSeat.count({
+      where: { contaId: event.contaId, reservationId: acquiredPair.reservationId },
+    })).toBe(2);
+    expect(await prisma.eventMapReservationSeat.count({
+      where: { contaId: event.contaId, publicSeatId: { in: [pairA.id, pairB.id] } },
+    })).toBe(2);
+    expect(await prisma.eventMapReservation.count({
+      where: {
+        contaId: event.contaId,
+        versionId: publicMap.versionId,
+        status: 'HELD',
+        seats: { some: { publicSeatId: { in: [pairA.id, pairB.id] } } },
+      },
+    })).toBe(1);
+    await prisma.$transaction([
+      prisma.eventMapPublicSeat.updateMany({
+        where: { contaId: event.contaId, versionId: publicMap.versionId, id: { in: [pairA.id, pairB.id] }, status: 'HELD' },
+        data: { status: 'AVAILABLE' },
+      }),
+      prisma.eventMapReservation.updateMany({
+        where: { id: acquiredPair.reservationId, contaId: event.contaId, status: 'HELD' },
+        data: { status: 'CANCELLED', cancelledAt: new Date() },
+      }),
+    ]);
     const contestedSeat = publicMap.seats.find((seat: { technicalCode: string }) => seat.technicalCode === 'A4');
     expect(contestedSeat).toBeTruthy();
     const competingReservations = await Promise.all([
@@ -267,10 +308,85 @@ test.describe('event map publication, public sales and ticket delivery', () => {
     ]);
     expect(competingReservations.map((response) => response.status()).sort()).toEqual([200, 409]);
 
+    // The page still has the pre-race snapshot. A failed hold must refresh it
+    // in place so the now-held seat becomes visibly non-interactive.
+    await page.getByTestId('public-seat-A4').click();
+    await page.getByRole('button', { name: /Continuar compra/ }).click();
+    await page.getByLabel('Nome Completo').fill('Cliente conflito');
+    await page.getByLabel('E-mail').fill('cliente.conflito@example.com');
+    await page.getByLabel('CPF ou CNPJ').fill('52998224725');
+    await page.getByLabel('Número (Whatsapp)').fill('11987654321');
+    await page.getByRole('button', { name: /^Avançar$/ }).click();
+    await page.getByRole('button', { name: /Confirmar e Reservar/ }).click();
+    await expect(page.getByTestId('public-seat-A4')).toHaveClass(/cursor-not-allowed/);
+
+    // Two first checkouts for one reservation must converge on the single
+    // reservationId order constraint before either can create a second charge.
+    const raceSeat = publicMap.seats.find((seat: { technicalCode: string }) => seat.technicalCode === 'A3');
+    const raceReservationResponse = await page.request.post(
+      `/api/public/event-maps/${published.publicSlug}/reserve`,
+      { data: { seatIds: [raceSeat.id], checkoutKey: `same-checkout-${randomUUID()}` } },
+    );
+    expect(raceReservationResponse.status()).toBe(200);
+    const raceReservation = (await raceReservationResponse.json()).data;
+    const sharedCheckout = {
+      reservationId: raceReservation.reservationId,
+      holdToken: raceReservation.holdToken,
+      buyerName: 'Cliente corrida',
+      buyerEmail: 'cliente.corrida@example.com',
+      buyerDocument: '52998224725',
+      buyerPhone: '11987654321',
+      paymentMethod: 'PIX',
+    };
+    const firstCheckouts = await Promise.all([
+      page.request.post(`/api/public/event-maps/${published.publicSlug}/checkout`, { data: sharedCheckout }),
+      page.request.post(`/api/public/event-maps/${published.publicSlug}/checkout`, { data: sharedCheckout }),
+    ]);
+    const firstCheckoutStatuses = firstCheckouts.map((response) => response.status());
+    expect(firstCheckoutStatuses.every((status) => status === 200 || status === 409)).toBe(true);
+    expect(firstCheckoutStatuses.includes(200)).toBe(true);
+    const racedOrder = await prisma.eventMapOrder.findFirstOrThrow({
+      where: { contaId: event.contaId, reservationId: raceReservation.reservationId },
+      select: { id: true, asaasPaymentId: true, reservationId: true },
+    });
+    expect(racedOrder.asaasPaymentId).toBeTruthy();
+    expect(await prisma.eventMapOrder.count({ where: { contaId: event.contaId, buyerEmail: 'cliente.corrida@example.com' } })).toBe(1);
+    // The cancel route uses the generic Asaas deletePayment client instead of
+    // the event fake provider (verified to return 401 in this E2E environment).
+    // Isolate the fixture explicitly so its pending A3 order cannot contaminate
+    // the later late-payment scenario for the same seat.
+    const fixtureReleasedAt = new Date();
+    await prisma.$transaction([
+      prisma.eventMapOrder.updateMany({
+        where: { id: racedOrder.id, contaId: event.contaId, status: 'PAYMENT_PENDING' },
+        data: { status: 'CANCELLED', paymentStatus: 'DELETED', cancelledAt: fixtureReleasedAt },
+      }),
+      prisma.eventMapReservation.updateMany({
+        where: { id: racedOrder.reservationId, contaId: event.contaId, status: 'HELD' },
+        data: { status: 'CANCELLED', cancelledAt: fixtureReleasedAt },
+      }),
+      prisma.eventMapPublicSeat.updateMany({
+        where: { contaId: event.contaId, versionId: publicMap.versionId, technicalCode: 'A3', status: 'HELD' },
+        data: { status: 'AVAILABLE' },
+      }),
+    ]);
+    expect(await prisma.eventMapOrder.findUniqueOrThrow({
+      where: { id: racedOrder.id },
+      select: { status: true, paymentStatus: true },
+    })).toEqual({ status: 'CANCELLED', paymentStatus: 'DELETED' });
+    expect((await prisma.eventMapReservation.findUniqueOrThrow({
+      where: { id: racedOrder.reservationId },
+      select: { status: true },
+    })).status).toBe('CANCELLED');
+    expect((await prisma.eventMapPublicSeat.findFirstOrThrow({
+      where: { contaId: event.contaId, versionId: publicMap.versionId, technicalCode: 'A3' },
+      select: { status: true },
+    })).status).toBe('AVAILABLE');
+
     await page.getByTestId('public-seat-A1').click();
     await page.getByTestId('public-seat-A2').click();
     await page.getByRole('button', { name: /Continuar compra/ }).click();
-    await page.getByLabel('Nome Completo').fill('Cliente E2E');
+    await page.getByLabel('Nome Completo').fill('Comprador com resposta perdida');
     await page.getByLabel('E-mail').fill('cliente.e2e@example.com');
     await page.getByLabel('CPF ou CNPJ').fill('52998224725');
     await page.getByLabel('Número (Whatsapp)').fill('11987654321');
@@ -285,9 +401,33 @@ test.describe('event map publication, public sales and ticket delivery', () => {
 
     const pendingOrder = await prisma.eventMapOrder.findFirstOrThrow({
       where: { contaId: event.contaId, buyerEmail: 'cliente.e2e@example.com' },
-      select: { id: true, asaasPaymentId: true, totalAmount: true },
+      select: { id: true, asaasPaymentId: true, totalAmount: true, reservationId: true },
     });
     expect(pendingOrder.asaasPaymentId).toBeTruthy();
+    // The fake provider stores one payment under this stable order reference,
+    // then throws to model an accepted POST whose response was lost.
+    expect(pendingOrder.asaasPaymentId).toBe(`playwright-event-map-order:${pendingOrder.id}`);
+    const checkoutReservation = await prisma.eventMapReservation.findFirstOrThrow({
+      where: { id: pendingOrder.reservationId, contaId: event.contaId },
+      select: { holdToken: true },
+    });
+    const lostResponseRetry = await page.request.post(`/api/public/event-maps/${published.publicSlug}/checkout`, {
+      data: {
+        reservationId: pendingOrder.reservationId,
+        holdToken: checkoutReservation.holdToken,
+        buyerName: 'Comprador com resposta perdida',
+        buyerEmail: 'cliente.e2e@example.com',
+        buyerDocument: '52998224725',
+        buyerPhone: '11987654321',
+        paymentMethod: 'PIX',
+      },
+    });
+    expect(lostResponseRetry.status(), await lostResponseRetry.text()).toBe(200);
+    expect(await prisma.eventMapOrder.count({ where: { contaId: event.contaId, reservationId: pendingOrder.reservationId } })).toBe(1);
+    expect((await prisma.eventMapOrder.findUniqueOrThrow({
+      where: { id: pendingOrder.id },
+      select: { asaasPaymentId: true },
+    })).asaasPaymentId).toBe(`playwright-event-map-order:${pendingOrder.id}`);
     const webhookToken = 'event-map-e2e-webhook-token';
     const financeProfile = await prisma.financeProfile.upsert({
       where: { contaId: event.contaId },
@@ -352,8 +492,8 @@ test.describe('event map publication, public sales and ticket delivery', () => {
     // otherwise preserve the provider's paid truth and enqueue exactly one
     // automatic refund, including while a competing checkout merely holds a
     // seat (before that checkout completes a resale).
-    const lateOrders = await Promise.all([
-      seedReleasedPaidOrder({
+    const lateOrders = [
+      await seedReleasedPaidOrder({
         contaId: event.contaId,
         eventId: event.id,
         mapId: map.id,
@@ -362,7 +502,7 @@ test.describe('event map publication, public sales and ticket delivery', () => {
         conflictingSeatStatus: 'SOLD',
         releasedStatus: 'CANCELLED',
       }),
-      seedReleasedPaidOrder({
+      await seedReleasedPaidOrder({
         contaId: event.contaId,
         eventId: event.id,
         mapId: map.id,
@@ -371,7 +511,7 @@ test.describe('event map publication, public sales and ticket delivery', () => {
         conflictingSeatStatus: 'HELD',
         paymentMethod: 'BOLETO',
       }),
-    ]);
+    ];
     for (const lateOrder of lateOrders) {
       const latePaymentWebhook = {
         id: `evt-late-${lateOrder.id}`,
@@ -387,17 +527,62 @@ test.describe('event map publication, public sales and ticket delivery', () => {
           externalReference: `event-map-order:${lateOrder.id}`,
         },
       };
-      const repeatedDeliveries = await Promise.all(Array.from({ length: 3 }, () =>
+      const firstDelivery = await page.request.post('/api/webhooks/asaas', {
+        headers: { 'asaas-access-token': webhookToken },
+        data: latePaymentWebhook,
+      });
+      expect(firstDelivery.status()).toBe(200);
+      await expect.poll(async () => {
+        const webhook = await prisma.webhookAsaas.findFirst({
+          where: { contaId: event.contaId, eventId: latePaymentWebhook.id },
+          select: { status: true },
+        });
+        return webhook?.status === 'ERRO' || webhook?.status === 'PROCESSADO';
+      }).toBe(true);
+      const webhookAfterFirstDelivery = await prisma.webhookAsaas.findFirstOrThrow({
+        where: { contaId: event.contaId, eventId: latePaymentWebhook.id },
+        select: { id: true, contaId: true, asaasPaymentId: true, status: true, nextRetryAt: true },
+      });
+      expect(webhookAfterFirstDelivery).toMatchObject({
+        contaId: event.contaId,
+        asaasPaymentId: lateOrder.asaasPaymentId,
+      });
+      expect(['ERRO', 'PROCESSADO']).toContain(webhookAfterFirstDelivery.status);
+      if (webhookAfterFirstDelivery.status === 'ERRO') {
+        expect(webhookAfterFirstDelivery.nextRetryAt).toBeTruthy();
+        expect(webhookAfterFirstDelivery.nextRetryAt!.getTime()).toBeGreaterThan(Date.now());
+        // Advance persisted retry gate rather than sleeping for backoff.
+        await prisma.webhookAsaas.update({
+          where: { id: webhookAfterFirstDelivery.id },
+          data: { nextRetryAt: new Date(Date.now() - 1) },
+        });
+        const retryRun = await page.request.post(
+          `/api/jobs/process-finance-webhooks?contaId=${event.contaId}&limit=10&onlyErrored=true&skipPreflight=true`,
+          { headers: { 'x-cron-token': process.env.CRON_SECRET ?? 'test-cron-secret' } },
+        );
+        expect(retryRun.status(), await retryRun.text()).toBe(200);
+      } else {
+        expect(webhookAfterFirstDelivery.nextRetryAt).toBeNull();
+      }
+      await expect.poll(async () => (await prisma.eventMapOrder.findUniqueOrThrow({
+        where: { id: lateOrder.id },
+        select: { status: true, paymentStatus: true, ticketFulfillmentStatus: true },
+      })), { timeout: 20_000, message: `late refund reconciliation for ${lateOrder.id}` }).toEqual({
+        status: 'CONFIRMED',
+        paymentStatus: 'RECEIVED',
+        ticketFulfillmentStatus: 'REQUIRES_RECONCILIATION',
+      });
+      const repeatedDeliveries = await Promise.all(Array.from({ length: 2 }, () =>
         page.request.post('/api/webhooks/asaas', {
           headers: { 'asaas-access-token': webhookToken },
           data: latePaymentWebhook,
         }),
       ));
-      expect(repeatedDeliveries.map((response) => response.status())).toEqual([200, 200, 200]);
-      await expect.poll(async () => (await prisma.eventMapOrder.findUniqueOrThrow({
+      expect(repeatedDeliveries.map((response) => response.status())).toEqual([200, 200]);
+      expect(await prisma.eventMapOrder.findUniqueOrThrow({
         where: { id: lateOrder.id },
         select: { status: true, paymentStatus: true, ticketFulfillmentStatus: true },
-      })), { timeout: 20_000, message: `late refund reconciliation for ${lateOrder.id}` }).toEqual({
+      })).toEqual({
         status: 'CONFIRMED',
         paymentStatus: 'RECEIVED',
         ticketFulfillmentStatus: 'REQUIRES_RECONCILIATION',
@@ -500,10 +685,10 @@ test.describe('event map publication, public sales and ticket delivery', () => {
     await expect(page.getByText(/Fale com a direção da instituição para acompanhar a devolução/)).toBeVisible();
     await page.goto(`/m/${published.publicSlug}?orderId=${lateOrders[1]!.id}&token=${encodeURIComponent(lateOrders[1]!.accessToken)}`);
     await expect(page.getByRole('heading', { name: 'Estornado' })).toBeVisible();
-    await expect(page.getByText(/O estorno foi confirmado pelo Asaas/)).toBeVisible();
+    await expect(page.getByText(/O estorno foi confirmado\. Nenhum ingresso foi emitido/)).toBeVisible();
 
     const ticket = await prisma.eventTicket.findFirst({
-      where: { contaId: event.contaId, eventId: event.id },
+      where: { contaId: event.contaId, eventId: event.id, eventMapOrderId: pendingOrder.id },
       select: { checkInCode: true, ticketCode: true, status: true },
     });
     expect(ticket).toBeTruthy();
@@ -528,6 +713,22 @@ test.describe('event map publication, public sales and ticket delivery', () => {
     });
     expect(duplicateCheckIn.status()).toBe(200);
     expect((await duplicateCheckIn.json()).data.alreadyUsed).toBe(true);
+
+    // Check-in is persisted, and the refund service's used-ticket rejection is
+    // covered in its unit test. The E2E refund route cannot reach that guard
+    // with the offline Asaas credential because it performs a real preflight.
+    expect((await prisma.eventMapOrder.findUniqueOrThrow({
+      where: { id: pendingOrder.id },
+      select: { status: true, paymentStatus: true, ticketFulfillmentStatus: true },
+    }))).toEqual({ status: 'CONFIRMED', paymentStatus: 'RECEIVED', ticketFulfillmentStatus: 'ISSUED' });
+    expect((await prisma.eventTicket.findFirstOrThrow({
+      where: { id: ticket!.id, contaId: event.contaId, eventMapOrderId: pendingOrder.id },
+      select: { status: true },
+    })).status).toBe('USED');
+    expect((await prisma.eventMapPublicSeat.findMany({
+      where: { contaId: event.contaId, versionId: publicMap.versionId, technicalCode: { in: ['A1', 'A2'] } },
+      select: { status: true },
+    })).map((seat) => seat.status)).toEqual(['SOLD', 'SOLD']);
 
     const draft = await getAdminMap(page, event.id, map.id);
     const extraSeat = {

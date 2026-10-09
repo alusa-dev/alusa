@@ -34,6 +34,7 @@ export type ImageCropDialogProps = {
   applyingLabel?: string;
   onApply: (_result: CroppedImageResult) => void | Promise<void>;
   className?: string;
+  disableBackdropBlur?: boolean;
 };
 
 export function ImageCropDialog({
@@ -53,6 +54,7 @@ export function ImageCropDialog({
   applyingLabel = 'Processando...',
   onApply,
   className,
+  disableBackdropBlur = false,
   showGridWhenRect = true,
 }: ImageCropDialogProps) {
   const zoomControlId = React.useId();
@@ -115,6 +117,8 @@ export function ImageCropDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
+        disableBackdropBlur={disableBackdropBlur}
+        disableScaleAnimation
         className={cn(
           'flex max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-[520px] flex-col gap-0 overflow-hidden rounded-2xl border-white/70 p-0 shadow-xl sm:w-full',
           className,
@@ -130,8 +134,8 @@ export function ImageCropDialog({
             {description}
           </DialogDescription>
         </DialogHeader>
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 [scrollbar-gutter:stable] sm:px-5">
-          <div className="relative mx-auto aspect-square w-full overflow-hidden rounded-xl bg-slate-950">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 sm:px-5">
+          <div className="relative mx-auto aspect-square w-full max-w-[min(100%,480px,56dvh)] overflow-hidden rounded-xl bg-slate-950">
             {src ? (
               <ImageCropper
                 image={src}
@@ -159,7 +163,7 @@ export function ImageCropDialog({
               </div>
             )}
           </div>
-          <div className="flex items-center gap-3" role="group" aria-label="Controle de zoom">
+          <div className="flex items-center gap-2.5" role="group" aria-label="Controle de zoom">
               <label htmlFor={zoomControlId} className="sr-only">
                 Zoom
               </label>
@@ -203,7 +207,7 @@ export function ImageCropDialog({
               </Button>
           </div>
           {lowResolution ? (
-            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+            <p className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs leading-5 text-amber-800">
               O recorte selecionado tem menos de {exportSize}×{exportSize}px e poderá perder nitidez.
             </p>
           ) : null}
@@ -213,7 +217,7 @@ export function ImageCropDialog({
             </p>
           ) : null}
         </div>
-        <DialogFooter className="shrink-0 bg-white px-4 pb-4 pt-5 sm:px-5 sm:pb-5">
+        <DialogFooter className="shrink-0 gap-2 bg-white px-4 py-4 sm:px-5 sm:py-4 sm:space-x-0">
           <Button
             type="button"
             variant="outline"

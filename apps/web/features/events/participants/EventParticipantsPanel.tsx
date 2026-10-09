@@ -7,6 +7,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { PersonAvatar } from '@/components/shared/PersonAvatar';
 import { DangerActionDialog } from '@/features/renewals/components/DangerActionDialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from '@/components/ui/toast';
 
@@ -80,7 +81,16 @@ export function EventParticipantsPanel({
     <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <CardHeader className="p-0 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <CardTitle className="text-base font-semibold text-slate-800">Participantes Inscritos</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <CardTitle className="text-base font-semibold text-slate-800">Participantes Inscritos</CardTitle>
+            <Badge
+              variant="neutral"
+              className="tabular-nums"
+              aria-label={loading ? 'Carregando total de inscritos' : `${participants.length} inscritos`}
+            >
+              {loading ? '…' : participants.length}
+            </Badge>
+          </div>
           <p className="text-xs text-slate-500 mt-1">
             Alunos vinculados ao evento, controle de pagamento da taxa e total investido pelo aluno.
           </p>

@@ -28,6 +28,7 @@ export function ParticipantPaymentStatusBadge({ participant }: { participant: Ev
     PARCIAL: <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">Parcial</span>,
     QUITADO: <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">Quitado</span>,
     EM_DIA: <span className="inline-flex rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-800">Em dia</span>,
+    EM_VERIFICACAO: <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">Verificando</span>,
     ATRASADO: <span className="inline-flex rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-800">Atrasado</span>,
     PENDENTE: <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">Pendente</span>,
     ESTORNADO: <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">Estornado</span>,

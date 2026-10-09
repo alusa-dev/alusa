@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { drainFinanceWebhookSideEffectOutbox } from '@alusa/finance';
 import { createTicketSaleSchema, listByEventQuerySchema } from '@alusa/lib/events/events.schema';
-import { createTicketSale, listTicketSales } from '@alusa/lib/events/events.service';
+import { createTicketSale } from '@alusa/finance';
+import { listTicketSales } from '@alusa/lib/events/events.service';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 import { getEventsContext, handleEventsRouteError, queryObject } from '../_helpers';

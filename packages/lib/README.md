@@ -2,6 +2,11 @@
 
 Camada compartilhada de compatibilidade durante a convergência do monorepo.
 
+`@alusa/lib` não depende de `@alusa/finance` em runtime. Fluxos que precisam de
+ações financeiras recebem portas/provider-agnostic capabilities da camada de
+aplicação; integrações, reconciliação e mutações financeiras são compostas em
+`@alusa/finance`.
+
 Novos módulos devem declarar ownership e preferir o pacote de destino:
 
 - domínio acadêmico puro: `@alusa/domain`;

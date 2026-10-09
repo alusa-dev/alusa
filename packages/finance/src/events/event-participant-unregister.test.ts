@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
 
-vi.mock('../prisma', () => ({
+vi.mock('@alusa/database', () => ({
   prisma: {
     eventParticipant: { findFirst: vi.fn() },
     eventFinancialEntry: { findFirst: vi.fn() },
@@ -11,8 +11,8 @@ vi.mock('../prisma', () => ({
   },
 }));
 
-import { prisma } from '../prisma';
-import { unregisterEventParticipant } from './events.service';
+import { prisma } from '@alusa/database';
+import { unregisterEventParticipant } from './event-participant-lifecycle-operations';
 
 function createTransactionMock() {
   return {

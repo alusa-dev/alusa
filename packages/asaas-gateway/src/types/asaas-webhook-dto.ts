@@ -43,6 +43,10 @@ export interface AsaasWebhookPayment {
   // Campos de refund/chargeback
   refundedDate?: string | null;
   chargebackDate?: string | null;
+  chargeback?: {
+    status?: string | null;
+    reason?: string | null;
+  } | null;
 }
 
 /**

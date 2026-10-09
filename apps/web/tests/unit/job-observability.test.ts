@@ -1,8 +1,59 @@
 import { describe, expect, it, vi } from 'vitest';
+import { sharedTelemetry } from '@alusa/observability';
 
 import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 describe('job observability', () => {
+  it('registra contagens dos jobs de ingressos e mantém a lista de campos permitidos', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const recordMetric = vi
+      .spyOn(sharedTelemetry, 'recordMetric')
+      .mockImplementation(() => undefined);
+
+    logJobResult('events-jobs', Date.now(), {
+      expired: 2,
+      consistent: 3,
+      issued: 4,
+      inspected: 5,
+      findingCount: 6,
+      arbitraryCount: 7,
+    });
+
+    const payload = JSON.parse(String(info.mock.calls[0]?.[0]));
+    expect(payload.attributes).toMatchObject({
+      expired: 2,
+      consistent: 3,
+      issued: 4,
+      inspected: 5,
+      findingCount: 6,
+    });
+    expect(payload.attributes.arbitraryCount).toBeUndefined();
+    const metrics = recordMetric.mock.calls.map(([metric]) => metric);
+    expect(metrics).toContainEqual(
+      expect.objectContaining({
+        name: 'alusa.job.items',
+        value: 2,
+        dimensions: expect.objectContaining({ result: 'expired' }),
+      }),
+    );
+    expect(metrics).toContainEqual(
+      expect.objectContaining({
+        name: 'alusa.job.items',
+        value: 6,
+        dimensions: expect.objectContaining({ result: 'findingcount' }),
+      }),
+    );
+    expect(
+      metrics.some(
+        (metric) =>
+          metric.name === 'alusa.job.items' && metric.dimensions?.result === 'arbitraryCount',
+      ),
+    ).toBe(false);
+
+    info.mockRestore();
+    recordMetric.mockRestore();
+  });
+
   it('registra apenas métricas numéricas do resultado', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
@@ -48,7 +99,12 @@ describe('job observability', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
-    logJobResult('reconcile-asaas-customers', Date.now() - 10, { scanned: 2, failed: 1 }, { partialFailure: true });
+    logJobResult(
+      'reconcile-asaas-customers',
+      Date.now() - 10,
+      { scanned: 2, failed: 1 },
+      { partialFailure: true },
+    );
 
     expect(warn).toHaveBeenCalledTimes(1);
     expect(info).not.toHaveBeenCalled();

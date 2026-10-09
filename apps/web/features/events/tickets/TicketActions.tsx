@@ -51,10 +51,13 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
     ),
     onSuccess: async () => {
       await invalidate();
-      toast.success({ title: 'Estorno solicitado', description: 'O status será atualizado automaticamente via webhook do Asaas.' });
+      toast.success({ title: 'Estorno solicitado', description: 'O status será atualizado assim que a solicitação for confirmada.' });
       setRefundOpen(false);
     },
-    onError: (err) => toast.error({ title: 'Erro ao estornar pagamento', description: err.message }),
+    onError: () => toast.error({
+      title: 'Não foi possível solicitar o estorno',
+      description: 'Tente novamente. Se o problema continuar, entre em contato com o suporte.',
+    }),
   });
 
   const paid = useMutation({ mutationFn: () => markTicketSalePaid(sale.id), onSuccess: invalidate, onError: (err) => toast.error({ title: 'Erro ao marcar como pago', description: err.message }) });
@@ -94,7 +97,7 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
             ) : null}
             {sale.invoiceUrl ? (
               <DropdownMenuItem asChild>
-                <Link href={sale.invoiceUrl} target="_blank">Abrir fatura Asaas</Link>
+                <Link href={sale.invoiceUrl} target="_blank">Abrir cobrança</Link>
               </DropdownMenuItem>
             ) : null}
             {sale.ticketsUrl ? (
@@ -120,7 +123,7 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
           open={refundOpen}
           onOpenChange={setRefundOpen}
           title="Estornar pagamento?"
-          description="O estorno será solicitado no Asaas e o status final será confirmado via webhook."
+          description="O estorno será solicitado e o status será atualizado após a confirmação."
           confirmText="Solicitar estorno"
           cancelText="Cancelar"
           variant="destructive"

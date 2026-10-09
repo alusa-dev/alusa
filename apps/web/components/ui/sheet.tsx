@@ -16,8 +16,9 @@ const SheetOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      'fixed inset-0 z-50 alusa-overlay-soft bg-slate-950/30 backdrop-blur-[1px] data-[state=open]:animate-in data-[state=closed]:animate-out',
+      'fixed inset-0 z-50 alusa-overlay-soft data-[state=open]:animate-in data-[state=closed]:animate-out',
       className,
+      'bg-black/80 !bg-black/80 backdrop-blur-none !backdrop-blur-none',
     )}
     {...props}
   />

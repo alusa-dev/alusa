@@ -37,6 +37,7 @@ export default function BillingScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [charges, setCharges] = useState<BillingCharge[]>([]);
+  const [chargesError, setChargesError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState<BillingCategoryFilter>();
   const [sort, setSort] = useState<BillingChargesSort>('created-at-desc');
@@ -48,17 +49,22 @@ export default function BillingScreen() {
   const [chargesHasMore, setChargesHasMore] = useState(false);
   const [chargesLoadingMore, setChargesLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
+  const chargesRequestIdRef = useRef(0);
+  const summaryRequestIdRef = useRef(0);
 
   const loadSummary = useCallback(async (options: { silent?: boolean } = {}) => {
+    const requestId = ++summaryRequestIdRef.current;
     if (!options.silent) setLoading(true);
     setError(null);
     try {
       const response = await billingService.getSummary(period);
+      if (requestId !== summaryRequestIdRef.current) return;
       setSummary(response.summary);
     } catch (loadError) {
+      if (requestId !== summaryRequestIdRef.current) return;
       setError(loadError instanceof Error ? loadError.message : 'Não foi possível carregar o resumo das cobranças.');
     } finally {
-      if (!options.silent) setLoading(false);
+      if (requestId === summaryRequestIdRef.current && !options.silent) setLoading(false);
     }
   }, [period]);
 
@@ -67,18 +73,23 @@ export default function BillingScreen() {
   }, [loadSummary]);
 
   const loadCharges = useCallback(async (options: { silent?: boolean } = {}) => {
+    const requestId = ++chargesRequestIdRef.current;
     if (!options.silent) setChargesLoading(true);
+    setChargesError(null);
     try {
       const response = await billingService.listCharges({ period, category, sort, search, offset: 0, limit: 20 });
+      if (requestId !== chargesRequestIdRef.current) return;
       setCharges(response.charges);
       setChargesOffset(response.offset + response.charges.length);
       setChargesHasMore(response.hasMore);
-    } catch {
+    } catch (loadError) {
+      if (requestId !== chargesRequestIdRef.current) return;
       setCharges([]);
       setChargesOffset(0);
       setChargesHasMore(false);
+      setChargesError(loadError instanceof Error ? loadError.message : 'Não foi possível carregar as cobranças.');
     } finally {
-      if (!options.silent) setChargesLoading(false);
+      if (requestId === chargesRequestIdRef.current && !options.silent) setChargesLoading(false);
     }
   }, [category, period, search, sort]);
 
@@ -121,14 +132,18 @@ export default function BillingScreen() {
     if (chargesLoading || chargesLoadingMore || loadingMoreRef.current || !chargesHasMore) return;
     loadingMoreRef.current = true;
     setChargesLoadingMore(true);
+    const requestId = chargesRequestIdRef.current;
     try {
       const response = await billingService.listCharges({ period, category, sort, search, offset: chargesOffset, limit: 10 });
+      if (requestId !== chargesRequestIdRef.current) return;
       setCharges((current) => {
         const existingIds = new Set(current.map((charge) => `${charge.origin}:${charge.id}`));
         return [...current, ...response.charges.filter((charge) => !existingIds.has(`${charge.origin}:${charge.id}`))];
       });
       setChargesOffset((current) => Math.max(current, response.offset + response.charges.length));
       setChargesHasMore(response.hasMore);
+    } catch (loadError) {
+      if (requestId === chargesRequestIdRef.current) setChargesError(loadError instanceof Error ? loadError.message : 'Não foi possível carregar mais cobranças.');
     } finally {
       loadingMoreRef.current = false;
       setChargesLoadingMore(false);
@@ -190,7 +205,7 @@ export default function BillingScreen() {
           </View>
         </View>
       ) : null}
-      {!loading && !error ? <BillingList charges={charges} loading={chargesLoading} loadingMore={chargesLoadingMore} hasMore={chargesHasMore} search={search} onSearchChange={setSearch} onOpenFilters={openFilters} hasActiveFilters={Boolean(category) || sort !== 'created-at-desc'} /> : null}
+      {!loading && !error ? <BillingList charges={charges} loading={chargesLoading} error={chargesError} onRetry={() => void loadCharges()} loadingMore={chargesLoadingMore} hasMore={chargesHasMore} search={search} onSearchChange={setSearch} onOpenFilters={openFilters} hasActiveFilters={Boolean(category) || sort !== 'created-at-desc'} /> : null}
       <BillingFilterSheet
         visible={filterVisible}
         category={draftCategory}
@@ -241,7 +256,7 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.76 },
 });
 
-function BillingList({ charges, loading, loadingMore, hasMore, search, onSearchChange, onOpenFilters, hasActiveFilters }: { charges: BillingCharge[]; loading: boolean; loadingMore: boolean; hasMore: boolean; search: string; onSearchChange: (value: string) => void; onOpenFilters: () => void; hasActiveFilters: boolean }) {
+function BillingList({ charges, loading, error, onRetry, loadingMore, hasMore, search, onSearchChange, onOpenFilters, hasActiveFilters }: { charges: BillingCharge[]; loading: boolean; error: string | null; onRetry: () => void; loadingMore: boolean; hasMore: boolean; search: string; onSearchChange: (_value: string) => void; onOpenFilters: () => void; hasActiveFilters: boolean }) {
   return (
     <View style={listStyles.section}>
       <InlineSearchHeader
@@ -255,8 +270,9 @@ function BillingList({ charges, loading, loadingMore, hasMore, search, onSearchC
         filterActive={hasActiveFilters}
       />
       {loading ? <BillingListSkeleton /> : null}
-      {!loading && charges.length === 0 ? <EmptyState title="Nenhuma cobrança encontrada" message="As cobranças da conta aparecerão aqui quando forem geradas." /> : null}
-      {!loading ? charges.map((charge) => <Pressable key={`${charge.origin}:${charge.id}`} accessibilityRole="button" accessibilityLabel={`${charge.studentName}, ${charge.description}`} onPress={() => router.push({ pathname: '/(app)/billing/[chargeId]', params: { chargeId: charge.id } })} style={({ pressed }) => [listStyles.card, pressed ? listStyles.pressed : null]}>
+      {!loading && error ? <ErrorState title="Não foi possível carregar" message={error} actionLabel="Tentar novamente" onAction={onRetry} /> : null}
+      {!loading && !error && charges.length === 0 ? <EmptyState title="Nenhuma cobrança encontrada" message="As cobranças da conta aparecerão aqui quando forem geradas." /> : null}
+      {!loading && !error ? charges.map((charge) => <Pressable key={`${charge.origin}:${charge.id}`} accessibilityRole="button" accessibilityLabel={`${charge.studentName}, ${charge.description}`} onPress={() => router.push({ pathname: '/(app)/billing/[chargeId]', params: { chargeId: charge.id } })} style={({ pressed }) => [listStyles.card, pressed ? listStyles.pressed : null]}>
         <View style={listStyles.copy}>
           <AppText weight="medium" numberOfLines={1}>{charge.studentName}</AppText>
           <AppText variant="small" tone="muted" numberOfLines={1}>{charge.description}</AppText>
@@ -268,8 +284,8 @@ function BillingList({ charges, loading, loadingMore, hasMore, search, onSearchC
         </View>
         <ChevronRightIcon color={colors.inkMuted} size={20} strokeWidth={1.8} style={listStyles.cardArrow} />
       </Pressable>) : null}
-      {!loading && loadingMore ? <AppText variant="small" tone="muted" style={listStyles.loadingMore}>Carregando mais cobranças...</AppText> : null}
-      {!loading && !loadingMore && !hasMore && charges.length > 0 ? <AppText variant="small" tone="muted" style={listStyles.endMessage}>Fim da lista</AppText> : null}
+      {!loading && !error && loadingMore ? <AppText variant="small" tone="muted" style={listStyles.loadingMore}>Carregando mais cobranças...</AppText> : null}
+      {!loading && !error && !loadingMore && !hasMore && charges.length > 0 ? <AppText variant="small" tone="muted" style={listStyles.endMessage}>Fim da lista</AppText> : null}
     </View>
   );
 }

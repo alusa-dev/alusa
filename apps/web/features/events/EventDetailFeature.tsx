@@ -6,7 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 import { EventCostumesPanel } from './costumes/EventCostumesPanel';
 import { EventDangerZone } from './detail/EventDangerZone';
-import { EventDetailKpis } from './detail/EventDetailKpis';
 import { EventHeader } from './detail/EventHeader';
 import { EventMapSection } from './detail/EventMapSection';
 import { getEvent, listEventParticipants } from './events-service';
@@ -44,8 +43,7 @@ export function EventDetailFeature({ eventId }: { eventId: string }) {
 
   return (
     <div className="space-y-8 pb-16">
-      <EventHeader event={event} />
-      <EventDetailKpis event={event} participantsCount={participants.length} />
+      <EventHeader event={event} participantsCount={participants.length} />
       <EventParticipantsPanel eventId={eventId} event={event} participants={participants} loading={participantsQuery.isLoading} />
 
       {event.hasCostumes && (
@@ -79,7 +77,7 @@ export function EventDetailFeature({ eventId }: { eventId: string }) {
             <p className="text-xs text-slate-500 mt-1">Controle detalhado de receitas de bilheteria/taxas e despesas com fornecedores.</p>
           </CardHeader>
           <CardContent className="p-0">
-            <EventFinancialPanel eventId={eventId} event={event} />
+            <EventFinancialPanel eventId={eventId} event={event} showResultMetricsTab={false} />
           </CardContent>
         </Card>
       )}

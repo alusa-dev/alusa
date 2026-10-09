@@ -24,7 +24,22 @@ export function TicketSalesTable({
     <EventPaginatedDataTable
       columns={[
         { id: 'buyer', header: 'Comprador', width: 'w-[22%]', align: 'left', render: (sale: TicketSaleDTO) => <span className="font-medium text-slate-950">{sale.buyerName}</span> },
-        { id: 'lot', header: 'Lote', width: 'w-[16%]', align: 'left', render: (sale: TicketSaleDTO) => sale.lot.name },
+        {
+          id: 'lot',
+          header: 'Mapa/Lote',
+          width: 'w-[16%]',
+          align: 'left',
+          render: (sale: TicketSaleDTO) => (
+            <div className="min-w-0">
+              <strong className="block truncate font-medium text-slate-950" title={sale.sessionName ?? undefined}>
+                {sale.sessionName || 'Sem mapa'}
+              </strong>
+              <span className="block truncate text-xs text-slate-500" title={sale.lot.name}>
+                {sale.lot.name}
+              </span>
+            </div>
+          ),
+        },
         { id: 'qty', header: 'Qtd.', width: 'w-[9%]', align: 'right', render: (sale: TicketSaleDTO) => sale.quantity },
         { id: 'total', header: 'Total', width: 'w-[14%]', align: 'right', render: (sale: TicketSaleDTO) => formatCurrency(sale.totalAmount) },
         { id: 'status', header: 'Status', width: 'w-[14%]', align: 'center', render: (sale: TicketSaleDTO) => <SoftBadge tone={getTicketSaleTone(sale.status)}>{EXTENDED_TICKET_SALE_STATUS_LABELS[sale.status]}</SoftBadge> },

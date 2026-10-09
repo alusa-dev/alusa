@@ -4512,6 +4512,8 @@ model SchoolEvent {
   paymentDiscountDueDateLimitDays Int?
   contratoModeloId                String?
   notes                           String?
+  ticketArtworkUrl                String?
+  ticketArtworkStorageKey         String?
   createdByUserId                 String?
   createdAt                       DateTime          @default(now())
   updatedAt                       DateTime          @updatedAt
@@ -4552,6 +4554,7 @@ model EventTicketLot {
   id            String               @id @default(cuid())
   contaId       String
   eventId       String
+  eventMapId    String?
   name          String
   ticketType    EventTicketType
   unitPrice     Decimal              @db.Decimal(12, 2)
@@ -4566,12 +4569,13 @@ model EventTicketLot {
 
   conta       Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
   event       SchoolEvent       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventMap    EventMap?         @relation(fields: [eventMapId], references: [id], onDelete: SetNull)
   sales       EventTicketSale[]
   mapSections EventMapSection[]
 
-  @@unique([contaId, eventId, name], name: "uq_event_ticket_lot_conta_event_name")
   @@index([contaId], name: "idx_event_ticket_lot_conta")
   @@index([contaId, eventId, status], name: "idx_event_ticket_lot_conta_event_status")
+  @@index([contaId, eventMapId, status], name: "idx_event_ticket_lot_conta_map_status")
   @@index([contaId, saleStartsAt, saleEndsAt], name: "idx_event_ticket_lot_conta_sale_window")
 }
 
@@ -4580,6 +4584,10 @@ model EventMap {
   contaId            String
   eventId            String
   name               String
+  startsAt           DateTime?
+  endsAt             DateTime?
+  locationName       String?
+  locationAddress    String?
   status             EventMapStatus @default(DRAFT)
   publishedVersionId String?
   publicSlug         String?        @unique
@@ -4594,6 +4602,7 @@ model EventMap {
 
   conta        Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
   event        SchoolEvent           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  ticketLots   EventTicketLot[]
   versions     EventMapVersion[]
   levels       EventMapLevel[]
   objects      EventMapObject[]
@@ -4851,6 +4860,7 @@ model EventMapOrder {
   asaasPaymentId                 String?
   paymentMethod                  String?
   paymentStatus                  String?
+  refundRequestUrl               String?
   invoiceUrl                     String?
   expiresAt                      DateTime?
   paidAt                         DateTime?
@@ -4873,7 +4883,7 @@ model EventMapOrder {
   @@index([contaId, eventMapId, versionId, status], name: "idx_event_map_order_conta_map_version_status")
   @@index([contaId, status, ticketFulfillmentStatus, updatedAt], name: "idx_event_map_order_conta_fulfillment")
   @@index([contaId, eventId, createdAt], name: "idx_event_map_order_conta_event_created")
-  @@index([contaId, asaasPaymentId], name: "idx_event_map_order_conta_asaas_payment")
+  @@unique([contaId, asaasPaymentId], name: "uq_event_map_order_conta_asaas_payment")
   @@index([contaId, expiresAt, status], name: "idx_event_map_order_conta_expires_status")
 }
 

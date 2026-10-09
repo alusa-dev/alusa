@@ -9,6 +9,11 @@ import { enforcePublicEventMapRateLimit } from '@/src/server/events/public-event
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+function noStore(response: NextResponse) {
+  response.headers.set('Cache-Control', 'private, no-store, max-age=0');
+  return response;
+}
+
 type RouteContext = {
   params: Promise<{ publicSlug: string }>;
 };
@@ -16,11 +21,11 @@ type RouteContext = {
 export async function POST(request: NextRequest, { params }: RouteContext) {
   try {
     const { publicSlug } = await params;
-    const limited = await enforcePublicEventMapRateLimit(request, 'reserve', publicSlug);
-    if (limited) return limited;
+    const limited = await enforcePublicEventMapRateLimit(request, 'reserve');
+    if (limited) return noStore(limited);
     const body = publicSeatReservationSchema.parse(await request.json());
-    return NextResponse.json({ data: await reservePublicEventMapSeats(publicSlug, body) });
+    return noStore(NextResponse.json({ data: await reservePublicEventMapSeats(publicSlug, body) }));
   } catch (error) {
-    return handleEventsRouteError(error, 'ERRO_RESERVAR_ASSENTOS_MAPA_PUBLICO');
+    return noStore(handleEventsRouteError(error, 'ERRO_RESERVAR_ASSENTOS_MAPA_PUBLICO'));
   }
 }

@@ -5,13 +5,18 @@ vi.mock('../prisma', () => ({
     eventTicket: {
       findFirst: vi.fn(),
       findMany: vi.fn(),
+      count: vi.fn(),
     },
+    eventAudit: { findMany: vi.fn() },
   },
 }));
 
 import { prisma } from '../prisma';
 import {
   assertEventAllowsCheckIn,
+  listEventTicketCheckIns,
+  isEventMapOrderRefundFinalized,
+  isTicketPaymentBlocked,
   verifyEventTicketForCheckInAcrossEvents,
 } from './ticket-checkin.service';
 
@@ -102,6 +107,61 @@ describe('verifyEventTicketForCheckInAcrossEvents', () => {
   });
 });
 
+describe('listEventTicketCheckIns', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns only USED tickets scoped to tenant and event, with the recorded operator', async () => {
+    vi.mocked(prisma.eventTicket.findMany).mockResolvedValue([{
+      id: 'ticket-used',
+      usedAt: new Date('2026-10-08T16:00:00.000Z'),
+      order: { buyerName: 'Ana', buyerEmail: 'ana@example.test', map: { name: 'Sessão 1' } },
+      orderItem: { sectionName: 'Plateia', seatLabel: 'A1' },
+      sale: null,
+      saleSeat: null,
+    }] as never);
+    vi.mocked(prisma.eventAudit.findMany).mockResolvedValue([{
+      entityId: 'ticket-used', actor: { nome: 'Operador' },
+    }] as never);
+    vi.mocked(prisma.eventTicket.count).mockResolvedValue(41);
+
+    const result = await listEventTicketCheckIns('conta-a', 'event-a', { page: 3, pageSize: 10 });
+
+    expect(prisma.eventTicket.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { contaId: 'conta-a', eventId: 'event-a', status: 'USED' },
+      skip: 20,
+      take: 10,
+    }));
+    expect(prisma.eventTicket.count).toHaveBeenCalledWith({ where: { contaId: 'conta-a', eventId: 'event-a', status: 'USED' } });
+    expect(prisma.eventAudit.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ contaId: 'conta-a', eventId: 'event-a', entityId: { in: ['ticket-used'] } }),
+    }));
+    expect(result).toMatchObject({ total: 41, page: 3, pageSize: 10 });
+    expect(result.items[0]).toMatchObject({
+      buyerName: 'Ana', sessionName: 'Sessão 1', seatLabel: 'Plateia · A1', operatorName: 'Operador',
+    });
+  });
+
+  it('clamps page and page size and skips the audit lookup for an empty page', async () => {
+    vi.mocked(prisma.eventTicket.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.eventTicket.count).mockResolvedValue(3);
+
+    const result = await listEventTicketCheckIns('conta-a', 'event-a', { page: 1001, pageSize: 1000 });
+
+    expect(prisma.eventTicket.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 49_950, take: 50 }));
+    expect(result).toMatchObject({ items: [], total: 3, page: 1_000, pageSize: 50 });
+    expect(prisma.eventAudit.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('event-map refund finality', () => {
+  it('keeps a confirmed refund terminal across later payment snapshots', () => {
+    expect(isEventMapOrderRefundFinalized('REFUNDED', 'REFUNDED')).toBe(true);
+    expect(isEventMapOrderRefundFinalized('CONFIRMED', 'PAYMENT_REFUNDED')).toBe(true);
+    expect(isEventMapOrderRefundFinalized('CONFIRMED', 'REFUND_DENIED')).toBe(false);
+    expect(isEventMapOrderRefundFinalized('CONFIRMED', 'DISPUTE_LOST')).toBe(false);
+  });
+});
+
 describe('assertEventAllowsCheckIn', () => {
   it.each(['DRAFT', 'PLANNING', 'ACTIVE', 'FINISHED'] as const)('allows check-in for %s events', (status) => {
     expect(() => assertEventAllowsCheckIn(status)).not.toThrow();
@@ -112,5 +172,25 @@ describe('assertEventAllowsCheckIn', () => {
       code: 'EVENTO_INDISPONIVEL',
       status: 409,
     }));
+  });
+});
+
+describe('isTicketPaymentBlocked', () => {
+  it.each([
+    'REFUND_REQUESTED',
+    'REFUND_IN_PROGRESS',
+    'PAYMENT_REFUND_IN_PROGRESS',
+    'REFUNDED',
+    'PAYMENT_REFUNDED',
+    'CHARGEBACK_REQUESTED',
+    'CHARGEBACK_DISPUTE',
+    'AWAITING_CHARGEBACK_REVERSAL',
+    'CHARGEBACK_UNKNOWN',
+  ])('blocks tickets while payment is %s', (status) => {
+    expect(isTicketPaymentBlocked(status)).toBe(true);
+  });
+
+  it.each(['RECEIVED', 'REFUND_DENIED', 'PENDING', null, undefined])('keeps tickets unblocked for %s', (status) => {
+    expect(isTicketPaymentBlocked(status)).toBe(false);
   });
 });

@@ -127,6 +127,18 @@ export const createEventMapSchema = z.object({
   name: requiredText('Informe o nome do mapa.').default('Mapa principal'),
   creationMode: z.enum(['blank', 'reference-plan']).default('blank'),
   templateMapId: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional()),
+  startsAt: z.coerce.date().optional().nullable(),
+  endsAt: z.coerce.date().optional().nullable(),
+  locationName: z.preprocess(emptyToUndefined, z.string().trim().max(255).optional().nullable()),
+  locationAddress: z.preprocess(emptyToUndefined, z.string().trim().max(500).optional().nullable()),
+}).superRefine((input, context) => {
+  if (input.startsAt && input.endsAt && input.endsAt <= input.startsAt) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['endsAt'],
+      message: 'O término da sessão deve ser posterior ao início.',
+    });
+  }
 });
 
 export const eventMapLevelSchema = z.object({
@@ -231,9 +243,13 @@ export const updateEventMapDraftSchema = z.object({
 export const updateEventMapSettingsSchema = z
   .object({
     name: requiredText('Informe o nome do mapa.').optional(),
+    startsAt: z.coerce.date().optional().nullable(),
+    endsAt: z.coerce.date().optional().nullable(),
+    locationName: z.preprocess(emptyToUndefined, z.string().trim().max(255).optional().nullable()),
+    locationAddress: z.preprocess(emptyToUndefined, z.string().trim().max(500).optional().nullable()),
     publicEnabled: z.boolean().optional(),
   })
-  .refine((value) => value.name !== undefined || value.publicEnabled !== undefined, {
+  .refine((value) => Object.values(value).some((item) => item !== undefined), {
     message: 'Informe ao menos uma configuração para salvar.',
   });
 
@@ -243,6 +259,18 @@ export const updateEventMapReferenceChartSchema = z.object({
 
 export const duplicateEventMapSchema = z.object({
   name: requiredText('Informe o nome do novo mapa.').optional(),
+  startsAt: z.coerce.date().optional().nullable(),
+  endsAt: z.coerce.date().optional().nullable(),
+  locationName: z.preprocess(emptyToUndefined, z.string().trim().max(255).optional().nullable()),
+  locationAddress: z.preprocess(emptyToUndefined, z.string().trim().max(500).optional().nullable()),
+}).superRefine((input, context) => {
+  if (input.startsAt && input.endsAt && input.endsAt <= input.startsAt) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['endsAt'],
+      message: 'O término da sessão deve ser posterior ao início.',
+    });
+  }
 });
 
 export const publicSeatReservationSchema = z.object({

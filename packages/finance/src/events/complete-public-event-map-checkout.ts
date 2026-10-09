@@ -1,21 +1,19 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@alusa/database';
-import {
-  cancelPublicEventMapOrder,
-  confirmPublicEventMapOrderPayment,
-  enqueuePublicOrderCreatedEmail,
-  preparePublicEventMapCheckout,
-  reconcileEventMapOrderFinancialStateFromAsaas,
-  buildPublicEventMapCheckoutResponse,
-  publicOrderStatusPath,
-} from '@alusa/lib/events/map/event-map.service';
-import type { PublicCheckoutInput } from '@alusa/lib/events/map/event-map.service';
+import { preparePublicEventMapCheckout } from '@alusa/lib/events/map/public-event-map-checkout-persistence';
+import { publicOrderStatusPath } from '@alusa/lib/events/map/public-order-links';
+import { buildPublicEventMapCheckoutResponse } from './public-event-map-checkout-response';
+import { enqueuePublicOrderCreatedEmail } from './public-order-created-email';
+import { confirmPublicEventMapOrderPayment } from './confirm-public-event-map-order-payment';
+import { cancelPublicEventMapOrder } from '@alusa/lib/events/map/event-map-order-operations';
+import { reconcileEventMapOrderFinancialStateFromAsaas } from './event-map-payment-transitions';
+import type { PublicCheckoutInput } from '@alusa/lib/events/map/event-map.schema';
 import {
   getEventAsaasPaymentProvider,
   type EventAsaasPayment,
-} from '@alusa/lib/events/event-asaas-payment-provider';
-import { EventsError } from '@alusa/lib/events/events.service';
-import { loadDecryptedAsaasCredentials } from '@alusa/lib/services/integracoes/asaas-credentials-service';
+} from './event-asaas-payment-provider';
+import { EventsError } from '@alusa/domain/events';
+import { loadDecryptedAsaasCredentials } from '../foundation/load-decrypted-asaas-credentials';
 import { logEventsFinance } from './events-finance-observability';
 
 const PAID_ASAAS_PAYMENT_STATUSES = new Set([
@@ -97,7 +95,7 @@ export async function completePublicEventMapCheckout(
     if (!credentials?.apiKey) {
       throw new EventsError(
         'ASAAS_NAO_CONFIGURADO',
-        'Configure a integração Asaas para vender ingressos no mapa público.',
+        'A integração de pagamentos não está configurada para vender ingressos. Fale com a instituição.',
         409,
       );
     }
@@ -382,8 +380,8 @@ export async function completePublicEventMapCheckout(
         orderId: updated.id,
         buyerEmail: updated.buyerEmail,
         buyerName: updated.buyerName,
-        eventName: pending.map.event.name,
-        eventStartsAt: pending.map.event.startsAt,
+        eventName: `${pending.map.event.name} · ${pending.map.name}`,
+        eventStartsAt: pending.map.startsAt ?? pending.map.event.startsAt,
         statusPath: publicOrderStatusPath(pending.map.publicSlug, updated.id, updated.accessToken),
         invoiceUrl: updated.invoiceUrl,
         paymentMethod: input.paymentMethod,
@@ -424,7 +422,11 @@ export async function completePublicEventMapCheckout(
       !paymentCreationClaimed &&
       !paymentCreationStarted
     ) {
-      await cancelPublicEventMapOrder(pending.order.id, 'Falha ao gerar cobrança Asaas.');
+      await cancelPublicEventMapOrder(
+        pending.map.contaId,
+        pending.order.id,
+        'Falha ao gerar a cobrança.',
+      );
     }
     throw error;
   }

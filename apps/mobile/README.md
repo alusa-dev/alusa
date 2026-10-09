@@ -57,6 +57,10 @@ Quando o primeiro login é concluído em um dispositivo compatível, o iOS apres
 
 Para testar em um iPhone, mantenha computador e aparelho na mesma rede Wi-Fi, use o IP local do computador em `EXPO_PUBLIC_API_URL` (por exemplo, `http://10.0.0.101:3000`) e deixe `EXPO_PUBLIC_MOBILE_AUTH_ENABLED=true`.
 
+O build de desenvolvimento solicita acesso à rede local no iOS e permite HTTP local apenas durante o desenvolvimento. Depois de alterar `app.config.js`, reinstale o development build para aplicar as permissões nativas; recarregar o JavaScript não atualiza o `Info.plist` nem o manifesto Android. Em produção, o app exige HTTPS e não habilita tráfego HTTP local.
+
+Para gerar um development build para iPhone físico, use `eas build --profile development-device --platform ios`. O perfil `development` existente continua destinado ao simulador.
+
 ## Checks
 
 ```bash

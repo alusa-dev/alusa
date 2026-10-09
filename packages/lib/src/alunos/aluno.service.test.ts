@@ -1,24 +1,26 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { createAluno, deleteAluno, listAlunos } from './aluno.service';
+import { createAluno as createAlunoPersisted, deleteAluno as deleteAlunoPersisted, listAlunos } from './aluno.service';
 import { encryptSecret } from '../security/encryption';
 
 const {
-  ensureAsaasCustomerForPayerMock,
+  ensurePayerProfileMock,
   syncAlunoInativacaoToAsaasMock,
 } = vi.hoisted(() => ({
-  ensureAsaasCustomerForPayerMock: vi.fn(),
+  ensurePayerProfileMock: vi.fn(),
   syncAlunoInativacaoToAsaasMock: vi.fn(),
 }));
 
-vi.mock('@alusa/finance', async () => {
-  return {
-    ensureAsaasCustomerForPayer: ensureAsaasCustomerForPayerMock,
-    loadAndValidateSubaccountKey: vi.fn(),
-    syncAlunoInativacaoToAsaas: syncAlunoInativacaoToAsaasMock,
-    syncAlunoToAsaasProvider: vi.fn(),
-  };
-});
+const studentFinancePortForTests = {
+  ensurePayerProfile: ensurePayerProfileMock,
+  deactivatePayerProfile: syncAlunoInativacaoToAsaasMock,
+  synchronizeStudentProfile: vi.fn(),
+};
+
+const createAlunoWithFinance = (input: Parameters<typeof createAlunoPersisted>[0]) =>
+  createAlunoPersisted(input, studentFinancePortForTests);
+const deleteAlunoWithFinance = (id: string, tenantId: string, reason?: string) =>
+  deleteAlunoPersisted(id, tenantId, reason, false, undefined, studentFinancePortForTests);
 
 const prisma = new PrismaClient();
 
@@ -100,12 +102,12 @@ describe('Aluno Service', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     let counter = 0;
-    ensureAsaasCustomerForPayerMock.mockImplementation(async ({ contaId: inputContaId, payer }) => {
+    ensurePayerProfileMock.mockImplementation(async ({ tenantId: inputContaId, payer }) => {
       counter += 1;
-      const customerId = payer.asaasCustomerId ?? `cust_${counter}`;
-      const externalReference = `${payer.type.toLowerCase()}:${payer.id ?? customerId}`;
+      const customerId = payer.existingCustomerReference ?? `cust_${counter}`;
+      const externalReference = `${payer.role.toLowerCase()}:${payer.id ?? customerId}`;
 
-      if (payer.id && payer.type === 'ALUNO') {
+      if (payer.id && payer.role === 'STUDENT') {
         await prisma.aluno.updateMany({
           where: { id: payer.id, contaId: inputContaId },
           data: {
@@ -116,7 +118,7 @@ describe('Aluno Service', () => {
         });
       }
 
-      if (payer.id && payer.type === 'RESPONSAVEL') {
+      if (payer.id && payer.role === 'RESPONSIBLE') {
         await prisma.responsavel.updateMany({
           where: { id: payer.id, contaId: inputContaId },
           data: {
@@ -127,12 +129,7 @@ describe('Aluno Service', () => {
         });
       }
 
-      return {
-        ok: true,
-        customerId,
-        externalReference,
-        reused: false,
-      };
+      return undefined;
     });
     syncAlunoInativacaoToAsaasMock.mockResolvedValue({
       success: true,
@@ -160,7 +157,7 @@ describe('Aluno Service', () => {
   });
 
   it('cria e lista alunos', async () => {
-    const aluno = await createAluno({
+    const aluno = await createAlunoWithFinance({
       contaId,
       nome: 'Teste Unit',
       cpf: '52998224725',
@@ -181,8 +178,8 @@ describe('Aluno Service', () => {
     await prisma.aluno.deleteMany({ where: { contaId } });
     
     const endereco = { cep: '01001000', logradouro: 'Rua A', numero: '10', bairro: 'Centro', cidade: 'SP', uf: 'SP' };
-    const a1 = await createAluno({ contaId, nome: 'Aluno 1', cpf: '12345678909', dataNasc: new Date('2000-02-02'), endereco });
-    const a2 = await createAluno({ contaId, nome: 'Aluno 2', cpf: '98765432100', dataNasc: new Date('2001-03-03'), endereco });
+    const a1 = await createAlunoWithFinance({ contaId, nome: 'Aluno 1', cpf: '12345678909', dataNasc: new Date('2000-02-02'), endereco });
+    const a2 = await createAlunoWithFinance({ contaId, nome: 'Aluno 2', cpf: '98765432100', dataNasc: new Date('2001-03-03'), endereco });
     expect(a1.codigoInterno).toBeDefined();
     expect(a2.codigoInterno).toBeDefined();
     expect(Number(a2.codigoInterno) - Number(a1.codigoInterno)).toBe(1);
@@ -191,7 +188,7 @@ describe('Aluno Service', () => {
 
   it('cria aluno menor com responsável', async () => {
     const endereco = { cep: '01001000', logradouro: 'Rua A', numero: '10', bairro: 'Centro', cidade: 'SP', uf: 'SP' };
-    const aluno = await createAluno({
+    const aluno = await createAlunoWithFinance({
       contaId,
       nome: 'João Silva',
       cpf: '74185296355',
@@ -227,7 +224,7 @@ describe('Aluno Service', () => {
   });
 
   it('reativa automaticamente o mesmo aluno maior de idade pelo CPF', async () => {
-    const alunoOriginal = await createAluno({
+    const alunoOriginal = await createAlunoWithFinance({
       contaId,
       nome: 'Aluno Reativado Adulto',
       cpf: '39053344705',
@@ -239,7 +236,7 @@ describe('Aluno Service', () => {
       data: { status: 'INATIVO', motivoInativacao: 'Pausa', dataInativacao: new Date() },
     });
 
-    const alunoRecadastrado = await createAluno({
+    const alunoRecadastrado = await createAlunoWithFinance({
       contaId,
       nome: 'Aluno Reativado Adulto Atualizado',
       cpf: '39053344705',
@@ -267,7 +264,7 @@ describe('Aluno Service', () => {
       cidade: 'São Paulo',
       uf: 'SP',
     };
-    const alunoOriginal = await createAluno({
+    const alunoOriginal = await createAlunoWithFinance({
       contaId,
       nome: 'Menor Reativado',
       dataNasc: new Date('2015-05-15'),
@@ -286,7 +283,7 @@ describe('Aluno Service', () => {
       data: { status: 'INATIVO', motivoInativacao: 'Pausa', dataInativacao: new Date() },
     });
 
-    const alunoRecadastrado = await createAluno({
+    const alunoRecadastrado = await createAlunoWithFinance({
       contaId,
       nome: 'Menor Reativado',
       dataNasc: new Date('2015-05-15'),
@@ -310,7 +307,7 @@ describe('Aluno Service', () => {
   });
 
   it('não cria outro aluno quando o cadastro original ainda está ativo', async () => {
-    await createAluno({
+    await createAlunoWithFinance({
       contaId,
       nome: 'Aluno Ativo Duplicado',
       cpf: '52998224725',
@@ -318,7 +315,7 @@ describe('Aluno Service', () => {
     });
 
     await expect(
-      createAluno({
+      createAlunoWithFinance({
         contaId,
         nome: 'Aluno Ativo Duplicado',
         cpf: '52998224725',
@@ -329,7 +326,7 @@ describe('Aluno Service', () => {
 
   it('hard delete aluno quando não há histórico financeiro', async () => {
     const endereco = { cep: '01001000', logradouro: 'Rua A', numero: '10', bairro: 'Centro', cidade: 'SP', uf: 'SP' };
-    const aluno = await createAluno({
+    const aluno = await createAlunoWithFinance({
       contaId,
       nome: 'Aluno Delete',
       cpf: '39053344705',
@@ -337,16 +334,16 @@ describe('Aluno Service', () => {
       endereco,
     });
 
-    await deleteAluno(aluno.id, contaId, 'duplicado');
+    await deleteAlunoWithFinance(aluno.id, contaId, 'duplicado');
 
     const updated = await prisma.aluno.findUnique({ where: { id: aluno.id } });
     expect(updated).toBeNull();
-    expect(syncAlunoInativacaoToAsaasMock).toHaveBeenCalledWith({ alunoId: aluno.id, contaId });
+    expect(syncAlunoInativacaoToAsaasMock).toHaveBeenCalledWith({ studentId: aluno.id, tenantId: contaId });
   });
 
   it('arquiva aluno mesmo com assinaturas ativas', async () => {
     const endereco = { cep: '01001000', logradouro: 'Rua A', numero: '10', bairro: 'Centro', cidade: 'SP', uf: 'SP' };
-    const aluno = await createAluno({
+    const aluno = await createAlunoWithFinance({
       contaId,
       nome: 'Aluno Assinatura',
       cpf: '52998224725',
@@ -387,7 +384,7 @@ describe('Aluno Service', () => {
       },
     });
 
-    await deleteAluno(aluno.id, contaId);
+    await deleteAlunoWithFinance(aluno.id, contaId);
 
     const stillThere = await prisma.aluno.findUnique({ where: { id: aluno.id } });
     expect(stillThere).not.toBeNull();
@@ -397,7 +394,7 @@ describe('Aluno Service', () => {
 
   it('arquiva aluno mesmo com matrículas ativas', async () => {
     const endereco = { cep: '01001000', logradouro: 'Rua A', numero: '10', bairro: 'Centro', cidade: 'SP', uf: 'SP' };
-    const aluno = await createAluno({
+    const aluno = await createAlunoWithFinance({
       contaId,
       nome: 'Aluno Matricula',
       cpf: '15350946056',
@@ -416,7 +413,7 @@ describe('Aluno Service', () => {
       },
     });
 
-    await deleteAluno(aluno.id, contaId);
+    await deleteAlunoWithFinance(aluno.id, contaId);
 
     const stillThere = await prisma.aluno.findUnique({ where: { id: aluno.id } });
     expect(stillThere).not.toBeNull();
@@ -428,7 +425,7 @@ describe('Aluno Service', () => {
     const endereco = { cep: '01001000', logradouro: 'Rua A', numero: '10', bairro: 'Centro', cidade: 'SP', uf: 'SP' };
     
     // Aluno com consentimento
-    const alunoComConsentimento = await createAluno({
+    const alunoComConsentimento = await createAlunoWithFinance({
       contaId,
       nome: 'Ana Costa',
       cpf: '39053344705',
@@ -442,7 +439,7 @@ describe('Aluno Service', () => {
     expect(alunoComConsentimento.dataConsentimentoImagem).toBeDefined();
     
     // Aluno sem consentimento
-    const alunoSemConsentimento = await createAluno({
+    const alunoSemConsentimento = await createAlunoWithFinance({
       contaId,
       nome: 'Pedro Santos',
       cpf: '15350946056',
@@ -457,7 +454,7 @@ describe('Aluno Service', () => {
 
   it('normaliza CPF e telefone corretamente', async () => {
     const endereco = { cep: '01001000', logradouro: 'Rua A', numero: '10', bairro: 'Centro', cidade: 'SP', uf: 'SP' };
-    const aluno = await createAluno({
+    const aluno = await createAlunoWithFinance({
       contaId,
       nome: 'Carlos Teste',
       dataNasc: new Date('2000-01-01'),
@@ -473,12 +470,12 @@ describe('Aluno Service', () => {
   });
 
   it('não cria aluno quando o Asaas falha', async () => {
-    ensureAsaasCustomerForPayerMock.mockRejectedValueOnce(new Error('timeout'));
+    ensurePayerProfileMock.mockRejectedValueOnce(new Error('timeout'));
 
     const endereco = { cep: '01001000', logradouro: 'Rua A', numero: '10', bairro: 'Centro', cidade: 'SP', uf: 'SP' };
 
     await expect(
-      createAluno({
+      createAlunoWithFinance({
         contaId,
         nome: 'Falha Asaas',
         cpf: '93541134780',
@@ -508,7 +505,7 @@ describe('Aluno Service', () => {
     };
 
     it('cria aluno menor SEM CPF quando responsável está completo', async () => {
-      const aluno = await createAluno({
+      const aluno = await createAlunoWithFinance({
         contaId,
         nome: 'Menor Sem CPF',
         dataNasc: new Date('2015-05-15'), // < 18 anos
@@ -553,7 +550,7 @@ describe('Aluno Service', () => {
         },
       });
 
-      const aluno = await createAluno({
+      const aluno = await createAlunoWithFinance({
         contaId,
         nome: 'Menor Vinculado',
         dataNasc: new Date('2015-05-15'),
@@ -587,7 +584,7 @@ describe('Aluno Service', () => {
       });
 
       await expect(
-        createAluno({
+        createAlunoWithFinance({
           contaId,
           nome: 'Menor Endereco Incompleto',
           dataNasc: new Date('2015-05-15'),
@@ -604,7 +601,7 @@ describe('Aluno Service', () => {
     });
 
     it('cria aluno menor COM CPF quando responsável está completo', async () => {
-      const aluno = await createAluno({
+      const aluno = await createAlunoWithFinance({
         contaId,
         nome: 'Menor Com CPF',
         dataNasc: new Date('2015-05-15'), // < 18 anos
@@ -625,7 +622,7 @@ describe('Aluno Service', () => {
 
     it('rejeita aluno menor com responsável financeiro sem endereço', async () => {
       await expect(
-        createAluno({
+        createAlunoWithFinance({
           contaId,
           nome: 'Menor Sem Endereco',
           dataNasc: new Date('2015-05-15'), // < 18 anos
@@ -645,7 +642,7 @@ describe('Aluno Service', () => {
 
   describe('Regras de maior de idade', () => {
     it('cria aluno maior SEM responsável (responsável opcional)', async () => {
-      const aluno = await createAluno({
+      const aluno = await createAlunoWithFinance({
         contaId,
         nome: 'Maior Sem Responsável',
         cpf: '52998224725', // CPF válido
@@ -658,7 +655,7 @@ describe('Aluno Service', () => {
     });
 
     it('cria aluno maior COM responsável (responsável opcional)', async () => {
-      const aluno = await createAluno({
+      const aluno = await createAlunoWithFinance({
         contaId,
         nome: 'Maior Com Responsável',
         cpf: '52998224725', // CPF válido
@@ -676,7 +673,7 @@ describe('Aluno Service', () => {
     });
 
     it('cria aluno maior sem endereço (endereço opcional)', async () => {
-      const aluno = await createAluno({
+      const aluno = await createAlunoWithFinance({
         contaId,
         nome: 'Maior Sem Endereco',
         cpf: '52998224725', // CPF válido
