@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { updateEventFinancialEntrySchema } from '@alusa/lib/events/events.schema';
-import { updateFinancialEntry } from '@alusa/lib/events/events.service';
+import { updateFinancialEntry } from '@alusa/finance';
 
 import { getEventsContext, handleEventsRouteError } from '../../_helpers';
 

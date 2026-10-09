@@ -69,6 +69,101 @@ describe('tenant cache', () => {
     }
   });
 
+  it('serves stale immediately and refreshes through the scheduled callback', async () => {
+    vi.useFakeTimers();
+    try {
+      const adapter = new MemoryCacheAdapter();
+      await adapter.set('alusa:test:tenant:ct_a:dashboard:kpis:v1', { value: 1 }, {
+        ttlSeconds: 1,
+        staleWhileRevalidateSeconds: 30,
+      });
+      vi.advanceTimersByTime(1_500);
+      const scheduled: Array<() => Promise<void>> = [];
+      const load = vi.fn(async () => ({ value: 2 }));
+
+      const result = await withTenantCache({
+        adapter,
+        key: 'alusa:test:tenant:ct_a:dashboard:kpis:v1',
+        ttlSeconds: 1,
+        staleWhileRevalidateSeconds: 30,
+        lockTtlSeconds: 10,
+        scheduleStaleRevalidation: (callback) => scheduled.push(callback),
+        load,
+      });
+
+      expect(result).toEqual({ state: 'STALE', body: { value: 1 } });
+      expect(load).not.toHaveBeenCalled();
+      await scheduled[0]?.();
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(await adapter.get('alusa:test:tenant:ct_a:dashboard:kpis:v1')).toEqual({
+        state: 'HIT',
+        body: { value: 2 },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses the distributed lock to avoid concurrent stale refreshes', async () => {
+    vi.useFakeTimers();
+    try {
+      const primary = new MemoryCacheAdapter();
+      const fallbackA = new MemoryCacheAdapter();
+      const fallbackB = new MemoryCacheAdapter();
+      const fallbackAAcquireLock = vi.spyOn(fallbackA, 'acquireLock');
+      const fallbackBAcquireLock = vi.spyOn(fallbackB, 'acquireLock');
+      const adapterA = new ResilientCacheAdapter(primary, fallbackA, { label: 'worker-a' });
+      const adapterB = new ResilientCacheAdapter(primary, fallbackB, { label: 'worker-b' });
+      const key = 'alusa:test:tenant:ct_a:dashboard:kpis:v1';
+      await primary.set(key, { value: 1 }, { ttlSeconds: 1, staleWhileRevalidateSeconds: 30 });
+      vi.advanceTimersByTime(1_500);
+      const scheduled: Array<() => Promise<void>> = [];
+      const load = vi.fn(async () => ({ value: 2 }));
+      const optionsA = {
+        adapter: adapterA,
+        key,
+        ttlSeconds: 1,
+        staleWhileRevalidateSeconds: 30,
+        lockTtlSeconds: 10,
+        scheduleStaleRevalidation: (callback: () => Promise<void>) => scheduled.push(callback),
+        load,
+      };
+      const optionsB = {
+        ...optionsA,
+        adapter: adapterB,
+      };
+
+      await Promise.all([withTenantCache(optionsA), withTenantCache(optionsB)]);
+      await Promise.all(scheduled.map((callback) => callback()));
+
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(fallbackAAcquireLock).not.toHaveBeenCalled();
+      expect(fallbackBAcquireLock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not fall back when the primary lock is already held', async () => {
+    const primary = {
+      get: vi.fn(async () => ({ state: 'MISS' as const })),
+      set: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+      acquireLock: vi.fn(async () => null),
+    };
+    const fallback = {
+      get: vi.fn(async () => ({ state: 'MISS' as const })),
+      set: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+      acquireLock: vi.fn(async () => 'fallback-token'),
+    };
+    const adapter = new ResilientCacheAdapter(primary, fallback, { label: 'test-primary-lock-held' });
+
+    await expect(adapter.acquireLock('k-lock-held', 10)).resolves.toBeNull();
+    expect(primary.acquireLock).toHaveBeenCalledTimes(1);
+    expect(fallback.acquireLock).not.toHaveBeenCalled();
+  });
+
   it('bypasses reads but refreshes the value', async () => {
     const adapter = new MemoryCacheAdapter();
     await adapter.set('k', { value: 1 }, { ttlSeconds: 30 });

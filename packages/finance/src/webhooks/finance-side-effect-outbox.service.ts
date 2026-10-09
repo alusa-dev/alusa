@@ -13,6 +13,7 @@ import {
 } from '@alusa/lib/notifications/emit-billing-notifications';
 import { getFinanceSideEffectRefundGateway } from './finance-side-effect-refund-gateway';
 import { getFinanceSideEffectEmailGateway } from './finance-side-effect-email-gateway';
+import { isTicketPaymentBlocked } from '@alusa/domain/events';
 
 const MAX_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 60_000;
@@ -555,9 +556,37 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
       };
       await emitBillingNotifications([payload.candidate], payload.sourceType, { throwOnError: true });
     } else if (event.effectType === 'EVENT_PUBLIC_ORDER_TICKET_EMAIL') {
-      providerMessageId = (await sendEventPublicOrderTicketEmail(
-        event.payload as EventPublicOrderTicketEmailPayload,
-      )).id;
+      const payload = event.payload as EventPublicOrderTicketEmailPayload;
+      const order = await prisma.eventMapOrder.findFirst({
+        where: { id: payload.orderId, contaId: event.contaId },
+        select: { status: true, paymentStatus: true, ticketFulfillmentStatus: true, _count: { select: { items: true } } },
+      });
+      const validTickets = order
+        ? await prisma.eventTicket.count({ where: { contaId: event.contaId, eventMapOrderId: payload.orderId, status: { in: ['VALID', 'USED'] } } })
+        : 0;
+      if (
+        !order ||
+        order.status !== 'CONFIRMED' ||
+        order.ticketFulfillmentStatus !== 'ISSUED' ||
+        validTickets !== order._count.items ||
+        isTicketPaymentBlocked(order.paymentStatus)
+      ) {
+        await prisma.financeWebhookSideEffectOutbox.updateMany({
+          where: { id: eventId, status: FinanceWebhookSideEffectStatus.PROCESSING, lockToken },
+          data: {
+            status: FinanceWebhookSideEffectStatus.PROCESSED,
+            processedAt: new Date(),
+            lockedAt: null,
+            leaseExpiresAt: null,
+            lockToken: null,
+            deliveryStatus: 'SKIPPED',
+            deliveryStatusAt: new Date(),
+            lastError: 'Entrega de ingresso ignorada porque o pedido não está elegível ou o pagamento está bloqueado.',
+          },
+        });
+        return { processed: true, reason: 'ticket_email_blocked_by_order_state' };
+      }
+      providerMessageId = (await sendEventPublicOrderTicketEmail(payload)).id;
     } else if (event.effectType === 'EVENT_PUBLIC_ORDER_CREATED_EMAIL') {
       providerMessageId = (await sendEventPublicOrderCreatedEmail(
         event.payload as EventPublicOrderCreatedEmailPayload,

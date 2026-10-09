@@ -107,6 +107,10 @@ type AsaasWebhookBody = {
     nossoNumero?: string;
     creditDate?: string;
     estimatedCreditDate?: string;
+    chargeback?: {
+      status?: string | null;
+      reason?: string | null;
+    } | null;
   };
   transfer?: {
     id: string;
@@ -335,6 +339,7 @@ async function processAsaasWebhookForRecord(params: {
           creditDate: payload.payment.creditDate ?? null,
           estimatedCreditDate: payload.payment.estimatedCreditDate ?? null,
           deleted: typeof payload.payment.deleted === 'boolean' ? payload.payment.deleted : null,
+          chargeback: payload.payment.chargeback ?? null,
         },
       });
 

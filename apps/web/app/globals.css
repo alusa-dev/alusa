@@ -1982,7 +1982,7 @@ select:focus {
 	--avatar-border: rgba(255, 255, 255, 0.08);
 
 	/* Overlays / modais */
-	--overlay-bg: rgba(5, 7, 10, 0.72);
+	--overlay-bg: rgba(0, 0, 0, 0.8);
 
 	--modal-bg: #15161e;
 	--modal-border: #32323e;
@@ -3816,7 +3816,7 @@ svg:hover,
 
 /* Registration dialogs use a neutral dimmed backdrop without blur. */
 .alusa-registration-wizard-overlay {
-	background-color: rgb(0 0 0 / 60%) !important;
+	background-color: rgb(0 0 0 / 80%) !important;
 	backdrop-filter: none !important;
 	-webkit-backdrop-filter: none !important;
 }
@@ -3876,7 +3876,7 @@ svg:hover,
 }
 
 [data-theme="dark"] .alusa-registration-wizard-overlay {
-	background-color: rgb(0 0 0 / 60%) !important;
+	background-color: rgb(0 0 0 / 80%) !important;
 }
 
 .aluno-registration-wizard .alusa-wizard-fields :is(input.wizard-field-input, textarea.wizard-field-input, .alusa-select-trigger):is(:focus, :focus-visible, [data-state='open']):not(.wizard-field-input--required-empty):not(.wizard-field-input--error),

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
 import { ChevronRightIcon } from 'react-native-heroicons/outline';
@@ -23,20 +23,26 @@ export default function EventsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const loadEvents = useCallback(async (mode: 'initial' | 'refresh' = 'initial') => {
+    const requestId = ++requestIdRef.current;
     if (mode === 'refresh') setRefreshing(true);
     else setLoading(true);
     setError(null);
 
     try {
       const result = await eventsService.listEvents({ pageSize: 100 });
+      if (requestId !== requestIdRef.current) return;
       setEvents(result.events);
     } catch (reason) {
+      if (requestId !== requestIdRef.current) return;
       setError(reason instanceof Error ? reason.message : 'Não foi possível carregar os eventos.');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 

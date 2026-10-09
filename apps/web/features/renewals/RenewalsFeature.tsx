@@ -1358,6 +1358,7 @@ export default function RematriculasFeature() {
       >
         <DialogContent
           fullScreenMobile
+          disableBackdropBlur
           overlayClass="alusa-registration-wizard-overlay"
           className="renewal-standalone-search-dialog alusa-wizard-corner-smoothing flex max-h-[min(88dvh,calc(100dvh-3rem))] w-full max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border border-slate-200 bg-[#f8fafc] p-0 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0 max-md:rounded-none max-md:border-0"
         >
@@ -1536,6 +1537,7 @@ export default function RematriculasFeature() {
           fullScreenMobile
           aria-busy={campaignSaving}
           closeDisabled={campaignSaving}
+          disableBackdropBlur
           onEscapeKeyDown={(event) => {
             if (campaignSaving) event.preventDefault();
           }}

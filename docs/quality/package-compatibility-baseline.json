@@ -1,6 +1,1 @@
-[
-  {
-    "edge": "@alusa/lib→@alusa/finance",
-    "reason": "Ponte temporária do adapter de ciclo de vida de aluno; remover após migração incremental dos consumidores."
-  }
-]
+[]

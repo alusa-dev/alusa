@@ -88,12 +88,7 @@ const forbiddenManifestDependencies = {
   ]),
 };
 
-const compatibilityImportAllowlist = new Map([
-  [
-    '@alusa/lib→@alusa/finance',
-    'ponte temporária do adapter de ciclo de vida de aluno; migrar para o bounded context de alunos antes de remover o barrel de compatibilidade',
-  ],
-]);
+const compatibilityImportAllowlist = new Map();
 
 function packageDirectories() {
   return workspaceRoots.flatMap((workspaceRoot) => {

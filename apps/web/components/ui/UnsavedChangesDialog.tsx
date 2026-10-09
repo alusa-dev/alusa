@@ -38,7 +38,7 @@ export function UnsavedChangesDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <>
         <AlertDialogContent
-          overlayClassName="bg-black/25 backdrop-blur-none"
+          overlayClassName="bg-black/80 backdrop-blur-none"
           className={cn('alusa-unsaved-changes-dialog', className)}
         >
           <AlertDialogHeader>

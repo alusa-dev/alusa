@@ -116,6 +116,7 @@ export type FinanceOperationalEventName =
   | 'finance.events.public_event_map.order_payment.reconcile.failed'
   | 'finance.events.public_event_map.reservation_expire.job.completed'
   | 'finance.events.public_event_map.order_reconcile.job.completed'
+  | 'finance.events.public_event_map.refund_reconcile.job.completed'
   | 'finance.events.public_event_map.ticket_fulfillment.job.completed'
   | 'finance.events.public_event_map.financial_inconsistencies.inspect'
   | 'finance.http.charge_detail.cache_write.failed'

@@ -44,6 +44,7 @@ export type WithTenantCacheInput<T> = {
   lockTtlSeconds?: number;
   waitForLockMs?: number;
   bypass?: boolean;
+  scheduleStaleRevalidation?: (_revalidate: () => Promise<void>) => void;
   load: () => Promise<T>;
 };
 
@@ -324,8 +325,14 @@ export class ResilientCacheAdapter implements TenantCacheAdapter {
   }
 
   async acquireLock(key: string, ttlSeconds: number): Promise<string | null> {
+    const acquirePrimaryLock = this.primary.acquireLock;
+    if (!acquirePrimaryLock) {
+      return this.fallback.acquireLock?.(key, ttlSeconds) ?? null;
+    }
+
     try {
-      return await this.primary.acquireLock?.(key, ttlSeconds) ?? this.fallback.acquireLock?.(key, ttlSeconds) ?? null;
+      // A null token means the primary lock exists and is owned by another worker.
+      return await acquirePrimaryLock.call(this.primary, key, ttlSeconds);
     } catch (error) {
       this.warn('acquireLock', error);
       return this.fallback.acquireLock?.(key, ttlSeconds) ?? null;
@@ -354,11 +361,25 @@ export async function withTenantCache<T>({
   lockTtlSeconds,
   waitForLockMs = 150,
   bypass = false,
+  scheduleStaleRevalidation,
   load,
 }: WithTenantCacheInput<T>): Promise<{ state: CacheState; body: T }> {
   const cachedBefore = !bypass ? await adapter.get<T>(key) : { state: 'BYPASS' as CacheState };
   if (!bypass) {
     if (cachedBefore.body && (cachedBefore.state === 'HIT' || cachedBefore.state === 'STALE')) {
+      if (cachedBefore.state === 'STALE' && scheduleStaleRevalidation && lockTtlSeconds && adapter.acquireLock) {
+        scheduleStaleRevalidation(async () => {
+          const lockKey = `${key}:lock`;
+          const lockToken = await adapter.acquireLock?.(lockKey, lockTtlSeconds);
+          if (!lockToken) return;
+          try {
+            const refreshed = await load();
+            await adapter.set(key, refreshed, { ttlSeconds, staleWhileRevalidateSeconds });
+          } finally {
+            await adapter.releaseLock?.(lockKey, lockToken);
+          }
+        });
+      }
       return { state: cachedBefore.state, body: cachedBefore.body };
     }
   }

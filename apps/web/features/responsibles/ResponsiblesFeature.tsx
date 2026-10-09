@@ -197,6 +197,7 @@ export function ResponsaveisFeature() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent
           fullScreenMobile
+          disableBackdropBlur
           overlayClass="alusa-registration-wizard-overlay"
           className="responsible-registration-modal alusa-wizard-corner-smoothing flex h-[min(820px,calc(100dvh-3rem))] max-w-[820px] w-full flex-col gap-0 overflow-hidden rounded-[20px] bg-[#f8fafc] p-0 max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0"
         >

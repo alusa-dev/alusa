@@ -3,10 +3,25 @@
 import type { PublicMapViewModel } from './public-map-adapter';
 import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { MAP_ARTBOARD_STROKE, MAP_ARTBOARD_STROKE_WIDTH } from '@alusa/domain';
+import { isPublicOrderRefundActionPending } from '@alusa/lib/events/map/public-order-refund-action';
 import bwipjs from '@bwip-js/browser';
 
-import { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, CheckCircle2, CircleAlert, ExternalLink, Loader2, MapPin, ShoppingCart, Ticket, Check, Copy, CreditCard, QrCode, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  CalendarDaysIcon as CalendarDays,
+  CheckCircle as CheckCircle2,
+  AlertCircle as CircleAlert,
+  ExternalLink,
+  Loader2,
+  MapPin,
+  ShoppingCartSolid as ShoppingCart,
+  Ticket,
+  Check,
+  Copy,
+  CreditCard,
+  QrCode,
+  Refresh as RefreshCw,
+} from '@/components/icons/icons';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,12 +31,13 @@ import { BrandWordmark } from '@/components/brand/BrandWordmark';
 import { PublicMapLevelTabs } from './PublicMapLevelTabs';
 import { PublicOrderReservationCountdown } from './PublicOrderReservationCountdown';
 import {
+  isPublicOrderTicketPaymentBlocked,
+  publicOrderPaymentStatusLabel,
   publicOrderStatusLabel,
   publicSeatStatusLabel,
   publicSeatTooltip,
 } from './public-order-utils';
 import {
-  filterPublicMapObjectsByLevel,
   filterPublicMapRenderableObjects,
   filterPublicMapSeatsByLevel,
   getDefaultPublicMapLevelId,
@@ -115,7 +131,7 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
   const json = await response.json().catch(() => null);
   if (!response.ok) {
     const message = (json as { error?: { message?: string } } | null)?.error?.message ?? 'Não foi possível concluir.';
-    throw new Error(message);
+    throw Object.assign(new Error(message), { status: response.status });
   }
   return (json as { data?: T })?.data ?? (json as T);
 }
@@ -155,6 +171,7 @@ export function PublicMapExperience({
   const [pollTimedOut, setPollTimedOut] = useState(false);
   const [isSyncingPayment, setIsSyncingPayment] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const expirationSyncAttempted = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [order, setOrder] = useState<PublicMapOrderState | null>(initialOrder);
   const bankSlipBarcodeSvg = useMemo(() => {
@@ -276,6 +293,12 @@ export function PublicMapExperience({
     }
   }
 
+  function handleReservationExpired() {
+    if (expirationSyncAttempted.current) return;
+    expirationSyncAttempted.current = true;
+    void handleSyncPayment();
+  }
+
   function resetCheckoutFlow() {
     setOrder(null);
     setStep('SELECTION');
@@ -347,6 +370,7 @@ export function PublicMapExperience({
       );
 
       setOrder({ ...checkout, paymentMethod });
+      expirationSyncAttempted.current = false;
       if (checkout.statusUrl && typeof window !== 'undefined') {
         window.history.replaceState(null, '', checkout.statusUrl);
       }
@@ -358,6 +382,19 @@ export function PublicMapExperience({
       setStep('CONFIRMATION');
     } catch (checkoutError) {
       setError((checkoutError as Error).message);
+      if ((checkoutError as Error & { status?: number }).status === 409) {
+        setStep('SELECTION');
+        try {
+          const latestMap = await parseApiResponse<Pick<PublicMapViewModel, 'seats'>>(
+            await fetch(`/api/public/event-maps/${map.publicSlug}`, { cache: 'no-store' }),
+          );
+          setSeats(latestMap.seats);
+          const availableIds = new Set(latestMap.seats.filter((seat) => seat.status === 'AVAILABLE').map((seat) => seat.id));
+          setSelectedIds((current) => current.filter((seatId) => availableIds.has(seatId)));
+        } catch {
+          // Keep the conflict message visible; the next explicit refresh can retry.
+        }
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -369,6 +406,7 @@ export function PublicMapExperience({
   const currentOrderPaymentStatus = order?.paymentStatus;
   const currentTicketFulfillmentStatus = order?.ticketFulfillmentStatus;
   const currentTicketFulfillmentError = order?.ticketFulfillmentLastError;
+  const currentOrderTicketPaymentBlocked = isPublicOrderTicketPaymentBlocked(currentOrderPaymentStatus);
 
   useEffect(() => {
     if (
@@ -381,7 +419,8 @@ export function PublicMapExperience({
         && !(currentOrderStatus === 'CONFIRMED'
           && currentTicketFulfillmentError?.startsWith('ASSENTOS_INDISPONIVEIS:')
           && currentOrderPaymentStatus !== 'REFUND_DENIED'
-          && currentOrderPaymentStatus !== 'REFUNDED'))
+          && currentOrderPaymentStatus !== 'REFUNDED')
+        && !(currentOrderStatus === 'CONFIRMED' && currentOrderTicketPaymentBlocked))
     ) return;
 
     const orderId = currentOrderId;
@@ -465,6 +504,7 @@ export function PublicMapExperience({
             && status.ticketFulfillmentLastError?.startsWith('ASSENTOS_INDISPONIVEIS:')
             && status.paymentStatus !== 'REFUND_DENIED'
             && status.paymentStatus !== 'REFUNDED')
+          || (status.status === 'CONFIRMED' && isPublicOrderTicketPaymentBlocked(status.paymentStatus))
         ) {
           const baseDelay = Math.min(30_000, 5000 * (2 ** Math.min(pollAttempt, 3)));
           pollAttempt += 1;
@@ -499,12 +539,22 @@ export function PublicMapExperience({
       inFlightController?.abort();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [currentOrderAccessToken, currentOrderId, currentOrderPaymentStatus, currentOrderStatus, currentTicketFulfillmentError, currentTicketFulfillmentStatus]);
+  }, [currentOrderAccessToken, currentOrderId, currentOrderPaymentStatus, currentOrderStatus, currentOrderTicketPaymentBlocked, currentTicketFulfillmentError, currentTicketFulfillmentStatus]);
 
   const ticketsIssued =
     order?.status === 'CONFIRMED'
     && order.ticketFulfillmentStatus === 'ISSUED'
+    && !isPublicOrderTicketPaymentBlocked(order.paymentStatus)
     && Boolean(order.ticketsUrl);
+  const buyerRefundActionUrl = order && isPublicOrderRefundActionPending({
+    ...order,
+    paymentStatus: order.paymentStatus ?? null,
+    requestState: order.refundRequestUrl ? 'AWAITING_CUSTOMER_ACTION' : null,
+  })
+    ? order.refundRequestUrl
+    : null;
+  const paymentOperationalLabel = publicOrderPaymentStatusLabel(order?.paymentStatus);
+  const paymentAccessBlocked = isPublicOrderTicketPaymentBlocked(order?.paymentStatus);
   const ticketFulfillmentNeedsReconciliation =
     order?.status === 'CONFIRMED'
     && order.ticketFulfillmentStatus === 'REQUIRES_RECONCILIATION';
@@ -512,7 +562,7 @@ export function PublicMapExperience({
   const isPublicSelectionView = mode === 'public' && step === 'SELECTION';
   const paymentOptions = [
     { value: 'PIX' as const, label: 'Pix', desktopLabel: 'Pagar no PIX', description: 'Código Copia e Cola ou QR Code', icon: QrCode },
-    { value: 'CREDIT_CARD' as const, label: 'Cartão de Crédito', desktopLabel: 'Pagar no cartão de crédito ou débito', description: 'Pague no cartão via Asaas', icon: CreditCard },
+    { value: 'CREDIT_CARD' as const, label: 'Cartão de Crédito', desktopLabel: 'Pagar no cartão de crédito ou débito', description: 'Pague com segurança usando cartão', icon: CreditCard },
     { value: 'BOLETO' as const, label: 'Boleto Bancário', desktopLabel: 'Pagar no boleto', description: 'Compensação em até 1 dia útil', icon: Ticket },
   ];
   const paymentMethodInfo = {
@@ -520,7 +570,7 @@ export function PublicMapExperience({
       description: 'Após confirmar, você poderá pagar com o QR Code ou o código Pix nesta página.',
     },
     CREDIT_CARD: {
-      description: 'Após confirmar, você poderá concluir o pagamento com cartão no ambiente seguro do Asaas.',
+      description: 'Após confirmar, você poderá concluir o pagamento com cartão em um ambiente seguro.',
     },
     BOLETO: {
       description: 'O boleto será gerado após confirmar. A compensação pode levar até 1 dia útil.',
@@ -580,10 +630,10 @@ export function PublicMapExperience({
                 <CalendarDays aria-hidden="true" className="h-4 w-4" />
                 {formatDate(map.event.startsAt)}
               </span>
-              {map.event.locationName ? (
+              {map.event.locationName || map.event.locationAddress ? (
                 <span className="inline-flex items-center gap-1.5">
                   <MapPin aria-hidden="true" className="h-4 w-4" />
-                  {map.event.locationName}
+                  {[map.event.locationName, map.event.locationAddress].filter(Boolean).join(' · ')}
                 </span>
               ) : null}
             </div>
@@ -1068,6 +1118,8 @@ export function PublicMapExperience({
                 className={`border-0 bg-transparent p-0 text-center shadow-none lg:rounded-lg lg:border lg:bg-white lg:p-4 lg:text-left lg:shadow-sm ${
                   order.paymentStatus === 'REFUND_DENIED'
                     ? 'lg:border-rose-200'
+                    : paymentAccessBlocked
+                    ? 'lg:border-amber-200'
                     : order.status === 'CONFIRMED'
                     ? 'lg:border-emerald-200'
                     : order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED'
@@ -1079,6 +1131,8 @@ export function PublicMapExperience({
                   className={`flex items-center justify-center gap-2 lg:justify-start ${
                     order.paymentStatus === 'REFUND_DENIED'
                       ? 'text-rose-700'
+                      : paymentAccessBlocked
+                      ? order.paymentStatus === 'DISPUTE_LOST' ? 'text-rose-700' : 'text-amber-700'
                       : order.status === 'CONFIRMED'
                       ? 'text-emerald-700'
                       : order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED'
@@ -1090,16 +1144,20 @@ export function PublicMapExperience({
                     <CheckCircle2 className="h-5 w-5" />
                   ) : order.paymentStatus === 'REFUND_DENIED' ? (
                     <CircleAlert className="h-5 w-5" />
+                  ) : paymentAccessBlocked ? (
+                    <CircleAlert className="h-5 w-5" />
                   ) : (
                     <Loader2 className="h-5 w-5 animate-spin" />
                   )}
                   <h2 className="text-lg font-semibold lg:text-sm">
                     {order.paymentStatus === 'REFUND_DENIED'
                       ? 'Estorno não concluído'
+                    : buyerRefundActionUrl
+                      ? 'Ação necessária para concluir o estorno'
+                    : paymentOperationalLabel
+                      ? paymentOperationalLabel
                     : order.status === 'CONFIRMED' && ticketsIssued
                       ? 'Pagamento confirmado!'
-                      : order.refundRequestUrl
-                        ? 'Ação necessária para concluir o estorno'
                         : order.status === 'CONFIRMED' && order.ticketFulfillmentLastError?.startsWith('ASSENTOS_INDISPONIVEIS:')
                           ? 'Pagamento confirmado; estorno em andamento'
                       : order.status === 'CONFIRMED'
@@ -1116,13 +1174,19 @@ export function PublicMapExperience({
                     {order.status === 'CONFIRMED' && ticketsIssued
                     ? 'Seus ingressos foram emitidos e já podem ser baixados.'
                     : order.paymentStatus === 'REFUND_DENIED'
-                      ? 'O Asaas não concluiu o estorno do boleto. Fale com a direção da instituição para acompanhar a devolução. Não é necessário realizar uma nova compra.'
-                    : order.refundRequestUrl
-                      ? 'Os assentos já não estavam disponíveis quando o pagamento foi confirmado. Para receber o valor do boleto, informe seus dados na página segura do Asaas. Nenhum ingresso foi emitido.'
+                      ? 'Não foi possível concluir o estorno do boleto. Fale com a direção da instituição para acompanhar a devolução. Não é necessário realizar uma nova compra.'
+                    : buyerRefundActionUrl
+                      ? 'Os assentos já não estavam disponíveis quando o pagamento foi confirmado. Para receber o valor do boleto, informe seus dados na página segura de pagamento. Nenhum ingresso foi emitido.'
+                    : order.status === 'REFUNDED'
+                      ? 'O estorno foi confirmado. Nenhum ingresso foi emitido para este pedido.'
+                    : paymentAccessBlocked
+                      ? order.paymentStatus === 'DISPUTE_LOST'
+                        ? 'A contestação foi perdida. Os ingressos permanecem bloqueados; entre em contato com a organização para orientação.'
+                        : order.paymentStatus === 'DONE'
+                          ? 'A contestação foi encerrada. Os ingressos permanecem temporariamente indisponíveis enquanto o resultado é conferido.'
+                          : 'O pagamento está em análise. Seus ingressos estão temporariamente indisponíveis e o check-in está bloqueado.'
                     : order.status === 'CONFIRMED' && order.ticketFulfillmentLastError?.startsWith('ASSENTOS_INDISPONIVEIS:')
                       ? 'Os assentos já não estavam disponíveis quando o pagamento foi confirmado. O estorno está sendo iniciado; não faça uma nova compra enquanto ele é processado.'
-                    : order.status === 'REFUNDED'
-                      ? 'O estorno foi confirmado pelo Asaas. Nenhum ingresso foi emitido para este pedido.'
                     : order.status === 'CONFIRMED'
                       ? ticketFulfillmentNeedsReconciliation
                         ? 'O pagamento foi confirmado e o pedido está em reconciliação automática. Não é necessário realizar uma nova compra.'
@@ -1132,9 +1196,9 @@ export function PublicMapExperience({
                       : null}
                   </p>
                 ) : null}
-                {order.refundRequestUrl ? (
+                {buyerRefundActionUrl ? (
                   <Button asChild className="mt-3 w-full bg-brand-accent text-white hover:bg-brand-accent/90">
-                    <a href={order.refundRequestUrl} target="_blank" rel="noreferrer">
+                    <a href={buyerRefundActionUrl} target="_blank" rel="noreferrer">
                       Informar dados para o estorno
                       <ExternalLink className="h-4 w-4" />
                     </a>
@@ -1156,6 +1220,16 @@ export function PublicMapExperience({
               {pollTimedOut && order.status === 'PAYMENT_PENDING' ? (
                 <p className="rounded-lg bg-slate-50 px-3 py-2 text-center text-sm text-slate-600">
                   A confirmação está demorando. Se você já pagou, use &quot;Já paguei&quot; abaixo.
+                </p>
+              ) : null}
+
+              {order.status === 'PAYMENT_PENDING' ? (
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-center text-sm text-amber-900" role="status" aria-live="polite">
+                  {order.paymentStatus === 'PAYMENT_CREATION_IN_PROGRESS'
+                    ? 'Verificando a criação da cobrança. Seus assentos continuam reservados.'
+                    : order.paymentStatus === 'PAYMENT_CREATION_UNKNOWN'
+                      ? 'Ainda não foi possível confirmar a cobrança. Seus assentos só serão liberados depois de verificarmos que não houve pagamento.'
+                      : 'Aguardando a confirmação do pagamento. Se o tempo da reserva terminar, vamos verificar antes de liberar os assentos.'}
                 </p>
               ) : null}
 
@@ -1192,6 +1266,7 @@ export function PublicMapExperience({
                   {order.expiresAt ? (
                     <PublicOrderReservationCountdown
                       expiresAt={order.expiresAt}
+                      onExpired={handleReservationExpired}
                       className="text-left text-sm font-semibold"
                       tone="danger"
                     />
@@ -1394,6 +1469,7 @@ export function PublicMapExperience({
                           </button>
                           <PublicOrderReservationCountdown
                             expiresAt={order.expiresAt}
+                            onExpired={handleReservationExpired}
                             className="shrink-0 text-right text-sm font-semibold"
                             tone="danger"
                           />
@@ -1413,6 +1489,7 @@ export function PublicMapExperience({
               {order.status === 'PAYMENT_PENDING' && paymentMethod === 'PIX' ? (
                 <PublicOrderReservationCountdown
                   expiresAt={order.expiresAt}
+                  onExpired={handleReservationExpired}
                   className={`text-center text-sm font-semibold ${paymentMethod === 'PIX' && order.pixQrCode ? 'lg:hidden' : ''}`}
                   tone="danger"
                 />
@@ -1477,6 +1554,7 @@ export function PublicMapExperience({
         <div className="w-full shrink-0 px-4 py-3 text-center">
           <PublicOrderReservationCountdown
             expiresAt={order.expiresAt}
+            onExpired={handleReservationExpired}
             className="text-center text-sm font-semibold"
             tone="danger"
           />

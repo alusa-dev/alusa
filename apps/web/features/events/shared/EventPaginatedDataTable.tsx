@@ -33,9 +33,9 @@ export function EventPaginatedDataTable<T extends object>({
   return (
     <EventTablePanel>
       <DataTable {...tableProps} data={paginatedData} />
-      {total > pageSize ? (
+      {total > 0 ? (
         <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
-          <Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />
+          <Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} hideIfSinglePage={false} />
         </div>
       ) : null}
     </EventTablePanel>

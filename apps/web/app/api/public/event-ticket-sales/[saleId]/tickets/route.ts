@@ -18,7 +18,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
 
   try {
     const sale = await getPublicStaffSaleTickets(saleId, token);
-    const pdf = createEventTicketsPdf(sale);
+    const pdf = await createEventTicketsPdf(sale);
     const body = new Uint8Array(pdf).buffer;
 
     return new NextResponse(body, {

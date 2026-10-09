@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
@@ -64,6 +64,13 @@ export async function cachedDashboardBlock<T>(
     ttlSeconds: DASHBOARD_BLOCK_CACHE_SECONDS,
     staleWhileRevalidateSeconds: DASHBOARD_BLOCK_STALE_SECONDS,
     lockTtlSeconds: 10,
+    scheduleStaleRevalidation: (revalidate) => after(async () => {
+      try {
+        await revalidate();
+      } catch (error) {
+        console.warn('[dashboard][cache] stale revalidation failed', error instanceof Error ? error.name : 'unknown_error');
+      }
+    }),
     load,
   });
 

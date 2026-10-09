@@ -1,28 +1,36 @@
 'use client';
 
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
 
+import { Plus } from '@/components/icons/icons';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
-import { resolveActivePublishedEventMap } from '@alusa/domain/events';
-
 import { listEventMaps } from '../map/api/event-map-service';
-import { getEvent, listTicketLots, listTicketSales, type EventScopedResources } from '../events-service';
+import type { EventMapDTO } from '../map/api/event-map-service';
+import { getEvent, listEventCheckIns, listTicketLots, listTicketSales, type EventScopedResources } from '../events-service';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { OUTLINE_BUTTON_CLASS, PRIMARY_BUTTON_CLASS } from '../shared/event-form-utils';
 import { LotFormDialog } from './LotFormDialog';
 import { SaleFormDialog } from './SaleFormDialog';
 import { TicketLotsTable } from './TicketLotsTable';
-import { TicketMetricsPanel } from './TicketMetricsPanel';
 import { TicketReservationsTable } from './TicketReservationsTable';
 import { TicketSalesTable } from './TicketSalesTable';
+import { EventCheckInsTable } from './EventCheckInsTable';
 
 export function EventTicketsPanel({ eventId, scopedResources }: { eventId: string; scopedResources?: EventScopedResources }) {
+  const [activeTab, setActiveTab] = useState('sales');
+  const [checkInsPage, setCheckInsPage] = useState(1);
+  const checkInsPageSize = 20;
   const eventQuery = useQuery({ queryKey: eventQueryKeys.event(eventId), queryFn: () => getEvent(eventId) });
   const lots = useQuery({ queryKey: eventQueryKeys.lots(eventId), queryFn: () => listTicketLots(eventId) });
   const sales = useQuery({ queryKey: eventQueryKeys.sales(eventId), queryFn: () => listTicketSales(eventId) });
+  const checkIns = useQuery({
+    queryKey: ['events', 'check-ins', eventId, checkInsPage, checkInsPageSize],
+    queryFn: () => listEventCheckIns(eventId, checkInsPage, checkInsPageSize),
+    enabled: activeTab === 'check-ins',
+  });
   const mapsQuery = useQuery({
     queryKey: ['events', 'maps', eventId],
     queryFn: () => listEventMaps(eventId),
@@ -32,21 +40,18 @@ export function EventTicketsPanel({ eventId, scopedResources }: { eventId: strin
   const event = eventQuery.data;
   const lotRows = lots.data ?? [];
   const saleRows = sales.data ?? [];
-  const publishedMapId = resolveActivePublishedEventMap(mapsQuery.data ?? [])?.id ?? null;
+  const publishedMaps = (mapsQuery.data ?? []).filter((map) => map.status === 'PUBLISHED');
   const manualSaleRows = saleRows.filter((sale) => sale.status !== 'RESERVED');
   const reservedRows = saleRows.filter((sale) => sale.status === 'RESERVED');
-  const revenue = manualSaleRows.filter((sale) => sale.status === 'PAID').reduce((sum, sale) => sum + sale.totalAmount, 0);
-  const pending = saleRows.filter((sale) => sale.status === 'PENDING' || sale.status === 'RESERVED').reduce((sum, sale) => sum + sale.totalAmount, 0);
-  const complimentary = manualSaleRows.filter((sale) => sale.status === 'COMPLIMENTARY').reduce((sum, sale) => sum + sale.quantity, 0);
 
   return (
-    <Tabs defaultValue="sales" variant="line" className="space-y-5">
+    <Tabs value={activeTab} onValueChange={setActiveTab} variant="line" className="space-y-5">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <TabsList className="overflow-x-auto">
           <TabsTrigger value="sales">Vendas</TabsTrigger>
           <TabsTrigger value="reserved">Reservados</TabsTrigger>
           <TabsTrigger value="lots">Lotes</TabsTrigger>
-          <TabsTrigger value="metrics">Métricas</TabsTrigger>
+          <TabsTrigger value="check-ins">Check-ins</TabsTrigger>
         </TabsList>
         <div className="flex flex-wrap gap-2 md:justify-end">
           <LotFormDialog
@@ -60,7 +65,11 @@ export function EventTicketsPanel({ eventId, scopedResources }: { eventId: strin
               event={event}
               lots={lotRows}
               scopedResources={scopedResources}
-              publishedMapId={publishedMapId}
+              publishedMaps={publishedMaps.map((map: EventMapDTO) => ({
+                id: map.id,
+                name: map.name,
+                startsAt: map.startsAt ?? map.event.startsAt,
+              }))}
               trigger={<Button className={PRIMARY_BUTTON_CLASS}><Plus className="h-4 w-4" /> Venda</Button>}
             />
           ) : null}
@@ -80,8 +89,15 @@ export function EventTicketsPanel({ eventId, scopedResources }: { eventId: strin
           loading={lots.isLoading}
         />
       </TabsContent>
-      <TabsContent value="metrics">
-        <TicketMetricsPanel revenue={revenue} pending={pending} sold={manualSaleRows.reduce((sum, sale) => sum + sale.quantity, 0)} complimentary={complimentary} />
+      <TabsContent value="check-ins">
+        <EventCheckInsTable
+          checkIns={checkIns.data?.items ?? []}
+          total={checkIns.data?.total ?? 0}
+          page={checkInsPage}
+          pageSize={checkInsPageSize}
+          onPageChange={setCheckInsPage}
+          loading={checkIns.isLoading}
+        />
       </TabsContent>
     </Tabs>
   );

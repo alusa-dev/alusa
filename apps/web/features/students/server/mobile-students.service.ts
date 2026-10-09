@@ -7,6 +7,7 @@ import {
   saveAsaasCustomerNotificationPreferences,
   type CustomerNotificationPreferenceInput,
 } from '@alusa/finance';
+import { studentFinancePort } from '@/src/server/students/student-finance-port';
 
 export type MobileStudent = {
   id: string;
@@ -399,7 +400,10 @@ export async function updateMobileStudent(input: { userId: string; contaId: stri
   if (!existing) throw new MobileStudentNotFoundError();
   const { updateAluno } = await import('@alusa/lib/alunos/aluno.service');
   const normalizedFoto = await normalizeAvatarUpload({ entity: 'aluno', entityId: input.studentId, contaId: input.contaId, foto: input.data.foto as string | null | undefined, previousFoto: existing.foto });
-  await updateAluno({ ...(input.data as Parameters<typeof updateAluno>[0]), id: input.studentId, contaId: input.contaId, ...(normalizedFoto !== undefined ? { foto: normalizedFoto } : {}) });
+  await updateAluno(
+    { ...(input.data as Parameters<typeof updateAluno>[0]), id: input.studentId, contaId: input.contaId, ...(normalizedFoto !== undefined ? { foto: normalizedFoto } : {}) },
+    studentFinancePort,
+  );
 }
 
 type NotificationContext = {

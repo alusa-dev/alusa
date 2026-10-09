@@ -1,4 +1,6 @@
 export type SchoolEventStatus = 'DRAFT' | 'PLANNING' | 'ACTIVE' | 'FINISHED' | 'CANCELLED' | 'ARCHIVED';
+export * from './events-error';
+export * from './ticket-payment-eligibility';
 export type EventTicketMode = 'NONE' | 'SIMPLE' | 'NUMBERED_SEATS';
 export type EventTicketLotStatus = 'DRAFT' | 'ACTIVE' | 'SOLD_OUT' | 'CLOSED' | 'CANCELLED' | 'ARCHIVED';
 export type EventTicketSaleStatus = 'PENDING' | 'PAID' | 'CANCELLED' | 'REFUNDED' | 'COMPLIMENTARY';

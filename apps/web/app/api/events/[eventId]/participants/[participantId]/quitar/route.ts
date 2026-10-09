@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { quitarParticipantFeeSchema } from '@alusa/lib/events/events.schema';
-import { quitarEventParticipantFee } from '@alusa/lib/events/events.service';
+import { quitarEventParticipantFee } from '@alusa/finance';
 
 import { getEventsContext, handleEventsRouteError } from '../../../../_helpers';
 

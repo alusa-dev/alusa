@@ -49,6 +49,7 @@ export default function EnrollmentWizardDialog({
       <Dialog open={open} onOpenChange={handleDialogOpenChange}>
         <DialogContent
           fullScreenMobile
+          disableBackdropBlur
           overlayClass="alusa-registration-wizard-overlay"
           className="enrollment-registration-wizard alusa-wizard-corner-smoothing flex min-h-0 w-full max-w-4xl flex-col gap-0 overflow-hidden rounded-2xl bg-[#f8fafc] p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-h-[min(90dvh,calc(100dvh-3rem))] max-md:h-[100dvh] max-md:max-h-[100dvh] md:transition-all md:duration-300"
           data-testid="matricula-wizard"

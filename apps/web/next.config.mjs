@@ -112,8 +112,11 @@ const nextConfig = {
     // Turbopack even when their dist files exist.
     root: turbopackRoot,
     resolveAlias: {
-      '@alusa/observability': packageSourcePath('observability', 'index.ts'),
-      '@alusa/observability/*': packageSourcePath('observability', '*'),
+      // This package uses explicit `.js` specifiers in its TypeScript source.
+      // Turbopack does not provide webpack's `.js` -> `.ts` extension alias, so
+      // the turbo dev server consumes the package output built by dev:turbo.
+      '@alusa/observability': packageDistPath('observability', 'index.js'),
+      '@alusa/observability/*': packageDistPath('observability', '*.js'),
       '@alusa/admin-auth': packageSourcePath('admin-auth', 'index.ts'),
       '@alusa/admin-auth/*': packageSourcePath('admin-auth', '*'),
       '@alusa/asaas': packageDistPath('asaas', 'index.js'),

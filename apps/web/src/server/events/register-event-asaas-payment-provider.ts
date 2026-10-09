@@ -1,14 +1,12 @@
 import {
-  registerEventAsaasPaymentProvider,
-  type EventAsaasPayment,
-  type EventAsaasPaymentProvider,
-} from '@alusa/lib/events/event-asaas-payment-provider';
-import {
   eventAsaasPaymentProvider,
+  registerEventAsaasPaymentProvider,
   registerFinanceSideEffectEmailGatewayForTests,
   registerFinanceSideEffectRefundGatewayForTests,
   type FinanceSideEffectEmailGateway,
   type FinanceSideEffectRefundGateway,
+  type EventAsaasPayment,
+  type EventAsaasPaymentProvider,
 } from '@alusa/finance';
 import { prisma } from '@alusa/database';
 

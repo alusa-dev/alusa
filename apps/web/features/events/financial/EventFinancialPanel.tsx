@@ -1,8 +1,8 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
 
+import { Plus } from '@/components/icons/icons';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
@@ -13,7 +13,15 @@ import { OUTLINE_BUTTON_CLASS, PRIMARY_BUTTON_CLASS } from '../shared/event-form
 import { FinancialEntriesTable } from './FinancialEntriesTable';
 import { FinancialFormDialog } from './FinancialFormDialog';
 
-export function EventFinancialPanel({ eventId, event }: { eventId: string; event?: SchoolEventDTO }) {
+export function EventFinancialPanel({
+  eventId,
+  event,
+  showResultMetricsTab = true,
+}: {
+  eventId: string;
+  event?: SchoolEventDTO;
+  showResultMetricsTab?: boolean;
+}) {
   const entries = useQuery({ queryKey: eventQueryKeys.finance(eventId), queryFn: () => listFinancialEntries(eventId) });
   const rows = entries.data ?? [];
   const costs = rows.filter((entry) => entry.type === 'COST');
@@ -22,7 +30,11 @@ export function EventFinancialPanel({ eventId, event }: { eventId: string; event
   return (
     <Tabs defaultValue="costs" variant="line" className="space-y-5">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <TabsList className="overflow-x-auto"><TabsTrigger value="costs">Custos</TabsTrigger><TabsTrigger value="revenues">Receitas</TabsTrigger><TabsTrigger value="result">Resultado</TabsTrigger></TabsList>
+      <TabsList className="overflow-x-auto">
+        <TabsTrigger value="costs">Custos</TabsTrigger>
+        <TabsTrigger value="revenues">Receitas</TabsTrigger>
+        {showResultMetricsTab && <TabsTrigger value="result">Resultado</TabsTrigger>}
+      </TabsList>
         <div className="flex flex-wrap gap-2 md:justify-end">
           <FinancialFormDialog eventId={eventId} type="COST" trigger={<Button variant="outline" className={OUTLINE_BUTTON_CLASS}><Plus className="h-4 w-4" /> Custo</Button>} />
           <FinancialFormDialog eventId={eventId} type="REVENUE" trigger={<Button className={PRIMARY_BUTTON_CLASS}><Plus className="h-4 w-4" /> Receita</Button>} />
@@ -30,9 +42,11 @@ export function EventFinancialPanel({ eventId, event }: { eventId: string; event
       </div>
       <TabsContent value="costs"><FinancialEntriesTable entries={costs} eventId={eventId} loading={entries.isLoading} /></TabsContent>
       <TabsContent value="revenues"><FinancialEntriesTable entries={revenues} eventId={eventId} loading={entries.isLoading} /></TabsContent>
-      <TabsContent value="result">
-        {event ? <EventSummary event={event} /> : null}
-      </TabsContent>
+      {showResultMetricsTab && (
+        <TabsContent value="result">
+          {event ? <EventSummary event={event} /> : null}
+        </TabsContent>
+      )}
     </Tabs>
   );
 }

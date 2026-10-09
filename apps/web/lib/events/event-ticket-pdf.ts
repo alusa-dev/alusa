@@ -20,7 +20,6 @@ const CODE_128_PATTERNS = [
 ] as const;
 
 const TICKET_IMAGE_RELATIVE_PATH = ['workspace-assets', 'tickets', 'reference-images', 'image-ticket.png'];
-const TICKET_IMAGE_SIZE = { width: 1122, height: 1402 };
 
 function findTicketImagePath() {
   const candidates = [
@@ -43,11 +42,14 @@ const ticketImageDataUrl = loadTicketImageDataUrl();
 
 type EventTicketPdfOrder = {
   id: string;
+  sessionName?: string | null;
   totalAmount: number;
   event: {
     name: string;
     startsAt: string;
     locationName?: string | null;
+    locationAddress?: string | null;
+    ticketArtworkUrl?: string | null;
   };
   items: Array<{
     sectionName: string;
@@ -98,6 +100,42 @@ function fitFontSize(
   const textWidth = doc.getTextWidth(text);
   if (textWidth <= maxWidth) return preferredSize;
   return Math.max(minimumSize, preferredSize * (maxWidth / textWidth));
+}
+
+function truncateTextToWidth(doc: jsPDF, text: string, maxWidth: number) {
+  if (doc.getTextWidth(text) <= maxWidth) return text;
+  let shortened = text;
+  while (shortened && doc.getTextWidth(`${shortened}...`) > maxWidth) {
+    shortened = shortened.slice(0, -1).trimEnd();
+  }
+  return `${shortened}...`;
+}
+
+function fitTextBlock(
+  doc: jsPDF,
+  text: string,
+  maxWidth: number,
+  maxLines: number,
+  preferredSize: number,
+  minimumSize: number,
+  bold = false,
+) {
+  doc.setFont('helvetica', bold ? 'bold' : 'normal');
+  const normalizedText = text.replace(/\s+/g, ' ').trim();
+  let fontSize = preferredSize;
+  doc.setFontSize(fontSize);
+  let lines: string[] = doc.splitTextToSize(normalizedText, maxWidth);
+  while (lines.length > maxLines && fontSize > minimumSize) {
+    fontSize = Math.max(minimumSize, fontSize - 0.25);
+    doc.setFontSize(fontSize);
+    lines = doc.splitTextToSize(normalizedText, maxWidth);
+  }
+  const truncated = lines.length > maxLines;
+  if (truncated) {
+    const lastLine = lines.slice(maxLines - 1).join(' ');
+    lines = [...lines.slice(0, maxLines - 1), truncateTextToWidth(doc, lastLine, maxWidth)];
+  }
+  return { lines, fontSize, truncated };
 }
 
 function getVerticalTextY(doc: jsPDF, text: string, centerY: number, bottomY: number, options?: { fontSize?: number; bold?: boolean; topY?: number }) {
@@ -162,8 +200,36 @@ function drawQrCode(doc: jsPDF, value: string, x: number, y: number, size: numbe
   }
 }
 
-function drawTicketImage(doc: jsPDF, x: number, y: number, size: number, radius: number) {
-  if (!ticketImageDataUrl) {
+async function loadEventArtwork(url?: string | null) {
+  if (!url) return null;
+  try {
+    if (url.startsWith('/uploads/')) {
+      const absolute = path.join(process.cwd(), 'public', url.slice(1));
+      return `data:image/jpeg;base64,${readFileSync(absolute).toString('base64')}`;
+    }
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) return null;
+    const length = Number(response.headers.get('content-length'));
+    if (Number.isFinite(length) && length > 3 * 1024 * 1024) return null;
+    if (!response.body) return null;
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > 3 * 1024 * 1024) { await reader.cancel(); return null; }
+      chunks.push(value);
+    }
+    const bytes = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+    return `data:image/jpeg;base64,${bytes.toString('base64')}`;
+  } catch { return null; }
+}
+
+function drawTicketImage(doc: jsPDF, x: number, y: number, size: number, radius: number, eventImage?: string | null) {
+  const imageData = eventImage ?? ticketImageDataUrl;
+  if (!imageData) {
     doc.setDrawColor(124, 58, 237);
     doc.setFillColor(124, 58, 237);
     doc.roundedRect(x, y, size, size, radius, radius, 'F');
@@ -171,7 +237,7 @@ function drawTicketImage(doc: jsPDF, x: number, y: number, size: number, radius:
     return;
   }
 
-  const sourceRatio = TICKET_IMAGE_SIZE.width / TICKET_IMAGE_SIZE.height;
+  const sourceRatio = 1;
   const targetRatio = 1;
   const drawWidth = sourceRatio > targetRatio ? size * sourceRatio : size;
   const drawHeight = sourceRatio > targetRatio ? size : size / sourceRatio;
@@ -189,11 +255,12 @@ function drawTicketImage(doc: jsPDF, x: number, y: number, size: number, radius:
   doc.rect(x + size / 2, y, size / 2, size, null);
   pdf.clip();
   pdf.discardPath();
-  doc.addImage(ticketImageDataUrl, 'PNG', drawX, drawY, drawWidth, drawHeight, undefined, 'FAST');
+  doc.addImage(imageData, imageData.startsWith('data:image/png') ? 'PNG' : 'JPEG', drawX, drawY, drawWidth, drawHeight, undefined, 'FAST');
   pdf.restoreGraphicsState();
 }
 
-export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
+export async function createEventTicketsPdf(order: EventTicketPdfOrder): Promise<Buffer> {
+  const eventImage = await loadEventArtwork(order.event.ticketArtworkUrl);
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -215,10 +282,15 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
   const bodyColGap = 20;
   const bodyColWidth = (bodyWidth - bodyColGap) / 2;
   const bodyCol2X = bodyContentX + bodyColWidth + bodyColGap;
+  const qrSize = Math.min(48, bodyColWidth);
+  const qrX = bodyCol2X + (bodyColWidth - qrSize) / 2;
+  // Keep the entire QR quiet zone clear, including the location's wrapped lines.
+  const locationWidth = qrX - bodyContentX - 10;
   const eventTime = formatTime(order.event.startsAt);
+  const eventTitle = order.sessionName ? `${order.event.name} · ${order.sessionName}` : order.event.name;
   let y = marginY;
 
-  doc.setProperties({ title: `Ingressos ${order.event.name}` });
+  doc.setProperties({ title: `Ingressos ${eventTitle}` });
 
   order.items.forEach((item, index) => {
     if (index > 0 && index % ticketsPerPage === 0) {
@@ -233,7 +305,7 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
     doc.setFillColor(255, 255, 255);
     doc.roundedRect(contentX, y, ticketWidth, ticketHeight, radius, radius, 'FD');
 
-    drawTicketImage(doc, contentX, y, imageSize, radius);
+    drawTicketImage(doc, contentX, y, imageSize, radius, eventImage);
 
     doc.setDrawColor(203, 213, 225);
     doc.setLineDashPattern([4, 4], 0);
@@ -241,10 +313,17 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
     doc.setLineDashPattern([], 0);
 
     doc.setTextColor(15, 23, 42); // slate-900
-    const titleFontSize = fitFontSize(doc, order.event.name, 14.8, 8.5, bodyWidth, true);
+    const titleFontSize = fitFontSize(doc, eventTitle, 14.8, 8.5, bodyWidth, true);
+    const title = fitTextBlock(doc, eventTitle, bodyWidth, 2, titleFontSize, 8.5, true);
+    if (title.truncated && order.sessionName) {
+      title.lines = [
+        truncateTextToWidth(doc, order.event.name, bodyWidth),
+        truncateTextToWidth(doc, order.sessionName, bodyWidth),
+      ];
+    }
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(titleFontSize);
-    doc.text(order.event.name, bodyContentX, y + 28, { maxWidth: bodyWidth });
+    doc.setFontSize(title.fontSize);
+    doc.text(title.lines, bodyContentX, y + (title.lines.length > 1 ? 22 : 28), { lineHeightFactor: 1.15 });
 
     doc.setDrawColor(241, 245, 249); // slate-100
     doc.setLineWidth(1);
@@ -254,10 +333,17 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
     doc.setFontSize(6.2);
     doc.setTextColor(100, 116, 139); // slate-500
     doc.text('SETOR / ASSENTO', bodyContentX, y + 59);
+    const seat = fitTextBlock(doc, `${item.sectionName} - ${item.seatLabel}`, bodyColWidth, 2, 9.8, 8, true);
+    if (seat.truncated) {
+      seat.lines = [
+        truncateTextToWidth(doc, item.sectionName, bodyColWidth),
+        truncateTextToWidth(doc, item.seatLabel, bodyColWidth),
+      ];
+    }
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9.8);
+    doc.setFontSize(seat.fontSize);
     doc.setTextColor(15, 23, 42); // slate-900
-    doc.text(`${item.sectionName} - ${item.seatLabel}`, bodyContentX, y + 71, { maxWidth: bodyColWidth });
+    doc.text(seat.lines, bodyContentX, y + 71, { lineHeightFactor: 1.15 });
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.2);
@@ -281,17 +367,24 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
     doc.setFontSize(6.2);
     doc.setTextColor(100, 116, 139); // slate-500
     doc.text('CÓDIGO DE CHECK-IN', bodyCol2X, y + 93);
-    const qrSize = Math.min(48, bodyColWidth);
-    drawQrCode(doc, checkInCode, bodyCol2X + (bodyColWidth - qrSize) / 2, y + 98, qrSize);
+    drawQrCode(doc, checkInCode, qrX, y + 98, qrSize);
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.2);
     doc.setTextColor(100, 116, 139); // slate-500
     doc.text('LOCAL', bodyContentX, y + 125);
+    const location = fitTextBlock(
+      doc,
+      [order.event.locationName, order.event.locationAddress].filter(Boolean).join(' · ') || '-',
+      locationWidth,
+      2,
+      7.8,
+      6.8,
+    );
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.8);
+    doc.setFontSize(location.fontSize);
     doc.setTextColor(71, 85, 105); // slate-600
-    doc.text(order.event.locationName ?? '-', bodyContentX, y + 136, { maxWidth: bodyWidth });
+    doc.text(location.lines, bodyContentX, y + 136, { lineHeightFactor: 1.15 });
 
     const stubTopY = y + 10;
     const stubCenterY = y + ticketHeight / 2;
@@ -303,11 +396,12 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
     const barcodeX = stubX + stubWidth * 0.62 - barcodeWidth / 2;
     const barcodeY = y + (ticketHeight - barcodeHeight) / 2;
     const checkInX = stubX + stubWidth * 0.87;
-    const eventLabel = order.event.name;
-    const detailsLabel = `${item.sectionName} - ${item.seatLabel} • ${eventTime} • ${formatCurrency(item.unitPrice)}`;
+    const detailsText = `${item.sectionName} - ${item.seatLabel} • ${eventTime} • ${formatCurrency(item.unitPrice)}`;
     const stubTextHeight = stubBottomY - stubTopY;
-    const eventFontSize = fitFontSize(doc, eventLabel, 9.2, 5.8, stubTextHeight, true);
-    const detailsFontSize = fitFontSize(doc, detailsLabel, 7.4, 5.4, stubTextHeight, true);
+    const eventFontSize = fitFontSize(doc, eventTitle, 9.2, 5.8, stubTextHeight, true);
+    const eventLabel = truncateTextToWidth(doc, eventTitle, stubTextHeight);
+    const detailsFontSize = fitFontSize(doc, detailsText, 7.4, 5.4, stubTextHeight, true);
+    const detailsLabel = truncateTextToWidth(doc, detailsText, stubTextHeight);
     const checkInFontSize = 6.5;
     const checkInLabelY = getVerticalTextY(doc, formattedCheckInCode, stubCenterY, stubBottomY, { fontSize: checkInFontSize, bold: true, topY: stubTopY });
 

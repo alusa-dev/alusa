@@ -8,6 +8,7 @@ import {
 } from '@alusa/domain';
 
 import { prisma } from '../../prisma';
+export { releaseSeatsForTicketSale } from './event-map-order-operations';
 import { assertEventScopedTicketSaleLinks } from '../event-participant-scope';
 import {
   buildPublicEventTicketSalePath,
@@ -173,6 +174,8 @@ async function getPublishedStaffMapOrThrow(db: DbClient, contaId: string, eventI
           name: true,
           startsAt: true,
           endsAt: true,
+          locationName: true,
+          locationAddress: true,
           status: true,
           ticketMode: true,
           finishedAt: true,
@@ -224,8 +227,10 @@ export async function getStaffEventMapSalesView(ctx: Pick<EventsContext, 'contaI
     event: {
       id: map.event.id,
       name: map.event.name,
-      startsAt: map.event.startsAt.toISOString(),
-      endsAt: map.event.endsAt?.toISOString() ?? null,
+      startsAt: (map.startsAt ?? map.event.startsAt).toISOString(),
+      endsAt: map.endsAt?.toISOString() ?? null,
+      locationName: map.locationName ?? map.event.locationName,
+      locationAddress: map.locationAddress ?? map.event.locationAddress,
       status: map.event.status,
       ticketMode: map.event.ticketMode,
     },
@@ -429,28 +434,6 @@ export async function releaseStaffEventMapReservation(ctx: EventsContext, eventI
   });
 }
 
-export async function releaseSeatsForTicketSale(tx: Prisma.TransactionClient, contaId: string, saleId: string) {
-  const saleSeats = await tx.eventTicketSaleSeat.findMany({
-    where: { contaId, saleId },
-    select: { publicSeatId: true, ticket: { select: { id: true } } },
-  });
-  if (saleSeats.length === 0) return;
-
-  const seatIds = saleSeats.map((entry) => entry.publicSeatId);
-  await tx.eventMapPublicSeat.updateMany({
-    where: { contaId, id: { in: seatIds }, status: 'SOLD' },
-    data: { status: 'AVAILABLE' },
-  });
-
-  const ticketIds = saleSeats.map((entry) => entry.ticket?.id).filter((id): id is string => Boolean(id));
-  if (ticketIds.length > 0) {
-    await tx.eventTicket.updateMany({
-      where: { contaId, id: { in: ticketIds }, status: 'VALID' },
-      data: { status: 'CANCELLED', cancelledAt: new Date() },
-    });
-  }
-}
-
 export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTicketSaleInput & { holdToken: string }) {
   return prisma.$transaction(async (tx) => {
     await expireStaffReservations(tx, ctx.contaId);
@@ -624,17 +607,26 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
       for (const saleId of createdSaleIds) {
         const sale = await tx.eventTicketSale.findUniqueOrThrow({
           where: { id: saleId },
-          include: { event: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } }, lot: { select: { name: true } }, tickets: { where: { status: 'VALID' }, select: { id: true } } },
+          include: {
+            event: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } },
+            lot: { select: { name: true } },
+            tickets: { where: { status: 'VALID' }, select: { id: true } },
+            saleSeats: {
+              take: 1,
+              include: { publicSeat: { include: { map: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } } } } },
+            },
+          },
         });
         if (!sale.accessToken || sale.tickets.length === 0) continue;
+        const session = sale.saleSeats[0]?.publicSeat.map;
         await enqueueEventTicketEmail(tx, {
           contaId: ctx.contaId,
           purchaseId: sale.id,
           buyerEmail,
           buyerName: sale.buyerName,
-          eventName: sale.event.name,
-          eventStartsAt: sale.event.startsAt,
-          eventLocation: [sale.event.locationName, sale.event.locationAddress].filter(Boolean).join(' — ') || null,
+          eventName: session ? `${sale.event.name} · ${session.name}` : sale.event.name,
+          eventStartsAt: session?.startsAt ?? sale.event.startsAt,
+          eventLocation: [session?.locationName ?? sale.event.locationName, session?.locationAddress ?? sale.event.locationAddress].filter(Boolean).join(' — ') || null,
           ticketType: sale.lot.name,
           ticketCount: sale.tickets.length,
           ticketsPath: buildPublicEventTicketSalePath(sale.id, sale.accessToken),
@@ -657,10 +649,15 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
       saleSeats: {
         include: {
           ticket: { select: { id: true, ticketCode: true, checkInCode: true, status: true } },
+          publicSeat: {
+            include: {
+              map: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } },
+            },
+          },
         },
       },
       tickets: { where: { status: 'VALID' }, select: { id: true, ticketCode: true, checkInCode: true, status: true }, orderBy: { createdAt: 'asc' } },
-      event: { select: { id: true, name: true, startsAt: true, locationName: true, locationAddress: true } },
+      event: { select: { id: true, name: true, startsAt: true, locationName: true, locationAddress: true, ticketArtworkUrl: true } },
       lot: { select: { name: true } },
     },
   });
@@ -685,6 +682,7 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
   const printableSeats = saleSeats.filter(
     (seat) => seat.ticket?.ticketCode && seat.ticket.status === 'VALID',
   );
+  const session = saleSeats[0]?.publicSeat.map ?? null;
   const items = printableSeats.length > 0
     ? printableSeats.map((seat) => ({
         id: seat.id,
@@ -714,9 +712,12 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
     id: sale.id,
     buyerName: sale.buyerName,
     totalAmount: toMoney(sale.totalAmount),
+    sessionName: session?.name ?? null,
     event: {
       ...sale.event,
-      startsAt: sale.event.startsAt.toISOString(),
+      startsAt: (session?.startsAt ?? sale.event.startsAt).toISOString(),
+      locationName: session?.locationName ?? sale.event.locationName,
+      locationAddress: session?.locationAddress ?? sale.event.locationAddress,
     },
     items,
   };

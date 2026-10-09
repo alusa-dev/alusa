@@ -54,20 +54,26 @@ export default function BillingChargesScreen({ origin }: { origin?: BillingOrigi
   const [draftCategory, setDraftCategory] = useState<BillingCategoryFilter>();
   const [draftSort, setDraftSort] = useState<BillingChargesSort>('created-at-desc');
   const loadingMoreRef = useRef(false);
+  const requestIdRef = useRef(0);
 
   const loadCharges = useCallback(async (options: { silent?: boolean } = {}) => {
+    const requestId = ++requestIdRef.current;
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
     if (!options.silent) setLoading(true);
     setError(null);
     setLoadMoreError(null);
     try {
       const response = await billingService.listCharges({ period, origin, category, sort, search, offset: 0, limit: 20 });
+      if (requestId !== requestIdRef.current) return;
       setCharges(response.charges);
       setOffset(response.offset + response.charges.length);
       setHasMore(response.hasMore);
     } catch (loadError) {
+      if (requestId !== requestIdRef.current) return;
       setError(loadError instanceof Error ? loadError.message : 'Não foi possível carregar as cobranças.');
     } finally {
-      if (!options.silent) setLoading(false);
+      if (requestId === requestIdRef.current && !options.silent) setLoading(false);
     }
   }, [category, origin, period, search, sort]);
 
@@ -85,8 +91,10 @@ export default function BillingChargesScreen({ origin }: { origin?: BillingOrigi
     loadingMoreRef.current = true;
     setLoadingMore(true);
     setLoadMoreError(null);
+    const requestId = requestIdRef.current;
     try {
       const response = await billingService.listCharges({ period, origin, category, sort, search, offset, limit: 10 });
+      if (requestId !== requestIdRef.current) return;
       setCharges((current) => {
         const existingIds = new Set(current.map(chargeKey));
         return [...current, ...response.charges.filter((charge) => !existingIds.has(chargeKey(charge)))];
@@ -94,10 +102,12 @@ export default function BillingChargesScreen({ origin }: { origin?: BillingOrigi
       setOffset(response.offset + response.charges.length);
       setHasMore(response.hasMore);
     } catch (loadError) {
-      setLoadMoreError(loadError instanceof Error ? loadError.message : 'Não foi possível carregar mais cobranças.');
+      if (requestId === requestIdRef.current) setLoadMoreError(loadError instanceof Error ? loadError.message : 'Não foi possível carregar mais cobranças.');
     } finally {
-      loadingMoreRef.current = false;
-      setLoadingMore(false);
+      if (requestId === requestIdRef.current) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
     }
   }, [category, hasMore, loading, loadingMore, offset, origin, period, search, sort]);
 

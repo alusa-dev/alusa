@@ -6,6 +6,7 @@ import {
   getExpiredReservationDecision,
   inspectEventFinancialInconsistencies,
   reconcilePendingEventMapOrders,
+  reconcileRefundingEventMapOrders,
   reconcilePendingEventMapTicketFulfillment,
   type ExpirableEventMapReservationRecord,
   type InspectableEventMapOrder,
@@ -175,6 +176,91 @@ describe('expireEventMapReservations', () => {
     expect(expireCalls).toBe(0);
   });
 
+  it('preserves the hold when Asaas confirms a payment received at the expiry boundary', async () => {
+    let expireCalls = 0;
+    const latePayment = reservation({
+      order: {
+        id: 'order-late-payment',
+        status: 'PAYMENT_PENDING',
+        asaasPaymentId: 'pay-late',
+        paymentStatus: 'PENDING',
+        ticketCount: 0,
+      },
+    });
+    const result = await expireEventMapReservations({ contaId: 'conta-1', now, useLock: false }, {
+      resolveTargetContaIds: async () => ['conta-1'],
+      findExpiredReservations: async () => [latePayment],
+      resolveExternalPaymentAtExpiry: async () => ({ decision: 'PAID', paymentId: 'pay-late' }),
+      expireReservation: async () => { expireCalls += 1; return { expired: true }; },
+    });
+
+    expect(result.expired).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(expireCalls).toBe(0);
+  });
+
+  it('does not release a reservation when checkout resolves as paid while expiry reconciliation is in flight', async () => {
+    let releaseExternalLookup!: (_decision: { decision: 'PAID'; paymentId: string }) => void;
+    let lookupStarted!: () => void;
+    const started = new Promise<void>((resolve) => { lookupStarted = resolve; });
+    const providerDecision = new Promise<{ decision: 'PAID'; paymentId: string }>((resolve) => {
+      releaseExternalLookup = resolve;
+    });
+    let expiryState = { status: 'PAYMENT_PENDING', paymentStatus: 'PAYMENT_CREATION_UNKNOWN' };
+    let expireCalls = 0;
+    const pending = reservation({
+      order: {
+        id: 'order-racing-checkout',
+        status: 'PAYMENT_PENDING',
+        asaasPaymentId: null,
+        paymentStatus: 'PAYMENT_CREATION_UNKNOWN',
+        updatedAt: now,
+        ticketCount: 0,
+      },
+    });
+
+    const job = expireEventMapReservations({ contaId: 'conta-1', now, useLock: false }, {
+      resolveTargetContaIds: async () => ['conta-1'],
+      findExpiredReservations: async () => [pending],
+      resolveExternalPaymentAtExpiry: async () => {
+        lookupStarted();
+        return providerDecision;
+      },
+      expireReservation: async () => {
+        expireCalls += 1;
+        expiryState = { status: 'EXPIRED', paymentStatus: 'DELETED' };
+        return { expired: true };
+      },
+    });
+
+    await started;
+    // Deterministic checkout completion while the expiry worker is blocked on
+    // the provider lookup; the paid provider result is the authority to retain.
+    expiryState = { status: 'CONFIRMED', paymentStatus: 'RECEIVED' };
+    releaseExternalLookup({ decision: 'PAID', paymentId: 'pay-racing-checkout' });
+    const result = await job;
+
+    expect(result.expired).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(expireCalls).toBe(0);
+    expect(expiryState).toEqual({ status: 'CONFIRMED', paymentStatus: 'RECEIVED' });
+  });
+
+  it('does not expire or overwrite a seat claimed by a concurrent new reservation', async () => {
+    const held = reservation();
+    const result = await expireEventMapReservations({ contaId: 'conta-1', now, useLock: false }, {
+      resolveTargetContaIds: async () => ['conta-1'],
+      findExpiredReservations: async () => [held],
+      // The persistence transaction uses conditional HELD updates and rolls back
+      // if another reservation has already claimed any seat.
+      expireReservation: async () => ({ expired: false, reason: 'seat_not_held' }),
+    });
+
+    expect(result.expired).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.errors[0]?.reason).toBe('seat_not_held');
+  });
+
   it('expires eligible reservations and is safe to run again', async () => {
     const expiredIds = new Set<string>();
     const target = reservation();
@@ -299,6 +385,106 @@ describe('reconcilePendingEventMapOrders', () => {
     expect(result.skipped).toBe(1);
     expect(result.consistent).toBe(1);
     expect(result.errors[0]?.orderId).toBe('order-1');
+  });
+});
+
+describe('reconcileRefundingEventMapOrders', () => {
+  const candidate = {
+    id: 'order-1',
+    contaId: 'conta-1',
+    asaasPaymentId: 'pay-1',
+    totalAmount: 120,
+  };
+
+  it('finalizes the order and frees seats only after a matching refund is DONE', async () => {
+    const finalized: unknown[] = [];
+    const denied: unknown[] = [];
+    const dependencies = {
+      resolveTargetContaIds: async () => ['conta-1'],
+      findOrders: async (input: { contaId: string; updatedBefore: Date; limit: number }) => {
+        expect(input.contaId).toBe('conta-1');
+        expect(input.limit).toBe(50);
+        return [candidate];
+      },
+      listRefunds: async (input: { contaId: string; paymentId: string }) => {
+        expect(input).toEqual({ contaId: 'conta-1', paymentId: 'pay-1' });
+        return { data: [{ dateCreated: '2026-01-10T11:00:00.000Z', status: 'DONE', value: 120 }] };
+      },
+      finalizeRefund: async (input: unknown) => { finalized.push(input); return { status: 'REFUNDED' }; },
+      denyRefund: async (input: unknown) => { denied.push(input); return { paymentStatus: 'REFUND_DENIED' }; },
+    };
+
+    const result = await reconcileRefundingEventMapOrders({ contaId: 'conta-1', now, useLock: false }, dependencies);
+
+    expect(result).toMatchObject({ processed: 1, finalized: 1, denied: 0, stillProcessing: 0, unmatched: 0, errors: [] });
+    expect(finalized).toEqual([{
+      contaId: 'conta-1',
+      paymentId: 'pay-1',
+      orderId: 'order-1',
+      refundedAmount: 120,
+    }]);
+    expect(denied).toHaveLength(0);
+  });
+
+  it('removes the refund hold only when the latest matching refund is cancelled', async () => {
+    const denied: unknown[] = [];
+    const dependencies = {
+      resolveTargetContaIds: async () => ['conta-1'],
+      findOrders: async () => [candidate],
+      listRefunds: async () => ({ data: [
+        { dateCreated: '2026-01-10T10:00:00.000Z', status: 'CANCELLED', value: 120 },
+        { dateCreated: '2026-01-10T09:00:00.000Z', status: 'PENDING', value: 120 },
+      ] }),
+      finalizeRefund: async () => { throw new Error('should not finalize'); },
+      denyRefund: async (input: unknown) => { denied.push(input); return { paymentStatus: 'REFUND_DENIED' }; },
+    };
+
+    const result = await reconcileRefundingEventMapOrders({ contaId: 'conta-1', now, useLock: false }, dependencies);
+
+    expect(result).toMatchObject({ processed: 1, finalized: 0, denied: 1, stillProcessing: 0, errors: [] });
+    expect(denied).toEqual([{
+      contaId: 'conta-1',
+      paymentId: 'pay-1',
+      orderId: 'order-1',
+    }]);
+  });
+
+  it('keeps tickets blocked while refund is pending or there is no matching refund evidence', async () => {
+    const finalized: unknown[] = [];
+    const denied: unknown[] = [];
+    const dependencies = {
+      resolveTargetContaIds: async () => ['conta-1'],
+      findOrders: async () => [candidate, { ...candidate, id: 'order-2', asaasPaymentId: 'pay-2' }],
+      listRefunds: async ({ paymentId }: { paymentId: string }) => paymentId === 'pay-1'
+        ? { data: [{ dateCreated: '2026-01-10T11:00:00.000Z', status: 'PENDING', value: 120 }] }
+        : { data: [] },
+      finalizeRefund: async (input: unknown) => { finalized.push(input); return { status: 'REFUNDED' }; },
+      denyRefund: async (input: unknown) => { denied.push(input); },
+    };
+
+    const result = await reconcileRefundingEventMapOrders({ contaId: 'conta-1', now, useLock: false }, dependencies);
+
+    expect(result).toMatchObject({ processed: 2, finalized: 0, denied: 0, stillProcessing: 1, unmatched: 1, errors: [] });
+    expect(finalized).toHaveLength(0);
+    expect(denied).toHaveLength(0);
+  });
+
+  it('continues the tenant-scoped batch after a provider lookup failure', async () => {
+    const dependencies = {
+      resolveTargetContaIds: async () => ['conta-1'],
+      findOrders: async () => [candidate, { ...candidate, id: 'order-2', asaasPaymentId: 'pay-2' }],
+      listRefunds: async ({ paymentId }: { paymentId: string }) => {
+        if (paymentId === 'pay-1') throw new Error('provider unavailable');
+        return { data: [{ dateCreated: '2026-01-10T11:00:00.000Z', status: 'DONE', value: 120 }] };
+      },
+      finalizeRefund: async () => ({ status: 'REFUNDED' }),
+      denyRefund: async () => ({ paymentStatus: 'REFUND_DENIED' }),
+    };
+
+    const result = await reconcileRefundingEventMapOrders({ contaId: 'conta-1', now, useLock: false }, dependencies);
+
+    expect(result).toMatchObject({ processed: 2, finalized: 1, skipped: 1 });
+    expect(result.errors).toEqual([{ orderId: 'order-1', contaId: 'conta-1', reason: 'provider unavailable' }]);
   });
 });
 

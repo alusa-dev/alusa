@@ -13,11 +13,11 @@ export const EXTENDED_TICKET_SALE_STATUS_LABELS: Record<TicketSaleDTO['status'],
 
 export function getTicketSaleTone(status: TicketSaleDTO['status']): EventSoftBadgeTone {
   const tones: Record<TicketSaleDTO['status'], EventSoftBadgeTone> = {
-    RESERVED: 'info',
+    RESERVED: 'warning',
     PENDING: 'warning',
     PAID: 'success',
-    CANCELLED: 'danger',
-    REFUNDED: 'neutral',
+    CANCELLED: 'neutral',
+    REFUNDED: 'info',
     COMPLIMENTARY: 'info',
   };
 

@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { MoreVertical } from 'lucide-react';
 import { EVENT_TICKET_LOT_STATUS_LABELS, EVENT_TICKET_TYPE_LABELS, type EventTicketMode } from '@alusa/shared';
 
+import { MoreVertical } from '@/components/icons/icons';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -119,7 +119,25 @@ export function TicketLotsTable({
   return (
     <EventPaginatedDataTable
       columns={[
-          { id: 'name', header: 'Lote', width: 'w-[24%]', align: 'left', render: (lot: TicketLotDTO) => <span className="font-medium text-slate-950">{lot.name}</span> },
+          {
+            id: 'name',
+            header: 'Lote / sessão',
+            width: 'w-[24%]',
+            align: 'left',
+            render: (lot: TicketLotDTO) => (
+              <span className="flex flex-col">
+                <span className="font-medium text-slate-950">{lot.name}</span>
+                {lot.eventMap ? (
+                  <span className="text-xs text-slate-500">
+                    {lot.eventMap.name}
+                    {` · ${new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(lot.eventMap.startsAt ?? lot.event.startsAt))}`}
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-500">Lote geral do evento</span>
+                )}
+              </span>
+            ),
+          },
           { id: 'type', header: 'Tipo', width: 'w-[16%]', align: 'left', render: (lot: TicketLotDTO) => EVENT_TICKET_TYPE_LABELS[lot.ticketType] },
           { id: 'price', header: 'Valor', width: 'w-[15%]', align: 'right', render: (lot: TicketLotDTO) => formatCurrency(lot.unitPrice) },
           {

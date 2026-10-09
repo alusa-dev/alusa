@@ -91,7 +91,7 @@ export function MobileAppHeader() {
         </div>
       </header>
 
-      <MobileSidebar open={navOpen} onOpenChange={setNavOpen} />
+      {navOpen ? <MobileSidebar open onOpenChange={setNavOpen} /> : null}
       <MobileUserMenuDrawer open={userMenuOpen} onOpenChange={setUserMenuOpen} />
     </>
   );

@@ -2,7 +2,11 @@ import { Prisma, PrismaClient } from '@prisma/client';
 
 import { prisma } from '../prisma';
 import { EventsError } from './events.service';
+import { isTicketPaymentBlocked } from './ticket-payment-eligibility';
 import { normalizeCheckInCode, toCheckInCode } from './map/ticket-code';
+
+export { isTicketPaymentBlocked } from './ticket-payment-eligibility';
+export { isEventMapOrderRefundFinalized } from './ticket-payment-eligibility';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -21,6 +25,7 @@ const ticketInclude = {
       buyerName: true,
       buyerEmail: true,
       status: true,
+      paymentStatus: true,
     },
   },
   orderItem: {
@@ -69,6 +74,60 @@ export type EventTicketCheckInEvent = {
   status: EventTicketWithCheckInRelations['event']['status'];
   startsAt: string;
 };
+
+export async function listEventTicketCheckIns(
+  contaId: string,
+  eventId: string,
+  options: { page?: number; pageSize?: number } = {},
+) {
+  const page = Math.min(1_000, Math.max(1, Math.floor(options.page ?? 1)));
+  const pageSize = Math.min(50, Math.max(1, Math.floor(options.pageSize ?? 20)));
+  const where = { contaId, eventId, status: 'USED' as const };
+  const [tickets, total] = await Promise.all([prisma.eventTicket.findMany({
+    where,
+    orderBy: [{ usedAt: 'desc' }, { id: 'desc' }],
+    skip: (page - 1) * pageSize,
+    take: pageSize,
+    select: {
+      id: true,
+      usedAt: true,
+      order: { select: { buyerName: true, buyerEmail: true, map: { select: { name: true } } } },
+      orderItem: { select: { sectionName: true, seatLabel: true } },
+      sale: { select: { buyerName: true, buyerEmail: true, lot: { select: { name: true } } } },
+      saleSeat: { select: { sectionName: true, seatLabel: true } },
+    },
+  }), prisma.eventTicket.count({ where })]);
+  if (tickets.length === 0) return { items: [], total, page, pageSize };
+
+  const audits = await prisma.eventAudit.findMany({
+    where: {
+      contaId,
+      eventId,
+      entityType: 'EventTicket',
+      entityId: { in: tickets.map((ticket) => ticket.id) },
+      action: { in: ['events.ticket.check_in', 'events.map.ticket.check_in'] },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { entityId: true, actor: { select: { nome: true } } },
+  });
+  const operators = new Map<string, string>();
+  for (const audit of audits) if (!operators.has(audit.entityId) && audit.actor?.nome) operators.set(audit.entityId, audit.actor.nome);
+
+  const items = tickets.map((ticket) => {
+    const seat = ticket.orderItem ?? ticket.saleSeat;
+    return {
+      id: ticket.id,
+      buyerName: ticket.order?.buyerName ?? ticket.sale?.buyerName ?? 'Comprador não identificado',
+      buyerEmail: ticket.order?.buyerEmail ?? ticket.sale?.buyerEmail ?? null,
+      sessionName: ticket.order?.map?.name ?? null,
+      lotName: ticket.sale?.lot.name ?? null,
+      seatLabel: seat ? [seat.sectionName, seat.seatLabel].filter(Boolean).join(' · ') : null,
+      usedAt: ticket.usedAt?.toISOString() ?? null,
+      operatorName: operators.get(ticket.id) ?? null,
+    };
+  });
+  return { items, total, page, pageSize };
+}
 
 export function assertEventAllowsCheckIn(status: EventTicketCheckInEvent['status']) {
   if (status === 'CANCELLED' || status === 'ARCHIVED') {
@@ -208,12 +267,28 @@ export async function markEventTicketUsed(
   if (verified.order && verified.order.status !== 'CONFIRMED') {
     throw new EventsError('PEDIDO_NAO_CONFIRMADO', 'Pedido do ingresso não está confirmado.', 409);
   }
+  if (verified.order && isTicketPaymentBlocked(verified.order.paymentStatus)) {
+    throw new EventsError('PAGAMENTO_EM_ANALISE', 'Ingresso bloqueado enquanto o pagamento está em análise.', 409);
+  }
   if (verified.sale && !['PAID', 'COMPLIMENTARY'].includes(verified.sale.status)) {
     throw new EventsError('VENDA_NAO_CONFIRMADA', 'Venda do ingresso não está confirmada.', 409);
   }
 
   const now = new Date();
   const updated = await prisma.$transaction(async (tx) => {
+    if (verified.order) {
+      // Serialize check-in with refund/dispute transitions, which update the
+      // same tenant-scoped order row. The provider event remains authoritative.
+      await tx.$queryRaw`SELECT id FROM "EventMapOrder" WHERE id = ${verified.order.id} AND "contaId" = ${contaId} FOR UPDATE`;
+      const order = await tx.eventMapOrder.findFirst({
+        where: { id: verified.order.id, contaId },
+        select: { status: true, paymentStatus: true },
+      });
+      if (!order || order.status !== 'CONFIRMED' || isTicketPaymentBlocked(order.paymentStatus)) {
+        throw new EventsError('PAGAMENTO_EM_ANALISE', 'Ingresso bloqueado enquanto o pagamento está em análise.', 409);
+      }
+    }
+
     const result = await tx.eventTicket.updateMany({
       where: { id: verified.ticketId, contaId, eventId, status: 'VALID' },
       data: { status: 'USED', usedAt: now },

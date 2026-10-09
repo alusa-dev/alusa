@@ -125,6 +125,7 @@ export default function ModalityDialog({
     <Dialog open={open} onOpenChange={(next) => !disable && onOpenChange(next)}>
       <DialogContent
         fullScreenMobile
+        disableBackdropBlur
         overlayClass="alusa-registration-wizard-overlay"
         className="modality-registration-dialog alusa-wizard-corner-smoothing flex w-full max-w-xl min-h-0 flex-col gap-0 overflow-hidden rounded-2xl bg-[#f8fafc] p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-md:h-[100dvh] max-md:max-h-[100dvh] md:max-h-[90vh]"
       >

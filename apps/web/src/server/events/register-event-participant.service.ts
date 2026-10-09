@@ -1,10 +1,16 @@
 import { z } from 'zod';
 
-import { createStandaloneCharge } from '@alusa/finance';
 import {
-  eventParticipantScalarSelect,
+  createEventRegistrationCharge,
+  markEventParticipantGroupForReconciliation,
+  markEventParticipantGroupPaid,
   registerEventParticipant,
   registerEventParticipantGroup,
+  rollbackEventParticipantRegistration,
+  rollbackEventParticipantGroupRegistration,
+} from '@alusa/finance';
+import {
+  eventParticipantScalarSelect,
   type EventsContext,
 } from '@alusa/lib/events/events.service';
 import { registerEventParticipantRequestSchema } from '@alusa/lib/events/events.schema';
@@ -52,6 +58,17 @@ function isUniqueConstraintError(error: unknown): boolean {
 }
 
 function billingFailure(error: string, participantCount?: number): EventParticipantRegistrationResult {
+  if (error === 'ERRO_AO_CRIAR_PAGAMENTO') {
+    return {
+      status: 202,
+      body: {
+        operationStatus: 'REQUIRES_RECONCILIATION',
+        message: 'Estamos confirmando o resultado da cobrança. A inscrição foi preservada e será atualizada após a verificação.',
+      },
+      errorCode: 'COBRANCA_EM_VERIFICACAO',
+      ...(participantCount === undefined ? {} : { fields: { participantCount } }),
+    };
+  }
   const mapped = billingErrorMap[error] ?? {
     status: 502,
     message: 'Não foi possível criar a cobrança no provedor financeiro.',
@@ -62,38 +79,6 @@ function billingFailure(error: string, participantCount?: number): EventParticip
     errorCode: error,
     ...(participantCount === undefined ? {} : { fields: { participantCount } }),
   };
-}
-
-async function rollbackParticipantGroup(
-  contaId: string,
-  groupId: string,
-  participantIds: string[],
-  entryIds: string[],
-) {
-  await eventParticipantRepository.$transaction(async (tx) => {
-    await tx.eventoContrato.deleteMany({
-      where: { contaId, participantId: { in: participantIds }, status: 'PENDENTE' },
-    });
-    if (entryIds.length > 0) {
-      await tx.eventFinancialEntry.deleteMany({ where: { contaId, id: { in: entryIds } } });
-    }
-    await tx.eventParticipant.deleteMany({ where: { contaId, id: { in: participantIds } } });
-    await tx.eventBillingGroup.deleteMany({ where: { contaId, id: groupId, status: 'PENDING' } });
-  });
-}
-
-async function rollbackParticipant(contaId: string, participant: { id: string; revenueEntryId: string | null }) {
-  await eventParticipantRepository.eventoContrato.deleteMany({
-    where: { contaId, participantId: participant.id, status: 'PENDENTE' },
-  });
-  await eventParticipantRepository.eventParticipant.deleteMany({
-    where: { id: participant.id, contaId },
-  });
-  if (participant.revenueEntryId) {
-    await eventParticipantRepository.eventFinancialEntry.deleteMany({
-      where: { id: participant.revenueEntryId, contaId },
-    });
-  }
 }
 
 export async function registerEventParticipantForHttp(input: {
@@ -212,7 +197,15 @@ export async function registerEventParticipantForHttp(input: {
     const groupBalanceAmount = Number(groupResult.group.balanceAmount);
     if (groupBalanceAmount > 0 && !isFeePaid && body.billingMethod !== 'MANUAL_RECEIVED') {
       try {
-        const billingResult = await createStandaloneCharge({
+        const billingResult = await createEventRegistrationCharge({
+          contaId: ctx.contaId,
+          target: {
+            kind: 'group',
+            groupId: groupResult.group.id,
+            participantIds: groupResult.participants.map((participant) => participant.id),
+            revenueEntryIds: groupResult.participants.map((participant) => participant.revenueEntryId).filter((id): id is string => Boolean(id)),
+          },
+          charge: {
           contaId: ctx.contaId,
           actor: { type: 'USER', id: ctx.userId },
           payer: { type: 'responsavel', responsavelId: body.responsavelId },
@@ -231,55 +224,41 @@ export async function registerEventParticipantForHttp(input: {
           notificationChannelsConfigured: body.notificationChannelsConfigured,
           uiRequestId: `event-billing-group:${groupResult.group.id}:balance`,
           ...eventPaymentRulesToAsaas(paymentRules),
+          },
         });
 
         if (!billingResult.success) {
-          await rollbackParticipantGroup(
-            ctx.contaId,
-            groupResult.group.id,
-            groupResult.participants.map((participant) => participant.id),
-            groupResult.participants
+          if (billingResult.error === 'ERRO_AO_CRIAR_PAGAMENTO') {
+            return {
+              ...billingFailure(billingResult.error, alunoIds.length),
+              body: {
+                ...(billingFailure(billingResult.error, alunoIds.length).body as Record<string, unknown>),
+                data: groupResult.participants[0],
+              },
+            };
+          }
+          await rollbackEventParticipantGroupRegistration({
+            contaId: ctx.contaId,
+            groupId: groupResult.group.id,
+            participantIds: groupResult.participants.map((participant) => participant.id),
+            revenueEntryIds: groupResult.participants
               .map((participant) => participant.revenueEntryId)
               .filter((id): id is string => Boolean(id)),
-          );
+          });
           return billingFailure(billingResult.error, alunoIds.length);
         }
 
-        const updatedGroup = await eventParticipantRepository.eventBillingGroup.update({
-          where: { id: groupResult.group.id, contaId: ctx.contaId },
-          data: {
-            status: 'OPEN',
-            standaloneChargeId: billingResult.data.chargeId,
-            asaasPaymentId: billingResult.data.asaasPaymentId ?? null,
-            asaasInstallmentId: billingResult.data.asaasInstallmentId ?? null,
-          },
-        });
-        await eventParticipantRepository.eventParticipant.updateMany({
-          where: { contaId: ctx.contaId, id: { in: groupResult.participants.map((participant) => participant.id) } },
-          data: {
-            standaloneChargeId: updatedGroup.standaloneChargeId,
-            asaasPaymentId: updatedGroup.asaasPaymentId,
-            asaasInstallmentId: updatedGroup.asaasInstallmentId,
-          },
-        });
-        await eventParticipantRepository.eventFinancialEntry.updateMany({
-          where: {
-            contaId: ctx.contaId,
-            id: { in: groupResult.participants.map((participant) => participant.revenueEntryId).filter((id): id is string => Boolean(id)) },
-          },
-          data: { paymentProvider: 'ASAAS', paymentStatus: 'PENDING' },
-        });
       } catch (billingError) {
-        await eventParticipantRepository.eventBillingGroup.updateMany({
-          where: { id: groupResult.group.id, contaId: ctx.contaId, status: 'PENDING' },
-          data: { status: 'REQUIRES_RECONCILIATION' },
+        await markEventParticipantGroupForReconciliation({
+          contaId: ctx.contaId,
+          groupId: groupResult.group.id,
         });
         throw billingError;
       }
     } else if (body.billingMethod !== 'MANUAL_RECEIVED' || body.isFeeExempt) {
-      await eventParticipantRepository.eventBillingGroup.update({
-        where: { id: groupResult.group.id, contaId: ctx.contaId },
-        data: { status: 'PAID' },
+      await markEventParticipantGroupPaid({
+        contaId: ctx.contaId,
+        groupId: groupResult.group.id,
       });
     }
 
@@ -329,7 +308,10 @@ export async function registerEventParticipantForHttp(input: {
 
   if (balanceAmount > 0 && !isFeePaid && body.billingMethod !== 'MANUAL_RECEIVED') {
     try {
-      const billingResult = await createStandaloneCharge({
+      const billingResult = await createEventRegistrationCharge({
+          contaId: ctx.contaId,
+        target: { kind: 'participant', participantId: participant.id, revenueEntryId: participant.revenueEntryId },
+          charge: {
         contaId: ctx.contaId,
         actor: { type: 'USER', id: ctx.userId },
         payer: body.responsavelId
@@ -350,33 +332,33 @@ export async function registerEventParticipantForHttp(input: {
         notificationChannelsConfigured: body.notificationChannelsConfigured,
         uiRequestId: `event-participant:${participant.id}:balance`,
         ...eventPaymentRulesToAsaas(paymentRules),
+        },
       });
 
       if (!billingResult.success) {
-        await rollbackParticipant(ctx.contaId, participant);
+        if (billingResult.error === 'ERRO_AO_CRIAR_PAGAMENTO') {
+          return {
+            ...billingFailure(billingResult.error),
+            body: {
+              ...(billingFailure(billingResult.error).body as Record<string, unknown>),
+              data: participant,
+            },
+          };
+        }
+        await rollbackEventParticipantRegistration({
+          contaId: ctx.contaId,
+          participantId: participant.id,
+          revenueEntryId: participant.revenueEntryId,
+        });
         return billingFailure(billingResult.error);
       }
 
-      await eventParticipantRepository.eventParticipant.updateMany({
-        where: { id: participant.id, contaId: ctx.contaId },
-        data: {
-          standaloneChargeId: billingResult.data.chargeId,
-          asaasPaymentId: billingResult.data.asaasPaymentId ?? null,
-          asaasInstallmentId: billingResult.data.asaasInstallmentId ?? null,
-        },
-      });
-      if (participant.revenueEntryId) {
-        await eventParticipantRepository.eventFinancialEntry.updateMany({
-          where: { id: participant.revenueEntryId, contaId: ctx.contaId },
-          data: {
-            paymentProvider: 'ASAAS',
-            paymentStatus: 'PENDING',
-            asaasPaymentId: billingResult.data.asaasPaymentId ?? billingResult.data.asaasInstallmentId ?? null,
-          },
-        });
-      }
     } catch (billingError) {
-      await rollbackParticipant(ctx.contaId, participant);
+      await rollbackEventParticipantRegistration({
+        contaId: ctx.contaId,
+        participantId: participant.id,
+        revenueEntryId: participant.revenueEntryId,
+      });
       throw billingError;
     }
   }

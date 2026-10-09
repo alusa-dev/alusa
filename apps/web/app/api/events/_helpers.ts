@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { EventsError, type EventsContext } from '@alusa/lib/events/events.service';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { canRequestEventRefund } from '@/features/events/shared/event-refund-permission';
 import {
   assertPlatformAccessForConta,
   platformBillingAccessResponse,
@@ -26,6 +27,7 @@ export type EventsPermission =
   | 'eventTickets.manageLots'
   | 'eventTickets.createSale'
   | 'eventTickets.cancelSale'
+  | 'eventTickets.refund'
   | 'eventTickets.markPaid'
   | 'eventMaps.view'
   | 'eventMaps.manage'
@@ -56,6 +58,7 @@ const ALL_PERMISSIONS: EventsPermission[] = [
   'eventTickets.manageLots',
   'eventTickets.createSale',
   'eventTickets.cancelSale',
+  'eventTickets.refund',
   'eventTickets.markPaid',
   'eventMaps.view',
   'eventMaps.manage',
@@ -101,6 +104,7 @@ const ROLE_PERMISSIONS: Record<string, EventsPermission[]> = {
   FINANCEIRO: [
     'events.view',
     'eventTickets.view',
+    'eventTickets.refund',
     'eventTickets.checkIn',
     'eventTickets.markPaid',
     'eventMaps.view',
@@ -137,7 +141,10 @@ export async function getEventsContext(
   const role = auth.role || 'ANONYMOUS';
 
   const permissions = ROLE_PERMISSIONS[role] ?? [];
-  if (!permissions.includes(permission)) {
+  const permitted = permission === 'eventTickets.refund'
+    ? canRequestEventRefund(role)
+    : permissions.includes(permission);
+  if (!permitted) {
     throw new EventsError('SEM_PERMISSAO', 'Você não tem permissão para esta ação.', 403);
   }
 

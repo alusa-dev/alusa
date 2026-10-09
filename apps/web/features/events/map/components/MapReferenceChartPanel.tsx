@@ -136,24 +136,26 @@ export function MapReferenceChartPanel({
 
   return (
     <aside className={cn(
-      'flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 backdrop-blur',
-      embedded ? 'max-h-[24rem] shadow-none' : 'max-h-[22rem] shadow-lg shadow-slate-300/30',
+      embedded ? 'min-h-0' : 'flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 backdrop-blur',
+      !embedded && 'max-h-[22rem] shadow-lg shadow-slate-300/30',
     )}>
-      <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <CreatorIcon name="reference" size={16} className="text-brand-accent" />
-            <h2 className="text-sm font-semibold text-slate-950">Planta de referência</h2>
+      {!embedded ? (
+        <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <CreatorIcon name="reference" size={16} className="text-brand-accent" />
+              <h2 className="text-sm font-semibold text-slate-950">Planta de referência</h2>
+            </div>
+            <p className="text-xs text-slate-500">Guia visual para construir o mapa</p>
           </div>
-          <p className="text-xs text-slate-500">Guia visual para construir o mapa</p>
+          {chart ? (
+            <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-500">
+              <CreatorIcon name="locked" size={12} />
+              auxiliar
+            </span>
+          ) : null}
         </div>
-        {chart ? (
-          <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-500">
-            <CreatorIcon name="locked" size={12} />
-            auxiliar
-          </span>
-        ) : null}
-      </div>
+      ) : null}
 
       <input
         ref={fileInputRef}
@@ -164,16 +166,21 @@ export function MapReferenceChartPanel({
         onChange={(event) => void handleUpload(event.target.files?.[0])}
       />
 
-      <div className="min-h-0 overflow-y-auto p-3">
+      <div className={cn('min-h-0 overflow-y-auto', embedded ? '' : 'p-3')}>
         {!chart ? (
-          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3 text-center">
+          <div className={cn(
+            'gap-3',
+            embedded
+              ? 'flex items-center justify-between'
+              : 'rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3 text-center',
+          )}>
             <p className="text-xs leading-5 text-slate-500">
               Importe a planta do local para desenhar setores, blocos e fileiras por cima dela.
             </p>
             <Button
               type="button"
               size="sm"
-              className="mt-3 h-8 w-full text-xs"
+              className={cn('h-8 text-xs', embedded ? 'shrink-0' : 'mt-3 w-full')}
               disabled={disabled || busy}
               onClick={() => fileInputRef.current?.click()}
             >
@@ -182,7 +189,7 @@ export function MapReferenceChartPanel({
             </Button>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className={cn(embedded ? 'space-y-2' : 'space-y-3')}>
             <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white text-slate-500">
                 <CreatorIcon name="reference" size={16} />

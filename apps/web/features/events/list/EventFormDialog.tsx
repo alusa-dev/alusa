@@ -34,6 +34,7 @@ import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatt
 import { useEventResources } from '../shared/useEventResources';
 import { FieldHelpTooltip } from '@/components/ui/field-help-tooltip';
 import { wizardSoftFieldInputClass, wizardSoftTextareaFieldClass } from '@/components/shared/wizard/field-styles';
+import { EventTicketArtworkSection } from './EventTicketArtworkSection';
 
 type PaymentRuleType = 'FIXED' | 'PERCENTAGE';
 
@@ -54,7 +55,7 @@ export function EventFormDialog({
 }: {
   event?: SchoolEventDTO | null;
   trigger: React.ReactNode;
-  onSaved?: (event: SchoolEventDTO) => void;
+  onSaved?: (_event: SchoolEventDTO) => void;
 }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -64,6 +65,7 @@ export function EventFormDialog({
   const [discountText, setDiscountText] = useState('');
   const [discountType, setDiscountType] = useState<PaymentRuleType>('PERCENTAGE');
   const [discountDaysText, setDiscountDaysText] = useState('0');
+  const [artworkFile, setArtworkFile] = useState<File | null>(null);
   const resources = useEventResources();
 
   useEffect(() => {
@@ -75,12 +77,23 @@ export function EventFormDialog({
       setDiscountText(event?.paymentRules?.discount?.value?.toString() ?? '');
       setDiscountType(event?.paymentRules?.discount?.type ?? 'PERCENTAGE');
       setDiscountDaysText(event?.paymentRules?.discount?.dueDateLimitDays?.toString() ?? '0');
+      setArtworkFile(null);
     }
   }, [open, event]);
 
   const mutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) => saveEvent(payload, event?.id),
     onSuccess: async (saved) => {
+      try {
+        if (artworkFile) await uploadArtwork(saved.id);
+        setArtworkFile(null);
+      } catch (error) {
+        toast.error({ title: 'Evento salvo, imagem pendente', description: (error as Error).message });
+        await queryClient.invalidateQueries({ queryKey: eventQueryKeys.events });
+        await queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(saved.id) });
+        onSaved?.(saved);
+        return;
+      }
       toast.success({
         title: event ? 'Evento atualizado' : 'Evento criado',
         description: event ? 'As alterações do evento foram salvas com sucesso.' : 'O novo evento foi cadastrado com sucesso.'
@@ -141,6 +154,20 @@ export function EventFormDialog({
     });
   }
 
+  async function uploadArtwork(eventId: string) {
+    if (!artworkFile) return;
+    const data = new FormData(); data.append('file', artworkFile);
+    const response = await fetch(`/api/events/${eventId}/ticket-artwork`, { method: 'POST', body: data });
+    if (!response.ok) { const body = await response.json().catch(() => null); throw new Error(body?.error?.message ?? 'Falha ao enviar imagem do ingresso.'); }
+  }
+
+  async function removeArtwork() {
+    if (!event?.id) return;
+    const response = await fetch(`/api/events/${event.id}/ticket-artwork`, { method: 'DELETE' });
+    if (!response.ok) throw new Error('Não foi possível remover a imagem.');
+    await queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(event.id) });
+  }
+
   const userOptions = (resources.data?.users ?? []).map((user) => ({ value: user.id, label: user.nome }));
   const defaultStartsAt = event?.startsAt ?? getRoundedNowISOString();
 
@@ -149,6 +176,7 @@ export function EventFormDialog({
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent
         fullScreenMobile
+        disableBackdropBlur
         overlayClass="alusa-registration-wizard-overlay"
         className="event-registration-dialog alusa-wizard-corner-smoothing flex h-[min(820px,calc(100dvh-3rem))] w-[calc(100vw-2rem)] max-w-4xl min-h-0 flex-col gap-0 overflow-hidden rounded-[20px] bg-[#f8fafc] p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0"
       >
@@ -242,6 +270,12 @@ export function EventFormDialog({
                 </div>
               </div>
             </section>
+            <EventTicketArtworkSection
+              eventArtworkUrl={event?.ticketArtworkUrl}
+              pendingFile={artworkFile}
+              onFileChange={setArtworkFile}
+              onRemove={removeArtwork}
+            />
             <section className={EVENT_SECTION_CLASS}>
               <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Configurações</span>
               <div className="mt-4">

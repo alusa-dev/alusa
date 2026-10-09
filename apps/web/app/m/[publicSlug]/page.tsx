@@ -46,6 +46,7 @@ export default async function PublicEventMapPage({ params, searchParams }: PageP
         status: initialOrder.status,
         paymentStatus: initialOrder.paymentStatus,
         refundRequestUrl: initialOrder.refundRequestUrl,
+        ticketFulfillmentLastError: initialOrder.ticketFulfillmentLastError,
         ticketFulfillmentStatus: initialOrder.ticketFulfillmentStatus,
         expiresAt: initialOrder.expiresAt,
         statusUrl: initialOrder.statusUrl,

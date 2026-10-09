@@ -1278,12 +1278,14 @@ export async function createBillingWebhookNotification(params: {
     return { notificationId: null, created: false, recipientCount: 0 };
   }
 
-  const cobranca = await prisma.cobranca.findUnique({
+  const cobranca = await prisma.cobranca.findFirst({
     where: {
-      uq_cobranca_conta_asaas_payment: {
-        contaId: params.contaId,
-        asaasPaymentId: params.asaasPaymentId,
-      },
+      contaId: params.contaId,
+      OR: [
+        { asaasPaymentId: params.asaasPaymentId },
+        { asaasId: params.asaasPaymentId },
+      ],
+      matricula: { contaId: params.contaId, aluno: { contaId: params.contaId } },
     },
     select: {
       id: true,

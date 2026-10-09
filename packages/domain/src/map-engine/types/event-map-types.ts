@@ -77,8 +77,21 @@ export type EventMapDTO = {
   id: string;
   contaId: string;
   eventId: string;
-  event: { id: string; name: string; startsAt: string; status: string; ticketMode: string };
+  event: {
+    id: string;
+    name: string;
+    startsAt: string;
+    endsAt?: string | null;
+    locationName?: string | null;
+    locationAddress?: string | null;
+    status: string;
+    ticketMode: string;
+  };
   name: string;
+  startsAt?: string;
+  endsAt?: string | null;
+  locationName?: string | null;
+  locationAddress?: string | null;
   status: EventMapStatus;
   publishedVersionId: string | null;
   publicSlug?: string | null;

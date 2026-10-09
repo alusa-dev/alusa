@@ -1,12 +1,10 @@
 import { prisma } from '@alusa/database';
-import { EventsError } from '@alusa/lib/events/events.service';
-import { getEventAsaasPaymentProvider } from '@alusa/lib/events/event-asaas-payment-provider';
-import {
-  confirmPublicEventMapOrderPayment,
-  getPublicEventMapOrderStatus,
-  reconcileEventMapOrderFinancialStateFromAsaas,
-} from '@alusa/lib/events/map/event-map.service';
-import { loadDecryptedAsaasCredentials } from '@alusa/lib/services/integracoes/asaas-credentials-service';
+import { EventsError } from '@alusa/domain/events';
+import { getEventAsaasPaymentProvider } from './event-asaas-payment-provider';
+import { getPublicEventMapOrderStatus } from '@alusa/lib/events/map/public-event-map-order-status.service';
+import { confirmPublicEventMapOrderPayment } from './confirm-public-event-map-order-payment';
+import { reconcileEventMapOrderFinancialStateFromAsaas } from './event-map-payment-transitions';
+import { loadDecryptedAsaasCredentials } from '../foundation/load-decrypted-asaas-credentials';
 import { Prisma } from '@prisma/client';
 
 const PAYMENT_SYNC_WINDOW_MS = 15 * 60 * 1000;
@@ -71,7 +69,7 @@ export async function syncPublicEventMapOrderPaymentByBuyer(orderId: string, acc
 
   const credentials = await loadDecryptedAsaasCredentials(order.contaId);
   if (!credentials?.apiKey) {
-    throw new EventsError('ASAAS_NAO_CONFIGURADO', 'Integração Asaas não configurada.', 409);
+    throw new EventsError('ASAAS_NAO_CONFIGURADO', 'Integração de pagamentos não configurada.', 409);
   }
   const payment = await getEventAsaasPaymentProvider().getPayment({
     apiKey: credentials.apiKey,
@@ -135,6 +133,14 @@ export async function syncPublicEventMapOrderPaymentByBuyer(orderId: string, acc
       ticketFulfillmentError: confirmationError.code,
     });
     if (!reconciled) throw confirmationError;
+    if (reconciled.blocked) {
+      return {
+        synced: false as const,
+        status: reconciled.status,
+        blocked: true as const,
+        order: await getPublicEventMapOrderStatus(orderId, accessToken),
+      };
+    }
   }
 
   return {

@@ -37,13 +37,16 @@ const {
   mockRefundTicketSales: vi.fn(async () => null),
 }));
 
-vi.mock('@alusa/lib/events/events.service', () => ({
-  refundTicketSalesByAsaasPayment: mockRefundTicketSales,
+vi.mock('../../events/refund-event-ticket-sales-by-payment', () => ({
+  refundEventTicketSalesByPayment: mockRefundTicketSales,
 }));
 
-vi.mock('@alusa/lib/events/map/event-map.service', () => ({
-  cancelPublicEventMapOrderByPayment: mockCancelEventMapOrder,
+vi.mock('../../events/confirm-public-event-map-order-payment', () => ({
   confirmPublicEventMapOrderPayment: mockConfirmEventMapOrderPayment,
+}));
+
+vi.mock('../../events/event-map-payment-transitions', () => ({
+  cancelPublicEventMapOrderByPayment: mockCancelEventMapOrder,
   markPublicEventMapOrderRefundProcessingByPayment: mockMarkEventMapRefundProcessing,
   reconcileEventMapOrderFinancialStateFromAsaas: mockReconcileEventMapOrder,
   refundPublicEventMapOrderByPayment: mockRefundEventMapOrder,
@@ -2336,6 +2339,126 @@ describe('handlePaymentWebhook', () => {
     }));
   });
 
+  it.each(['REQUESTED', 'IN_DISPUTE', 'DISPUTE_LOST', 'DONE'])(
+    'prioriza chargeback %s presente em PAYMENT_RECEIVED e não emite ingressos',
+    async (chargebackStatus) => {
+      const { prisma } = await import('@alusa/database');
+      vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+        id: 'order-1', status: 'PAYMENT_PENDING', asaasPaymentId: 'pay-chargeback-mixed', paymentStatus: null,
+      } as never);
+      vi.mocked(prisma.eventMapOrder.findMany).mockResolvedValueOnce([] as never);
+
+      const result = await handlePaymentWebhook('conta-1', {
+        event: 'PAYMENT_RECEIVED',
+        payment: {
+          id: 'pay-chargeback-mixed', status: 'RECEIVED', value: 60,
+          externalReference: 'event-map-order:order-1',
+          chargeback: { status: chargebackStatus },
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+      expect(mockReconcileEventMapOrder).not.toHaveBeenCalled();
+      expect(mockMarkEventMapRefundProcessing).toHaveBeenCalledWith(expect.objectContaining({
+        paymentStatus: chargebackStatus,
+      }));
+      expect(mockRefundTicketSales).not.toHaveBeenCalled();
+    },
+  );
+
+  it('bloqueia e audita status de chargeback desconhecido mesmo em PAYMENT_RECEIVED', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-1', status: 'PAYMENT_PENDING', asaasPaymentId: 'pay-chargeback-unknown', paymentStatus: null,
+    } as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockResolvedValueOnce([] as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: 'pay-chargeback-unknown', status: 'RECEIVED', value: 60,
+        externalReference: 'event-map-order:order-1',
+        chargeback: { status: 'FUTURE_PROVIDER_STATE' },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockReconcileEventMapOrder).not.toHaveBeenCalled();
+    expect(mockMarkEventMapRefundProcessing).toHaveBeenCalledWith(expect.objectContaining({
+      paymentStatus: 'CHARGEBACK_UNKNOWN', rawChargebackStatus: 'FUTURE_PROVIDER_STATE',
+    }));
+    expect(mockRefundTicketSales).not.toHaveBeenCalled();
+  });
+
+  it('emite o pedido após o provedor confirmar a reversão do chargeback', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-1', status: 'PAYMENT_PENDING', asaasPaymentId: 'pay-chargeback-reversed', paymentStatus: 'IN_DISPUTE',
+    } as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockResolvedValueOnce([] as never);
+    mockConfirmEventMapOrderPayment.mockResolvedValueOnce({ confirmed: true } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: 'pay-chargeback-reversed', status: 'RECEIVED', value: 60,
+        externalReference: 'event-map-order:order-1',
+        chargeback: { status: 'REVERSED' },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockConfirmEventMapOrderPayment).toHaveBeenCalled();
+    expect(mockMarkEventMapRefundProcessing).toHaveBeenCalledWith(expect.objectContaining({
+      paymentStatus: 'REVERSED',
+    }));
+  });
+
+  it('um PAYMENT_RECEIVED atrasado não libera pedido que já está em disputa', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-1', status: 'PAYMENT_PENDING', asaasPaymentId: 'pay-order-replay', paymentStatus: 'IN_DISPUTE',
+    } as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockResolvedValueOnce([] as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: 'pay-order-replay', status: 'RECEIVED', value: 60,
+        externalReference: 'event-map-order:order-1',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockReconcileEventMapOrder).not.toHaveBeenCalled();
+    expect(mockMarkEventMapRefundProcessing).not.toHaveBeenCalled();
+  });
+
+  it('ignora chargeback e recusa atrasados depois do estorno final', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-1', status: 'REFUNDED', asaasPaymentId: 'pay-already-refunded', paymentStatus: 'REFUNDED',
+    } as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockResolvedValueOnce([] as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_REFUND_DENIED',
+      payment: {
+        id: 'pay-already-refunded', status: 'REFUND_DENIED', value: 60,
+        externalReference: 'event-map-order:order-1',
+        chargeback: { status: 'DISPUTE_LOST' },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockMarkEventMapRefundProcessing).not.toHaveBeenCalled();
+    expect(mockRefundEventMapOrder).not.toHaveBeenCalled();
+    expect(mockRefundTicketSales).not.toHaveBeenCalled();
+  });
+
   it('não marca o webhook como sucesso quando o pedido ainda não pôde ser reconciliado', async () => {
     const { prisma } = await import('@alusa/database');
     vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({ id: 'order-1', asaasPaymentId: null } as never);
@@ -2359,11 +2482,11 @@ describe('handlePaymentWebhook', () => {
   it('registra recusa de estorno sem marcar pedido ou venda como estornados', async () => {
     const { prisma } = await import('@alusa/database');
     vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
-      id: 'order-1',
+      id: 'order-1', status: 'CONFIRMED', paymentStatus: 'REFUND_REQUESTED',
       asaasPaymentId: null,
     } as never);
     vi.mocked(prisma.eventMapOrder.findMany).mockResolvedValueOnce([
-      { id: 'order-1', asaasPaymentId: 'pay_event_map_refund_denied' },
+      { id: 'order-1', status: 'CONFIRMED', paymentStatus: 'REFUND_REQUESTED', asaasPaymentId: 'pay_event_map_refund_denied' },
     ] as never);
 
     const result = await handlePaymentWebhook('conta-1', {

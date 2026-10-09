@@ -20,7 +20,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     if (!token) return NextResponse.json({ error: { code: 'TOKEN_AUSENTE', message: 'Token ausente.' } }, { status: 401 });
 
     const order = await getPublicEventMapOrderTickets(orderId, token);
-    const pdf = createEventTicketsPdf(order);
+    const pdf = await createEventTicketsPdf(order);
     const body = new Uint8Array(pdf).buffer;
     return new NextResponse(body, {
       headers: {

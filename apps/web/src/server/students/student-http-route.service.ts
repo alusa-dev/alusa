@@ -6,7 +6,10 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { prisma } from '@/lib/prisma';
 import { updateAluno, deleteAluno, getAluno } from '@alusa/lib/alunos/aluno.service';
 import { buildAlunoArchivePlan } from '@alusa/lib/alunos/policies';
-import { AsaasCustomerEnsureError } from '@alusa/finance';
+import {
+  AsaasCustomerEnsureError,
+} from '@alusa/finance';
+import { studentFinancePort } from './student-finance-port';
 import { getPaymentsProviderForConta } from '@/src/server/finance/payments-provider.factory';
 import {
   executeAlunoArchivePlan,
@@ -236,7 +239,7 @@ export async function patchAlunoRoute(req: Request, { params }: { params: Promis
       ...parsed,
       contaId,
       ...(normalizedFoto !== undefined ? { foto: normalizedFoto } : {}),
-    });
+    }, studentFinancePort);
 
     await auditSensitiveAccess({
       prisma,
@@ -440,7 +443,7 @@ export async function deleteAlunoRoute(req: Request, { params }: { params: Promi
     }
 
     // 4) Aplicar operação local (arquivar/hard delete + customer safety)
-    const alunoResult = await deleteAluno(rawParams.id, contaId, motivo, false, actorId);
+    const alunoResult = await deleteAluno(rawParams.id, contaId, motivo, false, actorId, studentFinancePort);
 
     // 5) Calcular blockers depois (podem ter mudado)
     const blockers = await getAlunoDeletionBlockers({ alunoId: rawParams.id, contaId });

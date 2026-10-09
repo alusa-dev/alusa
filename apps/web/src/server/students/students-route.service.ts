@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { isMenorDeIdade } from '@alusa/domain';
 import { maskCpf as privacyMaskCpf } from '@alusa/shared';
 import { createAluno, updateAluno } from '@alusa/lib/alunos/aluno.service';
+import { studentFinancePort } from './student-finance-port';
 import { formatZodErrors } from '@alusa/lib/alunos/aluno.schema';
 import {
   assertPayerAddressFiscalReady,
@@ -267,13 +268,21 @@ export function prepareAlunoCreateInput(rawInput: unknown, contaId: string) {
 export async function createAlunoForTenant(params: { rawInput: unknown; contaId: string }) {
   const parsed = prepareAlunoCreateInput(params.rawInput, params.contaId);
   const dataUrlPhoto = parsed.foto?.startsWith('data:image/') ? parsed.foto : null;
-  let aluno = await createAluno(dataUrlPhoto ? { ...parsed, foto: undefined } : parsed);
+  let aluno = await createAluno(
+    dataUrlPhoto ? { ...parsed, foto: undefined } : parsed,
+    studentFinancePort,
+  );
 
   if (dataUrlPhoto) {
     const normalizedFoto = await normalizeAvatarUpload({
       entity: 'aluno', entityId: aluno.id, contaId: params.contaId, foto: dataUrlPhoto, previousFoto: null,
     });
-    if (normalizedFoto) aluno = await updateAluno({ id: aluno.id, contaId: params.contaId, foto: normalizedFoto });
+    if (normalizedFoto) {
+      aluno = await updateAluno(
+        { id: aluno.id, contaId: params.contaId, foto: normalizedFoto },
+        studentFinancePort,
+      );
+    }
   }
 
   return aluno;

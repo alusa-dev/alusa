@@ -18,6 +18,10 @@ export function useSidebarNavAccess() {
     typeof session?.user === 'object' && session?.user && 'financeIntegrationMode' in session.user
       ? ((session.user as { financeIntegrationMode?: string }).financeIntegrationMode ?? null)
       : null;
+  const visibilityContaId =
+    typeof session?.user === 'object' && session?.user && 'contaId' in session.user
+      ? ((session.user as { contaId?: string | null }).contaId ?? null)
+      : null;
   const financialCapabilities = resolveFinancialCapabilities(financeIntegrationMode);
   const role =
     typeof session?.user === 'object' && session?.user && 'role' in session.user
@@ -48,6 +52,7 @@ export function useSidebarNavAccess() {
       return;
     }
 
+    setShowAutomaticAnticipationItem(true);
     const controller = new AbortController();
 
     async function loadAutomaticAnticipationVisibility() {
@@ -73,7 +78,7 @@ export function useSidebarNavAccess() {
     void loadAutomaticAnticipationVisibility();
 
     return () => controller.abort();
-  }, [shouldLoadAutomaticAnticipationVisibility]);
+  }, [shouldLoadAutomaticAnticipationVisibility, visibilityContaId]);
 
   const allowedGroups = useMemo(
     () =>

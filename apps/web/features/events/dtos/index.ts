@@ -62,3 +62,17 @@ export const eligibleEventStudentsQueryDTOSchema = z.object({
   q: z.string().trim().optional(),
 });
 export type EligibleEventStudentsQueryDTO = z.infer<typeof eligibleEventStudentsQueryDTOSchema>;
+
+export const eventPublicOrdersQueryDTOSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(50).default(6),
+  search: z.string().trim().max(120).optional(),
+  status: z.enum(['PAYMENT_PENDING', 'CONFIRMED', 'CANCELLED', 'EXPIRED', 'REFUNDED', 'PARTIALLY_REFUNDED']).optional(),
+});
+export type EventPublicOrdersQueryDTO = z.infer<typeof eventPublicOrdersQueryDTOSchema>;
+
+export const eventPublicTicketCheckInInputDTOSchema = z.object({
+  ticketCode: z.string().trim().min(4).max(64),
+  confirm: z.boolean().optional(),
+});
+export type EventPublicTicketCheckInInputDTO = z.infer<typeof eventPublicTicketCheckInInputDTOSchema>;

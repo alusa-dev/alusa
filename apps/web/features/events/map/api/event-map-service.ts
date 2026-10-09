@@ -103,7 +103,14 @@ export async function updateEventMapReferenceChart(
 
 export async function createEventMap(
   eventId: string,
-  payload: { name: string; creationMode?: 'blank' | 'reference-plan' },
+  payload: {
+    name: string;
+    creationMode?: 'blank' | 'reference-plan';
+    startsAt?: string | null;
+    endsAt?: string | null;
+    locationName?: string | null;
+    locationAddress?: string | null;
+  },
 ) {
   const json = await parseResponse<JsonEnvelope<EventMapDTO>>(
     await eventMapFetch(`/api/events/${eventId}/maps`, {
@@ -129,7 +136,14 @@ export async function saveEventMapDraft(eventId: string, mapId: string, payload:
 export async function saveEventMapSettings(
   eventId: string,
   mapId: string,
-  payload: { name?: string; publicEnabled?: boolean },
+  payload: {
+    name?: string;
+    startsAt?: string | null;
+    endsAt?: string | null;
+    locationName?: string | null;
+    locationAddress?: string | null;
+    publicEnabled?: boolean;
+  },
 ) {
   const json = await parseResponse<JsonEnvelope<EventMapDTO>>(
     await eventMapFetch(`/api/events/${eventId}/maps/${mapId}/settings`, {
@@ -156,12 +170,16 @@ export async function publishEventMap(eventId: string, mapId: string, payload?: 
   return json.data;
 }
 
-export async function duplicateEventMap(eventId: string, mapId: string) {
+export async function duplicateEventMap(
+  eventId: string,
+  mapId: string,
+  payload: { name: string; startsAt: string; endsAt?: string | null; locationName?: string | null; locationAddress?: string | null },
+) {
   const json = await parseResponse<JsonEnvelope<EventMapDTO>>(
     await eventMapFetch(`/api/events/${eventId}/maps/${mapId}/duplicate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify(payload),
     }),
   );
   return json.data;

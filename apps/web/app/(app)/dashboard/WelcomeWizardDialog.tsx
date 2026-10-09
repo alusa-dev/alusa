@@ -91,7 +91,7 @@ export function WelcomeWizardDialog({
       <DialogContent
         fullScreenMobile
         unstyled
-        overlayClass="bg-black/80 backdrop-blur-sm supports-[backdrop-filter]:backdrop-blur-md"
+        overlayClass="bg-black/80 backdrop-blur-none"
         onEscapeKeyDown={(event) => event.preventDefault()}
         onInteractOutside={(event) => event.preventDefault()}
         className={`max-w-[640px] !transition-none data-[state=closed]:!animate-none data-[state=open]:!animate-none [&>button.absolute]:z-20 [&>button.absolute]:text-white [&>button.absolute:hover]:opacity-100 ${

@@ -5,6 +5,7 @@ export const SELECT_CLASS =
 export const LABEL_CLASS = 'text-xs font-medium text-slate-600';
 export const PRIMARY_BUTTON_CLASS = 'h-10 bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90';
 export const OUTLINE_BUTTON_CLASS = 'h-10 border-slate-200 bg-white px-4 text-slate-700 shadow-sm shadow-slate-200/40 hover:bg-slate-50';
+export const EVENT_HEADER_ACTION_BUTTON_CLASS = 'h-10 border-slate-200 bg-white px-4 text-slate-700 shadow-none hover:bg-slate-50';
 
 export const TIME_OPTIONS = Array.from({ length: 24 * 4 }, (_, index) => {
   const hour = String(Math.floor(index / 4)).padStart(2, '0');

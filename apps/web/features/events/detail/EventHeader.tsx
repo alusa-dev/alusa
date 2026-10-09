@@ -1,9 +1,12 @@
 'use client';
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { differenceInCalendarDays } from 'date-fns';
 import { CalendarDays, CheckCircle2, Clock, MapPin, PackageCheck, User } from 'lucide-react';
 import { type SchoolEventStatus } from '@alusa/shared';
 
+import { Edit } from '@/components/icons/icons';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -20,11 +23,23 @@ import { cn } from '@/lib/utils';
 
 import { EventFormDialog } from '../list/EventFormDialog';
 import { formatCurrency, formatDate, formatTime, updateEventStatus, type SchoolEventDTO } from '../events-service';
+import { EventReportDialog } from './EventReportDialog';
 import { EventStatusBadge as StatusBadge } from '../shared/EventStatusBadge';
 import { eventQueryKeys } from '../shared/event-query-keys';
-import { OUTLINE_BUTTON_CLASS, PRIMARY_BUTTON_CLASS } from '../shared/event-form-utils';
+import { EVENT_HEADER_ACTION_BUTTON_CLASS, PRIMARY_BUTTON_CLASS } from '../shared/event-form-utils';
 
-export function EventHeader({ event }: { event: SchoolEventDTO }) {
+function getEventCountdownLabel(startsAt: string) {
+  const startDate = new Date(startsAt);
+  if (Number.isNaN(startDate.getTime())) return null;
+
+  const daysRemaining = differenceInCalendarDays(startDate, new Date());
+  if (daysRemaining < 0) return null;
+  if (daysRemaining === 0) return 'É hoje';
+
+  return `Faltam ${daysRemaining} ${daysRemaining === 1 ? 'dia' : 'dias'}`;
+}
+
+export function EventHeader({ event, participantsCount }: { event: SchoolEventDTO; participantsCount: number }) {
   const queryClient = useQueryClient();
   const statusMutation = useMutation({
     mutationFn: (status: SchoolEventStatus) => updateEventStatus(event.id, status),
@@ -48,13 +63,19 @@ export function EventHeader({ event }: { event: SchoolEventDTO }) {
     ...(event.status === 'ARCHIVED' ? [{ status: 'FINISHED' as const, label: 'Desarquivar', icon: PackageCheck }] : []),
   ];
 
+  const countdownLabel = event.status === 'ACTIVE' ? getEventCountdownLabel(event.startsAt) : null;
+
   return (
-    <div className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm shadow-slate-200/40">
+    <div className="rounded-xl border border-slate-200 bg-transparent px-5 py-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="truncate text-[22px] font-semibold tracking-tight text-slate-950 md:text-2xl">{event.name}</h1>
-            <StatusBadge status={event.status} />
+            {countdownLabel ? (
+              <Badge variant="success">{countdownLabel}</Badge>
+            ) : (
+              <StatusBadge status={event.status} />
+            )}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-slate-500">
             <div className="flex items-center gap-1.5">
@@ -78,13 +99,14 @@ export function EventHeader({ event }: { event: SchoolEventDTO }) {
           </div>
         </div>
         <div className="flex flex-wrap gap-2 lg:justify-end">
-          <EventFormDialog event={event} trigger={<Button variant="outline" className={OUTLINE_BUTTON_CLASS}>Editar</Button>} />
+          <EventFormDialog event={event} trigger={<Button variant="outline" className={EVENT_HEADER_ACTION_BUTTON_CLASS}><Edit className="h-4 w-4" />Editar</Button>} />
+          <EventReportDialog event={event} participantsCount={participantsCount} />
           {nextActions.map((action) => {
             if (action.status === 'FINISHED') {
               return (
                 <Dialog key={action.status}>
                   <DialogTrigger asChild>
-                    <Button variant="outline" className={OUTLINE_BUTTON_CLASS}>
+                    <Button className={PRIMARY_BUTTON_CLASS}>
                       <action.icon className="h-4 w-4" />
                       {action.label}
                     </Button>
@@ -164,7 +186,7 @@ export function EventHeader({ event }: { event: SchoolEventDTO }) {
                 key={action.status}
                 variant="outline"
                 className={cn(
-                  OUTLINE_BUTTON_CLASS,
+                  EVENT_HEADER_ACTION_BUTTON_CLASS,
                   action.status === 'CANCELLED' && 'text-slate-700 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700',
                 )}
                 disabled={statusMutation.isPending}

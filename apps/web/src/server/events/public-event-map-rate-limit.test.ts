@@ -8,7 +8,12 @@ const rateLimitMocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/rate-limit', () => rateLimitMocks);
 
-import { enforcePublicEventMapPaymentSyncRateLimit, enforcePublicEventMapRateLimit } from './public-event-map-rate-limit';
+import {
+  enforcePublicEventMapOrderStatusRateLimit,
+  enforcePublicEventMapOrderStatusSubjectRateLimit,
+  enforcePublicEventMapPaymentSyncRateLimit,
+  enforcePublicEventMapRateLimit,
+} from './public-event-map-rate-limit';
 
 describe('public event map rate limits', () => {
   beforeEach(() => {
@@ -18,32 +23,20 @@ describe('public event map rate limits', () => {
     rateLimitMocks.strictRateLimitAsync.mockResolvedValue({ ok: true, remaining: 3, resetAt: 20_000 });
   });
 
-  it('bounds reservation and checkout attempts per map and client', async () => {
-    const request = new Request('https://alusa.example/api/public/event-maps/map_123/reserve');
+  it.each(['reserve', 'checkout'] as const)('limits %s only by stable subject', async (operation) => {
+    const request = new Request(`https://alusa.example/api/public/event-maps/map_123/${operation}`);
 
-    expect(await enforcePublicEventMapRateLimit(request, 'reserve', 'map_123')).toBeNull();
-    expect(rateLimitMocks.strictRateLimitAsync.mock.calls).toEqual([
-      ['public:event-map:reserve:map_123:hashed-client', 30, 5 * 60_000],
-      ['public:event-map:reserve:subject:hashed-client', 90, 5 * 60_000],
-    ]);
-
-    rateLimitMocks.strictRateLimitAsync.mockClear();
-    expect(await enforcePublicEventMapRateLimit(request, 'checkout', 'map_123')).toBeNull();
-    expect(rateLimitMocks.strictRateLimitAsync.mock.calls).toEqual([
-      ['public:event-map:checkout:map_123:hashed-client', 8, 5 * 60_000],
-      ['public:event-map:checkout:subject:hashed-client', 20, 5 * 60_000],
-    ]);
+    expect(await enforcePublicEventMapRateLimit(request, operation)).toBeNull();
+    expect(rateLimitMocks.strictRateLimitAsync).toHaveBeenCalledWith(
+      `public:event-map:${operation}:subject:hashed-client`, 1_500, 5 * 60_000,
+    );
   });
 
-  it('returns 429 with Retry-After when checkout limit is reached', async () => {
-    rateLimitMocks.strictRateLimitAsync
-      .mockResolvedValueOnce({ ok: true, remaining: 2, resetAt: 20_000 })
-      .mockResolvedValueOnce({ ok: false, remaining: 0, resetAt: Date.now() + 4_000 });
+  it('returns 429 with Retry-After when the subject budget is reached', async () => {
+    rateLimitMocks.strictRateLimitAsync.mockResolvedValue({ ok: false, remaining: 0, resetAt: Date.now() + 4_000 });
 
     const response = await enforcePublicEventMapRateLimit(
-      new Request('https://alusa.example/api/public/event-maps/map_123/checkout'),
-      'checkout',
-      'map_123',
+      new Request('https://alusa.example/api/public/event-maps/map_123/checkout'), 'checkout',
     );
 
     expect(response?.status).toBe(429);
@@ -51,13 +44,52 @@ describe('public event map rate limits', () => {
     expect(await response?.json()).toMatchObject({ error: { code: 'RATE_LIMITED' } });
   });
 
-  it('limits manual Asaas payment checks per order and client', async () => {
+  it('uses a fixed shared fallback when a trustworthy proxy IP is unavailable', async () => {
+    const request = new Request('https://alusa.example/api/public/event-maps/map_123/reserve', {
+      headers: { 'user-agent': 'attacker-controlled-a', 'accept-language': 'pt-BR' },
+    });
+    rateLimitMocks.ipFromRequest.mockReturnValue('ua:attacker-controlled-a|al:pt-BR');
+
+    expect(await enforcePublicEventMapRateLimit(request, 'reserve')).toBeNull();
+    expect(rateLimitMocks.rateLimitSubject).toHaveBeenCalledWith('public-event-map:untrusted-origin');
+    expect(rateLimitMocks.strictRateLimitAsync).toHaveBeenCalledWith(
+      'public:event-map:reserve:subject:hashed-client', 1_500, 5 * 60_000,
+    );
+
+    rateLimitMocks.ipFromRequest.mockReturnValue('ua:attacker-controlled-b|al:en-US');
+    rateLimitMocks.rateLimitSubject.mockClear();
+    rateLimitMocks.strictRateLimitAsync.mockClear();
+    expect(await enforcePublicEventMapRateLimit(request, 'reserve')).toBeNull();
+    expect(rateLimitMocks.rateLimitSubject).toHaveBeenCalledWith('public-event-map:untrusted-origin');
+    expect(rateLimitMocks.strictRateLimitAsync).toHaveBeenCalledWith(
+      'public:event-map:reserve:subject:hashed-client', 1_500, 5 * 60_000,
+    );
+  });
+
+  it('applies the aggregate status budget before order lookup', async () => {
+    const request = new Request('https://alusa.example/api/public/event-map-orders/order_1/status');
+
+    expect(await enforcePublicEventMapOrderStatusSubjectRateLimit(request)).toBeNull();
+    expect(rateLimitMocks.strictRateLimitAsync).toHaveBeenCalledWith(
+      'public:event-map-order-status-subject:hashed-client', 15_000, 5 * 60_000,
+    );
+  });
+
+  it('applies the per-order status budget after token validation', async () => {
+    const request = new Request('https://alusa.example/api/public/event-map-orders/order_1/status');
+
+    expect(await enforcePublicEventMapOrderStatusRateLimit(request, 'order_1')).toBeNull();
+    expect(rateLimitMocks.strictRateLimitAsync).toHaveBeenCalledWith(
+      'public:event-map-order-status:order_1:hashed-client', 60, 5 * 60_000,
+    );
+  });
+
+  it('limits manual payment sync only by stable subject', async () => {
     const request = new Request('https://alusa.example/api/public/event-map-orders/order_1/sync-payment');
 
-    expect(await enforcePublicEventMapPaymentSyncRateLimit(request, 'order_1')).toBeNull();
-    expect(rateLimitMocks.strictRateLimitAsync.mock.calls).toEqual([
-      ['public:event-map-payment-sync:order_1:hashed-client', 3, 15 * 60_000],
-      ['public:event-map-payment-sync:subject:hashed-client', 20, 15 * 60_000],
-    ]);
+    expect(await enforcePublicEventMapPaymentSyncRateLimit(request)).toBeNull();
+    expect(rateLimitMocks.strictRateLimitAsync).toHaveBeenCalledWith(
+      'public:event-map-payment-sync:subject:hashed-client', 20, 15 * 60_000,
+    );
   });
 });
