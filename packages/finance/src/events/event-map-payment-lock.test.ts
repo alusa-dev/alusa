@@ -20,7 +20,8 @@ describe('event map payment confirmation lock', () => {
     prismaMock.$transaction.mockImplementation(async (callback: (_tx: typeof prismaMock) => Promise<unknown>) => callback(prismaMock));
     prismaMock.$queryRaw.mockResolvedValue([{ id: 'order-1' }]);
     prismaMock.eventMapOrder.findFirst
-      .mockResolvedValueOnce({ id: 'order-1' })
+      .mockResolvedValueOnce({ id: 'order-1', reservationId: null, asaasPaymentId: 'pay-1' })
+      .mockResolvedValueOnce({ id: 'order-1', reservationId: null, asaasPaymentId: 'pay-1' })
       // Represents a chargeback hold committed after the webhook pre-read,
       // but before this transaction acquired the order lock.
       .mockResolvedValueOnce({
@@ -39,7 +40,7 @@ describe('event map payment confirmation lock', () => {
     })).rejects.toMatchObject({ code: 'PAGAMENTO_BLOQUEADO_POR_ANALISE' });
 
     const lockOrder = prismaMock.$queryRaw.mock.invocationCallOrder[0];
-    const lockedReread = prismaMock.eventMapOrder.findFirst.mock.invocationCallOrder[1];
+    const lockedReread = prismaMock.eventMapOrder.findFirst.mock.invocationCallOrder[2];
     expect(lockOrder).toBeLessThan(lockedReread);
     expect(prismaMock.$queryRaw.mock.calls[0][0].join('')).toContain('FOR UPDATE');
     expect(prismaMock.$queryRaw.mock.calls[0][2]).toContain('conta-1');

@@ -2509,7 +2509,7 @@ describe('handlePaymentWebhook', () => {
     });
     expect(mockRefundTicketSales).toHaveBeenCalledWith({
       contaId: 'conta-1',
-      asaasPaymentId: 'pay_event_map_refund_denied',
+      paymentId: 'pay_event_map_refund_denied',
       paymentStatus: 'REFUND_DENIED',
       isFinalRefund: false,
     });
