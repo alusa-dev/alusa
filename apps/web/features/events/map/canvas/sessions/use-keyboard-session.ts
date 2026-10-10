@@ -8,6 +8,7 @@ import type { MapTransformSession } from '../transform/map-transform-session';
 import { restoreTransformNodeSnapshots, type TransformNodeSnapshot } from '../adapters/konva-transform-adapter';
 import { DEFAULT_TRANSFORMER_SCALE_OPTIONS, resolveGenericTransformerScaleOptions } from '../transform/transform-handle-mode';
 import type { TransformerScaleOptions } from '../transform/transform-handle-mode';
+import type { MapSelection } from '@alusa/domain';
 
 type TransformContextRef = MutableRefObject<{
   selectedNodeIds: string[];
@@ -24,7 +25,8 @@ type KeyboardSessionInput = {
   transformCancelledRef: MutableRefObject<boolean>;
   setIsTransformSessionActive: (active: boolean) => void;
   setTransformerScaleOptions: (options: TransformerScaleOptions) => void;
-  ascendSelection: () => boolean;
+  selection: MapSelection;
+  setSelection: (selection: MapSelection | null) => void;
 };
 
 const ROTATION_SNAPS_15 = Array.from({ length: 24 }, (_, index) => index * 15);
@@ -39,7 +41,8 @@ export function useKeyboardSession({
   transformCancelledRef,
   setIsTransformSessionActive,
   setTransformerScaleOptions,
-  ascendSelection,
+  selection,
+  setSelection,
 }: KeyboardSessionInput) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -62,13 +65,14 @@ export function useKeyboardSession({
       if (event.key !== 'Escape') return;
       const target = event.target;
       if (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
-      if (!ascendSelection()) return;
+      if (selection.length === 0) return;
+      setSelection([]);
       event.preventDefault();
       event.stopPropagation();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [ascendSelection, isTransformSessionActive]);
+  }, [isTransformSessionActive, selection, setSelection]);
 
   useEffect(() => {
     if (!isTransformSessionActive) return;

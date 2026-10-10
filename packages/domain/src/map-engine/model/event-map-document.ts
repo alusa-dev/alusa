@@ -92,6 +92,8 @@ export type MapSeatBlock = {
   fitMaximumSeatCount?: number;
   startNumber?: number;
   numberingDirection?: 'left-to-right' | 'right-to-left';
+  /** Label format for seats in this block. Missing values preserve legacy alphanumeric labels. */
+  numberingMode?: 'ALPHANUMERIC' | 'NUMERIC';
   rowIds: string[];
   rows: MapSeatRow[];
 };

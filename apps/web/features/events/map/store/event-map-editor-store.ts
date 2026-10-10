@@ -1,12 +1,12 @@
 'use client';
-import { MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, buildLevelLayerSortOrderPatches, computeArtboardFitView, computeSeatBlockSeatLabel, createSeatBlock, executeMapCommand, expandObjectSelectionItems, findMapBlockOwner, findMapRowOwner, findMapSeatOwner, getNextGroupDisplayName, getNextLevelSortOrder, getNextMapLayerSortOrder, getNextSeatBlockRowPrefix, getObjectGroupId, getObjectGroupLabel, getSeatBlockPreviewBounds, getSeatBlockRowLabel, getSelectableItems, getTextModeFromCreation, isPlateiaBaseLevel, migrateLegacyMapDocument, normalizeMapLevels, normalizeSeatBlockConfig, normalizeSelection, normalizeTextData, pathLength, projectMapDocumentToEditorFields, reorderLevelPanelChildItems, replaceSelection, resizeArcPathToLength, resolveSeatCountForRow, sanitizeGroupMembership, sanitizeTextObjectData, sectionLocalToWorld, setObjectGroupData, sortLevelPanelChildren, toggleSelectionItem, validateGroupCandidates, withAutoObjectLabel, withDuplicateObjectLabel, worldToSectionLocal } from '@alusa/domain';
+import { MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, applySeatBlockNumbering, buildLevelLayerSortOrderPatches, computeArtboardFitView, computeSeatBlockSeatLabel, createSeatBlock, executeMapCommand, expandObjectSelectionItems, findMapBlockOwner, findMapRowOwner, findMapSeatOwner, getNextGroupDisplayName, getNextLevelSortOrder, getNextMapLayerSortOrder, getNextNumericSeatNumber, getNextSeatBlockRowPrefix, getObjectGroupId, getObjectGroupLabel, getSeatBlockPreviewBounds, getSeatBlockRowLabel, getSelectableItems, getTextModeFromCreation, isPlateiaBaseLevel, migrateLegacyMapDocument, normalizeMapLevels, normalizeSeatBlockConfig, normalizeSelection, normalizeTextData, pathLength, projectMapDocumentToEditorFields, reorderLevelPanelChildItems, replaceSelection, resizeArcPathToLength, resolveSeatCountForRow, sanitizeGroupMembership, sanitizeTextObjectData, sectionLocalToWorld, setObjectGroupData, sortLevelPanelChildren, toggleSelectionItem, validateGroupCandidates, withAutoObjectLabel, withDuplicateObjectLabel, worldToSectionLocal } from '@alusa/domain';
 import type { EventMapDTO, EventMapDraftPayload, EventMapLevelDTO, EventMapObjectDTO, EventMapSectionDTO, EventSeatDTO, MapCommand, MapSelection, MapSelectionItem, MapTool, MapReferenceChart, MapSeatBlock, MapSeatRow, SeatBlockConfig, SeatDistributionMode, SeatRowPath } from '@alusa/domain';
 
 import { create } from 'zustand';
 
 export type { MapSelection, MapSelectionItem, MapTool };
 
-type SeatBlockPropertiesPatch = Partial<Pick<MapSeatBlock, 'name' | 'columnCount' | 'rowGap' | 'defaultSeatGap' | 'distribution' | 'distributionMode' | 'distributionAlignment' | 'firstRowSeatCount' | 'lastRowSeatCount' | 'fitMinimumSeatCount' | 'fitMaximumSeatCount'>> & {
+type SeatBlockPropertiesPatch = Partial<Pick<MapSeatBlock, 'name' | 'columnCount' | 'rowGap' | 'defaultSeatGap' | 'distribution' | 'distributionMode' | 'distributionAlignment' | 'firstRowSeatCount' | 'lastRowSeatCount' | 'fitMinimumSeatCount' | 'fitMaximumSeatCount' | 'numberingMode'>> & {
   seatSize?: number;
   rowSeatCounts?: number[];
   rowPaths?: SeatRowPath[];
@@ -841,6 +841,18 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       const levelId = state.activeLevelId ?? state.map.levels[0]?.id;
       if (!levelId) return state;
       const levelSections = before.sections.filter((entry) => entry.levelId === levelId);
+      const selectedBlockId = state.selection.length === 1
+        ? state.selection[0]?.type === 'seatblock' ? state.selection[0].id
+          : state.selection[0]?.type === 'seatrow' ? findMapRowOwner(before, state.selection[0].id)?.block.id
+            : undefined
+        : undefined;
+      const inheritedBlock = selectedBlockId
+        ? findMapBlockOwner(before, selectedBlockId)?.block
+        : levelSections.flatMap((entry) => entry.blocks).at(-1);
+      const numberingMode = inheritedBlock?.numberingMode ?? 'ALPHANUMERIC';
+      const startNumber = numberingMode === 'NUMERIC'
+        ? getNextNumericSeatNumber(levelSections.flatMap((entry) => entry.blocks))
+        : normalizedConfig.startNumber;
       const usedRowLabels = new Set(levelSections.flatMap((entry) => entry.blocks.flatMap((block) => block.rows.map((row) => row.label.toUpperCase()))));
       const usedSeatCodes = new Set(levelSections.flatMap((entry) => entry.blocks.flatMap((block) =>
         block.rows.flatMap((row) => row.seats.flatMap((seat) => [seat.label, seat.technicalCode ?? ''].map((code) => code.toUpperCase()))),
@@ -856,11 +868,11 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
           for (let columnIndex = 0; columnIndex < (rowSeatCounts[rowIndex] ?? 0); columnIndex += 1) {
             const labels = computeSeatBlockSeatLabel(0, columnIndex, {
               rowPrefix: rowLabel,
-              startNumber: normalizedConfig.startNumber,
+              startNumber,
               numberingDirection: normalizedConfig.numberingDirection,
               columns: rowSeatCounts[rowIndex] ?? normalizedConfig.columns,
             });
-            if (usedSeatCodes.has(labels.displayLabel.toUpperCase())) return false;
+            if (numberingMode !== 'NUMERIC' && usedSeatCodes.has(labels.displayLabel.toUpperCase())) return false;
           }
         }
         return true;
@@ -896,13 +908,31 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         rowGap: Math.max(0, normalizedConfig.verticalSpacing - normalizedConfig.seatSize),
         rowSeatCounts,
         rowPrefix,
-        startNumber: normalizedConfig.startNumber,
+        startNumber,
         numberingDirection: normalizedConfig.numberingDirection,
         createId: createLocalId,
       });
+      const numberedDocument = {
+        ...result.document,
+        sections: result.document.sections.map((entry) => entry.id !== sectionId ? entry : {
+          ...entry,
+          blocks: entry.blocks.map((block) => block.id === result.blockId
+            ? { ...block, ...(numberingMode === 'NUMERIC' ? { numberingMode, startNumber } : {}) }
+            : block),
+        }),
+      };
+      const after = numberingMode === 'NUMERIC'
+        ? {
+            ...numberedDocument,
+            sections: numberedDocument.sections.map((entry) => entry.id !== sectionId ? entry : {
+              ...entry,
+              blocks: entry.blocks.map((block) => block.id === result.blockId ? applySeatBlockNumbering(block) : block),
+            }),
+          }
+        : numberedDocument;
       const command: MapCommand = {
         type: 'REPLACE_DOCUMENT',
-        payload: { before, after: result.document, description: 'Criar bloco de fileiras' },
+        payload: { before, after, description: 'Criar bloco de fileiras' },
       };
       const next = runCommand(state, command);
       return { ...next, selection: [{ type: 'seatblock', id: result.blockId }] };
@@ -911,6 +941,12 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
     set((state) => {
       if (!state.map?.document) return state;
       const before = documentFromMap(state.map);
+      if (patch.numberingMode !== undefined && state.map.seats.some((seat) => {
+        const belongsToBlock = before.sections.some((section) => section.blocks.some((block) =>
+          block.id === id && block.rows.some((row) => row.seats.some((candidate) => candidate.id === seat.id)),
+        ));
+        return belongsToBlock && (seat.status === 'HELD' || seat.status === 'SOLD' || seat.status === 'COMPLIMENTARY');
+      })) return state;
       const { seatSize, rowSeatCounts, rowPaths, columnCount, ...blockPatch } = patch;
       const after = {
         ...before,
@@ -1041,7 +1077,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
                   : rowPath,
               };
             });
-            return {
+            const updatedBlock = {
               ...block,
               ...blockPatch,
               columnCount: nextColumnCount,
@@ -1053,6 +1089,11 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
               fitMaximumSeatCount: normalizedFitMaximum,
               rows,
             };
+            const numberingChanged = blockPatch.numberingMode !== undefined &&
+              blockPatch.numberingMode !== (block.numberingMode ?? 'ALPHANUMERIC');
+            return updatedBlock.numberingMode === 'NUMERIC' && (numberingChanged || shouldReflowSeats || sequentialRowCounts !== null)
+              ? applySeatBlockNumbering(updatedBlock)
+              : numberingChanged ? applySeatBlockNumbering(updatedBlock) : updatedBlock;
           }),
           };
           return containsTarget && nextSection.blocks.length > 0 ? { ...nextSection, outline: [] } : nextSection;

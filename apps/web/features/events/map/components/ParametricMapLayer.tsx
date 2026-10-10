@@ -11,6 +11,7 @@ import {
 } from '@alusa/domain';
 import { Group, Line, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
+import React from 'react';
 
 type ParametricMapLayerProps = {
   document: EventMapDocument | null | undefined;
@@ -97,7 +98,7 @@ export function ParametricMapLayer({ document, levelId, selection, readOnly, onS
                         onMouseDown={(event) => handleSelect(event, onSelect, { type: 'seatblock', id: block.id })}
                         onDblClick={(event) => handleSelect(event, onSelect, { type: 'seatrow', id: row.id })}
                       />
-                      {first ? (
+                      {first && block.numberingMode !== 'NUMERIC' ? (
                         <Text
                           id={`node-seatrow-label-${row.id}`}
                           x={first.x - 22}

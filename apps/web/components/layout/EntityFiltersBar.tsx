@@ -19,16 +19,18 @@ import { Search, Filter, CheckCircle } from '@/components/icons/icons';
 import { cn } from '@/lib/cn';
 
 export type StatusValue = 'TODOS' | 'ATIVO' | 'INATIVO';
+export type EntityStatusValue = StatusValue | 'FUTURAS';
 export type SortOrder = 'ASC' | 'DESC';
 
-interface EntityFiltersBarProps {
+interface EntityFiltersBarProps<TStatus extends EntityStatusValue = StatusValue> {
   searchValue: string;
   onSearchChange: (_v: string) => void;
   onSearchEnter?: () => void;
   searchPlaceholder?: string;
-  statusValue: StatusValue;
-  onStatusChange: (_v: StatusValue) => void;
+  statusValue: TStatus;
+  onStatusChange: (_v: TStatus) => void;
   hideStatusFilter?: boolean;
+  additionalStatusOptions?: Array<{ value: TStatus; label: string }>;
   sortOrder: SortOrder;
   onSortChange: (_o: SortOrder) => void;
   /** Sobrescreve o título da seção de ordenação no menu (ex.: vencimento em Cobranças). */
@@ -43,7 +45,7 @@ interface EntityFiltersBarProps {
   extraFilters?: ReactNode; // espaço para filtros adicionais no dropdown
 }
 
-export default function EntityFiltersBar({
+export default function EntityFiltersBar<TStatus extends EntityStatusValue = StatusValue>({
   searchValue,
   onSearchChange,
   onSearchEnter,
@@ -51,6 +53,7 @@ export default function EntityFiltersBar({
   statusValue,
   onStatusChange,
   hideStatusFilter = false,
+  additionalStatusOptions,
   sortOrder,
   onSortChange,
   sortMenuTitle = 'Ordenar por nome',
@@ -59,7 +62,7 @@ export default function EntityFiltersBar({
   className = '',
   extraLeft,
   extraFilters,
-}: EntityFiltersBarProps) {
+}: EntityFiltersBarProps<TStatus>) {
   return (
     <div
       className={cn(
@@ -88,7 +91,7 @@ export default function EntityFiltersBar({
         )}
       >
         {hideStatusFilter ? null : (
-          <Select value={statusValue} onValueChange={(v: StatusValue) => onStatusChange(v)}>
+          <Select value={statusValue} onValueChange={(v: string) => onStatusChange(v as TStatus)}>
             <SelectTrigger className="flex h-10 w-full min-w-0 shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-lg border-slate-200 bg-white px-3 text-slate-700 shadow-none alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] lg:w-auto lg:min-w-[150px] lg:max-w-[190px]">
               <SelectValue placeholder="Todos os status" />
             </SelectTrigger>
@@ -96,6 +99,9 @@ export default function EntityFiltersBar({
               <SelectItem value="TODOS">Todos os status</SelectItem>
               <SelectItem value="ATIVO">Ativos</SelectItem>
               <SelectItem value="INATIVO">Inativos</SelectItem>
+              {additionalStatusOptions?.map((option) => (
+                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         )}

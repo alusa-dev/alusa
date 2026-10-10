@@ -5,7 +5,8 @@ import { logFinanceOperationalEvent } from '../foundation/operational-log';
  * PR3: Aplica timeout em matrículas pendentes que excedem o prazo configurado.
  *
  * Fluxo:
- * 1. Busca matrículas em status AGUARDANDO_CONFIRMACAO/PENDENTE_TAXA com createdAt > X dias
+ * 1. Busca matrículas em status AGUARDANDO_CONFIRMACAO/PENDENTE_TAXA cujo maior entre
+ *    createdAt e dataInicio excede o prazo configurado
  * 2. Atualiza status para CANCELADA e marca timeoutAppliedAt
  * 3. Cancela subscription pendente no gateway (se existir)
  * 4. Registra auditoria
@@ -82,12 +83,16 @@ export async function applyMatriculaTimeoutJob(
       status: { in: TIMEOUT_ELIGIBLE_STATUSES },
       timeoutAppliedAt: null, // Idempotência: não reaplicar timeout
       createdAt: { lt: threshold },
+      // Matrículas futuras ficam aguardando a vigência. O prazo só começa a
+      // contar depois do início do contrato, sem mudar o timeout de matrículas imediatas.
+      dataInicio: { lt: threshold },
       ...(contaId ? { contaId } : {}),
     },
     select: {
       id: true,
       status: true,
       createdAt: true,
+      dataInicio: true,
       asaasSubscriptionId: true,
       aluno: {
         select: {

@@ -2,6 +2,8 @@ import { DEFAULT_SEAT_BLOCK_CONFIG } from '@alusa/domain';
 import type { EventMapDTO } from '../../api/event-map-service';
 import type { MapReferenceChart } from '@alusa/domain';
 import { useEventMapEditorStore } from '../event-map-editor-store';
+import { buildGroupDragCommit } from '../../canvas/commit/group-drag-commit';
+import { buildParametricDragNodeIds } from '../../canvas/sessions/use-map-node-drag-session';
 import { describe, expect, it, beforeEach } from 'vitest';
 
 function createMap(): EventMapDTO {
@@ -135,6 +137,118 @@ describe('event map editor store', () => {
     canonicalSeat = state.map!.document!.sections[0]!.blocks[0]!.rows[0]!.seats.find((seat) => seat.id === target.id)!;
     expect(canonicalSeat).toMatchObject({ technicalCode: 'VIP-09', label: 'Poltrona VIP', rowLabel: 'Mezanino', seatNumber: '07' });
   });
+
+  it('assigns sequential numeric labels across rows and persists the block numbering mode', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 2,
+      columns: 3,
+      totalSeats: 5,
+    });
+    let state = useEventMapEditorStore.getState();
+    const block = state.map!.document!.sections[0]!.blocks[0]!;
+
+    state.updateSeatBlock(block.id, { numberingMode: 'NUMERIC' });
+    state = useEventMapEditorStore.getState();
+
+    const savedBlock = state.map!.document!.sections[0]!.blocks[0]!;
+    expect(savedBlock.numberingMode).toBe('NUMERIC');
+    expect(state.map!.seats.map((seat) => seat.displayLabel)).toEqual(['1', '2', '3', '4', '5']);
+    expect(new Set(state.map!.seats.map((seat) => seat.technicalCode)).size).toBe(5);
+    expect(state.toPayload()!.document?.sections[0]!.blocks[0]).toMatchObject({ numberingMode: 'NUMERIC' });
+  });
+
+  it('continues numeric numbering when creating another row block', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG, rows: 2, columns: 3, totalSeats: 6,
+    });
+    let state = useEventMapEditorStore.getState();
+    state.updateSeatBlock(state.map!.document!.sections[0]!.blocks[0]!.id, { numberingMode: 'NUMERIC' });
+
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 400, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG, rows: 2, columns: 2, totalSeats: 4,
+    });
+    state = useEventMapEditorStore.getState();
+
+    const blocks = state.map!.document!.sections.flatMap((section) => section.blocks);
+    expect(blocks[1]!.numberingMode).toBe('NUMERIC');
+    expect(blocks[1]!.rows.flatMap((row) => row.seats.map((seat) => seat.label))).toEqual(['7', '8', '9', '10']);
+    expect(new Set(blocks.flatMap((block) => block.rows.flatMap((row) => row.seats.map((seat) => seat.technicalCode)))).size).toBe(10);
+  });
+
+  it('restores alphanumeric labels using the block start number, direction, and partial row width', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 2,
+      columns: 3,
+      totalSeats: 5,
+      startNumber: 9,
+      numberingDirection: 'right-to-left',
+    });
+    let state = useEventMapEditorStore.getState();
+    const block = state.map!.document!.sections[0]!.blocks[0]!;
+
+    state.updateSeatBlock(block.id, { numberingMode: 'NUMERIC' });
+    state = useEventMapEditorStore.getState();
+    state.updateSeatBlock(block.id, { numberingMode: 'ALPHANUMERIC' });
+    state = useEventMapEditorStore.getState();
+
+    const savedBlock = state.map!.document!.sections[0]!.blocks[0]!;
+    expect(state.map!.seats.map((seat) => seat.displayLabel)).toEqual(['A11', 'A10', 'A9', 'B10', 'B9']);
+    const technicalCodes = state.map!.seats.map((seat) => seat.technicalCode);
+    expect(new Set(technicalCodes).size).toBe(5);
+    expect(state.toPayload()!.document?.sections[0]!.blocks[0]).toMatchObject({ numberingMode: 'ALPHANUMERIC' });
+  });
+
+  it('renumbers a numeric block when a later update creates another row and its seats', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 1,
+      columns: 2,
+      totalSeats: 2,
+    });
+    let state = useEventMapEditorStore.getState();
+    const block = state.map!.document!.sections[0]!.blocks[0]!;
+    state.updateSeatBlock(block.id, { numberingMode: 'NUMERIC' });
+    state = useEventMapEditorStore.getState();
+
+    state.updateSeatBlock(block.id, {
+      columnCount: 2,
+      rowSeatCounts: [2, 2],
+      distribution: [{ type: 'SEATS', count: 2 }],
+    });
+    state = useEventMapEditorStore.getState();
+
+    const updatedBlock = state.map!.document!.sections[0]!.blocks[0]!;
+    expect(updatedBlock.numberingMode).toBe('NUMERIC');
+    expect(updatedBlock.rows).toHaveLength(2);
+    expect(state.map!.seats.map((seat) => seat.displayLabel)).toEqual(['1', '2', '3', '4']);
+    expect(new Set(state.map!.seats.map((seat) => seat.technicalCode)).size).toBe(4);
+  });
+
+  it.each(['HELD', 'SOLD', 'COMPLIMENTARY'] as const)(
+    'blocks numbering changes when a seat is %s',
+    (status) => {
+      useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+        ...DEFAULT_SEAT_BLOCK_CONFIG,
+        rows: 1,
+        columns: 2,
+        totalSeats: 2,
+      });
+      let state = useEventMapEditorStore.getState();
+      const block = state.map!.document!.sections[0]!.blocks[0]!;
+      const seat = state.map!.seats[0]!;
+      state.updateSeat(seat.id, { status });
+      state = useEventMapEditorStore.getState();
+      const labelsBefore = state.map!.seats.map((entry) => entry.displayLabel);
+
+      state.updateSeatBlock(block.id, { numberingMode: 'NUMERIC' });
+      state = useEventMapEditorStore.getState();
+
+      expect(state.map!.document!.sections[0]!.blocks[0]!.numberingMode).toBeUndefined();
+      expect(state.map!.seats.map((entry) => entry.displayLabel)).toEqual(labelsBefore);
+    },
+  );
 
   it('does not record a no-op update and reports stale item references', () => {
     const objectId = useEventMapEditorStore.getState().addObjectAt('shape-square', { x: 80, y: 90 });
@@ -426,6 +540,66 @@ describe('event map editor store', () => {
     expect(duplicateSeats[0]!.y - sourceSeats[0]!.y).toBeCloseTo(28);
   });
 
+  it('continues numeric seat numbers when duplicating a sector', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG, rows: 2, columns: 3, totalSeats: 6,
+    });
+    let state = useEventMapEditorStore.getState();
+    const source = state.map!.document!.sections[0]!;
+    state.updateSeatBlock(source.blocks[0]!.id, { numberingMode: 'NUMERIC' });
+    state = useEventMapEditorStore.getState();
+    state.setSelection({ type: 'section', id: source.id });
+    state.duplicateSelection();
+
+    state = useEventMapEditorStore.getState();
+    const duplicate = state.map!.document!.sections.find((section) => section.id !== source.id)!;
+    const duplicateBlock = duplicate.blocks[0]!;
+    const duplicateSeats = duplicateBlock.rows.flatMap((row) => row.seats);
+    expect(duplicateBlock.numberingMode).toBe('NUMERIC');
+    expect(duplicateSeats.map((seat) => seat.label)).toEqual(['7', '8', '9', '10', '11', '12']);
+    expect(new Set(state.map!.document!.sections.flatMap((section) => section.blocks.flatMap((block) => block.rows.flatMap((row) => row.seats.map((seat) => seat.technicalCode))))).size).toBe(12);
+  });
+
+  it('continues numeric seat numbers when duplicating a row inside a numeric block', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG, rows: 2, columns: 3, totalSeats: 6,
+    });
+    let state = useEventMapEditorStore.getState();
+    const block = state.map!.document!.sections[0]!.blocks[0]!;
+    state.updateSeatBlock(block.id, { numberingMode: 'NUMERIC' });
+    state = useEventMapEditorStore.getState();
+    const row = state.map!.document!.sections[0]!.blocks[0]!.rows[1]!;
+    state.setSelection({ type: 'seatrow', id: row.id });
+    state.duplicateSelection();
+
+    state = useEventMapEditorStore.getState();
+    const updatedBlock = state.map!.document!.sections[0]!.blocks[0]!;
+    expect(updatedBlock.rows).toHaveLength(3);
+    expect(updatedBlock.rows[2]!.label).toBe('C');
+    expect(updatedBlock.rows[2]!.seats.map((seat) => seat.label)).toEqual(['7', '8', '9']);
+    expect(new Set(updatedBlock.rows.flatMap((entry) => entry.seats.map((seat) => seat.technicalCode))).size).toBe(9);
+  });
+
+  it('keeps a continuous numeric cursor when duplicating multiple rows together', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG, rows: 2, columns: 3, totalSeats: 6,
+    });
+    let state = useEventMapEditorStore.getState();
+    const block = state.map!.document!.sections[0]!.blocks[0]!;
+    state.updateSeatBlock(block.id, { numberingMode: 'NUMERIC' });
+    state = useEventMapEditorStore.getState();
+    const rows = state.map!.document!.sections[0]!.blocks[0]!.rows;
+    state.setSelection(rows.map((row) => ({ type: 'seatrow' as const, id: row.id })));
+    state.duplicateSelection();
+
+    state = useEventMapEditorStore.getState();
+    const updatedBlock = state.map!.document!.sections[0]!.blocks[0]!;
+    expect(updatedBlock.rows.slice(2).map((row) => row.seats.map((seat) => seat.label))).toEqual([
+      ['7', '8', '9'],
+      ['10', '11', '12'],
+    ]);
+  });
+
   it('restores a duplicated sector document, seats, and linked visual elements through store undo/redo', () => {
     useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
       ...DEFAULT_SEAT_BLOCK_CONFIG,
@@ -699,6 +873,65 @@ describe('event map editor store', () => {
       const initial = initialSeatPositions.get(seat.id)!;
       return Math.abs(seat.x - initial.x - 80) < 0.01 && Math.abs(seat.y - initial.y - 45) < 0.01;
     })).toBe(true);
+  });
+
+  it('moves a selected seat sector and shape together while keeping parametric row geometry aligned', () => {
+    useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
+      ...DEFAULT_SEAT_BLOCK_CONFIG,
+      rows: 2,
+      columns: 4,
+      totalSeats: 8,
+    });
+    const stageId = useEventMapEditorStore.getState().addObjectAt('stage', { x: 420, y: 50 }, { width: 220, height: 60 });
+    expect(stageId).toBeTruthy();
+
+    const before = useEventMapEditorStore.getState().map!;
+    const block = before.document!.sections[0]!.blocks[0]!;
+    const row = block.rows[0]!;
+    const stage = before.objects.find((object) => object.id === stageId)!;
+    expect(row.path.type).toBe('LINE');
+    if (row.path.type !== 'LINE') throw new Error('Expected line row geometry');
+    const delta = { x: 32, y: 24 };
+
+    const parametricItems = [{ type: 'seatblock' as const, id: block.id }];
+    const dragNodeIds = [`node-${stage.id}`, ...buildParametricDragNodeIds(before, parametricItems)];
+    const origin = new Map(dragNodeIds.map((nodeId) => {
+      const id = nodeId.replace(/^node-/, '');
+      const object = before.objects.find((entry) => entry.id === id);
+      const seat = before.seats.find((entry) => entry.id === id);
+      return [nodeId, { x: object?.x ?? seat?.x ?? 0, y: object?.y ?? seat?.y ?? 0 }] as const;
+    }));
+    const drag = {
+      anchorNodeId: `node-${stage.id}`,
+      origin,
+      nodes: new Map(),
+      bounds: null,
+      delta,
+      parametricItems,
+    };
+    const genericUpdates = buildGroupDragCommit({ drag, map: before }).payload;
+
+    useEventMapEditorStore.getState().transformParametricSelections(
+      parametricItems.map((item) => ({ item, matrix: [1, 0, 0, 1, delta.x, delta.y] as [number, number, number, number, number, number] })),
+      genericUpdates ?? undefined,
+    );
+
+    const after = useEventMapEditorStore.getState().map!;
+    const afterRow = after.document!.sections[0]!.blocks[0]!.rows[0]!;
+    const afterStage = after.objects.find((object) => object.id === stageId)!;
+    expect(afterStage).toMatchObject({ x: stage.x + delta.x, y: stage.y + delta.y });
+    expect(afterRow.path.type).toBe('LINE');
+    if (afterRow.path.type === 'LINE') {
+      expect(afterRow.path.start.x).toBeCloseTo(row.path.start.x + delta.x);
+      expect(afterRow.path.start.y).toBeCloseTo(row.path.start.y + delta.y);
+      expect(afterRow.path.end.x).toBeCloseTo(row.path.end.x + delta.x);
+      expect(afterRow.path.end.y).toBeCloseTo(row.path.end.y + delta.y);
+    }
+    for (const initialSeat of before.seats) {
+      const movedSeat = after.seats.find((seat) => seat.id === initialSeat.id)!;
+      expect(movedSeat.x).toBeCloseTo(initialSeat.x + delta.x);
+      expect(movedSeat.y).toBeCloseTo(initialSeat.y + delta.y);
+    }
   });
 
   it('supports a fixed block with more than eighty columns', () => {

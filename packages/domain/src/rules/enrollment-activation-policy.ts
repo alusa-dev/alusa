@@ -14,7 +14,38 @@ export type EnrollmentActivationDecision =
   | {
       action: 'KEEP';
       reason: 'POLICY_IMMEDIATE' | 'FEE_NOT_PAID' | 'STATUS_NOT_PENDING_FEE';
-    };
+  };
+
+export type EnrollmentStartDecision =
+  | { action: 'TRANSITION'; targetStatus: 'PENDENTE_TAXA' | 'ATIVA' }
+  | { action: 'KEEP'; reason: 'STATUS_NOT_WAITING_FOR_START' | 'FEE_NOT_PAID' };
+
+/**
+ * Decide the academic status when a scheduled enrollment reaches its start date.
+ * Financial state is supplied as input; this function does not inspect charges.
+ */
+export function decideEnrollmentStatusAtContractStart(input: {
+  enrollmentStatus: EnrollmentActivationStatus;
+  activationPolicy: EnrollmentActivationPolicy;
+  feeRequired: boolean;
+  feeStatus: EnrollmentFeeStatus;
+}): EnrollmentStartDecision {
+  const feeIsPending = input.feeRequired && input.feeStatus !== 'PAGO';
+
+  if (input.enrollmentStatus === 'AGUARDANDO_CONFIRMACAO') {
+    return input.activationPolicy === 'REQUIRES_PAYMENT' && feeIsPending
+      ? { action: 'TRANSITION', targetStatus: 'PENDENTE_TAXA' }
+      : { action: 'TRANSITION', targetStatus: 'ATIVA' };
+  }
+
+  if (input.enrollmentStatus === 'PENDENTE_TAXA') {
+    return input.activationPolicy === 'REQUIRES_PAYMENT' && feeIsPending
+      ? { action: 'KEEP', reason: 'FEE_NOT_PAID' }
+      : { action: 'TRANSITION', targetStatus: 'ATIVA' };
+  }
+
+  return { action: 'KEEP', reason: 'STATUS_NOT_WAITING_FOR_START' };
+}
 
 export function decideEnrollmentActivationAfterFee(input: {
   activationPolicy: EnrollmentActivationPolicy;

@@ -31,13 +31,13 @@ describe('datas seguras para o Asaas', () => {
     expect(formatIsoDate(dueDate)).toBe('2026-08-03');
   });
 
-  it('preserva uma data de início futura para a taxa', () => {
+  it('mantém a taxa vinculada à formalização mesmo com início futuro', () => {
     const dueDate = resolveEnrollmentFeeDueDate(
       new Date('2026-08-10T00:00:00.000Z'),
       viradaManausBrasilia,
     );
 
-    expect(formatIsoDate(dueDate)).toBe('2026-08-10');
+    expect(formatIsoDate(dueDate)).toBe('2026-08-03');
   });
 
   it('calcula a primeira mensalidade usando o dia corrente do fuso do Asaas', () => {

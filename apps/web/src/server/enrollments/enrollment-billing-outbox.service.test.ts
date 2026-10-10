@@ -167,6 +167,31 @@ describe('enqueueEnrollmentBillingOutbox', () => {
 });
 
 describe('processEnrollmentBillingOutboxEvent', () => {
+  it('não permite que o processamento direto execute um evento antes de availableAt', async () => {
+    const now = new Date('2026-10-01T12:00:00.000Z');
+    const prisma = {
+      matriculaBillingOutbox: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'scheduled-1',
+          contaId: 'conta-1',
+          matriculaId: 'mat-1',
+          status: MatriculaBillingOutboxStatus.PENDING,
+          availableAt: new Date('2026-10-01T12:00:01.000Z'),
+          payload: { matriculaId: 'mat-1' },
+        }),
+        updateMany: vi.fn(),
+      },
+    };
+
+    await expect(processEnrollmentBillingOutboxEvent('scheduled-1', {
+      prisma: prisma as never,
+      now,
+    })).resolves.toMatchObject({ status: 'SKIPPED', eventId: 'scheduled-1' });
+    expect(prisma.matriculaBillingOutbox.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('processEnrollmentBillingOutboxEvent', () => {
   it('usa o acordo canônico e cria complemento antes de provisionar unificação em cobrança paga', async () => {
     const now = new Date('2026-07-31T12:00:00.000Z');
     const event = {

@@ -11,6 +11,12 @@ import {
 } from './matricula-state-machine';
 
 describe('matricula-state-machine', () => {
+  it('permite avançar para pendente de taxa ao chegar a vigência', () => {
+    expect(canTransition(StatusMatricula.AGUARDANDO_CONFIRMACAO, StatusMatricula.PENDENTE_TAXA)).toBe(true);
+    expect(validateTransition(StatusMatricula.AGUARDANDO_CONFIRMACAO, StatusMatricula.PENDENTE_TAXA))
+      .toEqual({ success: true });
+  });
+
   it('trata ENCERRADA como terminal sem ocupar vaga', () => {
     expect(isTerminalStatus(StatusMatricula.ENCERRADA)).toBe(true);
     expect(getTerminalStatuses()).toContain(StatusMatricula.ENCERRADA);

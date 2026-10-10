@@ -94,6 +94,7 @@ export interface ListMatriculasParams {
   excludeStatus?: MatriculaStatus | MatriculaStatus[];
   search?: string;
   turmaId?: string;
+  classRosterPeriod?: 'CURRENT' | 'FUTURE';
   page?: number;
   pageSize?: number;
   signal?: AbortSignal;
@@ -164,6 +165,7 @@ export async function listMatriculasRequest(
   if (excludeStatuses.length) usp.set('excludeStatus', excludeStatuses.join(','));
   if (params.search) usp.set('q', params.search);
   if (params.turmaId) usp.set('turmaId', params.turmaId);
+  if (params.classRosterPeriod) usp.set('classRosterPeriod', params.classRosterPeriod);
   if (params.page) usp.set('page', String(params.page));
   if (params.pageSize) usp.set('pageSize', String(params.pageSize));
 

@@ -761,7 +761,9 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
     where: {
       contaId: input.contaId,
       matriculaId: matricula.id,
-      kind: 'TUITION',
+      kind: input.targetStatus === 'CANCELADA'
+        ? { in: ['TUITION', 'ENROLLMENT_FEE'] }
+        : 'TUITION',
       status: input.targetStatus === 'ATIVA' ? 'PAUSED' : { in: ['ACTIVE', 'SCHEDULED'] },
     },
     orderBy: input.targetStatus === 'ATIVA' ? { validUntil: 'desc' } : { validFrom: 'desc' },
@@ -798,7 +800,9 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
         where: {
           contaId: input.contaId,
           matriculaId: matricula.id,
-          kind: 'TUITION',
+          kind: input.targetStatus === 'CANCELADA'
+            ? { in: ['TUITION', 'ENROLLMENT_FEE'] }
+            : 'TUITION',
           status: input.targetStatus === 'ATIVA' ? 'PAUSED' : { in: ['ACTIVE', 'SCHEDULED'] },
         },
         orderBy: input.targetStatus === 'ATIVA' ? { validUntil: 'desc' } : { validFrom: 'desc' },
@@ -820,6 +824,18 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
   let canonicalHandled = false;
 
   if (canonicalAllocation) {
+    const allocationIds = input.targetStatus === 'CANCELADA'
+      ? (await input.prisma.billingAllocation.findMany({
+          where: {
+            contaId: input.contaId,
+            matriculaId: matricula.id,
+            agreementId: canonicalAllocation.agreementId,
+            kind: { in: ['TUITION', 'ENROLLMENT_FEE'] },
+            status: { in: ['ACTIVE', 'SCHEDULED'] },
+          },
+          select: { id: true },
+        })).map((allocation) => allocation.id)
+      : [canonicalAllocation.id];
     const identity = await resolveMatriculaFinancialIdentity(
       input.prisma,
       input.contaId,
@@ -880,7 +896,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
           reason: effectiveMotivo,
           effectivePolicy: 'CURRENT_CYCLE_FULL' as const,
           effectiveDate,
-          allocationIds: [canonicalAllocation.id],
+          allocationIds,
           nextDueDate: canonicalAllocation.agreement.nextDueDate?.toISOString().slice(0, 10) ?? effectiveDate,
         }
       : {
@@ -891,7 +907,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
           reason: effectiveMotivo,
           effectivePolicy: 'CURRENT_CYCLE_FULL' as const,
           effectiveDate,
-          allocationIds: [canonicalAllocation.id],
+          allocationIds,
         };
     try {
       const preview = await previewBillingAgreementChange(change);

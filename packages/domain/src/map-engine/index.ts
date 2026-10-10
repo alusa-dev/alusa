@@ -28,6 +28,7 @@ export * from './operations/selection/delete-selection.js';
 export * from './operations/selection/group-selection.js';
 export * from './operations/layers/reorder-level-layers.js';
 export * from './layout/seat-block-config.js';
+export * from './layout/seat-block-numbering.js';
 export * from './layout/object-groups.js';
 export * from './layout/object-naming.js';
 export * from './layout/section-geometry.js';

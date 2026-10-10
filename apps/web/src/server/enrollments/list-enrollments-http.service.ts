@@ -36,6 +36,7 @@ export async function listMatriculasHttp(req: Request) {
       alunoId: url.searchParams.get('alunoId') ?? undefined,
       planoId: url.searchParams.get('planoId') ?? undefined,
       turmaId: url.searchParams.get('turmaId') ?? undefined,
+      classRosterPeriod: url.searchParams.get('classRosterPeriod') ?? undefined,
       comboId: comboParam === 'null' ? null : comboParam === null ? undefined : comboParam.trim() || undefined,
       status,
       excludeStatus,
@@ -46,6 +47,9 @@ export async function listMatriculasHttp(req: Request) {
     });
     if (!parsedQuery.success) {
       return errorResult(400, 'PARAMETROS_INVALIDOS', parsedQuery.error.issues[0]?.message ?? 'Parâmetros inválidos.', parsedQuery.error.issues);
+    }
+    if (parsedQuery.data.classRosterPeriod && !parsedQuery.data.turmaId) {
+      return errorResult(400, 'FILTRO_TURMA_OBRIGATORIO', 'O filtro de período da turma exige uma turma selecionada.');
     }
 
     const auth = await resolveTenantSession(parsedQuery.data.contaId ?? null);
@@ -64,6 +68,7 @@ export async function listMatriculasHttp(req: Request) {
       alunoId: parsedQuery.data.alunoId ?? undefined,
       planoId: parsedQuery.data.planoId ?? undefined,
       turmaId: parsedQuery.data.turmaId ?? undefined,
+      classRosterPeriod: parsedQuery.data.classRosterPeriod,
       comboId: parsedQuery.data.comboId === undefined ? undefined : parsedQuery.data.comboId,
       status: normalizeMatriculaStatusFilters(parsedQuery.data.status).length > 0
         ? normalizeMatriculaStatusFilters(parsedQuery.data.status)

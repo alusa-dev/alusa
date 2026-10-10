@@ -1,7 +1,7 @@
 'use client';
 
-import { findMapBlockOwner, findMapSeatOwner, getSelectableItems, isItemSelected, resolveDragTarget, type MapSelectionItem } from '@alusa/domain';
-import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
+import { findMapBlockOwner, findMapRowOwner, findMapSeatOwner, getSelectableItems, isItemSelected, resolveDragTarget, type MapSelectionItem } from '@alusa/domain';
+import type { MutableRefObject } from 'react';
 import { useCallback } from 'react';
 import type Konva from 'konva';
 import type { EventMapDTO, EventMapObjectDTO } from '../../api/event-map-service';
@@ -25,6 +25,29 @@ export function buildParametricDragNodeIds(
     ...rows.flatMap((row) => [`node-seatrow-line-${row.id}`, `node-seatrow-label-${row.id}`, `node-seatrow-${row.id}`]),
     ...items.map((item) => `node-${item.type}-${item.id}`),
   ])];
+}
+
+export function resolveSelectedParametricDragItems(
+  map: EventMapDTO | null,
+  selection: MapSelectionItem[],
+): Array<Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>> {
+  if (!map?.document) return selection.filter(
+    (item): item is Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }> => item.type === 'seatblock' || item.type === 'seatrow',
+  );
+
+  const items = selection.flatMap((item) => {
+    if (item.type === 'seatblock' || item.type === 'seatrow') return [item];
+    if (item.type !== 'section') return [];
+    const section = map.document!.sections.find((entry) => entry.id === item.id);
+    return section?.blocks.map((block) => ({ type: 'seatblock' as const, id: block.id })) ?? [];
+  });
+  const unique = [...new Map(items.map((item) => [`${item.type}:${item.id}`, item])).values()];
+  const selectedBlockIds = new Set(unique.flatMap((item) => item.type === 'seatblock' ? [item.id] : []));
+  return unique.filter((item) => {
+    if (item.type !== 'seatrow') return true;
+    const owner = findMapRowOwner(map.document!, item.id);
+    return !owner || !selectedBlockIds.has(owner.block.id);
+  });
 }
 
 export function useMapNodeDragSession({
@@ -150,16 +173,12 @@ export function useMapNodeDragSession({
         isItemSelected(currentSelection, item) ||
         (item.type === 'seat' && draggedSeatOwner !== null && (
           isItemSelected(currentSelection, { type: 'seatblock', id: draggedSeatOwner.block.id }) ||
-          isItemSelected(currentSelection, { type: 'seatrow', id: draggedSeatOwner.row.id })
+          isItemSelected(currentSelection, { type: 'seatrow', id: draggedSeatOwner.row.id }) ||
+          isItemSelected(currentSelection, { type: 'section', id: draggedSeatOwner.section.id })
         ))
       );
       const isDraggingExistingMultiSelection = selectedItems.length > 1 && itemIsPartOfSelection;
-      const selectedParametricItems = currentSelection.filter(
-        (entry): entry is Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }> => entry.type === 'seatblock' || entry.type === 'seatrow',
-      ).filter((entry, index, entries) => entry.type !== 'seatrow' || !entries.some((candidate) => {
-        if (candidate.type !== 'seatblock' || !currentState.map?.document) return false;
-        return findMapBlockOwner(currentState.map.document, candidate.id)?.block.rows.some((row) => row.id === entry.id) ?? false;
-      }) || entries.findIndex((candidate) => candidate.type === entry.type && candidate.id === entry.id) === index);
+      const selectedParametricItems = resolveSelectedParametricDragItems(currentState.map, currentSelection);
       const shouldDragSeatSection =
         !isDraggingExistingMultiSelection && item?.type === 'seat' && item.id !== individualSeatDragId && Boolean(draggedSeat?.sectionId);
       const shouldDragSeatBlock =

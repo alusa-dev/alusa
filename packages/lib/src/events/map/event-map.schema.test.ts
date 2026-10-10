@@ -21,6 +21,7 @@ describe('event map document schema', () => {
           rowGap: 24,
           defaultSeatGap: 8,
           distribution: [{ type: 'SEATS', count: 1 }],
+          numberingMode: 'NUMERIC',
           rowIds: ['row-1'],
           rows: [{
             id: 'row-1',
@@ -50,6 +51,36 @@ describe('event map document schema', () => {
       rowLabel: 'VIP',
       seatNumber: '17B',
     });
+    expect(result.sections[0]?.blocks[0]?.numberingMode).toBe('NUMERIC');
+  });
+
+  it('rejects unknown block numbering modes', () => {
+    const result = eventMapDocumentSchema.safeParse({
+      schemaVersion: 1,
+      sections: [{
+        id: 'section-1',
+        levelId: 'level-1',
+        name: 'Setor A',
+        color: '#123456',
+        position: { x: 0, y: 0 },
+        rotation: 0,
+        outline: [],
+        blockIds: ['block-1'],
+        blocks: [{
+          id: 'block-1',
+          sectionId: 'section-1',
+          rowGap: 0,
+          defaultSeatGap: 0,
+          distribution: [{ type: 'SEATS', count: 0 }],
+          numberingMode: 'SEQUENTIAL',
+          rowIds: [],
+          rows: [],
+        }],
+      }],
+      visualElements: [],
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it('rejects duplicate IDs and children stored under a different parent', () => {

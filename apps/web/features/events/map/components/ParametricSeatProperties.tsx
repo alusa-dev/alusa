@@ -1,7 +1,7 @@
 'use client';
 
 import { arcSweepDegrees, createArcPathFromChord, pointAtDistance, pathLength, resolveSeatCountForRow, setArcSweep } from '@alusa/domain';
-import type { MapSeatBlock, MapSeatRow, MapSection, SeatDistributionAlignment, SeatDistributionMode, SeatRowPath } from '@alusa/domain';
+import type { EventMapDTO, MapSeatBlock, MapSeatRow, MapSection, SeatDistributionAlignment, SeatDistributionMode, SeatRowPath } from '@alusa/domain';
 import { CreatorIcon } from '@/components/icons/hugeicons';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,6 +11,11 @@ import {
   MAP_PANEL_SECTION_TITLE_CLASS,
 } from './text-format-options';
 import { MapPanelSelect } from './MapPanelSelect';
+import { useState } from 'react';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 function toNumber(value: string, fallback = 0) {
   const parsed = Number(value);
@@ -197,11 +202,14 @@ type ParametricSeatPropertiesProps = {
   block: MapSeatBlock | null;
   row: MapSeatRow | null;
   disabled?: boolean;
-  onUpdateBlock: (id: string, patch: Partial<Pick<MapSeatBlock, 'name' | 'columnCount' | 'rowGap' | 'defaultSeatGap' | 'distribution' | 'distributionMode' | 'distributionAlignment' | 'firstRowSeatCount' | 'lastRowSeatCount' | 'fitMinimumSeatCount' | 'fitMaximumSeatCount'>> & { seatSize?: number; rowSeatCounts?: number[]; rowPaths?: SeatRowPath[] }) => void;
+  numberingLocked?: boolean;
+  status: EventMapDTO['status'];
+  onUpdateBlock: (id: string, patch: Partial<Pick<MapSeatBlock, 'name' | 'columnCount' | 'rowGap' | 'defaultSeatGap' | 'distribution' | 'distributionMode' | 'distributionAlignment' | 'firstRowSeatCount' | 'lastRowSeatCount' | 'fitMinimumSeatCount' | 'fitMaximumSeatCount' | 'numberingMode'>> & { seatSize?: number; rowSeatCounts?: number[]; rowPaths?: SeatRowPath[] }) => void;
   onUpdateRow: (id: string, patch: Partial<Pick<MapSeatRow, 'path' | 'seatGap' | 'seatSize'>>) => void;
 };
 
-export function ParametricSeatProperties({ section, block, row, disabled, onUpdateBlock, onUpdateRow }: ParametricSeatPropertiesProps) {
+export function ParametricSeatProperties({ section, block, row, disabled, numberingLocked, status, onUpdateBlock, onUpdateRow }: ParametricSeatPropertiesProps) {
+  const [pendingNumberingMode, setPendingNumberingMode] = useState<MapSeatBlock['numberingMode'] | null>(null);
   if (!block && !row) return null;
   const activeBlock = block ?? (row ? section.blocks.find((candidate) => candidate.id === row.blockId) ?? null : null);
   if (!activeBlock) return null;
@@ -226,6 +234,22 @@ export function ParametricSeatProperties({ section, block, row, disabled, onUpda
             onChange={(event) => onUpdateBlock(activeBlock.id, { name: event.target.value || null })}
             className={MAP_PANEL_FIELD_CLASS}
           />
+        </PanelField>
+        <PanelField label="Numeração dos assentos">
+          <MapPanelSelect
+            value={activeBlock.numberingMode ?? 'ALPHANUMERIC'}
+            disabled={disabled || numberingLocked}
+            options={[
+              { value: 'ALPHANUMERIC', label: 'Alfanumérica (A1, A2...)' },
+              { value: 'NUMERIC', label: 'Numérica (1, 2, 3...)' },
+            ]}
+            onValueChange={(value) => {
+              const numberingMode = value as MapSeatBlock['numberingMode'];
+              if (status === 'PUBLISHED') setPendingNumberingMode(numberingMode);
+              else onUpdateBlock(activeBlock.id, { numberingMode });
+            }}
+          />
+          {numberingLocked ? <p className="text-xs text-amber-700">A numeração fica bloqueada enquanto houver assentos reservados, vendidos ou cortesia neste bloco.</p> : null}
         </PanelField>
         <PanelField label="Colunas">
           <QuantityStepper
@@ -477,6 +501,23 @@ export function ParametricSeatProperties({ section, block, row, disabled, onUpda
           </div>
         </PanelSection>
       ) : null}
+      <AlertDialog open={pendingNumberingMode !== null} onOpenChange={(open) => !open && setPendingNumberingMode(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Alterar numeração de mapa publicado?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A alteração troca as etiquetas e os códigos técnicos deste bloco. Assentos reservados ou vendidos ficam protegidos; confirme apenas se a nova numeração deve aparecer na próxima publicação do mapa.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={() => {
+              if (pendingNumberingMode) onUpdateBlock(activeBlock.id, { numberingMode: pendingNumberingMode });
+              setPendingNumberingMode(null);
+            }}>Alterar numeração</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

@@ -38,7 +38,7 @@ import {
   type Cycle,
   type StagedEnrollmentFinancialResources,
 } from '@alusa/finance';
-import { resolveFirstDueDate } from '@/src/server/enrollments/recurring-billing';
+import { resolveEnrollmentFeeDueDate, resolveFirstDueDate } from '@/src/server/enrollments/recurring-billing';
 import {
   resolveInitialBillingProvisionStatus,
 } from '@/src/server/enrollments/billing-provision-status';
@@ -355,6 +355,7 @@ export type ListarMatriculasInput = {
   alunoId?: string;
   planoId?: string;
   turmaId?: string;
+  classRosterPeriod?: 'CURRENT' | 'FUTURE';
   comboId?: string | null;
   status?: StatusMatricula[];
   excludeStatus?: StatusMatricula[];
@@ -395,7 +396,11 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
         ],
       },
       { status: { notIn: [StatusMatricula.ENCERRADA, StatusMatricula.CANCELADA, StatusMatricula.RECUSADA] } },
-      { dataInicio: { lte: academicDay.end } },
+      {
+        dataInicio: input.classRosterPeriod === 'FUTURE'
+          ? { gt: academicDay.end }
+          : { lte: academicDay.end },
+      },
       { dataFimContrato: { gte: academicDay.start } },
     );
   }
@@ -531,6 +536,8 @@ export type CriarMatriculaInput = {
   criarCobranca: boolean;
   /** Mantém a matrícula pendente até uma operação financeira externa ser confirmada. */
   requiresFinancialProvisioning?: boolean;
+  /** Agenda a provisão recorrente para o início futuro do contrato. */
+  deferSubscriptionUntil?: Date | null;
   billingMode?: BillingMode | null;
   matriculaFamiliarId?: string | null;
   familyOrderIndex?: number | null;
@@ -1214,7 +1221,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
             input.preprovisionedBilling?.enrollmentFee?.value ?? input.taxaMatricula,
           vencimento: input.preprovisionedBilling?.enrollmentFee
             ? new Date(`${input.preprovisionedBilling.enrollmentFee.dueDate}T12:00:00.000Z`)
-            : new Date(),
+            : resolveEnrollmentFeeDueDate(input.dataInicio),
           formaPagamento: input.formaPagamentoTaxa ?? input.formaPagamento ?? FormaPagamento.BOLETO,
           status: input.preprovisionedBilling?.enrollmentFee
             ? mapAsaasPaymentStatusToCobranca(
@@ -1369,15 +1376,18 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       const dedupeKey = subscriptionTargetId
         ? `enrollment-subscription-update:${subscriptionTargetId}:${matricula.id}`
         : `enrollment-billing:${matricula.id}`;
+      const deferSubscription = Boolean(input.deferSubscriptionUntil && !subscriptionTargetId);
+      const hasEnrollmentFee = !input.taxaIsenta && input.gerarCobrancaTaxa && input.taxaMatricula > 0;
       const billingOutboxEvent = await tx.matriculaBillingOutbox.create({
         data: {
           contaId: input.contaId,
           matriculaId: matricula.id,
           aggregateType: 'MATRICULA',
           aggregateId: matricula.id,
-          eventType: outboxEventType,
-          dedupeKey,
-          idempotencyKey: input.uiRequestId ?? dedupeKey,
+          eventType: deferSubscription && hasEnrollmentFee ? 'PROVISION_ENROLLMENT_FEE' : outboxEventType,
+          ...(deferSubscription && !hasEnrollmentFee ? { availableAt: input.deferSubscriptionUntil! } : {}),
+          dedupeKey: deferSubscription && hasEnrollmentFee ? `enrollment-fee:${matricula.id}` : dedupeKey,
+          idempotencyKey: deferSubscription && hasEnrollmentFee ? `enrollment-fee:${matricula.id}` : input.uiRequestId ?? dedupeKey,
           externalReference: `matricula:${matricula.id}:billing`,
           correlationId: input.uiRequestId ?? dedupeKey,
           payload: {
@@ -1385,10 +1395,37 @@ export async function criarMatricula(input: CriarMatriculaInput) {
             actorUserId: input.createdById,
             subscriptionTargetId,
             billingStrategy,
+            ...(deferSubscription && hasEnrollmentFee ? { billingPhase: 'ENROLLMENT_FEE' } : {}),
+            ...(deferSubscription && !hasEnrollmentFee ? { billingPhase: 'SUBSCRIPTION_ONLY' } : {}),
           } as Prisma.InputJsonValue,
         },
       });
       billingOutboxEventId = billingOutboxEvent.id;
+
+      if (deferSubscription && hasEnrollmentFee) {
+        const scheduledDedupeKey = `enrollment-billing:${matricula.id}`;
+        await tx.matriculaBillingOutbox.create({
+          data: {
+            contaId: input.contaId,
+            matriculaId: matricula.id,
+            aggregateType: 'MATRICULA',
+            aggregateId: matricula.id,
+            eventType: 'PROVISION_ENROLLMENT_BILLING',
+            availableAt: input.deferSubscriptionUntil!,
+            dedupeKey: scheduledDedupeKey,
+            idempotencyKey: input.uiRequestId ?? scheduledDedupeKey,
+            externalReference: `matricula:${matricula.id}:billing`,
+            correlationId: input.uiRequestId ?? scheduledDedupeKey,
+            payload: {
+              matriculaId: matricula.id,
+              actorUserId: input.createdById,
+              subscriptionTargetId: null,
+              billingStrategy,
+              billingPhase: 'SUBSCRIPTION_ONLY',
+            } as Prisma.InputJsonValue,
+          },
+        });
+      }
     }
 
     const committedMatricula = input.preprovisionedBilling
