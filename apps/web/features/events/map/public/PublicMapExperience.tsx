@@ -96,6 +96,52 @@ type PublicObject = {
   data?: Record<string, unknown>;
 };
 
+type PublicMapRenderItem =
+  | { kind: 'object'; id: string; sortOrder: number; object: PublicObject }
+  | {
+      kind: 'row-guides';
+      id: string;
+      sortOrder: number;
+      guide: { id: string; sectionId: string; sectionColor: string; curved: boolean; points: string };
+    }
+  | { kind: 'seat'; id: string; sortOrder: number; seat: PublicSeat };
+
+type PublicMapRenderKind = PublicMapRenderItem['kind'];
+type PublicMapRenderSortItem = {
+  kind: PublicMapRenderKind;
+  id: string;
+  sortOrder: number;
+  object?: Pick<PublicObject, 'type' | 'data'>;
+};
+
+export function sortPublicMapRenderItems<T extends PublicMapRenderSortItem>(items: T[]) {
+  const kindPriority = { object: 0, 'row-guides': 1, seat: 2 } as const;
+  return [...items].sort(
+    (left, right) => {
+      const leftIsText = left.kind === 'object' && left.object?.type === 'TEXT';
+      const rightIsText = right.kind === 'object' && right.object?.type === 'TEXT';
+      if (leftIsText !== rightIsText) return leftIsText ? 1 : -1;
+
+      const leftIsFilledObject =
+        left.kind === 'object' &&
+        left.object != null &&
+        getObjectAppearance({ type: left.object.type, data: left.object.data ?? {} }).fill != null;
+      const rightIsFilledObject =
+        right.kind === 'object' &&
+        right.object != null &&
+        getObjectAppearance({ type: right.object.type, data: right.object.data ?? {} }).fill != null;
+      if (leftIsFilledObject && right.kind === 'seat') return -1;
+      if (rightIsFilledObject && left.kind === 'seat') return 1;
+
+      return (
+        left.sortOrder - right.sortOrder ||
+        kindPriority[left.kind] - kindPriority[right.kind] ||
+        left.id.localeCompare(right.id)
+      );
+    },
+  );
+}
+
 function formatCurrency(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 }
@@ -363,13 +409,7 @@ export function PublicMapExperience({
         seat,
       })),
     ];
-    const priority = { object: 0, 'row-guides': 1, seat: 2 } as const;
-    return items.sort(
-      (left, right) =>
-        left.sortOrder - right.sortOrder ||
-        priority[left.kind] - priority[right.kind] ||
-        left.id.localeCompare(right.id),
-    );
+    return sortPublicMapRenderItems(items);
   }, [levelObjects, levelRowGuides, levelSeats, map.objects, map.sections]);
   const selectedSeats = useMemo(
     () => seats.filter((seat) => selectedIds.includes(seat.id)),
