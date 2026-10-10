@@ -96,6 +96,46 @@ type PublicObject = {
   data?: Record<string, unknown>;
 };
 
+type PublicMapRenderItem =
+  | { kind: 'object'; id: string; sortOrder: number; object: PublicObject }
+  | {
+      kind: 'row-guides';
+      id: string;
+      sortOrder: number;
+      guide: { id: string; sectionId: string; sectionColor: string; curved: boolean; points: string };
+    }
+  | { kind: 'seat'; id: string; sortOrder: number; seat: PublicSeat };
+
+type PublicMapRenderKind = PublicMapRenderItem['kind'];
+type PublicMapRenderSortItem = {
+  kind: PublicMapRenderKind;
+  id: string;
+  sortOrder: number;
+  object?: Pick<PublicObject, 'type' | 'data'>;
+};
+
+function publicMapRenderLayer(item: PublicMapRenderSortItem) {
+  if (item.kind === 'object') {
+    if (item.object?.type === 'TEXT') return 2;
+    const appearance = item.object
+      ? getObjectAppearance({ type: item.object.type, data: item.object.data ?? {} })
+      : null;
+    return appearance?.fill ? 0 : 1;
+  }
+  return 1;
+}
+
+export function sortPublicMapRenderItems<T extends PublicMapRenderSortItem>(items: T[]) {
+  const kindPriority = { object: 0, 'row-guides': 1, seat: 2 } as const;
+  return [...items].sort(
+    (left, right) =>
+      publicMapRenderLayer(left) - publicMapRenderLayer(right) ||
+      left.sortOrder - right.sortOrder ||
+      kindPriority[left.kind] - kindPriority[right.kind] ||
+      left.id.localeCompare(right.id),
+  );
+}
+
 function formatCurrency(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 }
@@ -363,13 +403,7 @@ export function PublicMapExperience({
         seat,
       })),
     ];
-    const priority = { object: 0, 'row-guides': 1, seat: 2 } as const;
-    return items.sort(
-      (left, right) =>
-        left.sortOrder - right.sortOrder ||
-        priority[left.kind] - priority[right.kind] ||
-        left.id.localeCompare(right.id),
-    );
+    return sortPublicMapRenderItems(items);
   }, [levelObjects, levelRowGuides, levelSeats, map.objects, map.sections]);
   const selectedSeats = useMemo(
     () => seats.filter((seat) => selectedIds.includes(seat.id)),
