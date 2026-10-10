@@ -9,6 +9,11 @@ import {
 import { prisma } from '@/src/prisma';
 import { runWithTenant } from '@/lib/prisma-tenant';
 import {
+  getAcademicDateKey,
+  getAcademicDateStartInstant,
+  isAcademicDateInFuture,
+} from '@alusa/shared/date-only';
+import {
   formatIsoDate,
   isDateOnlyBefore,
   mapFormaPagamentoToBillingType,
@@ -552,6 +557,20 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
     );
   }
 
+  // Persist future enrollment billing now, but make only the fee runnable at
+  // confirmation. The recurring outbox is scheduled for the contract start.
+  const enrollmentDateKey = getAcademicDateKey(input.dataInicio);
+  const schoolTimeZone = input.criarCobranca
+    ? await runWithTenant(input.contaId, async (tx) =>
+        (await tx.conta.findUnique({ where: { id: input.contaId }, select: { timezone: true } }))?.timezone,
+      )
+    : null;
+  const deferSubscriptionUntil =
+    input.criarCobranca &&
+    enrollmentDateKey &&
+    isAcademicDateInFuture(input.dataInicio, new Date(), schoolTimeZone ?? undefined)
+      ? getAcademicDateStartInstant(enrollmentDateKey, schoolTimeZone ?? undefined)
+      : null;
   let operation: { id: string };
   let leaseVersion: number;
   const leaseStartedAt = new Date();
@@ -607,6 +626,62 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
       requestFingerprint,
       error,
     });
+  }
+
+  if (deferSubscriptionUntil) {
+    let result: Awaited<ReturnType<typeof criarMatricula>>;
+    try {
+      result = await criarMatricula({
+        ...input,
+        requiresFinancialProvisioning: true,
+        deferSubscriptionUntil,
+      });
+    } catch (error) {
+      await withEnrollmentOperationTenant(input.contaId, (operations) =>
+        operations.updateMany({
+          where: { id: operation.id, contaId: input.contaId, version: leaseVersion },
+          data: {
+            status: EnrollmentCreationOperationStatus.FAILED,
+            lastError: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
+            lockedAt: null,
+            leaseExpiresAt: null,
+          },
+        }),
+      ).catch(() => ({ count: 0 }));
+      throw error;
+    }
+
+    const committed = await withEnrollmentOperationTenant(input.contaId, (operations) =>
+      operations.updateMany({
+        where: {
+          id: operation.id,
+          contaId: input.contaId,
+          version: leaseVersion,
+          status: EnrollmentCreationOperationStatus.PROCESSING,
+        },
+        data: {
+          status: EnrollmentCreationOperationStatus.COMMITTED,
+          matriculaId: result.matricula.id,
+          completedAt: new Date(),
+          lockedAt: null,
+          leaseExpiresAt: null,
+          result: {
+            matriculaId: result.matricula.id,
+            billingDeferredUntil: deferSubscriptionUntil.toISOString(),
+            enrollmentFeeOutboxEventId:
+              ('billingOutboxEventId' in result ? result.billingOutboxEventId : null) ?? null,
+          } as Prisma.InputJsonValue,
+        },
+      }),
+    ).catch(() => ({ count: 0 }));
+    if (committed.count !== 1) {
+      throw new ImmediateEnrollmentCreationError(
+        'RESULTADO_LOCAL_INCERTO',
+        'A matrícula foi persistida e agendada, mas a confirmação da operação precisa de reconciliação.',
+        true,
+      );
+    }
+    return result;
   }
 
   const staged = await stageEnrollmentFinancialResources({

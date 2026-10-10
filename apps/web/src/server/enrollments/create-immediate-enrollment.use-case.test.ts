@@ -16,6 +16,7 @@ const {
     plano: { findFirst: vi.fn() },
     combo: { findFirst: vi.fn() },
     matricula: { findFirst: vi.fn() },
+    conta: { findUnique: vi.fn() },
     enrollmentCreationOperation: {
       findFirst: vi.fn(),
       create: vi.fn(),
@@ -70,7 +71,7 @@ function input(overrides: Record<string, unknown> = {}) {
     turmaId: 'turma-1',
     comboId: null,
     responsavelFinanceiroId: 'resp-1',
-    dataInicio: new Date('2099-01-01T12:00:00.000Z'),
+    dataInicio: new Date('2020-01-01T12:00:00.000Z'),
     dataFimContrato: new Date('2099-12-31T12:00:00.000Z'),
     vencimentoDia: 5,
     taxaMatricula: 80,
@@ -121,6 +122,7 @@ describe('createImmediateEnrollment', () => {
     vi.clearAllMocks();
     prismaMock.enrollmentCreationOperation.findFirst.mockResolvedValue(null);
     prismaMock.matricula.findFirst.mockResolvedValue(null);
+    prismaMock.conta.findUnique.mockResolvedValue({ timezone: 'America/Manaus' });
     prismaMock.aluno.findFirst.mockResolvedValue({
       id: 'aluno-1',
       dataNasc: new Date('2010-01-01T00:00:00.000Z'),
@@ -180,6 +182,27 @@ describe('createImmediateEnrollment', () => {
       }),
     );
     expect(result.matricula.id).toBe('matricula-1');
+    expect(prismaMock.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'COMMITTED' }) }),
+    );
+  });
+
+  it('agenda o faturamento recorrente para o início de matrícula futura sem criar recursos remotos agora', async () => {
+    const result = await createImmediateEnrollment(input({
+      dataInicio: new Date('2099-01-01T00:00:00.000Z'),
+    }));
+
+    expect(result.matricula.id).toBe('matricula-1');
+    expect(stageMock).not.toHaveBeenCalled();
+    expect(criarMatriculaMock).toHaveBeenCalledWith(expect.objectContaining({
+      requiresFinancialProvisioning: true,
+      deferSubscriptionUntil: new Date('2099-01-01T04:00:00.000Z'),
+    }));
+    expect(prismaMock.enrollmentCreationOperation.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ uiRequestId: 'request-1', requestFingerprint: expect.any(String) }),
+      }),
+    );
     expect(prismaMock.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'COMMITTED' }) }),
     );
@@ -314,7 +337,7 @@ describe('createImmediateEnrollment', () => {
   it('bloqueia assinatura cuja vigência termina antes do primeiro vencimento', async () => {
     await expect(
       createImmediateEnrollment(
-        input({ dataFimContrato: new Date('2098-12-31T12:00:00.000Z') }),
+        input({ dataFimContrato: new Date('2019-12-31T12:00:00.000Z') }),
       ),
     ).rejects.toMatchObject({ code: 'DATA_FIM_INVALIDA' });
     expect(stageMock).not.toHaveBeenCalled();
@@ -495,7 +518,7 @@ describe('createImmediateEnrollment', () => {
       descontoIds: ['discount-a', 'discount-b', 'discount-a'],
       notificationChannelsConfigured: true,
       notificationChannels: ['EMAIL', 'SMS', 'EMAIL'],
-      dataInicio: new Date('2099-01-01T08:00:00-04:00'),
+      dataInicio: new Date('2020-01-01T08:00:00-04:00'),
       jurosMensal: null,
       billingStrategy: null,
       valorMensalidadeOverride: 125.001,

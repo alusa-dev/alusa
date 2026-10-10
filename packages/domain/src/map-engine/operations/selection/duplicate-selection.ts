@@ -15,6 +15,7 @@ import { projectMapDocumentToEditorFields } from '../../migration/project-map-do
 import type { EventMapDocument, MapSeatBlock, MapSeatRow, SeatRowPath } from '../../model/event-map-document.js';
 import { toLocal } from '../../geometry/rotation.js';
 import { getNextSeatBlockRowPrefix, getSeatBlockRowLabel } from '../../layout/seat-block-config.js';
+import { applySeatBlockNumbering, getNextNumericSeatNumber } from '../../layout/seat-block-numbering.js';
 import { getNextMapLayerSortOrder } from '../../doc/levels.js';
 
 export type DuplicateSelectionInput = { map: EventMapDTO; selection: MapSelection; offset?: { x: number; y: number }; runtime?: MapEngineRuntime };
@@ -60,16 +61,23 @@ function translatePath(path: SeatRowPath, dx: number, dy: number): SeatRowPath {
   return { ...path, p0: point(path.p0), p1: point(path.p1), p2: point(path.p2), p3: point(path.p3) };
 }
 
+function getSeatSuffix(seat: MapSeatRow['seats'][number], rowLabel: string) {
+  return seat.seatNumber ?? (seat.label.startsWith(rowLabel) ? seat.label.slice(rowLabel.length) : String(seat.columnIndex + 1));
+}
+
 function duplicateRow(row: MapSeatRow, sectionId: string, blockId: string, offset: { x: number; y: number }, runtime?: MapEngineRuntime, rowLabel = row.label) {
   const rowId = createLocalId('row', runtime);
   const seats = row.seats.map((seat) => {
-    const number = seat.technicalCode?.match(/(\d+)$/)?.[1] ?? String(seat.columnIndex + 1);
+    const number = seat.seatNumber ?? (seat.label.startsWith(row.label) ? seat.label.slice(row.label.length) : String(seat.columnIndex + 1));
+    const id = createLocalId('seat', runtime);
     const label = `${rowLabel}${number}`;
     return {
       ...seat,
-      id: createLocalId('seat', runtime),
+      id,
       label,
-      technicalCode: label,
+      technicalCode: `${blockId}-${id}`,
+      rowLabel,
+      seatNumber: number,
       ...(seat.position ? { position: { x: seat.position.x + offset.x, y: seat.position.y + offset.y } } : {}),
     };
   });
@@ -85,10 +93,11 @@ function duplicateRow(row: MapSeatRow, sectionId: string, blockId: string, offse
   } satisfies MapSeatRow;
 }
 
-function duplicateBlock(block: MapSeatBlock, sectionId: string, offset: { x: number; y: number }, runtime?: MapEngineRuntime, rowPrefix = 'A') {
+function duplicateBlock(block: MapSeatBlock, sectionId: string, offset: { x: number; y: number }, runtime?: MapEngineRuntime, rowPrefix = 'A', startNumber?: number) {
   const blockId = createLocalId('block', runtime);
   const rows = block.rows.map((row, index) => duplicateRow(row, sectionId, blockId, offset, runtime, getSeatBlockRowLabel(index, rowPrefix)));
-  return { ...block, id: blockId, sectionId, rowIds: rows.map((row) => row.id), rows } satisfies MapSeatBlock;
+  const copy = { ...block, ...(startNumber === undefined ? {} : { startNumber }), id: blockId, sectionId, rowIds: rows.map((row) => row.id), rows } satisfies MapSeatBlock;
+  return copy.numberingMode === 'NUMERIC' ? applySeatBlockNumbering(copy) : copy;
 }
 
 export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSelectionResult {
@@ -163,6 +172,15 @@ export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSel
     const sourceSectionById = new Map(sections.map((section) => [section.id, section]));
     const duplicatedSectionIds = new Map<string, string>();
     const nextRowPrefixByLevel = new Map<string, string>();
+    const nextNumericSeatNumberByLevel = new Map<string, number>();
+    const takeNextNumericSeatNumber = (levelId: string, blocks: readonly MapSeatBlock[], seatCount?: number) => {
+      const nextNumber = nextNumericSeatNumberByLevel.get(levelId) ?? getNextNumericSeatNumber(
+        sections.filter((section) => section.levelId === levelId).flatMap((section) => section.blocks),
+      );
+      const allocatedSeatCount = seatCount ?? blocks.reduce((total, block) => total + block.rows.reduce((rowTotal, row) => rowTotal + row.seats.length, 0), 0);
+      nextNumericSeatNumberByLevel.set(levelId, nextNumber + allocatedSeatCount);
+      return nextNumber;
+    };
     const takeNextRowPrefix = (levelId: string, rowCount = 0, requestedSeatSuffixes: string[] = []) => {
       const levelSections = sections.filter((section) => section.levelId === levelId);
       const rowLabels = levelSections
@@ -198,12 +216,14 @@ export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSel
         // Moving the section moves its local geometry too; offsetting both here
         // would apply the duplicate offset twice.
         const blocks = section.blocks.map((block) => {
+          const startNumber = block.numberingMode === 'NUMERIC' ? takeNextNumericSeatNumber(section.levelId, [block]) : undefined;
           return duplicateBlock(
             block,
             sectionId,
             { x: 0, y: 0 },
             input.runtime,
-            takeNextRowPrefix(section.levelId, block.rows.length, block.rows.flatMap((row) => row.seats.map((seat) => seat.technicalCode?.match(/(\d+)$/)?.[1] ?? String(seat.columnIndex + 1)))),
+            takeNextRowPrefix(section.levelId, block.rows.length, block.rows.flatMap((row) => row.seats.map((seat) => getSeatSuffix(seat, row.label)))),
+            startNumber,
           );
         });
         const nextSortOrder = nextSectionSortOrderByLevel.get(section.levelId) ?? Math.max(
@@ -248,8 +268,9 @@ export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSel
         if (!sourceSection) continue;
         const sectionId = createLocalId('section', input.runtime);
         const localOffset = toLocal(offset, { x: 0, y: 0 }, sourceSection.rotation);
-        const duplicateRowPrefix = takeNextRowPrefix(sourceSection.levelId, block.rows.length, block.rows.flatMap((row) => row.seats.map((seat) => seat.technicalCode?.match(/(\d+)$/)?.[1] ?? String(seat.columnIndex + 1))));
-        const copy = duplicateBlock(block, sectionId, localOffset, input.runtime, duplicateRowPrefix);
+        const duplicateRowPrefix = takeNextRowPrefix(sourceSection.levelId, block.rows.length, block.rows.flatMap((row) => row.seats.map((seat) => getSeatSuffix(seat, row.label))));
+        const startNumber = block.numberingMode === 'NUMERIC' ? takeNextNumericSeatNumber(sourceSection.levelId, [block]) : undefined;
+        const copy = duplicateBlock(block, sectionId, localOffset, input.runtime, duplicateRowPrefix, startNumber);
         const nextSortOrder = Math.max(
           -1,
           ...sections
@@ -278,10 +299,23 @@ export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSel
         const target = sections.find((entry) => entry.id === section.id);
         if (!target) continue;
         const localOffset = toLocal(offset, { x: 0, y: 0 }, section.rotation);
-        const rowPrefix = takeNextRowPrefix(section.levelId, 1, row.seats.map((seat) => seat.technicalCode?.match(/(\d+)$/)?.[1] ?? String(seat.columnIndex + 1)));
-        const copy = duplicateRow(row, section.id, block.id, localOffset, input.runtime, rowPrefix);
+        const rowPrefix = takeNextRowPrefix(section.levelId, 1, row.seats.map((seat) => getSeatSuffix(seat, row.label)));
+        let copy = duplicateRow(row, section.id, block.id, localOffset, input.runtime, rowPrefix);
         const targetBlock = target.blocks.find((entry) => entry.id === block.id);
         if (targetBlock) {
+          if (targetBlock.numberingMode === 'NUMERIC') {
+            const startNumber = takeNextNumericSeatNumber(section.levelId, [targetBlock], copy.seats.length);
+            copy = {
+              ...copy,
+              seats: copy.seats.map((seat, seatIndex) => {
+                const visualIndex = targetBlock.numberingDirection === 'right-to-left'
+                  ? copy.seats.length - seatIndex - 1
+                  : seatIndex;
+                const seatNumber = String(startNumber + visualIndex);
+                return { ...seat, label: seatNumber, seatNumber, rowLabel: rowPrefix };
+              }),
+            };
+          }
           targetBlock.rows.push(copy);
           targetBlock.rowIds.push(copy.id);
           created.push({ type: 'seatrow', id: copy.id });

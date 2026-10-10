@@ -120,6 +120,15 @@ function projectAllocations(input: {
       .filter((allocation) => isAllocationEffective(allocation, change.effectiveDate))
       .map((allocation) => [allocation.id, allocation]),
   );
+  const removableById = new Map(
+    sourceAllocations
+      .filter(
+        (allocation) =>
+          (allocation.status === 'ACTIVE' || allocation.status === 'SCHEDULED') &&
+          (allocation.validUntil === null || allocation.validUntil > change.effectiveDate),
+      )
+      .map((allocation) => [allocation.id, allocation]),
+  );
   let sourceAddedCents = 0;
   let sourceRemovedCents = 0;
   let targetAddedCents = 0;
@@ -143,14 +152,15 @@ function projectAllocations(input: {
   const endAllocations = (ids: string[]) => {
     assertDistinctIds(ids);
     for (const id of ids) {
-      const allocation = activeById.get(id);
+      const allocation = removableById.get(id);
       if (!allocation) {
         throw new BillingAgreementError('ALLOCATION_NOT_FOUND', 'Alocação ativa não encontrada.', {
           allocationId: id,
         });
       }
+      const wasEffective = isAllocationEffective(allocation, change.effectiveDate);
       closeAllocation(allocation);
-      if (allocation.recurring) sourceRemovedCents += allocation.netAmountCents;
+      if (wasEffective && allocation.recurring) sourceRemovedCents += allocation.netAmountCents;
     }
   };
 

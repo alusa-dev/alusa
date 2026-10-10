@@ -62,7 +62,10 @@ function buildPrisma() {
     },
     customer: { findFirst: vi.fn(async () => null), findUnique: vi.fn(async () => null) },
     customerPayer: { findUnique: vi.fn(async () => null) },
-    billingAllocation: { findFirst: vi.fn(async () => null) },
+    billingAllocation: {
+      findFirst: vi.fn(async () => null),
+      findMany: vi.fn(async () => [{ id: 'allocation-1' }]),
+    },
     matriculaBillingOutbox: { findFirst: vi.fn(async () => null) },
     matriculaOperacao: {
       findFirst: vi.fn(async () => null),
@@ -218,6 +221,21 @@ describe('syncMatriculaStatus cancellation', () => {
       code: 'IDEMPOTENCY_CONFLICT',
       statusCode: 409,
     });
+
+    expect(root.billingAllocation.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        contaId: 'conta-1',
+        status: { in: ['ACTIVE', 'SCHEDULED'] },
+        OR: [{ validUntil: null }, { validUntil: { gte: expect.any(Date) } }],
+      }),
+    }));
+    expect(root.billingAllocation.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        contaId: 'conta-1',
+        status: { in: ['ACTIVE', 'SCHEDULED'] },
+        OR: [{ validUntil: null }, { validUntil: { gte: expect.any(Date) } }],
+      }),
+    }));
 
     expect(commitBillingAgreementChangeMock).toHaveBeenCalledWith(expect.objectContaining({
       uiRequestId: expect.stringMatching(

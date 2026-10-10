@@ -59,6 +59,7 @@ export async function retryEnrollmentBillingProvisionJob(
   const minAgeMinutes = Math.max(1, input.minAgeMinutes ?? DEFAULT_MIN_AGE_MINUTES);
   const limit = Math.max(1, Math.min(input.limit ?? DEFAULT_LIMIT, 100));
   const threshold = new Date(Date.now() - minAgeMinutes * 60 * 1000);
+  const now = new Date();
 
   const result: RetryEnrollmentBillingProvisionResult = {
     scanned: 0,
@@ -80,6 +81,35 @@ export async function retryEnrollmentBillingProvisionJob(
       },
       status: { notIn: ['RECUSADA', 'CANCELADA'] },
       createdAt: { lt: threshold },
+      OR: [
+        {
+          billingOutboxEvents: {
+            some: {
+              status: {
+                in: [
+                  MatriculaBillingOutboxStatus.PENDING,
+                  MatriculaBillingOutboxStatus.PROCESSING,
+                  MatriculaBillingOutboxStatus.FAILED,
+                ],
+              },
+              availableAt: { lte: now },
+            },
+          },
+        },
+        {
+          billingOutboxEvents: {
+            none: {
+              status: {
+                in: [
+                  MatriculaBillingOutboxStatus.PENDING,
+                  MatriculaBillingOutboxStatus.PROCESSING,
+                  MatriculaBillingOutboxStatus.FAILED,
+                ],
+              },
+            },
+          },
+        },
+      ],
       ...(input.contaId ? { contaId: input.contaId } : {}),
     },
     orderBy: { createdAt: 'asc' },
@@ -112,6 +142,7 @@ export async function retryEnrollmentBillingProvisionJob(
             MatriculaBillingOutboxStatus.REQUIRES_RECONCILIATION,
           ],
         },
+        availableAt: { lte: now },
       },
       select: { id: true, terminalIntent: true },
     });

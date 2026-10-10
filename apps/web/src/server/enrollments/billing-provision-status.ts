@@ -59,6 +59,22 @@ export function deriveBillingProvisionStatusFromSync(input: {
   return MatriculaBillingProvisionStatus.PARCIAL;
 }
 
+export function deriveDeferredEnrollmentFeeProvisionStatus(input: {
+  requiresTax: boolean;
+  taxaSyncSuccess: boolean | null;
+}): MatriculaBillingProvisionStatus {
+  if (input.requiresTax && input.taxaSyncSuccess === true) {
+    return MatriculaBillingProvisionStatus.PENDENTE;
+  }
+  return deriveBillingProvisionStatusFromSync({
+    requiresTax: input.requiresTax,
+    taxaSyncSuccess: input.taxaSyncSuccess,
+    shouldCreateSubscription: false,
+    subscriptionSyncSuccess: null,
+    hasAsaasSubscriptionId: false,
+  });
+}
+
 export function billingProvisionUpdate(
   status: MatriculaBillingProvisionStatus,
   error?: string | null,

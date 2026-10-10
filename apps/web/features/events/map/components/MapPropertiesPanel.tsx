@@ -698,7 +698,11 @@ export function MapPropertiesPanel({
             section={parametricSelection.section}
             block={parametricSelection.block}
             row={parametricSelection.row}
+            status={status}
             disabled={disabled}
+            numberingLocked={Boolean(parametricSelection.block?.rows.some((row) => row.seats.some((seat) =>
+              map?.seats.some((entry) => entry.id === seat.id && (entry.status === 'HELD' || entry.status === 'SOLD' || entry.status === 'COMPLIMENTARY')),
+            )))}
             onUpdateBlock={updateSeatBlock}
             onUpdateRow={updateSeatRow}
           />

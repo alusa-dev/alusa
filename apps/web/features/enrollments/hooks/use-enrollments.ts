@@ -14,6 +14,7 @@ export interface UseMatriculasOptions {
   excludeStatus?: MatriculaStatus | MatriculaStatus[];
   search?: string;
   turmaId?: string;
+  classRosterPeriod?: 'CURRENT' | 'FUTURE';
 }
 
 interface UseMatriculasState {
@@ -34,7 +35,7 @@ const INITIAL_STATE: UseMatriculasState = {
   pageSize: 6,
 };
 
-export function useMatriculas({ contaId, status, excludeStatus, search, turmaId }: UseMatriculasOptions) {
+export function useMatriculas({ contaId, status, excludeStatus, search, turmaId, classRosterPeriod }: UseMatriculasOptions) {
   const [state, setState] = useState<UseMatriculasState>(INITIAL_STATE);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -55,6 +56,7 @@ export function useMatriculas({ contaId, status, excludeStatus, search, turmaId 
           excludeStatus,
           search,
           turmaId,
+          classRosterPeriod,
           page: overrides?.page ?? 1,
           pageSize: overrides?.pageSize ?? 6,
           signal: controller.signal,
@@ -81,7 +83,7 @@ export function useMatriculas({ contaId, status, excludeStatus, search, turmaId 
         }));
       }
     },
-    [contaId, status, excludeStatus, search, turmaId],
+    [contaId, status, excludeStatus, search, turmaId, classRosterPeriod],
   );
 
   useEffect(() => {

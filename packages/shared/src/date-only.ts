@@ -103,6 +103,58 @@ export function getAcademicDateBoundsForStoredDate(value: Date | string): Academ
   return getBoundsForKey(dateKey);
 }
 
+/** Resolve midnight at the start of a stored academic date in the Conta timezone. */
+export function getAcademicDateStartInstant(
+  value: Date | string,
+  timeZone: string = DEFAULT_ACADEMIC_TIMEZONE,
+): Date {
+  const dateKey = getAcademicDateKey(value);
+  if (!dateKey) throw new Error('Data acadêmica inválida');
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const targetWallClock = Date.UTC(year, month - 1, day);
+  const normalizedTimeZone = normalizeAcademicTimeZone(timeZone);
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: normalizedTimeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  });
+
+  let candidate = targetWallClock;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const parts = new Map(formatter.formatToParts(new Date(candidate)).map((part) => [part.type, part.value]));
+    const observedWallClock = Date.UTC(
+      Number(parts.get('year')),
+      Number(parts.get('month')) - 1,
+      Number(parts.get('day')),
+      Number(parts.get('hour')),
+      Number(parts.get('minute')),
+      Number(parts.get('second')),
+    );
+    const correction = targetWallClock - observedWallClock;
+    candidate += correction;
+    if (correction === 0) return new Date(candidate);
+  }
+
+  // Some timezones change their offset at midnight. If midnight itself is
+  // skipped, return the first representable minute on that academic date.
+  const start = candidate - 18 * 60 * 60 * 1000;
+  const end = candidate + 36 * 60 * 60 * 1000;
+  for (let instant = start; instant <= end; instant += 60 * 1000) {
+    const parts = new Map(formatter.formatToParts(new Date(instant)).map((part) => [part.type, part.value]));
+    if (
+      `${parts.get('year')}-${parts.get('month')}-${parts.get('day')}` === dateKey
+    ) {
+      return new Date(instant);
+    }
+  }
+  throw new Error('Data acadêmica sem início local representável');
+}
+
 export function getAcademicDateBoundsForInstant(
   instant: Date = new Date(),
   timeZone: string = DEFAULT_ACADEMIC_TIMEZONE,

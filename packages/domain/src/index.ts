@@ -87,12 +87,16 @@ export {
   validateReativacao,
 } from './rules/matricula-state-machine.js';
 
-export { decideEnrollmentActivationAfterFee } from './rules/enrollment-activation-policy.js';
+export {
+  decideEnrollmentActivationAfterFee,
+  decideEnrollmentStatusAtContractStart,
+} from './rules/enrollment-activation-policy.js';
 export type {
   EnrollmentActivationDecision,
   EnrollmentActivationPolicy,
   EnrollmentActivationStatus,
   EnrollmentFeeStatus,
+  EnrollmentStartDecision,
 } from './rules/enrollment-activation-policy.js';
 
 export type {

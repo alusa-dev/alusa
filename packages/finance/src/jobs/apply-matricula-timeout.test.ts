@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@alusa/database', () => ({
   prisma: {
@@ -21,12 +21,15 @@ const oldMatricula = (overrides: Record<string, unknown> = {}) => ({
   id: 'mat-1',
   status: 'PENDENTE_TAXA',
   createdAt: new Date('2026-07-01T00:00:00.000Z'),
+  dataInicio: new Date('2026-07-01T00:00:00.000Z'),
   asaasSubscriptionId: null,
   aluno: { id: 'aluno-1', nome: 'Aluno 1', contaId: 'conta-1' },
   ...overrides,
 });
 
 describe('applyMatriculaTimeoutJob', () => {
+  afterEach(() => vi.useRealTimers());
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.matricula.findMany).mockResolvedValue([oldMatricula()] as never);
@@ -83,5 +86,46 @@ describe('applyMatriculaTimeoutJob', () => {
     expect(result.canceladas).toBe(1);
     expect(prisma.matricula.update).toHaveBeenCalledTimes(1);
     expect(auditLogService.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('não aplica timeout antes de uma data de início futura, mesmo após 30 dias da criação', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-09T12:00:00.000Z'));
+    vi.mocked(prisma.matricula.findMany).mockResolvedValue([] as never);
+
+    const result = await applyMatriculaTimeoutJob({ timeoutDays: 30 });
+
+    expect(result.canceladas).toBe(0);
+    expect(prisma.matricula.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          createdAt: { lt: new Date('2026-09-09T12:00:00.000Z') },
+          dataInicio: { lt: new Date('2026-09-09T12:00:00.000Z') },
+        }),
+      }),
+    );
+  });
+
+  it('conta o prazo após o início quando a matrícula foi criada antes da vigência', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-09T12:00:00.000Z'));
+    vi.mocked(prisma.matricula.findMany).mockResolvedValue([
+      oldMatricula({
+        createdAt: new Date('2026-07-01T00:00:00.000Z'),
+        dataInicio: new Date('2026-09-01T00:00:00.000Z'),
+      }),
+    ] as never);
+
+    const result = await applyMatriculaTimeoutJob({ timeoutDays: 30 });
+
+    expect(result.canceladas).toBe(1);
+    expect(prisma.matricula.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          createdAt: { lt: new Date('2026-09-09T12:00:00.000Z') },
+          dataInicio: { lt: new Date('2026-09-09T12:00:00.000Z') },
+        }),
+      }),
+    );
   });
 });

@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 
 import { prisma as defaultPrisma } from '@/src/prisma';
 import { calcularPrecoMatricula } from '@/src/server/enrollments/enrollment.service';
+import { activateEnrollmentAtContractStart } from '@/src/server/enrollments/enrollment-activation.service';
 import {
   provisionIndividualEnrollmentBilling,
   pushEnrollmentFeeToAsaas,
@@ -210,6 +211,7 @@ async function runProvisionForEnrollment(input: {
   contaId: string;
   matriculaId: string;
   actorUserId: string;
+  billingPhase?: 'ENROLLMENT_FEE' | 'SUBSCRIPTION_ONLY';
 }, deps: {
   prisma: PrismaClient;
   provisionEnrollmentBilling: ProvisionEnrollmentBilling;
@@ -225,10 +227,29 @@ async function runProvisionForEnrollment(input: {
 
   if (
     matricula.billingProvisionStatus === MatriculaBillingProvisionStatus.NAO_APLICAVEL ||
-    matricula.billingProvisionStatus === MatriculaBillingProvisionStatus.PROVISIONADO ||
+    (matricula.billingProvisionStatus === MatriculaBillingProvisionStatus.PROVISIONADO &&
+      input.billingPhase !== 'SUBSCRIPTION_ONLY') ||
     matricula.billingProvisionStatus === MatriculaBillingProvisionStatus.CANCELADO
   ) {
     return { skipped: true as const, reason: `STATUS_${matricula.billingProvisionStatus}` };
+  }
+
+  if (
+    input.billingPhase === 'SUBSCRIPTION_ONLY' &&
+    matricula.billingProvisionStatus === MatriculaBillingProvisionStatus.PROVISIONADO
+  ) {
+    try {
+      await activateEnrollmentAtContractStart({
+        contaId: input.contaId,
+        matriculaId: input.matriculaId,
+      });
+    } catch (error) {
+      return {
+        retryableFailure: true as const,
+        reason: `DEFERRED_ENROLLMENT_ACTIVATION_RETRY:${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    return { skipped: false as const };
   }
 
   if (matricula.billingProvisionStatus === MatriculaBillingProvisionStatus.RESULTADO_INCERTO) {
@@ -252,7 +273,11 @@ async function runProvisionForEnrollment(input: {
   });
 
   const gerarCobrancaTaxa =
+    input.billingPhase !== 'SUBSCRIPTION_ONLY' &&
     !matricula.taxaIsenta && Number(matricula.taxaMatricula) > 0 && Boolean(matricula.cobrancas[0]);
+  const requireEnrollmentFeePayment =
+    input.billingPhase === 'SUBSCRIPTION_ONLY' &&
+    !matricula.taxaIsenta && Number(matricula.taxaMatricula) > 0;
   const criarCobranca = preco.planoLiquido > 0;
 
   if (!gerarCobrancaTaxa && !criarCobranca) {
@@ -260,6 +285,19 @@ async function runProvisionForEnrollment(input: {
       where: { id: matricula.id, contaId: input.contaId },
       data: billingProvisionUpdate(MatriculaBillingProvisionStatus.NAO_APLICAVEL),
     });
+    if (input.billingPhase === 'SUBSCRIPTION_ONLY') {
+      try {
+        await activateEnrollmentAtContractStart({
+          contaId: input.contaId,
+          matriculaId: input.matriculaId,
+        });
+      } catch (error) {
+        return {
+          retryableFailure: true as const,
+          reason: `DEFERRED_ENROLLMENT_ACTIVATION_RETRY:${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    }
     return { skipped: true as const, reason: 'SEM_COBRANCA_A_PROVISIONAR' };
   }
 
@@ -268,9 +306,11 @@ async function runProvisionForEnrollment(input: {
     actorUserId: input.actorUserId,
     matriculaId: matricula.id,
     payload: {
-      criarCobranca,
+      criarCobranca: input.billingPhase !== 'ENROLLMENT_FEE' && criarCobranca,
       gerarCobrancaTaxa,
       taxaIsenta: matricula.taxaIsenta,
+      deferSubscription: input.billingPhase === 'ENROLLMENT_FEE',
+      requireEnrollmentFeePayment,
     },
     preco,
     cobrancas: {
@@ -318,6 +358,13 @@ async function runProvisionForEnrollment(input: {
   }
 
   if (
+    input.billingPhase === 'ENROLLMENT_FEE' &&
+    completion.billingProvisionStatus === MatriculaBillingProvisionStatus.PENDENTE
+  ) {
+    return { skipped: false as const };
+  }
+
+  if (
     completion.billingProvisionStatus !== MatriculaBillingProvisionStatus.PROVISIONADO &&
     completion.billingProvisionStatus !== MatriculaBillingProvisionStatus.NAO_APLICAVEL
   ) {
@@ -331,6 +378,20 @@ async function runProvisionForEnrollment(input: {
         .filter(Boolean)
         .join(':'),
     };
+  }
+
+  if (input.billingPhase === 'SUBSCRIPTION_ONLY') {
+    try {
+      await activateEnrollmentAtContractStart({
+        contaId: input.contaId,
+        matriculaId: input.matriculaId,
+      });
+    } catch (error) {
+      return {
+        retryableFailure: true as const,
+        reason: `DEFERRED_ENROLLMENT_ACTIVATION_RETRY:${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
   }
 
   return { skipped: false as const };
@@ -1026,6 +1087,9 @@ export async function processEnrollmentBillingOutboxEvent(
   if (event.status === MatriculaBillingOutboxStatus.CANCELLED) {
     return { eventId, matriculaId: event.matriculaId, status: 'SKIPPED' };
   }
+  if (event.availableAt > now) {
+    return { eventId, matriculaId: event.matriculaId, status: 'SKIPPED' };
+  }
 
   const eventPayload =
     event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload)
@@ -1040,6 +1104,7 @@ export async function processEnrollmentBillingOutboxEvent(
     where: {
       id: event.id,
       contaId: event.contaId,
+      availableAt: { lte: now },
       terminalIntent: null,
       OR: [
         {
@@ -1282,6 +1347,10 @@ export async function processEnrollmentBillingOutboxEvent(
             contaId: event.contaId,
             matriculaId,
             actorUserId,
+            billingPhase:
+              eventPayload.billingPhase === 'ENROLLMENT_FEE' || eventPayload.billingPhase === 'SUBSCRIPTION_ONLY'
+                ? eventPayload.billingPhase
+                : undefined,
           }, {
             prisma: db,
             provisionEnrollmentBilling:

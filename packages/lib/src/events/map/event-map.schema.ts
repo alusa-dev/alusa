@@ -86,6 +86,7 @@ const mapSeatBlockSchema = z.object({
   fitMaximumSeatCount: z.number().int().nonnegative().optional(),
   startNumber: z.number().int().positive().max(9999).optional(),
   numberingDirection: z.enum(['left-to-right', 'right-to-left']).optional(),
+  numberingMode: z.enum(['ALPHANUMERIC', 'NUMERIC']).optional(),
   rowIds: z.array(idSchema),
   rows: z.array(mapSeatRowSchema),
 });

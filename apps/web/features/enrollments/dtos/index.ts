@@ -321,6 +321,7 @@ export const listMatriculasQueryDTOSchema = z.object({
   alunoId: z.string().trim().optional(),
   planoId: z.string().trim().optional(),
   turmaId: z.string().trim().optional(),
+  classRosterPeriod: z.enum(['CURRENT', 'FUTURE']).optional(),
   comboId: z.string().trim().optional().nullable(),
   status: z.array(matriculaStatusFilterDTOSchema).default([]),
   excludeStatus: z.array(matriculaStatusFilterDTOSchema).default([]),

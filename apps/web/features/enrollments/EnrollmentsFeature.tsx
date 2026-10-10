@@ -25,7 +25,7 @@ import {
 import TableLayout from '@/components/layout/TableLayout';
 import { table } from '@/components/layout/TableStyles';
 import EntityFiltersBar, {
-  type StatusValue,
+  type EntityStatusValue as StatusValue,
   type SortOrder as SortOrderEF,
 } from '@/components/layout/EntityFiltersBar';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
@@ -75,6 +75,12 @@ const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
   day: '2-digit',
   month: 'long',
   year: 'numeric',
+});
+const academicDateFormatter = new Intl.DateTimeFormat('pt-BR', {
+  day: '2-digit',
+  month: 'long',
+  year: 'numeric',
+  timeZone: 'UTC',
 });
 
 const COBRANCA_BLOCKING_STATUSES: MatriculaCobrancaStatus[] = [
@@ -198,6 +204,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
       excludeStatus,
       search,
       turmaId: initialTurmaId,
+      classRosterPeriod: initialTurmaId && statusValue === 'FUTURAS' ? 'FUTURE' : undefined,
     });
 
   const composeStatusToast = useCallback(
@@ -536,6 +543,14 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
               <span className="block max-w-full truncate font-medium text-gray-900 lg:max-w-[220px]">
                 {m.aluno.nome || '—'}
               </span>
+              {initialTurmaId && statusValue === 'FUTURAS' ? (
+                <span className="mt-1 block text-[11px] text-gray-500">
+                  Início previsto:{' '}
+                  {academicDateFormatter.format(
+                    new Date(`${m.dataInicio.slice(0, 10)}T12:00:00.000Z`),
+                  )}
+                </span>
+              ) : null}
               <span className="mt-1 line-clamp-2 text-[11px] text-gray-500 lg:hidden">
                 {m.combo?.nome || m.turma?.nome || '—'} · {m.plano?.nome ?? '—'}
               </span>
@@ -615,6 +630,8 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         width: 'w-[7.25rem] max-lg:shrink-0 max-lg:whitespace-nowrap lg:w-[10%]',
         render: (m) => {
           const billingBadge = resolveBillingProvisionBadge(m.billingProvisionStatus);
+          const isUpcomingEnrollment =
+            initialTurmaId !== undefined && statusValue === 'FUTURAS' && m.status === 'ATIVA';
 
           if (billingBadge) {
             return (
@@ -626,6 +643,19 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                 data-testid={`matricula-status-${m.id}`}
               >
                 {billingBadge.label}
+              </Badge>
+            );
+          }
+
+          if (isUpcomingEnrollment) {
+            return (
+              <Badge
+                variant="info"
+                size="sm"
+                title="Matrícula ativa com início futuro"
+                data-testid={`matricula-status-${m.id}`}
+              >
+                Próxima
               </Badge>
             );
           }
@@ -787,7 +817,9 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
     [
       actionLoading,
       formatTaxaStatus,
+      initialTurmaId,
       router,
+      statusValue,
     ],
   );
 
@@ -858,6 +890,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           onSearchChange={setSearch}
           statusValue={statusValue}
           onStatusChange={(value) => setStatusValue(value)}
+          additionalStatusOptions={initialTurmaId ? [{ value: 'FUTURAS', label: 'Futuras' }] : undefined}
           sortOrder={sortOrder}
           onSortChange={(value) => setSortOrder(value)}
           searchPlaceholder="Buscar por aluno, plano ou turma..."

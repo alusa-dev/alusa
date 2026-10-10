@@ -92,14 +92,14 @@ export function resolveChargeableFirstDueDate(
  * rejeições na virada Manaus/Brasília e durante o tempo entre preview e commit.
  */
 export function resolveEnrollmentFeeDueDate(dataInicio: Date, now = new Date()): Date {
-  const start = getCivilDateParts(dataInicio);
+  // Enrollment fee is due at formalization; contract start must never push it
+  // into the future. Keep the parameter for call-site compatibility.
+  void dataInicio;
   const providerTomorrow = addCivilDays(
     getDatePartsInTimeZone(now, ASAAS_OPERATIONAL_TIME_ZONE),
     1,
   );
-  return toUtcCivilDate(
-    compareCivilDate(start, providerTomorrow) < 0 ? providerTomorrow : start,
-  );
+  return toUtcCivilDate(providerTomorrow);
 }
 
 export function formatIsoDate(date: Date) {

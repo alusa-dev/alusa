@@ -212,6 +212,7 @@ async function cancelEligiblePendingPayments(input: {
       if (isNotFoundError(error)) continue;
       throw error;
     }
+    if (fresh.deleted) continue;
     if (fresh.status !== 'PENDING') {
       throw new BillingAgreementError(
         'REMOTE_STATE_DIVERGED',
@@ -343,17 +344,22 @@ async function executeRemotePlan(input: {
     throw new BillingAgreementError('REMOTE_STATE_DIVERGED', 'O acordo não possui assinatura remota.');
   }
   const before = await deps.asaas.getSubscription({ contaId, subscriptionId: previousSubscriptionId });
-  assertRemoteSubscriptionCompatible({
-    remote: before,
-    agreement: context.agreement,
-    expectedCustomerId: context.agreement.payer.customerId,
-    expectedAmountCents: plan.resultingAmountCents,
-    allowDesiredAmount: true,
-  });
-  const paymentsBefore = await deps.asaas.listSubscriptionPayments({
-    contaId,
-    subscriptionId: previousSubscriptionId,
-  });
+  const subscriptionAlreadyDeleted = plan.remoteAction === 'DELETE_SUBSCRIPTION' && before.deleted;
+  if (!subscriptionAlreadyDeleted) {
+    assertRemoteSubscriptionCompatible({
+      remote: before,
+      agreement: context.agreement,
+      expectedCustomerId: context.agreement.payer.customerId,
+      expectedAmountCents: plan.resultingAmountCents,
+      allowDesiredAmount: true,
+    });
+  }
+  const paymentsBefore = subscriptionAlreadyDeleted
+    ? []
+    : await deps.asaas.listSubscriptionPayments({
+        contaId,
+        subscriptionId: previousSubscriptionId,
+      });
 
   if (plan.remoteAction === 'REPLACE_SUBSCRIPTION') {
     const externalReference = replacementExternalReference(context.agreement, plan.payer.customerId);
@@ -414,9 +420,11 @@ async function executeRemotePlan(input: {
     if (plan.resultingAmountCents !== 0) {
       throw new BillingAgreementError('INVALID_INPUT', 'A assinatura só pode ser removida com total zero.');
     }
-    await deps.asaas.deleteSubscription({ contaId, subscriptionId: previousSubscriptionId });
-    if (!(await getAfterDelete({ deps, contaId, subscriptionId: previousSubscriptionId }))) {
-      throw new BillingAgreementError('REMOTE_OPERATION_UNCERTAIN', 'A remoção da assinatura não foi confirmada.');
+    if (!subscriptionAlreadyDeleted) {
+      await deps.asaas.deleteSubscription({ contaId, subscriptionId: previousSubscriptionId });
+      if (!(await getAfterDelete({ deps, contaId, subscriptionId: previousSubscriptionId }))) {
+        throw new BillingAgreementError('REMOTE_OPERATION_UNCERTAIN', 'A remoção da assinatura não foi confirmada.');
+      }
     }
     await cancelEligiblePendingPayments({
       deps,

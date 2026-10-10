@@ -1,4 +1,5 @@
 import type { EventMapDocument, MapSeatBlock, SeatDistributionSegment, SeatRowPath } from '../model/event-map-document.js';
+import { applySeatBlockNumbering } from '../layout/seat-block-numbering.js';
 
 export function updateSeatRowPath(document: EventMapDocument, rowId: string, path: SeatRowPath): EventMapDocument {
   return {
@@ -13,16 +14,28 @@ export function updateSeatRowPath(document: EventMapDocument, rowId: string, pat
   };
 }
 
+/**
+ * Canonical block update. Numbering-mode changes rebuild labels immediately;
+ * numeric blocks rebuild them on every update so row/seat count changes keep
+ * their sequential numbering. Geometry builders that replace rows directly
+ * should apply `applySeatBlockNumbering` after the final rows are assembled.
+ */
 export function updateSeatBlock(
   document: EventMapDocument,
   blockId: string,
-  patch: Partial<Pick<MapSeatBlock, 'name' | 'columnCount' | 'rowGap' | 'defaultSeatGap' | 'distribution' | 'distributionMode' | 'distributionAlignment' | 'firstRowSeatCount' | 'lastRowSeatCount' | 'fitMinimumSeatCount' | 'fitMaximumSeatCount'>> & { distribution?: SeatDistributionSegment[] },
+  patch: Partial<Pick<MapSeatBlock, 'name' | 'columnCount' | 'rowGap' | 'defaultSeatGap' | 'distribution' | 'distributionMode' | 'distributionAlignment' | 'firstRowSeatCount' | 'lastRowSeatCount' | 'fitMinimumSeatCount' | 'fitMaximumSeatCount' | 'numberingMode'>> & { distribution?: SeatDistributionSegment[] },
 ): EventMapDocument {
   return {
     ...document,
     sections: document.sections.map((section) => ({
       ...section,
-      blocks: section.blocks.map((block) => (block.id === blockId ? { ...block, ...patch } : block)),
+      blocks: section.blocks.map((block) => {
+        if (block.id !== blockId) return block;
+        const updatedBlock = { ...block, ...patch };
+        return patch.numberingMode !== undefined || updatedBlock.numberingMode === 'NUMERIC'
+          ? applySeatBlockNumbering(updatedBlock)
+          : updatedBlock;
+      }),
     })),
   };
 }

@@ -42,13 +42,16 @@ export function useSelectionSession({
   clearIndividualSeatDrag,
 }: SelectionSessionInput) {
   const selectedParametricItems = useMemo(() => {
-    const parametricItems = selection.filter(
-      (item): item is Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }> =>
-        item.type === 'seatblock' || item.type === 'seatrow',
-    );
-    const selectedBlockIds = new Set(parametricItems.flatMap((item) => item.type === 'seatblock' ? [item.id] : []));
-    if (!map?.document || selectedBlockIds.size === 0) return parametricItems;
-    return parametricItems.filter((item) => {
+    const parametricItems = selection.flatMap((item) => {
+      if (item.type === 'seatblock' || item.type === 'seatrow') return [item];
+      if (item.type !== 'section' || !map?.document) return [];
+      const section = map.document.sections.find((entry) => entry.id === item.id);
+      return section?.blocks.map((block) => ({ type: 'seatblock' as const, id: block.id })) ?? [];
+    });
+    const uniqueItems = [...new Map(parametricItems.map((item) => [`${item.type}:${item.id}`, item])).values()];
+    const selectedBlockIds = new Set(uniqueItems.flatMap((item) => item.type === 'seatblock' ? [item.id] : []));
+    if (!map?.document || selectedBlockIds.size === 0) return uniqueItems;
+    return uniqueItems.filter((item) => {
       if (item.type !== 'seatrow') return true;
       const owner = findMapRowOwner(map.document!, item.id);
       return !owner || !selectedBlockIds.has(owner.block.id);
@@ -57,7 +60,6 @@ export function useSelectionSession({
 
   const selectedNodeIds = useMemo(() => {
     if (!map || selection.length === 0) return [];
-    if (selection.some((item) => item.type === 'section')) return [];
     if (selectedParametricItems.length === 0) return resolveCanvasNodeIds(map, selection);
 
     const coveredSeatIds = new Set(

@@ -247,8 +247,6 @@ export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, o
     transformContextRef,
   });
 
-  const ascendSelection = useEventMapEditorStore((state) => state.ascendSelection);
-
   useKeyboardSession({
     stageRef,
     transformerRef,
@@ -259,7 +257,8 @@ export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, o
     transformCancelledRef,
     setIsTransformSessionActive,
     setTransformerScaleOptions,
-    ascendSelection,
+    selection,
+    setSelection,
   });
 
   useTransformSession({
@@ -331,6 +330,7 @@ export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, o
     addRowAt,
     addSeatBlockAt,
     seatBlockDefaults: getInheritedSeatBlockDefaults(map, level?.id, selection),
+    selection,
     setSelection,
     setIndividualSeatDragId,
     getMarqueeSelection,

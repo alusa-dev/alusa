@@ -32,6 +32,7 @@ import {
 } from '@/src/server/enrollments/recurring-billing';
 import { syncInitialSubscriptionPaymentFromAsaas } from '@/src/server/enrollments/subscription-payment-materialization';
 import {
+  deriveDeferredEnrollmentFeeProvisionStatus,
   billingProvisionUpdate,
   deriveBillingProvisionStatusFromSync,
 } from '@/src/server/enrollments/billing-provision-status';
@@ -55,6 +56,8 @@ export type ProvisionIndividualEnrollmentBillingInput = {
     criarCobranca: boolean;
     gerarCobrancaTaxa: boolean;
     taxaIsenta: boolean;
+    deferSubscription?: boolean;
+    requireEnrollmentFeePayment?: boolean;
   };
   preco: {
     taxa: number;
@@ -409,9 +412,11 @@ export async function provisionIndividualEnrollmentBilling(
   };
 
   const requiresTaxConfirmation =
-    input.payload.gerarCobrancaTaxa &&
-    !input.payload.taxaIsenta &&
-    Number(input.preco.taxa ?? 0) > 0;
+    input.payload.requireEnrollmentFeePayment === true || (
+      input.payload.gerarCobrancaTaxa &&
+      !input.payload.taxaIsenta &&
+      Number(input.preco.taxa ?? 0) > 0
+    );
 
   const claimed = await prisma.matricula.updateMany({
     where: {
@@ -434,12 +439,16 @@ export async function provisionIndividualEnrollmentBilling(
       return { ...result, terminalEnrollment: true };
     }
 
-    result.taxaSync = await pushEnrollmentFeeToAsaas({
-      contaId: input.contaId,
-      actorUserId: input.actorUserId,
-      matriculaId: input.matriculaId,
-      cobrancaTaxa: result.cobrancas.taxa,
-    });
+    result.taxaSync = input.payload.requireEnrollmentFeePayment
+      ? result.cobrancas.taxa.asaasPaymentId
+        ? { success: true, asaasPaymentId: result.cobrancas.taxa.asaasPaymentId }
+        : { success: false, error: 'TAXA_ASAAS_NAO_CONFIRMADA' }
+      : await pushEnrollmentFeeToAsaas({
+          contaId: input.contaId,
+          actorUserId: input.actorUserId,
+          matriculaId: input.matriculaId,
+          cobrancaTaxa: result.cobrancas.taxa,
+        });
 
     if (result.taxaSync.asaasPaymentId && result.cobrancas.taxa) {
       result.cobrancas.taxa = {
@@ -483,7 +492,12 @@ export async function provisionIndividualEnrollmentBilling(
     }
   }
 
-  const finalStatus = deriveBillingProvisionStatusFromSync({
+  const finalStatus = input.payload.deferSubscription
+    ? deriveDeferredEnrollmentFeeProvisionStatus({
+        requiresTax: requiresTaxConfirmation,
+        taxaSyncSuccess: result.taxaSync?.success ?? null,
+      })
+    : deriveBillingProvisionStatusFromSync({
     requiresTax: requiresTaxConfirmation,
     taxaSyncSuccess: result.taxaSync?.success ?? null,
     shouldCreateSubscription,
