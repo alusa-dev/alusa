@@ -62,7 +62,10 @@ function buildPrisma() {
     },
     customer: { findFirst: vi.fn(async () => null), findUnique: vi.fn(async () => null) },
     customerPayer: { findUnique: vi.fn(async () => null) },
-    billingAllocation: { findFirst: vi.fn(async () => null) },
+    billingAllocation: {
+      findFirst: vi.fn(async () => null),
+      findMany: vi.fn(async () => [{ id: 'allocation-1' }]),
+    },
     matriculaBillingOutbox: { findFirst: vi.fn(async () => null) },
     matriculaOperacao: {
       findFirst: vi.fn(async () => null),
