@@ -114,7 +114,13 @@ function createCheckoutKey() {
 
 function renderPublicMapObject(object: PublicObject) {
   const data = object.data ?? {};
-  if (object.type === 'TEXT') return <PublicMapTextSvg key={object.id} object={object} />;
+  if (object.type === 'TEXT') {
+    return (
+      <g key={object.id} pointerEvents="none">
+        <PublicMapTextSvg object={object} />
+      </g>
+    );
+  }
 
   const width = object.width ?? 180;
   const height = object.height ?? 90;
@@ -125,7 +131,12 @@ function renderPublicMapObject(object: PublicObject) {
   const dash = appearance.dash?.join(' ');
 
   return (
-    <g key={object.id} transform={`translate(${object.x} ${object.y}) rotate(${object.rotation})`} opacity={opacity}>
+    <g
+      key={object.id}
+      transform={`translate(${object.x} ${object.y}) rotate(${object.rotation})`}
+      opacity={opacity}
+      pointerEvents="none"
+    >
       {shape === 'circle' || shape === 'ellipse' ? (
         <ellipse
           cx={width / 2}
@@ -876,6 +887,7 @@ export function PublicMapExperience({
                       strokeWidth={2}
                       strokeDasharray={item.guide.curved ? '5 4' : undefined}
                       opacity={0.55}
+                      pointerEvents="none"
                     />
                   );
                 }

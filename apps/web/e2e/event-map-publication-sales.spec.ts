@@ -102,6 +102,25 @@ async function seedPublishedMapScenario(page: import('@playwright/test').Page) {
     },
   });
 
+  // A decorative object above the seat layer must not intercept seat clicks.
+  await prisma.eventMapObject.create({
+    data: {
+      id: randomUUID(),
+      contaId,
+      eventMapId: map.id,
+      levelId: level.id,
+      sectionId: null,
+      type: 'TABLE',
+      data: { shape: 'circle', fill: '#c4b5fd', opacity: 0.8 },
+      x: 373,
+      y: 163,
+      width: 34,
+      height: 34,
+      rotation: 0,
+      sortOrder: 10,
+    },
+  });
+
   await prisma.eventSeat.createMany({
     data: Array.from({ length: 4 }, (_, index) => ({
       id: randomUUID(),
