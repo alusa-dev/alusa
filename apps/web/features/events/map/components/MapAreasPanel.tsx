@@ -4,9 +4,15 @@ import { useEventMapEditorStore } from '../store/event-map-editor-store';
 
 import { cn } from '@/lib/utils';
 import { CreatorIcon } from '@/components/icons/hugeicons';
+import { useState } from 'react';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 
 export function MapAreasPanel() {
+  const [levelToDelete, setLevelToDelete] = useState<string | null>(null);
   const map = useEventMapEditorStore((state) => state.map);
   const activeLevelId = useEventMapEditorStore((state) => state.activeLevelId);
   const setActiveLevelId = useEventMapEditorStore((state) => state.setActiveLevelId);
@@ -18,6 +24,10 @@ export function MapAreasPanel() {
   if (!map) return null;
 
   const levels = sortLevelsForPanel(map.levels);
+  const pendingLevel = levels.find((level) => level.id === levelToDelete) ?? null;
+  const pendingSections = pendingLevel ? map.sections.filter((section) => section.levelId === pendingLevel.id) : [];
+  const pendingSeats = pendingLevel ? map.seats.filter((seat) => seat.levelId === pendingLevel.id).length : 0;
+  const pendingObjects = pendingLevel ? map.objects.filter((object) => object.levelId === pendingLevel.id).length : 0;
 
   function selectLevel(levelId: string) {
     setActiveLevelId(levelId);
@@ -67,17 +77,17 @@ export function MapAreasPanel() {
                   className={cn('flex min-w-0 flex-1 items-center gap-2.5 text-left', active && 'font-medium')}
                 >
                   <span className="inline-flex h-[22px] w-[34px] shrink-0 rounded-[3px] border border-slate-300 bg-white" />
-                  <span className="truncate">{level.name}</span>
+                  <span className="truncate">{level.name.trim() || 'Área sem nome'}</span>
                 </button>
 
                 {!locked ? (
                   <button
                     type="button"
                     aria-label="Excluir área do mapa"
-                    disabled={disabled}
+                    disabled={disabled || levels.length <= 1}
                     onClick={(event) => {
                       event.stopPropagation();
-                      deleteLevel(level.id);
+                      setLevelToDelete(level.id);
                     }}
                     className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:pointer-events-none disabled:opacity-40"
                   >
@@ -89,6 +99,26 @@ export function MapAreasPanel() {
           })}
         </div>
       </div>
+      <AlertDialog open={Boolean(pendingLevel)} onOpenChange={(open) => !open && setLevelToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir área “{pendingLevel?.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingSections.length === 0 && pendingSeats === 0 && pendingObjects === 0
+                ? 'Esta área está vazia e será removida do mapa.'
+                : `A exclusão removerá esta área e todo o seu conteúdo: ${pendingSections.length} setor(es), ${pendingSeats} assento(s) e ${pendingObjects} objeto(s).`}
+              {' '}A ação pode ser desfeita pelo botão Desfazer enquanto permanecer no editor.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={() => {
+              if (pendingLevel && levels.length > 1) deleteLevel(pendingLevel.id);
+              setLevelToDelete(null);
+            }}>Excluir área</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </aside>
   );
 }

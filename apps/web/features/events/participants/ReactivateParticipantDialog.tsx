@@ -13,11 +13,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import { toast } from '@/components/ui/toast';
 
 import { reactivateEventParticipant, type EventParticipantDTO, type SchoolEventDTO } from '../events-service';
 import { EventField as Field } from '../shared/EventField';
 import { eventQueryKeys } from '../shared/event-query-keys';
+import { handleFormDataSubmit } from '../shared/event-form-utils';
 import { parseCurrencyInput } from '../shared/event-formatters';
 import { ParticipantBillingFields, type ParticipantBillingMethod, type ParticipantChargeType, type ParticipantNotificationChannel } from './ParticipantBillingFields';
 
@@ -117,15 +119,15 @@ export function ReactivateParticipantDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (nextOpen || !mutation.isPending) onOpenChange(nextOpen); }}>
+      <DialogContent closeDisabled={mutation.isPending} className="max-w-md">
         <DialogHeader>
           <DialogTitle>Reinscrever aluno</DialogTitle>
           <DialogDescription>
             Gere uma nova cobrança para reativar a inscrição cancelada de {participant?.displayName ?? 'participante'}.
           </DialogDescription>
         </DialogHeader>
-        <form key={open ? participant?.id ?? 'open' : 'closed'} action={handleReactivate} className="space-y-4 mt-2">
+        <form key={open ? participant?.id ?? 'open' : 'closed'} onSubmit={(event) => handleFormDataSubmit(event, handleReactivate)} className="space-y-4 mt-2">
           <ParticipantBillingFields
             billingMethod={billingMethod}
             chargeType={chargeType}
@@ -147,7 +149,7 @@ export function ReactivateParticipantDialog({
           </Field>
           <DialogFooter className="pt-2">
             <Button type="submit" disabled={mutation.isPending} className="w-full">
-              {mutation.isPending ? 'Reinscrevendo...' : 'Reinscrever aluno'}
+              {mutation.isPending ? <><span>Reinscrevendo</span><LoadingDots label="Reinscrevendo aluno" size="sm" className="text-white" /></> : 'Reinscrever aluno'}
             </Button>
           </DialogFooter>
         </form>

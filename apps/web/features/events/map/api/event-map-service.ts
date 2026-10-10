@@ -122,7 +122,11 @@ export async function createEventMap(
   return json.data;
 }
 
-export async function saveEventMapDraft(eventId: string, mapId: string, payload: EventMapDraftPayload) {
+export async function saveEventMapDraft(
+  eventId: string,
+  mapId: string,
+  payload: EventMapDraftPayload & { expectedUpdatedAt: string },
+) {
   const json = await parseResponse<JsonEnvelope<EventMapDTO>>(
     await eventMapFetch(`/api/events/${eventId}/maps/${mapId}`, {
       method: 'PATCH',
@@ -155,16 +159,16 @@ export async function saveEventMapSettings(
   return json.data;
 }
 
-export async function publishEventMap(eventId: string, mapId: string, payload?: EventMapDraftPayload | null) {
+export async function publishEventMap(
+  eventId: string,
+  mapId: string,
+  input: { expectedUpdatedAt: string; draft?: EventMapDraftPayload | null },
+) {
   const json = await parseResponse<JsonEnvelope<EventMapDTO>>(
     await eventMapFetch(`/api/events/${eventId}/maps/${mapId}/publish`, {
       method: 'POST',
-      ...(payload
-        ? {
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          }
-        : {}),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...input.draft, expectedUpdatedAt: input.expectedUpdatedAt }),
     }),
   );
   return json.data;

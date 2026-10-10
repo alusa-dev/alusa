@@ -15,6 +15,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -23,7 +24,7 @@ import { createCostume, updateCostume, type CostumeDTO } from '../events-service
 import { EventField as Field } from '../shared/EventField';
 import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
 import { eventQueryKeys } from '../shared/event-query-keys';
-import { FILTER_INPUT_CLASS, nullableString, numberValue } from '../shared/event-form-utils';
+import { FILTER_INPUT_CLASS, handleFormDataSubmit, nullableString, numberValue } from '../shared/event-form-utils';
 import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
 
 export function CostumeFormDialog({
@@ -42,7 +43,10 @@ export function CostumeFormDialog({
   const queryClient = useQueryClient();
   const [localOpen, setLocalOpen] = useState(false);
   const open = controlledOpen !== undefined ? controlledOpen : localOpen;
-  const setOpen = controlledOnOpenChange !== undefined ? controlledOnOpenChange : setLocalOpen;
+  const setOpen = (nextOpen: boolean) => {
+    if (!nextOpen && mutation.isPending) return;
+    (controlledOnOpenChange ?? setLocalOpen)(nextOpen);
+  };
   const [schoolCostText, setSchoolCostText] = useState("");
   const [chargedValueText, setChargedValueText] = useState("");
 
@@ -103,7 +107,7 @@ export function CostumeFormDialog({
           <DialogTitle>{costume ? 'Editar figurino' : 'Novo figurino'}</DialogTitle>
           <DialogDescription>Cadastre peças, custos e valores cobrados.</DialogDescription>
         </DialogHeader>
-        <form action={submit} className="grid gap-4">
+        <form onSubmit={(event) => handleFormDataSubmit(event, submit)} className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Nome"><Input name="name" required defaultValue={costume?.name} className={FILTER_INPUT_CLASS} /></Field>
             <Field label="Categoria"><NativeSelect name="category" defaultValue={costume?.category ?? "CLOTHING"} options={EVENT_COSTUME_CATEGORIES.map((category) => ({ value: category, label: EVENT_COSTUME_CATEGORY_LABELS[category] }))} /></Field>
@@ -142,7 +146,7 @@ export function CostumeFormDialog({
           </div>
           <Field label="Acessórios inclusos"><Input name="accessories" defaultValue={costume?.accessories ?? ''} className={FILTER_INPUT_CLASS} /></Field>
           <Field label="Descrição"><Textarea name="description" defaultValue={costume?.description ?? ''} className="rounded-xl border-slate-200" /></Field>
-          <DialogFooter><Button type="submit" disabled={mutation.isPending}>Salvar figurino</Button></DialogFooter>
+          <DialogFooter><Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando figurino" size="sm" className="text-white" /></> : 'Salvar figurino'}</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

@@ -4,9 +4,26 @@ import {
   calculateEventParticipantDiscount,
   normalizeEventFinancialLine,
   normalizeEventFinancialPayment,
+  calculateEventCostPayment,
+  supportsEventCostPaymentOrigin,
 } from './financial';
 
 describe('event financial canonical rules', () => {
+  it('allows payment tracking for manual costs and costume purchases, but not recognized losses', () => {
+    expect(supportsEventCostPaymentOrigin('MANUAL')).toBe(true);
+    expect(supportsEventCostPaymentOrigin('COSTUME', 'costume-1')).toBe(true);
+    expect(supportsEventCostPaymentOrigin('COSTUME')).toBe(false);
+    expect(supportsEventCostPaymentOrigin('COSTUME', 'loss:assignment-1')).toBe(false);
+    expect(supportsEventCostPaymentOrigin('COSTUME_ASSIGNMENT', 'assignment-1')).toBe(false);
+  });
+
+  it('allows a partial cost payment and then a final payment, but rejects above balance', () => {
+    const partial = calculateEventCostPayment({ expectedAmount: 100, paidAmount: 0, paymentAmount: 35 });
+    expect(partial).toEqual({ balance: 100, totalPaid: 35, remaining: 65, status: 'PARTIALLY_PAID' });
+    const final = calculateEventCostPayment({ expectedAmount: 100, paidAmount: partial.totalPaid, paymentAmount: 65 });
+    expect(final).toEqual({ balance: 65, totalPaid: 100, remaining: 0, status: 'PAID' });
+    expect(() => calculateEventCostPayment({ expectedAmount: 100, paidAmount: 75, paymentAmount: 26 })).toThrow();
+  });
   it('calculates fixed and percentage discounts in cents', () => {
     expect(calculateEventParticipantDiscount({
       originalAmount: 780,

@@ -52,6 +52,15 @@ describe('konva-transform-adapter', () => {
     expect(node.scaleX()).toBe(1);
   });
 
+  it('uses the larger axis for seat resizing and handles mirrored scale as a positive diameter', () => {
+    const node = mockNode({ x: 8, y: 12, rotation: -20, scaleX: -0.75, scaleY: 1.5 });
+    const patch = readSeatTransformFromNode(node as never, 32);
+
+    expect(patch).toEqual({ x: 8, y: 12, size: 48, rotation: -20 });
+    expect(node.scaleX()).toBe(1);
+    expect(node.scaleY()).toBe(1);
+  });
+
 
   it('captures snapshots for leaf nodes without assuming a Konva container', () => {
     const node = mockNode({ x: 10, y: 20, rotation: 5, scaleX: 1.2, scaleY: 0.8 });

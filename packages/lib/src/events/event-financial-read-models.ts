@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, type EventFinancialPayment } from '@prisma/client';
 
 function toNumber(value: Prisma.Decimal | number | string | null | undefined): number {
   if (value == null) return 0;
@@ -104,7 +104,7 @@ export function mapFinancialEntry(
       event: { select: { id: true; name: true; startsAt: true } };
       createdBy: { select: { id: true; nome: true } };
     };
-  }>,
+  }> & { payments?: EventFinancialPayment[] },
 ) {
   return {
     id: entry.id,
@@ -117,6 +117,7 @@ export function mapFinancialEntry(
     supplier: entry.supplier,
     originType: entry.originType,
     originId: entry.originId,
+    hasAsaasLink: Boolean(entry.asaasPaymentId || entry.paymentProvider || entry.paymentStatus),
     costClass: entry.costClass,
     expectedAmount: toMoney(entry.expectedAmount),
     grossAmount: entry.grossAmount == null ? null : toMoney(entry.grossAmount),
@@ -127,6 +128,15 @@ export function mapFinancialEntry(
     dueDate: toIso(entry.dueDate),
     realizedAt: toIso(entry.realizedAt),
     status: entry.status,
+    payments: (entry.payments ?? []).map((payment) => ({
+      id: payment.id,
+      amount: toMoney(payment.amount),
+      refundedAmount: toMoney(payment.refundedAmount),
+      paymentMethod: payment.paymentMethod,
+      paidAt: payment.paidAt.toISOString(),
+      notes: payment.notes,
+      status: payment.status,
+    })),
     paymentMethod: entry.paymentMethod,
     proofUrl: entry.proofUrl,
     notes: entry.notes,

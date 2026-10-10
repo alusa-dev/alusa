@@ -1,9 +1,12 @@
 import { Prisma, EventPaymentMethod } from '@prisma/client';
 import { prisma } from '@alusa/database';
+import { acquireGuardLock } from '../core/idempotency.service';
 import {
   EventsError,
   normalizeEventFinancialLine,
   normalizeEventFinancialPayment,
+  calculateEventCostPayment,
+  supportsEventCostPaymentOrigin,
   validateTicketSaleStatusTransition,
 } from '@alusa/domain/events';
 import { eventParticipantScalarSelect, mapFinancialEntry, mapTicketSale } from '@alusa/lib/events/event-financial-read-models';
@@ -21,6 +24,13 @@ type EventsContext = { contaId: string; userId: string };
 
 const mapToEventPaymentMethod = (method?: string | null): EventPaymentMethod => {
   if (!method) return 'OTHER';
+  const legacyMethods: Record<string, EventPaymentMethod> = {
+    MANUAL_BOLETO: 'OTHER',
+    MANUAL_CARD: 'EXTERNAL_CARD',
+    MANUAL_CASH: 'CASH',
+    MANUAL_TRANSFER: 'TRANSFER',
+  };
+  if (legacyMethods[method]) return legacyMethods[method];
   const allowed = ['CASH', 'MANUAL_PIX', 'EXTERNAL_CARD', 'TRANSFER', 'COMPLIMENTARY', 'OTHER'];
   if (allowed.includes(method)) return method as EventPaymentMethod;
   return 'OTHER';
@@ -36,6 +46,24 @@ function toMoney(value: Prisma.Decimal | number | string | null | undefined): nu
   return Math.round((toNumber(value) + Number.EPSILON) * 100) / 100;
 }
 function decimal(value: number): Prisma.Decimal { return new Prisma.Decimal(value); }
+async function lockEventParticipantForFinancialMutation(tx: Prisma.TransactionClient, contaId: string, eventId: string, participantId: string) {
+  const [participant] = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT p."id"
+    FROM "EventParticipant" p
+    WHERE p."id" = ${participantId} AND p."eventId" = ${eventId} AND p."contaId" = ${contaId}
+    FOR UPDATE OF p
+  `;
+  if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
+}
+async function lockEventFinancialEntryForParticipantMutation(tx: Prisma.TransactionClient, contaId: string, eventId: string, entryId: string) {
+  const [entry] = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT e."id"
+    FROM "EventFinancialEntry" e
+    WHERE e."id" = ${entryId} AND e."eventId" = ${eventId} AND e."contaId" = ${contaId}
+    FOR UPDATE OF e
+  `;
+  if (!entry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento da inscrição não encontrado.', 404);
+}
 function createPublicToken(prefix: string) {
   return `${prefix}_${globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`;
 }
@@ -52,8 +80,10 @@ function normalizeFinancialPaymentOrThrow(input: Parameters<typeof normalizeEven
   catch (error) { throw new EventsError('PAGAMENTO_INCONSISTENTE', error instanceof Error ? error.message : 'Pagamento financeiro inconsistente.', 422); }
 }
 function assertFinancialEntryState(type: string, status: string, actualAmount: number | null) {
-  const requiresPayment = type === 'COST' ? status === 'PAID' : ['RECEIVED', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(status);
-  if (requiresPayment && actualAmount == null) throw new EventsError('STATUS_FINANCEIRO_INCONSISTENTE', 'Um lançamento realizado precisa possuir valor efetivamente recebido ou pago.', 422);
+  const requiresPayment = type === 'COST' ? ['PAID', 'PARTIALLY_PAID'].includes(status) : ['RECEIVED', 'PARTIALLY_PAID', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(status);
+  if (requiresPayment && (actualAmount == null || actualAmount <= 0)) {
+    throw new EventsError('STATUS_FINANCEIRO_INCONSISTENTE', 'Um lançamento realizado precisa possuir valor efetivamente recebido ou pago.', 422);
+  }
 }
 async function getTicketSaleDto(tx: Prisma.TransactionClient, contaId: string, saleId: string) {
   const sale = await tx.eventTicketSale.findFirst({ where: { id: saleId, contaId }, include: {
@@ -66,6 +96,7 @@ async function getTicketSaleDto(tx: Prisma.TransactionClient, contaId: string, s
 async function getFinancialEntryDto(tx: Prisma.TransactionClient, contaId: string, entryId: string) {
   const entry = await tx.eventFinancialEntry.findFirst({ where: { id: entryId, contaId }, include: {
     event: { select: { id: true, name: true, startsAt: true } }, createdBy: { select: { id: true, nome: true } },
+    payments: { where: { contaId }, orderBy: { paidAt: 'asc' } },
   } });
   if (!entry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
   return mapFinancialEntry(entry);
@@ -73,6 +104,8 @@ async function getFinancialEntryDto(tx: Prisma.TransactionClient, contaId: strin
 
 export async function quitarEventParticipantFee(ctx: EventsContext, eventId: string, participantId: string, input: QuitarParticipantFeeInput) {
   return prisma.$transaction(async (tx) => {
+    await acquireGuardLock({ tx, contaId: ctx.contaId, scope: 'event-payment-create', key: input.idempotencyKey });
+    await lockEventParticipantForFinancialMutation(tx, ctx.contaId, eventId, participantId);
     const participant = await tx.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
       select: { ...eventParticipantScalarSelect, event: true },
@@ -80,13 +113,32 @@ export async function quitarEventParticipantFee(ctx: EventsContext, eventId: str
     if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
     assertFinancialAdjustmentEvent(participant.event.status);
 
+    const existingPayment = await tx.eventFinancialPayment.findFirst({
+      where: { contaId: ctx.contaId, idempotencyKey: input.idempotencyKey },
+      select: { id: true, participantId: true, eventId: true, amount: true, paymentMethod: true },
+    });
+    if (existingPayment) {
+      if (existingPayment.participantId !== participant.id || existingPayment.eventId !== eventId
+        || existingPayment.paymentMethod !== mapToEventPaymentMethod(input.paymentMethod)) {
+        throw new EventsError('IDEMPOTENCY_KEY_REUTILIZADA', 'Esta chave já foi usada em outro pagamento.', 409);
+      }
+      return tx.eventParticipant.findFirst({
+        where: { id: participantId, contaId: ctx.contaId, eventId },
+        select: eventParticipantScalarSelect,
+      });
+    }
+
     if (participant.isFeePaid) {
       throw new EventsError('TAXA_JA_PAGA', 'A taxa de inscrição deste aluno já está paga.', 409);
     }
 
-    const value = participant.registrationFeeCharged.toNumber();
+    const value = toMoney(participant.registrationFeeCharged);
     if (value <= 0) {
       throw new EventsError('VALOR_INVALIDO', 'Esta inscrição não possui valor a ser cobrado.', 400);
+    }
+
+    if (participant.billingMode !== 'FULL' || participant.asaasPaymentId || participant.asaasInstallmentId) {
+      throw new EventsError('BAIXA_MANUAL_BLOQUEADA', 'A quitação manual está disponível apenas para inscrições manuais.', 409);
     }
 
     let revenueEntryId = participant.revenueEntryId;
@@ -94,41 +146,67 @@ export async function quitarEventParticipantFee(ctx: EventsContext, eventId: str
       await tx.eventFinancialEntry.updateMany({
         where: { id: revenueEntryId, contaId: ctx.contaId, eventId },
         data: {
-          status: 'RECEIVED',
-          actualAmount: decimal(value),
-          realizedAt: new Date(),
-          paymentMethod: mapToEventPaymentMethod(input.paymentMethod),
+          originType: 'EVENT_REGISTRATION',
         },
       });
+      const scopedEntry = await tx.eventFinancialEntry.findFirst({
+        where: { id: revenueEntryId, eventId, contaId: ctx.contaId },
+        select: { asaasPaymentId: true, paymentProvider: true },
+      });
+      if (!scopedEntry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento da inscrição não encontrado.', 404);
+      if (scopedEntry.asaasPaymentId || scopedEntry.paymentProvider === 'ASAAS') {
+        throw new EventsError('BAIXA_MANUAL_BLOQUEADA', 'A inscrição possui uma cobrança vinculada e não pode ser baixada manualmente.', 409);
+      }
     } else {
       const entry = await tx.eventFinancialEntry.create({
         data: {
           contaId: ctx.contaId,
           eventId: participant.eventId,
           type: 'REVENUE',
+          originType: 'EVENT_REGISTRATION',
           category: 'Taxa de inscrição',
           description: 'Taxa de inscrição',
           expectedAmount: decimal(value),
-          actualAmount: decimal(value),
+          actualAmount: null,
           dueDate: new Date(),
-          realizedAt: new Date(),
-          status: 'RECEIVED',
+          status: 'PENDING',
           paymentMethod: mapToEventPaymentMethod(input.paymentMethod),
         },
       });
       revenueEntryId = entry.id;
+      await tx.eventParticipant.updateMany({
+        where: { id: participant.id, eventId, contaId: ctx.contaId },
+        data: { revenueEntryId },
+      });
     }
 
-    const updatedResult = await tx.eventParticipant.updateMany({
-      where: { id: participantId, contaId: ctx.contaId, eventId },
+    await lockEventFinancialEntryForParticipantMutation(tx, ctx.contaId, eventId, revenueEntryId);
+
+    const totalsBefore = await loadManualPaymentTotals(tx, ctx.contaId, revenueEntryId);
+    const remaining = toMoney(Math.max(value - totalsBefore.net, 0));
+    if (remaining <= 0) {
+      throw new EventsError('TAXA_JA_PAGA', 'A taxa de inscrição deste aluno já está paga.', 409);
+    }
+    const now = new Date();
+    const payment = await tx.eventFinancialPayment.create({
       data: {
-        isFeePaid: true,
-        feePaymentMethod: input.paymentMethod,
-        revenueEntryId,
+        contaId: ctx.contaId,
+        eventId,
+        financialEntryId: revenueEntryId,
+        idempotencyKey: input.idempotencyKey,
+        participantId: participant.id,
+        amount: decimal(remaining),
+        paymentMethod: mapToEventPaymentMethod(input.paymentMethod),
+        paidAt: now,
+        notes: null,
+        status: 'RECEIVED',
+        refundedAmount: decimal(0),
+        netAmount: decimal(remaining),
+        createdByUserId: ctx.userId,
       },
     });
-    if (updatedResult.count !== 1) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
-    const updated = await tx.eventParticipant.findFirst({ where: { id: participantId, contaId: ctx.contaId, eventId }, select: eventParticipantScalarSelect });
+    const refreshed = await refreshManualParticipantPaymentSnapshot(tx, { ...participant, contaId: ctx.contaId }, revenueEntryId);
+    const updated = refreshed.participant;
 
     await recordEventAudit(tx, {
       contaId: ctx.contaId,
@@ -138,7 +216,7 @@ export async function quitarEventParticipantFee(ctx: EventsContext, eventId: str
       entityId: participantId,
       eventId: participant.eventId,
       before: participant,
-      after: updated,
+      after: { payment, participant: updated, totals: refreshed.totals },
     });
 
     return updated;
@@ -283,8 +361,15 @@ export async function createFinancialEntry(ctx: EventsContext, input: CreateEven
     if (input.type === 'REVENUE' && payment.actualAmount != null && payment.actualAmount > line.netAmount) {
       throw new EventsError('VALOR_RECEBIDO_INVALIDO', 'O valor recebido não pode ser maior que o valor líquido esperado.', 422);
     }
-    assertFinancialEntryState(input.type, input.status, payment.actualAmount);
-    const isRealized = input.type === 'COST' ? input.status === 'PAID' : input.status === 'RECEIVED';
+    if (input.type === 'COST' && payment.actualAmount != null && payment.actualAmount > line.netAmount) {
+      throw new EventsError('VALOR_PAGO_INVALIDO', 'O valor pago não pode ser maior que o valor esperado.', 422);
+    }
+    const isCostPaymentStatus = input.type === 'COST' && ['PAID', 'PARTIALLY_PAID'].includes(input.status);
+    const entryStatus = isCostPaymentStatus && payment.actualAmount != null
+      ? payment.actualAmount >= line.netAmount ? 'PAID' : 'PARTIALLY_PAID'
+      : input.status;
+    assertFinancialEntryState(input.type, entryStatus, payment.actualAmount);
+    const isRealized = input.type === 'COST' ? entryStatus === 'PAID' : entryStatus === 'RECEIVED';
     const entry = await tx.eventFinancialEntry.create({
       data: {
         contaId: ctx.contaId,
@@ -302,14 +387,32 @@ export async function createFinancialEntry(ctx: EventsContext, input: CreateEven
         refundedAmount: decimal(payment.refundedAmount),
         netAmount: payment.netAmount == null ? null : decimal(payment.netAmount),
         dueDate: isRealized ? null : input.dueDate,
-        realizedAt: isRealized ? (input.realizedAt ?? new Date()) : null,
-        status: input.status,
+        realizedAt: input.type === 'COST' && entryStatus === 'PARTIALLY_PAID'
+          ? (input.realizedAt ?? new Date())
+          : isRealized ? (input.realizedAt ?? new Date()) : null,
+        status: entryStatus,
         paymentMethod: input.paymentMethod,
         proofUrl: input.proofUrl,
         notes: input.notes,
         createdByUserId: ctx.userId,
       },
     });
+
+    if (input.type === 'COST' && isCostPaymentStatus && payment.actualAmount != null && payment.actualAmount > 0) {
+      await tx.eventFinancialPayment.create({ data: {
+        contaId: ctx.contaId,
+        eventId: input.eventId,
+        financialEntryId: entry.id,
+        amount: decimal(payment.actualAmount),
+        paymentMethod: mapToEventPaymentMethod(input.paymentMethod),
+        paidAt: input.realizedAt ?? new Date(),
+        notes: input.notes,
+        status: 'PAID',
+        refundedAmount: decimal(0),
+        netAmount: decimal(payment.actualAmount),
+        createdByUserId: ctx.userId,
+      } });
+    }
 
     await recordEventAudit(tx, {
       contaId: ctx.contaId,
@@ -332,6 +435,17 @@ export async function updateFinancialEntry(
   expectedEventId?: string,
 ) {
   return prisma.$transaction(async (tx) => {
+    // Serialize edits with payment registration on the same tenant-owned row.
+    // Read the entry and payment ledger only after acquiring this lock so an
+    // edit cannot validate against a stale paid total while a payment commits.
+    const [lockedEntry] = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT e."id"
+      FROM "EventFinancialEntry" e
+      WHERE e."id" = ${entryId} AND e."contaId" = ${ctx.contaId}
+      FOR UPDATE OF e
+    `;
+    if (!lockedEntry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
+
     const current = await tx.eventFinancialEntry.findFirst({
       where: {
         id: entryId,
@@ -341,10 +455,14 @@ export async function updateFinancialEntry(
       include: { event: true },
     });
     if (!current) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
-    if (current.originType !== 'MANUAL') {
+    const sourceManagedCostRefund = current.type === 'COST'
+      && supportsEventCostPaymentOrigin(current.originType, current.originId)
+      && input.status === 'REFUNDED'
+      && Object.entries(input).every(([key, value]) => value === undefined || ['status', 'actualAmount', 'realizedAt', 'refundedAmount'].includes(key));
+    if (current.originType !== 'MANUAL' && !sourceManagedCostRefund) {
       throw new EventsError(
         'LANCAMENTO_AUTOMATICO',
-        'Lançamentos automáticos devem ser alterados pela venda ou figurino de origem.',
+        'Lançamentos automáticos devem ser alterados pela origem. Pagamentos registrados podem ser estornados pelo histórico.',
         409,
       );
     }
@@ -355,8 +473,38 @@ export async function updateFinancialEntry(
       grossAmount: input.grossAmount ?? current.grossAmount?.toNumber(),
       discountAmount: input.discountAmount ?? current.discountAmount.toNumber(),
     });
-    const nextActual = input.actualAmount === undefined ? toMoney(current.actualAmount) : input.actualAmount;
-    const nextRefunded = input.refundedAmount === undefined ? toMoney(current.refundedAmount) : input.refundedAmount;
+    const costPaymentTotals = current.type === 'COST'
+      ? await loadManualPaymentTotals(tx, ctx.contaId, entryId)
+      : null;
+    const hasCostPaymentHistory = current.type === 'COST' && Boolean(costPaymentTotals && costPaymentTotals.received > 0);
+    if (sourceManagedCostRefund && !hasCostPaymentHistory) {
+      throw new EventsError('PAGAMENTO_NAO_ENCONTRADO', 'Não há pagamento registrado para estornar neste custo.', 409);
+    }
+    if (hasCostPaymentHistory && costPaymentTotals) {
+      if (input.type && input.type !== 'COST') {
+        throw new EventsError('LANCAMENTO_COM_PAGAMENTOS', 'Não é possível alterar o tipo de um custo com pagamentos registrados.', 409);
+      }
+      if (line.netAmount < costPaymentTotals.net) {
+        throw new EventsError('VALOR_ABAIXO_DO_PAGO', 'O valor esperado não pode ser menor que o total já pago.', 422);
+      }
+      if (input.actualAmount !== undefined && toMoney(input.actualAmount) !== costPaymentTotals.received) {
+        throw new EventsError('PAGAMENTO_IMUTAVEL', 'Altere os valores pagos registrando pagamentos ou estornos no histórico.', 409);
+      }
+      if (input.status === 'CANCELLED') {
+        throw new EventsError('CUSTO_COM_PAGAMENTO_NAO_PODE_SER_CANCELADO', 'Estorne os pagamentos registrados antes de encerrar este custo.', 409);
+      }
+      if (input.status === 'REFUNDED' && costPaymentTotals.net <= 0) {
+        throw new EventsError('PAGAMENTO_JA_ESTORNADO', 'Não há saldo pago para estornar neste custo.', 409);
+      }
+    }
+    const nextActual = hasCostPaymentHistory && costPaymentTotals
+      ? costPaymentTotals.received
+      : input.actualAmount === undefined ? toMoney(current.actualAmount) : input.actualAmount;
+    const nextRefunded = input.status === 'REFUNDED' && hasCostPaymentHistory && costPaymentTotals
+      ? costPaymentTotals.received
+      : hasCostPaymentHistory && costPaymentTotals
+        ? costPaymentTotals.refunded
+        : input.refundedAmount === undefined ? toMoney(current.refundedAmount) : input.refundedAmount;
     const nextType = input.type ?? current.type;
     const payment = normalizeFinancialPaymentOrThrow({
       actualAmount: nextActual,
@@ -367,9 +515,19 @@ export async function updateFinancialEntry(
     if (nextType === 'REVENUE' && payment.actualAmount != null && payment.actualAmount > line.netAmount) {
       throw new EventsError('VALOR_RECEBIDO_INVALIDO', 'O valor recebido não pode ser maior que o valor líquido esperado.', 422);
     }
-    assertFinancialEntryState(nextType, input.status ?? current.status, payment.actualAmount);
-
-    const nextStatus = input.status ?? current.status;
+    if (current.type === 'COST' && !hasCostPaymentHistory && ['PAID', 'PARTIALLY_PAID'].includes(input.status ?? current.status)) {
+      throw new EventsError('PAGAMENTO_DEVE_SER_REGISTRADO', 'Registre pagamentos pelo histórico para manter o saldo e a auditoria consistentes.', 409);
+    }
+    const nextStatus = hasCostPaymentHistory && costPaymentTotals
+      ? input.status === 'REFUNDED'
+        ? 'REFUNDED'
+        : costPaymentTotals.net <= 0 && costPaymentTotals.refunded > 0
+          ? 'REFUNDED'
+          : costPaymentTotals.net >= line.netAmount && line.netAmount > 0
+            ? 'PAID'
+            : costPaymentTotals.net > 0 ? 'PARTIALLY_PAID' : (input.status ?? current.status)
+      : input.status ?? current.status;
+    assertFinancialEntryState(nextType, nextStatus, payment.actualAmount);
     const isRealized = nextType === 'COST' ? nextStatus === 'PAID' : nextStatus === 'RECEIVED';
     const updatedResult = await tx.eventFinancialEntry.updateMany({
       where: { id: entryId, contaId: ctx.contaId, eventId: current.eventId },
@@ -385,15 +543,32 @@ export async function updateFinancialEntry(
         actualAmount: payment.actualAmount == null ? null : decimal(payment.actualAmount),
         refundedAmount: decimal(payment.refundedAmount),
         netAmount: payment.netAmount == null ? null : decimal(payment.netAmount),
-        dueDate: isRealized ? null : input.dueDate,
-        realizedAt: isRealized ? (input.realizedAt ?? current.realizedAt ?? new Date()) : null,
-        status: input.status,
+        dueDate: isRealized ? null : input.dueDate ?? current.dueDate,
+        realizedAt: nextType === 'COST' && nextStatus === 'PARTIALLY_PAID'
+          ? (input.realizedAt ?? current.realizedAt ?? new Date())
+          : isRealized ? (input.realizedAt ?? current.realizedAt ?? new Date()) : null,
+        cancelledAt: nextStatus === 'CANCELLED' ? (current.cancelledAt ?? new Date()) : null,
+        refundedAt: ['REFUNDED', 'PARTIALLY_REFUNDED'].includes(nextStatus) ? (current.refundedAt ?? new Date()) : null,
+        status: nextStatus,
         paymentMethod: input.paymentMethod,
         proofUrl: input.proofUrl,
         notes: input.notes,
       },
     });
     if (updatedResult.count !== 1) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
+    if (nextType === 'COST' && nextStatus === 'REFUNDED' && hasCostPaymentHistory) {
+      const payments = await tx.eventFinancialPayment.findMany({
+        where: { contaId: ctx.contaId, financialEntryId: entryId },
+        select: { id: true, amount: true },
+      });
+      const refundedAt = new Date();
+      for (const costPayment of payments) {
+        await tx.eventFinancialPayment.updateMany({
+          where: { id: costPayment.id, contaId: ctx.contaId, financialEntryId: entryId },
+          data: { status: 'REFUNDED', refundedAt, refundedAmount: costPayment.amount, netAmount: decimal(0) },
+        });
+      }
+    }
     const updated = await tx.eventFinancialEntry.findFirst({ where: { id: entryId, contaId: ctx.contaId, eventId: current.eventId } });
     if (!updated) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
 
@@ -410,6 +585,292 @@ export async function updateFinancialEntry(
 
     return getFinancialEntryDto(tx, ctx.contaId, entryId);
   });
+}
+
+export async function registerEventCostPayment(
+  ctx: EventsContext,
+  entryId: string,
+  input: { idempotencyKey: string; amount: number; paymentMethod: EventPaymentMethod; paidAt?: Date | null; notes?: string | null },
+) {
+  return prisma.$transaction(async (tx) => {
+    await acquireGuardLock({ tx, contaId: ctx.contaId, scope: 'event-payment-create', key: input.idempotencyKey });
+    // Lock the tenant-owned row so concurrent submissions compute the balance
+    // serially. The lock and ledger/summary writes share this transaction.
+    const [entry] = await tx.$queryRaw<Array<{ id: string; contaId: string; eventId: string; type: string; originType: string; originId: string | null; status: string; expectedAmount: Prisma.Decimal; actualAmount: Prisma.Decimal | null; dueDate: Date | null; eventStatus: string }>>`
+      SELECT e."id", e."contaId", e."eventId", e."type"::text AS "type", e."originType"::text AS "originType", e."originId",
+             e."status"::text AS "status", e."expectedAmount", e."actualAmount", e."dueDate", ev."status"::text AS "eventStatus"
+      FROM "EventFinancialEntry" e JOIN "SchoolEvent" ev ON ev."id" = e."eventId" AND ev."contaId" = e."contaId"
+      WHERE e."id" = ${entryId} AND e."contaId" = ${ctx.contaId}
+      FOR UPDATE OF e
+    `;
+    if (!entry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
+    const existingPayment = await tx.eventFinancialPayment.findFirst({
+      where: { contaId: ctx.contaId, idempotencyKey: input.idempotencyKey },
+      select: { id: true, financialEntryId: true, amount: true, paymentMethod: true, paidAt: true, notes: true },
+    });
+    if (existingPayment) {
+      if (existingPayment.financialEntryId !== entry.id
+        || toMoney(existingPayment.amount) !== toMoney(input.amount)
+        || existingPayment.paymentMethod !== input.paymentMethod
+        || (existingPayment.notes ?? null) !== (input.notes ?? null)
+        || (input.paidAt != null && existingPayment.paidAt.getTime() !== input.paidAt.getTime())) {
+        throw new EventsError('IDEMPOTENCY_KEY_REUTILIZADA', 'Esta chave já foi usada em outro lançamento.', 409);
+      }
+      return getFinancialEntryDto(tx, ctx.contaId, entry.id);
+    }
+    if (entry.type !== 'COST' || !supportsEventCostPaymentOrigin(entry.originType, entry.originId)) {
+      throw new EventsError('BAIXA_NAO_DISPONIVEL', 'Este lançamento não aceita pagamentos registrados por esta tela.', 409);
+    }
+    assertFinancialAdjustmentEvent(entry.eventStatus);
+    if (['CANCELLED', 'REFUNDED', 'PAID'].includes(entry.status)) throw new EventsError('LANCAMENTO_ENCERRADO', 'Este custo não aceita novos pagamentos.', 409);
+    let calculation: ReturnType<typeof calculateEventCostPayment>;
+    try {
+      calculation = calculateEventCostPayment({ expectedAmount: entry.expectedAmount.toString(), paidAmount: entry.actualAmount?.toString(), paymentAmount: input.amount });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Pagamento inválido.';
+      throw new EventsError(message.includes('saldo') ? 'VALOR_ACIMA_DO_SALDO' : 'VALOR_INVALIDO', message, 422);
+    }
+    const amount = toMoney(input.amount);
+    const totalPaid = calculation.totalPaid;
+    const nextStatus = calculation.status;
+    const now = input.paidAt ?? new Date();
+    const payment = await tx.eventFinancialPayment.create({ data: {
+      contaId: ctx.contaId, eventId: entry.eventId, financialEntryId: entry.id,
+      idempotencyKey: input.idempotencyKey,
+      amount: decimal(amount), paymentMethod: input.paymentMethod, paidAt: now, notes: input.notes,
+      status: 'PAID', refundedAmount: decimal(0), netAmount: decimal(amount), createdByUserId: ctx.userId,
+    } });
+    const updatedResult = await tx.eventFinancialEntry.updateMany({
+      where: { id: entry.id, contaId: ctx.contaId, eventId: entry.eventId },
+      data: {
+        actualAmount: decimal(totalPaid), status: nextStatus, realizedAt: now,
+        paymentMethod: input.paymentMethod, dueDate: nextStatus === 'PAID' ? null : entry.dueDate,
+      },
+    });
+    if (updatedResult.count !== 1) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
+    const updated = await tx.eventFinancialEntry.findFirst({ where: { id: entry.id, contaId: ctx.contaId } });
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId, actorUserId: ctx.userId, action: 'events.finance.cost.payment.create',
+      entityType: 'EventFinancialPayment', entityId: payment.id, eventId: entry.eventId,
+      before: { entry, balance: calculation.balance }, after: { payment, entry: updated, balance: calculation.remaining },
+    });
+    return getFinancialEntryDto(tx, ctx.contaId, entry.id);
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function registerCostumeAssignmentPayment(
+  ctx: EventsContext,
+  entryId: string,
+  input: { idempotencyKey: string; amount: number; paymentMethod: EventPaymentMethod; paidAt?: Date | null; notes?: string | null },
+) {
+  return prisma.$transaction(async (tx) => {
+    await acquireGuardLock({ tx, contaId: ctx.contaId, scope: 'event-payment-create', key: input.idempotencyKey });
+    const assignmentCandidate = await tx.eventCostumeAssignment.findFirst({ where: { contaId: ctx.contaId, revenueEntryId: entryId }, select: { id: true } });
+    if (!assignmentCandidate) throw new EventsError('VINCULO_NAO_ENCONTRADO', 'Vínculo de figurino associado à receita não encontrado.', 404);
+    await tx.$queryRaw`SELECT "id" FROM "EventCostumeAssignment" WHERE "id" = ${assignmentCandidate.id} AND "contaId" = ${ctx.contaId} FOR UPDATE`;
+    const assignmentState = await tx.eventCostumeAssignment.findFirst({ where: { id: assignmentCandidate.id, contaId: ctx.contaId }, select: { status: true, revenueEntryId: true } });
+    if (!assignmentState || assignmentState.revenueEntryId !== entryId) {
+      throw new EventsError('VINCULO_CANCELADO', 'Vínculos cancelados não aceitam novos recebimentos.', 409);
+    }
+    const [entry] = await tx.$queryRaw<Array<{ id: string; eventId: string; status: string; expectedAmount: Prisma.Decimal; actualAmount: Prisma.Decimal | null; eventStatus: string; asaasPaymentId: string | null; paymentProvider: string | null }>>`
+      SELECT e."id", e."eventId", e."status"::text AS "status", e."expectedAmount", e."actualAmount", e."asaasPaymentId", e."paymentProvider", ev."status"::text AS "eventStatus"
+      FROM "EventFinancialEntry" e JOIN "SchoolEvent" ev ON ev."id" = e."eventId" AND ev."contaId" = e."contaId"
+      WHERE e."id" = ${entryId} AND e."contaId" = ${ctx.contaId} AND e."type" = 'REVENUE' AND e."originType" = 'COSTUME_ASSIGNMENT'
+      FOR UPDATE OF e
+    `;
+    if (!entry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Receita de figurino não encontrada.', 404);
+    const existingPayment = await tx.eventFinancialPayment.findFirst({
+      where: { contaId: ctx.contaId, idempotencyKey: input.idempotencyKey },
+      select: { id: true, financialEntryId: true, amount: true, paymentMethod: true, notes: true, paidAt: true },
+    });
+    if (existingPayment) {
+      if (existingPayment.financialEntryId !== entry.id || toMoney(existingPayment.amount) !== toMoney(input.amount)
+        || existingPayment.paymentMethod !== input.paymentMethod || (existingPayment.notes ?? null) !== (input.notes ?? null)
+        || (input.paidAt != null && existingPayment.paidAt.getTime() !== input.paidAt.getTime())) {
+        throw new EventsError('IDEMPOTENCY_KEY_REUTILIZADA', 'Esta chave já foi usada em outro lançamento.', 409);
+      }
+      return getFinancialEntryDto(tx, ctx.contaId, entry.id);
+    }
+    if (assignmentState.status === 'CANCELLED') throw new EventsError('VINCULO_CANCELADO', 'Vínculos cancelados não aceitam novos recebimentos.', 409);
+    if (entry.asaasPaymentId || entry.paymentProvider === 'ASAAS') throw new EventsError('BAIXA_MANUAL_BLOQUEADA', 'Esta receita possui cobrança Asaas vinculada.', 409);
+    assertFinancialAdjustmentEvent(entry.eventStatus);
+    if (['CANCELLED', 'REFUNDED', 'PAID'].includes(entry.status)) throw new EventsError('LANCAMENTO_ENCERRADO', 'Esta receita não aceita novos recebimentos.', 409);
+    const amount = toMoney(input.amount);
+    const expected = toMoney(entry.expectedAmount);
+    const totalsBefore = await loadManualPaymentTotals(tx, ctx.contaId, entry.id);
+    const paid = totalsBefore.net;
+    if (amount <= 0) throw new EventsError('VALOR_INVALIDO', 'Informe um valor maior que zero.', 422);
+    const remaining = toMoney(Math.max(expected - paid, 0));
+    if (amount > remaining) throw new EventsError('VALOR_ACIMA_DO_SALDO', `O valor máximo para recebimento é ${remaining.toFixed(2)}.`, 422);
+    const totalPaid = toMoney(paid + amount);
+    const totalReceived = toMoney(totalsBefore.received + amount);
+    const nextStatus = totalPaid >= expected
+      ? 'RECEIVED'
+      : totalsBefore.refunded > 0 ? 'PARTIALLY_REFUNDED' : 'PARTIALLY_PAID';
+    const now = input.paidAt ?? new Date();
+    const payment = await tx.eventFinancialPayment.create({ data: {
+      contaId: ctx.contaId, eventId: entry.eventId, financialEntryId: entry.id,
+      idempotencyKey: input.idempotencyKey, amount: decimal(amount), paymentMethod: input.paymentMethod,
+      paidAt: now, notes: input.notes, status: 'PAID', refundedAmount: decimal(0), netAmount: decimal(amount), createdByUserId: ctx.userId,
+    } });
+    await tx.eventFinancialEntry.updateMany({
+      where: { id: entry.id, contaId: ctx.contaId, eventId: entry.eventId },
+      data: { actualAmount: decimal(totalReceived), refundedAmount: decimal(totalsBefore.refunded), netAmount: decimal(totalPaid), status: nextStatus, realizedAt: now, paymentMethod: input.paymentMethod },
+    });
+    const assignment = await tx.eventCostumeAssignment.findFirst({ where: { contaId: ctx.contaId, revenueEntryId: entry.id }, select: { id: true } });
+    if (!assignment) throw new EventsError('VINCULO_NAO_ENCONTRADO', 'Vínculo de figurino associado à receita não encontrado.', 409);
+    await tx.eventCostumeAssignment.updateMany({ where: { id: assignment.id, contaId: ctx.contaId }, data: { isPaid: nextStatus === 'RECEIVED' } });
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId, actorUserId: ctx.userId, action: 'events.costumeAssignment.payment.create',
+      entityType: 'EventFinancialPayment', entityId: payment.id, eventId: entry.eventId,
+      before: { entry, paidAmount: paid, remaining }, after: { payment, paidAmount: totalPaid, remaining: toMoney(expected - totalPaid) },
+    });
+    return getFinancialEntryDto(tx, ctx.contaId, entry.id);
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function refundCostumeAssignmentPayment(
+  ctx: EventsContext,
+  entryId: string,
+  input: { idempotencyKey: string; amount?: number | null },
+) {
+  return prisma.$transaction(async (tx) => {
+    await acquireGuardLock({ tx, contaId: ctx.contaId, scope: 'event-payment-refund', key: input.idempotencyKey });
+    const priorAudit = await tx.eventAudit.findFirst({
+      where: { contaId: ctx.contaId, action: 'events.costumeAssignment.payment.refund', metadata: { path: ['idempotencyKey'], equals: input.idempotencyKey } },
+      select: { entityId: true, metadata: true },
+    });
+    if (priorAudit) {
+      const metadata = priorAudit.metadata && typeof priorAudit.metadata === 'object' && !Array.isArray(priorAudit.metadata)
+        ? priorAudit.metadata as Record<string, unknown>
+        : {};
+      const priorRequestedAmount = metadata.requestedAmount == null ? null : Number(metadata.requestedAmount);
+      const requestedAmount = input.amount == null ? null : toMoney(input.amount);
+      if (priorAudit.entityId !== entryId || priorRequestedAmount !== requestedAmount) {
+        throw new EventsError('IDEMPOTENCY_KEY_REUTILIZADA', 'Esta chave já foi usada em outro estorno.', 409);
+      }
+      return getFinancialEntryDto(tx, ctx.contaId, entryId);
+    }
+    const assignmentCandidate = await tx.eventCostumeAssignment.findFirst({ where: { contaId: ctx.contaId, revenueEntryId: entryId }, select: { id: true } });
+    if (!assignmentCandidate) throw new EventsError('VINCULO_NAO_ENCONTRADO', 'Vínculo de figurino associado à receita não encontrado.', 404);
+    await tx.$queryRaw`SELECT "id" FROM "EventCostumeAssignment" WHERE "id" = ${assignmentCandidate.id} AND "contaId" = ${ctx.contaId} FOR UPDATE`;
+    const assignmentState = await tx.eventCostumeAssignment.findFirst({ where: { id: assignmentCandidate.id, contaId: ctx.contaId }, select: { status: true, revenueEntryId: true } });
+    if (!assignmentState || assignmentState.revenueEntryId !== entryId) throw new EventsError('VINCULO_NAO_ENCONTRADO', 'Vínculo de figurino associado à receita não encontrado.', 404);
+    const [locked] = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT e."id" FROM "EventFinancialEntry" e
+      WHERE e."id" = ${entryId} AND e."contaId" = ${ctx.contaId} AND e."type" = 'REVENUE' AND e."originType" = 'COSTUME_ASSIGNMENT'
+      FOR UPDATE OF e
+    `;
+    if (!locked) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Receita de figurino não encontrada.', 404);
+    const entry = await tx.eventFinancialEntry.findFirst({ where: { id: entryId, contaId: ctx.contaId }, include: { event: true } });
+    if (!entry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Receita de figurino não encontrada.', 404);
+    if (entry.asaasPaymentId || entry.paymentProvider === 'ASAAS') throw new EventsError('ESTORNO_ASAAS_BLOQUEADO', 'O estorno desta cobrança vinculada ao Asaas deve ser processado pela cobrança e confirmado pelo webhook.', 409);
+    assertFinancialAdjustmentEvent(entry.event.status);
+    const payments = await tx.eventFinancialPayment.findMany({ where: { contaId: ctx.contaId, financialEntryId: entryId, status: { in: ['PAID', 'REFUNDED'] } }, orderBy: [{ paidAt: 'desc' }, { id: 'desc' }] });
+    const remainingTotal = toMoney(payments.reduce((sum, payment) => sum + Math.max(toMoney(payment.amount) - toMoney(payment.refundedAmount), 0), 0));
+    const refundAmount = input.amount == null ? remainingTotal : toMoney(input.amount);
+    if (refundAmount <= 0 || refundAmount > remainingTotal) throw new EventsError('VALOR_ESTORNO_INVALIDO', `O estorno deve ser maior que zero e não superar ${remainingTotal.toFixed(2)}.`, 422);
+    let toRefund = refundAmount;
+    for (const payment of payments) {
+      if (toRefund <= 0) break;
+      const paymentRemaining = toMoney(Math.max(toMoney(payment.amount) - toMoney(payment.refundedAmount), 0));
+      if (paymentRemaining <= 0) continue;
+      const amount = Math.min(paymentRemaining, toRefund);
+      const refundedAmount = toMoney(toMoney(payment.refundedAmount) + amount);
+      const fullyRefunded = refundedAmount >= toMoney(payment.amount);
+      await tx.eventFinancialPayment.updateMany({ where: { id: payment.id, contaId: ctx.contaId }, data: {
+        refundedAmount: decimal(refundedAmount), netAmount: decimal(toMoney(toMoney(payment.amount) - refundedAmount)),
+        status: fullyRefunded ? 'REFUNDED' : 'PAID', refundedAt: fullyRefunded ? new Date() : null,
+      } });
+      toRefund = toMoney(toRefund - amount);
+    }
+    const updatedPayments = await tx.eventFinancialPayment.findMany({ where: { contaId: ctx.contaId, financialEntryId: entryId } });
+    const totalReceived = toMoney(updatedPayments.reduce((sum, payment) => sum + toMoney(payment.amount), 0));
+    const totalRefunded = toMoney(updatedPayments.reduce((sum, payment) => sum + toMoney(payment.refundedAmount), 0));
+    const netPaid = toMoney(totalReceived - totalRefunded);
+    const nextStatus = netPaid <= 0
+      ? 'REFUNDED'
+      : totalRefunded > 0 ? 'PARTIALLY_REFUNDED'
+        : netPaid >= toMoney(entry.expectedAmount) ? 'RECEIVED' : 'PARTIALLY_PAID';
+    await tx.eventFinancialEntry.updateMany({ where: { id: entryId, contaId: ctx.contaId }, data: {
+      actualAmount: decimal(totalReceived), refundedAmount: decimal(totalRefunded), netAmount: decimal(netPaid), status: nextStatus,
+    } });
+    const assignment = await tx.eventCostumeAssignment.findFirst({ where: { contaId: ctx.contaId, revenueEntryId: entryId }, select: { id: true } });
+    if (!assignment) throw new EventsError('VINCULO_NAO_ENCONTRADO', 'Vínculo de figurino associado à receita não encontrado.', 409);
+    await tx.eventCostumeAssignment.updateMany({ where: { id: assignment.id, contaId: ctx.contaId }, data: { isPaid: netPaid >= toMoney(entry.expectedAmount) } });
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId, actorUserId: ctx.userId, action: 'events.costumeAssignment.payment.refund',
+      entityType: 'EventFinancialEntry', entityId: entryId, eventId: entry.eventId,
+      before: { entry, payments }, after: { totalReceived, totalRefunded, netPaid, status: nextStatus },
+      metadata: { idempotencyKey: input.idempotencyKey, amount: refundAmount, requestedAmount: input.amount == null ? null : toMoney(input.amount) },
+    });
+    return getFinancialEntryDto(tx, ctx.contaId, entryId);
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function deleteEventCost(ctx: EventsContext, entryId: string) {
+  return prisma.$transaction(async (tx) => {
+    const source = await tx.eventFinancialEntry.findFirst({
+      where: { id: entryId, contaId: ctx.contaId, type: 'COST' },
+      select: { originType: true, originId: true },
+    });
+    if (!source) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
+
+    // Costume loss entries can be materialized again by assignment updates.
+    // Serialize deletion with that source writer before taking the entry lock.
+    if (source.originType === 'COSTUME' && source.originId?.startsWith('loss:')) {
+      const key = `event-cost-origin:${ctx.contaId}:${source.originType}:${source.originId}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+    }
+    // Keep this lock identical to registerEventCostPayment: either payment
+    // creation commits first and is observed below, or deletion wins first.
+    const [entry] = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT e."id"
+      FROM "EventFinancialEntry" e
+      WHERE e."id" = ${entryId} AND e."contaId" = ${ctx.contaId}
+      FOR UPDATE OF e
+    `;
+    if (!entry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
+
+    const current = await tx.eventFinancialEntry.findFirst({
+      where: { id: entryId, contaId: ctx.contaId, type: 'COST' },
+      include: { payments: { where: { contaId: ctx.contaId }, orderBy: { paidAt: 'asc' } } },
+    });
+    if (!current) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
+
+    // Hard deletion is an explicit operational action for event costs. Keep the
+    // full pre-delete entry, payment ledger, and provider references in the
+    // immutable audit record before the database cascades payment rows.
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.finance.cost.delete',
+      entityType: 'EventFinancialEntry',
+      entityId: current.id,
+      eventId: current.eventId,
+      before: {
+        entry: current,
+        payments: current.payments,
+        asaasReference: {
+          paymentProvider: current.paymentProvider,
+          asaasPaymentId: current.asaasPaymentId,
+          paymentStatus: current.paymentStatus,
+        },
+      },
+      after: null,
+      metadata: {
+        deletion: 'hard',
+        originType: current.originType,
+        originId: current.originId,
+        paymentProvider: current.paymentProvider,
+        asaasPaymentId: current.asaasPaymentId,
+        paymentStatus: current.paymentStatus,
+      },
+    });
+    const deleted = await tx.eventFinancialEntry.deleteMany({ where: { id: entryId, contaId: ctx.contaId } });
+    if (deleted.count !== 1) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
+    return { success: true as const };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 
@@ -446,7 +907,9 @@ async function refreshManualParticipantPaymentSnapshot(
     ? 'REFUNDED'
     : totals.net >= expected && expected > 0
       ? 'RECEIVED'
-      : 'PENDING';
+      : totals.net > 0
+        ? 'PARTIALLY_PAID'
+        : 'PENDING';
   const updatedEntryResult = await tx.eventFinancialEntry.updateMany({
     where: { id: entryId, contaId: participant.contaId },
     data: {
@@ -492,12 +955,29 @@ export async function createManualEventParticipantPayment(
   input: ManualEventParticipantPaymentInput,
 ) {
   return prisma.$transaction(async (tx) => {
+    await acquireGuardLock({ tx, contaId: ctx.contaId, scope: 'event-payment-create', key: input.idempotencyKey });
+    await lockEventParticipantForFinancialMutation(tx, ctx.contaId, eventId, participantId);
     const participant = await tx.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
       select: { ...eventParticipantScalarSelect, event: true },
     });
     if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
     assertFinancialAdjustmentEvent(participant.event.status);
+
+    const existingPayment = await tx.eventFinancialPayment.findFirst({
+      where: { contaId: ctx.contaId, idempotencyKey: input.idempotencyKey },
+      select: { id: true, eventId: true, participantId: true, amount: true, paymentMethod: true, financialEntryId: true, notes: true, paidAt: true },
+    });
+    if (existingPayment) {
+      if (existingPayment.participantId !== participant.id || existingPayment.eventId !== eventId
+        || toMoney(existingPayment.amount) !== toMoney(input.amount)
+        || existingPayment.paymentMethod !== mapToEventPaymentMethod(input.paymentMethod)
+        || (existingPayment.notes ?? null) !== (input.notes ?? null)
+        || (input.paidAt != null && existingPayment.paidAt.getTime() !== input.paidAt.getTime())) {
+        throw new EventsError('IDEMPOTENCY_KEY_REUTILIZADA', 'Esta chave já foi usada em outro pagamento.', 409);
+      }
+      return { payment: existingPayment, ...await refreshManualParticipantPaymentSnapshot(tx, { ...participant, contaId: ctx.contaId }, existingPayment.financialEntryId) };
+    }
     if (participant.billingMode !== 'FULL' || participant.asaasPaymentId || participant.asaasInstallmentId) {
       throw new EventsError('BAIXA_MANUAL_BLOQUEADA', 'A baixa manual está disponível apenas para inscrições manuais.', 409);
     }
@@ -508,10 +988,20 @@ export async function createManualEventParticipantPayment(
 
     let entryId = participant.revenueEntryId;
     if (entryId) {
-      const entry = await tx.eventFinancialEntry.findFirst({ where: { id: entryId, contaId: ctx.contaId } });
+      let entry = await tx.eventFinancialEntry.findFirst({ where: { id: entryId, eventId, contaId: ctx.contaId } });
       if (!entry) entryId = null;
+      if (entry) {
+        await lockEventFinancialEntryForParticipantMutation(tx, ctx.contaId, eventId, entry.id);
+        entry = await tx.eventFinancialEntry.findFirst({ where: { id: entry.id, eventId, contaId: ctx.contaId } });
+      }
       if (entry?.asaasPaymentId || entry?.paymentProvider === 'ASAAS') {
         throw new EventsError('BAIXA_MANUAL_BLOQUEADA', 'A inscrição possui uma cobrança vinculada e não pode ser baixada manualmente.', 409);
+      }
+      if (entry) {
+        await tx.eventFinancialEntry.updateMany({
+          where: { id: entry.id, contaId: ctx.contaId, eventId },
+          data: { originType: 'EVENT_REGISTRATION' },
+        });
       }
     }
     if (!entryId) {
@@ -520,6 +1010,7 @@ export async function createManualEventParticipantPayment(
           contaId: ctx.contaId,
           eventId,
           type: 'REVENUE',
+          originType: 'EVENT_REGISTRATION',
           category: 'Taxa de inscrição',
           description: 'Taxa de inscrição',
           expectedAmount: decimal(expected),
@@ -537,6 +1028,8 @@ export async function createManualEventParticipantPayment(
       });
     }
 
+    await lockEventFinancialEntryForParticipantMutation(tx, ctx.contaId, eventId, entryId);
+
     const totalsBefore = await loadManualPaymentTotals(tx, ctx.contaId, entryId);
     const remaining = toMoney(Math.max(expected - totalsBefore.net, 0));
     if (amount > remaining) {
@@ -548,6 +1041,7 @@ export async function createManualEventParticipantPayment(
         contaId: ctx.contaId,
         eventId,
         financialEntryId: entryId,
+        idempotencyKey: input.idempotencyKey,
         participantId: participant.id,
         amount: decimal(amount),
         paymentMethod: mapToEventPaymentMethod(input.paymentMethod),
@@ -574,11 +1068,13 @@ export async function createManualEventParticipantPayment(
 
 export async function refundManualEventParticipantPayment(ctx: EventsContext, eventId: string, participantId: string, paymentId: string) {
   return prisma.$transaction(async (tx) => {
+    await lockEventParticipantForFinancialMutation(tx, ctx.contaId, eventId, participantId);
     const payment = await tx.eventFinancialPayment.findFirst({
       where: { id: paymentId, participantId, eventId, contaId: ctx.contaId },
       include: { participant: true },
     });
     if (!payment?.participant) throw new EventsError('PAGAMENTO_NAO_ENCONTRADO', 'Pagamento manual não encontrado.', 404);
+    await lockEventFinancialEntryForParticipantMutation(tx, ctx.contaId, eventId, payment.financialEntryId);
     if (payment.status === 'REFUNDED') throw new EventsError('PAGAMENTO_JA_ESTORNADO', 'Este pagamento já foi estornado.', 409);
 
     const updatedPaymentResult = await tx.eventFinancialPayment.updateMany({
@@ -604,11 +1100,13 @@ export async function refundManualEventParticipantPayment(ctx: EventsContext, ev
 
 export async function deleteManualEventParticipantPayment(ctx: EventsContext, eventId: string, participantId: string, paymentId: string) {
   return prisma.$transaction(async (tx) => {
+    await lockEventParticipantForFinancialMutation(tx, ctx.contaId, eventId, participantId);
     const payment = await tx.eventFinancialPayment.findFirst({
       where: { id: paymentId, participantId, eventId, contaId: ctx.contaId },
       include: { participant: true },
     });
     if (!payment?.participant) throw new EventsError('PAGAMENTO_NAO_ENCONTRADO', 'Pagamento manual não encontrado.', 404);
+    await lockEventFinancialEntryForParticipantMutation(tx, ctx.contaId, eventId, payment.financialEntryId);
     if (!['RECEIVED', 'REFUNDED'].includes(payment.status)) {
       throw new EventsError('EXCLUSAO_PAGAMENTO_BLOQUEADA', 'Este pagamento não pode ser excluído.', 409);
     }
@@ -632,6 +1130,7 @@ export async function deleteManualEventParticipantPayment(ctx: EventsContext, ev
 
 export async function refundManualEventParticipantFee(ctx: EventsContext, eventId: string, participantId: string) {
   return prisma.$transaction(async (tx) => {
+    await lockEventParticipantForFinancialMutation(tx, ctx.contaId, eventId, participantId);
     const participant = await tx.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
       select: { ...eventParticipantScalarSelect, event: true },
@@ -642,49 +1141,71 @@ export async function refundManualEventParticipantFee(ctx: EventsContext, eventI
       throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'A inscrição não possui lançamento financeiro vinculado.', 404);
     }
 
-    const entry = await tx.eventFinancialEntry.findFirst({
+    let entry = await tx.eventFinancialEntry.findFirst({
       where: { id: participant.revenueEntryId, contaId: ctx.contaId },
     });
+    if (!entry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
+    await lockEventFinancialEntryForParticipantMutation(tx, ctx.contaId, eventId, entry.id);
+    entry = await tx.eventFinancialEntry.findFirst({ where: { id: entry.id, eventId, contaId: ctx.contaId } });
     if (!entry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
     if (entry.asaasPaymentId || entry.paymentProvider === 'ASAAS') {
       throw new EventsError('ESTORNO_ASAAS_BLOQUEADO', 'Use o fluxo de estorno da cobrança para concluir esta operação.', 409);
     }
-    if (!['RECEIVED', 'PAID'].includes(entry.status)) {
+    if (!['RECEIVED', 'PAID', 'PARTIALLY_REFUNDED'].includes(entry.status)) {
       throw new EventsError('ESTORNO_BLOQUEADO', 'Somente taxas manuais pagas podem ser estornadas.', 400);
     }
 
-    const refundableAmount = toNumber(entry.actualAmount ?? participant.registrationFeeCharged);
+    let payments = await tx.eventFinancialPayment.findMany({
+      where: { contaId: ctx.contaId, eventId, participantId, financialEntryId: entry.id },
+      orderBy: { paidAt: 'asc' },
+    });
+    if (payments.length === 0) {
+      const historicalAmount = toMoney(entry.actualAmount ?? participant.registrationFeeCharged);
+      if (historicalAmount <= 0) {
+        throw new EventsError('VALOR_INVALIDO', 'Não há valor pago para estornar.', 400);
+      }
+      // Older manual registrations predate the payment ledger. Materialize the
+      // known receipt before refunding so the resulting history remains auditable.
+      const legacyPayment = await tx.eventFinancialPayment.create({
+        data: {
+          contaId: ctx.contaId,
+          eventId,
+          financialEntryId: entry.id,
+          participantId: participant.id,
+          amount: decimal(historicalAmount),
+          paymentMethod: entry.paymentMethod ?? mapToEventPaymentMethod(participant.feePaymentMethod),
+          paidAt: entry.realizedAt ?? participant.createdAt,
+          notes: 'Registro histórico convertido para preservar o histórico de estorno.',
+          status: 'RECEIVED',
+          refundedAmount: decimal(0),
+          netAmount: decimal(historicalAmount),
+          createdByUserId: ctx.userId,
+        },
+      });
+      payments = [legacyPayment];
+    }
+
+    const refundableAmount = toMoney(payments.reduce((sum, payment) => sum + Math.max(toMoney(payment.amount) - toMoney(payment.refundedAmount), 0), 0));
     if (refundableAmount <= 0) {
       throw new EventsError('VALOR_INVALIDO', 'Não há valor pago para estornar.', 400);
     }
 
-    const updatedEntryResult = await tx.eventFinancialEntry.updateMany({
-      where: { id: entry.id, eventId: participant.eventId, contaId: ctx.contaId },
-      data: {
-        status: 'REFUNDED',
-        refundedAt: new Date(),
-        refundedAmount: decimal(refundableAmount),
-        netAmount: decimal(0),
-      },
-    });
-
-    const updatedParticipantResult = await tx.eventParticipant.updateMany({
-      where: { id: participant.id, eventId, contaId: ctx.contaId },
-      data: {
-        isFeePaid: false,
-        feeRefundedAmount: decimal(refundableAmount),
-        feePaidAmount: decimal(0),
-        financialStatusSnapshot: 'ESTORNADO',
-      },
-    });
-    if (updatedEntryResult.count !== 1 || updatedParticipantResult.count !== 1) {
-      throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
+    const refundedAt = new Date();
+    for (const payment of payments) {
+      const amount = toMoney(payment.amount);
+      const alreadyRefunded = toMoney(payment.refundedAmount);
+      if (alreadyRefunded >= amount) continue;
+      await tx.eventFinancialPayment.updateMany({
+        where: { id: payment.id, contaId: ctx.contaId, eventId, participantId, financialEntryId: entry.id },
+        data: {
+          status: 'REFUNDED',
+          refundedAt,
+          refundedAmount: decimal(amount),
+          netAmount: decimal(0),
+        },
+      });
     }
-    const [updatedEntry, updatedParticipant] = await Promise.all([
-      tx.eventFinancialEntry.findFirst({ where: { id: entry.id, eventId, contaId: ctx.contaId } }),
-      tx.eventParticipant.findFirst({ where: { id: participant.id, eventId, contaId: ctx.contaId }, select: eventParticipantScalarSelect }),
-    ]);
-    if (!updatedEntry || !updatedParticipant) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
+    const refreshed = await refreshManualParticipantPaymentSnapshot(tx, { ...participant, contaId: ctx.contaId }, entry.id);
 
     await recordEventAudit(tx, {
       contaId: ctx.contaId,
@@ -694,7 +1215,7 @@ export async function refundManualEventParticipantFee(ctx: EventsContext, eventI
       entityId: entry.id,
       eventId: participant.eventId,
       before: { participant, entry },
-      after: { participant: updatedParticipant, entry: updatedEntry },
+      after: { participant: refreshed.participant, entry: refreshed.entry, totalRefunded: refreshed.totals.refunded },
     });
 
     return { success: true };
@@ -703,6 +1224,7 @@ export async function refundManualEventParticipantFee(ctx: EventsContext, eventI
 
 export async function deleteManualEventParticipantFee(ctx: EventsContext, eventId: string, participantId: string) {
   return prisma.$transaction(async (tx) => {
+    await lockEventParticipantForFinancialMutation(tx, ctx.contaId, eventId, participantId);
     const participant = await tx.eventParticipant.findFirst({
       where: { id: participantId, eventId, contaId: ctx.contaId },
       select: { ...eventParticipantScalarSelect, event: true },
@@ -720,7 +1242,10 @@ export async function deleteManualEventParticipantFee(ctx: EventsContext, eventI
     if (entry.asaasPaymentId || entry.paymentProvider === 'ASAAS') {
       throw new EventsError('EXCLUSAO_ASAAS_BLOQUEADA', 'Não é possível excluir uma cobrança vinculada a um pagamento.', 409);
     }
-    if (participant.isFeePaid || entry.actualAmount || ['RECEIVED', 'PAID', 'REFUNDED', 'PARTIALLY_REFUNDED'].includes(entry.status)) {
+    const paymentHistoryCount = await tx.eventFinancialPayment.count({
+      where: { contaId: ctx.contaId, eventId, participantId, financialEntryId: entry.id },
+    });
+    if (paymentHistoryCount > 0 || participant.isFeePaid || entry.actualAmount || ['RECEIVED', 'PAID', 'REFUNDED', 'PARTIALLY_REFUNDED'].includes(entry.status)) {
       throw new EventsError('EXCLUSAO_BLOQUEADA', 'Não é possível excluir taxa paga ou estornada. Use estorno para preservar o histórico.', 400);
     }
 

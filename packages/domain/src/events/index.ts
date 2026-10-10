@@ -23,11 +23,12 @@ export type EventFinancialEntryStatus =
   | 'EXPECTED'
   | 'PENDING'
   | 'PAID'
+  | 'PARTIALLY_PAID'
   | 'RECEIVED'
   | 'CANCELLED'
   | 'REFUNDED'
   | 'PARTIALLY_REFUNDED';
-export type EventFinancialOriginType = 'MANUAL' | 'TICKET_SALE' | 'COSTUME' | 'COSTUME_ASSIGNMENT';
+export type EventFinancialOriginType = 'MANUAL' | 'EVENT_REGISTRATION' | 'TICKET_SALE' | 'COSTUME' | 'COSTUME_ASSIGNMENT';
 
 export type EventParticipantFinancialStatus =
   | 'ISENTO'
@@ -100,14 +101,14 @@ const COSTUME_ASSIGNMENT_TRANSITIONS: Record<
   EventCostumeAssignmentStatus,
   EventCostumeAssignmentStatus[]
 > = {
-  PENDING: ['ORDERED', 'RECEIVED', 'DELIVERED', 'RETURNED', 'DAMAGED', 'LOST', 'CANCELLED'],
-  ORDERED: ['PENDING', 'RECEIVED', 'DELIVERED', 'RETURNED', 'DAMAGED', 'LOST', 'CANCELLED'],
-  RECEIVED: ['PENDING', 'ORDERED', 'DELIVERED', 'RETURNED', 'DAMAGED', 'LOST', 'CANCELLED'],
-  DELIVERED: ['PENDING', 'ORDERED', 'RECEIVED', 'RETURNED', 'DAMAGED', 'LOST', 'CANCELLED'],
-  RETURNED: ['PENDING', 'ORDERED', 'RECEIVED', 'DELIVERED', 'DAMAGED', 'LOST', 'CANCELLED'],
-  DAMAGED: ['PENDING', 'ORDERED', 'RECEIVED', 'DELIVERED', 'RETURNED', 'LOST', 'CANCELLED'],
-  LOST: ['PENDING', 'ORDERED', 'RECEIVED', 'DELIVERED', 'RETURNED', 'DAMAGED', 'CANCELLED'],
-  CANCELLED: ['PENDING', 'ORDERED', 'RECEIVED', 'DELIVERED', 'RETURNED', 'DAMAGED', 'LOST'],
+  PENDING: ['ORDERED', 'CANCELLED'],
+  ORDERED: ['PENDING', 'RECEIVED', 'CANCELLED'],
+  RECEIVED: ['DELIVERED', 'CANCELLED'],
+  DELIVERED: ['RETURNED', 'DAMAGED', 'LOST', 'CANCELLED'],
+  RETURNED: ['PENDING', 'ORDERED', 'RECEIVED', 'DELIVERED'],
+  DAMAGED: [],
+  LOST: [],
+  CANCELLED: [],
 };
 
 function transitionResult<T extends string>(
@@ -181,6 +182,7 @@ export type EventMetricFinancialEntry = {
 };
 
 export type EventMetricCostumeAssignment = {
+  revenueEntryId?: string | null;
   status: EventCostumeAssignmentStatus;
   billingMode?: EventCostumeAssignmentBillingMode | null;
   chargedValue?: number | string | null;
@@ -396,6 +398,10 @@ export function resolveEventParticipantPayment(input: {
 
       if (PAID_CHARGE_STATUSES.has(status)) {
         paidAmount += value;
+        if (refunded > 0) {
+          refundedAmount += Math.min(refunded, value);
+          hasRefunded = true;
+        }
       } else if (REFUNDED_CHARGE_STATUSES.has(status)) {
         paidAmount += value;
         refundedAmount += refunded > 0 ? refunded : value;
@@ -470,8 +476,9 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   const costumeCostRealizedById = new Map<string, number>();
   for (const entry of financialEntries) {
     if (entry.type !== 'COST' || entry.originType !== 'COSTUME' || !entry.originId) continue;
-    if (entry.status === 'PAID') {
-      costumeCostRealizedById.set(entry.originId, money(entry.actualAmount));
+    if (entry.status === 'PAID' || entry.status === 'PARTIALLY_PAID' || entry.status === 'REFUNDED') {
+      const netPaid = money(Math.max(money(entry.actualAmount) - money(entry.refundedAmount), 0));
+      costumeCostRealizedById.set(entry.originId, money((costumeCostRealizedById.get(entry.originId) ?? 0) + netPaid));
     }
   }
 
@@ -586,10 +593,10 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
       }
       receitaBrutaPrevista += gross;
       descontosPrevistos += discount;
-      if (entry.status === 'EXPECTED' || entry.status === 'PENDING' || entry.status === 'RECEIVED') {
+      if (entry.status === 'EXPECTED' || entry.status === 'PENDING' || entry.status === 'RECEIVED' || entry.status === 'PARTIALLY_PAID') {
         receitaPrevista += expected;
       }
-      if (entry.status === 'RECEIVED' || entry.status === 'PENDING' || entry.status === 'PARTIALLY_REFUNDED') {
+      if (entry.status === 'RECEIVED' || entry.status === 'PENDING' || entry.status === 'PARTIALLY_PAID' || entry.status === 'PARTIALLY_REFUNDED') {
         if (entry.actualAmount != null) {
           receitaRecebidaBruta += actual;
           receitaEstornada += refunded;
@@ -600,14 +607,14 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
 
     if (entry.type === 'COST') {
       const costClass = entry.costClass ?? 'DIRECT';
-      if (entry.status === 'EXPECTED' || entry.status === 'PENDING' || entry.status === 'PAID') {
+      if (entry.status === 'EXPECTED' || entry.status === 'PENDING' || entry.status === 'PAID' || entry.status === 'PARTIALLY_PAID') {
         custoPrevisto += expected;
         if (costClass === 'DIRECT') custoDiretoPrevisto += expected;
         if (costClass === 'INDIRECT') custoIndiretoPrevisto += expected;
         if (costClass === 'FINANCIAL') taxasFinanceirasPrevistas += expected;
         if (costClass === 'TAX') impostosPrevistos += expected;
       }
-      if (entry.status === 'PAID') {
+      if (entry.status === 'PAID' || entry.status === 'PARTIALLY_PAID') {
         custoRealizado += actual;
         if (costClass === 'DIRECT') custoDiretoRealizado += actual;
         if (costClass === 'INDIRECT') custoIndiretoRealizado += actual;
@@ -618,6 +625,11 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     }
   }
 
+  const financialEntryById = new Map(
+    financialEntries
+      .filter((entry): entry is EventMetricFinancialEntry & { id: string } => Boolean(entry.id))
+      .map((entry) => [entry.id, entry]),
+  );
   for (const assignment of costumeAssignments) {
     if (assignment.status === 'CANCELLED') continue;
     if (assignment.billingMode !== 'SEPARATE_CHARGE') continue;
@@ -625,7 +637,17 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     if (value > 0) {
       receitaPrevista += value;
       receitaBrutaPrevista += value;
-      if (assignment.isPaid) {
+      const entry = assignment.revenueEntryId ? financialEntryById.get(assignment.revenueEntryId) : undefined;
+      if (entry) {
+        const actual = money(entry.actualAmount);
+        const refunded = money(entry.refundedAmount);
+        if (actual > 0) {
+          receitaRecebidaBruta += actual;
+          receitaEstornada += refunded;
+          receitaRealizada += Math.max(actual - refunded, 0);
+        }
+      } else if (assignment.isPaid) {
+        // Legacy paid assignments may predate the individual payment ledger.
         receitaRealizada += value;
         receitaRecebidaBruta += value;
       }

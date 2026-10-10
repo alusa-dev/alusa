@@ -4,7 +4,7 @@ import type { FinancialEntryDTO } from '../events-service';
 import type { EventSoftBadgeTone } from '../shared/EventSoftBadge';
 
 export const FINANCIAL_STATUS_OPTIONS: Record<EventFinancialEntryType, EventFinancialEntryStatus[]> = {
-  COST: ['EXPECTED', 'PENDING', 'PAID', 'CANCELLED'],
+  COST: ['EXPECTED', 'PENDING', 'PARTIALLY_PAID', 'PAID', 'CANCELLED'],
   REVENUE: ['EXPECTED', 'PENDING', 'RECEIVED', 'PARTIALLY_REFUNDED', 'REFUNDED', 'CANCELLED'],
 };
 
@@ -12,6 +12,7 @@ export const FINANCIAL_STATUS_TONES: Record<EventFinancialEntryStatus, EventSoft
   EXPECTED: 'neutral',
   PENDING: 'warning',
   PAID: 'success',
+  PARTIALLY_PAID: 'warning',
   RECEIVED: 'success',
   CANCELLED: 'danger',
   REFUNDED: 'neutral',
@@ -29,6 +30,7 @@ export function isFinancialRealized(status: EventFinancialEntryStatus) {
 
 export function getFinancialOriginLabel(entry: FinancialEntryDTO) {
   if (entry.originType === 'MANUAL') return 'Manual';
+  if (entry.originType === 'EVENT_REGISTRATION') return 'Inscrição';
   if (entry.originType === 'TICKET_SALE') return 'Venda de ingresso';
   if (entry.originType === 'COSTUME_ASSIGNMENT') return 'Vínculo de figurino';
   if (entry.originType === 'COSTUME') return entry.originId?.startsWith('loss:') ? 'Prejuízo de figurino' : 'Figurino';
@@ -36,6 +38,7 @@ export function getFinancialOriginLabel(entry: FinancialEntryDTO) {
 }
 
 export function getFinancialOriginActionLabel(entry: FinancialEntryDTO) {
+  if (entry.originType === 'EVENT_REGISTRATION') return 'Ajuste pela inscrição do evento';
   if (entry.originType === 'TICKET_SALE') return 'Ajuste pela venda de ingresso';
   if (entry.originType === 'COSTUME_ASSIGNMENT') return 'Ajuste pelo vínculo do figurino';
   if (entry.originType === 'COSTUME') return entry.originId?.startsWith('loss:')

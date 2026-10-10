@@ -35,6 +35,7 @@ import {
 } from '../events-service';
 import { EventField as Field } from '../shared/EventField';
 import { eventQueryKeys } from '../shared/event-query-keys';
+import { handleFormDataSubmit } from '../shared/event-form-utils';
 import { PRIMARY_BUTTON_CLASS } from '../shared/event-form-utils';
 import { parseCurrencyInput } from '../shared/event-formatters';
 import { ParticipantBillingFields, type ParticipantBillingMethod, type ParticipantChargeType, type ParticipantDiscountType, type ParticipantNotificationChannel } from './ParticipantBillingFields';
@@ -328,7 +329,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
         )}
         aria-busy={registerMutation.isPending}
       >
-        <form key={open ? 'open' : 'closed'} action={handleRegisterParticipant} inert={registerMutation.isPending || undefined} className="flex h-full min-h-0 flex-col overflow-hidden">
+        <form key={open ? 'open' : 'closed'} onSubmit={(event) => handleFormDataSubmit(event, handleRegisterParticipant)} inert={registerMutation.isPending || undefined} className="flex h-full min-h-0 flex-col overflow-hidden">
           <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-4 pr-14 max-md:pb-4 max-md:pl-4 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
             <DialogTitle className="text-xl font-semibold tracking-tight text-slate-900">Inscrever aluno no evento</DialogTitle>
             <DialogDescription className="mt-2 max-w-2xl text-sm text-slate-600">Selecione um aluno cadastrado e especifique a taxa cobrada.</DialogDescription>
@@ -521,7 +522,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
               Cancelar
             </Button>
             <Button type="submit" disabled={registerMutation.isPending} variant="wizardPrimary" className="h-10 min-h-10 w-full min-w-0 rounded-[10px] bg-[#512a82] px-5 font-normal text-white shadow-none hover:bg-[#512a82] md:w-[160px]">
-              Confirmar inscrição
+              {registerMutation.isPending ? 'Inscrevendo...' : 'Confirmar inscrição'}
             </Button>
           </DialogFooter>
         </form>

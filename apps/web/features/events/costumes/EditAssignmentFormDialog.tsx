@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -22,10 +23,21 @@ import { updateCostumeAssignment, type CostumeAssignmentDTO, type CostumeDTO, ty
 import { EventField as Field } from '../shared/EventField';
 import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
 import { eventQueryKeys } from '../shared/event-query-keys';
-import { FILTER_INPUT_CLASS, nullableString } from '../shared/event-form-utils';
+import { FILTER_INPUT_CLASS, handleFormDataSubmit, nullableString } from '../shared/event-form-utils';
 import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
 import { mergeScopedPersonOptions } from '../shared/event-scoped-resource-options';
 import { COSTUME_BILLING_OPTIONS } from './costume-billing-ui';
+
+const NEXT_ASSIGNMENT_STATUSES: Record<CostumeAssignmentDTO['status'], CostumeAssignmentDTO['status'][]> = {
+  PENDING: ['ORDERED', 'CANCELLED'],
+  ORDERED: ['PENDING', 'RECEIVED', 'CANCELLED'],
+  RECEIVED: ['DELIVERED', 'CANCELLED'],
+  DELIVERED: ['RETURNED', 'DAMAGED', 'LOST', 'CANCELLED'],
+  RETURNED: ['PENDING', 'ORDERED', 'RECEIVED', 'DELIVERED'],
+  DAMAGED: [],
+  LOST: [],
+  CANCELLED: [],
+};
 
 export function EditAssignmentFormDialog({
   eventId,
@@ -61,7 +73,9 @@ export function EditAssignmentFormDialog({
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.assignments(eventId) }),
+        queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) }),
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) }),
+        queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] }),
       ]);
       toast.success({ title: 'Vínculo atualizado', description: 'O vínculo do figurino foi atualizado com sucesso.' });
       onOpenChange(false);
@@ -86,13 +100,13 @@ export function EditAssignmentFormDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (nextOpen || !mutation.isPending) onOpenChange(nextOpen); }}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Editar vínculo</DialogTitle>
           <DialogDescription>Atualize o vínculo, entrega e forma de cobrança.</DialogDescription>
         </DialogHeader>
-        <form action={submit} className="grid gap-4">
+        <form onSubmit={(event) => handleFormDataSubmit(event, submit)} className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Figurino">
               <NativeSelect
@@ -111,14 +125,6 @@ export function EditAssignmentFormDialog({
                 options={mergeScopedPersonOptions(scopedResources?.alunos ?? [], assignment.aluno)}
               />
             </Field>
-            <Field label="Turma">
-              <NativeSelect
-                name="turmaId"
-                defaultValue={assignment.turma?.id || ""}
-                placeholder="Opcional"
-                options={mergeScopedPersonOptions(scopedResources?.turmas ?? [], assignment.turma)}
-              />
-            </Field>
             <Field label="Tamanho definido">
               <Input name="definedSize" defaultValue={assignment.definedSize || ""} className={FILTER_INPUT_CLASS} />
             </Field>
@@ -126,7 +132,7 @@ export function EditAssignmentFormDialog({
               <NativeSelect
                 name="status"
                 defaultValue={assignment.status}
-                options={Object.entries(EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS).map(([value, label]) => ({ value, label }))}
+                options={[assignment.status, ...NEXT_ASSIGNMENT_STATUSES[assignment.status]].map((value) => ({ value, label: EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS[value] }))}
               />
             </Field>
             <Field label="Forma de cobrança">
@@ -158,7 +164,7 @@ export function EditAssignmentFormDialog({
             <Textarea name="notes" defaultValue={assignment.notes || ""} className="rounded-xl border-slate-200" />
           </Field>
           <DialogFooter>
-            <Button type="submit">Salvar alterações</Button>
+            <Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando vínculo" size="sm" className="text-white" /></> : 'Salvar alterações'}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

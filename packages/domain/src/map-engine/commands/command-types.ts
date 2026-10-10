@@ -167,6 +167,7 @@ export type MapCommand =
         seats: EventSeatDTO[];
         sections: EventMapSectionDTO[];
         levels: EventMapLevelDTO[];
+        document?: EventMapDocument | null;
       };
     }
   | {

@@ -102,7 +102,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
   });
 
   const publishMutation = useMutation({
-    mutationFn: (mapId: string) => publishEventMap(event.id, mapId),
+    mutationFn: (map: EventMapDTO) => publishEventMap(event.id, map.id, { expectedUpdatedAt: map.updatedAt }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: eventMapQueryKeys.maps(event.id) });
       toast.success({
@@ -341,7 +341,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
           cancelLabel="Cancelar"
           loadingLabel={publishDialog.loadingLabel}
           onConfirm={async () => {
-            await publishMutation.mutateAsync(mapToPublish.id);
+            await publishMutation.mutateAsync(mapToPublish);
           }}
         />
       ) : null}

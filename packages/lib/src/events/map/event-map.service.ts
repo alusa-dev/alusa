@@ -534,6 +534,21 @@ export async function createEventMap(ctx: EventsContext, eventId: string, input:
 }
 
 function validateDraftReferences(input: UpdateEventMapDraftInput) {
+  const assertUniqueIds = (items: Array<{ id: string }>, label: string) => {
+    const ids = new Set<string>();
+    for (const item of items) {
+      if (ids.has(item.id)) {
+        throw new EventsError('MAPA_REFERENCIA_INVALIDA', `O identificador de ${label} ${item.id} está duplicado.`, 422);
+      }
+      ids.add(item.id);
+    }
+  };
+
+  assertUniqueIds(input.levels, 'prancheta');
+  assertUniqueIds(input.sections, 'setor');
+  assertUniqueIds(input.objects, 'objeto');
+  assertUniqueIds(input.seats, 'assento');
+
   const levelIds = new Set(input.levels.map((level) => level.id));
   const sectionIds = new Set(input.sections.map((section) => section.id));
   const objectIds = new Set(input.objects.map((object) => object.id));
@@ -809,15 +824,24 @@ export async function updateEventMapDraft(
   input: UpdateEventMapDraftInput,
 ) {
   return prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT "id" FROM "EventMap"
+      WHERE "id" = ${mapId} AND "contaId" = ${ctx.contaId} AND "eventId" = ${eventId}
+      FOR UPDATE
+    `);
+    if (locked.length === 0) throw new EventsError('MAPA_NAO_ENCONTRADO', 'Mapa do evento não encontrado.', 404);
     const current = await tx.eventMap.findFirst({ where: { id: mapId, contaId: ctx.contaId, eventId } });
     if (!current) throw new EventsError('MAPA_NAO_ENCONTRADO', 'Mapa do evento não encontrado.', 404);
     assertMapEditable(current);
+    if (current.updatedAt.getTime() !== new Date(input.expectedUpdatedAt).getTime()) {
+      throw new EventsError('CONFLITO_RASCUNHO_MAPA', 'Este mapa foi alterado por outra pessoa. Recarregue o mapa antes de salvar suas alterações.', 409);
+    }
     const previousSeats = await tx.eventSeat.findMany({
       where: { contaId: ctx.contaId, eventMapId: mapId },
       select: { id: true, status: true, publicVisible: true, accessible: true },
     });
     const materializedInput = materializeDocumentDraft(input, previousSeats);
-    if (!materializedInput.document) validateDraftReferences(materializedInput);
+    validateDraftReferences(materializedInput);
     const mapOwnedInput = await ensureMapOwnedLots(tx, ctx, eventId, mapId, materializedInput);
     await assertLotsBelongToEvent(tx, ctx, eventId, mapId, mapOwnedInput);
 
@@ -1029,9 +1053,23 @@ export async function updateEventMapReferenceChart(
   });
 }
 
-export async function publishEventMap(ctx: EventsContext, eventId: string, mapId: string) {
+export async function publishEventMap(
+  ctx: EventsContext,
+  eventId: string,
+  mapId: string,
+  expectedUpdatedAt: string,
+) {
   return prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT "id" FROM "EventMap"
+      WHERE "id" = ${mapId} AND "contaId" = ${ctx.contaId} AND "eventId" = ${eventId}
+      FOR UPDATE
+    `);
+    if (locked.length === 0) throw new EventsError('MAPA_NAO_ENCONTRADO', 'Mapa do evento não encontrado.', 404);
     const map = await getMapRecordOrThrow(tx, ctx.contaId, eventId, mapId);
+    if (map.updatedAt.getTime() !== new Date(expectedUpdatedAt).getTime()) {
+      throw new EventsError('CONFLITO_RASCUNHO_MAPA', 'Este mapa foi alterado por outra pessoa. Recarregue o mapa antes de publicar.', 409);
+    }
     const transition = validateEventMapStatusTransition(map.status, 'PUBLISHED');
     if (!transition.ok) throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
 
@@ -1049,6 +1087,36 @@ export async function publishEventMap(ctx: EventsContext, eventId: string, mapId
 
     if (!publishValidation.ok) {
       throw new EventsError('MAPA_NAO_PUBLICAVEL', publishValidation.errors.join(' '), 422);
+    }
+
+    const heldReservations = await tx.eventMapReservation.count({
+      where: {
+        contaId: ctx.contaId,
+        eventMapId: mapId,
+        status: 'HELD',
+      },
+    });
+    if (heldReservations > 0) {
+      throw new EventsError(
+        'MAPA_COM_RESERVAS_ATIVAS',
+        'Há assentos reservados ou aguardando liberação neste mapa. Aguarde a conclusão ou a reconciliação da reserva antes de publicar uma nova versão.',
+        409,
+      );
+    }
+
+    const pendingOrders = await tx.eventMapOrder.count({
+      where: {
+        contaId: ctx.contaId,
+        eventMapId: mapId,
+        status: 'PAYMENT_PENDING',
+      },
+    });
+    if (pendingOrders > 0) {
+      throw new EventsError(
+        'MAPA_COM_PEDIDOS_PENDENTES',
+        'Há pedidos aguardando a confirmação ou reconciliação do pagamento. Resolva essas cobranças antes de publicar uma nova versão do mapa.',
+        409,
+      );
     }
 
     const nextVersion = (map.versions[0]?.version ?? 0) + 1;
@@ -1531,7 +1599,7 @@ function mapPublicSeat(seat: EventMapPublicSeatRecord) {
   };
 }
 
-function snapshotRecord(snapshot: Prisma.JsonValue) {
+function snapshotRecord(snapshot: unknown) {
   return typeof snapshot === 'object' && snapshot !== null && !Array.isArray(snapshot)
     ? (snapshot as Record<string, unknown>)
     : {};
@@ -1549,6 +1617,15 @@ export async function getPublicEventMap(publicSlug: string) {
     orderBy: [{ sectionName: 'asc' }, { rowLabel: 'asc' }, { seatNumber: 'asc' }, { displayLabel: 'asc' }],
   });
   const snapshot = snapshotRecord(version.snapshot);
+  const snapshotEvent = snapshotRecord(snapshot.event);
+  const snapshotDate = (value: unknown, fallback: Date | null) => {
+    if (typeof value === 'string' && !Number.isNaN(Date.parse(value))) return new Date(value);
+    return fallback;
+  };
+  const publishedStartsAt = snapshotDate(snapshot.startsAt, map.startsAt ?? map.event.startsAt)!;
+  const publishedEndsAt = Object.hasOwn(snapshot, 'endsAt')
+    ? (snapshot.endsAt === null ? null : snapshotDate(snapshot.endsAt, null))
+    : map.endsAt;
 
   return {
     publicSlug: map.publicSlug!,
@@ -1556,15 +1633,19 @@ export async function getPublicEventMap(publicSlug: string) {
     mapId: map.id,
     versionId: version.id,
     version: version.version,
-    name: map.name,
+    name: typeof snapshot.name === 'string' ? snapshot.name : map.name,
     publishedAt: version.publishedAt.toISOString(),
     event: {
       id: map.event.id,
-      name: map.event.name,
-      startsAt: (map.startsAt ?? map.event.startsAt).toISOString(),
-      endsAt: map.endsAt?.toISOString() ?? null,
-      locationName: map.locationName ?? map.event.locationName,
-      locationAddress: map.locationAddress ?? map.event.locationAddress,
+      name: typeof snapshotEvent.name === 'string' ? snapshotEvent.name : map.event.name,
+      startsAt: publishedStartsAt.toISOString(),
+      endsAt: publishedEndsAt?.toISOString() ?? null,
+      locationName: typeof snapshot.locationName === 'string' || snapshot.locationName === null
+        ? snapshot.locationName
+        : map.locationName ?? map.event.locationName,
+      locationAddress: typeof snapshot.locationAddress === 'string' || snapshot.locationAddress === null
+        ? snapshot.locationAddress
+        : map.locationAddress ?? map.event.locationAddress,
       status: map.event.status,
     },
     levels: Array.isArray(snapshot.levels) ? snapshot.levels : [],
@@ -1585,7 +1666,18 @@ export type PublicEventMapDTO = Awaited<ReturnType<typeof getPublicEventMap>>;
 
 export async function reservePublicEventMapSeats(publicSlug: string, input: PublicSeatReservationInput) {
   return prisma.$transaction(async (tx) => {
+    const initialMap = await getPublicMapShellOrThrow(tx, publicSlug);
+    const expectedVersionId = initialMap.publishedVersionId;
+    const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT "id" FROM "EventMap"
+      WHERE "id" = ${initialMap.id} AND "contaId" = ${initialMap.contaId}
+      FOR UPDATE
+    `);
+    if (locked.length === 0) throw new EventsError('MAPA_NAO_ENCONTRADO', 'Mapa do evento não encontrado.', 404);
     const map = await getPublicMapShellOrThrow(tx, publicSlug);
+    if (map.id !== initialMap.id || map.publishedVersionId !== expectedVersionId || !map.publicEnabled) {
+      throw new EventsError('MAPA_VERSAO_ALTERADA', 'A versão pública do mapa mudou. Atualize a página e selecione os assentos novamente.', 409);
+    }
     assertEventTicketSalesOpen(map.event);
 
     const versionId = map.publishedVersionId!;

@@ -87,6 +87,7 @@ export async function reconcileEventMapOrderFinancialStateFromAsaas(params: Even
         status: { in: ['PAYMENT_PENDING', 'EXPIRED', 'CANCELLED', 'CONFIRMED'] },
       },
       include: {
+        map: { select: { publishedVersionId: true } },
         reservation: { include: { seats: { include: { publicSeat: { select: { status: true } } } } } },
       },
     });
@@ -95,15 +96,37 @@ export async function reconcileEventMapOrderFinancialStateFromAsaas(params: Even
       isTicketPaymentBlocked(order.paymentStatus)
       && !mayResolveChargebackPaymentHold(order.paymentStatus, params.chargebackStatus)
     ) return { orderId: order.id, status: order.status, financialOnly: true, blocked: true };
+    const releasedOrder = order.status === 'EXPIRED' || order.status === 'CANCELLED';
+    const stalePublishedVersion = order.versionId !== order.map.publishedVersionId;
     if (order.status === 'CONFIRMED' && order.ticketFulfillmentStatus === 'REQUIRES_RECONCILIATION') {
+      if (stalePublishedVersion) {
+        const refundValue = typeof params.paidAmount === 'number' && Number.isFinite(params.paidAmount)
+          ? toMoney(params.paidAmount)
+          : toMoney(order.totalAmount);
+        await tx.financeWebhookSideEffectOutbox.createMany({
+          data: {
+            contaId: params.contaId,
+            effectType: 'EVENT_MAP_LATE_PAYMENT_REFUND',
+            dedupeKey: `${params.contaId}:EVENT_MAP_LATE_PAYMENT_REFUND:${order.id}`,
+            payload: toAuditJson({
+              orderId: order.id,
+              asaasPaymentId: params.asaasPaymentId,
+              value: refundValue,
+              description: `Estorno por indisponibilidade dos assentos - pedido ${order.id}`,
+              requestState: 'NOT_SUBMITTED',
+            }),
+            status: 'PENDING',
+          },
+          skipDuplicates: true,
+        });
+      }
       return { orderId: order.id, status: 'CONFIRMED', financialOnly: true };
     }
 
-    const releasedOrder = order.status === 'EXPIRED' || order.status === 'CANCELLED';
     const seatsStillFree = order.reservation?.seats.length
       && order.reservation.seats.every((seat) => seat.publicSeat.status === 'AVAILABLE');
-    if (releasedOrder && seatsStillFree) return null;
-    const cannotFulfillLatePayment = releasedOrder && !seatsStillFree;
+    if (releasedOrder && seatsStillFree && !stalePublishedVersion) return null;
+    const cannotFulfillLatePayment = stalePublishedVersion || (releasedOrder && !seatsStillFree);
 
     const update = await tx.eventMapOrder.updateMany({
       where: { id: order.id, contaId: params.contaId, status: order.status },

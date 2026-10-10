@@ -10,6 +10,23 @@ import { applyCanvasTransformPayload } from '../commit/apply-canvas-transform';
 import { buildGroupDragCommit } from '../commit/group-drag-commit';
 import type { GroupDragState } from './use-drag-session';
 
+export function buildParametricDragNodeIds(
+  map: EventMapDTO | null,
+  items: Array<Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>>,
+) {
+  if (!map?.document) return [];
+  const rows = items.flatMap((item) => {
+    if (item.type === 'seatblock') return findMapBlockOwner(map.document!, item.id)?.block.rows ?? [];
+    return map.document!.sections.flatMap((section) => section.blocks.flatMap((block) => block.rows)).filter((row) => row.id === item.id);
+  });
+  const seatIds = new Set(rows.flatMap((row) => row.seatIds));
+  return [...new Set([
+    ...map.seats.filter((seat) => seatIds.has(seat.id)).map((seat) => `node-${seat.id}`),
+    ...rows.flatMap((row) => [`node-seatrow-line-${row.id}`, `node-seatrow-label-${row.id}`, `node-seatrow-${row.id}`]),
+    ...items.map((item) => `node-${item.type}-${item.id}`),
+  ])];
+}
+
 export function useMapNodeDragSession({
   activeLevelId,
   transformerRef,
@@ -97,15 +114,19 @@ export function useMapNodeDragSession({
     if (!drag) return;
     committedGroupDragNodeIdsRef.current = new Set(drag.origin.keys());
     if (drag.parametricItems?.length) {
-        useEventMapEditorStore.getState().transformParametricSelections(drag.parametricItems.map((item) => ({ item, matrix: [1, 0, 0, 1, drag.delta.x, drag.delta.y] })));
-        for (const [nodeId, origin] of drag.origin) {
-          if (nodeId.startsWith('node-seatrow-line-') || nodeId.startsWith('node-seatrow-label-') || nodeId.startsWith('node-seatrow-') || nodeId.startsWith('node-seatblock-')) {
-            drag.nodes.get(nodeId)?.position(origin);
-          }
+      const generic = buildGroupDragCommit({ drag, map }).payload;
+      useEventMapEditorStore.getState().transformParametricSelections(
+        drag.parametricItems.map((item) => ({ item, matrix: [1, 0, 0, 1, drag.delta.x, drag.delta.y] })),
+        generic ?? undefined,
+      );
+      for (const [nodeId, origin] of drag.origin) {
+        if (nodeId.startsWith('node-seatrow-line-') || nodeId.startsWith('node-seatrow-label-') || nodeId.startsWith('node-seatrow-') || nodeId.startsWith('node-seatblock-')) {
+          drag.nodes.get(nodeId)?.position(origin);
         }
-      } else {
-        applyCanvasTransformPayload(buildGroupDragCommit({ drag, map }).payload);
       }
+    } else {
+      applyCanvasTransformPayload(buildGroupDragCommit({ drag, map }).payload);
+    }
   }, [committedGroupDragNodeIdsRef, groupDragRef, map]);
 
   const handleNodeDragStart = useCallback(
@@ -133,6 +154,12 @@ export function useMapNodeDragSession({
         ))
       );
       const isDraggingExistingMultiSelection = selectedItems.length > 1 && itemIsPartOfSelection;
+      const selectedParametricItems = currentSelection.filter(
+        (entry): entry is Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }> => entry.type === 'seatblock' || entry.type === 'seatrow',
+      ).filter((entry, index, entries) => entry.type !== 'seatrow' || !entries.some((candidate) => {
+        if (candidate.type !== 'seatblock' || !currentState.map?.document) return false;
+        return findMapBlockOwner(currentState.map.document, candidate.id)?.block.rows.some((row) => row.id === entry.id) ?? false;
+      }) || entries.findIndex((candidate) => candidate.type === entry.type && candidate.id === entry.id) === index);
       const shouldDragSeatSection =
         !isDraggingExistingMultiSelection && item?.type === 'seat' && item.id !== individualSeatDragId && Boolean(draggedSeat?.sectionId);
       const shouldDragSeatBlock =
@@ -144,7 +171,7 @@ export function useMapNodeDragSession({
       const parametricItem = shouldDragSeatBlock && draggedSeatOwner
         ? selectedRow ?? { type: 'seatblock' as const, id: draggedSeatOwner.block.id }
         : undefined;
-      const selectedParametricItems = shouldDragSeatBlock && draggedSeatOwner
+      const implicitParametricItems = shouldDragSeatBlock && draggedSeatOwner
         ? currentSelection.length > 1 && currentSelection.every((entry) => entry.type === 'seatblock') && currentSelection.some((entry) => entry.id === draggedSeatOwner.block.id)
           ? currentSelection.filter((entry): entry is Extract<MapSelectionItem, { type: 'seatblock' }> => entry.type === 'seatblock')
           : [parametricItem!]
@@ -155,12 +182,25 @@ export function useMapNodeDragSession({
           : shouldDragSeatSection && draggedSeat?.sectionId
             ? getSectionGroupNodeIds(draggedSeat.sectionId)
             : [];
-      const resolvedNodeIds = blockNodeIds.length > 0 ? blockNodeIds : sectionNodeIds.length > 0 ? sectionNodeIds : dragTarget.nodeIds;
-      const preserveSelectedBlocks = Boolean(selectedParametricItems && selectedParametricItems.length > 1);
+      const dragParametricItems = isDraggingExistingMultiSelection
+        ? selectedParametricItems
+        : implicitParametricItems ?? [];
+      const parametricNodeIds = buildParametricDragNodeIds(currentState.map, dragParametricItems);
+      const coveredSeatIds = new Set(dragParametricItems.flatMap((entry) => {
+        if (!currentState.map?.document) return [];
+        if (entry.type === 'seatblock') return findMapBlockOwner(currentState.map.document, entry.id)?.block.rows.flatMap((row) => row.seatIds) ?? [];
+        const owner = currentState.map.document.sections.flatMap((section) => section.blocks.flatMap((block) => block.rows)).find((row) => row.id === entry.id);
+        return owner?.seatIds ?? [];
+      }));
+      const regularNodeIds = dragTarget.nodeIds.filter((id) => !coveredSeatIds.has(id.replace(/^node-/, '')));
+      const resolvedNodeIds = isDraggingExistingMultiSelection && dragParametricItems.length > 0
+        ? [...new Set([...regularNodeIds, ...parametricNodeIds])]
+        : blockNodeIds.length > 0 ? blockNodeIds : sectionNodeIds.length > 0 ? sectionNodeIds : dragTarget.nodeIds;
+      const preserveSelectedBlocks = Boolean(implicitParametricItems && implicitParametricItems.length > 1);
       const resolvedSelectionItems = isDraggingExistingMultiSelection
         ? selectedItems
         : preserveSelectedBlocks
-        ? selectedParametricItems!
+        ? implicitParametricItems!
         : !isDraggingExistingMultiSelection && item?.type === 'section'
           ? [item]
           : shouldDragSeatBlock && draggedSeatOwner
@@ -173,7 +213,7 @@ export function useMapNodeDragSession({
         resolvedSelectionItems.length !== selectableSelection.length ||
         !resolvedSelectionItems.every((entry) => isItemSelected(currentSelection, entry));
       if (selectionChanged) setSelection(resolvedSelectionItems);
-      beginGroupDrag(nodeId, resolvedNodeIds, selectedParametricItems);
+      beginGroupDrag(nodeId, resolvedNodeIds, dragParametricItems.length > 0 ? dragParametricItems : undefined);
     },
     [
       activeLevelId,

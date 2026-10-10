@@ -8,6 +8,7 @@ import {
 } from '@alusa/domain';
 
 import { prisma } from '../../prisma';
+import { lockEventMapForReservation, lockPublicEventMapReservation } from './event-map-order-operations';
 export { releaseSeatsForTicketSale } from './event-map-order-operations';
 import { assertEventScopedTicketSaleLinks } from '../event-participant-scope';
 import {
@@ -138,26 +139,38 @@ function mapStaffSeat(seat: {
   };
 }
 
-async function expireStaffReservations(db: DbClient, contaId: string, now = new Date()) {
-  const expired = await db.eventMapReservation.findMany({
+async function expireStaffReservations(tx: Prisma.TransactionClient, contaId: string, eventMapId: string, now = new Date()) {
+  const candidates = await tx.eventMapReservation.findMany({
     where: {
       contaId,
+      eventMapId,
       source: 'STAFF_MANUAL',
       status: 'HELD',
       expiresAt: { lt: now },
     },
+    select: { id: true },
+    orderBy: { id: 'asc' },
+  });
+  if (candidates.length === 0) return;
+
+  for (const reservation of candidates) {
+    await lockPublicEventMapReservation(tx, { contaId, reservationId: reservation.id });
+  }
+  const expired = await tx.eventMapReservation.findMany({
+    where: { contaId, eventMapId, id: { in: candidates.map((reservation) => reservation.id) }, source: 'STAFF_MANUAL', status: 'HELD', expiresAt: { lt: now } },
     include: { seats: { select: { publicSeatId: true } } },
+    orderBy: { id: 'asc' },
   });
   if (expired.length === 0) return;
 
   const expiredSeatIds = [...new Set(expired.flatMap((reservation) => reservation.seats.map((seat) => seat.publicSeatId)))];
   if (expiredSeatIds.length > 0) {
-    await db.eventMapPublicSeat.updateMany({
+    await tx.eventMapPublicSeat.updateMany({
       where: { contaId, id: { in: expiredSeatIds }, status: 'HELD' },
       data: { status: 'AVAILABLE' },
     });
   }
-  await db.eventMapReservation.updateMany({
+  await tx.eventMapReservation.updateMany({
     where: { contaId, id: { in: expired.map((reservation) => reservation.id) }, status: 'HELD' },
     data: { status: 'EXPIRED', checkoutKey: null },
   });
@@ -190,6 +203,18 @@ async function getPublishedStaffMapOrThrow(db: DbClient, contaId: string, eventI
     throw new EventsError('EVENTO_SEM_ASSENTOS_NUMERADOS', 'Este evento não usa assentos numerados.', 409);
   }
   return map;
+}
+
+async function getLockedPublishedStaffMapOrThrow(tx: Prisma.TransactionClient, contaId: string, eventId: string, mapId: string) {
+  const initial = await getPublishedStaffMapOrThrow(tx, contaId, eventId, mapId);
+  if (!await lockEventMapForReservation(tx, { contaId, eventMapId: mapId })) {
+    throw new EventsError('MAPA_NAO_PUBLICADO', 'Mapa publicado não encontrado. Atualize a tela e tente novamente.', 409);
+  }
+  const current = await getPublishedStaffMapOrThrow(tx, contaId, eventId, mapId);
+  if (current.publishedVersionId !== initial.publishedVersionId) {
+    throw new EventsError('MAPA_VERSAO_ALTERADA', 'A versão do mapa mudou. Atualize a tela antes de reservar assentos.', 409);
+  }
+  return current;
 }
 
 function mapStaffReservationResult(
@@ -309,9 +334,9 @@ export async function reserveStaffEventMapSeats(
   input: { seatIds: string[]; holdToken?: string | null },
 ) {
   return prisma.$transaction(async (tx) => {
-    const map = await getPublishedStaffMapOrThrow(tx, ctx.contaId, eventId, mapId);
+    const map = await getLockedPublishedStaffMapOrThrow(tx, ctx.contaId, eventId, mapId);
     assertEventTicketSalesOpen(map.event);
-    await expireStaffReservations(tx, ctx.contaId);
+    await expireStaffReservations(tx, ctx.contaId, mapId);
     const versionId = map.publishedVersionId!;
 
     if (input.holdToken) {
@@ -403,6 +428,13 @@ export async function reserveStaffEventMapSeats(
 
 export async function releaseStaffEventMapReservation(ctx: EventsContext, eventId: string, holdToken: string) {
   return prisma.$transaction(async (tx) => {
+    const candidate = await tx.eventMapReservation.findFirst({
+      where: { contaId: ctx.contaId, eventId, holdToken, source: 'STAFF_MANUAL', status: 'HELD' },
+      select: { id: true, eventMapId: true },
+    });
+    if (!candidate) return { released: false };
+    if (!await lockEventMapForReservation(tx, { contaId: ctx.contaId, eventMapId: candidate.eventMapId })) return { released: false };
+    await lockPublicEventMapReservation(tx, { contaId: ctx.contaId, reservationId: candidate.id });
     const reservation = await tx.eventMapReservation.findFirst({
       where: {
         contaId: ctx.contaId,
@@ -436,7 +468,16 @@ export async function releaseStaffEventMapReservation(ctx: EventsContext, eventI
 
 export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTicketSaleInput & { holdToken: string }) {
   return prisma.$transaction(async (tx) => {
-    await expireStaffReservations(tx, ctx.contaId);
+    const candidate = await tx.eventMapReservation.findFirst({
+      where: { contaId: ctx.contaId, eventId: input.eventId, holdToken: input.holdToken, source: 'STAFF_MANUAL', status: 'HELD' },
+      select: { id: true, eventMapId: true },
+    });
+    if (!candidate) throw new EventsError('RESERVA_INVALIDA', 'Reserva de assentos não encontrada ou expirada.', 409);
+    if (!await lockEventMapForReservation(tx, { contaId: ctx.contaId, eventMapId: candidate.eventMapId })) {
+      throw new EventsError('RESERVA_INVALIDA', 'Mapa da reserva não encontrado.', 409);
+    }
+    await expireStaffReservations(tx, ctx.contaId, candidate.eventMapId);
+    await lockPublicEventMapReservation(tx, { contaId: ctx.contaId, reservationId: candidate.id });
 
     const reservation = await tx.eventMapReservation.findFirst({
       where: {

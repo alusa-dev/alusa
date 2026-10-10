@@ -4,7 +4,7 @@ import { eventParticipantScalarSelect, mapFinancialEntry, mapTicketSale } from '
 import { recordEventAudit } from './event-audit.service';
 export { eventParticipantScalarSelect, mapFinancialEntry, mapTicketSale } from './event-financial-read-models';
 export { recordEventAudit } from './event-audit.service';
-import { Prisma, PrismaClient, EventFinancialEntryStatus } from '@prisma/client';
+import { Prisma, PrismaClient, EventFinancialEntryStatus, type EventFinancialEntry } from '@prisma/client';
 
 import {
   EventsError,
@@ -129,14 +129,15 @@ type ParticipantPaymentSnapshot = {
   totalRefunded: number;
   netPaid: number;
   realizedAt: Date | null;
-  entryStatus: 'PENDING' | 'RECEIVED' | 'CANCELLED' | 'REFUNDED' | 'PARTIALLY_REFUNDED';
+  entryStatus: 'PENDING' | 'RECEIVED' | 'CANCELLED' | 'REFUNDED' | 'PARTIALLY_REFUNDED' | 'PARTIALLY_PAID';
 };
 
-function financialEntryStatusFromParticipantStatus(status: string): ParticipantPaymentSnapshot['entryStatus'] {
+export function financialEntryStatusFromParticipantStatus(status: string): ParticipantPaymentSnapshot['entryStatus'] {
   if (status === 'QUITADO') return 'RECEIVED';
   if (status === 'CANCELADO') return 'CANCELLED';
   if (status === 'ESTORNADO') return 'REFUNDED';
   if (status === 'ESTORNADO_PARCIAL') return 'PARTIALLY_REFUNDED';
+  if (status === 'EM_DIA' || status === 'PARCIAL') return 'PARTIALLY_PAID';
   return 'PENDING';
 }
 
@@ -161,7 +162,7 @@ function participantDueDate(entry: any, charges: any[]) {
   return dates.sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
 }
 
-function applyParticipantPaymentSnapshotsToEntries<T extends { id: string; status: any; actualAmount: any; realizedAt?: Date | null; refundedAmount?: any; netAmount?: any }>(
+export function applyParticipantPaymentSnapshotsToEntries<T extends { id: string; status: any; actualAmount: any; realizedAt?: Date | null; refundedAmount?: any; netAmount?: any }>(
   entries: T[],
   snapshots: Map<string, ParticipantPaymentSnapshot> | undefined,
 ): T[] {
@@ -215,6 +216,7 @@ function buildMetrics(
       category: entry.category,
     })),
     costumeAssignments: record.assignments.map((assignment) => ({
+      revenueEntryId: assignment.revenueEntryId,
       status: assignment.status,
       billingMode: assignment.billingMode,
       chargedValue: assignment.chargedValue == null ? null : toMoney(assignment.chargedValue),
@@ -1253,7 +1255,8 @@ export function mapCostume(costume: Prisma.EventCostumeGetPayload<{ include: { e
     supplier: costume.supplier,
     quantity: costume.quantity,
     notes: costume.notes,
-    assignmentsCount: costume.assignments.length,
+    assignmentsCount: costume.assignments.filter((assignment) => assignment.status !== 'CANCELLED').length,
+    canDelete: costume.assignments.every((assignment) => assignment.status === 'CANCELLED'),
     createdAt: costume.createdAt.toISOString(),
     updatedAt: costume.updatedAt.toISOString(),
   };
@@ -1265,8 +1268,38 @@ export async function listCostumes(ctx: Pick<EventsContext, 'contaId'>, input: {
     include: { event: { select: { id: true, name: true, startsAt: true } }, assignments: true },
     orderBy: { createdAt: 'desc' },
   });
-  return costumes.map(mapCostume);
+  const costumeIds = costumes.map((costume) => costume.id);
+  const assignmentEntryIds = costumes.flatMap((costume) => costume.assignments.map((assignment) => assignment.revenueEntryId).filter((id): id is string => Boolean(id)));
+  const entries = costumeIds.length ? await prisma.eventFinancialEntry.findMany({
+    where: {
+      contaId: ctx.contaId,
+      OR: [
+        { originType: 'COSTUME', originId: { in: costumeIds } },
+        ...(assignmentEntryIds.length ? [{ id: { in: assignmentEntryIds }, originType: 'COSTUME_ASSIGNMENT' as const }] : []),
+      ],
+    },
+    include: { payments: { where: { contaId: ctx.contaId }, select: { id: true } } },
+  }) : [];
+  const paidCostumeIds = new Set(entries.filter((entry) => entry.originType === 'COSTUME' && (entry.payments.length > 0 || toMoney(entry.actualAmount) > 0
+    || Boolean(entry.asaasPaymentId || entry.paymentProvider || entry.paymentStatus)
+    || ['PAID', 'PARTIALLY_PAID', 'RECEIVED', 'REFUNDED', 'PARTIALLY_REFUNDED'].includes(entry.status))).map((entry) => entry.originId));
+  const paidAssignmentEntryIds = new Set(entries.filter((entry) => entry.originType === 'COSTUME_ASSIGNMENT' && (entry.payments.length > 0 || toMoney(entry.actualAmount) > 0
+    || Boolean(entry.asaasPaymentId || entry.paymentProvider || entry.paymentStatus)
+    || ['PAID', 'PARTIALLY_PAID', 'RECEIVED', 'REFUNDED', 'PARTIALLY_REFUNDED'].includes(entry.status))).map((entry) => entry.id));
+  return costumes.map((costume) => ({
+    ...mapCostume(costume),
+    canDelete: costume.assignments.every((assignment) => assignment.status === 'CANCELLED')
+      && !paidCostumeIds.has(costume.id)
+      && !costume.assignments.some((assignment) => assignment.revenueEntryId && paidAssignmentEntryIds.has(assignment.revenueEntryId)),
+  }));
 }
+
+async function lockCostumeStock(tx: Prisma.TransactionClient, contaId: string, costumeId: string) {
+  const key = `event-costume-stock:${contaId}:${costumeId}`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+}
+
+const COSTUME_UNAVAILABLE_ASSIGNMENT_STATUSES = ['PENDING', 'ORDERED', 'RECEIVED', 'DELIVERED', 'DAMAGED', 'LOST'] as const;
 
 async function getCostumeDto(db: DbClient, contaId: string, costumeId: string) {
   const costume = await db.eventCostume.findFirst({
@@ -1339,12 +1372,41 @@ export async function createCostume(ctx: EventsContext, input: CreateCostumeInpu
 
 export async function updateCostume(ctx: EventsContext, costumeId: string, input: UpdateCostumeInput) {
   return prisma.$transaction(async (tx) => {
+    await lockCostumeStock(tx, ctx.contaId, costumeId);
     const current = await tx.eventCostume.findFirst({
       where: { id: costumeId, contaId: ctx.contaId },
       include: { event: true },
     });
     if (!current) throw new EventsError('FIGURINO_NAO_ENCONTRADO', 'Figurino não encontrado.', 404);
     assertFinancialAdjustmentEvent(current.event.status);
+
+    await tx.$queryRaw`SELECT "id" FROM "EventFinancialEntry" WHERE "contaId" = ${ctx.contaId} AND "originType" = 'COSTUME' AND "originId" = ${costumeId} FOR UPDATE`;
+
+    const nextSchoolCost = input.schoolCost === undefined ? current.schoolCost : input.schoolCost == null ? null : decimal(input.schoolCost);
+    const nextQuantity = input.quantity ?? current.quantity;
+    const nextName = input.name ?? current.name;
+    const nextSupplier = input.supplier === undefined ? current.supplier : input.supplier;
+    const committedCount = await tx.eventCostumeAssignment.count({
+      where: { contaId: ctx.contaId, costumeId, status: { in: [...COSTUME_UNAVAILABLE_ASSIGNMENT_STATUSES] } },
+    });
+    if (nextQuantity < committedCount) {
+      throw new EventsError('QUANTIDADE_ABAIXO_DO_COMPROMETIDO', `A quantidade não pode ser menor que ${committedCount} unidade(s) comprometida(s) ou indisponível(is).`, 409);
+    }
+
+    const linkedCost = await tx.eventFinancialEntry.findFirst({
+      where: { contaId: ctx.contaId, originType: 'COSTUME', originId: costumeId },
+      include: { payments: { where: { contaId: ctx.contaId }, select: { id: true } } },
+    });
+    const costChanged = Number(nextSchoolCost ?? 0) !== Number(current.schoolCost ?? 0)
+      || nextQuantity !== current.quantity || nextName !== current.name || nextSupplier !== current.supplier;
+    if (linkedCost && costChanged) {
+      const hasPaymentHistory = linkedCost.payments.length > 0 || toMoney(linkedCost.actualAmount) > 0
+        || Boolean(linkedCost.asaasPaymentId || linkedCost.paymentProvider || linkedCost.paymentStatus)
+        || ['PAID', 'PARTIALLY_PAID', 'RECEIVED', 'REFUNDED', 'PARTIALLY_REFUNDED'].includes(linkedCost.status);
+      if (hasPaymentHistory) {
+        throw new EventsError('CUSTO_COM_HISTORICO_FINANCEIRO', 'Não é possível alterar nome, fornecedor, custo ou quantidade porque o custo do figurino já possui histórico financeiro. Preserve o lançamento e faça um ajuste financeiro separado.', 409);
+      }
+    }
 
     const updated = await tx.eventCostume.update({
       where: { id: costumeId },
@@ -1362,6 +1424,33 @@ export async function updateCostume(ctx: EventsContext, costumeId: string, input
         notes: input.notes,
       },
     });
+
+    if (linkedCost && costChanged) {
+      await tx.eventFinancialEntry.updateMany({
+        where: { id: linkedCost.id, contaId: ctx.contaId, originType: 'COSTUME', originId: costumeId },
+        data: {
+          description: `Custo de figurino - ${updated.name}`,
+          supplier: updated.supplier,
+          expectedAmount: decimal(toMoney(updated.schoolCost) * updated.quantity),
+        },
+      });
+    } else if (!linkedCost && toMoney(updated.schoolCost) > 0) {
+      await tx.eventFinancialEntry.create({
+        data: {
+          contaId: ctx.contaId,
+          eventId: updated.eventId,
+          type: 'COST',
+          category: 'Figurino',
+          description: `Custo de figurino - ${updated.name}`,
+          supplier: updated.supplier,
+          originType: 'COSTUME',
+          originId: updated.id,
+          expectedAmount: decimal(toMoney(updated.schoolCost) * updated.quantity),
+          status: 'PENDING',
+          createdByUserId: ctx.userId,
+        },
+      });
+    }
 
     await recordEventAudit(tx, {
       contaId: ctx.contaId,
@@ -1422,7 +1511,38 @@ export async function listCostumeAssignments(ctx: Pick<EventsContext, 'contaId'>
     },
     orderBy: { createdAt: 'desc' },
   });
-  return assignments.map(mapCostumeAssignment);
+  const entryIds = assignments.map((assignment) => assignment.revenueEntryId).filter((id): id is string => Boolean(id));
+  const entries = entryIds.length ? await prisma.eventFinancialEntry.findMany({
+    where: { contaId: ctx.contaId, id: { in: entryIds }, type: 'REVENUE', originType: 'COSTUME_ASSIGNMENT' },
+    select: { id: true, status: true, actualAmount: true, refundedAmount: true },
+  }) : [];
+  const entryById = new Map(entries.map((entry) => [entry.id, entry]));
+  return assignments.map((assignment) => ({
+    ...mapCostumeAssignment(assignment),
+    ...mapCostumeAssignmentPayment(assignment, assignment.revenueEntryId ? entryById.get(assignment.revenueEntryId) ?? null : null),
+  }));
+}
+
+function mapCostumeAssignmentPayment(
+  assignment: { chargedValue: Prisma.Decimal | null; billingMode: string; isPaid: boolean },
+  entry: Pick<EventFinancialEntry, 'status' | 'actualAmount' | 'refundedAmount'> | null,
+) {
+  const expectedAmount = assignment.billingMode === 'SEPARATE_CHARGE' ? toMoney(assignment.chargedValue) : 0;
+  const statusIndicatesPaid = entry?.status === 'RECEIVED' || entry?.status === 'PAID';
+  const grossPaidAmount = entry?.actualAmount != null
+    ? toMoney(entry.actualAmount)
+    : (statusIndicatesPaid || (!entry && assignment.isPaid) ? expectedAmount : 0);
+  const refundedAmount = toMoney(entry?.refundedAmount);
+  const paidAmount = Math.max(grossPaidAmount - refundedAmount, 0);
+  const remainingAmount = Math.max(expectedAmount - paidAmount, 0);
+
+  return {
+    isPaid: expectedAmount > 0 && remainingAmount === 0 && paidAmount > 0,
+    paidAmount,
+    refundedAmount,
+    remainingAmount,
+    financialEntryStatus: entry?.status ?? null,
+  };
 }
 
 async function getCostumeAssignmentDto(db: DbClient, contaId: string, assignmentId: string) {
@@ -1436,11 +1556,22 @@ async function getCostumeAssignmentDto(db: DbClient, contaId: string, assignment
     },
   });
   if (!assignment) throw new EventsError('VINCULO_NAO_ENCONTRADO', 'Vínculo de figurino não encontrado.', 404);
-  return mapCostumeAssignment(assignment);
+  const entry = assignment.revenueEntryId ? await db.eventFinancialEntry.findFirst({
+    where: { id: assignment.revenueEntryId, contaId, type: 'REVENUE', originType: 'COSTUME_ASSIGNMENT' },
+    select: { status: true, actualAmount: true, refundedAmount: true },
+  }) : null;
+  return {
+    ...mapCostumeAssignment(assignment),
+    ...mapCostumeAssignmentPayment(assignment, entry),
+  };
 }
 
 export async function createCostumeAssignment(ctx: EventsContext, input: CreateCostumeAssignmentInput) {
   return prisma.$transaction(async (tx) => {
+    if (Boolean(input.alunoId) === Boolean(input.turmaId)) {
+      throw new EventsError('DONO_VINCULO_INVALIDO', 'Informe exatamente um aluno ou uma turma.', 422);
+    }
+    await lockCostumeStock(tx, ctx.contaId, input.costumeId);
     const costume = await tx.eventCostume.findFirst({
       where: { id: input.costumeId, contaId: ctx.contaId, eventId: input.eventId },
       include: { event: true },
@@ -1448,30 +1579,59 @@ export async function createCostumeAssignment(ctx: EventsContext, input: CreateC
     if (!costume) throw new EventsError('FIGURINO_NAO_ENCONTRADO', 'Figurino não encontrado.', 404);
     assertOperationalEvent(costume.event.status);
 
-    const activeAssignmentsCount = await tx.eventCostumeAssignment.count({
+    const groupParticipants = input.turmaId
+      ? await tx.eventParticipant.findMany({
+          where: { contaId: ctx.contaId, eventId: input.eventId, turmaId: input.turmaId, cancelledAt: null, alunoId: { not: null } },
+          select: { alunoId: true },
+          orderBy: { alunoId: 'asc' },
+        })
+      : [];
+    const targetAlunoIds = input.alunoId ? [input.alunoId] : [...new Set(groupParticipants.flatMap((item) => item.alunoId ? [item.alunoId] : []))];
+    if (targetAlunoIds.length === 0) {
+      throw new EventsError('TURMA_SEM_PARTICIPANTES', 'A turma não possui alunos ativos inscritos neste evento.', 422);
+    }
+    const targetTurmaIds = input.turmaId
+      ? [input.turmaId]
+      : [...new Set((await tx.eventParticipant.findMany({
+          where: { contaId: ctx.contaId, eventId: input.eventId, alunoId: { in: targetAlunoIds }, cancelledAt: null, turmaId: { not: null } },
+          select: { turmaId: true },
+        })).flatMap((participant) => participant.turmaId ? [participant.turmaId] : []))];
+    const legacyGroupAssignment = targetTurmaIds.length ? await tx.eventCostumeAssignment.findFirst({
       where: {
-        costumeId: input.costumeId,
         contaId: ctx.contaId,
-        status: { not: 'CANCELLED' }
-      }
+        eventId: input.eventId,
+        costumeId: input.costumeId,
+        turmaId: { in: targetTurmaIds },
+        alunoId: null,
+        status: { in: [...COSTUME_UNAVAILABLE_ASSIGNMENT_STATUSES] },
+      },
+      select: { id: true },
+    }) : null;
+    if (legacyGroupAssignment) {
+      throw new EventsError('VINCULO_LEGADO_POR_TURMA', 'Este figurino ainda possui um vínculo antigo diretamente com a turma. Resolva ou cancele esse vínculo antes de criar vínculos individuais.', 409);
+    }
+    const existingAssignments = await tx.eventCostumeAssignment.findMany({
+      where: { contaId: ctx.contaId, eventId: input.eventId, costumeId: input.costumeId, alunoId: { in: targetAlunoIds } },
+      select: { alunoId: true },
     });
-
-    if (input.status !== 'CANCELLED' && activeAssignmentsCount >= costume.quantity) {
-      throw new EventsError('ESTOQUE_INSUFICIENTE', `Estoque insuficiente para o figurino "${costume.name}". (Disponível: ${costume.quantity}, Reservado: ${activeAssignmentsCount})`, 400);
+    const alreadyLinked = new Set(existingAssignments.flatMap((assignment) => assignment.alunoId ? [assignment.alunoId] : []));
+    const newAlunoIds = targetAlunoIds.filter((alunoId) => !alreadyLinked.has(alunoId));
+    if (input.alunoId && newAlunoIds.length === 0) {
+      throw new EventsError('VINCULO_JA_EXISTE', 'Este aluno já possui um vínculo com este figurino; o histórico existente foi preservado.', 409);
+    }
+    if (newAlunoIds.length === 0) {
+      throw new EventsError('TURMA_JA_VINCULADA', 'Todos os alunos ativos da turma já possuem este figurino.', 409);
+    }
+    const unavailableCount = await tx.eventCostumeAssignment.count({
+      where: { contaId: ctx.contaId, costumeId: input.costumeId, status: { in: [...COSTUME_UNAVAILABLE_ASSIGNMENT_STATUSES] } },
+    });
+    const available = costume.quantity - unavailableCount;
+    if (newAlunoIds.length > available) {
+      throw new EventsError('ESTOQUE_INSUFICIENTE', `Estoque insuficiente para "${costume.name}": ${available} unidade(s) disponível(is) e ${newAlunoIds.length} necessária(s).`, 409);
     }
 
-    if (input.status === 'DELIVERED' && !input.alunoId) {
-      throw new EventsError('ALUNO_OBRIGATORIO', 'Informe o aluno antes de marcar entrega.', 422);
-    }
-
-    await assertEventScopedAssignmentLinks(tx, ctx.contaId, input.eventId, {
-      alunoId: input.alunoId,
-      turmaId: input.turmaId,
-      requireAluno: input.status === 'DELIVERED',
-    });
-
-    if (input.returnedAt && !input.deliveredAt) {
-      throw new EventsError('DEVOLUCAO_INVALIDA', 'Não é possível devolver antes da entrega.', 422);
+    for (const alunoId of newAlunoIds) {
+      await assertEventScopedAssignmentLinks(tx, ctx.contaId, input.eventId, { alunoId });
     }
 
     const billingMode = input.billingMode ?? 'SEPARATE_CHARGE';
@@ -1483,27 +1643,29 @@ export async function createCostumeAssignment(ctx: EventsContext, input: CreateC
       throw new EventsError('VALOR_OBRIGATORIO', 'Informe um valor maior que zero para cobrança separada.', 422);
     }
 
-    const assignment = await tx.eventCostumeAssignment.create({
-      data: {
+    const createdAssignments: Awaited<ReturnType<typeof getCostumeAssignmentDto>>[] = [];
+    for (const alunoId of newAlunoIds) {
+      const assignment = await tx.eventCostumeAssignment.create({
+        data: {
         contaId: ctx.contaId,
         eventId: input.eventId,
         costumeId: input.costumeId,
-        alunoId: input.alunoId,
-        turmaId: input.turmaId,
+        alunoId,
+        turmaId: null,
         definedSize: input.definedSize,
-        status: input.status,
+        status: 'PENDING',
         billingMode,
         chargedValue: billingMode === 'FREE' ? null : decimal(chargedValue),
-        isPaid: billingMode === 'SEPARATE_CHARGE' ? input.isPaid : false,
-        deliveredAt: input.deliveredAt,
-        returnedAt: input.returnedAt,
-        deliveredByUserId: input.status === 'DELIVERED' ? ctx.userId : null,
+        isPaid: false,
+        deliveredAt: null,
+        returnedAt: null,
+        deliveredByUserId: null,
         notes: input.notes,
       },
-    });
+      });
 
-    if (billingMode === 'SEPARATE_CHARGE' && chargedValue > 0) {
-      const entry = await tx.eventFinancialEntry.create({
+      if (billingMode === 'SEPARATE_CHARGE' && chargedValue > 0) {
+        const entry = await tx.eventFinancialEntry.create({
         data: {
           contaId: ctx.contaId,
           eventId: input.eventId,
@@ -1513,42 +1675,74 @@ export async function createCostumeAssignment(ctx: EventsContext, input: CreateC
           originType: 'COSTUME_ASSIGNMENT',
           originId: assignment.id,
           expectedAmount: decimal(chargedValue),
-          actualAmount: input.isPaid ? decimal(chargedValue) : null,
-          status: input.isPaid ? 'RECEIVED' : 'PENDING',
-          realizedAt: input.isPaid ? new Date() : null,
+          actualAmount: null,
+          status: 'PENDING',
           createdByUserId: ctx.userId,
         },
+        });
+        await tx.eventCostumeAssignment.update({ where: { id: assignment.id }, data: { revenueEntryId: entry.id } });
+      }
+
+      await recordEventAudit(tx, {
+        contaId: ctx.contaId,
+        actorUserId: ctx.userId,
+        action: 'events.costumeAssignment.create',
+        entityType: 'EventCostumeAssignment',
+        entityId: assignment.id,
+        eventId: input.eventId,
+        after: { ...assignment, groupId: input.turmaId ?? null },
       });
-      await tx.eventCostumeAssignment.update({ where: { id: assignment.id }, data: { revenueEntryId: entry.id } });
+      createdAssignments.push(await getCostumeAssignmentDto(tx, ctx.contaId, assignment.id));
     }
 
-    await recordEventAudit(tx, {
-      contaId: ctx.contaId,
-      actorUserId: ctx.userId,
-      action: 'events.costumeAssignment.create',
-      entityType: 'EventCostumeAssignment',
-      entityId: assignment.id,
-      eventId: input.eventId,
-      after: assignment,
-    });
+    if (input.turmaId) {
+      await recordEventAudit(tx, {
+        contaId: ctx.contaId,
+        actorUserId: ctx.userId,
+        action: 'events.costumeAssignment.group.create',
+        entityType: 'EventCostumeAssignment',
+        entityId: costume.id,
+        eventId: input.eventId,
+        after: { costumeId: costume.id, turmaId: input.turmaId, assignmentIds: createdAssignments.map((assignment) => assignment.id), createdCount: createdAssignments.length, skippedExistingCount: targetAlunoIds.length - createdAssignments.length },
+      });
+    }
 
-    return getCostumeAssignmentDto(tx, ctx.contaId, assignment.id);
+    return { assignments: createdAssignments, createdCount: createdAssignments.length, skippedExistingCount: targetAlunoIds.length - createdAssignments.length };
   });
 }
 
 export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: string, input: UpdateCostumeAssignmentInput) {
   return prisma.$transaction(async (tx) => {
+    const lossCostLockKey = `event-cost-origin:${ctx.contaId}:COSTUME:loss:${assignmentId}`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lossCostLockKey}, 0))`;
+    await tx.$queryRaw`SELECT "id" FROM "EventCostumeAssignment" WHERE "id" = ${assignmentId} AND "contaId" = ${ctx.contaId} FOR UPDATE`;
+    const lockedAssignment = await tx.eventCostumeAssignment.findFirst({ where: { id: assignmentId, contaId: ctx.contaId }, select: { revenueEntryId: true } });
+    if (lockedAssignment?.revenueEntryId) {
+      await tx.$queryRaw`SELECT "id" FROM "EventFinancialEntry" WHERE "id" = ${lockedAssignment.revenueEntryId} AND "contaId" = ${ctx.contaId} FOR UPDATE`;
+    }
     const current = await tx.eventCostumeAssignment.findFirst({
       where: { id: assignmentId, contaId: ctx.contaId },
       include: { event: true },
     });
     if (!current) throw new EventsError('VINCULO_NAO_ENCONTRADO', 'Vínculo de figurino não encontrado.', 404);
     assertOperationalEvent(current.event.status);
+    const existingRevenueEntry = current.revenueEntryId
+      ? await tx.eventFinancialEntry.findFirst({ where: { id: current.revenueEntryId, contaId: ctx.contaId, type: 'REVENUE', originType: 'COSTUME_ASSIGNMENT' } })
+      : null;
 
     const targetAlunoId = input.alunoId === undefined ? current.alunoId : input.alunoId;
     const targetTurmaId = input.turmaId === undefined ? current.turmaId : input.turmaId;
     const targetStatus = input.status ?? current.status;
+    if (targetStatus !== 'CANCELLED' && (!targetAlunoId || targetTurmaId)) {
+      throw new EventsError('DONO_VINCULO_INVALIDO', 'Um vínculo ativo deve pertencer a um aluno. Para vincular uma turma, use o cadastro, que expande os vínculos por aluno inscrito.', 422);
+    }
 
+    const targetCostumeId = input.costumeId ?? current.costumeId;
+    if (targetCostumeId !== current.costumeId || (input.status && input.status !== current.status)) {
+      for (const costumeId of [...new Set([current.costumeId, targetCostumeId])].sort()) {
+        await lockCostumeStock(tx, ctx.contaId, costumeId);
+      }
+    }
     await assertEventScopedAssignmentLinks(tx, ctx.contaId, current.eventId, {
       alunoId: targetAlunoId,
       turmaId: targetTurmaId,
@@ -1558,22 +1752,15 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
     if (input.status) {
       const transition = validateCostumeAssignmentStatusTransition(current.status, input.status);
       if (!transition.ok) throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
-      if (input.status === 'CANCELLED' && current.billingMode === 'SEPARATE_CHARGE' && current.isPaid && current.revenueEntryId) {
-        throw new EventsError(
-          'DESVINCULO_BLOQUEADO_PAGO',
-          'Não é possível desvincular um figurino pago. Estorne ou ajuste o pagamento antes de desvincular.',
-          400,
-        );
-      }
       if (input.status === 'DELIVERED' && !targetAlunoId) {
         throw new EventsError('ALUNO_OBRIGATORIO', 'Informe o aluno antes de marcar entrega.', 422);
       }
     }
 
-    const targetCostumeId = (input.costumeId as string) ?? current.costumeId;
-    const willBeActive = input.status ? input.status !== 'CANCELLED' : current.status !== 'CANCELLED';
-    const wasActive = current.status !== 'CANCELLED';
-    const isAddingNewActiveReservation = (willBeActive && !wasActive) || (willBeActive && wasActive && input.costumeId && input.costumeId !== current.costumeId);
+    const willReserveStock = COSTUME_UNAVAILABLE_ASSIGNMENT_STATUSES.includes(targetStatus as typeof COSTUME_UNAVAILABLE_ASSIGNMENT_STATUSES[number]);
+    const wasReservingStock = COSTUME_UNAVAILABLE_ASSIGNMENT_STATUSES.includes(current.status as typeof COSTUME_UNAVAILABLE_ASSIGNMENT_STATUSES[number]);
+    const isAddingNewActiveReservation = (willReserveStock && !wasReservingStock)
+      || (willReserveStock && wasReservingStock && input.costumeId && input.costumeId !== current.costumeId);
 
     if (isAddingNewActiveReservation) {
       const costume = await tx.eventCostume.findFirst({
@@ -1585,7 +1772,7 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
         where: {
           costumeId: targetCostumeId,
           contaId: ctx.contaId,
-          status: { not: 'CANCELLED' }
+          status: { in: [...COSTUME_UNAVAILABLE_ASSIGNMENT_STATUSES] }
         }
       });
 
@@ -1595,23 +1782,22 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
     }
 
     const now = new Date();
-    let deliveredAt: Date | null | undefined = input.deliveredAt;
-    let returnedAt: Date | null | undefined = input.returnedAt;
+    let deliveredAt: Date | null | undefined = input.deliveredAt ?? undefined;
+    let returnedAt: Date | null | undefined = input.returnedAt ?? undefined;
     let deliveredByUserId: string | null | undefined = undefined;
 
     if (input.status) {
       if (input.status === 'DELIVERED') {
         deliveredAt = input.deliveredAt ?? current.deliveredAt ?? now;
-        returnedAt = null;
+        returnedAt = input.returnedAt ?? current.returnedAt;
         deliveredByUserId = ctx.userId;
       } else if (input.status === 'RETURNED') {
         deliveredAt = input.deliveredAt ?? current.deliveredAt ?? now;
         returnedAt = input.returnedAt ?? current.returnedAt ?? now;
         deliveredByUserId = current.deliveredByUserId ?? ctx.userId;
       } else {
-        deliveredAt = null;
-        returnedAt = null;
-        deliveredByUserId = null;
+        deliveredAt = input.deliveredAt ?? current.deliveredAt;
+        returnedAt = input.returnedAt ?? current.returnedAt;
       }
     }
 
@@ -1623,9 +1809,10 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
     if (targetBillingMode === 'SEPARATE_CHARGE' && targetChargedValue <= 0) {
       throw new EventsError('VALOR_OBRIGATORIO', 'Informe um valor maior que zero para cobrança separada.', 422);
     }
-    const targetIsPaid = targetBillingMode === 'SEPARATE_CHARGE'
-      ? (input.isPaid ?? current.isPaid)
-      : false;
+    const targetIsPaid = targetBillingMode === 'SEPARATE_CHARGE' && existingRevenueEntry?.status === 'RECEIVED';
+    if (Object.prototype.hasOwnProperty.call(input, 'isPaid')) {
+      throw new EventsError('PAGAMENTO_FORA_DO_LEDGER', 'Registre ou estorne recebimentos pela tela financeira do evento.', 409);
+    }
 
     const updated = await tx.eventCostumeAssignment.update({
       where: { id: assignmentId },
@@ -1646,6 +1833,11 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
     });
 
     if (updated.status === 'CANCELLED' && updated.revenueEntryId) {
+      const payments = await tx.eventFinancialPayment.findMany({ where: { contaId: ctx.contaId, financialEntryId: updated.revenueEntryId }, select: { amount: true, refundedAmount: true } });
+      const remainingReceived = toMoney(payments.reduce((sum, payment) => sum + Math.max(toMoney(payment.amount) - toMoney(payment.refundedAmount), 0), 0));
+      if (remainingReceived > 0 || (!payments.length && (toMoney(existingRevenueEntry?.actualAmount) > 0 || current.isPaid))) {
+        throw new EventsError('CANCELAMENTO_COM_PAGAMENTO', 'Estorne integralmente os recebimentos antes de cancelar este vínculo. O ledger será preservado.', 409);
+      }
       await tx.eventFinancialEntry.updateMany({
         where: {
           contaId: ctx.contaId,
@@ -1655,12 +1847,13 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
         data: {
           status: 'CANCELLED',
           cancelledAt: now,
-          actualAmount: null,
-          realizedAt: null,
         },
       });
+      await tx.eventCostumeAssignment.updateMany({ where: { id: assignmentId, contaId: ctx.contaId }, data: { isPaid: false } });
     } else if (updated.billingMode !== 'SEPARATE_CHARGE') {
       if (updated.revenueEntryId) {
+        const paymentCount = await tx.eventFinancialPayment.count({ where: { contaId: ctx.contaId, financialEntryId: updated.revenueEntryId } });
+        if (paymentCount > 0) throw new EventsError('COBRANCA_COM_PAGAMENTO', 'Não é possível remover a cobrança após recebimentos. Preserve o histórico financeiro.', 409);
         await tx.eventFinancialEntry.deleteMany({
           where: { contaId: ctx.contaId, id: updated.revenueEntryId, originType: 'COSTUME_ASSIGNMENT' },
         });
@@ -1676,14 +1869,18 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
       });
 
       if (chargedValue > 0) {
+        const payments = await tx.eventFinancialPayment.findMany({ where: { contaId: ctx.contaId, financialEntryId: updated.revenueEntryId }, select: { id: true } });
+        const billingChanged = targetBillingMode !== current.billingMode || chargedValue !== toMoney(current.chargedValue) || updated.costumeId !== current.costumeId;
+        const hasLegacyPaymentState = !payments.length && (existingRevenueEntry?.actualAmount != null || current.isPaid);
+        if ((payments.length > 0 || hasLegacyPaymentState) && billingChanged) throw new EventsError('COBRANCA_COM_PAGAMENTO', 'Não é possível alterar a cobrança após recebimentos. Preserve o histórico financeiro.', 409);
         await tx.eventFinancialEntry.updateMany({
           where: { contaId: ctx.contaId, id: updated.revenueEntryId, originType: 'COSTUME_ASSIGNMENT' },
           data: {
             description: targetCostume?.name ?? undefined,
             expectedAmount: decimal(chargedValue),
-            actualAmount: targetIsPaid ? decimal(chargedValue) : null,
-            status: targetIsPaid ? 'RECEIVED' : 'PENDING',
-            realizedAt: targetIsPaid ? now : null,
+            ...(!payments.length && !hasLegacyPaymentState ? { actualAmount: null, realizedAt: null } : {}),
+            status: updated.status === 'CANCELLED' ? 'CANCELLED' : existingRevenueEntry?.status === 'CANCELLED' ? 'PENDING' : (existingRevenueEntry?.status ?? 'PENDING'),
+            cancelledAt: updated.status === 'CANCELLED' ? now : null,
           },
         });
       } else {
@@ -1712,9 +1909,8 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
               originType: 'COSTUME_ASSIGNMENT',
               originId: updated.id,
               expectedAmount: decimal(chargedValue),
-              actualAmount: targetIsPaid ? decimal(chargedValue) : null,
-              status: targetIsPaid ? 'RECEIVED' : 'PENDING',
-              realizedAt: targetIsPaid ? now : null,
+              actualAmount: null,
+              status: 'PENDING',
               createdByUserId: ctx.userId,
             },
           });
@@ -1732,7 +1928,19 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
         where: { id: updated.costumeId, contaId: ctx.contaId },
       });
       const lossAmount = toMoney(targetCostume?.schoolCost) || toMoney(updated.chargedValue);
-      if (lossAmount > 0) {
+      const deletionMarker = await tx.eventAudit.findFirst({
+        where: {
+          contaId: ctx.contaId,
+          action: 'events.finance.cost.delete',
+          entityType: 'EventFinancialEntry',
+          AND: [
+            { metadata: { path: ['originType'], equals: 'COSTUME' } },
+            { metadata: { path: ['originId'], equals: lossOriginId } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (lossAmount > 0 && !deletionMarker) {
         const existingLoss = await tx.eventFinancialEntry.findFirst({
           where: { contaId: ctx.contaId, originType: 'COSTUME', originId: lossOriginId },
         });
@@ -1775,8 +1983,7 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
         },
         data: {
           status: 'CANCELLED',
-          actualAmount: null,
-          realizedAt: null,
+          cancelledAt: now,
           notes: `Prejuízo cancelado porque o figurino voltou para ${updated.status}.`,
         },
       });
@@ -1811,10 +2018,36 @@ export async function listFinancialEntries(
     include: {
       event: { select: { id: true, name: true, startsAt: true } },
       createdBy: { select: { id: true, nome: true } },
+      payments: { where: { contaId: ctx.contaId }, orderBy: { paidAt: 'asc' } },
     },
     orderBy: [{ realizedAt: 'desc' }, { dueDate: 'desc' }, { createdAt: 'desc' }],
   });
-  return entries.map(mapFinancialEntry);
+  const legacyRegistrationEntryIds = await findLegacyRegistrationEntryIds(ctx.contaId, input.eventId, entries);
+  return entries.map((entry) => {
+    const mapped = mapFinancialEntry(entry);
+    return legacyRegistrationEntryIds.has(entry.id) ? { ...mapped, originType: 'EVENT_REGISTRATION' as const } : mapped;
+  });
+}
+
+async function findLegacyRegistrationEntryIds(
+  contaId: string,
+  eventId: string | undefined,
+  entries: Array<{ id: string; type: string; originType: string }>,
+) {
+  const candidateIds = entries
+    .filter((entry) => entry.type === 'REVENUE' && entry.originType === 'MANUAL')
+    .map((entry) => entry.id);
+  if (candidateIds.length === 0) return new Set<string>();
+
+  const linkedParticipants = await prisma.eventParticipant.findMany({
+    where: {
+      contaId,
+      ...(eventId ? { eventId } : {}),
+      revenueEntryId: { in: candidateIds },
+    },
+    select: { revenueEntryId: true },
+  });
+  return new Set(linkedParticipants.flatMap((participant) => participant.revenueEntryId ? [participant.revenueEntryId] : []));
 }
 
 export async function listFinancialEntriesPage(
@@ -1853,15 +2086,20 @@ export async function listFinancialEntriesPage(
       include: {
         event: { select: { id: true, name: true, startsAt: true } },
         createdBy: { select: { id: true, nome: true } },
+        payments: { where: { contaId: ctx.contaId }, orderBy: { paidAt: 'asc' } },
       },
       orderBy: [{ realizedAt: 'desc' }, { dueDate: 'desc' }, { createdAt: 'desc' }],
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
   ]);
+  const legacyRegistrationEntryIds = await findLegacyRegistrationEntryIds(ctx.contaId, input.eventId, entries);
 
   return {
-    entries: entries.map(mapFinancialEntry),
+    entries: entries.map((entry) => {
+      const mapped = mapFinancialEntry(entry);
+      return legacyRegistrationEntryIds.has(entry.id) ? { ...mapped, originType: 'EVENT_REGISTRATION' as const } : mapped;
+    }),
     meta: pageMeta(total, page, pageSize),
   };
 }
@@ -2229,7 +2467,10 @@ export async function loadEventBillingGroupCharges(
 
 async function buildParticipantPaymentSnapshots(
   ctx: Pick<EventsContext, 'contaId'>,
-  records: Pick<SchoolEventRecord, 'participants' | 'financialEntries'>[],
+  records: Array<{
+    participants: SchoolEventRecord['participants'];
+    financialEntries: SchoolEventRecord['financialEntries'];
+  }>,
 ): Promise<Map<string, ParticipantPaymentSnapshot>> {
   const participants = records.flatMap((record) => record.participants);
   const entryById = new Map(records.flatMap((record) => record.financialEntries.map((entry) => [entry.id, entry])));
@@ -2246,6 +2487,20 @@ async function buildParticipantPaymentSnapshots(
 
   const snapshots = new Map<string, ParticipantPaymentSnapshot>();
   if (feeParticipants.length === 0) return snapshots;
+
+  const revenueEntryIds = [...new Set(feeParticipants.map((participant) => participant.revenueEntryId).filter((id): id is string => Boolean(id)))];
+  const manualPayments = revenueEntryIds.length > 0
+    ? await prisma.eventFinancialPayment.findMany({
+        where: { contaId: ctx.contaId, financialEntryId: { in: revenueEntryIds } },
+        select: { financialEntryId: true, status: true, amount: true, refundedAmount: true },
+      })
+    : [];
+  const manualPaymentsByEntry = new Map<string, typeof manualPayments>();
+  for (const payment of manualPayments) {
+    const existing = manualPaymentsByEntry.get(payment.financialEntryId) ?? [];
+    existing.push(payment);
+    manualPaymentsByEntry.set(payment.financialEntryId, existing);
+  }
 
   const billingGroupIds = [...new Set(feeParticipants.map((participant) => participant.billingGroupId).filter((id): id is string => Boolean(id)))];
   const billingGroups = billingGroupIds.length > 0
@@ -2320,6 +2575,11 @@ async function buildParticipantPaymentSnapshots(
       entry,
       participantCharges,
       participant.isFeeExempt,
+      manualPaymentsByEntry.get(participant.revenueEntryId ?? '')?.map((payment) => ({
+        status: payment.status,
+        amount: payment.amount.toNumber(),
+        refundedAmount: payment.refundedAmount.toNumber(),
+      })) ?? [],
     );
     // ENTRY_INSTALLMENT has two payment channels: the manual entry and the
     // external balance. calculateParticipantPayment already merges both;
@@ -2368,6 +2628,7 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
         where: { contaId: ctx.contaId, id: { in: revenueEntryIds } },
       })
     : [];
+  const paymentSnapshots = await buildParticipantPaymentSnapshots(ctx, [{ participants, financialEntries }]);
 
   const billingGroupIds = [...new Set(participants.map((participant) => participant.billingGroupId).filter((id): id is string => Boolean(id)))];
   const billingGroups = billingGroupIds.length > 0
@@ -2375,6 +2636,28 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
     : [];
   const billingGroupById = new Map(billingGroups.map((group) => [group.id, group]));
   const billingGroupCharges = await loadEventBillingGroupCharges(prisma, ctx.contaId, billingGroups);
+
+  const alunoIds = [...new Set(participants.map((participant) => participant.alunoId).filter((id): id is string => Boolean(id)))];
+    const [costumeAssignments, participantTicketSales] = alunoIds.length > 0
+    ? await Promise.all([
+        prisma.eventCostumeAssignment.findMany({ where: { contaId: ctx.contaId, eventId, alunoId: { in: alunoIds }, status: { not: 'CANCELLED' } } }),
+        prisma.eventTicketSale.findMany({ where: { contaId: ctx.contaId, eventId, alunoId: { in: alunoIds }, status: { in: ['PAID', 'COMPLIMENTARY'] } } }),
+      ])
+    : [[], []];
+  const costumesByAluno = new Map<string, typeof costumeAssignments>();
+  for (const assignment of costumeAssignments) {
+    if (!assignment.alunoId) continue;
+    const existing = costumesByAluno.get(assignment.alunoId) ?? [];
+    existing.push(assignment);
+    costumesByAluno.set(assignment.alunoId, existing);
+  }
+  const ticketSalesByAluno = new Map<string, typeof participantTicketSales>();
+  for (const sale of participantTicketSales) {
+    if (!sale.alunoId) continue;
+    const existing = ticketSalesByAluno.get(sale.alunoId) ?? [];
+    existing.push(sale);
+    ticketSalesByAluno.set(sale.alunoId, existing);
+  }
 
   const asaasPaymentIds = financialEntries
     .map((e) => e.asaasPaymentId)
@@ -2418,11 +2701,9 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
     let costumesValue = 0;
 
     if (part.alunoId) {
-      const costumes = await prisma.eventCostumeAssignment.findMany({
-        where: { contaId: ctx.contaId, eventId, alunoId: part.alunoId },
-      });
+      const costumes = costumesByAluno.get(part.alunoId) ?? [];
       costumeCount = costumes.length;
-      pendingCostumes = costumes.filter((c) => c.status !== 'DELIVERED').length;
+      pendingCostumes = costumes.filter((costume) => ['PENDING', 'ORDERED', 'RECEIVED'].includes(costume.status)).length;
       costumesValue = costumes.reduce(
         (sum, c) => sum + (c.billingMode === 'SEPARATE_CHARGE' && c.chargedValue ? c.chargedValue.toNumber() : 0),
         0,
@@ -2432,9 +2713,7 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
     let ticketsBought = 0;
     let ticketsValue = 0;
     if (part.alunoId) {
-      const ticketSales = await prisma.eventTicketSale.findMany({
-        where: { contaId: ctx.contaId, eventId, alunoId: part.alunoId, status: { in: ['PAID', 'COMPLIMENTARY'] } },
-      });
+      const ticketSales = ticketSalesByAluno.get(part.alunoId) ?? [];
       ticketsBought = ticketSales.reduce((sum, s) => sum + s.quantity, 0);
       ticketsValue = ticketSales.reduce((sum, s) => sum + s.totalAmount.toNumber(), 0);
     }
@@ -2480,13 +2759,16 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
       });
     }
 
-    const paymentDetails = calculateParticipantPayment(
-      feeValue,
-      part.isFeePaid,
-      entry,
-      participantCharges,
-      part.isFeeExempt
-    );
+    const paymentSnapshot = paymentSnapshots.get(part.revenueEntryId ?? part.id);
+    const paymentDetails = paymentSnapshot
+      ? {
+          percentPaid: paymentSnapshot.percentPaid,
+          status: paymentSnapshot.financialStatus,
+          totalPaid: paymentSnapshot.totalPaid,
+          totalRefunded: paymentSnapshot.totalRefunded,
+          netPaid: paymentSnapshot.netPaid,
+        }
+      : calculateParticipantPayment(feeValue, part.isFeePaid, entry, participantCharges, part.isFeeExempt);
     participantSortData.set(part.id, {
       status: part.cancelledAt ? 'CANCELADO' : paymentDetails.status,
       dueDate: participantDueDate(entry, participantCharges),
@@ -2582,18 +2864,7 @@ export async function listEventParticipantsPage(
     prisma.eventParticipant.findMany({
       where,
       select: {
-        id: true,
-        eventId: true,
-        alunoId: true,
-        displayName: true,
-        registrationFeeCharged: true,
-        isFeePaid: true,
-        isFeeExempt: true,
-        feePaymentMethod: true,
-        financialStatusSnapshot: true,
-        feePaidAmount: true,
-        cancelledAt: true,
-        createdAt: true,
+        ...eventParticipantScalarSelect,
         aluno: { select: { id: true, nome: true, foto: true } },
         turma: { select: { id: true, nome: true } },
       },
@@ -2603,22 +2874,32 @@ export async function listEventParticipantsPage(
     }),
   ]);
 
+  const revenueEntryIds = participants.map((participant) => participant.revenueEntryId).filter((id): id is string => Boolean(id));
+  const financialEntries = revenueEntryIds.length > 0
+      ? await prisma.eventFinancialEntry.findMany({
+        where: { contaId: ctx.contaId, eventId, id: { in: revenueEntryIds } },
+      })
+    : [];
+  const paymentSnapshots = await buildParticipantPaymentSnapshots(ctx, [{ participants, financialEntries }]);
+
   return {
     participants: participants.map((participant) => {
       const registrationFee = toMoney(participant.registrationFeeCharged);
-      const feePaidAmount = toMoney(participant.feePaidAmount);
+      const snapshot = paymentSnapshots.get(participant.revenueEntryId ?? participant.id);
+      const feePaidAmount = snapshot?.netPaid ?? toMoney(participant.feePaidAmount);
       const percentPaid = participant.isFeeExempt || registrationFee <= 0
         ? 100
-        : Math.min(100, Math.max(0, Math.round((feePaidAmount / registrationFee) * 100)));
+        : snapshot?.percentPaid ?? Math.min(100, Math.max(0, Math.round((feePaidAmount / registrationFee) * 100)));
       const financialStatus = participant.cancelledAt
         ? 'CANCELADO'
         : participant.isFeeExempt || registrationFee <= 0
           ? 'ISENTO'
-          : participant.isFeePaid || percentPaid >= 100
-            ? 'QUITADO'
-            : participant.financialStatusSnapshot && participant.financialStatusSnapshot !== 'QUITADO'
-              ? participant.financialStatusSnapshot
-              : percentPaid > 0 ? 'PARCIAL' : 'PENDENTE';
+          : snapshot?.financialStatus
+            ?? (participant.isFeePaid || percentPaid >= 100
+              ? 'QUITADO'
+              : participant.financialStatusSnapshot && participant.financialStatusSnapshot !== 'QUITADO'
+                ? participant.financialStatusSnapshot
+                : percentPaid > 0 ? 'PARCIAL' : 'PENDENTE');
 
       return {
         id: participant.id,
@@ -2783,6 +3064,12 @@ export async function deleteTicketLot(ctx: EventsContext, lotId: string) {
 
 export async function deleteCostume(ctx: EventsContext, costumeId: string) {
   return prisma.$transaction(async (tx) => {
+    // Lock existing links before acquiring the stock lock. Assignment updates
+    // use the same row-then-stock order; creation uses the stock lock before
+    // inserting, so the count below sees any assignment that wins the race.
+    await tx.$queryRaw`SELECT "id" FROM "EventCostumeAssignment" WHERE "contaId" = ${ctx.contaId} AND "costumeId" = ${costumeId} FOR UPDATE`;
+    await lockCostumeStock(tx, ctx.contaId, costumeId);
+
     const current = await tx.eventCostume.findFirst({
       where: { id: costumeId, contaId: ctx.contaId },
       include: { event: true },
@@ -2791,33 +3078,47 @@ export async function deleteCostume(ctx: EventsContext, costumeId: string) {
     assertOperationalEvent(current.event.status);
 
     // Business rule: Prevent deletion if any students/groups are assigned to this costume
-    const assignmentsCount = await tx.eventCostumeAssignment.count({
-      where: { contaId: ctx.contaId, costumeId },
+    const activeAssignmentsCount = await tx.eventCostumeAssignment.count({
+      where: { contaId: ctx.contaId, costumeId, status: { not: 'CANCELLED' } },
     });
-    if (assignmentsCount > 0) {
+    if (activeAssignmentsCount > 0) {
       throw new EventsError(
         'EXCLUSAO_BLOQUEADA_VINCULOS',
-        'Não é possível excluir um figurino que possui alunos vinculados.',
+        'Não é possível excluir um figurino que possui vínculos ativos.',
         400
       );
     }
 
-    // Business rule: Prevent deletion if there are paid financial entries associated with it
-    const paidFinancialEntriesCount = await tx.eventFinancialEntry.count({
-      where: {
-        contaId: ctx.contaId,
-        originType: 'COSTUME',
-        originId: costumeId,
-        status: 'PAID',
-      },
-    });
-    if (paidFinancialEntriesCount > 0) {
-      throw new EventsError(
-        'EXCLUSAO_BLOQUEADA_PAGO',
-        'Não é possível excluir um figurino que possui lançamentos financeiros pagos.',
-        400
-      );
+    const assignments = await tx.eventCostumeAssignment.findMany({ where: { contaId: ctx.contaId, costumeId }, select: { id: true, revenueEntryId: true } });
+    const revenueEntryIds = assignments.map((assignment) => assignment.revenueEntryId).filter((id): id is string => Boolean(id));
+    const assignmentEntries = revenueEntryIds.length ? await tx.eventFinancialEntry.findMany({
+      where: { contaId: ctx.contaId, id: { in: revenueEntryIds }, originType: 'COSTUME_ASSIGNMENT' },
+      include: { payments: { where: { contaId: ctx.contaId }, select: { id: true } } },
+    }) : [];
+    if (assignmentEntries.some((entry) => entry.payments.length > 0 || toMoney(entry.actualAmount) > 0 || ['RECEIVED', 'PAID', 'PARTIALLY_PAID', 'REFUNDED', 'PARTIALLY_REFUNDED'].includes(entry.status))) {
+      throw new EventsError('EXCLUSAO_BLOQUEADA_PAGO', 'Não é possível excluir um figurino com histórico de recebimento dos vínculos.', 409);
     }
+
+    const costumeFinancialEntries = await tx.eventFinancialEntry.findMany({
+      where: { contaId: ctx.contaId, originType: 'COSTUME', originId: costumeId },
+      include: { payments: { where: { contaId: ctx.contaId }, select: { id: true } } },
+    });
+    const hasCostPaymentHistory = costumeFinancialEntries.some((entry) => entry.payments.length > 0 || toMoney(entry.actualAmount) > 0
+      || Boolean(entry.asaasPaymentId || entry.paymentProvider || entry.paymentStatus)
+      || ['PAID', 'PARTIALLY_PAID', 'RECEIVED', 'REFUNDED', 'PARTIALLY_REFUNDED'].includes(entry.status));
+    if (hasCostPaymentHistory) {
+      throw new EventsError('EXCLUSAO_BLOQUEADA_PAGO', 'Não é possível excluir um figurino com pagamentos registrados no custo vinculado.', 409);
+    }
+
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId, actorUserId: ctx.userId, action: 'events.costume.cancelled-links.clear',
+      entityType: 'EventCostume', entityId: costumeId, eventId: current.eventId,
+      before: { assignments, revenueEntries: assignmentEntries, costumeFinancialEntries }, after: null,
+    });
+    if (revenueEntryIds.length) {
+      await tx.eventFinancialEntry.deleteMany({ where: { contaId: ctx.contaId, id: { in: revenueEntryIds }, originType: 'COSTUME_ASSIGNMENT', status: { in: ['PENDING', 'CANCELLED'] } } });
+    }
+    await tx.eventCostumeAssignment.deleteMany({ where: { contaId: ctx.contaId, costumeId, status: 'CANCELLED' } });
 
     // Delete any pending financial entries associated with the costume
     await tx.eventFinancialEntry.deleteMany({
@@ -2825,7 +3126,7 @@ export async function deleteCostume(ctx: EventsContext, costumeId: string) {
         contaId: ctx.contaId,
         originType: 'COSTUME',
         originId: costumeId,
-        status: 'PENDING',
+        status: { in: ['PENDING', 'EXPECTED', 'CANCELLED'] },
       },
     });
 

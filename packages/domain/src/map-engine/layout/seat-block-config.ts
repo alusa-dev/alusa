@@ -110,11 +110,11 @@ export function buildSeatBlockPreview(origin: { x: number; y: number }, rawConfi
   const seats: SeatBlockPreviewSeat[] = [];
   for (let rowIndex = 0; rowIndex < config.rows; rowIndex += 1) {
     const rowLabel = getSeatBlockRowLabel(rowIndex, config.rowPrefix);
-    for (let columnIndex = 0; columnIndex < config.columns; columnIndex += 1) {
+    const rowSeatCount = Math.min(config.columns, config.totalSeats - rowIndex * config.columns);
+    for (let columnIndex = 0; columnIndex < rowSeatCount; columnIndex += 1) {
       if (seats.length >= config.totalSeats) return seats;
-      const visualColumnIndex = config.numberingDirection === 'right-to-left' ? config.columns - columnIndex - 1 : columnIndex;
-      const labels = computeSeatBlockSeatLabel(rowIndex, columnIndex, config);
-      const x = origin.x + visualColumnIndex * config.horizontalSpacing;
+      const labels = computeSeatBlockSeatLabel(rowIndex, columnIndex, { ...config, columns: rowSeatCount });
+      const x = origin.x + columnIndex * config.horizontalSpacing;
       const y = origin.y + rowIndex * config.verticalSpacing;
       seats.push({ x, y, size: config.seatSize, rowLabel, seatNumber: labels.seatNumber, displayLabel: labels.displayLabel, technicalCode: labels.displayLabel, rowIndex, columnIndex, rotation: 0 });
     }

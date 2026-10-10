@@ -305,9 +305,7 @@ export async function createMobileCostumeAssignment(
 ) {
   await getAvailableMobileEvent(actor, eventId);
   assertRole(actor, EVENT_COSTUME_MANAGE_ROLES, 'Você não tem permissão para vincular figurinos.');
-  return {
-    assignment: await createCostumeAssignment({ contaId: actor.contaId, userId: actor.userId }, { ...input, eventId }),
-  };
+  return createCostumeAssignment({ contaId: actor.contaId, userId: actor.userId }, { ...input, eventId });
 }
 
 export async function finishMobileEvent(actor: MobileEventsActor, eventId: string) {

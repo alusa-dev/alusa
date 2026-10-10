@@ -25,6 +25,21 @@ function getNodeEntityId(nodeId: string) {
   return nodeId.replace(/^node-/, '');
 }
 
+export function moveGroupDragNodes(drag: GroupDragState, x: number, y: number) {
+  const anchorOrigin = drag.origin.get(drag.anchorNodeId);
+  if (!anchorOrigin) return;
+  const dx = x - anchorOrigin.x;
+  const dy = y - anchorOrigin.y;
+  drag.delta = { x: dx, y: dy };
+  for (const [nodeId, start] of drag.origin) {
+    if (nodeId === drag.anchorNodeId) continue;
+    const node = drag.nodes.get(nodeId);
+    if (!node) continue;
+    node.x(start.x + dx);
+    node.y(start.y + dy);
+  }
+}
+
 export function useDragSession({ stageRef }: DragSessionInput) {
   const groupDragRef = useRef<GroupDragState | null>(null);
   const committedGroupDragNodeIdsRef = useRef<Set<string>>(new Set());
@@ -84,19 +99,7 @@ export function useDragSession({ stageRef }: DragSessionInput) {
     const drag = groupDragRef.current;
     if (!drag || drag.anchorNodeId !== event.target.id()) return;
 
-    const anchorOrigin = drag.origin.get(drag.anchorNodeId);
-    if (!anchorOrigin) return;
-
-    const dx = event.target.x() - anchorOrigin.x;
-    const dy = event.target.y() - anchorOrigin.y;
-    drag.delta = { x: dx, y: dy };
-    for (const [nodeId, start] of drag.origin) {
-      if (nodeId === drag.anchorNodeId) continue;
-      const node = drag.nodes.get(nodeId);
-      if (!node) continue;
-      node.x(start.x + dx);
-      node.y(start.y + dy);
-    }
+    moveGroupDragNodes(drag, event.target.x(), event.target.y());
   }, []);
 
   return {

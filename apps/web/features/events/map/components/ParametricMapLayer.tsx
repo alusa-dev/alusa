@@ -18,6 +18,8 @@ type ParametricMapLayerProps = {
   selection: MapSelection;
   readOnly: boolean;
   onSelect: (event: Konva.KonvaEventObject<MouseEvent>, item: MapSelectionItem) => void;
+  renderMode?: 'all' | 'outlines' | 'row-guides';
+  sectionId?: string;
 };
 
 function handleSelect(
@@ -29,20 +31,20 @@ function handleSelect(
   onSelect(event, item);
 }
 
-export function ParametricMapLayer({ document, levelId, selection, readOnly, onSelect }: ParametricMapLayerProps) {
+export function ParametricMapLayer({ document, levelId, selection, readOnly, onSelect, renderMode = 'all', sectionId }: ParametricMapLayerProps) {
   if (!document) return null;
 
   return (
     <>
       {document.sections
-        .filter((section) => section.levelId === levelId && !section.hidden)
+        .filter((section) => section.levelId === levelId && !section.hidden && (!sectionId || section.id === sectionId))
         .map((section) => {
           const hasSeatBlocks = section.blocks.length > 0;
           const outline = mapPointsLocalToWorld(section.outline, section.position, section.rotation).flatMap((point) => [point.x, point.y]);
           const sectionSelected = isItemSelected(selection, { type: 'section', id: section.id });
           return (
             <Group key={section.id} listening={!readOnly}>
-              {!hasSeatBlocks && section.outline.length >= 3 ? (
+              {renderMode !== 'row-guides' && !hasSeatBlocks && section.outline.length >= 3 ? (
                 <Line
                   points={outline}
                   closed
@@ -54,7 +56,7 @@ export function ParametricMapLayer({ document, levelId, selection, readOnly, onS
                   onMouseDown={(event) => handleSelect(event, onSelect, { type: 'section', id: section.id })}
                 />
               ) : null}
-              {section.blocks.map((block) => {
+              {renderMode !== 'outlines' ? section.blocks.map((block) => {
                 const blockSelected = isItemSelected(selection, { type: 'seatblock', id: block.id });
                 const visibleRows = block.rows.filter((row, rowIndex) => resolveSeatCountForRow(block, row, rowIndex, block.rows.length) > 0);
                 const renderTransformProxy = (rows: typeof visibleRows, id: string, selected: boolean, rotation: number) => {
@@ -110,7 +112,7 @@ export function ParametricMapLayer({ document, levelId, selection, readOnly, onS
                     </Group>
                   )];
                 })}</Group>;
-              })}
+              }) : null}
             </Group>
           );
         })}

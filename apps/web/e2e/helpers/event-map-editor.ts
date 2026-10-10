@@ -157,7 +157,7 @@ export async function clickMapPoint(page: Page, point: { x: number; y: number })
 }
 
 export async function openPresetsMenu(page: Page) {
-  await page.getByRole('button', { name: 'Presets' }).click();
+  await page.getByRole('button', { name: 'Elementos' }).click();
 }
 
 export async function activateTool(page: Page, toolId: 'seat' | 'select') {
@@ -188,8 +188,10 @@ export async function createSeatBlock(
   const verticalSpacing = options.verticalSpacing ?? seatSize + 14;
   const seatGap = Math.max(0, horizontalSpacing - seatSize);
   const rowGap = Math.max(0, verticalSpacing - seatSize);
-  const width = options.columns * horizontalSpacing - seatGap;
-  const height = options.rows * verticalSpacing - rowGap;
+  // Give the pointer bounds a small tolerance so integer rounding does not
+  // drop the last row or column at an exact grid boundary.
+  const width = options.columns * horizontalSpacing - seatGap + 2;
+  const height = options.rows * verticalSpacing - rowGap + 2;
   await dragOnCanvas(
     page,
     options.origin,

@@ -29,6 +29,20 @@ export type PublishableMapInput = {
   seats: Array<{ id: string; sectionId?: string | null; status: EventSeatStatus; publicVisible?: boolean }>;
 };
 
+export function buildPublishableMapInput(map: {
+  event: { ticketMode: string };
+  levels: unknown[];
+  sections: Array<{ id: string; name: string; lotId?: string | null }>;
+  seats: Array<{ id: string; sectionId?: string | null; status: EventSeatStatus; publicVisible?: boolean }>;
+}): PublishableMapInput {
+  return {
+    ticketMode: map.event.ticketMode as EventTicketMode,
+    levelsCount: map.levels.length,
+    sections: map.sections,
+    seats: map.seats,
+  };
+}
+
 export type PublishValidationResult =
   | { ok: true }
   | { ok: false; errors: string[] };

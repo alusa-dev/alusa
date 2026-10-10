@@ -1,0 +1,2 @@
+ALTER TYPE "EventFinancialEntryStatus" ADD VALUE IF NOT EXISTS 'PARTIALLY_PAID';
+ALTER TYPE "EventFinancialPaymentStatus" ADD VALUE IF NOT EXISTS 'PAID';

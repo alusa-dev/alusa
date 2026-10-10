@@ -134,6 +134,7 @@ export function useTransformSession(input: TransformSessionInput) {
       }
 
       if (session.parametricItems.length > 0 && session.initialParametricTransforms.size > 0) {
+        const commit = buildMapTransformCommit(session, { stage, transformer }, currentMap);
         const transforms = session.parametricItems.flatMap((item) => {
           const initial = session.initialParametricTransforms.get(`${item.type}:${item.id}`);
           const node = stage.findOne(`#node-${item.type}-${item.id}`);
@@ -145,7 +146,16 @@ export function useTransformSession(input: TransformSessionInput) {
           node.getLayer()?.batchDraw();
           return [{ item, matrix: values as [number, number, number, number, number, number] }];
         });
-        useEventMapEditorStore.getState().transformParametricSelections(transforms);
+        for (const entry of commit.objectUpdates) {
+          lastTransformCommitRef.current.set(entry.id, { x: entry.patch.x ?? 0, y: entry.patch.y ?? 0 });
+        }
+        for (const entry of commit.seatUpdates) {
+          lastTransformCommitRef.current.set(entry.id, { x: entry.patch.x ?? 0, y: entry.patch.y ?? 0 });
+        }
+        useEventMapEditorStore.getState().transformParametricSelections(transforms, {
+          objects: commit.objectUpdates,
+          seats: commit.seatUpdates,
+        });
         resetParametricPreviewScales(session, stage);
         resetMapTransformTransformer(session, transformer);
         mapTransformSessionRef.current = null;

@@ -1934,6 +1934,7 @@ export {
 } from './events/complete-public-event-map-checkout';
 export {
   createFinancialEntry,
+  deleteEventCost,
   createManualEventParticipantPayment,
   deleteManualEventParticipantFee,
   deleteManualEventParticipantPayment,
@@ -1942,6 +1943,9 @@ export {
   refundManualEventParticipantFee,
   refundManualEventParticipantPayment,
   refundTicketSale,
+  registerEventCostPayment,
+  registerCostumeAssignmentPayment,
+  refundCostumeAssignmentPayment,
   updateFinancialEntry,
 } from './events/event-financial-operations';
 export {

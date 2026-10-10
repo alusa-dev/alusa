@@ -22,6 +22,26 @@ describe('artboard levels', () => {
     });
   });
 
+  it('preserves an empty or partial base-area name while it is being edited', () => {
+    const normalized = normalizeMapLevels([
+      { id: 'level-1', name: '', sortOrder: 0, widthPx: 1200, heightPx: 800, unit: 'px', scale: null },
+    ]);
+    const partialName = normalizeMapLevels([
+      { id: 'level-1', name: 'Sessão ', sortOrder: 0, widthPx: 1200, heightPx: 800, unit: 'px', scale: null },
+    ]);
+
+    expect(normalized[0]?.name).toBe('');
+    expect(partialName[0]?.name).toBe('Sessão ');
+  });
+
+  it('migrates legacy base-area names to the default label', () => {
+    const normalized = normalizeMapLevels([
+      { id: 'level-1', name: 'Plateia', sortOrder: 0, widthPx: 1200, heightPx: 800, unit: 'px', scale: null },
+    ]);
+
+    expect(normalized[0]?.name).toBe('Ambiente 1');
+  });
+
   it('clamps artboard dimensions to supported bounds', () => {
     expect(clampArtboardWidth(100)).toBe(320);
     expect(normalizeArtboardDimensions(30000, 100)).toEqual({

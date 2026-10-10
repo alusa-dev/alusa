@@ -1,5 +1,5 @@
 'use client';
-import { MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, buildLevelLayerSortOrderPatches, computeArtboardFitView, createSeatBlock, executeMapCommand, expandObjectSelectionItems, findMapBlockOwner, findMapRowOwner, findMapSeatOwner, getNextGroupDisplayName, getNextLevelSortOrder, getNextSeatBlockRowPrefix, getObjectGroupId, getObjectGroupLabel, getSeatBlockPreviewBounds, getSeatBlockRowLabel, getSelectableItems, getTextModeFromCreation, isPlateiaBaseLevel, migrateLegacyMapDocument, normalizeMapLevels, normalizeSeatBlockConfig, normalizeSelection, normalizeTextData, pathLength, projectMapDocumentToEditorFields, reorderLevelPanelChildItems, replaceSelection, resizeArcPathToLength, resolveSeatCountForRow, sanitizeGroupMembership, sanitizeTextObjectData, sectionLocalToWorld, setObjectGroupData, sortLevelPanelChildren, toggleSelectionItem, validateGroupCandidates, withAutoObjectLabel, withDuplicateObjectLabel, worldToSectionLocal } from '@alusa/domain';
+import { MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, buildLevelLayerSortOrderPatches, computeArtboardFitView, computeSeatBlockSeatLabel, createSeatBlock, executeMapCommand, expandObjectSelectionItems, findMapBlockOwner, findMapRowOwner, findMapSeatOwner, getNextGroupDisplayName, getNextLevelSortOrder, getNextMapLayerSortOrder, getNextSeatBlockRowPrefix, getObjectGroupId, getObjectGroupLabel, getSeatBlockPreviewBounds, getSeatBlockRowLabel, getSelectableItems, getTextModeFromCreation, isPlateiaBaseLevel, migrateLegacyMapDocument, normalizeMapLevels, normalizeSeatBlockConfig, normalizeSelection, normalizeTextData, pathLength, projectMapDocumentToEditorFields, reorderLevelPanelChildItems, replaceSelection, resizeArcPathToLength, resolveSeatCountForRow, sanitizeGroupMembership, sanitizeTextObjectData, sectionLocalToWorld, setObjectGroupData, sortLevelPanelChildren, toggleSelectionItem, validateGroupCandidates, withAutoObjectLabel, withDuplicateObjectLabel, worldToSectionLocal } from '@alusa/domain';
 import type { EventMapDTO, EventMapDraftPayload, EventMapLevelDTO, EventMapObjectDTO, EventMapSectionDTO, EventSeatDTO, MapCommand, MapSelection, MapSelectionItem, MapTool, MapReferenceChart, MapSeatBlock, MapSeatRow, SeatBlockConfig, SeatDistributionMode, SeatRowPath } from '@alusa/domain';
 
 import { create } from 'zustand';
@@ -37,6 +37,8 @@ type EventMapEditorState = {
   temporaryZoomPreviousTool: MapTool | null;
   zoomScrubbedThisHold: boolean;
   inlineTextEditorActive: boolean;
+  commandFeedback: { id: number; messages: string[] } | null;
+  clearCommandFeedback: (id: number) => void;
   loadMap: (map: EventMapDTO, options?: { dirty?: boolean }) => void;
   setTool: (tool: MapTool) => void;
   beginTemporaryZoom: () => void;
@@ -64,7 +66,13 @@ type EventMapEditorState = {
   deleteSeatBlock: (id: string) => void;
   updateSeatRowPath: (rowId: string, path: SeatRowPath) => void;
   transformParametricSelection: (item: Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>, matrix: [number, number, number, number, number, number]) => void;
-  transformParametricSelections: (transforms: Array<{ item: Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>; matrix: [number, number, number, number, number, number] }>) => void;
+  transformParametricSelections: (
+    transforms: Array<{ item: Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>; matrix: [number, number, number, number, number, number] }>,
+    updates?: {
+      objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
+      seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
+    },
+  ) => void;
   updateObject: (id: string, patch: Partial<EventMapObjectDTO>) => void;
   updateObjects: (updates: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>) => void;
   updateMapItems: (updates: {
@@ -130,17 +138,44 @@ function translateRowPath(path: SeatRowPath, dx: number, dy: number): SeatRowPat
   return { ...path, p0: point(path.p0), p1: point(path.p1), p2: point(path.p2), p3: point(path.p3) };
 }
 
-function ensureRowSeatCapacity(row: MapSeatBlock['rows'][number], requiredCount: number, rowIndex?: number): MapSeatBlock['rows'][number] {
+function ensureRowSeatCapacity(
+  row: MapSeatBlock['rows'][number],
+  requiredCount: number,
+  block: MapSeatBlock,
+  usedSeatCodes: Set<string>,
+  rowIndex?: number,
+): MapSeatBlock['rows'][number] {
   if (row.seats.length >= requiredCount) return row;
   const seats = [...row.seats];
   const seatIds = [...row.seatIds];
+  const direction = block.numberingDirection ?? 'left-to-right';
+  let step = direction === 'right-to-left' ? -1 : 1;
+  const startNumber = block.startNumber ?? 1;
+  const lastNumber = Number(seats.at(-1)?.technicalCode?.match(/(\d+)$/)?.[1]);
+  let nextNumber = Number.isFinite(lastNumber) && lastNumber > 0
+    ? lastNumber + step
+    : startNumber + (direction === 'right-to-left' ? Math.max(0, (block.columnCount ?? requiredCount) - 1) : 0);
   for (let index = seats.length; index < requiredCount; index += 1) {
     const id = createLocalId('seat');
-    const number = index + 1;
+    while (nextNumber > 0 && usedSeatCodes.has(`${row.label}${nextNumber}`.toUpperCase())) nextNumber += step;
+    if (nextNumber <= 0) {
+      const rowNumbers = seats
+        .map((seat) => Number(seat.technicalCode?.match(/(\d+)$/)?.[1]))
+        .filter((number) => Number.isFinite(number) && number > 0);
+      nextNumber = Math.max(startNumber, ...rowNumbers) + 1;
+      // The descending RTL sequence has reached its positive-number limit.
+      // Continue upward within this row to keep new seat codes unique and
+      // avoid depending on unrelated rows' number ranges.
+      step = 1;
+    }
+    const number = nextNumber;
+    nextNumber += step;
+    const technicalCode = `${row.label}${number}`;
+    usedSeatCodes.add(technicalCode.toUpperCase());
     seats.push({
       id,
-      label: `${row.label}${number}`,
-      technicalCode: `${row.label}${number}`,
+      label: technicalCode,
+      technicalCode,
       rowIndex: rowIndex ?? row.seats[0]?.rowIndex ?? 0,
       columnIndex: index,
       accessible: false,
@@ -161,14 +196,14 @@ function fixedRowSeatCounts(block: MapSeatBlock) {
 }
 
 /**
- * A seat position is an explicit exception to the row's parametric layout.
- * Changing the row rhythm must return seats to that layout; otherwise an old
- * dragged position wins over the new size/gap and seats visually pile up.
+ * Individual seat geometry overrides are exceptions to the row layout.
+ * Changing the row rhythm returns seats to that layout so old positions or
+ * sizes do not override the new geometry.
  */
 function clearSeatLayoutOverrides(row: MapSeatBlock['rows'][number]): MapSeatBlock['rows'][number] {
   return {
     ...row,
-    seats: row.seats.map(({ position: _position, rotation: _rotation, ...seat }) => seat),
+    seats: row.seats.map(({ position: _position, rotation: _rotation, size: _size, ...seat }) => seat),
   };
 }
 
@@ -240,12 +275,12 @@ function applyMapLevels(map: EventMapDTO) {
 function cloneAndNormalizeMap(map: EventMapDTO): EventMapDTO {
   const next = cloneMap(map);
   applyMapLevels(next);
-  next.objects = next.objects.map((object) =>
-    object.type === 'TEXT' ? { ...object, data: sanitizeTextObjectData(normalizeTextData(object.data)) } : object,
-  );
-  const document = next.document ?? documentFromMap(next);
+  const document = documentFromMap(next);
   const normalizedDocument = {
     ...document,
+    visualElements: document.visualElements.map((object) =>
+      object.type === 'TEXT' ? { ...object, data: sanitizeTextObjectData(normalizeTextData(object.data)) } : object,
+    ),
     sections: document.sections.map((section) => ({
       ...section,
       outline: section.blocks.length > 0 ? [] : section.outline,
@@ -273,7 +308,9 @@ function cloneAndNormalizeMap(map: EventMapDTO): EventMapDTO {
 }
 
 function documentFromMap(map: EventMapDTO) {
-  if (map.document) return cloneMap({ ...map, document: map.document }).document!;
+  if (map.document) {
+    return cloneMap({ ...map, document: map.document }).document!;
+  }
   return migrateLegacyMapDocument({
     sections: map.sections.map((section) => ({
       id: section.id,
@@ -397,6 +434,16 @@ function buildRedoCommand(
   nextMap: EventMapDTO,
 ): MapCommand {
   if (command.type === 'REPLACE_DOCUMENT') return command;
+  if (command.type === 'DUPLICATE_SELECTION' && map.document && nextMap.document) {
+    return {
+      type: 'REPLACE_DOCUMENT',
+      payload: {
+        before: map.document,
+        after: nextMap.document,
+        description: 'Refazer duplicação',
+      },
+    };
+  }
   const createdObjects = nextMap.objects.filter((no) => !map.objects.some((o) => o.id === no.id));
   const createdSeats = nextMap.seats.filter((ns) => !map.seats.some((s) => s.id === ns.id));
   const createdSections = nextMap.sections.filter((ns) => !map.sections.some((s) => s.id === ns.id));
@@ -416,6 +463,7 @@ function buildRedoCommand(
         seats: createdSeats,
         sections: createdSections,
         levels: createdLevels,
+        ...(nextMap.document ? { document: nextMap.document } : {}),
       },
     };
   }
@@ -428,6 +476,14 @@ function buildRedoCommand(
   }
 
   return buildRedoUpdateItems(map, nextMap);
+}
+
+let commandFeedbackSequence = 0;
+
+function commandFeedbackPatch(messages: string[]) {
+  return messages.length > 0
+    ? { commandFeedback: { id: ++commandFeedbackSequence, messages } }
+    : {};
 }
 
 function commitCommandResult(
@@ -452,6 +508,7 @@ function commitCommandResult(
   return {
     ...(hasMapChanged ? { map: res.map, isDirty: true, past: nextPast, future: [] } : {}),
     selection: res.selection ?? state.selection,
+    ...commandFeedbackPatch(res.warnings),
     ...(res.activeLevelId ? { activeLevelId: res.activeLevelId } : {}),
   };
 }
@@ -514,7 +571,7 @@ function createDefaultSection(map: EventMapDTO, levelId: string, point: { x: num
     rotation: 0,
     locked: false,
     hidden: false,
-    sortOrder: map.objects.length,
+    sortOrder: getNextMapLayerSortOrder(map),
   };
 
   map.sections.push(section);
@@ -551,6 +608,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
   temporaryZoomPreviousTool: null,
   zoomScrubbedThisHold: false,
   inlineTextEditorActive: false,
+  commandFeedback: null,
   loadMap: (map, options) => {
     const normalized = cloneAndNormalizeMap(map);
     const activeLevelId = getDefaultActiveLevelId(normalized.levels);
@@ -606,6 +664,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       temporaryZoomPreviousTool: null,
       zoomScrubbedThisHold: false,
       inlineTextEditorActive: false,
+      commandFeedback: null,
       isDirty: options?.dirty ?? false,
       past: [],
       future: [],
@@ -731,7 +790,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
           blockIds: [],
           blocks: [],
         };
-        const before = state.map.document;
+        const before = documentFromMap(state.map);
         const after = { ...before, sections: [...before.sections, section] };
         const result = runCommand(state, {
           type: 'REPLACE_DOCUMENT',
@@ -781,13 +840,34 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       const before = documentFromMap(state.map);
       const levelId = state.activeLevelId ?? state.map.levels[0]?.id;
       if (!levelId) return state;
-      const usedRowLabels = before.sections
-        .filter((entry) => entry.levelId === levelId)
-        .flatMap((entry) => entry.blocks.flatMap((block) => block.rows.map((row) => row.label)));
-      const configuredPrefix = config.rowPrefix?.trim();
-      const rowPrefix = configuredPrefix && configuredPrefix.toUpperCase() !== 'A'
-        ? configuredPrefix
-        : getNextSeatBlockRowPrefix(usedRowLabels);
+      const levelSections = before.sections.filter((entry) => entry.levelId === levelId);
+      const usedRowLabels = new Set(levelSections.flatMap((entry) => entry.blocks.flatMap((block) => block.rows.map((row) => row.label.toUpperCase()))));
+      const usedSeatCodes = new Set(levelSections.flatMap((entry) => entry.blocks.flatMap((block) =>
+        block.rows.flatMap((row) => row.seats.flatMap((seat) => [seat.label, seat.technicalCode ?? ''].map((code) => code.toUpperCase()))),
+      )));
+      const requestedPrefix = config.rowPrefix?.trim();
+      let rowPrefix = requestedPrefix && requestedPrefix.toUpperCase() !== 'A'
+        ? requestedPrefix
+        : getNextSeatBlockRowPrefix([...usedRowLabels]);
+      const isPrefixAvailable = (candidate: string) => {
+        for (let rowIndex = 0; rowIndex < rowSeatCounts.length; rowIndex += 1) {
+          const rowLabel = getSeatBlockRowLabel(rowIndex, candidate);
+          if (usedRowLabels.has(rowLabel.toUpperCase())) return false;
+          for (let columnIndex = 0; columnIndex < (rowSeatCounts[rowIndex] ?? 0); columnIndex += 1) {
+            const labels = computeSeatBlockSeatLabel(0, columnIndex, {
+              rowPrefix: rowLabel,
+              startNumber: normalizedConfig.startNumber,
+              numberingDirection: normalizedConfig.numberingDirection,
+              columns: rowSeatCounts[rowIndex] ?? normalizedConfig.columns,
+            });
+            if (usedSeatCodes.has(labels.displayLabel.toUpperCase())) return false;
+          }
+        }
+        return true;
+      };
+      while (!isPrefixAvailable(rowPrefix)) {
+        rowPrefix = getNextSeatBlockRowPrefix([...usedRowLabels, rowPrefix]);
+      }
       const sectionId = createLocalId('section');
       const section = {
         id: sectionId,
@@ -817,6 +897,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         rowSeatCounts,
         rowPrefix,
         startNumber: normalizedConfig.startNumber,
+        numberingDirection: normalizedConfig.numberingDirection,
         createId: createLocalId,
       });
       const command: MapCommand = {
@@ -829,7 +910,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
   updateSeatBlock: (id, patch) =>
     set((state) => {
       if (!state.map?.document) return state;
-      const before = state.map.document;
+      const before = documentFromMap(state.map);
       const { seatSize, rowSeatCounts, rowPaths, columnCount, ...blockPatch } = patch;
       const after = {
         ...before,
@@ -930,8 +1011,11 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
               nextRows.every((row, rowIndex) => (rowPaths?.[rowIndex] ?? row.path).type === 'LINE')
               ? firstRequestedPath
               : null;
+            const usedSeatCodes = new Set(before.sections.flatMap((section) => section.blocks.flatMap((entry) =>
+                entry.rows.flatMap((candidate) => candidate.seats.flatMap((seat) => [seat.label, seat.technicalCode ?? ''].map((code) => code.toUpperCase()))),
+            )));
             const rows = nextRows.map((row, rowIndex) => {
-              const capacityRow = ensureRowSeatCapacity(row, requestedMaximum, rowIndex);
+              const capacityRow = ensureRowSeatCapacity(row, requestedMaximum, block, usedSeatCodes, rowIndex);
               const layoutRow = shouldReflowSeats ? clearSeatLayoutOverrides(capacityRow) : capacityRow;
               const nextRowDistribution = sequentialRowCounts
                 ? [{ type: 'SEATS' as const, count: sequentialRowCounts[rowIndex] ?? 0 }]
@@ -982,7 +1066,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
   updateSeatRow: (id, patch) =>
     set((state) => {
       if (!state.map?.document) return state;
-      const before = state.map.document;
+      const before = documentFromMap(state.map);
       const rowOwner = findMapRowOwner(before, id);
       const rowIndex = rowOwner?.block.rows.findIndex((candidate) => candidate.id === id) ?? -1;
       const rowSeatCount = rowOwner && rowIndex >= 0
@@ -1026,34 +1110,14 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       });
     }),
   deleteSeatBlock: (id) =>
-    set((state) => {
-      if (!state.map?.document) return state;
-      const before = state.map.document;
-      const after = {
-        ...before,
-        sections: before.sections.flatMap((section) => {
-          if (!section.blocks.some((block) => block.id === id)) return [section];
-          const blocks = section.blocks.filter((block) => block.id !== id);
-          if (blocks.length === 0) return [];
-          return [{
-            ...section,
-            blockIds: section.blockIds.filter((blockId) => blockId !== id),
-            blocks,
-          }];
-        }),
-      };
-      return {
-        ...runCommand(state, {
-        type: 'REPLACE_DOCUMENT',
-        payload: { before, after, description: 'Excluir bloco de fileiras' },
-        }),
-        selection: state.selection.some((item) => item.type === 'seatblock' && item.id === id) ? [] : state.selection,
-      };
-    }),
+    set((state) => runCommand(state, {
+      type: 'DELETE_SELECTION',
+      payload: { selection: [{ type: 'seatblock', id }] },
+    })),
   updateSeatRowPath: (rowId, path) =>
     set((state) => {
       if (!state.map?.document) return state;
-      const before = state.map.document;
+      const before = documentFromMap(state.map);
       const after = {
         ...before,
         sections: before.sections.map((section) => ({
@@ -1070,12 +1134,12 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       });
     }),
   transformParametricSelection: (item, matrix) => get().transformParametricSelections([{ item, matrix }]),
-  transformParametricSelections: (transforms) =>
+  transformParametricSelections: (transforms, updates = {}) =>
     set((state) => {
-      const document = state.map?.document;
-      if (!document || transforms.length === 0) return state;
+      const document = state.map ? documentFromMap(state.map) : null;
+      if (!document || (transforms.length === 0 && !updates.objects?.length && !updates.seats?.length)) return state;
       const validTransforms = transforms.filter(({ matrix }) => matrix.every(Number.isFinite) && Math.abs(matrix[0] * matrix[3] - matrix[1] * matrix[2]) >= 0.0001);
-      if (validTransforms.length === 0) return state;
+      if (validTransforms.length === 0 && !updates.objects?.length && !updates.seats?.length) return state;
       const blockTransforms = new Map(validTransforms.flatMap(({ item, matrix }) => item.type === 'seatblock' ? [[item.id, matrix] as const] : []));
       const rowTransforms = new Map(validTransforms.flatMap(({ item, matrix }) => item.type === 'seatrow' ? [[item.id, matrix] as const] : []));
       const transformPoint = (point: { x: number; y: number }, section: (typeof document.sections)[number], matrix: [number, number, number, number, number, number]) => {
@@ -1094,7 +1158,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         }
       };
       const before = document;
-      const after = {
+      let after = {
         ...document,
         sections: document.sections.map((section) => ({
           ...section,
@@ -1130,6 +1194,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
                     ...seat,
                     ...(seat.position ? { position: transformPoint(seat.position, section, rowMatrix) } : {}),
                     ...(seat.rotation !== undefined ? { rotation: seat.rotation + rowRotation } : {}),
+                    ...(seat.size !== undefined ? { size: Math.max(8, seat.size * rowScale) } : {}),
                   })),
                 };
               }),
@@ -1137,8 +1202,70 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
           }),
         })),
       };
-      if (after === before) return state;
-      const description = validTransforms.length > 1 ? 'Transformar grupos de assentos' : validTransforms[0]!.item.type === 'seatblock' ? 'Transformar bloco de fileiras' : 'Transformar fileira';
+
+      if (updates.objects?.length) {
+        const objectPatches = new Map(updates.objects.map((entry) => [entry.id, entry.patch]));
+        after = {
+          ...after,
+          visualElements: after.visualElements.map((element) => {
+            const patch = objectPatches.get(element.id);
+            if (!patch) return element;
+            return {
+              ...element,
+              ...patch,
+              ...(patch.data ? { data: { ...element.data, ...patch.data } } : {}),
+            };
+          }),
+        };
+      }
+
+      if (updates.seats?.length) {
+        const seatPatches = new Map(updates.seats.map((entry) => [entry.id, entry.patch]));
+        const previousSeats = new Map((state.map?.seats ?? []).map((seat) => [seat.id, seat]));
+        after = {
+          ...after,
+          sections: after.sections.map((section) => ({
+            ...section,
+            blocks: section.blocks.map((block) => ({
+              ...block,
+              rows: block.rows.map((row) => ({
+                ...row,
+                seats: row.seats.map((seat) => {
+                  const patch = seatPatches.get(seat.id);
+                  if (!patch) return seat;
+                  const previousSeat = previousSeats.get(seat.id);
+                  const hasPositionPatch = patch.x !== undefined || patch.y !== undefined;
+                  const position = hasPositionPatch && previousSeat
+                    ? worldToSectionLocal(
+                        { x: patch.x ?? previousSeat.x, y: patch.y ?? previousSeat.y },
+                        section.position,
+                        section.rotation,
+                      )
+                    : seat.position;
+                  const { size: _size, ...seatWithoutSize } = seat;
+                  const removesSizeOverride = patch.size === null || (
+                    patch.size !== undefined && Math.abs(patch.size - row.seatSize) < 0.001
+                  );
+                  return {
+                    ...(removesSizeOverride ? seatWithoutSize : seat),
+                    ...(position ? { position } : {}),
+                    ...(patch.rotation !== undefined ? { rotation: patch.rotation - section.rotation } : {}),
+                    ...(!removesSizeOverride && patch.size !== undefined && patch.size !== null ? { size: patch.size } : {}),
+                  };
+                }),
+              })),
+            })),
+          })),
+        };
+      }
+
+      const description = updates.objects?.length || updates.seats?.length
+        ? 'Transformar seleção'
+        : validTransforms.length > 1
+          ? 'Transformar grupos de assentos'
+          : validTransforms[0]?.item.type === 'seatblock'
+            ? 'Transformar bloco de fileiras'
+            : 'Transformar fileira';
       return runCommand(state, { type: 'REPLACE_DOCUMENT', payload: { before, after, description } });
     }),
   updateObject: (id, patch) =>
@@ -1160,18 +1287,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
   updateSeat: (id, patch) =>
     set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { seats: [{ id, patch }] } })),
   updateSection: (id, patch) =>
-    set((state) => {
-      if (!state.map?.document) return runCommand(state, { type: 'UPDATE_ITEMS', payload: { sections: [{ id, patch }] } });
-      const before = state.map.document;
-      const after = {
-        ...before,
-        sections: before.sections.map((section) => (section.id === id ? { ...section, ...patch } : section)),
-      };
-      return runCommand(state, {
-        type: 'REPLACE_DOCUMENT',
-        payload: { before, after, description: 'Atualizar seção' },
-      });
-    }),
+    set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { sections: [{ id, patch }] } })),
   updateLevel: (id, patch) =>
     set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { levels: [{ id, patch }] } })),
   addLevel: (name) =>
@@ -1192,14 +1308,15 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
   toggleSectionVisibility: (id) =>
     set((state) => {
       if (!state.map) return state;
-      const section = state.map.document?.sections.find((entry) => entry.id === id);
+      const document = state.map.document ? documentFromMap(state.map) : null;
+      const section = document?.sections.find((entry) => entry.id === id);
       const legacySection = state.map.sections.find((entry) => entry.id === id);
       const linkedObjects = state.map.objects.filter((object) => object.sectionId === id);
       const currentHidden = section?.hidden ?? legacySection?.hidden ?? (linkedObjects.length > 0 && linkedObjects.every((object) => object.hidden));
       const nextHidden = !currentHidden;
 
-      if (state.map.document && section) {
-        const before = state.map.document;
+      if (document && section) {
+        const before = document;
         const after = {
           ...before,
           sections: before.sections.map((entry) => entry.id === id ? { ...entry, hidden: nextHidden } : entry),
@@ -1221,12 +1338,10 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       return nextHidden ? { ...result, selection: [] } : result;
     }),
   deleteSection: (id) =>
-    set((state) => {
-      if (!state.map?.document) return runCommand(state, { type: 'DELETE_SELECTION', payload: { selection: [{ type: 'section', id }] } });
-      const before = state.map.document;
-      const after = { ...before, sections: before.sections.filter((section) => section.id !== id) };
-      return { ...runCommand(state, { type: 'REPLACE_DOCUMENT', payload: { before, after, description: 'Excluir seção' } }), selection: [] };
-    }),
+    set((state) => runCommand(state, {
+      type: 'DELETE_SELECTION',
+      payload: { selection: [{ type: 'section', id }] },
+    })),
   deleteLevel: (id) =>
     set((state) => runCommand(state, { type: 'DELETE_LEVEL', payload: { levelId: id } })),
   deleteSelection: () =>
@@ -1248,10 +1363,24 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       const orderChanged = items.some(
         (item, index) => item.id !== reordered[index]?.id || item.kind !== reordered[index]?.kind,
       );
-      if (patches.length === 0 || !orderChanged) return state;
+      if (!orderChanged) return state;
+      const before = documentFromMap(state.map);
+      const objectSortOrder = new Map(patches.objects.map(({ id, patch }) => [id, patch.sortOrder]));
+      const sectionSortOrder = new Map(patches.sections.map(({ id, sortOrder }) => [id, sortOrder]));
+      const after = {
+        ...before,
+        sections: before.sections.map((section) => ({
+          ...section,
+          ...(sectionSortOrder.has(section.id) ? { sortOrder: sectionSortOrder.get(section.id) } : {}),
+        })),
+        visualElements: before.visualElements.map((object) => ({
+          ...object,
+          ...(objectSortOrder.has(object.id) ? { sortOrder: objectSortOrder.get(object.id)! } : {}),
+        })),
+      };
       return runCommand(state, {
-        type: 'UPDATE_ITEMS',
-        payload: { objects: patches },
+        type: 'REPLACE_DOCUMENT',
+        payload: { before, after, description: 'Reordenar camadas' },
       });
     }),
   undo: () =>
@@ -1269,6 +1398,11 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         },
       );
 
+      if (res.map === state.map) {
+        const feedback = commandFeedbackPatch(res.warnings);
+        return Object.keys(feedback).length > 0 ? feedback : state;
+      }
+
       return {
         map: res.map,
         selection: last.undoSelection ?? res.selection ?? state.selection,
@@ -1276,6 +1410,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         past: state.past.slice(0, -1),
         future: [last, ...state.future].slice(0, 24),
         isDirty: true,
+        ...commandFeedbackPatch(res.warnings),
       };
     }),
   redo: () =>
@@ -1293,6 +1428,11 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         },
       );
 
+      if (res.map === state.map) {
+        const feedback = commandFeedbackPatch(res.warnings);
+        return Object.keys(feedback).length > 0 ? feedback : state;
+      }
+
       return {
         map: res.map,
         selection: next.executeSelection ?? res.selection ?? state.selection,
@@ -1300,6 +1440,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         past: [...state.past, next].slice(-24),
         future: state.future.slice(1),
         isDirty: true,
+        ...commandFeedbackPatch(res.warnings),
       };
     }),
   markSaved: (map) =>
@@ -1328,6 +1469,9 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
   setReferenceChart: (referenceChart) =>
     set((state) => (state.map ? { map: { ...state.map, referenceChart } } : state)),
   setInlineTextEditorActive: (active) => set({ inlineTextEditorActive: active }),
+  clearCommandFeedback: (id) => set((state) => (
+    state.commandFeedback?.id === id ? { commandFeedback: null } : state
+  )),
   toPayload: () => {
     const map = get().map;
     if (!map) return null;

@@ -8,6 +8,7 @@ import { useMutation } from '@tanstack/react-query';
 
 import { CreatorIcon } from '@/components/icons/hugeicons';
 import { Button } from '@/components/ui/button';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import {
   Dialog,
   DialogContent,
@@ -127,9 +128,10 @@ export function MapSettingsDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (nextOpen || !saveMutation.isPending) onOpenChange(nextOpen); }}>
       <DialogContent
         fullScreenMobile
+        closeDisabled={saveMutation.isPending}
         className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] max-w-2xl gap-0 overflow-hidden rounded-[20px] border border-slate-200 bg-white p-0 shadow-lg max-md:rounded-none"
       >
         <DialogHeader className="border-b border-slate-200 px-6 pb-4 pt-5 text-left max-md:px-4 max-md:pb-3 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))]">
@@ -283,7 +285,7 @@ export function MapSettingsDialog({
             onClick={() => saveMutation.mutate()}
             disabled={disabled || saveMutation.isPending}
           >
-            {saveMutation.isPending ? 'Salvando...' : 'Salvar'}
+            {saveMutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando configurações do mapa" size="sm" className="text-white" /></> : 'Salvar'}
           </Button>
         </DialogFooter>
       </DialogContent>

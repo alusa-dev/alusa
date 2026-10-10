@@ -73,10 +73,17 @@ describe('compactParametricSeatSelection', () => {
     ]);
   });
 
-  it('preserves partial-seat and mixed selections as-is', () => {
-    const partial = seats(['a1', 'a2', 'b1']);
-    expect(compactParametricSeatSelection(partial, document)).toBe(partial);
+  it('preserves partial seat selections as-is', () => {
+    const partial = seats(['a1', 'b1']);
+    expect(compactParametricSeatSelection(partial, document)).toEqual(partial);
+  });
+
+  it('compacts complete rows inside a mixed shape and seat selection', () => {
     const mixed: MapSelectionItem[] = [{ type: 'object', id: 'stage' }, ...seats(['a1', 'a2'])];
-    expect(compactParametricSeatSelection(mixed, document)).toBe(mixed);
+
+    expect(compactParametricSeatSelection(mixed, document)).toEqual([
+      { type: 'object', id: 'stage' },
+      { type: 'seatrow', id: 'row-a1' },
+    ]);
   });
 });

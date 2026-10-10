@@ -24,31 +24,41 @@ export function reorderLevelPanelChildItems(
 }
 
 export function buildLevelLayerSortOrderPatches(
-  map: Pick<EventMapDTO, 'objects'>,
+  map: Pick<EventMapDTO, 'objects' | 'sections'>,
   orderedItems: LevelPanelChildItem[],
-): Array<{ id: string; patch: Pick<EventMapObjectDTO, 'sortOrder'> }> {
+): {
+  objects: Array<{ id: string; patch: Pick<EventMapObjectDTO, 'sortOrder'> }>;
+  sections: Array<{ id: string; sortOrder: number }>;
+} {
   const patches: Array<{ id: string; patch: Pick<EventMapObjectDTO, 'sortOrder'> }> = [];
+  const sectionPatches: Array<{ id: string; sortOrder: number }> = [];
+  const orderStride = map.objects.length + 1;
 
   orderedItems.forEach((item, index) => {
     const sortOrder = orderedItems.length - 1 - index;
 
     if (item.kind === 'section') {
+      sectionPatches.push({ id: item.id, sortOrder: sortOrder * orderStride });
       const linkedObject = map.objects.find((object) => object.sectionId === item.id);
       if (linkedObject) {
-        patches.push({ id: linkedObject.id, patch: { sortOrder } });
+        patches.push({ id: linkedObject.id, patch: { sortOrder: sortOrder * orderStride } });
       }
       return;
     }
 
     if (item.kind === 'object') {
-      patches.push({ id: item.id, patch: { sortOrder } });
+      patches.push({ id: item.id, patch: { sortOrder: sortOrder * orderStride } });
       return;
     }
 
-    for (const objectId of item.objectIds) {
-      patches.push({ id: objectId, patch: { sortOrder } });
-    }
+    const groupObjects = item.objectIds
+      .map((id) => map.objects.find((object) => object.id === id))
+      .filter((object): object is EventMapObjectDTO => Boolean(object))
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id));
+    groupObjects.forEach((object, index) => {
+      patches.push({ id: object.id, patch: { sortOrder: sortOrder * orderStride + index } });
+    });
   });
 
-  return patches;
+  return { objects: patches, sections: sectionPatches };
 }

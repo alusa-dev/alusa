@@ -19,6 +19,11 @@ export function roundEventMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+export function supportsEventCostPaymentOrigin(originType: string, originId?: string | null): boolean {
+  return originType === 'MANUAL'
+    || (originType === 'COSTUME' && Boolean(originId) && !originId?.startsWith('loss:'));
+}
+
 export function calculateEventParticipantDiscount(input: {
   originalAmount: number;
   discountType?: EventParticipantDiscountType | null;
@@ -87,4 +92,19 @@ export function normalizeEventFinancialPayment(input: {
     refundedAmount,
     netAmount: actualAmount == null ? null : money(actualAmount - refundedAmount),
   };
+}
+
+export function calculateEventCostPayment(input: {
+  expectedAmount: number | string;
+  paidAmount: number | string | null | undefined;
+  paymentAmount: number | string;
+}) {
+  const expectedAmount = money(input.expectedAmount);
+  const paidAmount = money(input.paidAmount);
+  const paymentAmount = money(input.paymentAmount);
+  if (paymentAmount <= 0) throw new Error('O pagamento deve ser maior que zero.');
+  const balance = money(Math.max(expectedAmount - paidAmount, 0));
+  if (paymentAmount > balance) throw new Error('O pagamento não pode ser maior que o saldo restante.');
+  const totalPaid = money(paidAmount + paymentAmount);
+  return { balance, totalPaid, remaining: money(balance - paymentAmount), status: totalPaid >= expectedAmount ? 'PAID' as const : 'PARTIALLY_PAID' as const };
 }

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS, type EventCostumeAssignmentBillingMode } from '@alusa/shared';
+import { type EventCostumeAssignmentBillingMode } from '@alusa/shared';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +15,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -23,7 +24,7 @@ import { createCostumeAssignment, type CostumeDTO, type EventScopedResources } f
 import { EventField as Field } from '../shared/EventField';
 import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
 import { eventQueryKeys } from '../shared/event-query-keys';
-import { FILTER_INPUT_CLASS, nullableString } from '../shared/event-form-utils';
+import { FILTER_INPUT_CLASS, handleFormDataSubmit, nullableString } from '../shared/event-form-utils';
 import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
 import { mergeScopedPersonOptions } from '../shared/event-scoped-resource-options';
 import { COSTUME_BILLING_OPTIONS } from './costume-billing-ui';
@@ -34,19 +35,25 @@ export function AssignmentFormDialog({ eventId, costumes, scopedResources, trigg
   const [open, setOpen] = useState(false);
   const [chargedValueText, setChargedValueText] = useState("");
   const [billingMode, setBillingMode] = useState<EventCostumeAssignmentBillingMode>('INCLUDED_IN_REGISTRATION_FEE');
+  const [alunoId, setAlunoId] = useState('');
+  const [turmaId, setTurmaId] = useState('');
   const isSeparateCharge = billingMode === 'SEPARATE_CHARGE';
 
   const mutation = useMutation({
     mutationFn: createCostumeAssignment,
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.assignments(eventId) }),
+        queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) }),
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) }),
+        queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] }),
       ]);
-      toast.success({ title: 'Entrega cadastrada', description: 'A entrega do figurino foi registrada com sucesso.' });
+      toast.success({ title: 'Vínculos cadastrados', description: `${result.createdCount} vínculo(s) individual(is) criado(s); ${result.skippedExistingCount} duplicado(s) ignorado(s).` });
       setOpen(false);
       setChargedValueText("");
       setBillingMode('INCLUDED_IN_REGISTRATION_FEE');
+      setAlunoId('');
+      setTurmaId('');
     },
     onError: (error) => toast.error({ title: 'Erro na entrega', description: (error as Error).message }),
   });
@@ -68,22 +75,24 @@ export function AssignmentFormDialog({ eventId, costumes, scopedResources, trigg
   }
   return (
     <Dialog open={open} onOpenChange={(val) => {
+      if (!val && mutation.isPending) return;
       setOpen(val);
       if (!val) {
         setChargedValueText("");
         setBillingMode('INCLUDED_IN_REGISTRATION_FEE');
+        setAlunoId('');
+        setTurmaId('');
       }
     }}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent className="max-w-2xl">
-        <DialogHeader><DialogTitle>Vincular figurino</DialogTitle><DialogDescription>Defina o vínculo com alunos ou turmas inscritos neste evento, entrega e forma de cobrança.</DialogDescription></DialogHeader>
-        <form action={submit} className="grid gap-4">
+        <DialogHeader><DialogTitle>Vincular figurino</DialogTitle><DialogDescription>Vínculos a uma turma serão expandidos para uma peça e uma cobrança individual por aluno ativo inscrito no evento.</DialogDescription></DialogHeader>
+        <form onSubmit={(event) => handleFormDataSubmit(event, submit)} className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Figurino"><NativeSelect name="costumeId" required placeholder="Selecione" options={costumes.map((item) => ({ value: item.id, label: item.name }))} /></Field>
-            <Field label="Aluno"><NativeSelect name="alunoId" placeholder="Opcional" options={mergeScopedPersonOptions(scopedResources?.alunos ?? [])} /></Field>
-            <Field label="Turma"><NativeSelect name="turmaId" placeholder="Opcional" options={mergeScopedPersonOptions(scopedResources?.turmas ?? [])} /></Field>
+            <Field label="Aluno"><NativeSelect name="alunoId" value={alunoId} onValueChange={(value) => { setAlunoId(value); if (value) setTurmaId(''); }} placeholder="Selecione um aluno" options={mergeScopedPersonOptions(scopedResources?.alunos ?? [])} /></Field>
+            <Field label="Turma"><NativeSelect name="turmaId" value={turmaId} onValueChange={(value) => { setTurmaId(value); if (value) setAlunoId(''); }} placeholder="Selecione uma turma" options={mergeScopedPersonOptions(scopedResources?.turmas ?? [])} /></Field>
             <Field label="Tamanho definido"><Input name="definedSize" className={FILTER_INPUT_CLASS} /></Field>
-            <Field label="Status"><NativeSelect name="status" defaultValue="PENDING" options={Object.entries(EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS).map(([value, label]) => ({ value, label }))} /></Field>
             <Field label="Forma de cobrança">
               <NativeSelect
                 name="billingMode"
@@ -110,7 +119,7 @@ export function AssignmentFormDialog({ eventId, costumes, scopedResources, trigg
             ) : null}
           </div>
           <Field label="Observações"><Textarea name="notes" className="rounded-xl border-slate-200" /></Field>
-          <DialogFooter><Button type="submit">Salvar vínculo</Button></DialogFooter>
+          <DialogFooter><Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando vínculo" size="sm" className="text-white" /></> : 'Salvar vínculo'}</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

@@ -1,4 +1,4 @@
-import type { EventMapLevelDTO, EventMapObjectDTO } from '../types/event-map-types.js';
+import type { EventMapDTO, EventMapLevelDTO, EventMapObjectDTO } from '../types/event-map-types.js';
 
 import { getObjectGroupId, getObjectGroupLabel } from '../layout/object-groups.js';
 
@@ -72,7 +72,9 @@ export function isPlateiaBaseLevel(level: Pick<EventMapLevelDTO, 'sortOrder'>) {
 
 function normalizeBaseLevelName(name: string) {
   const trimmed = name.trim();
-  return trimmed && !LEGACY_PLATEIA_LEVEL_NAMES.has(trimmed) ? trimmed : PLATEIA_LEVEL_NAME;
+  // Keep the editor's draft intact while a name is being replaced. The save
+  // schema still requires a non-empty name; legacy aliases remain migrated.
+  return LEGACY_PLATEIA_LEVEL_NAMES.has(trimmed) ? PLATEIA_LEVEL_NAME : name;
 }
 
 export function normalizeMapLevels(levels: EventMapLevelDTO[]): EventMapLevelDTO[] {
@@ -126,8 +128,16 @@ export type LevelPanelChildItem =
   | { kind: 'object'; id: string; sortOrder: number }
   | { kind: 'group'; id: string; sortOrder: number; objectIds: string[]; label: string };
 
+export function getNextMapLayerSortOrder(map: Pick<EventMapDTO, 'objects' | 'sections'>) {
+  return Math.max(
+    -1,
+    ...map.objects.map((object) => object.sortOrder),
+    ...map.sections.map((section) => section.sortOrder ?? 0),
+  ) + 1;
+}
+
 export function sortLevelPanelChildren(
-  sections: Array<{ id: string; levelId: string }>,
+  sections: Array<{ id: string; levelId: string; sortOrder?: number }>,
   objects: EventMapObjectDTO[],
   levelId: string,
 ) {
@@ -166,7 +176,7 @@ export function sortLevelPanelChildren(
       .filter((section) => section.levelId === levelId)
       .map((section) => {
         const linkedObject = objects.find((object) => object.sectionId === section.id);
-        return { kind: 'section' as const, id: section.id, sortOrder: linkedObject?.sortOrder ?? 0 };
+        return { kind: 'section' as const, id: section.id, sortOrder: linkedObject?.sortOrder ?? section.sortOrder ?? 0 };
       }),
     ...groupItems,
     ...levelObjects

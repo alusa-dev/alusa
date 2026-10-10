@@ -1,4 +1,5 @@
 import type { EventMapDocument, MapSeatBlock, SeatDistributionAlignment, SeatDistributionMode, SeatDistributionSegment } from '../model/event-map-document.js';
+import { computeSeatBlockSeatLabel } from './seat-block-config.js';
 
 export type CreateSeatBlockInput = {
   document: EventMapDocument;
@@ -11,6 +12,7 @@ export type CreateSeatBlockInput = {
   rowGap: number;
   rowPrefix?: string;
   startNumber?: number;
+  numberingDirection?: 'left-to-right' | 'right-to-left';
   rowSeatCounts?: number[];
   distribution?: SeatDistributionSegment[];
   distributionMode?: SeatDistributionMode;
@@ -56,11 +58,18 @@ export function createSeatBlock(input: CreateSeatBlockInput) {
     const label = rowLabel(prefix, rowIndex);
     const rowSeatCount = rowSeatCounts?.[rowIndex] ?? columns;
     const seats = Array.from({ length: rowSeatCount }, (_, columnIndex) => {
-      const number = startNumber + columnIndex;
+      const labels = computeSeatBlockSeatLabel(0, columnIndex, {
+        rowPrefix: label,
+        startNumber,
+        numberingDirection: input.numberingDirection ?? 'left-to-right',
+        // RTL numbering starts at the rightmost occupied seat. Partial rows
+        // therefore use their own width rather than the block capacity.
+        columns: rowSeatCount,
+      });
       return {
         id: input.createId('seat'),
-        label: `${label}${number}`,
-        technicalCode: `${label}${number}`,
+        label: labels.displayLabel,
+        technicalCode: labels.displayLabel,
         rowIndex,
         columnIndex,
         accessible: false,
@@ -99,6 +108,8 @@ export function createSeatBlock(input: CreateSeatBlockInput) {
     lastRowSeatCount: input.lastRowSeatCount ?? columns,
     fitMinimumSeatCount: input.fitMinimumSeatCount ?? 1,
     fitMaximumSeatCount: input.fitMaximumSeatCount ?? columns,
+    startNumber,
+    numberingDirection: input.numberingDirection ?? 'left-to-right',
     rowIds,
     rows,
   };

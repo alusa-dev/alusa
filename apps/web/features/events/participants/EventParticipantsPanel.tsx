@@ -171,10 +171,11 @@ export function EventParticipantsPanel({
                   />
                 ),
               },
-            ]}
-            data={participants}
-            rowKey={(part) => part.id}
-            loading={loading}
+          ]}
+          data={participants}
+          rowKey={(part) => part.id}
+          loading={loading}
+          tableClassName="min-w-[840px]"
           onRowClick={(part) => router.push('/events/' + eventId + '/participants/' + part.id)}
           emptyMessage={<EmptyState title="Nenhum aluno inscrito." description="Inscreva manualmente os alunos participantes do evento." />}
         />

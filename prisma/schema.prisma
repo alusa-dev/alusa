@@ -474,6 +474,7 @@ enum EventPaymentMethod {
 
 enum EventFinancialPaymentStatus {
   RECEIVED
+  PAID
   REFUNDED
 }
 
@@ -519,6 +520,7 @@ enum EventFinancialEntryStatus {
   EXPECTED
   PENDING
   PAID
+  PARTIALLY_PAID
   RECEIVED
   CANCELLED
   REFUNDED
@@ -527,6 +529,7 @@ enum EventFinancialEntryStatus {
 
 enum EventFinancialOriginType {
   MANUAL
+  EVENT_REGISTRATION
   TICKET_SALE
   COSTUME
   COSTUME_ASSIGNMENT
@@ -5122,6 +5125,7 @@ model EventFinancialPayment {
   contaId          String
   eventId          String
   financialEntryId String
+  idempotencyKey   String?
   participantId    String?
   amount           Decimal                     @db.Decimal(12, 2)
   paymentMethod    EventPaymentMethod
@@ -5144,6 +5148,7 @@ model EventFinancialPayment {
   @@index([contaId, financialEntryId, status], name: "idx_event_financial_payment_entry_status")
   @@index([contaId, participantId, status], name: "idx_event_financial_payment_participant_status")
   @@index([contaId, eventId, paidAt], name: "idx_event_financial_payment_event_paid")
+  @@unique([contaId, idempotencyKey], name: "uq_event_financial_payment_conta_idempotency")
 }
 
 model EventParticipant {
@@ -5192,6 +5197,7 @@ model EventParticipant {
 
   @@index([contaId], name: "idx_event_participant_conta")
   @@index([contaId, eventId, type], name: "idx_event_participant_conta_event_type")
+  @@index([contaId, revenueEntryId], name: "idx_event_participant_conta_revenue_entry")
   @@index([contaId, alunoId], name: "idx_event_participant_conta_aluno")
   @@index([contaId, turmaId], name: "idx_event_participant_conta_turma")
   @@index([contaId, responsavelId], name: "idx_event_participant_conta_responsavel")

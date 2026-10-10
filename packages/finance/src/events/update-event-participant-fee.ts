@@ -46,8 +46,8 @@ export async function updateEventParticipantFeeInTransaction(input: {
       await tx.eventFinancialEntry.updateMany({
         where: { id: revenueEntryId, contaId },
         data: body.isFeePaid
-          ? { status: 'RECEIVED', actualAmount: participant.registrationFeeCharged, realizedAt: new Date() }
-          : { status: 'PENDING', actualAmount: null, realizedAt: null },
+          ? { originType: 'EVENT_REGISTRATION', status: 'RECEIVED', actualAmount: participant.registrationFeeCharged, realizedAt: new Date() }
+          : { originType: 'EVENT_REGISTRATION', status: 'PENDING', actualAmount: null, realizedAt: null },
       });
     } else if (participant.registrationFeeCharged.gt(0)) {
       const createdEntry = await tx.eventFinancialEntry.create({
@@ -55,6 +55,7 @@ export async function updateEventParticipantFeeInTransaction(input: {
           contaId,
           eventId: participant.eventId,
           type: 'REVENUE',
+          originType: 'EVENT_REGISTRATION',
           category: 'Taxa de inscrição',
           description: 'Taxa de inscrição',
           expectedAmount: participant.registrationFeeCharged,
@@ -104,6 +105,7 @@ export async function updateEventParticipantFeeInTransaction(input: {
     await tx.eventFinancialEntry.updateMany({
       where: { id: currentEntry.id, contaId },
       data: {
+        originType: 'EVENT_REGISTRATION',
         expectedAmount: discount.chargedAmount,
         grossAmount: discount.originalAmount,
         discountAmount: discount.discountAmount,
@@ -118,6 +120,7 @@ export async function updateEventParticipantFeeInTransaction(input: {
         contaId,
         eventId: participant.eventId,
         type: 'REVENUE',
+        originType: 'EVENT_REGISTRATION',
         category: 'Taxa de inscrição',
         description: 'Taxa de inscrição',
         expectedAmount: discount.chargedAmount,

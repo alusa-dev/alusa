@@ -1,5 +1,5 @@
 'use client';
-import { BLOCKING_MAP_DOCUMENT_DIAGNOSTIC_TYPES, getSelectableItems, mergeEventMapWithLocalDraft, validateDuplicateSelection, validateEventMapDocument, validateEventMapIntegrity, validateGroupCandidates, validatePublishableEventMap, getPrimarySelection, type EventMapDTO, type EventTicketMode } from '@alusa/domain';
+import { BLOCKING_MAP_DOCUMENT_DIAGNOSTIC_TYPES, buildPublishableMapInput, getSelectableItems, mergeEventMapWithLocalDraft, validateDuplicateSelection, validateEventMapDocument, validateEventMapIntegrity, validateGroupCandidates, validatePublishableEventMap, getPrimarySelection, type EventMapDTO } from '@alusa/domain';
 import { registerEventMapE2EBridge, unregisterEventMapE2EBridge } from '../browser/event-map-e2e-bridge';
 import { clearEventMapLocalDraft, readEventMapLocalDraft, writeEventMapLocalDraft } from '../browser/local-draft-storage';
 import { listTicketLots } from '../../events-service';
@@ -23,6 +23,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/components/ui/toast';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 
 const MapCanvas = dynamic(() => import('./MapCanvas').then((mod) => mod.MapCanvas), {
   ssr: false,
@@ -41,20 +42,6 @@ function isTypingTarget(target: EventTarget | null) {
 
 function isNativeActivationTarget(target: EventTarget | null) {
   return target instanceof HTMLElement && target.closest('button, a, [role="button"], [role="menuitem"], [role="combobox"]') !== null;
-}
-
-function buildPublishValidationInput(map: EventMapDTO) {
-  return {
-    ticketMode: map.event.ticketMode as EventTicketMode,
-    levelsCount: map.levels.length,
-    sections: map.sections.map((section) => ({ id: section.id, name: section.name, lotId: section.lotId })),
-    seats: map.seats.map((seat) => ({
-      id: seat.id,
-      sectionId: seat.sectionId,
-      status: seat.status,
-      publicVisible: seat.publicVisible,
-    })),
-  };
 }
 
 function formatPublishValidationErrors(map: EventMapDTO, errors: string[]) {
@@ -93,6 +80,8 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
   const toPayload = useEventMapEditorStore((state) => state.toPayload);
   const updateObject = useEventMapEditorStore((state) => state.updateObject);
   const selection = useEventMapEditorStore((state) => state.selection);
+  const commandFeedback = useEventMapEditorStore((state) => state.commandFeedback);
+  const clearCommandFeedback = useEventMapEditorStore((state) => state.clearCommandFeedback);
   const spacePanPreviousToolRef = useRef<typeof tool | null>(null);
   const zoomKeyDownAtRef = useRef(0);
   const loadedMapIdRef = useRef<string | null>(null);
@@ -112,11 +101,20 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
     return object?.type === 'TEXT' ? object : null;
   }, [map, selection]);
 
+  useEffect(() => {
+    if (!commandFeedback) return;
+    for (const message of commandFeedback.messages) {
+      toast.warning({ title: 'Ação não aplicada', description: message });
+    }
+    clearCommandFeedback(commandFeedback.id);
+  }, [clearCommandFeedback, commandFeedback]);
+
   const publishBlocked = useMemo(() => {
     if (!map) return true;
     const documentDiagnostics = map.document ? validateEventMapDocument(map.document).diagnostics : [];
     const integrityErrors = validateEventMapIntegrity(map).errors;
-    return documentDiagnostics.some((diagnostic) => BLOCKING_MAP_DOCUMENT_DIAGNOSTIC_TYPES.includes(diagnostic.type)) || integrityErrors.some((error) => error.severity === 'error');
+    const publishValidation = validatePublishableEventMap(buildPublishableMapInput(map));
+    return !publishValidation.ok || documentDiagnostics.some((diagnostic) => BLOCKING_MAP_DOCUMENT_DIAGNOSTIC_TYPES.includes(diagnostic.type)) || integrityErrors.some((error) => error.severity === 'error');
   }, [map]);
 
   const handleReferenceChartTransformCommit = useCallback(
@@ -184,7 +182,9 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
     mutationFn: async () => {
       const payload = toPayload();
       if (!payload) throw new Error('Mapa ainda não carregado.');
-      return saveEventMapDraft(eventId, mapId, payload);
+      const currentMap = useEventMapEditorStore.getState().map;
+      if (!currentMap) throw new Error('Mapa ainda não carregado.');
+      return saveEventMapDraft(eventId, mapId, { ...payload, expectedUpdatedAt: currentMap.updatedAt });
     },
     onSuccess: async (saved) => {
       clearEventMapLocalDraft(eventId, mapId);
@@ -192,11 +192,15 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
       await queryClient.invalidateQueries({ queryKey: eventMapEditorQueryKeys.map(eventId, mapId) });
       toast.success({ title: 'Mapa salvo' });
     },
-    onError: (error) => toast.error({ title: 'Não foi possível salvar', description: (error as Error).message }),
+    onError: (error) => {
+      const message = (error as Error).message;
+      toast.error({ title: message.includes('Recarregue o mapa') ? 'Conflito no rascunho' : 'Não foi possível salvar', description: message });
+    },
   });
 
   const publishMutation = useMutation({
-    mutationFn: (payload?: ReturnType<typeof toPayload>) => publishEventMap(eventId, mapId, payload),
+    mutationFn: (input: { expectedUpdatedAt: string; draft?: ReturnType<typeof toPayload> }) =>
+      publishEventMap(eventId, mapId, input),
     onSuccess: async (published) => {
       clearEventMapLocalDraft(eventId, mapId);
       markSaved(published);
@@ -214,7 +218,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
       return;
     }
 
-    let validation = validatePublishableEventMap(buildPublishValidationInput(currentMap));
+    let validation = validatePublishableEventMap(buildPublishableMapInput(currentMap));
     if (!validation.ok) {
       const lots = lotsQuery.data ?? [];
       const onlyMissingLot = validation.errors.length === 1 && validation.errors[0]?.includes('lote');
@@ -227,7 +231,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
           }
         }
         const refreshedMap = useEventMapEditorStore.getState().map ?? currentMap;
-        validation = validatePublishableEventMap(buildPublishValidationInput(refreshedMap));
+        validation = validatePublishableEventMap(buildPublishableMapInput(refreshedMap));
         if (validation.ok) {
           toast.info({
             title: 'Lote vinculado automaticamente',
@@ -251,14 +255,18 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
 
   async function confirmPublish() {
     const latestState = useEventMapEditorStore.getState();
-    const payload = latestState.isDirty ? latestState.toPayload() : null;
-    if (latestState.isDirty && !payload) {
+    const currentMap = latestState.map;
+    const draftPayload = latestState.isDirty ? latestState.toPayload() : null;
+    if (!currentMap || (latestState.isDirty && !draftPayload)) {
       toast.error({ title: 'Mapa ainda não carregado.' });
       return;
     }
 
     try {
-      await publishMutation.mutateAsync(payload);
+      await publishMutation.mutateAsync({
+        expectedUpdatedAt: currentMap.updatedAt,
+        ...(draftPayload ? { draft: draftPayload } : {}),
+      });
       setPublishConfirmationOpen(false);
     } catch {
       // publishMutation.onError already surfaces the toast
@@ -313,6 +321,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
       }
       if ((event.metaKey || event.ctrlKey) && key === 'd') {
         event.preventDefault();
+        if (event.repeat) return;
         if (!store.map) return;
         const validation = validateDuplicateSelection(store.map, store.selection);
         if (!validation.ok) {
@@ -448,7 +457,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
           <DialogFooter>
             <Button variant="outline" onClick={() => setPublishConfirmationOpen(false)} disabled={publishMutation.isPending}>Voltar ao mapa</Button>
             <Button onClick={() => void confirmPublish()} disabled={publishMutation.isPending}>
-              {publishMutation.isPending ? 'Publicando…' : 'Confirmar publicação'}
+              {publishMutation.isPending ? <><span>Publicando</span><LoadingDots label="Publicando mapa" size="sm" className="text-white" /></> : 'Confirmar publicação'}
             </Button>
           </DialogFooter>
         </DialogContent>

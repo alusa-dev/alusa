@@ -8,6 +8,8 @@ import {
   isSameSelectionItem,
   resolveCanvasNodeIds,
   resolveGroupSelectionItem,
+  findMapBlockOwner,
+  findMapRowOwner,
   findMapSeatOwner,
   type BoundsRect,
 } from '@alusa/domain';
@@ -39,15 +41,41 @@ export function useSelectionSession({
   setSelection,
   clearIndividualSeatDrag,
 }: SelectionSessionInput) {
+  const selectedParametricItems = useMemo(() => {
+    const parametricItems = selection.filter(
+      (item): item is Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }> =>
+        item.type === 'seatblock' || item.type === 'seatrow',
+    );
+    const selectedBlockIds = new Set(parametricItems.flatMap((item) => item.type === 'seatblock' ? [item.id] : []));
+    if (!map?.document || selectedBlockIds.size === 0) return parametricItems;
+    return parametricItems.filter((item) => {
+      if (item.type !== 'seatrow') return true;
+      const owner = findMapRowOwner(map.document!, item.id);
+      return !owner || !selectedBlockIds.has(owner.block.id);
+    });
+  }, [map?.document, selection]);
+
   const selectedNodeIds = useMemo(() => {
     if (!map || selection.length === 0) return [];
-    if (selection.length === 1 && selection[0]?.type === 'seatblock') return [`node-seatblock-${selection[0].id}`];
-    if (selection.length === 1 && selection[0]?.type === 'seatrow') return [`node-seatrow-${selection[0].id}`];
-    if (selection.every((item) => item.type === 'seatblock')) return selection.map((item) => `node-seatblock-${item.id}`);
-    if (selection.every((item) => item.type === 'seatrow')) return selection.map((item) => `node-seatrow-${item.id}`);
-    if (selection.some((item) => item.type === 'section' || item.type === 'seatblock' || item.type === 'seatrow')) return [];
-    return resolveCanvasNodeIds(map, selection);
-  }, [selection, map]);
+    if (selection.some((item) => item.type === 'section')) return [];
+    if (selectedParametricItems.length === 0) return resolveCanvasNodeIds(map, selection);
+
+    const coveredSeatIds = new Set(
+      selectedParametricItems.flatMap((item) => {
+        if (!map.document) return [];
+        if (item.type === 'seatblock') return findMapBlockOwner(map.document, item.id)?.block.rows.flatMap((row) => row.seatIds) ?? [];
+        return findMapRowOwner(map.document, item.id)?.row.seatIds ?? [];
+      }),
+    );
+    const regularSelection = selection.filter((item) => item.type !== 'seatblock' && item.type !== 'seatrow');
+    const mapSeatIds = new Set(map.seats.map((seat) => seat.id));
+    const regularNodeIds = resolveCanvasNodeIds(map, regularSelection).filter((nodeId) => {
+      const seatId = nodeId.replace(/^node-/, '');
+      return !mapSeatIds.has(seatId) || !coveredSeatIds.has(seatId);
+    });
+    const parametricNodeIds = selectedParametricItems.map((item) => `node-${item.type}-${item.id}`);
+    return [...new Set([...regularNodeIds, ...parametricNodeIds])];
+  }, [map, selectedParametricItems, selection]);
 
   const selectedObjectIds = useMemo(() => {
     if (!map) return [];
@@ -126,6 +154,7 @@ export function useSelectionSession({
     selectedNodeIds,
     selectedObjectIds,
     selectedSeatIds,
+    selectedParametricItems,
     selectionContainsSeatsOrSections,
     handleSelectItem,
     getMarqueeSelection,
