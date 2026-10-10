@@ -168,7 +168,7 @@ function renderSceneObject(object: PublicMapSceneObject): ReactNode {
   const dash = appearance.dash?.join(' ');
 
   return (
-    <g key={object.id} transform={`translate(${object.x} ${object.y}) rotate(${object.rotation})`} opacity={opacity}>
+    <g key={object.id} transform={`translate(${object.x} ${object.y}) rotate(${object.rotation})`} opacity={opacity} pointerEvents="none">
       {shape === 'circle' || shape === 'ellipse' ? (
         <ellipse cx={width / 2} cy={height / 2} rx={width / 2} ry={height / 2} fill={appearance.fill ?? 'none'} stroke={appearance.stroke ?? 'none'} strokeWidth={appearance.strokeWidth} strokeDasharray={dash} />
       ) : shape === 'triangle' ? (
@@ -203,7 +203,7 @@ export function PublicMapSceneRenderer<S extends PublicMapSceneSeat>({
     if (item.kind === 'object') return renderSceneObject(item.object);
     if (item.kind === 'row-guides') {
       return (
-        <g key={item.guide.id}>
+        <g key={item.guide.id} pointerEvents="none">
           <polyline points={item.guide.points} fill="none" stroke={`${item.guide.sectionColor}44`} strokeWidth={2} strokeDasharray={item.guide.curved ? '5 4' : undefined} opacity={0.55} />
           {item.guide.rowLabel && item.guide.labelPosition ? (
             <text
@@ -227,7 +227,7 @@ export function PublicMapSceneRenderer<S extends PublicMapSceneSeat>({
     const classes = `${selected ? 'fill-brand-accent stroke-brand-accent' : ''} ${interactive ? 'cursor-pointer' : 'cursor-not-allowed'}`;
     return (
       <g key={seat.id} transform={`rotate(${seat.rotation} ${seat.x} ${seat.y})`}>
-        {interactive ? <title>{publicSeatTooltip(seat.status, seat.displayLabel, seat.sectionName)}</title> : null}
+        <title>{publicSeatTooltip(seat.status, seat.displayLabel, seat.sectionName)}</title>
         <circle data-public-seat data-testid={`public-seat-${seat.technicalCode}`} cx={seat.x} cy={seat.y} r={radius} stroke={selected ? undefined : '#ffffff'} strokeWidth={selected ? 4 : 2} fill={selected ? undefined : seatFill(toSeatAppearanceStatus(seat.status))} className={classes} onClick={() => onSeatClick(seat)} />
         <text x={seat.x} y={seat.y + 4} textAnchor="middle" fontSize={Math.max(9, radius * 0.65)} fontWeight="bold" className="pointer-events-none select-none fill-white">{seat.displayLabel}</text>
       </g>
