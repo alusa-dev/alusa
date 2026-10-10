@@ -47,6 +47,18 @@ import {
 } from './public-map-level-view';
 import { PublicMapTextSvg } from './public-map-text-render';
 import { PublicMapViewport } from './PublicMapViewport';
+import {
+  getObjectAppearance,
+  seatFill,
+} from '../canvas/render/map-object-appearance';
+import type { EventMapObjectDTO } from '../api/event-map-service';
+import type { EventSeatStatus } from '@alusa/shared';
+import {
+  mapPointsLocalToWorld,
+  pathToPolyline,
+  resolveSeatCountForRow,
+  type EventMapDocument,
+} from '@alusa/domain';
 
 import { formatCpfCnpjBR, formatPhoneBR, isValidCpfCnpjBR, isValidPhoneBR, onlyDigits } from '@/lib/formatters';
 
@@ -73,12 +85,13 @@ type PublicObject = {
   id: string;
   levelId?: string | null;
   sectionId?: string | null;
-  type: string;
+  type: EventMapObjectDTO['type'];
   x: number;
   y: number;
   width: number | null;
   height: number | null;
   rotation: number;
+  sortOrder?: number;
   hidden?: boolean;
   data?: Record<string, unknown>;
 };
@@ -99,32 +112,106 @@ function createCheckoutKey() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function objectStyle(object: PublicObject) {
+function renderPublicMapObject(object: PublicObject) {
   const data = object.data ?? {};
-  if (object.type === 'STAGE') return { fill: '#111827', stroke: '#111827', dash: undefined };
-  if (object.type === 'BLOCKED_AREA') return { fill: '#fee2e2', stroke: '#ef4444', dash: '7 5' };
-  if (object.type === 'TEXT') return { fill: 'transparent', stroke: 'transparent', dash: undefined };
-  if (object.type === 'SECTION') {
-    const fillEnabled = data.fillEnabled === true;
-    return {
-      fill: fillEnabled && typeof data.fill === 'string' ? data.fill : 'transparent',
-      stroke: fillEnabled ? '#7c3aed' : 'transparent',
-      dash: undefined,
-    };
+  if (object.type === 'TEXT') {
+    return (
+      <g key={object.id} pointerEvents="none">
+        <PublicMapTextSvg object={object} />
+      </g>
+    );
   }
-  return {
-    fill: typeof data.fill === 'string' ? data.fill : '#f8fafc',
-    stroke: object.type === 'SECTION' ? '#7c3aed' : '#cbd5e1',
-    dash: undefined,
-  };
+
+  const width = object.width ?? 180;
+  const height = object.height ?? 90;
+  const shape = typeof data.shape === 'string' ? data.shape : null;
+  const opacity = Number(data.opacity ?? (object.type === 'SECTION' ? 0 : 1));
+  const cornerRadius = Number(data.cornerRadius ?? (object.type === 'TABLE' ? 999 : shape ? 0 : 8));
+  const appearance = getObjectAppearance({ type: object.type, data });
+  const dash = appearance.dash?.join(' ');
+
+  return (
+    <g
+      key={object.id}
+      transform={`translate(${object.x} ${object.y}) rotate(${object.rotation})`}
+      opacity={opacity}
+      pointerEvents="none"
+    >
+      {shape === 'circle' || shape === 'ellipse' ? (
+        <ellipse
+          cx={width / 2}
+          cy={height / 2}
+          rx={width / 2}
+          ry={height / 2}
+          fill={appearance.fill ?? 'none'}
+          stroke={appearance.stroke ?? 'none'}
+          strokeWidth={appearance.strokeWidth}
+          strokeDasharray={dash}
+        />
+      ) : shape === 'triangle' ? (
+        <polygon
+          points={Array.from({ length: 3 }, (_, index) => {
+            const angle = (index * 2 * Math.PI) / 3;
+            const radius = Math.min(width, height) / 2;
+            return `${width / 2 + radius * Math.sin(angle)},${height / 2 - radius * Math.cos(angle)}`;
+          }).join(' ')}
+          transform={`rotate(30 ${width / 2} ${height / 2})`}
+          fill={appearance.fill ?? 'none'}
+          stroke={appearance.stroke ?? 'none'}
+          strokeWidth={appearance.strokeWidth}
+          strokeDasharray={dash}
+        />
+      ) : (
+        <rect
+          width={width}
+          height={height}
+          rx={cornerRadius}
+          fill={appearance.fill ?? 'none'}
+          stroke={appearance.stroke ?? 'none'}
+          strokeWidth={appearance.strokeWidth}
+          strokeDasharray={dash}
+        />
+      )}
+    </g>
+  );
 }
 
-function seatClasses(seat: PublicSeat, selected: boolean, interactive: boolean) {
-  if (selected) return 'fill-brand-accent stroke-brand-accent';
-  if (seat.status === 'AVAILABLE' && interactive) return 'fill-emerald-500 stroke-blue-700';
-  if (seat.status === 'HELD') return 'fill-amber-400 stroke-amber-700';
-  if (seat.status === 'SOLD') return 'fill-slate-300 stroke-slate-400';
-  return 'fill-slate-200 stroke-slate-300';
+function renderPublicSeat(
+  seat: PublicSeat,
+  selected: boolean,
+  interactive: boolean,
+  onToggle: (_seat: PublicSeat) => void,
+) {
+  const center = { x: seat.x, y: seat.y };
+  const radius = (seat.size ?? 24) / 2;
+
+  return (
+    <g key={seat.id} transform={`rotate(${seat.rotation} ${center.x} ${center.y})`}>
+      {interactive ? <title>{publicSeatTooltip(seat.status, seat.displayLabel, seat.sectionName)}</title> : null}
+      <circle
+        data-public-seat
+        data-testid={`public-seat-${seat.technicalCode}`}
+        cx={center.x}
+        cy={center.y}
+        r={radius}
+        stroke={selected ? undefined : '#ffffff'}
+        strokeWidth={selected ? 4 : 2}
+        fill={selected ? undefined : seatFill(seat.status as EventSeatStatus)}
+        className={`${selected ? 'fill-brand-accent stroke-brand-accent' : ''} ${seat.status === 'AVAILABLE' && interactive ? 'cursor-pointer' : 'cursor-not-allowed'}`}
+        onClick={() => onToggle(seat)}
+      />
+      <text
+        x={center.x}
+        y={center.y + 4}
+        textAnchor="middle"
+        fontSize={Math.max(9, radius * 0.65)}
+        fontWeight="bold"
+        className="pointer-events-none select-none fill-white"
+      >
+        {seat.displayLabel}
+      </text>
+    </g>
+  );
 }
 
 async function parseApiResponse<T>(response: Response): Promise<T> {
@@ -216,6 +303,74 @@ export function PublicMapExperience({
     () => filterPublicMapSeatsByLevel(seats, activeLevel.id),
     [activeLevel.id, seats],
   );
+  const levelRowGuides = useMemo(() => {
+    const document = map.document as EventMapDocument | null;
+    if (!document || !Array.isArray(document.sections)) return [];
+
+    return document.sections
+      .filter((section) => section.levelId === activeLevel.id && !section.hidden && section.blocks.length > 0)
+      .flatMap((section) =>
+        section.blocks.flatMap((block) =>
+          block.rows.flatMap((row, rowIndex) => {
+            if (resolveSeatCountForRow(block, row, rowIndex, block.rows.length) <= 0) return [];
+            const points = mapPointsLocalToWorld(
+              pathToPolyline(row.path, row.path.type === 'ARC' ? 48 : 24),
+              section.position,
+              section.rotation,
+            );
+            return [
+              {
+                id: row.id,
+                sectionId: section.id,
+                sectionColor: section.color,
+                curved: row.path.type !== 'LINE',
+                points: points.map((point) => `${point.x},${point.y}`).join(' '),
+              },
+            ];
+          }),
+        ),
+      );
+  }, [activeLevel.id, map.document]);
+  const levelRenderItems = useMemo(() => {
+    const allObjects = map.objects as PublicObject[];
+    const sectionObjectOrder = new Map(
+      allObjects
+        .filter((object) => object.type === 'SECTION' && object.sectionId)
+        .map((object) => [object.sectionId!, object.sortOrder ?? 0]),
+    );
+    const sectionOrder = new Map(
+      (map.sections as Array<{ id: string; sortOrder?: number }>).map((section) => [section.id, section.sortOrder ?? 0]),
+    );
+    const items = [
+      ...levelObjects.map((object) => ({
+        kind: 'object' as const,
+        id: object.id,
+        sortOrder: object.sortOrder ?? 0,
+        object,
+      })),
+      ...levelRowGuides.map((guide) => ({
+        kind: 'row-guides' as const,
+        id: guide.id,
+        sortOrder: sectionObjectOrder.get(guide.sectionId) ?? sectionOrder.get(guide.sectionId) ?? 0,
+        guide,
+      })),
+      ...levelSeats.map((seat) => ({
+        kind: 'seat' as const,
+        id: seat.id,
+        sortOrder: seat.sectionId
+          ? sectionObjectOrder.get(seat.sectionId) ?? sectionOrder.get(seat.sectionId) ?? 0
+          : 0,
+        seat,
+      })),
+    ];
+    const priority = { object: 0, 'row-guides': 1, seat: 2 } as const;
+    return items.sort(
+      (left, right) =>
+        left.sortOrder - right.sortOrder ||
+        priority[left.kind] - priority[right.kind] ||
+        left.id.localeCompare(right.id),
+    );
+  }, [levelObjects, levelRowGuides, levelSeats, map.objects, map.sections]);
   const selectedSeats = useMemo(
     () => seats.filter((seat) => selectedIds.includes(seat.id)),
     [seats, selectedIds],
@@ -720,61 +875,27 @@ export function PublicMapExperience({
                 stroke={MAP_ARTBOARD_STROKE}
                 strokeWidth={MAP_ARTBOARD_STROKE_WIDTH}
               />
-              {levelObjects.map((object) => {
-                const style = objectStyle(object);
-                const width = object.width ?? 0;
-                const height = object.height ?? 0;
-                const cx = object.x + width / 2;
-                const cy = object.y + height / 2;
-                if (object.type === 'TEXT') {
-                  return <PublicMapTextSvg key={object.id} object={object} />;
-                }
-                return (
-                  <rect
-                    key={object.id}
-                    x={object.x}
-                    y={object.y}
-                    width={width}
-                    height={height}
-                    rx={6}
-                    fill={style.fill}
-                    stroke={style.stroke}
-                    strokeWidth={1.5}
-                    strokeDasharray={style.dash}
-                    transform={`rotate(${object.rotation} ${cx} ${cy})`}
-                  />
-                );
-              })}
-              {levelSeats.map((seat) => {
-                const selected = selectedIds.includes(seat.id);
-                const center = { x: seat.x, y: seat.y };
-                const rotation = seat.rotation;
-                const radius = Math.max((seat.size ?? 28) / 2, 8);
-                const interactive = mode === 'public';
-                return (
-                  <g key={seat.id} transform={`rotate(${rotation} ${center.x} ${center.y})`}>
-                    {interactive ? (
-                      <title>{publicSeatTooltip(seat.status, seat.displayLabel, seat.sectionName)}</title>
-                    ) : null}
-                    <circle
-                      data-public-seat
-                      data-testid={`public-seat-${seat.technicalCode}`}
-                      cx={center.x}
-                      cy={center.y}
-                      r={radius}
-                      strokeWidth={selected ? 4 : 2}
-                      className={`${seatClasses(seat, selected, interactive)} ${seat.status === 'AVAILABLE' && interactive ? 'cursor-pointer' : 'cursor-not-allowed'}`}
-                      onClick={() => toggleSeat(seat)}
+              {levelRenderItems.map((item) => {
+                if (item.kind === 'object') return renderPublicMapObject(item.object);
+                if (item.kind === 'row-guides') {
+                  return (
+                    <polyline
+                      key={item.guide.id}
+                      points={item.guide.points}
+                      fill="none"
+                      stroke={`${item.guide.sectionColor}44`}
+                      strokeWidth={2}
+                      strokeDasharray={item.guide.curved ? '5 4' : undefined}
+                      opacity={0.55}
+                      pointerEvents="none"
                     />
-                    <text
-                      x={center.x}
-                      y={center.y + 4}
-                      textAnchor="middle"
-                      className="pointer-events-none select-none fill-white text-[12px] font-semibold"
-                    >
-                      {seat.displayLabel}
-                    </text>
-                  </g>
+                  );
+                }
+                return renderPublicSeat(
+                  item.seat,
+                  selectedIds.includes(item.seat.id),
+                  mode === 'public',
+                  toggleSeat,
                 );
               })}
           </PublicMapViewport>

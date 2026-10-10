@@ -8,7 +8,9 @@ export function seatFill(status: EventSeatDTO['status']) {
   return '#10b981';
 }
 
-export function objectStyle(object: EventMapObjectDTO) {
+type MapObjectAppearanceSource = Pick<EventMapObjectDTO, 'type' | 'data'>;
+
+export function objectStyle(object: MapObjectAppearanceSource) {
   if (object.type === 'STAGE') return { fill: '#111827', stroke: '#111827', text: '#ffffff' };
   if (object.type === 'BLOCKED_AREA') return { fill: '#e2e8f0', stroke: '#94a3b8', text: '#475569' };
   if (object.type === 'TABLE') return { fill: '#fefce8', stroke: '#ca8a04', text: '#854d0e' };
@@ -46,7 +48,7 @@ export function getObjectPreviewBorderStyle(object: EventMapObjectDTO) {
   return 'solid';
 }
 
-export function getObjectStrokeDash(object: EventMapObjectDTO) {
+export function getObjectStrokeDash(object: MapObjectAppearanceSource) {
   const strokeStyle = object.data.strokeStyle;
   if (strokeStyle === 'dashed') return [10, 6];
   if (strokeStyle === 'dotted') return [2, 6];
@@ -57,7 +59,7 @@ export function isObjectAppearanceEnabled(value: unknown, fallback = true) {
   return value === undefined || value === null ? fallback : Boolean(value);
 }
 
-export function getObjectAppearance(object: EventMapObjectDTO) {
+export function getObjectAppearance(object: MapObjectAppearanceSource) {
   const style = objectStyle(object);
   const fillEnabledDefault = object.type === 'SECTION' ? false : true;
   const fillEnabled = isObjectAppearanceEnabled(object.data.fillEnabled, fillEnabledDefault);
