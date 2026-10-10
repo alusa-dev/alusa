@@ -33,10 +33,22 @@ describe('event cost hard deletion (database)', () => {
         schoolCost: 100,
         quantity: 1,
       } });
+      const student = await prisma.aluno.create({ data: {
+        contaId: conta.id,
+        nome: `Aluno ${suffix}`,
+        dataNasc: new Date('2018-01-01T00:00:00.000Z'),
+      } });
+      await prisma.eventParticipant.create({ data: {
+        contaId: conta.id,
+        eventId: event.id,
+        type: 'STUDENT',
+        alunoId: student.id,
+      } });
       const assignment = await prisma.eventCostumeAssignment.create({ data: {
         contaId: conta.id,
         eventId: event.id,
         costumeId: costume.id,
+        alunoId: student.id,
         status: 'LOST',
         billingMode: 'FREE',
       } });

@@ -838,12 +838,9 @@ export async function deleteEventCost(ctx: EventsContext, entryId: string) {
     });
     if (!current) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
 
-    if (current.payments.length > 0 || toMoney(current.actualAmount) > 0
-      || Boolean(current.asaasPaymentId || current.paymentProvider || current.paymentStatus)
-      || ['PAID', 'PARTIALLY_PAID', 'RECEIVED', 'REFUNDED', 'PARTIALLY_REFUNDED'].includes(current.status)) {
-      throw new EventsError('EXCLUSAO_BLOQUEADA_PAGO', 'Não é possível excluir um custo com histórico de pagamento ou recebimento. Preserve o ledger financeiro.', 409);
-    }
-
+    // Hard deletion is an explicit operational action for event costs. Keep the
+    // full pre-delete entry, payment ledger, and provider references in the
+    // immutable audit record before the database cascades payment rows.
     await recordEventAudit(tx, {
       contaId: ctx.contaId,
       actorUserId: ctx.userId,
