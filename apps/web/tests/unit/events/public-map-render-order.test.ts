@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sortPublicMapRenderItems } from '../PublicMapExperience';
+import { sortPublicMapRenderItems } from '../../../features/events/map/public/PublicMapExperience';
 
 describe('public map render order', () => {
   it('keeps opaque filled shapes behind seats even when their layer order is higher', () => {
@@ -44,5 +44,43 @@ describe('public map render order', () => {
     };
 
     expect(sortPublicMapRenderItems([seat, text]).map((item) => item.id)).toEqual(['seat-1', 'text-1']);
+  });
+
+  it('preserves editor order between map objects', () => {
+    const outline = {
+      kind: 'object' as const,
+      id: 'outline-1',
+      sortOrder: 2,
+      object: {
+        id: 'outline-1',
+        type: 'SECTION' as const,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 50,
+        rotation: 0,
+        data: { fillEnabled: false },
+      },
+    };
+    const filled = {
+      kind: 'object' as const,
+      id: 'filled-1',
+      sortOrder: 9,
+      object: {
+        id: 'filled-1',
+        type: 'GENERAL_AREA' as const,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 50,
+        rotation: 0,
+        data: { shape: 'square', fill: '#fff', fillEnabled: true },
+      },
+    };
+
+    expect(sortPublicMapRenderItems([filled, outline]).map((item) => item.id)).toEqual([
+      'outline-1',
+      'filled-1',
+    ]);
   });
 });
