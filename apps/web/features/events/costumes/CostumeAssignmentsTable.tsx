@@ -2,7 +2,7 @@
 
 import { EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS } from '@alusa/shared';
 
-import { type CostumeAssignmentDTO, type CostumeDTO, type EventScopedResources } from '../events-service';
+import { formatCurrency, type CostumeAssignmentDTO, type CostumeDTO, type EventScopedResources } from '../events-service';
 import { EventEmptyState as EmptyState } from '../shared/EventEmptyState';
 import { EventPaginatedDataTable } from '../shared/EventPaginatedDataTable';
 import { EventSoftBadge as SoftBadge, type EventSoftBadgeTone } from '../shared/EventSoftBadge';
@@ -40,7 +40,14 @@ export function CostumeAssignmentsTable({
         { id: 'student', header: 'Aluno/Turma', width: 'w-[18%]', align: 'left', render: (item: CostumeAssignmentDTO) => item.aluno?.nome || item.turma?.nome || '-' },
         { id: 'status', header: 'Status', width: 'w-[13%]', align: 'center', render: (item: CostumeAssignmentDTO) => <SoftBadge tone={ASSIGNMENT_STATUS_TONES[item.status]}>{EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS[item.status]}</SoftBadge> },
         { id: 'billing', header: 'Cobrança', width: 'w-[17%]', align: 'left', render: (item: CostumeAssignmentDTO) => COSTUME_BILLING_LABELS[item.billingMode] },
-        { id: 'value', header: 'Valor', width: 'w-[14%]', align: 'right', render: (item: CostumeAssignmentDTO) => getCostumeAssignmentValueLabel(item) },
+        { id: 'value', header: 'Valor', width: 'w-[14%]', align: 'right', render: (item: CostumeAssignmentDTO) => (
+          <div className="space-y-0.5">
+            <div>{getCostumeAssignmentValueLabel(item)}</div>
+            {item.billingMode === 'SEPARATE_CHARGE' && item.paidAmount > 0 && item.remainingAmount > 0 ? (
+              <div className="text-xs text-slate-500">Pago {formatCurrency(item.paidAmount)} · Restante {formatCurrency(item.remainingAmount)}</div>
+            ) : null}
+          </div>
+        ) },
         { id: 'finance', header: 'Financeiro', width: 'w-[12%]', align: 'center', render: (item: CostumeAssignmentDTO) => getCostumeAssignmentFinancialBadge(item) },
         { id: 'actions', header: 'Ações', width: 'w-[10%]', align: 'right', render: (item: CostumeAssignmentDTO) => <AssignmentActions assignment={item} eventId={eventId} costumes={costumes} scopedResources={scopedResources} /> },
       ]}

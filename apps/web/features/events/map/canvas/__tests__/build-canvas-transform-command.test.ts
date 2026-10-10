@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildCanvasTransformCommand } from '../commit/build-canvas-transform-command';
+import { buildGroupDragCommit } from '../commit/group-drag-commit';
 import type { EventMapDTO } from '../../api/event-map-service';
 
 function baseMap(): EventMapDTO {
@@ -72,4 +73,28 @@ describe('buildCanvasTransformCommand', () => {
     });
   });
 
+});
+
+describe('buildGroupDragCommit', () => {
+  it('keeps regular object updates in a drag that also transforms a parametric block', () => {
+    const result = buildGroupDragCommit({
+      map: baseMap(),
+      drag: {
+        anchorNodeId: 'node-obj-1',
+        origin: new Map([
+          ['node-obj-1', { x: 10, y: 20 }],
+          ['node-seatblock-block-1', { x: 40, y: 50 }],
+        ]),
+        nodes: new Map(),
+        bounds: null,
+        delta: { x: 6, y: -4 },
+        parametricItems: [{ type: 'seatblock', id: 'block-1' }],
+      },
+    });
+
+    expect(result.payload).toEqual({
+      objects: [{ id: 'obj-1', patch: { x: 16, y: 16 } }],
+      seats: [],
+    });
+  });
 });

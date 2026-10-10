@@ -13,6 +13,7 @@
  */
 
 import { prisma } from '@alusa/database';
+import type { Prisma } from '@prisma/client';
 import * as crypto from 'crypto';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -43,6 +44,8 @@ export type IdempotencyGuardScope =
   | 'charge-create'
   | 'installment-create'
   | 'subscription-create'
+  | 'event-payment-create'
+  | 'event-payment-refund'
   | 'read-model-project'
   | 'reconciliation';
 
@@ -136,9 +139,7 @@ export function buildGuardKey(params: {
  * O lock é liberado automaticamente no fim da transação.
  */
 export async function acquireGuardLock(params: {
-  tx: {
-    $queryRaw: <T = unknown>(query: TemplateStringsArray | unknown, ...values: unknown[]) => Promise<T>;
-  };
+  tx: Pick<Prisma.TransactionClient, '$queryRaw'>;
   contaId: string;
   scope: IdempotencyGuardScope;
   key: string;
@@ -195,7 +196,7 @@ export async function withIdempotencyGuard<T>(params: {
   return prisma.$transaction(async (tx) => {
     if (typeof (tx as { $queryRaw?: unknown }).$queryRaw === 'function') {
       await acquireGuardLock({
-        tx: tx as unknown as { $queryRaw: <V = unknown>(query: TemplateStringsArray | unknown, ...values: unknown[]) => Promise<V> },
+        tx: tx as unknown as Pick<Prisma.TransactionClient, '$queryRaw'>,
         contaId: params.contaId,
         scope: params.scope,
         key: params.key,

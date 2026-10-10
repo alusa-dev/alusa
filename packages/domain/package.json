@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@alusa/shared": "workspace:*",
+    "@noble/hashes": "1.8.0",
     "polygon-clipping": "^0.15.7",
     "rbush": "^4.0.1"
   },

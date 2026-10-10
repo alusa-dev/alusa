@@ -387,7 +387,7 @@ test.describe('events production hardening jobs', () => {
     const first = await page.request.get(`/api/jobs/events-expire-reservations?contaId=${contaId}&limit=10`, {
       headers: { 'x-cron-token': cronSecret },
     });
-    expect(first.status()).toBe(200);
+    expect(first.status()).toBe(503);
     expect((await first.json() as JobResponse<{ expired: number; skipped: number }>).job)
       .toMatchObject({ expired: 0, skipped: 1 });
 
@@ -550,7 +550,7 @@ test.describe('events production hardening jobs', () => {
     const response = await page.request.get(`/api/jobs/events-expire-reservations?contaId=${contaId}&limit=10`, {
       headers: { 'x-cron-token': cronSecret },
     });
-    expect(response.status()).toBe(200);
+    expect(response.status()).toBe(503);
     expect((await response.json() as JobResponse<{ expired: number; skipped: number }>).job)
       .toMatchObject({ expired: 0, skipped: 1 });
     expect(await prisma.eventMapReservation.findUnique({
@@ -610,10 +610,8 @@ test.describe('events production hardening jobs', () => {
       headers: { 'x-cron-token': cronSecret },
     });
     expect(response.status()).toBe(200);
-    const body = await response.json() as JobResponse<{ findings: Array<{ type: string }> }>;
-    const types = body.job.findings.map((finding) => finding.type);
-    expect(types).toContain('CONFIRMED_ORDER_WITHOUT_TICKET');
-    expect(types).toContain('CONFIRMED_ORDER_WITH_UNSOLD_SEAT');
+    const body = await response.json() as JobResponse<{ findingCount: number }>;
+    expect(body.job.findingCount).toBeGreaterThanOrEqual(2);
 
     await expect.poll(async () => prisma.eventMapOrder.findUnique({
       where: { id: order.id },

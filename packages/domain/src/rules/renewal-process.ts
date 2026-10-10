@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { sha256Hex } from '../utils/sha256.js';
 
 export type RenewalOrigin = 'CAMPAIGN' | 'STANDALONE';
 export type RenewalHolderType = 'STUDENT' | 'RESPONSIBLE';
@@ -120,7 +120,7 @@ function stableStringify(value: unknown): string {
 }
 
 function hashSnapshot(snapshot: Record<string, unknown>) {
-  return createHash('sha256').update(stableStringify(snapshot)).digest('hex');
+  return sha256Hex(stableStringify(snapshot));
 }
 
 function toDateOnly(date: Date): Date {
@@ -156,14 +156,12 @@ export function calculateRenewalEffectiveAt(input: {
 }
 
 export function buildRenewalSourceVersion(sourceEnrollments: RenewalSourceEnrollment[]) {
-  return createHash('sha256')
-    .update(
-      sourceEnrollments
-        .map((source) => `${source.id}:${source.updatedAt.toISOString()}`)
-        .sort()
-        .join('|'),
-    )
-    .digest('hex');
+  return sha256Hex(
+    sourceEnrollments
+      .map((source) => `${source.id}:${source.updatedAt.toISOString()}`)
+      .sort()
+      .join('|'),
+  );
 }
 
 export function buildRenewalPreview(input: BuildRenewalPreviewInput): RenewalPreview {

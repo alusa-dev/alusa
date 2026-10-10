@@ -50,8 +50,15 @@ function seatIdsForSelection(document: EventMapDocument, item: MapSelectionItem)
 }
 
 function removeFromDocument(document: EventMapDocument, item: MapSelectionItem): EventMapDocument {
+  if (item.type === 'object') {
+    return { ...document, visualElements: document.visualElements.filter((element) => element.id !== item.id) };
+  }
   if (item.type === 'section') {
-    return { ...document, sections: document.sections.filter((section) => section.id !== item.id) };
+    return {
+      ...document,
+      sections: document.sections.filter((section) => section.id !== item.id),
+      visualElements: document.visualElements.filter((element) => element.sectionId !== item.id),
+    };
   }
 
   if (item.type === 'seatblock') {
@@ -100,24 +107,30 @@ function removeFromDocument(document: EventMapDocument, item: MapSelectionItem):
 }
 
 function pruneEmptySeatContainers(document: EventMapDocument): EventMapDocument {
+  const sections = document.sections
+    .map((section) => ({
+      ...section,
+      // A seat-block section is a logical container. Its visible geometry
+      // comes from the rows, so never keep a stale derived rectangle.
+      outline: section.blocks.length > 0 ? [] : section.outline,
+      blockIds: section.blockIds.filter((blockId) => section.blocks.some((block) => block.id === blockId && block.rows.length > 0)),
+      blocks: section.blocks
+        .map((block) => ({
+          ...block,
+          rowIds: block.rowIds.filter((rowId) => block.rows.some((row) => row.id === rowId && row.seats.length > 0)),
+          rows: block.rows.filter((row) => row.seats.length > 0),
+        }))
+        .filter((block) => block.rows.length > 0),
+    }))
+    .filter((section) => section.blocks.length > 0);
+  const retainedSectionIds = new Set(sections.map((section) => section.id));
+
   return {
     ...document,
-    sections: document.sections
-      .map((section) => ({
-        ...section,
-        // A seat-block section is a logical container. Its visible geometry
-        // comes from the rows, so never keep a stale derived rectangle.
-        outline: section.blocks.length > 0 ? [] : section.outline,
-        blockIds: section.blockIds.filter((blockId) => section.blocks.some((block) => block.id === blockId && block.rows.length > 0)),
-        blocks: section.blocks
-          .map((block) => ({
-            ...block,
-            rowIds: block.rowIds.filter((rowId) => block.rows.some((row) => row.id === rowId && row.seats.length > 0)),
-            rows: block.rows.filter((row) => row.seats.length > 0),
-          }))
-          .filter((block) => block.rows.length > 0),
-      }))
-      .filter((section) => section.blocks.length > 0),
+    sections,
+    visualElements: document.visualElements.filter((element) =>
+      !element.sectionId || retainedSectionIds.has(element.sectionId),
+    ),
   };
 }
 
@@ -131,8 +144,12 @@ function projectDocument(map: EventMapDTO, document: EventMapDocument) {
 }
 
 export function deleteSelection(input: DeleteSelectionInput): DeleteSelectionResult {
+  const items = expandObjectSelectionItems(getSelectableItems(input.selection), input.map.objects);
+  if (items.length === 0) {
+    return { map: input.map, selection: input.selection, warnings: [], blocked: false };
+  }
+
   const nextMap = cloneMap(input.map);
-  const items = expandObjectSelectionItems(getSelectableItems(input.selection), nextMap.objects);
   const warnings: string[] = [];
 
   const hasLockedItem = items.some((item) => {
@@ -179,7 +196,7 @@ export function deleteSelection(input: DeleteSelectionInput): DeleteSelectionRes
   }
 
   for (const item of items) {
-    if (nextMap.document && ['section', 'seatblock', 'seatrow', 'seat'].includes(item.type)) {
+    if (nextMap.document && ['object', 'section', 'seatblock', 'seatrow', 'seat'].includes(item.type)) {
       projectDocument(nextMap, removeFromDocument(nextMap.document, item));
     } else if (item.type === 'seat') {
       nextMap.seats = nextMap.seats.filter((entry) => entry.id !== item.id);
@@ -197,7 +214,19 @@ export function deleteSelection(input: DeleteSelectionInput): DeleteSelectionRes
 
   }
 
-  nextMap.objects = sanitizeGroupMembership(nextMap.objects);
+  if (nextMap.document) {
+    const visualElements = sanitizeGroupMembership(nextMap.document.visualElements);
+    nextMap.document = {
+      ...nextMap.document,
+      visualElements: visualElements.map((object) => ({ ...object, data: { ...object.data } })),
+    };
+    const projection = projectMapDocumentToEditorFields(nextMap.document, nextMap);
+    nextMap.sections = projection.sections;
+    nextMap.objects = projection.objects;
+    nextMap.seats = projection.seats;
+  } else {
+    nextMap.objects = sanitizeGroupMembership(nextMap.objects);
+  }
   updateCounts(nextMap);
 
   return { map: nextMap, selection: [], warnings, blocked: false };

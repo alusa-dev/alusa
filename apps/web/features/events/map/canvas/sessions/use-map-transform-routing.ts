@@ -23,6 +23,7 @@ export function useMapTransformRouting({
   selectedNodeIds,
   selectedObjectIds,
   selectedSeatIds,
+  selectedParametricItems,
   selectionContainsSeatsOrSections,
   selection,
   levelBounds,
@@ -33,6 +34,7 @@ export function useMapTransformRouting({
   selectedNodeIds: string[];
   selectedObjectIds: string[];
   selectedSeatIds: string[];
+  selectedParametricItems: Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>[];
   selectionContainsSeatsOrSections: boolean;
   selection: MapSelectionItem[];
   levelBounds: LevelBounds | null;
@@ -91,9 +93,7 @@ export function useMapTransformRouting({
     selectedNodeIds,
     transformKind: transformRouting.kind,
     selectedParametricItem: selection.length === 1 && (selection[0]?.type === 'seatblock' || selection[0]?.type === 'seatrow') ? selection[0] : null,
-    selectedParametricItems: selection.length > 0 && selection.every((item) => item.type === 'seatblock' || item.type === 'seatrow')
-      ? selection as Extract<MapSelectionItem, { type: 'seatblock' | 'seatrow' }>[]
-      : [],
+    selectedParametricItems,
     levelBounds,
   };
 

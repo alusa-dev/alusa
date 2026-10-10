@@ -1,6 +1,6 @@
 import type { MapCommand } from '../../commands/command-types.js';
 import { deleteSelection } from '../../operations/selection/delete-selection.js';
-import { duplicateSelection } from '../../operations/selection/duplicate-selection.js';
+import { duplicateSelection, validateDuplicateSelection } from '../../operations/selection/duplicate-selection.js';
 import { groupSelection, ungroupSelection } from '../../operations/selection/group-selection.js';
 import { moveSelection } from '../../operations/transform/move-selection.js';
 import {
@@ -15,7 +15,17 @@ export function handleDeleteSelection(
   command: Extract<MapCommand, { type: 'DELETE_SELECTION' }>,
 ): MapCommandHandlerResult {
   const result = deleteSelection({ map: state.nextMap, selection: command.payload.selection });
-  if (result.blocked) return;
+  if (result.blocked) {
+    return {
+      earlyReturn: commandResult({
+        map: state.beforeMap,
+        selection: state.selection,
+        createdId: state.createdId,
+        activeLevelId: state.activeLevelId,
+        warnings: result.warnings,
+      }),
+    };
+  }
   state.nextMap = result.map;
   state.nextSelection = result.selection;
 }
@@ -24,6 +34,18 @@ export function handleDuplicateSelection(
   state: MapCommandHandlerState,
   command: Extract<MapCommand, { type: 'DUPLICATE_SELECTION' }>,
 ): MapCommandHandlerResult {
+  const validation = validateDuplicateSelection(state.nextMap, command.payload.selection);
+  if (!validation.ok) {
+    return {
+      earlyReturn: commandResult({
+        map: state.beforeMap,
+        selection: state.selection,
+        createdId: state.createdId,
+        activeLevelId: state.activeLevelId,
+        warnings: [validation.reason],
+      }),
+    };
+  }
   const result = duplicateSelection({
     map: state.nextMap,
     selection: command.payload.selection,
@@ -36,11 +58,13 @@ export function handleDuplicateSelection(
         selection: state.selection,
         createdId: state.createdId,
         activeLevelId: state.activeLevelId,
+        warnings: result.warnings,
       }),
     };
   }
   state.nextMap = result.map;
   state.nextSelection = result.selection;
+  state.warnings.push(...result.warnings);
 }
 
 export function handleGroupSelection(
@@ -55,11 +79,13 @@ export function handleGroupSelection(
         selection: state.selection,
         createdId: state.createdId,
         activeLevelId: state.activeLevelId,
+        warnings: result.warnings,
       }),
     };
   }
   state.nextMap = result.map;
   state.nextSelection = result.selection;
+  state.warnings.push(...result.warnings);
 }
 
 export function handleUngroupSelection(
@@ -74,11 +100,13 @@ export function handleUngroupSelection(
         selection: state.selection,
         createdId: state.createdId,
         activeLevelId: state.activeLevelId,
+        warnings: result.warnings,
       }),
     };
   }
   state.nextMap = result.map;
   state.nextSelection = result.selection;
+  state.warnings.push(...result.warnings);
 }
 
 export function handleNudgeSelection(
@@ -94,14 +122,17 @@ export function handleNudgeSelection(
         selection: state.selection,
         createdId: state.createdId,
         activeLevelId: state.activeLevelId,
+        warnings: result.warnings,
       }),
     };
   }
-  handleUpdateItems(state, {
+  state.warnings.push(...result.warnings);
+  const updateResult = handleUpdateItems(state, {
     type: 'UPDATE_ITEMS',
     payload: {
       objects: result.patches.objects,
       seats: result.patches.seats,
     },
   });
+  if (updateResult && 'earlyReturn' in updateResult) return updateResult;
 }

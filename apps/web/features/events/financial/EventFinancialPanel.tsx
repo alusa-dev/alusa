@@ -40,8 +40,8 @@ export function EventFinancialPanel({
           <FinancialFormDialog eventId={eventId} type="REVENUE" trigger={<Button className={PRIMARY_BUTTON_CLASS}><Plus className="h-4 w-4" /> Receita</Button>} />
         </div>
       </div>
-      <TabsContent value="costs"><FinancialEntriesTable entries={costs} eventId={eventId} loading={entries.isLoading} /></TabsContent>
-      <TabsContent value="revenues"><FinancialEntriesTable entries={revenues} eventId={eventId} loading={entries.isLoading} /></TabsContent>
+      <TabsContent value="costs"><FinancialEntriesTable entries={costs} eventId={eventId} loading={entries.isLoading} type="COST" /></TabsContent>
+      <TabsContent value="revenues"><FinancialEntriesTable entries={revenues} eventId={eventId} loading={entries.isLoading} type="REVENUE" /></TabsContent>
       {showResultMetricsTab && (
         <TabsContent value="result">
           {event ? <EventSummary event={event} /> : null}

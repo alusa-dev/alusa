@@ -421,6 +421,7 @@ export async function reactivateEventParticipant(
           contaId: ctx.contaId,
           eventId,
           type: 'REVENUE',
+          originType: 'EVENT_REGISTRATION',
           category: 'Taxa de inscrição',
           description: billingMode === 'ENTRY_INSTALLMENT' ? 'Entrada da taxa de inscrição' : 'Taxa de inscrição',
           expectedAmount: decimal(feeCharged),

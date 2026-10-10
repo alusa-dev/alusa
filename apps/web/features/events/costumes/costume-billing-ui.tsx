@@ -23,11 +23,23 @@ export const COSTUME_BILLING_OPTIONS = COSTUME_BILLING_MODES.map((mode) => ({
 }));
 
 export function getCostumeAssignmentFinancialBadge(assignment: CostumeAssignmentDTO) {
+  if (assignment.status === 'CANCELLED') {
+    return <SoftBadge tone="danger">Cancelado</SoftBadge>;
+  }
   if (assignment.billingMode === 'INCLUDED_IN_REGISTRATION_FEE') {
     return <SoftBadge tone="info">Incluso</SoftBadge>;
   }
   if (assignment.billingMode === 'FREE') {
     return <SoftBadge tone="neutral">Sem cobrança</SoftBadge>;
+  }
+  if (assignment.financialEntryStatus === 'REFUNDED') {
+    return <SoftBadge tone="danger">Estornado</SoftBadge>;
+  }
+  if (assignment.financialEntryStatus === 'PARTIALLY_REFUNDED') {
+    return <SoftBadge tone="warning">Estorno parcial</SoftBadge>;
+  }
+  if (assignment.paidAmount > 0 && assignment.remainingAmount > 0) {
+    return <SoftBadge tone="warning">Parcialmente pago</SoftBadge>;
   }
   return assignment.isPaid ? <SoftBadge tone="success">Pago</SoftBadge> : <SoftBadge tone="warning">Pendente</SoftBadge>;
 }

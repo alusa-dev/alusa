@@ -12,6 +12,7 @@ import {
 } from '@alusa/shared';
 
 import { Button } from '@/components/ui/button';
+import { wizardFieldInputClass, wizardTextareaFieldClass } from '@/components/shared/wizard/field-styles';
 import {
   Dialog,
   DialogContent,
@@ -21,6 +22,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -30,7 +32,7 @@ import { EventDateTimeField as DateTimeField } from '../shared/EventDateTimeFiel
 import { EventField as Field } from '../shared/EventField';
 import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
 import { eventQueryKeys } from '../shared/event-query-keys';
-import { datetimeValue, FILTER_INPUT_CLASS, getRoundedNowISOString, nullableString } from '../shared/event-form-utils';
+import { datetimeValue, getRoundedNowISOString, handleFormDataSubmit, nullableString } from '../shared/event-form-utils';
 import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
 import { FINANCIAL_STATUS_OPTIONS, isFinancialRealized, toCurrencyInputText } from './financial-entry-ui';
 
@@ -43,10 +45,13 @@ export function FinancialEntryEditDialog({
   entry: FinancialEntryDTO;
   eventId: string;
   open: boolean;
-  onOpenChange: (open: boolean) => void;
+  onOpenChange: (_open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const statusOptions = FINANCIAL_STATUS_OPTIONS[entry.type];
+  const hasCostPaymentHistory = entry.type === 'COST' && (
+    Boolean(entry.payments?.length) || ['PAID', 'PARTIALLY_PAID', 'REFUNDED'].includes(entry.status)
+  );
+  const statusOptions = FINANCIAL_STATUS_OPTIONS[entry.type].filter((status) => !(entry.type === 'COST' && ['PAID', 'PARTIALLY_PAID'].includes(status)));
   const [selectedStatus, setSelectedStatus] = useState<EventFinancialEntryStatus>(entry.status);
   const [expectedAmountText, setExpectedAmountText] = useState(toCurrencyInputText(entry.expectedAmount));
   const [actualAmountText, setActualAmountText] = useState(toCurrencyInputText(entry.actualAmount ?? entry.expectedAmount));
@@ -74,100 +79,125 @@ export function FinancialEntryEditDialog({
       description: nullableString(formData, 'description'),
       supplier: entry.type === 'COST' ? nullableString(formData, 'supplier') : undefined,
       expectedAmount: parseCurrencyInput(nullableString(formData, 'expectedAmount') ?? expectedAmountText),
-      actualAmount: realized ? parseCurrencyInput(nullableString(formData, 'actualAmount') ?? actualAmountText) : undefined,
-      dueDate: realized ? undefined : datetimeValue(formData, 'dueDate'),
-      realizedAt: realized ? datetimeValue(formData, 'realizedAt') : undefined,
-      status,
-      paymentMethod: realized ? nullableString(formData, 'paymentMethod') : undefined,
+      actualAmount: !hasCostPaymentHistory && realized ? parseCurrencyInput(nullableString(formData, 'actualAmount') ?? actualAmountText) : undefined,
+      dueDate: realized && !hasCostPaymentHistory ? undefined : datetimeValue(formData, 'dueDate'),
+      realizedAt: !hasCostPaymentHistory && realized ? datetimeValue(formData, 'realizedAt') : undefined,
+      status: hasCostPaymentHistory ? undefined : status,
+      paymentMethod: !hasCostPaymentHistory && realized ? nullableString(formData, 'paymentMethod') : undefined,
       notes: nullableString(formData, 'notes'),
     });
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Editar lançamento</DialogTitle>
-          <DialogDescription>Atualize apenas lançamentos manuais. Lançamentos automáticos devem ser ajustados pela origem.</DialogDescription>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (nextOpen || !mutation.isPending) onOpenChange(nextOpen); }}>
+      <DialogContent
+        fullScreenMobile
+        closeDisabled={mutation.isPending}
+        className="flex max-w-[720px] flex-col gap-0 overflow-hidden rounded-[20px] p-0 sm:rounded-[20px] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0"
+      >
+        <DialogHeader className="shrink-0 border-b border-slate-100 px-6 pb-5 pt-6 text-left max-md:px-5 max-md:pb-4 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))]">
+          <DialogTitle className="text-xl font-normal tracking-tight text-slate-950">Editar lançamento</DialogTitle>
+          <DialogDescription className="mt-1 text-sm leading-5 text-slate-600">
+            Atualize os dados do lançamento manual. Valores e status de custos com pagamentos são calculados pelo histórico.
+          </DialogDescription>
         </DialogHeader>
-        <form action={submit} className="grid gap-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Categoria">
-              <NativeSelect
-                name="category"
-                defaultValue={entry.category}
-                required
-                options={(entry.type === 'COST' ? EVENT_COST_CATEGORIES : EVENT_REVENUE_CATEGORIES.filter((category) => category !== 'Venda de ingresso')).map((category) => ({ value: category, label: category }))}
-              />
-            </Field>
-            <Field label="Status">
-              <NativeSelect
-                name="status"
-                defaultValue={selectedStatus}
-                required
-                onValueChange={(val) => setSelectedStatus(val as EventFinancialEntryStatus)}
-                options={statusOptions.map((status) => ({ value: status, label: EVENT_FINANCIAL_STATUS_LABELS[status] }))}
-              />
-            </Field>
-            <Field label="Descrição">
-              <Input name="description" defaultValue={entry.description} required className={FILTER_INPUT_CLASS} />
-            </Field>
-            {entry.type === 'COST' ? (
-              <Field label="Fornecedor">
-                <Input name="supplier" defaultValue={entry.supplier ?? ''} className={FILTER_INPUT_CLASS} />
-              </Field>
-            ) : null}
-            <Field label="Valor previsto">
-              <div className="relative flex items-center">
-                <span className="pointer-events-none absolute left-3 text-xs font-semibold text-slate-400">R$</span>
-                <Input
-                  name="expectedAmount"
-                  type="text"
-                  value={expectedAmountText}
-                  onChange={(event) => setExpectedAmountText(formatCurrencyInput(event.target.value))}
-                  className={cn(FILTER_INPUT_CLASS, 'pl-10 text-right')}
-                  required
-                />
-              </div>
-            </Field>
-            {isRealized ? (
-              <>
-                <Field label={entry.type === 'COST' ? 'Valor pago' : 'Valor recebido'}>
+        <form onSubmit={(event) => handleFormDataSubmit(event, submit)} className="flex min-h-0 flex-1 flex-col">
+          <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5 max-md:px-5">
+            <section aria-labelledby="financial-entry-fields-title" className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
+              <h3 id="financial-entry-fields-title" className="text-sm font-semibold text-slate-800">Dados do lançamento</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Categoria">
+                  <NativeSelect
+                    name="category"
+                    defaultValue={entry.category}
+                    required
+                    triggerClassName={wizardFieldInputClass}
+                    options={(entry.type === 'COST' ? EVENT_COST_CATEGORIES : EVENT_REVENUE_CATEGORIES.filter((category) => category !== 'Venda de ingresso')).map((category) => ({ value: category, label: category }))}
+                  />
+                </Field>
+                <Field label="Status">
+                  {hasCostPaymentHistory ? (
+                    <div className={cn(wizardFieldInputClass, 'flex items-center text-xs text-slate-600')}>
+                      <span className="truncate">{EVENT_FINANCIAL_STATUS_LABELS[entry.status]} · calculado pelos pagamentos</span>
+                    </div>
+                  ) : (
+                    <NativeSelect
+                      name="status"
+                      defaultValue={selectedStatus}
+                      required
+                      onValueChange={(val) => setSelectedStatus(val as EventFinancialEntryStatus)}
+                      triggerClassName={wizardFieldInputClass}
+                      options={statusOptions.map((status) => ({ value: status, label: EVENT_FINANCIAL_STATUS_LABELS[status] }))}
+                    />
+                  )}
+                </Field>
+                <Field label="Descrição">
+                  <Input name="description" defaultValue={entry.description} required className={wizardFieldInputClass} />
+                </Field>
+                {entry.type === 'COST' ? (
+                  <Field label="Fornecedor">
+                    <Input name="supplier" defaultValue={entry.supplier ?? ''} className={wizardFieldInputClass} />
+                  </Field>
+                ) : null}
+                <Field label="Valor previsto">
                   <div className="relative flex items-center">
-                    <span className="pointer-events-none absolute left-3 text-xs font-semibold text-slate-400">R$</span>
+                    <span className="pointer-events-none absolute left-3 text-[13px] text-slate-500">R$</span>
                     <Input
-                      name="actualAmount"
+                      name="expectedAmount"
                       type="text"
-                      value={actualAmountText}
-                      onChange={(event) => setActualAmountText(formatCurrencyInput(event.target.value))}
-                      className={cn(FILTER_INPUT_CLASS, 'pl-10 text-right')}
+                      value={expectedAmountText}
+                      onChange={(event) => setExpectedAmountText(formatCurrencyInput(event.target.value))}
+                      className={cn(wizardFieldInputClass, 'pl-9 text-left tabular-nums')}
                       required
                     />
                   </div>
                 </Field>
-                <Field label={entry.type === 'COST' ? 'Data de pagamento' : 'Data de recebimento'}>
-                  <DateTimeField name="realizedAt" defaultValue={entry.realizedAt ?? getRoundedNowISOString()} />
-                </Field>
-                <Field label="Forma de pagamento">
-                  <NativeSelect
-                    name="paymentMethod"
-                    defaultValue={entry.paymentMethod}
-                    placeholder="Opcional"
-                    options={EVENT_PAYMENT_METHODS.filter((method) => method !== 'COMPLIMENTARY').map((method) => ({ value: method, label: EVENT_PAYMENT_METHOD_LABELS[method] }))}
-                  />
-                </Field>
-              </>
-            ) : (
-              <Field label="Data prevista">
-                <DateTimeField name="dueDate" defaultValue={entry.dueDate} />
+                {isRealized && !hasCostPaymentHistory ? (
+                  <>
+                    <Field label={entry.type === 'COST' ? 'Valor pago' : 'Valor recebido'}>
+                      <div className="relative flex items-center">
+                        <span className="pointer-events-none absolute left-3 text-[13px] text-slate-500">R$</span>
+                        <Input
+                          name="actualAmount"
+                          type="text"
+                          value={actualAmountText}
+                          onChange={(event) => setActualAmountText(formatCurrencyInput(event.target.value))}
+                          className={cn(wizardFieldInputClass, 'pl-9 text-left tabular-nums')}
+                          required
+                        />
+                      </div>
+                    </Field>
+                    <Field label={entry.type === 'COST' ? 'Data de pagamento' : 'Data de recebimento'}>
+                      <DateTimeField name="realizedAt" defaultValue={entry.realizedAt ?? getRoundedNowISOString()} inputClassName={wizardFieldInputClass} timeSelectClassName={wizardFieldInputClass} />
+                    </Field>
+                    <Field label="Forma de pagamento">
+                      <NativeSelect
+                        name="paymentMethod"
+                        defaultValue={entry.paymentMethod}
+                        placeholder="Opcional"
+                        triggerClassName={wizardFieldInputClass}
+                        options={EVENT_PAYMENT_METHODS.filter((method) => method !== 'COMPLIMENTARY').map((method) => ({ value: method, label: EVENT_PAYMENT_METHOD_LABELS[method] }))}
+                      />
+                    </Field>
+                  </>
+                ) : (
+                  <Field label="Data prevista">
+                    <DateTimeField name="dueDate" defaultValue={entry.dueDate} inputClassName={wizardFieldInputClass} timeSelectClassName={wizardFieldInputClass} />
+                  </Field>
+                )}
+              </div>
+              <Field label="Observações">
+                <Textarea name="notes" defaultValue={entry.notes ?? ''} className={wizardTextareaFieldClass} />
               </Field>
-            )}
+            </section>
           </div>
-          <Field label="Observações">
-            <Textarea name="notes" defaultValue={entry.notes ?? ''} className="rounded-xl border-slate-200" />
-          </Field>
-          <DialogFooter>
-            <Button type="submit" disabled={mutation.isPending}>Salvar alterações</Button>
+          <DialogFooter className="shrink-0 gap-2 border-t border-slate-100 bg-white px-6 py-4 max-md:px-5">
+            <Button type="button" variant="wizardSecondary" onClick={() => onOpenChange(false)} disabled={mutation.isPending} className="h-10 min-h-10 w-[120px] min-w-0 rounded-[10px] px-5 font-normal max-md:w-full">
+              Cancelar
+            </Button>
+            <Button type="submit" variant="wizardPrimary" disabled={mutation.isPending} className="h-10 min-h-10 w-[180px] min-w-0 rounded-[10px] px-5 font-normal max-md:w-full">
+              {mutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando alterações" size="sm" className="text-white" /></> : 'Salvar alterações'}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

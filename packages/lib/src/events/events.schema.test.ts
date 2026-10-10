@@ -1,6 +1,29 @@
 import { describe, expect, it } from 'vitest';
 
-import { listEventParticipantsQuerySchema, listFinancialEntriesQuerySchema, registerEventParticipantRequestSchema } from './events.schema';
+import {
+  createEventCostPaymentSchema,
+  listEventParticipantsQuerySchema,
+  listFinancialEntriesQuerySchema,
+  manualEventParticipantPaymentSchema,
+  quitarParticipantFeeSchema,
+  registerEventParticipantRequestSchema,
+} from './events.schema';
+
+describe('event cost payment schema', () => {
+  const base = {
+    idempotencyKey: '00000000-0000-4000-8000-000000000001',
+    amount: 100,
+    paymentMethod: 'MANUAL_PIX',
+  };
+
+  it('accepts a valid manual vendor payment', () => {
+    expect(createEventCostPaymentSchema.parse(base)).toEqual(expect.objectContaining(base));
+  });
+
+  it('does not accept complimentary as a vendor payment method', () => {
+    expect(() => createEventCostPaymentSchema.parse({ ...base, paymentMethod: 'COMPLIMENTARY' })).toThrow();
+  });
+});
 
 describe('event participant billing schema', () => {
   const base = {
@@ -171,6 +194,18 @@ describe('event participant billing schema', () => {
       entryAmount: 180,
       entryPaymentMethod: 'CASH',
     })).toThrow('responsável financeiro');
+  });
+});
+
+describe('event participant payment idempotency schemas', () => {
+  const idempotencyKey = '00000000-0000-4000-8000-000000000201';
+
+  it('requires an idempotency key for partial manual receipts and quit actions', () => {
+    expect(manualEventParticipantPaymentSchema.parse({ idempotencyKey, amount: 10, paymentMethod: 'CASH' })).toMatchObject({ idempotencyKey });
+    expect(quitarParticipantFeeSchema.parse({ idempotencyKey, paymentMethod: 'MANUAL_PIX' })).toMatchObject({ idempotencyKey });
+    expect(() => manualEventParticipantPaymentSchema.parse({ amount: 10, paymentMethod: 'CASH' })).toThrow();
+    expect(() => manualEventParticipantPaymentSchema.parse({ idempotencyKey, amount: 10, paymentMethod: 'COMPLIMENTARY' })).toThrow();
+    expect(() => quitarParticipantFeeSchema.parse({ paymentMethod: 'MANUAL_PIX' })).toThrow();
   });
 });
 

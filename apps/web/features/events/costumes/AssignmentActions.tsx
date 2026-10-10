@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { MoreVertical, RotateCcw } from 'lucide-react';
+import { MoreVertical } from 'lucide-react';
 import { type EventCostumeAssignmentStatus } from '@alusa/shared';
 
 import { Button } from '@/components/ui/button';
@@ -34,32 +34,21 @@ export function AssignmentActions({
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
   const [unlinkOpen, setUnlinkOpen] = useState(false);
-  const [refundOpen, setRefundOpen] = useState(false);
-  const isSeparatePaid = assignment.billingMode === 'SEPARATE_CHARGE' && assignment.isPaid;
+  const isTerminal = ['CANCELLED', 'RETURNED', 'DAMAGED', 'LOST'].includes(assignment.status);
+  const hasAvailableActions = !['CANCELLED', 'DAMAGED', 'LOST'].includes(assignment.status);
 
   const mutation = useMutation({
     mutationFn: (status: EventCostumeAssignmentStatus) => updateCostumeAssignment(assignment.id, { status }),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.assignments(eventId) }),
+        queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) }),
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) }),
+        queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] }),
       ]);
       toast.success({ title: 'Status atualizado', description: 'O status do figurino foi atualizado com sucesso.' });
     },
     onError: (error) => toast.error({ title: 'Erro ao atualizar status', description: (error as Error).message }),
-  });
-
-  const refundMutation = useMutation({
-    mutationFn: () => updateCostumeAssignment(assignment.id, { isPaid: false }),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: eventQueryKeys.assignments(eventId) }),
-        queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) }),
-      ]);
-      toast.success({ title: 'Pagamento estornado', description: 'O pagamento próprio do figurino voltou para pendente.' });
-      setRefundOpen(false);
-    },
-    onError: (error) => toast.error({ title: 'Erro ao estornar pagamento', description: (error as Error).message }),
   });
 
   const unlinkMutation = useMutation({
@@ -67,13 +56,17 @@ export function AssignmentActions({
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.assignments(eventId) }),
+        queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) }),
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) }),
+        queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] }),
       ]);
       toast.success({ title: 'Figurino desvinculado', description: 'O vínculo foi removido deste participante.' });
       setUnlinkOpen(false);
     },
     onError: (error) => toast.error({ title: 'Erro ao desvincular figurino', description: (error as Error).message }),
   });
+
+  if (!hasAvailableActions) return null;
 
   return (
     <>
@@ -84,47 +77,31 @@ export function AssignmentActions({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
-          <DropdownMenuItem onClick={() => setEditOpen(true)}>
+          {!isTerminal && <DropdownMenuItem onClick={() => setEditOpen(true)}>
             Editar
-          </DropdownMenuItem>
+          </DropdownMenuItem>}
 
-          {assignment.status !== 'DELIVERED' && (
-            <DropdownMenuItem onClick={() => mutation.mutate('DELIVERED')}>
-              Entregar
-            </DropdownMenuItem>
-          )}
+          {assignment.status === 'PENDING' && <DropdownMenuItem onClick={() => mutation.mutate('ORDERED')}>Encomendar</DropdownMenuItem>}
+          {assignment.status === 'ORDERED' && <DropdownMenuItem onClick={() => mutation.mutate('RECEIVED')}>Marcar como recebido</DropdownMenuItem>}
+          {assignment.status === 'RECEIVED' && <DropdownMenuItem onClick={() => mutation.mutate('DELIVERED')}>Entregar</DropdownMenuItem>}
+          {assignment.status === 'RETURNED' && <DropdownMenuItem onClick={() => mutation.mutate('PENDING')}>Reabrir vínculo</DropdownMenuItem>}
 
-          {assignment.status !== 'RETURNED' && (
+          {assignment.status === 'DELIVERED' && (
             <DropdownMenuItem onClick={() => mutation.mutate('RETURNED')}>
               Devolver
             </DropdownMenuItem>
           )}
 
-          {assignment.status !== 'PENDING' && (
-            <DropdownMenuItem onClick={() => mutation.mutate('PENDING')}>
-              Marcar como Pendente
-            </DropdownMenuItem>
+          {assignment.status === 'ORDERED' && (
+            <DropdownMenuItem onClick={() => mutation.mutate('PENDING')}>Marcar como Pendente</DropdownMenuItem>
           )}
 
-          <DropdownMenuSeparator />
-
-          {isSeparatePaid ? (
-            <DropdownMenuItem
-              className="text-rose-700 focus:text-rose-700"
-              onClick={() => setRefundOpen(true)}
-            >
-              <RotateCcw className="mr-2 h-4 w-4" />
-              Estornar pagamento
-            </DropdownMenuItem>
-          ) : null}
-
-          <DropdownMenuItem
+          {!isTerminal && <DropdownMenuItem
             className="text-rose-600 focus:bg-rose-50 hover:bg-rose-50"
-            disabled={isSeparatePaid}
             onClick={() => setUnlinkOpen(true)}
           >
             Desvincular
-          </DropdownMenuItem>
+          </DropdownMenuItem>}
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -140,8 +117,8 @@ export function AssignmentActions({
       <ConfirmDialog
         open={unlinkOpen}
         onOpenChange={setUnlinkOpen}
-        title="Desvincular figurino?"
-        description="O vínculo será cancelado e deixará de aparecer para este aluno ou turma. Pagamentos próprios precisam ser estornados antes."
+        title="Cancelar vínculo de figurino?"
+        description="O vínculo será cancelado e deixará de reservar uma unidade. Vínculos com recebimentos registrados não podem ser cancelados."
         confirmText="Desvincular"
         cancelText="Cancelar"
         variant="destructive"
@@ -149,17 +126,6 @@ export function AssignmentActions({
         loading={unlinkMutation.isPending}
       />
 
-      <ConfirmDialog
-        open={refundOpen}
-        onOpenChange={setRefundOpen}
-        title="Estornar pagamento do figurino?"
-        description="O pagamento próprio deste figurino voltará para pendente. Depois disso, o vínculo poderá ser desvinculado."
-        confirmText="Estornar pagamento"
-        cancelText="Cancelar"
-        variant="destructive"
-        onConfirm={() => refundMutation.mutate()}
-        loading={refundMutation.isPending}
-      />
     </>
   );
 }

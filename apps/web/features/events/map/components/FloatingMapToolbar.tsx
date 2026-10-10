@@ -27,7 +27,7 @@ type ToolbarTool = {
 };
 
 const presetTools: ToolbarTool[] = [
-  { id: 'seat', label: 'Bloco de fileiras', shortcut: 'C', icon: 'block' },
+  { id: 'seat', label: 'Bloco de fileiras', shortcut: 'C', icon: 'seat' },
   { id: 'stage', label: 'Adicionar palco', icon: 'stage' },
   { id: 'blocked', label: 'Área bloqueada', icon: 'blocked' },
 ];

@@ -40,6 +40,8 @@ export type EventsPermission =
   | 'eventFinance.createCost'
   | 'eventFinance.createRevenue'
   | 'eventFinance.markPaid'
+  | 'eventFinance.registerCostPayment'
+  | 'eventFinance.registerCostumePayment'
   | 'eventFinance.markReceived'
   | 'eventFinance.cancelEntry'
   | 'eventFinance.reconcile'
@@ -71,6 +73,8 @@ const ALL_PERMISSIONS: EventsPermission[] = [
   'eventFinance.createCost',
   'eventFinance.createRevenue',
   'eventFinance.markPaid',
+  'eventFinance.registerCostPayment',
+  'eventFinance.registerCostumePayment',
   'eventFinance.markReceived',
   'eventFinance.cancelEntry',
   'eventFinance.reconcile',
@@ -112,6 +116,8 @@ const ROLE_PERMISSIONS: Record<string, EventsPermission[]> = {
     'eventFinance.createCost',
     'eventFinance.createRevenue',
     'eventFinance.markPaid',
+    'eventFinance.registerCostPayment',
+    'eventFinance.registerCostumePayment',
     'eventFinance.markReceived',
     'eventFinance.cancelEntry',
     'eventFinance.reconcile',

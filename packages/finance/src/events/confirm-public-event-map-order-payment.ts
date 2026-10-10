@@ -86,6 +86,14 @@ export async function confirmPublicEventMapOrderPayment(params: {
       };
     }
 
+    if (order.versionId !== order.map.publishedVersionId) {
+      throw new EventsError(
+        'MAPA_VERSAO_ALTERADA',
+        'A versão do mapa deste pedido foi substituída. A emissão será interrompida e o pagamento seguirá para reconciliação financeira.',
+        409,
+      );
+    }
+
     if (
       order.status !== 'PAYMENT_PENDING' &&
       order.status !== 'CONFIRMED' &&

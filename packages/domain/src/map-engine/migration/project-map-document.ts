@@ -15,17 +15,19 @@ export function projectMapDocumentToEditorFields(
   const previousSeats = new Map((previous?.seats ?? []).map((seat) => [seat.id, seat]));
   const sections = document.sections.map((section): EventMapSectionDTO => {
     const previousSection = previousSections.get(section.id);
+    const lotId = section.lotId !== undefined ? section.lotId : previousSection?.lotId ?? null;
     return {
       id: section.id,
       levelId: section.levelId,
-      lotId: section.lotId ?? previousSection?.lotId ?? null,
-      lot: previousSection?.lot ?? null,
+      lotId,
+      lot: previousSection?.lot?.id === lotId ? previousSection.lot : null,
       name: section.name,
       color: section.color,
       capacity: section.capacity ?? null,
       status: section.status ?? 'ACTIVE',
       notes: section.notes ?? null,
       hidden: section.hidden ?? false,
+      ...(section.sortOrder !== undefined ? { sortOrder: section.sortOrder } : {}),
     };
   });
   const sectionById = new Map(document.sections.map((section) => [section.id, section]));

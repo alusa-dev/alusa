@@ -29,6 +29,7 @@ import {
   type ExecuteMapCommandContext,
   type MapCommandHandlerResult,
   type MapCommandHandlerState,
+  updateCounts,
 } from './reducer-context.js';
 
 export type { CommandResult, ExecuteMapCommandContext } from './reducer-context.js';
@@ -238,6 +239,7 @@ export function executeMapCommand(
     activeLevelId,
     nextActiveLevelId: activeLevelId,
     createdId: null,
+    warnings: [],
     runtime,
   };
 
@@ -256,19 +258,19 @@ export function executeMapCommand(
       break;
     }
     case 'ADD_OBJECT':
-      handleAddObject(state, normalizedCommand);
+      handlerEarlyReturn = applyHandlerResult(state, handleAddObject(state, normalizedCommand));
       break;
     case 'DELETE_SELECTION':
-      handleDeleteSelection(state, normalizedCommand);
+      handlerEarlyReturn = applyHandlerResult(state, handleDeleteSelection(state, normalizedCommand));
       break;
     case 'UPDATE_ITEMS':
       handlerEarlyReturn = applyHandlerResult(state, handleUpdateItems(state, normalizedCommand));
       break;
     case 'ADD_LEVEL':
-      handleAddLevel(state, normalizedCommand);
+      handlerEarlyReturn = applyHandlerResult(state, handleAddLevel(state, normalizedCommand));
       break;
     case 'DELETE_LEVEL':
-      handleDeleteLevel(state, normalizedCommand);
+      handlerEarlyReturn = applyHandlerResult(state, handleDeleteLevel(state, normalizedCommand));
       break;
     case 'DUPLICATE_SELECTION':
       handlerEarlyReturn = applyHandlerResult(state, handleDuplicateSelection(state, normalizedCommand));
@@ -283,10 +285,10 @@ export function executeMapCommand(
       handlerEarlyReturn = applyHandlerResult(state, handleNudgeSelection(state, normalizedCommand));
       break;
     case 'RESTORE_DELETED_ITEMS':
-      handleRestoreDeletedItems(state, normalizedCommand);
+      handlerEarlyReturn = applyHandlerResult(state, handleRestoreDeletedItems(state, normalizedCommand));
       break;
     case 'RESTORE_OBJECT_GROUPS':
-      handleRestoreObjectGroups(state, normalizedCommand);
+      handlerEarlyReturn = applyHandlerResult(state, handleRestoreObjectGroups(state, normalizedCommand));
       break;
     default:
       break;
@@ -294,6 +296,16 @@ export function executeMapCommand(
 
   if (handlerEarlyReturn) {
     return handlerEarlyReturn;
+  }
+
+  // Rebuild the compatibility DTO projection from the canonical document at
+  // the command boundary. Commands must write the document first.
+  if (state.nextMap.document) {
+    const projection = projectMapDocumentToEditorFields(state.nextMap.document, state.nextMap);
+    state.nextMap.sections = projection.sections;
+    state.nextMap.objects = projection.objects;
+    state.nextMap.seats = projection.seats;
+    updateCounts(state.nextMap);
   }
 
   let undoCommand: MapCommand | null = null;
@@ -334,6 +346,19 @@ export function executeMapCommand(
             before: state.nextMap.document,
             after: map.document,
             description: 'Desfazer exclusão',
+          },
+        };
+        break;
+      }
+      if (normalizedCommand.type === 'DELETE_LEVEL' && map.document && state.nextMap.document) {
+        undoCommand = {
+          type: 'RESTORE_DELETED_ITEMS',
+          payload: {
+            objects: map.objects.filter((object) => !state.nextMap.objects.some((next) => next.id === object.id)),
+            seats: map.seats.filter((seat) => !state.nextMap.seats.some((next) => next.id === seat.id)),
+            sections: map.sections.filter((section) => !state.nextMap.sections.some((next) => next.id === section.id)),
+            levels: map.levels.filter((level) => !state.nextMap.levels.some((next) => next.id === level.id)),
+            document: map.document,
           },
         };
         break;
@@ -442,5 +467,6 @@ export function executeMapCommand(
     activeLevelId: state.nextActiveLevelId,
     undoCommand,
     patches: [normalizedCommand],
+    warnings: state.warnings,
   });
 }

@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
-import { createEventMap, duplicateEventMap, listEventMaps, uploadEventMapReferenceChart } from '../api/event-map-service';
+import { createEventMap, deleteEventMap, duplicateEventMap, listEventMaps, uploadEventMapReferenceChart } from '../api/event-map-service';
 import { getEvent } from '../../events-service';
 
 type CreationIntent = 'blank' | 'reference-plan';
@@ -98,8 +98,15 @@ export function CreateEventMapRoute({ eventId }: { eventId: string }) {
         description: error instanceof Error ? error.message : 'Tente novamente.',
       });
 
-      if (createdMap) {
-        router.replace(`/events/${eventId}/maps/${createdMap.id}/editor`);
+      if (createdMap && creationMode === 'reference-plan') {
+        try {
+          const cleanup = await deleteEventMap(eventId, createdMap.id);
+          if (cleanup.action !== 'DELETE') throw new Error('O mapa não pôde ser removido com segurança.');
+          await queryClient.invalidateQueries({ queryKey: ['events', 'maps', eventId] });
+        } catch {
+          toast.error({ title: 'O mapa foi criado, mas não pôde ser removido', description: 'Abra o editor para concluir a configuração ou exclua o rascunho manualmente.' });
+          router.replace(`/events/${eventId}/maps/${createdMap.id}/editor`);
+        }
       }
     } finally {
       setBusy(null);

@@ -3,7 +3,7 @@ import { isPublicEventMapVisible } from '@alusa/domain/events';
 import { EventsError, assertEventTicketSalesOpen } from '../events.service';
 import { prisma } from '../../prisma';
 import { getPublicReservationExpiration } from './public-reservation-policy';
-import { decimal, lockPublicEventMapReservation, toAuditJson, toMoney } from './event-map-order-operations';
+import { decimal, lockEventMapForReservation, lockPublicEventMapReservation, toAuditJson, toMoney } from './event-map-order-operations';
 import type { PublicCheckoutInput } from './event-map.schema';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
@@ -33,7 +33,15 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
   if (!buyerDocument) throw new EventsError('DOCUMENTO_OBRIGATORIO', 'Informe o CPF/CNPJ do comprador para gerar a cobrança.', 422);
 
   return prisma.$transaction(async (tx) => {
+    const initialMap = await getPublicMapShellOrThrow(tx, publicSlug);
+    const expectedVersionId = initialMap.publishedVersionId!;
+    if (!await lockEventMapForReservation(tx, { contaId: initialMap.contaId, eventMapId: initialMap.id })) {
+      throw new EventsError('MAPA_PUBLICO_NAO_ENCONTRADO', 'Mapa público não encontrado ou indisponível.', 404);
+    }
     const map = await getPublicMapShellOrThrow(tx, publicSlug);
+    if (map.id !== initialMap.id || map.publishedVersionId !== expectedVersionId || !map.publicEnabled) {
+      throw new EventsError('MAPA_VERSAO_ALTERADA', 'A versão pública do mapa mudou. Atualize a página e selecione os assentos novamente.', 409);
+    }
     await lockPublicEventMapReservation(tx, { contaId: map.contaId, reservationId: input.reservationId });
 
     const lockedReservation = await tx.$queryRaw<Array<{ id: string }>>`

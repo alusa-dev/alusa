@@ -1,4 +1,4 @@
-import { MIN_OBJECT_SIZE, findMapBlockOwner, findMapRowOwner, getObjectBounds, shortestRotationDelta } from '@alusa/domain';
+import { findMapBlockOwner, findMapRowOwner, shortestRotationDelta } from '@alusa/domain';
 import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO } from '../../api/event-map-service';
 import {
   applyObjectTransformLivePreview,
@@ -9,6 +9,7 @@ import {
   resetNodeScale,
   type ObjectTransformSession,
 } from '../adapters/konva-transform-adapter';
+import { computeUnionBoundsFromNodes } from '../adapters/konva-snap-adapter';
 import Konva from 'konva';
 import type { MapTransformSessionKind } from './transform-routing';
 import type { MapSelectionItem } from '@alusa/domain';
@@ -65,6 +66,16 @@ export function beginMapTransformSession(input: {
   transformer: Konva.Transformer;
 }): MapTransformSession | null {
   const objectTransform = beginObjectTransformSession(input.map, input.selectedObjectIds, input.stage, input.transformer);
+  if (objectTransform && input.kind === 'uniform') {
+    const bounds = computeUnionBoundsFromNodes(input.transformer.nodes());
+    if ([bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite) && bounds.width > 0 && bounds.height > 0) {
+      objectTransform.initialBounds = {
+        ...bounds,
+        centerX: bounds.x + bounds.width / 2,
+        centerY: bounds.y + bounds.height / 2,
+      };
+    }
+  }
   const parametricItems = input.parametricItems ?? [];
   const initialParametricTransforms = new Map<string, Konva.Transform>();
   const parametricPreviewSnapshots: ParametricPreviewSnapshot[] = [];
@@ -211,10 +222,10 @@ export function buildMapTransformCommit(
   const seatUpdates: MapTransformCommitResult['seatUpdates'] = [];
 
   if (session.objectTransform) {
-    if (session.kind === 'generic') {
+    if (session.kind === 'generic' || session.parametricItems.length > 0) {
       objectUpdates.push(
         ...readObjectTransformCommitFromNodes(ctx.stage, session.objectTransform, [...session.objectTransform.snapshots.keys()], {
-          scaleMode: 'independent',
+          scaleMode: session.kind === 'generic' ? 'independent' : 'uniform',
         }).map((entry) => ({ id: entry.id, patch: entry.patch })),
       );
     } else {
@@ -228,20 +239,6 @@ export function buildMapTransformCommit(
         })),
       );
     }
-  }
-
-  for (const objectId of session.selectedObjectIds) {
-    const object = map.objects.find((entry) => entry.id === objectId);
-    const node = ctx.stage.findOne(`#node-${objectId}`);
-    if (!object || !node || object.type === 'TEXT' || session.kind !== 'generic') continue;
-    const bounds = getObjectBounds(object);
-    const x = node.x();
-    const y = node.y();
-    const width = Math.max(MIN_OBJECT_SIZE, bounds.width * Math.abs(node.scaleX() || 1));
-    const height = Math.max(MIN_OBJECT_SIZE, bounds.height * Math.abs(node.scaleY() || 1));
-    const rotation = node.rotation();
-    resetNodeScale(node);
-    if ([x, y, width, height, rotation].every(Number.isFinite)) objectUpdates.push({ id: objectId, patch: { x, y, width, height, rotation } });
   }
 
   for (const seatId of session.selectedSeatIds) {

@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { sha256Hex as hashSha256Hex } from '../utils/sha256.js';
 
 export const CONTRACT_ACCEPTANCE_TEXT_V1 =
   'Declaro que li o documento e concordo com todos os termos e condições legais.';
@@ -22,7 +22,7 @@ export function stableStringify(value: unknown): string {
 }
 
 export function sha256Hex(value: string | Buffer | Uint8Array): string {
-  return createHash('sha256').update(value).digest('hex');
+  return hashSha256Hex(value);
 }
 
 export function hashCanonicalPayload(payload: unknown): string {

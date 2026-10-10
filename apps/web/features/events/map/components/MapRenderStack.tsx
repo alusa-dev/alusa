@@ -4,6 +4,7 @@ import type { EventMapObjectDTO } from '../api/event-map-service';
 import { LooseSeatNode } from './LooseSeatNode';
 import { ShapeMapObjectNode } from './ShapeMapObjectNode';
 import { TextMapObjectNode } from './TextMapObjectNode';
+import { ParametricMapLayer } from './ParametricMapLayer';
 
 
 export type { MapCanvasRenderHandlers, MapCanvasRenderState } from '../canvas/render/map-canvas-render-model';
@@ -62,13 +63,30 @@ export function MapObjectNode({
 export function MapRenderStack({
   state,
   handlers,
+  levelId,
 }: {
   state: MapCanvasRenderState;
   handlers: MapCanvasRenderHandlers;
+  levelId: string;
 }) {
   return (
     <>
       {state.renderStack.map((item) => {
+        if (item.kind === 'row-guides') {
+          return (
+            <ParametricMapLayer
+              key={`row-guides-${item.id}`}
+              document={state.document}
+              levelId={levelId}
+              selection={state.selection}
+              readOnly={state.readOnly}
+              onSelect={handlers.onSelect}
+              renderMode="row-guides"
+              sectionId={item.id}
+            />
+          );
+        }
+
         if (item.kind === 'seat') {
           const seat = state.levelSeats.find((entry) => entry.id === item.id);
           if (!seat) return null;

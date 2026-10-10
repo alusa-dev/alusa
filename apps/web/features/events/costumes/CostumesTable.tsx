@@ -8,10 +8,8 @@ import { EventPaginatedDataTable } from '../shared/EventPaginatedDataTable';
 import { CostumeActions } from './CostumeActions';
 
 function getCostumeStats(costumeId: string, assignments: CostumeAssignmentDTO[]) {
-  const costumeAssignments = assignments.filter((assignment) => assignment.costume.id === costumeId && assignment.status !== 'CANCELLED');
-  const deliveredCount = costumeAssignments.filter((assignment) => assignment.status === 'DELIVERED').length;
+  const costumeAssignments = assignments.filter((assignment) => assignment.costume.id === costumeId && !['CANCELLED', 'RETURNED'].includes(assignment.status));
   return {
-    delivered: deliveredCount,
     activeCount: costumeAssignments.length,
   };
 }
@@ -37,14 +35,13 @@ export function CostumesTable({
         { id: 'charge', header: 'Valor cobrado', width: 'w-[15%]', align: 'right', render: (item: CostumeDTO) => formatCurrency(item.chargedValue ?? 0) },
         {
           id: 'qty',
-          header: 'Estoque / Disp.',
+          header: 'Disponível / Total',
           width: 'w-[14%]',
           align: 'right',
           render: (item: CostumeDTO) => {
             const stats = getCostumeStats(item.id, assignments);
-            const available = item.quantity - stats.activeCount;
-            const inStock = item.quantity - stats.delivered;
-            return <span className="font-semibold text-slate-900">{inStock}/{available}</span>;
+            const available = Math.max(0, item.quantity - stats.activeCount);
+            return <span className="font-semibold text-slate-900">{available}/{item.quantity}</span>;
           },
         },
         { id: 'actions', header: 'Ações', width: 'w-[10%]', align: 'right', render: (item: CostumeDTO) => <CostumeActions costume={item} eventId={eventId} /> },

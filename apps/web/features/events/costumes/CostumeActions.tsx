@@ -27,6 +27,7 @@ export function CostumeActions({ costume, eventId }: { costume: CostumeDTO; even
   const invalidate = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: eventQueryKeys.costumes(eventId) }),
+      queryClient.invalidateQueries({ queryKey: eventQueryKeys.assignments(eventId) }),
       queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) }),
       queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) }),
     ]);
@@ -59,9 +60,9 @@ export function CostumeActions({ costume, eventId }: { costume: CostumeDTO; even
 
           <DropdownMenuItem
             className="text-rose-600 focus:bg-rose-50 hover:bg-rose-50"
-            disabled={costume.assignmentsCount > 0}
+            disabled={!costume.canDelete}
             onClick={() => setDeleteOpen(true)}
-            title={costume.assignmentsCount > 0 ? 'Não é possível excluir um figurino com alunos vinculados.' : undefined}
+            title={!costume.canDelete ? 'Exclusão disponível somente sem vínculos ativos e sem histórico de recebimento.' : undefined}
           >
             Excluir
           </DropdownMenuItem>

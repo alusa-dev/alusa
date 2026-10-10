@@ -16,6 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -57,7 +58,7 @@ export function ConfirmDialog({
             disabled={loading}
             className={variant === 'destructive' ? 'bg-red-600 hover:bg-red-700 text-white' : ''}
           >
-            {loading ? 'Processando...' : confirmText}
+            {loading ? <><span>Processando</span><LoadingDots label="Processando ação" size="sm" className="text-white" /></> : confirmText}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

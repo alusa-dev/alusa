@@ -2,18 +2,53 @@ import type { EventMapDTO, EventMapObjectDTO } from '../../types/event-map-types
 import type { MapEngineRuntime } from '../../ports/runtime-ports.js';
 import type { MapSelection, MapSelectionItem } from '../../selection/selection-utils.js';
 import { getSelectableItems } from '../../selection/selection-utils.js';
-import { expandObjectSelectionItems } from '../../layout/object-groups.js';
-import { cloneMap, createLocalId, DEFAULT_COLORS, updateCounts } from '../../reducer/reducer-context.js';
+import {
+  expandObjectSelectionItems,
+  getObjectGroupId,
+  getObjectGroupLabel,
+  getNextGroupDisplayName,
+  setObjectGroupData,
+} from '../../layout/object-groups.js';
+import { withDuplicateObjectLabel } from '../../layout/object-naming.js';
+import { cloneMap, createLocalId, updateCounts } from '../../reducer/reducer-context.js';
 import { projectMapDocumentToEditorFields } from '../../migration/project-map-document.js';
 import type { EventMapDocument, MapSeatBlock, MapSeatRow, SeatRowPath } from '../../model/event-map-document.js';
 import { toLocal } from '../../geometry/rotation.js';
 import { getNextSeatBlockRowPrefix, getSeatBlockRowLabel } from '../../layout/seat-block-config.js';
+import { getNextMapLayerSortOrder } from '../../doc/levels.js';
 
 export type DuplicateSelectionInput = { map: EventMapDTO; selection: MapSelection; offset?: { x: number; y: number }; runtime?: MapEngineRuntime };
 export type DuplicateSelectionResult = { map: EventMapDTO; selection: MapSelection; warnings: string[] };
 export type DuplicateSelectionValidationResult = { ok: true } | { ok: false; reason: string };
 
-export function validateDuplicateSelection(_map: EventMapDTO, _selection: MapSelection): DuplicateSelectionValidationResult {
+export function validateDuplicateSelection(map: EventMapDTO, selection: MapSelection): DuplicateSelectionValidationResult {
+  if (selection.length === 0) return { ok: false, reason: 'Selecione um item do mapa para duplicar.' };
+  if (selection.some((item) => item.type === 'level')) {
+    return { ok: false, reason: 'Planos não podem ser duplicados por este atalho.' };
+  }
+  if (selection.some((item) => item.type === 'seat')) {
+    return { ok: false, reason: 'Assentos individuais não podem ser duplicados. Duplique a fileira ou o bloco de assentos.' };
+  }
+  const selectable = expandObjectSelectionItems(getSelectableItems(selection), map.objects);
+  for (const item of selectable) {
+    if (item.type === 'object') {
+      const object = map.objects.find((entry) => entry.id === item.id);
+      if (!object) return { ok: false, reason: 'O objeto selecionado não está mais disponível para duplicação.' };
+      if (object.locked) return { ok: false, reason: 'Desbloqueie os objetos selecionados antes de duplicar.' };
+    } else if (item.type === 'section') {
+      if (!map.document?.sections.some((section) => section.id === item.id)) {
+        return { ok: false, reason: 'O setor selecionado não possui dados editáveis para duplicação.' };
+      }
+    } else if (item.type === 'seatblock') {
+      if (!map.document || !map.document.sections.some((section) => section.blocks.some((block) => block.id === item.id))) {
+        return { ok: false, reason: 'O bloco selecionado não está mais disponível para duplicação.' };
+      }
+    } else if (item.type === 'seatrow') {
+      if (!map.document || !map.document.sections.some((section) => section.blocks.some((block) => block.rows.some((row) => row.id === item.id)))) {
+        return { ok: false, reason: 'A fileira selecionada não está mais disponível para duplicação.' };
+      }
+    }
+  }
   return { ok: true };
 }
 
@@ -35,7 +70,7 @@ function duplicateRow(row: MapSeatRow, sectionId: string, blockId: string, offse
       id: createLocalId('seat', runtime),
       label,
       technicalCode: label,
-      publicVisible: true,
+      ...(seat.position ? { position: { x: seat.position.x + offset.x, y: seat.position.y + offset.y } } : {}),
     };
   });
   return {
@@ -57,14 +92,69 @@ function duplicateBlock(block: MapSeatBlock, sectionId: string, offset: { x: num
 }
 
 export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSelectionResult {
+  const validation = validateDuplicateSelection(input.map, input.selection);
+  if (!validation.ok) {
+    return { map: input.map, selection: input.selection, warnings: [validation.reason] };
+  }
   const offset = input.offset ?? { x: 28, y: 28 };
   const nextMap = cloneMap(input.map);
   const items = expandObjectSelectionItems(getSelectableItems(input.selection), nextMap.objects);
+  const selectedSections = new Set(items.filter((item) => item.type === 'section').map((item) => item.id));
+  const selectedBlocks = new Set(items.filter((item) => item.type === 'seatblock').map((item) => item.id));
+  const blockIdsInSections = new Set(nextMap.document?.sections
+    .filter((section) => selectedSections.has(section.id))
+    .flatMap((section) => section.blocks.map((block) => block.id)) ?? []);
+  const rowIdsInSelectedBlocks = new Set(nextMap.document?.sections
+    .flatMap((section) => section.blocks)
+    .filter((block) => selectedBlocks.has(block.id) || blockIdsInSections.has(block.id))
+    .flatMap((block) => block.rows.map((row) => row.id)) ?? []);
+  const linkedObjectIds = new Set(nextMap.objects
+    .filter((object) => object.sectionId && selectedSections.has(object.sectionId))
+    .map((object) => object.id));
+  const normalizedItems = items.filter((item) => {
+    if (item.type === 'seatblock') return !blockIdsInSections.has(item.id);
+    if (item.type === 'seatrow') return !rowIdsInSelectedBlocks.has(item.id);
+    if (item.type === 'object') return !linkedObjectIds.has(item.id);
+    return true;
+  });
+  items.splice(0, items.length, ...normalizedItems);
+  const groupedItemIndexes = new Map<string, number[]>();
+  items.forEach((item, index) => {
+    if (item.type !== 'object') return;
+    const object = nextMap.objects.find((entry) => entry.id === item.id);
+    const groupId = object ? getObjectGroupId(object) : null;
+    if (!groupId) return;
+    const indexes = groupedItemIndexes.get(groupId) ?? [];
+    indexes.push(index);
+    groupedItemIndexes.set(groupId, indexes);
+  });
+  for (const indexes of groupedItemIndexes.values()) {
+    const sortedItems = indexes
+      .map((index) => items[index])
+      .filter((item): item is Extract<MapSelectionItem, { type: 'object' }> => Boolean(item))
+      .sort((left, right) => {
+        const leftOrder = nextMap.objects.find((object) => object.id === left.id)?.sortOrder ?? 0;
+        const rightOrder = nextMap.objects.find((object) => object.id === right.id)?.sortOrder ?? 0;
+        return leftOrder - rightOrder;
+      });
+    indexes.forEach((index, offsetIndex) => {
+      const sortedItem = sortedItems[offsetIndex];
+      if (sortedItem) items[index] = sortedItem;
+    });
+  }
   const warnings: string[] = [];
   const created: MapSelectionItem[] = [];
     const sourceDocument = nextMap.document
       ? (JSON.parse(JSON.stringify(nextMap.document)) as EventMapDocument)
       : undefined;
+  if (sourceDocument) {
+    const documentObjectIds = new Set(sourceDocument.visualElements.map((element) => element.id));
+    sourceDocument.visualElements.push(
+      ...nextMap.objects
+        .filter((object) => !documentObjectIds.has(object.id))
+        .map((object) => ({ ...object, data: { ...object.data } })),
+    );
+  }
   if (sourceDocument) {
     const selectedSectionIds = new Set(items.filter((item) => item.type === 'section').map((item) => item.id));
     const selectedBlockIds = new Set(items.filter((item) => item.type === 'seatblock').map((item) => item.id));
@@ -73,14 +163,33 @@ export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSel
     const sourceSectionById = new Map(sections.map((section) => [section.id, section]));
     const duplicatedSectionIds = new Map<string, string>();
     const nextRowPrefixByLevel = new Map<string, string>();
-    const takeNextRowPrefix = (levelId: string, rowCount = 0) => {
-      const rowLabels = sections
-        .filter((section) => section.levelId === levelId)
-        .flatMap((section) => section.blocks.flatMap((block) => block.rows.map((row) => row.label)));
-      const prefix = nextRowPrefixByLevel.get(levelId) ?? getNextSeatBlockRowPrefix(rowLabels);
+    const takeNextRowPrefix = (levelId: string, rowCount = 0, requestedSeatSuffixes: string[] = []) => {
+      const levelSections = sections.filter((section) => section.levelId === levelId);
+      const rowLabels = levelSections
+        .flatMap((section) => section.blocks.flatMap((block) => block.rows.map((row) => row.label.toUpperCase())));
+      const usedSeatLabels = new Set(levelSections.flatMap((section) => section.blocks.flatMap((block) =>
+        block.rows.flatMap((row) => row.seats.flatMap((seat) => [seat.label, seat.technicalCode ?? ''].map((label) => label.toUpperCase()))),
+      )));
+      const maxSeatNumber = Math.max(1, ...levelSections.flatMap((section) => section.blocks.flatMap((block) => block.rows.map((row) => row.seats.length))));
+      let prefix = nextRowPrefixByLevel.get(levelId) ?? getNextSeatBlockRowPrefix(rowLabels);
+      const isAvailable = (candidate: string) => {
+        for (let rowIndex = 0; rowIndex < Math.max(1, rowCount); rowIndex += 1) {
+          const rowLabel = getSeatBlockRowLabel(rowIndex, candidate);
+          if (rowLabels.includes(rowLabel.toUpperCase())) return false;
+          const seatSuffixes = requestedSeatSuffixes.length > 0
+            ? requestedSeatSuffixes
+            : Array.from({ length: maxSeatNumber }, (_, index) => String(index + 1));
+          for (const suffix of seatSuffixes) {
+            if (usedSeatLabels.has(`${rowLabel}${suffix}`.toUpperCase())) return false;
+          }
+        }
+        return true;
+      };
+      while (!isAvailable(prefix)) prefix = getSeatBlockRowLabel(1, prefix);
       if (rowCount > 0) nextRowPrefixByLevel.set(levelId, getSeatBlockRowLabel(rowCount, prefix));
       return prefix;
     };
+    const nextSectionSortOrderByLevel = new Map<string, number>();
     const duplicatedSections = sourceDocument.sections
       .filter((section) => selectedSectionIds.has(section.id))
       .map((section) => {
@@ -89,8 +198,20 @@ export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSel
         // Moving the section moves its local geometry too; offsetting both here
         // would apply the duplicate offset twice.
         const blocks = section.blocks.map((block) => {
-          return duplicateBlock(block, sectionId, { x: 0, y: 0 }, input.runtime, takeNextRowPrefix(section.levelId, block.rows.length));
+          return duplicateBlock(
+            block,
+            sectionId,
+            { x: 0, y: 0 },
+            input.runtime,
+            takeNextRowPrefix(section.levelId, block.rows.length, block.rows.flatMap((row) => row.seats.map((seat) => seat.technicalCode?.match(/(\d+)$/)?.[1] ?? String(seat.columnIndex + 1)))),
+          );
         });
+        const nextSortOrder = nextSectionSortOrderByLevel.get(section.levelId) ?? Math.max(
+          -1,
+          ...sourceDocument.sections.filter((entry) => entry.levelId === section.levelId).map((entry) => entry.sortOrder ?? 0),
+          ...sourceDocument.visualElements.filter((entry) => entry.levelId === section.levelId).map((entry) => entry.sortOrder),
+        ) + 1;
+        nextSectionSortOrderByLevel.set(section.levelId, nextSortOrder + 1);
         created.push({ type: 'section', id: sectionId });
         return {
           ...section,
@@ -99,6 +220,7 @@ export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSel
           lotId: null,
           capacity: null,
           position: { x: section.position.x + offset.x, y: section.position.y + offset.y },
+          sortOrder: nextSortOrder,
           blockIds: blocks.map((block) => block.id),
           blocks,
         };
@@ -114,7 +236,7 @@ export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSel
         sectionId,
         x: element.x + offset.x,
         y: element.y + offset.y,
-        sortOrder: element.sortOrder + sourceDocument.visualElements.length,
+        sortOrder: sourceDocument.sections.find((entry) => entry.id === sectionId)?.sortOrder ?? element.sortOrder,
       }];
     });
     sourceDocument.visualElements.push(...duplicatedVisualElements);
@@ -126,14 +248,23 @@ export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSel
         if (!sourceSection) continue;
         const sectionId = createLocalId('section', input.runtime);
         const localOffset = toLocal(offset, { x: 0, y: 0 }, sourceSection.rotation);
-        const duplicateRowPrefix = takeNextRowPrefix(sourceSection.levelId, block.rows.length);
+        const duplicateRowPrefix = takeNextRowPrefix(sourceSection.levelId, block.rows.length, block.rows.flatMap((row) => row.seats.map((seat) => seat.technicalCode?.match(/(\d+)$/)?.[1] ?? String(seat.columnIndex + 1))));
         const copy = duplicateBlock(block, sectionId, localOffset, input.runtime, duplicateRowPrefix);
-        const sectionIndex = sections.length;
+        const nextSortOrder = Math.max(
+          -1,
+          ...sections
+            .filter((entry) => entry.levelId === sourceSection.levelId)
+            .map((entry) => entry.sortOrder ?? 0),
+          ...sourceDocument.visualElements
+            .filter((entry) => entry.levelId === sourceSection.levelId)
+            .map((entry) => entry.sortOrder),
+        ) + 1;
         sections.push({
           ...sourceSection,
           id: sectionId,
-          name: `Setor ${sectionIndex + 1}`,
-          color: DEFAULT_COLORS[sectionIndex % DEFAULT_COLORS.length]!,
+          name: `${sourceSection.name} (cópia)`,
+          color: sourceSection.color,
+          sortOrder: nextSortOrder,
           lotId: null,
           capacity: null,
           outline: [],
@@ -146,7 +277,9 @@ export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSel
       for (const { block, row } of rows) {
         const target = sections.find((entry) => entry.id === section.id);
         if (!target) continue;
-        const copy = duplicateRow(row, section.id, block.id, offset, input.runtime);
+        const localOffset = toLocal(offset, { x: 0, y: 0 }, section.rotation);
+        const rowPrefix = takeNextRowPrefix(section.levelId, 1, row.seats.map((seat) => seat.technicalCode?.match(/(\d+)$/)?.[1] ?? String(seat.columnIndex + 1)));
+        const copy = duplicateRow(row, section.id, block.id, localOffset, input.runtime, rowPrefix);
         const targetBlock = target.blocks.find((entry) => entry.id === block.id);
         if (targetBlock) {
           targetBlock.rows.push(copy);
@@ -159,9 +292,10 @@ export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSel
     const projection = projectMapDocumentToEditorFields(nextMap.document, nextMap);
     nextMap.sections = projection.sections;
     nextMap.seats = projection.seats.map((seat) => (created.some((item) => item.type === 'seatblock' || item.type === 'seatrow' || item.type === 'section') && !input.map.seats.some((previous) => previous.id === seat.id) ? { ...seat, status: 'AVAILABLE' } : seat));
-    nextMap.objects = projection.objects;
+    nextMap.objects = [...projection.objects];
   }
 
+  const groupCopyIds = new Map<string, { id: string; label: string }>();
   for (const item of items) {
     if (item.type !== 'object') continue;
     const object = nextMap.objects.find((entry) => entry.id === item.id);
@@ -169,8 +303,27 @@ export function duplicateSelection(input: DuplicateSelectionInput): DuplicateSel
       if (object?.locked) warnings.push('Objeto bloqueado não foi duplicado.');
       continue;
     }
-    const copy: EventMapObjectDTO = { ...object, id: createLocalId('object', input.runtime), x: object.x + offset.x, y: object.y + offset.y, sortOrder: nextMap.objects.length };
+    const groupId = getObjectGroupId(object);
+    let data: Record<string, unknown> = withDuplicateObjectLabel(object, nextMap.objects);
+    if (groupId) {
+      let copiedGroup = groupCopyIds.get(groupId);
+      if (!copiedGroup) {
+        copiedGroup = {
+          id: createLocalId('group', input.runtime),
+          label: getNextGroupDisplayName(nextMap.objects, getObjectGroupLabel(object)),
+        };
+        groupCopyIds.set(groupId, copiedGroup);
+      }
+      data = setObjectGroupData(data, copiedGroup.id, copiedGroup.label);
+    }
+    const copy: EventMapObjectDTO = { ...object, id: createLocalId('object', input.runtime), data, x: object.x + offset.x, y: object.y + offset.y, sortOrder: getNextMapLayerSortOrder(nextMap) };
     nextMap.objects.push(copy);
+    if (nextMap.document) {
+      nextMap.document = {
+        ...nextMap.document,
+        visualElements: [...nextMap.document.visualElements, copy],
+      };
+    }
     created.push({ type: 'object', id: copy.id });
   }
 

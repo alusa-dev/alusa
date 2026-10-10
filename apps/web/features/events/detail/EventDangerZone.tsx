@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { Button } from '@/components/ui/button';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
@@ -74,7 +75,7 @@ export function EventDangerZone({ event }: { event: SchoolEventDTO }) {
                 onClick={() => deleteMutation.mutate()}
                 disabled={deleteMutation.isPending}
               >
-                {deleteMutation.isPending ? 'Excluindo...' : 'Confirmar Exclusão'}
+                {deleteMutation.isPending ? <><span>Excluindo</span><LoadingDots label="Excluindo evento" size="sm" className="text-white" /></> : 'Confirmar Exclusão'}
               </Button>
             </DialogFooter>
           </DialogContent>

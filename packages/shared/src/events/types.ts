@@ -137,6 +137,7 @@ export const EVENT_FINANCIAL_ENTRY_STATUSES = [
   'EXPECTED',
   'PENDING',
   'PAID',
+  'PARTIALLY_PAID',
   'RECEIVED',
   'CANCELLED',
   'REFUNDED',
@@ -147,6 +148,7 @@ export type EventFinancialEntryStatus = (typeof EVENT_FINANCIAL_ENTRY_STATUSES)[
 
 export const EVENT_FINANCIAL_ORIGIN_TYPES = [
   'MANUAL',
+  'EVENT_REGISTRATION',
   'TICKET_SALE',
   'COSTUME',
   'COSTUME_ASSIGNMENT',
@@ -279,6 +281,7 @@ export const EVENT_FINANCIAL_STATUS_LABELS: Record<EventFinancialEntryStatus, st
   EXPECTED: 'Previsto',
   PENDING: 'Pendente',
   PAID: 'Pago',
+  PARTIALLY_PAID: 'Parcialmente pago',
   RECEIVED: 'Recebido',
   CANCELLED: 'Cancelado',
   REFUNDED: 'Estornado',

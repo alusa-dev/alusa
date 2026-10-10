@@ -148,6 +148,7 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
           contaId: ctx.contaId,
           eventId: input.eventId,
           type: 'REVENUE',
+          originType: 'EVENT_REGISTRATION',
           category: 'Taxa de inscrição',
           description: billingMode === 'ENTRY_INSTALLMENT' ? 'Entrada da taxa de inscrição' : 'Taxa de inscrição',
           expectedAmount: decimal(feeCharged),
@@ -390,6 +391,7 @@ export async function registerEventParticipantGroup(
               contaId: ctx.contaId,
               eventId: input.eventId,
               type: 'REVENUE',
+              originType: 'EVENT_REGISTRATION',
               category: 'Taxa de inscrição',
               description: input.billingMethod === 'MANUAL_RECEIVED' && allocatedEntry > 0
                 ? 'Entrada manual da cobrança agrupada do evento'

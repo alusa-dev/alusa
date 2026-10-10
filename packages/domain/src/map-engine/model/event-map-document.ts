@@ -43,9 +43,14 @@ export type MapSeat = {
   id: string;
   label: string;
   technicalCode?: string;
+  /** Optional per-seat display overrides; omitted values inherit from the row/code. */
+  rowLabel?: string;
+  seatNumber?: string;
   categoryId?: string;
   accessible?: boolean;
   publicVisible?: boolean;
+  /** Optional size override for an intentionally resized individual seat. */
+  size?: number;
   rowIndex: number;
   columnIndex: number;
   /** Optional local override for an intentional individual-seat exception. */
@@ -85,6 +90,8 @@ export type MapSeatBlock = {
   lastRowSeatCount?: number;
   fitMinimumSeatCount?: number;
   fitMaximumSeatCount?: number;
+  startNumber?: number;
+  numberingDirection?: 'left-to-right' | 'right-to-left';
   rowIds: string[];
   rows: MapSeatRow[];
 };
@@ -100,6 +107,8 @@ export type MapSection = {
   notes?: string | null;
   /** Editor layer visibility; does not change seat availability/public visibility. */
   hidden?: boolean;
+  /** Layer stacking order within the level; larger values render in front. */
+  sortOrder?: number;
   position: MapPoint;
   rotation: number;
   outline: MapPoint[];

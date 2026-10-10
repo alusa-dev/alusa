@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 
@@ -25,7 +26,7 @@ import { EventDateTimeField as DateTimeField } from '../shared/EventDateTimeFiel
 import { EventField as Field } from '../shared/EventField';
 import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
 import { eventQueryKeys } from '../shared/event-query-keys';
-import { datetimeValue, FILTER_INPUT_CLASS, nullableString, numberValue } from '../shared/event-form-utils';
+import { datetimeValue, FILTER_INPUT_CLASS, handleFormDataSubmit, nullableString, numberValue } from '../shared/event-form-utils';
 import { mergeScopedPersonOptions } from '../shared/event-scoped-resource-options';
 
 export function EditSaleFormDialog({
@@ -80,13 +81,13 @@ export function EditSaleFormDialog({
     }));
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (nextOpen || !mutation.isPending) onOpenChange(nextOpen); }}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Editar venda de ingresso</DialogTitle>
           <DialogDescription>Altere as informações da venda. O estoque e o lançamento financeiro associados serão atualizados.</DialogDescription>
         </DialogHeader>
-        <form action={submit} className="grid gap-4">
+        <form onSubmit={(event) => handleFormDataSubmit(event, submit)} className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Lote">
               <NativeSelect
@@ -157,7 +158,7 @@ export function EditSaleFormDialog({
           </Field>
           <DialogFooter>
             <Button type="submit" disabled={mutation.isPending}>
-              {mutation.isPending ? 'Salvando...' : 'Salvar Alterações'}
+              {mutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando venda" size="sm" className="text-white" /></> : 'Salvar alterações'}
             </Button>
           </DialogFooter>
         </form>

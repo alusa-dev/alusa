@@ -1,13 +1,15 @@
 'use client';
 
-import { BLOCKING_MAP_DOCUMENT_DIAGNOSTIC_TYPES, validateEventMapDocument, validateEventMapIntegrity, type EventMapDTO } from '@alusa/domain';
+import { BLOCKING_MAP_DOCUMENT_DIAGNOSTIC_TYPES, buildPublishableMapInput, validateEventMapDocument, validateEventMapIntegrity, validatePublishableEventMap, type EventMapDTO } from '@alusa/domain';
 
 import { CreatorIcon } from '@/components/icons/hugeicons';
 
 export function MapReviewPanel({ map }: { map: EventMapDTO }) {
   const documentValidation = map.document ? validateEventMapDocument(map.document) : { valid: true, diagnostics: [] };
   const integrity = validateEventMapIntegrity(map);
+  const publishValidation = validatePublishableEventMap(buildPublishableMapInput(map));
   const errors = [
+    ...(!publishValidation.ok ? publishValidation.errors : []),
     ...documentValidation.diagnostics.filter((diagnostic) => BLOCKING_MAP_DOCUMENT_DIAGNOSTIC_TYPES.includes(diagnostic.type)).map((diagnostic) => diagnostic.message),
     ...integrity.errors.filter((error) => error.severity === 'error').map((error) => error.message),
   ];
@@ -15,7 +17,7 @@ export function MapReviewPanel({ map }: { map: EventMapDTO }) {
     ...documentValidation.diagnostics.filter((diagnostic) => !BLOCKING_MAP_DOCUMENT_DIAGNOSTIC_TYPES.includes(diagnostic.type)).map((diagnostic) => diagnostic.message),
     ...integrity.errors.filter((error) => error.severity === 'warning').map((error) => error.message),
   ];
-  const canPublish = errors.length === 0 && warnings.length === 0;
+  const canPublish = publishValidation.ok && errors.length === 0 && warnings.length === 0;
 
   return (
     <aside className="absolute right-4 top-24 z-20 flex max-h-[calc(100%-8rem)] w-80 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-lg shadow-slate-300/30 backdrop-blur">

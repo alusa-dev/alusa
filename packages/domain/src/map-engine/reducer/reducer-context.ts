@@ -6,7 +6,7 @@ import type {
 import type { MapCommand } from '../commands/command-types.js';
 import type { MapEngineRuntime } from '../ports/runtime-ports.js';
 import type { MapSelection } from '../selection/selection-utils.js';
-import { normalizeMapLevels } from '../doc/levels.js';
+import { getNextMapLayerSortOrder, normalizeMapLevels } from '../doc/levels.js';
 
 export const DEFAULT_COLORS = ['#6d28d9', '#0f766e', '#2563eb', '#db2777', '#ea580c', '#16a34a'];
 
@@ -76,7 +76,7 @@ export function createDefaultSection(
     rotation: 0,
     locked: false,
     hidden: false,
-    sortOrder: map.objects.length,
+    sortOrder: getNextMapLayerSortOrder(map),
   };
 
   map.sections.push(section);
@@ -142,6 +142,7 @@ export type MapCommandHandlerState = {
   activeLevelId: string | null;
   nextActiveLevelId: string | null;
   createdId: string | null;
+  warnings: string[];
   runtime?: MapEngineRuntime;
 };
 

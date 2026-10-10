@@ -46,7 +46,7 @@ export function useMapStagePointerSession({
   marqueeDraft: MarqueeDraft | null;
   setMarqueeDraft: Dispatch<SetStateAction<MarqueeDraft | null>>;
 }) {
-  const handleStageMouseDown = useCallback((event: Konva.KonvaEventObject<MouseEvent>) => {
+  const handleStageMouseDown = useCallback((event: { target: Konva.Node }) => {
     if (readOnly) return;
     const point = getPointerPoint();
     if (!point) return;
@@ -86,8 +86,15 @@ export function useMapStagePointerSession({
   }, [creationDraft, getPointerPoint, marqueeDraft, setCreationDraft, setMarqueeDraft, tool]);
 
   const handleStageMouseUp = useCallback(() => {
+    const activeLevel = map?.levels.find((level) => level.id === levelId);
+    const isInsideArtboard = (point: { x: number; y: number } | null) =>
+      Boolean(point && (!activeLevel || (point.x >= 0 && point.y >= 0 && point.x <= activeLevel.widthPx && point.y <= activeLevel.heightPx)));
     if (marqueeDraft && tool === 'select') {
-      const point = getPointerPoint() ?? marqueeDraft.current;
+      const point = getPointerPoint();
+      if (!point || !isInsideArtboard(point)) {
+        setMarqueeDraft(null);
+        return;
+      }
       const box = normalizeBoundsRect(marqueeDraft.start, point);
       setMarqueeDraft(null);
       if (box.width >= 4 || box.height >= 4) {
@@ -100,7 +107,10 @@ export function useMapStagePointerSession({
     }
     if (!creationDraft) return;
     const point = getPointerPoint();
-    if (!point) return;
+    if (!point || !isInsideArtboard(point)) {
+      setCreationDraft(null);
+      return;
+    }
     const draft = { ...creationDraft, current: point };
     const box = getCreationBox(draft);
     setCreationDraft(null);
@@ -133,7 +143,7 @@ export function useMapStagePointerSession({
       return;
     }
     addObjectAt(draft.tool, { x: box.x, y: box.y }, { width: Math.max(20, box.width), height: Math.max(20, box.height) });
-  }, [addObjectAt, addSeatBlockAt, creationDraft, getMarqueeSelection, getPointerPoint, levelId, map?.referenceChart?.calibration, map?.seats.length, marqueeDraft, openNewTextEditor, seatBlockDefaults, setCreationDraft, setMarqueeDraft, setSelection, tool]);
+  }, [addObjectAt, addSeatBlockAt, creationDraft, getMarqueeSelection, getPointerPoint, levelId, map?.levels, map?.referenceChart?.calibration, map?.seats.length, marqueeDraft, openNewTextEditor, seatBlockDefaults, setCreationDraft, setMarqueeDraft, setSelection, tool]);
 
   const handleStageClick = useCallback(() => undefined, []);
 

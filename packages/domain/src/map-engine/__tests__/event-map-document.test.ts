@@ -6,6 +6,7 @@ import {
   createEmptyEventMapDocument,
   migrateLegacyMapDocument,
   deleteSelection,
+  duplicateSelection,
   executeMapCommand,
   projectMapDocumentToEditorFields,
   resolveEventMapLayout,
@@ -87,6 +88,66 @@ function editorMapFromDocument(document: EventMapDocument): EventMapDTO {
 }
 
 describe('event map document engine', () => {
+  it('keeps an explicitly empty section name in canonical and legacy visual labels', () => {
+    const document = createEmptyEventMapDocument();
+    document.sections.push({
+      id: 'section-1', levelId: 'level-1', name: 'Setor A', color: '#123456',
+      position: { x: 0, y: 0 }, rotation: 0, outline: [], blockIds: [], blocks: [],
+    });
+    document.visualElements.push({
+      id: 'section-label', levelId: 'level-1', sectionId: 'section-1', type: 'SECTION',
+      data: { label: 'Setor A' }, x: 0, y: 0, rotation: 0, locked: false, hidden: false, sortOrder: 0,
+    });
+    const canonicalMap = editorMapFromDocument(document);
+    const canonical = executeMapCommand(canonicalMap, {
+      type: 'UPDATE_ITEMS', payload: { sections: [{ id: 'section-1', patch: { name: '' } }] },
+    }, { selection: [] });
+    expect(canonical.map.document?.sections[0]?.name).toBe('');
+    expect(canonical.map.document?.visualElements[0]?.data.label).toBe('');
+
+    const legacyMap = {
+      ...canonicalMap,
+      document: undefined,
+      sections: [{ ...canonicalMap.sections[0]!, name: 'Setor A' }],
+      objects: [{
+        id: 'section-label', levelId: 'level-1', sectionId: 'section-1', type: 'SECTION' as const,
+        data: { label: 'Setor A' }, x: 0, y: 0, width: null, height: null, rotation: 0,
+        locked: false, hidden: false, sortOrder: 0,
+      }],
+    };
+    const legacy = executeMapCommand(legacyMap, {
+      type: 'UPDATE_ITEMS', payload: { sections: [{ id: 'section-1', patch: { name: '' } }] },
+    }, { selection: [] });
+    expect(legacy.map.sections[0]?.name).toBe('');
+    expect(legacy.map.objects[0]?.data.label).toBe('');
+  });
+
+  it('respects an explicit null lot through document replacement and inherits only absent legacy values', () => {
+    const document = documentWithRow({ type: 'LINE', start: { x: 0, y: 0 }, end: { x: 180, y: 0 } });
+    const previousSection = {
+      ...projectMapDocumentToEditorFields(document).sections[0]!,
+      lotId: 'lot-legacy',
+      lot: { id: 'lot-legacy', name: 'Lote antigo', unitPrice: 30, status: 'ACTIVE' as const, quantityTotal: 20, quantitySold: 3 },
+    };
+    document.sections[0]!.lotId = null;
+
+    expect(projectMapDocumentToEditorFields(document, { sections: [previousSection] }).sections[0]).toMatchObject({ lotId: null, lot: null });
+    document.sections[0]!.lotId = 'lot-new';
+    expect(projectMapDocumentToEditorFields(document, { sections: [previousSection] }).sections[0]).toMatchObject({ lotId: 'lot-new', lot: null });
+
+    const map = editorMapFromDocument({ ...document, sections: [{ ...document.sections[0]!, lotId: 'lot-legacy' }] });
+    const before = map.document!;
+    const after = { ...before, sections: before.sections.map((section) => ({ ...section, lotId: null })) };
+    const replaced = executeMapCommand(map, {
+      type: 'REPLACE_DOCUMENT',
+      payload: { before, after, description: 'Limpar lote do setor' },
+    }, { selection: [] });
+    expect(replaced.map.sections[0]?.lotId).toBeNull();
+
+    delete document.sections[0]!.lotId;
+    expect(projectMapDocumentToEditorFields(document, { sections: [previousSection] }).sections[0]).toMatchObject({ lotId: 'lot-legacy', lot: previousSection.lot });
+  });
+
   it('round-trips section-local and world coordinates', () => {
     const local = { x: 40, y: -10 };
     const world = sectionLocalToWorld(local, { x: 100, y: 80 }, 20);
@@ -186,6 +247,117 @@ describe('event map document engine', () => {
     expect(result.map.seats).toHaveLength(0);
   });
 
+  it('duplicates a grouped object as one independent group', () => {
+    const map = editorMapFromDocument(createEmptyEventMapDocument());
+    map.document = undefined;
+    const object = (id: string, sortOrder: number) => ({
+      id, levelId: 'level-1', sectionId: null, type: 'RECTANGLE', data: { groupId: 'group-1', groupLabel: 'Grupo 01' },
+      x: sortOrder * 10, y: 0, width: 20, height: 20, rotation: 0, locked: false, hidden: false, sortOrder,
+    });
+    map.objects = [object('object-1', 1), object('object-2', 2)];
+
+    const result = duplicateSelection({ map, selection: [{ type: 'object', id: 'object-1' }] });
+    const copies = result.map.objects.filter((entry) => !map.objects.some((source) => source.id === entry.id));
+    expect(copies).toHaveLength(2);
+    expect(new Set(copies.map((entry) => entry.data.groupId)).size).toBe(1);
+    expect(copies[0]!.data.groupId).not.toBe('group-1');
+  });
+
+  it('keeps canonical visual elements in sync when deletion sanitizes group membership', () => {
+    const map = editorMapFromDocument(createEmptyEventMapDocument());
+    const object = (id: string, groupId?: string) => ({
+      id, levelId: 'level-1', sectionId: null, type: 'RECTANGLE',
+      data: groupId ? { groupId, groupLabel: 'Grupo 01' } : {},
+      x: 0, y: 0, width: 20, height: 20, rotation: 0, locked: false, hidden: false, sortOrder: 0,
+    });
+    map.objects = [object('group-member-1', 'group-1'), object('independent-object')];
+    map.document = { ...map.document!, visualElements: map.objects };
+
+    const result = deleteSelection({ map, selection: [{ type: 'object', id: 'independent-object' }] });
+    expect(result.map.document?.visualElements).toEqual(result.map.objects);
+    expect(result.map.objects).toHaveLength(1);
+    expect(result.map.objects.every((entry) => !('groupId' in entry.data))).toBe(true);
+  });
+
+  it('creates a section atomically in the canonical document through the command reducer', () => {
+    const map = editorMapFromDocument(createEmptyEventMapDocument());
+    const created = executeMapCommand(map, {
+      type: 'ADD_OBJECT',
+      payload: { id: 'section-command-id', tool: 'section', point: { x: 40, y: 60 }, size: { width: 180, height: 120 } },
+    }, {
+      activeLevelId: 'level-1',
+      selection: [],
+      runtime: { createId: (prefix) => `${prefix}-created` },
+    });
+
+    expect(created.map.document?.sections).toHaveLength(1);
+    expect(created.map.document?.sections[0]).toMatchObject({
+      id: 'section-created',
+      levelId: 'level-1',
+      position: { x: 40, y: 60 },
+      outline: [{ x: 0, y: 0 }, { x: 180, y: 0 }, { x: 180, y: 120 }, { x: 0, y: 120 }],
+    });
+    expect(created.map.sections.map((section) => section.id)).toEqual(['section-created']);
+    expect(created.map.document?.visualElements).toEqual(created.map.objects);
+
+    const undone = executeMapCommand(created.map, created.undoCommand!, { activeLevelId: 'level-1', selection: [] });
+    expect(undone.map.document?.sections).toHaveLength(0);
+    expect(undone.map.objects).toHaveLength(0);
+  });
+
+  it('returns a warning when a command cannot create the requested item', () => {
+    const map = editorMapFromDocument(createEmptyEventMapDocument());
+    const result = executeMapCommand(map, {
+      type: 'ADD_OBJECT',
+      payload: { id: 'unused', tool: 'row', point: { x: 0, y: 0 } },
+    }, { activeLevelId: 'level-1', selection: [] });
+
+    expect(result.map).toBe(map);
+    expect(result.patches).toEqual([]);
+    expect(result.warnings).toContain('Use a ferramenta de assentos para criar fileiras e lugares.');
+  });
+
+  it('normalizes section and descendant selections and restores linked elements on duplicate undo/redo', () => {
+    const document = documentWithRow({ type: 'LINE', start: { x: 0, y: 0 }, end: { x: 180, y: 0 } });
+    document.visualElements.push({
+      id: 'visual-1', levelId: 'level-1', sectionId: 'section-1', type: 'TEXT', data: { text: 'Setor' },
+      x: 120, y: 100, width: 80, height: 30, rotation: 0, locked: false, hidden: false, sortOrder: 1,
+    });
+    const map = editorMapFromDocument(document);
+    const blockId = document.sections[0]!.blocks[0]!.id;
+    const rowId = document.sections[0]!.blocks[0]!.rows[0]!.id;
+    const duplicated = executeMapCommand(map, {
+      type: 'DUPLICATE_SELECTION',
+      payload: { selection: [
+        { type: 'section', id: 'section-1' }, { type: 'seatblock', id: blockId },
+        { type: 'seatrow', id: rowId }, { type: 'object', id: 'visual-1' },
+      ] },
+    }, { activeLevelId: 'level-1', selection: [{ type: 'section', id: 'section-1' }] });
+    expect(duplicated.map.document?.sections).toHaveLength(2);
+    expect(duplicated.map.document?.visualElements).toHaveLength(2);
+    const copiedSection = duplicated.map.document!.sections.find((section) => section.id !== 'section-1')!;
+    expect(copiedSection.blocks).toHaveLength(1);
+    expect(copiedSection.blocks[0]!.rows).toHaveLength(1);
+
+    const undone = executeMapCommand(duplicated.map, duplicated.undoCommand!, { activeLevelId: 'level-1', selection: [] });
+    expect(undone.map.document?.sections).toHaveLength(1);
+    expect(undone.map.document?.visualElements.map((element) => element.id)).toEqual(['visual-1']);
+    const redone = executeMapCommand(undone.map, undone.undoCommand!, { activeLevelId: 'level-1', selection: [] });
+    expect(redone.map.document?.sections).toHaveLength(2);
+    expect(redone.map.document?.visualElements).toHaveLength(2);
+    expect(redone.map.document?.visualElements.every((element) => element.sectionId && redone.map.document?.sections.some((section) => section.id === element.sectionId))).toBe(true);
+  });
+
+  it('rejects invalid duplication at the command boundary without changing the map', () => {
+    const map = editorMapFromDocument(createEmptyEventMapDocument());
+    const result = executeMapCommand(map, {
+      type: 'DUPLICATE_SELECTION', payload: { selection: [{ type: 'level', id: 'level-1' }] },
+    }, { activeLevelId: 'level-1', selection: [{ type: 'level', id: 'level-1' }] });
+    expect(result.map).toEqual(map);
+    expect(result.patches).toEqual([]);
+    expect(result.warnings).toContain('Planos não podem ser duplicados por este atalho.');
+  });
+
   it('undoes a parametric deletion by restoring the complete canonical document', () => {
     const map = editorMapFromDocument(documentWithRow({ type: 'LINE', start: { x: 0, y: 0 }, end: { x: 180, y: 0 } }));
     const deleted = executeMapCommand(
@@ -221,6 +393,33 @@ describe('event map document engine', () => {
     expect(result.blocked).toBe(true);
     expect(result.map.document?.sections[0]?.blocks).toHaveLength(1);
     expect(result.warnings[0]).toContain('vendido');
+  });
+
+  it('removes section-linked visual elements when deleting the last seat block removes its section', () => {
+    const document = documentWithRow({ type: 'LINE', start: { x: 0, y: 0 }, end: { x: 180, y: 0 } });
+    document.visualElements.push({
+      id: 'section-label',
+      levelId: 'level-1',
+      sectionId: 'section-1',
+      type: 'TEXT',
+      data: { text: 'Setor A' },
+      x: 120,
+      y: 40,
+      width: 80,
+      height: 20,
+      rotation: 0,
+      locked: false,
+      hidden: false,
+      sortOrder: 1,
+    });
+    const result = deleteSelection({
+      map: editorMapFromDocument(document),
+      selection: [{ type: 'seatblock', id: 'block-1' }],
+    });
+
+    expect(result.map.document?.sections).toHaveLength(0);
+    expect(result.map.document?.visualElements).toHaveLength(0);
+    expect(result.map.objects).toHaveLength(0);
   });
 
   it('persists a block translation in the canonical row path', () => {

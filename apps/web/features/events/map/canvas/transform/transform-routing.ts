@@ -21,10 +21,9 @@ export type TransformRoutingResult = {
 export function resolveTransformRouting(input: TransformRoutingInput): TransformRoutingResult {
   const {
     selectedNodeCount,
-    selectedObjectIds,
-    objects,
     mixedTextAndShapes,
     selectedTextCount,
+    selectionContainsSeatsOrSections,
     selectedParametricItem,
   } = input;
 
@@ -36,6 +35,13 @@ export function resolveTransformRouting(input: TransformRoutingInput): Transform
   }
 
   if (!isMulti) {
+    if (selectedNodeCount > 0 && selectionContainsSeatsOrSections) {
+      return {
+        kind: 'generic',
+        transformDisabled: false,
+      };
+    }
+
     return {
       kind: null,
       transformDisabled: false,

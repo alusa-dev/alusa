@@ -14,6 +14,12 @@ import { MapObjectPreview, MapSectionPreview } from './MapObjectPreview';
 
 import { cn } from '@/lib/utils';
 import { CreatorIcon } from '@/components/icons/hugeicons';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 import {
   DndContext,
@@ -91,6 +97,9 @@ function LayerRow({
   dragHandleProps,
   showVisibility,
   showDelete,
+  onReorder,
+  moveUpDisabled,
+  moveDownDisabled,
   onSelect,
   onToggleVisibility,
   onDelete,
@@ -108,6 +117,9 @@ function LayerRow({
   dragHandleProps?: HTMLAttributes<HTMLButtonElement>;
   showVisibility?: boolean;
   showDelete?: boolean;
+  onReorder?: (action: 'up' | 'down' | 'front' | 'back') => void;
+  moveUpDisabled?: boolean;
+  moveDownDisabled?: boolean;
   onSelect: () => void;
   onToggleVisibility?: () => void;
   onDelete?: () => void;
@@ -175,6 +187,35 @@ function LayerRow({
       </button>
 
       <div className="flex shrink-0 items-center gap-0.5">
+        {onReorder ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label={`Ações da camada ${label}`}
+                disabled={disabled || isDragOverlay}
+                onClick={(event) => event.stopPropagation()}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:pointer-events-none disabled:opacity-40"
+              >
+                <span aria-hidden>⋯</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem disabled={moveUpDisabled} onSelect={() => onReorder('up')}>
+                Mover para cima
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={moveDownDisabled} onSelect={() => onReorder('down')}>
+                Mover para baixo
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={moveUpDisabled} onSelect={() => onReorder('front')}>
+                Trazer para frente
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={moveDownDisabled} onSelect={() => onReorder('back')}>
+                Enviar para trás
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
         {showVisibility && onToggleVisibility ? (
           <LayerActionButton
             label={hidden ? 'Mostrar camada' : 'Ocultar camada'}
@@ -259,6 +300,7 @@ type LayerRowContent = {
   onSelect: () => void;
   onToggleVisibility?: () => void;
   onDelete?: () => void;
+  onReorder?: (action: 'up' | 'down' | 'front' | 'back') => void;
 };
 
 function buildLayerRowContent(
@@ -274,6 +316,7 @@ function buildLayerRowContent(
     toggleSectionVisibility: (id: string) => void;
     deleteObject: (id: string) => void;
     deleteSection: (id: string) => void;
+    onReorder?: (action: 'up' | 'down' | 'front' | 'back') => void;
   },
 ): LayerRowContent | null {
   if (item.kind === 'section') {
@@ -291,6 +334,7 @@ function buildLayerRowContent(
       onSelect: () => options.setSelection(replaceSelection({ type: 'section', id: section.id })),
       onToggleVisibility: () => options.toggleSectionVisibility(section.id),
       onDelete: () => options.deleteSection(section.id),
+      onReorder: options.onReorder,
     };
   }
 
@@ -320,6 +364,7 @@ function buildLayerRowContent(
       onDelete: () => {
         for (const objectId of item.objectIds) options.deleteObject(objectId);
       },
+      onReorder: options.onReorder,
     };
   }
 
@@ -340,6 +385,7 @@ function buildLayerRowContent(
     onSelect: () => options.setSelection(replaceSelection({ type: 'object', id: object.id })),
     onToggleVisibility: () => options.toggleObjectVisibility(object.id),
     onDelete: () => options.deleteObject(object.id),
+    onReorder: options.onReorder,
   };
 }
 
@@ -356,6 +402,9 @@ function renderLayerItem(
     toggleSectionVisibility: (id: string) => void;
     deleteObject: (id: string) => void;
     deleteSection: (id: string) => void;
+    onReorder?: (action: 'up' | 'down' | 'front' | 'back') => void;
+    moveUpDisabled?: boolean;
+    moveDownDisabled?: boolean;
     isDragOverlay?: boolean;
     dragHandleProps?: HTMLAttributes<HTMLButtonElement>;
     isDragging?: boolean;
@@ -379,6 +428,8 @@ function renderLayerItem(
           isDragOverlay={options.isDragOverlay}
           dragHandleProps={options.dragHandleProps}
           {...rowContent}
+          moveUpDisabled={options.moveUpDisabled}
+          moveDownDisabled={options.moveDownDisabled}
         />
 
         {expanded && !options.isDragOverlay
@@ -417,6 +468,8 @@ function renderLayerItem(
       isDragOverlay={options.isDragOverlay}
       dragHandleProps={options.dragHandleProps}
       {...rowContent}
+      moveUpDisabled={options.moveUpDisabled}
+      moveDownDisabled={options.moveDownDisabled}
     />
   );
 }
@@ -563,6 +616,16 @@ export function MapLayersPanel() {
     dragStartPointerYRef.current = null;
   }
 
+  function reorderItemAt(index: number, action: 'up' | 'down' | 'front' | 'back') {
+    if (!activeLevel || childItems.length < 2) return;
+    const toIndex = action === 'up'
+      ? Math.max(0, index - 1)
+      : action === 'down'
+        ? Math.min(childItems.length - 1, index + 1)
+        : action === 'front' ? 0 : childItems.length - 1;
+    reorderLevelLayers(activeLevel.id, index, toIndex);
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const indicator = insertionIndicator;
     setActiveDragId(null);
@@ -614,7 +677,7 @@ export function MapLayersPanel() {
             onDragCancel={handleDragCancel}
           >
             <div key={activeLevel.id} className="flex flex-col gap-1">
-              {childItems.map((item) => {
+              {childItems.map((item, index) => {
                 const itemId = getLayerItemSortId(item);
                 return (
                   <div key={itemId} className="flex flex-col gap-1">
@@ -625,6 +688,9 @@ export function MapLayersPanel() {
                       {({ dragHandleProps, isDragging }) =>
                         renderLayerItem(item, map, {
                           ...layerItemOptions,
+                          onReorder: (action) => reorderItemAt(index, action),
+                          moveUpDisabled: index === 0,
+                          moveDownDisabled: index === childItems.length - 1,
                           dragHandleProps,
                           isDragging,
                         })
@@ -649,6 +715,7 @@ export function MapLayersPanel() {
                 <div className="w-[calc(100%-0px)] min-w-[14rem] cursor-grabbing">
                   {renderLayerItem(activeDragItem, map, {
                     ...layerItemOptions,
+                    onReorder: undefined,
                     isDragOverlay: true,
                   })}
                 </div>

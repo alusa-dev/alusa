@@ -41,9 +41,12 @@ const mapSeatSchema = z.object({
   id: idSchema,
   label: requiredText('Informe o nome do assento.', 120),
   technicalCode: z.string().trim().max(120).optional(),
+  rowLabel: z.string().trim().max(80).optional(),
+  seatNumber: z.string().trim().max(80).optional(),
   categoryId: z.string().trim().max(120).optional(),
   accessible: z.boolean().optional(),
   publicVisible: z.boolean().optional(),
+  size: positiveSize.optional(),
   rowIndex: z.number().int().nonnegative(),
   columnIndex: z.number().int().nonnegative(),
   position: mapPointSchema.optional(),
@@ -81,6 +84,8 @@ const mapSeatBlockSchema = z.object({
   lastRowSeatCount: z.number().int().nonnegative().optional(),
   fitMinimumSeatCount: z.number().int().nonnegative().optional(),
   fitMaximumSeatCount: z.number().int().nonnegative().optional(),
+  startNumber: z.number().int().positive().max(9999).optional(),
+  numberingDirection: z.enum(['left-to-right', 'right-to-left']).optional(),
   rowIds: z.array(idSchema),
   rows: z.array(mapSeatRowSchema),
 });
@@ -94,6 +99,7 @@ const mapSectionDocumentSchema = z.object({
   status: z.string().trim().min(1).max(40).optional(),
   notes: optionalText,
   hidden: z.boolean().optional(),
+  sortOrder: z.number().int().nonnegative().optional(),
   position: mapPointSchema,
   rotation: coordinate,
   outline: z.array(mapPointSchema).max(500),
@@ -119,6 +125,51 @@ export const eventMapDocumentSchema = z.object({
   schemaVersion: z.literal(1),
   sections: z.array(mapSectionDocumentSchema),
   visualElements: z.array(mapVisualElementSchema),
+}).superRefine((document, context) => {
+  const sectionIds = new Set<string>();
+  const blockIds = new Set<string>();
+  const rowIds = new Set<string>();
+  const seatIds = new Set<string>();
+  const visualElementIds = new Set<string>();
+
+  const addUniqueId = (ids: Set<string>, id: string, path: (string | number)[], label: string) => {
+    if (ids.has(id)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path, message: `O identificador de ${label} está duplicado.` });
+      return;
+    }
+    ids.add(id);
+  };
+
+  document.sections.forEach((section, sectionIndex) => {
+    addUniqueId(sectionIds, section.id, ['sections', sectionIndex, 'id'], 'setor');
+    section.blocks.forEach((block, blockIndex) => {
+      addUniqueId(blockIds, block.id, ['sections', sectionIndex, 'blocks', blockIndex, 'id'], 'bloco');
+      if (block.sectionId !== section.id) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['sections', sectionIndex, 'blocks', blockIndex, 'sectionId'],
+          message: 'O bloco precisa pertencer ao setor em que está armazenado.',
+        });
+      }
+      block.rows.forEach((row, rowIndex) => {
+        addUniqueId(rowIds, row.id, ['sections', sectionIndex, 'blocks', blockIndex, 'rows', rowIndex, 'id'], 'fileira');
+        if (row.sectionId !== section.id || (row.blockId !== undefined && row.blockId !== block.id)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['sections', sectionIndex, 'blocks', blockIndex, 'rows', rowIndex],
+            message: 'A fileira precisa pertencer ao setor e ao bloco em que está armazenada.',
+          });
+        }
+        row.seats.forEach((seat, seatIndex) => {
+          addUniqueId(seatIds, seat.id, ['sections', sectionIndex, 'blocks', blockIndex, 'rows', rowIndex, 'seats', seatIndex, 'id'], 'assento');
+        });
+      });
+    });
+  });
+
+  document.visualElements.forEach((element, index) => {
+    addUniqueId(visualElementIds, element.id, ['visualElements', index, 'id'], 'objeto');
+  });
 });
 
 export const eventMapIdSchema = z.string().trim().min(1);
@@ -232,12 +283,17 @@ export const eventMapReferenceChartSchema = z.object({
 });
 
 export const updateEventMapDraftSchema = z.object({
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
   name: requiredText('Informe o nome do mapa.').optional(),
   document: eventMapDocumentSchema.optional(),
   levels: z.array(eventMapLevelSchema).min(1, 'Crie pelo menos uma prancheta.'),
   sections: z.array(eventMapSectionSchema).default([]),
   objects: z.array(eventMapObjectSchema).default([]),
   seats: z.array(eventSeatSchema).default([]),
+});
+
+export const publishEventMapSchema = z.object({
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
 });
 
 export const updateEventMapSettingsSchema = z

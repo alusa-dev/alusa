@@ -229,13 +229,13 @@ export const createCostumeAssignmentSchema = z.object({
   alunoId: optionalId,
   turmaId: optionalId,
   definedSize: optionalText,
-  status: z.enum(EVENT_COSTUME_ASSIGNMENT_STATUSES).optional().default('PENDING'),
   billingMode: z.enum(eventCostumeAssignmentBillingModes).optional().default('SEPARATE_CHARGE'),
   chargedValue: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
-  isPaid: z.coerce.boolean().optional().default(false),
-  deliveredAt: optionalDate,
-  returnedAt: optionalDate,
   notes: optionalText,
+}).strict().superRefine((value, context) => {
+  if (Boolean(value.alunoId) === Boolean(value.turmaId)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['alunoId'], message: 'Informe exatamente um aluno ou uma turma.' });
+  }
 });
 
 export const updateCostumeAssignmentSchema = z.object({
@@ -246,10 +246,13 @@ export const updateCostumeAssignmentSchema = z.object({
   billingMode: z.enum(eventCostumeAssignmentBillingModes).optional(),
   definedSize: optionalText,
   chargedValue: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
-  isPaid: z.coerce.boolean().optional(),
   deliveredAt: optionalDate,
   returnedAt: optionalDate,
   notes: optionalText,
+}).superRefine((value, context) => {
+  if (value.turmaId) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['turmaId'], message: 'Atualize vínculos individualmente. Para uma turma, use a ação de vincular figurino, que cria um vínculo por aluno inscrito.' });
+  }
 });
 
 export const listFinancialEntriesQuerySchema = listByEventQuerySchema.extend({
@@ -290,6 +293,23 @@ export const createEventFinancialEntrySchema = z.object({
 export const updateEventFinancialEntrySchema = createEventFinancialEntrySchema
   .omit({ eventId: true })
   .partial();
+
+export const createEventCostPaymentSchema = z.object({
+  idempotencyKey: z.string().uuid(),
+  amount: moneySchema,
+  paymentMethod: z.enum(['CASH', 'MANUAL_PIX', 'EXTERNAL_CARD', 'TRANSFER', 'OTHER']),
+  paidAt: optionalDate,
+  notes: optionalText,
+});
+
+export const refundCostumeAssignmentPaymentSchema = z.object({
+  idempotencyKey: z.string().uuid(),
+  amount: moneySchema.gt(0).optional(),
+});
+
+export const deleteEventFinancialEntryParamsSchema = z.object({
+  entryId: z.string().trim().min(1).max(128),
+});
 
 export const eventReportQuerySchema = z.object({
   eventId: z.string().trim().optional(),
@@ -428,12 +448,16 @@ export const reactivateEventParticipantSchema = createEventParticipantSchema.omi
 });
 
 export const quitarParticipantFeeSchema = z.object({
-  paymentMethod: z.string().trim().min(1),
+  idempotencyKey: z.string().uuid(),
+  paymentMethod: z.enum([
+    'MANUAL_PIX', 'MANUAL_BOLETO', 'MANUAL_CARD', 'MANUAL_CASH', 'MANUAL_TRANSFER',
+  ]),
 });
 
 export const manualEventParticipantPaymentSchema = z.object({
+  idempotencyKey: z.string().uuid(),
   amount: moneySchema.gt(0),
-  paymentMethod: z.enum(EVENT_PAYMENT_METHODS),
+  paymentMethod: z.enum(['CASH', 'MANUAL_PIX', 'EXTERNAL_CARD', 'TRANSFER', 'OTHER']),
   paidAt: optionalDate,
   notes: optionalText,
 });

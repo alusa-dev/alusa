@@ -171,7 +171,7 @@ export function MapReferenceChartPanel({
           <div className={cn(
             'gap-3',
             embedded
-              ? 'flex items-center justify-between'
+              ? 'flex flex-col items-stretch'
               : 'rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3 text-center',
           )}>
             <p className="text-xs leading-5 text-slate-500">
@@ -180,7 +180,7 @@ export function MapReferenceChartPanel({
             <Button
               type="button"
               size="sm"
-              className={cn('h-8 text-xs', embedded ? 'shrink-0' : 'mt-3 w-full')}
+              className={cn('h-8 text-xs', embedded ? 'w-full justify-center' : 'mt-3 w-full')}
               disabled={disabled || busy}
               onClick={() => fileInputRef.current?.click()}
             >

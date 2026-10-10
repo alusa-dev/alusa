@@ -62,6 +62,9 @@ type MapCanvasStageProps = {
   onMouseDown: (event: Konva.KonvaEventObject<MouseEvent>) => void;
   onMouseMove: (event: Konva.KonvaEventObject<MouseEvent>) => void;
   onMouseUp: (event: Konva.KonvaEventObject<MouseEvent>) => void;
+  onTouchStart: (event: Konva.KonvaEventObject<TouchEvent>) => void;
+  onTouchMove: (event: Konva.KonvaEventObject<TouchEvent>) => void;
+  onTouchEnd: (event: Konva.KonvaEventObject<TouchEvent>) => void;
   onClick: (event: Konva.KonvaEventObject<MouseEvent>) => void;
   onWheel: (event: Konva.KonvaEventObject<WheelEvent>) => void;
 };
@@ -100,6 +103,9 @@ export function MapCanvasStage({
   onMouseDown,
   onMouseMove,
   onMouseUp,
+  onTouchStart,
+  onTouchMove,
+  onTouchEnd,
   onClick,
   onWheel,
 }: MapCanvasStageProps) {
@@ -119,6 +125,9 @@ export function MapCanvasStage({
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
       onClick={onClick}
       onWheel={onWheel}
     >
@@ -138,8 +147,9 @@ export function MapCanvasStage({
           selection={renderState.selection}
           readOnly={readOnly}
           onSelect={renderHandlers.onSelect}
+          renderMode="outlines"
         />
-        <MapRenderStack state={renderState} handlers={renderHandlers} />
+        <MapRenderStack state={renderState} handlers={renderHandlers} levelId={levelId} />
         <SeatBlockPreviewLayer seatBlockDraft={seatBlockDraft} seatBlockPreviewSeats={seatBlockPreviewSeats} />
         <MapTransformer
           transformerRef={transformerRef}

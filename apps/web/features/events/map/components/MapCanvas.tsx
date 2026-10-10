@@ -91,6 +91,19 @@ export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, o
   const [creationDraft, setCreationDraft] = useState<CreationDraft | null>(null);
   const [individualSeatDragId, setIndividualSeatDragId] = useState<string | null>(null);
   const [marqueeDraft, setMarqueeDraft] = useState<MarqueeDraft | null>(null);
+  useEffect(() => {
+    function cancelDraft(event: PointerEvent) {
+      if (event.type === 'pointerup' && event.target instanceof Node && stageRef.current?.container().contains(event.target)) return;
+      setCreationDraft(null);
+      setMarqueeDraft(null);
+    }
+    window.addEventListener('pointerup', cancelDraft);
+    window.addEventListener('pointercancel', cancelDraft);
+    return () => {
+      window.removeEventListener('pointerup', cancelDraft);
+      window.removeEventListener('pointercancel', cancelDraft);
+    };
+  }, []);
   const [textEditor, setTextEditor] = useState<TextEditorState | null>(null);
   const textEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const textEditorFocusKeyRef = useRef<string | null>(null);
@@ -209,6 +222,7 @@ export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, o
     selectedNodeIds,
     selectedObjectIds,
     selectedSeatIds,
+    selectedParametricItems,
     selectionContainsSeatsOrSections,
     handleSelectItem,
     getMarqueeSelection,
@@ -226,6 +240,7 @@ export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, o
     selectedNodeIds,
     selectedObjectIds,
     selectedSeatIds,
+    selectedParametricItems,
     selectionContainsSeatsOrSections,
     selection,
     levelBounds,
@@ -456,6 +471,9 @@ export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, o
         onMouseDown={stagePointer.handleStageMouseDown}
         onMouseMove={stagePointer.handleStageMouseMove}
         onMouseUp={stagePointer.handleStageMouseUp}
+        onTouchStart={stagePointer.handleStageMouseDown}
+        onTouchMove={stagePointer.handleStageMouseMove}
+        onTouchEnd={stagePointer.handleStageMouseUp}
         onClick={stagePointer.handleStageClick}
         onWheel={viewportHandlers.handleWheel}
       />

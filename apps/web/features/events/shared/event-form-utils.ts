@@ -1,3 +1,5 @@
+import type { FormEvent } from 'react';
+
 export const FILTER_INPUT_CLASS =
   'h-10 rounded-lg border-slate-200 bg-white text-sm shadow-none focus-visible:ring-brand-accent/30';
 export const SELECT_CLASS =
@@ -71,4 +73,13 @@ export function numberValue(form: FormData, key: string) {
 
 export function booleanValue(form: FormData, key: string) {
   return form.get(key) === 'on';
+}
+
+/** Prevent the browser's action-form reset while an async mutation is pending. */
+export function handleFormDataSubmit(
+  event: FormEvent<HTMLFormElement>,
+  submit: (formData: FormData) => void,
+) {
+  event.preventDefault();
+  submit(new FormData(event.currentTarget));
 }

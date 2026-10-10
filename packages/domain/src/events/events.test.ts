@@ -109,6 +109,42 @@ describe('events domain rules', () => {
     expect(metrics.lucroLiquidoRealizado).toBe(60);
   });
 
+  it('inclui custos de figurino parcialmente pagos no realizado e desconta estornos', () => {
+    const metrics = calculateEventMetrics({
+      costumes: [{ id: 'costume-1', schoolCost: 1600, quantity: 1 }],
+      financialEntries: [{
+        id: 'costume-cost-1',
+        type: 'COST',
+        status: 'PARTIALLY_PAID',
+        expectedAmount: 1600,
+        actualAmount: 500,
+        refundedAmount: 100,
+        originType: 'COSTUME',
+        originId: 'costume-1',
+      }],
+    });
+
+    expect(metrics.custoPrevisto).toBe(1600);
+    expect(metrics.custoRealizado).toBe(400);
+  });
+
+  it('inclui receita parcialmente paga no previsto e reconhece o realizado líquido de estornos', () => {
+    const metrics = calculateEventMetrics({
+      financialEntries: [{
+        type: 'REVENUE',
+        status: 'PARTIALLY_PAID',
+        expectedAmount: 1000,
+        actualAmount: 400,
+        refundedAmount: 50,
+        originType: 'MANUAL',
+      }],
+    });
+
+    expect(metrics.receitaPrevista).toBe(1000);
+    expect(metrics.receitaRealizada).toBe(350);
+    expect(metrics.saldoAReceber).toBe(650);
+  });
+
   it('ignora receitas financeiras automaticas para nao duplicar vendas', () => {
     const metrics = calculateEventMetrics({
       ticketSales: [{ status: 'PAID', quantity: 1, totalAmount: 100 }],
@@ -302,6 +338,19 @@ describe('events domain rules', () => {
     expect(metrics.lucroBrutoRealizado).toBe(700);
     expect(metrics.lucroLiquidoRealizado).toBe(600);
     expect(metrics.taxasFinanceirasRealizadas).toBe(100);
+  });
+
+  it('contabiliza desembolso parcial como custo realizado sem quitar o saldo previsto', () => {
+    const metrics = calculateEventMetrics({
+      financialEntries: [{
+        type: 'COST', status: 'PARTIALLY_PAID', expectedAmount: 500, actualAmount: 175,
+        originType: 'MANUAL', costClass: 'DIRECT',
+      }],
+    });
+
+    expect(metrics.custoPrevisto).toBe(500);
+    expect(metrics.custoRealizado).toBe(175);
+    expect(metrics.custoDiretoRealizado).toBe(175);
   });
 
   it('não reconhece como pago um custo de figurino pendente', () => {

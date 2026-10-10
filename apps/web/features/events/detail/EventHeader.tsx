@@ -8,6 +8,7 @@ import { type SchoolEventStatus } from '@alusa/shared';
 import { Edit } from '@/components/icons/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import {
   Dialog,
   DialogClose,
@@ -172,7 +173,7 @@ export function EventHeader({ event, participantsCount }: { event: SchoolEventDT
                           onClick={() => statusMutation.mutate('FINISHED')}
                           disabled={statusMutation.isPending}
                         >
-                          {statusMutation.isPending ? 'Finalizando...' : 'Sair'}
+                          {statusMutation.isPending ? <><span>Finalizando</span><LoadingDots label="Finalizando evento" size="sm" className="text-white" /></> : 'Sair'}
                         </Button>
                       </DialogClose>
                     </DialogFooter>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -32,6 +32,7 @@ import {
 
 import { formatCurrency, formatDate, formatDateTime, permanentlyDeleteEventParticipant, regenerateEventContract, type EventContractDTO } from '@/features/events/events-service';
 import { Button } from '@/components/ui/button';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -174,7 +175,7 @@ function EditableSection({
                 disabled={saving}
                 className="bg-[#A94DFF] text-white shadow-none hover:bg-[#A94DFF]/90"
               >
-                {saving ? 'Salvando...' : 'Salvar'}
+                {saving ? <><span>Salvando</span><LoadingDots label="Salvando alterações" size="sm" className="text-white" /></> : 'Salvar'}
               </Button>
             </div>
           ) : (
@@ -270,6 +271,8 @@ export function ParticipantDetailsFeature({
   const [manualPaymentMethod, setManualPaymentMethod] = useState('MANUAL_PIX');
   const [manualPaymentNotes, setManualPaymentNotes] = useState('');
   const [manualPaymentActionTarget, setManualPaymentActionTarget] = useState<{ action: 'refund' | 'delete'; paymentId: string } | null>(null);
+  const quitarIdempotencyKey = useRef<string | null>(null);
+  const manualPaymentIdempotencyKey = useRef<string | null>(null);
 
   // Form states
   const [generalForm, setGeneralForm] = useState({
@@ -590,7 +593,7 @@ export function ParticipantDetailsFeature({
       const res = await fetch(`/api/events/${eventId}/participants/${participantId}/quitar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paymentMethod: method }),
+        body: JSON.stringify({ paymentMethod: method, idempotencyKey: quitarIdempotencyKey.current ??= crypto.randomUUID() }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => null);
@@ -602,6 +605,7 @@ export function ParticipantDetailsFeature({
       queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] });
       queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId, participantId] });
       toast.success({ title: 'Pagamento registrado', description: 'A taxa de inscrição foi quitada com sucesso.' });
+      quitarIdempotencyKey.current = null;
       setQuitarConfirmOpen(null);
     },
     onError: (err) => {
@@ -618,6 +622,7 @@ export function ParticipantDetailsFeature({
           amount: manualPaymentAmount,
           paymentMethod: manualPaymentMethod,
           notes: manualPaymentNotes || null,
+          idempotencyKey: manualPaymentIdempotencyKey.current ??= crypto.randomUUID(),
         }),
       });
       if (!res.ok) {
@@ -633,6 +638,7 @@ export function ParticipantDetailsFeature({
       setManualPaymentOpen(false);
       setManualPaymentAmountText('');
       setManualPaymentNotes('');
+      manualPaymentIdempotencyKey.current = null;
       toast.success({ title: 'Baixa registrada', description: 'O pagamento foi vinculado ao lançamento financeiro.' });
     },
     onError: (err) => toast.error({ title: 'Erro ao dar baixa', description: err.message }),
@@ -1469,7 +1475,7 @@ export function ParticipantDetailsFeature({
                     onClick={() => generatePaymentBookMutation.mutate()}
                     className="border-slate-200 bg-white text-slate-700 hover:bg-slate-50 shadow-none flex items-center gap-1.5"
                   >
-                    {generatePaymentBookMutation.isPending ? 'Gerando...' : 'Gerar carnê de parcelamento'}
+                    {generatePaymentBookMutation.isPending ? <><span>Gerando</span><LoadingDots label="Gerando carnê de parcelamento" size="sm" /></> : 'Gerar carnê de parcelamento'}
                     <ExternalLink className="h-3.5 w-3.5" />
                   </Button>
                 )}
@@ -1978,7 +1984,7 @@ export function ParticipantDetailsFeature({
                 <Input
                   id="manual-payment-amount"
                   value={manualPaymentAmountText}
-                  onChange={(event) => setManualPaymentAmountText(formatCurrencyInput(event.target.value))}
+                  onChange={(event) => { manualPaymentIdempotencyKey.current = null; setManualPaymentAmountText(formatCurrencyInput(event.target.value)); }}
                   className="h-10 rounded-lg border-slate-200 pl-10 text-right shadow-sm focus:border-[#A94DFF] focus:ring-2 focus:ring-[#A94DFF]/30"
                   placeholder="0,00"
                   autoFocus
@@ -1987,7 +1993,7 @@ export function ParticipantDetailsFeature({
             </div>
             <div className="space-y-1.5">
               <label className={labelClass} htmlFor="manual-payment-method">Forma de recebimento</label>
-              <Select value={manualPaymentMethod} onValueChange={setManualPaymentMethod}>
+              <Select value={manualPaymentMethod} onValueChange={(value) => { manualPaymentIdempotencyKey.current = null; setManualPaymentMethod(value); }}>
                 <SelectTrigger id="manual-payment-method" className="h-10 rounded-lg border-slate-200 bg-white shadow-sm">
                   <SelectValue placeholder="Selecione a forma de recebimento" />
                 </SelectTrigger>
@@ -2003,7 +2009,7 @@ export function ParticipantDetailsFeature({
               <Textarea
                 id="manual-payment-notes"
                 value={manualPaymentNotes}
-                onChange={(event) => setManualPaymentNotes(event.target.value)}
+                onChange={(event) => { manualPaymentIdempotencyKey.current = null; setManualPaymentNotes(event.target.value); }}
                 placeholder="Opcional"
                 className="min-h-[88px] resize-y rounded-lg border-slate-200 shadow-sm focus:border-[#A94DFF] focus:ring-2 focus:ring-[#A94DFF]/30"
               />
@@ -2022,7 +2028,7 @@ export function ParticipantDetailsFeature({
               onClick={() => manualPaymentMutation.mutate()}
               className="h-10 bg-brand-accent text-white shadow-none hover:bg-brand-accent/90"
             >
-              {manualPaymentMutation.isPending ? 'Registrando...' : 'Confirmar baixa'}
+              {manualPaymentMutation.isPending ? <><span>Registrando</span><LoadingDots label="Registrando pagamento" size="sm" className="text-white" /></> : 'Confirmar baixa'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2069,7 +2075,7 @@ export function ParticipantDetailsFeature({
               <label className={labelClass}>Forma de Pagamento</label>
               <select
                 value={quitarMethod}
-                onChange={(e) => setQuitarMethod(e.target.value)}
+                onChange={(e) => { quitarIdempotencyKey.current = null; setQuitarMethod(e.target.value); }}
                 className={controlClass}
               >
                 <option value="MANUAL_PIX">Pix Manual</option>
@@ -2094,7 +2100,7 @@ export function ParticipantDetailsFeature({
                   quitarMutation.mutate({ method: quitarMethod });
                 }}
               >
-                {quitarMutation.isPending ? 'Quitando...' : 'Quitar Taxa'}
+                {quitarMutation.isPending ? <><span>Quitando</span><LoadingDots label="Quitando taxa" size="sm" className="text-white" /></> : 'Quitar Taxa'}
               </Button>
             </DialogFooter>
           </div>
@@ -2185,7 +2191,7 @@ export function ParticipantDetailsFeature({
               onClick={handleSaveCostumeEdit}
               disabled={updateCostumeAssignmentMutation.isPending}
             >
-              {updateCostumeAssignmentMutation.isPending ? 'Salvando...' : 'Salvar alterações'}
+              {updateCostumeAssignmentMutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando alterações do figurino" size="sm" className="text-white" /></> : 'Salvar alterações'}
             </Button>
           </DialogFooter>
         </DialogContent>

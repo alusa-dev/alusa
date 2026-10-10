@@ -149,6 +149,7 @@ async function seedDraft(
 
   const response = await page.request.patch(`/api/events/${scenario.eventId}/maps/${scenario.mapId}`, {
     data: {
+      expectedUpdatedAt: current.updatedAt,
       name: current.name,
       levels: current.levels,
       sections: draft.sections ?? [],
@@ -221,16 +222,14 @@ test.describe('Event map editor transform flows', () => {
       rows: 1,
       columns: 4,
       horizontalSpacing: 44,
-      layoutMode: 'RECTANGULAR',
     });
     await createSeatBlock(page, {
       origin: { x: 220, y: 380 },
       totalSeats: 12,
       rows: 3,
       columns: 4,
-      horizontalSpacing: 40,
-      verticalSpacing: 70,
-      layoutMode: 'RECTANGULAR',
+      horizontalSpacing: 44,
+      verticalSpacing: 42,
     });
 
     const seats = await getEditorGeometry(page);
@@ -243,8 +242,9 @@ test.describe('Event map editor transform flows', () => {
     expect(secondBlock.every((seat) => seat.rotation === 0)).toBe(true);
 
     const map = (await getEditorState(page)).map;
-    expect(map?.document?.sections[0]?.blocks).toHaveLength(2);
-    expect(map?.document?.sections[0]?.blocks.every((block) => block.rows.every((row) => row.path.type === 'LINE'))).toBe(true);
+    const blocks = map?.document?.sections.flatMap((section) => section.blocks) ?? [];
+    expect(blocks).toHaveLength(2);
+    expect(blocks.every((block) => block.rows.every((row) => row.path.type === 'LINE'))).toBe(true);
   });
 
   test('multi-object resize uses the whole selection and preserves the untouched axis', async ({ page }) => {
@@ -334,8 +334,8 @@ test.describe('Event map editor transform flows', () => {
       rows: 2,
       columns: 2,
       seatSize: 28,
-      horizontalSpacing: 18,
-      verticalSpacing: 16,
+      horizontalSpacing: 38,
+      verticalSpacing: 42,
     });
     await activateTool(page, 'select');
 

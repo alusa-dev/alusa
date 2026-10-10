@@ -5,12 +5,13 @@ import {
   type MapCommandHandlerState,
   updateCounts,
 } from '../reducer-context.js';
+import { projectMapDocumentToEditorFields } from '../../migration/project-map-document.js';
 
 export function handleRestoreDeletedItems(
   state: MapCommandHandlerState,
   command: Extract<MapCommand, { type: 'RESTORE_DELETED_ITEMS' }>,
 ): MapCommandHandlerResult {
-  const { objects, seats, sections, levels } = command.payload;
+  const { objects, seats, sections, levels, document } = command.payload;
   for (const level of levels) {
     if (!state.nextMap.levels.some((l) => l.id === level.id)) {
       state.nextMap.levels.push(level);
@@ -32,6 +33,13 @@ export function handleRestoreDeletedItems(
       state.nextMap.seats.push(seat);
     }
   }
+  if (document) {
+    state.nextMap.document = document;
+    const projection = projectMapDocumentToEditorFields(document, state.nextMap);
+    state.nextMap.sections = projection.sections;
+    state.nextMap.objects = projection.objects;
+    state.nextMap.seats = projection.seats;
+  }
   updateCounts(state.nextMap);
 }
 
@@ -50,4 +58,19 @@ export function handleRestoreObjectGroups(
     }
     return object;
   });
+  if (state.nextMap.document) {
+    const objectDataById = new Map(objects.map((entry) => [entry.id, entry.prevData]));
+    state.nextMap.document = {
+      ...state.nextMap.document,
+      visualElements: state.nextMap.document.visualElements.map((element) => {
+        const previousData = objectDataById.get(element.id);
+        return previousData ? { ...element, data: { ...previousData } } : element;
+      }),
+    };
+    const projection = projectMapDocumentToEditorFields(state.nextMap.document, state.nextMap);
+    state.nextMap.sections = projection.sections;
+    state.nextMap.objects = projection.objects;
+    state.nextMap.seats = projection.seats;
+    updateCounts(state.nextMap);
+  }
 }

@@ -178,7 +178,13 @@ export function readObjectTransformCommitFromNodes(
 
     if (snapshot.type === 'TEXT') {
       const textNode = node as Konva.Text;
-      const fontSize = clampFontSize(textNode.fontSize());
+      const scaleX = Math.abs(textNode.scaleX());
+      const scaleY = Math.abs(textNode.scaleY());
+      if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY)) {
+        resetNodeScale(node);
+        continue;
+      }
+      const fontSize = clampFontSize(textNode.fontSize() * Math.max(scaleX, scaleY, MIN_UNIFORM_SCALE));
       updates.push({
         id: objectId,
         patch: {
@@ -187,15 +193,16 @@ export function readObjectTransformCommitFromNodes(
           rotation: textNode.rotation(),
           width:
             snapshot.textMode === 'multiline' && textNode.width() > 0
-              ? clampObjectSize(textNode.width())
+              ? clampObjectSize(textNode.width() * scaleX)
               : null,
           height:
             snapshot.textMode === 'multiline' && textNode.height() > 0
-              ? clampObjectSize(textNode.height())
+              ? clampObjectSize(textNode.height() * scaleY)
               : null,
           data: { fontSize },
         },
       });
+      resetNodeScale(node);
       continue;
     }
 

@@ -1,13 +1,37 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../prisma';
 
-/** Shared transaction lock used by reservation mutations and paid-order confirmation. */
+/** The map row serializes publication with every reservation mutation for its current version. */
+export async function lockEventMapForReservation(
+  tx: Prisma.TransactionClient,
+  input: { contaId: string; eventMapId: string },
+) {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT "id" FROM "EventMap"
+    WHERE "id" = ${input.eventMapId} AND "contaId" = ${input.contaId}
+    FOR UPDATE
+  `);
+  return rows.length === 1;
+}
+
+/** Shared lock order: EventMap row, reservation advisory lock, reservation row. */
 export async function lockPublicEventMapReservation(
   tx: Prisma.TransactionClient,
   input: { contaId: string; reservationId: string },
 ) {
+  const reservation = await tx.eventMapReservation.findFirst({
+    where: { id: input.reservationId, contaId: input.contaId },
+    select: { eventMapId: true },
+  });
+  if (!reservation) return;
+  await lockEventMapForReservation(tx, { contaId: input.contaId, eventMapId: reservation.eventMapId });
   const key = `public-event-map-reservation:${input.contaId}:${input.reservationId}`;
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+  await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT "id" FROM "EventMapReservation"
+    WHERE "id" = ${input.reservationId} AND "contaId" = ${input.contaId}
+    FOR UPDATE
+  `);
 }
 
 /** Domain persistence operation shared by finance cancellation and checkout failure recovery. */

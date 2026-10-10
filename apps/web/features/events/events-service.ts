@@ -120,6 +120,7 @@ export type CostumeDTO = {
   quantity: number;
   notes: string | null;
   assignmentsCount: number;
+  canDelete: boolean;
 };
 
 export type CostumeAssignmentDTO = {
@@ -135,10 +136,20 @@ export type CostumeAssignmentDTO = {
   billingMode: EventCostumeAssignmentBillingMode;
   chargedValue: number | null;
   isPaid: boolean;
+  paidAmount: number;
+  refundedAmount: number;
+  remainingAmount: number;
+  financialEntryStatus: EventFinancialEntryStatus | null;
   deliveredAt: string | null;
   returnedAt: string | null;
   notes: string | null;
   revenueEntryId?: string | null;
+};
+
+export type CreateCostumeAssignmentResult = {
+  assignments: CostumeAssignmentDTO[];
+  createdCount: number;
+  skippedExistingCount: number;
 };
 
 export type FinancialEntryDTO = {
@@ -149,8 +160,9 @@ export type FinancialEntryDTO = {
   category: string;
   description: string;
   supplier: string | null;
-  originType: 'MANUAL' | 'TICKET_SALE' | 'COSTUME' | 'COSTUME_ASSIGNMENT';
+  originType: 'MANUAL' | 'EVENT_REGISTRATION' | 'TICKET_SALE' | 'COSTUME' | 'COSTUME_ASSIGNMENT';
   originId: string | null;
+  hasAsaasLink?: boolean;
   costClass?: 'DIRECT' | 'INDIRECT' | 'FINANCIAL' | 'TAX';
   expectedAmount: number;
   grossAmount?: number | null;
@@ -163,6 +175,7 @@ export type FinancialEntryDTO = {
   status: EventFinancialEntryStatus;
   paymentMethod: EventPaymentMethod | null;
   notes: string | null;
+  payments?: Array<{ id: string; amount: number; refundedAmount: number; paymentMethod: EventPaymentMethod; paidAt: string; notes: string | null; status: string }>;
 };
 
 export type EventAuditDTO = {
@@ -521,7 +534,7 @@ export async function listCostumeAssignments(eventId?: string) {
 }
 
 export async function createCostumeAssignment(payload: Record<string, unknown>) {
-  return (await parseResponse<JsonEnvelope<CostumeAssignmentDTO>>(await fetch('/api/events/costume-assignments', {
+  return (await parseResponse<JsonEnvelope<CreateCostumeAssignmentResult>>(await fetch('/api/events/costume-assignments', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -560,6 +573,30 @@ export async function updateFinancialEntry(id: string, payload: Record<string, u
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+  }))).data;
+}
+
+export async function registerEventCostPayment(id: string, payload: Record<string, unknown>) {
+  return (await parseResponse<JsonEnvelope<FinancialEntryDTO>>(await fetch(`/api/events/financial-entries/${id}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }))).data;
+}
+
+export async function registerCostumeAssignmentPayment(id: string, payload: Record<string, unknown>) {
+  return (await parseResponse<JsonEnvelope<FinancialEntryDTO>>(await fetch(`/api/events/financial-entries/${id}/costume-payments`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }))).data;
+}
+
+export async function refundCostumeAssignmentPayment(id: string, payload: Record<string, unknown>) {
+  return (await parseResponse<JsonEnvelope<FinancialEntryDTO>>(await fetch(`/api/events/financial-entries/${id}/costume-refunds`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }))).data;
+}
+
+export async function deleteEventCost(id: string) {
+  return (await parseResponse<JsonEnvelope<{ success: boolean }>>(await fetch(`/api/events/financial-entries/${id}`, {
+    method: 'DELETE',
   }))).data;
 }
 
@@ -723,11 +760,16 @@ export async function reactivateEventParticipant(eventId: string, participantId:
   return (await parseResponse<JsonEnvelope<EventParticipantDTO>>(response)).data;
 }
 
-export async function quitarEventParticipantFee(eventId: string, participantId: string, paymentMethod: string) {
+export async function quitarEventParticipantFee(
+  eventId: string,
+  participantId: string,
+  paymentMethod: string,
+  idempotencyKey = crypto.randomUUID(),
+) {
   const response = await fetch(`/api/events/${eventId}/participants/${participantId}/quitar`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ paymentMethod }),
+    body: JSON.stringify({ paymentMethod, idempotencyKey }),
   });
   return (await parseResponse<JsonEnvelope<EventParticipantDTO>>(response)).data;
 }

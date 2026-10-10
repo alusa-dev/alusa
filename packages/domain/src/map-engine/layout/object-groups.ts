@@ -53,11 +53,12 @@ export function validateGroupCandidates(items: MapSelectionItem[], objects: Even
 }
 
 /** Removes group metadata when a group has fewer than two members. */
-export function sanitizeGroupMembership(objects: EventMapObjectDTO[]) {
+export function sanitizeGroupMembership<T extends Pick<EventMapObjectDTO, 'id' | 'data'>>(objects: T[]): T[] {
   const membersByGroup = new Map<string, string[]>();
 
   for (const object of objects) {
-    const groupId = getObjectGroupId(object);
+    const value = object.data[OBJECT_GROUP_ID_KEY];
+    const groupId = typeof value === 'string' && value.trim() ? value : null;
     if (!groupId) continue;
     const members = membersByGroup.get(groupId) ?? [];
     members.push(object.id);

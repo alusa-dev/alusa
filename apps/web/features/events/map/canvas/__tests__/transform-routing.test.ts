@@ -64,4 +64,17 @@ describe('transform-routing', () => {
     expect(routing.kind).toBe('generic');
     expect(routing.transformDisabled).toBe(false);
   });
+
+  it('routes a single loose seat through the transform commit pipeline', () => {
+    const routing = resolveTransformRouting({
+      selectedNodeCount: 1,
+      selectedObjectIds: [],
+      objects: OBJECTS,
+      mixedTextAndShapes: false,
+      selectedTextCount: 0,
+      selectionContainsSeatsOrSections: true,
+    });
+
+    expect(routing).toEqual({ kind: 'generic', transformDisabled: false });
+  });
 });

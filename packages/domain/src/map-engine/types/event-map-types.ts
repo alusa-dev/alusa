@@ -35,6 +35,7 @@ export type EventMapSectionDTO = {
   status: string;
   notes: string | null;
   hidden?: boolean;
+  sortOrder?: number;
 };
 
 export type EventMapObjectDTO = {
@@ -126,6 +127,7 @@ export type EventMapDTO = {
 };
 
 export type EventMapDraftPayload = {
+  expectedUpdatedAt?: string;
   name?: string;
   document?: EventMapDocument;
   levels: EventMapLevelDTO[];

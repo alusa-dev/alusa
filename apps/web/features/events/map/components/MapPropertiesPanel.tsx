@@ -852,12 +852,22 @@ export function MapPropertiesPanel({
         {multiSelectCount <= 1 && selected?.type === 'level' && selected.value! ? (
           <>
             <PanelField label="Nome" hint="O nome aparece nas abas públicas do mapa.">
-              <Input
-                value={selected.value!.name}
-                disabled={disabled}
-                onChange={(event) => updateLevel(selected.value!.id, { name: event.target.value })}
-                className={FIELD_CLASS}
-              />
+              <div className="space-y-1.5">
+                <Input
+                  value={selected.value!.name}
+                  disabled={disabled}
+                  required
+                  aria-required="true"
+                  aria-invalid={!selected.value!.name.trim()}
+                  maxLength={255}
+                  placeholder="Nome do ambiente"
+                  onChange={(event) => updateLevel(selected.value!.id, { name: event.target.value })}
+                  className={FIELD_CLASS}
+                />
+                {!selected.value!.name.trim() ? (
+                  <p className="text-xs text-rose-600" role="status">Informe um nome para salvar esta área.</p>
+                ) : null}
+              </div>
             </PanelField>
             <LevelArtboardProperties
               level={selected.value!}
@@ -868,13 +878,15 @@ export function MapPropertiesPanel({
         ) : null}
 
         {multiSelectCount === 0 || selected?.type === 'level' ? (
-          <MapReferenceChartPanel
-            eventId={eventId}
-            mapId={mapId}
-            disabled={disabled}
-            embedded
-            onEditingChange={onReferenceChartEditingChange}
-          />
+          <PanelSection title="Planta de referência">
+            <MapReferenceChartPanel
+              eventId={eventId}
+              mapId={mapId}
+              disabled={disabled}
+              embedded
+              onEditingChange={onReferenceChartEditingChange}
+            />
+          </PanelSection>
         ) : null}
       </div>
     </aside>

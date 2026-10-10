@@ -39,6 +39,12 @@ export function groupSelection(input: {
       : object,
   );
   nextMap.objects = sanitizeGroupMembership(nextMap.objects);
+  if (nextMap.document) {
+    nextMap.document = {
+      ...nextMap.document,
+      visualElements: nextMap.objects.map((object) => ({ ...object, data: { ...object.data } })),
+    };
+  }
 
   return {
     map: nextMap,
@@ -70,6 +76,12 @@ export function ungroupSelection(input: { map: EventMapDTO; selection: MapSelect
     }
     return object;
   });
+  if (nextMap.document) {
+    nextMap.document = {
+      ...nextMap.document,
+      visualElements: nextMap.objects.map((object) => ({ ...object, data: { ...object.data } })),
+    };
+  }
 
   return { map: nextMap, selection: input.selection, warnings: [], blocked: false };
 }

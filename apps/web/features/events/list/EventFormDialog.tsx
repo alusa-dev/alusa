@@ -19,6 +19,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
@@ -29,7 +30,7 @@ import { EventDateTimeField as DateTimeField } from '../shared/EventDateTimeFiel
 import { EventField as Field } from '../shared/EventField';
 import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
 import { eventQueryKeys } from '../shared/event-query-keys';
-import { datetimeValue, getRoundedNowISOString, nullableString, numberValue } from '../shared/event-form-utils';
+import { datetimeValue, getRoundedNowISOString, handleFormDataSubmit, nullableString, numberValue } from '../shared/event-form-utils';
 import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
 import { useEventResources } from '../shared/useEventResources';
 import { FieldHelpTooltip } from '@/components/ui/field-help-tooltip';
@@ -172,7 +173,7 @@ export function EventFormDialog({
   const defaultStartsAt = event?.startsAt ?? getRoundedNowISOString();
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (nextOpen || !mutation.isPending) setOpen(nextOpen); }}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent
         fullScreenMobile
@@ -180,7 +181,7 @@ export function EventFormDialog({
         overlayClass="alusa-registration-wizard-overlay"
         className="event-registration-dialog alusa-wizard-corner-smoothing flex h-[min(820px,calc(100dvh-3rem))] w-[calc(100vw-2rem)] max-w-4xl min-h-0 flex-col gap-0 overflow-hidden rounded-[20px] bg-[#f8fafc] p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0"
       >
-        <form action={handleSubmit} className="flex h-full min-h-0 flex-col max-md:max-h-none max-md:flex-1">
+        <form onSubmit={(event) => handleFormDataSubmit(event, handleSubmit)} className="flex h-full min-h-0 flex-col max-md:max-h-none max-md:flex-1">
           <div className="shrink-0 bg-[#f8fafc] px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] alusa-dark:bg-[color:var(--color-bg-card)] md:px-6 md:py-5">
             <DialogTitle className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0 alusa-dark:text-[color:var(--color-text-primary)]">
               {event ? 'Editar evento' : 'Novo evento'}
@@ -405,11 +406,11 @@ export function EventFormDialog({
             </section>
           </div>
           <DialogFooter className="shrink-0 flex-col-reverse gap-3 space-x-0 bg-[#f8fafc] px-4 py-3 max-md:pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:flex-col-reverse sm:space-x-0 md:flex-row md:justify-end md:px-6 md:py-3">
-            <Button type="button" variant="outline" className="h-10 min-h-10 w-full min-w-0 rounded-[10px] border-0 bg-[#eff3f8] px-5 font-normal text-[#303030] shadow-none hover:bg-[#eff3f8] md:w-[120px]" onClick={() => setOpen(false)}>
+            <Button type="button" variant="outline" disabled={mutation.isPending} className="h-10 min-h-10 w-full min-w-0 rounded-[10px] border-0 bg-[#eff3f8] px-5 font-normal text-[#303030] shadow-none hover:bg-[#eff3f8] md:w-[120px]" onClick={() => setOpen(false)}>
               Cancelar
             </Button>
             <Button type="submit" disabled={mutation.isPending} variant="wizardPrimary" className="h-10 min-h-10 w-full min-w-0 rounded-[10px] bg-[#512a82] px-5 font-normal text-white shadow-none hover:bg-[#512a82] md:w-[160px]">
-              {mutation.isPending ? 'Salvando...' : 'Salvar evento'}
+              {mutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando evento" size="sm" className="text-white" /></> : 'Salvar evento'}
             </Button>
           </DialogFooter>
         </form>
