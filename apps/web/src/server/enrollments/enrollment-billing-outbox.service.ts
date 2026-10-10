@@ -275,6 +275,9 @@ async function runProvisionForEnrollment(input: {
   const gerarCobrancaTaxa =
     input.billingPhase !== 'SUBSCRIPTION_ONLY' &&
     !matricula.taxaIsenta && Number(matricula.taxaMatricula) > 0 && Boolean(matricula.cobrancas[0]);
+  const requireEnrollmentFeePayment =
+    input.billingPhase === 'SUBSCRIPTION_ONLY' &&
+    !matricula.taxaIsenta && Number(matricula.taxaMatricula) > 0;
   const criarCobranca = preco.planoLiquido > 0;
 
   if (!gerarCobrancaTaxa && !criarCobranca) {
@@ -307,8 +310,7 @@ async function runProvisionForEnrollment(input: {
       gerarCobrancaTaxa,
       taxaIsenta: matricula.taxaIsenta,
       deferSubscription: input.billingPhase === 'ENROLLMENT_FEE',
-      requireEnrollmentFeePayment:
-        input.billingPhase === 'SUBSCRIPTION_ONLY' && gerarCobrancaTaxa,
+      requireEnrollmentFeePayment,
     },
     preco,
     cobrancas: {

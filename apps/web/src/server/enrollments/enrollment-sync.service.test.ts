@@ -222,6 +222,21 @@ describe('syncMatriculaStatus cancellation', () => {
       statusCode: 409,
     });
 
+    expect(root.billingAllocation.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        contaId: 'conta-1',
+        status: { in: ['ACTIVE', 'SCHEDULED'] },
+        OR: [{ validUntil: null }, { validUntil: { gte: expect.any(Date) } }],
+      }),
+    }));
+    expect(root.billingAllocation.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        contaId: 'conta-1',
+        status: { in: ['ACTIVE', 'SCHEDULED'] },
+        OR: [{ validUntil: null }, { validUntil: { gte: expect.any(Date) } }],
+      }),
+    }));
+
     expect(commitBillingAgreementChangeMock).toHaveBeenCalledWith(expect.objectContaining({
       uiRequestId: expect.stringMatching(
         /^status:mat-1:CANCELADA:\d{4}-\d{2}-\d{2}:preview-hash-0123456$/,

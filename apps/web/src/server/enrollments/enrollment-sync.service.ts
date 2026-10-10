@@ -757,6 +757,9 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
     details: [],
     expectedWebhooks: [],
   };
+  const allocationValidityFilter = input.targetStatus === 'CANCELADA'
+    ? { OR: [{ validUntil: null }, { validUntil: { gte: new Date() } }] }
+    : {};
   let canonicalAllocation = await input.prisma.billingAllocation.findFirst({
     where: {
       contaId: input.contaId,
@@ -765,6 +768,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
         ? { in: ['TUITION', 'ENROLLMENT_FEE'] }
         : 'TUITION',
       status: input.targetStatus === 'ATIVA' ? 'PAUSED' : { in: ['ACTIVE', 'SCHEDULED'] },
+      ...allocationValidityFilter,
     },
     orderBy: input.targetStatus === 'ATIVA' ? { validUntil: 'desc' } : { validFrom: 'desc' },
     select: {
@@ -804,6 +808,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
             ? { in: ['TUITION', 'ENROLLMENT_FEE'] }
             : 'TUITION',
           status: input.targetStatus === 'ATIVA' ? 'PAUSED' : { in: ['ACTIVE', 'SCHEDULED'] },
+          ...allocationValidityFilter,
         },
         orderBy: input.targetStatus === 'ATIVA' ? { validUntil: 'desc' } : { validFrom: 'desc' },
         select: {
@@ -832,6 +837,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
             agreementId: canonicalAllocation.agreementId,
             kind: { in: ['TUITION', 'ENROLLMENT_FEE'] },
             status: { in: ['ACTIVE', 'SCHEDULED'] },
+            ...allocationValidityFilter,
           },
           select: { id: true },
         })).map((allocation) => allocation.id)

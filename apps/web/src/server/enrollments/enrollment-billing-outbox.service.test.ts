@@ -354,7 +354,11 @@ describe('processEnrollmentBillingOutboxEvent', () => {
       eventType: 'PROVISION_ENROLLMENT_BILLING',
       status: MatriculaBillingOutboxStatus.PENDING,
       attempts: 0,
-      payload: { matriculaId: 'mat-1', actorUserId: 'user-1' },
+      payload: {
+        matriculaId: 'mat-1',
+        actorUserId: 'user-1',
+        billingPhase: 'SUBSCRIPTION_ONLY',
+      },
       correlationId: 'correlation-1',
       availableAt: now,
     };
@@ -363,8 +367,8 @@ describe('processEnrollmentBillingOutboxEvent', () => {
       contaId: 'conta-1',
       billingMode: BillingMode.INDIVIDUAL,
       billingProvisionStatus: MatriculaBillingProvisionStatus.PENDENTE,
-      taxaIsenta: true,
-      taxaMatricula: 0,
+      taxaIsenta: false,
+      taxaMatricula: 100,
       asaasSubscriptionId: null,
       cobrancas: [],
       descontos: [],
@@ -422,6 +426,13 @@ describe('processEnrollmentBillingOutboxEvent', () => {
       error:
         'BILLING_PROVISION_INCOMPLETE:PARCIAL:BILLING_AGREEMENT_MATERIALIZATION_FAILED',
     });
+    expect(provisionEnrollmentBilling).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({
+        requireEnrollmentFeePayment: true,
+        gerarCobrancaTaxa: false,
+      }),
+      cobrancas: expect.objectContaining({ taxa: null }),
+    }));
     expect(transactionOutboxUpdateMany).toHaveBeenCalledWith({
       where: expect.objectContaining({ id: 'outbox-1', claimToken: expect.any(String) }),
       data: expect.objectContaining({
