@@ -1,7 +1,12 @@
 'use client';
 
 import type { StaffEventMapSalesViewDTO } from '@alusa/lib/events/map/staff-map-sales.service';
-import { MAP_ARTBOARD_STROKE, MAP_ARTBOARD_STROKE_WIDTH } from '@alusa/domain';
+import {
+  MAP_ARTBOARD_STROKE,
+  MAP_ARTBOARD_STROKE_WIDTH,
+  type EventMapObjectDTO,
+  type EventMapDocument,
+} from '@alusa/domain';
 
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
@@ -17,8 +22,8 @@ import {
 } from '@/components/ui/dialog';
 
 import { PublicMapLevelTabs } from '../map/public/PublicMapLevelTabs';
-import { PublicMapTextSvg } from '../map/public/public-map-text-render';
 import { PublicMapViewport } from '../map/public/PublicMapViewport';
+import { PublicMapSceneRenderer, buildPublicMapSceneItems } from '../map/public/public-map-scene-render';
 import {
   filterPublicMapRenderableObjects,
   filterPublicMapSeatsByLevel,
@@ -27,7 +32,6 @@ import {
   resolvePublicMapLevels,
   type PublicMapLevelView,
 } from '../map/public/public-map-level-view';
-import { publicSeatTooltip } from '../map/public/public-order-utils';
 import {
   getStaffEventMapSalesView,
   reserveStaffSeats,
@@ -35,48 +39,10 @@ import {
 } from '../events-service';
 
 type StaffSeat = StaffEventMapSalesViewDTO['seats'][number];
-type StaffObject = {
-  id: string;
-  levelId?: string | null;
-  sectionId?: string | null;
-  type: string;
-  x: number;
-  y: number;
-  width: number | null;
-  height: number | null;
-  rotation: number;
-  hidden?: boolean;
-  data?: Record<string, unknown>;
-};
+type StaffObject = EventMapObjectDTO;
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
-}
-
-function objectStyle(object: StaffObject) {
-  const data = object.data ?? {};
-  if (object.type === 'STAGE') return { fill: '#111827', stroke: '#111827', dash: undefined };
-  if (object.type === 'BLOCKED_AREA') return { fill: '#fee2e2', stroke: '#ef4444', dash: '7 5' };
-  if (object.type === 'TEXT') return { fill: 'transparent', stroke: 'transparent', dash: undefined };
-  if (object.type === 'SECTION') {
-    const fillEnabled = data.fillEnabled === true;
-    return {
-      fill: fillEnabled && typeof data.fill === 'string' ? data.fill : 'transparent',
-      stroke: fillEnabled ? '#7c3aed' : 'transparent',
-      dash: undefined,
-    };
-  }
-  return { fill: '#f8fafc', stroke: '#cbd5e1', dash: undefined };
-}
-
-function staffSeatClasses(seat: StaffSeat, selected: boolean, ownHeldIds: Set<string>) {
-  if (selected) return 'fill-brand-accent stroke-brand-accent';
-  if (seat.status === 'AVAILABLE') return 'fill-emerald-500 stroke-emerald-700 cursor-pointer';
-  if (seat.status === 'HELD' && ownHeldIds.has(seat.id)) return 'fill-amber-300 stroke-amber-600 cursor-pointer';
-  if (seat.status === 'HELD') return 'fill-amber-400 stroke-amber-700 cursor-not-allowed';
-  if (seat.status === 'SOLD') return 'fill-slate-300 stroke-slate-400 cursor-not-allowed';
-  if (seat.status === 'BLOCKED') return 'fill-rose-200 stroke-rose-400 cursor-not-allowed';
-  return 'fill-slate-200 stroke-slate-300 cursor-not-allowed';
 }
 
 function isSeatSelectable(seat: StaffSeat, selectedIds: string[], ownHeldIds: Set<string>) {
@@ -144,6 +110,17 @@ export function StaffSeatPickerDialog({
     if (!map || !activeLevel) return [];
     return filterPublicMapSeatsByLevel(map.seats, activeLevel.id);
   }, [activeLevel, map]);
+  const levelRenderItems = useMemo(() => {
+    if (!map || !activeLevel) return [];
+    return buildPublicMapSceneItems({
+      levelId: activeLevel.id,
+      document: map.document as EventMapDocument | null,
+      levelObjects,
+      levelSeats,
+      allObjects: map.objects as StaffObject[],
+      sections: map.sections as Array<{ id: string; sortOrder?: number }>,
+    });
+  }, [activeLevel, levelObjects, levelSeats, map]);
   const ownHeldIds = useMemo(() => new Set(initialSeatIds ?? []), [initialSeatIds]);
   const selectedSeats = useMemo(
     () => (map?.seats ?? []).filter((seat) => selectedIds.includes(seat.id)),
@@ -224,60 +201,12 @@ export function StaffSeatPickerDialog({
                       stroke={MAP_ARTBOARD_STROKE}
                       strokeWidth={MAP_ARTBOARD_STROKE_WIDTH}
                     />
-                    {levelObjects.map((object) => {
-                      const style = objectStyle(object);
-                      const width = object.width ?? 0;
-                      const height = object.height ?? 0;
-                      const cx = object.x + width / 2;
-                      const cy = object.y + height / 2;
-                      if (object.type === 'TEXT') {
-                        return <PublicMapTextSvg key={object.id} object={object as import('../map/public/public-map-text-render').PublicMapTextObject} />;
-                      }
-                      return (
-                        <rect
-                          key={object.id}
-                          x={object.x}
-                          y={object.y}
-                          width={width}
-                          height={height}
-                          rx={6}
-                          fill={style.fill}
-                          stroke={style.stroke}
-                          strokeWidth={1.5}
-                          strokeDasharray={style.dash}
-                          transform={`rotate(${object.rotation} ${cx} ${cy})`}
-                        />
-                      );
-                    })}
-                    {levelSeats.map((seat) => {
-                      const selected = selectedIds.includes(seat.id);
-                      const center = { x: seat.x, y: seat.y };
-                      const rotation = seat.rotation;
-                      const radius = Math.max((seat.size ?? 28) / 2, 8);
-                      const interactive = isSeatSelectable(seat, selectedIds, ownHeldIds);
-                      return (
-                        <g key={seat.id} transform={`rotate(${rotation} ${center.x} ${center.y})`}>
-                          <title>{publicSeatTooltip(seat.status, seat.displayLabel, seat.sectionName)}</title>
-                          <circle
-                            data-public-seat
-                            cx={center.x}
-                            cy={center.y}
-                            r={radius}
-                            strokeWidth={selected ? 4 : 2}
-                            className={staffSeatClasses(seat, selected, ownHeldIds)}
-                            onClick={() => (interactive ? toggleSeat(seat) : undefined)}
-                          />
-                          <text
-                            x={center.x}
-                            y={center.y + 4}
-                            textAnchor="middle"
-                            className="pointer-events-none select-none fill-white text-[12px] font-semibold"
-                          >
-                            {seat.displayLabel}
-                          </text>
-                        </g>
-                      );
-                    })}
+                    <PublicMapSceneRenderer
+                      items={levelRenderItems}
+                      selectedSeatIds={selectedIds}
+                      isSeatInteractive={(seat) => isSeatSelectable(seat, selectedIds, ownHeldIds)}
+                      onSeatClick={toggleSeat}
+                    />
                   </PublicMapViewport>
                 </div>
               ) : null}
