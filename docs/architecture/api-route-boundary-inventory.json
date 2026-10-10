@@ -1,9 +1,9 @@
 {
   "generatedAt": "deterministic",
-  "routeCount": 529,
+  "routeCount": 531,
   "summary": {
     "byApp": {
-      "web": 502,
+      "web": 504,
       "admin": 27
     },
     "byCategory": {
@@ -16,7 +16,7 @@
       "configuration": 11,
       "contracts": 14,
       "development": 4,
-      "events": 52,
+      "events": 54,
       "files": 5,
       "finance": 78,
       "identity": 23,
@@ -33,7 +33,7 @@
       "tenant": 7
     },
     "byProtection": {
-      "AUTH_USER": 278,
+      "AUTH_USER": 280,
       "CRON_SECRET": 47,
       "MOBILE_ACCESS_TOKEN": 43,
       "PUBLIC": 41,
@@ -41,7 +41,7 @@
       "TENANT_FINANCE": 61,
       "WEBHOOK_TOKEN": 4
     },
-    "withoutNearbyTest": 477,
+    "withoutNearbyTest": 479,
     "withoutAuthEvidence": 0,
     "directPrisma": 0,
     "directAsaas": 0
@@ -3877,6 +3877,48 @@
       "app": "web",
       "file": "apps/web/app/api/events/financial-entries/[entryId]/route.ts",
       "path": "/api/events/financial-entries/:entryId",
+      "category": "events",
+      "protection": "AUTH_USER",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantSession",
+        "withTenantSession",
+        "getEventsContext",
+        "getServerSession",
+        "resolveSessionAccess",
+        "authenticate"
+      ],
+      "hasDTOValidation": true,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
+      "file": "apps/web/app/api/events/financial-entries/[entryId]/costume-payments/route.ts",
+      "path": "/api/events/financial-entries/:entryId/costume-payments",
+      "category": "events",
+      "protection": "AUTH_USER",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantSession",
+        "withTenantSession",
+        "getEventsContext",
+        "getServerSession",
+        "resolveSessionAccess",
+        "authenticate"
+      ],
+      "hasDTOValidation": true,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
+      "file": "apps/web/app/api/events/financial-entries/[entryId]/costume-refunds/route.ts",
+      "path": "/api/events/financial-entries/:entryId/costume-refunds",
       "category": "events",
       "protection": "AUTH_USER",
       "tenantMode": "authenticated-tenant",
