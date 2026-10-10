@@ -1498,6 +1498,7 @@
         "apps/web/features/events/list/EventsTable.tsx",
         "apps/web/features/events/map/components/EventMapPanel.tsx",
         "apps/web/features/events/map/components/MapPropertiesPanel.tsx",
+        "apps/web/features/events/map/public/PublicMapExperience.tsx",
         "apps/web/features/events/participants/ParticipantBillingFields.tsx",
         "apps/web/features/events/participants/ParticipantDetailsFeature.tsx",
         "apps/web/features/events/participants/ParticipantPaymentBadge.tsx",
