@@ -39,6 +39,21 @@ describe('WhatsAppCloudClient', () => {
       }),
     );
   });
+
+  it('aborta uma chamada à API que excede o timeout configurado', async () => {
+    const fetchImpl = vi.fn<typeof fetch>((_input, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+    }));
+    const client = new WhatsAppCloudClient({
+      accessToken: 'secret-token',
+      graphApiVersion: 'v25.0',
+      fetchImpl,
+      timeoutMs: 1,
+    });
+
+    await expect(client.sendMessage('phone-1', { kind: 'text', to: '559798128106', body: 'Teste' }))
+      .rejects.toMatchObject({ name: 'TimeoutError' });
+  });
 });
 
 describe('verifyMetaWebhookSignature', () => {

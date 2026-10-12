@@ -6,6 +6,7 @@ type WhatsAppCloudClientOptions = {
   accessToken: string;
   graphApiVersion: string;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 };
 
 type MetaApiErrorBody = {
@@ -34,6 +35,7 @@ export class WhatsAppCloudClient {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(buildMetaMessagePayload(request)),
+        signal: AbortSignal.timeout(this.options.timeoutMs ?? 15_000),
       },
     );
 

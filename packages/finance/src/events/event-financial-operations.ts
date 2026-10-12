@@ -124,6 +124,38 @@ export async function requestEventTicketSaleWhatsAppResend(ctx: EventsContext, s
     if (!sale.buyerPhone || !sale.whatsappOptInAt || !sale.whatsappOptInSource || sale.whatsappOptOutAt) {
       throw new EventsError('WHATSAPP_SEM_CONSENTIMENTO', 'Esta venda não possui telefone com autorização registrada para WhatsApp.', 409);
     }
+    const candidateNotifications = await tx.eventTicketWhatsAppNotification.findMany({
+      where: {
+        contaId: ctx.contaId,
+        eventTicketSaleId: sale.id,
+        OR: [
+          { status: { in: ['PENDING', 'PROCESSING', 'QUEUED'] } },
+          { status: 'FAILED' },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, status: true, whatsappJobId: true, attempts: true, maxAttempts: true },
+    });
+    for (const activeNotification of candidateNotifications) {
+      let retryIsActive = activeNotification.status !== 'FAILED'
+        || activeNotification.attempts < activeNotification.maxAttempts;
+      if (retryIsActive && activeNotification.status === 'FAILED' && activeNotification.whatsappJobId) {
+        const linkedJob = await tx.whatsAppOutboundJob.findFirst({
+          where: {
+            id: activeNotification.whatsappJobId,
+            contaId: ctx.contaId,
+          },
+          select: { id: true, status: true, attempts: true, maxAttempts: true },
+        });
+        retryIsActive = Boolean(linkedJob && (
+          linkedJob.status === 'PENDING' || linkedJob.status === 'PROCESSING'
+          || (linkedJob.status === 'FAILED' && linkedJob.attempts < linkedJob.maxAttempts)
+        ));
+      }
+      if (retryIsActive) {
+        return { queued: false, active: true, notificationId: activeNotification.id, status: activeNotification.status };
+      }
+    }
     const recentResends = await tx.auditLog.count({
       where: {
         contaId: ctx.contaId,
@@ -146,7 +178,11 @@ export async function requestEventTicketSaleWhatsAppResend(ctx: EventsContext, s
       actorUserId: ctx.userId,
       deliveryKey: globalThis.crypto.randomUUID(),
     });
-    return { queued: notification.queued };
+    const saved = await tx.eventTicketWhatsAppNotification.findUnique({
+      where: { idempotencyKey: notification.idempotencyKey },
+      select: { id: true, status: true },
+    });
+    return { queued: notification.queued, active: false, notificationId: saved?.id ?? null, status: saved?.status ?? null };
   });
 }
 async function getFinancialEntryDto(tx: Prisma.TransactionClient, contaId: string, entryId: string) {

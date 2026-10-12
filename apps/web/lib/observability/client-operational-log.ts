@@ -41,6 +41,7 @@ export type ClientOperationalEventName =
   | 'contracts.templates.load_failed'
   | 'platform_billing.summary.load_failed'
   | 'public_event_map.order_poll.failed'
+  | 'public_event_map.order_auto_sync.failed'
   | 'public_event.participant.student_lookup.failed'
   | 'portal.student_selector.load_failed'
   | 'auth.login.sign_in.failed'

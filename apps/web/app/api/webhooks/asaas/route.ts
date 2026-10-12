@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
 import * as Sentry from '@sentry/nextjs';
 import {
@@ -17,6 +17,7 @@ import type { AsaasWebhookPayload } from '@alusa/finance';
 import { emitBillingNotificationCandidate } from '@/lib/notifications/emit-billing-notifications';
 import { invalidateChargesCache } from '@/lib/cache/invalidation';
 import { logApiOperationalEvent, recordApiResponseMetrics } from '@/lib/observability/api-logger';
+import { processAsaasWebhookPostResponse } from '@/src/server/webhooks/asaas-post-response.service';
 
 const MAX_BODY_BYTES = 512 * 1024;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -228,6 +229,11 @@ export async function POST(req: NextRequest) {
           error: cacheError,
         });
       });
+    }
+    if (useAsyncQueue && !processingRuntime.inlineDrain && result.success && result.webhookId && processedContaId) {
+      const webhookId = result.webhookId;
+      const contaId = processedContaId;
+      after(() => processAsaasWebhookPostResponse({ contaId, webhookId, requestId }));
     }
     // Depois de persistido, falhas de processamento viram retry/DLQ interno.
     // Antes da persistência, falhas técnicas precisam retornar 5xx para o Asaas reenviar.

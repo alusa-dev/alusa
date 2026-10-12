@@ -51,7 +51,7 @@ export async function POST(
   });
   const whatsappJobId = await getContractWhatsAppJobId({ notificationId: queued.id, contaId: auth.contaId });
   const outbox = whatsappJobId
-    ? await drainWhatsAppOutbox({ jobId: whatsappJobId })
+    ? await drainWhatsAppOutbox({ contaId: auth.contaId, jobId: whatsappJobId })
     : { claimed: 0, sent: 0, retried: 0, deadLettered: 0 };
   return NextResponse.json({ success: true, notification, outbox, notificationId: queued.id });
 }

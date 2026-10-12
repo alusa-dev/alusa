@@ -43,7 +43,7 @@ export async function POST(
       idempotencyKey: `whatsapp-contract:${auth.contaId}:${contract.id}:${requestId}`,
       correlationId: requestId,
     });
-    const drained = await drainWhatsAppOutbox({ limit: 1, jobId: queued.jobId });
+    const drained = await drainWhatsAppOutbox({ limit: 1, contaId: auth.contaId, jobId: queued.jobId });
 
     return NextResponse.json({
       success: true,

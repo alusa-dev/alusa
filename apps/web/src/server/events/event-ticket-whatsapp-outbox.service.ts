@@ -27,6 +27,25 @@ type DrainResult = {
   paused: boolean;
 };
 
+export async function findRecentlyCreatedPendingEventTicketWhatsAppNotifications(input: {
+  createdSince: Date;
+  contaId?: string;
+  limit: number;
+}) {
+  const requestedLimit = Number.isFinite(input.limit) ? Math.floor(input.limit) : 1;
+  const take = Math.min(3, Math.max(1, requestedLimit));
+  return prisma.eventTicketWhatsAppNotification.findMany({
+    where: {
+      status: EventTicketWhatsAppNotificationStatus.PENDING,
+      createdAt: { gte: input.createdSince },
+      ...(input.contaId ? { contaId: input.contaId } : {}),
+    },
+    orderBy: { createdAt: 'asc' },
+    take,
+    select: { id: true, contaId: true },
+  });
+}
+
 function buildPublicTicketUrlPrefix() {
   const baseUrl = process.env.APP_URL?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim();
   if (!baseUrl) throw new Error('EVENT_TICKET_PUBLIC_URL_UNAVAILABLE');
@@ -139,7 +158,8 @@ async function loadEligiblePurchase(notification: {
   return { kind: 'SKIP' as const, reason: 'PURCHASE_REFERENCE_INVALID' };
 }
 
-export async function drainEventTicketWhatsAppNotifications(input: { limit?: number; contaId?: string } = {}): Promise<DrainResult> {
+export async function drainEventTicketWhatsAppNotifications(input: { limit?: number; contaId?: string; notificationId?: string } = {}): Promise<DrainResult> {
+  if (input.notificationId && !input.contaId) throw new Error('TENANT_SCOPE_REQUIRED_FOR_NOTIFICATION');
   const runtime = getWhatsAppRuntimeConfig();
   const result: DrainResult = { claimed: 0, queued: 0, retried: 0, deadLettered: 0, skipped: 0, paused: !runtime.enabled };
   if (!runtime.enabled) return result;
@@ -154,6 +174,7 @@ export async function drainEventTicketWhatsAppNotifications(input: { limit?: num
       status: EventTicketWhatsAppNotificationStatus.PROCESSING,
       lockedAt: { lt: new Date(now.getTime() - LEASE_TIMEOUT_MS) },
       ...(input.contaId ? { contaId: input.contaId } : {}),
+      ...(input.notificationId ? { id: input.notificationId } : {}),
     },
     data: {
       status: EventTicketWhatsAppNotificationStatus.FAILED,
@@ -164,7 +185,12 @@ export async function drainEventTicketWhatsAppNotifications(input: { limit?: num
     },
   });
   await prisma.eventTicketWhatsAppNotification.updateMany({
-    where: { status: EventTicketWhatsAppNotificationStatus.FAILED, attempts: { gte: 8 }, ...(input.contaId ? { contaId: input.contaId } : {}) },
+    where: {
+      status: EventTicketWhatsAppNotificationStatus.FAILED,
+      attempts: { gte: 8 },
+      ...(input.contaId ? { contaId: input.contaId } : {}),
+      ...(input.notificationId ? { id: input.notificationId } : {}),
+    },
     data: { status: EventTicketWhatsAppNotificationStatus.DLQ, processedAt: now, lockedAt: null, lockedBy: null },
   });
 
@@ -174,13 +200,23 @@ export async function drainEventTicketWhatsAppNotifications(input: { limit?: num
       nextAttemptAt: { lte: now },
       attempts: { lt: 8 },
       ...(input.contaId ? { contaId: input.contaId } : {}),
+      ...(input.notificationId ? { id: input.notificationId } : {}),
     },
     orderBy: [{ nextAttemptAt: 'asc' }, { createdAt: 'asc' }],
     take: limit,
-    select: { id: true, contaId: true },
+    select: { id: true, contaId: true, whatsappJobId: true },
   });
 
   for (const candidate of candidates) {
+    if (candidate.whatsappJobId) {
+      const linkedJob = await prisma.whatsAppOutboundJob.findFirst({
+        where: { id: candidate.whatsappJobId, contaId: candidate.contaId },
+        select: { status: true },
+      });
+      // A delivery receipt failure is terminal for this message. The existing
+      // idempotency key points at a SENT job, so automatic retry cannot resend it.
+      if (linkedJob?.status === 'SENT' || linkedJob?.status === 'DLQ') continue;
+    }
     const claimed = await prisma.eventTicketWhatsAppNotification.updateMany({
       where: {
         id: candidate.id,
@@ -229,6 +265,22 @@ export async function drainEventTicketWhatsAppNotifications(input: { limit?: num
         idempotencyKey: `event-ticket-template:${runtime.phoneNumberId}:${notification.id}`,
         correlationId: notification.correlationId,
       });
+      if (queued.status === 'SENT' || queued.status === 'DLQ') {
+        const alreadySent = queued.status === 'SENT';
+        await prisma.eventTicketWhatsAppNotification.updateMany({
+          where: { id: notification.id, contaId: notification.contaId, status: EventTicketWhatsAppNotificationStatus.PROCESSING, lockedBy: workerId },
+          data: {
+            status: alreadySent ? EventTicketWhatsAppNotificationStatus.SENT : EventTicketWhatsAppNotificationStatus.DLQ,
+            whatsappJobId: queued.jobId,
+            processedAt: new Date(),
+            lockedAt: null,
+            lockedBy: null,
+            lastErrorCode: alreadySent ? null : notification.lastErrorCode ?? 'DELIVERY_FAILED',
+            lastError: alreadySent ? null : notification.lastError,
+          },
+        });
+        continue;
+      }
       const updated = await prisma.eventTicketWhatsAppNotification.updateMany({
         where: { id: notification.id, contaId: notification.contaId, status: EventTicketWhatsAppNotificationStatus.PROCESSING, lockedBy: workerId },
         data: {
@@ -277,4 +329,37 @@ export async function drainEventTicketWhatsAppNotifications(input: { limit?: num
   }
 
   return result;
+}
+
+/** Post-commit targeted dispatch. Cron remains responsible for recovery/retries. */
+export async function dispatchEventTicketWhatsAppNotification(input: { contaId: string; notificationId: string }) {
+  await drainEventTicketWhatsAppNotifications({ ...input, limit: 1 });
+  const notification = await prisma.eventTicketWhatsAppNotification.findFirst({
+    where: { id: input.notificationId, contaId: input.contaId },
+    select: { status: true, whatsappJobId: true },
+  });
+  if (notification?.whatsappJobId) {
+    const { drainWhatsAppOutbox } = await import('@/src/server/whatsapp/outbox.service');
+    await drainWhatsAppOutbox({ limit: 1, contaId: input.contaId, jobId: notification.whatsappJobId });
+  }
+  return notification?.status ?? null;
+}
+
+export async function dispatchPublicOrderTicketWhatsAppNotification(input: { orderId: string; accessToken: string }) {
+  const order = await prisma.eventMapOrder.findFirst({
+    where: { id: input.orderId, accessToken: input.accessToken },
+    select: { id: true, contaId: true },
+  });
+  if (!order) return null;
+  const notification = await prisma.eventTicketWhatsAppNotification.findFirst({
+    where: {
+      contaId: order.contaId,
+      eventMapOrderId: order.id,
+      status: { in: [EventTicketWhatsAppNotificationStatus.PENDING, EventTicketWhatsAppNotificationStatus.FAILED] },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  });
+  if (!notification) return null;
+  return dispatchEventTicketWhatsAppNotification({ contaId: order.contaId, notificationId: notification.id });
 }

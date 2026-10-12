@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 /**
  * Webhook Observability Service
  *
@@ -45,6 +47,17 @@ const WEBHOOK_ALERT_ATTRIBUTES = [
   'security.signal',
   'queue.lag_seconds',
   'queue.backlog',
+] as const;
+const WEBHOOK_QUEUE_ATTRIBUTES = [
+  'webhook.event',
+  'webhook.result',
+  'webhook.correlation_hash',
+  'queue.stage',
+  'queue.received_at',
+  'queue.claimed_at',
+  'queue.completed_at',
+  'queue.lag_ms',
+  'queue.processing_ms',
 ] as const;
 
 function emitWebhookAlertLog(params: {
@@ -97,6 +110,7 @@ export interface WebhookLogEntry {
   source?: 'WEBHOOK' | 'REPLAY' | 'REPROCESS';
   retry?: boolean;
   correlationId?: string;
+  queueLagMs?: number;
 }
 
 export interface WebhookMetrics {
@@ -158,7 +172,6 @@ export function logWebhookProcessing(entry: WebhookLogEntry): void {
         dimensions,
       });
     }
-
     // Successful per-event records create avoidable log volume. Keep full counts
     // in aggregated metrics and emit structured logs only for failed processing.
     if (entry.result !== 'ERROR') return;
@@ -195,6 +208,7 @@ export function createWebhookLogEntry(params: {
   error?: string;
   source?: WebhookLogEntry['source'];
   retry?: boolean;
+  queueLagMs?: number;
 }): WebhookLogEntry {
   const definition = getEventDefinition(params.event);
 
@@ -212,8 +226,98 @@ export function createWebhookLogEntry(params: {
     error: params.error,
     source: params.source ?? 'WEBHOOK',
     retry: params.retry,
+    queueLagMs: params.queueLagMs,
     correlationId: getCorrelationId(),
   };
+}
+
+/** Emits bounded, PII-free queue claim and lag metrics for a persisted event. */
+export function logWebhookClaimed(params: { event: string; eventId: string | null; recordId: string; receivedAt: Date; claimedAt: Date }): void {
+  try {
+    const definition = getEventDefinition(params.event);
+    const correlationHash = createHash('sha256').update(params.eventId ?? params.recordId).digest('hex').slice(0, 20);
+    const dimensions = normalizeMetricDimensions({
+      provider: 'asaas',
+      'operation.name': (definition?.category ?? 'UNKNOWN').toLowerCase(),
+    });
+    void sharedTelemetry.recordMetric({ kind: 'counter', name: 'finance.webhook.claimed', value: 1, dimensions });
+    const lagMs = Math.max(0, params.claimedAt.getTime() - params.receivedAt.getTime());
+    void sharedTelemetry.recordMetric({
+      kind: 'distribution',
+      name: 'finance.webhook.queue_lag_received_to_claim',
+      value: lagMs,
+      unit: 'millisecond',
+      dimensions,
+    });
+    const log = createStructuredLog({
+      severity: 'info',
+      'service.name': 'alusa-finance',
+      'event.name': 'finance.webhook.queue.claimed',
+      correlationId: correlationHash,
+      attributes: {
+        'webhook.event': params.event,
+        'webhook.correlation_hash': correlationHash,
+        'queue.stage': 'claimed',
+        'queue.received_at': params.receivedAt.toISOString(),
+        'queue.claimed_at': params.claimedAt.toISOString(),
+        'queue.lag_ms': lagMs,
+      },
+      allowedAttributes: WEBHOOK_QUEUE_ATTRIBUTES,
+    });
+    console.info(JSON.stringify(log));
+    void sharedTelemetry.publishLog(log);
+  } catch {
+    // Telemetry must not affect queue processing.
+  }
+}
+
+export function logWebhookCompleted(params: {
+  event: string;
+  eventId: string | null;
+  recordId: string;
+  result: 'SUCCESS' | 'ERROR' | 'SKIPPED';
+  receivedAt: Date;
+  claimedAt: Date;
+  completedAt: Date;
+}): void {
+  try {
+    const correlationHash = createHash('sha256').update(params.eventId ?? params.recordId).digest('hex').slice(0, 20);
+    const lagMs = Math.max(0, params.completedAt.getTime() - params.receivedAt.getTime());
+    const processingMs = Math.max(0, params.completedAt.getTime() - params.claimedAt.getTime());
+    void sharedTelemetry.recordMetric({
+      kind: 'distribution',
+      name: 'finance.webhook.queue_lag_received_to_complete',
+      value: lagMs,
+      unit: 'millisecond',
+      dimensions: normalizeMetricDimensions({
+        provider: 'asaas',
+        result: params.result.toLowerCase(),
+        'operation.name': (getEventDefinition(params.event)?.category ?? 'UNKNOWN').toLowerCase(),
+      }),
+    });
+    const log = createStructuredLog({
+      severity: params.result === 'ERROR' ? 'warn' : 'info',
+      'service.name': 'alusa-finance',
+      'event.name': 'finance.webhook.queue.completed',
+      correlationId: correlationHash,
+      attributes: {
+        'webhook.event': params.event,
+        'webhook.result': params.result,
+        'webhook.correlation_hash': correlationHash,
+        'queue.stage': 'completed',
+        'queue.received_at': params.receivedAt.toISOString(),
+        'queue.claimed_at': params.claimedAt.toISOString(),
+        'queue.completed_at': params.completedAt.toISOString(),
+        'queue.lag_ms': lagMs,
+        'queue.processing_ms': processingMs,
+      },
+      allowedAttributes: WEBHOOK_QUEUE_ATTRIBUTES,
+    });
+    console.info(JSON.stringify(log));
+    void sharedTelemetry.publishLog(log);
+  } catch {
+    // Telemetry must not affect webhook processing.
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

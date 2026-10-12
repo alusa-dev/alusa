@@ -1247,7 +1247,8 @@
         "apps/web/src/server/students/student-archive.orchestrator.ts",
         "apps/web/src/server/students/student-detail-http-route.service.ts",
         "apps/web/src/server/students/student-finance-port.ts",
-        "apps/web/src/server/students/student-http-route.service.ts"
+        "apps/web/src/server/students/student-http-route.service.ts",
+        "apps/web/src/server/webhooks/asaas-post-response.service.ts"
       ]
     },
     {

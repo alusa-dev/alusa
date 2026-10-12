@@ -10,6 +10,7 @@ const { getWhatsAppRuntimeConfig, assertWhatsAppConfigured, enqueueWhatsAppMessa
       findMany: vi.fn(),
       findUnique: vi.fn(),
     },
+    whatsAppOutboundJob: { findFirst: vi.fn() },
     eventMapOrder: { findFirst: vi.fn() },
     eventTicketSale: { findFirst: vi.fn() },
   },
@@ -19,12 +20,29 @@ vi.mock('@/prisma/client', () => ({ prisma }));
 vi.mock('@/src/server/whatsapp/config', () => ({ getWhatsAppRuntimeConfig, assertWhatsAppConfigured }));
 vi.mock('@/src/server/whatsapp/outbox.service', () => ({ enqueueWhatsAppMessage }));
 
-import { drainEventTicketWhatsAppNotifications } from './event-ticket-whatsapp-outbox.service';
+import {
+  drainEventTicketWhatsAppNotifications,
+  findRecentlyCreatedPendingEventTicketWhatsAppNotifications,
+} from './event-ticket-whatsapp-outbox.service';
 
 describe('drainEventTicketWhatsAppNotifications', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     prisma.eventTicketWhatsAppNotification.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('selects recent pending notifications through a bounded tenant-scoped service query', async () => {
+    const createdSince = new Date('2026-10-12T10:00:00.000Z');
+    prisma.eventTicketWhatsAppNotification.findMany.mockResolvedValue([]);
+
+    await findRecentlyCreatedPendingEventTicketWhatsAppNotifications({ createdSince, contaId: 'conta-a', limit: 2 });
+
+    expect(prisma.eventTicketWhatsAppNotification.findMany).toHaveBeenCalledWith({
+      where: { status: 'PENDING', createdAt: { gte: createdSince }, contaId: 'conta-a' },
+      orderBy: { createdAt: 'asc' },
+      take: 2,
+      select: { id: true, contaId: true },
+    });
   });
 
   it('does not claim or mutate notifications while WhatsApp is disabled', async () => {
@@ -77,7 +95,7 @@ describe('drainEventTicketWhatsAppNotifications', () => {
     const result = await drainEventTicketWhatsAppNotifications();
 
     expect(result.queued).toBe(1);
-    expect(prisma.eventTicketWhatsAppNotification.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: { id: true, contaId: true } }));
+    expect(prisma.eventTicketWhatsAppNotification.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: { id: true, contaId: true, whatsappJobId: true } }));
     expect(prisma.eventTicketWhatsAppNotification.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 'notification-1', contaId: 'conta-1' }), data: expect.objectContaining({ status: 'PROCESSING' }) }));
     expect(prisma.eventTicketWhatsAppNotification.findUnique).toHaveBeenCalledWith({ where: { id: 'notification-1', contaId: 'conta-1' } });
     expect(prisma.eventMapOrder.findFirst).toHaveBeenCalledWith(expect.objectContaining({
@@ -98,6 +116,35 @@ describe('drainEventTicketWhatsAppNotifications', () => {
     expect(prisma.eventTicketWhatsAppNotification.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 'notification-1', contaId: 'conta-1' }),
       data: expect.objectContaining({ status: 'QUEUED', whatsappJobId: 'job-1' }),
+    }));
+    vi.unstubAllEnvs();
+  });
+
+  it('restores the ticket notification as sent when its idempotent outbox job already succeeded', async () => {
+    vi.stubEnv('APP_URL', 'https://alusa.app');
+    vi.stubEnv('WHATSAPP_EVENT_TICKET_URL_PREFIX', 'https://alusa.app/api/public/event-ticket-links/');
+    getWhatsAppRuntimeConfig.mockReturnValue({ enabled: true, phoneNumberId: 'phone-id' });
+    prisma.eventTicketWhatsAppNotification.findMany.mockResolvedValue([{ id: 'notification-recovered', contaId: 'conta-1' }]);
+    prisma.eventTicketWhatsAppNotification.findUnique.mockResolvedValue({
+      id: 'notification-recovered', contaId: 'conta-1', purchaseType: 'PUBLIC_ORDER',
+      eventMapOrderId: 'order-1', eventTicketSaleId: null, status: 'PROCESSING',
+      recipientPhone: '5511999999999', consentVersion: 'event-ticket-whatsapp-v1',
+      consentRecordedAt: new Date(), consentSource: 'PUBLIC_CHECKOUT', attempts: 2, maxAttempts: 8,
+      templateName: 'ingresso_emitido', languageCode: 'pt_BR', correlationId: 'event-ticket:public_order:order-1',
+    });
+    prisma.eventMapOrder.findFirst.mockResolvedValue({
+      id: 'order-1', status: 'CONFIRMED', paymentStatus: 'PAID', ticketFulfillmentStatus: 'ISSUED',
+      buyerName: 'Ana Silva', buyerPhone: '5511999999999', whatsappOptInAt: new Date(),
+      whatsappOptInSource: 'PUBLIC_CHECKOUT', accessToken: 'opaque-access-token',
+      event: { name: 'Festival' }, map: { name: 'Sessão 01' }, items: [{ ticket: { id: 'ticket-1', status: 'VALID' } }],
+    });
+    enqueueWhatsAppMessage.mockResolvedValue({ jobId: 'job-already-sent', status: 'SENT', deduplicated: true });
+
+    await drainEventTicketWhatsAppNotifications();
+
+    expect(prisma.eventTicketWhatsAppNotification.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'notification-recovered', contaId: 'conta-1' }),
+      data: expect.objectContaining({ status: 'SENT', whatsappJobId: 'job-already-sent', processedAt: expect.any(Date), lastErrorCode: null }),
     }));
     vi.unstubAllEnvs();
   });
@@ -157,5 +204,23 @@ describe('drainEventTicketWhatsAppNotifications', () => {
       data: expect.objectContaining({ status: 'FAILED' }),
     }));
     vi.unstubAllEnvs();
+  });
+
+  it('does not requeue a definitive delivery failure onto its already-sent job', async () => {
+    getWhatsAppRuntimeConfig.mockReturnValue({ enabled: true, phoneNumberId: 'phone-id' });
+    prisma.eventTicketWhatsAppNotification.findMany.mockResolvedValue([
+      { id: 'notification-delivery-failed', contaId: 'conta-a', whatsappJobId: 'job-already-sent' },
+    ]);
+    prisma.whatsAppOutboundJob.findFirst.mockResolvedValue({ status: 'SENT' });
+
+    const result = await drainEventTicketWhatsAppNotifications();
+
+    expect(result).toMatchObject({ claimed: 0, queued: 0 });
+    expect(prisma.whatsAppOutboundJob.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'job-already-sent', contaId: 'conta-a' },
+    }));
+    expect(prisma.eventTicketWhatsAppNotification.updateMany).toHaveBeenCalledTimes(2);
+    expect(prisma.eventTicketWhatsAppNotification.findUnique).not.toHaveBeenCalled();
+    expect(enqueueWhatsAppMessage).not.toHaveBeenCalled();
   });
 });

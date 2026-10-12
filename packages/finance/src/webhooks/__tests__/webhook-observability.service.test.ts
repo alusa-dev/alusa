@@ -5,6 +5,8 @@ import {
   alertQueueLagCritical,
   alertTokenRejected,
   evaluateWebhookSLOs,
+  logWebhookClaimed,
+  logWebhookCompleted,
   logWebhookProcessing,
   type WebhookLogEntry,
 } from '../webhook-observability.service';
@@ -56,6 +58,40 @@ describe('webhook telemetry', () => {
     expect(JSON.stringify({ logs, metrics })).not.toContain('customer@example.com');
     expect(logs[0]?.correlationId).toBe('asaas-event:evt-private-id');
     expect(logs[0]).not.toHaveProperty('eventId');
+  });
+
+  it('emite claim e conclusão com timestamps e lag sem identificadores originais', () => {
+    const logs: StructuredLog[] = [];
+    const metrics: TelemetryMetric[] = [];
+    const infoLog = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    unsubscribe = registerTelemetrySink({ log: (record) => logs.push(record), metric: (metric) => metrics.push(metric) });
+    const receivedAt = new Date('2026-10-12T10:00:00.000Z');
+    const claimedAt = new Date('2026-10-12T10:00:02.000Z');
+    const completedAt = new Date('2026-10-12T10:00:03.500Z');
+
+    logWebhookClaimed({ event: 'PAYMENT_RECEIVED', eventId: 'private-event-id', recordId: 'private-record-id', receivedAt, claimedAt });
+    logWebhookProcessing({
+      timestamp: completedAt.toISOString(), eventName: 'PAYMENT_RECEIVED', eventId: 'private-event-id',
+      category: 'PAYMENT', handled: true, critical: false, impactLevel: 'low', result: 'SUCCESS',
+      durationMs: 1500, contaId: 'tenant-private-id', correlationId: 'asaas-event:private-event-id', queueLagMs: 3500,
+    });
+    logWebhookCompleted({ event: 'PAYMENT_RECEIVED', eventId: 'private-event-id', recordId: 'private-record-id', result: 'SUCCESS', receivedAt, claimedAt, completedAt });
+
+    expect(infoLog).toHaveBeenCalledTimes(2);
+    expect(logs).toHaveLength(2);
+    expect(logs[0]).toMatchObject({
+      'event.name': 'finance.webhook.queue.claimed',
+      attributes: { 'queue.stage': 'claimed', 'queue.lag_ms': 2000, 'webhook.event': 'PAYMENT_RECEIVED' },
+    });
+    expect(logs[1]).toMatchObject({
+      'event.name': 'finance.webhook.queue.completed',
+      attributes: { 'queue.stage': 'completed', 'queue.lag_ms': 3500, 'queue.processing_ms': 1500 },
+    });
+    expect(logs[0]?.correlationId).toMatch(/^[a-f0-9]{20}$/);
+    expect(JSON.stringify({ logs, metrics })).not.toContain('private-event-id');
+    expect(JSON.stringify({ logs, metrics })).not.toContain('private-record-id');
+    expect(metrics.filter((metric) => metric.name === 'finance.webhook.queue_lag_received_to_claim')).toHaveLength(1);
+    expect(metrics.filter((metric) => metric.name === 'finance.webhook.queue_lag_received_to_complete')).toHaveLength(1);
   });
 
   it('normaliza alertas e limita dados e volume de sinais de segurança', () => {

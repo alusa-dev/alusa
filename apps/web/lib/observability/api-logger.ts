@@ -30,6 +30,8 @@ export type ApiOperationalEventName =
   | 'api.upload.failed'
   | 'api.upload.delete.failed'
   | 'api.webhook.inline_drain.failed'
+  | 'api.webhook.post_response_drain.failed'
+  | 'api.whatsapp_webhook.post_response_processing.failed'
   | 'api.webhook.maintenance.failed'
   | 'api.webhook.notification_candidate.failed'
   | 'api.webhook.cache_invalidation.failed'

@@ -16,10 +16,12 @@ import { withCorrelationId } from '../foundation/correlation';
 import {
   logWebhookProcessing,
   createWebhookLogEntry,
+  logWebhookCompleted,
   alertIfUnhandledCritical,
   alertIfUnknownEvent,
   alertTokenRejected,
   alertQueueLagCritical,
+  logWebhookClaimed,
 } from './webhook-observability.service';
 import {
   getWebhookQueueMetrics,
@@ -971,8 +973,40 @@ async function enqueueAsaasWebhookEventInternal(
   };
 }
 
+export async function claimTenantFairAsaasWebhooks(
+  tx: Prisma.TransactionClient,
+  input: { statuses: string[]; maxAttempts: number; limit: number },
+): Promise<Array<{ id: string }>> {
+  return tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    WITH ranked AS (
+      SELECT w.id, w."contaId", w."recebidoEm",
+        ROW_NUMBER() OVER (PARTITION BY w."contaId" ORDER BY w."recebidoEm" ASC, w.id ASC) AS tenant_rank
+      FROM "WebhookAsaas" w
+      WHERE w.status IN (${Prisma.join(input.statuses)})
+        AND w.tentativas < ${input.maxAttempts}
+        AND (w."nextRetryAt" IS NULL OR w."nextRetryAt" <= NOW())
+    ),
+    picked AS (
+      SELECT w.id
+      FROM "WebhookAsaas" w
+      JOIN ranked r ON r.id = w.id
+      ORDER BY r.tenant_rank ASC, r."recebidoEm" ASC, r."contaId" ASC, w.id ASC
+      FOR UPDATE OF w SKIP LOCKED
+      LIMIT ${input.limit}
+    )
+    UPDATE "WebhookAsaas" w
+    SET status = 'PROCESSANDO', tentativas = w.tentativas + 1, "ultimaTentativaEm" = NOW()
+    FROM picked
+    WHERE w.id = picked.id
+      AND w.status IN (${Prisma.join(input.statuses)})
+      AND w.tentativas < ${input.maxAttempts}
+    RETURNING w.id
+  `);
+}
+
 export async function processAsaasWebhookQueue(params?: {
   contaId?: string;
+  webhookId?: string;
   limit?: number;
   statuses?: Array<'PENDENTE' | 'ERRO'>;
   source?: 'WEBHOOK' | 'REPLAY' | 'REPROCESS';
@@ -1006,41 +1040,11 @@ export async function processAsaasWebhookQueue(params?: {
 
   const claimedRows = await prisma.$transaction(async (tx) => {
     const contaFilter = params?.contaId ? Prisma.sql`AND w."contaId" = ${params.contaId}` : Prisma.empty;
+    const webhookFilter = params?.webhookId ? Prisma.sql`AND w.id = ${params.webhookId}` : Prisma.empty;
 
-    // Tenant-fair: distribui picks entre tenants usando DISTINCT ON + ORDER BY
+    // Tenant-fair batch filling preserves per-tenant round robin and SKIP LOCKED.
     if (params?.tenantFair && !params?.contaId) {
-      return tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-        WITH per_tenant AS (
-          SELECT DISTINCT ON (w."contaId") w.id, w."contaId", w."recebidoEm"
-          FROM "WebhookAsaas" w
-          WHERE w.status IN (${Prisma.join(statuses)})
-            AND w.tentativas < ${maxAttempts}
-            AND (w."nextRetryAt" IS NULL OR w."nextRetryAt" <= NOW())
-          ORDER BY w."contaId", w."recebidoEm" ASC
-        ),
-        picked AS (
-          SELECT w.id
-          FROM "WebhookAsaas" w
-          WHERE w.status IN (${Prisma.join(statuses)})
-            AND w.tentativas < ${maxAttempts}
-            AND (w."nextRetryAt" IS NULL OR w."nextRetryAt" <= NOW())
-            AND (
-              w.id IN (SELECT id FROM per_tenant)
-              OR w."recebidoEm" <= (SELECT MIN("recebidoEm") FROM per_tenant)
-            )
-          ORDER BY w."recebidoEm" ASC
-          FOR UPDATE SKIP LOCKED
-          LIMIT ${limit}
-        )
-        UPDATE "WebhookAsaas" w
-        SET
-          status = 'PROCESSANDO',
-          tentativas = w.tentativas + 1,
-          "ultimaTentativaEm" = NOW()
-        FROM picked
-        WHERE w.id = picked.id
-        RETURNING w.id
-      `);
+      return claimTenantFairAsaasWebhooks(tx, { statuses, maxAttempts, limit });
     }
 
     return tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
@@ -1049,6 +1053,7 @@ export async function processAsaasWebhookQueue(params?: {
         FROM "WebhookAsaas" w
         WHERE w.status IN (${Prisma.join(statuses)})
           ${contaFilter}
+          ${webhookFilter}
           AND w.tentativas < ${maxAttempts}
           AND (w."nextRetryAt" IS NULL OR w."nextRetryAt" <= NOW())
         ORDER BY w."recebidoEm" ASC
@@ -1062,6 +1067,8 @@ export async function processAsaasWebhookQueue(params?: {
         "ultimaTentativaEm" = NOW()
       FROM picked
       WHERE w.id = picked.id
+        AND w.status IN (${Prisma.join(statuses)})
+        AND w.tentativas < ${maxAttempts}
       RETURNING w.id
     `);
   });
@@ -1086,6 +1093,14 @@ export async function processAsaasWebhookQueue(params?: {
     attempted += 1;
 
     const event = hook.evento;
+    const claimedAt = hook.ultimaTentativaEm ?? new Date();
+    logWebhookClaimed({
+      event,
+      eventId: hook.eventId ?? null,
+      recordId: hook.id,
+      receivedAt: hook.recebidoEm,
+      claimedAt,
+    });
     const payload = hook.payload as unknown as AsaasWebhookBody;
     // The persisted webhook row/event is stable across retries. Use it for
     // business correlation while Sentry/requestId continue to identify each
@@ -1133,11 +1148,21 @@ export async function processAsaasWebhookQueue(params?: {
         contaId: hook.contaId,
         result: result.ok ? (result.skipped ? 'SKIPPED' : 'SUCCESS') : 'ERROR',
         durationMs: result.duracaoMs,
+        queueLagMs: Math.max(0, Date.now() - hook.recebidoEm.getTime()),
         error: result.error,
         source,
         retry: hook.tentativas > 1,
       })
     );
+    logWebhookCompleted({
+      event,
+      eventId: hook.eventId ?? null,
+      recordId: hook.id,
+      result: result.ok ? (result.skipped ? 'SKIPPED' : 'SUCCESS') : 'ERROR',
+      receivedAt: hook.recebidoEm,
+      claimedAt,
+      completedAt: new Date(),
+    });
 
     if (result.ok) {
       processed += 1;
