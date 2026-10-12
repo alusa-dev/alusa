@@ -162,17 +162,15 @@ export function startEnrollmentFinancialCommandLeaseHeartbeat(input: {
   claimToken: string;
   leaseMs?: number;
   intervalMs?: number;
-  clock?: () => Date;
 }) {
   const leaseMs = input.leaseMs ?? 5 * 60_000;
-  const clock = input.clock ?? (() => new Date());
   let stopped = false;
   let lost = false;
   let renewal = Promise.resolve();
   const timer = setInterval(() => {
     if (stopped || lost) return;
     renewal = renewal.then(async () => {
-      const now = clock();
+      const now = new Date();
       const leaseExpiresAt = new Date(now.getTime() + leaseMs);
       const renewed = await input.db.$transaction(async (tx) => {
         const agreement = await tx.billingAgreement.updateMany({
@@ -194,7 +192,7 @@ export function startEnrollmentFinancialCommandLeaseHeartbeat(input: {
     async assertOwned() {
       await renewal;
       if (lost) throw new Error('ENROLLMENT_FINANCIAL_COMMAND_LEASE_LOST');
-      const now = clock();
+      const now = new Date();
       const [agreementCount, eventCount] = await Promise.all([
         input.db.billingAgreement.count({
           where: {

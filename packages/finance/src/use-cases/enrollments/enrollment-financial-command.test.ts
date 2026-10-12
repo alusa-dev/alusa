@@ -203,8 +203,8 @@ describe('processEnrollmentFinancialCommand', () => {
     };
     const { db, tx } = baseDb();
     const remoteState = { value: 150, cycle: 'MONTHLY', nextDueDate: '2026-11-01', endDate: null, status: 'ACTIVE', interest: { value: 6 }, discount: { value: 10, type: 'PERCENTAGE', dueDateLimitDays: 5 }, fine: { value: 2, type: 'FIXED' } };
-    const get = vi.fn(async () => ({ ...remoteState } as never));
-    const update = vi.fn(async (_id: string, patch: { fine?: { value: number } }) => { if (patch.fine) remoteState.fine.value = patch.fine.value; });
+    const get = vi.fn(async () => structuredClone(remoteState) as never);
+    const update = vi.fn(async (_id: string, patch: { fine?: { value: number; type: 'FIXED' } }) => { if (patch.fine) remoteState.fine = { ...patch.fine }; });
 
     const result = await processEnrollmentFinancialCommand({
       db: db as never,
@@ -213,6 +213,7 @@ describe('processEnrollmentFinancialCommand', () => {
     });
 
     expect(result.status).toBe(MatriculaBillingOutboxStatus.PROCESSED);
+    expect(get).toHaveBeenCalledTimes(2);
     expect(update).toHaveBeenCalledWith('asaas-sub-1', { fine: { value: 0, type: 'FIXED' }, updatePendingPayments: true }, { contaId: 'conta-1' });
     expect(syncEditableSubscriptionPayments).toHaveBeenCalledWith({
       contaId: 'conta-1',

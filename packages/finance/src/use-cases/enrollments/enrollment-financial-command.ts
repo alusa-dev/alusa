@@ -179,7 +179,7 @@ export async function processEnrollmentFinancialCommand(input: {
     await input.assertLeaseOwned?.();
     let current = await remote.get(command.targetSubscriptionId, { contaId: input.event.contaId });
     const patch = command.remotePatch;
-    const remoteTerms = current as typeof current & { interest?: { value?: number | null } | null; fine?: { value?: number | null; type?: string | null } | null; discount?: { value?: number | null; type?: string | null; dueDateLimitDays?: number | null } | null };
+    let remoteTerms = current as typeof current & { interest?: { value?: number | null } | null; fine?: { value?: number | null; type?: string | null } | null; discount?: { value?: number | null; type?: string | null; dueDateLimitDays?: number | null } | null };
     const matches = () =>
       (patch.value === undefined || Number(current.value) === patch.value) &&
       (patch.cycle === undefined || current.cycle === patch.cycle) &&
@@ -193,6 +193,7 @@ export async function processEnrollmentFinancialCommand(input: {
       await remote.update(command.targetSubscriptionId, patch as Parameters<typeof updateSubscription>[1], { contaId: input.event.contaId });
       await input.assertLeaseOwned?.();
       current = await remote.get(command.targetSubscriptionId, { contaId: input.event.contaId });
+      remoteTerms = current as typeof current & { interest?: { value?: number | null } | null; fine?: { value?: number | null; type?: string | null } | null; discount?: { value?: number | null; type?: string | null; dueDateLimitDays?: number | null } | null };
     }
     if (!matches()) return await fail('ASAAS_NAO_CONFIRMOU_ATUALIZACAO_DA_ASSINATURA');
     if (patch.interest || patch.fine || patch.discount) {

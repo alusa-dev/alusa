@@ -1276,7 +1276,13 @@ export async function processEnrollmentBillingOutboxEvent(
     return { eventId: event.id, matriculaId: targetMatriculaId, status: 'SKIPPED' };
   }
   const mutationLeaseHeartbeat = leasedAsaasSubscriptionId && isSerializedSubscriptionMutation
-    ? startEnrollmentFinancialCommandLeaseHeartbeat({ db, contaId: event.contaId, targetSubscriptionId: leasedAsaasSubscriptionId, eventId: event.id, claimToken, ...(deps.now ? { clock: () => now } : {}) })
+    ? startEnrollmentFinancialCommandLeaseHeartbeat({
+        db,
+        contaId: event.contaId,
+        targetSubscriptionId: leasedAsaasSubscriptionId,
+        eventId: event.id,
+        claimToken,
+      })
     : null;
   try {
   if (claimedEvent.terminalIntent) {

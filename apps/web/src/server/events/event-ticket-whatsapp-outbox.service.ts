@@ -245,7 +245,7 @@ export async function drainEventTicketWhatsAppNotifications(input: { limit?: num
       result.queued += 1;
     } catch (error) {
       const sanitized = sanitizeWhatsAppError(error);
-      const attempts = notification.attempts + 1;
+      const attempts = notification.attempts;
       const permanentCodes = [
         'EVENT_TICKET_PUBLIC_URL_UNAVAILABLE',
         'EVENT_TICKET_PUBLIC_URL_MUST_BE_HTTPS',

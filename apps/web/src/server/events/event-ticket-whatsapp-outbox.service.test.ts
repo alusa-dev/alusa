@@ -129,4 +129,33 @@ describe('drainEventTicketWhatsAppNotifications', () => {
       data: expect.objectContaining({ status: 'SKIPPED', lastErrorCode: 'RECIPIENT_OR_CONSENT_CHANGED' }),
     }));
   });
+
+  it('retries the seventh failed send instead of moving it to DLQ early', async () => {
+    vi.stubEnv('APP_URL', 'https://alusa.app');
+    vi.stubEnv('WHATSAPP_EVENT_TICKET_URL_PREFIX', 'https://alusa.app/api/public/event-ticket-links/');
+    getWhatsAppRuntimeConfig.mockReturnValue({ enabled: true, phoneNumberId: 'phone-id' });
+    prisma.eventTicketWhatsAppNotification.findMany.mockResolvedValue([{ id: 'notification-3', contaId: 'conta-a' }]);
+    prisma.eventTicketWhatsAppNotification.findUnique.mockResolvedValue({
+      id: 'notification-3', contaId: 'conta-a', purchaseType: 'PUBLIC_ORDER',
+      eventMapOrderId: 'order-3', eventTicketSaleId: null, status: 'PROCESSING',
+      recipientPhone: '5511999999999', consentVersion: 'event-ticket-whatsapp-v1',
+      consentRecordedAt: new Date(), consentSource: 'PUBLIC_CHECKOUT', attempts: 7, maxAttempts: 8,
+      templateName: 'ingresso_emitido', languageCode: 'pt_BR', correlationId: 'event-ticket:public_order:order-3',
+    });
+    prisma.eventMapOrder.findFirst.mockResolvedValue({
+      id: 'order-3', status: 'CONFIRMED', paymentStatus: 'PAID', ticketFulfillmentStatus: 'ISSUED',
+      buyerName: 'Ana Silva', buyerPhone: '5511999999999', whatsappOptInAt: new Date(),
+      whatsappOptInSource: 'PUBLIC_CHECKOUT', whatsappOptOutAt: null, accessToken: 'opaque-access-token',
+      event: { name: 'Festival' }, map: { name: 'Sessão 01' }, items: [{ ticket: { id: 'ticket-3', status: 'VALID' } }],
+    });
+    enqueueWhatsAppMessage.mockRejectedValue(new Error('temporary provider failure'));
+
+    const result = await drainEventTicketWhatsAppNotifications();
+
+    expect(result).toMatchObject({ claimed: 1, retried: 1, deadLettered: 0 });
+    expect(prisma.eventTicketWhatsAppNotification.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'FAILED' }),
+    }));
+    vi.unstubAllEnvs();
+  });
 });
