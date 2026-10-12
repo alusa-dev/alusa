@@ -17,10 +17,7 @@ import type { AsaasWebhookPayload } from '@alusa/finance';
 import { emitBillingNotificationCandidate } from '@/lib/notifications/emit-billing-notifications';
 import { invalidateChargesCache } from '@/lib/cache/invalidation';
 import { logApiOperationalEvent, recordApiResponseMetrics } from '@/lib/observability/api-logger';
-import {
-  dispatchEventTicketWhatsAppNotification,
-  findRecentlyCreatedPendingEventTicketWhatsAppNotifications,
-} from '@/src/server/events/event-ticket-whatsapp-outbox.service';
+import { processAsaasWebhookPostResponse } from '@/src/server/webhooks/asaas-post-response.service';
 
 const MAX_BODY_BYTES = 512 * 1024;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -236,41 +233,7 @@ export async function POST(req: NextRequest) {
     if (useAsyncQueue && !processingRuntime.inlineDrain && result.success && result.webhookId && processedContaId) {
       const webhookId = result.webhookId;
       const contaId = processedContaId;
-      after(async () => {
-        const notificationCreatedAt = new Date();
-        try {
-          const processed = await processAsaasWebhookQueueWithInbox({
-            contaId,
-            webhookId,
-            limit: 1,
-            statuses: ['PENDENTE', 'ERRO'],
-            source: 'WEBHOOK',
-            drainSideEffects: false,
-          });
-          if (!processed.processed) return;
-          const notifications = await findRecentlyCreatedPendingEventTicketWhatsAppNotifications({
-            contaId,
-            createdSince: notificationCreatedAt,
-            limit: 2,
-          });
-          for (const notification of notifications) {
-            try {
-              await dispatchEventTicketWhatsAppNotification({ contaId, notificationId: notification.id });
-            } catch {
-              // Durable notification and scheduled worker retain retry ownership.
-            }
-          }
-        } catch (error) {
-          logApiOperationalEvent({
-            severity: 'warn',
-            eventName: 'api.webhook.post_response_drain.failed',
-            route: '/api/webhooks/asaas',
-            method: 'POST',
-            requestId,
-            error,
-          });
-        }
-      });
+      after(() => processAsaasWebhookPostResponse({ contaId, webhookId, requestId }));
     }
     // Depois de persistido, falhas de processamento viram retry/DLQ interno.
     // Antes da persistência, falhas técnicas precisam retornar 5xx para o Asaas reenviar.
