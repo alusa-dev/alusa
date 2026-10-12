@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { findManyMock, countMock, orderGroupByMock, ticketGroupByMock } = vi.hoisted(() => ({
+const { findManyMock, countMock, orderGroupByMock, ticketGroupByMock, notificationFindManyMock } = vi.hoisted(() => ({
   findManyMock: vi.fn(),
   countMock: vi.fn(),
   orderGroupByMock: vi.fn(),
   ticketGroupByMock: vi.fn(),
+  notificationFindManyMock: vi.fn(),
 }));
 
 vi.mock('../../prisma', () => ({
@@ -15,6 +16,7 @@ vi.mock('../../prisma', () => ({
       groupBy: orderGroupByMock,
     },
     eventTicket: { groupBy: ticketGroupByMock },
+    eventTicketWhatsAppNotification: { findMany: notificationFindManyMock },
   },
 }));
 
@@ -58,6 +60,7 @@ describe('listEventPublicMapOrdersForAdmin', () => {
       { status: 'USED', _count: { _all: 4 } },
       { status: 'CANCELLED', _count: { _all: 3 } },
     ]);
+    notificationFindManyMock.mockResolvedValue([]);
   });
 
   it('paginates tenant-scoped search results and counts reserved seats before ticket issuance', async () => {
@@ -82,6 +85,10 @@ describe('listEventPublicMapOrdersForAdmin', () => {
       take: 6,
     }));
     expect(countMock).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ contaId: 'conta-1', eventId: 'event-1' }) }));
+    expect(notificationFindManyMock).toHaveBeenCalledWith(expect.objectContaining({
+      where: { contaId: 'conta-1', eventMapOrderId: { in: ['order-1'] } },
+      select: { eventMapOrderId: true, status: true },
+    }));
     expect(result.total).toBe(20);
     expect(result.items[0]).toMatchObject({ seatCount: 2, ticketCount: 0, lotNames: ['1º Lote'] });
   });
@@ -173,5 +180,19 @@ describe('listEventPublicMapOrdersForAdmin', () => {
       cancelledAt: '2026-10-02T14:35:00.000Z',
       lotNames: [],
     });
+  });
+
+  it('returns the newest WhatsApp status for each tenant-scoped page order', async () => {
+    notificationFindManyMock.mockResolvedValueOnce([
+      { eventMapOrderId: 'order-1', status: 'DELIVERED' },
+      { eventMapOrderId: 'order-1', status: 'SENT' },
+    ]);
+
+    const result = await listEventPublicMapOrdersForAdmin('conta-1', 'event-1');
+
+    expect(result.items[0]?.whatsappStatus).toBe('DELIVERED');
+    expect(notificationFindManyMock).toHaveBeenCalledWith(expect.objectContaining({
+      where: { contaId: 'conta-1', eventMapOrderId: { in: ['order-1'] } },
+    }));
   });
 });

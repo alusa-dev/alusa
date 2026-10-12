@@ -10325,6 +10325,7 @@
       "authEvidence": true,
       "authEvidenceTokens": [
         "resolveAsaasWebhookAccessToken",
+        "signature",
         "WEBHOOK"
       ],
       "hasDTOValidation": false,
@@ -10375,7 +10376,8 @@
       "tenantMode": "webhook-payload",
       "authEvidence": true,
       "authEvidenceTokens": [
-        "signature"
+        "signature",
+        "WEBHOOK"
       ],
       "hasDTOValidation": false,
       "hasNearbyTest": false,
