@@ -1,9 +1,9 @@
 {
   "generatedAt": "deterministic",
-  "routeCount": 531,
+  "routeCount": 534,
   "summary": {
     "byApp": {
-      "web": 504,
+      "web": 507,
       "admin": 27
     },
     "byCategory": {
@@ -16,7 +16,7 @@
       "configuration": 11,
       "contracts": 14,
       "development": 4,
-      "events": 54,
+      "events": 56,
       "files": 5,
       "finance": 78,
       "identity": 23,
@@ -26,22 +26,22 @@
       "platform-billing": 7,
       "portal": 8,
       "privacy": 4,
-      "public": 17,
+      "public": 18,
       "reporting": 9,
       "sales": 25,
       "search": 1,
       "tenant": 7
     },
     "byProtection": {
-      "AUTH_USER": 280,
+      "AUTH_USER": 282,
       "CRON_SECRET": 47,
       "MOBILE_ACCESS_TOKEN": 43,
-      "PUBLIC": 41,
+      "PUBLIC": 42,
       "TENANT_ADMIN": 55,
       "TENANT_FINANCE": 61,
       "WEBHOOK_TOKEN": 4
     },
-    "withoutNearbyTest": 479,
+    "withoutNearbyTest": 482,
     "withoutAuthEvidence": 0,
     "directPrisma": 0,
     "directAsaas": 0
@@ -3665,6 +3665,27 @@
     },
     {
       "app": "web",
+      "file": "apps/web/app/api/events/[eventId]/public-orders/[orderId]/resend-ticket-whatsapp/route.ts",
+      "path": "/api/events/:eventId/public-orders/:orderId/resend-ticket-whatsapp",
+      "category": "events",
+      "protection": "AUTH_USER",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantSession",
+        "withTenantSession",
+        "getEventsContext",
+        "getServerSession",
+        "resolveSessionAccess",
+        "authenticate"
+      ],
+      "hasDTOValidation": true,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
       "file": "apps/web/app/api/events/[eventId]/public-orders/verify-ticket/route.ts",
       "path": "/api/events/:eventId/public-orders/verify-ticket",
       "category": "events",
@@ -4184,6 +4205,27 @@
         "authenticate"
       ],
       "hasDTOValidation": true,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
+      "file": "apps/web/app/api/events/ticket-sales/[saleId]/resend-ticket-whatsapp/route.ts",
+      "path": "/api/events/ticket-sales/:saleId/resend-ticket-whatsapp",
+      "category": "events",
+      "protection": "AUTH_USER",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantSession",
+        "withTenantSession",
+        "getEventsContext",
+        "getServerSession",
+        "resolveSessionAccess",
+        "authenticate"
+      ],
+      "hasDTOValidation": false,
       "hasNearbyTest": false,
       "directPrisma": false,
       "directAsaas": false
@@ -8789,6 +8831,22 @@
         "PUBLIC_ROUTE"
       ],
       "hasDTOValidation": true,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
+      "file": "apps/web/app/api/public/event-ticket-links/[token]/route.ts",
+      "path": "/api/public/event-ticket-links/:token",
+      "category": "public",
+      "protection": "PUBLIC",
+      "tenantMode": "public",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "PUBLIC_ROUTE"
+      ],
+      "hasDTOValidation": false,
       "hasNearbyTest": false,
       "directPrisma": false,
       "directAsaas": false

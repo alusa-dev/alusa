@@ -478,13 +478,6 @@ export async function patchMatriculaRoute(req: Request, ctx: { params: Promise<{
 
     let subscriptionMetadata: Record<string, unknown> | undefined;
     let pendingFinancialCommand: Omit<EnrollmentFinancialCommand, 'version' | 'commandId' | 'actorId' | 'matriculaId'> | undefined;
-    let pendingLocalAlignment:
-      | {
-          matriculaId: string;
-          contaId: string;
-          dueDate: string;
-        }
-      | null = null;
     const billingDayChanged =
       typeof parsedBody.data.vencimentoDia === 'number' &&
       parsedBody.data.vencimentoDia !== before.vencimentoDia;
