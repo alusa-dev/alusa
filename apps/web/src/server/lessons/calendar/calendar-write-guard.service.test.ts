@@ -39,7 +39,10 @@ describe('calendar write guard', () => {
       await previous;
       return release;
     });
-    const tx = { $queryRaw: vi.fn(async () => { releases.push(await lock()); }) };
+    const executeRaw = vi.fn(async (_query: TemplateStringsArray, _contaId: string) => {
+      releases.push(await lock());
+    });
+    const tx = { $executeRaw: executeRaw };
     prismaMock.$transaction.mockImplementation((callback: (client: typeof tx) => Promise<unknown>) => callback(tx));
     let active = 0;
     let maxActive = 0;
@@ -54,17 +57,19 @@ describe('calendar write guard', () => {
 
     await Promise.all([writer(), writer()]);
 
-    expect(lock).toHaveBeenCalledTimes(2);
+    expect(executeRaw).toHaveBeenCalledTimes(2);
+    expect(Array.from(executeRaw.mock.calls[0]?.[0] ?? []).join('')).toContain('pg_advisory_xact_lock');
+    expect(executeRaw.mock.calls[0]?.[1]).toBe('conta-a');
     expect(maxActive).toBe(1);
   });
 
   it('rolls back the transaction when a linked write or operation log fails', async () => {
     const persisted: string[] = [];
-    const tx = { $queryRaw: vi.fn(), addEvent: () => persisted.push('event'), addLinkedState: () => persisted.push('linked') };
+    const tx = { $executeRaw: vi.fn(), addEvent: () => persisted.push('event'), addLinkedState: () => persisted.push('linked') };
     prismaMock.$transaction.mockImplementation(async (callback: (client: typeof tx) => Promise<unknown>) => {
       const pending: string[] = [];
       const transactionalClient = {
-        $queryRaw: tx.$queryRaw,
+        $executeRaw: tx.$executeRaw,
         addEvent: () => pending.push('event'),
         addLinkedState: () => pending.push('linked'),
       };
