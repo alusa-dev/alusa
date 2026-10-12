@@ -825,7 +825,7 @@ export async function withCalendarEventWriteLock<T>(
 }
 
 export async function acquireCalendarEventWriteLock(contaId: string, tx: Prisma.TransactionClient) {
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${contaId}), hashtext('calendar-event-write'))`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${contaId}), hashtext('calendar-event-write'))`;
 }
 
 export async function materializeCalendarWindow(params: {
