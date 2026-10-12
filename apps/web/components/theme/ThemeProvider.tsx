@@ -67,6 +67,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof document === "undefined") return;
     try {
+      // Keep route-specific responsive theme colors (for example, the public
+      // event-map checkout) instead of replacing them with the app theme.
+      if (document.querySelector('meta[name="theme-color"][media]')) return;
+
       const content = resolvedTheme === "dark" ? "#0D1015" : "#FFFFFF";
       let meta = document.querySelector('meta[name="theme-color"]');
       if (!meta) {

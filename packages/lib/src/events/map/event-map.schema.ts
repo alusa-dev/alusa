@@ -348,7 +348,10 @@ export const publicCheckoutSchema = z.object({
     (value) => typeof value === 'string' ? value.replace(/\D/g, '') : value,
     z.string().max(13).regex(/^\d{10,13}$/, 'Informe um número de WhatsApp válido.'),
   ),
-  whatsappConsent: z.boolean().optional().default(false),
+  whatsappConsent: z.boolean().refine(
+    (value) => value,
+    'Autorize o recebimento pelo WhatsApp para continuar.',
+  ),
   paymentMethod: z.enum(['PIX', 'CREDIT_CARD', 'BOLETO']),
 });
 

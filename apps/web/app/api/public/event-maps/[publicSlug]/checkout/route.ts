@@ -59,7 +59,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       const notificationSync = await syncCustomerNotificationChannels(
         order.contaId,
         order.asaasCustomerId,
-        { email: true, sms: false, whatsapp: true },
+        { email: true, sms: false, whatsapp: body.whatsappConsent },
       );
       if (!notificationSync.success || notificationSync.warnings.length > 0) {
         logApiOperationalEvent({

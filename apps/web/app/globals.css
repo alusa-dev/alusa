@@ -25,7 +25,7 @@ body:has([data-area='public']) {
 @media (max-width: 1023px) {
 	html:has([data-public-ticket-checkout]),
 	body:has([data-public-ticket-checkout]) {
-		background: #3e1f63;
+		background: #f8fafc;
 	}
 }
 

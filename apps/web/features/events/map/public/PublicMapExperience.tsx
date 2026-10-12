@@ -19,14 +19,18 @@ import {
   Check,
   Copy,
   CreditCard,
+  InfoCircle,
   QrCode,
   Refresh as RefreshCw,
 } from '@/components/icons/icons';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { WhatsappIcon } from '@hugeicons/core-free-icons';
 
 import { Button } from '@/components/ui/button';
 import { InfoCallout } from '@/components/ui/info-callout';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { BrandWordmark } from '@/components/brand/BrandWordmark';
 
 import { PublicMapLevelTabs } from './PublicMapLevelTabs';
@@ -138,6 +142,7 @@ export function PublicMapExperience({
   const [buyerEmail, setBuyerEmail] = useState('');
   const [buyerDocument, setBuyerDocument] = useState('');
   const [buyerPhone, setBuyerPhone] = useState('');
+  const [buyerPhoneConfirmation, setBuyerPhoneConfirmation] = useState('');
   const [whatsappConsent, setWhatsappConsent] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'PIX' | 'CREDIT_CARD' | 'BOLETO'>(
     initialOrder?.paymentMethod ?? 'PIX',
@@ -212,15 +217,23 @@ export function PublicMapExperience({
     [seats, selectedIds],
   );
   const total = selectedSeats.reduce((sum, seat) => sum + seat.unitPrice, 0);
+  const normalizedBuyerPhone = onlyDigits(buyerPhone);
+  const normalizedBuyerPhoneConfirmation = onlyDigits(buyerPhoneConfirmation);
+  const hasValidPhoneConfirmation = isValidPhoneBR(normalizedBuyerPhoneConfirmation);
+  const phoneConfirmationMatches = normalizedBuyerPhone === normalizedBuyerPhoneConfirmation;
+  const phoneConfirmationMismatch = hasValidPhoneConfirmation && !phoneConfirmationMatches;
 
   const isIdentificationValid = useMemo(() => {
     return (
       buyerName.trim().length > 0 &&
       buyerEmail.trim().length > 0 &&
       isValidCpfCnpjBR(buyerDocument) &&
-      isValidPhoneBR(buyerPhone)
+      isValidPhoneBR(buyerPhone) &&
+      hasValidPhoneConfirmation &&
+      phoneConfirmationMatches &&
+      whatsappConsent
     );
-  }, [buyerName, buyerEmail, buyerDocument, buyerPhone]);
+  }, [buyerName, buyerEmail, buyerDocument, buyerPhone, hasValidPhoneConfirmation, phoneConfirmationMatches, whatsappConsent]);
 
   function toggleSeat(seat: PublicSeat) {
     if (seat.status !== 'AVAILABLE' || mode === 'preview') return;
@@ -564,7 +577,6 @@ export function PublicMapExperience({
   const paymentOptions = [
     { value: 'PIX' as const, label: 'Pix', desktopLabel: 'Pagar no PIX', description: 'Código Copia e Cola ou QR Code', icon: QrCode },
     { value: 'CREDIT_CARD' as const, label: 'Cartão débito/crédito', desktopLabel: 'Pagar no cartão de crédito ou débito', description: 'Pague com segurança usando cartão', icon: CreditCard },
-    { value: 'BOLETO' as const, label: 'Boleto Bancário', desktopLabel: 'Pagar no boleto', description: 'Compensação em até 1 dia útil', icon: Ticket },
   ];
   const paymentMethodInfo = {
     PIX: {
@@ -592,7 +604,7 @@ export function PublicMapExperience({
           <BrandWordmark className="h-7 w-auto" />
         </div>
       ) : null}
-      <header className={`shrink-0 border-b ${step === 'SELECTION' ? 'border-slate-200 bg-white lg:border-transparent lg:bg-[#3e1f63]' : 'border-transparent bg-slate-100'} ${step !== 'SELECTION' ? 'lg:hidden' : ''}`}>
+      <header className={`sticky top-0 z-40 shrink-0 border-b bg-[#3e1f63] lg:static lg:z-auto ${step === 'SELECTION' ? 'border-slate-200 lg:border-transparent' : 'border-transparent lg:bg-slate-100'} ${step !== 'SELECTION' ? 'lg:hidden' : ''}`}>
         <div className="flex items-center justify-between gap-4 bg-[#3e1f63] px-4 py-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] lg:hidden">
           <BrandWordmark variant="white" className="h-6 w-auto" />
           <nav aria-label={`Etapa ${stepIndex(step)} de 3: ${stepLabel(step)}`} className="flex items-center gap-3">
@@ -924,34 +936,93 @@ export function PublicMapExperience({
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="public-map-buyer-phone" className="text-sm font-medium text-slate-700 lg:text-slate-950">Número (WhatsApp)</Label>
-                    <div className="space-y-2.5">
-                      <Input
-                        id="public-map-buyer-phone"
-                        type="tel"
-                        inputMode="tel"
-                        autoComplete="tel"
-                        value={buyerPhone}
-                        onChange={(event) => setBuyerPhone(formatPhoneBR(event.target.value))}
-                        placeholder="(00) 00000-0000"
-                        className="h-12 rounded-lg border border-slate-200 bg-slate-50 text-base shadow-none placeholder:text-slate-400 focus:border-[#3e1f63] focus:bg-white focus:ring-2 focus:ring-[#3e1f63]/15 focus-visible:ring-2 lg:h-10 lg:rounded-md lg:border-transparent lg:bg-slate-100 lg:text-sm lg:focus:bg-transparent lg:focus:ring-0 lg:focus-visible:ring-0"
-                      />
+                    <Label htmlFor="public-map-buyer-phone" className="text-sm font-medium text-slate-700 lg:text-slate-950">Número do WhatsApp</Label>
+                    <div className="space-y-5">
+                      <div className="space-y-1.5">
+                        <div className="relative">
+                          <HugeiconsIcon
+                            icon={WhatsappIcon}
+                            size={18}
+                            aria-hidden="true"
+                            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                          />
+                          <Input
+                            id="public-map-buyer-phone"
+                            type="tel"
+                            inputMode="tel"
+                            autoComplete="tel"
+                            value={buyerPhone}
+                            onChange={(event) => setBuyerPhone(formatPhoneBR(event.target.value))}
+                            placeholder="(00) 00000-0000"
+                            className="h-12 rounded-lg border border-slate-200 bg-slate-50 pl-10 text-base shadow-none placeholder:text-slate-400 focus:border-[#3e1f63] focus:bg-white focus:ring-2 focus:ring-[#3e1f63]/15 focus-visible:ring-2 lg:h-10 lg:rounded-md lg:border-transparent lg:bg-slate-100 lg:text-sm lg:focus:bg-transparent lg:focus:ring-0 lg:focus-visible:ring-0"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="public-map-buyer-phone-confirmation" className="text-sm font-medium text-slate-700 lg:text-slate-950">Confirme o número do WhatsApp</Label>
+                        <div className="relative">
+                          <HugeiconsIcon
+                            icon={WhatsappIcon}
+                            size={18}
+                            aria-hidden="true"
+                            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                          />
+                          <Input
+                            id="public-map-buyer-phone-confirmation"
+                            type="tel"
+                            inputMode="tel"
+                            autoComplete="off"
+                            value={buyerPhoneConfirmation}
+                            onChange={(event) => setBuyerPhoneConfirmation(formatPhoneBR(event.target.value))}
+                            placeholder="(00) 00000-0000"
+                            aria-invalid={phoneConfirmationMismatch}
+                            aria-describedby={phoneConfirmationMismatch ? 'public-map-buyer-phone-confirmation-error' : undefined}
+                            className={`h-12 rounded-lg border bg-slate-50 pl-10 text-base shadow-none placeholder:text-slate-400 focus:bg-white focus:ring-2 focus-visible:ring-2 lg:h-10 lg:rounded-md lg:bg-slate-100 lg:text-sm lg:focus:bg-transparent lg:focus:ring-0 lg:focus-visible:ring-0 ${phoneConfirmationMismatch ? 'border-red-400 focus:border-red-500 focus:ring-red-500/15 focus-visible:ring-red-500/15 lg:border-red-400 lg:focus:border-red-500' : 'border-slate-200 focus:border-[#3e1f63] focus:ring-[#3e1f63]/15 focus-visible:ring-[#3e1f63]/15 lg:border-transparent'}`}
+                          />
+                        </div>
+                        {phoneConfirmationMismatch ? (
+                          <p id="public-map-buyer-phone-confirmation-error" className="text-xs text-red-600" role="alert">
+                            Os números não conferem.
+                          </p>
+                        ) : null}
+                      </div>
                       <InfoCallout
-                        size="sm"
-                        showIcon
-                        mobileInlineIcon
+                        variant="info"
+                        size="md"
+                        className="px-3.5 py-3 sm:px-4"
                       >
-                        Se você autorizar abaixo, os ingressos e avisos sobre a cobrança serão enviados para este número pelo WhatsApp da Alusa.
+                        <div className="flex items-start gap-2">
+                          <input
+                            id="public-map-whatsapp-consent"
+                            type="checkbox"
+                            checked={whatsappConsent}
+                            onChange={(event) => setWhatsappConsent(event.target.checked)}
+                            className="mt-0.5 h-4 w-4 shrink-0 accent-[#3e1f63]"
+                          />
+                          <div className="min-w-0 flex-1 text-sm leading-5 text-slate-700">
+                            <label htmlFor="public-map-whatsapp-consent" className="cursor-pointer">
+                              Aceito receber cobranças e notificações sobre meus ingressos pelo WhatsApp.
+                            </label>
+                            {' '}
+                            <TooltipProvider delayDuration={200}>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    type="button"
+                                    aria-label="Informações sobre o cancelamento das mensagens"
+                                    className="hidden h-6 w-6 translate-y-1 items-center justify-center rounded-full text-slate-400 transition-colors hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3e1f63]/40 lg:inline-flex"
+                                  >
+                                    <InfoCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-xs text-left leading-relaxed">
+                                  Você pode parar de receber mensagens quando quiser.
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                        </div>
                       </InfoCallout>
-                      <label className="flex cursor-pointer items-start gap-2 text-sm leading-5 text-slate-700">
-                        <input
-                          type="checkbox"
-                          checked={whatsappConsent}
-                          onChange={(event) => setWhatsappConsent(event.target.checked)}
-                          className="mt-0.5 h-4 w-4 accent-[#3e1f63]"
-                        />
-                        <span>Autorizo o envio dos ingressos e de avisos sobre esta cobrança pelo WhatsApp. Posso cancelar o recebimento a qualquer momento.</span>
-                      </label>
                     </div>
                   </div>
                 </div>
@@ -1212,7 +1283,7 @@ export function PublicMapExperience({
                     </h2>
                     <p className="mt-2 text-sm leading-5 text-slate-600">
                       {order.invoiceUrl
-                        ? 'Conclua o pagamento na página segura da cobrança.'
+                        ? 'O pagamento é processado pelo Asaas.'
                         : 'A cobrança do cartão está sendo preparada. Esta página será atualizada assim que estiver pronta.'}
                     </p>
                   </div>
@@ -1220,8 +1291,9 @@ export function PublicMapExperience({
                     <ol className="space-y-4">
                       {[
                         'Abra a cobrança pelo botão abaixo.',
-                        'Informe os dados do cartão e confirme o pagamento.',
-                        'Volte para esta página. A confirmação é automática e seus ingressos serão emitidos.',
+                        'Na página do Asaas, informe os dados do cartão e confirme o pagamento.',
+                        'Volte para esta página. A confirmação será feita automaticamente.',
+                        'Após a aprovação do pagamento, enviaremos os ingressos para o e-mail e o WhatsApp informados.',
                       ].map((instruction, index) => (
                         <li key={instruction} className="flex items-center gap-3 text-sm leading-5 text-slate-600">
                           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
@@ -1410,12 +1482,15 @@ export function PublicMapExperience({
                       <h3 className="text-lg font-semibold text-slate-950">
                         Precisa de ajuda?<br />Veja como pagar com Pix
                       </h3>
+                      <p className="mt-2 text-sm leading-5 text-slate-600">
+                        O pagamento é processado pelo Asaas.
+                      </p>
                       <ol className="mt-5 space-y-4">
                         {[
                           'Abra o aplicativo do seu banco.',
-                          'Acesse Pix e escolha pagar com QR Code.',
-                          'Aponte a câmera para o código ao lado ou copie e cole o código Pix.',
-                          'Após o pagamento, a confirmação é automática e seus ingressos serão emitidos.',
+                          'Escaneie o QR Code exibido nesta página ou copie o código Pix.',
+                          'Confira os dados e confirme o pagamento no aplicativo do banco.',
+                          'Volte para esta página. A confirmação será automática e, após a aprovação, enviaremos os ingressos para o e-mail e o WhatsApp informados.',
                         ].map((instruction, index) => (
                           <li key={instruction} className="flex items-center gap-3 text-sm leading-5 text-slate-600">
                             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
@@ -1537,7 +1612,7 @@ export function PublicMapExperience({
       ) : null}
 
       {isPublicFlow && (step === 'IDENTIFICATION' || step === 'PAYMENT_METHOD' || (step === 'CONFIRMATION' && order)) ? (
-        <div className="relative z-30 w-full shrink-0 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-sm pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] lg:hidden">
+        <div className="relative z-30 w-full shrink-0 border-t border-slate-200 bg-slate-50 px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] lg:hidden">
           <div className="mx-auto flex max-w-7xl flex-col gap-3">
             {step !== 'CONFIRMATION' ? (
               <>
@@ -1621,7 +1696,7 @@ export function PublicMapExperience({
       ) : null}
 
       {isPublicSelectionView ? (
-        <div className="relative z-30 w-full shrink-0 border-t border-slate-200 bg-white/95 px-3 py-3 backdrop-blur-sm pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] lg:hidden">
+        <div className="relative z-30 w-full shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] lg:hidden">
           <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs text-slate-500">
