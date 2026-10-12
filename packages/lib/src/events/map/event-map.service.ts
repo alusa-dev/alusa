@@ -2036,6 +2036,38 @@ export async function requestPublicOrderTicketWhatsAppResend(ctx: EventsContext,
     if (!order.buyerPhone || !order.whatsappOptInAt || !order.whatsappOptInSource || order.whatsappOptOutAt) {
       throw new EventsError('WHATSAPP_SEM_CONSENTIMENTO', 'Este pedido não possui telefone com autorização registrada para WhatsApp.', 409);
     }
+    const candidateNotifications = await tx.eventTicketWhatsAppNotification.findMany({
+      where: {
+        contaId: ctx.contaId,
+        eventMapOrderId: order.id,
+        OR: [
+          { status: { in: ['PENDING', 'PROCESSING', 'QUEUED'] } },
+          { status: 'FAILED' },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, status: true, whatsappJobId: true, attempts: true, maxAttempts: true },
+    });
+    for (const activeNotification of candidateNotifications) {
+      let retryIsActive = activeNotification.status !== 'FAILED'
+        || activeNotification.attempts < activeNotification.maxAttempts;
+      if (retryIsActive && activeNotification.status === 'FAILED' && activeNotification.whatsappJobId) {
+        const linkedJob = await tx.whatsAppOutboundJob.findFirst({
+          where: {
+            id: activeNotification.whatsappJobId,
+            contaId: ctx.contaId,
+          },
+          select: { id: true, status: true, attempts: true, maxAttempts: true },
+        });
+        retryIsActive = Boolean(linkedJob && (
+          linkedJob.status === 'PENDING' || linkedJob.status === 'PROCESSING'
+          || (linkedJob.status === 'FAILED' && linkedJob.attempts < linkedJob.maxAttempts)
+        ));
+      }
+      if (retryIsActive) {
+        return { queued: false, active: true, notificationId: activeNotification.id, status: activeNotification.status };
+      }
+    }
     const recentResends = await tx.auditLog.count({
       where: {
         contaId: ctx.contaId, entityType: 'EventMapOrder', entityId: order.id,
@@ -2055,7 +2087,11 @@ export async function requestPublicOrderTicketWhatsAppResend(ctx: EventsContext,
       actorUserId: ctx.userId,
       deliveryKey: globalThis.crypto.randomUUID(),
     });
-    return { queued: result.queued };
+    const notification = await tx.eventTicketWhatsAppNotification.findUnique({
+      where: { idempotencyKey: result.idempotencyKey },
+      select: { id: true, status: true },
+    });
+    return { queued: result.queued, active: false, notificationId: notification?.id ?? null, status: notification?.status ?? null };
   });
 }
 
@@ -2130,6 +2166,19 @@ export async function listEventPublicMapOrdersForAdmin(
     orderStatuses.reduce((sum, row) => sum + (predicate(row) ? row._count._all : 0), 0);
   const ticketCount = (status: (typeof ticketStatuses)[number]['status']) =>
     ticketStatuses.find((row) => row.status === status)?._count._all ?? 0;
+  const notifications = orders.length
+    ? await prisma.eventTicketWhatsAppNotification.findMany({
+      where: { contaId, eventMapOrderId: { in: orders.map((order) => order.id) } },
+      orderBy: { createdAt: 'desc' },
+      select: { eventMapOrderId: true, status: true },
+    })
+    : [];
+  const latestWhatsAppStatus = new Map<string, string>();
+  for (const notification of notifications) {
+    if (notification.eventMapOrderId && !latestWhatsAppStatus.has(notification.eventMapOrderId)) {
+      latestWhatsAppStatus.set(notification.eventMapOrderId, notification.status);
+    }
+  }
 
   return {
     page,
@@ -2151,6 +2200,7 @@ export async function listEventPublicMapOrdersForAdmin(
     buyerName: order.buyerName,
     buyerEmail: order.buyerEmail,
     whatsappAvailable: Boolean(order.buyerPhone && order.whatsappOptInAt && order.whatsappOptInSource && !order.whatsappOptOutAt),
+    whatsappStatus: latestWhatsAppStatus.get(order.id) ?? null,
     totalAmount: toMoney(order.totalAmount),
     status: order.status,
     ticketFulfillmentStatus: order.ticketFulfillmentStatus,

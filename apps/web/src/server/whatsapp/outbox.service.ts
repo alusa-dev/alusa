@@ -21,6 +21,12 @@ import { decryptSecret } from '@alusa/database';
 import { prisma } from '@/prisma/client';
 import { assertWhatsAppConfigured, getWhatsAppRuntimeConfig } from './config';
 import { buildContractTemplateIdempotencyKey } from './contract-idempotency';
+import {
+  canAdvanceTicketNotificationStatus,
+  canAdvanceWhatsAppMessageStatus,
+  mapWhatsAppProviderStatus,
+  toTicketNotificationStatus,
+} from './status-progression';
 
 type EnqueueWhatsAppMessageInput = {
   contaId?: string | null;
@@ -426,7 +432,8 @@ function formatDate(value: Date): string {
   return new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Manaus' }).format(value);
 }
 
-export async function drainWhatsAppOutbox(input: { limit?: number; jobId?: string } = {}): Promise<DrainWhatsAppOutboxResult> {
+export async function drainWhatsAppOutbox(input: { limit?: number; jobId?: string; contaId?: string } = {}): Promise<DrainWhatsAppOutboxResult> {
+  if (input.jobId && !input.contaId) throw new Error('TENANT_SCOPE_REQUIRED_FOR_JOB');
   const config = assertWhatsAppConfigured();
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
   const workerId = `whatsapp-${process.pid}-${Date.now()}`;
@@ -434,6 +441,8 @@ export async function drainWhatsAppOutbox(input: { limit?: number; jobId?: strin
 
   await prisma.whatsAppOutboundJob.updateMany({
     where: {
+      ...(input.jobId ? { id: input.jobId } : {}),
+      ...(input.contaId ? { contaId: input.contaId } : {}),
       status: WhatsAppOutboundJobStatus.PROCESSING,
       lockedAt: { lt: new Date(Date.now() - 10 * 60_000) },
     },
@@ -450,6 +459,7 @@ export async function drainWhatsAppOutbox(input: { limit?: number; jobId?: strin
   const candidates = await prisma.whatsAppOutboundJob.findMany({
     where: {
       ...(input.jobId ? { id: input.jobId } : {}),
+      ...(input.contaId ? { contaId: input.contaId } : {}),
       status: { in: [WhatsAppOutboundJobStatus.PENDING, WhatsAppOutboundJobStatus.FAILED] },
       nextAttemptAt: { lte: now },
     },
@@ -468,6 +478,7 @@ export async function drainWhatsAppOutbox(input: { limit?: number; jobId?: strin
     const claimed = await prisma.whatsAppOutboundJob.updateMany({
       where: {
         id: candidate.id,
+        ...(input.contaId ? { contaId: input.contaId } : {}),
         status: { in: [WhatsAppOutboundJobStatus.PENDING, WhatsAppOutboundJobStatus.FAILED] },
       },
       data: {
@@ -520,8 +531,8 @@ async function markWhatsAppJobSent(jobId: string, messageId: string, externalMes
         lastError: null,
       },
     }),
-    prisma.whatsAppMessage.update({
-      where: { id: messageId },
+    prisma.whatsAppMessage.updateMany({
+      where: { id: messageId, status: { in: [WhatsAppMessageStatus.QUEUED, WhatsAppMessageStatus.FAILED, WhatsAppMessageStatus.SENT] } },
       data: {
         status: WhatsAppMessageStatus.SENT,
         externalMessageId,
@@ -530,7 +541,7 @@ async function markWhatsAppJobSent(jobId: string, messageId: string, externalMes
       },
     }),
     prisma.eventTicketWhatsAppNotification.updateMany({
-      where: { whatsappJobId: jobId, status: EventTicketWhatsAppNotificationStatus.QUEUED },
+      where: { whatsappJobId: jobId, status: { in: [EventTicketWhatsAppNotificationStatus.QUEUED, EventTicketWhatsAppNotificationStatus.FAILED] } },
       data: { status: 'SENT', processedAt: new Date(), lastErrorCode: null, lastError: null },
     }),
   ]);
@@ -629,13 +640,18 @@ export async function ingestWhatsAppWebhook(input: {
   });
 }
 
-export async function drainWhatsAppWebhooks(input: { limit?: number } = {}): Promise<DrainWhatsAppWebhookResult> {
+export async function drainWhatsAppWebhooks(input: { limit?: number; eventId?: string } = {}): Promise<DrainWhatsAppWebhookResult> {
+  if (input.eventId && !input.eventId.trim()) throw new Error('WEBHOOK_EVENT_ID_INVALID');
   const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
   const now = new Date();
   const staleAt = new Date(Date.now() - 10 * 60_000);
 
   await prisma.whatsAppWebhookEvent.updateMany({
-    where: { status: WhatsAppWebhookEventStatus.PROCESSING, updatedAt: { lt: staleAt } },
+    where: {
+      ...(input.eventId ? { id: input.eventId } : {}),
+      status: WhatsAppWebhookEventStatus.PROCESSING,
+      updatedAt: { lt: staleAt },
+    },
     data: {
       status: WhatsAppWebhookEventStatus.FAILED,
       nextRetryAt: now,
@@ -646,6 +662,7 @@ export async function drainWhatsAppWebhooks(input: { limit?: number } = {}): Pro
 
   const events = await prisma.whatsAppWebhookEvent.findMany({
     where: {
+      ...(input.eventId ? { id: input.eventId } : {}),
       status: { in: [WhatsAppWebhookEventStatus.RECEIVED, WhatsAppWebhookEventStatus.FAILED] },
       nextRetryAt: { lte: now },
     },
@@ -876,16 +893,21 @@ async function processWhatsAppWebhookEvent(eventId: string) {
       }
 
       for (const status of record.statuses) {
-        const mapped = mapWhatsAppStatus(status.status);
+        const mapped = mapWhatsAppProviderStatus(status.status);
         const messageWhere = { connectionId: connection.id, externalMessageId: status.id };
-        await tx.whatsAppMessage.updateMany({
-          where: messageWhere,
+        const existingMessages = await tx.whatsAppMessage.findMany({ where: messageWhere, select: { id: true, status: true } });
+        if (existingMessages.length === 0) throw new Error('WHATSAPP_STATUS_MESSAGE_NOT_FOUND');
+        for (const existingMessage of existingMessages) {
+          if (!canAdvanceWhatsAppMessageStatus(existingMessage.status, mapped)) continue;
+          await tx.whatsAppMessage.updateMany({
+          where: { id: existingMessage.id, status: existingMessage.status },
           data: {
             status: mapped,
             errorCode: status.errors?.[0]?.code ? String(status.errors[0].code) : null,
             errorMessage: status.errors?.[0]?.message ?? status.errors?.[0]?.title ?? null,
           },
         });
+        }
         const messages = await tx.whatsAppMessage.findMany({ where: messageWhere, select: { id: true } });
         if (messages.length > 0) {
           const jobs = await tx.whatsAppOutboundJob.findMany({
@@ -893,25 +915,24 @@ async function processWhatsAppWebhookEvent(eventId: string) {
             select: { id: true },
           });
           if (jobs.length > 0) {
-            await tx.eventTicketWhatsAppNotification.updateMany({
-              where: {
-                whatsappJobId: { in: jobs.map((job) => job.id) },
-                status: { not: EventTicketWhatsAppNotificationStatus.SKIPPED },
-              },
-              data: {
-                status: mapped === WhatsAppMessageStatus.DELIVERED
-                  ? 'DELIVERED'
-                  : mapped === WhatsAppMessageStatus.READ
-                    ? 'READ'
-                    : mapped === WhatsAppMessageStatus.FAILED
-                      ? 'FAILED'
-                      : 'SENT',
-                ...(mapped === WhatsAppMessageStatus.FAILED
-                  ? { lastErrorCode: status.errors?.[0]?.code ? String(status.errors[0].code) : null, lastError: status.errors?.[0]?.message ?? status.errors?.[0]?.title ?? null }
-                  : {}),
-                processedAt: new Date(),
-              },
+            const ticketStatus = toTicketNotificationStatus(mapped);
+            const notifications = await tx.eventTicketWhatsAppNotification.findMany({
+              where: { whatsappJobId: { in: jobs.map((job) => job.id) } },
+              select: { id: true, status: true },
             });
+            for (const notification of notifications) {
+              if (!canAdvanceTicketNotificationStatus(notification.status, ticketStatus)) continue;
+              await tx.eventTicketWhatsAppNotification.updateMany({
+                where: { id: notification.id, status: notification.status },
+                data: {
+                  status: ticketStatus,
+                  ...(mapped === WhatsAppMessageStatus.FAILED
+                    ? { lastErrorCode: status.errors?.[0]?.code ? String(status.errors[0].code) : null, lastError: status.errors?.[0]?.message ?? status.errors?.[0]?.title ?? null }
+                    : {}),
+                  processedAt: new Date(),
+                },
+              });
+            }
           }
         }
       }
@@ -926,13 +947,6 @@ async function processWhatsAppWebhookEvent(eventId: string) {
 
 function extractWebhookRecords(payload: unknown) {
   return extractWhatsAppWebhookRecords(payload);
-}
-
-function mapWhatsAppStatus(status: string): WhatsAppMessageStatus {
-  if (status === 'delivered') return WhatsAppMessageStatus.DELIVERED;
-  if (status === 'read') return WhatsAppMessageStatus.READ;
-  if (status === 'failed') return WhatsAppMessageStatus.FAILED;
-  return WhatsAppMessageStatus.SENT;
 }
 
 const WHATSAPP_OPT_OUT_WORDS = new Set(['SAIR', 'PARAR', 'STOP', 'CANCELAR', 'CANCELA', 'REMOVER']);

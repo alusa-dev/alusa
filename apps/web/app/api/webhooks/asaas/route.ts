@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
 import * as Sentry from '@sentry/nextjs';
 import {
@@ -17,6 +17,8 @@ import type { AsaasWebhookPayload } from '@alusa/finance';
 import { emitBillingNotificationCandidate } from '@/lib/notifications/emit-billing-notifications';
 import { invalidateChargesCache } from '@/lib/cache/invalidation';
 import { logApiOperationalEvent, recordApiResponseMetrics } from '@/lib/observability/api-logger';
+import { prisma } from '@/prisma/client';
+import { dispatchEventTicketWhatsAppNotification } from '@/src/server/events/event-ticket-whatsapp-outbox.service';
 
 const MAX_BODY_BYTES = 512 * 1024;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -227,6 +229,50 @@ export async function POST(req: NextRequest) {
           requestId,
           error: cacheError,
         });
+      });
+    }
+    if (useAsyncQueue && !processingRuntime.inlineDrain && result.success && result.webhookId && processedContaId) {
+      const webhookId = result.webhookId;
+      const contaId = processedContaId;
+      after(async () => {
+        const notificationCreatedAt = new Date();
+        try {
+          const processed = await processAsaasWebhookQueueWithInbox({
+            contaId,
+            webhookId,
+            limit: 1,
+            statuses: ['PENDENTE', 'ERRO'],
+            source: 'WEBHOOK',
+            drainSideEffects: false,
+          });
+          if (!processed.processed) return;
+          const notifications = await prisma.eventTicketWhatsAppNotification.findMany({
+            where: {
+              contaId,
+              status: 'PENDING',
+              createdAt: { gte: notificationCreatedAt },
+            },
+            orderBy: { createdAt: 'asc' },
+            take: 2,
+            select: { id: true },
+          });
+          for (const notification of notifications) {
+            try {
+              await dispatchEventTicketWhatsAppNotification({ contaId, notificationId: notification.id });
+            } catch {
+              // Durable notification and scheduled worker retain retry ownership.
+            }
+          }
+        } catch (error) {
+          logApiOperationalEvent({
+            severity: 'warn',
+            eventName: 'api.webhook.post_response_drain.failed',
+            route: '/api/webhooks/asaas',
+            method: 'POST',
+            requestId,
+            error,
+          });
+        }
       });
     }
     // Depois de persistido, falhas de processamento viram retry/DLQ interno.

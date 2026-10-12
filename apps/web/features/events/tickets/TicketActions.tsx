@@ -76,8 +76,8 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
   const resendWhatsApp = useMutation({
     mutationFn: () => resendTicketSaleWhatsApp(sale.id),
     onSuccess: (result) => toast.success({
-      title: 'Reenvio solicitado',
-      description: 'O ingresso será enviado pelo WhatsApp em alguns instantes.',
+      title: result.active ? 'Envio em andamento' : 'Envio solicitado',
+      description: result.active ? 'O envio desta venda já está em andamento.' : 'A solicitação de envio foi registrada.',
     }),
     onError: (error) => toast.error({ title: 'Não foi possível reenviar pelo WhatsApp', description: error.message }),
   });

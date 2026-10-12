@@ -10,6 +10,7 @@ const { getWhatsAppRuntimeConfig, assertWhatsAppConfigured, enqueueWhatsAppMessa
       findMany: vi.fn(),
       findUnique: vi.fn(),
     },
+    whatsAppOutboundJob: { findFirst: vi.fn() },
     eventMapOrder: { findFirst: vi.fn() },
     eventTicketSale: { findFirst: vi.fn() },
   },
@@ -77,7 +78,7 @@ describe('drainEventTicketWhatsAppNotifications', () => {
     const result = await drainEventTicketWhatsAppNotifications();
 
     expect(result.queued).toBe(1);
-    expect(prisma.eventTicketWhatsAppNotification.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: { id: true, contaId: true } }));
+    expect(prisma.eventTicketWhatsAppNotification.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: { id: true, contaId: true, whatsappJobId: true } }));
     expect(prisma.eventTicketWhatsAppNotification.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 'notification-1', contaId: 'conta-1' }), data: expect.objectContaining({ status: 'PROCESSING' }) }));
     expect(prisma.eventTicketWhatsAppNotification.findUnique).toHaveBeenCalledWith({ where: { id: 'notification-1', contaId: 'conta-1' } });
     expect(prisma.eventMapOrder.findFirst).toHaveBeenCalledWith(expect.objectContaining({
@@ -157,5 +158,23 @@ describe('drainEventTicketWhatsAppNotifications', () => {
       data: expect.objectContaining({ status: 'FAILED' }),
     }));
     vi.unstubAllEnvs();
+  });
+
+  it('does not requeue a definitive delivery failure onto its already-sent job', async () => {
+    getWhatsAppRuntimeConfig.mockReturnValue({ enabled: true, phoneNumberId: 'phone-id' });
+    prisma.eventTicketWhatsAppNotification.findMany.mockResolvedValue([
+      { id: 'notification-delivery-failed', contaId: 'conta-a', whatsappJobId: 'job-already-sent' },
+    ]);
+    prisma.whatsAppOutboundJob.findFirst.mockResolvedValue({ status: 'SENT' });
+
+    const result = await drainEventTicketWhatsAppNotifications();
+
+    expect(result).toMatchObject({ claimed: 0, queued: 0 });
+    expect(prisma.whatsAppOutboundJob.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'job-already-sent', contaId: 'conta-a' },
+    }));
+    expect(prisma.eventTicketWhatsAppNotification.updateMany).toHaveBeenCalledTimes(2);
+    expect(prisma.eventTicketWhatsAppNotification.findUnique).not.toHaveBeenCalled();
+    expect(enqueueWhatsAppMessage).not.toHaveBeenCalled();
   });
 });

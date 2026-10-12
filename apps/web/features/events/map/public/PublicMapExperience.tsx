@@ -6,7 +6,7 @@ import { MAP_ARTBOARD_STROKE, MAP_ARTBOARD_STROKE_WIDTH } from '@alusa/domain';
 import { isPublicOrderRefundActionPending } from '@alusa/lib/events/map/public-order-refund-action';
 import bwipjs from '@bwip-js/browser';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarDaysIcon as CalendarDays,
   CheckCircle as CheckCircle2,
@@ -31,6 +31,7 @@ import { BrandWordmark } from '@/components/brand/BrandWordmark';
 
 import { PublicMapLevelTabs } from './PublicMapLevelTabs';
 import { PublicOrderReservationCountdown } from './PublicOrderReservationCountdown';
+import { updatePublicOrderIfCurrent } from './public-order-sync';
 import {
   isPublicOrderTicketPaymentBlocked,
   publicOrderPaymentStatusLabel,
@@ -147,10 +148,13 @@ export function PublicMapExperience({
   const [copied, setCopied] = useState(false);
   const [pollTimedOut, setPollTimedOut] = useState(false);
   const [isSyncingPayment, setIsSyncingPayment] = useState(false);
+  const lastAutomaticSyncAt = useRef(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const expirationSyncAttempted = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [order, setOrder] = useState<PublicMapOrderState | null>(initialOrder);
+  const currentOrderIdRef = useRef(order?.orderId ?? null);
+  currentOrderIdRef.current = order?.orderId ?? null;
   const bankSlipBarcodeSvg = useMemo(() => {
     const barcodeDigits = order?.bankSlipBarcode?.replace(/\D/g, '');
     if (!barcodeDigits || !/^\d{44}$/.test(barcodeDigits)) return null;
@@ -234,10 +238,14 @@ export function PublicMapExperience({
     setError(null);
   }
 
-  async function handleSyncPayment() {
-    if (!order) return;
-    setIsSyncingPayment(true);
-    setError(null);
+  const syncOrderId = order?.orderId ?? null;
+  const syncAccessToken = order?.accessToken ?? null;
+  const handleSyncPayment = useCallback(async (automatic = false) => {
+    if (!syncOrderId || !syncAccessToken) return;
+    if (!automatic) {
+      setIsSyncingPayment(true);
+      setError(null);
+    }
     try {
       const result = await parseApiResponse<{
         synced: boolean;
@@ -252,33 +260,30 @@ export function PublicMapExperience({
         };
       }>(
         await fetch(
-          `/api/public/event-map-orders/${order.orderId}/sync-payment?token=${encodeURIComponent(order.accessToken)}`,
+          `/api/public/event-map-orders/${syncOrderId}/sync-payment?token=${encodeURIComponent(syncAccessToken)}${automatic ? '&automatic=1' : ''}`,
           { method: 'POST' },
         ),
       );
-      setOrder((current) =>
-        current
-          ? {
-              ...current,
+      setOrder((current) => updatePublicOrderIfCurrent(current, syncOrderId, (currentOrder) => ({
+              ...currentOrder,
               status: result.order.status,
               ticketFulfillmentStatus: result.order.ticketFulfillmentStatus,
               ticketsUrl: result.order.ticketsUrl,
               invoiceUrl: result.order.invoiceUrl,
-              expiresAt: result.order.expiresAt ?? current.expiresAt,
+              expiresAt: result.order.expiresAt ?? currentOrder.expiresAt,
               items: result.order.items.map((item) => ({
                 ticketCode: item.ticketCode ?? '',
                 seatLabel: item.seatLabel,
                 sectionName: item.sectionName,
               })),
-            }
-          : current,
-      );
+      })));
     } catch (syncError) {
-      setError((syncError as Error).message);
+      if (automatic) logClientOperationalEvent('public_event_map.order_auto_sync.failed', syncError);
+      else if (currentOrderIdRef.current === syncOrderId) setError((syncError as Error).message);
     } finally {
-      setIsSyncingPayment(false);
+      if (!automatic && currentOrderIdRef.current === syncOrderId) setIsSyncingPayment(false);
     }
-  }
+  }, [syncAccessToken, syncOrderId]);
 
   function handleReservationExpired() {
     if (expirationSyncAttempted.current) return;
@@ -288,6 +293,8 @@ export function PublicMapExperience({
 
   function resetCheckoutFlow() {
     setOrder(null);
+    setIsSyncingPayment(false);
+    lastAutomaticSyncAt.current = 0;
     setStep('SELECTION');
     setPollTimedOut(false);
     setError(null);
@@ -358,6 +365,8 @@ export function PublicMapExperience({
       );
 
       setOrder({ ...checkout, paymentMethod });
+      setIsSyncingPayment(false);
+      lastAutomaticSyncAt.current = 0;
       expirationSyncAttempted.current = false;
       if (checkout.statusUrl && typeof window !== 'undefined') {
         window.history.replaceState(null, '', checkout.statusUrl);
@@ -494,6 +503,10 @@ export function PublicMapExperience({
             && status.paymentStatus !== 'REFUNDED')
           || (status.status === 'CONFIRMED' && isPublicOrderTicketPaymentBlocked(status.paymentStatus))
         ) {
+          if (status.status === 'PAYMENT_PENDING' && Date.now() - lastAutomaticSyncAt.current >= 90_000) {
+            lastAutomaticSyncAt.current = Date.now();
+            void handleSyncPayment(true);
+          }
           const baseDelay = Math.min(30_000, 5000 * (2 ** Math.min(pollAttempt, 3)));
           pollAttempt += 1;
           schedulePoll(nextPollDelay(baseDelay));
@@ -527,7 +540,7 @@ export function PublicMapExperience({
       inFlightController?.abort();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [currentOrderAccessToken, currentOrderId, currentOrderPaymentStatus, currentOrderStatus, currentOrderTicketPaymentBlocked, currentTicketFulfillmentError, currentTicketFulfillmentStatus]);
+  }, [currentOrderAccessToken, currentOrderId, currentOrderPaymentStatus, currentOrderStatus, currentOrderTicketPaymentBlocked, currentTicketFulfillmentError, currentTicketFulfillmentStatus, handleSyncPayment]);
 
   const ticketsIssued =
     order?.status === 'CONFIRMED'
@@ -1336,7 +1349,7 @@ export function PublicMapExperience({
                           variant="ghost"
                           className="w-full justify-center border-0 bg-slate-200 text-slate-700 shadow-none hover:bg-slate-300 hover:text-slate-900 lg:h-10"
                           disabled={isSyncingPayment}
-                          onClick={handleSyncPayment}
+                          onClick={() => void handleSyncPayment()}
                         >
                           {isSyncingPayment ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                           Já paguei
@@ -1418,7 +1431,7 @@ export function PublicMapExperience({
                             type="button"
                             className="inline-flex h-auto w-fit items-center gap-2 border-0 bg-transparent p-0 text-left text-sm text-slate-600 shadow-none hover:bg-transparent hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
                             disabled={isSyncingPayment}
-                            onClick={handleSyncPayment}
+                            onClick={() => void handleSyncPayment()}
                           >
                             {isSyncingPayment ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                             Já paguei
@@ -1466,7 +1479,7 @@ export function PublicMapExperience({
                     variant="ghost"
                     className="w-full justify-center border-0 bg-slate-200 text-slate-700 shadow-none hover:bg-slate-300 hover:text-slate-900 lg:h-10"
                     disabled={isSyncingPayment}
-                    onClick={handleSyncPayment}
+                    onClick={() => void handleSyncPayment()}
                   >
                     {isSyncingPayment ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                     Já paguei
@@ -1592,7 +1605,7 @@ export function PublicMapExperience({
                   variant="ghost"
                   className="min-h-12 w-full justify-center rounded-lg border-0 bg-slate-100 text-base font-medium text-slate-700 shadow-none hover:bg-slate-200 hover:text-slate-900"
                   disabled={isSyncingPayment}
-                  onClick={handleSyncPayment}
+                  onClick={() => void handleSyncPayment()}
                 >
                   {isSyncingPayment ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                   Já paguei, verificar agora

@@ -52,6 +52,7 @@ type PublicOrderListItem = {
   ticketCount: number;
   ticketsUsed: number;
   whatsappAvailable: boolean;
+  whatsappStatus?: string | null;
 };
 
 type TicketInfo = {
@@ -77,6 +78,21 @@ function formatCurrency(value: number) {
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
+}
+
+function whatsAppStatusLabel(status?: string | null) {
+  switch (status) {
+    case 'PENDING': return 'Envio solicitado';
+    case 'PROCESSING':
+    case 'QUEUED': return 'Enviando';
+    case 'SENT': return 'Enviado';
+    case 'DELIVERED': return 'Entregue';
+    case 'READ': return 'Lida';
+    case 'FAILED':
+    case 'DLQ': return 'Não enviado';
+    case 'SKIPPED': return 'Não enviado';
+    default: return 'Sem envio';
+  }
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -202,14 +218,19 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
   });
 
   const resendWhatsAppMutation = useMutation({
-    mutationFn: async (order: PublicOrderListItem) => parseResponse<{ queued: boolean }>(await fetch(
+    mutationFn: async (order: PublicOrderListItem) => parseResponse<{ queued: boolean; active?: boolean }>(await fetch(
       `/api/events/${event.id}/public-orders/${order.id}/resend-ticket-whatsapp`,
       { method: 'POST' },
     )),
-    onSuccess: (result) => toast.success({
-      title: 'Reenvio solicitado',
-      description: 'O ingresso será enviado pelo WhatsApp em alguns instantes.',
-    }),
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ['events', event.id, 'public-orders'] });
+      toast.success({
+        title: result.active ? 'Envio em andamento' : 'Envio solicitado',
+        description: result.active
+          ? 'O envio deste ingresso já foi solicitado.'
+          : 'Você pode acompanhar o envio na coluna WhatsApp.',
+      });
+    },
     onError: (error) => toast.error({ title: 'Não foi possível reenviar pelo WhatsApp', description: (error as Error).message }),
   });
 
@@ -275,6 +296,13 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
           {order.ticketsUsed > 0 ? ` · ${order.ticketsUsed} usados` : ''}
         </span>
       ),
+    },
+    {
+      id: 'whatsapp',
+      header: 'WhatsApp',
+      width: 'w-[12%]',
+      align: 'left',
+      render: (order) => <span className="text-xs text-slate-600">{whatsAppStatusLabel(order.whatsappStatus)}</span>,
     },
     {
       id: 'created',

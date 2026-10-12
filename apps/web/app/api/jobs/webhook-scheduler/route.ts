@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
+import { after } from 'next/server';
+import { prisma } from '@/prisma/client';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { runWebhookScheduler } from '@alusa/finance';
 import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
+import { dispatchEventTicketWhatsAppNotification } from '@/src/server/events/event-ticket-whatsapp-outbox.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -43,6 +46,34 @@ async function run(req: Request) {
       skipArchive: url.searchParams.get('skipArchive') === 'true',
       enableReconciliation: url.searchParams.get('enableReconciliation') === 'true',
     });
+
+    if (!result.skippedDueToLock) {
+      const committedSince = new Date(startedAt);
+      const tenantId = tenantScope.contaId;
+      after(async () => {
+        try {
+          const notifications = await prisma.eventTicketWhatsAppNotification.findMany({
+            where: {
+              status: 'PENDING',
+              createdAt: { gte: committedSince },
+              ...(tenantId ? { contaId: tenantId } : {}),
+            },
+            orderBy: { createdAt: 'asc' },
+            take: 3,
+            select: { id: true, contaId: true },
+          });
+          for (const notification of notifications) {
+            try {
+              await dispatchEventTicketWhatsAppNotification({ contaId: notification.contaId, notificationId: notification.id });
+            } catch {
+              // Persisted notification and the WhatsApp cron retain retry ownership.
+            }
+          }
+        } catch {
+          // Do not change the already returned scheduler result; cron is the durable fallback.
+        }
+      });
+    }
 
     logJobResult('webhook-scheduler', startedAt, result, {
       hasTenantScope: Boolean(tenantScope.contaId),

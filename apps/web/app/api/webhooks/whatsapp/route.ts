@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
+import { after } from 'next/server';
 import {
   hashWebhookBody,
   verifyMetaWebhookChallenge,
   verifyMetaWebhookSignature,
 } from '@alusa/whatsapp';
-import { ingestWhatsAppWebhook } from '@/src/server/whatsapp/outbox.service';
+import { drainWhatsAppWebhooks, ingestWhatsAppWebhook } from '@/src/server/whatsapp/outbox.service';
 import { getWhatsAppRuntimeConfig } from '@/src/server/whatsapp/config';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
@@ -55,6 +56,24 @@ export async function POST(request: Request) {
       payloadHash,
       payload,
     });
+
+    if (result.status === 'RECEIVED' || result.status === 'FAILED') {
+      const eventId = result.id;
+      after(async () => {
+        try {
+          await drainWhatsAppWebhooks({ limit: 1, eventId });
+        } catch (error) {
+          logApiOperationalEvent({
+            severity: 'warn',
+            eventName: 'api.whatsapp_webhook.post_response_processing.failed',
+            route: '/api/webhooks/whatsapp',
+            method: 'POST',
+            requestId: getRequestId(request),
+            error,
+          });
+        }
+      });
+    }
 
     return NextResponse.json({ received: true, eventId: result.id, status: result.status }, { status: 200 });
   } catch (error) {

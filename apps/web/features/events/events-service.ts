@@ -403,7 +403,7 @@ export async function markTicketSalePaid(id: string) {
 }
 
 export async function resendTicketSaleWhatsApp(id: string) {
-  return (await parseResponse<JsonEnvelope<{ queued: boolean }>>(await fetch(`/api/events/ticket-sales/${id}/resend-ticket-whatsapp`, { method: 'POST' }))).data;
+  return (await parseResponse<JsonEnvelope<{ queued: boolean; active?: boolean }>>(await fetch(`/api/events/ticket-sales/${id}/resend-ticket-whatsapp`, { method: 'POST' }))).data;
 }
 
 export async function cancelTicketSale(id: string, reason?: string) {

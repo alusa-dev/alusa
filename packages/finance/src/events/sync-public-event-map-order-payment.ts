@@ -6,9 +6,12 @@ import { confirmPublicEventMapOrderPayment } from './confirm-public-event-map-or
 import { reconcileEventMapOrderFinancialStateFromAsaas } from './event-map-payment-transitions';
 import { loadDecryptedAsaasCredentials } from '../foundation/load-decrypted-asaas-credentials';
 import { Prisma } from '@prisma/client';
+import { acquireWebhookJobLock, releaseWebhookJobLock } from '../foundation/webhook-job-lock.service';
 
 const PAYMENT_SYNC_WINDOW_MS = 15 * 60 * 1000;
 const PAYMENT_SYNC_MAX_PER_WINDOW = 8;
+const AUTOMATIC_PAYMENT_SYNC_MAX_PER_WINDOW = 8;
+const AUTOMATIC_PAYMENT_SYNC_COOLDOWN_MS = 90_000;
 const PAID_EVENT_MAP_STATUSES = new Set([
   'CONFIRMED',
   'RECEIVED',
@@ -25,7 +28,80 @@ function toAuditJson(value: unknown): Prisma.InputJsonValue {
  * Provider I/O and payment reconciliation belong to finance; the lib package
  * retains the order/map persistence primitives.
  */
-export async function syncPublicEventMapOrderPaymentByBuyer(orderId: string, accessToken: string) {
+export async function syncPublicEventMapOrderPaymentByBuyer(
+  orderId: string,
+  accessToken: string,
+  options: { automatic?: boolean } = {},
+) {
+  const access = await prisma.eventMapOrder.findFirst({
+    where: { id: orderId, accessToken },
+    select: { id: true, contaId: true },
+  });
+  if (!access) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido não encontrado.', 404);
+  const action = options.automatic ? 'events.map.public.sync_payment_auto' : 'events.map.public.sync_payment';
+  const lockName = `event-map-payment-sync:${access.contaId}:${orderId}`;
+  const lock = await acquireWebhookJobLock(lockName, { ttlMs: 120_000 });
+  if (!lock.acquired) {
+    if (!options.automatic) throw new EventsError('LIMITE_SINCRONIZACAO', 'Aguarde alguns instantes antes de tentar novamente.', 429);
+    const order = await getPublicEventMapOrderStatus(orderId, accessToken);
+    return { synced: false as const, status: order.status, throttled: true as const, order };
+  }
+  try {
+    const recentSyncs = await prisma.auditLog.count({
+      where: {
+        contaId: access.contaId,
+        entityType: 'EventMapOrder',
+        entityId: orderId,
+        action,
+        createdAt: { gte: new Date(Date.now() - PAYMENT_SYNC_WINDOW_MS) },
+      },
+    });
+    if (options.automatic) {
+      const latestAutoSync = await prisma.auditLog.findFirst({
+        where: {
+          contaId: access.contaId,
+          entityType: 'EventMapOrder',
+          entityId: orderId,
+          action,
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      });
+      if (latestAutoSync && Date.now() - latestAutoSync.createdAt.getTime() < AUTOMATIC_PAYMENT_SYNC_COOLDOWN_MS) {
+        const order = await getPublicEventMapOrderStatus(orderId, accessToken);
+        return { synced: false as const, status: order.status, throttled: true as const, order };
+      }
+    }
+    const maxSyncs = options.automatic ? AUTOMATIC_PAYMENT_SYNC_MAX_PER_WINDOW : PAYMENT_SYNC_MAX_PER_WINDOW;
+    if (recentSyncs >= maxSyncs) {
+      if (!options.automatic) throw new EventsError('LIMITE_SINCRONIZACAO', 'Aguarde alguns minutos antes de tentar novamente.', 429);
+      const order = await getPublicEventMapOrderStatus(orderId, accessToken);
+      return { synced: false as const, status: order.status, throttled: true as const, order };
+    }
+    if (options.automatic) {
+      await prisma.auditLog.create({
+        data: {
+          contaId: access.contaId,
+          actorType: 'SYSTEM',
+          actorId: null,
+          action,
+          entityType: 'EventMapOrder',
+          entityId: orderId,
+          metadata: { source: 'CHECKOUT_AUTO_SYNC' },
+        },
+      });
+    }
+    return await syncPublicEventMapOrderPaymentUnlocked(orderId, accessToken, options);
+  } finally {
+    await releaseWebhookJobLock({ jobName: lockName, workerId: lock.workerId }).catch(() => undefined);
+  }
+}
+
+async function syncPublicEventMapOrderPaymentUnlocked(
+  orderId: string,
+  accessToken: string,
+  options: { automatic?: boolean },
+) {
   const order = await prisma.eventMapOrder.findFirst({
     where: { id: orderId, accessToken },
     select: {
@@ -54,7 +130,7 @@ export async function syncPublicEventMapOrderPaymentByBuyer(orderId: string, acc
     throw new EventsError('COBRANCA_AUSENTE', 'Cobrança ainda não foi gerada para este pedido.', 409);
   }
 
-  const recentSyncs = await prisma.auditLog.count({
+  const recentSyncs = options.automatic ? 0 : await prisma.auditLog.count({
     where: {
       contaId: order.contaId,
       entityType: 'EventMapOrder',
@@ -77,17 +153,19 @@ export async function syncPublicEventMapOrderPaymentByBuyer(orderId: string, acc
   });
   const paymentStatus = (payment.status ?? '').trim().toUpperCase();
 
-  await prisma.auditLog.create({
-    data: {
-      contaId: order.contaId,
-      actorType: 'SYSTEM',
-      actorId: null,
-      action: 'events.map.public.sync_payment',
-      entityType: 'EventMapOrder',
-      entityId: order.id,
-      metadata: toAuditJson({ asaasPaymentId: order.asaasPaymentId, paymentStatus }),
-    },
-  });
+  if (!options.automatic) {
+    await prisma.auditLog.create({
+      data: {
+        contaId: order.contaId,
+        actorType: 'SYSTEM',
+        actorId: null,
+        action: 'events.map.public.sync_payment',
+        entityType: 'EventMapOrder',
+        entityId: order.id,
+        metadata: toAuditJson({ asaasPaymentId: order.asaasPaymentId, paymentStatus }),
+      },
+    });
+  }
 
   if (!PAID_EVENT_MAP_STATUSES.has(paymentStatus)) {
     return {
