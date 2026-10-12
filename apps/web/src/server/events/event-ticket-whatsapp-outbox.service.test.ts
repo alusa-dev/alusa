@@ -120,6 +120,35 @@ describe('drainEventTicketWhatsAppNotifications', () => {
     vi.unstubAllEnvs();
   });
 
+  it('restores the ticket notification as sent when its idempotent outbox job already succeeded', async () => {
+    vi.stubEnv('APP_URL', 'https://alusa.app');
+    vi.stubEnv('WHATSAPP_EVENT_TICKET_URL_PREFIX', 'https://alusa.app/api/public/event-ticket-links/');
+    getWhatsAppRuntimeConfig.mockReturnValue({ enabled: true, phoneNumberId: 'phone-id' });
+    prisma.eventTicketWhatsAppNotification.findMany.mockResolvedValue([{ id: 'notification-recovered', contaId: 'conta-1' }]);
+    prisma.eventTicketWhatsAppNotification.findUnique.mockResolvedValue({
+      id: 'notification-recovered', contaId: 'conta-1', purchaseType: 'PUBLIC_ORDER',
+      eventMapOrderId: 'order-1', eventTicketSaleId: null, status: 'PROCESSING',
+      recipientPhone: '5511999999999', consentVersion: 'event-ticket-whatsapp-v1',
+      consentRecordedAt: new Date(), consentSource: 'PUBLIC_CHECKOUT', attempts: 2, maxAttempts: 8,
+      templateName: 'ingresso_emitido', languageCode: 'pt_BR', correlationId: 'event-ticket:public_order:order-1',
+    });
+    prisma.eventMapOrder.findFirst.mockResolvedValue({
+      id: 'order-1', status: 'CONFIRMED', paymentStatus: 'PAID', ticketFulfillmentStatus: 'ISSUED',
+      buyerName: 'Ana Silva', buyerPhone: '5511999999999', whatsappOptInAt: new Date(),
+      whatsappOptInSource: 'PUBLIC_CHECKOUT', accessToken: 'opaque-access-token',
+      event: { name: 'Festival' }, map: { name: 'Sessão 01' }, items: [{ ticket: { id: 'ticket-1', status: 'VALID' } }],
+    });
+    enqueueWhatsAppMessage.mockResolvedValue({ jobId: 'job-already-sent', status: 'SENT', deduplicated: true });
+
+    await drainEventTicketWhatsAppNotifications();
+
+    expect(prisma.eventTicketWhatsAppNotification.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'notification-recovered', contaId: 'conta-1' }),
+      data: expect.objectContaining({ status: 'SENT', whatsappJobId: 'job-already-sent', processedAt: expect.any(Date), lastErrorCode: null }),
+    }));
+    vi.unstubAllEnvs();
+  });
+
   it('skips a staff sale after WhatsApp consent is withdrawn', async () => {
     getWhatsAppRuntimeConfig.mockReturnValue({ enabled: true, phoneNumberId: 'phone-id' });
     prisma.eventTicketWhatsAppNotification.findMany.mockResolvedValue([{ id: 'notification-2', contaId: 'conta-a' }]);

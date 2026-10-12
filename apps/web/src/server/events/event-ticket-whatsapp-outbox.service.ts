@@ -266,15 +266,17 @@ export async function drainEventTicketWhatsAppNotifications(input: { limit?: num
         correlationId: notification.correlationId,
       });
       if (queued.status === 'SENT' || queued.status === 'DLQ') {
+        const alreadySent = queued.status === 'SENT';
         await prisma.eventTicketWhatsAppNotification.updateMany({
           where: { id: notification.id, contaId: notification.contaId, status: EventTicketWhatsAppNotificationStatus.PROCESSING, lockedBy: workerId },
           data: {
-            status: EventTicketWhatsAppNotificationStatus.FAILED,
+            status: alreadySent ? EventTicketWhatsAppNotificationStatus.SENT : EventTicketWhatsAppNotificationStatus.DLQ,
             whatsappJobId: queued.jobId,
-            processedAt: null,
+            processedAt: new Date(),
             lockedAt: null,
             lockedBy: null,
-            lastErrorCode: notification.lastErrorCode ?? 'DELIVERY_FAILED',
+            lastErrorCode: alreadySent ? null : notification.lastErrorCode ?? 'DELIVERY_FAILED',
+            lastError: alreadySent ? null : notification.lastError,
           },
         });
         continue;
