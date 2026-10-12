@@ -70,7 +70,8 @@ describe('public event map no-store headers', () => {
     const checkoutResponse = await checkout(
       request('https://alusa.test/api/public/event-maps/public-map/checkout', {
         reservationId: 'reservation-1', holdToken: 'hold-token-1', buyerName: 'Ana Silva',
-        buyerEmail: 'ana@example.com', buyerDocument: '52998224725', buyerPhone: '11987654321', paymentMethod: 'PIX',
+        buyerEmail: 'ana@example.com', buyerDocument: '52998224725', buyerPhone: '11987654321',
+        whatsappConsent: true, paymentMethod: 'PIX',
       }),
       context,
     );

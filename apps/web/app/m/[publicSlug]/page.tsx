@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const viewport: Viewport = {
   themeColor: [
-    { media: '(max-width: 1023px)', color: '#3e1f63' },
+    { media: '(max-width: 1023px)', color: '#f8fafc' },
     { media: '(min-width: 1024px)', color: '#ffffff' },
   ],
 };

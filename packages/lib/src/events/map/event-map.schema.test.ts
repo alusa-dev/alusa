@@ -9,9 +9,9 @@ describe('public ticket checkout consent', () => {
     paymentMethod: 'PIX' as const,
   };
 
-  it('allows checkout without consent and defaults missing consent to false', () => {
-    expect(publicCheckoutSchema.parse({ ...checkout, whatsappConsent: false }).whatsappConsent).toBe(false);
-    expect(publicCheckoutSchema.parse(checkout).whatsappConsent).toBe(false);
+  it('requires WhatsApp consent to complete checkout', () => {
+    expect(() => publicCheckoutSchema.parse({ ...checkout, whatsappConsent: false })).toThrow();
+    expect(() => publicCheckoutSchema.parse(checkout)).toThrow();
     expect(publicCheckoutSchema.parse({ ...checkout, whatsappConsent: true }).whatsappConsent).toBe(true);
   });
 });
