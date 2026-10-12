@@ -18,6 +18,11 @@ import { calculateEventParticipantDiscount } from './event-participant-discount'
 
 const emptyToUndefined = (value: unknown) =>
   typeof value === 'string' && value.trim() === '' ? undefined : value;
+const normalizeOptionalPhone = (value: unknown) => {
+  if (typeof value !== 'string') return emptyToUndefined(value);
+  const digits = value.replace(/\D/g, '');
+  return digits || undefined;
+};
 
 const optionalText = z.preprocess(
   emptyToUndefined,
@@ -170,6 +175,7 @@ export const createTicketSaleSchema = z
     lotId: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional()),
     buyerName: requiredText('Informe o comprador.'),
     buyerEmail: z.preprocess(emptyToUndefined, z.string().trim().email('Informe um e-mail válido.').max(180).optional().nullable()),
+    buyerPhone: z.preprocess(normalizeOptionalPhone, z.string().max(13).regex(/^\d{10,13}$/, 'Informe um número de WhatsApp válido.').optional().nullable()),
     alunoId: optionalId,
     responsavelId: optionalId,
     quantity: z.preprocess(emptyToUndefined, positiveIntSchema.optional()),

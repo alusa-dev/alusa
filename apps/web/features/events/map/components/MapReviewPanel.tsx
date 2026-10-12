@@ -3,6 +3,7 @@
 import { BLOCKING_MAP_DOCUMENT_DIAGNOSTIC_TYPES, buildPublishableMapInput, validateEventMapDocument, validateEventMapIntegrity, validatePublishableEventMap, type EventMapDTO } from '@alusa/domain';
 
 import { CreatorIcon } from '@/components/icons/hugeicons';
+import { MAP_FLOATING_SHADOW_CLASS } from './map-toolbar-styles';
 
 export function MapReviewPanel({ map }: { map: EventMapDTO }) {
   const documentValidation = map.document ? validateEventMapDocument(map.document) : { valid: true, diagnostics: [] };
@@ -20,7 +21,7 @@ export function MapReviewPanel({ map }: { map: EventMapDTO }) {
   const canPublish = publishValidation.ok && errors.length === 0 && warnings.length === 0;
 
   return (
-    <aside className="absolute right-4 top-24 z-20 flex max-h-[calc(100%-8rem)] w-80 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-lg shadow-slate-300/30 backdrop-blur">
+    <aside className={`absolute right-4 top-24 z-20 flex max-h-[calc(100%-8rem)] w-80 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 ${MAP_FLOATING_SHADOW_CLASS} backdrop-blur`}>
       <div className="border-b border-slate-200 px-4 py-3">
         <div className="flex items-center gap-2">
           <CreatorIcon name={canPublish ? 'success' : 'warning'} size={16} className={canPublish ? 'text-emerald-600' : 'text-amber-600'} />

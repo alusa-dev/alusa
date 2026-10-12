@@ -1,4 +1,4 @@
-import { getPayment, listSubscriptionPayments, updatePayment } from '@alusa/finance';
+import { getPayment, listSubscriptionPayments, updatePayment } from '../asaas-ops';
 
 type PaymentTerms = {
   interest?: { value: number } | null;
@@ -12,6 +12,9 @@ type SyncablePayment = {
   dueDate?: string | null;
   billingType?: string | null;
   deleted?: boolean | null;
+  interest?: { value?: number | null } | null;
+  fine?: { value?: number | null; type?: string | null } | null;
+  discount?: { value?: number | null; type?: string | null; dueDateLimitDays?: number | null } | null;
 };
 
 // Asaas documents updates for charges that have not been paid or confirmed.
@@ -40,10 +43,27 @@ function buildPaymentTermsPayload(terms: PaymentTerms) {
   };
 }
 
+function paymentTermsMatch(actual: SyncablePayment, expected: PaymentTerms) {
+  if (expected.interest && Number(actual.interest?.value ?? 0) !== expected.interest.value) return false;
+  if (expected.fine) {
+    if (Number(actual.fine?.value ?? 0) !== expected.fine.value) return false;
+    const expectedType = (expected.fine.type ?? 'PERCENTAGE').toUpperCase();
+    if ((actual.fine?.type ?? 'PERCENTAGE').toUpperCase() !== expectedType) return false;
+  }
+  if (expected.discount) {
+    if (Number(actual.discount?.value ?? 0) !== expected.discount.value) return false;
+    const expectedType = (expected.discount.type ?? 'PERCENTAGE').toUpperCase();
+    if ((actual.discount?.type ?? 'PERCENTAGE').toUpperCase() !== expectedType) return false;
+    if (Number(actual.discount?.dueDateLimitDays ?? 0) !== (expected.discount.dueDateLimitDays ?? 0)) return false;
+  }
+  return true;
+}
+
 export async function syncEditableSubscriptionPayments(input: {
   contaId: string;
   asaasSubscriptionId: string;
   terms: PaymentTerms;
+  assertLeaseOwned?: () => Promise<void>;
 }) {
   const payments: SyncablePayment[] = [];
 
@@ -92,6 +112,7 @@ export async function syncEditableSubscriptionPayments(input: {
         continue;
       }
 
+      await input.assertLeaseOwned?.();
       await updatePayment(
         payment.id,
         {
@@ -108,6 +129,13 @@ export async function syncEditableSubscriptionPayments(input: {
         failures.push({
           paymentId: payment.id,
           message: `A atualização foi aceita, mas a cobrança mudou para ${confirmed.status}.`,
+        });
+        continue;
+      }
+      if (!paymentTermsMatch(confirmed as typeof confirmed & SyncablePayment, input.terms)) {
+        failures.push({
+          paymentId: payment.id,
+          message: 'O Asaas manteve juros, multa ou desconto diferentes dos termos solicitados.',
         });
         continue;
       }

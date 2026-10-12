@@ -5,6 +5,7 @@ import { MAX_ZOOM, MIN_ZOOM } from '../canvas/render/zoom-scrub';
 import { CreatorIcon } from '@/components/icons/hugeicons';
 
 import { Button } from '@/components/ui/button';
+import { MAP_TOOLBAR_SURFACE_CLASS } from './map-toolbar-styles';
 
 export function MapBottomBar() {
   const map = useEventMapEditorStore((state) => state.map);
@@ -15,7 +16,7 @@ export function MapBottomBar() {
   const seatCount = map?.counts.seats ?? 0;
 
   return (
-    <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 rounded-xl border border-slate-200 bg-white/95 p-1.5 shadow-lg shadow-slate-300/30 backdrop-blur">
+    <div className={`absolute bottom-4 left-4 z-20 flex items-center gap-2 px-1.5 ${MAP_TOOLBAR_SURFACE_CLASS}`}>
       <div className="flex h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-1">
         <Button
           type="button"
@@ -23,7 +24,7 @@ export function MapBottomBar() {
           size="icon"
           aria-label="Reduzir zoom"
           disabled={zoom <= MIN_ZOOM}
-          className="h-8 w-8 rounded-md"
+          className="h-7 w-7 rounded-full"
           onClick={() => setZoom(zoom - 0.1)}
         >
           <CreatorIcon name="minus" size={16} />
@@ -35,7 +36,7 @@ export function MapBottomBar() {
           size="icon"
           aria-label="Aumentar zoom"
           disabled={zoom >= MAX_ZOOM}
-          className="h-8 w-8 rounded-md"
+          className="h-7 w-7 rounded-full"
           onClick={() => setZoom(zoom + 0.1)}
         >
           <CreatorIcon name="add" size={16} />
@@ -52,7 +53,7 @@ export function MapBottomBar() {
       >
         <CreatorIcon name="maximize" size={16} />
       </Button>
-      <span className="ml-2 border-l border-slate-200 pl-3 text-xs text-slate-500">
+      <span className="ml-2 flex h-9 items-center border-l border-slate-200 px-3 text-xs text-slate-500">
         {sectionCount} {sectionCount === 1 ? 'setor' : 'setores'} · {seatCount} {seatCount === 1 ? 'assento' : 'assentos'}
       </span>
     </div>

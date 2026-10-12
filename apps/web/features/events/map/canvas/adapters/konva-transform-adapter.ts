@@ -230,7 +230,10 @@ export function readSeatTransformFromNode(node: Konva.Node, baseSize = 24) {
   resetNodeScale(node);
   const x = node.x();
   const y = node.y();
-  const size = Math.max(MIN_OBJECT_SIZE, baseSize * scale);
+  // Seats can be transformed as part of a larger group whose bounds remain
+  // above MIN_OBJECT_SIZE even when each seat becomes smaller than that.
+  // Keep the actual diameter proportional so a later enlargement is reversible.
+  const size = baseSize * scale;
   const rotation = node.rotation();
   if (![x, y, size, rotation].every(Number.isFinite)) return null;
   return { x, y, size, rotation };

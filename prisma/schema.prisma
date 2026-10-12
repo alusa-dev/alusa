@@ -109,6 +109,7 @@ enum WhatsAppOutboundJobStatus {
   SENT
   FAILED
   DLQ
+  CANCELLED
 }
 
 enum ContractWhatsAppNotificationStatus {
@@ -118,6 +119,23 @@ enum ContractWhatsAppNotificationStatus {
   FAILED
   DLQ
   SKIPPED
+}
+
+enum EventTicketWhatsAppNotificationStatus {
+  PENDING
+  PROCESSING
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  DLQ
+  SKIPPED
+}
+
+enum EventTicketWhatsAppPurchaseType {
+  PUBLIC_ORDER
+  STAFF_SALE
 }
 
 enum PlatformBillingEnvironment {
@@ -1454,6 +1472,7 @@ model Conta {
   eventTickets                      EventTicket[]
   eventTicketLots                   EventTicketLot[]
   eventTicketSales                  EventTicketSale[]
+  eventTicketWhatsAppNotifications EventTicketWhatsAppNotification[]
   eventTicketSaleSeats              EventTicketSaleSeat[]
   eventCostumes                     EventCostume[]
   eventCostumeAssignments           EventCostumeAssignment[]
@@ -3089,6 +3108,8 @@ model BillingAgreement {
   asaasSubscriptionId      String?
   remoteStatus             String?
   remoteStatusUpdatedAt    DateTime?
+  mutationLeaseToken       String?
+  mutationLeaseExpiresAt   DateTime?
   version                  Int                    @default(1)
   lastReconciledAt         DateTime?
   reconciliationError      String?
@@ -3183,6 +3204,7 @@ model BillingChangeOperation {
   availableAt        DateTime                     @default(now())
   lockedAt           DateTime?
   leaseExpiresAt     DateTime?
+  claimToken         String?
   lastAttemptAt      DateTime?
   lastError          String?
   completedAt        DateTime?
@@ -3287,6 +3309,7 @@ model FamilyBillingOutbox {
   availableAt           DateTime                  @default(now())
   lockedAt              DateTime?
   leaseExpiresAt        DateTime?
+  claimToken            String?
   processedAt           DateTime?
   lastAttemptAt         DateTime?
   lastError             String?
@@ -4851,6 +4874,10 @@ model EventMapOrder {
   buyerEmail                     String
   buyerDocument                  String?
   buyerPhone                     String?
+  whatsappOptInAt                DateTime?
+  whatsappOptInSource            String?                         @db.VarChar(32)
+  whatsappOptOutAt                DateTime?
+  whatsappOptOutSource            String?                         @db.VarChar(32)
   totalAmount                    Decimal                         @default(0) @db.Decimal(12, 2)
   status                         EventMapOrderStatus             @default(PAYMENT_PENDING)
   ticketFulfillmentStatus        EventMapTicketFulfillmentStatus @default(PENDING)
@@ -4882,6 +4909,7 @@ model EventMapOrder {
   reservation EventMapReservation? @relation(fields: [reservationId], references: [id], onDelete: SetNull)
   items       EventMapOrderItem[]
   tickets     EventTicket[]
+  whatsappNotifications EventTicketWhatsAppNotification[]
 
   @@index([contaId, eventMapId, versionId, status], name: "idx_event_map_order_conta_map_version_status")
   @@index([contaId, status, ticketFulfillmentStatus, updatedAt], name: "idx_event_map_order_conta_fulfillment")
@@ -4948,6 +4976,11 @@ model EventTicketSale {
   lotId             String
   buyerName         String
   buyerEmail        String?
+  buyerPhone        String?               @db.VarChar(32)
+  whatsappOptInAt   DateTime?
+  whatsappOptInSource String?             @db.VarChar(32)
+  whatsappOptOutAt   DateTime?
+  whatsappOptOutSource String?            @db.VarChar(32)
   accessToken       String?               @unique
   alunoId           String?
   responsavelId     String?
@@ -4980,6 +5013,7 @@ model EventTicketSale {
   createdBy   Usuario?              @relation("EventTicketSaleCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   saleSeats   EventTicketSaleSeat[]
   tickets     EventTicket[]
+  whatsappNotifications EventTicketWhatsAppNotification[]
 
   @@index([contaId], name: "idx_event_ticket_sale_conta")
   @@index([contaId, eventId, status], name: "idx_event_ticket_sale_conta_event_status")
@@ -4989,6 +5023,43 @@ model EventTicketSale {
   @@index([contaId, responsavelId], name: "idx_event_ticket_sale_conta_responsavel")
   @@index([contaId, asaasPaymentId], name: "idx_event_ticket_sale_conta_asaas_payment")
   @@index([contaId, eventMapOrderId], name: "idx_event_ticket_sale_conta_map_order")
+}
+
+model EventTicketWhatsAppNotification {
+  id                  String                                 @id @default(cuid())
+  contaId             String
+  purchaseType        EventTicketWhatsAppPurchaseType
+  eventMapOrderId     String?
+  eventTicketSaleId   String?
+  status              EventTicketWhatsAppNotificationStatus @default(PENDING)
+  templateName        String
+  languageCode        String                                 @default("pt_BR")
+  recipientPhone      String                                 @db.VarChar(32)
+  consentVersion      String?
+  consentSource       String?                                @db.VarChar(32)
+  consentRecordedAt   DateTime?
+  attempts            Int                                    @default(0)
+  maxAttempts         Int                                    @default(8)
+  nextAttemptAt       DateTime                               @default(now())
+  lockedAt            DateTime?
+  lockedBy            String?
+  lastErrorCode       String?
+  lastError           String?
+  correlationId       String?
+  idempotencyKey      String                                 @unique(map: "uq_event_ticket_whatsapp_notification_idempotency")
+  whatsappJobId       String?
+  processedAt         DateTime?
+  createdAt           DateTime                               @default(now())
+  updatedAt           DateTime                               @updatedAt
+
+  conta         Conta          @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  eventMapOrder EventMapOrder? @relation(fields: [eventMapOrderId], references: [id], onDelete: Restrict)
+  eventTicketSale EventTicketSale? @relation(fields: [eventTicketSaleId], references: [id], onDelete: Restrict)
+
+  @@index([contaId, status, nextAttemptAt], name: "idx_event_ticket_whatsapp_notification_retry")
+  @@index([contaId, eventMapOrderId, createdAt], name: "idx_event_ticket_whatsapp_notification_order")
+  @@index([contaId, eventTicketSaleId, createdAt], name: "idx_event_ticket_whatsapp_notification_sale")
+  @@index([whatsappJobId], name: "idx_event_ticket_whatsapp_notification_job")
 }
 
 model EventTicketSaleSeat {

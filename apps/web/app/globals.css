@@ -22,6 +22,13 @@ body:has([data-area='public']) {
 	background: #f6f3f7;
 }
 
+@media (max-width: 1023px) {
+	html:has([data-public-ticket-checkout]),
+	body:has([data-public-ticket-checkout]) {
+		background: #3e1f63;
+	}
+}
+
 /* Site marketing — escopo público (data-area="public") */
 [data-area='public'] {
 	color-scheme: light;
@@ -3028,6 +3035,18 @@ html:not([data-theme="dark"]) input:hover:not(:focus):not(:disabled) {
 	transition: all 0.2s ease;
 }
 
+html:not([data-theme="dark"]) [data-testid="properties-panel"] input:not([type="checkbox"]):not([type="color"]):not([type="range"]):hover:not(:focus):not(:disabled) {
+	border-color: transparent !important;
+	background-color: #f5f5f5 !important;
+	box-shadow: none !important;
+}
+
+[data-theme="dark"] [data-testid="properties-panel"] input:not([type="checkbox"]):not([type="color"]):not([type="range"]):hover:not(:focus):not(:disabled) {
+	border-color: transparent !important;
+	background-color: var(--color-bg-card-soft) !important;
+	box-shadow: none !important;
+}
+
 /* Hover melhorado para selects nativos (light) */
 html:not([data-theme="dark"]) select:hover:not(:focus):not(:disabled) {
 	border-color: #c4b5fd !important;
@@ -3315,6 +3334,10 @@ svg:hover,
 	filter: brightness(0.98);
 }
 
+.calendar-scheduler-wrapper .fc-event:hover {
+	z-index: 2;
+}
+
 .calendar-scheduler-wrapper .fc-event[aria-label] {
 	/* Preserve the visual focus ring while keeping the event card itself clean. */
 	-webkit-tap-highlight-color: transparent;
@@ -3345,12 +3368,37 @@ svg:hover,
 	margin-inline: 0;
 }
 
+.calendar-scheduler-wrapper--week .fc-timegrid-event-harness:has(.calendar-event-draft-selection) {
+	left: 0 !important;
+	right: 0 !important;
+	z-index: 3;
+}
+
 .calendar-scheduler-wrapper--week .fc-timegrid-event {
 	min-height: 22px;
 }
 
 .calendar-scheduler-wrapper--week .fc-timegrid-event .fc-event-main {
-	overflow: hidden;
+	overflow: visible;
+}
+
+.calendar-scheduler-wrapper .fc-event.calendar-event-draft-selection,
+.calendar-scheduler-wrapper .fc-event-mirror {
+	background: #f1f5f9 !important;
+	border: 1px dashed #94a3b8 !important;
+	color: #475569 !important;
+	opacity: 1 !important;
+}
+
+.calendar-scheduler-wrapper--has-draft-selection .fc-highlight {
+	background: transparent !important;
+}
+
+[data-theme="dark"] .calendar-scheduler-wrapper .fc-event.calendar-event-draft-selection,
+[data-theme="dark"] .calendar-scheduler-wrapper .fc-event-mirror {
+	background: #1e293b !important;
+	border-color: #64748b !important;
+	color: #e2e8f0 !important;
 }
 
 .calendar-scheduler-wrapper--week .fc-timegrid-more-link,

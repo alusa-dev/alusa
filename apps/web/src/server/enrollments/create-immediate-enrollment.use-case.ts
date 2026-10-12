@@ -560,13 +560,12 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
   // Persist future enrollment billing now, but make only the fee runnable at
   // confirmation. The recurring outbox is scheduled for the contract start.
   const enrollmentDateKey = getAcademicDateKey(input.dataInicio);
-  const schoolTimeZone = input.criarCobranca
+  const schoolTimeZone = enrollmentDateKey
     ? await runWithTenant(input.contaId, async (tx) =>
         (await tx.conta.findUnique({ where: { id: input.contaId }, select: { timezone: true } }))?.timezone,
       )
     : null;
   const deferSubscriptionUntil =
-    input.criarCobranca &&
     enrollmentDateKey &&
     isAcademicDateInFuture(input.dataInicio, new Date(), schoolTimeZone ?? undefined)
       ? getAcademicDateStartInstant(enrollmentDateKey, schoolTimeZone ?? undefined)

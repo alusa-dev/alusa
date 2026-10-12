@@ -90,7 +90,7 @@ describe('PATCH /api/matriculas/[id]', () => {
     prismaMock.billingAllocation.updateMany.mockResolvedValue({ count: 1 });
   });
 
-  it('sincroniza o novo dia de vencimento com o vínculo financeiro antes de salvar localmente', async () => {
+  it('enfileira a mudança do dia de vencimento e aguarda confirmação financeira', async () => {
     prismaMock.matricula.findFirst.mockResolvedValue({
       id: 'mat-1',
       asaasSubscriptionId: 'sub_123',
@@ -130,48 +130,26 @@ describe('PATCH /api/matriculas/[id]', () => {
 
     expect(response.status).toBe(200);
     expect(getSubscriptionMock).toHaveBeenCalledWith('sub_123', { contaId: 'conta-1' });
-    expect(updateSubscriptionMock).toHaveBeenCalledWith(
-      'sub_123',
-      {
-        nextDueDate: '2026-03-10',
-        updatePendingPayments: true,
-      },
-      { contaId: 'conta-1' },
-    );
+    expect(updateSubscriptionMock).not.toHaveBeenCalled();
     expect(atualizarDetalhesMatriculaMock).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'mat-1',
         contaId: 'conta-1',
         actorId: 'user-1',
         vencimentoDia: 10,
+        financialCommand: expect.objectContaining({
+          targetSubscriptionId: 'sub_123',
+          remotePatch: { nextDueDate: '2026-03-10', updatePendingPayments: true },
+          snapshot: expect.objectContaining({ dueDay: 10, nextDueDate: '2026-03-10' }),
+        }),
       }),
     );
-    expect(prismaMock.cobranca.updateMany).toHaveBeenCalledWith({
-      where: {
-        matriculaId: 'mat-1',
-        status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
-      },
-      data: {
-        vencimento: new Date('2026-03-10T12:00:00.000Z'),
-      },
-    });
-    expect(prismaMock.charge.updateMany).toHaveBeenCalledWith({
-      where: {
-        contaId: 'conta-1',
-        cobranca: {
-          matriculaId: 'mat-1',
-          status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
-        },
-      },
-      data: {
-        dueDate: new Date('2026-03-10T12:00:00.000Z'),
-      },
-    });
-    expect(data.asyncSync.localAlignment).toEqual({ cobrancasUpdated: 1, chargesUpdated: 1 });
-    expect(data.asyncSync.message).toMatch(/alinhadas com o vínculo financeiro/i);
+    expect(prismaMock.cobranca.updateMany).not.toHaveBeenCalled();
+    expect(prismaMock.charge.updateMany).not.toHaveBeenCalled();
+    expect(data.asyncSync).toMatchObject({ status: 'PENDING', fields: ['nextDueDate', 'updatePendingPayments'] });
   });
 
-  it('sincroniza a data de fim como endDate no Asaas sem recalcular próximo vencimento', async () => {
+  it('enfileira a data de fim no Asaas sem recalcular próximo vencimento', async () => {
     prismaMock.matricula.findFirst.mockResolvedValue({
       id: 'mat-1',
       asaasSubscriptionId: 'sub_123',
@@ -213,24 +191,22 @@ describe('PATCH /api/matriculas/[id]', () => {
     const data = await response.json();
 
     expect(response.status).toBe(200);
-    expect(updateSubscriptionMock).toHaveBeenCalledWith(
-      'sub_123',
-      {
-        endDate: '2027-01-31',
-      },
-      { contaId: 'conta-1' },
-    );
+    expect(updateSubscriptionMock).not.toHaveBeenCalled();
     expect(atualizarDetalhesMatriculaMock).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'mat-1',
         contaId: 'conta-1',
         actorId: 'user-1',
         dataFimContrato: '2027-01-31T00:00:00.000Z',
+        financialCommand: expect.objectContaining({
+          targetSubscriptionId: 'sub_123',
+          remotePatch: { endDate: '2027-01-31' },
+        }),
       }),
     );
     expect(prismaMock.cobranca.updateMany).not.toHaveBeenCalled();
     expect(prismaMock.charge.updateMany).not.toHaveBeenCalled();
-    expect(data.asyncSync.fields).toEqual(['endDate']);
+    expect(data.asyncSync).toMatchObject({ status: 'PENDING', fields: ['endDate'] });
   });
 
   it('bloqueia payload Asaas quando o novo vencimento ficaria após a data de fim', async () => {
@@ -344,10 +320,16 @@ describe('PATCH /api/matriculas/[id]', () => {
 
     expect(response.status).toBe(200);
     expect(updateSubscriptionMock).not.toHaveBeenCalled();
-    expect(projectConfirmedBillingAgreementSnapshotMock).toHaveBeenCalledWith(
+    expect(projectConfirmedBillingAgreementSnapshotMock).not.toHaveBeenCalled();
+    expect(atualizarDetalhesMatriculaMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        asaasSubscriptionId: 'sub_shared',
-        validUntil: '2027-01-01',
+        financialCommand: expect.objectContaining({
+          targetSubscriptionId: 'sub_shared',
+          affectedMatriculaIds: ['mat-1', 'mat-2'],
+          remotePatch: {},
+          snapshot: expect.objectContaining({ validUntil: '2027-01-01' }),
+          allocationValidity: { matriculaIds: ['mat-1'], validUntil: '2026-12-01' },
+        }),
       }),
     );
     expect(atualizarDetalhesMatriculaMock).toHaveBeenCalledWith(
@@ -356,11 +338,6 @@ describe('PATCH /api/matriculas/[id]', () => {
         dataFimContrato: '2026-11-30T00:00:00.000Z',
       }),
     );
-    expect(prismaMock.billingAllocation.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ agreementId: 'agreement-1', matriculaId: 'mat-1' }),
-        data: { validUntil: new Date('2026-12-01T00:00:00.000Z') },
-      }),
-    );
+    expect(prismaMock.billingAllocation.updateMany).not.toHaveBeenCalled();
   });
 });

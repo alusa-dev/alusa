@@ -913,11 +913,10 @@ export const matriculaStatusSyncDataDTOSchema = z.object({
 });
 export type MatriculaStatusSyncDataDTO = z.infer<typeof matriculaStatusSyncDataDTOSchema>;
 
-export const matriculaStatusSyncResultDTOSchema = z.object({
-  success: z.boolean(),
-  message: z.string(),
-  data: matriculaStatusSyncDataDTOSchema,
-});
+export const matriculaStatusSyncResultDTOSchema = z.union([
+  z.object({ success: z.literal(true), pending: z.literal(true), retryable: z.literal(true), message: z.string(), matriculaId: z.string(), status: matriculaStatusDTOSchema.nullable(), operationId: z.string().nullable().optional(), correlationId: z.string().nullable().optional() }),
+  z.object({ success: z.boolean(), pending: z.literal(false).optional(), message: z.string(), data: matriculaStatusSyncDataDTOSchema }),
+]);
 export type MatriculaStatusSyncResultDTO = z.infer<typeof matriculaStatusSyncResultDTOSchema>;
 
 export const matriculaDeleteResultDTOSchema = z.object({

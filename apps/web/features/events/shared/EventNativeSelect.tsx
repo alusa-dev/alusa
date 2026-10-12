@@ -31,7 +31,7 @@ export function EventNativeSelect({
   options: EventSelectOption[];
   required?: boolean;
   placeholder?: string;
-  onValueChange?: (value: string) => void;
+  onValueChange?: (_value: string) => void;
   triggerClassName?: string;
 }) {
   const [internalValue, setInternalValue] = useState<string>(defaultValue ?? '');
@@ -40,7 +40,7 @@ export function EventNativeSelect({
     <>
       <input type="hidden" name={name} value={selectedValue} required={required} />
       <Select
-        value={selectedValue || undefined}
+        value={selectedValue}
         onValueChange={(next) => {
           const val = next === EMPTY_SELECT_VALUE ? '' : next ?? '';
           if (value == null) setInternalValue(val);

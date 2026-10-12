@@ -9,6 +9,9 @@ import type {
   ProposedBillingAdjustment,
   BillingAgreement,
 } from './types';
+import type { Prisma } from '@prisma/client';
+
+export type BillingOwnershipGuard = (tx?: Prisma.TransactionClient) => Promise<void>;
 
 export type ReserveBillingOperationInput = {
   contaId: string;
@@ -17,6 +20,7 @@ export type ReserveBillingOperationInput = {
   correlationId: string;
   change: BillingAgreementChangeInput;
   preview: BillingAgreementChangePreview;
+  ownershipGuard?: BillingOwnershipGuard;
 };
 
 export type ReserveBillingOperationResult =
@@ -33,6 +37,7 @@ export type ApplyConfirmedBillingChangeInput = {
   remoteProgress: BillingRemoteProgress[];
   adjustments: ProposedBillingAdjustment[];
   correlationId: string;
+  ownershipGuard?: BillingOwnershipGuard;
 };
 
 export interface BillingAgreementRepositoryPort {
@@ -53,6 +58,7 @@ export interface BillingAgreementRepositoryPort {
     contaId: string;
     operationId: string;
     progress: BillingRemoteProgress[];
+    ownershipGuard?: BillingOwnershipGuard;
   }): Promise<void>;
 
   applyConfirmedChange(
@@ -65,6 +71,7 @@ export interface BillingAgreementRepositoryPort {
     errorCode: string;
     errorMessage: string;
     remoteProgress: BillingRemoteProgress[];
+    ownershipGuard?: BillingOwnershipGuard;
   }): Promise<void>;
 
   markOperationFailed(input: {
@@ -72,6 +79,7 @@ export interface BillingAgreementRepositoryPort {
     operationId: string;
     errorCode: string;
     errorMessage: string;
+    ownershipGuard?: BillingOwnershipGuard;
   }): Promise<void>;
 }
 
@@ -173,7 +181,8 @@ export interface BillingAgreementLockPort {
   withAgreementLocks<T>(input: {
     contaId: string;
     agreementIds: string[];
-    run: () => Promise<T>;
+    leaseToken?: string;
+    run: (assertOwned: () => Promise<void>) => Promise<T>;
   }): Promise<{ acquired: true; result: T } | { acquired: false }>;
 }
 

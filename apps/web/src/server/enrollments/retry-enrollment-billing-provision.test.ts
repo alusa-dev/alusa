@@ -7,15 +7,19 @@ import {
 const mocks = vi.hoisted(() => ({
   matriculaFindMany: vi.fn(),
   outboxFindFirst: vi.fn(),
+  outboxFindMany: vi.fn(),
   processEvent: vi.fn(),
   enqueueBilling: vi.fn(),
   enqueueMerge: vi.fn(),
+  resumeTerminalIntent: vi.fn(),
+  userFindFirst: vi.fn(),
 }));
 
 vi.mock('@/src/prisma', () => ({
   prisma: {
     matricula: { findMany: mocks.matriculaFindMany },
-    matriculaBillingOutbox: { findFirst: mocks.outboxFindFirst },
+    matriculaBillingOutbox: { findFirst: mocks.outboxFindFirst, findMany: mocks.outboxFindMany },
+    usuario: { findFirst: mocks.userFindFirst },
   },
 }));
 
@@ -27,6 +31,7 @@ vi.mock('@/src/server/enrollments/enrollment-billing-outbox.service', () => ({
   enqueueEnrollmentBillingOutbox: mocks.enqueueBilling,
   enqueueEnrollmentSubscriptionMergeOutbox: mocks.enqueueMerge,
   processEnrollmentBillingOutboxEvent: mocks.processEvent,
+  resumeReconciledEnrollmentTerminalIntent: mocks.resumeTerminalIntent,
 }));
 
 import { retryEnrollmentBillingProvisionJob } from './retry-enrollment-billing-provision';
@@ -40,7 +45,10 @@ describe('retryEnrollmentBillingProvisionJob scheduled outbox eligibility', () =
     vi.clearAllMocks();
     mocks.matriculaFindMany.mockResolvedValue([]);
     mocks.outboxFindFirst.mockResolvedValue(null);
+    mocks.outboxFindMany.mockResolvedValue([]);
     mocks.processEvent.mockResolvedValue({ status: 'PROCESSED' });
+    mocks.resumeTerminalIntent.mockResolvedValue({ status: 'CANCELLED' });
+    mocks.userFindFirst.mockResolvedValue({ id: 'user-fallback' });
   });
 
   afterEach(() => {
@@ -55,6 +63,7 @@ describe('retryEnrollmentBillingProvisionJob scheduled outbox eligibility', () =
       expect.objectContaining({
         take: 1,
         where: expect.objectContaining({
+          matriculaFamiliarId: null,
           OR: [
             {
               billingOutboxEvents: {
@@ -89,6 +98,20 @@ describe('retryEnrollmentBillingProvisionJob scheduled outbox eligibility', () =
     );
     expect(mocks.outboxFindFirst).not.toHaveBeenCalled();
     expect(mocks.processEvent).not.toHaveBeenCalled();
+  });
+
+  it('retoma intenção terminal persistida em reconciliação pelo cron', async () => {
+    mocks.outboxFindMany.mockResolvedValueOnce([{
+      contaId: 'conta-1', matriculaId: 'mat-1', terminalIntentActorId: 'user-1',
+    }]);
+
+    const result = await retryEnrollmentBillingProvisionJob({ limit: 1 });
+
+    expect(mocks.resumeTerminalIntent).toHaveBeenCalledWith({
+      contaId: 'conta-1', matriculaId: 'mat-1', actorUserId: 'user-1',
+    });
+    expect(mocks.matriculaFindMany).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ scanned: 1, retried: 1, recovered: 1 });
   });
 
   it('mantém elegível taxa falha vencida mesmo com assinatura futura e só seleciona evento disponível', async () => {

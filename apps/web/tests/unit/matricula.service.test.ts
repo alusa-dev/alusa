@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { FormaPagamento, PeriodicidadePlano, Status } from '@prisma/client';
 import { prisma } from '@/src/prisma';
 
@@ -8,6 +8,7 @@ import {
   calcularPrecoMatricula,
   criarMatricula,
   listarMatriculas,
+  atualizarDetalhesMatricula,
 } from '@/src/server/enrollments/enrollment.service';
 
 // Serviço oficial para criar conta com owner atendendo ao schema
@@ -326,6 +327,53 @@ describe('serviço de matrícula', () => {
       expect(primeiroVencimento instanceof Date).toBe(true);
     });
 
+    it.each([
+      ['IMMEDIATE', 0],
+      ['REQUIRES_PAYMENT', 50],
+    ] as const)('mantém matrícula futura aguardando início sob política %s', async (policy, fee) => {
+      await prisma.conta.update({
+        where: { id: contaId },
+        data: { matriculaActivationPolicy: policy },
+      });
+      try {
+        const { matricula } = await criarMatricula({
+          contaId,
+          alunoId,
+          responsavelFinanceiroId: responsavelId,
+          turmaId,
+          planoId,
+          taxaMatricula: fee,
+          taxaIsenta: fee === 0,
+          formaPagamento: FormaPagamento.BOLETO,
+          criarCobranca: false,
+          gerarCobrancaTaxa: false,
+          pagarTaxaAgora: false,
+          dataInicio: new Date('2099-11-01T12:00:00.000Z'),
+          dataFimContrato: new Date('2100-10-31T12:00:00.000Z'),
+          deferSubscriptionUntil: new Date('2099-11-01T04:00:00.000Z'),
+          vencimentoDia: 5,
+          createdById: ownerId,
+          modeloId,
+        });
+
+        expect(matricula.status).toBe('AGUARDANDO_CONFIRMACAO');
+        const activationEvent = await prisma.matriculaBillingOutbox.findFirst({
+          where: { contaId, matriculaId: matricula.id, status: 'PENDING' },
+          orderBy: { createdAt: 'desc' },
+        });
+        expect(activationEvent?.availableAt).toEqual(new Date('2099-11-01T04:00:00.000Z'));
+        expect(activationEvent?.payload).toMatchObject({
+          billingPhase: 'SUBSCRIPTION_ONLY',
+          createRecurringBilling: false,
+        });
+      } finally {
+        await prisma.conta.update({
+          where: { id: contaId },
+          data: { matriculaActivationPolicy: 'IMMEDIATE' },
+        });
+      }
+    });
+
     it('criarMatricula gera cobrança da taxa quando explicitamente habilitado', async () => {
       const dataInicio = new Date();
       const dataFimContrato = new Date(dataInicio);
@@ -476,6 +524,34 @@ describe('serviço de matrícula', () => {
       expect(m.turma?.nome).toBeTruthy();
       expect(m.plano?.nome).toBeTruthy();
       expect(Array.isArray(m.cobrancas)).toBe(true);
+    });
+
+    it('edição de vigência individual não consulta nem altera outbox familiar', async () => {
+      const enrollment = await prisma.matricula.findFirst({
+        where: { contaId, matriculaFamiliarId: null },
+        select: { id: true, dataInicio: true, dataFimContrato: true },
+      });
+      if (!enrollment) return;
+      const familyLookup = vi.spyOn(prisma.familyBillingOutbox, 'findFirst');
+      const newStart = new Date(Date.now() + 45 * 24 * 60 * 60 * 1000);
+      const newEnd = new Date(newStart);
+      newEnd.setUTCFullYear(newEnd.getUTCFullYear() + 1);
+      try {
+        await atualizarDetalhesMatricula({
+          id: enrollment.id,
+          contaId,
+          actorId: ownerId,
+          dataInicio: newStart.toISOString(),
+          dataFimContrato: newEnd.toISOString(),
+        });
+        expect(familyLookup).not.toHaveBeenCalled();
+      } finally {
+        familyLookup.mockRestore();
+        await prisma.matricula.update({
+          where: { id: enrollment.id },
+          data: { dataInicio: enrollment.dataInicio, dataFimContrato: enrollment.dataFimContrato },
+        });
+      }
     });
   });
 });

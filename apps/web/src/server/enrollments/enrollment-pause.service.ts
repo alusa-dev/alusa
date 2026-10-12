@@ -13,8 +13,8 @@ import {
   materializeBillingAgreement,
 } from '@alusa/finance';
 import { AsaasHttpError } from '@alusa/finance';
-import { validatePausa, validateReativacao, validarCapacidade } from '@alusa/domain';
-import type { TurmaCapacidadeInfo } from '@alusa/domain';
+import { validatePausa, validateReativacao, validarCapacidade, validarConflitosHorario } from '@alusa/domain';
+import { buildSeatOccupancyOverlapWhereClause } from '@alusa/lib/services/matricula-occupancy';
 import {
   cancelLocalFutureEnrollmentCharges,
   markEnrollmentFinanceDivergence,
@@ -463,6 +463,9 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
       matriculaFamiliarId: true,
       version: true,
       turmaId: true,
+      comboId: true,
+      combo: { select: { turmas: { select: { turmaId: true } } } },
+      matriculaTurmas: { select: { turmaId: true } },
     },
   });
 
@@ -849,14 +852,10 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
       matriculaFamiliarId: true,
       version: true,
       turmaId: true,
-      turma: {
-        select: {
-          id: true,
-          nome: true,
-          capacidade: true,
-          _count: { select: { matriculas: { where: { status: { in: ['ATIVA', 'PENDENTE_TAXA', 'AGUARDANDO_CONFIRMACAO'] } } } } },
-        },
-      },
+      comboId: true,
+      dataFimContrato: true,
+      combo: { select: { turmas: { select: { turmaId: true } } } },
+      matriculaTurmas: { select: { turmaId: true } },
     },
   });
 
@@ -864,21 +863,7 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
     throw new PausaBusinessError('MATRICULA_NOT_FOUND', 'Matrícula não encontrada.', 404);
   }
 
-  // Validação de domínio: verifica se pode reativar + capacidade
-  let capacidadeDisponivel: boolean | undefined;
-
-  if (!matricula.manterVaga && matricula.turma) {
-    const turmaInfo: TurmaCapacidadeInfo = {
-      id: matricula.turma.id,
-      nome: matricula.turma.nome,
-      capacidade: matricula.turma.capacidade,
-      matriculasOcupantes: matricula.turma._count.matriculas,
-    };
-    const capResult = validarCapacidade([turmaInfo]);
-    capacidadeDisponivel = capResult.success;
-  }
-
-  const validacao = validateReativacao(matricula.status, matricula.manterVaga, capacidadeDisponivel);
+  const validacao = validateReativacao(matricula.status, matricula.manterVaga);
   if (!validacao.success) {
     const msgs: Record<string, string> = {
       MATRICULA_NAO_PAUSADA: 'A matrícula precisa estar com status Pausada para ser reativada.',
@@ -887,21 +872,127 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
     throw new PausaBusinessError(validacao.error, msgs[validacao.error] ?? validacao.error);
   }
 
-  // Criar operação local
-  const operacao = await input.prisma.matriculaOperacao.create({
-    data: {
-      matriculaId: matricula.id,
+  // Reserve capacity before any Asaas side effect. The row remains paused while
+  // reserved, and manterVaga=true makes that reservation visible to all
+  // occupancy queries. Advisory locks match enrollment creation.
+  let reservedVersion = matricula.version;
+  const operacao = await input.prisma.$transaction(async (tx) => {
+    const classIds = Array.from(new Set([
+      ...(matricula.turmaId ? [matricula.turmaId] : []),
+      ...(matricula.matriculaTurmas ?? []).map((item) => item.turmaId),
+      ...(matricula.combo?.turmas?.map((item) => item.turmaId) ?? []),
+    ])).sort();
+    const lockIds = [
+      ...classIds.map((id) => `turma:${id}`),
+      ...(matricula.comboId ? [`combo:${matricula.comboId}`] : []),
+    ].sort();
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.contaId}), hashtext(${matricula.alunoId}))`;
+    for (const lockId of lockIds) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.contaId}), hashtext(${lockId}))`;
+    }
+
+    const current = await tx.matricula.findFirst({
+      where: { id: matricula.id, aluno: { contaId: input.contaId } },
+      select: { id: true, status: true, version: true, manterVaga: true },
+    });
+    if (!current || current.status !== 'PAUSADA' || current.version !== matricula.version) {
+      throw new PausaBusinessError(
+        'OPERACAO_DUPLICADA',
+        'A matrícula mudou durante a reativação. Atualize os dados e tente novamente.',
+        409,
+      );
+    }
+
+    const effectiveStart = new Date(`${input.dataRetornoEfetiva}T12:00:00.000Z`);
+    const occupancyPeriod = buildSeatOccupancyOverlapWhereClause(
+      effectiveStart,
+      matricula.dataFimContrato ?? effectiveStart,
+    );
+    if (!current.manterVaga) {
+      const turmas = await tx.turma.findMany({
+        where: { contaId: input.contaId, id: { in: classIds } },
+        select: { id: true, nome: true, capacidade: true, diasSemana: true, horaInicio: true, horaFim: true },
+      });
+      for (const turma of turmas) {
+        const occupied = await tx.matricula.count({
+          where: {
+            contaId: input.contaId,
+            OR: [{ turmaId: turma.id }, { matriculaTurmas: { some: { turmaId: turma.id } } }],
+            ...occupancyPeriod,
+            NOT: { id: matricula.id },
+          },
+        });
+        if (!validarCapacidade([{ id: turma.id, nome: turma.nome, capacidade: turma.capacidade, matriculasOcupantes: occupied }]).success) {
+          throw new PausaBusinessError('SEM_VAGA_PARA_REATIVACAO', `Não há vaga disponível na turma "${turma.nome}" para reativar esta matrícula.`);
+        }
+      }
+
+      if (matricula.comboId) {
+        const combo = await tx.combo.findFirst({
+          where: { id: matricula.comboId, contaId: input.contaId },
+          select: { id: true, vagasLimite: true },
+        });
+        if (!combo) throw new PausaBusinessError('COMBO_NAO_ENCONTRADO', 'Combo da matrícula não encontrado.', 409);
+        if (combo.vagasLimite != null) {
+          const occupied = await tx.matricula.count({
+            where: { contaId: input.contaId, comboId: combo.id, ...occupancyPeriod, NOT: { id: matricula.id } },
+          });
+          if (!validarCapacidade([], { vagasLimite: combo.vagasLimite, matriculasOcupantes: occupied }).success) {
+            throw new PausaBusinessError('COMBO_SEM_VAGAS', 'Combo não possui vagas disponíveis para reativar esta matrícula.');
+          }
+        }
+      }
+
+      const otherEnrollments = await tx.matricula.findMany({
+        where: { contaId: input.contaId, alunoId: matricula.alunoId, ...occupancyPeriod, NOT: { id: matricula.id } },
+        include: {
+          turma: { select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true } },
+          matriculaTurmas: { include: { turma: { select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true } } } },
+        },
+      });
+      const existingClasses = Array.from(new Map(
+        otherEnrollments.flatMap((item) => [item.turma, ...item.matriculaTurmas.map((membership) => membership.turma)])
+          .filter((item): item is NonNullable<typeof item> => item !== null)
+          .map((item) => [item.id, item]),
+      ).values());
+      const targetClasses = await tx.turma.findMany({
+        where: { contaId: input.contaId, id: { in: classIds } },
+        select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
+      });
+      const conflict = validarConflitosHorario(targetClasses, existingClasses);
+      if (!conflict.success) {
+        throw new PausaBusinessError('CONFLITO_HORARIO', `Conflito de horário entre "${conflict.turma1}" e "${conflict.turma2}".`);
+      }
+    }
+
+    const additionalActiveStudents = await countAdditionalActiveStudentsForEnrollment({
+      tx,
       contaId: input.contaId,
-      tipo: 'REATIVACAO',
-      origem: 'USER',
-      status: 'PENDENTE_SINCRONISMO',
-      actorId: input.actorId,
-      observacao: input.observacao,
-      payloadEnviado: {
-        dataRetornoEfetiva: input.dataRetornoEfetiva,
-        nextDueDate: input.nextDueDate,
+      alunoId: matricula.alunoId,
+    });
+    await assertStudentCapacity({ tx, contaId: input.contaId, additionalActiveStudents, operation: 'matricula.pause.reactivate' });
+
+    const operation = await tx.matriculaOperacao.create({
+      data: {
+        matriculaId: matricula.id,
+        contaId: input.contaId,
+        tipo: 'REATIVACAO',
+        origem: 'USER',
+        status: 'PENDENTE_SINCRONISMO',
+        actorId: input.actorId,
+        observacao: input.observacao,
+        payloadEnviado: { dataRetornoEfetiva: input.dataRetornoEfetiva, nextDueDate: input.nextDueDate },
       },
-    },
+    });
+    if (!current.manterVaga) {
+      const reservation = await tx.matricula.update({
+        where: { id: matricula.id, version: current.version },
+        data: { manterVaga: true, version: { increment: 1 }, integrationStatus: 'PENDENTE_SINCRONISMO' },
+        select: { version: true },
+      });
+      reservedVersion = reservation.version;
+    }
+    return operation;
   });
 
   const warnings: string[] = [];
@@ -964,9 +1055,21 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
       integrationStatus = committed.status === 'COMPLETED' ? 'SINCRONIZADO' : 'DIVERGENTE';
       warningCode = committed.status === 'COMPLETED' ? null : 'OPERACAO_FINANCEIRA_REQUER_RECONCILIACAO';
     } catch (error) {
+      const outcomeUncertain = !(error instanceof AsaasHttpError) || error.status >= 500;
+      if (!outcomeUncertain && !matricula.manterVaga) {
+        await input.prisma.matricula.updateMany({
+          where: { id: matricula.id, aluno: { contaId: input.contaId }, version: reservedVersion, status: 'PAUSADA' },
+          data: { manterVaga: false, integrationStatus: 'DIVERGENTE', version: { increment: 1 } },
+        });
+      }
       await input.prisma.matriculaOperacao.update({
         where: { id: operacao.id },
-        data: { status: 'ERRO', erro: error instanceof Error ? error.message : String(error), processedAt: new Date() },
+        data: {
+          status: outcomeUncertain ? 'PENDENTE_SINCRONISMO' : 'ERRO',
+          erro: error instanceof Error ? error.message : String(error),
+          payloadRecebido: { outcomeUncertain },
+          processedAt: outcomeUncertain ? null : new Date(),
+        },
       });
       throw buildFinancialError('reativar', matricula.asaasSubscriptionId ?? pausedCanonicalAllocation.agreementId, error);
     }
@@ -983,13 +1086,20 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
       integrationStatus = 'PENDENTE_SINCRONISMO'; // Aguardamos webhook de confirmação
 
     } catch (error) {
+      const outcomeUncertain = !(error instanceof AsaasHttpError) || error.status >= 500;
+      if (!outcomeUncertain && !matricula.manterVaga) {
+        await input.prisma.matricula.updateMany({
+          where: { id: matricula.id, aluno: { contaId: input.contaId }, version: reservedVersion, status: 'PAUSADA' },
+          data: { manterVaga: false, integrationStatus: 'DIVERGENTE', version: { increment: 1 } },
+        });
+      }
       await input.prisma.matriculaOperacao.update({
         where: { id: operacao.id },
         data: {
-          status: 'ERRO',
+          status: outcomeUncertain ? 'PENDENTE_SINCRONISMO' : 'ERRO',
           erro: error instanceof Error ? error.message : String(error),
-          payloadRecebido: { error: true },
-          processedAt: new Date(),
+          payloadRecebido: { error: true, outcomeUncertain },
+          processedAt: outcomeUncertain ? null : new Date(),
         },
       });
       throw buildFinancialError('reativar', matricula.asaasSubscriptionId, error);
@@ -998,18 +1108,6 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
 
   // Atualizar matrícula
   await input.prisma.$transaction(async (tx) => {
-    const additionalActiveStudents = await countAdditionalActiveStudentsForEnrollment({
-      tx,
-      contaId: input.contaId,
-      alunoId: matricula.alunoId,
-    });
-    await assertStudentCapacity({
-      tx,
-      contaId: input.contaId,
-      additionalActiveStudents,
-      operation: 'matricula.pause.reactivate',
-    });
-
     const [overdueCharges, openEnrollmentFee] = await Promise.all([
       tx.cobranca.count({
         where: {
@@ -1035,7 +1133,7 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
         : 'ADIMPLENTE' as const;
 
     await tx.matricula.update({
-      where: { id: matricula.id, version: matricula.version },
+      where: { id: matricula.id, version: reservedVersion },
       data: {
         status: 'ATIVA',
         pausaAtiva: false,

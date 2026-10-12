@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { differenceInCalendarDays } from 'date-fns';
 import { CalendarDays, CheckCircle2, Clock, MapPin, PackageCheck, User } from 'lucide-react';
@@ -8,10 +9,9 @@ import { type SchoolEventStatus } from '@alusa/shared';
 import { Edit } from '@/components/icons/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { LoadingDots } from '@/components/ui/LoadingDots';
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -41,6 +41,7 @@ function getEventCountdownLabel(startsAt: string) {
 }
 
 export function EventHeader({ event, participantsCount }: { event: SchoolEventDTO; participantsCount: number }) {
+  const [finishDialogOpen, setFinishDialogOpen] = useState(false);
   const queryClient = useQueryClient();
   const statusMutation = useMutation({
     mutationFn: (status: SchoolEventStatus) => updateEventStatus(event.id, status),
@@ -49,6 +50,7 @@ export function EventHeader({ event, participantsCount }: { event: SchoolEventDT
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(event.id) }),
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.events }),
       ]);
+      setFinishDialogOpen(false);
       toast.success({ title: 'Status atualizado', description: 'O status do evento foi atualizado com sucesso.' });
     },
     onError: (error) => toast.error({ title: 'Erro ao alterar status', description: (error as Error).message }),
@@ -105,14 +107,15 @@ export function EventHeader({ event, participantsCount }: { event: SchoolEventDT
           {nextActions.map((action) => {
             if (action.status === 'FINISHED') {
               return (
-                <Dialog key={action.status}>
+                <Dialog key={action.status} open={finishDialogOpen} onOpenChange={(open) => { if (open || !statusMutation.isPending) setFinishDialogOpen(open); }}>
                   <DialogTrigger asChild>
                     <Button className={PRIMARY_BUTTON_CLASS}>
                       <action.icon className="h-4 w-4" />
                       {action.label}
                     </Button>
                   </DialogTrigger>
-                  <DialogContent className="max-w-lg">
+                  <DialogContent closeDisabled={statusMutation.isPending} className="relative max-w-lg" aria-busy={statusMutation.isPending}>
+                    <div inert={statusMutation.isPending || undefined}>
                     <DialogHeader>
                       <DialogTitle>Finalizar Evento - Detalhes e Insights</DialogTitle>
                       <DialogDescription>
@@ -166,17 +169,17 @@ export function EventHeader({ event, participantsCount }: { event: SchoolEventDT
                       >
                         Imprimir relatório
                       </Button>
-                      <DialogClose asChild>
-                        <Button
-                          type="button"
-                          className={PRIMARY_BUTTON_CLASS}
-                          onClick={() => statusMutation.mutate('FINISHED')}
-                          disabled={statusMutation.isPending}
-                        >
-                          {statusMutation.isPending ? <><span>Finalizando</span><LoadingDots label="Finalizando evento" size="sm" className="text-white" /></> : 'Sair'}
-                        </Button>
-                      </DialogClose>
+                      <Button
+                        type="button"
+                        className={PRIMARY_BUTTON_CLASS}
+                        onClick={() => statusMutation.mutate('FINISHED')}
+                        disabled={statusMutation.isPending}
+                      >
+                        {statusMutation.isPending ? 'Finalizando' : 'Sair'}
+                      </Button>
                     </DialogFooter>
+                    </div>
+                    <EventMutationOverlay pending={statusMutation.isPending} label="Finalizando evento" />
                   </DialogContent>
                 </Dialog>
               );

@@ -12,6 +12,7 @@ const {
   listSubscriptionPaymentsMock,
   updateSubscriptionMock,
   updatePaymentMock,
+  enqueueEnrollmentFinancialCommandMock,
   prismaMock,
   resolveMatriculaFinancialContextMock,
   updateFamilyFinancialLocalStateMock,
@@ -24,7 +25,9 @@ const {
   listSubscriptionPaymentsMock: vi.fn(),
   updateSubscriptionMock: vi.fn(),
   updatePaymentMock: vi.fn(),
+  enqueueEnrollmentFinancialCommandMock: vi.fn(),
   prismaMock: {
+    $transaction: vi.fn(),
     matricula: {
       findFirst: vi.fn(),
       update: vi.fn(),
@@ -57,6 +60,7 @@ vi.mock('@alusa/finance', () => ({
   listSubscriptionPayments: listSubscriptionPaymentsMock,
   updateSubscription: updateSubscriptionMock,
   updatePayment: updatePaymentMock,
+  enqueueEnrollmentFinancialCommand: enqueueEnrollmentFinancialCommandMock,
   KycNotApprovedError: class KycNotApprovedError extends Error {},
 }));
 
@@ -88,6 +92,8 @@ function buildRequest(body: Record<string, unknown>) {
 describe('PUT /api/matriculas/[id]/juros-multa', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    prismaMock.$transaction.mockImplementation((callback: (tx: typeof prismaMock) => unknown) => callback(prismaMock));
+    enqueueEnrollmentFinancialCommandMock.mockResolvedValue({ id: 'financial-command-terms-1' });
     getServerSessionMock.mockResolvedValue({
       user: { id: 'user-1', contaId: 'conta-1' },
     });
@@ -141,14 +147,7 @@ describe('PUT /api/matriculas/[id]/juros-multa', () => {
     });
   });
 
-  it('envia juros, multa, desconto e updatePendingPayments no PUT da assinatura Asaas', async () => {
-    updateSubscriptionMock.mockResolvedValue({
-      id: 'sub_123',
-      interest: { value: 0 },
-      fine: { value: 0, type: 'PERCENTAGE' },
-      discount: { value: 0, type: 'PERCENTAGE', dueDateLimitDays: 5 },
-    });
-
+  it('enfileira juros, multa, desconto e updatePendingPayments para o Asaas', async () => {
     const response = await PUT(
       buildRequest({
         interest: { value: 0 },
@@ -159,34 +158,40 @@ describe('PUT /api/matriculas/[id]/juros-multa', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(updateSubscriptionMock).toHaveBeenCalledWith(
-      'sub_123',
-      {
-        interest: { value: 0 },
-        fine: { value: 0, type: 'PERCENTAGE' },
-        discount: { value: 0, type: 'PERCENTAGE', dueDateLimitDays: 5 },
-        updatePendingPayments: true,
-      },
-      { contaId: 'conta-1' },
+    expect(enqueueEnrollmentFinancialCommandMock).toHaveBeenCalledWith(
+      prismaMock,
+      expect.objectContaining({
+        contaId: 'conta-1',
+        actorId: 'user-1',
+        command: expect.objectContaining({
+          matriculaId: 'mat-1',
+          targetSubscriptionId: 'sub_123',
+          affectedMatriculaIds: ['mat-1'],
+          remotePatch: {
+            interest: { value: 0 },
+            fine: { value: 0, type: 'PERCENTAGE' },
+            discount: { value: 0, type: 'PERCENTAGE', dueDateLimitDays: 5 },
+            updatePendingPayments: true,
+          },
+          localPatch: {
+            jurosMensal: null,
+            jurosTipo: null,
+            multaPercentual: null,
+            multaTipo: null,
+            descontoAntecipado: null,
+            descontoTipo: null,
+            prazoDesconto: null,
+          },
+        }),
+      }),
     );
-    expect(getSubscriptionMock).not.toHaveBeenCalled();
-    expect(listSubscriptionPaymentsMock).toHaveBeenCalledWith('sub_123', {
-      contaId: 'conta-1',
+    expect(updateSubscriptionMock).not.toHaveBeenCalled();
+    expect(listSubscriptionPaymentsMock).not.toHaveBeenCalled();
+    expect(updatePaymentMock).not.toHaveBeenCalled();
+    const data = await response.json();
+    expect(data.asyncSync).toMatchObject({
       status: 'PENDING',
-      limit: 100,
-      offset: 0,
+      operationId: 'financial-command-terms-1',
     });
-    expect(updatePaymentMock).toHaveBeenCalledWith(
-      'pay_pending',
-      {
-        billingType: 'BOLETO',
-        value: 150,
-        dueDate: '2026-06-10',
-        interest: { value: 0 },
-        fine: { value: 0, type: 'PERCENTAGE' },
-        discount: { value: 0, type: 'PERCENTAGE', dueDateLimitDays: 5 },
-      },
-      { contaId: 'conta-1' },
-    );
   });
 });

@@ -3,6 +3,7 @@ import { isPlateiaBaseLevel, replaceSelection, sortLevelsForPanel } from '@alusa
 import { useEventMapEditorStore } from '../store/event-map-editor-store';
 
 import { cn } from '@/lib/utils';
+import { MAP_FLOATING_SHADOW_CLASS } from './map-toolbar-styles';
 import { CreatorIcon } from '@/components/icons/hugeicons';
 import { useState } from 'react';
 import {
@@ -35,11 +36,11 @@ export function MapAreasPanel() {
   }
 
   return (
-    <aside className="flex max-h-[13.5rem] min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-lg shadow-slate-300/30 backdrop-blur">
+    <aside className={`flex max-h-[13.5rem] min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 ${MAP_FLOATING_SHADOW_CLASS} backdrop-blur`}>
       <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <CreatorIcon name="map" size={16} className="text-brand-accent" />
+            <CreatorIcon name="map" size={16} className="text-slate-500" />
             <h2 className="text-sm font-semibold text-slate-950">Áreas do Mapa</h2>
           </div>
           <p className="text-xs text-slate-500">Andares, setores e ambientes</p>
@@ -100,7 +101,7 @@ export function MapAreasPanel() {
         </div>
       </div>
       <AlertDialog open={Boolean(pendingLevel)} onOpenChange={(open) => !open && setLevelToDelete(null)}>
-        <AlertDialogContent>
+        <AlertDialogContent className={MAP_FLOATING_SHADOW_CLASS}>
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir área “{pendingLevel?.name}”?</AlertDialogTitle>
             <AlertDialogDescription>

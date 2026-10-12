@@ -2,7 +2,7 @@ import {
   BillingMode,
   MatriculaBillingOutboxStatus,
   MatriculaBillingProvisionStatus,
-  type Prisma,
+  Prisma,
   type PrismaClient,
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
@@ -29,15 +29,27 @@ import {
   resolveChargeableFirstDueDate,
 } from './recurring-billing';
 import { inspectEnrollmentPaidCharges, syncMatriculaStatus } from './enrollment-sync.service';
+import { decideEnrollmentStatusAtContractStart } from '@alusa/domain';
+import { getAcademicDateKey, getAcademicDateStartInstant, isAcademicDateInFuture } from '@alusa/shared/date-only';
+import {
+  claimEnrollmentFinancialCommand,
+  processEnrollmentFinancialCommand,
+  releaseEnrollmentFinancialCommandLease,
+  startEnrollmentFinancialCommandLeaseHeartbeat,
+} from '@alusa/finance';
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
 
-type EnrollmentBillingOutboxResult = {
+export type EnrollmentBillingOutboxResult = {
   eventId: string;
   matriculaId: string | null;
   status: 'PROCESSED' | 'FAILED' | 'SKIPPED' | 'CANCELLED' | 'REQUIRES_RECONCILIATION';
   error?: string;
 };
+
+export function isDeferredEnrollmentBillingResult(result: Pick<EnrollmentBillingOutboxResult, 'status' | 'error'>): boolean {
+  return result.status === 'SKIPPED' && result.error === 'NOT_YET_EFFECTIVE';
+}
 
 type ProvisionEnrollmentBilling = typeof provisionIndividualEnrollmentBilling;
 
@@ -175,12 +187,12 @@ export function resolveEnrollmentMergeEffectivePolicy(
     : ('CURRENT_CYCLE_FULL' as const);
 }
 
-async function loadProvisionContext(db: PrismaLike, input: { contaId: string; matriculaId: string }) {
+async function loadProvisionContext(db: PrismaLike, input: { contaId: string; matriculaId: string; allowSharedFee?: boolean }) {
   return db.matricula.findFirst({
     where: {
       id: input.matriculaId,
       contaId: input.contaId,
-      billingMode: BillingMode.INDIVIDUAL,
+      ...(input.allowSharedFee ? {} : { billingMode: BillingMode.INDIVIDUAL }),
     },
     include: {
       cobrancas: {
@@ -212,6 +224,7 @@ async function runProvisionForEnrollment(input: {
   matriculaId: string;
   actorUserId: string;
   billingPhase?: 'ENROLLMENT_FEE' | 'SUBSCRIPTION_ONLY';
+  createRecurringBilling?: boolean;
 }, deps: {
   prisma: PrismaClient;
   provisionEnrollmentBilling: ProvisionEnrollmentBilling;
@@ -219,10 +232,26 @@ async function runProvisionForEnrollment(input: {
   const matricula = await loadProvisionContext(deps.prisma, {
     contaId: input.contaId,
     matriculaId: input.matriculaId,
+    allowSharedFee: input.billingPhase === 'ENROLLMENT_FEE',
   });
 
   if (!matricula) {
     return { skipped: true as const, reason: 'MATRICULA_NAO_ENCONTRADA_OU_NAO_INDIVIDUAL' };
+  }
+
+  if (
+    input.billingPhase === 'SUBSCRIPTION_ONLY' &&
+    matricula.billingProvisionStatus === MatriculaBillingProvisionStatus.NAO_APLICAVEL
+  ) {
+    try {
+      await activateEnrollmentAtContractStart({ contaId: input.contaId, matriculaId: input.matriculaId });
+    } catch (error) {
+      return {
+        retryableFailure: true as const,
+        reason: `DEFERRED_ENROLLMENT_ACTIVATION_RETRY:${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    return { skipped: false as const };
   }
 
   if (
@@ -278,7 +307,9 @@ async function runProvisionForEnrollment(input: {
   const requireEnrollmentFeePayment =
     input.billingPhase === 'SUBSCRIPTION_ONLY' &&
     !matricula.taxaIsenta && Number(matricula.taxaMatricula) > 0;
-  const criarCobranca = preco.planoLiquido > 0;
+  const criarCobranca = input.createRecurringBilling === false
+    ? false
+    : preco.planoLiquido > 0;
 
   if (!gerarCobrancaTaxa && !criarCobranca) {
     await deps.prisma.matricula.updateMany({
@@ -408,6 +439,8 @@ async function runExistingSubscriptionUpdate(input: {
   matriculaId: string;
   subscriptionTargetId: string;
   actorUserId: string;
+  agreementLeaseToken?: string;
+  assertLeaseOwned: () => Promise<void>;
   billingStrategy?: { kind?: string; effectiveAt?: string } | null;
 }, deps: {
   prisma: PrismaClient;
@@ -494,10 +527,12 @@ async function runExistingSubscriptionUpdate(input: {
     if (await isTerminalEnrollment(deps.prisma, { contaId: input.contaId, matriculaId: input.matriculaId })) {
       return { requiresReconciliation: true as const, reason: 'MATRICULA_TERMINAL_ANTES_DA_TAXA' };
     }
+    await input.assertLeaseOwned();
     const feeSync = await deps.pushEnrollmentFee({
       contaId: input.contaId,
       actorUserId: input.actorUserId,
       matriculaId: input.matriculaId,
+      assertLeaseOwned: input.assertLeaseOwned,
       cobrancaTaxa: {
         id: enrollmentFeeCharge.id,
         formaPagamento: enrollmentFeeCharge.formaPagamento,
@@ -614,6 +649,7 @@ async function runExistingSubscriptionUpdate(input: {
       previewHash: preview.previewHash,
       previewExpiresAt: preview.expiresAt,
       expectedAgreementVersion: preview.sourceVersion,
+      ...(input.agreementLeaseToken ? { agreementLeaseToken: input.agreementLeaseToken } : {}),
     });
     if (result.status === 'REQUIRES_RECONCILIATION') {
       return { requiresReconciliation: true as const, reason: `BILLING_OPERATION_UNCERTAIN:${result.operationId}` };
@@ -671,21 +707,27 @@ async function runExistingSubscriptionUpdate(input: {
     const [account, currentEnrollment] = await Promise.all([
       tx.conta.findFirst({
         where: { id: input.contaId },
-        select: { matriculaActivationPolicy: true },
+        select: { matriculaActivationPolicy: true, timezone: true },
       }),
       tx.matricula.findFirst({
         where: { id: input.matriculaId, contaId: input.contaId },
-        select: { status: true, taxaIsenta: true, taxaMatricula: true },
+        select: { status: true, taxaIsenta: true, taxaMatricula: true, taxaStatus: true, dataInicio: true },
       }),
     ]);
     if (!currentEnrollment) return false;
 
-    const activationStatus =
-      account?.matriculaActivationPolicy === 'REQUIRES_PAYMENT' &&
-      !currentEnrollment.taxaIsenta &&
-      Number(currentEnrollment.taxaMatricula) > 0
-        ? ('PENDENTE_TAXA' as const)
-        : ('ATIVA' as const);
+    const activationDecision = isAcademicDateInFuture(
+      currentEnrollment.dataInicio,
+      new Date(),
+      account?.timezone ?? undefined,
+    )
+      ? { action: 'KEEP' as const }
+      : decideEnrollmentStatusAtContractStart({
+          activationPolicy: account?.matriculaActivationPolicy ?? 'IMMEDIATE',
+          enrollmentStatus: currentEnrollment.status,
+          feeRequired: !currentEnrollment.taxaIsenta && Number(currentEnrollment.taxaMatricula) > 0,
+          feeStatus: currentEnrollment.taxaStatus,
+        });
 
     const enrollmentUpdate = await tx.matricula.updateMany({
       where: {
@@ -695,8 +737,8 @@ async function runExistingSubscriptionUpdate(input: {
       },
       data: {
         ...billingProvisionUpdate(MatriculaBillingProvisionStatus.PROVISIONADO),
-        ...(currentEnrollment.status === 'AGUARDANDO_CONFIRMACAO'
-          ? { status: activationStatus }
+        ...(currentEnrollment.status === 'AGUARDANDO_CONFIRMACAO' && activationDecision.action === 'TRANSITION'
+          ? { status: activationDecision.targetStatus }
           : {}),
       },
     });
@@ -1069,6 +1111,7 @@ export async function processEnrollmentBillingOutboxEvent(
     commitBillingAgreementChange?: typeof commitBillingAgreementChange;
     processPendingBillingAdjustments?: typeof processPendingBillingAdjustments;
     getSubscription?: typeof getSubscription;
+    financialCommandRemote?: import('@alusa/finance').EnrollmentFinancialCommandRemote;
     materializeBillingAgreement?: typeof materializeBillingAgreement;
     pushEnrollmentFeeToAsaas?: typeof pushEnrollmentFeeToAsaas;
   } = {},
@@ -1087,8 +1130,25 @@ export async function processEnrollmentBillingOutboxEvent(
   if (event.status === MatriculaBillingOutboxStatus.CANCELLED) {
     return { eventId, matriculaId: event.matriculaId, status: 'SKIPPED' };
   }
+  if (event.attempts >= 8) {
+    const reclaimable = event.status === MatriculaBillingOutboxStatus.PENDING || event.status === MatriculaBillingOutboxStatus.FAILED ||
+      (event.status === MatriculaBillingOutboxStatus.PROCESSING && event.leaseExpiresAt !== null && event.leaseExpiresAt <= now);
+    if (!reclaimable) return { eventId, matriculaId: event.matriculaId, status: 'SKIPPED' };
+    const transitioned = await db.$transaction(async (tx) => {
+      const changed = await tx.matriculaBillingOutbox.updateMany({
+        where: { id: event.id, contaId: event.contaId, attempts: { gte: 8 }, status: event.status, ...(event.status === MatriculaBillingOutboxStatus.PROCESSING ? { leaseExpiresAt: { lte: now } } : {}) },
+        data: { status: MatriculaBillingOutboxStatus.REQUIRES_RECONCILIATION, lockedAt: null, leaseExpiresAt: null, claimToken: null, lastError: 'LIMITE_DE_TENTATIVAS_ATINGIDO_REQUER_RECONCILIACAO' },
+      });
+      if (changed.count && event.matriculaId) {
+        await tx.matricula.updateMany({ where: { id: event.matriculaId, contaId: event.contaId, status: { notIn: ['CANCELADA', 'ENCERRADA', 'RECUSADA'] } }, data: billingProvisionUpdate(MatriculaBillingProvisionStatus.RESULTADO_INCERTO, 'LIMITE_DE_TENTATIVAS_ATINGIDO_REQUER_RECONCILIACAO') });
+        await tx.matriculaLog.create({ data: { matriculaId: event.matriculaId, action: 'BILLING_PROVISION_RETRY_CAP_REACHED', metadata: { eventId: event.id, attempts: event.attempts, error: 'LIMITE_DE_TENTATIVAS_ATINGIDO_REQUER_RECONCILIACAO' } as Prisma.InputJsonValue } });
+      }
+      return changed.count > 0;
+    });
+    return { eventId, matriculaId: event.matriculaId, status: transitioned ? 'REQUIRES_RECONCILIATION' : 'SKIPPED' };
+  }
   if (event.availableAt > now) {
-    return { eventId, matriculaId: event.matriculaId, status: 'SKIPPED' };
+    return { eventId, matriculaId: event.matriculaId, status: 'SKIPPED', error: 'NOT_YET_EFFECTIVE' };
   }
 
   const eventPayload =
@@ -1100,34 +1160,57 @@ export async function processEnrollmentBillingOutboxEvent(
       ? eventPayload.matriculaId.trim()
       : event.matriculaId;
   const claimToken = randomUUID();
-  const locked = await db.matriculaBillingOutbox.updateMany({
-    where: {
-      id: event.id,
-      contaId: event.contaId,
-      availableAt: { lte: now },
-      terminalIntent: null,
-      OR: [
-        {
-          status: {
-            in: [MatriculaBillingOutboxStatus.PENDING, MatriculaBillingOutboxStatus.FAILED],
-          },
-        },
-        {
-          status: MatriculaBillingOutboxStatus.PROCESSING,
-          leaseExpiresAt: { lte: now },
-        },
-      ],
-    },
-    data: {
-      status: MatriculaBillingOutboxStatus.PROCESSING,
-      claimToken,
-      lockedAt: now,
-      leaseExpiresAt: new Date(now.getTime() + 10 * 60 * 1000),
-      lastAttemptAt: now,
-      attempts: { increment: 1 },
-      lastError: null,
-    },
-  });
+  const claimWhere = {
+    id: event.id,
+    contaId: event.contaId,
+    availableAt: { lte: now },
+    terminalIntent: null,
+    OR: [
+      { status: { in: [MatriculaBillingOutboxStatus.PENDING, MatriculaBillingOutboxStatus.FAILED] } },
+      { status: MatriculaBillingOutboxStatus.PROCESSING, leaseExpiresAt: { lte: now } },
+    ],
+  };
+  const claimData = {
+    status: MatriculaBillingOutboxStatus.PROCESSING,
+    claimToken,
+    lockedAt: now,
+    leaseExpiresAt: new Date(now.getTime() + 10 * 60 * 1000),
+    lastAttemptAt: now,
+    attempts: { increment: 1 },
+    lastError: null,
+  };
+  const isSerializedSubscriptionMutation = event.eventType === 'APPLY_ENROLLMENT_FINANCIAL_COMMAND' ||
+    event.eventType === 'UPDATE_EXISTING_SUBSCRIPTION_BILLING';
+  const rawTargetSubscriptionId = event.eventType === 'APPLY_ENROLLMENT_FINANCIAL_COMMAND'
+    ? eventPayload.targetSubscriptionId ?? eventPayload.subscriptionTargetId
+    : event.eventType === 'UPDATE_EXISTING_SUBSCRIPTION_BILLING'
+      ? eventPayload.subscriptionTargetId ?? eventPayload.targetSubscriptionId
+      : null;
+  const targetSubscriptionReferenceId = typeof rawTargetSubscriptionId === 'string' && rawTargetSubscriptionId.trim()
+    ? rawTargetSubscriptionId.trim()
+    : null;
+  if (isSerializedSubscriptionMutation && !targetSubscriptionReferenceId) {
+    await db.matriculaBillingOutbox.updateMany({
+      where: { id: event.id, contaId: event.contaId, status: event.status },
+      data: { status: MatriculaBillingOutboxStatus.REQUIRES_RECONCILIATION, lastError: 'ALVO_ASSINATURA_AUSENTE_AO_SERIALIZAR_COMANDO' },
+    });
+    return { eventId, matriculaId: targetMatriculaId, status: 'REQUIRES_RECONCILIATION' };
+  }
+  const locked = targetSubscriptionReferenceId
+    ? await claimEnrollmentFinancialCommand({
+        db,
+        event: { id: event.id, contaId: event.contaId, status: event.status },
+        target: event.eventType === 'APPLY_ENROLLMENT_FINANCIAL_COMMAND'
+          ? { kind: 'ASAAS_SUBSCRIPTION', id: targetSubscriptionReferenceId }
+          : { kind: 'SUBSCRIPTION', id: targetSubscriptionReferenceId },
+        now,
+        claimToken,
+        leaseExpiresAt: claimData.leaseExpiresAt,
+      })
+    : await db.matriculaBillingOutbox.updateMany({ where: claimWhere, data: claimData });
+  const leasedAsaasSubscriptionId = 'asaasSubscriptionId' in locked && typeof locked.asaasSubscriptionId === 'string'
+    ? locked.asaasSubscriptionId
+    : null;
   if (locked.count === 0) {
     const current = await db.matriculaBillingOutbox.findUnique({
       where: { id: event.id },
@@ -1163,7 +1246,13 @@ export async function processEnrollmentBillingOutboxEvent(
         return { eventId: event.id, matriculaId: current.matriculaId, status: 'REQUIRES_RECONCILIATION' };
       }
     }
-    return { eventId: event.id, matriculaId: event.matriculaId, status: 'SKIPPED' };
+    return {
+      eventId: event.id,
+      matriculaId: event.matriculaId,
+      status: current?.status === MatriculaBillingOutboxStatus.REQUIRES_RECONCILIATION
+        ? 'REQUIRES_RECONCILIATION'
+        : 'SKIPPED',
+    };
   }
 
   // Re-read after claiming: `event` was loaded before the CAS and may contain
@@ -1186,6 +1275,10 @@ export async function processEnrollmentBillingOutboxEvent(
   if (!claimedEvent || claimedEvent.status !== MatriculaBillingOutboxStatus.PROCESSING || claimedEvent.claimToken !== claimToken) {
     return { eventId: event.id, matriculaId: targetMatriculaId, status: 'SKIPPED' };
   }
+  const mutationLeaseHeartbeat = leasedAsaasSubscriptionId && isSerializedSubscriptionMutation
+    ? startEnrollmentFinancialCommandLeaseHeartbeat({ db, contaId: event.contaId, targetSubscriptionId: leasedAsaasSubscriptionId, eventId: event.id, claimToken, ...(deps.now ? { clock: () => now } : {}) })
+    : null;
+  try {
   if (claimedEvent.terminalIntent) {
     if (claimedEvent.attempts > 1) {
       const marked = await db.matriculaBillingOutbox.updateMany({
@@ -1223,6 +1316,59 @@ export async function processEnrollmentBillingOutboxEvent(
       actorId: claimedEvent.terminalIntentActorId,
       claimToken,
     });
+  }
+
+  // A cancellation may have marked one billing phase before a process failure
+  // interrupted sibling coordination. Never let another phase create remote
+  // effects while any tenant-scoped sibling carries a terminal intent.
+  const siblingTerminalIntent = targetMatriculaId
+    ? await db.matriculaBillingOutbox.findFirst({
+        where: {
+          contaId: event.contaId,
+          matriculaId: targetMatriculaId,
+          id: { not: event.id },
+          terminalIntent: { not: null },
+        },
+        orderBy: { terminalIntentAt: 'asc' },
+        select: {
+          terminalIntent: true,
+          terminalIntentReason: true,
+          terminalIntentActorId: true,
+        },
+      })
+    : null;
+  if (siblingTerminalIntent?.terminalIntent) {
+    const uncertainPriorAttempt = claimedEvent.attempts > 1;
+    const propagated = await db.matriculaBillingOutbox.updateMany({
+      where: {
+        id: claimedEvent.id,
+        contaId: claimedEvent.contaId,
+        status: MatriculaBillingOutboxStatus.PROCESSING,
+        claimToken,
+        terminalIntent: null,
+      },
+      data: {
+        terminalIntent: siblingTerminalIntent.terminalIntent,
+        terminalIntentReason: siblingTerminalIntent.terminalIntentReason,
+        terminalIntentActorId: siblingTerminalIntent.terminalIntentActorId,
+        terminalIntentAt: new Date(),
+        status: uncertainPriorAttempt
+          ? MatriculaBillingOutboxStatus.REQUIRES_RECONCILIATION
+          : MatriculaBillingOutboxStatus.CANCELLED,
+        processedAt: uncertainPriorAttempt ? null : new Date(),
+        lockedAt: null,
+        leaseExpiresAt: null,
+        claimToken: null,
+        lastError: uncertainPriorAttempt
+          ? 'INTENCAO_TERMINAL_DE_IRMA_REQUER_RECONCILIACAO'
+          : 'INTENCAO_TERMINAL_DE_IRMA_CANCELOU_EVENTO_ANTES_DE_EFEITOS',
+      },
+    });
+    return {
+      eventId: claimedEvent.id,
+      matriculaId: targetMatriculaId,
+      status: propagated.count === 0 || uncertainPriorAttempt ? 'REQUIRES_RECONCILIATION' : 'CANCELLED',
+    };
   }
 
   const terminalEnrollment = targetMatriculaId
@@ -1275,6 +1421,31 @@ export async function processEnrollmentBillingOutboxEvent(
       ? payload.actorUserId.trim()
       : 'enrollment-billing-outbox';
 
+  if (event.eventType === 'APPLY_ENROLLMENT_FINANCIAL_COMMAND' && leasedAsaasSubscriptionId) {
+    return await processEnrollmentFinancialCommand({
+        db,
+        event: { id: event.id, contaId: event.contaId, matriculaId: event.matriculaId ?? targetMatriculaId ?? '', attempts: claimedEvent.attempts, payload: event.payload },
+        claimToken,
+        now,
+        remote: deps.financialCommandRemote,
+        assertLeaseOwned: () => mutationLeaseHeartbeat!.assertOwned(),
+        finishTerminalIntent: async ({ intent, reason, actorId }) => {
+          const result = await finishTerminalIntent({
+            db,
+            eventId: event.id,
+            contaId: event.contaId,
+            matriculaId: event.matriculaId ?? targetMatriculaId ?? '',
+            actorUserId,
+            intent,
+            reason,
+            actorId,
+            claimToken,
+          });
+          return { ...result, matriculaId: result.matriculaId ?? targetMatriculaId ?? '' };
+        },
+    });
+  }
+
   if (!matriculaId) {
     const message = 'Evento de provisionamento sem matrícula vinculada.';
     const failed = await db.matriculaBillingOutbox.updateMany({
@@ -1300,7 +1471,7 @@ export async function processEnrollmentBillingOutboxEvent(
 
   const latestEnrollment = await db.matricula.findFirst({
     where: { id: matriculaId, contaId: event.contaId },
-    select: { status: true },
+    select: { status: true, dataInicio: true },
   });
   if (!latestEnrollment || latestEnrollment.status === 'RECUSADA' || latestEnrollment.status === 'CANCELADA') {
     await db.matriculaBillingOutbox.updateMany({
@@ -1314,6 +1485,30 @@ export async function processEnrollmentBillingOutboxEvent(
       },
     });
     return { eventId: event.id, matriculaId, status: 'SKIPPED' };
+  }
+
+  const recurringPhase = payload.billingPhase === 'SUBSCRIPTION_ONLY' || event.eventType !== 'PROVISION_ENROLLMENT_FEE';
+  if (recurringPhase) {
+    const [account, current] = await Promise.all([
+      db.conta.findUnique({ where: { id: event.contaId }, select: { timezone: true } }),
+      Promise.resolve(latestEnrollment),
+    ]);
+    if (current && isAcademicDateInFuture(current.dataInicio, new Date(), account?.timezone ?? undefined)) {
+      const dateKey = getAcademicDateKey(current.dataInicio);
+      const availableAt = dateKey ? getAcademicDateStartInstant(dateKey, account?.timezone ?? undefined) : current.dataInicio;
+      await db.matriculaBillingOutbox.updateMany({
+        where: { id: event.id, contaId: event.contaId, status: MatriculaBillingOutboxStatus.PROCESSING, claimToken },
+        data: {
+          status: MatriculaBillingOutboxStatus.PENDING,
+          availableAt,
+          lockedAt: null,
+          leaseExpiresAt: null,
+          claimToken: null,
+          lastError: 'AGUARDANDO_INICIO_ACADEMICO_ATUALIZADO',
+        },
+      });
+      return { eventId: event.id, matriculaId, status: 'SKIPPED', error: 'NOT_YET_EFFECTIVE' };
+    }
   }
 
   try {
@@ -1332,6 +1527,8 @@ export async function processEnrollmentBillingOutboxEvent(
             matriculaId,
             subscriptionTargetId,
             actorUserId,
+            agreementLeaseToken: claimToken,
+            assertLeaseOwned: () => mutationLeaseHeartbeat!.assertOwned(),
             billingStrategy,
           }, {
             prisma: db,
@@ -1351,6 +1548,7 @@ export async function processEnrollmentBillingOutboxEvent(
               eventPayload.billingPhase === 'ENROLLMENT_FEE' || eventPayload.billingPhase === 'SUBSCRIPTION_ONLY'
                 ? eventPayload.billingPhase
                 : undefined,
+            ...(eventPayload.createRecurringBilling === false ? { createRecurringBilling: false } : {}),
           }, {
             prisma: db,
             provisionEnrollmentBilling:
@@ -1447,6 +1645,7 @@ export async function processEnrollmentBillingOutboxEvent(
 
     if ('retryableFailure' in result) {
       const reason = (result.reason ?? 'BILLING_RETRY_PENDING').slice(0, 2000);
+      const attemptsExhausted = claimedEvent.attempts >= 8;
       await db.$transaction(async (tx) => {
         const outboxUpdate = await tx.matriculaBillingOutbox.updateMany({
           where: {
@@ -1457,19 +1656,22 @@ export async function processEnrollmentBillingOutboxEvent(
             claimToken,
           },
           data: {
-            status: MatriculaBillingOutboxStatus.FAILED,
+            status: attemptsExhausted ? MatriculaBillingOutboxStatus.REQUIRES_RECONCILIATION : MatriculaBillingOutboxStatus.FAILED,
             lockedAt: null,
             leaseExpiresAt: null,
             claimToken: null,
             lastError: reason,
-            availableAt: retryDate(now, event.attempts + 1),
+            ...(attemptsExhausted ? {} : { availableAt: retryDate(now, claimedEvent.attempts) }),
           },
         });
         if (outboxUpdate.count === 0) return;
+        if (attemptsExhausted) {
+          await tx.matricula.updateMany({ where: { id: matriculaId, contaId: event.contaId, status: { notIn: ['CANCELADA', 'ENCERRADA', 'RECUSADA'] } }, data: billingProvisionUpdate(MatriculaBillingProvisionStatus.RESULTADO_INCERTO, 'LIMITE_DE_TENTATIVAS_ATINGIDO_REQUER_RECONCILIACAO') });
+        }
         await tx.matriculaLog.create({
           data: {
             matriculaId,
-            action: 'BILLING_PROVISION_INCOMPLETE_RETRY_SCHEDULED',
+            action: attemptsExhausted ? 'BILLING_PROVISION_RETRY_CAP_REACHED' : 'BILLING_PROVISION_INCOMPLETE_RETRY_SCHEDULED',
             metadata: {
               eventId: event.id,
               correlationId: event.correlationId,
@@ -1506,7 +1708,7 @@ export async function processEnrollmentBillingOutboxEvent(
       return {
         eventId: event.id,
         matriculaId,
-        status: 'FAILED',
+        status: attemptsExhausted ? 'REQUIRES_RECONCILIATION' : 'FAILED',
         error: reason,
       };
     }
@@ -1569,7 +1771,8 @@ export async function processEnrollmentBillingOutboxEvent(
       where: { id: event.id, contaId: event.contaId },
       select: { terminalIntent: true },
     });
-    const uncertain = isUncertainFinancialResult(error) || Boolean(pendingTerminalIntent?.terminalIntent);
+    const attemptsExhausted = claimedEvent.attempts >= 8;
+    const uncertain = isUncertainFinancialResult(error) || Boolean(pendingTerminalIntent?.terminalIntent) || attemptsExhausted;
 
     await db.$transaction(async (tx) => {
       const outboxUpdate = await tx.matriculaBillingOutbox.updateMany({
@@ -1589,8 +1792,8 @@ export async function processEnrollmentBillingOutboxEvent(
           claimToken: null,
           lastError: pendingTerminalIntent?.terminalIntent
             ? `INTENCAO_TERMINAL_REQUER_RECONCILIACAO:${message}`.slice(0, 2000)
-            : message.slice(0, 2000),
-          availableAt: uncertain ? event.availableAt : retryDate(now, event.attempts + 1),
+            : attemptsExhausted ? `LIMITE_DE_TENTATIVAS_ATINGIDO:${message}`.slice(0, 2000) : message.slice(0, 2000),
+          availableAt: uncertain ? event.availableAt : retryDate(now, claimedEvent.attempts),
         },
       });
 
@@ -1607,7 +1810,7 @@ export async function processEnrollmentBillingOutboxEvent(
         await tx.matriculaLog.create({
           data: {
             matriculaId,
-            action: 'BILLING_PROVISION_RESULTADO_INCERTO',
+            action: attemptsExhausted ? 'BILLING_PROVISION_RETRY_CAP_REACHED' : 'BILLING_PROVISION_RESULTADO_INCERTO',
             metadata: {
               eventId: event.id,
               error: message,
@@ -1657,6 +1860,12 @@ export async function processEnrollmentBillingOutboxEvent(
       error: message,
     };
   }
+  } finally {
+    await mutationLeaseHeartbeat?.stop();
+    if (isSerializedSubscriptionMutation && leasedAsaasSubscriptionId) {
+      await releaseEnrollmentFinancialCommandLease({ db, contaId: event.contaId, targetSubscriptionId: leasedAsaasSubscriptionId, claimToken });
+    }
+  }
 }
 
 export async function processEnrollmentBillingOutboxBatch(
@@ -1666,6 +1875,23 @@ export async function processEnrollmentBillingOutboxBatch(
   const db = deps.prisma ?? defaultPrisma;
   const limit = Math.max(1, Math.min(input.limit ?? 25, 100));
   const now = input.now ?? new Date();
+  const exhaustedEvents = await db.matriculaBillingOutbox.findMany({
+    where: {
+      attempts: { gte: 8 },
+      OR: [
+        { status: { in: [MatriculaBillingOutboxStatus.PENDING, MatriculaBillingOutboxStatus.FAILED] } },
+        { status: MatriculaBillingOutboxStatus.PROCESSING, leaseExpiresAt: { lte: now } },
+      ],
+      ...(input.contaId ? { contaId: input.contaId } : {}),
+    },
+    orderBy: [{ availableAt: 'asc' }, { createdAt: 'asc' }],
+    take: limit,
+    select: { id: true },
+  });
+  const results: EnrollmentBillingOutboxResult[] = [];
+  for (const event of exhaustedEvents) {
+    results.push(await processEnrollmentBillingOutboxEvent(event.id, { prisma: db, now }));
+  }
   const events = await db.matriculaBillingOutbox.findMany({
     where: {
       OR: [
@@ -1684,11 +1910,10 @@ export async function processEnrollmentBillingOutboxBatch(
       ...(input.contaId ? { contaId: input.contaId } : {}),
     },
     orderBy: [{ availableAt: 'asc' }, { createdAt: 'asc' }],
-    take: limit,
+    take: Math.max(0, limit - exhaustedEvents.length),
     select: { id: true },
   });
 
-  const results: EnrollmentBillingOutboxResult[] = [];
   for (const event of events) {
     results.push(await processEnrollmentBillingOutboxEvent(event.id, { prisma: db, now }));
   }

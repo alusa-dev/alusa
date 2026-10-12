@@ -1,5 +1,6 @@
 import { decideEnrollmentStatusAtContractStart, validateTransition } from '@alusa/domain';
 import { runWithTenant } from '@/lib/prisma-tenant';
+import { isAcademicDateInFuture } from '@alusa/shared/date-only';
 import {
   assertStudentCapacity,
   countAdditionalActiveStudentsForEnrollment,
@@ -17,7 +18,7 @@ export async function activateEnrollmentAtContractStart(input: {
       const [account, enrollment] = await Promise.all([
         tx.conta.findFirst({
           where: { id: input.contaId },
-          select: { matriculaActivationPolicy: true },
+          select: { matriculaActivationPolicy: true, timezone: true },
         }),
         tx.matricula.findFirst({
           where: { id: input.matriculaId, contaId: input.contaId },
@@ -27,10 +28,15 @@ export async function activateEnrollmentAtContractStart(input: {
             taxaIsenta: true,
             taxaMatricula: true,
             taxaStatus: true,
+            dataInicio: true,
           },
         }),
       ]);
       if (!enrollment) throw new Error('MATRICULA_NAO_ENCONTRADA_AO_ATIVAR_INICIO_FUTURO');
+
+      if (isAcademicDateInFuture(enrollment.dataInicio, new Date(), account?.timezone ?? undefined)) {
+        return { action: 'KEEP' as const, reason: 'STATUS_NOT_WAITING_FOR_START' as const };
+      }
 
       const feeRequired = !enrollment.taxaIsenta && Number(enrollment.taxaMatricula) > 0;
       const decision = decideEnrollmentStatusAtContractStart({

@@ -7,6 +7,7 @@ import { Maximize2, Minus, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { computeArtboardFitView } from '@alusa/domain';
 import { clampZoom } from '../canvas/render/zoom-scrub';
+import { useMobileMapGestures } from './use-mobile-map-gestures';
 
 type Pan = { x: number; y: number };
 
@@ -81,23 +82,25 @@ function readContainerViewportSize(
 
 function PublicMapZoomBar({
   zoom,
+  mobileTouchTargets = false,
   onZoomOut,
   onZoomIn,
   onFitToView,
 }: {
   zoom: number;
+  mobileTouchTargets?: boolean;
   onZoomOut: () => void;
   onZoomIn: () => void;
   onFitToView: () => void;
 }) {
   return (
     <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex gap-2 sm:bottom-4 sm:left-4">
-      <div className="pointer-events-auto flex h-8 items-center gap-0.5 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-lg shadow-slate-300/30 backdrop-blur sm:h-9 sm:gap-1">
+      <div className={`pointer-events-auto flex h-8 items-center gap-0.5 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-lg shadow-slate-300/30 backdrop-blur sm:h-9 sm:gap-1 ${mobileTouchTargets ? 'max-lg:!h-11' : ''}`}>
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          className="h-7 w-7 rounded-md sm:h-8 sm:w-8"
+          className={`h-7 w-7 rounded-md sm:h-8 sm:w-8 ${mobileTouchTargets ? 'max-lg:!h-9 max-lg:!w-9' : ''}`}
           onClick={onZoomOut}
           aria-label="Diminuir zoom"
         >
@@ -110,7 +113,7 @@ function PublicMapZoomBar({
           type="button"
           variant="ghost"
           size="icon"
-          className="h-7 w-7 rounded-md sm:h-8 sm:w-8"
+          className={`h-7 w-7 rounded-md sm:h-8 sm:w-8 ${mobileTouchTargets ? 'max-lg:!h-9 max-lg:!w-9' : ''}`}
           onClick={onZoomIn}
           aria-label="Aumentar zoom"
         >
@@ -120,7 +123,7 @@ function PublicMapZoomBar({
           type="button"
           variant="ghost"
           size="icon"
-          className="h-8 w-8 rounded-lg sm:h-9 sm:w-9"
+          className={`h-8 w-8 rounded-lg sm:h-9 sm:w-9 ${mobileTouchTargets ? 'max-lg:!h-9 max-lg:!w-9' : ''}`}
           onClick={onFitToView}
           aria-label="Ajustar zoom para visualizar o mapa inteiro"
         >
@@ -138,6 +141,7 @@ export function PublicMapViewport({
   ariaLabel,
   fillAvailable = false,
   fillAvailableOnMobile = false,
+  enableMobileGestures = false,
   children,
 }: {
   artboardWidth: number;
@@ -146,6 +150,7 @@ export function PublicMapViewport({
   ariaLabel: string;
   fillAvailable?: boolean;
   fillAvailableOnMobile?: boolean;
+  enableMobileGestures?: boolean;
   children: ReactNode;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -158,6 +163,10 @@ export function PublicMapViewport({
   const [pan, setPan] = useState<Pan>({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const panSessionRef = useRef<{ originX: number; originY: number; startPan: Pan } | null>(null);
+  const touchGestures = useMobileMapGestures(enableMobileGestures, { pan, zoom }, (next) => {
+    setPan(next.pan);
+    setZoom(next.zoom);
+  });
 
   zoomRef.current = zoom;
 
@@ -311,6 +320,7 @@ export function PublicMapViewport({
 
   const handlePointerDown = useCallback(
     (event: React.PointerEvent<SVGSVGElement>) => {
+      if (touchGestures.onPointerDown(event)) return;
       if (event.button !== 0 || !panEnabled || isSeatPointerTarget(event.target)) return;
 
       panSessionRef.current = {
@@ -321,10 +331,11 @@ export function PublicMapViewport({
       setIsPanning(true);
       event.currentTarget.setPointerCapture(event.pointerId);
     },
-    [pan, panEnabled],
+    [pan, panEnabled, touchGestures],
   );
 
   const handlePointerMove = useCallback((event: React.PointerEvent<SVGSVGElement>) => {
+    if (touchGestures.onPointerMove(event)) return;
     const session = panSessionRef.current;
     if (!session) return;
 
@@ -334,16 +345,17 @@ export function PublicMapViewport({
       x: session.startPan.x + dx,
       y: session.startPan.y + dy,
     });
-  }, []);
+  }, [touchGestures]);
 
   const endPan = useCallback((event: React.PointerEvent<SVGSVGElement>) => {
+    if (touchGestures.onPointerEnd(event)) return;
     if (!panSessionRef.current) return;
     panSessionRef.current = null;
     setIsPanning(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-  }, []);
+  }, [touchGestures]);
 
   return (
     <div
@@ -373,6 +385,7 @@ export function PublicMapViewport({
           onPointerMove={handlePointerMove}
           onPointerUp={endPan}
           onPointerCancel={endPan}
+          onClickCapture={touchGestures.onClickCapture}
         >
           <rect
             x={0}
@@ -386,6 +399,7 @@ export function PublicMapViewport({
       ) : null}
       <PublicMapZoomBar
         zoom={zoom}
+        mobileTouchTargets={enableMobileGestures}
         onZoomOut={() => adjustZoom(-0.1)}
         onZoomIn={() => adjustZoom(0.1)}
         onFitToView={fitToView}

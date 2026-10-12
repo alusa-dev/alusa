@@ -1303,7 +1303,7 @@ describe('event map editor store', () => {
     expect(useEventMapEditorStore.getState().past).toHaveLength(0);
   });
 
-  it('does not shrink parametric seats below the minimum size', () => {
+  it('keeps parametric seat and gap proportions when shrinking near the minimum bounds and enlarging again', () => {
     useEventMapEditorStore.getState().addSeatBlockAt({ x: 100, y: 100 }, {
       ...DEFAULT_SEAT_BLOCK_CONFIG,
       rows: 1,
@@ -1312,16 +1312,27 @@ describe('event map editor store', () => {
     });
     const state = useEventMapEditorStore.getState();
     const block = state.map!.document!.sections[0]!.blocks[0]!;
-    const initialSeatGap = block.rows[0]!.seatGap;
+    const initialRow = block.rows[0]!;
+    const initialSeatGap = initialRow.seatGap;
+    const initialSeatSize = initialRow.seatSize;
 
     state.transformParametricSelection(
       { type: 'seatblock', id: block.id },
-      [0.1, 0, 0, 0.1, 0, 0],
+      [0.02, 0, 0, 0.02, 0, 0],
     );
 
     const transformedRow = useEventMapEditorStore.getState().map!.document!.sections[0]!.blocks[0]!.rows[0]!;
-    expect(transformedRow.seatSize).toBe(8);
-    expect(transformedRow.seatGap).toBeCloseTo(initialSeatGap * 0.1);
+    expect(transformedRow.seatSize).toBeCloseTo(initialSeatSize * 0.02);
+    expect(transformedRow.seatGap).toBeCloseTo(initialSeatGap * 0.02);
+
+    useEventMapEditorStore.getState().transformParametricSelection(
+      { type: 'seatblock', id: block.id },
+      [50, 0, 0, 50, 0, 0],
+    );
+
+    const restoredRow = useEventMapEditorStore.getState().map!.document!.sections[0]!.blocks[0]!.rows[0]!;
+    expect(restoredRow.seatSize).toBeCloseTo(initialSeatSize);
+    expect(restoredRow.seatGap).toBeCloseTo(initialSeatGap);
   });
 
   it('ignores seats outside the selected row when transforming a mixed selection', () => {

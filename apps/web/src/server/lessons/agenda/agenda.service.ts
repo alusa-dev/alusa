@@ -1,4 +1,5 @@
 import { unstable_cache } from 'next/cache';
+import type { Prisma } from '@prisma/client';
 
 import type {
   CalendarEventDetailsResultDTO,
@@ -13,6 +14,8 @@ import {
   buildAgendaListPayload,
   buildConflictMap,
   assertNoCalendarConflicts,
+  assertCalendarResourcesBelongToConta,
+  withCalendarEventWriteLock,
   getCalendarEventOrThrow,
   listCalendarEventsRaw,
   loadAlunoResources,
@@ -94,10 +97,11 @@ async function syncLinkedMakeupStatusesForEvent(
   contaId: string,
   eventId: string,
   status: 'AGENDADO' | 'CANCELADO' | 'REALIZADO',
+  tx: Prisma.TransactionClient,
 ) {
   if (status === 'AGENDADO') return;
 
-  await prisma.makeupClass.updateMany({
+  await tx.makeupClass.updateMany({
     where: {
       contaId,
       eventoDestinoId: eventId,
@@ -124,13 +128,14 @@ async function syncExperimentalStatusForEventUpdate(params: {
   currentProfessorIds: string[];
   nextProfessorIds: string[];
   experimentalId?: string;
+  tx: Prisma.TransactionClient;
 }) {
   if (!params.experimentalId) {
     return null;
   }
 
   if (params.nextStatus === 'CANCELADO') {
-    await prisma.aulaExperimental.update({
+    await params.tx.aulaExperimental.update({
       where: { id: params.experimentalId },
       data: { status: 'CANCELADA' },
     });
@@ -143,7 +148,7 @@ async function syncExperimentalStatusForEventUpdate(params: {
   }
 
   if (params.nextStatus === 'REALIZADO') {
-    await prisma.aulaExperimental.update({
+    await params.tx.aulaExperimental.update({
       where: { id: params.experimentalId },
       data: { status: 'REALIZADA' },
     });
@@ -170,7 +175,7 @@ async function syncExperimentalStatusForEventUpdate(params: {
     return null;
   }
 
-  await prisma.aulaExperimental.update({
+  await params.tx.aulaExperimental.update({
     where: { id: params.experimentalId },
     data: { status: 'REAGENDADA' },
   });
@@ -261,16 +266,18 @@ export async function createAgendaEvent(contaId: string, input: CreateCalendarEv
     : (turmaDefaults?.professores.map((item) => item.professorId) ?? []);
   const salaId = input.salaId ?? turmaDefaults?.salaId ?? null;
 
+  const created = await withCalendarEventWriteLock(contaId, async (tx) => {
+  await assertCalendarResourcesBelongToConta({ contaId, turmaId: input.turmaId, salaId, professorIds, prismaClient: tx });
   await assertNoCalendarConflicts({
     contaId,
     startAt: new Date(input.startAt),
     endAt: new Date(input.endAt),
     salaId,
     professorIds,
-    prismaClient: prisma,
+    prismaClient: tx,
   });
 
-  const created = await prisma.calendarEvent.create({
+  const created = await tx.calendarEvent.create({
     data: {
       contaId,
       tipo: input.type,
@@ -313,7 +320,9 @@ export async function createAgendaEvent(contaId: string, input: CreateCalendarEv
       salaId,
       professorIds,
     },
-    prismaClient: prisma,
+    prismaClient: tx,
+  });
+  return created;
   });
 
   return buildEventDetailsResult(created.id, contaId);
@@ -338,6 +347,8 @@ export async function updateAgendaEvent(
   const nextTurmaId = input.turmaId !== undefined ? input.turmaId ?? null : current.turmaId;
   const currentProfessorIds = current.professores.map((item) => item.professor.id);
 
+  await withCalendarEventWriteLock(contaId, async (tx) => {
+  await assertCalendarResourcesBelongToConta({ contaId, turmaId: nextTurmaId, salaId, professorIds, prismaClient: tx });
   await assertNoCalendarConflicts({
     contaId,
     startAt,
@@ -345,10 +356,10 @@ export async function updateAgendaEvent(
     salaId,
     professorIds,
     ignoreEventId: eventId,
-    prismaClient: prisma,
+    prismaClient: tx,
   });
 
-  await prisma.calendarEvent.update({
+  await tx.calendarEvent.update({
     where: { id: eventId },
     data: {
       tipo: input.type ?? current.tipo,
@@ -375,7 +386,7 @@ export async function updateAgendaEvent(
     },
   });
 
-  await syncLinkedMakeupStatusesForEvent(contaId, eventId, nextStatus);
+  await syncLinkedMakeupStatusesForEvent(contaId, eventId, nextStatus, tx);
   const experimentalSync = await syncExperimentalStatusForEventUpdate({
     eventId,
     nextStatus,
@@ -391,6 +402,7 @@ export async function updateAgendaEvent(
     currentProfessorIds,
     nextProfessorIds: professorIds,
     experimentalId: current.aulaExperimental?.id,
+    tx,
   });
   await createAulasOperationLog({
     contaId,
@@ -412,7 +424,7 @@ export async function updateAgendaEvent(
       salaId,
       professorIds,
     },
-    prismaClient: prisma,
+    prismaClient: tx,
   });
 
   if (experimentalSync) {
@@ -423,9 +435,10 @@ export async function updateAgendaEvent(
       entityId: current.aulaExperimental?.id ?? null,
       message: experimentalSync.message,
       details: experimentalSync.details,
-      prismaClient: prisma,
+      prismaClient: tx,
     });
   }
+  });
 
   return buildEventDetailsResult(eventId, contaId);
 }

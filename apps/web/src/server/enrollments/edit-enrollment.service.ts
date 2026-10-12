@@ -2,23 +2,20 @@ import { z } from 'zod';
 
 import {
   getSubscription,
-  projectConfirmedBillingAllocationValues,
-  updateSubscription,
 } from '@alusa/finance';
 import { type PeriodicidadePlano } from '@prisma/client';
 
 import { editMatriculaInputDTOSchema } from '@/features/enrollments/dtos';
 import { mapEditMatriculaResultToDTO } from '@/features/enrollments/mappers';
 import { classifyAsaasSubscriptionMutationError } from '@/src/server/finance/asaas-subscription-mutation-error';
-import { alignLocalPendingEnrollmentCharges } from '@/src/server/enrollments/enrollment-finance-consistency.service';
 import {
   isFinancialContextEditable,
   resolveMatriculaFinancialContext,
-  updateFamilyFinancialLocalState,
 } from '@/src/server/enrollments/financial-context.service';
 import { mapPeriodicidadeToCycle } from '@/src/server/enrollments/recurring-billing';
 import { matriculaRouteRepository } from '@/src/server/enrollments/enrollment-route.repository';
 import { editarMatricula } from '@/src/server/enrollments/enrollment.service';
+import type { EnrollmentFinancialCommand } from '@alusa/finance';
 
 type EditMatriculaInput = z.infer<typeof editMatriculaInputDTOSchema>;
 
@@ -219,6 +216,7 @@ export async function editMatriculaForHttp(input: {
   let nextSubscriptionCycle: ReturnType<typeof mapPeriodicidadeToCycle> | null = null;
   let pendingFamilyLocalUpdate: { value: number; cycle: ReturnType<typeof mapPeriodicidadeToCycle> } | null = null;
   let pendingCanonicalAllocationValues: Array<{ matriculaId: string; value: number }> | null = null;
+  let pendingFinancialCommand: Omit<EnrollmentFinancialCommand, 'version' | 'commandId' | 'matriculaId' | 'actorId'> | undefined;
 
   if (productChanged && targetSubscriptionId) {
     if (!financialContext) fail(400, 'ASSINATURA_NAO_ENCONTRADA', 'Esta matrícula não possui vínculo financeiro ativo');
@@ -260,19 +258,20 @@ export async function editMatriculaForHttp(input: {
 
     const previousValue = typeof remoteSubscription.value === 'number' ? remoteSubscription.value : financialContext.localSnapshot?.value ?? null;
     const previousCycle = typeof remoteSubscription.cycle === 'string' && remoteSubscription.cycle.length > 0 ? remoteSubscription.cycle : null;
-    const subscriptionPayload: Parameters<typeof updateSubscription>[1] = { updatePendingPayments: true };
-    if (previousValue !== nextSubscriptionValue) subscriptionPayload.value = nextSubscriptionValue;
-    if (nextSubscriptionCycle && previousCycle !== nextSubscriptionCycle) subscriptionPayload.cycle = nextSubscriptionCycle;
-    if (subscriptionPayload.value !== undefined || subscriptionPayload.cycle !== undefined) {
-      try {
-        await updateSubscription(targetSubscriptionId, subscriptionPayload, { contaId });
-      } catch (error) {
-        const classified = classifyAsaasSubscriptionMutationError(error);
-        if (classified.kind === 'not_found' || classified.kind === 'not_editable') fail(409, 'ASSINATURA_NAO_EDITAVEL', classified.providerMessage ?? 'O vínculo recorrente não pode ser atualizado porque está expirado ou removido na integração financeira.');
-        if (classified.kind === 'unauthorized') fail(502, 'FINANCEIRO_AUTENTICACAO_INVALIDA', classified.providerMessage ?? 'A conta financeira rejeitou a operação.');
-        throw error;
-      }
-    }
+    const remotePatch: NonNullable<EnrollmentFinancialCommand['remotePatch']> = { updatePendingPayments: true };
+    if (previousValue !== nextSubscriptionValue) remotePatch.value = nextSubscriptionValue;
+    if (nextSubscriptionCycle && previousCycle !== nextSubscriptionCycle) remotePatch.cycle = nextSubscriptionCycle;
+    pendingFinancialCommand = {
+      targetSubscriptionId,
+      affectedMatriculaIds: financialContext.family?.affectedMatriculaIds ?? financialContext.sharedAgreement?.affectedMatriculaIds ?? [currentMatricula.id],
+      remotePatch,
+      localPatch: {},
+      allocationValues: pendingCanonicalAllocationValues ?? undefined,
+      snapshot: {
+        value: nextSubscriptionValue,
+        cycle: nextSubscriptionCycle ?? undefined,
+      },
+    };
     financialMetadata = {
       subscriptionSync: {
         kind: 'PRODUCT_RECURRING_TERMS_UPDATED',
@@ -305,21 +304,15 @@ export async function editMatriculaForHttp(input: {
     planoId: body.planoId,
     motivo: body.motivo ?? undefined,
     metadata: financialMetadata,
+    financialCommand: pendingFinancialCommand,
   });
-  if (targetSubscriptionId && nextSubscriptionValue != null && pendingCanonicalAllocationValues) {
-    await projectConfirmedBillingAllocationValues({ contaId, asaasSubscriptionId: targetSubscriptionId, totalValue: nextSubscriptionValue, cycle: nextSubscriptionCycle, allocations: pendingCanonicalAllocationValues });
-  }
-
-  const localAlignment = pendingFamilyLocalUpdate && financialContext
-    ? await updateFamilyFinancialLocalState({ db: matriculaRouteRepository, context: financialContext, value: pendingFamilyLocalUpdate.value, cycle: pendingFamilyLocalUpdate.cycle })
-    : financialMetadata && pendingCanonicalAllocationValues
-      ? await Promise.all(pendingCanonicalAllocationValues.map((allocation) => alignLocalPendingEnrollmentCharges({ db: matriculaRouteRepository, matriculaId: allocation.matriculaId, contaId, value: allocation.value }))).then((results) => ({ cobrancasUpdated: results.reduce((sum, result) => sum + result.cobrancasUpdated, 0), chargesUpdated: results.reduce((sum, result) => sum + result.chargesUpdated, 0), matriculasUpdated: results.length }))
-      : null;
 
   return {
     payload: {
       ...mapEditMatriculaResultToDTO(matricula as unknown as Record<string, unknown>),
       asyncSync: financialMetadata ? {
+        status: 'PENDING',
+        operationId: matricula.financialCommandEventId ?? null,
         provider: 'ASAAS',
         fields: [
           ...(nextSubscriptionValue !== null ? ['value'] : []),
@@ -327,8 +320,7 @@ export async function editMatriculaForHttp(input: {
           'updatePendingPayments',
         ],
         ...(nextSubscriptionCycle ? { cycle: nextSubscriptionCycle } : {}),
-        localAlignment,
-        message: 'A troca de plano ou combo também atualizou a assinatura recorrente para manter coerência com os próximos ciclos financeiros.',
+        message: 'A alteração acadêmica foi salva e a atualização financeira está na fila de sincronização. O estado financeiro será confirmado após a resposta do Asaas.',
       } : null,
     },
   };

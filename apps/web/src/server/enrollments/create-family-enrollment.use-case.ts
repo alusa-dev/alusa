@@ -38,7 +38,9 @@ import {
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { evaluateResponsavelPayerFiscalReadiness } from '@alusa/finance';
 import { allocateFamilyAmount } from '@alusa/finance/family-billing/allocation';
+import { provisionFutureFamilyEnrollment } from '@alusa/finance';
 import { findUnlinkedStudentIds } from '@/src/server/responsibles/linked-students.service';
+import { getAcademicDateKey, getAcademicDateStartInstant, isAcademicDateInFuture } from '@alusa/shared/date-only';
 import type { CreateMatriculaFamiliarBody } from './family-enrollment.schema';
 
 export type CreateFamilyEnrollmentActor = {
@@ -481,6 +483,7 @@ async function rollbackFamilyEnrollmentDraft(params: {
   message: string;
   preserveOutbox?: boolean;
   preserveFamilyState?: boolean;
+  cancelFutureRecurringOutbox?: boolean;
 }) {
   const matriculaRequestPrefix = `${params.uiRequestId}:aluno:`;
 
@@ -560,6 +563,23 @@ async function rollbackFamilyEnrollmentDraft(params: {
         },
         data: { lastError: params.message.slice(0, 2000) },
       });
+      if (params.cancelFutureRecurringOutbox) {
+        await tx.familyBillingOutbox.updateMany({
+          where: {
+            contaId: params.contaId,
+            matriculaFamiliarId: params.familyId,
+            eventType: `FUTURE_FAMILY_RECURRING:${params.operationId}`,
+            payload: { path: ['operationId'], equals: params.operationId },
+            status: { in: ['PENDING', 'FAILED'] },
+          },
+          data: {
+            status: 'REQUIRES_RECONCILIATION',
+            lockedAt: null,
+            leaseExpiresAt: null,
+            lastError: `RECORRÊNCIA_BLOQUEADA_POR_FALHA_NA_TAXA: ${params.message}`.slice(0, 2000),
+          },
+        });
+      }
     }
 
     await tx.familyEnrollmentOperation.updateMany({
@@ -732,6 +752,7 @@ export async function executeCreateFamilyEnrollment(params: {
   let rollbackContext: { familyId: string; operationId: string } | null = null;
   let financialAttempted = false;
   let financialConfirmed = false;
+  let deferredBillingAt: Date | null = null;
 
   try {
     const responsavel = await prisma.responsavel.findFirst({
@@ -745,6 +766,12 @@ export async function executeCreateFamilyEnrollment(params: {
 
     const dataInicio = parseDate(body.dataInicio);
     const dataFimContrato = parseDate(body.dataFimContrato);
+    const accountTimeZone = (await prisma.conta.findFirst({ where: { id: contaId }, select: { timezone: true } }))?.timezone;
+    const academicStartKey = getAcademicDateKey(dataInicio);
+    const futureStart = Boolean(academicStartKey && isAcademicDateInFuture(dataInicio, new Date(), accountTimeZone ?? undefined));
+    deferredBillingAt = futureStart && academicStartKey
+      ? getAcademicDateStartInstant(academicStartKey, accountTimeZone ?? undefined)
+      : null;
     const paymentSelection = resolveWizardPaymentSelection({
       formaPagamento: body.formaPagamento,
       formaPagamentoTaxa: body.formaPagamentoTaxa,
@@ -1058,6 +1085,7 @@ export async function executeCreateFamilyEnrollment(params: {
       criarCobranca: false,
       requiresFinancialProvisioning:
         willCreateSubscriptionPlanned || willCreateEnrollmentFeePlanned,
+      aggregateBillingManaged: true,
       billingMode: BillingMode.SHARED_PLAN,
       matriculaFamiliarId: family.id,
       valorMensalidadeOverride: null,
@@ -1287,7 +1315,7 @@ export async function executeCreateFamilyEnrollment(params: {
     let financialError: string | null = null;
     let financialProvisioned = false;
 
-    if (shouldCreateSubscription || shouldCreateEnrollmentFee) {
+    if (shouldCreateSubscription || shouldCreateEnrollmentFee || deferredBillingAt) {
       const nextDueDate = resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia);
       const billingAdjustments = buildBillingAdjustments(body);
 
@@ -1311,6 +1339,7 @@ export async function executeCreateFamilyEnrollment(params: {
         uiRequestId: body.uiRequestId,
         strategy: body.billingStrategy.kind,
         operationId: operation.id,
+        operationMatriculaIds: results.flatMap((result) => result.status === 'success' ? [result.matriculaId] : []),
         targetStandaloneSubscriptionId: joinExisting
           ? family.standaloneSubscriptionId
           : scheduledTargetFamily?.standaloneSubscriptionId ?? null,
@@ -1357,28 +1386,41 @@ export async function executeCreateFamilyEnrollment(params: {
 
       try {
         financialAttempted = true;
-        const outbox = await enqueueFamilyBillingOutbox({
-          contaId,
-          aggregateType: 'MATRICULA_FAMILIAR',
-          aggregateId: family.id,
-          matriculaFamiliarId: family.id,
-          payload,
-          eventType: joinExisting
-            ? `JOIN_EXISTING_FAMILY_CURRENT_CYCLE:${operation.id}`
-            : scheduleNextCycle
-              ? `SCHEDULE_FAMILY_UNIFICATION_NEXT_CYCLE:${operation.id}`
-              : `SYNC_FAMILY_BILLING:${operation.id}`,
-        });
-        const processingResult = await processFamilyBillingOutboxEvent(outbox.id);
-        if (processingResult.processed) {
-          financialProvisioned = true;
-          financialConfirmed = true;
-          financialStatus = FamilyBillingStatus.ATIVO;
-        } else if (processingResult.reason === 'REQUIRES_RECONCILIATION') {
-          financialError = 'RESULTADO_INCERTO: cobrança familiar requer reconciliação.';
-          financialStatus = FamilyBillingStatus.PARCIAL;
+        if (deferredBillingAt) {
+          const provisioned = await provisionFutureFamilyEnrollment({
+            payload,
+            matriculaFamiliarId: family.id,
+            availableAt: deferredBillingAt,
+          });
+          financialConfirmed = provisioned.feeConfirmed;
+          financialError = provisioned.error;
+          financialStatus = provisioned.status === 'PARTIAL'
+            ? FamilyBillingStatus.PARCIAL
+            : FamilyBillingStatus.PENDENTE;
         } else {
-          financialStatus = FamilyBillingStatus.PENDENTE;
+          const outbox = await enqueueFamilyBillingOutbox({
+            contaId,
+            aggregateType: 'MATRICULA_FAMILIAR',
+            aggregateId: family.id,
+            matriculaFamiliarId: family.id,
+            payload,
+            eventType: joinExisting
+              ? `JOIN_EXISTING_FAMILY_CURRENT_CYCLE:${operation.id}`
+              : scheduleNextCycle
+                ? `SCHEDULE_FAMILY_UNIFICATION_NEXT_CYCLE:${operation.id}`
+                : `SYNC_FAMILY_BILLING:${operation.id}`,
+          });
+          const processingResult = await processFamilyBillingOutboxEvent(outbox.id);
+          if (processingResult.processed) {
+            financialProvisioned = true;
+            financialConfirmed = true;
+            financialStatus = FamilyBillingStatus.ATIVO;
+          } else if (processingResult.reason === 'REQUIRES_RECONCILIATION') {
+            financialError = 'RESULTADO_INCERTO: cobrança familiar requer reconciliação.';
+            financialStatus = FamilyBillingStatus.PARCIAL;
+          } else {
+            financialStatus = FamilyBillingStatus.PENDENTE;
+          }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1404,6 +1446,7 @@ export async function executeCreateFamilyEnrollment(params: {
         message: `O financeiro não confirmou a matrícula familiar: ${financialError}`,
         preserveOutbox: requiresReconciliation || joinExisting,
         preserveFamilyState: joinExisting,
+        cancelFutureRecurringOutbox: Boolean(deferredBillingAt && financialAttempted),
       });
       return NextResponse.json(
         {
@@ -1552,6 +1595,7 @@ export async function executeCreateFamilyEnrollment(params: {
         message: `Falha inesperada na criação familiar: ${error instanceof Error ? error.message : String(error)}`,
         preserveOutbox: financialAttempted,
         preserveFamilyState: body.billingStrategy.kind === 'JOIN_EXISTING_CURRENT_CYCLE',
+        cancelFutureRecurringOutbox: Boolean(deferredBillingAt && financialAttempted),
       }).catch((rollbackError) => {
         logEnrollmentOperationalEvent('api.enrollment.compensation.failed', rollbackError);
       });

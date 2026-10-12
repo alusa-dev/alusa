@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/tooltip';
 
 import { MAP_TEXT_FIELD_CLASS, MAP_TEXT_FONT_OPTIONS } from './text-format-options';
+import { MAP_TOOLBAR_SURFACE_CLASS } from './map-toolbar-styles';
 
 function toNumber(value: string, fallback = 0) {
   const parsed = Number(value);
@@ -58,7 +59,7 @@ function FormatToggleButton({
           aria-pressed={active}
           onClick={onClick}
           className={cn(
-            'h-8 w-8 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100',
+            'h-9 w-9 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100',
             active && 'border-brand-accent bg-brand-accent text-white hover:bg-brand-accent hover:text-white',
           )}
         >
@@ -103,7 +104,7 @@ export function FloatingTextFormatToolbar({
     <TooltipProvider>
       <div
         data-testid="text-format-toolbar"
-        className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-lg shadow-slate-300/30 backdrop-blur"
+        className={`flex items-center gap-1 px-1.5 ${MAP_TOOLBAR_SURFACE_CLASS}`}
       >
         <Select
           value={fontFamily}

@@ -57,6 +57,7 @@ export interface InfoCalloutProps
     VariantProps<typeof infoCalloutVariants> {
   title?: React.ReactNode;
   showIcon?: boolean;
+  mobileInlineIcon?: boolean;
 }
 
 function hasStructuredItems(children: React.ReactNode): boolean {
@@ -70,6 +71,7 @@ export function InfoCallout({
   size = 'md',
   title,
   showIcon = false,
+  mobileInlineIcon = false,
   className,
   children,
   ...props
@@ -132,7 +134,9 @@ export function InfoCallout({
     >
       <div
         className={cn(
-          'flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3',
+          mobileInlineIcon
+            ? 'flex flex-row items-start gap-2.5 sm:items-center sm:gap-3'
+            : 'flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3',
           size === 'sm' ? 'text-xs' : 'text-sm',
         )}
       >
@@ -144,7 +148,7 @@ export function InfoCallout({
             />
           ) : (
             <InformationCircleIcon
-              className={cn('h-5 w-5 shrink-0', iconVariants[resolvedVariant])}
+              className={cn(mobileInlineIcon ? 'mt-0.5 h-4 w-4 shrink-0 sm:mt-0 sm:h-5 sm:w-5' : 'h-5 w-5 shrink-0', iconVariants[resolvedVariant])}
               aria-hidden
             />
           )

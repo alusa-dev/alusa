@@ -109,6 +109,8 @@ export {
 // Eventos escolares
 export * from './events/events.schema';
 export * from './events/events.service';
+export * from './events/ticket-whatsapp-notification';
+export * from './events/public-event-ticket-access';
 export * from './events/events-payment-rules';
 export * from './events/event-contracts.service';
 export * from './events/ticket-checkin.service';

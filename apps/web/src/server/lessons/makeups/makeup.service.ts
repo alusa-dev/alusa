@@ -7,6 +7,9 @@ import type {
 } from '@/features/lessons/dtos';
 import {
   assertNoCalendarConflicts,
+  assertCalendarResourcesBelongToConta,
+  withCalendarEventWriteLock,
+  acquireCalendarEventWriteLock,
   buildEligibleMatriculaWhere,
   getCalendarEventOrThrow,
   loadAlunoResources,
@@ -80,9 +83,10 @@ async function syncDestinationEventFromMakeupStatus(
   contaId: string,
   destinoEventoId: string,
   status: 'AGENDADA' | 'REALIZADA' | 'CANCELADA',
+  tx: import('@prisma/client').Prisma.TransactionClient,
 ) {
   if (status === 'REALIZADA') {
-    await prisma.calendarEvent.updateMany({
+    await tx.calendarEvent.updateMany({
       where: {
         id: destinoEventoId,
         contaId,
@@ -99,11 +103,11 @@ async function syncDestinationEventFromMakeupStatus(
   if (status !== 'CANCELADA') return;
 
   const [event, activeLinks] = await Promise.all([
-    prisma.calendarEvent.findFirst({
+    tx.calendarEvent.findFirst({
       where: { id: destinoEventoId, contaId },
       select: { id: true, source: true },
     }),
-    prisma.makeupClass.count({
+    tx.makeupClass.count({
       where: {
         contaId,
         eventoDestinoId: destinoEventoId,
@@ -114,7 +118,7 @@ async function syncDestinationEventFromMakeupStatus(
 
   if (!event || event.source !== 'REPOSICAO' || activeLinks > 0) return;
 
-  await prisma.calendarEvent.update({
+  await tx.calendarEvent.update({
     where: { id: destinoEventoId },
     data: {
       status: 'CANCELADO',
@@ -250,34 +254,37 @@ export async function createMakeupClass(
   }
 
   if (!destinoEventoId) {
-    if (!input.destinationEvent) {
+    const destinationEvent = input.destinationEvent;
+    if (!destinationEvent) {
       throw new AulasError('EVENTO_DESTINO_OBRIGATORIO', 'Informe o evento de destino ou os dados para criá-lo.');
     }
 
-    const professorIds = input.destinationEvent.professorIds.length
-      ? input.destinationEvent.professorIds
+    const professorIds = destinationEvent.professorIds.length
+      ? destinationEvent.professorIds
       : turmaDestino.professores.map((item) => item.professorId);
-    const salaId = input.destinationEvent.salaId ?? turmaDestino.salaId ?? null;
-    const startAt = new Date(input.destinationEvent.startAt);
-    const endAt = new Date(input.destinationEvent.endAt);
+    const salaId = destinationEvent.salaId ?? turmaDestino.salaId ?? null;
+    const startAt = new Date(destinationEvent.startAt);
+    const endAt = new Date(destinationEvent.endAt);
 
+    const createdId = await withCalendarEventWriteLock(contaId, async (tx) => {
+    await assertCalendarResourcesBelongToConta({ contaId, turmaId: turmaDestino.id, salaId, professorIds, prismaClient: tx });
     await assertNoCalendarConflicts({
       contaId,
       startAt,
       endAt,
       salaId,
       professorIds,
-      prismaClient: prisma,
+      prismaClient: tx,
     });
 
-    const createdEvent = await prisma.calendarEvent.create({
+    const createdEvent = await tx.calendarEvent.create({
       data: {
         contaId,
         tipo: 'REPOSICAO',
         status: 'AGENDADO',
         source: 'REPOSICAO',
         manuallyAdjusted: true,
-        titulo: input.destinationEvent.title ?? `Reposição • ${turmaDestino.nome}`,
+        titulo: destinationEvent.title ?? `Reposição • ${turmaDestino.nome}`,
         descricao: input.observacao ?? null,
         startAt,
         endAt,
@@ -300,6 +307,23 @@ export async function createMakeupClass(
     });
 
     destinoEventoId = createdEvent.id;
+    const createdMakeup = await tx.makeupClass.create({
+      data: {
+        contaId, scope: input.scope, alunoId, matriculaId, eventoOrigemId: origemEvento.id,
+        eventoDestinoId: createdEvent.id, turmaOrigemId: input.turmaOrigemId,
+        turmaDestinoId: input.turmaDestinoId, status: 'AGENDADA', observacao: input.observacao ?? null,
+        createdByUserId: userId,
+      }, select: { id: true },
+    });
+    await createAulasOperationLog({
+      contaId, action: 'MAKEUP_CREATED', entityType: 'MAKEUP_CLASS', entityId: createdMakeup.id,
+      message: 'Reposição criada com origem e destino vinculados.',
+      details: { scope: input.scope, alunoId, eventoOrigemId: origemEvento.id, eventoDestinoId: createdEvent.id,
+        turmaOrigemId: input.turmaOrigemId, turmaDestinoId: input.turmaDestinoId }, prismaClient: tx,
+    });
+    return createdMakeup.id;
+    });
+    return getMakeupClassDetails(contaId, createdId);
   } else {
     const destinoEvento = await getCalendarEventOrThrow(destinoEventoId, contaId, prisma);
 
@@ -370,7 +394,9 @@ export async function updateMakeupClass(
   const current = await getMakeupOrThrow(contaId, id);
   const nextStatus = input.status ?? current.status;
 
-  await prisma.makeupClass.update({
+  await prisma.$transaction(async (tx) => {
+  await acquireCalendarEventWriteLock(contaId, tx);
+  await tx.makeupClass.update({
     where: { id },
     data: {
       status: nextStatus,
@@ -378,7 +404,7 @@ export async function updateMakeupClass(
     },
   });
 
-  await syncDestinationEventFromMakeupStatus(contaId, current.eventoDestino.id, nextStatus);
+  await syncDestinationEventFromMakeupStatus(contaId, current.eventoDestino.id, nextStatus, tx);
   await createAulasOperationLog({
     contaId,
     action: 'MAKEUP_UPDATED',
@@ -395,7 +421,8 @@ export async function updateMakeupClass(
       eventoDestinoId: current.eventoDestino.id,
       eventoOrigemId: current.eventoOrigem.id,
     },
-    prismaClient: prisma,
+    prismaClient: tx,
+  });
   });
 
   return getMakeupClassDetails(contaId, id);

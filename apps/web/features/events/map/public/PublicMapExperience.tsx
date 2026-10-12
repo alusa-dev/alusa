@@ -24,6 +24,7 @@ import {
 } from '@/components/icons/icons';
 
 import { Button } from '@/components/ui/button';
+import { InfoCallout } from '@/components/ui/info-callout';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { BrandWordmark } from '@/components/brand/BrandWordmark';
@@ -136,6 +137,7 @@ export function PublicMapExperience({
   const [buyerEmail, setBuyerEmail] = useState('');
   const [buyerDocument, setBuyerDocument] = useState('');
   const [buyerPhone, setBuyerPhone] = useState('');
+  const [whatsappConsent, setWhatsappConsent] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'PIX' | 'CREDIT_CARD' | 'BOLETO'>(
     initialOrder?.paymentMethod ?? 'PIX',
   );
@@ -349,6 +351,7 @@ export function PublicMapExperience({
             buyerEmail,
             buyerDocument: onlyDigits(buyerDocument),
             buyerPhone: onlyDigits(buyerPhone),
+            whatsappConsent,
             paymentMethod,
           }),
         }),
@@ -547,7 +550,7 @@ export function PublicMapExperience({
   const isPublicSelectionView = mode === 'public' && step === 'SELECTION';
   const paymentOptions = [
     { value: 'PIX' as const, label: 'Pix', desktopLabel: 'Pagar no PIX', description: 'Código Copia e Cola ou QR Code', icon: QrCode },
-    { value: 'CREDIT_CARD' as const, label: 'Cartão de Crédito', desktopLabel: 'Pagar no cartão de crédito ou débito', description: 'Pague com segurança usando cartão', icon: CreditCard },
+    { value: 'CREDIT_CARD' as const, label: 'Cartão débito/crédito', desktopLabel: 'Pagar no cartão de crédito ou débito', description: 'Pague com segurança usando cartão', icon: CreditCard },
     { value: 'BOLETO' as const, label: 'Boleto Bancário', desktopLabel: 'Pagar no boleto', description: 'Compensação em até 1 dia útil', icon: Ticket },
   ];
   const paymentMethodInfo = {
@@ -563,7 +566,7 @@ export function PublicMapExperience({
   }[paymentMethod];
 
   return (
-    <div className={isPublicFlow ? 'flex h-dvh flex-col overflow-hidden lg:bg-slate-100' : undefined}>
+    <div data-public-ticket-checkout={isPublicFlow ? '' : undefined} className={isPublicFlow ? 'flex h-dvh flex-col overflow-hidden lg:bg-slate-100' : undefined}>
     <main className={`relative ${isPublicFlow ? 'bg-white lg:!bg-slate-100' : 'bg-slate-100'} text-slate-950 ${
       isPublicFlow
         ? 'flex min-h-0 flex-1 flex-col overflow-hidden lg:min-h-0 lg:flex-1'
@@ -577,7 +580,7 @@ export function PublicMapExperience({
         </div>
       ) : null}
       <header className={`shrink-0 border-b ${step === 'SELECTION' ? 'border-slate-200 bg-white lg:border-transparent lg:bg-[#3e1f63]' : 'border-transparent bg-slate-100'} ${step !== 'SELECTION' ? 'lg:hidden' : ''}`}>
-        <div className="flex items-center justify-between gap-4 bg-[#3e1f63] px-4 py-3 lg:hidden">
+        <div className="flex items-center justify-between gap-4 bg-[#3e1f63] px-4 py-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] lg:hidden">
           <BrandWordmark variant="white" className="h-6 w-auto" />
           <nav aria-label={`Etapa ${stepIndex(step)} de 3: ${stepLabel(step)}`} className="flex items-center gap-3">
               {[1, 2, 3].map((stepNumber) => {
@@ -694,6 +697,7 @@ export function PublicMapExperience({
             ariaLabel={`Mapa de assentos de ${map.event.name} — ${activeLevel.name}`}
             fillAvailable={step === 'IDENTIFICATION' || isPublicSelectionView}
             fillAvailableOnMobile={isPublicSelectionView}
+            enableMobileGestures={isPublicFlow}
           >
               <rect
                 data-map-background
@@ -874,50 +878,68 @@ export function PublicMapExperience({
               <div className="mt-5 space-y-4">
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <Label htmlFor="public-map-buyer-name">Nome Completo</Label>
+                    <Label htmlFor="public-map-buyer-name" className="text-sm font-medium text-slate-700 lg:text-slate-950">Nome Completo</Label>
                     <Input
                       id="public-map-buyer-name"
                       value={buyerName}
                       onChange={(event) => setBuyerName(event.target.value)}
                       placeholder="Seu nome"
-                      className="h-11 border-transparent bg-slate-100 shadow-none focus:border-[#3e1f63] focus:bg-transparent focus:ring-0 focus-visible:ring-0 lg:h-10"
+                      className="h-12 rounded-lg border border-slate-200 bg-slate-50 text-base shadow-none placeholder:text-slate-400 focus:border-[#3e1f63] focus:bg-white focus:ring-2 focus:ring-[#3e1f63]/15 focus-visible:ring-2 lg:h-10 lg:rounded-md lg:border-transparent lg:bg-slate-100 lg:text-sm lg:focus:bg-transparent lg:focus:ring-0 lg:focus-visible:ring-0"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="public-map-buyer-email">E-mail</Label>
+                    <Label htmlFor="public-map-buyer-email" className="text-sm font-medium text-slate-700 lg:text-slate-950">E-mail</Label>
                     <Input
                       id="public-map-buyer-email"
                       type="email"
                       value={buyerEmail}
                       onChange={(event) => setBuyerEmail(event.target.value)}
                       placeholder="nome@email.com"
-                      className="h-11 border-transparent bg-slate-100 shadow-none focus:border-[#3e1f63] focus:bg-transparent focus:ring-0 focus-visible:ring-0 lg:h-10"
+                      className="h-12 rounded-lg border border-slate-200 bg-slate-50 text-base shadow-none placeholder:text-slate-400 focus:border-[#3e1f63] focus:bg-white focus:ring-2 focus:ring-[#3e1f63]/15 focus-visible:ring-2 lg:h-10 lg:rounded-md lg:border-transparent lg:bg-slate-100 lg:text-sm lg:focus:bg-transparent lg:focus:ring-0 lg:focus-visible:ring-0"
                     />
                   </div>
                 </div>
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <Label htmlFor="public-map-buyer-document">CPF ou CNPJ</Label>
+                    <Label htmlFor="public-map-buyer-document" className="text-sm font-medium text-slate-700 lg:text-slate-950">CPF ou CNPJ</Label>
                     <Input
                       id="public-map-buyer-document"
                       value={buyerDocument}
                       onChange={(event) => setBuyerDocument(formatCpfCnpjBR(event.target.value))}
                       placeholder="000.000.000-00"
-                      className="h-11 border-transparent bg-slate-100 shadow-none focus:border-[#3e1f63] focus:bg-transparent focus:ring-0 focus-visible:ring-0 lg:h-10"
+                      className="h-12 rounded-lg border border-slate-200 bg-slate-50 text-base shadow-none placeholder:text-slate-400 focus:border-[#3e1f63] focus:bg-white focus:ring-2 focus:ring-[#3e1f63]/15 focus-visible:ring-2 lg:h-10 lg:rounded-md lg:border-transparent lg:bg-slate-100 lg:text-sm lg:focus:bg-transparent lg:focus:ring-0 lg:focus-visible:ring-0"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="public-map-buyer-phone">Número (Whatsapp)</Label>
-                    <Input
-                      id="public-map-buyer-phone"
-                      type="tel"
-                      inputMode="tel"
-                      autoComplete="tel"
-                      value={buyerPhone}
-                      onChange={(event) => setBuyerPhone(formatPhoneBR(event.target.value))}
-                      placeholder="(00) 00000-0000"
-                      className="h-11 border-transparent bg-slate-100 shadow-none focus:border-[#3e1f63] focus:bg-transparent focus:ring-0 focus-visible:ring-0 lg:h-10"
-                    />
+                    <Label htmlFor="public-map-buyer-phone" className="text-sm font-medium text-slate-700 lg:text-slate-950">Número (WhatsApp)</Label>
+                    <div className="space-y-2.5">
+                      <Input
+                        id="public-map-buyer-phone"
+                        type="tel"
+                        inputMode="tel"
+                        autoComplete="tel"
+                        value={buyerPhone}
+                        onChange={(event) => setBuyerPhone(formatPhoneBR(event.target.value))}
+                        placeholder="(00) 00000-0000"
+                        className="h-12 rounded-lg border border-slate-200 bg-slate-50 text-base shadow-none placeholder:text-slate-400 focus:border-[#3e1f63] focus:bg-white focus:ring-2 focus:ring-[#3e1f63]/15 focus-visible:ring-2 lg:h-10 lg:rounded-md lg:border-transparent lg:bg-slate-100 lg:text-sm lg:focus:bg-transparent lg:focus:ring-0 lg:focus-visible:ring-0"
+                      />
+                      <InfoCallout
+                        size="sm"
+                        showIcon
+                        mobileInlineIcon
+                      >
+                        Se você autorizar abaixo, os ingressos e avisos sobre a cobrança serão enviados para este número pelo WhatsApp da Alusa.
+                      </InfoCallout>
+                      <label className="flex cursor-pointer items-start gap-2 text-sm leading-5 text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={whatsappConsent}
+                          onChange={(event) => setWhatsappConsent(event.target.checked)}
+                          className="mt-0.5 h-4 w-4 accent-[#3e1f63]"
+                        />
+                        <span>Autorizo o envio dos ingressos e de avisos sobre esta cobrança pelo WhatsApp. Posso cancelar o recebimento a qualquer momento.</span>
+                      </label>
+                    </div>
                   </div>
                 </div>
 
@@ -978,13 +1000,13 @@ export function PublicMapExperience({
                         type="button"
                         aria-pressed={isSelected}
                         onClick={() => setPaymentMethod(option.value)}
-                        className={`box-border flex h-16 w-full items-center justify-between rounded-lg border px-3 py-3 text-left transition-colors ${isSelected ? 'alusa-selection-card--selected text-[#2b2634]' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                        className={`box-border flex min-h-[4.25rem] w-full items-center justify-between rounded-xl border px-4 py-3 text-left transition-[border-color,background-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3e1f63]/30 focus-visible:ring-offset-2 ${isSelected ? 'alusa-selection-card--selected text-[#2b2634]' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                       >
                         <div className="flex min-w-0 items-center gap-3">
-                          {option.value !== 'CREDIT_CARD' ? <Icon className="h-5 w-5 shrink-0 text-brand-accent" /> : null}
+                          <Icon className="h-5 w-5 shrink-0 text-brand-accent" />
                           <div className="min-w-0">
-                            <strong className="block text-sm text-slate-950">{option.label}</strong>
-                            <span className="text-xs text-slate-500">{option.description}</span>
+                            <strong className="block text-base font-semibold text-slate-950">{option.label}</strong>
+                            <span className="mt-0.5 block text-sm leading-5 text-slate-600">{option.description}</span>
                           </div>
                         </div>
                         {isSelected && <Check className="h-4 w-4" />}
@@ -1049,7 +1071,7 @@ export function PublicMapExperience({
             <div className="flex min-h-full flex-col justify-center space-y-4 px-3 py-4 lg:block lg:min-h-0 lg:space-y-4 lg:px-0 lg:py-0">
               {order.status !== 'PAYMENT_PENDING' ? (
               <section
-                className={`border-0 bg-transparent p-0 text-center shadow-none lg:rounded-lg lg:border lg:bg-white lg:p-4 lg:text-left lg:shadow-sm ${
+                className={`rounded-xl border border-slate-200 bg-white p-4 text-center shadow-sm lg:rounded-lg lg:border lg:bg-white lg:p-4 lg:text-left lg:shadow-sm ${
                   order.paymentStatus === 'REFUND_DENIED'
                     ? 'lg:border-rose-200'
                     : paymentAccessBlocked
@@ -1276,14 +1298,14 @@ export function PublicMapExperience({
                                     aria-label="Código do boleto"
                                     readOnly
                                     value={order.bankSlipCode ?? ''}
-                                    className="select-all truncate border-transparent bg-slate-100 pr-11 font-mono text-[11px] shadow-none focus-visible:border-slate-500 focus-visible:bg-white focus-visible:ring-0 focus-visible:ring-offset-0"
+                                    className="h-12 rounded-lg border border-slate-200 bg-slate-50 pr-12 font-mono text-xs shadow-none focus-visible:border-slate-500 focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-slate-300"
                                   />
                                   <Button
                                     type="button"
                                     size="icon"
                                     variant="ghost"
                                     aria-label={copied ? 'Código do boleto copiado' : 'Copiar código do boleto'}
-                                    className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 border-0 bg-transparent shadow-none hover:bg-slate-200/70"
+                                    className="absolute right-1 top-1/2 h-9 w-9 -translate-y-1/2 border-0 bg-transparent shadow-none hover:bg-slate-200/70"
                                     onClick={() => copyPaymentCode(order.bankSlipCode!)}
                                   >
                                     {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
@@ -1348,20 +1370,20 @@ export function PublicMapExperience({
                     </div>
 
                     <div className="text-left space-y-1.5">
-                      <Label htmlFor="pix-copia-cola" className="text-xs text-slate-500">Código Copia e Cola</Label>
+                      <Label htmlFor="pix-copia-cola" className="text-sm text-slate-600 lg:text-xs lg:text-slate-500">Código Copia e Cola</Label>
                       <div className="relative">
                         <Input
                           id="pix-copia-cola"
                           readOnly
                           value={order.pixQrCode.payload}
-                          className="select-all truncate border-transparent bg-slate-100 pr-11 font-mono text-xs shadow-none focus-visible:border-slate-500 focus-visible:bg-white focus-visible:ring-0 focus-visible:ring-offset-0"
+                          className="h-12 rounded-lg border border-slate-200 bg-slate-50 pr-12 font-mono text-xs shadow-none focus-visible:border-slate-500 focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-slate-300 lg:h-10 lg:rounded-md lg:border-transparent lg:bg-slate-100 lg:focus-visible:ring-0"
                         />
                         <Button
                           type="button"
                           size="icon"
                           variant="ghost"
                           aria-label={copied ? 'Código Pix copiado' : 'Copiar código Pix'}
-                          className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 border-0 bg-transparent shadow-none hover:bg-slate-200/70"
+                            className="absolute right-1 top-1/2 h-9 w-9 -translate-y-1/2 border-0 bg-transparent shadow-none hover:bg-slate-200/70 lg:h-8 lg:w-8"
                           onClick={() => copyPaymentCode(order.pixQrCode!.payload)}
                         >
                           {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
@@ -1502,19 +1524,19 @@ export function PublicMapExperience({
       ) : null}
 
       {isPublicFlow && (step === 'IDENTIFICATION' || step === 'PAYMENT_METHOD' || (step === 'CONFIRMATION' && order)) ? (
-        <div className="relative z-30 w-full shrink-0 border-t border-slate-200 bg-white/95 px-3 py-3 backdrop-blur-sm pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] lg:hidden">
-          <div className="mx-auto flex max-w-7xl flex-col gap-2">
+        <div className="relative z-30 w-full shrink-0 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-sm pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] lg:hidden">
+          <div className="mx-auto flex max-w-7xl flex-col gap-3">
             {step !== 'CONFIRMATION' ? (
               <>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-slate-500">Total da compra</span>
-                  <strong className="text-base text-slate-950">{formatCurrency(total)}</strong>
+                  <span className="text-sm text-slate-600">Total da compra</span>
+                  <strong className="text-lg font-semibold text-slate-950">{formatCurrency(total)}</strong>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-3">
                   <Button
                     type="button"
                     variant="ghost"
-                    className="w-1/3 bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-900"
+                    className="min-h-12 w-1/3 rounded-lg bg-slate-100 text-base font-medium text-slate-700 hover:bg-slate-200 hover:text-slate-900"
                     onClick={() => setStep(step === 'IDENTIFICATION' ? 'SELECTION' : 'IDENTIFICATION')}
                     disabled={step === 'PAYMENT_METHOD' && isSubmitting}
                   >
@@ -1523,7 +1545,7 @@ export function PublicMapExperience({
                   {step === 'IDENTIFICATION' ? (
                     <Button
                       type="button"
-                      className="w-2/3 bg-brand-accent text-white hover:bg-brand-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="min-h-12 w-2/3 rounded-lg bg-brand-accent text-base font-semibold text-white hover:bg-brand-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
                       disabled={!isIdentificationValid}
                       onClick={() => setStep('PAYMENT_METHOD')}
                     >
@@ -1532,7 +1554,7 @@ export function PublicMapExperience({
                   ) : (
                     <Button
                       type="button"
-                      className="w-2/3 bg-brand-accent text-white hover:bg-brand-accent/90"
+                      className="min-h-12 w-2/3 rounded-lg bg-brand-accent text-base font-semibold text-white hover:bg-brand-accent/90"
                       disabled={isSubmitting}
                       onClick={handleCheckout}
                     >
@@ -1543,12 +1565,12 @@ export function PublicMapExperience({
                 </div>
               </>
             ) : order && ticketsIssued && order.ticketsUrl ? (
-              <div className="flex gap-2">
-                <Button type="button" variant="outline" className="w-1/2" onClick={resetCheckoutFlow}>
+              <div className="flex gap-3">
+                <Button type="button" variant="outline" className="min-h-12 w-1/2 rounded-lg text-base" onClick={resetCheckoutFlow}>
                   <MapPin className="h-4 w-4" />
                   Ver mapa
                 </Button>
-                <Button asChild className="w-1/2 bg-emerald-700 text-white hover:bg-emerald-800">
+                <Button asChild className="min-h-12 w-1/2 rounded-lg bg-emerald-700 text-base text-white hover:bg-emerald-800">
                   <a href={order.ticketsUrl} target="_blank" rel="noreferrer">
                     <Ticket className="h-4 w-4" />
                     Ver ingressos
@@ -1558,7 +1580,7 @@ export function PublicMapExperience({
             ) : order?.status === 'PAYMENT_PENDING' ? (
               <>
                 {order.invoiceUrl && (paymentMethod !== 'PIX' || !order.pixQrCode) ? (
-                  <Button asChild className="w-full bg-brand-accent text-white hover:bg-brand-accent/90">
+                  <Button asChild className="min-h-12 w-full rounded-lg bg-brand-accent text-base font-semibold text-white hover:bg-brand-accent/90">
                     <a href={order.invoiceUrl} target="_blank" rel="noreferrer">
                       <ExternalLink className="h-4 w-4" />
                       Ir para o pagamento
@@ -1568,7 +1590,7 @@ export function PublicMapExperience({
                 <Button
                   type="button"
                   variant="ghost"
-                  className="w-full justify-center border-0 bg-slate-100 text-slate-700 shadow-none hover:bg-slate-200 hover:text-slate-900"
+                  className="min-h-12 w-full justify-center rounded-lg border-0 bg-slate-100 text-base font-medium text-slate-700 shadow-none hover:bg-slate-200 hover:text-slate-900"
                   disabled={isSyncingPayment}
                   onClick={handleSyncPayment}
                 >
@@ -1577,7 +1599,7 @@ export function PublicMapExperience({
                 </Button>
               </>
             ) : order && (order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED') ? (
-              <Button type="button" className="w-full bg-brand-accent text-white" onClick={resetCheckoutFlow}>
+              <Button type="button" className="min-h-12 w-full rounded-lg bg-brand-accent text-base font-semibold text-white" onClick={resetCheckoutFlow}>
                 Nova compra no mapa
               </Button>
             ) : null}
@@ -1596,7 +1618,7 @@ export function PublicMapExperience({
             </div>
             <Button
               type="button"
-              className="shrink-0 bg-brand-accent px-5 text-white hover:bg-brand-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-12 min-w-32 shrink-0 bg-brand-accent px-6 text-base text-white hover:bg-brand-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={selectedSeats.length === 0}
               onClick={() => setStep('IDENTIFICATION')}
             >

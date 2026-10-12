@@ -3,6 +3,7 @@ import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { drainContractWhatsAppNotifications, drainWhatsAppOutbox, drainWhatsAppWebhooks } from '@/src/server/whatsapp/outbox.service';
 import { apiJsonError } from '@/lib/api/standard-response';
 import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
+import { drainEventTicketWhatsAppNotifications } from '@/src/server/events/event-ticket-whatsapp-outbox.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -19,24 +20,31 @@ async function run(request: Request) {
     if (!auth.ok) return auth.response;
 
     const url = new URL(request.url);
+    // Process inbound STOP/SAIR replies before sending pending outbound jobs.
+    const webhooks = auth.isCron ? await drainWhatsAppWebhooks({
+      limit: toPositiveInt(url.searchParams.get('webhookLimit'), 100, 500),
+    }) : { processed: 0, retried: 0, deadLettered: 0 };
     const contractNotifications = await drainContractWhatsAppNotifications({
       contaId: auth.contaId,
       limit: toPositiveInt(url.searchParams.get('contractLimit'), 50, 200),
     });
-    const outbox = await drainWhatsAppOutbox({
+    const eventTicketNotifications = await drainEventTicketWhatsAppNotifications({
+      ...(!auth.isCron && auth.contaId ? { contaId: auth.contaId } : {}),
+      limit: toPositiveInt(url.searchParams.get('eventTicketLimit'), 50, 100),
+    });
+    const outbox = auth.isCron ? await drainWhatsAppOutbox({
       limit: toPositiveInt(url.searchParams.get('outboxLimit'), 50, 200),
-    });
-    const webhooks = await drainWhatsAppWebhooks({
-      limit: toPositiveInt(url.searchParams.get('webhookLimit'), 100, 500),
-    });
+    }) : { queued: 0, retried: 0, deadLettered: 0, skipped: 0 };
     const hasFailures =
       contractNotifications.retried > 0 ||
       contractNotifications.deadLettered > 0 ||
+      eventTicketNotifications.retried > 0 ||
+      eventTicketNotifications.deadLettered > 0 ||
       outbox.retried > 0 ||
       outbox.deadLettered > 0 ||
       webhooks.retried > 0 ||
       webhooks.deadLettered > 0;
-    const result = { contractNotifications, outbox, webhooks };
+    const result = { contractNotifications, eventTicketNotifications, outbox, webhooks };
 
     logJobResult('whatsapp', startedAt, result, {
       hasTenantScope: Boolean(auth.contaId),

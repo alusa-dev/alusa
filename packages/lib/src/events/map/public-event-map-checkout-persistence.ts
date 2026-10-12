@@ -73,7 +73,8 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
       where: { reservationId: reservation.id },
       create: {
         contaId: map.contaId, eventId: map.eventId, eventMapId: map.id, versionId: map.publishedVersionId!, reservationId: reservation.id,
-        buyerName: input.buyerName, buyerEmail: input.buyerEmail, buyerDocument, buyerPhone: input.buyerPhone, totalAmount: decimal(totalAmount),
+        buyerName: input.buyerName, buyerEmail: input.buyerEmail, buyerDocument, buyerPhone: input.buyerPhone,
+        ...(input.whatsappConsent ? { whatsappOptInAt: new Date(), whatsappOptInSource: 'PUBLIC_CHECKOUT' } : {}), totalAmount: decimal(totalAmount),
         status: 'PAYMENT_PENDING', paymentProvider: 'ASAAS', paymentMethod: input.paymentMethod, expiresAt: proposedExpiresAt, accessToken: createPublicToken('order'),
       },
       update: {},
@@ -89,9 +90,18 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
 
     const expiresAt = order.asaasPaymentId ? order.expiresAt ?? proposedExpiresAt : proposedExpiresAt;
     await tx.eventMapReservation.update({ where: { id: reservation.id }, data: { status: 'HELD', expiresAt, buyerName: input.buyerName, buyerEmail: input.buyerEmail } });
-    if (order.buyerName !== input.buyerName || order.buyerEmail !== input.buyerEmail || order.buyerDocument !== buyerDocument || order.buyerPhone !== input.buyerPhone || order.paymentMethod !== input.paymentMethod || order.expiresAt?.getTime() !== expiresAt.getTime()) {
-      await tx.eventMapOrder.update({ where: { id: order.id }, data: { buyerName: input.buyerName, buyerEmail: input.buyerEmail, buyerDocument, buyerPhone: input.buyerPhone, paymentMethod: input.paymentMethod, expiresAt } });
-    }
+    await tx.eventMapOrder.update({
+      where: { id: order.id },
+      data: {
+        buyerName: input.buyerName,
+        buyerEmail: input.buyerEmail,
+        buyerDocument,
+        buyerPhone: input.buyerPhone,
+        ...(input.whatsappConsent && !order.whatsappOptOutAt ? { whatsappOptInAt: new Date(), whatsappOptInSource: 'PUBLIC_CHECKOUT' } : {}),
+        paymentMethod: input.paymentMethod,
+        expiresAt,
+      },
+    });
     await tx.auditLog.create({ data: { contaId: map.contaId, actorType: 'SYSTEM', actorId: null, action: 'events.map.public.checkout', entityType: 'EventMapOrder', entityId: order.id, metadata: toAuditJson({ eventId: map.eventId, eventMapId: map.id, versionId: map.publishedVersionId, seats: publicSeats.map((seat) => seat.technicalCode), totalAmount, expiresAt: expiresAt.toISOString() }) } });
     return { order, map, publicSeats, totalAmount, expiresAt };
   });

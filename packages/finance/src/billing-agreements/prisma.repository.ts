@@ -45,6 +45,10 @@ function dateOnly(value: Date | null | undefined): string | null {
   return value ? value.toISOString().slice(0, 10) : null;
 }
 
+function isTerminalEnrollmentStatus(status: string): boolean {
+  return status === 'CANCELADA' || status === 'ENCERRADA' || status === 'RECUSADA';
+}
+
 function exclusiveDayAfter(value: Date): Date {
   const result = new Date(value);
   result.setUTCDate(result.getUTCDate() + 1);
@@ -273,6 +277,7 @@ export function createPrismaBillingAgreementRepository(
           customer: { select: { asaasCustomerId: true, payerType: true, payerId: true } },
           allocations: {
             include: {
+              matricula: { select: { status: true } },
               sourceCharge: {
                 include: {
                   cobranca: true,
@@ -408,7 +413,12 @@ export function createPrismaBillingAgreementRepository(
       };
       return {
         agreement,
-        allocations: row.allocations.map(billingAllocation),
+        // Historical paused allocations can remain after an enrollment is
+        // cancelled or closed. They must not keep the shared subscription alive
+        // when the last current enrollment is removed.
+        allocations: row.allocations
+          .filter((allocation) => !isTerminalEnrollmentStatus(allocation.matricula.status))
+          .map(billingAllocation),
         charges: [...charges.values()].sort((left, right) => left.dueDate.localeCompare(right.dueDate)),
         currentCycle,
       };
@@ -441,8 +451,10 @@ export function createPrismaBillingAgreementRepository(
       });
       if (scheduled) return { outcome: 'CONFLICT', operation: mapOperation(scheduled) };
       try {
-        const row = await prisma.billingChangeOperation.create({
-          data: {
+        const row = await prisma.$transaction(async (tx) => {
+          if (input.ownershipGuard) await input.ownershipGuard(tx);
+          return tx.billingChangeOperation.create({
+            data: {
             contaId: input.contaId,
             sourceAgreementId: input.change.agreementId,
             targetAgreementId:
@@ -475,7 +487,8 @@ export function createPrismaBillingAgreementRepository(
             attempts: 1,
             lockedAt: new Date(),
             lastAttemptAt: new Date(),
-          },
+            },
+          });
         });
         return { outcome: 'RESERVED', operation: mapOperation(row) };
       } catch (error) {
@@ -506,14 +519,18 @@ export function createPrismaBillingAgreementRepository(
     },
 
     async recordRemoteProgress(input) {
-      await prisma.billingChangeOperation.updateMany({
-        where: { id: input.operationId, contaId: input.contaId, status: { in: ['PROCESSING', 'REQUIRES_RECONCILIATION'] } },
-        data: { result: toJson({ remoteProgress: input.progress }), lastAttemptAt: new Date() },
+      await prisma.$transaction(async (tx) => {
+        if (input.ownershipGuard) await input.ownershipGuard(tx);
+        await tx.billingChangeOperation.updateMany({
+          where: { id: input.operationId, contaId: input.contaId, status: { in: ['PROCESSING', 'REQUIRES_RECONCILIATION'] } },
+          data: { result: toJson({ remoteProgress: input.progress }), lastAttemptAt: new Date() },
+        });
       });
     },
 
     async applyConfirmedChange(input: ApplyConfirmedBillingChangeInput) {
       return prisma.$transaction(async (tx): Promise<BillingAgreementChangeResult> => {
+        if (input.ownershipGuard) await input.ownershipGuard(tx);
         const plans = new Map(input.preview.plans.map((plan) => [plan.agreementId, plan]));
         for (const [agreementId, version] of Object.entries(input.expectedVersions)) {
           const updated = await tx.billingAgreement.updateMany({
@@ -687,10 +704,11 @@ export function createPrismaBillingAgreementRepository(
         for (const [agreementId, plan] of plans) {
           const progress = input.remoteProgress.find((item) => item.agreementId === agreementId);
           const scheduled = plan.remoteAction.startsWith('SCHEDULE_');
+          const effectiveRemoteAction = progress?.action ?? plan.remoteAction;
           const status =
-            plan.remoteAction === 'DELETE_SUBSCRIPTION'
+            effectiveRemoteAction === 'DELETE_SUBSCRIPTION'
               ? 'CANCELLED'
-              : plan.remoteAction === 'PAUSE_SUBSCRIPTION'
+              : effectiveRemoteAction === 'PAUSE_SUBSCRIPTION'
                 ? 'INACTIVE'
                 : plan.resultingAmountCents > 0
                   ? 'ACTIVE'
@@ -710,7 +728,7 @@ export function createPrismaBillingAgreementRepository(
                 // o status remoto fica INACTIVE. confirmedValue continua sendo
                 // esse snapshot e não deve virar zero artificialmente.
                 confirmedValue:
-                  plan.remoteAction === 'PAUSE_SUBSCRIPTION'
+                  effectiveRemoteAction === 'PAUSE_SUBSCRIPTION'
                     ? undefined
                     : amountDecimal(plan.resultingAmountCents),
                 asaasSubscriptionId: progress?.resultingSubscriptionId,
@@ -788,28 +806,34 @@ export function createPrismaBillingAgreementRepository(
     },
 
     async markOperationUncertain(input) {
-      await prisma.billingChangeOperation.updateMany({
-        where: { id: input.operationId, contaId: input.contaId, status: { not: 'COMPLETED' } },
-        data: {
-          status: 'REQUIRES_RECONCILIATION',
-          result: toJson({ remoteProgress: input.remoteProgress }),
-          lastError: `${input.errorCode}: ${input.errorMessage}`.slice(0, 2000),
-          lockedAt: null,
-          leaseExpiresAt: null,
-          availableAt: new Date(),
-        },
+      await prisma.$transaction(async (tx) => {
+        if (input.ownershipGuard) await input.ownershipGuard(tx);
+        await tx.billingChangeOperation.updateMany({
+          where: { id: input.operationId, contaId: input.contaId, status: { not: 'COMPLETED' } },
+          data: {
+            status: 'REQUIRES_RECONCILIATION',
+            result: toJson({ remoteProgress: input.remoteProgress }),
+            lastError: `${input.errorCode}: ${input.errorMessage}`.slice(0, 2000),
+            lockedAt: null,
+            leaseExpiresAt: null,
+            availableAt: new Date(),
+          },
+        });
       });
     },
 
     async markOperationFailed(input) {
-      await prisma.billingChangeOperation.updateMany({
-        where: { id: input.operationId, contaId: input.contaId, status: { not: 'COMPLETED' } },
-        data: {
-          status: 'FAILED',
-          lastError: `${input.errorCode}: ${input.errorMessage}`.slice(0, 2000),
-          lockedAt: null,
-          leaseExpiresAt: null,
-        },
+      await prisma.$transaction(async (tx) => {
+        if (input.ownershipGuard) await input.ownershipGuard(tx);
+        await tx.billingChangeOperation.updateMany({
+          where: { id: input.operationId, contaId: input.contaId, status: { not: 'COMPLETED' } },
+          data: {
+            status: 'FAILED',
+            lastError: `${input.errorCode}: ${input.errorMessage}`.slice(0, 2000),
+            lockedAt: null,
+            leaseExpiresAt: null,
+          },
+        });
       });
     },
   };

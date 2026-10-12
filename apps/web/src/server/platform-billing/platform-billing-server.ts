@@ -5,6 +5,7 @@ import { parseStripeEnvironment, type StripeEnvironment } from '@alusa/stripe';
 import type { PlatformPlanCode } from '@alusa/platform-billing';
 import { evaluateStudentCapacity } from '@alusa/platform-billing';
 import type { TenantTransactionClient } from '@/lib/prisma-tenant';
+import { isAcademicDateInFuture } from '@alusa/shared/date-only';
 
 const PLATFORM_BILLING_MANAGE_ROLES = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -53,6 +54,10 @@ export async function countActivePlatformBillingStudents(params: {
   tx: TenantTransactionClient;
   contaId: string;
 }): Promise<number> {
+  const account = await params.tx.conta.findUnique({
+    where: { id: params.contaId },
+    select: { timezone: true },
+  });
   const rows = await params.tx.matricula.findMany({
     where: {
       contaId: params.contaId,
@@ -61,11 +66,12 @@ export async function countActivePlatformBillingStudents(params: {
         status: 'ATIVO',
       },
     },
-    distinct: ['alunoId'],
-    select: { alunoId: true },
+    select: { alunoId: true, dataInicio: true },
   });
 
-  return rows.length;
+  return new Set(rows
+    .filter((row) => !isAcademicDateInFuture(row.dataInicio, new Date(), account?.timezone ?? undefined))
+    .map((row) => row.alunoId)).size;
 }
 
 export function assertCanManagePlatformBilling(canManage: boolean): NextResponse | null {

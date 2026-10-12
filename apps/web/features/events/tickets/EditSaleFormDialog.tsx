@@ -1,5 +1,7 @@
 'use client';
 
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
+
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   EVENT_PAYMENT_METHOD_LABELS,
@@ -17,7 +19,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 
@@ -82,12 +83,12 @@ export function EditSaleFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (nextOpen || !mutation.isPending) onOpenChange(nextOpen); }}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl relative" aria-busy={mutation.isPending}>
         <DialogHeader>
           <DialogTitle>Editar venda de ingresso</DialogTitle>
           <DialogDescription>Altere as informações da venda. O estoque e o lançamento financeiro associados serão atualizados.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={(event) => handleFormDataSubmit(event, submit)} className="grid gap-4">
+        <form inert={mutation.isPending || undefined} onSubmit={(event) => handleFormDataSubmit(event, submit)} className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Lote">
               <NativeSelect
@@ -158,10 +159,12 @@ export function EditSaleFormDialog({
           </Field>
           <DialogFooter>
             <Button type="submit" disabled={mutation.isPending}>
-              {mutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando venda" size="sm" className="text-white" /></> : 'Salvar alterações'}
+              {mutation.isPending ? 'Salvando' : 'Salvar alterações'}
             </Button>
           </DialogFooter>
         </form>
+
+        <EventMutationOverlay pending={mutation.isPending} label="Salvando venda" />
       </DialogContent>
     </Dialog>
   );

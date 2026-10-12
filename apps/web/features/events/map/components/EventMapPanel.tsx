@@ -121,7 +121,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
       if (result.action === 'ARCHIVE') {
         toast.success({
           title: 'Mapa removido',
-          description: 'O mapa saiu da listagem. Pedidos, tickets e auditoria foram preservados.',
+          description: 'O mapa saiu da lista. Os pedidos e ingressos existentes foram mantidos.',
         });
       } else if (result.action === 'DEMOTE_TO_DRAFT') {
         toast.success({

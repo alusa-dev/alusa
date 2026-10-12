@@ -13,6 +13,8 @@ import {
 import { AsaasHttpError, deletePayment, deleteSubscription, isAsaasEnabled } from '@alusa/finance';
 import { buildSeatOccupancyWhereClauseForAcademicDate } from '@alusa/lib/services/matricula-occupancy';
 import {
+  getAcademicDateKey,
+  getAcademicDateStartInstant,
   getAcademicDateBoundsForInstant,
   getAcademicDateBoundsForStoredDate,
   isAcademicDateInFuture,
@@ -30,6 +32,11 @@ import { assertStudentCapacity } from '@/src/server/platform-billing/capacity';
 import { calcularPrecoMatricula, type DescontoInput } from './enrollment-pricing';
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
+
+export function resolveRenewalProvisionAt(date: Date, timezone?: string | null) {
+  const key = getAcademicDateKey(date);
+  return key ? getAcademicDateStartInstant(key, timezone ?? undefined) : date;
+}
 
 type RenewalRemoteCancellationStatus = 'NOT_NEEDED' | 'CANCELLED' | 'REQUIRES_RECONCILIATION' | 'FAILED';
 
@@ -2295,7 +2302,7 @@ export async function confirmRenewalProcess(
             enrollmentFeeTotal: group.enrollmentFeeTotal,
             firstDueDate,
             effectiveAt,
-            provisionAt: new Date(effectiveAt.getTime() - 10 * 24 * 60 * 60 * 1000),
+            provisionAt: resolveRenewalProvisionAt(effectiveAt, conta?.timezone),
             externalReference: agreementExternalReference,
             feeChargeMoment,
             feeUnit: groupKey === 'SHARED' ? configuredFeeUnit : 'PER_STUDENT',
@@ -2659,6 +2666,21 @@ async function cancelFutureFinancialRemoteEffects(
 
   for (const subscriptionId of subscriptionIds) {
     try {
+      const agreement = await deps.prisma.billingAgreement.findFirst({
+        where: { contaId: input.contaId, asaasSubscriptionId: subscriptionId },
+        select: { id: true },
+      });
+      if (agreement) {
+        result.issues.push({
+          targetType: 'SUBSCRIPTION',
+          externalId: subscriptionId,
+          code: 'CANONICAL_BILLING_AGREEMENT_REQUIRES_RECONCILIATION',
+          message: 'A assinatura pertence a um acordo financeiro canônico; a rematrícula não pode removê-la diretamente.',
+          uncertain: true,
+        });
+        continue;
+      }
+      // Fallback legado somente para subscriptions sem BillingAgreement canônico.
       await deleteSubscription(subscriptionId, { contaId: input.contaId });
       result.cancelledSubscriptionIds.push(subscriptionId);
     } catch (error) {
@@ -3271,7 +3293,7 @@ export async function editRenewalFutureLink(
         enrollmentFeeTotal,
         firstDueDate,
         effectiveAt,
-        provisionAt: new Date(effectiveAt.getTime() - 10 * 24 * 60 * 60 * 1000),
+        provisionAt: resolveRenewalProvisionAt(effectiveAt, processo.conta?.timezone),
         feeChargeMoment,
         feeUnit,
         feePurpose,

@@ -3,6 +3,49 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPrismaBillingAgreementRepository } from './prisma.repository';
 
 describe('createPrismaBillingAgreementRepository', () => {
+  it('fenceia a projeção confirmada na mesma transação do claim familiar', async () => {
+    const billingAgreementUpdateMany = vi.fn();
+    const outboxUpdateMany = vi.fn().mockResolvedValue({ count: 0 });
+    const repository = createPrismaBillingAgreementRepository({
+      $transaction: vi.fn(async (work: (tx: unknown) => unknown) => work({
+        familyBillingOutbox: { updateMany: outboxUpdateMany },
+        billingAgreement: { updateMany: billingAgreementUpdateMany },
+      })),
+    } as never);
+
+    await expect(repository.applyConfirmedChange({
+      contaId: 'conta-1', operationId: 'op-1', change: {} as never,
+      preview: {} as never, expectedVersions: {}, remoteProgress: [], adjustments: [],
+      correlationId: 'correlation-1',
+      ownershipGuard: async (tx) => {
+        const result = await tx!.familyBillingOutbox.updateMany({ where: { claimToken: 'claim-1' } });
+        if (result.count !== 1) throw new Error('FAMILY_BILLING_LEASE_LOST_RESULT_UNCERTAIN');
+      },
+    })).rejects.toThrow('FAMILY_BILLING_LEASE_LOST_RESULT_UNCERTAIN');
+    expect(outboxUpdateMany).toHaveBeenCalledTimes(1);
+    expect(billingAgreementUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('não grava progresso remoto do acordo depois que o claim familiar foi perdido', async () => {
+    const operationUpdateMany = vi.fn();
+    const outboxUpdateMany = vi.fn().mockResolvedValue({ count: 0 });
+    const repository = createPrismaBillingAgreementRepository({
+      $transaction: vi.fn(async (work: (tx: unknown) => unknown) => work({
+        familyBillingOutbox: { updateMany: outboxUpdateMany },
+        billingChangeOperation: { updateMany: operationUpdateMany },
+      })),
+    } as never);
+
+    await expect(repository.recordRemoteProgress({
+      contaId: 'conta-1', operationId: 'op-1', progress: [],
+      ownershipGuard: async (tx) => {
+        const result = await tx!.familyBillingOutbox.updateMany({ where: { claimToken: 'claim-1' } });
+        if (result.count !== 1) throw new Error('FAMILY_BILLING_LEASE_LOST_RESULT_UNCERTAIN');
+      },
+    })).rejects.toThrow('FAMILY_BILLING_LEASE_LOST_RESULT_UNCERTAIN');
+    expect(operationUpdateMany).not.toHaveBeenCalled();
+  });
+
   it('usa o customer Asaas canônico do alias e preserva o customer local histórico', async () => {
     const billingAgreementFindFirst = vi.fn().mockResolvedValue({
       id: 'agreement-1',

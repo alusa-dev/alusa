@@ -9,6 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import { MAP_FLOATING_SHADOW_CLASS } from './map-toolbar-styles';
 
 import {
   updateEventMapReferenceChart,
@@ -137,7 +138,7 @@ export function MapReferenceChartPanel({
   return (
     <aside className={cn(
       embedded ? 'min-h-0' : 'flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 backdrop-blur',
-      !embedded && 'max-h-[22rem] shadow-lg shadow-slate-300/30',
+      !embedded && cn('max-h-[22rem]', MAP_FLOATING_SHADOW_CLASS),
     )}>
       {!embedded ? (
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">

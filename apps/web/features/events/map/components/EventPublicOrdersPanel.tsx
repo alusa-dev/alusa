@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import Pagination from '@/components/layout/Pagination';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { MAP_FLOATING_SHADOW_CLASS } from './map-toolbar-styles';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,6 +51,7 @@ type PublicOrderListItem = {
   seatCount: number;
   ticketCount: number;
   ticketsUsed: number;
+  whatsappAvailable: boolean;
 };
 
 type TicketInfo = {
@@ -199,6 +201,18 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
     onError: () => toast.error({ title: 'Não foi possível cancelar o pedido', description: 'Tente novamente. Se o problema continuar, entre em contato com o suporte.' }),
   });
 
+  const resendWhatsAppMutation = useMutation({
+    mutationFn: async (order: PublicOrderListItem) => parseResponse<{ queued: boolean }>(await fetch(
+      `/api/events/${event.id}/public-orders/${order.id}/resend-ticket-whatsapp`,
+      { method: 'POST' },
+    )),
+    onSuccess: (result) => toast.success({
+      title: 'Reenvio solicitado',
+      description: 'O ingresso será enviado pelo WhatsApp em alguns instantes.',
+    }),
+    onError: (error) => toast.error({ title: 'Não foi possível reenviar pelo WhatsApp', description: (error as Error).message }),
+  });
+
   const orders = ordersQuery.data?.items ?? [];
   const verifiedCurrentTicket = verifyResult?.ticketCode === ticketCode.trim().toUpperCase() ? verifyResult : null;
   const orderColumns: DataTableColumn<PublicOrderListItem>[] = [
@@ -276,8 +290,9 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
       align: 'center',
       render: (order) => {
         const { canViewRefundDetails, canViewCancellationDetails, invoiceUrl, canDownloadTickets, canRefund, canCancel } = publicOrderAdminActions(order, mayRequestRefund);
+        const canResendWhatsApp = order.status === 'CONFIRMED' && order.ticketFulfillmentStatus === 'ISSUED' && order.ticketCount > 0 && order.whatsappAvailable;
 
-        if (!canViewRefundDetails && !canViewCancellationDetails && !invoiceUrl && !canDownloadTickets && !canRefund && !canCancel) return <span className="text-slate-400">—</span>;
+        if (!canViewRefundDetails && !canViewCancellationDetails && !invoiceUrl && !canDownloadTickets && !canRefund && !canCancel && !canResendWhatsApp) return <span className="text-slate-400">—</span>;
 
         return (
           <div className="flex justify-center" onClick={(clickEvent) => clickEvent.stopPropagation()}>
@@ -293,7 +308,7 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
                   <MoreVertical className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-60">
+              <DropdownMenuContent align="end" className="w-72 max-w-[calc(100vw-2rem)]">
                 {canViewRefundDetails ? (
                   <DropdownMenuItem className="whitespace-nowrap" onSelect={() => setRefundedDetailsTarget(order)}>
                     Ver detalhes do estorno
@@ -315,6 +330,11 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
                       <Ticket className="mr-2 h-4 w-4" />
                       Baixar ingressos (PDF)
                     </a>
+                  </DropdownMenuItem>
+                ) : null}
+                {canResendWhatsApp ? (
+                  <DropdownMenuItem className="whitespace-nowrap" disabled={resendWhatsAppMutation.isPending} onSelect={() => resendWhatsAppMutation.mutate(order)}>
+                    Reenviar ingresso pelo WhatsApp
                   </DropdownMenuItem>
                 ) : null}
                 {canRefund ? (
@@ -510,7 +530,7 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
         open={Boolean(refundedDetailsTarget)}
         onOpenChange={(open) => { if (!open) setRefundedDetailsTarget(null); }}
       >
-        <DialogContent className="max-w-md gap-0 p-0">
+        <DialogContent className={`max-w-md gap-0 p-0 ${MAP_FLOATING_SHADOW_CLASS}`}>
           <DialogHeader className="border-b border-slate-200 px-6 pb-4 pt-6 pr-12">
             <DialogTitle className="mt-1 text-base font-semibold tracking-tight text-slate-900">
               Detalhes do estorno
@@ -587,7 +607,7 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
         open={Boolean(cancelledDetailsTarget)}
         onOpenChange={(open) => { if (!open) setCancelledDetailsTarget(null); }}
       >
-        <DialogContent className="max-w-md gap-0 p-0">
+        <DialogContent className={`max-w-md gap-0 p-0 ${MAP_FLOATING_SHADOW_CLASS}`}>
           <DialogHeader className="border-b border-slate-200 px-6 pb-4 pt-6 pr-12">
             <DialogTitle className="mt-1 text-base font-semibold tracking-tight text-slate-900">
               Detalhes do cancelamento

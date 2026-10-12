@@ -164,4 +164,56 @@ describe('calculateBillingAgreementChangePreview', () => {
     expect(preview.plans[0]?.resultingAmountCents).toBe(0);
     expect(preview.plans[0]?.remoteAction).toBe('PAUSE_SUBSCRIPTION');
   });
+
+  it('calcula a cobrança parcial separada do valor recorrente futuro', () => {
+    const preview = calculateBillingAgreementChangePreview({
+      change: {
+        ...common,
+        kind: 'REMOVE_ALLOCATION',
+        effectivePolicy: 'CURRENT_CYCLE_PRORATED',
+        allocationIds: ['allocation-2'],
+      },
+      sourceContext: context({
+        charges: [{
+          id: 'charge-current', contaId: 'conta-1', agreementId: 'agreement-1', allocationId: null,
+          providerPaymentId: 'payment-current', status: 'PENDING', amountCents: 30_000, dueDate: '2026-07-10',
+        }],
+      }),
+      now: new Date('2026-07-21T12:00:00.000Z'),
+      previewTtlMs: 60_000,
+    });
+
+    const plan = preview.plans[0]!;
+    expect(plan.resultingAmountCents).toBe(20_000);
+    expect(plan.updatePendingPayments).toBe(false);
+    expect(plan.chargeImpacts[0]).toMatchObject({
+      action: 'UPDATE_PAYMENT',
+      targetAmountCents: expect.any(Number),
+    });
+    expect(plan.chargeImpacts[0]!.targetAmountCents).toBeLessThan(30_000);
+    expect(plan.chargeImpacts[0]!.targetAmountCents).toBeGreaterThan(20_000);
+  });
+
+  it('mantém vencida no valor devido e inativa a recorrência da última alocação', () => {
+    const single = context({
+      allocations: [context().allocations[0]!],
+      charges: [{
+        id: 'charge-overdue', contaId: 'conta-1', agreementId: 'agreement-1', allocationId: null,
+        providerPaymentId: 'payment-overdue', status: 'OVERDUE', amountCents: 20_000, dueDate: '2026-06-10',
+      }],
+    });
+    single.agreement.desiredAmountCents = 20_000;
+    single.agreement.confirmedAmountCents = 20_000;
+    const preview = calculateBillingAgreementChangePreview({
+      change: { ...common, kind: 'REMOVE_ALLOCATION', effectivePolicy: 'CURRENT_CYCLE_FULL', allocationIds: ['allocation-1'] },
+      sourceContext: single,
+      now: new Date('2026-07-21T12:00:00.000Z'),
+      previewTtlMs: 60_000,
+    });
+
+    expect(preview.plans[0]?.remoteAction).toBe('PAUSE_SUBSCRIPTION');
+    expect(preview.plans[0]?.chargeImpacts[0]).toMatchObject({ action: 'MANUAL_REVIEW', targetAmountCents: null });
+    expect(preview.warnings.join(' ')).toContain('vencida');
+    expect(preview.blockers).toEqual([]);
+  });
 });

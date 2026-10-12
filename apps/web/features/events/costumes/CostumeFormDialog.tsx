@@ -1,5 +1,7 @@
 'use client';
 
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
+
 import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { EVENT_COSTUME_CATEGORIES, EVENT_COSTUME_CATEGORY_LABELS } from '@alusa/shared';
@@ -15,7 +17,6 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -102,12 +103,12 @@ export function CostumeFormDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl relative" aria-busy={mutation.isPending}>
         <DialogHeader>
           <DialogTitle>{costume ? 'Editar figurino' : 'Novo figurino'}</DialogTitle>
           <DialogDescription>Cadastre peças, custos e valores cobrados.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={(event) => handleFormDataSubmit(event, submit)} className="grid gap-4">
+        <form inert={mutation.isPending || undefined} onSubmit={(event) => handleFormDataSubmit(event, submit)} className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Nome"><Input name="name" required defaultValue={costume?.name} className={FILTER_INPUT_CLASS} /></Field>
             <Field label="Categoria"><NativeSelect name="category" defaultValue={costume?.category ?? "CLOTHING"} options={EVENT_COSTUME_CATEGORIES.map((category) => ({ value: category, label: EVENT_COSTUME_CATEGORY_LABELS[category] }))} /></Field>
@@ -146,8 +147,10 @@ export function CostumeFormDialog({
           </div>
           <Field label="Acessórios inclusos"><Input name="accessories" defaultValue={costume?.accessories ?? ''} className={FILTER_INPUT_CLASS} /></Field>
           <Field label="Descrição"><Textarea name="description" defaultValue={costume?.description ?? ''} className="rounded-xl border-slate-200" /></Field>
-          <DialogFooter><Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando figurino" size="sm" className="text-white" /></> : 'Salvar figurino'}</Button></DialogFooter>
+          <DialogFooter><Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? 'Salvando' : 'Salvar figurino'}</Button></DialogFooter>
         </form>
+
+        <EventMutationOverlay pending={mutation.isPending} label="Salvando figurino" />
       </DialogContent>
     </Dialog>
   );

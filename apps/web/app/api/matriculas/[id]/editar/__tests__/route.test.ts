@@ -108,10 +108,10 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
       chargesUpdated: 2,
       readModelsUpdated: 2,
     });
-    editarMatriculaMock.mockResolvedValue({ id: 'mat-1' });
+    editarMatriculaMock.mockResolvedValue({ id: 'mat-1', financialCommandEventId: 'financial-command-1' });
   });
 
-  it('atualiza valor recorrente da assinatura quando o plano muda', async () => {
+  it('enfileira a atualização recorrente da assinatura quando o plano muda', async () => {
     prismaMock.matricula.findFirst.mockResolvedValue({
       id: 'mat-1',
       planoId: 'plano-antigo',
@@ -141,21 +141,8 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
 
     expect(response.status).toBe(200);
     expect(getSubscriptionMock).toHaveBeenCalledWith('sub_123', { contaId: 'conta-1' });
-    expect(updateSubscriptionMock).toHaveBeenCalledWith(
-      'sub_123',
-      {
-        updatePendingPayments: true,
-        value: 299.9,
-      },
-      { contaId: 'conta-1' },
-    );
-    expect(projectConfirmedBillingAllocationValuesMock).toHaveBeenCalledWith({
-      contaId: 'conta-1',
-      asaasSubscriptionId: 'sub_123',
-      totalValue: 299.9,
-      cycle: 'MONTHLY',
-      allocations: [{ matriculaId: 'mat-1', value: 299.9 }],
-    });
+    expect(updateSubscriptionMock).not.toHaveBeenCalled();
+    expect(projectConfirmedBillingAllocationValuesMock).not.toHaveBeenCalled();
     expect(editarMatriculaMock).toHaveBeenCalledWith(
       expect.objectContaining({
         matriculaId: 'mat-1',
@@ -163,6 +150,12 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
         createdById: 'user-1',
         planoId: 'plano-novo',
         turmaId: 'turma-2',
+        financialCommand: expect.objectContaining({
+          targetSubscriptionId: 'sub_123',
+          affectedMatriculaIds: ['mat-1'],
+          remotePatch: { updatePendingPayments: true, value: 299.9 },
+          allocationValues: [{ matriculaId: 'mat-1', value: 299.9 }],
+        }),
         metadata: expect.objectContaining({
           subscriptionSync: expect.objectContaining({
             kind: 'PRODUCT_RECURRING_TERMS_UPDATED',
@@ -174,37 +167,12 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
         }),
       }),
     );
-    expect(prismaMock.cobranca.updateMany).toHaveBeenCalledWith({
-      where: {
-        matriculaId: 'mat-1',
-        status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
-      },
-      data: {
-        valor: 299.9,
-        valorFinal: 299.9,
-      },
-    });
-    expect(prismaMock.charge.updateMany).toHaveBeenCalledWith({
-      where: {
-        contaId: 'conta-1',
-        cobranca: {
-          matriculaId: 'mat-1',
-          status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
-        },
-      },
-      data: {
-        value: 299.9,
-      },
-    });
-    expect(data.asyncSync.localAlignment).toEqual({
-      cobrancasUpdated: 2,
-      chargesUpdated: 2,
-      matriculasUpdated: 1,
-    });
-    expect(data.asyncSync.message).toMatch(/plano ou combo/i);
+    expect(prismaMock.cobranca.updateMany).not.toHaveBeenCalled();
+    expect(prismaMock.charge.updateMany).not.toHaveBeenCalled();
+    expect(data.asyncSync).toMatchObject({ status: 'PENDING', operationId: 'financial-command-1' });
   });
 
-  it('atualiza valor e ciclo recorrente quando o combo muda', async () => {
+  it('enfileira valor e ciclo recorrentes quando o combo muda', async () => {
     prismaMock.matricula.findFirst.mockResolvedValue({
       id: 'mat-1',
       planoId: null,
@@ -232,18 +200,15 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
     const data = await response.json();
 
     expect(response.status).toBe(200);
-    expect(updateSubscriptionMock).toHaveBeenCalledWith(
-      'sub_123',
-      {
-        updatePendingPayments: true,
-        value: 750,
-        cycle: 'QUARTERLY',
-      },
-      { contaId: 'conta-1' },
-    );
+    expect(updateSubscriptionMock).not.toHaveBeenCalled();
     expect(editarMatriculaMock).toHaveBeenCalledWith(
       expect.objectContaining({
         comboId: 'combo-novo',
+        financialCommand: expect.objectContaining({
+          targetSubscriptionId: 'sub_123',
+          remotePatch: { updatePendingPayments: true, value: 750, cycle: 'QUARTERLY' },
+          allocationValues: [{ matriculaId: 'mat-1', value: 750 }],
+        }),
         metadata: expect.objectContaining({
           subscriptionSync: expect.objectContaining({
             productKind: 'COMBO',
@@ -253,7 +218,7 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
         }),
       }),
     );
-    expect(data.asyncSync.cycle).toBe('QUARTERLY');
+    expect(data.asyncSync).toMatchObject({ status: 'PENDING', cycle: 'QUARTERLY' });
   });
 
   it('preserva o preço agregado do plano familiar ao editar um dos vínculos', async () => {
@@ -301,37 +266,24 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
     const data = await response.json();
 
     expect(response.status).toBe(200);
-    expect(updateSubscriptionMock).toHaveBeenCalledWith(
-      'sub_family',
-      {
-        updatePendingPayments: true,
-        value: 400,
-      },
-      { contaId: 'conta-1' },
-    );
-    expect(projectConfirmedBillingAllocationValuesMock).toHaveBeenCalledWith({
-      contaId: 'conta-1',
-      asaasSubscriptionId: 'sub_family',
-      totalValue: 400,
-      cycle: 'MONTHLY',
-      allocations: [
-        { matriculaId: 'mat-1', value: 250 },
-        { matriculaId: 'mat-2', value: 150 },
-      ],
-    });
-    expect(updateFamilyFinancialLocalStateMock).toHaveBeenCalledWith(
+    expect(updateSubscriptionMock).not.toHaveBeenCalled();
+    expect(projectConfirmedBillingAllocationValuesMock).not.toHaveBeenCalled();
+    expect(updateFamilyFinancialLocalStateMock).not.toHaveBeenCalled();
+    expect(editarMatriculaMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        value: 400,
-        cycle: 'MONTHLY',
+        financialCommand: expect.objectContaining({
+          targetSubscriptionId: 'sub_family',
+          affectedMatriculaIds: ['mat-1', 'mat-2'],
+          remotePatch: { updatePendingPayments: true, value: 400 },
+          allocationValues: [
+            { matriculaId: 'mat-1', value: 250 },
+            { matriculaId: 'mat-2', value: 150 },
+          ],
+        }),
       }),
     );
     expect(prismaMock.cobranca.updateMany).not.toHaveBeenCalled();
-    expect(data.asyncSync.localAlignment).toEqual({
-      matriculasUpdated: 2,
-      subscriptionsUpdated: 1,
-      chargesUpdated: 2,
-      readModelsUpdated: 2,
-    });
+    expect(data.asyncSync).toMatchObject({ status: 'PENDING', operationId: 'financial-command-1' });
   });
 
   it('bloqueia assinatura familiar com periodicidades divergentes', async () => {

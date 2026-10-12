@@ -1,5 +1,7 @@
 'use client';
 
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
+
 import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -20,7 +22,6 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -105,8 +106,8 @@ export function LotFormDialog({
       <DialogContent
         fullScreenMobile
         closeDisabled={mutation.isPending}
-        className="flex min-h-0 max-h-[calc(100dvh-3rem)] max-w-[720px] flex-col gap-0 overflow-hidden rounded-[20px] p-0 sm:rounded-[20px] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0"
-      >
+        className="flex min-h-0 max-h-[calc(100dvh-3rem)] max-w-[720px] flex-col gap-0 overflow-hidden rounded-[20px] p-0 sm:rounded-[20px] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0 relative"
+       aria-busy={mutation.isPending}>
         <DialogHeader className="shrink-0 border-b border-slate-100 px-6 pb-5 pt-6 text-left max-md:px-5 max-md:pb-4 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))]">
           <DialogTitle className="text-xl font-normal tracking-tight text-slate-950">{lot ? 'Editar lote' : 'Novo lote'}</DialogTitle>
           <DialogDescription className="mt-1 text-sm leading-5 text-slate-600">
@@ -115,7 +116,7 @@ export function LotFormDialog({
               : 'Configure estoque, valor e período de vendas.'}
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={(event) => handleFormDataSubmit(event, submit)} className="flex min-h-0 flex-1 flex-col">
+        <form inert={mutation.isPending || undefined} onSubmit={(event) => handleFormDataSubmit(event, submit)} className="flex min-h-0 flex-1 flex-col">
           <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5 max-md:px-5">
             <section aria-labelledby="ticket-lot-fields-title" className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
               <h3 id="ticket-lot-fields-title" className="text-sm font-semibold text-slate-800">Dados do lote</h3>
@@ -158,10 +159,12 @@ export function LotFormDialog({
               Cancelar
             </Button>
             <Button type="submit" variant="wizardPrimary" disabled={mutation.isPending} className="h-10 min-h-10 w-[180px] min-w-0 rounded-[10px] px-5 font-normal max-md:w-full">
-              {mutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando lote" size="sm" className="text-white" /></> : 'Salvar lote'}
+              {mutation.isPending ? 'Salvando' : 'Salvar lote'}
             </Button>
           </DialogFooter>
         </form>
+
+        <EventMutationOverlay pending={mutation.isPending} label="Salvando lote" />
       </DialogContent>
     </Dialog>
   );

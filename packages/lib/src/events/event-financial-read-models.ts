@@ -72,6 +72,7 @@ export function mapTicketSale(
     lotId: sale.lotId,
     lot: sale.lot,
     buyerName: sale.buyerName,
+    whatsappAvailable: Boolean(sale.buyerPhone && sale.whatsappOptInAt && sale.whatsappOptInSource && !sale.whatsappOptOutAt),
     aluno: sale.aluno,
     responsavel: sale.responsavel,
     quantity: sale.quantity,

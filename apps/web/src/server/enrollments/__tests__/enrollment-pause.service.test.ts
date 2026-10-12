@@ -83,14 +83,40 @@ function createPrismaMock(overrides?: {
   localCharges?: unknown[];
   overdueCharges?: number;
   openEnrollmentFee?: number;
+  comboCount?: number;
+  transactionMatricula?: unknown;
 }) {
   const tx = {
     aluno: {
       findFirst: vi.fn(async () => null),
     },
-    matricula: {
-      findFirst: vi.fn(async () => null),
-      update: vi.fn(async () => ({ id: 'mat-1' })),
+      matricula: {
+      findFirst: vi.fn(async () => overrides?.transactionMatricula ?? overrides?.findFirst ?? null),
+      findMany: vi.fn(async () => []),
+      count: vi.fn(async (args: { where?: { comboId?: string; OR?: unknown } }) => {
+        if (args.where?.comboId) return overrides?.comboCount ?? 0;
+        if (args.where?.OR) {
+        const turma = (overrides?.findFirst as { turma?: { _count?: { matriculas: number } } } | undefined)?.turma;
+        return overrides?.turmaCount ?? turma?._count?.matriculas ?? 0;
+        }
+        return 0;
+      }),
+      update: vi.fn(async (args: { where?: { version?: number }; data?: { version?: { increment?: number } } }) => ({
+        id: 'mat-1',
+        version: (args.where?.version ?? 1) + (args.data?.version?.increment ?? 0),
+      })),
+    },
+    turma: {
+      findMany: vi.fn(async () => {
+        const turma = (overrides?.findFirst as { turma?: { id: string; nome: string; capacidade: number } } | undefined)?.turma;
+        return turma ? [{ id: turma.id, nome: turma.nome, capacidade: turma.capacidade, diasSemana: [], horaInicio: null, horaFim: null }] : [];
+      }),
+    },
+    combo: {
+      findFirst: vi.fn(async () => {
+        const combo = (overrides?.findFirst as { comboCapacity?: number; comboId?: string } | undefined);
+        return combo?.comboCapacity == null ? null : { id: combo.comboId ?? 'combo-1', vagasLimite: combo.comboCapacity };
+      }),
     },
     cobranca: {
       count: vi.fn(async (args: { where?: { tipo?: string } }) =>
@@ -105,11 +131,13 @@ function createPrismaMock(overrides?: {
       updateMany: vi.fn(async () => ({ count: 0 })),
     },
     matriculaOperacao: {
+      create: vi.fn(async () => ({ id: 'op-1', correlationId: 'corr-uuid-mock' })),
       updateMany: vi.fn(async () => ({ count: 0 })),
     },
     matriculaLog: {
       create: vi.fn(async () => ({ id: 'log-1' })),
     },
+    $executeRaw: vi.fn(async () => 1),
   };
 
   const root = {
@@ -118,6 +146,7 @@ function createPrismaMock(overrides?: {
     },
     matricula: {
       findFirst: vi.fn().mockResolvedValue(overrides?.findFirst ?? null),
+      updateMany: vi.fn(async () => ({ count: 1 })),
     },
     matriculaOperacao: {
       findFirst: vi.fn(async () => null),
@@ -144,6 +173,7 @@ function createPrismaMock(overrides?: {
 function ativaMatricula(extra: Record<string, unknown> = {}) {
   return {
     id: 'mat-1',
+    alunoId: 'aluno-1',
     status: 'ATIVA',
     pausaAtiva: false,
     asaasSubscriptionId: 'sub_123',
@@ -156,12 +186,14 @@ function ativaMatricula(extra: Record<string, unknown> = {}) {
 function pausadaMatricula(extra: Record<string, unknown> = {}) {
   return {
     id: 'mat-1',
+    alunoId: 'aluno-1',
     status: 'PAUSADA',
     pausaAtiva: true,
     manterVaga: true,
     cobrarDurantePausa: false,
     asaasSubscriptionId: 'sub_123',
     version: 1,
+    dataFimContrato: new Date('2026-12-31T12:00:00.000Z'),
     turmaId: 'turma-1',
     turma: {
       id: 'turma-1',
@@ -374,6 +406,7 @@ describe('enrollment-pause.service', () => {
           data: expect.objectContaining({ status: 'ATIVA', statusFinanceiro: 'ADIMPLENTE' }),
         }),
       );
+      expect(tx.$executeRaw).toHaveBeenCalledWith(expect.anything(), 'conta-1', 'aluno-1');
     });
 
     it('restaura como inadimplente quando há cobrança vencida na reativação', async () => {
@@ -423,7 +456,7 @@ describe('enrollment-pause.service', () => {
     });
 
     it('rejeita se vaga liberada e turma lotada', async () => {
-      const { root } = createPrismaMock({
+      const { root, tx } = createPrismaMock({
         findFirst: pausadaMatricula({
           manterVaga: false,
           turma: {
@@ -437,6 +470,46 @@ describe('enrollment-pause.service', () => {
 
       await expect(reativarMatricula({ prisma: root, ...baseReativarInput }))
         .rejects.toMatchObject({ code: 'SEM_VAGA_PARA_REATIVACAO' });
+      expect(ativarAssinaturaMock).not.toHaveBeenCalled();
+      expect(tx.matriculaOperacao.create).not.toHaveBeenCalled();
+    });
+
+    it('reserva a matrícula sob locks antes de ativar assinatura no Asaas', async () => {
+      const { root, tx } = createPrismaMock({ findFirst: pausadaMatricula({ manterVaga: false }) });
+
+      await reativarMatricula({ prisma: root, ...baseReativarInput });
+
+      const reservation = tx.matricula.update.mock.calls[0]?.[0];
+      expect(reservation).toMatchObject({ data: { manterVaga: true, version: { increment: 1 } } });
+      expect(tx.$executeRaw).toHaveBeenCalled();
+      expect(tx.matricula.update.mock.invocationCallOrder[0]).toBeLessThan(ativarAssinaturaMock.mock.invocationCallOrder[0]!);
+    });
+
+    it('rejeita reativação concorrente quando a matrícula mudou sob o lock', async () => {
+      const { root } = createPrismaMock({
+        findFirst: pausadaMatricula({ manterVaga: false }),
+        transactionMatricula: { id: 'mat-1', status: 'PAUSADA', version: 2, manterVaga: true },
+      });
+
+      await expect(reativarMatricula({ prisma: root, ...baseReativarInput }))
+        .rejects.toMatchObject({ code: 'OPERACAO_DUPLICADA', statusCode: 409 });
+      expect(ativarAssinaturaMock).not.toHaveBeenCalled();
+    });
+
+    it('rejeita reativação de combo cheio antes de qualquer efeito financeiro', async () => {
+      const { root } = createPrismaMock({
+        findFirst: pausadaMatricula({
+          manterVaga: false,
+          comboId: 'combo-1',
+          comboCapacity: 2,
+          turma: { id: 'turma-1', nome: 'Turma A', capacidade: 20, _count: { matriculas: 0 } },
+        }),
+        comboCount: 2,
+      });
+
+      await expect(reativarMatricula({ prisma: root, ...baseReativarInput }))
+        .rejects.toMatchObject({ code: 'COMBO_SEM_VAGAS' });
+      expect(ativarAssinaturaMock).not.toHaveBeenCalled();
     });
 
     it('rejeita se nextDueDate não informada', async () => {
@@ -456,12 +529,18 @@ describe('enrollment-pause.service', () => {
         .rejects.toMatchObject({ code: 'MATRICULA_NOT_FOUND', statusCode: 404 });
     });
 
-    it('registra operação com ERRO e lança PausaBusinessError se Asaas falhar na ativação', async () => {
+    it('mantém vaga reservada e operação pendente quando o resultado da ativação é incerto', async () => {
       const { root } = createPrismaMock({ findFirst: pausadaMatricula() });
       ativarAssinaturaMock.mockRejectedValueOnce(new Error('Unauthorized'));
 
       await expect(reativarMatricula({ prisma: root, ...baseReativarInput }))
         .rejects.toMatchObject({ code: 'DIVERGENCIA_INTEGRACAO' });
+      expect((root as unknown as { matriculaOperacao: { update: ReturnType<typeof vi.fn> } }).matriculaOperacao.update)
+        .toHaveBeenCalledWith(expect.objectContaining({
+          data: expect.objectContaining({ status: 'PENDENTE_SINCRONISMO', payloadRecebido: { error: true, outcomeUncertain: true } }),
+        }));
+      expect((root as unknown as { matricula: { updateMany: ReturnType<typeof vi.fn> } }).matricula.updateMany)
+        .not.toHaveBeenCalled();
     });
 
     it('não altera cobranças já geradas ao reativar a assinatura', async () => {

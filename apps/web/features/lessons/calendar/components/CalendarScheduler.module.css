@@ -1,0 +1,3 @@
+.timeGridSizing :global(.fc-timegrid-slot) {
+  height: var(--calendar-timegrid-slot-height) !important;
+}

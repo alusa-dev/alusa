@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { EventTicketWhatsAppPurchaseType, Prisma } from '@prisma/client';
 
 import {
   groupStaffSeatsByLot,
@@ -15,6 +15,7 @@ import {
   buildPublicEventTicketSalePath,
   enqueueEventTicketEmail,
 } from '../ticket-email-outbox';
+import { enqueueEventTicketWhatsAppNotification, EVENT_TICKET_WHATSAPP_CONSENT_VERSION } from '../ticket-whatsapp-notification';
 import { createCheckInCode, toCheckInCode } from './ticket-code';
 import { assertEventTicketSalesOpen, EventsError, type EventsContext } from '../events.service';
 import type { CreateTicketSaleInput } from '../events.schema';
@@ -557,6 +558,9 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
           lotId,
           buyerName: input.buyerName,
           buyerEmail,
+          buyerPhone: input.buyerPhone ?? null,
+          whatsappOptInAt: input.buyerPhone ? now : null,
+          whatsappOptInSource: input.buyerPhone ? 'STAFF_SALE' : null,
           accessToken: createPublicToken('sale'),
           alunoId: input.alunoId,
           responsavelId: input.responsavelId,
@@ -644,7 +648,7 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
       data: { status: 'CONSUMED', consumedAt: now, checkoutKey: null },
     });
 
-    if (buyerEmail && (saleStatus === 'PAID' || saleStatus === 'COMPLIMENTARY')) {
+    if (saleStatus === 'PAID' || saleStatus === 'COMPLIMENTARY') {
       for (const saleId of createdSaleIds) {
         const sale = await tx.eventTicketSale.findUniqueOrThrow({
           where: { id: saleId },
@@ -660,18 +664,31 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
         });
         if (!sale.accessToken || sale.tickets.length === 0) continue;
         const session = sale.saleSeats[0]?.publicSeat.map;
-        await enqueueEventTicketEmail(tx, {
-          contaId: ctx.contaId,
-          purchaseId: sale.id,
-          buyerEmail,
-          buyerName: sale.buyerName,
-          eventName: session ? `${sale.event.name} · ${session.name}` : sale.event.name,
-          eventStartsAt: session?.startsAt ?? sale.event.startsAt,
-          eventLocation: [session?.locationName ?? sale.event.locationName, session?.locationAddress ?? sale.event.locationAddress].filter(Boolean).join(' — ') || null,
-          ticketType: sale.lot.name,
-          ticketCount: sale.tickets.length,
-          ticketsPath: buildPublicEventTicketSalePath(sale.id, sale.accessToken),
-        });
+        if (buyerEmail) {
+          await enqueueEventTicketEmail(tx, {
+            contaId: ctx.contaId,
+            purchaseId: sale.id,
+            buyerEmail,
+            buyerName: sale.buyerName,
+            eventName: session ? `${sale.event.name} · ${session.name}` : sale.event.name,
+            eventStartsAt: session?.startsAt ?? sale.event.startsAt,
+            eventLocation: [session?.locationName ?? sale.event.locationName, session?.locationAddress ?? sale.event.locationAddress].filter(Boolean).join(' — ') || null,
+            ticketType: sale.lot.name,
+            ticketCount: sale.tickets.length,
+            ticketsPath: buildPublicEventTicketSalePath(sale.id, sale.accessToken),
+          });
+        }
+        if (saleStatus === 'PAID' && sale.buyerPhone && sale.whatsappOptInAt) {
+          await enqueueEventTicketWhatsAppNotification(tx, {
+            contaId: ctx.contaId,
+            purchaseType: EventTicketWhatsAppPurchaseType.STAFF_SALE,
+            purchaseId: sale.id,
+            recipientPhone: sale.buyerPhone,
+            consentVersion: EVENT_TICKET_WHATSAPP_CONSENT_VERSION,
+            consentSource: sale.whatsappOptInSource,
+            consentRecordedAt: sale.whatsappOptInAt,
+          });
+        }
       }
     }
 

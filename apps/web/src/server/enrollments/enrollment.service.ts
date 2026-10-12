@@ -15,6 +15,7 @@ import {
 } from '@prisma/client';
 import type { Cobranca, PrismaClient } from '@prisma/client';
 import { prisma } from '@/src/prisma';
+import { enqueueEnrollmentFinancialCommand, type EnrollmentFinancialCommand } from '@alusa/finance';
 import { runWithTenant } from '@/lib/prisma-tenant';
 import {
   resolvePayer,
@@ -26,8 +27,8 @@ import {
 } from '@alusa/domain';
 import {
   buildSeatOccupancyOverlapWhereClause,
-  buildSeatOccupancyWhereClauseForAcademicDate,
 } from '@alusa/lib/services/matricula-occupancy';
+import { getAcademicDateKey, getAcademicDateStartInstant, isAcademicDateInFuture } from '@alusa/shared/date-only';
 import { getAcademicDateBoundsForInstant } from '@alusa/shared/date-only';
 import {
   materializeBillingAgreement,
@@ -538,6 +539,8 @@ export type CriarMatriculaInput = {
   requiresFinancialProvisioning?: boolean;
   /** Agenda a provisão recorrente para o início futuro do contrato. */
   deferSubscriptionUntil?: Date | null;
+  /** A operação agregada (ex.: matrícula familiar) provisiona o billing uma única vez. */
+  aggregateBillingManaged?: boolean;
   billingMode?: BillingMode | null;
   matriculaFamiliarId?: string | null;
   familyOrderIndex?: number | null;
@@ -1008,6 +1011,14 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       dataFimContrato: input.dataFimContrato,
     });
 
+    const capacityLockIds = [
+      ...targetTurmas.map((item) => `turma:${item.id}`),
+      ...(combo ? [`combo:${combo.id}`] : []),
+    ].sort();
+    for (const lockId of capacityLockIds) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.contaId}), hashtext(${lockId}))`;
+    }
+
     await assertTargetTurmasAvailable(tx, {
       contaId: input.contaId,
       alunoId: input.alunoId,
@@ -1036,16 +1047,25 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     // Determinar status inicial baseado na política da conta
     const conta = await tx.conta.findUnique({
       where: { id: input.contaId },
-      select: { matriculaActivationPolicy: true },
+      select: { matriculaActivationPolicy: true, timezone: true },
     });
     const policy = conta?.matriculaActivationPolicy ?? 'IMMEDIATE';
+    const contractStartsInFuture = isAcademicDateInFuture(
+      input.dataInicio,
+      new Date(),
+      conta?.timezone ?? undefined,
+    );
 
     const requiresDeferredBillingConfirmation =
       (input.criarCobranca || input.requiresFinancialProvisioning === true) &&
       !input.preprovisionedBilling;
 
     let statusInicial: StatusMatricula;
-    if (requiresDeferredBillingConfirmation) {
+    if (contractStartsInFuture) {
+      // Future enrollments remain outside current active-student and seat counts
+      // until the scheduled outbox reaches the academic contract start.
+      statusInicial = StatusMatricula.AGUARDANDO_CONFIRMACAO;
+    } else if (requiresDeferredBillingConfirmation) {
       // Estratégias que alteram uma assinatura existente só se tornam matrícula
       // efetiva depois que o comando financeiro síncrono for confirmado.
       statusInicial = StatusMatricula.AGUARDANDO_CONFIRMACAO;
@@ -1369,14 +1389,17 @@ export async function criarMatricula(input: CriarMatriculaInput) {
 
     let billingOutboxEventId: string | null = null;
 
-    if (billingProvisionStatus === MatriculaBillingProvisionStatus.PENDENTE) {
+    if (
+      (billingProvisionStatus === MatriculaBillingProvisionStatus.PENDENTE || Boolean(input.deferSubscriptionUntil)) &&
+      input.aggregateBillingManaged !== true
+    ) {
       const outboxEventType = subscriptionTargetId
         ? 'UPDATE_EXISTING_SUBSCRIPTION_BILLING'
         : 'PROVISION_ENROLLMENT_BILLING';
       const dedupeKey = subscriptionTargetId
         ? `enrollment-subscription-update:${subscriptionTargetId}:${matricula.id}`
         : `enrollment-billing:${matricula.id}`;
-      const deferSubscription = Boolean(input.deferSubscriptionUntil && !subscriptionTargetId);
+      const deferSubscription = Boolean(input.deferSubscriptionUntil);
       const hasEnrollmentFee = !input.taxaIsenta && input.gerarCobrancaTaxa && input.taxaMatricula > 0;
       const billingOutboxEvent = await tx.matriculaBillingOutbox.create({
         data: {
@@ -1395,6 +1418,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
             actorUserId: input.createdById,
             subscriptionTargetId,
             billingStrategy,
+            ...(input.criarCobranca !== undefined ? { createRecurringBilling: input.criarCobranca === true } : {}),
             ...(deferSubscription && hasEnrollmentFee ? { billingPhase: 'ENROLLMENT_FEE' } : {}),
             ...(deferSubscription && !hasEnrollmentFee ? { billingPhase: 'SUBSCRIPTION_ONLY' } : {}),
           } as Prisma.InputJsonValue,
@@ -1403,14 +1427,14 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       billingOutboxEventId = billingOutboxEvent.id;
 
       if (deferSubscription && hasEnrollmentFee) {
-        const scheduledDedupeKey = `enrollment-billing:${matricula.id}`;
+        const scheduledDedupeKey = dedupeKey;
         await tx.matriculaBillingOutbox.create({
           data: {
             contaId: input.contaId,
             matriculaId: matricula.id,
             aggregateType: 'MATRICULA',
             aggregateId: matricula.id,
-            eventType: 'PROVISION_ENROLLMENT_BILLING',
+            eventType: outboxEventType,
             availableAt: input.deferSubscriptionUntil!,
             dedupeKey: scheduledDedupeKey,
             idempotencyKey: input.uiRequestId ?? scheduledDedupeKey,
@@ -1419,9 +1443,10 @@ export async function criarMatricula(input: CriarMatriculaInput) {
             payload: {
               matriculaId: matricula.id,
               actorUserId: input.createdById,
-              subscriptionTargetId: null,
+              subscriptionTargetId,
               billingStrategy,
               billingPhase: 'SUBSCRIPTION_ONLY',
+              createRecurringBilling: input.criarCobranca === true,
             } as Prisma.InputJsonValue,
           },
         });
@@ -1547,10 +1572,11 @@ export async function atualizarDetalhesMatricula(input: {
   dataFimContrato?: string;
   vencimentoDia?: number;
   metadata?: Record<string, unknown>;
+  financialCommand?: Omit<EnrollmentFinancialCommand, 'version' | 'commandId' | 'actorId' | 'matriculaId'>;
 }) {
   const atual = await prisma.matricula.findFirst({
     where: { id: input.id, aluno: { contaId: input.contaId } },
-    select: { id: true, status: true, dataInicio: true, dataFimContrato: true, vencimentoDia: true },
+    select: { id: true, status: true, dataInicio: true, dataFimContrato: true, vencimentoDia: true, matriculaFamiliarId: true },
   });
 
   if (!atual) {
@@ -1565,29 +1591,21 @@ export async function atualizarDetalhesMatricula(input: {
   }
 
   const data: Record<string, unknown> = {};
-  if (input.dataInicio) {
-    data.dataInicio = new Date(input.dataInicio);
+  const nextDataInicio = input.dataInicio ? new Date(input.dataInicio) : atual.dataInicio;
+  const nextDataFimContrato = input.dataFimContrato ? new Date(input.dataFimContrato) : atual.dataFimContrato;
+  const datasResult = validarDatasContrato(nextDataInicio, nextDataFimContrato, {
+    permitirInicioPassado: true,
+  });
+  if (!datasResult.success) {
+    throw new MatriculaRuleError(
+      datasResult.error === 'DATA_FIM_ANTES_INICIO' ? 'DATA_FIM_INVALIDA' : 'DATA_INICIO_INVALIDA',
+      datasResult.error === 'DATA_FIM_ANTES_INICIO'
+        ? 'Data de fim do contrato deve ser posterior à data de início.'
+        : 'Data de início não pode estar no passado.',
+    );
   }
-  if (input.dataFimContrato) {
-    const nextDataInicio = input.dataInicio ? new Date(input.dataInicio) : atual.dataInicio;
-    const nextDataFimContrato = new Date(input.dataFimContrato);
-    const datasResult = validarDatasContrato(nextDataInicio, nextDataFimContrato, {
-      permitirInicioPassado: true,
-    });
-
-    if (!datasResult.success) {
-      const message =
-        datasResult.error === 'DATA_FIM_ANTES_INICIO'
-          ? 'Data de fim do contrato deve ser posterior à data de início.'
-          : 'Data de início não pode estar no passado.';
-      throw new MatriculaRuleError(
-        datasResult.error === 'DATA_FIM_ANTES_INICIO' ? 'DATA_FIM_INVALIDA' : 'DATA_INICIO_INVALIDA',
-        message,
-      );
-    }
-
-    data.dataFimContrato = nextDataFimContrato;
-  }
+  if (input.dataInicio) data.dataInicio = nextDataInicio;
+  if (input.dataFimContrato) data.dataFimContrato = nextDataFimContrato;
   if (typeof input.vencimentoDia === 'number') {
     data.vencimentoDia = input.vencimentoDia;
   }
@@ -1597,10 +1615,144 @@ export async function atualizarDetalhesMatricula(input: {
   }
 
   return prisma.$transaction(async (tx) => {
+    if (input.dataInicio) {
+      const [activeIndividualEvent, activeFamilyEvent] = await Promise.all([
+        tx.matriculaBillingOutbox.findFirst({
+          where: {
+            contaId: input.contaId,
+            matriculaId: input.id,
+            eventType: { not: 'PROVISION_ENROLLMENT_FEE' },
+            status: { in: ['PROCESSING', 'REQUIRES_RECONCILIATION'] },
+          },
+          select: { id: true },
+        }),
+        atual.matriculaFamiliarId
+          ? tx.familyBillingOutbox.findFirst({
+              where: {
+                contaId: input.contaId,
+                aggregateId: atual.matriculaFamiliarId,
+                eventType: { startsWith: 'FUTURE_FAMILY_RECURRING:' },
+                status: { in: ['PROCESSING', 'REQUIRES_RECONCILIATION'] },
+              },
+              select: { id: true },
+            })
+          : Promise.resolve(null),
+      ]);
+      if (activeIndividualEvent || activeFamilyEvent) {
+        throw new MatriculaRuleError('MATRICULA_NAO_EDITAVEL', 'A vigência não pode ser alterada enquanto um evento financeiro estiver em processamento ou reconciliação.');
+      }
+    }
+    const individualEvents = input.dataInicio
+      ? await tx.matriculaBillingOutbox.findMany({
+          where: {
+            contaId: input.contaId,
+            matriculaId: input.id,
+            eventType: { not: 'PROVISION_ENROLLMENT_FEE' },
+            status: { in: ['PENDING', 'FAILED'] },
+          },
+          select: { id: true, status: true },
+        })
+      : [];
+    const familyEvents = input.dataInicio && atual.matriculaFamiliarId
+      ? await tx.familyBillingOutbox.findMany({
+          where: {
+            contaId: input.contaId,
+            aggregateId: atual.matriculaFamiliarId,
+            eventType: { startsWith: 'FUTURE_FAMILY_RECURRING:' },
+            status: { in: ['PENDING', 'FAILED'] },
+          },
+          select: { id: true, status: true, payload: true },
+        })
+      : [];
+    for (const event of individualEvents) {
+      const claim = await tx.matriculaBillingOutbox.updateMany({
+        where: { id: event.id, contaId: input.contaId, status: event.status },
+        data: { status: 'PROCESSING' },
+      });
+      if (claim.count !== 1) {
+        throw new MatriculaRuleError('MATRICULA_NAO_EDITAVEL', 'O evento financeiro já foi reivindicado pelo worker; tente editar a vigência novamente após a reconciliação.');
+      }
+    }
+    for (const event of familyEvents) {
+      const claim = await tx.familyBillingOutbox.updateMany({
+        where: { id: event.id, contaId: input.contaId, status: event.status },
+        data: { status: 'PROCESSING' },
+      });
+      if (claim.count !== 1) {
+        throw new MatriculaRuleError('MATRICULA_NAO_EDITAVEL', 'O evento financeiro familiar já foi reivindicado pelo worker; tente editar a vigência novamente após a reconciliação.');
+      }
+    }
+    const familyMembers = input.dataInicio && atual.matriculaFamiliarId
+      ? await tx.matricula.findMany({
+          where: { contaId: input.contaId, matriculaFamiliarId: atual.matriculaFamiliarId },
+          select: { id: true, dataInicio: true, dataFimContrato: true },
+        })
+      : [];
+    if (familyMembers.some((member) => member.dataFimContrato < nextDataInicio)) {
+      throw new MatriculaRuleError(
+        'DATA_INICIO_INVALIDA',
+        'A nova data de início ultrapassa o fim do contrato de um ou mais membros da família.',
+      );
+    }
     const updated = await tx.matricula.update({
       where: { id: input.id },
       data,
     });
+
+    if (input.dataInicio && atual.matriculaFamiliarId && familyMembers.length > 1) {
+      await tx.matricula.updateMany({
+        where: {
+          contaId: input.contaId,
+          matriculaFamiliarId: atual.matriculaFamiliarId,
+          id: { not: input.id },
+        },
+        data: { dataInicio: nextDataInicio },
+      });
+      await tx.matriculaLog.createMany({
+        data: familyMembers
+          .filter((member) => member.id !== input.id)
+          .map((member) => ({
+            matriculaId: member.id,
+            actorId: input.actorId,
+            action: 'MATRICULA_DETAILS_EDITED',
+            metadata: {
+              previousDataInicio: member.dataInicio.toISOString(),
+              nextDataInicio: nextDataInicio.toISOString(),
+              familyStartDateSynchronized: true,
+            } as Prisma.InputJsonValue,
+          })),
+      });
+    }
+
+    if (input.dataInicio) {
+      const account = await tx.conta.findUnique({ where: { id: input.contaId }, select: { timezone: true } });
+      const startKey = getAcademicDateKey(nextDataInicio);
+      if (startKey) {
+        const availableAt = getAcademicDateStartInstant(startKey, account?.timezone ?? undefined);
+        for (const event of individualEvents) {
+          await tx.matriculaBillingOutbox.updateMany({
+            where: { id: event.id, contaId: input.contaId, status: 'PROCESSING' },
+            data: {
+              status: event.status,
+              availableAt,
+            },
+          });
+        }
+        for (const event of familyEvents) {
+          const payload = event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload)
+            ? event.payload as Record<string, unknown>
+            : {};
+          await tx.familyBillingOutbox.updateMany({
+            where: { id: event.id, contaId: input.contaId, status: 'PROCESSING' },
+            data: {
+              status: event.status,
+              availableAt,
+              payload: { ...payload, scheduledEffectiveAt: availableAt.toISOString() } as Prisma.InputJsonValue,
+            },
+          });
+        }
+      }
+    }
 
     await tx.matriculaLog.create({
       data: {
@@ -1619,7 +1771,18 @@ export async function atualizarDetalhesMatricula(input: {
       },
     });
 
-    return updated;
+    let financialCommandEventId: string | null = null;
+    if (input.financialCommand) {
+      const command = await enqueueEnrollmentFinancialCommand(tx, {
+        contaId: input.contaId,
+        actorId: input.actorId,
+        dedupeKey: `enrollment-financial-dates:${input.id}:${JSON.stringify(input.financialCommand)}`,
+        command: { ...input.financialCommand, matriculaId: input.id },
+      });
+      financialCommandEventId = command.id;
+    }
+
+    return Object.assign(updated, { financialCommandEventId });
   });
 }
 
@@ -1632,6 +1795,7 @@ export async function editarMatricula(input: {
   planoId?: string | null;
   motivo?: string;
   metadata?: Record<string, unknown>;
+  financialCommand?: Omit<EnrollmentFinancialCommand, 'version' | 'commandId' | 'matriculaId' | 'actorId'>;
 }) {
   const matricula = await prisma.matricula.findFirst({
     where: { id: input.matriculaId, aluno: { contaId: input.contaId } },
@@ -1672,6 +1836,33 @@ export async function editarMatricula(input: {
     const turmaChanged = typeof input.turmaId !== 'undefined' && input.turmaId !== verify.turmaId;
     const comboChanged = typeof input.comboId !== 'undefined' && input.comboId !== verify.comboId;
 
+    // Serialize capacity checks by tenant + class/combo, including N:N class
+    // memberships. Sorted lock acquisition keeps multi-class combos deadlock-safe.
+    const [currentMemberships, requestedCombo] = await Promise.all([
+      tx.matriculaTurma.findMany({
+        where: { contaId: input.contaId, matriculaId: input.matriculaId },
+        select: { turmaId: true },
+      }),
+      targetComboId
+        ? tx.combo.findFirst({
+            where: { id: targetComboId, contaId: input.contaId },
+            select: { turmas: { select: { turmaId: true } } },
+          })
+        : Promise.resolve(null),
+    ]);
+    const lockedClassIds = Array.from(new Set([
+      ...(targetTurmaId ? [targetTurmaId] : []),
+      ...(requestedCombo?.turmas.map((item) => item.turmaId) ?? []),
+      ...currentMemberships.map((item) => item.turmaId),
+    ])).sort();
+    const capacityLockIds = [
+      ...lockedClassIds.map((turmaId) => `turma:${turmaId}`),
+      ...(targetComboId ? [`combo:${targetComboId}`] : []),
+    ].sort();
+    for (const lockId of capacityLockIds) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.contaId}), hashtext(${lockId}))`;
+    }
+
     if (turmaChanged && targetTurmaId) {
       const turma = await tx.turma.findFirst({
         where: { id: targetTurmaId, contaId: input.contaId },
@@ -1692,8 +1883,11 @@ export async function editarMatricula(input: {
       const ocupadas = await tx.matricula.count({
         where: {
           contaId: input.contaId,
-          turmaId: turma.id,
-          ...buildSeatOccupancyWhereClauseForAcademicDate(verify.dataInicio),
+          OR: [
+            { turmaId: turma.id },
+            { matriculaTurmas: { some: { turmaId: turma.id } } },
+          ],
+          ...buildSeatOccupancyOverlapWhereClause(verify.dataInicio, verify.dataFimContrato),
           NOT: { id: input.matriculaId },
         },
       });
@@ -1716,8 +1910,9 @@ export async function editarMatricula(input: {
 
       const matriculasExistentes = await tx.matricula.findMany({
         where: {
+          contaId: input.contaId,
           alunoId: verify.alunoId,
-          ...buildSeatOccupancyWhereClauseForAcademicDate(verify.dataInicio),
+          ...buildSeatOccupancyOverlapWhereClause(verify.dataInicio, verify.dataFimContrato),
           NOT: { id: input.matriculaId },
         },
         include: {
@@ -1730,12 +1925,17 @@ export async function editarMatricula(input: {
               horaFim: true,
             },
           },
+          matriculaTurmas: {
+            include: { turma: { select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true } } },
+          },
         },
       });
 
-      const turmasExistentes = matriculasExistentes
-        .map((m) => m.turma)
-        .filter((t): t is NonNullable<typeof t> => t !== null);
+      const turmasExistentes = Array.from(new Map(
+        matriculasExistentes.flatMap((m) => [m.turma, ...m.matriculaTurmas.map((item) => item.turma)])
+          .filter((t): t is NonNullable<typeof t> => t !== null)
+          .map((t) => [t.id, t]),
+      ).values());
 
       const conflitosResult = validarConflitosHorario([turma], turmasExistentes);
       if (!conflitosResult.success) {
@@ -1760,8 +1960,8 @@ export async function editarMatricula(input: {
         const ocupadasCombo = await tx.matricula.count({
           where: {
             contaId: input.contaId,
+            ...buildSeatOccupancyOverlapWhereClause(verify.dataInicio, verify.dataFimContrato),
             comboId: combo.id,
-            ...buildSeatOccupancyWhereClauseForAcademicDate(verify.dataInicio),
             NOT: { id: input.matriculaId },
           },
         });
@@ -1778,6 +1978,26 @@ export async function editarMatricula(input: {
           );
         }
       }
+
+      const comboTurmas = await tx.turma.findMany({
+        where: { contaId: input.contaId, id: { in: requestedCombo?.turmas.map((item) => item.turmaId) ?? [] } },
+        select: { id: true, nome: true, capacidade: true, diasSemana: true, horaInicio: true, horaFim: true },
+      });
+      for (const turma of comboTurmas) {
+        const occupied = await tx.matricula.count({
+          where: { contaId: input.contaId, OR: [{ turmaId: turma.id }, { matriculaTurmas: { some: { turmaId: turma.id } } }], ...buildSeatOccupancyOverlapWhereClause(verify.dataInicio, verify.dataFimContrato), NOT: { id: input.matriculaId } },
+        });
+        if (!validarCapacidade([{ id: turma.id, nome: turma.nome, capacidade: turma.capacidade, matriculasOcupantes: occupied }]).success) {
+          throw new MatriculaConflictError('TURMA_SEM_VAGAS', `Turma "${turma.nome}" não possui vagas disponíveis.`);
+        }
+      }
+      const otherEnrollments = await tx.matricula.findMany({
+        where: { contaId: input.contaId, alunoId: verify.alunoId, ...buildSeatOccupancyOverlapWhereClause(verify.dataInicio, verify.dataFimContrato), NOT: { id: input.matriculaId } },
+        include: { turma: true, matriculaTurmas: { include: { turma: true } } },
+      });
+      const otherTurmas = Array.from(new Map(otherEnrollments.flatMap((item) => [item.turma, ...item.matriculaTurmas.map((membership) => membership.turma)]).filter((item): item is NonNullable<typeof item> => item !== null).map((item) => [item.id, item])).values());
+      const comboSchedule = validarConflitosHorario(comboTurmas, otherTurmas);
+      if (!comboSchedule.success) throw new MatriculaConflictError('CONFLITO_HORARIO', `Conflito de horário entre "${comboSchedule.turma1}" e "${comboSchedule.turma2}".`);
     }
 
     if (turmaChanged || comboChanged) {
@@ -1790,6 +2010,17 @@ export async function editarMatricula(input: {
         dataInicio: verify.dataInicio,
         dataFimContrato: verify.dataFimContrato,
       });
+    }
+
+    let financialCommandEventId: string | null = null;
+    if (input.financialCommand) {
+      const commandEvent = await enqueueEnrollmentFinancialCommand(tx, {
+        contaId: input.contaId,
+        actorId: input.createdById,
+        dedupeKey: `enrollment-financial-command:${input.matriculaId}:${input.financialCommand.targetSubscriptionId}:${JSON.stringify(input.financialCommand)}`,
+        command: { ...input.financialCommand, matriculaId: input.matriculaId },
+      });
+      financialCommandEventId = commandEvent.id;
     }
 
     if (input.planoId) {
@@ -1811,6 +2042,19 @@ export async function editarMatricula(input: {
       },
     });
 
+    if (turmaChanged || comboChanged) {
+      const desiredTurmaIds = targetComboId
+        ? (requestedCombo?.turmas.map((item) => item.turmaId) ?? [])
+        : targetTurmaId ? [targetTurmaId] : [];
+      await tx.matriculaTurma.deleteMany({ where: { contaId: input.contaId, matriculaId: input.matriculaId } });
+      if (desiredTurmaIds.length > 0) {
+        await tx.matriculaTurma.createMany({
+          data: Array.from(new Set(desiredTurmaIds)).map((turmaId) => ({ contaId: input.contaId, matriculaId: input.matriculaId, turmaId })),
+          skipDuplicates: true,
+        });
+      }
+    }
+
     await tx.matriculaLog.create({
       data: {
         matriculaId: input.matriculaId,
@@ -1826,6 +2070,6 @@ export async function editarMatricula(input: {
       },
     });
 
-    return updated;
+    return Object.assign(updated, { financialCommandEventId });
   });
 }
