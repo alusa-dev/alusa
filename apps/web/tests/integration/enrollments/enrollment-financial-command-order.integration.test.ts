@@ -9,7 +9,7 @@ const describeIf = hasDb ? describe : describe.skip;
 
 describeIf('enrollment financial command subscription ordering', () => {
   const db = new PrismaClient();
-  const now = new Date('2026-10-10T12:00:00.000Z');
+  const now = new Date();
   const subscriptionId = 'asaas-sub-financial-command-order';
   let contaId: string;
   let matriculaId: string;
