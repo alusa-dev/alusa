@@ -1,5 +1,7 @@
 'use client';
 
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
+
 import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS, type EventCostumeAssignmentBillingMode } from '@alusa/shared';
@@ -14,7 +16,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -101,12 +102,12 @@ export function EditAssignmentFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (nextOpen || !mutation.isPending) onOpenChange(nextOpen); }}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl relative" aria-busy={mutation.isPending}>
         <DialogHeader>
           <DialogTitle>Editar vínculo</DialogTitle>
           <DialogDescription>Atualize o vínculo, entrega e forma de cobrança.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={(event) => handleFormDataSubmit(event, submit)} className="grid gap-4">
+        <form inert={mutation.isPending || undefined} onSubmit={(event) => handleFormDataSubmit(event, submit)} className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Figurino">
               <NativeSelect
@@ -164,9 +165,11 @@ export function EditAssignmentFormDialog({
             <Textarea name="notes" defaultValue={assignment.notes || ""} className="rounded-xl border-slate-200" />
           </Field>
           <DialogFooter>
-            <Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando vínculo" size="sm" className="text-white" /></> : 'Salvar alterações'}</Button>
+            <Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? 'Salvando' : 'Salvar alterações'}</Button>
           </DialogFooter>
         </form>
+
+        <EventMutationOverlay pending={mutation.isPending} label="Salvando vínculo" />
       </DialogContent>
     </Dialog>
   );

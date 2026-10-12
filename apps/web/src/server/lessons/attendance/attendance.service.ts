@@ -17,6 +17,7 @@ import {
   buildAttendanceSummary,
   buildConflictMap,
   buildEligibleMatriculaWhere,
+  acquireCalendarEventWriteLock,
   getCalendarEventOrThrow,
   listCalendarEventsRaw,
   loadAulasResources,
@@ -265,11 +266,12 @@ export async function saveAttendanceForEvent(
     }
   }
 
-  await prisma.$transaction(
-    input.items.map((item) => {
+  await prisma.$transaction(async (tx) => {
+    await acquireCalendarEventWriteLock(contaId, tx);
+    await Promise.all(input.items.map((item) => {
       const eligibleStudent = eligibleStudentsByAlunoId.get(item.alunoId)!;
 
-      return prisma.attendanceRecord.upsert({
+      return tx.attendanceRecord.upsert({
         where: {
           uq_attendance_event_aluno: {
             calendarEventId: eventId,
@@ -294,10 +296,9 @@ export async function saveAttendanceForEvent(
           recordedByUserId: userId,
         },
       });
-    }),
-  );
+    }));
 
-  await prisma.calendarEvent.updateMany({
+  await tx.calendarEvent.updateMany({
     where: {
       id: eventId,
       contaId,
@@ -308,7 +309,7 @@ export async function saveAttendanceForEvent(
       cancelledAt: null,
     },
   });
-  await prisma.makeupClass.updateMany({
+  await tx.makeupClass.updateMany({
     where: {
       contaId,
       eventoDestinoId: eventId,
@@ -328,7 +329,8 @@ export async function saveAttendanceForEvent(
       items: input.items.length,
       recordedByUserId: userId,
     },
-    prismaClient: prisma,
+    prismaClient: tx,
+  });
   });
 
   return buildAttendanceDetails(contaId, eventId);

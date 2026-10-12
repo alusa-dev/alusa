@@ -1,5 +1,7 @@
 'use client';
 
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -30,10 +32,10 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from '@/components/ui/toast';
-import { MapPin } from '@/components/icons/icons';
+import { InfoCircle, MapPin } from '@/components/icons/icons';
 import { wizardFieldInputClass, wizardTextareaFieldClass } from '@/components/shared/wizard/field-styles';
 import { cn } from '@/lib/utils';
 
@@ -133,6 +135,7 @@ export function SaleFormDialog({
         holdToken: seatSelection.holdToken,
         buyerName: nullableString(formData, 'buyerName'),
         buyerEmail: nullableString(formData, 'buyerEmail'),
+        buyerPhone: nullableString(formData, 'buyerPhone'),
         alunoId: nullableString(formData, 'alunoId'),
         responsavelId: nullableString(formData, 'responsavelId'),
         paymentMethod: nullableString(formData, 'paymentMethod'),
@@ -148,6 +151,7 @@ export function SaleFormDialog({
       lotId: nullableString(formData, 'lotId'),
       buyerName: nullableString(formData, 'buyerName'),
       buyerEmail: nullableString(formData, 'buyerEmail'),
+      buyerPhone: nullableString(formData, 'buyerPhone'),
       alunoId: nullableString(formData, 'alunoId'),
       responsavelId: nullableString(formData, 'responsavelId'),
       quantity: numberValue(formData, 'quantity') ?? 1,
@@ -197,13 +201,14 @@ export function SaleFormDialog({
     const formData = new FormData(form);
     if (nullableString(formData, 'buyerName')?.trim()) return true;
     if (nullableString(formData, 'buyerEmail')?.trim()) return true;
+    if (nullableString(formData, 'buyerPhone')?.trim()) return true;
     if (nullableString(formData, 'notes')?.trim()) return true;
     if (nullableString(formData, 'alunoId')) return true;
     if (nullableString(formData, 'responsavelId')) return true;
     if (!isSeatedSale && nullableString(formData, 'lotId')) return true;
     if (!isSeatedSale && (numberValue(formData, 'quantity') ?? 1) !== 1) return true;
     if (nullableString(formData, 'paymentMethod') !== 'MANUAL_PIX') return true;
-    if (nullableString(formData, 'status') !== 'PENDING') return true;
+    if (nullableString(formData, 'status') !== 'PAID') return true;
 
     return false;
   }
@@ -245,8 +250,8 @@ export function SaleFormDialog({
         <DialogContent
           fullScreenMobile
           closeDisabled={mutation.isPending}
-          className="flex min-h-0 max-h-[calc(100dvh-3rem)] max-w-[720px] flex-col gap-0 overflow-hidden rounded-[20px] p-0 sm:rounded-[20px] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0"
-        >
+          className="flex min-h-0 max-h-[calc(100dvh-3rem)] max-w-[720px] flex-col gap-0 overflow-hidden rounded-[20px] p-0 sm:rounded-[20px] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0 relative"
+         aria-busy={mutation.isPending}>
           <DialogHeader className="shrink-0 border-b border-slate-100 px-6 pb-5 pt-6 text-left max-md:px-5 max-md:pb-4 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))]">
             <DialogTitle className="text-xl font-normal tracking-tight text-slate-950">Registrar venda manual</DialogTitle>
             <DialogDescription className="mt-1 text-sm leading-5 text-slate-600">
@@ -255,7 +260,7 @@ export function SaleFormDialog({
                 : 'A venda valida estoque no backend. Alunos e responsáveis listados são os vinculados a participantes deste evento.'}
             </DialogDescription>
           </DialogHeader>
-          <form key={formKey} ref={formRef} onSubmit={(event) => handleFormDataSubmit(event, submit)} className="flex min-h-0 flex-1 flex-col">
+          <form key={formKey} ref={formRef} inert={mutation.isPending || undefined} onSubmit={(event) => handleFormDataSubmit(event, submit)} className="flex min-h-0 flex-1 flex-col">
             <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5 max-md:px-5">
               {isSeatedSale ? (
                 <section aria-labelledby="manual-sale-seats-title" className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
@@ -367,12 +372,70 @@ export function SaleFormDialog({
                       />
                     </Field>
                   ) : null}
-                  <Field label="Comprador">
+                  <Field label="Nome">
                     <Input name="buyerName" required className={wizardFieldInputClass} />
                   </Field>
-                  <Field label="E-mail para receber os ingressos">
-                    <Input name="buyerEmail" type="email" className={wizardFieldInputClass} />
-                  </Field>
+                  <div className="grid gap-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <label htmlFor="manual-sale-buyer-email" className={LABEL_CLASS}>
+                        E-mail (opcional)
+                      </label>
+                      <TooltipProvider delayDuration={200}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              aria-label="Informações sobre o e-mail do comprador"
+                              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-slate-400 transition-colors hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
+                            >
+                              <InfoCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs text-left leading-relaxed">
+                            Informe o e-mail do comprador para receber os ingressos digitais.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                    <Input
+                      id="manual-sale-buyer-email"
+                      name="buyerEmail"
+                      type="email"
+                      className={wizardFieldInputClass}
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <label htmlFor="manual-sale-buyer-phone" className={LABEL_CLASS}>
+                        WhatsApp (opcional)
+                      </label>
+                      <TooltipProvider delayDuration={200}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              aria-label="Informações sobre o WhatsApp do comprador"
+                              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-slate-400 transition-colors hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
+                            >
+                              <InfoCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs text-left leading-relaxed">
+                            Informe somente após confirmar que o comprador autoriza receber pelo WhatsApp da Alusa avisos da cobrança e o link dos ingressos.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                    <Input
+                      id="manual-sale-buyer-phone"
+                      name="buyerPhone"
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      placeholder="(00) 00000-0000"
+                      className={wizardFieldInputClass}
+                    />
+                  </div>
                   <Field label="Aluno vinculado">
                     <NativeSelect name="alunoId" placeholder="Opcional" triggerClassName={wizardFieldInputClass} options={mergeScopedPersonOptions(scopedResources?.alunos ?? [])} />
                   </Field>
@@ -389,13 +452,16 @@ export function SaleFormDialog({
                       name="paymentMethod"
                       defaultValue="MANUAL_PIX"
                       triggerClassName={wizardFieldInputClass}
-                      options={EVENT_PAYMENT_METHODS.map((method) => ({ value: method, label: EVENT_PAYMENT_METHOD_LABELS[method] }))}
+                      options={EVENT_PAYMENT_METHODS.filter((method) => method !== 'COMPLIMENTARY').map((method) => ({
+                        value: method,
+                        label: EVENT_PAYMENT_METHOD_LABELS[method],
+                      }))}
                     />
                   </Field>
                   <Field label="Status">
                     <NativeSelect
                       name="status"
-                      defaultValue="PENDING"
+                      defaultValue="PAID"
                       triggerClassName={wizardFieldInputClass}
                       options={(['PENDING', 'PAID', 'COMPLIMENTARY'] as EventTicketSaleStatus[]).map((status) => ({
                         value: status,
@@ -425,11 +491,13 @@ export function SaleFormDialog({
                 disabled={mutation.isPending || (isSeatedSale && (!selectedMapId || !seatSelection?.holdToken))}
                 className="h-10 min-h-10 w-[180px] min-w-0 rounded-[10px] px-5 font-normal max-md:w-full"
               >
-                {mutation.isPending ? <><span>Registrando</span><LoadingDots label="Registrando venda" size="sm" className="text-white" /></> : 'Registrar venda'}
+                {mutation.isPending ? 'Registrando' : 'Registrar venda'}
               </Button>
             </DialogFooter>
           </form>
-        </DialogContent>
+
+        <EventMutationOverlay pending={mutation.isPending} label="Registrando venda" />
+      </DialogContent>
       </Dialog>
 
       <AlertDialog open={discardAlertOpen} onOpenChange={setDiscardAlertOpen}>

@@ -2,9 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { TZDateMini } from '@date-fns/tz';
-import { addDays, addMonths } from 'date-fns';
-
 import type {
   AgendaViewModeDTO,
   CalendarEventTypeDTO,
@@ -15,6 +12,7 @@ import {
   DEFAULT_ACCOUNT_TIMEZONE,
   buildZonedAgendaRangeIso,
   normalizeAccountTimeZoneClient,
+  shiftZonedAgendaAnchor,
 } from '@/lib/agenda-timezone';
 
 export type AgendaFiltersState = {
@@ -26,6 +24,13 @@ export type AgendaFiltersState = {
   salaId?: string;
   type?: CalendarEventTypeDTO[];
 };
+
+export function mergeAgendaFilters(
+  current: AgendaFiltersState,
+  patch: Partial<AgendaFiltersState>,
+): AgendaFiltersState {
+  return { ...current, ...patch };
+}
 
 function normalizeAgendaViewMode(viewMode?: AgendaViewModeDTO) {
   if (viewMode === 'month-compact') {
@@ -45,12 +50,8 @@ function prefetchAdjacentAgendaRanges(filters: AgendaFiltersState, timeZone: str
   const run = (direction: -1 | 1) => {
     try {
       const anchor = new Date(filters.start);
-      const z = new TZDateMini(anchor.getTime(), tz);
-      const shifted =
-        filters.viewMode === 'week'
-          ? addDays(z, direction === -1 ? -7 : 7)
-          : addMonths(z, direction === -1 ? -1 : 1);
-      const { start, end } = buildZonedAgendaRangeIso(new Date(shifted.getTime()), filters.viewMode, tz);
+      const shifted = shiftZonedAgendaAnchor(anchor, filters.viewMode, direction === -1 ? 'prev' : 'next', tz);
+      const { start, end } = buildZonedAgendaRangeIso(shifted, filters.viewMode, tz);
 
       void listAgendaEvents({
         start,

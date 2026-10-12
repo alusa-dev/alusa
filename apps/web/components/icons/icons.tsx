@@ -1,7 +1,12 @@
-// Centralização de ícones Heroicons (outline) para consistência e fácil troca futura.
+// Centralização de ícones Heroicons para consistência e fácil troca futura.
 // Convenção: usar nomes sem sufixo Icon para facilitar refactors e leitura sem ruído.
-// Se precisar da versão solid, importe localmente e documente o motivo.
+// Ícones solid devem ser exportados aqui com uso justificado.
 
+export {
+  PlusCircleIcon as AddCircle, // versão solid para ações de adição compactas
+} from '@heroicons/react/24/solid';
+
+// Ícones adicionais / aliases semânticos centralizados
 export {
   // Navegação / Estrutura
   Squares2X2Icon as Dashboard,

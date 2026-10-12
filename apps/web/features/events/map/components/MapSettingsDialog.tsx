@@ -1,5 +1,7 @@
 'use client';
 
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
+
 import type { EventMapDTO } from '../api/event-map-service';
 import { saveEventMapSettings } from '../api/event-map-service';
 
@@ -8,7 +10,6 @@ import { useMutation } from '@tanstack/react-query';
 
 import { CreatorIcon } from '@/components/icons/hugeicons';
 import { Button } from '@/components/ui/button';
-import { LoadingDots } from '@/components/ui/LoadingDots';
 import {
   Dialog,
   DialogContent,
@@ -24,6 +25,7 @@ import { toast } from '@/components/ui/toast';
 import { SectionCard, StepHeader } from '@/components/shared/wizard/layout';
 import { wizardFieldInputClass } from '@/components/shared/wizard/field-styles';
 import { MapReferenceChartPanel } from './MapReferenceChartPanel';
+import { MAP_FLOATING_SHADOW_CLASS } from './map-toolbar-styles';
 
 export function MapSettingsDialog({
   map,
@@ -132,8 +134,8 @@ export function MapSettingsDialog({
       <DialogContent
         fullScreenMobile
         closeDisabled={saveMutation.isPending}
-        className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] max-w-2xl gap-0 overflow-hidden rounded-[20px] border border-slate-200 bg-white p-0 shadow-lg max-md:rounded-none"
-      >
+        className={`grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] max-w-2xl gap-0 overflow-hidden rounded-[20px] border border-slate-200 bg-white p-0 ${MAP_FLOATING_SHADOW_CLASS} max-md:rounded-none relative`}
+       aria-busy={saveMutation.isPending}>
         <DialogHeader className="border-b border-slate-200 px-6 pb-4 pt-5 text-left max-md:px-4 max-md:pb-3 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))]">
           <DialogTitle className="text-xl font-normal tracking-tight text-[#0f0f0f]">Configurações do mapa</DialogTitle>
           <DialogDescription className="mt-1 text-sm text-[#5c5c5c]">
@@ -141,7 +143,7 @@ export function MapSettingsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 space-y-3 overflow-y-auto bg-white px-6 py-3 max-md:px-4">
+        <div inert={saveMutation.isPending || undefined} className="min-h-0 space-y-3 overflow-y-auto bg-white px-6 py-3 max-md:px-4">
           <SectionCard>
             <StepHeader title="Sessão" hint="Defina os dados desta apresentação." />
             <div className="grid gap-x-3 gap-y-2.5 sm:grid-cols-2">
@@ -285,9 +287,11 @@ export function MapSettingsDialog({
             onClick={() => saveMutation.mutate()}
             disabled={disabled || saveMutation.isPending}
           >
-            {saveMutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando configurações do mapa" size="sm" className="text-white" /></> : 'Salvar'}
+            {saveMutation.isPending ? 'Salvando' : 'Salvar'}
           </Button>
         </DialogFooter>
+
+        <EventMutationOverlay pending={saveMutation.isPending} label="Salvando configurações do mapa" />
       </DialogContent>
     </Dialog>
   );

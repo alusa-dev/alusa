@@ -1,5 +1,6 @@
 'use client';
 import { useEventMapEditorStore } from '../store/event-map-editor-store';
+import { MAP_FLOATING_SHADOW_CLASS } from './map-toolbar-styles';
 
 import { useMemo } from 'react';
 
@@ -15,7 +16,7 @@ export function MapMiniMap() {
   const height = level.heightPx * scale;
 
   return (
-    <div className="pointer-events-none absolute bottom-4 right-4 z-10 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-lg shadow-slate-300/30 backdrop-blur">
+    <div className={`pointer-events-none absolute bottom-4 right-4 z-10 rounded-xl border border-slate-200 bg-white/95 p-3 ${MAP_FLOATING_SHADOW_CLASS} backdrop-blur`}>
       <div className="mb-2 text-[11px] font-medium text-slate-500">{level.name}</div>
       <div className="relative rounded-md bg-slate-100" style={{ width, height }}>
         {map.sections

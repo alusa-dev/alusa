@@ -16,6 +16,7 @@ import type {
   StatusFinanceiro,
   StatusTaxaMatricula,
 } from '@prisma/client';
+import { isAcademicDateInFuture } from '@alusa/shared/date-only';
 
 type FeeProjection = {
   taxaStatus: StatusTaxaMatricula;
@@ -48,25 +49,33 @@ async function canActivateWithinCommercialCapacity(
     accessStatus,
     capability: 'STUDENT_WRITE',
   });
-  const existingActiveEnrollment = await tx.matricula.findFirst({
+  const accountTimezone = await tx.conta.findUnique({
+    where: { id: input.contaId },
+    select: { timezone: true },
+  });
+  const existingActiveEnrollments = await tx.matricula.findMany({
     where: {
       contaId: input.contaId,
       alunoId: input.alunoId,
       status: 'ATIVA',
       id: { not: input.matriculaId },
     },
-    select: { id: true },
+    select: { id: true, dataInicio: true },
   });
   const activeRows = await tx.matricula.findMany({
     where: { contaId: input.contaId, status: 'ATIVA', aluno: { status: 'ATIVO' } },
-    distinct: ['alunoId'],
-    select: { alunoId: true },
+    select: { alunoId: true, dataInicio: true },
   });
+  const effectiveActiveRows = activeRows.filter((row) =>
+    !isAcademicDateInFuture(row.dataInicio, new Date(), accountTimezone?.timezone ?? undefined),
+  );
   const capacity = evaluateStudentCapacity({
     contaId: input.contaId,
     planCode: account.planCode as PlatformPlanCode | null,
-    activeStudents: activeRows.length,
-    additionalActiveStudents: !input.alunoAtivo || existingActiveEnrollment ? 0 : 1,
+    activeStudents: new Set(effectiveActiveRows.map((row) => row.alunoId)).size,
+    additionalActiveStudents: !input.alunoAtivo || existingActiveEnrollments.some((enrollment) =>
+      !isAcademicDateInFuture(enrollment.dataInicio, new Date(), accountTimezone?.timezone ?? undefined),
+    ) ? 0 : 1,
   });
   if (accessAllowed && capacity.allowed) return true;
 
@@ -148,6 +157,7 @@ async function applyEnrollmentFeeProjection(input: {
         alunoId: true,
         aluno: { select: { status: true } },
         status: true,
+        dataInicio: true,
         taxaStatus: true,
         statusFinanceiro: true,
         version: true,
@@ -201,7 +211,19 @@ async function applyEnrollmentFeeProjection(input: {
       feeStatus: projection.taxaStatus,
     });
 
-    if (decision.action === 'ACTIVATE' && validateTransition(matricula.status, 'ATIVA').success) {
+    const accountTimezone = await tx.conta.findUnique({
+      where: { id: input.contaId },
+      select: { timezone: true },
+    });
+    const contractHasNotStarted = isAcademicDateInFuture(
+      matricula.dataInicio,
+      new Date(),
+      accountTimezone?.timezone ?? undefined,
+    );
+
+    // A paid fee is authoritative financially, but a future contract still
+    // waits for its effective date before academic activation/capacity use.
+    if (decision.action === 'ACTIVATE' && !contractHasNotStarted && validateTransition(matricula.status, 'ATIVA').success) {
       const capacityAllowed = await canActivateWithinCommercialCapacity(tx, {
         contaId: input.contaId,
         matriculaId: matricula.id,

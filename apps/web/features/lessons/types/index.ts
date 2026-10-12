@@ -8,8 +8,9 @@ import type {
 } from '../dtos';
 
 export const AGENDA_VIEW_OPTIONS: Array<{ value: AgendaViewModeDTO; label: string }> = [
+  { value: 'day', label: 'Dia' },
   { value: 'week', label: 'Semana' },
-  { value: 'month-detailed', label: 'Mês detalhado' },
+  { value: 'month-detailed', label: 'Mês' },
 ];
 
 export const CALENDAR_EVENT_TYPE_OPTIONS: Array<{ value: CalendarEventTypeDTO; label: string }> = [

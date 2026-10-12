@@ -61,6 +61,13 @@ describe('konva-transform-adapter', () => {
     expect(node.scaleY()).toBe(1);
   });
 
+  it('preserves proportional seat size below the general object minimum', () => {
+    const node = mockNode({ x: 8, y: 12, scaleX: 0.1, scaleY: 0.1 });
+    const patch = readSeatTransformFromNode(node as never, 24);
+
+    expect(patch?.size).toBeCloseTo(2.4);
+  });
+
 
   it('captures snapshots for leaf nodes without assuming a Konva container', () => {
     const node = mockNode({ x: 10, y: 20, rotation: 5, scaleX: 1.2, scaleY: 0.8 });

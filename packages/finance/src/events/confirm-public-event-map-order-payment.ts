@@ -1,7 +1,8 @@
-import { Prisma } from '@prisma/client';
+import { EventTicketWhatsAppPurchaseType, Prisma } from '@prisma/client';
 import { prisma } from '@alusa/database';
 import { EventsError } from '@alusa/domain/events';
 import { enqueueEventTicketEmail } from '@alusa/lib/events/ticket-email-outbox';
+import { enqueueEventTicketWhatsAppNotification, EVENT_TICKET_WHATSAPP_CONSENT_VERSION } from '@alusa/lib/events/ticket-whatsapp-notification';
 import { createCheckInCode } from '@alusa/lib/events/map/ticket-code';
 import {
   decimal,
@@ -319,6 +320,18 @@ export async function confirmPublicEventMapOrderPayment(params: {
       ticketsPath: publicOrderTicketsPath(order.id, order.accessToken),
       statusPath: publicOrderStatusPath(order.map.publicSlug, order.id, order.accessToken),
     });
+
+    if (order.buyerPhone && order.whatsappOptInAt && order.whatsappOptInSource === 'PUBLIC_CHECKOUT') {
+      await enqueueEventTicketWhatsAppNotification(tx, {
+        contaId: order.contaId,
+        purchaseType: EventTicketWhatsAppPurchaseType.PUBLIC_ORDER,
+        purchaseId: order.id,
+        recipientPhone: order.buyerPhone,
+        consentVersion: EVENT_TICKET_WHATSAPP_CONSENT_VERSION,
+        consentSource: order.whatsappOptInSource,
+        consentRecordedAt: order.whatsappOptInAt,
+      });
+    }
 
     return {
       orderId: updated.id,

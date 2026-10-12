@@ -70,6 +70,14 @@
       "types": "./dist/events/events-payment-rules.d.ts",
       "default": "./dist/events/events-payment-rules.js"
     },
+    "./events/ticket-whatsapp-notification": {
+      "types": "./dist/events/ticket-whatsapp-notification.d.ts",
+      "default": "./dist/events/ticket-whatsapp-notification.js"
+    },
+    "./events/public-event-ticket-access": {
+      "types": "./dist/events/public-event-ticket-access.d.ts",
+      "default": "./dist/events/public-event-ticket-access.js"
+    },
     "./events/event-financial-read-models": {
       "types": "./dist/events/event-financial-read-models.d.ts",
       "default": "./dist/events/event-financial-read-models.js"

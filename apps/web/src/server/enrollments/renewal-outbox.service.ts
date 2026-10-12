@@ -5,6 +5,7 @@ import { createStandaloneCharge } from '@alusa/finance';
 
 import { createRenewalPending } from './renewal-governance.service';
 import { mapPeriodicidadeToCycle } from './recurring-billing';
+import { isAcademicDateInFuture } from '@alusa/shared/date-only';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -274,6 +275,7 @@ async function handleFeeCharge(
 async function handleFutureFinanceProvision(
   event: { id: string; contaId: string; processoId: string | null; payload: Prisma.JsonValue },
   prisma: PrismaClient,
+  now: Date,
 ) {
   const payload = payloadRecord(event.payload);
   const agreement = await loadAgreement(prisma, {
@@ -289,6 +291,13 @@ async function handleFutureFinanceProvision(
 
   if (agreement.processo.status === 'CANCELLED' || agreement.status === 'CANCELLED') {
     return { skipped: true, reason: 'PROVISION_CANCELLED' };
+  }
+
+  const account = await prisma.conta.findUnique({ where: { id: event.contaId }, select: { timezone: true } });
+  if (isAcademicDateInFuture(agreement.effectiveAt, now, account?.timezone ?? undefined)) {
+    // A stale/early outbox delivery is retryable; never create the recurring
+    // remote object before the contract's academic start date.
+    throw new Error('RENEWAL_NOT_YET_EFFECTIVE');
   }
 
   if (agreement.asaasSubscriptionId && agreement.status === 'ACTIVE') {
@@ -318,6 +327,10 @@ async function handleFutureFinanceProvision(
     data: { status: 'PROVISIONING', failureCode: null, failureMessage: null },
   });
 
+  const firstChargeAt = agreement.firstDueDate && agreement.firstDueDate > agreement.effectiveAt
+    ? agreement.firstDueDate
+    : agreement.effectiveAt;
+
   const result = await createStandaloneCharge({
     contaId: event.contaId,
     actor: { type: 'SYSTEM', id: 'RenewalOutbox' },
@@ -329,7 +342,7 @@ async function handleFutureFinanceProvision(
       | 'CREDIT_CARD',
     description: `Mensalidade do próximo ciclo - rematrícula ${agreement.processoId}`,
     value: monthlyTotal,
-    nextDueDate: toDateKey(agreement.firstDueDate ?? agreement.effectiveAt),
+    nextDueDate: toDateKey(firstChargeAt),
     endDate: toDateKey(payerContext.firstFuture.dataFimContrato),
     cycle: mapPeriodicidadeToCycle(periodicidade),
     ...resolveNotificationPreferences(agreement),
@@ -532,7 +545,7 @@ export async function processRenewalOutbox(
       if (event.eventType === 'CREATE_RENEWAL_FEE_CHARGE') {
         await handleFeeCharge(event, deps.prisma, now);
       } else if (event.eventType === 'PROVISION_FUTURE_FINANCE') {
-        await handleFutureFinanceProvision(event, deps.prisma);
+        await handleFutureFinanceProvision(event, deps.prisma, now);
       } else {
         throw new Error(`Evento de rematrícula não suportado: ${event.eventType}`);
       }

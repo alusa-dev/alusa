@@ -46,6 +46,7 @@ type CalendarEventDialogProps = {
   };
   accountTimeZone?: string;
   initialEvent?: CalendarEventDetailsDTO | null;
+  initialRange?: { startAt: string; endAt: string } | null;
   onOpenChange: (_open: boolean) => void;
   onSaved: () => void;
 };
@@ -192,6 +193,7 @@ export function CalendarEventDialog({
   resources,
   accountTimeZone = DEFAULT_ACCOUNT_TIMEZONE,
   initialEvent,
+  initialRange,
   onOpenChange,
   onSaved,
 }: CalendarEventDialogProps) {
@@ -206,7 +208,16 @@ export function CalendarEventDialog({
       return;
     }
 
-    if (!initialEvent) return;
+    if (!initialEvent) {
+      if (initialRange) {
+        setValues((current) => ({
+          ...current,
+          startAt: utcIsoToZonedNaive(initialRange.startAt, tz),
+          endAt: utcIsoToZonedNaive(initialRange.endAt, tz),
+        }));
+      }
+      return;
+    }
 
     setValues({
       title: initialEvent.title,
@@ -219,7 +230,7 @@ export function CalendarEventDialog({
       salaId: initialEvent.sala?.id ?? '',
       professorId: initialEvent.professores[0]?.id ?? '',
     });
-  }, [initialEvent, open, tz]);
+  }, [initialEvent, initialRange, open, tz]);
 
   async function handleSubmit() {
     try {

@@ -1,9 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { startTransition, useDeferredValue, useEffect, useState } from 'react';
-import { TZDateMini } from '@date-fns/tz';
-import { addDays, addMonths } from 'date-fns';
+import { startTransition, useCallback, useEffect, useRef, useState } from 'react';
 
 import { AGENDA_VIEW_OPTIONS } from '@/features/lessons/types';
 
@@ -29,13 +27,13 @@ const CalendarScheduler = dynamic(
     })),
   { ssr: false, loading: () => <div className="min-h-[480px] animate-pulse rounded-xl bg-muted/40" /> },
 );
-import { ChevronDown, Plus } from '@/components/icons/icons';
-import type { AgendaFiltersState } from '@/features/lessons/agenda/hooks/use-agenda';
+import { ChevronDown, ChevronLeft, ChevronRight, Plus } from '@/components/icons/icons';
+import { mergeAgendaFilters, type AgendaFiltersState } from '@/features/lessons/agenda/hooks/use-agenda';
 import {
   DEFAULT_ACCOUNT_TIMEZONE,
   buildZonedAgendaRangeIso,
   formatAgendaPeriodLabel,
-  startOfZonedDayClient,
+  shiftZonedAgendaAnchor,
 } from '@/lib/agenda-timezone';
 
 const CalendarEventDialog = dynamic(
@@ -92,18 +90,29 @@ function CalendarLoadingState() {
       aria-live="polite"
       data-testid="agenda-calendar-loading"
     >
-      <div className="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-slate-100 bg-slate-100">
-        {Array.from({ length: 7 }).map((_, index) => (
-          <div key={index} className="h-11 bg-slate-50/80" />
-        ))}
+      <div className="hidden sm:block">
+        <div className="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-slate-100 bg-slate-100">
+          {Array.from({ length: 7 }).map((_, index) => (
+            <div key={index} className="h-11 bg-slate-50/80" />
+          ))}
+        </div>
+        <div className="mt-3 space-y-3">
+          {Array.from({ length: 8 }).map((_, index) => (
+            <div key={index} className="grid grid-cols-[42px_repeat(7,minmax(0,1fr))] gap-px">
+              <div className="h-10 rounded bg-slate-100/70" />
+              {Array.from({ length: 7 }).map((__, dayIndex) => (
+                <div key={dayIndex} className="h-10 bg-slate-50/50" />
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
-      <div className="space-y-3">
-        {Array.from({ length: 8 }).map((_, index) => (
-          <div key={index} className="grid grid-cols-[42px_repeat(7,minmax(0,1fr))] gap-px">
-            <div className="h-10 rounded bg-slate-100/70" />
-            {Array.from({ length: 7 }).map((__, dayIndex) => (
-              <div key={dayIndex} className="h-10 bg-slate-50/50" />
-            ))}
+      <div className="space-y-3 sm:hidden">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="space-y-2 rounded-xl border border-slate-100 p-3">
+            <div className="h-4 w-1/3 rounded bg-slate-100" />
+            <div className="h-5 w-3/4 rounded bg-slate-100/80" />
+            <div className="h-4 w-1/2 rounded bg-slate-50" />
           </div>
         ))}
       </div>
@@ -135,7 +144,11 @@ type AgendaPageProps = {
 
 export function AgendaPage({ initialFilters }: AgendaPageProps) {
   const calendarAgenda = useAgenda(initialFilters);
+  const viewAnchorRef = useRef(
+    initialFilters?.start ? new Date(initialFilters.start) : new Date(),
+  );
   const [createOpen, setCreateOpen] = useState(false);
+  const [selectedRange, setSelectedRange] = useState<{ startAt: string; endAt: string; allDay: boolean } | null>(null);
   const [experimentalCreateOpen, setExperimentalCreateOpen] = useState(false);
   const [editEvent, setEditEvent] = useState<CalendarEventDetailsDTO | null>(null);
   const [editExperimentalEvent, setEditExperimentalEvent] = useState<CalendarEventDetailsDTO | null>(null);
@@ -149,10 +162,11 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
   } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [resourcesError, setResourcesError] = useState<string | null>(null);
+  const [resourcesLoading, setResourcesLoading] = useState(true);
   const [loadingMakeupResources, setLoadingMakeupResources] = useState(false);
 
   const filters = calendarAgenda.filters;
-  const calendarEvents = useDeferredValue(calendarAgenda.data?.data.events ?? []);
+  const calendarEvents = calendarAgenda.data?.data.events ?? [];
   const calendarLoading = calendarAgenda.loading;
   const calendarError = calendarAgenda.error;
 
@@ -164,6 +178,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
     const run = async () => {
       try {
         setResourcesError(null);
+        setResourcesLoading(true);
         const nextResources = await listAgendaResources();
 
         if (!cancelled) {
@@ -173,6 +188,8 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         if (!cancelled) {
           setResourcesError((err as Error).message);
         }
+      } finally {
+        if (!cancelled) setResourcesLoading(false);
       }
     };
 
@@ -185,37 +202,28 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
 
   function applyFilters(patch: Partial<AgendaFiltersState>) {
     startTransition(() => {
-      calendarAgenda.setFilters((current) => ({ ...current, ...patch }));
+      calendarAgenda.setFilters((current) => mergeAgendaFilters(current, patch));
     });
   }
 
   function handleNavigatePeriod(direction: 'prev' | 'next' | 'today') {
-    const currentStart = new Date(calendarAgenda.filters.start);
-
     if (direction === 'today') {
-      const range = buildZonedAgendaRangeIso(new Date(), calendarAgenda.filters.viewMode, accountTimeZone);
+      const anchor = new Date();
+      viewAnchorRef.current = anchor;
+      const range = buildZonedAgendaRangeIso(anchor, calendarAgenda.filters.viewMode, accountTimeZone);
       startTransition(() => {
         calendarAgenda.setFilters((current) => ({ ...current, ...range }));
       });
       return;
     }
 
-    if (calendarAgenda.filters.viewMode === 'week') {
-      const z = new TZDateMini(currentStart.getTime(), accountTimeZone);
-      const shifted = addDays(z, direction === 'prev' ? -7 : 7);
-      const nextAnchor = new Date(shifted.getTime());
-      startTransition(() => {
-        calendarAgenda.setFilters((current) => ({
-          ...current,
-          ...buildZonedAgendaRangeIso(nextAnchor, current.viewMode, accountTimeZone),
-        }));
-      });
-      return;
-    }
-
-    const z = new TZDateMini(currentStart.getTime(), accountTimeZone);
-    const shifted = addMonths(z, direction === 'prev' ? -1 : 1);
-    const nextAnchor = new Date(shifted.getTime());
+    const nextAnchor = shiftZonedAgendaAnchor(
+      viewAnchorRef.current,
+      calendarAgenda.filters.viewMode,
+      direction,
+      accountTimeZone,
+    );
+    viewAnchorRef.current = nextAnchor;
     startTransition(() => {
       calendarAgenda.setFilters((current) => ({
         ...current,
@@ -225,9 +233,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
   }
 
   function handleViewModeChange(viewMode: AgendaViewModeDTO) {
-    const nextAnchor = calendarAgenda.filters.start
-      ? new Date(calendarAgenda.filters.start)
-      : startOfZonedDayClient(new Date(), accountTimeZone);
+    const nextAnchor = viewAnchorRef.current;
     startTransition(() => {
       calendarAgenda.setFilters((current) => ({
         ...current,
@@ -238,10 +244,26 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
   }
 
   function handleEventSaved() {
+    setSelectedRange(null);
     startTransition(() => {
       calendarAgenda.refresh();
     });
   }
+
+  const handleCalendarSelectRange = useCallback((startAt: string, endAt: string, allDay: boolean) => {
+    setSelectedRange({ startAt, endAt, allDay });
+  }, []);
+
+  function handleCalendarDraftAction(action: 'event' | 'experimental' | 'makeup') {
+    if (action === 'event') {
+      setCreateOpen(true);
+    } else if (action === 'experimental') {
+      setExperimentalCreateOpen(true);
+    } else {
+      void handleOpenMakeupDialog();
+    }
+  }
+  const handleCalendarRangeClear = useCallback(() => setSelectedRange(null), []);
 
   async function handleOpenMakeupDialog() {
     try {
@@ -290,109 +312,116 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         ) : null}
 
         <Card className="overflow-hidden rounded-lg border-slate-200 bg-white shadow-none md:rounded-xl alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
-          <div className="flex flex-col gap-3 border-b border-slate-100 bg-white px-3 py-3 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] md:gap-4 md:px-6 md:py-4 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="inline-flex w-full max-w-full overflow-hidden rounded-lg shadow-none sm:w-auto">
-                <Button
-                  className="h-10 min-w-0 flex-1 rounded-none rounded-l-lg bg-primary text-primary-foreground shadow-none hover:bg-primary/90 sm:flex-none"
-                  onClick={() => setCreateOpen(true)}
-                  data-testid="agenda-new-event"
-                  disabled={calendarLoading || !calendarAgenda.data}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Novo evento
-                </Button>
+          <div className="flex flex-col gap-3 border-b border-slate-100 bg-white px-3 py-3 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] md:gap-4 md:px-6 md:py-4">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-3 xl:flex xl:items-center xl:justify-between">
+              <div className="contents xl:flex xl:w-auto xl:min-w-0 xl:flex-nowrap xl:items-center xl:gap-2">
+                <div className="col-span-2 row-start-1 inline-flex max-w-full shrink-0 overflow-hidden rounded-lg shadow-none xl:col-span-1">
+                  <Button
+                    className="h-10 min-w-0 flex-1 rounded-none rounded-l-lg bg-primary text-primary-foreground shadow-none hover:bg-primary/90 sm:flex-none"
+                    onClick={() => setCreateOpen(true)}
+                    data-testid="agenda-new-event"
+                    disabled={calendarLoading || !calendarAgenda.data || resourcesLoading || Boolean(calendarError) || Boolean(resourcesError)}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Novo evento
+                  </Button>
 
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      aria-label="Abrir ações de criação da agenda"
-                      className="h-10 rounded-none rounded-r-lg border-l border-white/20 bg-primary px-3 text-primary-foreground shadow-none hover:bg-primary/90"
-                      data-testid="agenda-create-menu-trigger"
-                      disabled={
-                        calendarLoading ||
-                        !calendarAgenda.data ||
-                        loadingMakeupResources
-                      }
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56">
-                    <DropdownMenuItem
-                      onSelect={() => {
-                        setExperimentalCreateOpen(true);
-                      }}
-                    >
-                      Aula experimental
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => void handleOpenMakeupDialog()}>
-                      {loadingMakeupResources ? 'Carregando reposição...' : 'Reposição'}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label="Abrir ações de criação da agenda"
+                        className="h-10 rounded-none rounded-r-lg border-l border-white/20 bg-primary px-3 text-primary-foreground shadow-none hover:bg-primary/90"
+                        data-testid="agenda-create-menu-trigger"
+                        disabled={
+                          calendarLoading ||
+                          !calendarAgenda.data ||
+                          resourcesLoading ||
+                          Boolean(calendarError) ||
+                          Boolean(resourcesError) ||
+                          loadingMakeupResources
+                        }
+                      >
+                        <ChevronDown className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56 max-w-[calc(100vw-1.5rem)]">
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          setExperimentalCreateOpen(true);
+                        }}
+                      >
+                        Aula experimental
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => void handleOpenMakeupDialog()}>
+                        {loadingMakeupResources ? 'Carregando reposição...' : 'Reposição'}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+                <Tabs
+                  value={calendarAgenda.filters.viewMode}
+                  onValueChange={(value) => handleViewModeChange(value as AgendaViewModeDTO)}
+                  className="col-start-1 row-start-2 min-w-0 justify-self-start"
+                >
+                  <TabsList className="h-10 justify-start bg-slate-100/80 alusa-dark:bg-[color:var(--color-bg-elevated)]">
+                    {AGENDA_VIEW_OPTIONS.map((option) => (
+                      <TabsTrigger key={option.value} value={option.value} className="h-8 min-w-[3.5rem] rounded-lg px-3 py-0 text-sm alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:data-[state=active]:bg-[color:var(--color-bg-card)] alusa-dark:data-[state=active]:text-[color:var(--color-text-primary)] sm:min-w-[4rem] sm:px-4">
+                        {option.label}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
               </div>
 
-              <Tabs
-                value={calendarAgenda.filters.viewMode}
-                onValueChange={(value) => handleViewModeChange(value as AgendaViewModeDTO)}
-                className="w-full sm:w-auto"
-              >
-                <TabsList className="h-10 w-full justify-start overflow-x-auto bg-slate-100/80 alusa-dark:bg-[color:var(--color-bg-elevated)] sm:w-auto">
-                  {AGENDA_VIEW_OPTIONS.map((option) => (
-                    <TabsTrigger key={option.value} value={option.value} className="h-8 rounded-lg px-4 py-0 text-sm alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:data-[state=active]:bg-[color:var(--color-bg-card)] alusa-dark:data-[state=active]:text-[color:var(--color-text-primary)]">
-                      {option.label}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
-
-              <p
-                className="truncate text-sm font-semibold text-slate-900 sm:ml-2 alusa-dark:text-[color:var(--color-text-primary)]"
-                data-testid="agenda-period-label"
-              >
-                {formatAgendaPeriodLabel(filters.start, filters.end, filters.viewMode, accountTimeZone)}
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-3 xl:items-end">
-              <AgendaFilters
-                embedded
-                showCurrentLabel={false}
-                filters={filters}
-                resources={resources}
-                timeZone={accountTimeZone}
-                onFiltersChange={applyFilters}
-                onNavigatePeriod={handleNavigatePeriod}
-              />
-
+              <div className="contents xl:ml-auto xl:flex xl:min-w-0 xl:flex-1 xl:flex-row xl:items-center xl:justify-end xl:gap-3">
+                <div className="col-span-2 row-start-3 grid min-w-0 grid-cols-[auto_40px_minmax(0,1fr)_40px] items-center gap-2 xl:col-span-1 xl:flex xl:flex-none">
+                  <Button variant="outline" className="h-10 min-w-[4.5rem] rounded-lg px-3" onClick={() => handleNavigatePeriod('today')}>Hoje</Button>
+                  <Button variant="outline" size="icon" className="size-10 shrink-0 rounded-lg" aria-label="Período anterior" title="Período anterior" onClick={() => handleNavigatePeriod('prev')}><ChevronLeft className="size-4" /></Button>
+                  <p className="min-w-0 px-1 text-center text-xs font-semibold capitalize text-slate-900 alusa-dark:text-[color:var(--color-text-primary)] xl:max-w-[min(24vw,360px)] xl:truncate sm:text-sm" data-testid="agenda-period-label">
+                    {formatAgendaPeriodLabel(filters.start, filters.end, filters.viewMode, accountTimeZone)}
+                  </p>
+                  <Button variant="outline" size="icon" className="size-10 shrink-0 rounded-lg" aria-label="Próximo período" title="Próximo período" onClick={() => handleNavigatePeriod('next')}><ChevronRight className="size-4" /></Button>
+                </div>
+                <div className="col-start-2 row-start-2 flex min-w-0 items-center justify-end gap-2 xl:col-start-auto xl:row-auto xl:shrink-0">
+                  <AgendaFilters
+                    embedded
+                    showCurrentLabel={false}
+                    showNavigation={false}
+                    resourcesLoading={resourcesLoading}
+                    filters={filters}
+                    resources={resources}
+                    timeZone={accountTimeZone}
+                    onFiltersChange={applyFilters}
+                    onNavigatePeriod={handleNavigatePeriod}
+                  />
+                </div>
+                {resourcesLoading ? (
+                  <p className="col-span-2 row-start-4 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)] xl:hidden" role="status" aria-live="polite">
+                    Carregando opções de filtro…
+                  </p>
+                ) : null}
+              </div>
             </div>
           </div>
 
           <div className="relative mt-0">
-            {!calendarAgenda.data && calendarLoading ? <CalendarLoadingState /> : null}
-            {!calendarAgenda.data && !calendarLoading && calendarError ? (
+            {calendarLoading ? <CalendarLoadingState /> : null}
+            {!calendarLoading && calendarError ? (
               <CalendarErrorState onRetry={calendarAgenda.refresh} />
             ) : null}
-            {calendarAgenda.data ? (
-              <div
-                className={calendarLoading ? 'opacity-60 transition-opacity' : undefined}
-                aria-busy={calendarLoading}
-              >
+            {!calendarLoading && !calendarError && calendarAgenda.data ? (
+              <div aria-busy={false}>
                 <CalendarScheduler
                   events={calendarEvents}
                   viewMode={calendarAgenda.filters.viewMode}
                   anchorDate={calendarAgenda.filters.start}
                   timeZone={accountTimeZone}
                   onEventSelect={setSelectedEventId}
+                  draftSelection={selectedRange}
+                  onSelectRange={handleCalendarSelectRange}
+                  onClearRange={handleCalendarRangeClear}
+                  onDraftCreateAction={handleCalendarDraftAction}
                 />
-              </div>
-            ) : null}
-            {calendarLoading && calendarAgenda.data ? (
-              <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center" aria-live="polite">
-                <span className="rounded-full border border-slate-200 bg-white/95 px-3 py-1 text-xs font-medium text-slate-600 shadow-sm">
-                  Atualizando agenda...
-                </span>
               </div>
             ) : null}
           </div>
@@ -404,6 +433,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         mode="create"
         resources={resources}
         accountTimeZone={accountTimeZone}
+        initialRange={selectedRange}
         onOpenChange={setCreateOpen}
         onSaved={handleEventSaved}
       />

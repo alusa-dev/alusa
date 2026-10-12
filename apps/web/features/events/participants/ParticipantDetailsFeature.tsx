@@ -33,6 +33,7 @@ import {
 import { formatCurrency, formatDate, formatDateTime, permanentlyDeleteEventParticipant, regenerateEventContract, type EventContractDTO } from '@/features/events/events-service';
 import { Button } from '@/components/ui/button';
 import { LoadingDots } from '@/components/ui/LoadingDots';
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -488,7 +489,7 @@ export function ParticipantDetailsFeature({
       await refetch();
       await queryClient.invalidateQueries({ queryKey: ['events', 'detail', eventId] });
       setFeeActionTarget(null);
-      toast.success({ title: 'Taxa estornada', description: 'O recibo histórico foi preservado e a inscrição voltou a ficar sem pagamento ativo.' });
+      toast.success({ title: 'Taxa estornada', description: 'A taxa foi estornada e a inscrição não tem mais um pagamento ativo.' });
     },
     onError: (error) => {
       toast.error({ title: 'Erro ao estornar taxa', description: (error as Error).message });
@@ -773,14 +774,14 @@ export function ParticipantDetailsFeature({
       } else {
         toast.error({
           title: 'Erro ao gerar carnê',
-          description: 'A URL do PDF não foi retornada pelo gateway.',
+          description: 'Não foi possível abrir o carnê agora. Tente novamente.',
         });
       }
     },
     onError: (err) => {
       toast.error({
         title: 'Erro ao gerar carnê',
-        description: err.message,
+        description: 'Não foi possível abrir o carnê agora. Tente novamente.',
       });
     },
   });
@@ -1968,15 +1969,15 @@ export function ParticipantDetailsFeature({
         publicPath="/p/evento-contrato"
       />
 
-      <Dialog open={manualPaymentOpen} onOpenChange={setManualPaymentOpen}>
-        <DialogContent className="max-w-md gap-0 overflow-hidden bg-slate-50 p-0">
+      <Dialog open={manualPaymentOpen} onOpenChange={(open) => { if (open || !manualPaymentMutation.isPending) setManualPaymentOpen(open); }}>
+        <DialogContent closeDisabled={manualPaymentMutation.isPending} className="relative max-w-md gap-0 overflow-hidden bg-slate-50 p-0" aria-busy={manualPaymentMutation.isPending}>
           <DialogHeader className="border-b border-slate-200 bg-slate-50 px-6 py-5 pr-12">
             <DialogTitle className="text-xl font-semibold tracking-tight text-slate-900">Dar baixa manual</DialogTitle>
             <DialogDescription className="mt-2 text-sm leading-5 text-slate-600">
               Registre um pagamento recebido para esta inscrição. Saldo disponível: {formatCurrency(participantBalance)}.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-5 bg-white px-6 py-6">
+          <div inert={manualPaymentMutation.isPending || undefined} className="space-y-5 bg-white px-6 py-6">
             <div className="space-y-1.5">
               <label className={labelClass} htmlFor="manual-payment-amount">Valor recebido</label>
               <div className="relative flex items-center">
@@ -2028,9 +2029,10 @@ export function ParticipantDetailsFeature({
               onClick={() => manualPaymentMutation.mutate()}
               className="h-10 bg-brand-accent text-white shadow-none hover:bg-brand-accent/90"
             >
-              {manualPaymentMutation.isPending ? <><span>Registrando</span><LoadingDots label="Registrando pagamento" size="sm" className="text-white" /></> : 'Confirmar baixa'}
+              {manualPaymentMutation.isPending ? 'Registrando' : 'Confirmar baixa'}
             </Button>
           </DialogFooter>
+          <EventMutationOverlay pending={manualPaymentMutation.isPending} label="Registrando pagamento" />
         </DialogContent>
       </Dialog>
 
@@ -2062,15 +2064,15 @@ export function ParticipantDetailsFeature({
         loading={manualPaymentDeleteMutation.isPending}
       />
 
-      <Dialog open={quitarConfirmOpen !== null} onOpenChange={(o) => !o && setQuitarConfirmOpen(null)}>
-        <DialogContent className="max-w-sm">
+      <Dialog open={quitarConfirmOpen !== null} onOpenChange={(o) => (!o && !quitarMutation.isPending) && setQuitarConfirmOpen(null)}>
+        <DialogContent closeDisabled={quitarMutation.isPending} className="relative max-w-sm" aria-busy={quitarMutation.isPending}>
           <DialogHeader>
             <DialogTitle>Quitar Taxa de Inscrição</DialogTitle>
             <DialogDescription>
               Confirmar o recebimento manual de {formatCurrency(participant.registrationFeeCharged)} para {participant.displayName}.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-3">
+          <div inert={quitarMutation.isPending || undefined} className="space-y-4 py-3">
             <div className="space-y-1">
               <label className={labelClass}>Forma de Pagamento</label>
               <select
@@ -2100,10 +2102,11 @@ export function ParticipantDetailsFeature({
                   quitarMutation.mutate({ method: quitarMethod });
                 }}
               >
-                {quitarMutation.isPending ? <><span>Quitando</span><LoadingDots label="Quitando taxa" size="sm" className="text-white" /></> : 'Quitar Taxa'}
+                {quitarMutation.isPending ? 'Quitando' : 'Quitar Taxa'}
               </Button>
             </DialogFooter>
           </div>
+          <EventMutationOverlay pending={quitarMutation.isPending} label="Quitando taxa" />
         </DialogContent>
       </Dialog>
 
@@ -2135,15 +2138,15 @@ export function ParticipantDetailsFeature({
         loading={deleteParticipantFeeMutation.isPending}
       />
 
-      <Dialog open={Boolean(costumeEditTarget)} onOpenChange={(open) => !open && setCostumeEditTarget(null)}>
-        <DialogContent className="max-w-md">
+      <Dialog open={Boolean(costumeEditTarget)} onOpenChange={(open) => (!open && !updateCostumeAssignmentMutation.isPending) && setCostumeEditTarget(null)}>
+        <DialogContent closeDisabled={updateCostumeAssignmentMutation.isPending} className="relative max-w-md" aria-busy={updateCostumeAssignmentMutation.isPending}>
           <DialogHeader>
             <DialogTitle>Editar figurino</DialogTitle>
             <DialogDescription>
               Atualize as informações do vínculo {costumeEditTarget ? `"${costumeEditTarget.name}"` : ''}.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-3">
+          <div inert={updateCostumeAssignmentMutation.isPending || undefined} className="space-y-4 py-3">
             <div className="space-y-1">
               <label className={labelClass}>Tamanho</label>
               <Input
@@ -2191,9 +2194,10 @@ export function ParticipantDetailsFeature({
               onClick={handleSaveCostumeEdit}
               disabled={updateCostumeAssignmentMutation.isPending}
             >
-              {updateCostumeAssignmentMutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando alterações do figurino" size="sm" className="text-white" /></> : 'Salvar alterações'}
+              {updateCostumeAssignmentMutation.isPending ? 'Salvando' : 'Salvar alterações'}
             </Button>
           </DialogFooter>
+          <EventMutationOverlay pending={updateCostumeAssignmentMutation.isPending} label="Salvando alterações do figurino" />
         </DialogContent>
       </Dialog>
 

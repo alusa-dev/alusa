@@ -420,6 +420,7 @@ function mapSubscriptionAction(input: {
 function buildChargeImpacts(input: {
   context: BillingAgreementContext;
   resultingAmountCents: number;
+  currentCycleTargetAmountCents: number;
   updatePendingPayments: boolean;
   change: BillingAgreementChangeInput;
 }): { impacts: BillingChargeImpact[]; warnings: string[] } {
@@ -432,7 +433,16 @@ function buildChargeImpacts(input: {
       if (input.change.effectivePolicy === 'CURRENT_CYCLE_FULL' && charge.status === 'PENDING') {
         action = cancellation ? 'CANCEL_PENDING' : 'UPDATE_WITH_SUBSCRIPTION';
         targetAmountCents = cancellation ? 0 : input.resultingAmountCents;
-      } else if (input.change.effectivePolicy === 'CURRENT_CYCLE_FULL' && charge.status === 'OVERDUE') {
+      } else if (
+        input.change.effectivePolicy === 'CURRENT_CYCLE_PRORATED' &&
+        charge.status === 'PENDING' &&
+        input.context.currentCycle &&
+        charge.dueDate >= input.context.currentCycle.startsAt &&
+        charge.dueDate < input.context.currentCycle.endsAt
+      ) {
+        action = 'UPDATE_PAYMENT';
+        targetAmountCents = input.currentCycleTargetAmountCents;
+      } else if (charge.status === 'OVERDUE') {
         action = 'MANUAL_REVIEW';
         warnings.push(`A cobrança vencida ${charge.id} exige revisão e não será alterada automaticamente.`);
       } else if (input.change.effectivePolicy === 'MANUAL_ADJUSTMENT') {
@@ -502,10 +512,13 @@ function buildPlan(input: {
   // updatePendingPayments no Asaas é global. Com vencida presente, o serviço
   // atualiza somente pagamentos PENDING elegíveis, individualmente.
   const hasOverdue = input.context.charges.some((charge) => charge.status === 'OVERDUE');
-  const updatePendingPayments = desired.updatePendingPayments && !hasOverdue;
+  const updatePendingPayments =
+    input.change.effectivePolicy !== 'CURRENT_CYCLE_PRORATED' &&
+    desired.updatePendingPayments && !hasOverdue;
   const impactResult = buildChargeImpacts({
     context: input.context,
     resultingAmountCents: desired.desiredRecurringAmountCents,
+    currentCycleTargetAmountCents: desired.currentCycleTargetAmountCents,
     updatePendingPayments,
     change: input.change,
   });
@@ -525,6 +538,18 @@ function buildPlan(input: {
     (input.change.kind === 'PAUSE_ALLOCATION' || input.change.kind === 'RESUME_ALLOCATION'
       ? input.context.agreement.validUntil?.slice(0, 10) ?? null
       : null);
+  const hasOverdueDebt = input.context.charges.some((charge) => charge.status === 'OVERDUE');
+  const remoteAction =
+    desired.desiredRecurringAmountCents === 0 &&
+    hasOverdueDebt &&
+    Boolean(input.context.agreement.asaasSubscriptionId)
+      ? 'PAUSE_SUBSCRIPTION'
+      : mapSubscriptionAction({
+          action: desired.subscriptionAction,
+          change: input.change,
+          agreement: input.context.agreement,
+          resultingAmountCents: desired.desiredRecurringAmountCents,
+        });
   return {
     plan: {
       agreementId: input.context.agreement.id,
@@ -535,12 +560,7 @@ function buildPlan(input: {
       resultingAmountCents: desired.desiredRecurringAmountCents,
       addedAmountCents: input.addedAmountCents,
       removedAmountCents: input.removedAmountCents,
-      remoteAction: mapSubscriptionAction({
-        action: desired.subscriptionAction,
-        change: input.change,
-        agreement: input.context.agreement,
-        resultingAmountCents: desired.desiredRecurringAmountCents,
-      }),
+      remoteAction,
       updatePendingPayments,
       payer: input.payer ?? input.context.agreement.payer,
       chargeImpacts: impactResult.impacts,

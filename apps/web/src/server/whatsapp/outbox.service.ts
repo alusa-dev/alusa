@@ -5,6 +5,7 @@ import {
   WhatsAppMessageStatus,
   WhatsAppOutboundJobStatus,
   WhatsAppWebhookEventStatus,
+  EventTicketWhatsAppNotificationStatus,
   type Prisma,
 } from '@prisma/client';
 import {
@@ -528,6 +529,10 @@ async function markWhatsAppJobSent(jobId: string, messageId: string, externalMes
         errorMessage: null,
       },
     }),
+    prisma.eventTicketWhatsAppNotification.updateMany({
+      where: { whatsappJobId: jobId, status: EventTicketWhatsAppNotificationStatus.QUEUED },
+      data: { status: 'SENT', processedAt: new Date(), lastErrorCode: null, lastError: null },
+    }),
   ]);
 }
 
@@ -560,6 +565,15 @@ async function markWhatsAppJobFailure(
     }),
     prisma.contractWhatsAppNotification.updateMany({
       where: { whatsappJobId: job.id },
+      data: {
+        status: deadLetter ? 'DLQ' : 'FAILED',
+        lastErrorCode: sanitized.code,
+        lastError: sanitized.message,
+        ...(deadLetter ? { processedAt: new Date() } : { processedAt: null }),
+      },
+    }),
+    prisma.eventTicketWhatsAppNotification.updateMany({
+      where: { whatsappJobId: job.id, status: EventTicketWhatsAppNotificationStatus.QUEUED },
       data: {
         status: deadLetter ? 'DLQ' : 'FAILED',
         lastErrorCode: sanitized.code,
@@ -775,19 +789,131 @@ async function processWhatsAppWebhookEvent(eventId: string) {
               },
             });
           }
+
+          const [eventOrders, eventSales] = await Promise.all([
+            tx.eventMapOrder.findMany({
+              where: { buyerPhone: { in: phoneVariants }, whatsappOptInAt: { not: null }, whatsappOptOutAt: null },
+              select: { id: true, contaId: true },
+            }),
+            tx.eventTicketSale.findMany({
+              where: { buyerPhone: { in: phoneVariants }, whatsappOptInAt: { not: null }, whatsappOptOutAt: null },
+              select: { id: true, contaId: true },
+            }),
+          ]);
+          for (const order of eventOrders) {
+            await tx.eventMapOrder.updateMany({
+              where: { id: order.id, contaId: order.contaId, whatsappOptOutAt: null },
+              data: { whatsappOptOutAt: now, whatsappOptOutSource: 'WHATSAPP_INBOUND' },
+            });
+            await tx.auditLog.create({
+              data: {
+                contaId: order.contaId,
+                actorType: 'SYSTEM',
+                action: 'events.ticket.whatsapp.consent_revoked',
+                entityType: 'EventMapOrder',
+                entityId: order.id,
+                metadata: { phoneSuffix: normalizedFromPhone.slice(-4), source: 'WHATSAPP_INBOUND' },
+              },
+            });
+          }
+          for (const sale of eventSales) {
+            await tx.eventTicketSale.updateMany({
+              where: { id: sale.id, contaId: sale.contaId, whatsappOptOutAt: null },
+              data: { whatsappOptOutAt: now, whatsappOptOutSource: 'WHATSAPP_INBOUND' },
+            });
+            await tx.auditLog.create({
+              data: {
+                contaId: sale.contaId,
+                actorType: 'SYSTEM',
+                action: 'events.ticket.whatsapp.consent_revoked',
+                entityType: 'EventTicketSale',
+                entityId: sale.id,
+                metadata: { phoneSuffix: normalizedFromPhone.slice(-4), source: 'WHATSAPP_INBOUND' },
+              },
+            });
+          }
+          const notificationWhere: Prisma.EventTicketWhatsAppNotificationWhereInput = {
+            status: {
+              in: [
+                EventTicketWhatsAppNotificationStatus.PENDING,
+                EventTicketWhatsAppNotificationStatus.PROCESSING,
+                EventTicketWhatsAppNotificationStatus.QUEUED,
+                EventTicketWhatsAppNotificationStatus.FAILED,
+              ],
+            },
+            OR: [
+              ...(eventOrders.length ? [{ eventMapOrderId: { in: eventOrders.map((order) => order.id) } }] : []),
+              ...(eventSales.length ? [{ eventTicketSaleId: { in: eventSales.map((sale) => sale.id) } }] : []),
+            ],
+          };
+          const notifications = notificationWhere.OR?.length
+            ? await tx.eventTicketWhatsAppNotification.findMany({ where: notificationWhere, select: { whatsappJobId: true } })
+            : [];
+          const jobIds = notifications.flatMap((notification) => notification.whatsappJobId ? [notification.whatsappJobId] : []);
+          if (jobIds.length) {
+            const pendingJobs = await tx.whatsAppOutboundJob.findMany({
+              where: { id: { in: jobIds }, status: WhatsAppOutboundJobStatus.PENDING },
+              select: { id: true, messageId: true },
+            });
+            for (const job of pendingJobs) {
+              await tx.whatsAppOutboundJob.updateMany({
+                where: { id: job.id, status: WhatsAppOutboundJobStatus.PENDING },
+                data: { status: WhatsAppOutboundJobStatus.CANCELLED, processedAt: now, lockedAt: null, lockedBy: null, lastErrorCode: 'CONSENT_REVOKED' },
+              });
+              await tx.whatsAppMessage.updateMany({
+                where: { id: job.messageId, status: WhatsAppMessageStatus.QUEUED },
+                data: { status: WhatsAppMessageStatus.FAILED, errorCode: 'CONSENT_REVOKED', errorMessage: 'O destinatário revogou a autorização antes do envio.' },
+              });
+            }
+          }
+          if (notificationWhere.OR?.length) {
+            await tx.eventTicketWhatsAppNotification.updateMany({
+              where: notificationWhere,
+              data: { status: EventTicketWhatsAppNotificationStatus.SKIPPED, processedAt: now, lockedAt: null, lockedBy: null, lastErrorCode: 'CONSENT_REVOKED' },
+            });
+          }
         }
       }
 
       for (const status of record.statuses) {
         const mapped = mapWhatsAppStatus(status.status);
+        const messageWhere = { connectionId: connection.id, externalMessageId: status.id };
         await tx.whatsAppMessage.updateMany({
-          where: { connectionId: connection.id, externalMessageId: status.id },
+          where: messageWhere,
           data: {
             status: mapped,
             errorCode: status.errors?.[0]?.code ? String(status.errors[0].code) : null,
             errorMessage: status.errors?.[0]?.message ?? status.errors?.[0]?.title ?? null,
           },
         });
+        const messages = await tx.whatsAppMessage.findMany({ where: messageWhere, select: { id: true } });
+        if (messages.length > 0) {
+          const jobs = await tx.whatsAppOutboundJob.findMany({
+            where: { messageId: { in: messages.map((message) => message.id) } },
+            select: { id: true },
+          });
+          if (jobs.length > 0) {
+            await tx.eventTicketWhatsAppNotification.updateMany({
+              where: {
+                whatsappJobId: { in: jobs.map((job) => job.id) },
+                status: { not: EventTicketWhatsAppNotificationStatus.SKIPPED },
+              },
+              data: {
+                status: mapped === WhatsAppMessageStatus.DELIVERED
+                  ? 'DELIVERED'
+                  : mapped === WhatsAppMessageStatus.READ
+                    ? 'READ'
+                    : mapped === WhatsAppMessageStatus.FAILED
+                      ? 'FAILED'
+                      : 'SENT',
+                ...(mapped === WhatsAppMessageStatus.FAILED
+                  ? { lastErrorCode: status.errors?.[0]?.code ? String(status.errors[0].code) : null, lastError: status.errors?.[0]?.message ?? status.errors?.[0]?.title ?? null }
+                  : {}),
+                processedAt: new Date(),
+              },
+            });
+          }
+        }
       }
     }
 

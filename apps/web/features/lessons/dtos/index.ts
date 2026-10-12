@@ -38,7 +38,7 @@ export const makeupClassStatusSchema = z.enum(['AGENDADA', 'REALIZADA', 'CANCELA
 export const makeupClassScopeSchema = z.enum(['INDIVIDUAL', 'COLETIVA']);
 export const aulasOperationLogLevelSchema = z.enum(['INFO', 'WARNING', 'ERROR']);
 export const agendaViewModeSchema = z
-  .enum(['week', 'month-detailed', 'month-compact'])
+  .enum(['day', 'week', 'month-detailed', 'month-compact'])
   .default('week');
 
 export const aulasLookupItemSchema = z.object({

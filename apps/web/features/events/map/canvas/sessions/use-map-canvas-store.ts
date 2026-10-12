@@ -11,6 +11,7 @@ export function useMapCanvasStore() {
   const pan = useEventMapEditorStore((state) => state.pan);
   const setPan = useEventMapEditorStore((state) => state.setPan);
   const setZoom = useEventMapEditorStore((state) => state.setZoom);
+  const setTool = useEventMapEditorStore((state) => state.setTool);
   const setSelection = useEventMapEditorStore((state) => state.setSelection);
   const addObjectAt = useEventMapEditorStore((state) => state.addObjectAt);
   const addRowAt = useEventMapEditorStore((state) => state.addRowAt);
@@ -32,6 +33,7 @@ export function useMapCanvasStore() {
     pan,
     setPan,
     setZoom,
+    setTool,
     setSelection,
     addObjectAt,
     addRowAt,

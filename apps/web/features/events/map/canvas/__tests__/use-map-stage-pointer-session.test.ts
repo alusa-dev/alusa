@@ -167,4 +167,44 @@ describe('useMapStagePointerSession marquee selection', () => {
 
     expect(setSelection).toHaveBeenCalledWith([]);
   });
+
+  it('ignores the outside canvas click while inline text editing is committing', () => {
+    const stage = {} as Konva.Stage;
+    stage.getStage = () => stage;
+    const setCreationDraft = vi.fn();
+    const addObjectAt = vi.fn(() => 'unexpected-text');
+    const openNewTextEditor = vi.fn();
+    const setSelection = vi.fn();
+    const { result } = renderHook(() => useMapStagePointerSession({
+      readOnly: false,
+      textEditorActive: true,
+      tool: 'text',
+      map: createMap(),
+      levelId: 'level-1',
+      zoom: 1,
+      getPointerPoint: () => ({ x: 100, y: 100 }),
+      addObjectAt,
+      addRowAt: vi.fn(),
+      addSeatBlockAt: vi.fn(),
+      selection: [],
+      setSelection,
+      setIndividualSeatDragId: vi.fn(),
+      getMarqueeSelection: vi.fn(() => []),
+      openNewTextEditor,
+      creationDraft: null,
+      setCreationDraft,
+      marqueeDraft: null,
+      setMarqueeDraft: vi.fn(),
+    }));
+
+    act(() => {
+      result.current.handleStageMouseDown({ target: stage as unknown as Konva.Node });
+      result.current.handleStageMouseUp();
+    });
+
+    expect(setCreationDraft).not.toHaveBeenCalled();
+    expect(addObjectAt).not.toHaveBeenCalled();
+    expect(openNewTextEditor).not.toHaveBeenCalled();
+    expect(setSelection).not.toHaveBeenCalled();
+  });
 });

@@ -5,6 +5,8 @@ import type {
 } from '@/features/lessons/dtos';
 import {
   assertNoCalendarConflicts,
+  assertCalendarResourcesBelongToConta,
+  withCalendarEventWriteLock,
 } from '@/src/server/lessons/calendar/calendar-core.service';
 import { AulasError } from '@/src/server/lessons/lessons-error';
 import { createAulasOperationLog } from '@/src/server/lessons/calendar/operation-log.service';
@@ -123,6 +125,8 @@ export async function createExperimentalClass(
   const startAt = new Date(input.startAt);
   const endAt = new Date(input.endAt);
 
+  const created = await withCalendarEventWriteLock(contaId, async (tx) => {
+  await assertCalendarResourcesBelongToConta({ contaId, turmaId: input.turmaId, salaId, professorIds, prismaClient: tx });
   await assertNoCalendarConflicts({
     contaId,
     startAt,
@@ -131,12 +135,11 @@ export async function createExperimentalClass(
     professorIds,
     turmaId: input.turmaId,
     allowOwnTurmaRecurringOverlap: true,
-    prismaClient: prisma,
+    prismaClient: tx,
   });
 
   const title = `Aula experimental • ${aluno.nome}`;
 
-  const created = await prisma.$transaction(async (tx) => {
     const event = await tx.calendarEvent.create({
       data: {
         contaId,
@@ -249,18 +252,6 @@ export async function updateExperimentalClass(
   const startAt = input.startAt ? new Date(input.startAt) : current.calendarEvent.startAt;
   const endAt = input.endAt ? new Date(input.endAt) : current.calendarEvent.endAt;
 
-  await assertNoCalendarConflicts({
-    contaId,
-    startAt,
-    endAt,
-    salaId,
-    professorIds,
-    turmaId: nextTurmaId,
-    allowOwnTurmaRecurringOverlap: true,
-    ignoreEventId: current.calendarEventId,
-    prismaClient: prisma,
-  });
-
   const wasRescheduled =
     startAt.getTime() !== current.calendarEvent.startAt.getTime() ||
     endAt.getTime() !== current.calendarEvent.endAt.getTime() ||
@@ -273,7 +264,19 @@ export async function updateExperimentalClass(
     input.status ??
     (wasRescheduled && current.status === 'AGENDADA' ? 'REAGENDADA' : current.status);
 
-  await prisma.$transaction(async (tx) => {
+  await withCalendarEventWriteLock(contaId, async (tx) => {
+  await assertCalendarResourcesBelongToConta({ contaId, turmaId: nextTurmaId, salaId, professorIds, prismaClient: tx });
+  await assertNoCalendarConflicts({
+    contaId,
+    startAt,
+    endAt,
+    salaId,
+    professorIds,
+    turmaId: nextTurmaId,
+    allowOwnTurmaRecurringOverlap: true,
+    ignoreEventId: current.calendarEventId,
+    prismaClient: tx,
+  });
     await tx.calendarEvent.update({
       where: { id: current.calendarEventId },
       data: {

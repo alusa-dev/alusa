@@ -1,4 +1,4 @@
-import { Prisma, PrismaClient } from '@prisma/client';
+import { EventTicketWhatsAppPurchaseType, Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '@alusa/database';
 import { EventsError, validateTicketSaleStatusTransition } from '@alusa/domain/events';
 import { assertEventTicketSalesOpen } from '@alusa/lib/events/events.service';
@@ -6,6 +6,7 @@ import { assertEventScopedTicketSaleLinks } from '@alusa/lib/events/event-partic
 import { mapTicketSale } from '@alusa/lib/events/event-financial-read-models';
 import { recordEventAudit } from '@alusa/lib/events/event-audit.service';
 import { enqueueEventTicketEmail, buildPublicEventTicketSalePath } from '@alusa/lib/events/ticket-email-outbox';
+import { enqueueEventTicketWhatsAppNotification, EVENT_TICKET_WHATSAPP_CONSENT_VERSION } from '@alusa/lib/events/ticket-whatsapp-notification';
 import { createCheckInCode } from '@alusa/lib/events/map/ticket-code';
 import { syncPublicLotQuantity, releaseSeatsForTicketSale } from '@alusa/lib/events/map/event-map-order-operations';
 import { createSeatedTicketSale } from '@alusa/lib/events/map/staff-map-sales.service';
@@ -134,6 +135,9 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
         lotId: lot.id,
         buyerName: input.buyerName,
         buyerEmail,
+        buyerPhone: input.buyerPhone ?? null,
+        whatsappOptInAt: input.buyerPhone ? now : null,
+        whatsappOptInSource: input.buyerPhone ? 'STAFF_SALE' : null,
         accessToken: createPublicToken('sale'),
         alunoId: input.alunoId,
         responsavelId: input.responsavelId,
@@ -195,6 +199,18 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
         ticketType: lot.name,
         ticketCount: quantity,
         ticketsPath: buildPublicEventTicketSalePath(sale.id, sale.accessToken),
+      });
+    }
+
+    if (saleStatus === 'PAID' && sale.buyerPhone && sale.whatsappOptInAt && sale.accessToken) {
+      await enqueueEventTicketWhatsAppNotification(tx, {
+        contaId: ctx.contaId,
+        purchaseType: EventTicketWhatsAppPurchaseType.STAFF_SALE,
+        purchaseId: sale.id,
+        recipientPhone: sale.buyerPhone,
+        consentVersion: EVENT_TICKET_WHATSAPP_CONSENT_VERSION,
+        consentSource: sale.whatsappOptInSource,
+        consentRecordedAt: sale.whatsappOptInAt,
       });
     }
 
@@ -260,7 +276,13 @@ export async function updateTicketSale(ctx: EventsContext, saleId: string, input
     await tx.$queryRaw`SELECT id FROM "EventTicketSale" WHERE id = ${saleId} AND "contaId" = ${ctx.contaId} FOR UPDATE`;
     const current = await tx.eventTicketSale.findFirst({
       where: { id: saleId, contaId: ctx.contaId },
-      include: { lot: { include: { event: true } } },
+      include: {
+        lot: { include: { event: true } },
+        event: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } },
+        aluno: { select: { email: true } },
+        responsavel: { select: { email: true } },
+        tickets: { where: { status: 'VALID' }, select: { id: true } },
+      },
     });
     if (!current) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
     assertOperationalEvent(current.lot.event.status);
@@ -308,6 +330,7 @@ export async function updateTicketSale(ctx: EventsContext, saleId: string, input
     const paymentMethod = input.paymentMethod ?? current.paymentMethod;
 
     const resolvedStatus = paymentMethod === 'COMPLIMENTARY' ? 'COMPLIMENTARY' : newStatus;
+    const isNewlyPaid = resolvedStatus === 'PAID' && current.status !== 'PAID';
 
     const targetAlunoId = input.alunoId === undefined ? current.alunoId : input.alunoId;
     const targetResponsavelId =
@@ -322,6 +345,7 @@ export async function updateTicketSale(ctx: EventsContext, saleId: string, input
     const totalAmount = resolvedStatus === 'COMPLIMENTARY' ? 0 : unitPrice * quantity;
 
     const now = new Date();
+    const accessToken = isNewlyPaid ? (current.accessToken ?? createPublicToken('sale')) : current.accessToken;
 
     // Status transition validation
     if (resolvedStatus !== current.status) {
@@ -341,6 +365,7 @@ export async function updateTicketSale(ctx: EventsContext, saleId: string, input
         totalAmount: decimal(totalAmount),
         paymentMethod,
         status: resolvedStatus,
+        accessToken: isNewlyPaid ? accessToken : undefined,
         notes: input.notes === undefined ? undefined : input.notes,
         paidAt: resolvedStatus === 'PAID' ? (current.paidAt ?? now) : null,
         cancelledAt: resolvedStatus === 'CANCELLED' ? (current.cancelledAt ?? now) : null,
@@ -349,6 +374,51 @@ export async function updateTicketSale(ctx: EventsContext, saleId: string, input
     });
     if (updatedResult.count !== 1) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
     const updated = await tx.eventTicketSale.findFirst({ where: { id: saleId, contaId: ctx.contaId, eventId: current.eventId } });
+
+    if (isNewlyPaid) {
+      const missingTickets = quantity - current.tickets.length;
+      if (missingTickets < 0) {
+        throw new EventsError('INGRESSOS_INCONSISTENTES', 'A venda possui mais ingressos ativos que a quantidade informada.', 409);
+      }
+      if (missingTickets > 0) {
+        await tx.eventTicket.createMany({
+          data: Array.from({ length: missingTickets }, () => ({
+            contaId: ctx.contaId,
+            eventId: current.eventId,
+            eventTicketSaleId: saleId,
+            ticketCode: createPublicToken('ticket').toUpperCase(),
+            checkInCode: createCheckInCode(),
+          })),
+        });
+      }
+      const buyerEmail = normalizeEmail(current.buyerEmail) ?? normalizeEmail(current.responsavel?.email) ?? normalizeEmail(current.aluno?.email);
+      if (buyerEmail && accessToken) {
+        await enqueueEventTicketEmail(tx, {
+          contaId: ctx.contaId,
+          purchaseId: saleId,
+          buyerEmail,
+          buyerName: current.buyerName,
+          eventName: current.event.name,
+          eventStartsAt: current.event.startsAt,
+          eventLocation: [current.event.locationName, current.event.locationAddress].filter(Boolean).join(' — ') || null,
+          ticketType: lot.name,
+          ticketCount: quantity,
+          ticketsPath: buildPublicEventTicketSalePath(saleId, accessToken),
+        });
+      }
+      if (current.buyerPhone && current.whatsappOptInAt && current.whatsappOptInSource && !current.whatsappOptOutAt && accessToken) {
+        await enqueueEventTicketWhatsAppNotification(tx, {
+          contaId: ctx.contaId,
+          purchaseType: EventTicketWhatsAppPurchaseType.STAFF_SALE,
+          purchaseId: saleId,
+          recipientPhone: current.buyerPhone,
+          consentVersion: EVENT_TICKET_WHATSAPP_CONSENT_VERSION,
+          consentSource: current.whatsappOptInSource,
+          consentRecordedAt: current.whatsappOptInAt,
+          actorUserId: ctx.userId,
+        });
+      }
+    }
 
     // Sync financial entries
     if (resolvedStatus === 'COMPLIMENTARY' || totalAmount === 0) {

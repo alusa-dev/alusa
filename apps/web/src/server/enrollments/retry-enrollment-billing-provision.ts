@@ -9,6 +9,7 @@ import {
   enqueueEnrollmentBillingOutbox,
   enqueueEnrollmentSubscriptionMergeOutbox,
   processEnrollmentBillingOutboxEvent,
+  resumeReconciledEnrollmentTerminalIntent,
 } from '@/src/server/enrollments/enrollment-billing-outbox.service';
 import { billingProvisionUpdate } from '@/src/server/enrollments/billing-provision-status';
 
@@ -69,7 +70,53 @@ export async function retryEnrollmentBillingProvisionJob(
     errors: [],
   };
 
-  const candidates = await prisma.matricula.findMany({
+  const terminalIntents = await prisma.matriculaBillingOutbox.findMany({
+    where: {
+      status: MatriculaBillingOutboxStatus.REQUIRES_RECONCILIATION,
+      terminalIntent: { not: null },
+      updatedAt: { lt: threshold },
+      ...(input.contaId ? { contaId: input.contaId } : {}),
+    },
+    orderBy: { updatedAt: 'asc' },
+    take: limit,
+    select: { contaId: true, matriculaId: true, terminalIntentActorId: true },
+  });
+  for (const intent of terminalIntents) {
+    if (!intent.matriculaId) continue;
+    result.scanned += 1;
+    if (input.dryRun) {
+      result.retried += 1;
+      continue;
+    }
+    try {
+      const actorUserId = intent.terminalIntentActorId ?? (await prisma.usuario.findFirst({
+        where: { contaId: intent.contaId },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      }))?.id;
+      if (!actorUserId) {
+        result.skipped += 1;
+        result.errors.push({ matriculaId: intent.matriculaId, error: 'ACTOR_DE_RECONCILIACAO_NAO_ENCONTRADO' });
+        continue;
+      }
+      const resumed = await resumeReconciledEnrollmentTerminalIntent({
+        contaId: intent.contaId,
+        matriculaId: intent.matriculaId,
+        actorUserId,
+      });
+      result.retried += 1;
+      if (resumed.status === 'CANCELLED') result.recovered += 1;
+      else result.skipped += 1;
+    } catch (error) {
+      result.errors.push({
+        matriculaId: intent.matriculaId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const remainingLimit = Math.max(0, limit - terminalIntents.length);
+  const candidates = remainingLimit > 0 ? await prisma.matricula.findMany({
     where: {
       billingProvisionStatus: {
         in: [
@@ -80,6 +127,7 @@ export async function retryEnrollmentBillingProvisionJob(
         ],
       },
       status: { notIn: ['RECUSADA', 'CANCELADA'] },
+      matriculaFamiliarId: null,
       createdAt: { lt: threshold },
       OR: [
         {
@@ -113,16 +161,16 @@ export async function retryEnrollmentBillingProvisionJob(
       ...(input.contaId ? { contaId: input.contaId } : {}),
     },
     orderBy: { createdAt: 'asc' },
-    take: limit,
+    take: remainingLimit,
     select: {
       id: true,
       contaId: true,
       billingMode: true,
       billingProvisionStatus: true,
     },
-  });
+  }) : [];
 
-  result.scanned = candidates.length;
+  result.scanned += candidates.length;
 
   for (const matricula of candidates) {
     if (!needsBillingRetry(matricula.billingProvisionStatus)) {

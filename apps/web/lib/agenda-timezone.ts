@@ -1,11 +1,11 @@
 import { TZDateMini } from '@date-fns/tz';
-import { addDays, endOfMonth, endOfWeek, startOfMonth, startOfWeek } from 'date-fns';
+import { addDays, addMonths, endOfMonth, endOfWeek, startOfMonth, startOfWeek } from 'date-fns';
 import type { Locale } from 'date-fns';
 import { format } from 'date-fns';
 
 export const DEFAULT_ACCOUNT_TIMEZONE = 'America/Sao_Paulo';
 
-export type AgendaCalendarViewMode = 'week' | 'month-compact' | 'month-detailed';
+export type AgendaCalendarViewMode = 'day' | 'week' | 'month-compact' | 'month-detailed';
 
 /** Client-safe IANA normalization (must stay free of server-only imports). */
 export function normalizeAccountTimeZoneClient(input: string | null | undefined): string {
@@ -99,6 +99,9 @@ export function formatAgendaPeriodLabel(
   const endParts = getAgendaDateParts(end, timeZone);
 
   if (viewMode !== 'week') {
+    if (viewMode === 'day') {
+      return `${startParts.day} de ${startParts.month} de ${startParts.year}`;
+    }
     return `${startParts.month} de ${startParts.year}`;
   }
 
@@ -166,6 +169,10 @@ export function buildZonedAgendaRangeIso(
   const tz = normalizeAccountTimeZoneClient(timeZone);
   const zAnchor = new TZDateMini(anchor.getTime(), tz);
 
+  if (viewMode === 'day') {
+    return buildZonedDayRangeIso(anchor, tz);
+  }
+
   if (viewMode === 'week') {
     const wStart = startOfWeek(zAnchor, { weekStartsOn: 0 });
     const wEnd = endOfWeek(zAnchor, { weekStartsOn: 0 });
@@ -181,6 +188,23 @@ export function buildZonedAgendaRangeIso(
     start: new Date(mStart.getTime()).toISOString(),
     end: new Date(mEnd.getTime()).toISOString(),
   };
+}
+
+export function shiftZonedAgendaAnchor(
+  anchor: Date,
+  viewMode: AgendaCalendarViewMode,
+  direction: 'prev' | 'next',
+  timeZone: string,
+): Date {
+  const tz = normalizeAccountTimeZoneClient(timeZone);
+  const zonedAnchor = new TZDateMini(anchor.getTime(), tz);
+  const sign = direction === 'prev' ? -1 : 1;
+  const shifted = viewMode === 'day'
+    ? addDays(zonedAnchor, sign)
+    : viewMode === 'week'
+      ? addDays(zonedAnchor, sign * 7)
+      : addMonths(zonedAnchor, sign);
+  return new Date(shifted.getTime());
 }
 
 export function buildZonedDayRangeIso(anchor: Date, timeZone: string): { start: string; end: string } {

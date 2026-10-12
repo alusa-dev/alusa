@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { CreatorIcon } from '@/components/icons/hugeicons';
 import type { SeatCreationMode } from '../canvas/render/map-creation-draft';
+import { MAP_TOOLBAR_SURFACE_CLASS } from './map-toolbar-styles';
 
 export type { SeatCreationMode } from '../canvas/render/map-creation-draft';
 
@@ -32,7 +33,7 @@ export function SeatCreationToolbar({ mode, onModeChange }: SeatCreationToolbarP
       data-testid="seat-creation-toolbar"
       role="toolbar"
       aria-label="Ferramentas de criação de assentos"
-      className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/95 p-1.5 shadow-lg shadow-slate-300/30 backdrop-blur"
+      className={`flex items-center gap-1.5 px-1.5 ${MAP_TOOLBAR_SURFACE_CLASS}`}
     >
       {modes.map(({ id, label, description, icon }) => {
         const active = mode === id;

@@ -982,6 +982,20 @@ export type {
 // Fase 6 (subscriptions)
 export { createSubscription } from './use-cases/create-subscription';
 export {
+  enqueueEnrollmentFinancialCommand,
+  parseEnrollmentFinancialCommand,
+  processEnrollmentFinancialCommand,
+  type EnrollmentFinancialCommand,
+  type EnrollmentFinancialCommandResult,
+  type EnrollmentFinancialCommandRemote,
+} from './use-cases/enrollments/enrollment-financial-command';
+export { syncEditableSubscriptionPayments } from './use-cases/enrollments/subscription-pending-payments-sync';
+export {
+  claimEnrollmentFinancialCommand,
+  releaseEnrollmentFinancialCommandLease,
+  startEnrollmentFinancialCommandLeaseHeartbeat,
+} from './use-cases/enrollments/claim-enrollment-financial-command';
+export {
   compensateStagedEnrollmentFinancialResources,
   stageEnrollmentFinancialResources,
 } from './use-cases/stage-enrollment-financial-resources';
@@ -1939,6 +1953,7 @@ export {
   deleteManualEventParticipantFee,
   deleteManualEventParticipantPayment,
   markTicketSalePaid,
+  requestEventTicketSaleWhatsAppResend,
   quitarEventParticipantFee,
   refundManualEventParticipantFee,
   refundManualEventParticipantPayment,
@@ -1988,6 +2003,7 @@ export type {
 } from './events/events-finance-observability';
 
 export { updateEventParticipantFeeInTransaction } from './events/update-event-participant-fee';
+export { provisionFutureFamilyEnrollment } from './family-billing/future-family-enrollment.use-case';
 
 export { createEventRegistrationCharge } from './events/create-event-registration-charge';
 export {

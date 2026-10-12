@@ -189,17 +189,25 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
 
       if (warning || subscriptionSyncPending) {
         const syncError = result.asaasSync?.subscription?.error;
-        const description = warning
-          ? sanitizeMessage(warning.message)
-          : syncError
-            ? `A cobrança recorrente ainda não foi confirmada pelo financeiro. Detalhe: ${sanitizeMessage(syncError)}`
-            : 'A matrícula foi criada, mas a confirmação financeira ainda está em processamento.';
+        const isConfirmationPending =
+          warning?.code === 'FINANCEIRO_SINCRONIZANDO' || syncError === 'FINANCEIRO_SINCRONIZANDO';
+        const startDate = result.matricula.dataInicio.slice(0, 10);
+        const formattedStartDate = new Intl.DateTimeFormat('pt-BR').format(
+          new Date(`${startDate}T12:00:00`),
+        );
+        const description = isConfirmationPending
+          ? `As aulas estão previstas para começar em ${formattedStartDate}. A confirmação da matrícula ainda está em andamento.`
+          : warning
+            ? sanitizeMessage(warning.message)
+            : syncError
+              ? `A cobrança recorrente ainda não foi confirmada pelo financeiro. Detalhe: ${sanitizeMessage(syncError)}`
+              : 'A matrícula foi criada, mas a confirmação financeira ainda está em processamento.';
 
         toast.custom(
           (t) => (
             <CustomToast
               variant="warning"
-              title="Matrícula criada — confirmação pendente"
+              title={isConfirmationPending ? 'Matrícula registrada' : 'Matrícula criada — confirmação pendente'}
               description={description}
               onClose={() => toast.dismiss(t)}
             />

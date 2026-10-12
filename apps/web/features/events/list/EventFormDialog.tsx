@@ -1,5 +1,7 @@
 'use client';
 
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
+
 import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -19,7 +21,6 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
@@ -179,9 +180,9 @@ export function EventFormDialog({
         fullScreenMobile
         disableBackdropBlur
         overlayClass="alusa-registration-wizard-overlay"
-        className="event-registration-dialog alusa-wizard-corner-smoothing flex h-[min(820px,calc(100dvh-3rem))] w-[calc(100vw-2rem)] max-w-4xl min-h-0 flex-col gap-0 overflow-hidden rounded-[20px] bg-[#f8fafc] p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0"
-      >
-        <form onSubmit={(event) => handleFormDataSubmit(event, handleSubmit)} className="flex h-full min-h-0 flex-col max-md:max-h-none max-md:flex-1">
+        className="event-registration-dialog alusa-wizard-corner-smoothing flex h-[min(820px,calc(100dvh-3rem))] w-[calc(100vw-2rem)] max-w-4xl min-h-0 flex-col gap-0 overflow-hidden rounded-[20px] bg-[#f8fafc] p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0 relative"
+       aria-busy={mutation.isPending}>
+        <form inert={mutation.isPending || undefined} onSubmit={(event) => handleFormDataSubmit(event, handleSubmit)} className="flex h-full min-h-0 flex-col max-md:max-h-none max-md:flex-1">
           <div className="shrink-0 bg-[#f8fafc] px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] alusa-dark:bg-[color:var(--color-bg-card)] md:px-6 md:py-5">
             <DialogTitle className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0 alusa-dark:text-[color:var(--color-text-primary)]">
               {event ? 'Editar evento' : 'Novo evento'}
@@ -410,10 +411,12 @@ export function EventFormDialog({
               Cancelar
             </Button>
             <Button type="submit" disabled={mutation.isPending} variant="wizardPrimary" className="h-10 min-h-10 w-full min-w-0 rounded-[10px] bg-[#512a82] px-5 font-normal text-white shadow-none hover:bg-[#512a82] md:w-[160px]">
-              {mutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando evento" size="sm" className="text-white" /></> : 'Salvar evento'}
+              {mutation.isPending ? 'Salvando' : 'Salvar evento'}
             </Button>
           </DialogFooter>
         </form>
+
+        <EventMutationOverlay pending={mutation.isPending} label="Salvando evento" />
       </DialogContent>
     </Dialog>
   );

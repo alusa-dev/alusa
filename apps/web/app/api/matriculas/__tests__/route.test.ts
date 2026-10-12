@@ -14,6 +14,11 @@ vi.mock('@/lib/auth-options', () => ({
 vi.mock('@/src/server/enrollments/enrollment.service', () => ({
   criarMatricula: vi.fn(),
   listarMatriculas: vi.fn(),
+  MatriculaRuleError: class MatriculaRuleError extends Error {
+    constructor(readonly code: string, message: string) {
+      super(message);
+    }
+  },
   MatriculaConflictError: class MatriculaConflictError extends Error {
     code = 'MATRICULA_CONFLICT';
   },
@@ -55,6 +60,10 @@ vi.mock('@/src/server/enrollments/enrollment-billing.orchestrator', () => ({
 }));
 
 vi.mock('@/src/server/enrollments/enrollment-billing-outbox.service', () => ({
+  isDeferredEnrollmentBillingResult: vi.fn((result: { status: string; error?: string }) =>
+    result.status === 'SKIPPED' && result.error === 'NOT_YET_EFFECTIVE',
+  ),
+  processEnrollmentBillingOutboxEvent: vi.fn(),
   enqueueEnrollmentBillingOutbox: vi.fn(async () => ({ id: 'outbox-1' })),
 }));
 

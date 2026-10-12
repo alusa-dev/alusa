@@ -4,9 +4,21 @@ import { createStandaloneCharge } from '../use-cases/create-standalone-charge';
 import { refundCobranca, requestBankSlipRefund } from '../use-cases/asaas-ops';
 import { createAsaasBillingAgreementPort } from './asaas-subscription.adapter';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
+import type { BillingOwnershipGuard } from './ports';
 
 const LEASE_MS = 5 * 60 * 1000;
 const MAX_COMPLEMENT_ATTEMPTS = 5;
+
+async function withParentOwnershipGuard<T>(
+  ownershipGuard: BillingOwnershipGuard | undefined,
+  work: () => Promise<T>,
+): Promise<T> {
+  if (!ownershipGuard) return work();
+  return prisma.$transaction(async (tx) => {
+    await ownershipGuard(tx);
+    return work();
+  }, { maxWait: 10_000, timeout: 30_000 });
+}
 
 export function decideBillingAdjustmentFailure(input: {
   type: string;
@@ -35,6 +47,7 @@ export async function processPendingBillingAdjustments(input?: {
   operationId?: string;
   limit?: number;
   now?: Date;
+  ownershipGuard?: BillingOwnershipGuard;
 }) {
   const now = input?.now ?? new Date();
   const adjustments = await prisma.billingAdjustment.findMany({
@@ -55,8 +68,10 @@ export async function processPendingBillingAdjustments(input?: {
   let failed = 0;
 
   for (const adjustment of adjustments) {
-    const claimed = await prisma.billingAdjustment.updateMany({
-      where: {
+    const claimed = await prisma.$transaction(async (tx) => {
+      if (input?.ownershipGuard) await input.ownershipGuard(tx);
+      return tx.billingAdjustment.updateMany({
+        where: {
         id: adjustment.id,
         contaId: adjustment.contaId,
         status: { in: ['PENDING', 'FAILED'] },
@@ -68,11 +83,13 @@ export async function processPendingBillingAdjustments(input?: {
         lockedAt: now,
         leaseExpiresAt: new Date(now.getTime() + LEASE_MS),
         lastAttemptAt: now,
-      },
+        },
+      });
     });
     if (claimed.count !== 1) continue;
 
     try {
+      if (input?.ownershipGuard) await input.ownershipGuard();
       const agreement = await prisma.billingAgreement.findFirst({
         where: { id: adjustment.agreementId, contaId: adjustment.contaId },
         include: { customer: true },
@@ -84,6 +101,7 @@ export async function processPendingBillingAdjustments(input?: {
       let bankSlipRefundRequestUrl: string | null = null;
 
       if (adjustment.type === 'COMPLEMENT') {
+        if (input?.ownershipGuard) await input.ownershipGuard();
         const result = await createStandaloneCharge({
           contaId: adjustment.contaId,
           payer: agreement.payerType === 'RESPONSAVEL'
@@ -100,6 +118,7 @@ export async function processPendingBillingAdjustments(input?: {
           uiRequestId: adjustment.idempotencyKey,
           actor: { type: 'SYSTEM', id: 'billing-adjustment-worker' },
         });
+        if (input?.ownershipGuard) await input.ownershipGuard();
         if (!result.success || !result.data.asaasPaymentId) {
           throw new Error(`FALHA_COBRANCA_COMPLEMENTAR:${result.success ? 'SEM_PAYMENT_ID' : result.error}`);
         }
@@ -115,6 +134,7 @@ export async function processPendingBillingAdjustments(input?: {
           contaId: adjustment.contaId,
           paymentId: charge.asaasPaymentId,
         });
+        if (input?.ownershipGuard) await input.ownershipGuard();
         if (payment.billingType === 'BOLETO') {
           if (Math.round(amount * 100) !== payment.valueCents) {
             throw new Error('ESTORNO_PARCIAL_DE_BOLETO_REQUER_REVISAO');
@@ -123,6 +143,7 @@ export async function processPendingBillingAdjustments(input?: {
             contaId: adjustment.contaId,
             paymentId: charge.asaasPaymentId,
           });
+          if (input?.ownershipGuard) await input.ownershipGuard();
           bankSlipRefundRequestUrl = request.requestUrl;
         } else {
           await refundCobranca({
@@ -131,6 +152,7 @@ export async function processPendingBillingAdjustments(input?: {
             value: amount,
             description: `Ajuste do acordo ${agreement.externalReference}`,
           });
+          if (input?.ownershipGuard) await input.ownershipGuard();
         }
         providerPaymentId = charge.asaasPaymentId;
         // O Asaas confirma o identificador/status final por webhook; guardamos
@@ -142,6 +164,7 @@ export async function processPendingBillingAdjustments(input?: {
           contaId: adjustment.contaId,
           subscriptionId: agreement.asaasSubscriptionId,
         });
+        if (input?.ownershipGuard) await input.ownershipGuard();
         const payment = payments
           .filter((item) => item.status === 'PENDING' && item.dueDate >= adjustment.effectiveAt.toISOString().slice(0, 10))
           .sort((left, right) => left.dueDate.localeCompare(right.dueDate))[0];
@@ -150,6 +173,7 @@ export async function processPendingBillingAdjustments(input?: {
         if (creditCents > payment.valueCents) throw new Error('CREDITO_MAIOR_QUE_PROXIMA_COBRANCA_REQUER_REVISAO');
         if (creditCents === payment.valueCents) {
           await asaas.deletePayment({ contaId: adjustment.contaId, paymentId: payment.id });
+          if (input?.ownershipGuard) await input.ownershipGuard();
         } else {
           await asaas.updatePayment({
             contaId: adjustment.contaId,
@@ -161,7 +185,9 @@ export async function processPendingBillingAdjustments(input?: {
                 : 'UNDEFINED',
             dueDate: payment.dueDate,
           });
+          if (input?.ownershipGuard) await input.ownershipGuard();
           const confirmed = await asaas.getPayment({ contaId: adjustment.contaId, paymentId: payment.id });
+          if (input?.ownershipGuard) await input.ownershipGuard();
           if (confirmed.valueCents !== payment.valueCents - creditCents || confirmed.status !== 'PENDING') {
             throw new Error('RESULTADO_DO_CREDITO_NAO_CONFIRMADO');
           }
@@ -170,7 +196,9 @@ export async function processPendingBillingAdjustments(input?: {
       }
 
       if (bankSlipRefundRequestUrl) {
-        await prisma.billingAdjustment.updateMany({
+        await prisma.$transaction(async (tx) => {
+          if (input?.ownershipGuard) await input.ownershipGuard(tx);
+          await tx.billingAdjustment.updateMany({
           where: { id: adjustment.id, contaId: adjustment.contaId, status: 'PROCESSING' },
           data: {
             status: 'REQUIRES_RECONCILIATION',
@@ -186,8 +214,9 @@ export async function processPendingBillingAdjustments(input?: {
             leaseExpiresAt: null,
             lastError: 'AGUARDANDO_DADOS_BANCARIOS_DO_PAGADOR',
           },
+          });
         });
-        await upsertFinanceReconciliationIssue({
+        await withParentOwnershipGuard(input?.ownershipGuard, () => upsertFinanceReconciliationIssue({
           contaId: adjustment.contaId,
           entityType: 'SUBSCRIPTION',
           entityId: adjustment.agreementId,
@@ -201,14 +230,16 @@ export async function processPendingBillingAdjustments(input?: {
             bankSlipRefundRequestUrl,
             customerActionRequired: true,
           },
-        });
+        }));
         failed += 1;
         continue;
       }
 
-      await prisma.billingAdjustment.updateMany({
-        where: { id: adjustment.id, contaId: adjustment.contaId, status: 'PROCESSING' },
-        data: {
+      await prisma.$transaction(async (tx) => {
+        if (input?.ownershipGuard) await input.ownershipGuard(tx);
+        await tx.billingAdjustment.updateMany({
+          where: { id: adjustment.id, contaId: adjustment.contaId, status: 'PROCESSING' },
+          data: {
           status: 'APPLIED',
           providerPaymentId,
           providerRefundId,
@@ -217,7 +248,8 @@ export async function processPendingBillingAdjustments(input?: {
           lockedAt: null,
           leaseExpiresAt: null,
           lastError: null,
-        },
+          },
+        });
       });
       applied += 1;
     } catch (error) {
@@ -228,18 +260,21 @@ export async function processPendingBillingAdjustments(input?: {
         message,
         now,
       });
-      await prisma.billingAdjustment.updateMany({
-        where: { id: adjustment.id, contaId: adjustment.contaId, status: 'PROCESSING' },
-        data: {
+      await prisma.$transaction(async (tx) => {
+        if (input?.ownershipGuard) await input.ownershipGuard(tx);
+        await tx.billingAdjustment.updateMany({
+          where: { id: adjustment.id, contaId: adjustment.contaId, status: 'PROCESSING' },
+          data: {
           status: failure.status,
           availableAt: failure.availableAt,
           lockedAt: null,
           leaseExpiresAt: null,
           lastError: message.slice(0, 2000),
-        },
+          },
+        });
       });
       if (failure.reconcile) {
-        await upsertFinanceReconciliationIssue({
+        await withParentOwnershipGuard(input?.ownershipGuard, () => upsertFinanceReconciliationIssue({
           contaId: adjustment.contaId,
           entityType: 'SUBSCRIPTION',
           entityId: adjustment.agreementId,
@@ -249,7 +284,7 @@ export async function processPendingBillingAdjustments(input?: {
           localStatus: 'REQUIRES_RECONCILIATION',
           remoteStatus: null,
           metadata: { adjustmentId: adjustment.id, error: message.slice(0, 1000) },
-        });
+        }));
       }
       failed += 1;
     }

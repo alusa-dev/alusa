@@ -39,11 +39,14 @@ export function SeatBlockPreviewLayer({
             <Circle radius={radius} fill="#7c3aed" stroke="#ffffff" strokeWidth={2} strokeScaleEnabled={false} />
             <Text
               x={-radius}
-              y={-6}
+              y={-radius}
               width={radius * 2}
+              height={radius * 2}
               align="center"
+              verticalAlign="middle"
+              wrap="none"
               text={seat.displayLabel}
-              fontSize={Math.max(8, radius * 0.55)}
+              fontSize={Math.max(1, radius * 0.55)}
               fill="#ffffff"
               fontStyle="bold"
               listening={false}

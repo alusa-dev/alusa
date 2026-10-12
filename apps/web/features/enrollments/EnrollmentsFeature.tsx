@@ -33,6 +33,12 @@ import Pagination from '@/components/layout/Pagination';
 import ActionConfirmationDialog from '@/components/dialogs/ActionConfirmationDialog';
 import useCurrentUser from '@/hooks/use-current-user';
 import { useMatriculas } from './hooks/use-enrollments';
+import { canCancelEnrollment } from './enrollment-action-eligibility';
+import {
+  getEnrollmentActionErrorMessage,
+  getEnrollmentPendingMessage,
+  getEnrollmentWarningMessage,
+} from './enrollment-toast-messages';
 import {
   pauseMatriculaRequest,
   reactivateMatriculaRequest,
@@ -173,17 +179,6 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
   const [loadingTaxaLinks, setLoadingTaxaLinks] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<MatriculaListItem | null>(null);
 
-  const sanitizeMessage = useCallback(
-    (message: string) =>
-      message
-        .replace(/Asaas/gi, 'financeiro')
-        .replace(/webhooks?/gi, 'atualizações automáticas')
-        .replace(/assinatura/gi, 'cobrança recorrente')
-        .replace(/provedor/gi, 'serviço financeiro')
-        .trim(),
-    [],
-  );
-
   const statusFilter = useMemo(() => {
     if (statusValue === 'ATIVO') return 'ATIVA' as MatriculaStatus;
     if (statusValue === 'INATIVO') return ['CANCELADA', 'ENCERRADA'] as MatriculaStatus[];
@@ -210,16 +205,14 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
   const composeStatusToast = useCallback(
     (baseDescription: string, info: MatriculaStatusSyncData, extras: string[] = []) => {
       const expectedMessage = info.paymentSync.expectedWebhooks.length
-        ? 'As atualizações financeiras podem levar alguns instantes para aparecer no painel.'
-        : 'As atualizações vinculadas a essa ação serão refletidas automaticamente.';
-      const warningMessage = info.paymentSync.warnings[0]
-        ? sanitizeMessage(info.paymentSync.warnings[0])
-        : '';
-      return [baseDescription, ...extras, warningMessage, expectedMessage]
+        ? 'As cobranças podem levar alguns instantes para aparecer atualizadas.'
+        : 'As cobranças serão atualizadas automaticamente.';
+      const warningMessages = info.paymentSync.warnings.map(getEnrollmentWarningMessage);
+      return [baseDescription, ...extras, ...warningMessages, expectedMessage]
         .filter((part) => part && part.trim().length > 0)
         .join(' ');
     },
-    [sanitizeMessage],
+    [],
   );
 
   const handleCopyPix = useCallback(async (pixValue: string) => {
@@ -235,12 +228,12 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           onClose={() => toast.dismiss(t)}
         />
       ));
-    } catch (error) {
+    } catch {
       toast.custom((t) => (
         <CustomToast
           variant="error"
-          title="Erro ao copiar PIX"
-          description={(error as Error).message || 'Não foi possível copiar o código copia e cola no momento.'}
+          title="Não foi possível copiar o PIX"
+          description="O navegador não permitiu copiar o código. Confira a permissão de área de transferência e tente novamente."
           onClose={() => toast.dismiss(t)}
         />
       ));
@@ -299,14 +292,14 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           'Matrícula pausada com sucesso.',
           payload.manterVaga ? 'A vaga permaneceu reservada.' : 'A vaga foi liberada para a turma.',
           payload.cobrarDurantePausa
-            ? 'A cobrança recorrente seguirá ativa durante a pausa.'
+            ? 'A cobrança mensal seguirá ativa durante a pausa.'
             : response.cobrancasFuturasRemovidas > 0
               ? `${response.cobrancasFuturasRemovidas} cobrança(s) futura(s) foram removida(s).`
               : '',
           response.integrationStatus === 'PENDENTE_SINCRONISMO'
-            ? 'A confirmação financeira depende da atualização automática da cobrança recorrente.'
+            ? 'A atualização das cobranças ainda está sendo confirmada. Confira novamente em alguns minutos.'
             : '',
-          ...response.warnings.map((warning) => sanitizeMessage(warning)),
+          ...response.warnings.map(getEnrollmentWarningMessage),
         ]
           .filter(Boolean)
           .join(' ');
@@ -323,8 +316,8 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         toast.custom((t) => (
           <CustomToast
             variant="error"
-            title="Erro ao pausar"
-            description={sanitizeMessage((error as Error).message || 'Não foi possível pausar a matrícula.')}
+            title="Não foi possível pausar"
+            description={getEnrollmentActionErrorMessage(error, 'pausar')}
             onClose={() => toast.dismiss(t)}
           />
         ));
@@ -332,7 +325,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         setActionLoading(false);
       }
     },
-    [actionLoading, reload, sanitizeMessage],
+    [actionLoading, reload],
   );
 
   const handleRetomarMatricula = useCallback(
@@ -346,9 +339,9 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           'A matrícula foi retomada com sucesso.',
           `Próximo vencimento programado para ${dateFormatter.format(new Date(payload.nextDueDate))}.`,
           response.integrationStatus === 'PENDENTE_SINCRONISMO'
-            ? 'A confirmação financeira depende da atualização automática da cobrança recorrente.'
+            ? 'A atualização das cobranças ainda está sendo confirmada. Confira novamente em alguns minutos.'
             : '',
-          ...response.warnings.map((warning) => sanitizeMessage(warning)),
+          ...response.warnings.map(getEnrollmentWarningMessage),
         ]
           .filter(Boolean)
           .join(' ');
@@ -365,8 +358,8 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         toast.custom((t) => (
           <CustomToast
             variant="error"
-            title="Erro ao retomar"
-            description={sanitizeMessage((error as Error).message || 'Não foi possível retomar a matrícula.')}
+            title="Não foi possível retomar"
+            description={getEnrollmentActionErrorMessage(error, 'retomar')}
             onClose={() => toast.dismiss(t)}
           />
         ));
@@ -374,7 +367,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         setActionLoading(false);
       }
     },
-    [actionLoading, reload, sanitizeMessage],
+    [actionLoading, reload],
   );
 
   const handleCancelarMatricula = useCallback(
@@ -387,8 +380,20 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           id: matricula.id,
           status: 'CANCELADA',
         });
+        if ('pending' in response && response.pending) {
+          toast.custom((t) => (
+            <CustomToast
+              variant="warning"
+              title="Cancelamento em andamento"
+              description={getEnrollmentPendingMessage()}
+              onClose={() => toast.dismiss(t)}
+            />
+          ));
+          await reload();
+          return;
+        }
         const description = composeStatusToast(
-          'A matrícula foi cancelada. As cobranças vinculadas serão ajustadas automaticamente.',
+          'A matrícula foi cancelada.',
           response.data,
         );
         toast.custom((t) => (
@@ -404,8 +409,8 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         toast.custom((t) => (
           <CustomToast
             variant="error"
-            title="Erro ao cancelar"
-            description={sanitizeMessage((error as Error).message || 'Não foi possível cancelar a matrícula.')}
+            title="Não foi possível cancelar"
+            description={getEnrollmentActionErrorMessage(error, 'cancelar')}
             onClose={() => toast.dismiss(t)}
           />
         ));
@@ -414,7 +419,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         setCancelTarget(null);
       }
     },
-    [actionLoading, composeStatusToast, reload, sanitizeMessage],
+    [actionLoading, composeStatusToast, reload],
   );
 
 
@@ -468,7 +473,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           }
           throw new Error(
             (errorData as { error?: { message?: string } }).error?.message ||
-              'Erro ao excluir matrícula',
+              'Não foi possível excluir esta matrícula.',
           );
         }
 
@@ -488,8 +493,8 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         toast.custom((t) => (
           <CustomToast
             variant="error"
-            title="Erro ao excluir"
-            description={sanitizeMessage((error as Error).message || 'Não foi possível excluir esta matrícula.')}
+            title="Não foi possível excluir"
+            description={getEnrollmentActionErrorMessage(error, 'excluir')}
             onClose={() => toast.dismiss(t)}
           />
         ));
@@ -498,7 +503,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         setDeleteTarget(null);
       }
     },
-    [actionLoading, contaId, reload, sanitizeMessage],
+    [actionLoading, contaId, reload],
   );
 
   // Abre o comprovante EXACT do Asaas (transactionReceiptUrl > invoiceUrl)
@@ -631,7 +636,41 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         render: (m) => {
           const billingBadge = resolveBillingProvisionBadge(m.billingProvisionStatus);
           const isUpcomingEnrollment =
-            initialTurmaId !== undefined && statusValue === 'FUTURAS' && m.status === 'ATIVA';
+            initialTurmaId !== undefined &&
+            statusValue === 'FUTURAS' &&
+            (m.status === 'ATIVA' ||
+              m.status === 'AGUARDANDO_CONFIRMACAO' ||
+              m.status === 'PENDENTE_TAXA');
+
+          if (isUpcomingEnrollment) {
+            const hasBillingError =
+              m.billingProvisionStatus === 'FALHO' ||
+              m.billingProvisionStatus === 'RESULTADO_INCERTO';
+
+            return (
+              <div className="flex flex-col items-center gap-1">
+                <Badge
+                  variant="info"
+                  size="sm"
+                  title="Matrícula futura"
+                  data-testid={`matricula-status-${m.id}`}
+                >
+                  Próxima
+                </Badge>
+                {hasBillingError && billingBadge && (
+                  <Badge
+                    variant={billingBadge.variant}
+                    size="sm"
+                    title={billingBadge.title}
+                    className="max-w-[6.5rem]"
+                    data-testid={`matricula-billing-status-${m.id}`}
+                  >
+                    {billingBadge.label}
+                  </Badge>
+                )}
+              </div>
+            );
+          }
 
           if (billingBadge) {
             return (
@@ -643,19 +682,6 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                 data-testid={`matricula-status-${m.id}`}
               >
                 {billingBadge.label}
-              </Badge>
-            );
-          }
-
-          if (isUpcomingEnrollment) {
-            return (
-              <Badge
-                variant="info"
-                size="sm"
-                title="Matrícula ativa com início futuro"
-                data-testid={`matricula-status-${m.id}`}
-              >
-                Próxima
               </Badge>
             );
           }
@@ -697,16 +723,19 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         headerClassName: 'max-lg:px-1',
         cellClassName: 'max-lg:px-1',
         render: (m) => {
-          const cobrancaBloqueante = m.cobrancas?.find((c) =>
-            COBRANCA_BLOCKING_STATUSES.includes(c.status),
+          const cobrancaBloqueante = m.cobrancas?.find((c) => COBRANCA_BLOCKING_STATUSES.includes(c.status));
+          const temHistoricoOuVinculo = Boolean(
+            m.cobrancas?.length || m.contratos?.length || m.asaasSubscriptionId || m.isSharedSubscription || m.financialContext?.mode === 'FAMILY',
           );
-          const podeExcluir = !cobrancaBloqueante;
+          const podeExcluir = !temHistoricoOuVinculo;
           const isAtiva = m.status === 'ATIVA';
           const isPausada = m.status === 'PAUSADA';
-          const podeSerCancelada = isAtiva || isPausada;
+          const podeSerCancelada = canCancelEnrollment(m.status);
           const deleteHint = cobrancaBloqueante
             ? `A exclusão permanente será analisada no clique. Há pelo menos uma cobrança ${formatTaxaStatus(cobrancaBloqueante.status)} com vencimento em ${dateFormatter.format(new Date(cobrancaBloqueante.vencimento))}.`
-            : 'Excluir matrícula permanentemente.';
+            : temHistoricoOuVinculo
+              ? 'A matrícula possui vínculo familiar, contratual ou financeiro. Cancele para preservar o histórico.'
+              : 'Excluir matrícula permanentemente.';
 
           return (
             <div className="flex justify-end" data-testid={`matricula-actions-cell-${m.id}`}>
@@ -791,7 +820,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                         setDeleteTarget(m);
                       }}
                       data-testid={`matricula-action-excluir-${m.id}`}
-                      disabled={actionLoading}
+                      disabled={actionLoading || !podeExcluir}
                       className="text-red-600 focus:text-red-700"
                       title={deleteHint}
                     >

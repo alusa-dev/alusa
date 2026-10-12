@@ -344,7 +344,11 @@ export const publicCheckoutSchema = z.object({
   buyerEmail: z.string().trim().email('Informe um e-mail válido.').max(180),
   buyerDocument: z.string().trim().min(1, 'Informe o CPF/CNPJ do comprador.').max(32)
     .refine((value) => isValidCpfCnpjDigits(value), 'Informe um CPF/CNPJ válido.'),
-  buyerPhone: z.string().trim().max(24).regex(/^\D*(?:\d\D*){10,11}$/, 'Informe um número de WhatsApp válido.'),
+  buyerPhone: z.preprocess(
+    (value) => typeof value === 'string' ? value.replace(/\D/g, '') : value,
+    z.string().max(13).regex(/^\d{10,13}$/, 'Informe um número de WhatsApp válido.'),
+  ),
+  whatsappConsent: z.boolean().optional().default(false),
   paymentMethod: z.enum(['PIX', 'CREDIT_CARD', 'BOLETO']),
 });
 

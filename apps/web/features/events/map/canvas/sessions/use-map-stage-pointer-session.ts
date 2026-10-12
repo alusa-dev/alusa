@@ -10,6 +10,7 @@ import { getCreationBox, getSeatBlockConfigForBounds, isCreationTool, isPlacemen
 
 export function useMapStagePointerSession({
   readOnly,
+  textEditorActive = false,
   tool,
   map,
   levelId,
@@ -29,6 +30,7 @@ export function useMapStagePointerSession({
   setMarqueeDraft,
 }: {
   readOnly: boolean;
+  textEditorActive?: boolean;
   tool: MapTool;
   map: EventMapDTO | null;
   levelId: string | undefined;
@@ -50,7 +52,7 @@ export function useMapStagePointerSession({
 }) {
   const additiveMarqueeRef = useRef(false);
   const handleStageMouseDown = useCallback((event: { target: Konva.Node; evt?: Pick<MouseEvent, 'shiftKey' | 'ctrlKey' | 'metaKey'> }) => {
-    if (readOnly) return;
+    if (readOnly || textEditorActive) return;
     const point = getPointerPoint();
     if (!point) return;
 
@@ -76,9 +78,10 @@ export function useMapStagePointerSession({
     }
     setIndividualSeatDragId(null);
     setSelection(levelId ? [{ type: 'level', id: levelId }] : []);
-  }, [addRowAt, getPointerPoint, levelId, readOnly, setCreationDraft, setIndividualSeatDragId, setMarqueeDraft, setSelection, tool]);
+  }, [addRowAt, getPointerPoint, levelId, readOnly, setCreationDraft, setIndividualSeatDragId, setMarqueeDraft, setSelection, textEditorActive, tool]);
 
   const handleStageMouseMove = useCallback(() => {
+    if (textEditorActive) return;
     if (marqueeDraft && tool === 'select') {
       const point = getPointerPoint();
       if (point) setMarqueeDraft((draft) => (draft ? { ...draft, current: point } : null));
@@ -87,9 +90,10 @@ export function useMapStagePointerSession({
     if (!creationDraft) return;
     const point = getPointerPoint();
     if (point) setCreationDraft((draft) => (draft ? { ...draft, current: point } : null));
-  }, [creationDraft, getPointerPoint, marqueeDraft, setCreationDraft, setMarqueeDraft, tool]);
+  }, [creationDraft, getPointerPoint, marqueeDraft, setCreationDraft, setMarqueeDraft, textEditorActive, tool]);
 
   const handleStageMouseUp = useCallback((event?: { evt?: Pick<MouseEvent, 'shiftKey' | 'ctrlKey' | 'metaKey'> }) => {
+    if (textEditorActive) return;
     const activeLevel = map?.levels.find((level) => level.id === levelId);
     const isInsideArtboard = (point: { x: number; y: number } | null) =>
       Boolean(point && (!activeLevel || (point.x >= 0 && point.y >= 0 && point.x <= activeLevel.widthPx && point.y <= activeLevel.heightPx)));
@@ -173,7 +177,7 @@ export function useMapStagePointerSession({
       return;
     }
     addObjectAt(draft.tool, { x: box.x, y: box.y }, { width: Math.max(20, box.width), height: Math.max(20, box.height) });
-  }, [addObjectAt, addSeatBlockAt, creationDraft, getMarqueeSelection, getPointerPoint, levelId, map?.levels, map?.referenceChart?.calibration, map?.seats.length, marqueeDraft, openNewTextEditor, seatBlockDefaults, selection, setCreationDraft, setMarqueeDraft, setSelection, tool]);
+  }, [addObjectAt, addSeatBlockAt, creationDraft, getMarqueeSelection, getPointerPoint, levelId, map?.levels, map?.referenceChart?.calibration, map?.seats.length, marqueeDraft, openNewTextEditor, seatBlockDefaults, selection, setCreationDraft, setMarqueeDraft, setSelection, textEditorActive, tool]);
 
   const handleStageClick = useCallback(() => undefined, []);
 

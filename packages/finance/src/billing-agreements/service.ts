@@ -21,6 +21,7 @@ import type {
   BillingRemoteProgress,
   CommitBillingAgreementChangeInput,
 } from './types';
+import type { BillingOwnershipGuard } from './ports';
 
 const DEFAULT_PREVIEW_TTL_MS = 10 * 60 * 1000;
 
@@ -38,6 +39,7 @@ function withoutCommitMetadata(input: CommitBillingAgreementChangeInput): Billin
     previewHash: _previewHash,
     previewExpiresAt: _previewExpiresAt,
     expectedAgreementVersion: _expectedAgreementVersion,
+    agreementLeaseToken: _agreementLeaseToken,
     ...change
   } = input;
   return change;
@@ -122,12 +124,13 @@ async function updateEligiblePendingPayments(input: {
   contaId: string;
   plan: BillingAgreementPlan;
   payments: AsaasSubscriptionPaymentSnapshot[];
+  assertLeaseOwned: () => Promise<void>;
 }): Promise<void> {
   const targets = new Map(
     input.plan.chargeImpacts
       .filter(
         (impact) =>
-          impact.action === 'UPDATE_WITH_SUBSCRIPTION' &&
+          (impact.action === 'UPDATE_WITH_SUBSCRIPTION' || impact.action === 'UPDATE_PAYMENT') &&
           impact.providerPaymentId &&
           impact.targetAmountCents !== null,
       )
@@ -163,6 +166,7 @@ async function updateEligiblePendingPayments(input: {
         { paymentId: payment.id, billingType: fresh.billingType },
       );
     }
+    await input.assertLeaseOwned();
     await input.deps.asaas.updatePayment({
       contaId: input.contaId,
       paymentId: payment.id,
@@ -192,6 +196,7 @@ async function cancelEligiblePendingPayments(input: {
   contaId: string;
   impacts: BillingChargeImpact[];
   actualPayments: AsaasSubscriptionPaymentSnapshot[];
+  assertLeaseOwned: () => Promise<void>;
 }): Promise<void> {
   const requestedIds = new Set(
     input.impacts
@@ -220,6 +225,7 @@ async function cancelEligiblePendingPayments(input: {
         { paymentId: payment.id, status: fresh.status },
       );
     }
+    await input.assertLeaseOwned();
     await input.deps.asaas.deletePayment({ contaId: input.contaId, paymentId: payment.id });
     if (!(await getPaymentAfterDelete({ deps: input.deps, contaId: input.contaId, paymentId: payment.id }))) {
       throw new BillingAgreementError(
@@ -243,6 +249,7 @@ async function createOrRecoverSubscription(input: {
   idempotencyKey: string;
   externalReference: string;
   nextDueDate?: string;
+  assertLeaseOwned: () => Promise<void>;
 }): Promise<AsaasSubscriptionSnapshot> {
   const existing = await input.deps.asaas.findSubscriptionByExternalReference({
     contaId: input.contaId,
@@ -265,6 +272,7 @@ async function createOrRecoverSubscription(input: {
   if (!nextDueDate) {
     throw new BillingAgreementError('INVALID_INPUT', 'A assinatura exige a data do próximo vencimento.');
   }
+  await input.assertLeaseOwned();
   const created = await input.deps.asaas.createSubscription({
     contaId: input.contaId,
     customerId: input.plan.payer.customerId,
@@ -303,6 +311,7 @@ async function executeRemotePlan(input: {
   operationId: string;
   progress: BillingRemoteProgress[];
   onProgress: (_progress: BillingRemoteProgress[]) => Promise<void>;
+  assertLeaseOwned: () => Promise<void>;
 }): Promise<BillingRemoteProgress> {
   const { plan, context, deps, contaId } = input;
   const previousSubscriptionId = context.agreement.asaasSubscriptionId;
@@ -336,6 +345,7 @@ async function executeRemotePlan(input: {
         input.change.kind === 'RESUME_AGREEMENT' || input.change.kind === 'RESUME_ALLOCATION'
           ? input.change.nextDueDate
           : undefined,
+      assertLeaseOwned: input.assertLeaseOwned,
     });
     return { ...baseProgress, resultingSubscriptionId: created.id, confirmed: true };
   }
@@ -354,15 +364,58 @@ async function executeRemotePlan(input: {
       allowDesiredAmount: true,
     });
   }
+  const replaceForRemovedEndDate =
+    input.change.kind === 'REMOVE_ALLOCATION' &&
+    plan.resultingAmountCents > 0 &&
+    plan.agreementValidUntil === null &&
+    Boolean(before.endDate);
   const paymentsBefore = subscriptionAlreadyDeleted
     ? []
     : await deps.asaas.listSubscriptionPayments({
         contaId,
         subscriptionId: previousSubscriptionId,
       });
+  const hasRemoteOverduePayment = paymentsBefore.some(
+    (payment) => payment.status === 'OVERDUE' && !payment.deleted,
+  );
+  const pauseForOverdue = async () => {
+    const current = await deps.asaas.getSubscription({ contaId, subscriptionId: previousSubscriptionId });
+    if (current.status !== 'INACTIVE') {
+      await input.assertLeaseOwned();
+      await deps.asaas.updateSubscription({
+        contaId,
+        subscriptionId: previousSubscriptionId,
+        valueCents: current.valueCents,
+        updatePendingPayments: false,
+        status: 'INACTIVE',
+      });
+    }
+    const confirmed = await deps.asaas.getSubscription({ contaId, subscriptionId: previousSubscriptionId });
+    if (confirmed.deleted || confirmed.status !== 'INACTIVE') {
+      throw new BillingAgreementError(
+        'REMOTE_OPERATION_UNCERTAIN',
+        'A assinatura possui cobrança vencida, mas sua inativação não pôde ser confirmada; a dívida foi preservada.',
+      );
+    }
+    return confirmed;
+  };
 
-  if (plan.remoteAction === 'REPLACE_SUBSCRIPTION') {
-    const externalReference = replacementExternalReference(context.agreement, plan.payer.customerId);
+  if (plan.remoteAction === 'REPLACE_SUBSCRIPTION' || replaceForRemovedEndDate) {
+    if (hasRemoteOverduePayment) {
+      await pauseForOverdue();
+      await input.onProgress([
+        ...input.progress.filter((item) => item.agreementId !== plan.agreementId),
+        {
+          ...baseProgress,
+          action: 'PAUSE_SUBSCRIPTION',
+          resultingSubscriptionId: previousSubscriptionId,
+          confirmed: true,
+        },
+      ]);
+    }
+    const externalReference = replaceForRemovedEndDate
+      ? `${context.agreement.externalReference}:end-date:${stableFinancialHash(input.change.uiRequestId).slice(0, 12)}`
+      : replacementExternalReference(context.agreement, plan.payer.customerId);
     const replacement = await createOrRecoverSubscription({
       deps,
       context,
@@ -370,9 +423,12 @@ async function executeRemotePlan(input: {
       contaId,
       idempotencyKey: stableFinancialHash(`${contaId}:${input.change.uiRequestId}:${plan.agreementId}:replace`),
       externalReference,
+      nextDueDate: replaceForRemovedEndDate ? before.nextDueDate : undefined,
+      assertLeaseOwned: input.assertLeaseOwned,
     });
     const replacementProgress: BillingRemoteProgress = {
       ...baseProgress,
+      action: 'REPLACE_SUBSCRIPTION',
       resultingSubscriptionId: replacement.id,
       confirmed: false,
     };
@@ -402,16 +458,33 @@ async function executeRemotePlan(input: {
           'A nova assinatura foi criada, mas as cobranças equivalentes ainda não foram confirmadas. A antiga foi preservada.',
         );
       }
+      const pendingImpacts = hasRemoteOverduePayment
+        ? paymentsBefore
+            .filter((payment) => payment.status === 'PENDING' && !payment.deleted)
+            .map((payment) => ({
+              chargeId: `remote:${payment.id}`,
+              providerPaymentId: payment.id,
+              status: 'PENDING' as const,
+              dueDate: payment.dueDate,
+              amountCents: payment.valueCents,
+              targetAmountCents: null,
+              action: 'CANCEL_PENDING' as const,
+            }))
+        : plan.chargeImpacts;
       await cancelEligiblePendingPayments({
         deps,
         contaId,
-        impacts: plan.chargeImpacts,
+        impacts: pendingImpacts,
         actualPayments: paymentsBefore,
+        assertLeaseOwned: input.assertLeaseOwned,
       });
     }
-    await deps.asaas.deleteSubscription({ contaId, subscriptionId: previousSubscriptionId });
-    if (!(await getAfterDelete({ deps, contaId, subscriptionId: previousSubscriptionId }))) {
-      throw new BillingAgreementError('REMOTE_OPERATION_UNCERTAIN', 'A assinatura anterior não foi encerrada.');
+    if (!hasRemoteOverduePayment) {
+      await input.assertLeaseOwned();
+      await deps.asaas.deleteSubscription({ contaId, subscriptionId: previousSubscriptionId });
+      if (!(await getAfterDelete({ deps, contaId, subscriptionId: previousSubscriptionId }))) {
+        throw new BillingAgreementError('REMOTE_OPERATION_UNCERTAIN', 'A assinatura anterior não foi encerrada.');
+      }
     }
     return { ...replacementProgress, confirmed: true };
   }
@@ -420,7 +493,28 @@ async function executeRemotePlan(input: {
     if (plan.resultingAmountCents !== 0) {
       throw new BillingAgreementError('INVALID_INPUT', 'A assinatura só pode ser removida com total zero.');
     }
+    if (hasRemoteOverduePayment && !subscriptionAlreadyDeleted) {
+      await pauseForOverdue();
+      await input.onProgress([
+        ...input.progress.filter((item) => item.agreementId !== plan.agreementId),
+        {
+          ...baseProgress,
+          action: 'PAUSE_SUBSCRIPTION',
+          resultingSubscriptionId: previousSubscriptionId,
+          confirmed: true,
+        },
+      ]);
+      await cancelEligiblePendingPayments({
+        deps,
+        contaId,
+        impacts: plan.chargeImpacts,
+        actualPayments: paymentsBefore,
+        assertLeaseOwned: input.assertLeaseOwned,
+      });
+      return { ...baseProgress, action: 'PAUSE_SUBSCRIPTION', resultingSubscriptionId: previousSubscriptionId, confirmed: true };
+    }
     if (!subscriptionAlreadyDeleted) {
+      await input.assertLeaseOwned();
       await deps.asaas.deleteSubscription({ contaId, subscriptionId: previousSubscriptionId });
       if (!(await getAfterDelete({ deps, contaId, subscriptionId: previousSubscriptionId }))) {
         throw new BillingAgreementError('REMOTE_OPERATION_UNCERTAIN', 'A remoção da assinatura não foi confirmada.');
@@ -431,6 +525,7 @@ async function executeRemotePlan(input: {
       contaId,
       impacts: plan.chargeImpacts,
       actualPayments: paymentsBefore,
+      assertLeaseOwned: input.assertLeaseOwned,
     });
     return { ...baseProgress, resultingSubscriptionId: null, confirmed: true };
   }
@@ -457,6 +552,7 @@ async function executeRemotePlan(input: {
     (!status || before.status === status) &&
     (!targetEndDate || before.endDate === targetEndDate);
   if (!alreadyConfirmed) {
+    await input.assertLeaseOwned();
     await deps.asaas.updateSubscription({
       contaId,
       subscriptionId: previousSubscriptionId,
@@ -485,13 +581,14 @@ async function executeRemotePlan(input: {
   ) {
     throw new BillingAgreementError('REMOTE_OPERATION_UNCERTAIN', 'A atualização da assinatura não pôde ser confirmada.');
   }
-  await updateEligiblePendingPayments({ deps, contaId, plan, payments: paymentsBefore });
+  await updateEligiblePendingPayments({ deps, contaId, plan, payments: paymentsBefore, assertLeaseOwned: input.assertLeaseOwned });
   if (plan.remoteAction === 'PAUSE_SUBSCRIPTION') {
     await cancelEligiblePendingPayments({
       deps,
       contaId,
       impacts: plan.chargeImpacts,
       actualPayments: paymentsBefore,
+      assertLeaseOwned: input.assertLeaseOwned,
     });
   }
   return { ...baseProgress, confirmed: true };
@@ -554,7 +651,7 @@ export function createBillingAgreementLifecycleService(deps: BillingAgreementLif
     };
   }
 
-  async function commit(input: CommitBillingAgreementChangeInput): Promise<BillingAgreementChangeResult> {
+  async function commit(input: CommitBillingAgreementChangeInput, ownershipGuard?: BillingOwnershipGuard): Promise<BillingAgreementChangeResult> {
     if (!input.uiRequestId.trim()) {
       throw new BillingAgreementError('INVALID_INPUT', 'uiRequestId é obrigatório.');
     }
@@ -571,7 +668,8 @@ export function createBillingAgreementLifecycleService(deps: BillingAgreementLif
     const locked = await deps.lock.withAgreementLocks({
       contaId: change.contaId,
       agreementIds,
-      run: async () => {
+      ...(input.agreementLeaseToken ? { leaseToken: input.agreementLeaseToken } : {}),
+      run: async (assertLeaseOwned) => {
         const existing = await deps.repository.getOperationByRequest({
           contaId: change.contaId,
           uiRequestId: input.uiRequestId,
@@ -633,6 +731,7 @@ export function createBillingAgreementLifecycleService(deps: BillingAgreementLif
               correlationId,
               change,
               preview: freshPreview,
+              ...(ownershipGuard ? { ownershipGuard } : {}),
             });
         if (reserved.outcome === 'CONFLICT') {
           throw new BillingAgreementError('IDEMPOTENCY_CONFLICT', 'Conflito de idempotência financeira.');
@@ -641,6 +740,7 @@ export function createBillingAgreementLifecycleService(deps: BillingAgreementLif
         let progress = [...operation.remoteProgress];
         try {
           for (const plan of freshPreview.plans) {
+            await assertLeaseOwned();
             const context =
               plan.agreementId === contexts.source.agreement.id ? contexts.source : contexts.target;
             if (!context) {
@@ -656,26 +756,37 @@ export function createBillingAgreementLifecycleService(deps: BillingAgreementLif
               progress,
               onProgress: async (nextProgress) => {
                 progress = nextProgress;
+                await assertLeaseOwned();
                 await deps.repository.recordRemoteProgress({
                   contaId: change.contaId,
                   operationId: operation.id,
                   progress,
+                  ...(ownershipGuard ? { ownershipGuard } : {}),
                 });
               },
+              assertLeaseOwned,
             });
             progress = [
               ...progress.filter((item) => item.agreementId !== confirmed.agreementId),
               confirmed,
             ];
+            // Stop before any subsequent plan if a remote call outlived its
+            // lease. The in-memory progress above lets the catch path persist
+            // the operation as uncertain instead of retrying blindly.
+            await assertLeaseOwned();
             await deps.repository.recordRemoteProgress({
               contaId: change.contaId,
               operationId: operation.id,
               progress,
+              ...(ownershipGuard ? { ownershipGuard } : {}),
             });
           }
           const expectedVersions = Object.fromEntries(
             freshPreview.plans.map((plan) => [plan.agreementId, plan.sourceVersion]),
           );
+          // Remote side effects are complete. Fence the local projection against
+          // a lease that expired or was taken over while the provider was slow.
+          await assertLeaseOwned();
           const result = await deps.repository.applyConfirmedChange({
             contaId: change.contaId,
             operationId: operation.id,
@@ -685,6 +796,7 @@ export function createBillingAgreementLifecycleService(deps: BillingAgreementLif
             remoteProgress: progress,
             adjustments: freshPreview.adjustments,
             correlationId,
+            ...(ownershipGuard ? { ownershipGuard } : {}),
           });
           await deps.audit.record({
             contaId: change.contaId,
@@ -711,6 +823,7 @@ export function createBillingAgreementLifecycleService(deps: BillingAgreementLif
               errorCode: error instanceof BillingAgreementError ? error.code : 'REMOTE_OPERATION_UNCERTAIN',
               errorMessage: error instanceof Error ? error.message : String(error),
               remoteProgress: progress,
+              ...(ownershipGuard ? { ownershipGuard } : {}),
             });
             return {
               operationId: operation.id,
@@ -733,6 +846,7 @@ export function createBillingAgreementLifecycleService(deps: BillingAgreementLif
             operationId: operation.id,
             errorCode: error instanceof BillingAgreementError ? error.code : 'REMOTE_OPERATION_FAILED',
             errorMessage: error instanceof Error ? error.message : String(error),
+            ...(ownershipGuard ? { ownershipGuard } : {}),
           });
           throw error;
         }

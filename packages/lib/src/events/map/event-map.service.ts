@@ -1,4 +1,4 @@
-import { Prisma, PrismaClient, type EventMapPublicSeatStatus } from '@prisma/client';
+import { EventTicketWhatsAppPurchaseType, Prisma, PrismaClient, type EventMapPublicSeatStatus } from '@prisma/client';
 
 import {
   canCreateEventMap,
@@ -18,6 +18,7 @@ import type { EventMapDocument, MapReferenceChart, MapSeatBlock, MapSeatRow } fr
 import { prisma } from '../../prisma';
 import { assertEventTicketSalesOpen, EventsError, type EventsContext } from '../events.service';
 import { enqueueEventTicketEmail } from '../ticket-email-outbox';
+import { enqueueEventTicketWhatsAppNotification, EVENT_TICKET_WHATSAPP_CONSENT_VERSION } from '../ticket-whatsapp-notification';
 import { createCheckInCode, toCheckInCode } from './ticket-code';
 import {
   isTicketPaymentBlocked,
@@ -1927,6 +1928,7 @@ export async function getEventMapOrderTicketsForAdmin(contaId: string, orderId: 
 }
 
 const PUBLIC_ORDER_RESEND_EMAIL_WINDOW_MS = 60 * 60 * 1000;
+const EVENT_TICKET_WHATSAPP_RESEND_WINDOW_MS = 15 * 60 * 1000;
 
 async function countRecentOrderAuditActions(
   contaId: string,
@@ -2011,6 +2013,52 @@ export async function requestPublicOrderTicketEmailResend(orderId: string, acces
   return { ok: true as const, orderId: order.id, buyerEmail: order.buyerEmail };
 }
 
+export async function requestPublicOrderTicketWhatsAppResend(ctx: EventsContext, eventId: string, orderId: string) {
+  return prisma.$transaction(async (tx) => {
+    const [locked] = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "EventMapOrder"
+      WHERE "id" = ${orderId} AND "eventId" = ${eventId} AND "contaId" = ${ctx.contaId}
+      FOR UPDATE
+    `;
+    if (!locked) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido não encontrado.', 404);
+    const order = await tx.eventMapOrder.findFirst({
+      where: { id: orderId, eventId, contaId: ctx.contaId },
+      select: {
+        id: true, status: true, paymentStatus: true, ticketFulfillmentStatus: true,
+        buyerPhone: true, whatsappOptInAt: true, whatsappOptInSource: true, whatsappOptOutAt: true,
+        tickets: { where: { status: { in: ['VALID', 'USED'] } }, select: { id: true } },
+      },
+    });
+    if (!order) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido não encontrado.', 404);
+    if (order.status !== 'CONFIRMED' || order.ticketFulfillmentStatus !== 'ISSUED' || isTicketPaymentBlocked(order.paymentStatus) || order.tickets.length === 0) {
+      throw new EventsError('INGRESSOS_INDISPONIVEIS', 'O reenvio exige pagamento confirmado e ingressos emitidos.', 409);
+    }
+    if (!order.buyerPhone || !order.whatsappOptInAt || !order.whatsappOptInSource || order.whatsappOptOutAt) {
+      throw new EventsError('WHATSAPP_SEM_CONSENTIMENTO', 'Este pedido não possui telefone com autorização registrada para WhatsApp.', 409);
+    }
+    const recentResends = await tx.auditLog.count({
+      where: {
+        contaId: ctx.contaId, entityType: 'EventMapOrder', entityId: order.id,
+        action: 'events.ticket.whatsapp.queued',
+        createdAt: { gte: new Date(Date.now() - EVENT_TICKET_WHATSAPP_RESEND_WINDOW_MS) },
+      },
+    });
+    if (recentResends >= 3) throw new EventsError('LIMITE_REENVIO_WHATSAPP', 'Limite de reenvios atingido. Aguarde alguns minutos.', 429);
+    const result = await enqueueEventTicketWhatsAppNotification(tx, {
+      contaId: ctx.contaId,
+      purchaseType: EventTicketWhatsAppPurchaseType.PUBLIC_ORDER,
+      purchaseId: order.id,
+      recipientPhone: order.buyerPhone,
+      consentVersion: EVENT_TICKET_WHATSAPP_CONSENT_VERSION,
+      consentSource: order.whatsappOptInSource,
+      consentRecordedAt: order.whatsappOptInAt,
+      actorUserId: ctx.userId,
+      deliveryKey: globalThis.crypto.randomUUID(),
+    });
+    return { queued: result.queued };
+  });
+}
+
 export async function listEventPublicMapOrdersForAdmin(
   contaId: string,
   eventId: string,
@@ -2042,6 +2090,10 @@ export async function listEventPublicMapOrdersForAdmin(
       id: true,
       buyerName: true,
       buyerEmail: true,
+      buyerPhone: true,
+      whatsappOptInAt: true,
+      whatsappOptInSource: true,
+      whatsappOptOutAt: true,
       totalAmount: true,
       status: true,
       ticketFulfillmentStatus: true,
@@ -2098,6 +2150,7 @@ export async function listEventPublicMapOrdersForAdmin(
     id: order.id,
     buyerName: order.buyerName,
     buyerEmail: order.buyerEmail,
+    whatsappAvailable: Boolean(order.buyerPhone && order.whatsappOptInAt && order.whatsappOptInSource && !order.whatsappOptOutAt),
     totalAmount: toMoney(order.totalAmount),
     status: order.status,
     ticketFulfillmentStatus: order.ticketFulfillmentStatus,

@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import { eventMapDocumentSchema } from './event-map.schema.js';
+import { eventMapDocumentSchema, publicCheckoutSchema } from './event-map.schema.js';
+
+describe('public ticket checkout consent', () => {
+  const checkout = {
+    reservationId: 'reservation-1', holdToken: 'hold-token-123', buyerName: 'Pessoa',
+    buyerEmail: 'pessoa@example.com', buyerDocument: '52998224725', buyerPhone: '11999999999',
+    paymentMethod: 'PIX' as const,
+  };
+
+  it('allows checkout without consent and defaults missing consent to false', () => {
+    expect(publicCheckoutSchema.parse({ ...checkout, whatsappConsent: false }).whatsappConsent).toBe(false);
+    expect(publicCheckoutSchema.parse(checkout).whatsappConsent).toBe(false);
+    expect(publicCheckoutSchema.parse({ ...checkout, whatsappConsent: true }).whatsappConsent).toBe(true);
+  });
+});
 
 describe('event map document schema', () => {
   it('preserves per-seat row labels and seat numbers when parsing a saved document', () => {

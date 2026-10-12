@@ -4,6 +4,7 @@ import {
   getEnrollmentHistoryStatusLabel,
   getEnrollmentHistoryStatusVariant,
 } from '../enrollment-history-status';
+import { canCancelEnrollment } from '../enrollment-action-eligibility';
 
 describe('enrollment history status', () => {
   const timeZone = 'America/Sao_Paulo';
@@ -23,12 +24,17 @@ describe('enrollment history status', () => {
     expect(getEnrollmentHistoryStatusLabel('ATIVA', start, timeZone, now)).toBe('Ativa');
   });
 
-  it('shows tomorrow as upcoming and preserves non-active status labels', () => {
+  it('shows tomorrow as upcoming for an active enrollment', () => {
     const now = new Date('2026-09-07T04:30:00.000Z');
 
     expect(
       getEnrollmentHistoryStatusLabel('ATIVA', '2026-09-08T12:00:00.000Z', timeZone, now),
     ).toBe('Próxima');
+  });
+
+  it('preserves the paused label for a paused enrollment with a future start date', () => {
+    const now = new Date('2026-09-07T04:30:00.000Z');
+
     expect(
       getEnrollmentHistoryStatusLabel('PAUSADA', '2026-09-08T12:00:00.000Z', timeZone, now),
     ).toBe('Pausada');
@@ -43,5 +49,12 @@ describe('enrollment history status', () => {
     expect(
       getEnrollmentHistoryStatusLabel('ATIVA', '2026-09-08T12:00:00.000Z', 'America/Manaus', now),
     ).toBe('Próxima');
+  });
+});
+
+describe('enrollment action eligibility', () => {
+  it('allows cancellation of upcoming enrollments and excludes terminal enrollments', () => {
+    expect(canCancelEnrollment('AGUARDANDO_CONFIRMACAO')).toBe(true);
+    expect(canCancelEnrollment('CANCELADA')).toBe(false);
   });
 });

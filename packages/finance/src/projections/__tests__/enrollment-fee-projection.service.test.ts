@@ -226,4 +226,43 @@ describe('enrollment fee projection', () => {
       }),
     ).rejects.toThrow('FAMILY_FEE_PAYER_MISMATCH');
   });
+
+  it('preserva a taxa paga sem ativar matrícula familiar antes de dataInicio', async () => {
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(0),
+      matricula: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: 'mat-future', alunoId: 'aluno-1', aluno: { status: 'ATIVO' },
+          status: 'PENDENTE_TAXA', taxaStatus: 'PENDENTE', statusFinanceiro: 'PENDENTE_TAXA',
+          dataInicio: new Date('2099-11-01T00:00:00.000Z'), version: 1,
+        }),
+        findMany: vi.fn(),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      cobranca: { findFirst: vi.fn().mockResolvedValue(null) },
+      charge: { findFirst: vi.fn().mockResolvedValue(null) },
+      conta: { findUnique: vi.fn().mockResolvedValue({ matriculaActivationPolicy: 'REQUIRES_PAYMENT', timezone: 'America/Manaus' }) },
+      platformBillingAccount: { findUnique: vi.fn() },
+      matriculaOperacao: { updateMany: vi.fn(), upsert: vi.fn() },
+      matriculaLog: { create: vi.fn() },
+    };
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue({
+      id: 'fee-future', matriculaId: 'mat-future', status: 'PAGO',
+    } as never);
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback) =>
+      (callback as (client: typeof tx) => Promise<unknown>)(tx),
+    );
+
+    await projectAcademicEnrollmentFeeState({
+      contaId: 'conta-a', cobrancaId: 'fee-future', eventName: 'PAYMENT_RECEIVED',
+    });
+
+    expect(tx.matricula.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ taxaStatus: 'PAGO', statusFinanceiro: 'ADIMPLENTE' }),
+    }));
+    expect(tx.matricula.updateMany).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'ATIVA' }),
+    }));
+    expect(tx.platformBillingAccount.findUnique).not.toHaveBeenCalled();
+  });
 });

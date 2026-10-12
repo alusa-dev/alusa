@@ -10,7 +10,9 @@ import type { TextEditorState } from '../render/text-editor-layout';
 export function useMapTextEditorCommit({
   textEditor,
   textEditSnapshotRef,
+  textEditorFocusKeyRef,
   map,
+  setTool,
   setTextEditor,
   setInlineTextEditorActive,
   addObjectAt,
@@ -19,7 +21,9 @@ export function useMapTextEditorCommit({
 }: {
   textEditor: TextEditorState | null;
   textEditSnapshotRef: MutableRefObject<string | null>;
+  textEditorFocusKeyRef: MutableRefObject<string | null>;
   map: EventMapDTO | null;
+  setTool: (_tool: MapTool) => void;
   setTextEditor: Dispatch<SetStateAction<TextEditorState | null>>;
   setInlineTextEditorActive: (active: boolean) => void;
   addObjectAt: (
@@ -35,6 +39,7 @@ export function useMapTextEditorCommit({
     if (!textEditor.value.trim()) {
       if (textEditor.objectId) deleteObject(textEditor.objectId);
       setInlineTextEditorActive(false);
+      textEditorFocusKeyRef.current = null;
       setTextEditor(null);
       return;
     }
@@ -63,6 +68,7 @@ export function useMapTextEditorCommit({
       );
       if (!createdId) {
         setInlineTextEditorActive(false);
+        textEditorFocusKeyRef.current = null;
         setTextEditor(null);
         return;
       }
@@ -72,6 +78,9 @@ export function useMapTextEditorCommit({
         data: nextData,
       });
       setInlineTextEditorActive(false);
+      // Clear synchronously so a replacement editor can focus even when React
+      // batches the close/open transitions before the null-effect runs.
+      textEditorFocusKeyRef.current = null;
       setTextEditor(null);
       return;
     }
@@ -85,6 +94,7 @@ export function useMapTextEditorCommit({
       },
     });
     setInlineTextEditorActive(false);
+    textEditorFocusKeyRef.current = null;
     setTextEditor(null);
   }, [
     addObjectAt,
@@ -92,6 +102,7 @@ export function useMapTextEditorCommit({
     map?.objects,
     setInlineTextEditorActive,
     setTextEditor,
+    textEditorFocusKeyRef,
     textEditor,
     updateObject,
   ]);
@@ -108,8 +119,14 @@ export function useMapTextEditorCommit({
       });
     }
     setInlineTextEditorActive(false);
+    textEditorFocusKeyRef.current = null;
     setTextEditor(null);
-  }, [map?.objects, setInlineTextEditorActive, setTextEditor, textEditSnapshotRef, textEditor, updateObject]);
+  }, [map?.objects, setInlineTextEditorActive, setTextEditor, textEditSnapshotRef, textEditor, textEditorFocusKeyRef, updateObject]);
+
+  const handleTextEditorBlur = useCallback(() => {
+    commitTextEditor();
+    setTool('select');
+  }, [commitTextEditor, setTool]);
 
   const handleTextEditorKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -135,6 +152,7 @@ export function useMapTextEditorCommit({
   return {
     commitTextEditor,
     cancelTextEditor,
+    handleTextEditorBlur,
     handleTextEditorKeyDown,
   };
 }

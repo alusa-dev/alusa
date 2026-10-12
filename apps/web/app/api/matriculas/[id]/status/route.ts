@@ -13,7 +13,11 @@ import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-lo
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { ManualSyncError } from '@/src/server/enrollments/enrollment-sync.service';
-import { syncMatriculaStatusFromHttp } from '@/src/server/enrollments/enrollment-http-commands.service';
+import {
+  resolveDeferredCancellationFromHttp,
+  resolvePendingCancellationFromHttp,
+  syncMatriculaStatusFromHttp,
+} from '@/src/server/enrollments/enrollment-http-commands.service';
 import { notifyMatriculaAction } from '@alusa/lib/notifications/matricula-notifications';
 import { updateMatriculaStatusSyncInputDTOSchema } from '@/features/enrollments/dtos';
 import { mapMatriculaStatusSyncResultToDTO } from '@/features/enrollments/mappers';
@@ -35,11 +39,14 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  let tenantContaId: string | null = null;
+  let requestedMatriculaId: string | null = null;
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
+    tenantContaId = auth.contaId;
     if (!auth.role || !allowedRoles.has(String(auth.role).toUpperCase())) {
       return NextResponse.json(
         {
@@ -60,6 +67,7 @@ export async function PATCH(
 
     const rawParams = await params;
     const matriculaId = rawParams.id;
+    requestedMatriculaId = matriculaId;
     const parsedBody = updateMatriculaStatusSyncInputDTOSchema.safeParse(await request.json());
     if (!parsedBody.success) {
       return NextResponse.json({ error: 'Status inválido' }, { status: 400 });
@@ -86,15 +94,25 @@ export async function PATCH(
     });
 
     if (result.deferred) {
+      const pendingCancellation = await resolveDeferredCancellationFromHttp({
+        contaId: auth.contaId,
+        matriculaId,
+      });
       return NextResponse.json(
         {
           success: true,
           pending: true,
-          code: 'CANCELAMENTO_AGUARDANDO_PROVISIONAMENTO',
-          message:
-            'O cancelamento foi registrado e será concluído após a operação financeira em andamento.',
+          retryable: true,
+          code: result.deferredReason?.startsWith('RECONCILIATION_REQUIRED:')
+            ? 'CANCELAMENTO_PENDENTE_RECONCILIACAO'
+            : 'CANCELAMENTO_AGUARDANDO_PROVISIONAMENTO',
+          message: result.deferredReason?.startsWith('RECONCILIATION_REQUIRED:')
+            ? 'A intenção de cancelamento foi registrada. O resultado financeiro ainda precisa ser reconciliado antes da conclusão acadêmica.'
+            : 'O cancelamento foi registrado e será concluído após a operação financeira em andamento.',
           matriculaId,
           status: result.previousStatus,
+          operationId: pendingCancellation.operationId,
+          correlationId: pendingCancellation.correlationId,
         },
         { status: 202, headers: { 'cache-control': 'no-store' } },
       );
@@ -126,6 +144,24 @@ export async function PATCH(
     });
   } catch (error) {
     if (error instanceof ManualSyncError) {
+      if (tenantContaId && requestedMatriculaId) {
+        const pendingCancellation = await resolvePendingCancellationFromHttp({
+          contaId: tenantContaId,
+          matriculaId: requestedMatriculaId,
+        });
+        if (pendingCancellation) {
+          return NextResponse.json({
+            success: true,
+            pending: true,
+            retryable: true,
+            message: 'O cancelamento aguarda confirmação financeira e será reconciliado automaticamente. A matrícula permanece no estado atual.',
+            matriculaId: requestedMatriculaId,
+            status: pendingCancellation.status,
+            operationId: pendingCancellation.operationId,
+            correlationId: pendingCancellation.correlationId,
+          }, { status: 202, headers: { 'cache-control': 'no-store' } });
+        }
+      }
       logApiOperationalEvent({
         severity: 'error',
         eventName: 'api.academic.request.failed',

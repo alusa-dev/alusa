@@ -2,11 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { formatInstantInAccountZone, DEFAULT_ACCOUNT_TIMEZONE } from '@/lib/agenda-timezone';
-import { ptBR } from 'date-fns/locale';
 
-import { BookOpen, Clock, DocumentText, MapPin, User, Warning } from '@/components/icons/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { InfoCallout } from '@/components/ui/info-callout';
 import {
   Sheet,
   SheetContent,
@@ -14,6 +13,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import type { CalendarEventDetailsDTO } from '@/features/lessons/dtos';
+import { CALENDAR_EVENT_STATUS_OPTIONS, CALENDAR_EVENT_TYPE_OPTIONS } from '@/features/lessons/types';
 import {
   evaluateAttendanceLaunchPolicy,
   getAttendanceLaunchPolicyMessage,
@@ -49,7 +49,22 @@ function getExperimentalStatusVariant(status: NonNullable<CalendarEventDetailsDT
 }
 
 function formatEventType(type: CalendarEventDetailsDTO['type']) {
-  return type.toLowerCase().replace(/_/g, ' ');
+  return CALENDAR_EVENT_TYPE_OPTIONS.find((option) => option.value === type)?.label ?? type;
+}
+
+function formatEventStatus(status: CalendarEventDetailsDTO['status']) {
+  return CALENDAR_EVENT_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
+}
+
+function formatRelatedStatus(status: string) {
+  const labels: Record<string, string> = {
+    AGENDADA: 'Agendada',
+    REAGENDADA: 'Reagendada',
+    REALIZADA: 'Realizada',
+    CANCELADA: 'Cancelada',
+  };
+
+  return labels[status] ?? status;
 }
 
 export function CalendarEventSheet({
@@ -75,9 +90,14 @@ export function CalendarEventSheet({
         timeZone: eventTimeZone,
       })
     : null;
+  const attendanceRosterAvailable = Boolean(
+    event &&
+      ((event.type === 'AULA' && event.turma) ||
+        (event.type === 'REPOSICAO' && event.makeupsAsDestination.length > 0)),
+  );
   const canRegisterAttendance = Boolean(
     event &&
-      (event.type === 'AULA' || event.type === 'REPOSICAO') &&
+      attendanceRosterAvailable &&
       attendanceLaunchPolicy?.allowed,
   );
   const canEdit = Boolean(event && event.status === 'AGENDADO' && (temporalState === 'future' || temporalState === 'today'));
@@ -157,27 +177,13 @@ export function CalendarEventSheet({
             </div>
           ) : event ? (
             <>
-              <section className="space-y-3 text-center">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-slate-100 alusa-dark:bg-[color:var(--color-bg-card-soft)]">
-                  <BookOpen className="h-7 w-7 text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]" />
-                </div>
-
+              <section className="space-y-3 border-b border-slate-200 pb-5 alusa-dark:border-[color:var(--color-border-default)]">
                 <div className="space-y-1">
-                  <h2 className="text-sm font-medium text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">Detalhes do evento</h2>
-                  <p className="text-[30px] font-semibold tracking-[-0.03em] text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
-                    {formatInstantInAccountZone(event.startAt, 'HH:mm', eventTimeZone)}
-                    {' - '}
-                    {formatInstantInAccountZone(event.endAt, 'HH:mm', eventTimeZone)}
-                  </p>
-                  <p className="text-xs text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">
-                    {formatInstantInAccountZone(event.startAt, "dd 'de' MMMM", eventTimeZone, { locale: ptBR })}
-                    {' · '}
-                    {event.title}
-                  </p>
+                  <h2 className="text-xs font-medium uppercase tracking-wide text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">Detalhes do evento</h2>
+                  <p className="break-words text-xl font-semibold leading-7 text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{event.title}</p>
                 </div>
-
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <Badge variant={getStatusVariant(event.status)}>{event.status}</Badge>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={getStatusVariant(event.status)}>{formatEventStatus(event.status)}</Badge>
                   {temporalBadge ? (
                     <Badge
                       variant={
@@ -198,22 +204,17 @@ export function CalendarEventSheet({
                 </div>
               </section>
 
-              <section className="rounded-xl border border-slate-200 bg-white alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
-                <div className="divide-y divide-slate-100 alusa-dark:divide-[color:var(--color-border-default)]">
+              <section className="space-y-1">
+                <ListCaption>Informações</ListCaption>
+                <dl className="divide-y divide-slate-100 alusa-dark:divide-[color:var(--color-border-default)]">
                   <DetailRow
-                    label="Quando"
-                    value={`${formatInstantInAccountZone(event.startAt, "dd 'de' MMMM, HH:mm", eventTimeZone, { locale: ptBR })} - ${formatInstantInAccountZone(event.endAt, 'HH:mm', eventTimeZone, { locale: ptBR })}`}
-                    icon={Clock}
+                    label="Data e horário"
+                    value={`${formatInstantInAccountZone(event.startAt, 'dd/MM', eventTimeZone)} - ${formatInstantInAccountZone(event.startAt, 'HH:mm', eventTimeZone)} - ${formatInstantInAccountZone(event.endAt, 'HH:mm', eventTimeZone)}`}
                   />
-                  <DetailRow
-                    label="Turma"
-                    value={event.turma?.label ?? 'Sem turma'}
-                    icon={BookOpen}
-                  />
+                  <DetailRow label="Turma" value={event.turma?.label ?? 'Sem turma'} />
                   <DetailRow
                     label="Sala"
                     value={event.sala?.label ?? 'Sem sala'}
-                    icon={MapPin}
                   />
                   <DetailRow
                     label="Professor(es)"
@@ -222,78 +223,54 @@ export function CalendarEventSheet({
                         ? event.professores.map((professor) => professor.nome).join(', ')
                         : 'Sem professor'
                     }
-                    icon={User}
                   />
-                </div>
+                </dl>
               </section>
 
               {event.experimental ? (
-                <section className="rounded-xl border border-slate-200 bg-white p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">Aula experimental</div>
-                      <p className="mt-1 text-sm text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">Aluno: {event.experimental.aluno.label}</p>
-                    </div>
-                    <Badge variant={getExperimentalStatusVariant(event.experimental.status)}>
-                      {event.experimental.status}
-                    </Badge>
-                  </div>
-
-                  {event.experimental.observacao ? (
-                    <p className="mt-3 text-sm leading-6 text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">{event.experimental.observacao}</p>
-                  ) : null}
+                <section className="space-y-1 border-t border-slate-200 pt-4 alusa-dark:border-[color:var(--color-border-default)]">
+                  <ListCaption>Aula experimental</ListCaption>
+                  <dl className="divide-y divide-slate-100 alusa-dark:divide-[color:var(--color-border-default)]">
+                    <InfoListRow label="Aula experimental">
+                      <Badge variant={getExperimentalStatusVariant(event.experimental.status)}>
+                      {formatRelatedStatus(event.experimental.status)}
+                      </Badge>
+                    </InfoListRow>
+                    <InfoListRow label="Aluno">{event.experimental.aluno.label}</InfoListRow>
+                    {event.experimental.observacao ? (
+                      <InfoListRow label="Observação">{event.experimental.observacao}</InfoListRow>
+                    ) : null}
+                  </dl>
                 </section>
               ) : null}
 
               {event.description ? (
-                <section className="rounded-xl border border-slate-200 bg-white alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
-                  <div className="flex items-start gap-3 px-5 py-4">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400 alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-muted)]">
-                      <DocumentText className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">Descrição</div>
-                      <p className="mt-1 text-sm leading-6 text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">{event.description}</p>
-                    </div>
+                <section className="border-t border-slate-200 pt-4 alusa-dark:border-[color:var(--color-border-default)]">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">Descrição</div>
+                    <p className="mt-1 break-words text-sm leading-6 text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">{event.description}</p>
                   </div>
                 </section>
               ) : null}
 
-              {event.attendanceSummary ? (
-                <section className="rounded-xl border border-slate-200 bg-white p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
-                  <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">Elegíveis</div>
-                    <div className="mt-1 text-xl font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
-                      {event.attendanceSummary.totalEligible}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">Registrados</div>
-                    <div className="mt-1 text-xl font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
-                      {event.attendanceSummary.recorded}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">Presentes</div>
-                    <div className="mt-1 text-base font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
-                      {event.attendanceSummary.presente}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">Faltas</div>
-                    <div className="mt-1 text-base font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
+              {attendanceRosterAvailable && event.attendanceSummary ? (
+                <section className="space-y-1 border-t border-slate-200 pt-4 alusa-dark:border-[color:var(--color-border-default)]">
+                  <ListCaption>Frequência</ListCaption>
+                  <dl className="divide-y divide-slate-100 alusa-dark:divide-[color:var(--color-border-default)]">
+                    <InfoListRow label="Elegíveis">{event.attendanceSummary.totalEligible}</InfoListRow>
+                    <InfoListRow label="Registrados">{event.attendanceSummary.recorded}</InfoListRow>
+                    <InfoListRow label="Presentes">{event.attendanceSummary.presente}</InfoListRow>
+                    <InfoListRow label="Faltas">
                       {event.attendanceSummary.falta + event.attendanceSummary.faltaJustificada}
-                    </div>
-                  </div>
-                  </div>
+                    </InfoListRow>
+                  </dl>
                 </section>
               ) : null}
 
               {pendingClosure ? (
-                <section className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4">
-                  <div className="text-sm font-semibold text-amber-900">Fechamento pendente</div>
-                  <p className="mt-1 text-sm leading-6 text-amber-800">
+                <section className="border-t border-amber-200 pt-4 text-amber-800 alusa-dark:border-amber-900 alusa-dark:text-amber-200">
+                  <div className="text-sm font-semibold text-amber-900 alusa-dark:text-amber-100">Fechamento pendente</div>
+                  <p className="mt-1 text-sm leading-6">
                     Este evento ja passou do horario e continua agendado. O sistema preserva o status operacional
                     ate uma acao explicita para evitar conclusao automatica incorreta.
                   </p>
@@ -301,9 +278,9 @@ export function CalendarEventSheet({
               ) : null}
 
               {temporalState === 'in_progress' ? (
-                <section className="rounded-xl border border-sky-200 bg-sky-50 px-5 py-4">
-                  <div className="text-sm font-semibold text-sky-900">Evento em andamento</div>
-                  <p className="mt-1 text-sm leading-6 text-sky-800">
+                <section className="border-t border-sky-200 pt-4 text-sky-800 alusa-dark:border-sky-900 alusa-dark:text-sky-200">
+                  <div className="text-sm font-semibold text-sky-900 alusa-dark:text-sky-100">Evento em andamento</div>
+                  <p className="mt-1 text-sm leading-6">
                     Durante a execucao, priorize registro de frequencia e fechamento operacional. Edicoes estruturais
                     e cancelamento ficam bloqueados para evitar conflito de operacao.
                   </p>
@@ -311,16 +288,13 @@ export function CalendarEventSheet({
               ) : null}
 
               {event.conflicts.length ? (
-                <section className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
-                      <Warning className="h-4 w-4" />
-                    </div>
-                    <div className="text-sm font-semibold text-amber-900">Conflitos detectados</div>
+                <section className="border-t border-amber-200 pt-4 alusa-dark:border-amber-900">
+                  <div className="text-sm font-semibold text-amber-900 alusa-dark:text-amber-100">
+                    Conflitos detectados
                   </div>
-                  <ul className="mt-2 space-y-2 text-sm text-amber-800">
+                  <ul className="mt-2 divide-y divide-amber-200 text-sm text-amber-800 alusa-dark:divide-amber-900 alusa-dark:text-amber-200">
                     {event.conflicts.map((conflict) => (
-                      <li key={`${conflict.type}-${conflict.relatedEventId ?? 'none'}-${conflict.message}`}>
+                      <li className="py-2 first:pt-0" key={`${conflict.type}-${conflict.relatedEventId ?? 'none'}-${conflict.message}`}>
                         {conflict.message}
                       </li>
                     ))}
@@ -329,38 +303,42 @@ export function CalendarEventSheet({
               ) : null}
 
               {event.makeupsAsOrigin.length ? (
-                <section className="rounded-xl border border-slate-200 bg-white p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
-                  <div className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">Reposições originadas aqui</div>
-                  <div className="mt-2 space-y-2">
+                <section className="space-y-1 border-t border-slate-200 pt-4 alusa-dark:border-[color:var(--color-border-default)]">
+                  <ListCaption>Reposições</ListCaption>
+                  <dl className="divide-y divide-slate-100 alusa-dark:divide-[color:var(--color-border-default)]">
                     {event.makeupsAsOrigin.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-secondary)]">
-                        <span>{item.scope}</span>
-                        <Badge variant="outline">{item.status}</Badge>
-                      </div>
+                      <InfoListRow key={item.id} label="Reposição originada">
+                        <span className="flex flex-wrap items-center justify-end gap-2">
+                          <span>{item.scope}</span>
+                          <Badge variant="outline">{formatRelatedStatus(item.status)}</Badge>
+                        </span>
+                      </InfoListRow>
                     ))}
-                  </div>
+                  </dl>
                 </section>
               ) : null}
 
               {event.makeupsAsDestination.length ? (
-                <section className="rounded-xl border border-slate-200 bg-white p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
-                  <div className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">Reposições atendidas neste evento</div>
-                  <div className="mt-2 space-y-2">
+                <section className="space-y-1 border-t border-slate-200 pt-4 alusa-dark:border-[color:var(--color-border-default)]">
+                  <ListCaption>Reposições</ListCaption>
+                  <dl className="divide-y divide-slate-100 alusa-dark:divide-[color:var(--color-border-default)]">
                     {event.makeupsAsDestination.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-secondary)]">
-                        <span>{item.scope}</span>
-                        <Badge variant="outline">{item.status}</Badge>
-                      </div>
+                      <InfoListRow key={item.id} label="Reposição atendida">
+                        <span className="flex flex-wrap items-center justify-end gap-2">
+                          <span>{item.scope}</span>
+                          <Badge variant="outline">{formatRelatedStatus(item.status)}</Badge>
+                        </span>
+                      </InfoListRow>
                     ))}
-                  </div>
+                  </dl>
                 </section>
               ) : null}
 
-              {event && !canRegisterAttendance && attendanceLaunchPolicy ? (
-                <section className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
+              {attendanceRosterAvailable && event && !canRegisterAttendance && attendanceLaunchPolicy ? (
+                <InfoCallout variant="warning" size="sm">
                   {getAttendanceLaunchPolicyMessage(attendanceLaunchPolicy.reason) ??
                     'A frequência não está disponível para esta ocorrência no momento.'}
-                </section>
+                </InfoCallout>
               ) : null}
             </>
           ) : null}
@@ -431,31 +409,34 @@ export function CalendarEventSheet({
   );
 }
 
+function ListCaption({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="pb-1 text-xs font-medium uppercase tracking-wide text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">
+      {children}
+    </h3>
+  );
+}
+
+function InfoListRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[minmax(7rem,0.8fr)_minmax(0,1.6fr)] items-start gap-4 py-3">
+      <dt className="text-sm font-medium leading-5 text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">{label}</dt>
+      <dd className="min-w-0 break-words text-right text-sm font-medium leading-5 text-slate-800 alusa-dark:text-[color:var(--color-text-primary)]">{children}</dd>
+    </div>
+  );
+}
+
 function DetailRow({
   label,
   value,
-  icon: Icon,
 }: {
   label: string;
   value: string;
-  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 px-5 py-4">
-      <div className="flex min-w-0 items-start gap-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400 alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-muted)]">
-          <Icon className="h-4 w-4" />
-        </div>
-        <span className="min-w-0 text-sm font-medium leading-5 text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">{label}</span>
-      </div>
-      <span
-        className={cn(
-          'max-w-[58%] break-words text-right text-sm font-semibold leading-5 text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]',
-          label === 'Professor(es)' && 'max-w-[62%]',
-        )}
-      >
-        {value}
-      </span>
+    <div className="grid grid-cols-[minmax(7rem,0.8fr)_minmax(0,1.6fr)] items-start gap-4 py-3">
+      <dt className="min-w-0 text-sm font-medium leading-5 text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">{label}</dt>
+      <dd className="min-w-0 break-words text-right text-sm font-medium leading-5 text-slate-800 alusa-dark:text-[color:var(--color-text-primary)]">{value}</dd>
     </div>
   );
 }

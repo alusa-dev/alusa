@@ -1189,11 +1189,11 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         return worldToSectionLocal({ x: a * world.x + c * world.y + e, y: b * world.x + d * world.y + f }, section.position, section.rotation);
       };
       const transformPath = (path: SeatRowPath, section: (typeof document.sections)[number], matrix: [number, number, number, number, number, number]): SeatRowPath => {
-        const scale = Math.max(0.05, Math.hypot(matrix[0], matrix[1]));
+        const scale = Math.hypot(matrix[0], matrix[1]);
         const rotation = Math.atan2(matrix[1], matrix[0]) * (180 / Math.PI);
         switch (path.type) {
           case 'LINE': return { ...path, start: transformPoint(path.start, section, matrix), end: transformPoint(path.end, section, matrix) };
-          case 'ARC': return { ...path, center: transformPoint(path.center, section, matrix), radius: Math.max(1, path.radius * scale), startAngle: path.startAngle + rotation * Math.PI / 180, endAngle: path.endAngle + rotation * Math.PI / 180 };
+          case 'ARC': return { ...path, center: transformPoint(path.center, section, matrix), radius: path.radius * scale, startAngle: path.startAngle + rotation * Math.PI / 180, endAngle: path.endAngle + rotation * Math.PI / 180 };
           case 'POLYLINE': return { ...path, points: path.points.map((point) => transformPoint(point, section, matrix)) };
           case 'BEZIER': return { ...path, p0: transformPoint(path.p0, section, matrix), p1: transformPoint(path.p1, section, matrix), p2: transformPoint(path.p2, section, matrix), p3: transformPoint(path.p3, section, matrix) };
         }
@@ -1211,7 +1211,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
             const matrixForRow = (rowId: string) => blockMatrix ?? rowTransforms.get(rowId)!;
             const firstSelectedRow = block.rows.find((row) => selectedRows.has(row.id));
             const baseMatrix = blockMatrix ?? rowTransforms.get(firstSelectedRow!.id)!;
-            const scale = Math.max(0.05, Math.hypot(baseMatrix[0], baseMatrix[1]));
+            const scale = Math.hypot(baseMatrix[0], baseMatrix[1]);
             const rotation = Math.atan2(baseMatrix[1], baseMatrix[0]) * (180 / Math.PI);
             return {
               ...block,
@@ -1223,19 +1223,19 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
               rows: block.rows.map((row) => {
                 if (!blockTarget && !selectedRows.has(row.id)) return row;
                 const rowMatrix = matrixForRow(row.id);
-                const rowScale = Math.max(0.05, Math.hypot(rowMatrix[0], rowMatrix[1]));
+                const rowScale = Math.hypot(rowMatrix[0], rowMatrix[1]);
                 const rowRotation = Math.atan2(rowMatrix[1], rowMatrix[0]) * (180 / Math.PI);
                 return {
                   ...row,
                   path: transformPath(row.path, section, rowMatrix),
                   ...(!blockTarget ? { transformRotation: ((row.transformRotation ?? block.transformRotation ?? 0) + rowRotation + 360) % 360 } : {}),
-                  seatSize: Math.max(8, row.seatSize * rowScale),
+                  seatSize: row.seatSize * rowScale,
                   seatGap: Math.max(0, row.seatGap * rowScale),
                   seats: row.seats.map((seat) => ({
                     ...seat,
                     ...(seat.position ? { position: transformPoint(seat.position, section, rowMatrix) } : {}),
                     ...(seat.rotation !== undefined ? { rotation: seat.rotation + rowRotation } : {}),
-                    ...(seat.size !== undefined ? { size: Math.max(8, seat.size * rowScale) } : {}),
+                    ...(seat.size !== undefined ? { size: seat.size * rowScale } : {}),
                   })),
                 };
               }),

@@ -15,10 +15,36 @@ type Input = {
 
 /** Coordinate terminal state changes with tenant-scoped billing outbox claims. */
 export async function requestEnrollmentTerminalIntent(input: Input) {
+  const siblings = await input.db.matriculaBillingOutbox.findMany({
+    where: {
+      contaId: input.contaId,
+      matriculaId: input.matriculaId,
+      status: { in: ['PENDING', 'FAILED', 'PROCESSING', 'REQUIRES_RECONCILIATION'] },
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true },
+  });
+  if (siblings.length === 0) return { kind: 'NO_PENDING' as const };
+
+  // Mark every billing phase before allowing the academic terminal transition.
+  // A reconciliation hold is deliberately retained: it blocks later phases
+  // without claiming that an uncertain remote effect was rolled back.
+  const results = [];
+  for (const sibling of siblings) {
+    results.push(await requestSingleEnrollmentTerminalIntent({ ...input, eventId: sibling.id }));
+  }
+  const priority = ['CONFLICT', 'RECONCILIATION_REQUIRED', 'DEFERRED', 'RACED', 'CANCELLED'] as const;
+  for (const kind of priority) {
+    const result = results.find((item) => item.kind === kind);
+    if (result) return result;
+  }
+  return { kind: 'NO_PENDING' as const };
+}
+
+async function requestSingleEnrollmentTerminalIntent(input: Input & { eventId: string }) {
   const activeStatuses = ['PENDING', 'FAILED', 'PROCESSING', 'REQUIRES_RECONCILIATION'] as const;
   const outbox = await input.db.matriculaBillingOutbox.findFirst({
-    where: { contaId: input.contaId, matriculaId: input.matriculaId, status: { in: [...activeStatuses] } },
-    orderBy: { updatedAt: 'desc' },
+    where: { id: input.eventId, contaId: input.contaId, matriculaId: input.matriculaId, status: { in: [...activeStatuses] } },
     select: { id: true, status: true, terminalIntent: true, attempts: true },
   });
   if (!outbox) return { kind: 'NO_PENDING' as const };

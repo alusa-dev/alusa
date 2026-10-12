@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { MoreVertical } from 'lucide-react';
+import { MoreVertical } from '@/components/icons/icons';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -22,6 +22,7 @@ import {
   markTicketSalePaid,
   refundEventCharge,
   refundTicketSale,
+  resendTicketSaleWhatsApp,
   type EventScopedResources,
   type TicketLotDTO,
   type TicketSaleDTO,
@@ -72,13 +73,22 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
     },
     onError: (err) => toast.error({ title: 'Erro ao excluir', description: err.message }),
   });
+  const resendWhatsApp = useMutation({
+    mutationFn: () => resendTicketSaleWhatsApp(sale.id),
+    onSuccess: (result) => toast.success({
+      title: 'Reenvio solicitado',
+      description: 'O ingresso será enviado pelo WhatsApp em alguns instantes.',
+    }),
+    onError: (error) => toast.error({ title: 'Não foi possível reenviar pelo WhatsApp', description: error.message }),
+  });
 
   const isAsaasSale = Boolean(sale.asaasPaymentId || sale.paymentProvider === 'ASAAS');
 
   if (sale.source === 'PUBLIC_ORDER' || isAsaasSale) {
     const isRefundProcessing = sale.paymentStatus === 'REFUND_IN_PROGRESS' || sale.paymentStatus === 'REFUND_REQUESTED';
     const canRefundAsaas = sale.status === 'PAID' && Boolean(sale.asaasPaymentId) && !isRefundProcessing;
-    const hasActions = Boolean(sale.chargeDetailUrl || sale.invoiceUrl || sale.ticketsUrl || canRefundAsaas);
+    const canResendWhatsApp = sale.status === 'PAID' && Boolean(sale.whatsappAvailable);
+    const hasActions = Boolean(sale.chargeDetailUrl || sale.invoiceUrl || sale.ticketsUrl || canRefundAsaas || canResendWhatsApp);
     if (!hasActions) return <span className="text-slate-400">-</span>;
 
     return (
@@ -89,7 +99,7 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
               <MoreVertical className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuContent align="end" className="w-72 max-w-[calc(100vw-2rem)]">
             {sale.chargeDetailUrl ? (
               <DropdownMenuItem asChild>
                 <Link href={sale.chargeDetailUrl}>Ver cobrança</Link>
@@ -103,6 +113,11 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
             {sale.ticketsUrl ? (
               <DropdownMenuItem asChild>
                 <Link href={sale.ticketsUrl} target="_blank">Ver ticket</Link>
+              </DropdownMenuItem>
+            ) : null}
+            {canResendWhatsApp ? (
+              <DropdownMenuItem className="whitespace-nowrap" onSelect={() => resendWhatsApp.mutate()} disabled={resendWhatsApp.isPending}>
+                Reenviar ingresso pelo WhatsApp
               </DropdownMenuItem>
             ) : null}
             {canRefundAsaas ? (
@@ -142,7 +157,7 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
             <MoreVertical className="h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuContent align="end" className="w-72 max-w-[calc(100vw-2rem)]">
           {sale.chargeDetailUrl ? (
             <DropdownMenuItem asChild>
               <Link href={sale.chargeDetailUrl}>Ver cobrança</Link>
@@ -171,11 +186,12 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
             </DropdownMenuItem>
           )}
 
-          {sale.status === 'PAID' && (
-            <DropdownMenuItem onClick={() => refund.mutate()}>
-              Estornar
+          {sale.status === 'PAID' && sale.whatsappAvailable ? (
+            <DropdownMenuItem className="whitespace-nowrap" onSelect={() => resendWhatsApp.mutate()} disabled={resendWhatsApp.isPending}>
+              Reenviar ingresso pelo WhatsApp
             </DropdownMenuItem>
-          )}
+          ) : null}
+          {sale.status === 'PAID' && <DropdownMenuItem onClick={() => refund.mutate()}>Estornar</DropdownMenuItem>}
 
           <DropdownMenuSeparator />
 

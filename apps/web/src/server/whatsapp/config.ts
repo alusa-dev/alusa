@@ -15,6 +15,8 @@ export type WhatsAppRuntimeConfig = {
   contractMajorTemplateName: string;
   contractMinorTemplateName: string;
   contractTemplateLanguage: string;
+  eventTicketTemplateName: string;
+  eventTicketTemplateLanguage: string;
 };
 
 export function getWhatsAppRuntimeConfig(): WhatsAppRuntimeConfig {
@@ -39,6 +41,8 @@ export function getWhatsAppRuntimeConfig(): WhatsAppRuntimeConfig {
     contractMajorTemplateName: process.env.WHATSAPP_CONTRACT_MAJOR_TEMPLATE?.trim() || 'contrato_matricula_maior_18',
     contractMinorTemplateName: process.env.WHATSAPP_CONTRACT_MINOR_TEMPLATE?.trim() || 'contrato_matricula_menor_18',
     contractTemplateLanguage: process.env.WHATSAPP_CONTRACT_TEMPLATE_LANGUAGE?.trim() || 'pt_BR',
+    eventTicketTemplateName: process.env.WHATSAPP_EVENT_TICKET_TEMPLATE_NAME?.trim() || 'ingresso_emitido',
+    eventTicketTemplateLanguage: process.env.WHATSAPP_EVENT_TICKET_TEMPLATE_LANGUAGE?.trim() || 'pt_BR',
   };
 }
 

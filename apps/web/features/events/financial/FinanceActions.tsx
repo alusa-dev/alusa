@@ -25,7 +25,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { wizardFieldInputClass } from '@/components/shared/wizard/field-styles';
 import { DatePicker } from '@/components/ui/date-picker';
-import { LoadingDots } from '@/components/ui/LoadingDots';
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
@@ -107,7 +107,7 @@ export function FinanceActions({ entry, eventId }: { entry: FinancialEntryDTO; e
       setFullRefundOpen(false);
       setRefundText('');
       refundIdempotencyKey.current = null;
-      toast.success({ title: 'Estorno registrado', description: 'O ledger e o saldo da cobrança foram atualizados.' });
+      toast.success({ title: 'Estorno registrado', description: 'O estorno foi registrado e o saldo da cobrança foi atualizado.' });
     },
     onError: (error) => toast.error({ title: 'Erro no estorno', description: (error as Error).message }),
   });
@@ -303,7 +303,8 @@ export function FinanceActions({ entry, eventId }: { entry: FinancialEntryDTO; e
         <DialogContent
           fullScreenMobile
           closeDisabled={paymentMutation.isPending}
-          className="flex max-w-[560px] flex-col gap-0 overflow-hidden rounded-[20px] p-0 sm:rounded-[20px] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0"
+          className="relative flex max-w-[560px] flex-col gap-0 overflow-hidden rounded-[20px] p-0 sm:rounded-[20px] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0"
+          aria-busy={paymentMutation.isPending}
         >
           <DialogHeader className="shrink-0 border-b border-slate-100 px-6 pb-5 pt-6 text-left max-md:px-5 max-md:pb-4 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))]">
             <DialogTitle className="text-xl font-normal tracking-tight text-slate-950">Registrar pagamento</DialogTitle>
@@ -312,6 +313,7 @@ export function FinanceActions({ entry, eventId }: { entry: FinancialEntryDTO; e
             </DialogDescription>
           </DialogHeader>
           <form
+            inert={paymentMutation.isPending || undefined}
             onSubmit={(event) => handleFormDataSubmit(event, (formData) => submitCostPayment({
               amount: parseCurrencyInput(nullableString(formData, 'amount') ?? ''),
               paymentMethod: nullableString(formData, 'paymentMethod') ?? 'OTHER',
@@ -366,10 +368,11 @@ export function FinanceActions({ entry, eventId }: { entry: FinancialEntryDTO; e
                 Cancelar
               </Button>
               <Button type="submit" variant="wizardPrimary" disabled={paymentMutation.isPending} className="h-10 min-h-10 w-[180px] min-w-0 rounded-[10px] px-5 font-normal max-md:w-full">
-                {paymentMutation.isPending ? <><span>Registrando</span><LoadingDots label="Registrando pagamento" size="sm" className="text-white" /></> : entry.originType === 'COSTUME_ASSIGNMENT' ? 'Registrar recebimento' : 'Registrar pagamento'}
+                {paymentMutation.isPending ? 'Registrando' : entry.originType === 'COSTUME_ASSIGNMENT' ? 'Registrar recebimento' : 'Registrar pagamento'}
               </Button>
             </DialogFooter>
           </form>
+          <EventMutationOverlay pending={paymentMutation.isPending} label="Registrando pagamento" />
         </DialogContent>
       </Dialog>
 
@@ -417,12 +420,12 @@ export function FinanceActions({ entry, eventId }: { entry: FinancialEntryDTO; e
           {isManual ? <FinancialEntryEditDialog entry={entry} eventId={eventId} open={editOpen} onOpenChange={setEditOpen} /> : null}
 
           <Dialog open={refundOpen} onOpenChange={(nextOpen) => { if (nextOpen || !(mutation.isPending || costumeRefundMutation.isPending)) setRefundOpen(nextOpen); }}>
-            <DialogContent closeDisabled={mutation.isPending || costumeRefundMutation.isPending} className="max-w-md">
+            <DialogContent closeDisabled={mutation.isPending || costumeRefundMutation.isPending} className="relative max-w-md" aria-busy={mutation.isPending || costumeRefundMutation.isPending}>
               <DialogHeader>
                 <DialogTitle>Estorno parcial</DialogTitle>
                 <DialogDescription>Informe o valor estornado para ajustar o recebido líquido.</DialogDescription>
               </DialogHeader>
-              <form onSubmit={(event) => handleFormDataSubmit(event, submitPartialRefund)} className="grid gap-4">
+              <form inert={mutation.isPending || costumeRefundMutation.isPending || undefined} onSubmit={(event) => handleFormDataSubmit(event, submitPartialRefund)} className="grid gap-4">
                 <Field label="Valor estornado">
                   <div className="relative flex items-center">
                     <span className="absolute left-3 text-xs font-semibold text-slate-400 pointer-events-none">R$</span>
@@ -436,9 +439,10 @@ export function FinanceActions({ entry, eventId }: { entry: FinancialEntryDTO; e
                   </div>
                 </Field>
                 <DialogFooter>
-                <Button type="submit" disabled={mutation.isPending || costumeRefundMutation.isPending}>{mutation.isPending || costumeRefundMutation.isPending ? <><span>Estornando</span><LoadingDots label="Registrando estorno" size="sm" className="text-white" /></> : 'Confirmar estorno'}</Button>
+                <Button type="submit" disabled={mutation.isPending || costumeRefundMutation.isPending}>{mutation.isPending || costumeRefundMutation.isPending ? 'Estornando' : 'Confirmar estorno'}</Button>
                 </DialogFooter>
               </form>
+              <EventMutationOverlay pending={mutation.isPending || costumeRefundMutation.isPending} label="Registrando estorno" />
             </DialogContent>
           </Dialog>
 

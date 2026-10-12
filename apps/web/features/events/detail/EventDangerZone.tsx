@@ -1,14 +1,14 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { Button } from '@/components/ui/button';
-import { LoadingDots } from '@/components/ui/LoadingDots';
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -22,6 +22,7 @@ import { type SchoolEventDTO } from '../events-service';
 import { eventQueryKeys } from '../shared/event-query-keys';
 
 export function EventDangerZone({ event }: { event: SchoolEventDTO }) {
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const router = useRouter();
   const queryClient = useQueryClient();
   const deleteMutation = useMutation({
@@ -52,13 +53,14 @@ export function EventDangerZone({ event }: { event: SchoolEventDTO }) {
         </p>
       </CardHeader>
       <CardContent className="p-0 pt-2">
-        <Dialog>
+        <Dialog open={deleteDialogOpen} onOpenChange={(open) => { if (open || !deleteMutation.isPending) setDeleteDialogOpen(open); }}>
           <DialogTrigger asChild>
             <Button variant="destructive" className="bg-rose-600 hover:bg-rose-700 text-white font-medium">
               Excluir Evento
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-md">
+          <DialogContent closeDisabled={deleteMutation.isPending} className="relative max-w-md" aria-busy={deleteMutation.isPending}>
+            <div inert={deleteMutation.isPending || undefined}>
             <DialogHeader>
               <DialogTitle className="text-rose-800">Excluir Evento</DialogTitle>
               <DialogDescription>
@@ -66,18 +68,18 @@ export function EventDangerZone({ event }: { event: SchoolEventDTO }) {
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="gap-2 sm:gap-0">
-              <DialogClose asChild>
-                <Button variant="outline">Cancelar</Button>
-              </DialogClose>
+              <Button variant="outline" disabled={deleteMutation.isPending} onClick={() => setDeleteDialogOpen(false)}>Cancelar</Button>
               <Button
                 variant="destructive"
                 className="bg-rose-600 hover:bg-rose-700 text-white"
                 onClick={() => deleteMutation.mutate()}
                 disabled={deleteMutation.isPending}
               >
-                {deleteMutation.isPending ? <><span>Excluindo</span><LoadingDots label="Excluindo evento" size="sm" className="text-white" /></> : 'Confirmar Exclusão'}
+                {deleteMutation.isPending ? 'Excluindo' : 'Confirmar Exclusão'}
               </Button>
             </DialogFooter>
+            </div>
+            <EventMutationOverlay pending={deleteMutation.isPending} label="Excluindo evento" />
           </DialogContent>
         </Dialog>
       </CardContent>

@@ -1,5 +1,7 @@
 'use client';
 
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
+
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { type EventCostumeAssignmentBillingMode } from '@alusa/shared';
@@ -15,7 +17,6 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -48,7 +49,17 @@ export function AssignmentFormDialog({ eventId, costumes, scopedResources, trigg
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) }),
         queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] }),
       ]);
-      toast.success({ title: 'Vínculos cadastrados', description: `${result.createdCount} vínculo(s) individual(is) criado(s); ${result.skippedExistingCount} duplicado(s) ignorado(s).` });
+      const createdSummary = result.createdCount === 0
+        ? 'Nenhum figurino novo foi associado.'
+        : result.createdCount === 1
+          ? '1 figurino foi associado.'
+          : `${result.createdCount} figurinos foram associados.`;
+      const existingSummary = result.skippedExistingCount === 0
+        ? ''
+        : result.skippedExistingCount === 1
+          ? ' 1 associação que já existia foi mantida.'
+          : ` ${result.skippedExistingCount} associações que já existiam foram mantidas.`;
+      toast.success({ title: 'Figurinos atualizados', description: `${createdSummary}${existingSummary}` });
       setOpen(false);
       setChargedValueText("");
       setBillingMode('INCLUDED_IN_REGISTRATION_FEE');
@@ -85,9 +96,9 @@ export function AssignmentFormDialog({ eventId, costumes, scopedResources, trigg
       }
     }}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl relative" aria-busy={mutation.isPending}>
         <DialogHeader><DialogTitle>Vincular figurino</DialogTitle><DialogDescription>Vínculos a uma turma serão expandidos para uma peça e uma cobrança individual por aluno ativo inscrito no evento.</DialogDescription></DialogHeader>
-        <form onSubmit={(event) => handleFormDataSubmit(event, submit)} className="grid gap-4">
+        <form inert={mutation.isPending || undefined} onSubmit={(event) => handleFormDataSubmit(event, submit)} className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Figurino"><NativeSelect name="costumeId" required placeholder="Selecione" options={costumes.map((item) => ({ value: item.id, label: item.name }))} /></Field>
             <Field label="Aluno"><NativeSelect name="alunoId" value={alunoId} onValueChange={(value) => { setAlunoId(value); if (value) setTurmaId(''); }} placeholder="Selecione um aluno" options={mergeScopedPersonOptions(scopedResources?.alunos ?? [])} /></Field>
@@ -119,8 +130,10 @@ export function AssignmentFormDialog({ eventId, costumes, scopedResources, trigg
             ) : null}
           </div>
           <Field label="Observações"><Textarea name="notes" className="rounded-xl border-slate-200" /></Field>
-          <DialogFooter><Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando vínculo" size="sm" className="text-white" /></> : 'Salvar vínculo'}</Button></DialogFooter>
+          <DialogFooter><Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? 'Salvando' : 'Salvar vínculo'}</Button></DialogFooter>
         </form>
+
+        <EventMutationOverlay pending={mutation.isPending} label="Salvando vínculo" />
       </DialogContent>
     </Dialog>
   );

@@ -352,16 +352,16 @@ export async function countEligibleStudentsForEvent(
   return uniqueAlunoIds.size;
 }
 
-export async function materializeCalendarWindow(params: {
+async function materializeCalendarWindowInTransaction(params: {
   contaId: string;
   start: Date;
   end: Date;
   timeZone: string;
   logOperation?: boolean;
   logReason?: string;
-  prismaClient?: PrismaClient;
+  prismaClient: Prisma.TransactionClient;
 }) {
-  const prismaClient = params.prismaClient ?? prisma;
+  const prismaClient = params.prismaClient;
   const tz = normalizeAccountTimeZone(params.timeZone);
   const materializeStart = startOfZonedDay(addDays(params.start, -MATERIALIZATION_PAST_DAYS), tz);
   const materializeEnd = endOfZonedDay(addDays(params.end, MATERIALIZATION_FUTURE_DAYS), tz);
@@ -513,6 +513,25 @@ export async function materializeCalendarWindow(params: {
 
     if (!existing) {
       try {
+        await assertNoCalendarConflicts({
+          contaId: params.contaId,
+          startAt: occurrence.startAt,
+          endAt: occurrence.endAt,
+          salaId: occurrence.turma.salaId,
+          professorIds,
+          turmaId: occurrence.turma.id,
+          allowOwnTurmaRecurringOverlap: true,
+          allowOwnTurmaExperimentalOverlap: true,
+          prismaClient,
+        });
+      } catch (error) {
+        if (error instanceof AulasError && error.code === 'CONFLITO_SALA_PROFESSOR') {
+          summary.skipped += 1;
+          continue;
+        }
+        throw error;
+      }
+      try {
         await prismaClient.calendarEvent.create({
           data: {
             contaId: params.contaId,
@@ -589,6 +608,27 @@ export async function materializeCalendarWindow(params: {
     if (unchanged) {
       summary.skipped += 1;
       continue;
+    }
+
+    try {
+      await assertNoCalendarConflicts({
+        contaId: params.contaId,
+        startAt: occurrence.startAt,
+        endAt: occurrence.endAt,
+        salaId: occurrence.turma.salaId,
+        professorIds,
+        turmaId: occurrence.turma.id,
+        allowOwnTurmaRecurringOverlap: true,
+        allowOwnTurmaExperimentalOverlap: true,
+        ignoreEventId: existing.id,
+        prismaClient,
+      });
+    } catch (error) {
+      if (error instanceof AulasError && error.code === 'CONFLITO_SALA_PROFESSOR') {
+        summary.skipped += 1;
+        continue;
+      }
+      throw error;
     }
 
     await prismaClient.calendarEvent.update({
@@ -680,8 +720,9 @@ export async function assertNoCalendarConflicts(params: {
   professorIds?: string[];
   turmaId?: string | null;
   allowOwnTurmaRecurringOverlap?: boolean;
+  allowOwnTurmaExperimentalOverlap?: boolean;
   ignoreEventId?: string;
-  prismaClient?: PrismaClient;
+  prismaClient?: PrismaClient | Prisma.TransactionClient;
 }) {
   const prismaClient = params.prismaClient ?? prisma;
   const conflicts: string[] = [];
@@ -691,14 +732,13 @@ export async function assertNoCalendarConflicts(params: {
     source: string | null;
     tipo: string;
   }) => {
-    if (!params.allowOwnTurmaRecurringOverlap || !params.turmaId) {
-      return false;
-    }
-
-    return (
-      event.turmaId === params.turmaId &&
+    if (!params.turmaId || event.turmaId !== params.turmaId) return false;
+    return Boolean(
+      (params.allowOwnTurmaRecurringOverlap &&
       event.source === 'TURMA_RECORRENTE' &&
-      event.tipo === 'AULA'
+      event.tipo === 'AULA') ||
+      (params.allowOwnTurmaExperimentalOverlap &&
+        event.source === 'AULA_EXPERIMENTAL' && event.tipo === 'AULA_EXPERIMENTAL'),
     );
   };
 
@@ -770,6 +810,63 @@ export async function assertNoCalendarConflicts(params: {
       salaId: params.salaId ?? null,
       professorIds: params.professorIds ?? [],
     });
+  }
+}
+
+/** Serializes agenda writers for one institution while conflict checks and writes run. */
+export async function withCalendarEventWriteLock<T>(
+  contaId: string,
+  callback: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return prisma.$transaction(async (tx) => {
+    await acquireCalendarEventWriteLock(contaId, tx);
+    return callback(tx);
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+}
+
+export async function acquireCalendarEventWriteLock(contaId: string, tx: Prisma.TransactionClient) {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${contaId}), hashtext('calendar-event-write'))`;
+}
+
+export async function materializeCalendarWindow(params: {
+  contaId: string;
+  start: Date;
+  end: Date;
+  timeZone: string;
+  logOperation?: boolean;
+  logReason?: string;
+  prismaClient?: PrismaClient;
+}) {
+  const client = params.prismaClient ?? prisma;
+  return client.$transaction(async (tx) => {
+    await acquireCalendarEventWriteLock(params.contaId, tx);
+    return materializeCalendarWindowInTransaction({ ...params, prismaClient: tx });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+}
+
+export async function assertCalendarResourcesBelongToConta(params: {
+  contaId: string;
+  turmaId?: string | null;
+  salaId?: string | null;
+  professorIds?: string[];
+  prismaClient?: PrismaClient | Prisma.TransactionClient;
+}) {
+  const client = params.prismaClient ?? prisma;
+  const professorIds = [...new Set(params.professorIds ?? [])];
+  const [turma, sala, professores] = await Promise.all([
+    params.turmaId
+      ? client.turma.findFirst({ where: { id: params.turmaId, contaId: params.contaId }, select: { id: true } })
+      : Promise.resolve(true),
+    params.salaId
+      ? client.sala.findFirst({ where: { id: params.salaId, contaId: params.contaId }, select: { id: true } })
+      : Promise.resolve(true),
+    professorIds.length
+      ? client.professor.findMany({ where: { id: { in: professorIds }, contaId: params.contaId }, select: { id: true } })
+      : Promise.resolve([]),
+  ]);
+
+  if (!turma || !sala || professores.length !== professorIds.length) {
+    throw new AulasError('RECURSO_AGENDA_INVALIDO', 'Turma, sala ou professor não pertence à conta informada.');
   }
 }
 

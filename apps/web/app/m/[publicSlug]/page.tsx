@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation';
+import type { Viewport } from 'next';
 
 import { getPublicEventMapPaymentInstruments } from '@alusa/finance';
 import {
@@ -11,6 +12,12 @@ import { ensureEventAsaasPaymentProviderRegistered } from '@/src/server/events/r
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+export const viewport: Viewport = {
+  themeColor: [
+    { media: '(max-width: 1023px)', color: '#3e1f63' },
+    { media: '(min-width: 1024px)', color: '#ffffff' },
+  ],
+};
 
 type PageProps = {
   params: Promise<{ publicSlug: string }>;

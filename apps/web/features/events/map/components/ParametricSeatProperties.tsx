@@ -3,19 +3,31 @@
 import { arcSweepDegrees, createArcPathFromChord, pointAtDistance, pathLength, resolveSeatCountForRow, setArcSweep } from '@alusa/domain';
 import type { EventMapDTO, MapSeatBlock, MapSeatRow, MapSection, SeatDistributionAlignment, SeatDistributionMode, SeatRowPath } from '@alusa/domain';
 import { CreatorIcon } from '@/components/icons/hugeicons';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   MAP_PANEL_FIELD_CLASS,
   MAP_PANEL_SECTION_CLASS,
   MAP_PANEL_SECTION_TITLE_CLASS,
+  MAP_PANEL_SELECT_TRIGGER_CLASS,
 } from './text-format-options';
 import { MapPanelSelect } from './MapPanelSelect';
+import { MAP_FLOATING_SHADOW_CLASS } from './map-toolbar-styles';
 import { useState } from 'react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+
+const PARAMETRIC_FIELD_CLASS = cn(
+  MAP_PANEL_FIELD_CLASS,
+  'border-transparent bg-neutral-100 px-2.5 text-[13px] focus-visible:border-neutral-300 focus-visible:bg-neutral-100 focus-visible:ring-0',
+);
+const PARAMETRIC_SELECT_CLASS = cn(
+  MAP_PANEL_SELECT_TRIGGER_CLASS,
+  'border-transparent bg-neutral-100 px-2.5 text-[13px] hover:border-transparent data-[state=open]:border-neutral-300 focus:ring-0 focus-visible:ring-0',
+);
 
 function toNumber(value: string, fallback = 0) {
   const parsed = Number(value);
@@ -33,7 +45,7 @@ function PanelField({ label, children }: { label: string; children: React.ReactN
 
 function PanelSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className={MAP_PANEL_SECTION_CLASS}>
+    <section className={cn(MAP_PANEL_SECTION_CLASS, 'border-slate-100 p-3')}>
       <h3 className={MAP_PANEL_SECTION_TITLE_CLASS}>{title}</h3>
       <div className="space-y-3">{children}</div>
     </section>
@@ -60,13 +72,13 @@ function QuantityStepper({
   const displayValue = Number.isFinite(value) ? Math.round(value) : min;
 
   return (
-    <div className="flex h-9 items-center justify-between rounded-md border border-slate-200 bg-white px-1">
+    <div className="flex h-9 items-center justify-between rounded-lg bg-neutral-100 px-1">
       <button
         type="button"
         aria-label={`Reduzir ${label}`}
         disabled={disabled || value <= min}
         onClick={() => onChange(Math.max(min, displayValue - 1))}
-        className="inline-flex h-7 w-7 items-center justify-center rounded text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 disabled:pointer-events-none disabled:opacity-35"
+        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-neutral-200 hover:text-slate-950 disabled:pointer-events-none disabled:opacity-35"
       >
         <CreatorIcon name="minus" size={14} />
       </button>
@@ -78,7 +90,7 @@ function QuantityStepper({
         aria-label={`Aumentar ${label}`}
         disabled={disabled || (max !== undefined && value >= max)}
         onClick={() => onChange(max === undefined ? displayValue + 1 : Math.min(max, displayValue + 1))}
-        className="inline-flex h-7 w-7 items-center justify-center rounded text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 disabled:pointer-events-none disabled:opacity-35"
+        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-neutral-200 hover:text-slate-950 disabled:pointer-events-none disabled:opacity-35"
       >
         <CreatorIcon name="add" size={14} />
       </button>
@@ -232,11 +244,12 @@ export function ParametricSeatProperties({ section, block, row, disabled, number
             disabled={disabled}
             placeholder="Ex.: Plateia central"
             onChange={(event) => onUpdateBlock(activeBlock.id, { name: event.target.value || null })}
-            className={MAP_PANEL_FIELD_CLASS}
+            className={PARAMETRIC_FIELD_CLASS}
           />
         </PanelField>
         <PanelField label="Numeração dos assentos">
           <MapPanelSelect
+            className={PARAMETRIC_SELECT_CLASS}
             value={activeBlock.numberingMode ?? 'ALPHANUMERIC'}
             disabled={disabled || numberingLocked}
             options={[
@@ -273,7 +286,7 @@ export function ParametricSeatProperties({ section, block, row, disabled, number
             />
           </PanelField>
         ) : null}
-        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+        <div className="rounded-lg bg-neutral-100 px-3 py-2 text-xs text-slate-600">
           {activeBlock.rows.length} fileiras · {seatTotal} {seatTotal === 1 ? 'assento' : 'assentos'}
         </div>
       </PanelSection>
@@ -283,6 +296,7 @@ export function ParametricSeatProperties({ section, block, row, disabled, number
           <>
             <PanelField label="Forma das fileiras">
               <MapPanelSelect
+                className={PARAMETRIC_SELECT_CLASS}
                 value={blockPathType}
                 disabled={disabled}
                 options={[
@@ -317,6 +331,7 @@ export function ParametricSeatProperties({ section, block, row, disabled, number
                 </PanelField>
                 <PanelField label="Direção da curva">
                   <MapPanelSelect
+                    className={PARAMETRIC_SELECT_CLASS}
                     value={blockArcDirection ? 'DOWN' : 'UP'}
                     disabled={disabled}
                     options={[
@@ -375,6 +390,7 @@ export function ParametricSeatProperties({ section, block, row, disabled, number
       <PanelSection title="Distribuição dos assentos">
         <PanelField label="Distribuição">
           <MapPanelSelect
+            className={PARAMETRIC_SELECT_CLASS}
             value={activeBlock.distributionMode ?? 'FIXED'}
             disabled={disabled}
             options={[
@@ -413,6 +429,7 @@ export function ParametricSeatProperties({ section, block, row, disabled, number
             </div>
             <PanelField label="Alinhamento da progressão">
               <MapPanelSelect
+                className={PARAMETRIC_SELECT_CLASS}
                 value={activeBlock.distributionAlignment ?? 'LEFT'}
                 disabled={disabled}
                 options={[
@@ -457,6 +474,7 @@ export function ParametricSeatProperties({ section, block, row, disabled, number
         <PanelSection title={`Fileira ${row.label}`}>
           <PanelField label="Forma">
             <MapPanelSelect
+              className={PARAMETRIC_SELECT_CLASS}
               value={pathType(row.path)}
               disabled={disabled}
               options={[
@@ -485,6 +503,7 @@ export function ParametricSeatProperties({ section, block, row, disabled, number
               </PanelField>
               <PanelField label="Direção da curva">
                 <MapPanelSelect
+                  className={PARAMETRIC_SELECT_CLASS}
                   value={row.path.clockwise ? 'DOWN' : 'UP'}
                   disabled={disabled}
                   options={[
@@ -496,13 +515,13 @@ export function ParametricSeatProperties({ section, block, row, disabled, number
               </PanelField>
             </>
           ) : null}
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <div className="rounded-lg bg-neutral-100 px-3 py-2 text-xs text-slate-600">
             O espaçamento dos assentos é calculado ao longo do comprimento da geometria. Corredores são intervalos de distribuição do bloco.
           </div>
         </PanelSection>
       ) : null}
       <AlertDialog open={pendingNumberingMode !== null} onOpenChange={(open) => !open && setPendingNumberingMode(null)}>
-        <AlertDialogContent>
+        <AlertDialogContent className={MAP_FLOATING_SHADOW_CLASS}>
           <AlertDialogHeader>
             <AlertDialogTitle>Alterar numeração de mapa publicado?</AlertDialogTitle>
             <AlertDialogDescription>

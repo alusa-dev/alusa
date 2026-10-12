@@ -102,11 +102,13 @@ export async function pushEnrollmentFeeToAsaas(input: {
   actorUserId: string;
   matriculaId: string;
   cobrancaTaxa: EnrollmentBillingCobrancaRef;
+  assertLeaseOwned?: () => Promise<void>;
 }): Promise<MatriculaAsaasTaxaSyncDTO> {
   if (input.cobrancaTaxa.formaPagamento === FormaPagamento.INDEFINIDO) {
     return { success: false, error: 'FORMA_PAGAMENTO_INVALIDA' };
   }
 
+  await input.assertLeaseOwned?.();
   const chargeResult = await createCharge({
     contaId: input.contaId,
     cobrancaId: input.cobrancaTaxa.id,

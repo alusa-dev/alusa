@@ -26,6 +26,9 @@ import {
 } from '../billing-agreements/runtime';
 import { processPendingBillingAdjustments } from '../billing-agreements/adjustment-processor';
 import { deriveDeterministicId } from '../core/index';
+import { resolveFamilyOperationFutureStart, resolveFutureFamilyBillingAmounts } from './future-family-billing';
+import { decideEnrollmentStatusAtContractStart } from '@alusa/domain';
+import { isAcademicDateInFuture } from '@alusa/shared/date-only';
 
 export type SupportedNotificationChannel = 'EMAIL' | 'SMS' | 'WHATSAPP';
 export type SupportedBillingType = 'BOLETO' | 'PIX' | 'CREDIT_CARD';
@@ -69,6 +72,10 @@ export type FamilyBillingPayload = {
   discount?: DiscountPayload | null;
   interest?: InterestPayload | null;
   fine?: FinePayload | null;
+  billingPhase?: 'ENROLLMENT_FEE' | 'RECURRING' | null;
+  deferActivationUntil?: string | null;
+  billableMatriculaIds?: string[] | null;
+  operationMatriculaIds?: string[] | null;
 };
 
 export type FamilyBillingExecutionResult = {
@@ -131,49 +138,61 @@ function isUncertainFinancialResult(error: unknown) {
  * JOIN não entra aqui: alterar uma assinatura já existente não é reversível
  * com segurança sem uma operação canônica própria.
  */
-async function compensateFamilyCreationRemoteEffects(payload: FamilyBillingPayload) {
+export async function compensateFamilyCreationRemoteEffects(
+  payload: FamilyBillingPayload,
+  ownershipGuard?: FamilyBillingOwnershipGuard,
+) {
   if (payload.strategy === 'JOIN_EXISTING_CURRENT_CYCLE') {
     return { complete: false, errors: ['JOIN_EXISTING_REQUIRES_RECONCILIATION'] };
   }
 
-  const [family, allocations] = await Promise.all([
-    prisma.matriculaFamiliar.findFirst({
-      where: { id: payload.aggregateId, contaId: payload.contaId },
-      select: { standaloneSubscriptionId: true, standaloneEnrollmentChargeId: true },
-    }),
-    prisma.familyFinancialAllocation.findMany({
-      where: {
-        contaId: payload.contaId,
-        familyGroupId: payload.aggregateId,
-        ...(payload.operationId ? { familyEnrollmentOperationId: payload.operationId } : {}),
-      },
-      select: { standaloneSubscriptionId: true, sourceChargeId: true },
-    }),
-  ]);
+  const isFeePhase = payload.billingPhase === 'ENROLLMENT_FEE';
+  const isRecurringPhase = payload.billingPhase === 'RECURRING';
+  const [family, allocations] = isFeePhase || isRecurringPhase
+    ? [null, []]
+    : await Promise.all([
+        prisma.matriculaFamiliar.findFirst({
+          where: { id: payload.aggregateId, contaId: payload.contaId },
+          select: { standaloneSubscriptionId: true, standaloneEnrollmentChargeId: true },
+        }),
+        prisma.familyFinancialAllocation.findMany({
+          where: {
+            contaId: payload.contaId,
+            familyGroupId: payload.aggregateId,
+            ...(payload.operationId ? { familyEnrollmentOperationId: payload.operationId } : {}),
+          },
+          select: { standaloneSubscriptionId: true, sourceChargeId: true },
+        }),
+      ]);
 
   const subscriptionIds = new Set<string>();
-  if (family?.standaloneSubscriptionId) subscriptionIds.add(family.standaloneSubscriptionId);
+  if (!isFeePhase && family?.standaloneSubscriptionId) subscriptionIds.add(family.standaloneSubscriptionId);
   for (const allocation of allocations) {
     if (allocation.standaloneSubscriptionId)
       subscriptionIds.add(allocation.standaloneSubscriptionId);
   }
-  if (payload.monthlyValue > 0 && payload.uiRequestId) {
+  if (!isFeePhase && payload.monthlyValue > 0 && payload.uiRequestId) {
     subscriptionIds.add(
       deriveDeterministicId('sub', `${payload.aggregateId}:subscription:${payload.uiRequestId}`),
     );
   }
 
   const chargeIds = new Set<string>();
-  if (family?.standaloneEnrollmentChargeId) chargeIds.add(family.standaloneEnrollmentChargeId);
+  if (!isRecurringPhase && family?.standaloneEnrollmentChargeId) chargeIds.add(family.standaloneEnrollmentChargeId);
   for (const allocation of allocations) {
     if (allocation.sourceChargeId) chargeIds.add(allocation.sourceChargeId);
   }
-  if (payload.enrollmentFeeValue > 0 && payload.uiRequestId) {
+  if (!isRecurringPhase && payload.enrollmentFeeValue > 0 && payload.uiRequestId) {
     chargeIds.add(
       deriveDeterministicId('ch', `${payload.aggregateId}:enrollment-fee:${payload.uiRequestId}`),
     );
   }
-  if (payload.monthlyValue > 0 && payload.uiRequestId) {
+  const shortContract = payload.endDate < payload.nextDueDate;
+  if (
+    payload.monthlyValue > 0 &&
+    payload.uiRequestId &&
+    (isRecurringPhase ? shortContract : !isFeePhase)
+  ) {
     chargeIds.add(
       deriveDeterministicId('ch', `${payload.aggregateId}:short-tuition:${payload.uiRequestId}`),
     );
@@ -198,6 +217,7 @@ async function compensateFamilyCreationRemoteEffects(payload: FamilyBillingPaylo
   const deletedPayments = new Set<string>();
   const deleteRemotePayment = async (paymentId: string) => {
     if (deletedPayments.has(paymentId)) return;
+    if (ownershipGuard) await ownershipGuard();
     try {
       await deletePayment(paymentId, { contaId: payload.contaId });
       deletedPayments.add(paymentId);
@@ -207,6 +227,7 @@ async function compensateFamilyCreationRemoteEffects(payload: FamilyBillingPaylo
       if (!/not found|não encontrado|404/i.test(message))
         errors.push(`PAYMENT:${paymentId}:${message}`);
     }
+    if (ownershipGuard) await ownershipGuard();
   };
 
   for (const charge of charges) {
@@ -215,33 +236,46 @@ async function compensateFamilyCreationRemoteEffects(payload: FamilyBillingPaylo
 
   for (const subscription of subscriptions) {
     if (!subscription.asaasSubscriptionId) continue;
+    let remotePayments: Awaited<ReturnType<typeof listPayments>>;
+    if (ownershipGuard) await ownershipGuard();
     try {
-      const remotePayments = await listPayments(
+      remotePayments = await listPayments(
         { subscription: subscription.asaasSubscriptionId, limit: 20, offset: 0 },
         { contaId: payload.contaId },
       );
-      for (const payment of remotePayments.data) {
-        if (payment.id && !['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(payment.status)) {
-          await deleteRemotePayment(payment.id);
-        }
-      }
-      await deleteSubscription(subscription.asaasSubscriptionId, { contaId: payload.contaId });
-      await prisma.standaloneSubscription.updateMany({
-        where: { id: subscription.id, contaId: payload.contaId },
-        data: { status: 'DELETED', remoteStatus: 'DELETED' },
-      });
     } catch (error) {
       errors.push(
         `SUBSCRIPTION:${subscription.asaasSubscriptionId}:${error instanceof Error ? error.message : String(error)}`,
       );
+      continue;
     }
+    if (ownershipGuard) await ownershipGuard();
+    for (const payment of remotePayments.data) {
+      if (payment.id && !['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(payment.status)) {
+        await deleteRemotePayment(payment.id);
+      }
+    }
+    if (ownershipGuard) await ownershipGuard();
+    try {
+      await deleteSubscription(subscription.asaasSubscriptionId, { contaId: payload.contaId });
+    } catch (error) {
+      errors.push(
+        `SUBSCRIPTION:${subscription.asaasSubscriptionId}:${error instanceof Error ? error.message : String(error)}`,
+      );
+      continue;
+    }
+    if (ownershipGuard) await ownershipGuard();
+    await withOwnedTransaction(ownershipGuard, (tx) => tx.standaloneSubscription.updateMany({
+        where: { id: subscription.id, contaId: payload.contaId },
+        data: { status: 'DELETED', remoteStatus: 'DELETED' },
+      }));
   }
 
   if (chargeIds.size > 0) {
-    await prisma.charge.updateMany({
+    await withOwnedTransaction(ownershipGuard, (tx) => tx.charge.updateMany({
       where: { contaId: payload.contaId, id: { in: [...chargeIds] } },
       data: { status: 'CANCELED', asaasStatus: 'DELETED' },
-    });
+    }));
   }
 
   return { complete: errors.length === 0, errors };
@@ -309,6 +343,7 @@ export async function reconcileFailedFamilyEnrollmentOutbox(eventId: string) {
         processedAt: new Date(),
         lockedAt: null,
         leaseExpiresAt: null,
+        claimToken: null,
         lastError: null,
       },
     }),
@@ -397,7 +432,27 @@ export function parseFamilyBillingPayload(raw: unknown): FamilyBillingPayload {
     discount: parseDiscount(payload.discount),
     interest: parseInterest(payload.interest),
     fine: parseFine(payload.fine),
+    billingPhase: payload.billingPhase === 'ENROLLMENT_FEE' || payload.billingPhase === 'RECURRING' ? payload.billingPhase : null,
+    deferActivationUntil: typeof payload.deferActivationUntil === 'string' ? payload.deferActivationUntil : null,
+    billableMatriculaIds: Array.isArray(payload.billableMatriculaIds)
+      ? payload.billableMatriculaIds.filter((id): id is string => typeof id === 'string')
+      : null,
+    operationMatriculaIds: Array.isArray(payload.operationMatriculaIds)
+      ? payload.operationMatriculaIds.filter((id): id is string => typeof id === 'string')
+      : null,
   };
+}
+
+type FamilyBillingOwnershipGuard = (tx?: Prisma.TransactionClient) => Promise<void>;
+
+async function withOwnedTransaction<T>(
+  ownershipGuard: FamilyBillingOwnershipGuard | undefined,
+  work: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return prisma.$transaction(async (tx) => {
+    if (ownershipGuard) await ownershipGuard(tx);
+    return work(tx);
+  }, { maxWait: 10_000, timeout: 30_000 });
 }
 
 function ensurePositiveMoney(value: number) {
@@ -409,14 +464,16 @@ async function updateGroupMetadata(params: {
   familyGroupId: string;
   standaloneSubscriptionId?: string | null;
   standaloneChargeId?: string | null;
+  tx?: Prisma.TransactionClient;
 }) {
+  const db: Prisma.TransactionClient = params.tx ?? prisma;
   if (params.standaloneSubscriptionId) {
-    await prisma.standaloneSubscription.updateMany({
+    await db.standaloneSubscription.updateMany({
       where: { id: params.standaloneSubscriptionId, contaId: params.contaId },
       data: { familyGroupId: params.familyGroupId },
     });
 
-    const relatedCharges = await prisma.charge.findMany({
+    const relatedCharges = await db.charge.findMany({
       where: {
         contaId: params.contaId,
         standaloneSubscriptionId: params.standaloneSubscriptionId,
@@ -426,11 +483,11 @@ async function updateGroupMetadata(params: {
 
     if (relatedCharges.length > 0) {
       const chargeIds = relatedCharges.map((charge) => charge.id);
-      await prisma.charge.updateMany({
+      await db.charge.updateMany({
         where: { id: { in: chargeIds }, contaId: params.contaId },
         data: { familyGroupId: params.familyGroupId },
       });
-      await prisma.chargeReadModel.updateMany({
+      await db.chargeReadModel.updateMany({
         where: {
           contaId: params.contaId,
           sourceKind: 'CHARGE',
@@ -445,11 +502,11 @@ async function updateGroupMetadata(params: {
   }
 
   if (params.standaloneChargeId) {
-    await prisma.charge.updateMany({
+    await db.charge.updateMany({
       where: { id: params.standaloneChargeId, contaId: params.contaId },
       data: { familyGroupId: params.familyGroupId },
     });
-    await prisma.chargeReadModel.updateMany({
+    await db.chargeReadModel.updateMany({
       where: {
         contaId: params.contaId,
         sourceKind: 'CHARGE',
@@ -463,19 +520,22 @@ async function updateGroupMetadata(params: {
   }
 }
 
-async function linkFamilyEnrollmentCharge(payload: FamilyBillingPayload, chargeId: string) {
+async function linkFamilyEnrollmentCharge(payload: FamilyBillingPayload, chargeId: string, tx?: Prisma.TransactionClient) {
+  const db: Prisma.TransactionClient = tx ?? prisma;
   if (payload.aggregateType !== 'MATRICULA_FAMILIAR') return;
 
   await updateGroupMetadata({
     contaId: payload.contaId,
     familyGroupId: payload.aggregateId,
     standaloneChargeId: chargeId,
+    tx,
   });
-  await prisma.familyFinancialAllocation.updateMany({
+  await db.familyFinancialAllocation.updateMany({
     where: {
       contaId: payload.contaId,
       familyGroupId: payload.aggregateId,
       ...(payload.operationId ? { familyEnrollmentOperationId: payload.operationId } : {}),
+      ...(payload.billableMatriculaIds ? { matriculaId: { in: payload.billableMatriculaIds } } : {}),
       chargeKind: 'TAXA_MATRICULA',
       status: 'PENDING',
     },
@@ -496,22 +556,32 @@ async function persistAggregateSuccess(params: {
   payload: FamilyBillingPayload;
   subscriptionId?: string | null;
   enrollmentChargeId?: string | null;
+  tx?: Prisma.TransactionClient;
 }) {
+  const db: Prisma.TransactionClient = params.tx ?? prisma;
   if (params.payload.aggregateType === 'MATRICULA_FAMILIAR') {
-    await prisma.matriculaFamiliar.updateMany({
+    await db.matriculaFamiliar.updateMany({
       where: { id: params.payload.aggregateId, contaId: params.payload.contaId },
       data: {
-        status: FamilyBillingStatus.ATIVO,
-        billingProvisionStatus: MatriculaBillingProvisionStatus.PROVISIONADO,
-        standaloneSubscriptionId: params.subscriptionId ?? null,
-        standaloneEnrollmentChargeId: params.enrollmentChargeId ?? null,
+        status: params.payload.deferActivationUntil ? FamilyBillingStatus.PENDENTE : FamilyBillingStatus.ATIVO,
+        billingProvisionStatus: params.payload.deferActivationUntil
+          ? MatriculaBillingProvisionStatus.PENDENTE
+          : MatriculaBillingProvisionStatus.PROVISIONADO,
+        ...(params.payload.billingPhase === 'ENROLLMENT_FEE'
+          ? { standaloneEnrollmentChargeId: params.enrollmentChargeId ?? null }
+          : params.payload.billingPhase === 'RECURRING'
+            ? { standaloneSubscriptionId: params.subscriptionId ?? null }
+            : {
+                standaloneSubscriptionId: params.subscriptionId ?? null,
+                standaloneEnrollmentChargeId: params.enrollmentChargeId ?? null,
+              }),
         ultimoErro: null,
       },
     });
     return;
   }
 
-  await prisma.rematriculaFamiliar.updateMany({
+  await db.rematriculaFamiliar.updateMany({
     where: { id: params.payload.aggregateId, contaId: params.payload.contaId },
     data: {
       status: FamilyBillingStatus.PROCESSANDO,
@@ -524,7 +594,8 @@ async function persistAggregateSuccess(params: {
   });
 }
 
-async function persistAggregateFailure(payload: FamilyBillingPayload, message: string) {
+async function persistAggregateFailure(payload: FamilyBillingPayload, message: string, ownershipGuard?: (tx?: Prisma.TransactionClient) => Promise<void>, tx?: Prisma.TransactionClient) {
+  const db: Prisma.TransactionClient = tx ?? prisma;
   const hasPersistedFinancialEffect =
     payload.aggregateType === 'MATRICULA_FAMILIAR'
       ? Boolean(
@@ -548,7 +619,8 @@ async function persistAggregateFailure(payload: FamilyBillingPayload, message: s
   };
 
   if (payload.aggregateType === 'MATRICULA_FAMILIAR') {
-    await prisma.matriculaFamiliar.updateMany({
+    if (ownershipGuard) await ownershipGuard(tx);
+    await db.matriculaFamiliar.updateMany({
       where: {
         id: payload.aggregateId,
         contaId: payload.contaId,
@@ -564,7 +636,8 @@ async function persistAggregateFailure(payload: FamilyBillingPayload, message: s
           : data,
     });
     if (payload.operationId) {
-      await prisma.familyEnrollmentOperation.updateMany({
+      if (ownershipGuard) await ownershipGuard(tx);
+    await db.familyEnrollmentOperation.updateMany({
         where: {
           id: payload.operationId,
           contaId: payload.contaId,
@@ -576,15 +649,18 @@ async function persistAggregateFailure(payload: FamilyBillingPayload, message: s
     return;
   }
 
-  await prisma.rematriculaFamiliar.updateMany({
+  if (ownershipGuard) await ownershipGuard(tx);
+    await db.rematriculaFamiliar.updateMany({
     where: { id: payload.aggregateId, contaId: payload.contaId },
     data,
   });
 }
 
-async function persistAggregateUncertain(payload: FamilyBillingPayload, message: string) {
+async function persistAggregateUncertain(payload: FamilyBillingPayload, message: string, ownershipGuard?: (tx?: Prisma.TransactionClient) => Promise<void>, tx?: Prisma.TransactionClient) {
+  const db: Prisma.TransactionClient = tx ?? prisma;
   if (payload.aggregateType === 'MATRICULA_FAMILIAR') {
-    await prisma.matriculaFamiliar.updateMany({
+    if (ownershipGuard) await ownershipGuard(tx);
+    await db.matriculaFamiliar.updateMany({
       where: { id: payload.aggregateId, contaId: payload.contaId },
       data: {
         billingProvisionStatus: MatriculaBillingProvisionStatus.RESULTADO_INCERTO,
@@ -592,7 +668,8 @@ async function persistAggregateUncertain(payload: FamilyBillingPayload, message:
       },
     });
     if (payload.operationId) {
-      await prisma.familyEnrollmentOperation.updateMany({
+      if (ownershipGuard) await ownershipGuard(tx);
+    await db.familyEnrollmentOperation.updateMany({
         where: { id: payload.operationId, contaId: payload.contaId },
         data: {
           status: 'REQUIRES_RECONCILIATION',
@@ -602,7 +679,7 @@ async function persistAggregateUncertain(payload: FamilyBillingPayload, message:
     }
     return;
   }
-  await persistAggregateFailure(payload, `RESULTADO_INCERTO: ${message.slice(0, 1900)}`);
+  await persistAggregateFailure(payload, `RESULTADO_INCERTO: ${message.slice(0, 1900)}`, ownershipGuard, tx);
 }
 
 function buildStandaloneBaseInput(
@@ -648,6 +725,7 @@ function buildBillingAdjustments(
 async function scheduleNextCycleFamilyUnification(input: {
   payload: FamilyBillingPayload;
   sourceAgreementId: string;
+  ownershipGuard?: FamilyBillingOwnershipGuard;
 }) {
   const { payload } = input;
   if (
@@ -673,14 +751,15 @@ async function scheduleNextCycleFamilyUnification(input: {
   if (!targetSubscription?.familyGroupId) {
     throw new Error('ASSINATURA_DESTINO_UNIFICACAO_NAO_ENCONTRADA');
   }
+  const targetFamilyGroupId = targetSubscription.familyGroupId;
 
-  const targetAgreement = await materializeBillingAgreement({
+  const targetAgreement = await withOwnedTransaction(input.ownershipGuard, (tx) => materializeBillingAgreement({
     kind: 'FAMILY',
     contaId: payload.contaId,
     standaloneSubscriptionId: targetSubscription.id,
-    familyGroupId: targetSubscription.familyGroupId,
+    familyGroupId: targetFamilyGroupId,
     actorId: payload.actorId,
-  });
+  }, { tx }));
   const sourceAllocations = await prisma.billingAllocation.findMany({
     where: {
       contaId: payload.contaId,
@@ -716,7 +795,7 @@ async function scheduleNextCycleFamilyUnification(input: {
     previewHash: preview.previewHash,
     previewExpiresAt: preview.expiresAt,
     expectedAgreementVersion: preview.sourceVersion,
-  });
+  }, input.ownershipGuard);
 }
 
 /**
@@ -730,7 +809,9 @@ async function scheduleNextCycleFamilyUnification(input: {
  */
 export async function executeFamilyBilling(
   payload: FamilyBillingPayload,
+  ownershipGuard?: FamilyBillingOwnershipGuard,
 ): Promise<FamilyBillingExecutionResult> {
+  const assertOwned = ownershipGuard ?? (async () => undefined);
   const monthlyValue = ensurePositiveMoney(payload.monthlyValue);
   const enrollmentFeeValue = ensurePositiveMoney(payload.enrollmentFeeValue);
   let standaloneSubscriptionId: string | null = null;
@@ -773,7 +854,8 @@ export async function executeFamilyBilling(
       throw new Error('VERSAO_FINANCEIRA_FAMILIAR_DIVERGENTE');
     }
     if (monthlyValue > 0) {
-      const remoteBefore = await getSubscription(target.asaasSubscriptionId, {
+      await assertOwned();
+    const remoteBefore = await getSubscription(target.asaasSubscriptionId, {
         contaId: payload.contaId,
       });
       joinPreviousValue = payload.previousMonthlyValue;
@@ -792,7 +874,8 @@ export async function executeFamilyBilling(
     joinTarget = { id: target.id, asaasSubscriptionId: target.asaasSubscriptionId };
   }
 
-  if (enrollmentFeeValue > 0) {
+  if (enrollmentFeeValue > 0 && payload.billingPhase !== 'RECURRING') {
+    await assertOwned();
     const enrollmentResult = await createStandaloneCharge({
       ...buildStandaloneBaseInput(payload, {
         billingType: payload.enrollmentFeeBillingType,
@@ -808,24 +891,26 @@ export async function executeFamilyBilling(
     if (!enrollmentResult.success) {
       throw new Error(`Falha ao criar taxa familiar: ${enrollmentResult.error}`);
     }
+    await assertOwned();
 
     standaloneEnrollmentChargeId = enrollmentResult.data.chargeId;
     // Persiste o efeito financeiro antes de iniciar outra chamada externa. Assim,
     // uma falha/timeout na assinatura não deixa a taxa real órfã no estado local.
-    await linkFamilyEnrollmentCharge(payload, standaloneEnrollmentChargeId);
+    await withOwnedTransaction(ownershipGuard, (tx) => linkFamilyEnrollmentCharge(payload, standaloneEnrollmentChargeId!, tx));
   }
 
   if (monthlyValue > 0 && payload.strategy === 'JOIN_EXISTING_CURRENT_CYCLE') {
     if (!joinTarget || !joinUpdateDecision) {
       throw new Error('PAYLOAD_JOIN_FAMILIAR_INCOMPLETO');
     }
-    const targetAgreement = await materializeBillingAgreement({
+    const targetAgreement = await withOwnedTransaction(ownershipGuard, (tx) => materializeBillingAgreement({
       kind: 'FAMILY',
       contaId: payload.contaId,
       standaloneSubscriptionId: joinTarget.id,
       familyGroupId: payload.aggregateId,
       actorId: payload.actorId,
-    });
+    }, { tx }));
+    await assertOwned();
     const canonicalUiRequestId = `family-current-cycle:${payload.operationId ?? payload.aggregateId}`;
     const completedCanonicalOperation = await prisma.billingChangeOperation.findFirst({
       where: { contaId: payload.contaId, uiRequestId: canonicalUiRequestId, status: 'COMPLETED' },
@@ -835,8 +920,9 @@ export async function executeFamilyBilling(
       where: {
         contaId: payload.contaId,
         familyGroupId: payload.aggregateId,
-        ...(payload.operationId ? { familyEnrollmentOperationId: payload.operationId } : {}),
-        chargeKind: 'MENSALIDADE',
+      ...(payload.operationId ? { familyEnrollmentOperationId: payload.operationId } : {}),
+      ...(payload.billableMatriculaIds ? { matriculaId: { in: payload.billableMatriculaIds } } : {}),
+      chargeKind: 'MENSALIDADE',
         status: { in: ['PENDING', 'PROCESSING', 'ACTIVE'] },
         matriculaId: { not: null },
       },
@@ -855,8 +941,8 @@ export async function executeFamilyBilling(
       actorId: payload.actorId,
       reason: `Inclusão familiar ${payload.aggregateId} em cobrança existente`,
       kind: 'ADD_ALLOCATION' as const,
-      effectivePolicy: 'CURRENT_CYCLE_FULL' as const,
-      effectiveDate: pendingAllocations[0]!.competenceStart.toISOString().slice(0, 10),
+      effectivePolicy: payload.scheduledEffectiveAt ? 'NEXT_CYCLE' as const : 'CURRENT_CYCLE_FULL' as const,
+      effectiveDate: payload.scheduledEffectiveAt?.slice(0, 10) ?? pendingAllocations[0]!.competenceStart.toISOString().slice(0, 10),
       allocations: pendingAllocations.map((allocation) => ({
         clientId: allocation.id,
         enrollmentId: allocation.matriculaId!,
@@ -875,20 +961,23 @@ export async function executeFamilyBilling(
     };
     let canonicalOperationId = completedCanonicalOperation?.id ?? null;
     if (!canonicalOperationId) {
-      const preview = await previewBillingAgreementChange(change);
+      await assertOwned();
+    const preview = await previewBillingAgreementChange(change);
       if (preview.blockers.length > 0) {
         throw new Error(`UNIFICACAO_FAMILIAR_BLOQUEADA:${preview.blockers.join('|')}`);
       }
       if (preview.adjustments.some((adjustment) => adjustment.type === 'MANUAL_REVIEW')) {
         throw new Error('RESULTADO_INCERTO:CICLO_FAMILIAR_REQUER_REVISAO_MANUAL');
       }
+      await assertOwned();
       const result = await commitBillingAgreementChange({
         ...change,
         uiRequestId: canonicalUiRequestId,
         previewHash: preview.previewHash,
         previewExpiresAt: preview.expiresAt,
         expectedAgreementVersion: preview.sourceVersion,
-      });
+      }, ownershipGuard);
+      await assertOwned();
       if (result.status === 'REQUIRES_RECONCILIATION') {
         throw new Error(`RESULTADO_INCERTO:OPERACAO_CANONICA_FAMILIAR:${result.operationId}`);
       }
@@ -906,6 +995,7 @@ export async function executeFamilyBilling(
       await processPendingBillingAdjustments({
         contaId: payload.contaId,
         operationId: canonicalOperationId,
+        ownershipGuard,
       });
       const unresolved = await prisma.billingAdjustment.findFirst({
         where: {
@@ -948,6 +1038,7 @@ export async function executeFamilyBilling(
     standaloneSubscriptionId = joinTarget.id;
   } else if (monthlyValue > 0) {
     const shortContract = payload.endDate < payload.nextDueDate;
+    await assertOwned();
     const subscriptionResult = await createStandaloneCharge(
       shortContract
         ? {
@@ -975,24 +1066,27 @@ export async function executeFamilyBilling(
     if (!subscriptionResult.success) {
       throw new Error(`Falha ao criar assinatura familiar: ${subscriptionResult.error}`);
     }
+    await assertOwned();
 
     if (shortContract) standaloneTuitionChargeId = subscriptionResult.data.chargeId;
     else standaloneSubscriptionId = subscriptionResult.data.chargeId;
   }
 
-  await updateGroupMetadata({
+  await withOwnedTransaction(ownershipGuard, (tx) => updateGroupMetadata({
     contaId: payload.contaId,
     familyGroupId: payload.aggregateId,
     standaloneSubscriptionId,
     standaloneChargeId: standaloneEnrollmentChargeId,
-  });
+    tx,
+  }));
 
   if (payload.aggregateType === 'MATRICULA_FAMILIAR') {
-    await prisma.familyFinancialAllocation.updateMany({
+    await withOwnedTransaction(ownershipGuard, (tx) => tx.familyFinancialAllocation.updateMany({
       where: {
         contaId: payload.contaId,
         familyGroupId: payload.aggregateId,
         ...(payload.operationId ? { familyEnrollmentOperationId: payload.operationId } : {}),
+        ...(payload.billableMatriculaIds ? { matriculaId: { in: payload.billableMatriculaIds } } : {}),
         chargeKind: 'MENSALIDADE',
         status: 'PENDING',
       },
@@ -1003,11 +1097,11 @@ export async function executeFamilyBilling(
         status:
           payload.strategy === 'JOIN_EXISTING_CURRENT_CYCLE' ? 'PROCESSING' : 'AWAITING_WEBHOOK',
       },
-    });
+    }));
   }
 
   if (standaloneSubscriptionId && payload.aggregateType === 'REMATRICULA_FAMILIAR') {
-    await prisma.familyFinancialAllocation.updateMany({
+    await withOwnedTransaction(ownershipGuard, (tx) => tx.familyFinancialAllocation.updateMany({
       where: {
         contaId: payload.contaId,
         rematriculaFamiliarId: payload.aggregateId,
@@ -1017,9 +1111,9 @@ export async function executeFamilyBilling(
         standaloneSubscriptionId,
         status: 'AWAITING_WEBHOOK',
       },
-    });
+    }));
 
-    await prisma.rematriculaFamiliarItem.updateMany({
+    await withOwnedTransaction(ownershipGuard, (tx) => tx.rematriculaFamiliarItem.updateMany({
       where: {
         rematriculaFamiliarId: payload.aggregateId,
         decision: 'REMATRICULAR_AGORA',
@@ -1027,24 +1121,28 @@ export async function executeFamilyBilling(
       data: {
         targetFinancialAgreementId: standaloneSubscriptionId,
       },
-    });
+    }));
   }
 
   if (payload.aggregateType === 'MATRICULA_FAMILIAR' && payload.operationId) {
     const isJoin = payload.strategy === 'JOIN_EXISTING_CURRENT_CYCLE';
-    await prisma.$transaction(async (tx) => {
+    await withOwnedTransaction(ownershipGuard, async (tx) => {
       if (isJoin) {
+        await assertOwned(tx);
         const updated = await tx.matriculaFamiliar.updateMany({
           where: {
             id: payload.aggregateId,
             contaId: payload.contaId,
             billingVersion: payload.expectedBillingVersion ?? undefined,
+            status: { in: [FamilyBillingStatus.PENDENTE, FamilyBillingStatus.ATIVO, FamilyBillingStatus.PARCIAL] },
           },
           data: {
             valorMensalidadeTotal: payload.resultingMonthlyValue ?? monthlyValue,
             totalAlunos: payload.totalAlunos,
             billingVersion: { increment: 1 },
-            billingProvisionStatus: MatriculaBillingProvisionStatus.PROVISIONADO,
+            billingProvisionStatus: payload.deferActivationUntil
+              ? MatriculaBillingProvisionStatus.PENDENTE
+              : MatriculaBillingProvisionStatus.PROVISIONADO,
             ultimoErro: null,
           },
         });
@@ -1052,7 +1150,8 @@ export async function executeFamilyBilling(
           throw new Error('RESULTADO_INCERTO:VERSAO_FINANCEIRA_FAMILIAR_DIVERGENTE_APOS_PUT');
         }
         if (monthlyValue > 0) {
-          const subscriptionUpdated = await tx.standaloneSubscription.updateMany({
+          await assertOwned(tx);
+        const subscriptionUpdated = await tx.standaloneSubscription.updateMany({
             where: { id: standaloneSubscriptionId ?? '', contaId: payload.contaId },
             data: {
               value: payload.resultingMonthlyValue ?? monthlyValue,
@@ -1062,7 +1161,8 @@ export async function executeFamilyBilling(
           if (subscriptionUpdated.count === 0) {
             throw new Error('RESULTADO_INCERTO:ASSINATURA_LOCAL_AUSENTE_APOS_PUT');
           }
-          await tx.familyFinancialAllocation.updateMany({
+          await assertOwned(tx);
+        await tx.familyFinancialAllocation.updateMany({
             where: {
               contaId: payload.contaId,
               familyGroupId: payload.aggregateId,
@@ -1074,16 +1174,33 @@ export async function executeFamilyBilling(
           });
         }
       } else {
-        await tx.matriculaFamiliar.updateMany({
-          where: { id: payload.aggregateId, contaId: payload.contaId },
+        await assertOwned(tx);
+        const familyUpdated = await tx.matriculaFamiliar.updateMany({
+          where: {
+            id: payload.aggregateId,
+            contaId: payload.contaId,
+            status: { in: [FamilyBillingStatus.PENDENTE, FamilyBillingStatus.ATIVO, FamilyBillingStatus.PARCIAL] },
+          },
           data: {
-            status: FamilyBillingStatus.ATIVO,
-            billingProvisionStatus: MatriculaBillingProvisionStatus.PROVISIONADO,
-            standaloneSubscriptionId,
-            standaloneEnrollmentChargeId,
+            status: payload.deferActivationUntil ? FamilyBillingStatus.PENDENTE : FamilyBillingStatus.ATIVO,
+            billingProvisionStatus: payload.deferActivationUntil
+              ? MatriculaBillingProvisionStatus.PENDENTE
+              : MatriculaBillingProvisionStatus.PROVISIONADO,
+            ...(payload.billingPhase === 'ENROLLMENT_FEE'
+              ? { standaloneEnrollmentChargeId }
+              : payload.billingPhase === 'RECURRING'
+                ? {
+                    standaloneSubscriptionId,
+                    valorMensalidadeTotal: monthlyValue,
+                    totalAlunos: payload.totalAlunos,
+                  }
+                : { standaloneSubscriptionId, standaloneEnrollmentChargeId }),
             ultimoErro: null,
           },
         });
+        if (familyUpdated.count === 0) {
+          throw new Error('RESULTADO_INCERTO:FAMILIA_TERMINAL_APOS_EFEITO_REMOTO');
+        }
       }
 
       // A matrícula familiar só pode deixar o estado pendente depois que a
@@ -1091,59 +1208,110 @@ export async function executeFamilyBilling(
       // Matrículas já ativas não são tocadas: isso preserva retries e JOINs.
       const account = await tx.conta.findUnique({
         where: { id: payload.contaId },
-        select: { matriculaActivationPolicy: true },
+        select: { matriculaActivationPolicy: true, timezone: true },
       });
-      const pendingFeeStatus =
-        account?.matriculaActivationPolicy === 'REQUIRES_PAYMENT' && payload.enrollmentFeeValue > 0
-          ? StatusMatricula.PENDENTE_TAXA
-          : StatusMatricula.ATIVA;
-      await tx.matricula.updateMany({
-        where: {
-          contaId: payload.contaId,
-          matriculaFamiliarId: payload.aggregateId,
-          billingProvisionStatus: {
-            in: [
+      if (!payload.deferActivationUntil) {
+        const members = await tx.matricula.findMany({
+          where: {
+            contaId: payload.contaId,
+            matriculaFamiliarId: payload.aggregateId,
+            ...(payload.billableMatriculaIds ? { id: { in: payload.billableMatriculaIds } } : {}),
+            billingProvisionStatus: { in: [
+              MatriculaBillingProvisionStatus.NAO_APLICAVEL,
               MatriculaBillingProvisionStatus.PENDENTE,
               MatriculaBillingProvisionStatus.PROCESSANDO,
               MatriculaBillingProvisionStatus.PARCIAL,
-            ],
+            ] },
+            status: { in: [StatusMatricula.PENDENTE_TAXA, StatusMatricula.AGUARDANDO_CONFIRMACAO, StatusMatricula.ATIVA] },
           },
-        },
-        data: {
-          status: pendingFeeStatus,
-          billingProvisionStatus: MatriculaBillingProvisionStatus.PROVISIONADO,
-          billingProvisionError: null,
-          billingProvisionAt: new Date(),
-        },
-      });
-      const completedOperation = await tx.familyEnrollmentOperation.updateMany({
-        where: {
-          id: payload.operationId!,
-          contaId: payload.contaId,
-          status: { in: ['PENDING', 'PROCESSING'] },
-        },
-        data: { status: 'COMPLETED', completedAt: new Date(), lastError: null },
-      });
-      if (completedOperation.count === 0) {
-        const alreadyCompleted = await tx.familyEnrollmentOperation.findFirst({
-          where: { id: payload.operationId!, contaId: payload.contaId, status: 'COMPLETED' },
-          select: { id: true },
+          select: { id: true, status: true, taxaStatus: true, taxaIsenta: true, taxaMatricula: true, dataInicio: true, billingProvisionStatus: true },
         });
-        if (!alreadyCompleted) {
-          throw new Error('RESULTADO_INCERTO:OPERACAO_FAMILIAR_NAO_PODE_SER_CONCLUIDA');
+        for (const member of members) {
+          const futureStart = isAcademicDateInFuture(member.dataInicio, new Date(), account?.timezone ?? undefined);
+          const decision = futureStart
+            ? { action: 'KEEP' as const, reason: 'FEE_NOT_PAID' as const }
+            : decideEnrollmentStatusAtContractStart({
+                activationPolicy: account?.matriculaActivationPolicy ?? 'IMMEDIATE',
+                enrollmentStatus: member.status,
+                feeRequired: !member.taxaIsenta && Number(member.taxaMatricula) > 0,
+                feeStatus: member.taxaStatus,
+              });
+          await assertOwned(tx);
+        await tx.matricula.updateMany({
+            where: {
+              id: member.id,
+              contaId: payload.contaId,
+              status: member.status,
+              billingProvisionStatus: member.billingProvisionStatus,
+            },
+            data: {
+              ...(decision.action === 'TRANSITION' ? { status: decision.targetStatus } : {}),
+              ...(member.billingProvisionStatus === MatriculaBillingProvisionStatus.NAO_APLICAVEL
+                ? {}
+                : {
+                    billingProvisionStatus: MatriculaBillingProvisionStatus.PROVISIONADO,
+                    billingProvisionError: null,
+                    billingProvisionAt: new Date(),
+                  }),
+            },
+          });
+        }
+      }
+      if (!payload.deferActivationUntil && payload.billableMatriculaIds) {
+        await assertOwned(tx);
+        await tx.matricula.updateMany({
+          where: {
+            contaId: payload.contaId,
+            matriculaFamiliarId: payload.aggregateId,
+            id: { in: payload.billableMatriculaIds },
+            status: StatusMatricula.PAUSADA,
+            billingProvisionStatus: {
+              in: [
+                MatriculaBillingProvisionStatus.PENDENTE,
+                MatriculaBillingProvisionStatus.PROCESSANDO,
+                MatriculaBillingProvisionStatus.PARCIAL,
+              ],
+            },
+          },
+          data: {
+            billingProvisionStatus: MatriculaBillingProvisionStatus.PROVISIONADO,
+            billingProvisionError: null,
+            billingProvisionAt: new Date(),
+          },
+        });
+      }
+      if (!payload.deferActivationUntil) {
+        await assertOwned(tx);
+        const completedOperation = await tx.familyEnrollmentOperation.updateMany({
+          where: {
+            id: payload.operationId!,
+            contaId: payload.contaId,
+            status: { in: ['PENDING', 'PROCESSING'] },
+          },
+          data: { status: 'COMPLETED', completedAt: new Date(), lastError: null },
+        });
+        if (completedOperation.count === 0) {
+          const alreadyCompleted = await tx.familyEnrollmentOperation.findFirst({
+            where: { id: payload.operationId!, contaId: payload.contaId, status: 'COMPLETED' },
+            select: { id: true },
+          });
+          if (!alreadyCompleted) {
+            throw new Error('RESULTADO_INCERTO:OPERACAO_FAMILIAR_NAO_PODE_SER_CONCLUIDA');
+          }
         }
       }
     });
   } else {
-    await persistAggregateSuccess({
+    await withOwnedTransaction(ownershipGuard, (tx) => persistAggregateSuccess({
       payload,
       subscriptionId: standaloneSubscriptionId,
       enrollmentChargeId: standaloneEnrollmentChargeId,
-    });
+      tx,
+    }));
   }
 
   if (standaloneSubscriptionId && payload.aggregateType === 'MATRICULA_FAMILIAR') {
-    const sourceAgreement = await materializeBillingAgreement({
+    const sourceAgreement = await withOwnedTransaction(ownershipGuard, (tx) => materializeBillingAgreement({
       kind: 'FAMILY',
       contaId: payload.contaId,
       standaloneSubscriptionId,
@@ -1158,11 +1326,14 @@ export async function executeFamilyBilling(
         discountType: payload.discount?.type ?? null,
         discountDueDateLimitDays: payload.discount?.dueDateLimitDays ?? null,
       },
-    });
+    }, { tx }));
+    await assertOwned();
     await scheduleNextCycleFamilyUnification({
       payload,
       sourceAgreementId: sourceAgreement.id,
+      ownershipGuard,
     });
+    await assertOwned();
   }
 
   return { standaloneSubscriptionId, standaloneEnrollmentChargeId, standaloneTuitionChargeId };
@@ -1194,6 +1365,7 @@ export async function enqueueFamilyBillingOutbox(input: {
   matriculaFamiliarId?: string;
   rematriculaFamiliarId?: string;
   eventType?: string;
+  availableAt?: Date;
 }) {
   if (
     input.payload.contaId !== input.contaId ||
@@ -1219,6 +1391,7 @@ export async function enqueueFamilyBillingOutbox(input: {
         aggregateType: input.aggregateType,
         aggregateId: input.aggregateId,
         eventType,
+        ...(input.availableAt ? { availableAt: input.availableAt } : {}),
         dedupeKey,
         matriculaFamiliarId: input.matriculaFamiliarId ?? null,
         rematriculaFamiliarId: input.rematriculaFamiliarId ?? null,
@@ -1251,6 +1424,10 @@ export async function processFamilyBillingOutboxEvent(
     where: { id: eventId },
   });
 
+  if (event && event.availableAt > new Date()) {
+    return { processed: false, reason: 'NOT_YET_AVAILABLE' as const };
+  }
+
   if (
     !event ||
     event.status === FamilyBillingOutboxStatus.PROCESSED ||
@@ -1261,6 +1438,7 @@ export async function processFamilyBillingOutboxEvent(
   }
 
   const claimedAt = new Date();
+  const claimToken = globalThis.crypto.randomUUID();
   const claimed = await prisma.familyBillingOutbox.updateMany({
     where: {
       id: eventId,
@@ -1279,6 +1457,7 @@ export async function processFamilyBillingOutboxEvent(
       status: FamilyBillingOutboxStatus.PROCESSING,
       lockedAt: claimedAt,
       leaseExpiresAt: new Date(claimedAt.getTime() + 5 * 60 * 1000),
+      claimToken,
       lastAttemptAt: new Date(),
       attempts: { increment: 1 },
     },
@@ -1289,6 +1468,26 @@ export async function processFamilyBillingOutboxEvent(
   }
 
   let parsedFamilyPayload: FamilyBillingPayload | null = null;
+  let leaseLost = false;
+  const renewLease = async () => {
+    if (leaseLost) return false;
+    const renewed = await prisma.familyBillingOutbox.updateMany({
+      where: { id: eventId, contaId: event.contaId, status: FamilyBillingOutboxStatus.PROCESSING, claimToken, leaseExpiresAt: { gt: new Date() } },
+      data: { leaseExpiresAt: new Date(Date.now() + 5 * 60 * 1000) },
+    }).catch(() => ({ count: 0 }));
+    if (renewed.count !== 1) leaseLost = true;
+    return renewed.count === 1;
+  };
+  const assertOwned: FamilyBillingOwnershipGuard = async (tx) => {
+    const renewed = tx
+      ? await tx.familyBillingOutbox.updateMany({
+          where: { id: eventId, contaId: event.contaId, status: FamilyBillingOutboxStatus.PROCESSING, claimToken, leaseExpiresAt: { gt: new Date() } },
+          data: { leaseExpiresAt: new Date(Date.now() + 5 * 60 * 1000) },
+        })
+      : { count: (await renewLease()) ? 1 : 0 };
+    if (renewed.count !== 1) throw new Error('FAMILY_BILLING_LEASE_LOST_RESULT_UNCERTAIN');
+  };
+  const heartbeat = setInterval(() => { void renewLease(); }, 60_000);
 
   try {
     if (event.eventType === 'CLOSE_MATRICULA_FAMILIAR_SUBSCRIPTION') {
@@ -1363,13 +1562,14 @@ export async function processFamilyBillingOutboxEvent(
         if (!sourceSubscription.familyGroupId) {
           throw new Error('ASSINATURA_FAMILIAR_SEM_GRUPO_FINANCEIRO');
         }
-        const agreement = await materializeBillingAgreement({
+        const agreement = await withOwnedTransaction(assertOwned, (tx) => materializeBillingAgreement({
           kind: 'FAMILY',
           contaId: event.contaId,
-          standaloneSubscriptionId: sourceSubscription.id,
-          familyGroupId: sourceSubscription.familyGroupId,
+          standaloneSubscriptionId: sourceSubscription.id!,
+          familyGroupId: sourceSubscription.familyGroupId!,
           actorId: 'family-enrollment-closure',
-        });
+        }, { tx }));
+        await assertOwned();
         const change = {
           contaId: event.contaId,
           agreementId: agreement.id,
@@ -1379,6 +1579,7 @@ export async function processFamilyBillingOutboxEvent(
           effectivePolicy: 'CURRENT_CYCLE_FULL' as const,
           effectiveDate,
         };
+        await assertOwned();
         const preview = await previewBillingAgreementChange(change);
         if (
           preview.blockers.length > 0 ||
@@ -1388,13 +1589,15 @@ export async function processFamilyBillingOutboxEvent(
             `ENCERRAMENTO_FAMILIAR_REQUER_REVISAO:${preview.blockers.join('|') || 'MANUAL_REVIEW'}`,
           );
         }
+        await assertOwned();
         const committed = await commitBillingAgreementChange({
           ...change,
           uiRequestId: operationUiRequestId,
           previewHash: preview.previewHash,
           previewExpiresAt: preview.expiresAt,
           expectedAgreementVersion: preview.sourceVersion,
-        });
+        }, assertOwned);
+        await assertOwned();
         if (committed.status === 'REQUIRES_RECONCILIATION') {
           throw new Error(`RESULTADO_INCERTO:ENCERRAMENTO_FAMILIAR:${committed.operationId}`);
         }
@@ -1407,7 +1610,7 @@ export async function processFamilyBillingOutboxEvent(
           select: { id: true },
         });
         if (pendingAdjustment) {
-          await processPendingBillingAdjustments({ contaId: event.contaId, operationId });
+          await processPendingBillingAdjustments({ contaId: event.contaId, operationId, ownershipGuard: assertOwned });
           const unresolved = await prisma.billingAdjustment.findFirst({
             where: { contaId: event.contaId, operationId, status: { not: 'APPLIED' } },
             select: { status: true, lastError: true },
@@ -1420,36 +1623,39 @@ export async function processFamilyBillingOutboxEvent(
         }
       }
 
-      await prisma.matriculaFamiliar.updateMany({
+      await withOwnedTransaction(assertOwned, (tx) => tx.matriculaFamiliar.updateMany({
         where: {
           id: aggregateId,
           contaId: event.contaId,
           status: { in: [FamilyBillingStatus.ATIVO, FamilyBillingStatus.PARCIAL] },
         },
         data: { status: FamilyBillingStatus.CANCELADO, academicStatus: 'COMPLETO' },
-      });
-      await prisma.standaloneSubscription.updateMany({
+      }));
+      await withOwnedTransaction(assertOwned, (tx) => tx.standaloneSubscription.updateMany({
         where: { id: sourceFinancialAgreementId, contaId: event.contaId },
         data: {
           closureScheduledAt: new Date(),
           validUntil: new Date(`${effectiveDate}T00:00:00.000Z`),
         },
-      });
-      await prisma.familyBillingOutbox.updateMany({
+      }));
+      const completed = await prisma.familyBillingOutbox.updateMany({
         where: {
           id: eventId,
           contaId: event.contaId,
           status: FamilyBillingOutboxStatus.PROCESSING,
-          lockedAt: claimedAt,
+          claimToken,
+          leaseExpiresAt: { gt: new Date() },
         },
         data: {
           status: FamilyBillingOutboxStatus.PROCESSED,
           processedAt: new Date(),
           lockedAt: null,
           leaseExpiresAt: null,
+          claimToken: null,
           lastError: null,
         },
       });
+      if (completed.count !== 1) return { processed: false, reason: 'REQUIRES_RECONCILIATION' as const };
       return { processed: true as const };
     }
 
@@ -1506,9 +1712,11 @@ export async function processFamilyBillingOutboxEvent(
           select: { id: true },
         });
         if (pendingRecoveredAdjustment) {
-          await processPendingBillingAdjustments({
+          await assertOwned();
+        await processPendingBillingAdjustments({
             contaId: event.contaId,
             operationId: completedClosureOperation.id,
+            ownershipGuard: assertOwned,
           });
           const unresolved = await prisma.billingAdjustment.findFirst({
             where: {
@@ -1535,25 +1743,26 @@ export async function processFamilyBillingOutboxEvent(
         }
       }
 
-      await prisma.rematriculaFamiliar.updateMany({
+      await withOwnedTransaction(assertOwned, (tx) => tx.rematriculaFamiliar.updateMany({
         where: { id: event.aggregateId, contaId: event.contaId },
         data: {
           step: 'ENCERRAMENTO_ORIGEM_SOLICITADO',
           sourceBillingStatus: sourceAsaasSubscriptionId ? 'CLOSURE_REQUESTED' : 'REVIEW_MANUAL',
         },
-      });
+      }));
 
       if (sourceAsaasSubscriptionId && !completedClosureOperation) {
         if (!sourceSubscription.familyGroupId) {
           throw new Error('ASSINATURA_ORIGEM_SEM_GRUPO_FAMILIAR');
         }
-        const sourceAgreement = await materializeBillingAgreement({
+        const sourceAgreement = await withOwnedTransaction(assertOwned, (tx) => materializeBillingAgreement({
           kind: 'FAMILY',
           contaId: event.contaId,
-          standaloneSubscriptionId: sourceSubscription.id,
-          familyGroupId: sourceSubscription.familyGroupId,
+          standaloneSubscriptionId: sourceSubscription.id!,
+          familyGroupId: sourceSubscription.familyGroupId!,
           actorId: 'family-billing-outbox',
-        });
+        }, { tx }));
+        await assertOwned();
         const recurringAllocations = await prisma.billingAllocation.findMany({
           where: {
             contaId: event.contaId,
@@ -1589,6 +1798,7 @@ export async function processFamilyBillingOutboxEvent(
             prorationPolicy: 'FULL_CURRENT_CYCLE' as const,
           })),
         };
+        await assertOwned();
         const closurePreview = await previewBillingAgreementChange(closureChange);
         if (
           closurePreview.blockers.length > 0 ||
@@ -1598,13 +1808,15 @@ export async function processFamilyBillingOutboxEvent(
             `ENCERRAMENTO_CANONICO_BLOQUEADO:${closurePreview.blockers.join('|') || 'MANUAL_REVIEW'}`,
           );
         }
+        await assertOwned();
         const closureResult = await commitBillingAgreementChange({
           ...closureChange,
           uiRequestId: closureUiRequestId,
           previewHash: closurePreview.previewHash,
           previewExpiresAt: closurePreview.expiresAt,
           expectedAgreementVersion: closurePreview.sourceVersion,
-        });
+        }, assertOwned);
+        await assertOwned();
         if (closureResult.status === 'REQUIRES_RECONCILIATION') {
           throw new Error(`RESULTADO_INCERTO:ENCERRAMENTO_CANONICO:${closureResult.operationId}`);
         }
@@ -1620,6 +1832,7 @@ export async function processFamilyBillingOutboxEvent(
           await processPendingBillingAdjustments({
             contaId: event.contaId,
             operationId: closureResult.operationId,
+            ownershipGuard: assertOwned,
           });
           const unresolved = await prisma.billingAdjustment.findFirst({
             where: {
@@ -1646,31 +1859,34 @@ export async function processFamilyBillingOutboxEvent(
         }
       }
 
-      await prisma.standaloneSubscription.updateMany({
+      await withOwnedTransaction(assertOwned, (tx) => tx.standaloneSubscription.updateMany({
         where: { id: sourceFinancialAgreementId, contaId: event.contaId },
         data: {
           closureScheduledAt: new Date(),
           validUntil: effectiveDate ? new Date(`${effectiveDate}T12:00:00.000Z`) : undefined,
           familyTransitionId: event.aggregateId,
         },
-      });
+      }));
 
-      await prisma.familyBillingOutbox.updateMany({
+      const completed = await prisma.familyBillingOutbox.updateMany({
         where: {
           id: eventId,
           contaId: event.contaId,
           status: FamilyBillingOutboxStatus.PROCESSING,
-          lockedAt: claimedAt,
+          claimToken,
+          leaseExpiresAt: { gt: new Date() },
         },
         data: {
           status: FamilyBillingOutboxStatus.PROCESSED,
           processedAt: new Date(),
           lockedAt: null,
           leaseExpiresAt: null,
+          claimToken: null,
           lastError: null,
         },
       });
 
+      if (completed.count !== 1) return { processed: false, reason: 'REQUIRES_RECONCILIATION' as const };
       return { processed: true as const };
     }
 
@@ -1682,20 +1898,230 @@ export async function processFamilyBillingOutboxEvent(
     ) {
       throw new Error('PAYLOAD_OUTBOX_FAMILIAR_DIVERGENTE');
     }
-    await executeFamilyBilling(parsedFamilyPayload);
+    if (parsedFamilyPayload.billingPhase) {
+      const family = await prisma.matriculaFamiliar.findFirst({
+        where: { id: event.aggregateId, contaId: event.contaId },
+        select: { status: true, matriculas: { select: { id: true, status: true, cobrarDurantePausa: true, dataRetornoPrevista: true, dataInicio: true } } },
+      });
+      if (!family || family.status === FamilyBillingStatus.CANCELADO) {
+        const skipped = await prisma.familyBillingOutbox.updateMany({
+          where: { id: eventId, contaId: event.contaId, status: FamilyBillingOutboxStatus.PROCESSING, claimToken, leaseExpiresAt: { gt: new Date() } },
+          data: { status: FamilyBillingOutboxStatus.PROCESSED, processedAt: new Date(), lockedAt: null, leaseExpiresAt: null, claimToken: null, lastError: 'SKIPPED:FAMILIA_ENCERRADA_ANTES_DA_VIGENCIA' },
+        });
+        if (skipped.count !== 1) return { processed: false, reason: 'REQUIRES_RECONCILIATION' as const };
+        return { processed: false, reason: 'FAMILY_TERMINAL' as const };
+      }
+      if (parsedFamilyPayload.billingPhase === 'RECURRING') {
+        const account = await prisma.conta.findUnique({ where: { id: event.contaId }, select: { timezone: true } });
+        const persistedOperationIds = !parsedFamilyPayload.operationMatriculaIds && parsedFamilyPayload.operationId
+          ? await prisma.familyFinancialAllocation.findMany({
+              where: {
+                contaId: event.contaId,
+                familyGroupId: event.aggregateId,
+                familyEnrollmentOperationId: parsedFamilyPayload.operationId,
+                matriculaId: { not: null },
+              },
+              select: { matriculaId: true },
+              distinct: ['matriculaId'],
+            })
+          : [];
+        const latestFutureStart = resolveFamilyOperationFutureStart({
+          members: family.matriculas,
+          operationMatriculaIds: parsedFamilyPayload.operationMatriculaIds ?? (persistedOperationIds.length
+            ? persistedOperationIds.flatMap(({ matriculaId }) => matriculaId ? [matriculaId] : [])
+            : null),
+          now: new Date(),
+          timezone: account?.timezone,
+        });
+        if (latestFutureStart) {
+          const rescheduledPayload = {
+            ...parsedFamilyPayload,
+            scheduledEffectiveAt: latestFutureStart.toISOString(),
+          };
+          await prisma.familyBillingOutbox.updateMany({
+            where: { id: eventId, contaId: event.contaId, status: FamilyBillingOutboxStatus.PROCESSING, claimToken, leaseExpiresAt: { gt: new Date() } },
+            data: {
+              status: FamilyBillingOutboxStatus.PENDING,
+              availableAt: latestFutureStart,
+              payload: rescheduledPayload as unknown as Prisma.InputJsonValue,
+              lockedAt: null,
+              leaseExpiresAt: null,
+          claimToken: null,
+              processedAt: null,
+              lastError: 'AGUARDANDO_INICIO_ACADEMICO_ATUALIZADO',
+            },
+          });
+          return { processed: false, reason: 'NOT_YET_EFFECTIVE' as const };
+        }
+      }
+      if (parsedFamilyPayload.billingPhase === 'RECURRING' && parsedFamilyPayload.enrollmentFeeValue > 0) {
+        const feeOutbox = parsedFamilyPayload.operationId
+          ? await prisma.familyBillingOutbox.findFirst({
+              where: {
+                contaId: event.contaId,
+                eventType: `FUTURE_FAMILY_ENROLLMENT_FEE:${parsedFamilyPayload.operationId}`,
+                payload: { path: ['operationId'], equals: parsedFamilyPayload.operationId },
+              },
+              select: { status: true },
+            })
+          : null;
+        if (feeOutbox?.status !== FamilyBillingOutboxStatus.PROCESSED) {
+          const attemptsAfterClaim = Number(event.attempts ?? 0) + 1;
+          const exhausted = attemptsAfterClaim >= 8;
+          const retryAt = new Date(Date.now() + Math.min(60, Math.max(5, attemptsAfterClaim * 5)) * 60 * 1000);
+          await prisma.familyBillingOutbox.updateMany({
+            where: { id: eventId, contaId: event.contaId, status: FamilyBillingOutboxStatus.PROCESSING, claimToken, leaseExpiresAt: { gt: new Date() } },
+            data: {
+              status: exhausted ? FamilyBillingOutboxStatus.REQUIRES_RECONCILIATION : FamilyBillingOutboxStatus.PENDING,
+              lockedAt: null,
+              leaseExpiresAt: null,
+          claimToken: null,
+              availableAt: retryAt,
+              lastError: exhausted
+                ? 'LIMITE_DE_TENTATIVAS_AGUARDANDO_CONFIRMACAO_DA_TAXA'
+                : 'RECORRENCIA_FUTURA_AGUARDANDO_CONFIRMACAO_DA_TAXA',
+            },
+          });
+          return { processed: false, reason: 'ENROLLMENT_FEE_NOT_CONFIRMED' as const };
+        }
+      }
+      const isEnrollmentFeePhase = parsedFamilyPayload.billingPhase === 'ENROLLMENT_FEE';
+      const chargeKind = isEnrollmentFeePhase ? 'TAXA_MATRICULA' : 'MENSALIDADE';
+      const allocations = await prisma.familyFinancialAllocation.findMany({
+        where: {
+          contaId: event.contaId,
+          familyGroupId: event.aggregateId,
+          familyEnrollmentOperationId: parsedFamilyPayload.operationId ?? undefined,
+          chargeKind,
+        },
+        select: { matriculaId: true, amount: true, status: true, sourceChargeId: true },
+      });
+      const billableMatriculaIdsNow = family.matriculas
+        .filter((member) => member.status !== StatusMatricula.CANCELADA && member.status !== StatusMatricula.ENCERRADA && member.status !== StatusMatricula.RECUSADA && (isEnrollmentFeePhase || member.status !== StatusMatricula.PAUSADA || member.cobrarDurantePausa))
+        .map((member) => member.id)
+        .sort();
+      const priorBillableIds = parsedFamilyPayload.billableMatriculaIds?.slice().sort() ?? null;
+      const priorRemoteEffect = allocations.some((allocation) => allocation.status !== 'PENDING' || allocation.sourceChargeId !== null);
+      if (priorBillableIds && priorBillableIds.join('|') !== billableMatriculaIdsNow.join('|') && priorRemoteEffect) {
+        await prisma.familyBillingOutbox.updateMany({
+          where: { id: eventId, contaId: event.contaId, status: FamilyBillingOutboxStatus.PROCESSING, claimToken, leaseExpiresAt: { gt: new Date() } },
+          data: {
+            status: FamilyBillingOutboxStatus.REQUIRES_RECONCILIATION,
+            lockedAt: null,
+            leaseExpiresAt: null,
+          claimToken: null,
+            lastError: 'FUTURE_FAMILY_MEMBERS_CHANGED_AFTER_PREPARATION',
+          },
+        });
+        return { processed: false, reason: 'REQUIRES_RECONCILIATION' as const };
+      }
+      if (priorBillableIds && priorBillableIds.join('|') === billableMatriculaIdsNow.join('|') && priorRemoteEffect) {
+        parsedFamilyPayload = { ...parsedFamilyPayload, billableMatriculaIds: priorBillableIds };
+      } else {
+      const resolution = resolveFutureFamilyBillingAmounts({
+        phase: parsedFamilyPayload.billingPhase,
+        operationId: parsedFamilyPayload.operationId,
+        payload: {
+          monthlyValue: parsedFamilyPayload.monthlyValue,
+          enrollmentFeeValue: parsedFamilyPayload.enrollmentFeeValue,
+        },
+        members: family.matriculas,
+        allocations: allocations.map((allocation) => ({
+          matriculaId: allocation.matriculaId,
+          amount: Number(allocation.amount),
+        })),
+      });
+      if (resolution.kind === 'DEFER_PAUSED') {
+        const now = new Date();
+        const nextExpectedReturn = family.matriculas
+          .filter((member) => member.status === StatusMatricula.PAUSADA && !member.cobrarDurantePausa && member.dataRetornoPrevista)
+          .map((member) => member.dataRetornoPrevista!)
+          .filter((date) => date > now)
+          .sort((left, right) => left.getTime() - right.getTime())[0];
+        const availableAt = nextExpectedReturn ?? new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        await prisma.familyBillingOutbox.updateMany({
+          where: { id: eventId, contaId: event.contaId, status: FamilyBillingOutboxStatus.PROCESSING, claimToken, leaseExpiresAt: { gt: new Date() } },
+          data: {
+            status: FamilyBillingOutboxStatus.PENDING,
+            availableAt,
+            lockedAt: null,
+            leaseExpiresAt: null,
+          claimToken: null,
+            processedAt: null,
+            lastError: 'AGUARDANDO_RETORNO_DA_PAUSA_FAMILIAR',
+          },
+        });
+        return { processed: false, reason: 'FAMILY_PAUSED' as const };
+      }
+      if (resolution.kind === 'CANCEL_TERMINAL') {
+        const skipped = await prisma.familyBillingOutbox.updateMany({
+          where: { id: eventId, contaId: event.contaId, status: FamilyBillingOutboxStatus.PROCESSING, claimToken, leaseExpiresAt: { gt: new Date() } },
+          data: { status: FamilyBillingOutboxStatus.PROCESSED, processedAt: new Date(), lockedAt: null, leaseExpiresAt: null, claimToken: null, lastError: 'SKIPPED:FAMILIA_ENCERRADA_ANTES_DA_VIGENCIA' },
+        });
+        if (skipped.count !== 1) return { processed: false, reason: 'REQUIRES_RECONCILIATION' as const };
+        return { processed: false, reason: 'FAMILY_TERMINAL' as const };
+      }
+      if (resolution.kind === 'REQUIRES_RECONCILIATION') {
+        await prisma.familyBillingOutbox.updateMany({
+          where: { id: eventId, contaId: event.contaId, status: FamilyBillingOutboxStatus.PROCESSING, claimToken, leaseExpiresAt: { gt: new Date() } },
+          data: {
+            status: FamilyBillingOutboxStatus.REQUIRES_RECONCILIATION,
+            lockedAt: null,
+            leaseExpiresAt: null,
+          claimToken: null,
+            lastError: 'FUTURE_FAMILY_BILLING_CANNOT_BE_RECALCULATED_SAFELY',
+          },
+        });
+        return { processed: false, reason: 'REQUIRES_RECONCILIATION' as const };
+      }
+      const billableMatriculaIds = billableMatriculaIdsNow;
+      const terminalMatriculaIds = family.matriculas
+        .filter((member) => ['CANCELADA', 'ENCERRADA', 'RECUSADA'].includes(member.status))
+        .map((member) => member.id);
+      if (terminalMatriculaIds.length > 0) {
+        await withOwnedTransaction(assertOwned, (tx) => tx.familyFinancialAllocation.updateMany({
+          where: {
+            contaId: event.contaId,
+            familyGroupId: event.aggregateId,
+            familyEnrollmentOperationId: parsedFamilyPayload!.operationId ?? undefined,
+            chargeKind,
+            matriculaId: { in: terminalMatriculaIds },
+            status: 'PENDING',
+          },
+          data: { status: 'CANCELLED' },
+        }));
+      }
+      parsedFamilyPayload = {
+        ...parsedFamilyPayload,
+        totalAlunos: resolution.totalAlunos,
+        monthlyValue: resolution.monthlyValue,
+        enrollmentFeeValue: resolution.enrollmentFeeValue,
+        billableMatriculaIds,
+      };
+      const prepared = await prisma.familyBillingOutbox.updateMany({
+        where: { id: eventId, contaId: event.contaId, status: FamilyBillingOutboxStatus.PROCESSING, claimToken, leaseExpiresAt: { gt: new Date() } },
+        data: { payload: parsedFamilyPayload as unknown as Prisma.InputJsonValue },
+      });
+      if (prepared.count === 0) return { processed: false, reason: 'REQUIRES_RECONCILIATION' as const };
+      }
+    }
+    await assertOwned();
+    await executeFamilyBilling(parsedFamilyPayload, assertOwned);
 
     const completed = await prisma.familyBillingOutbox.updateMany({
       where: {
         id: eventId,
         contaId: event.contaId,
         status: FamilyBillingOutboxStatus.PROCESSING,
-        lockedAt: claimedAt,
+        claimToken,
+        leaseExpiresAt: { gt: new Date() },
       },
       data: {
         status: FamilyBillingOutboxStatus.PROCESSED,
         processedAt: new Date(),
         lockedAt: null,
         leaseExpiresAt: null,
+        claimToken: null,
         lastError: null,
       },
     });
@@ -1707,7 +2133,21 @@ export async function processFamilyBillingOutboxEvent(
     return { processed: true as const };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    let uncertain = isUncertainFinancialResult(error);
+    let uncertain = isUncertainFinancialResult(error) || leaseLost || message.includes('FAMILY_BILLING_LEASE_LOST');
+    const catchGuard: FamilyBillingOwnershipGuard = async (tx) => {
+      if (leaseLost) throw new Error('FAMILY_BILLING_LEASE_LOST_RESULT_UNCERTAIN');
+      const renewed = tx
+        ? await tx.familyBillingOutbox.updateMany({
+            where: { id: eventId, contaId: event.contaId, status: FamilyBillingOutboxStatus.PROCESSING, claimToken, leaseExpiresAt: { gt: new Date() } },
+            data: { leaseExpiresAt: new Date(Date.now() + 5 * 60 * 1000) },
+          })
+        : { count: (await renewLease()) ? 1 : 0 };
+      if (renewed.count !== 1) throw new Error('FAMILY_BILLING_LEASE_LOST_RESULT_UNCERTAIN');
+    };
+    const catchAssertOwned = async () => {
+      try { await catchGuard(); return true; } catch { return false; }
+    };
+    if (!(await catchAssertOwned())) { clearInterval(heartbeat); return { processed: false, reason: 'REQUIRES_RECONCILIATION' as const }; }
     let compensationMessage = '';
     if (
       parsedFamilyPayload?.aggregateType === 'MATRICULA_FAMILIAR' &&
@@ -1715,7 +2155,8 @@ export async function processFamilyBillingOutboxEvent(
       parsedFamilyPayload.strategy !== 'JOIN_EXISTING_CURRENT_CYCLE'
     ) {
       try {
-        const compensation = await compensateFamilyCreationRemoteEffects(parsedFamilyPayload);
+        if (!(await catchAssertOwned())) return { processed: false, reason: 'REQUIRES_RECONCILIATION' as const };
+        const compensation = await compensateFamilyCreationRemoteEffects(parsedFamilyPayload, catchGuard);
         if (!compensation.complete) {
           uncertain = true;
           compensationMessage = ` COMPENSACAO_INCOMPLETA:${compensation.errors.join('|')}`;
@@ -1727,13 +2168,15 @@ export async function processFamilyBillingOutboxEvent(
     }
     const finalMessage = `${message}${compensationMessage}`;
     if (parsedFamilyPayload) {
+      if (!(await catchAssertOwned())) return { processed: false, reason: 'REQUIRES_RECONCILIATION' as const };
       if (uncertain) {
-        await persistAggregateUncertain(parsedFamilyPayload, finalMessage);
+        await withOwnedTransaction(assertOwned, (tx) => persistAggregateUncertain(parsedFamilyPayload!, finalMessage, assertOwned, tx));
       } else {
-        await persistAggregateFailure(parsedFamilyPayload, finalMessage);
+        await withOwnedTransaction(assertOwned, (tx) => persistAggregateFailure(parsedFamilyPayload!, finalMessage, assertOwned, tx));
       }
     } else if (event.aggregateType === 'REMATRICULA_FAMILIAR') {
-      await prisma.rematriculaFamiliar.updateMany({
+      if (!(await catchAssertOwned())) return { processed: false, reason: 'REQUIRES_RECONCILIATION' as const };
+      await withOwnedTransaction(catchGuard, (tx) => tx.rematriculaFamiliar.updateMany({
         where: { id: event.aggregateId, contaId: event.contaId },
         data: {
           status: FamilyBillingStatus.FALHO,
@@ -1742,14 +2185,15 @@ export async function processFamilyBillingOutboxEvent(
             : message.slice(0, 2000),
           failureMessage: message.slice(0, 2000),
         },
-      });
+      }));
     }
     await prisma.familyBillingOutbox.updateMany({
       where: {
         id: eventId,
         contaId: event.contaId,
         status: FamilyBillingOutboxStatus.PROCESSING,
-        lockedAt: claimedAt,
+        claimToken,
+        leaseExpiresAt: { gt: new Date() },
       },
       data: {
         status: uncertain
@@ -1757,6 +2201,7 @@ export async function processFamilyBillingOutboxEvent(
           : FamilyBillingOutboxStatus.FAILED,
         lockedAt: null,
         leaseExpiresAt: null,
+        claimToken: null,
         lastError: finalMessage.slice(0, 2000),
         availableAt: new Date(
           Date.now() + Math.min(60, Math.max(5, event.attempts + 1) * 5) * 60 * 1000,
@@ -1767,6 +2212,8 @@ export async function processFamilyBillingOutboxEvent(
       return { processed: false, reason: 'REQUIRES_RECONCILIATION' as const };
     }
     throw error;
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 
@@ -1792,15 +2239,15 @@ export async function diagnoseFamilyBillingIntegrity(params?: {
         ...scope,
         matriculaFamiliarId: { not: null },
         status: 'ATIVA',
-        billingProvisionStatus: {
+          billingProvisionStatus: {
           in: [
             MatriculaBillingProvisionStatus.PENDENTE,
             MatriculaBillingProvisionStatus.PARCIAL,
             MatriculaBillingProvisionStatus.FALHO,
             MatriculaBillingProvisionStatus.RESULTADO_INCERTO,
-          ],
+            ],
+          },
         },
-      },
       select: { id: true, contaId: true, matriculaFamiliarId: true },
       take: limit,
     }),
@@ -1873,6 +2320,7 @@ export async function processFamilyBillingOutboxBatch(params?: {
           status: FamilyBillingOutboxStatus.REQUIRES_RECONCILIATION,
           lockedAt: null,
           leaseExpiresAt: null,
+          claimToken: null,
           lastError: 'LEASE_EXPIRADA_APOS_POSSIVEL_EFEITO_REMOTO',
         },
       });
@@ -1904,6 +2352,37 @@ export async function processFamilyBillingOutboxBatch(params?: {
       }
     });
   }
+  const cappedOpenEvents = await prisma.familyBillingOutbox.findMany({
+    where: {
+      attempts: { gte: 8 },
+      status: { in: [FamilyBillingOutboxStatus.PENDING, FamilyBillingOutboxStatus.FAILED] },
+      ...(params?.contaId ? { contaId: params.contaId } : {}),
+    },
+    take: limit,
+    select: { id: true, contaId: true, matriculaFamiliarId: true, payload: true },
+  });
+  let cappedReconciliationCount = 0;
+  for (const capped of cappedOpenEvents) {
+    let operationId: string | null = null;
+    try { operationId = parseFamilyBillingPayload(capped.payload).operationId ?? null; } catch { /* handled by durable outbox state */ }
+    const transitioned = await prisma.$transaction(async (tx) => {
+      const marked = await tx.familyBillingOutbox.updateMany({
+        where: { id: capped.id, contaId: capped.contaId, status: { in: [FamilyBillingOutboxStatus.PENDING, FamilyBillingOutboxStatus.FAILED] }, attempts: { gte: 8 } },
+        data: { status: FamilyBillingOutboxStatus.REQUIRES_RECONCILIATION, lockedAt: null, leaseExpiresAt: null, claimToken: null, lastError: 'LIMITE_DE_TENTATIVAS_ATINGIDO_REQUER_RECONCILIACAO' },
+      });
+      if (!marked.count) return false;
+      if (operationId) await tx.familyEnrollmentOperation.updateMany({
+        where: { id: operationId, contaId: capped.contaId, status: { in: ['PENDING', 'PROCESSING'] } },
+        data: { status: 'REQUIRES_RECONCILIATION', lastError: 'LIMITE_DE_TENTATIVAS_ATINGIDO_REQUER_RECONCILIACAO' },
+      });
+      if (capped.matriculaFamiliarId) await tx.matriculaFamiliar.updateMany({
+        where: { id: capped.matriculaFamiliarId, contaId: capped.contaId },
+        data: { billingProvisionStatus: MatriculaBillingProvisionStatus.RESULTADO_INCERTO, ultimoErro: 'LIMITE_DE_TENTATIVAS_ATINGIDO_REQUER_RECONCILIACAO' },
+      });
+      return true;
+    });
+    if (transitioned) cappedReconciliationCount += 1;
+  }
   const events = await prisma.familyBillingOutbox.findMany({
     where: {
       status: {
@@ -1914,6 +2393,7 @@ export async function processFamilyBillingOutboxBatch(params?: {
         ],
       },
       availableAt: { lte: new Date() },
+      attempts: { lt: 8 },
       ...(params?.contaId ? { contaId: params.contaId } : {}),
     },
     orderBy: [{ availableAt: 'asc' }, { createdAt: 'asc' }],
@@ -1946,7 +2426,7 @@ export async function processFamilyBillingOutboxBatch(params?: {
     attempted: events.length,
     processed,
     failed,
-    requiresReconciliation: requiresReconciliation + expiredLeases.length,
+    requiresReconciliation: requiresReconciliation + expiredLeases.length + cappedReconciliationCount,
     diagnostics,
   };
 }

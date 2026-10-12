@@ -139,6 +139,7 @@ export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, o
     setPan,
     setZoom,
     setSelection,
+    setTool,
     addObjectAt,
     addRowAt,
     addSeatBlockAt,
@@ -149,10 +150,12 @@ export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, o
     setViewportSize,
   } = store;
 
-  const { commitTextEditor, handleTextEditorKeyDown } = useMapTextEditorCommit({
+  const { handleTextEditorBlur, handleTextEditorKeyDown } = useMapTextEditorCommit({
     textEditor,
     textEditSnapshotRef,
+    textEditorFocusKeyRef,
     map,
+    setTool,
     setTextEditor,
     setInlineTextEditorActive,
     addObjectAt,
@@ -321,6 +324,7 @@ export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, o
 
   const stagePointer = useMapStagePointerSession({
     readOnly,
+    textEditorActive: Boolean(textEditor),
     tool,
     map,
     levelId: level?.id,
@@ -381,7 +385,7 @@ export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, o
   const cursor = resolveMapCanvasCursor({ tool, isPanning, isZoomScrubbing });
 
   if (!map || !level) {
-    return <div ref={containerRef} className="h-full min-h-0 flex-1 bg-slate-100" />;
+    return <div ref={containerRef} className="h-full min-h-0 flex-1 bg-neutral-100" />;
   }
 
   const canvasRenderState = buildMapCanvasRenderState({
@@ -424,7 +428,7 @@ export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, o
     <div
       ref={containerRef}
       data-testid="map-canvas"
-      className={`relative h-full min-h-0 flex-1 overflow-hidden bg-[#f8fafc]${tool === 'zoom' ? ' select-none' : ''}`}
+      className={`relative h-full min-h-0 flex-1 overflow-hidden bg-neutral-100${tool === 'zoom' ? ' select-none' : ''}`}
       style={{ cursor }}
     >
       {textEditor ? (
@@ -433,7 +437,7 @@ export function MapCanvas({ readOnly, seatCreationMode, referenceChartEditing, o
           textEditorRef={textEditorRef}
           textEditorDimensions={textEditorDimensions}
           onChange={(value) => setTextEditor((current) => (current ? { ...current, value } : current))}
-          onBlur={commitTextEditor}
+          onBlur={handleTextEditorBlur}
           onKeyDown={handleTextEditorKeyDown}
         />
       ) : null}

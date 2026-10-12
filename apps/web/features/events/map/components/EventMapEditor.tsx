@@ -8,6 +8,7 @@ import { useEventMapEditorStore } from '../store/event-map-editor-store';
 import type { SeatCreationMode } from '../canvas/render/map-creation-draft';
 import { FloatingMapToolbar } from './FloatingMapToolbar';
 import { FloatingTextFormatToolbar } from './FloatingTextFormatToolbar';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { MapAreasPanel } from './MapAreasPanel';
 import { MapBottomBar } from './MapBottomBar';
 import { MapEditorHeader } from './MapEditorHeader';
@@ -15,6 +16,7 @@ import { MapEditorLoading } from './MapEditorLoading';
 import { MapLayersPanel } from './MapLayersPanel';
 import { MapPropertiesPanel } from './MapPropertiesPanel';
 import { SeatCreationToolbar } from './SeatCreationToolbar';
+import { MAP_FLOATING_SHADOW_CLASS } from './map-toolbar-styles';
 
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -23,11 +25,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/components/ui/toast';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { LoadingDots } from '@/components/ui/LoadingDots';
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
 
 const MapCanvas = dynamic(() => import('./MapCanvas').then((mod) => mod.MapCanvas), {
   ssr: false,
-  loading: () => <div className="h-full min-h-0 flex-1 animate-pulse bg-slate-100" />,
+  loading: () => <div className="h-full min-h-0 flex-1 animate-pulse bg-neutral-100" />,
 });
 
 const eventMapEditorQueryKeys = {
@@ -57,6 +59,7 @@ function formatPublishValidationErrors(map: EventMapDTO, errors: string[]) {
 }
 
 export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: string }) {
+  const reduceMotion = useReducedMotion();
   const queryClient = useQueryClient();
   const mapQuery = useQuery({
     queryKey: eventMapEditorQueryKeys.map(eventId, mapId),
@@ -420,7 +423,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
   return (
     <main
       data-testid="event-map-editor"
-      className="flex h-[100svh] min-h-0 flex-col overflow-hidden bg-slate-100 text-slate-950"
+      className="flex h-[100svh] min-h-0 flex-col overflow-hidden bg-neutral-100 text-slate-950"
     >
       <MapEditorHeader
         map={map}
@@ -441,7 +444,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
         onReferenceChartEditingChange={setReferenceChartEditing}
       />
       <Dialog open={publishConfirmationOpen} onOpenChange={(open) => !publishMutation.isPending && setPublishConfirmationOpen(open)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className={`relative max-w-md ${MAP_FLOATING_SHADOW_CLASS}`} aria-busy={publishMutation.isPending}>
           <DialogHeader>
             <DialogTitle>Publicar mapa para venda?</DialogTitle>
             <DialogDescription>
@@ -457,9 +460,10 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
           <DialogFooter>
             <Button variant="outline" onClick={() => setPublishConfirmationOpen(false)} disabled={publishMutation.isPending}>Voltar ao mapa</Button>
             <Button onClick={() => void confirmPublish()} disabled={publishMutation.isPending}>
-              {publishMutation.isPending ? <><span>Publicando</span><LoadingDots label="Publicando mapa" size="sm" className="text-white" /></> : 'Confirmar publicação'}
+              {publishMutation.isPending ? 'Publicando' : 'Confirmar publicação'}
             </Button>
           </DialogFooter>
+          <EventMutationOverlay pending={publishMutation.isPending} label="Publicando mapa" />
         </DialogContent>
       </Dialog>
       <div className="min-h-0 flex-1">
@@ -470,18 +474,33 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
           </div>
           {!readOnly ? (
             <>
-              <div className="pointer-events-auto absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2">
+              <div className="pointer-events-auto absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center">
                 <FloatingMapToolbar activeTool={tool} onToolChange={setTool} />
                 {tool === 'seat' ? (
-                  <SeatCreationToolbar mode={seatCreationMode} onModeChange={setSeatCreationMode} />
+                  <div className="shrink-0 pl-2">
+                    <SeatCreationToolbar mode={seatCreationMode} onModeChange={setSeatCreationMode} />
+                  </div>
                 ) : null}
-                {selectedTextObject ? (
-                  <FloatingTextFormatToolbar
-                    object={selectedTextObject}
-                    disabled={map.status === 'ARCHIVED'}
-                    onUpdate={(patch) => updateObject(selectedTextObject.id, patch)}
-                  />
-                ) : null}
+                <AnimatePresence initial={false}>
+                  {selectedTextObject ? (
+                    <motion.div
+                      key="text-format-toolbar"
+                      initial={{ width: 0 }}
+                      animate={{ width: 'auto' }}
+                      exit={{ width: 0 }}
+                      transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.4, 0, 0.2, 1] }}
+                      className="shrink-0 overflow-hidden"
+                    >
+                      <div className="w-max pl-2">
+                        <FloatingTextFormatToolbar
+                          object={selectedTextObject}
+                          disabled={map.status === 'ARCHIVED'}
+                          onUpdate={(patch) => updateObject(selectedTextObject.id, patch)}
+                        />
+                      </div>
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
               </div>
             </>
           ) : null}

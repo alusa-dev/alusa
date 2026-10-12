@@ -11,6 +11,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { BrandWordmark } from '@/components/brand/BrandWordmark';
 import { toast } from '@/components/ui/toast';
+import { MAP_TOOLBAR_SURFACE_CLASS } from './map-toolbar-styles';
 
 export function MapEditorHeader({
   map,
@@ -63,7 +64,7 @@ export function MapEditorHeader({
 
   return (
     <>
-      <header className="absolute left-4 top-4 z-30 flex h-12 items-center rounded-lg border border-slate-200 bg-white/95 px-1.5 shadow-lg shadow-slate-300/30 backdrop-blur">
+      <header className={`absolute left-4 top-4 z-30 flex items-center px-1.5 ${MAP_TOOLBAR_SURFACE_CLASS}`}>
         <Button asChild variant="ghost" size="icon" className="h-9 w-9 rounded-lg text-slate-600 hover:bg-slate-100">
           <Link href={`/events/${map.eventId}`} aria-label="Voltar para o evento">
             <CreatorIcon name="back" size={16} />
@@ -71,7 +72,7 @@ export function MapEditorHeader({
         </Button>
       </header>
 
-      <div className="absolute left-[4.75rem] top-4 z-30 flex h-12 max-w-[calc(100%-6rem)] items-center gap-3 rounded-lg border border-slate-200 bg-white/95 px-4 shadow-lg shadow-slate-300/30 backdrop-blur">
+      <div className={`absolute left-[4.75rem] top-4 z-30 flex max-w-[calc(100%-6rem)] items-center gap-3 px-4 ${MAP_TOOLBAR_SURFACE_CLASS}`}>
         <BrandWordmark variant="purple" className="h-7 w-[92px]" width={92} height={28} />
         <span className="h-6 w-px shrink-0 bg-slate-200" aria-hidden />
         <div className="min-w-0 flex-1">
@@ -102,7 +103,7 @@ export function MapEditorHeader({
         onReferenceChartEditingChange={onReferenceChartEditingChange}
       />
 
-      <div className="absolute right-4 top-4 z-30 flex h-12 max-w-[calc(100%-8rem)] items-center gap-2 rounded-lg border border-slate-200 bg-white/95 px-1.5 shadow-lg shadow-slate-300/30 backdrop-blur">
+      <div className={`absolute right-4 top-4 z-30 flex max-w-[calc(100%-8rem)] items-center gap-2 px-1.5 ${MAP_TOOLBAR_SURFACE_CLASS}`}>
         <Button
           type="button"
           variant="ghost"

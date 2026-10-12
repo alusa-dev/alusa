@@ -9,6 +9,7 @@ import {
 import type { PlatformPlanCode } from '@alusa/platform-billing';
 import type { TenantTransactionClient } from '@/lib/prisma-tenant';
 import { runWithTenant } from '@/lib/prisma-tenant';
+import { isAcademicDateInFuture } from '@alusa/shared/date-only';
 import {
   countActivePlatformBillingStudents,
   resolvePlatformBillingEnvironment,
@@ -193,16 +194,23 @@ export async function countAdditionalActiveStudentsForEnrollment(input: {
   });
   if (!aluno) return 0;
 
-  const existingActiveEnrollment = await input.tx.matricula.findFirst({
+  const account = await input.tx.conta.findUnique({
+    where: { id: input.contaId },
+    select: { timezone: true },
+  });
+  const existingActiveEnrollments = await input.tx.matricula.findMany({
     where: {
       contaId: input.contaId,
       alunoId: input.alunoId,
       status: 'ATIVA',
     },
-    select: { id: true },
+    select: { id: true, dataInicio: true },
   });
 
-  return existingActiveEnrollment ? 0 : 1;
+  const hasCurrentEnrollment = existingActiveEnrollments.some((enrollment) =>
+    !isAcademicDateInFuture(enrollment.dataInicio, new Date(), account?.timezone ?? undefined),
+  );
+  return hasCurrentEnrollment ? 0 : 1;
 }
 
 export function isPlatformBillingCapacityError(error: unknown): error is PlatformBillingError {

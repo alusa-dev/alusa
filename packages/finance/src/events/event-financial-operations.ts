@@ -1,4 +1,4 @@
-import { Prisma, EventPaymentMethod } from '@prisma/client';
+import { EventTicketWhatsAppPurchaseType, Prisma, EventPaymentMethod } from '@prisma/client';
 import { prisma } from '@alusa/database';
 import { acquireGuardLock } from '../core/idempotency.service';
 import {
@@ -12,6 +12,7 @@ import {
 import { eventParticipantScalarSelect, mapFinancialEntry, mapTicketSale } from '@alusa/lib/events/event-financial-read-models';
 import { recordEventAudit } from '@alusa/lib/events/event-audit.service';
 import { enqueueEventTicketEmail, buildPublicEventTicketSalePath } from '@alusa/lib/events/ticket-email-outbox';
+import { enqueueEventTicketWhatsAppNotification, EVENT_TICKET_WHATSAPP_CONSENT_VERSION } from '@alusa/lib/events/ticket-whatsapp-notification';
 import { syncPublicLotQuantity, releaseSeatsForTicketSale } from '@alusa/lib/events/map/event-map-order-operations';
 import type {
   CreateEventFinancialEntryInput,
@@ -92,6 +93,61 @@ async function getTicketSaleDto(tx: Prisma.TransactionClient, contaId: string, s
   } });
   if (!sale) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
   return mapTicketSale(sale);
+}
+
+export async function requestEventTicketSaleWhatsAppResend(ctx: EventsContext, saleId: string) {
+  return prisma.$transaction(async (tx) => {
+    const [locked] = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "EventTicketSale"
+      WHERE "id" = ${saleId} AND "contaId" = ${ctx.contaId}
+      FOR UPDATE
+    `;
+    if (!locked) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
+    const sale = await tx.eventTicketSale.findFirst({
+      where: { id: saleId, contaId: ctx.contaId },
+      select: {
+        id: true,
+        status: true,
+        quantity: true,
+        buyerPhone: true,
+        whatsappOptInAt: true,
+        whatsappOptInSource: true,
+        whatsappOptOutAt: true,
+        accessToken: true,
+        tickets: { where: { status: { in: ['VALID', 'USED'] } }, select: { id: true } },
+      },
+    });
+    if (!sale) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
+    if (sale.status !== 'PAID' || !sale.accessToken || sale.tickets.length !== sale.quantity) {
+      throw new EventsError('INGRESSOS_INDISPONIVEIS', 'O reenvio exige uma venda paga com todos os ingressos emitidos.', 409);
+    }
+    if (!sale.buyerPhone || !sale.whatsappOptInAt || !sale.whatsappOptInSource || sale.whatsappOptOutAt) {
+      throw new EventsError('WHATSAPP_SEM_CONSENTIMENTO', 'Esta venda não possui telefone com autorização registrada para WhatsApp.', 409);
+    }
+    const recentResends = await tx.auditLog.count({
+      where: {
+        contaId: ctx.contaId,
+        entityType: 'EventTicketSale',
+        entityId: sale.id,
+        action: 'events.ticket.whatsapp.queued',
+        createdAt: { gte: new Date(Date.now() - 15 * 60_000) },
+      },
+    });
+    if (recentResends >= 3) throw new EventsError('LIMITE_REENVIO_WHATSAPP', 'Limite de reenvios atingido. Aguarde alguns minutos.', 429);
+
+    const notification = await enqueueEventTicketWhatsAppNotification(tx, {
+      contaId: ctx.contaId,
+      purchaseType: EventTicketWhatsAppPurchaseType.STAFF_SALE,
+      purchaseId: sale.id,
+      recipientPhone: sale.buyerPhone,
+      consentVersion: EVENT_TICKET_WHATSAPP_CONSENT_VERSION,
+      consentSource: sale.whatsappOptInSource,
+      consentRecordedAt: sale.whatsappOptInAt,
+      actorUserId: ctx.userId,
+      deliveryKey: globalThis.crypto.randomUUID(),
+    });
+    return { queued: notification.queued };
+  });
 }
 async function getFinancialEntryDto(tx: Prisma.TransactionClient, contaId: string, entryId: string) {
   const entry = await tx.eventFinancialEntry.findFirst({ where: { id: entryId, contaId }, include: {
@@ -271,6 +327,19 @@ export async function markTicketSalePaid(ctx: EventsContext, saleId: string) {
         ticketType: current.lot.name,
         ticketCount: current.tickets.length,
         ticketsPath: buildPublicEventTicketSalePath(current.id, accessToken),
+      });
+    }
+
+    if (current.buyerPhone && current.whatsappOptInAt && current.tickets.length > 0 && accessToken) {
+      await enqueueEventTicketWhatsAppNotification(tx, {
+        contaId: ctx.contaId,
+        purchaseType: EventTicketWhatsAppPurchaseType.STAFF_SALE,
+        purchaseId: current.id,
+        recipientPhone: current.buyerPhone,
+        consentVersion: EVENT_TICKET_WHATSAPP_CONSENT_VERSION,
+        consentSource: current.whatsappOptInSource,
+        consentRecordedAt: current.whatsappOptInAt,
+        actorUserId: ctx.userId,
       });
     }
 

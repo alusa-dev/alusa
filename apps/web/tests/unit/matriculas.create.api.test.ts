@@ -38,12 +38,20 @@ vi.mock('@/src/server/enrollments/enrollment.service', () => ({
   criarMatricula: criarMatriculaMock,
   buscarMatriculaPorId: buscarMatriculaPorIdMock,
   listarMatriculas: vi.fn(),
+  MatriculaRuleError: class MatriculaRuleError extends Error {
+    constructor(readonly code: string, message: string) {
+      super(message);
+    }
+  },
   MatriculaConflictError: class MatriculaConflictError extends Error {
     code = 'MATRICULA_DUPLICADA_TURMA';
   },
 }));
 
 vi.mock('@/src/server/enrollments/enrollment-billing-outbox.service', () => ({
+  isDeferredEnrollmentBillingResult: vi.fn((result: { status: string; error?: string }) =>
+    result.status === 'SKIPPED' && result.error === 'NOT_YET_EFFECTIVE',
+  ),
   processEnrollmentBillingOutboxEvent: processEnrollmentBillingOutboxEventMock,
 }));
 

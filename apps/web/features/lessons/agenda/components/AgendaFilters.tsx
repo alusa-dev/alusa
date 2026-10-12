@@ -26,6 +26,8 @@ type AgendaFiltersProps = {
   onNavigatePeriod: (_direction: 'prev' | 'next' | 'today') => void;
   embedded?: boolean;
   showCurrentLabel?: boolean;
+  showNavigation?: boolean;
+  resourcesLoading?: boolean;
 };
 
 const ALL = '__ALL__';
@@ -38,6 +40,8 @@ export function AgendaFilters({
   onNavigatePeriod,
   embedded = false,
   showCurrentLabel = true,
+  showNavigation = true,
+  resourcesLoading = false,
 }: AgendaFiltersProps) {
   const currentLabel = formatAgendaPeriodLabel(filters.start, filters.end, filters.viewMode, timeZone);
   const activeSecondaryFilters =
@@ -59,13 +63,14 @@ export function AgendaFilters({
         ) : null}
 
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-end lg:gap-2">
-          <div className="flex flex-wrap items-center gap-2 justify-end">
+          <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
             <Popover>
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
-                  className="h-10 rounded-lg border-slate-200 px-4"
+                  className={`h-10 rounded-lg px-4 ${activeSecondaryFilters > 0 ? 'border-primary/40 bg-primary/5 text-primary hover:bg-primary/10' : 'border-slate-200'}`}
                   data-testid="agenda-secondary-filters"
+                  aria-label={activeSecondaryFilters > 0 ? `Filtros, ${activeSecondaryFilters} ativos` : 'Filtros'}
                 >
                   <Filter className="mr-2 h-4 w-4" />
                   {activeSecondaryFilters > 0 ? `Filtros (${activeSecondaryFilters})` : 'Filtros'}
@@ -76,7 +81,7 @@ export function AgendaFilters({
                   <div>
                     <div className="text-sm font-semibold text-slate-900">Filtros adicionais</div>
                     <div className="mt-1 text-xs text-slate-500">
-                      Use só quando precisar refinar a leitura da agenda.
+                      {resourcesLoading ? 'Carregando turmas, professores e salas…' : 'Refine a leitura da agenda por turma, professor, sala ou tipo.'}
                     </div>
                   </div>
 
@@ -86,6 +91,7 @@ export function AgendaFilters({
                         Turma
                       </label>
                       <Select
+                        disabled={resourcesLoading}
                         value={filters.turmaId ?? ALL}
                         onValueChange={(value) =>
                           onFiltersChange({ turmaId: value === ALL ? undefined : value })
@@ -110,6 +116,7 @@ export function AgendaFilters({
                         Professor
                       </label>
                       <Select
+                        disabled={resourcesLoading}
                         value={filters.professorId ?? ALL}
                         onValueChange={(value) =>
                           onFiltersChange({ professorId: value === ALL ? undefined : value })
@@ -134,6 +141,7 @@ export function AgendaFilters({
                         Sala
                       </label>
                       <Select
+                        disabled={resourcesLoading}
                         value={filters.salaId ?? ALL}
                         onValueChange={(value) =>
                           onFiltersChange({ salaId: value === ALL ? undefined : value })
@@ -187,50 +195,35 @@ export function AgendaFilters({
                     </fieldset>
                   </div>
 
-                  {activeSecondaryFilters > 0 ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="h-8 px-2 text-xs text-slate-500 hover:text-slate-900"
-                      onClick={() => {
-                        onFiltersChange({
-                          turmaId: undefined,
-                          professorId: undefined,
-                          salaId: undefined,
-                          type: undefined,
-                        });
-                      }}
-                    >
-                      Limpar filtros adicionais
-                    </Button>
-                  ) : null}
                 </div>
               </PopoverContent>
             </Popover>
 
-            <Button variant="outline" className="h-10 rounded-lg border-slate-200 px-4" onClick={() => onNavigatePeriod('today')}>
-              Hoje
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-10 w-10 rounded-lg border-slate-200"
-              aria-label="Período anterior"
-              title="Período anterior"
-              onClick={() => onNavigatePeriod('prev')}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-10 w-10 rounded-lg border-slate-200"
-              aria-label="Próximo período"
-              title="Próximo período"
-              onClick={() => onNavigatePeriod('next')}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+            {activeSecondaryFilters > 0 ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-10 rounded-lg px-3 text-sm text-slate-600 hover:text-slate-900"
+                onClick={() => onFiltersChange({ turmaId: undefined, professorId: undefined, salaId: undefined, type: undefined })}
+                data-testid="agenda-clear-filters"
+              >
+                Limpar filtros
+              </Button>
+            ) : null}
+
+            {showNavigation ? (
+              <>
+                <Button variant="outline" className="h-10 rounded-lg border-slate-200 px-4" onClick={() => onNavigatePeriod('today')}>
+                  Hoje
+                </Button>
+                <Button variant="outline" size="icon" className="h-10 w-10 rounded-lg border-slate-200" aria-label="Período anterior" title="Período anterior" onClick={() => onNavigatePeriod('prev')}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-10 w-10 rounded-lg border-slate-200" aria-label="Próximo período" title="Próximo período" onClick={() => onNavigatePeriod('next')}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </>
+            ) : null}
           </div>
         </div>
       </div>

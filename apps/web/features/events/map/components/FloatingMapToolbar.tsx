@@ -3,21 +3,18 @@ import type { MapTool } from '../store/event-map-editor-store';
 import { CreatorIcon, type CreatorIconName } from '@/components/icons/hugeicons';
 
 import { cn } from '@/lib/utils';
+import { AnimatePresence, motion } from 'framer-motion';
 
-import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
-import { useState } from 'react';
+import { forwardRef, useState, type ComponentPropsWithoutRef } from 'react';
+import { MAP_TOOLBAR_SURFACE_CLASS } from './map-toolbar-styles';
+
+const toolbarSpring = { type: 'spring' as const, bounce: 0, duration: 0.4 };
 
 type ToolbarTool = {
   id: MapTool;
@@ -46,6 +43,63 @@ const tools: ToolbarTool[] = [
   { id: 'text', label: 'Adicionar texto', shortcut: 'T', icon: 'text' },
 ];
 
+type ToolbarButtonProps = Omit<
+  ComponentPropsWithoutRef<typeof motion.button>,
+  'aria-label' | 'children' | 'className' | 'onClick'
+> & {
+  active: boolean;
+  ariaLabel?: string;
+  icon: CreatorIconName;
+  label: string;
+  onClick?: ComponentPropsWithoutRef<typeof motion.button>['onClick'];
+  className?: string;
+};
+
+const ToolbarButton = forwardRef<HTMLButtonElement, ToolbarButtonProps>(
+  function ToolbarButton(
+    { active, ariaLabel, icon, label, onClick, className, ...buttonProps },
+    ref,
+  ) {
+    return (
+      <motion.button
+        {...buttonProps}
+        ref={ref}
+        type="button"
+        aria-label={ariaLabel ?? label}
+        onClick={onClick}
+        initial={false}
+        animate={{
+          gap: active ? 8 : 0,
+          paddingLeft: active ? 8 : 4,
+          paddingRight: active ? 8 : 4,
+        }}
+        transition={toolbarSpring}
+        className={cn(
+          'flex h-9 w-auto min-w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-transparent text-slate-500 hover:!bg-transparent hover:!text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/40',
+          active && 'bg-brand-accent text-white shadow-sm hover:!bg-brand-accent hover:!text-white',
+          className,
+        )}
+      >
+        <CreatorIcon name={icon} size={16} className="shrink-0" />
+        <AnimatePresence initial={false}>
+          {active ? (
+            <motion.span
+              key="toolbar-label"
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 'auto', opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={toolbarSpring}
+              className="max-w-[calc(100vw-17rem)] truncate overflow-hidden whitespace-nowrap text-xs sm:max-w-none"
+            >
+              {label}
+            </motion.span>
+          ) : null}
+        </AnimatePresence>
+      </motion.button>
+    );
+  },
+);
+
 function ToolbarDropdown({
   menuId,
   label,
@@ -61,34 +115,25 @@ function ToolbarDropdown({
   triggerIcon: CreatorIconName;
   items: ToolbarTool[];
   activeTool: MapTool;
-  onToolChange: (tool: MapTool) => void;
+  onToolChange: (_tool: MapTool) => void;
   open: boolean;
-  onOpenChange: (menuId: 'elements' | 'shapes', open: boolean) => void;
+  onOpenChange: (_menuId: 'elements' | 'shapes', _open: boolean) => void;
 }) {
-  const isActive = items.some((tool) => tool.id === activeTool);
+  const activeItem = items.find((tool) => tool.id === activeTool);
+  const isActive = Boolean(activeItem);
 
   return (
     <DropdownMenu open={open} onOpenChange={(nextOpen) => onOpenChange(menuId, nextOpen)}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className={cn(
-                'h-9 w-9 rounded-lg text-slate-600 hover:bg-slate-100',
-                isActive && 'bg-brand-accent text-white hover:bg-brand-accent hover:text-white',
-              )}
-              aria-label={label}
-            >
-              <CreatorIcon name={triggerIcon} size={16} />
-            </Button>
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="top">{label}</TooltipContent>
-      </Tooltip>
+      <DropdownMenuTrigger asChild>
+        <ToolbarButton
+          icon={triggerIcon}
+          label={activeItem?.label ?? label}
+          active={isActive}
+          ariaLabel={label}
+        />
+      </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="center" className="w-52">
+        <div className="px-3 pb-1 pt-2 text-xs font-semibold text-slate-500">{label}</div>
         {items.map((tool) => {
           return (
             <DropdownMenuItem
@@ -114,7 +159,7 @@ export function FloatingMapToolbar({
   className,
 }: {
   activeTool: MapTool;
-  onToolChange: (tool: MapTool) => void;
+  onToolChange: (_tool: MapTool) => void;
   className?: string;
 }) {
   const [openMenu, setOpenMenu] = useState<'elements' | 'shapes' | null>(null);
@@ -127,61 +172,45 @@ export function FloatingMapToolbar({
   };
 
   return (
-    <TooltipProvider>
-      <div
-        data-testid="map-toolbar"
-        className={cn(
-          'flex items-center gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-lg shadow-slate-300/30 backdrop-blur',
-          className,
-        )}
-      >
-        {tools.map((tool) => {
-          const active = activeTool === tool.id;
-          return (
-            <Tooltip key={tool.id}>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onToolChange(tool.id)}
-                  className={cn(
-                    'h-9 w-9 rounded-lg text-slate-600 hover:bg-slate-100',
-                    active && 'bg-brand-accent text-white hover:bg-brand-accent hover:text-white',
-                  )}
-                  aria-label={tool.label}
-                >
-                  <CreatorIcon name={tool.icon} size={16} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {tool.label}
-                {tool.shortcut ? <span className="ml-1 text-slate-400">({tool.shortcut})</span> : null}
-              </TooltipContent>
-            </Tooltip>
-          );
-        })}
-        <ToolbarDropdown
-          menuId="elements"
-          label="Elementos"
-          triggerIcon="block"
-          items={presetTools}
-          activeTool={activeTool}
-          onToolChange={onToolChange}
-          open={openMenu === 'elements'}
-          onOpenChange={handleMenuOpenChange}
-        />
-        <ToolbarDropdown
-          menuId="shapes"
-          label="Formas"
-          triggerIcon="shape"
-          items={shapeTools}
-          activeTool={activeTool}
-          onToolChange={onToolChange}
-          open={openMenu === 'shapes'}
-          onOpenChange={handleMenuOpenChange}
-        />
-      </div>
-    </TooltipProvider>
+    <div
+      data-testid="map-toolbar"
+      className={cn(
+        `${MAP_TOOLBAR_SURFACE_CLASS} flex w-fit max-w-[calc(100vw-0.5rem)] flex-nowrap items-center gap-0 overflow-hidden px-1.5 sm:gap-0.5`,
+        className,
+      )}
+    >
+      {tools.map((tool) => {
+        const active = activeTool === tool.id;
+        return (
+          <ToolbarButton
+            key={tool.id}
+            icon={tool.icon}
+            label={tool.label}
+            active={active}
+            onClick={() => onToolChange(tool.id)}
+          />
+        );
+      })}
+      <ToolbarDropdown
+        menuId="elements"
+        label="Elementos"
+        triggerIcon="elements"
+        items={presetTools}
+        activeTool={activeTool}
+        onToolChange={onToolChange}
+        open={openMenu === 'elements'}
+        onOpenChange={handleMenuOpenChange}
+      />
+      <ToolbarDropdown
+        menuId="shapes"
+        label="Formas"
+        triggerIcon="shape"
+        items={shapeTools}
+        activeTool={activeTool}
+        onToolChange={onToolChange}
+        open={openMenu === 'shapes'}
+        onOpenChange={handleMenuOpenChange}
+      />
+    </div>
   );
 }

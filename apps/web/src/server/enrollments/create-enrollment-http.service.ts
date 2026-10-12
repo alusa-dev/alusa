@@ -3,7 +3,7 @@ import { syncEnrollmentNotifications } from './enrollment-notifications.service'
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { matriculaRouteRepository } from './enrollment-route.repository';
 import { criarMatricula, buscarMatriculaPorId } from './enrollment.service';
-import { processEnrollmentBillingOutboxEvent } from './enrollment-billing-outbox.service';
+import { isDeferredEnrollmentBillingResult, processEnrollmentBillingOutboxEvent } from './enrollment-billing-outbox.service';
 import { createImmediateEnrollment, ImmediateEnrollmentCreationError } from './create-immediate-enrollment.use-case';
 import {
   createMatriculaInputDTOSchema,
@@ -20,6 +20,7 @@ import { assertPlatformAccessForConta, platformBillingAccessResponse } from '@/s
 import type { StagedEnrollmentFinancialResources } from '@alusa/finance';
 import { apiJsonError } from '@/lib/api/standard-response';
 import { requestEnrollmentTerminalIntent } from './enrollment-terminal-intent.service';
+import { getAcademicDateKey, getAcademicDateStartInstant, isAcademicDateInFuture } from '@alusa/shared/date-only';
 
 export function isPrismaClientInfrastructureError(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientValidationError
@@ -223,10 +224,15 @@ export async function createMatriculaHttp(params: {
 
   const willCreateSubscription = payload.criarCobranca === true;
   const willCreateEnrollmentFee = payload.gerarCobrancaTaxa === true && !payload.taxaIsenta && payload.taxaMatricula > 0;
+  if (willCreateEnrollmentFee && !willCreateSubscription) {
+    return errorResult(
+      422,
+      'ASSINATURA_OBRIGATORIA_PARA_MATRICULA_FINANCEIRA',
+      'A taxa de matrícula avulsa exige a criação ou atualização da assinatura mensal.',
+    );
+  }
   if (willCreateSubscription && !isSupportedAsaasBillingType(paymentSelection.billingType)) return errorResult(422, 'FORMA_PAGAMENTO_INVALIDA', 'Forma de pagamento da mensalidade não suporta cobrança no Asaas.');
   if (willCreateEnrollmentFee && !isSupportedAsaasBillingType(paymentSelection.billingTypeTaxa)) return errorResult(422, 'FORMA_PAGAMENTO_TAXA_INVALIDA', 'Forma de pagamento da taxa de matrícula não suporta cobrança no Asaas.');
-  if (willCreateEnrollmentFee && !willCreateSubscription) return errorResult(422, 'ASSINATURA_OBRIGATORIA_PARA_MATRICULA_FINANCEIRA', 'A taxa de matrícula só pode ser confirmada junto com a assinatura da mensalidade.');
-
   if (willCreateSubscription) {
     const previewNextDueDate = resolveChargeableFirstDueDate(payload.dataInicio, payload.vencimentoDia);
     if (isDateOnlyBefore(payload.dataFimContrato, previewNextDueDate)) {
@@ -235,9 +241,22 @@ export async function createMatriculaHttp(params: {
   }
 
   const usesSeparateSubscription = !payload.billingStrategy || payload.billingStrategy.kind === 'SEPARATE';
+  const sharedFutureBillingStart = !usesSeparateSubscription ? await (async () => {
+        const timezone = (await matriculaRouteRepository.conta.findUnique({
+          where: { id: auth.contaId! },
+          select: { timezone: true },
+        }))?.timezone;
+        const dateKey = getAcademicDateKey(payload.dataInicio);
+        return dateKey && isAcademicDateInFuture(payload.dataInicio, new Date(), timezone ?? undefined)
+          ? getAcademicDateStartInstant(dateKey, timezone ?? undefined)
+          : null;
+      })() : null;
+  const sharedPayload = sharedFutureBillingStart
+    ? { ...payload, deferSubscriptionUntil: sharedFutureBillingStart }
+    : payload;
   const operationResult = willCreateSubscription && usesSeparateSubscription
     ? await createImmediateEnrollment(payload)
-    : await criarMatricula(payload);
+    : await criarMatricula(sharedPayload);
   let billingOutboxResult: Awaited<ReturnType<typeof processEnrollmentBillingOutboxEvent>> | null = null;
   const billingOutboxEventId = (operationResult as { billingOutboxEventId?: string | null }).billingOutboxEventId ?? null;
   if (billingOutboxEventId) {
@@ -248,7 +267,8 @@ export async function createMatriculaHttp(params: {
         select: { id: true },
       }),
     );
-    if (willCreateSubscription && !usesSeparateSubscription && billingOutboxResult.status !== 'PROCESSED' && !skippedButAlreadyConfirmed) {
+    const scheduledForFuture = isDeferredEnrollmentBillingResult(billingOutboxResult);
+    if (willCreateSubscription && !usesSeparateSubscription && billingOutboxResult.status !== 'PROCESSED' && !skippedButAlreadyConfirmed && !scheduledForFuture) {
       const requiresReconciliation = billingOutboxResult.status === 'REQUIRES_RECONCILIATION';
       const reason = billingOutboxResult.error ?? (requiresReconciliation ? 'A alteração da assinatura existente teve resultado incerto.' : 'A alteração da assinatura existente não foi confirmada.');
       const refusalStatus = await rejectUnconfirmedEnrollment({ contaId: auth.contaId, matriculaId: operationResult.matricula.id, actorId: auth.userId, reason, requiresReconciliation });

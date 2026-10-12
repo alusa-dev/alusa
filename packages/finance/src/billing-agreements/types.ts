@@ -307,6 +307,8 @@ export type CommitBillingAgreementChangeInput = BillingAgreementChangeInput & {
   previewHash: string;
   previewExpiresAt: string;
   expectedAgreementVersion: number;
+  /** Internal lease owner for calls dispatched from the shared enrollment outbox. */
+  agreementLeaseToken?: string;
 };
 
 export type BillingRemoteProgress = {

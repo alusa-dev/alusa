@@ -1,10 +1,10 @@
-import type { CalendarEventStatus, CalendarEventType, Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type CalendarEventStatus, type CalendarEventType, type PrismaClient } from '@prisma/client';
 
 type AgendaPrismaClient = PrismaClient | Prisma.TransactionClient;
 import { TZDateMini } from '@date-fns/tz';
 import { addBusinessDays, endOfDay } from 'date-fns';
 
-import { countEligibleStudentsForEvent } from '@/src/server/lessons/calendar/calendar-core.service';
+import { acquireCalendarEventWriteLock, countEligibleStudentsForEvent } from '@/src/server/lessons/calendar/calendar-core.service';
 import {
   DEFAULT_ACCOUNT_TIMEZONE,
   normalizeAccountTimeZone,
@@ -176,7 +176,9 @@ async function processAutoCloseCandidate(
     return false;
   }
 
-  const updated = await prismaClient.calendarEvent.updateMany({
+  const applyClose = async (tx: Prisma.TransactionClient) => {
+  await acquireCalendarEventWriteLock(event.contaId, tx);
+  const updated = await tx.calendarEvent.updateMany({
     where: {
       id: event.id,
       contaId: event.contaId,
@@ -192,7 +194,7 @@ async function processAutoCloseCandidate(
     return false;
   }
 
-  await syncLinkedMakeupStatusesForAutoClosedEvent(event.contaId, event.id, prismaClient);
+  await syncLinkedMakeupStatusesForAutoClosedEvent(event.contaId, event.id, tx);
   await createAulasOperationLog({
     contaId: event.contaId,
     action: 'EVENT_AUTO_CLOSED',
@@ -211,10 +213,17 @@ async function processAutoCloseCandidate(
       eligibleStudents,
       recordedAttendance: event.attendanceRecords.length,
     },
-    prismaClient,
+    prismaClient: tx,
   });
 
   return true;
+  };
+
+  if ('$transaction' in prismaClient) {
+    return prismaClient.$transaction(applyClose, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+  }
+
+  return applyClose(prismaClient);
 }
 
 async function listAutoCloseCandidates(params: {

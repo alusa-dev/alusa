@@ -1,5 +1,7 @@
 'use client';
 
+import { EventMutationOverlay } from '@/features/events/components/EventMutationOverlay';
+
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -24,7 +26,6 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -70,7 +71,7 @@ export function FinancialFormDialog({ eventId, type, trigger }: { eventId: strin
     const description = nullableString(formData, 'description');
     const supplier = nullableString(formData, 'supplier');
     const notes = nullableString(formData, 'notes');
-    
+
     let expectedAmount = 0;
     let actualAmount: number | undefined = undefined;
     let dueDate: string | undefined = undefined;
@@ -122,15 +123,15 @@ export function FinancialFormDialog({ eventId, type, trigger }: { eventId: strin
       <DialogContent
         fullScreenMobile
         closeDisabled={mutation.isPending}
-        className="flex max-w-[720px] flex-col gap-0 overflow-hidden rounded-[20px] p-0 sm:rounded-[20px] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0"
-      >
+        className="flex max-w-[720px] flex-col gap-0 overflow-hidden rounded-[20px] p-0 sm:rounded-[20px] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0 relative"
+       aria-busy={mutation.isPending}>
         <DialogHeader className="shrink-0 border-b border-slate-100 px-6 pb-5 pt-6 text-left max-md:px-5 max-md:pb-4 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))]">
           <DialogTitle className="text-xl font-normal tracking-tight text-slate-950">{type === 'COST' ? 'Novo custo' : 'Nova receita'}</DialogTitle>
           <DialogDescription className="mt-1 text-sm leading-5 text-slate-600">
             Informe os dados do lançamento para controle financeiro do evento.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={(event) => handleFormDataSubmit(event, submit)} className="flex min-h-0 flex-1 flex-col">
+        <form inert={mutation.isPending || undefined} onSubmit={(event) => handleFormDataSubmit(event, submit)} className="flex min-h-0 flex-1 flex-col">
           <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5 max-md:px-5">
             <section aria-labelledby="new-financial-entry-fields-title" className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
               <h3 id="new-financial-entry-fields-title" className="text-sm font-semibold text-slate-800">Dados do lançamento</h3>
@@ -215,10 +216,12 @@ export function FinancialFormDialog({ eventId, type, trigger }: { eventId: strin
               Cancelar
             </Button>
             <Button type="submit" variant="wizardPrimary" disabled={mutation.isPending} className="h-10 min-h-10 w-[180px] min-w-0 rounded-[10px] px-5 font-normal max-md:w-full">
-              {mutation.isPending ? <><span>Salvando</span><LoadingDots label="Salvando lançamento" size="sm" className="text-white" /></> : 'Salvar lançamento'}
+              {mutation.isPending ? 'Salvando' : 'Salvar lançamento'}
             </Button>
           </DialogFooter>
         </form>
+
+        <EventMutationOverlay pending={mutation.isPending} label="Salvando lançamento" />
       </DialogContent>
     </Dialog>
   );

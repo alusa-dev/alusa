@@ -73,6 +73,7 @@ export type TicketSaleDTO = {
   lotId: string;
   lot: { id: string; name: string; ticketType: EventTicketType };
   buyerName: string;
+  whatsappAvailable?: boolean;
   aluno: { id: string; nome: string } | null;
   responsavel: { id: string; nome: string } | null;
   quantity: number;
@@ -399,6 +400,10 @@ export async function createTicketSale(payload: Record<string, unknown>) {
 
 export async function markTicketSalePaid(id: string) {
   return (await parseResponse<JsonEnvelope<TicketSaleDTO>>(await fetch(`/api/events/ticket-sales/${id}/mark-paid`, { method: 'POST' }))).data;
+}
+
+export async function resendTicketSaleWhatsApp(id: string) {
+  return (await parseResponse<JsonEnvelope<{ queued: boolean }>>(await fetch(`/api/events/ticket-sales/${id}/resend-ticket-whatsapp`, { method: 'POST' }))).data;
 }
 
 export async function cancelTicketSale(id: string, reason?: string) {

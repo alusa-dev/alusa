@@ -13,6 +13,7 @@ import { useEventMapEditorStore } from '../store/event-map-editor-store';
 import { MapObjectPreview, MapSectionPreview } from './MapObjectPreview';
 
 import { cn } from '@/lib/utils';
+import { MAP_FLOATING_SHADOW_CLASS } from './map-toolbar-styles';
 import { CreatorIcon } from '@/components/icons/hugeicons';
 import {
   DropdownMenu,
@@ -28,7 +29,6 @@ import {
   closestCenter,
   type DragEndEvent,
   type DragMoveEvent,
-  type DragOverEvent,
   type DragStartEvent,
   useDraggable,
   useDroppable,
@@ -36,7 +36,8 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { useMemo, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
 
 function getLayerItemSortId(item: LevelPanelChildItem) {
   return `${item.kind}-${item.id}`;
@@ -46,6 +47,21 @@ type LayerInsertionIndicator = {
   targetId: string;
   edge: 'before' | 'after';
 };
+
+function getLayerDropIndex(
+  items: LevelPanelChildItem[],
+  activeId: string,
+  indicator: LayerInsertionIndicator | null,
+) {
+  if (!indicator) return null;
+  const fromIndex = items.findIndex((item) => getLayerItemSortId(item) === activeId);
+  const targetIndex = items.findIndex((item) => getLayerItemSortId(item) === indicator.targetId);
+  if (fromIndex < 0 || targetIndex < 0) return null;
+
+  let toIndex = indicator.edge === 'after' ? targetIndex + 1 : targetIndex;
+  if (fromIndex < toIndex) toIndex -= 1;
+  return Math.max(0, Math.min(items.length - 1, toIndex));
+}
 
 function isSectionHidden(map: EventMapDTO, sectionId: string) {
   const section = map.document?.sections.find((entry) => entry.id === sectionId);
@@ -134,7 +150,7 @@ function LayerRow({
           'border-brand-accent/35 bg-white text-slate-950 shadow-lg shadow-slate-300/35 ring-1 ring-brand-accent/15',
         !isDragOverlay &&
           isDragging &&
-          'border-dashed border-slate-300/80 bg-slate-50/50 opacity-35 shadow-none',
+          'border-dashed border-slate-300/80 bg-slate-50/50 shadow-none',
         !isDragOverlay &&
           !isDragging &&
           (selected
@@ -150,7 +166,7 @@ function LayerRow({
           disabled={disabled}
           {...dragHandleProps}
           className={cn(
-            'inline-flex h-7 w-6 shrink-0 cursor-grab items-center justify-center rounded-md text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500 active:cursor-grabbing disabled:pointer-events-none disabled:opacity-40',
+            'inline-flex h-7 w-6 shrink-0 touch-none cursor-grab items-center justify-center rounded-md text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-500 active:cursor-grabbing disabled:pointer-events-none disabled:opacity-40',
             isDragOverlay && 'cursor-grabbing text-slate-400',
           )}
         >
@@ -235,11 +251,17 @@ function LayerRow({
   );
 }
 
-function LayerInsertionLine() {
+function LayerInsertionLine({ edge }: { edge: 'before' | 'after' }) {
   return (
-    <div className="relative -my-0.5 h-2 px-1" aria-hidden>
-      <span className="absolute left-3 right-3 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-brand-accent shadow-[0_0_0_2px_rgba(124,58,237,0.12)]" />
-      <span className="absolute left-2 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-brand-accent" />
+    <div
+      className={cn(
+        'pointer-events-none absolute left-0 right-0 z-10 h-0 transition-transform duration-200 ease-out',
+        edge === 'before' ? 'top-0' : 'bottom-0',
+      )}
+      aria-hidden
+    >
+      <span className="absolute left-3 right-3 top-0 h-0.5 rounded-full bg-brand-accent shadow-[0_0_0_2px_rgba(124,58,237,0.12)]" />
+      <span className="absolute left-2 top-0 h-1.5 w-1.5 -translate-y-[3px] rounded-full bg-brand-accent" />
     </div>
   );
 }
@@ -248,25 +270,29 @@ function DraggableLayerBlock({
   id,
   disabled,
   onNodeChange,
+  previewOffsetY = 0,
   children,
 }: {
   id: string;
   disabled?: boolean;
   onNodeChange?: (id: string, node: HTMLDivElement | null) => void;
+  previewOffsetY?: number;
   children: (props: {
     dragHandleProps: HTMLAttributes<HTMLButtonElement>;
     isDragging: boolean;
   }) => ReactNode;
 }) {
-  const { attributes, listeners, setNodeRef: setDraggableRef, transform, isDragging } = useDraggable({
+  const { attributes, listeners, setNodeRef: setDraggableRef, isDragging } = useDraggable({
     id,
     disabled,
   });
   const { setNodeRef: setDroppableRef } = useDroppable({ id, disabled });
 
   const style = {
-    transform: transform ? `translate3d(0, ${transform.y}px, 0)` : undefined,
-    transition: isDragging ? undefined : 'opacity 160ms ease, border-color 160ms ease, background-color 160ms ease',
+    // Keep the source row as a fixed-size placeholder; DragOverlay is the only
+    // element that follows the pointer, so the measured drop targets stay still.
+    transform: previewOffsetY ? `translate3d(0, ${previewOffsetY}px, 0)` : undefined,
+    transition: 'transform 180ms ease-out, opacity 180ms ease-out, border-color 160ms ease, background-color 160ms ease',
   };
 
   return (
@@ -276,7 +302,7 @@ function DraggableLayerBlock({
         onNodeChange?.(id, node);
       }}
     >
-      <div ref={setDraggableRef} style={style} className="touch-none">
+      <div ref={setDraggableRef} style={style} className={cn(isDragging && 'opacity-0')}>
         {children({
           dragHandleProps: {
             ...attributes,
@@ -432,7 +458,7 @@ function renderLayerItem(
           moveDownDisabled={options.moveDownDisabled}
         />
 
-        {expanded && !options.isDragOverlay
+        {expanded
           ? groupObjects.map((object) => (
               <LayerRow
                 key={object.id}
@@ -493,8 +519,15 @@ export function MapLayersPanel() {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [insertionIndicator, setInsertionIndicator] = useState<LayerInsertionIndicator | null>(null);
+  const [overlayContainer, setOverlayContainer] = useState<HTMLElement | null>(null);
   const layerRowRefs = useRef(new Map<string, HTMLDivElement>());
-  const dragStartPointerYRef = useRef<number | null>(null);
+  const activeDragIdRef = useRef<string | null>(null);
+  const grabOffsetRef = useRef<number | null>(null);
+  const latestPointerYRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setOverlayContainer(document.body);
+  }, []);
 
   const childItems = useMemo(() => {
     if (!map || !activeLevel) return [];
@@ -505,6 +538,12 @@ export function MapLayersPanel() {
     () => childItems.find((item) => getLayerItemSortId(item) === activeDragId) ?? null,
     [activeDragId, childItems],
   );
+  const activeDragIndex = activeDragId
+    ? childItems.findIndex((item) => getLayerItemSortId(item) === activeDragId)
+    : -1;
+  const previewDestinationIndex = activeDragId
+    ? getLayerDropIndex(childItems, activeDragId, insertionIndicator)
+    : null;
 
   const visibleLayerRows = useMemo(() => {
     return childItems.reduce((count, item) => {
@@ -541,7 +580,29 @@ export function MapLayersPanel() {
     layerRowRefs.current.delete(id);
   }
 
-  function resolveInsertionFromPointer(pointerY: number, activeId: string): LayerInsertionIndicator | null {
+  function getLayerPreviewOffset(index: number) {
+    if (
+      activeDragIndex < 0 ||
+      previewDestinationIndex === null ||
+      activeDragIndex === previewDestinationIndex
+    ) {
+      return 0;
+    }
+
+    const activeId = activeDragId;
+    if (!activeId) return 0;
+    const activeHeight = layerRowRefs.current.get(activeId)?.getBoundingClientRect().height ?? 0;
+    const offset = activeHeight + 4;
+    if (activeDragIndex < previewDestinationIndex) {
+      return index > activeDragIndex && index <= previewDestinationIndex ? -offset : 0;
+    }
+    return index >= previewDestinationIndex && index < activeDragIndex ? offset : 0;
+  }
+
+  const resolveInsertionFromPointer = useCallback((
+    pointerY: number,
+    activeId: string,
+  ): LayerInsertionIndicator | null => {
     const itemIds = childItems.map(getLayerItemSortId).filter((id) => id !== activeId);
     if (itemIds.length === 0) return null;
 
@@ -574,46 +635,59 @@ export function MapLayersPanel() {
     if (nextRow) return { targetId: nextRow.id, edge: 'before' };
 
     return { targetId: last.id, edge: 'after' };
-  }
+  }, [childItems]);
+
+  useEffect(() => {
+    function updatePointerPosition(event: PointerEvent) {
+      latestPointerYRef.current = event.clientY;
+      const activeId = activeDragIdRef.current;
+      if (activeId) {
+        setInsertionIndicator(resolveInsertionFromPointer(event.clientY, activeId));
+      }
+    }
+
+    // Capture phase runs before dnd-kit's PointerSensor end handler, so the
+    // release coordinate is available synchronously to handleDragEnd.
+    document.addEventListener('pointermove', updatePointerPosition, true);
+    document.addEventListener('pointerup', updatePointerPosition, true);
+    return () => {
+      document.removeEventListener('pointermove', updatePointerPosition, true);
+      document.removeEventListener('pointerup', updatePointerPosition, true);
+    };
+  }, [resolveInsertionFromPointer]);
 
   function handleDragStart(event: DragStartEvent) {
-    setActiveDragId(String(event.active.id));
+    const activeId = String(event.active.id);
+    activeDragIdRef.current = activeId;
+    setActiveDragId(activeId);
     setInsertionIndicator(null);
-    dragStartPointerYRef.current =
-      'clientY' in event.activatorEvent ? Number(event.activatorEvent.clientY) : null;
+    const activatorY =
+      'clientY' in event.activatorEvent && typeof event.activatorEvent.clientY === 'number'
+        ? event.activatorEvent.clientY
+        : null;
+    const initialRect = event.active.rect.current.initial ?? layerRowRefs.current.get(activeId)?.getBoundingClientRect();
+    grabOffsetRef.current = activatorY !== null && initialRect ? activatorY - initialRect.top : null;
+    latestPointerYRef.current = activatorY === null
+      ? null
+      : latestPointerYRef.current ?? activatorY;
   }
 
   function handleDragMove(event: DragMoveEvent) {
     const activeId = String(event.active.id);
-    const startPointerY = dragStartPointerYRef.current;
-    if (startPointerY === null) return;
-    setInsertionIndicator(resolveInsertionFromPointer(startPointerY + event.delta.y, activeId));
-  }
-
-  function handleDragOver(event: DragOverEvent) {
-    if (dragStartPointerYRef.current !== null) return;
-    const overId = event.over?.id ? String(event.over.id) : null;
-    const activeId = String(event.active.id);
-    const overRect = event.over?.rect;
-    const activeRect = event.active.rect.current.translated;
-
-    if (!overId || overId === activeId || !overRect || !activeRect) {
-      setInsertionIndicator(null);
-      return;
-    }
-
-    const activeCenterY = activeRect.top + activeRect.height / 2;
-    const overCenterY = overRect.top + overRect.height / 2;
-    setInsertionIndicator({
-      targetId: overId,
-      edge: activeCenterY < overCenterY ? 'before' : 'after',
-    });
+    const translatedRect = event.active.rect.current.translated;
+    if (!translatedRect) return;
+    const pointerY = latestPointerYRef.current ??
+      translatedRect.top + (grabOffsetRef.current ?? translatedRect.height / 2);
+    latestPointerYRef.current = pointerY;
+    setInsertionIndicator(resolveInsertionFromPointer(pointerY, activeId));
   }
 
   function handleDragCancel() {
     setActiveDragId(null);
+    activeDragIdRef.current = null;
     setInsertionIndicator(null);
-    dragStartPointerYRef.current = null;
+    grabOffsetRef.current = null;
+    latestPointerYRef.current = null;
   }
 
   function reorderItemAt(index: number, action: 'up' | 'down' | 'front' | 'back') {
@@ -627,22 +701,32 @@ export function MapLayersPanel() {
   }
 
   function handleDragEnd(event: DragEndEvent) {
-    const indicator = insertionIndicator;
+    const activeId = String(event.active.id);
+    const translatedRect = event.active.rect.current.translated;
+    // Resolve again at release using dnd-kit's translated rectangle. This stays
+    // correct when the scroll container moved during the drag and avoids a stale
+    // React state value winning a fast release.
+    const pointerY = latestPointerYRef.current ?? (translatedRect
+      ? translatedRect.top + (grabOffsetRef.current ?? translatedRect.height / 2)
+      : null);
+    const indicator = pointerY !== null
+      ? resolveInsertionFromPointer(pointerY, activeId)
+      : insertionIndicator;
     setActiveDragId(null);
+    activeDragIdRef.current = null;
     setInsertionIndicator(null);
-    dragStartPointerYRef.current = null;
+    grabOffsetRef.current = null;
+    latestPointerYRef.current = null;
     if (!activeLevel || !map) return;
 
-    const { active, over } = event;
-    const targetId = indicator?.targetId ?? (over?.id ? String(over.id) : null);
-    if (!targetId || active.id === targetId) return;
+    const { active } = event;
+    const targetId = indicator?.targetId;
+    if (!targetId) return;
 
     const fromIndex = childItems.findIndex((item) => getLayerItemSortId(item) === active.id);
-    const targetIndex = childItems.findIndex((item) => getLayerItemSortId(item) === targetId);
-    let toIndex = indicator?.edge === 'after' ? targetIndex + 1 : targetIndex;
-    if (fromIndex < toIndex) toIndex -= 1;
-    toIndex = Math.max(0, Math.min(childItems.length - 1, toIndex));
-    if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
+    const toIndex = getLayerDropIndex(childItems, String(active.id), indicator);
+    if (toIndex === null) return;
+    if (fromIndex === -1 || fromIndex === toIndex) return;
 
     reorderLevelLayers(activeLevel.id, fromIndex, toIndex);
   }
@@ -650,10 +734,10 @@ export function MapLayersPanel() {
   if (!map) return null;
 
   return (
-    <aside className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-lg shadow-slate-300/30 backdrop-blur">
+    <aside className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 ${MAP_FLOATING_SHADOW_CLASS} backdrop-blur`}>
       <div className="border-b border-slate-200 px-4 py-3">
         <div className="flex items-center gap-2">
-          <CreatorIcon name="layers" size={16} className="text-brand-accent" />
+          <CreatorIcon name="layers" size={16} className="text-slate-500" />
           <h2 className="text-sm font-semibold text-slate-950">Camadas</h2>
         </div>
         <p className="text-xs text-slate-500">Arraste para definir o que fica na frente no mapa.</p>
@@ -664,6 +748,13 @@ export function MapLayersPanel() {
           'min-h-0 overflow-y-auto p-2',
           visibleLayerRows > 5 && 'max-h-[15.25rem] overscroll-contain pr-1',
         )}
+        onScroll={() => {
+          if (activeDragIdRef.current && latestPointerYRef.current !== null) {
+            setInsertionIndicator(
+              resolveInsertionFromPointer(latestPointerYRef.current, activeDragIdRef.current),
+            );
+          }
+        }}
       >
         {activeLevel ? (
           <DndContext
@@ -672,7 +763,6 @@ export function MapLayersPanel() {
             modifiers={[restrictToVerticalAxis]}
             onDragStart={handleDragStart}
             onDragMove={handleDragMove}
-            onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
             onDragCancel={handleDragCancel}
           >
@@ -680,11 +770,13 @@ export function MapLayersPanel() {
               {childItems.map((item, index) => {
                 const itemId = getLayerItemSortId(item);
                 return (
-                  <div key={itemId} className="flex flex-col gap-1">
-                    {insertionIndicator?.targetId === itemId && insertionIndicator.edge === 'before' ? (
-                      <LayerInsertionLine />
-                    ) : null}
-                    <DraggableLayerBlock id={itemId} disabled={disabled} onNodeChange={setLayerRowRef}>
+                  <div key={itemId} className="relative flex flex-col gap-1">
+                    <DraggableLayerBlock
+                      id={itemId}
+                      disabled={disabled}
+                      onNodeChange={setLayerRowRef}
+                      previewOffsetY={getLayerPreviewOffset(index)}
+                    >
                       {({ dragHandleProps, isDragging }) =>
                         renderLayerItem(item, map, {
                           ...layerItemOptions,
@@ -696,8 +788,10 @@ export function MapLayersPanel() {
                         })
                       }
                     </DraggableLayerBlock>
-                    {insertionIndicator?.targetId === itemId && insertionIndicator.edge === 'after' ? (
-                      <LayerInsertionLine />
+                    {insertionIndicator?.targetId === itemId ? (
+                      <LayerInsertionLine
+                        edge={insertionIndicator.edge}
+                      />
                     ) : null}
                   </div>
                 );
@@ -710,17 +804,22 @@ export function MapLayersPanel() {
               ) : null}
             </div>
 
-            <DragOverlay dropAnimation={{ duration: 220, easing: 'cubic-bezier(0.18, 0.67, 0.6, 1)' }}>
-              {activeDragItem ? (
-                <div className="w-[calc(100%-0px)] min-w-[14rem] cursor-grabbing">
-                  {renderLayerItem(activeDragItem, map, {
-                    ...layerItemOptions,
-                    onReorder: undefined,
-                    isDragOverlay: true,
-                  })}
-                </div>
-              ) : null}
-            </DragOverlay>
+            {overlayContainer
+              ? createPortal(
+                  <DragOverlay dropAnimation={null}>
+                    {activeDragItem ? (
+                      <div className="pointer-events-none w-[calc(100%-0px)] min-w-[14rem] cursor-grabbing">
+                        {renderLayerItem(activeDragItem, map, {
+                          ...layerItemOptions,
+                          onReorder: undefined,
+                          isDragOverlay: true,
+                        })}
+                      </div>
+                    ) : null}
+                  </DragOverlay>,
+                  overlayContainer,
+                )
+              : null}
           </DndContext>
         ) : null}
       </div>

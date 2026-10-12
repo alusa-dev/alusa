@@ -4,7 +4,15 @@ import {
   activateDueRenewalProcesses,
   classifyRenewalIdempotency,
   previewRenewalProcess,
+  resolveRenewalProvisionAt,
 } from './renewal-process.service';
+
+describe('resolveRenewalProvisionAt', () => {
+  it('agenda assinatura recorrente no início acadêmico da data efetiva da conta', () => {
+    expect(resolveRenewalProvisionAt(new Date('2026-11-01T00:00:00.000Z'), 'America/Manaus'))
+      .toEqual(new Date('2026-11-01T04:00:00.000Z'));
+  });
+});
 
 vi.mock('@/src/server/platform-billing/capacity', () => ({
   assertStudentCapacity: vi.fn().mockResolvedValue(undefined),
