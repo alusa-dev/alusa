@@ -27,6 +27,25 @@ type DrainResult = {
   paused: boolean;
 };
 
+export async function findRecentlyCreatedPendingEventTicketWhatsAppNotifications(input: {
+  createdSince: Date;
+  contaId?: string;
+  limit: number;
+}) {
+  const requestedLimit = Number.isFinite(input.limit) ? Math.floor(input.limit) : 1;
+  const take = Math.min(3, Math.max(1, requestedLimit));
+  return prisma.eventTicketWhatsAppNotification.findMany({
+    where: {
+      status: EventTicketWhatsAppNotificationStatus.PENDING,
+      createdAt: { gte: input.createdSince },
+      ...(input.contaId ? { contaId: input.contaId } : {}),
+    },
+    orderBy: { createdAt: 'asc' },
+    take,
+    select: { id: true, contaId: true },
+  });
+}
+
 function buildPublicTicketUrlPrefix() {
   const baseUrl = process.env.APP_URL?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim();
   if (!baseUrl) throw new Error('EVENT_TICKET_PUBLIC_URL_UNAVAILABLE');

@@ -20,12 +20,29 @@ vi.mock('@/prisma/client', () => ({ prisma }));
 vi.mock('@/src/server/whatsapp/config', () => ({ getWhatsAppRuntimeConfig, assertWhatsAppConfigured }));
 vi.mock('@/src/server/whatsapp/outbox.service', () => ({ enqueueWhatsAppMessage }));
 
-import { drainEventTicketWhatsAppNotifications } from './event-ticket-whatsapp-outbox.service';
+import {
+  drainEventTicketWhatsAppNotifications,
+  findRecentlyCreatedPendingEventTicketWhatsAppNotifications,
+} from './event-ticket-whatsapp-outbox.service';
 
 describe('drainEventTicketWhatsAppNotifications', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     prisma.eventTicketWhatsAppNotification.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('selects recent pending notifications through a bounded tenant-scoped service query', async () => {
+    const createdSince = new Date('2026-10-12T10:00:00.000Z');
+    prisma.eventTicketWhatsAppNotification.findMany.mockResolvedValue([]);
+
+    await findRecentlyCreatedPendingEventTicketWhatsAppNotifications({ createdSince, contaId: 'conta-a', limit: 2 });
+
+    expect(prisma.eventTicketWhatsAppNotification.findMany).toHaveBeenCalledWith({
+      where: { status: 'PENDING', createdAt: { gte: createdSince }, contaId: 'conta-a' },
+      orderBy: { createdAt: 'asc' },
+      take: 2,
+      select: { id: true, contaId: true },
+    });
   });
 
   it('does not claim or mutate notifications while WhatsApp is disabled', async () => {

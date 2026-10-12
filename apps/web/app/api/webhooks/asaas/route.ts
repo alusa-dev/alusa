@@ -17,8 +17,10 @@ import type { AsaasWebhookPayload } from '@alusa/finance';
 import { emitBillingNotificationCandidate } from '@/lib/notifications/emit-billing-notifications';
 import { invalidateChargesCache } from '@/lib/cache/invalidation';
 import { logApiOperationalEvent, recordApiResponseMetrics } from '@/lib/observability/api-logger';
-import { prisma } from '@/prisma/client';
-import { dispatchEventTicketWhatsAppNotification } from '@/src/server/events/event-ticket-whatsapp-outbox.service';
+import {
+  dispatchEventTicketWhatsAppNotification,
+  findRecentlyCreatedPendingEventTicketWhatsAppNotifications,
+} from '@/src/server/events/event-ticket-whatsapp-outbox.service';
 
 const MAX_BODY_BYTES = 512 * 1024;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -246,15 +248,10 @@ export async function POST(req: NextRequest) {
             drainSideEffects: false,
           });
           if (!processed.processed) return;
-          const notifications = await prisma.eventTicketWhatsAppNotification.findMany({
-            where: {
-              contaId,
-              status: 'PENDING',
-              createdAt: { gte: notificationCreatedAt },
-            },
-            orderBy: { createdAt: 'asc' },
-            take: 2,
-            select: { id: true },
+          const notifications = await findRecentlyCreatedPendingEventTicketWhatsAppNotifications({
+            contaId,
+            createdSince: notificationCreatedAt,
+            limit: 2,
           });
           for (const notification of notifications) {
             try {
