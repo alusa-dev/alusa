@@ -59,6 +59,7 @@ export interface EnqueueFinanceSideEffectParams {
   payload: Prisma.InputJsonObject;
 }
 type EventPublicOrderTicketEmailPayload = {
+  purchaseType?: 'PUBLIC_MAP_ORDER' | 'STAFF_SALE';
   orderId: string;
   buyerEmail: string;
   buyerName: string;
@@ -557,34 +558,70 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
       await emitBillingNotifications([payload.candidate], payload.sourceType, { throwOnError: true });
     } else if (event.effectType === 'EVENT_PUBLIC_ORDER_TICKET_EMAIL') {
       const payload = event.payload as EventPublicOrderTicketEmailPayload;
-      const order = await prisma.eventMapOrder.findFirst({
-        where: { id: payload.orderId, contaId: event.contaId },
-        select: { status: true, paymentStatus: true, ticketFulfillmentStatus: true, _count: { select: { items: true } } },
-      });
-      const validTickets = order
-        ? await prisma.eventTicket.count({ where: { contaId: event.contaId, eventMapOrderId: payload.orderId, status: { in: ['VALID', 'USED'] } } })
-        : 0;
-      if (
-        !order ||
-        order.status !== 'CONFIRMED' ||
-        order.ticketFulfillmentStatus !== 'ISSUED' ||
-        validTickets !== order._count.items ||
-        isTicketPaymentBlocked(order.paymentStatus)
-      ) {
-        await prisma.financeWebhookSideEffectOutbox.updateMany({
-          where: { id: eventId, status: FinanceWebhookSideEffectStatus.PROCESSING, lockToken },
-          data: {
-            status: FinanceWebhookSideEffectStatus.PROCESSED,
-            processedAt: new Date(),
-            lockedAt: null,
-            leaseExpiresAt: null,
-            lockToken: null,
-            deliveryStatus: 'SKIPPED',
-            deliveryStatusAt: new Date(),
-            lastError: 'Entrega de ingresso ignorada porque o pedido não está elegível ou o pagamento está bloqueado.',
-          },
+      if (!payload.orderId || !payload.buyerEmail || !payload.ticketsPath) {
+        throw new SideEffectDeliveryError('Payload de entrega de ingresso incompleto.', false);
+      }
+      // Legacy rows predate purchaseType. Resolve them as public-map first, then
+      // as a staff sale only when no tenant-scoped map order exists.
+      const purchaseType = payload.purchaseType;
+      if (purchaseType && purchaseType !== 'PUBLIC_MAP_ORDER' && purchaseType !== 'STAFF_SALE') {
+        throw new SideEffectDeliveryError('Origem da compra de ingresso inválida.', false);
+      }
+      const order = purchaseType === 'STAFF_SALE'
+        ? null
+        : await prisma.eventMapOrder.findFirst({
+            where: { id: payload.orderId, contaId: event.contaId },
+            select: { status: true, paymentStatus: true, ticketFulfillmentStatus: true, _count: { select: { items: true } } },
+          });
+      const resolveStaffSale = purchaseType === 'STAFF_SALE' || (!purchaseType && !order);
+      if (resolveStaffSale) {
+        const sale = await prisma.eventTicketSale.findFirst({
+          where: { id: payload.orderId, contaId: event.contaId },
+          select: { status: true, quantity: true },
         });
-        return { processed: true, reason: 'ticket_email_blocked_by_order_state' };
+        if (!sale) throw new SideEffectDeliveryError('Venda de ingresso não encontrada para a conta.', true);
+        if (sale.status === 'CANCELLED' || sale.status === 'REFUNDED') {
+          await prisma.financeWebhookSideEffectOutbox.updateMany({
+            where: { id: eventId, status: FinanceWebhookSideEffectStatus.PROCESSING, lockToken },
+            data: {
+              status: FinanceWebhookSideEffectStatus.PROCESSED, processedAt: new Date(), lockedAt: null,
+              leaseExpiresAt: null, lockToken: null, deliveryStatus: 'SKIPPED', deliveryStatusAt: new Date(),
+              lastError: 'Entrega ignorada porque a venda foi cancelada ou reembolsada.',
+            },
+          });
+          return { processed: true, reason: 'ticket_email_blocked_by_sale_state' };
+        }
+        if (sale.status !== 'PAID' && sale.status !== 'COMPLIMENTARY') {
+          throw new SideEffectDeliveryError('Venda de ingresso ainda não está paga ou liberada como cortesia.', true);
+        }
+        const validTickets = await prisma.eventTicket.count({
+          where: { contaId: event.contaId, eventTicketSaleId: payload.orderId, status: { in: ['VALID', 'USED'] } },
+        });
+        if (validTickets !== sale.quantity || validTickets !== payload.ticketCount) {
+          throw new SideEffectDeliveryError('Quantidade de ingressos emitidos ainda não corresponde à venda.', true);
+        }
+      } else {
+        if (!order) throw new SideEffectDeliveryError('Pedido do mapa público não encontrado para a conta.', true);
+        const validTickets = await prisma.eventTicket.count({ where: { contaId: event.contaId, eventMapOrderId: payload.orderId, status: { in: ['VALID', 'USED'] } } });
+        if (order.status === 'CANCELLED' || order.paymentStatus === 'REFUNDED' || isTicketPaymentBlocked(order.paymentStatus)) {
+          await prisma.financeWebhookSideEffectOutbox.updateMany({
+            where: { id: eventId, status: FinanceWebhookSideEffectStatus.PROCESSING, lockToken },
+            data: {
+              status: FinanceWebhookSideEffectStatus.PROCESSED,
+              processedAt: new Date(),
+              lockedAt: null,
+              leaseExpiresAt: null,
+              lockToken: null,
+              deliveryStatus: 'SKIPPED',
+              deliveryStatusAt: new Date(),
+              lastError: 'Entrega de ingresso ignorada porque o pedido não está elegível ou o pagamento está bloqueado.',
+            },
+          });
+          return { processed: true, reason: 'ticket_email_blocked_by_order_state' };
+        }
+        if (order.status !== 'CONFIRMED' || order.ticketFulfillmentStatus !== 'ISSUED' || validTickets !== order._count.items) {
+          throw new SideEffectDeliveryError('Pedido de ingresso ainda não está totalmente emitido.', true);
+        }
       }
       providerMessageId = (await sendEventPublicOrderTicketEmail(payload)).id;
     } else if (event.effectType === 'EVENT_PUBLIC_ORDER_CREATED_EMAIL') {

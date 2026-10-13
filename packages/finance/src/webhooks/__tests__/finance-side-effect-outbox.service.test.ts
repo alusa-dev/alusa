@@ -4,6 +4,7 @@ const {
   outboxMock,
   webhookAsaasMock,
   eventMapOrderMock,
+  eventTicketSaleMock,
   eventTicketMock,
   emitBillingNotificationsMock,
   listPaymentRefundsMock,
@@ -22,6 +23,7 @@ const {
     updateMany: vi.fn(),
   },
   eventMapOrderMock: { findFirst: vi.fn() },
+  eventTicketSaleMock: { findFirst: vi.fn() },
   eventTicketMock: { count: vi.fn() },
   emitBillingNotificationsMock: vi.fn(),
   listPaymentRefundsMock: vi.fn(),
@@ -35,6 +37,7 @@ vi.mock('@alusa/database', () => ({
     financeWebhookSideEffectOutbox: outboxMock,
     webhookAsaas: webhookAsaasMock,
     eventMapOrder: eventMapOrderMock,
+    eventTicketSale: eventTicketSaleMock,
     eventTicket: eventTicketMock,
   },
 }));
@@ -121,6 +124,7 @@ describe('finance side-effect outbox leases', () => {
       _count: { items: 1 },
     });
     eventTicketMock.count.mockResolvedValue(1);
+    eventTicketSaleMock.findFirst.mockResolvedValue({ status: 'PAID', quantity: 1 });
     outboxMock.updateMany.mockResolvedValue({ count: 1 });
     outboxMock.create.mockResolvedValue({ id: 'effect-1' });
     webhookAsaasMock.findMany.mockResolvedValue([]);
@@ -474,6 +478,7 @@ describe('finance side-effect outbox leases', () => {
       ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
       effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
       payload: {
+        purchaseType: 'PUBLIC_MAP_ORDER',
         orderId: 'order-1',
         buyerEmail: 'buyer@example.com',
         buyerName: 'Buyer',
@@ -593,6 +598,10 @@ describe('finance side-effect outbox leases', () => {
 
       expect(result).toEqual({ processed: true });
       expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(eventMapOrderMock.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'order-1', contaId: 'conta-a' },
+      }));
+      expect(eventTicketSaleMock.findFirst).not.toHaveBeenCalled();
       const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit];
       expect(url).toBe('https://api.resend.com/emails');
       expect(request.headers).toEqual(expect.objectContaining({
@@ -629,6 +638,219 @@ describe('finance side-effect outbox leases', () => {
       else process.env.RESEND_API_KEY = previousApiKey;
       if (previousSender === undefined) delete process.env.EMAIL_FROM_EVENTS;
       else process.env.EMAIL_FROM_EVENTS = previousSender;
+    }
+  });
+
+  it.each(['PAID', 'COMPLIMENTARY'] as const)('envia venda de secretaria com status %s usando o vínculo de ingresso da venda', async (status) => {
+    const previousApiKey = process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = 'test-key';
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'staff-email-1' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    outboxMock.findUnique.mockResolvedValue({
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
+      payload: {
+        purchaseType: 'STAFF_SALE', orderId: 'sale-1', buyerEmail: 'buyer@example.com', buyerName: 'Buyer',
+        eventName: 'Evento Alusa', eventStartsAt: '2026-08-23T20:00:00.000Z', ticketCount: 1, ticketsPath: '/tickets',
+      },
+    } as never);
+    eventTicketSaleMock.findFirst.mockResolvedValue({ status, quantity: 1 });
+    eventTicketMock.count.mockResolvedValue(1);
+    outboxMock.updateMany.mockResolvedValue({ count: 1 });
+
+    try {
+      await expect(processFinanceWebhookSideEffectOutboxEvent('effect-1')).resolves.toEqual({ processed: true });
+      expect(eventTicketSaleMock.findFirst).toHaveBeenCalledWith({
+        where: { id: 'sale-1', contaId: 'conta-a' }, select: { status: true, quantity: true },
+      });
+      expect(eventTicketMock.count).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ contaId: 'conta-a', eventTicketSaleId: 'sale-1' }),
+      }));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousApiKey;
+    }
+  });
+
+  it('mantém venda cancelada como SKIPPED sem enviar email', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    outboxMock.findUnique.mockResolvedValue({
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING), effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
+      payload: { purchaseType: 'STAFF_SALE', orderId: 'sale-cancelled', buyerEmail: 'buyer@example.com', ticketsPath: '/tickets' },
+    } as never);
+    eventTicketSaleMock.findFirst.mockResolvedValue({ status: 'CANCELLED', quantity: 1 });
+    outboxMock.updateMany.mockResolvedValue({ count: 1 });
+
+    try {
+      await expect(processFinanceWebhookSideEffectOutboxEvent('effect-1')).resolves.toEqual({
+        processed: true, reason: 'ticket_email_blocked_by_sale_state',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(outboxMock.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        data: expect.objectContaining({ status: FinanceWebhookSideEffectStatus.PROCESSED, deliveryStatus: 'SKIPPED' }),
+      }));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('legacy payload falls back to a same-tenant staff sale when no map order exists', async () => {
+    const previousApiKey = process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = 'test-key';
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'legacy-staff-email' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    outboxMock.findUnique.mockResolvedValue({
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING), effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
+      payload: { orderId: 'legacy-sale-1', buyerEmail: 'buyer@example.com', buyerName: 'Buyer', eventName: 'Evento',
+        eventStartsAt: '2026-08-23T20:00:00.000Z', ticketCount: 1, ticketsPath: '/tickets' },
+    } as never);
+    eventMapOrderMock.findFirst.mockResolvedValue(null);
+    eventTicketSaleMock.findFirst.mockResolvedValue({ status: 'PAID', quantity: 1 });
+    eventTicketMock.count.mockResolvedValue(1);
+    outboxMock.updateMany.mockResolvedValue({ count: 1 });
+
+    try {
+      await expect(processFinanceWebhookSideEffectOutboxEvent('effect-1')).resolves.toEqual({ processed: true });
+      expect(eventMapOrderMock.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'legacy-sale-1', contaId: 'conta-a' },
+      }));
+      expect(eventTicketSaleMock.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'legacy-sale-1', contaId: 'conta-a' },
+      }));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousApiKey;
+    }
+  });
+
+  it('does not send or consume a Conta A effect when its staff sale is absent in Conta A', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const foreignTenantSale = { id: 'sale-1', contaId: 'conta-b', status: 'PAID', quantity: 1 };
+    const foreignTenantTickets = [{ id: 'ticket-b-1', contaId: 'conta-b', eventTicketSaleId: 'sale-1', status: 'VALID' }];
+    outboxMock.findUnique.mockResolvedValue({
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING), effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
+      payload: { purchaseType: 'STAFF_SALE', orderId: 'sale-1', buyerEmail: 'buyer@example.com', ticketsPath: '/tickets' },
+    } as never);
+    eventTicketSaleMock.findFirst.mockImplementation(({ where }: { where: { id: string; contaId: string } }) =>
+      Promise.resolve(where.id === foreignTenantSale.id && where.contaId === foreignTenantSale.contaId
+        ? foreignTenantSale
+        : null),
+    );
+    outboxMock.updateMany.mockResolvedValue({ count: 1 });
+
+    try {
+      await expect(processFinanceWebhookSideEffectOutboxEvent('effect-1')).resolves.toEqual({
+        processed: false, reason: 'Venda de ingresso não encontrada para a conta.',
+      });
+      expect(eventTicketSaleMock.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'sale-1', contaId: 'conta-a' },
+      }));
+      expect(foreignTenantSale).toMatchObject({ contaId: 'conta-b', status: 'PAID' });
+      expect(foreignTenantTickets).toHaveLength(1);
+      expect(eventTicketMock.count).not.toHaveBeenCalled();
+      expect(outboxMock.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        data: expect.objectContaining({ status: FinanceWebhookSideEffectStatus.PENDING, deliveryStatus: 'FAILED' }),
+      }));
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('retries partial staff ticket issuance and sends after the remaining tickets appear', async () => {
+    const previousApiKey = process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = 'test-key';
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'completed-staff-email' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    outboxMock.findUnique.mockResolvedValue({
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING), effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
+      payload: { purchaseType: 'STAFF_SALE', orderId: 'sale-partial', buyerEmail: 'buyer@example.com', buyerName: 'Buyer',
+        eventName: 'Evento', eventStartsAt: '2026-08-23T20:00:00.000Z', ticketCount: 2, ticketsPath: '/tickets' },
+    } as never);
+    eventTicketSaleMock.findFirst.mockResolvedValue({ status: 'PAID', quantity: 2 });
+    eventTicketMock.count.mockResolvedValueOnce(1).mockResolvedValueOnce(2);
+    outboxMock.updateMany
+      .mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 1 });
+
+    try {
+      await expect(processFinanceWebhookSideEffectOutboxEvent('effect-1')).resolves.toEqual({
+        processed: false, reason: 'Quantidade de ingressos emitidos ainda não corresponde à venda.',
+      });
+      expect(outboxMock.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        data: expect.objectContaining({ status: FinanceWebhookSideEffectStatus.PENDING, deliveryStatus: 'FAILED' }),
+      }));
+      await expect(processFinanceWebhookSideEffectOutboxEvent('effect-1')).resolves.toEqual({ processed: true });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(outboxMock.updateMany).toHaveBeenNthCalledWith(4, expect.objectContaining({
+        data: expect.objectContaining({ status: FinanceWebhookSideEffectStatus.PROCESSED, deliveryStatus: 'SENT' }),
+      }));
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousApiKey;
+    }
+  });
+
+  it('terminally skips a refunded staff sale', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    outboxMock.findUnique.mockResolvedValue({
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING), effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
+      payload: { purchaseType: 'STAFF_SALE', orderId: 'sale-refunded', buyerEmail: 'buyer@example.com', ticketsPath: '/tickets' },
+    } as never);
+    eventTicketSaleMock.findFirst.mockResolvedValue({ status: 'REFUNDED', quantity: 1 });
+    outboxMock.updateMany.mockResolvedValue({ count: 1 });
+
+    try {
+      await expect(processFinanceWebhookSideEffectOutboxEvent('effect-1')).resolves.toEqual({
+        processed: true, reason: 'ticket_email_blocked_by_sale_state',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(outboxMock.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        data: expect.objectContaining({ status: FinanceWebhookSideEffectStatus.PROCESSED, deliveryStatus: 'SKIPPED' }),
+      }));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('reuses the provider idempotency key after provider acceptance and outbox finalization lease loss', async () => {
+    const previousApiKey = process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = 'test-key';
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'provider-accepted-email' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    outboxMock.findUnique.mockResolvedValue({
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING), effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
+      payload: { purchaseType: 'PUBLIC_MAP_ORDER', orderId: 'order-lease-loss', buyerEmail: 'buyer@example.com',
+        buyerName: 'Buyer', eventName: 'Evento', eventStartsAt: '2026-08-23T20:00:00.000Z', ticketCount: 1,
+        ticketsPath: '/tickets', deliveryKey: 'resend:window-1' },
+    } as never);
+    outboxMock.updateMany
+      .mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 1 });
+
+    try {
+      await expect(processFinanceWebhookSideEffectOutboxEvent('effect-1')).resolves.toEqual({ processed: false, reason: 'lease_lost' });
+      await expect(processFinanceWebhookSideEffectOutboxEvent('effect-1')).resolves.toEqual({ processed: true });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const idempotencyKeys = fetchMock.mock.calls.map(([, request]) =>
+        (request as RequestInit).headers as Record<string, string>,
+      ).map((headers) => headers['Idempotency-Key']);
+      expect(idempotencyKeys).toEqual([
+        'event-ticket-email:order-lease-loss:resend:window-1',
+        'event-ticket-email:order-lease-loss:resend:window-1',
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousApiKey;
     }
   });
 

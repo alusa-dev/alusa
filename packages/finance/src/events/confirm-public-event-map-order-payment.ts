@@ -309,6 +309,7 @@ export async function confirmPublicEventMapOrderPayment(params: {
 
     await enqueueEventTicketEmail(tx, {
       contaId: order.contaId,
+      purchaseType: 'PUBLIC_MAP_ORDER',
       purchaseId: order.id,
       buyerEmail: order.buyerEmail,
       buyerName: order.buyerName,
