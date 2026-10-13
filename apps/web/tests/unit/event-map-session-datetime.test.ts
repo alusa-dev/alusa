@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   formatMapSessionDateTime,
   mapSessionDateTimeToIso,
-  shouldCaptureEventMapLocalSchedule,
 } from '../../features/events/map/session-datetime';
 
 describe('mapSessionDateTimeToIso', () => {
@@ -40,25 +39,5 @@ describe('mapSessionDateTimeToIso', () => {
   it('rejects invalid and incomplete values', () => {
     expect(mapSessionDateTimeToIso('2026-02-30T12:00')).toBeNull();
     expect(mapSessionDateTimeToIso('')).toBeNull();
-  });
-});
-
-describe('legacy event map schedule confirmation', () => {
-  it('does not infer an explicit local schedule during unrelated settings saves', () => {
-    expect(shouldCaptureEventMapLocalSchedule({
-      currentLocal: null,
-      initialInput: '2026-11-14T20:00',
-      nextInput: '2026-11-14T20:00',
-      explicitlyConfirmed: false,
-    })).toBe(false);
-  });
-
-  it('captures the displayed schedule after explicit confirmation without requiring a changed time', () => {
-    expect(shouldCaptureEventMapLocalSchedule({
-      currentLocal: null,
-      initialInput: '2026-11-14T20:00',
-      nextInput: '2026-11-14T20:00',
-      explicitlyConfirmed: true,
-    })).toBe(true);
   });
 });

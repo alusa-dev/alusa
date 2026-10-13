@@ -5,7 +5,7 @@ import { isTicketPaymentBlocked } from '../ticket-checkin.service';
 import { isPublicOrderRefundActionPending } from './public-order-refund-action';
 import { publicOrderStatusPath, publicOrderTicketsPath } from './public-order-links';
 import { toMoney } from './event-map-order-operations';
-import { eventMapLocalDateTimeToDate, eventMapSnapshotStartsAtToDate } from './event-map.schema';
+import { eventMapDateToLocalDateTime, eventMapLocalDateTimeToDate, eventMapSnapshotStartsAtToDate } from './event-map.schema';
 
 type EventTicketRecord = Prisma.EventTicketGetPayload<Prisma.EventTicketDefaultArgs>;
 function hasCompletePublicOrderTickets(order: { items: Array<{ ticket: EventTicketRecord | null }> }) {
@@ -50,7 +50,9 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
   const ticketsUrl = ticketsAvailable ? publicOrderTicketsPath(order.id, order.accessToken) : null;
   const snapshot = order.version.snapshot;
   const snapshotRecord = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) ? snapshot as Prisma.JsonObject : null;
-  const startsAtLocal = typeof snapshotRecord?.startsAtLocal === 'string' ? snapshotRecord.startsAtLocal : null;
+  const startsAtLocal = typeof snapshotRecord?.startsAtLocal === 'string'
+    ? snapshotRecord.startsAtLocal
+    : eventMapDateToLocalDateTime(typeof snapshotRecord?.startsAt === 'string' ? snapshotRecord.startsAt : null);
   const validStartsAtLocal = eventMapLocalDateTimeToDate(startsAtLocal);
   const pinnedStartsAt = validStartsAtLocal
     ?? eventMapSnapshotStartsAtToDate(snapshotRecord?.startsAt);

@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import { createEventMapSchema, eventMapDocumentSchema, publicCheckoutSchema } from './event-map.schema.js';
+import { createEventMapSchema, eventMapDateToLocalDateTime, eventMapDocumentSchema, publicCheckoutSchema } from './event-map.schema.js';
 
 describe('event map local session date fields', () => {
+  it.each(['UTC', 'America/Los_Angeles', 'Pacific/Kiritimati'])('derives a deterministic local fallback in %s', (timezone) => {
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = timezone;
+    try {
+      expect(eventMapDateToLocalDateTime('2026-11-15T00:00:00.000Z')).toBe('2026-11-15T00:00');
+      expect(eventMapDateToLocalDateTime(null)).toBeNull();
+    } finally {
+      if (previousTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTimezone;
+    }
+  });
+
   it('accepts valid civil date-time fields and rejects malformed or impossible dates', () => {
     expect(createEventMapSchema.parse({
       name: 'Sessão', startsAtLocal: '2026-11-14T20:15', endsAtLocal: '2026-11-14T22:00',

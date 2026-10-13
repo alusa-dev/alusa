@@ -3,12 +3,11 @@ import { describe, expect, it } from 'vitest';
 
 import { prisma } from '../../prisma';
 import { preparePublicEventMapCheckout } from './public-event-map-checkout-persistence';
-import { listEventMaps, reservePublicEventMapSeats } from './event-map.service';
+import { getPublicEventMap, listEventMaps, reservePublicEventMapSeats } from './event-map.service';
 import { getPublicEventMapOrderStatus } from './public-event-map-order-status.service';
 import { createSeatedTicketSale, getPublicStaffSaleTickets, reserveStaffEventMapSeats } from './staff-map-sales.service';
 
 const validLocal = '2026-11-14T20:00';
-const invalidLocal = '2026-02-30T20:00';
 const ctx = (contaId: string, userId: string) => ({ contaId, userId });
 
 async function createFixture(options: { startsAtLocal?: string; seatStatus?: 'AVAILABLE' | 'HELD'; lot?: boolean } = {}) {
@@ -118,25 +117,41 @@ const checkoutInput = (reservation: { id: string; holdToken: string }) => ({
 });
 
 describe('event map purchase schedule snapshots', () => {
-  it.each([undefined, invalidLocal])('rejects public holds for a legacy/invalid schedule (%s) before changing seat state', async (startsAtLocal) => {
-    const fixture = await createFixture({ startsAtLocal });
+  it('returns a timezone-independent local schedule for a legacy public map snapshot', async () => {
+    const fixture = await createFixture();
     try {
-      await expect(reservePublicEventMapSeats(fixture.map.publicSlug!, { seatIds: [fixture.seat.id] }))
-        .rejects.toMatchObject({ code: 'HORARIO_SESSAO_NAO_CONFIRMADO' });
-      expect((await prisma.eventMapPublicSeat.findUniqueOrThrow({ where: { id: fixture.seat.id } })).status).toBe('AVAILABLE');
-      expect(await prisma.eventMapReservation.count({ where: { contaId: fixture.conta.id } })).toBe(0);
+      const publicMap = await getPublicEventMap(fixture.map.publicSlug!);
+      expect(publicMap.event).toMatchObject({
+        startsAt: '2026-11-15T00:00:00.000Z',
+        startsAtLocal: '2026-11-15T00:00',
+      });
+      expect(await prisma.eventMapVersion.findUniqueOrThrow({ where: { id: fixture.version.id } })).toMatchObject({
+        snapshot: { startsAt: '2026-11-15T00:00:00.000Z' },
+      });
     } finally {
       await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
     }
   });
 
-  it.each([undefined, invalidLocal])('rejects checkout on a legacy/invalid version without creating an order (%s)', async (startsAtLocal) => {
-    const fixture = await createFixture({ startsAtLocal, seatStatus: 'HELD' });
+  it('allows public holds for a legacy version using its UTC schedule as an automatic fallback', async () => {
+    const fixture = await createFixture();
+    try {
+      await expect(reservePublicEventMapSeats(fixture.map.publicSlug!, { seatIds: [fixture.seat.id] }))
+        .resolves.toMatchObject({ reservationId: expect.any(String) });
+      expect((await prisma.eventMapPublicSeat.findUniqueOrThrow({ where: { id: fixture.seat.id } })).status).toBe('HELD');
+      expect(await prisma.eventMapReservation.count({ where: { contaId: fixture.conta.id } })).toBe(1);
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('allows checkout on a legacy version and snapshots its automatic fallback', async () => {
+    const fixture = await createFixture({ seatStatus: 'HELD' });
     try {
       const reservation = await createReservation(fixture, 'PUBLIC_CHECKOUT');
       await expect(preparePublicEventMapCheckout(fixture.map.publicSlug!, checkoutInput(reservation)))
-        .rejects.toMatchObject({ code: 'HORARIO_SESSAO_NAO_CONFIRMADO' });
-      expect(await prisma.eventMapOrder.count({ where: { contaId: fixture.conta.id } })).toBe(0);
+        .resolves.toMatchObject({ publishedMapSchedule: { startsAtLocal: '2026-11-15T00:00' } });
+      expect(await prisma.eventMapOrder.count({ where: { contaId: fixture.conta.id } })).toBe(1);
       expect((await prisma.eventMapPublicSeat.findUniqueOrThrow({ where: { id: fixture.seat.id } })).status).toBe('HELD');
     } finally {
       await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
@@ -172,24 +187,23 @@ describe('event map purchase schedule snapshots', () => {
     }
   });
 
-  it('rejects staff reservation and sale for a legacy schedule before creating sale side effects', async () => {
+  it('allows staff reservation and sale for a legacy schedule using its UTC fallback', async () => {
     const fixture = await createFixture();
     try {
-      await expect(reserveStaffEventMapSeats(ctx(fixture.conta.id, fixture.user.id), fixture.event.id, fixture.map.id, { seatIds: [fixture.seat.id] }))
-        .rejects.toMatchObject({ code: 'HORARIO_SESSAO_NAO_CONFIRMADO' });
-      expect(await prisma.eventMapReservation.count({ where: { contaId: fixture.conta.id } })).toBe(0);
+      const held = await reserveStaffEventMapSeats(ctx(fixture.conta.id, fixture.user.id), fixture.event.id, fixture.map.id, { seatIds: [fixture.seat.id] });
+      expect(held.reservationId).toBeTruthy();
+      expect(await prisma.eventMapReservation.count({ where: { contaId: fixture.conta.id } })).toBe(1);
 
-      const reservation = await createReservation(fixture, 'STAFF_MANUAL');
-      await expect(createSeatedTicketSale(ctx(fixture.conta.id, fixture.user.id), {
+      const sale = await createSeatedTicketSale(ctx(fixture.conta.id, fixture.user.id), {
         eventId: fixture.event.id,
         buyerName: 'Comprador Teste',
         paymentMethod: 'COMPLIMENTARY',
         status: 'COMPLIMENTARY',
-        holdToken: reservation.holdToken,
-      })).rejects.toMatchObject({ code: 'HORARIO_SESSAO_NAO_CONFIRMADO' });
-      expect(await prisma.eventTicketSale.count({ where: { contaId: fixture.conta.id } })).toBe(0);
-      expect(await prisma.eventFinancialEntry.count({ where: { contaId: fixture.conta.id, eventId: fixture.event.id } })).toBe(0);
-      expect((await prisma.eventMapPublicSeat.findUniqueOrThrow({ where: { id: fixture.seat.id } })).status).toBe('AVAILABLE');
+        holdToken: held.holdToken,
+      });
+      expect(sale.primarySaleId).toBeTruthy();
+      expect(await prisma.eventTicketSale.count({ where: { contaId: fixture.conta.id } })).toBe(1);
+      expect((await prisma.eventMapPublicSeat.findUniqueOrThrow({ where: { id: fixture.seat.id } })).status).toBe('SOLD');
     } finally {
       await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
     }
@@ -330,7 +344,10 @@ describe('event map purchase schedule snapshots', () => {
 
       const status = await getPublicEventMapOrderStatus(order.id, accessToken);
       expect(status.event.startsAt).toBe('2026-11-14T20:00:00.000Z');
-      expect(status.event.startsAtLocal).toBeNull();
+      expect(status.event.startsAtLocal).toBe('2026-11-14T20:00');
+      expect(await prisma.eventMapVersion.findUniqueOrThrow({ where: { id: fixture.version.id } })).toMatchObject({
+        snapshot: { startsAt: '2026-11-14T20:00:00.000Z' },
+      });
     } finally {
       await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
     }

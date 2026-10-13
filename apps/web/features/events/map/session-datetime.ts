@@ -11,15 +11,6 @@ export function mapSessionDateTimeToIso(value: string) {
   return iso;
 }
 
-export function shouldCaptureEventMapLocalSchedule(input: {
-  currentLocal: string | null | undefined;
-  initialInput: string;
-  nextInput: string;
-  explicitlyConfirmed: boolean;
-}) {
-  return input.nextInput !== input.initialInput || (!input.currentLocal && input.explicitlyConfirmed);
-}
-
 /** Formats a map session's civil date/time without applying a runtime timezone. */
 export function formatMapSessionDateTime(value?: string | null, startsAtLocal?: string | null) {
   if (!value) return '-';

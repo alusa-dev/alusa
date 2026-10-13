@@ -180,6 +180,14 @@ export function eventMapLocalDateTimeToDate(value?: string | null): Date | null 
   return !Number.isNaN(date.getTime()) && date.toISOString() === `${value}:00.000Z` ? date : null;
 }
 
+/** Uses persisted UTC date components as a deterministic fallback for legacy maps. */
+export function eventMapDateToLocalDateTime(value?: Date | string | null): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 16);
+}
+
 export function eventMapSnapshotStartsAtToDate(value: unknown): Date | null {
   if (typeof value !== 'string') return null;
   const date = new Date(value);
