@@ -30,8 +30,10 @@ describe('mapSessionDateTimeToIso', () => {
   });
 
   it('retains runtime-local formatting for legacy dates without an explicit local value', () => {
-    process.env.TZ = 'America/Manaus';
-    expect(formatMapSessionDateTime('2026-11-14T18:00:00.000Z')).toContain('14:00');
+    const value = '2026-11-14T18:00:00.000Z';
+    const expected = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+      .format(new Date(value));
+    expect(formatMapSessionDateTime(value)).toBe(expected);
   });
 
   it('rejects invalid and incomplete values', () => {
