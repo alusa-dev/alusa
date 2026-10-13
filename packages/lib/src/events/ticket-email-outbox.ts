@@ -2,6 +2,7 @@ import { FinanceWebhookSideEffectStatus, Prisma } from '@prisma/client';
 
 type EventTicketEmailOutboxParams = {
   contaId: string;
+  purchaseType: 'PUBLIC_MAP_ORDER' | 'STAFF_SALE';
   purchaseId: string;
   buyerEmail: string;
   buyerName: string;
@@ -38,6 +39,7 @@ export async function enqueueEventTicketEmail(
       effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
       dedupeKey,
       payload: toAuditJson({
+        purchaseType: params.purchaseType,
         orderId: params.purchaseId,
         buyerEmail: params.buyerEmail,
         buyerName: params.buyerName,
