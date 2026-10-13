@@ -344,7 +344,9 @@ function mapEventMap(record: EventMapRecord | EventMapListRecord) {
     },
     name: record.name,
     startsAt: (record.startsAt ?? record.event.startsAt).toISOString(),
+    startsAtLocal: record.startsAtLocal,
     endsAt: record.endsAt?.toISOString() ?? null,
+    endsAtLocal: record.endsAtLocal,
     locationName: record.locationName ?? record.event.locationName,
     locationAddress: record.locationAddress ?? record.event.locationAddress,
     status: record.status,
@@ -499,7 +501,9 @@ export async function createEventMap(ctx: EventsContext, eventId: string, input:
         eventId,
         name: input.name,
         startsAt,
+        startsAtLocal: input.startsAtLocal ?? null,
         endsAt,
+        endsAtLocal: input.endsAtLocal ?? null,
         locationName: input.locationName === undefined ? event.locationName : input.locationName,
         locationAddress: input.locationAddress === undefined ? event.locationAddress : input.locationAddress,
         status: 'DRAFT',
@@ -995,7 +999,9 @@ export async function updateEventMapSettings(
       data: {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.startsAt !== undefined ? { startsAt: input.startsAt } : {}),
+        ...(input.startsAtLocal !== undefined ? { startsAtLocal: input.startsAtLocal } : {}),
         ...(input.endsAt !== undefined ? { endsAt: input.endsAt } : {}),
+        ...(input.endsAtLocal !== undefined ? { endsAtLocal: input.endsAtLocal } : {}),
         ...(input.locationName !== undefined ? { locationName: input.locationName } : {}),
         ...(input.locationAddress !== undefined ? { locationAddress: input.locationAddress } : {}),
         ...(input.publicEnabled !== undefined ? { publicEnabled: input.publicEnabled } : {}),
@@ -1388,7 +1394,9 @@ export async function duplicateEventMap(
         eventId,
         name: input.name ?? `${source.name} (cópia)`,
         startsAt: sessionStartsAt,
+        startsAtLocal: input.startsAtLocal === undefined ? source.startsAtLocal : input.startsAtLocal,
         endsAt: sessionEndsAt,
+        endsAtLocal: input.endsAtLocal === undefined ? source.endsAtLocal : input.endsAtLocal,
         locationName: input.locationName === undefined ? source.locationName : input.locationName,
         locationAddress: input.locationAddress === undefined ? source.locationAddress : input.locationAddress,
         status: 'DRAFT',
@@ -1641,6 +1649,8 @@ export async function getPublicEventMap(publicSlug: string) {
       name: typeof snapshotEvent.name === 'string' ? snapshotEvent.name : map.event.name,
       startsAt: publishedStartsAt.toISOString(),
       endsAt: publishedEndsAt?.toISOString() ?? null,
+      startsAtLocal: typeof snapshot.startsAtLocal === 'string' ? snapshot.startsAtLocal : map.startsAtLocal,
+      endsAtLocal: typeof snapshot.endsAtLocal === 'string' ? snapshot.endsAtLocal : map.endsAtLocal,
       locationName: typeof snapshot.locationName === 'string' || snapshot.locationName === null
         ? snapshot.locationName
         : map.locationName ?? map.event.locationName,
@@ -1824,7 +1834,8 @@ export async function getPublicEventMapOrderTickets(orderId: string, accessToken
     where: { id: orderId, accessToken, status: 'CONFIRMED' },
     include: {
       event: { select: { id: true, name: true, startsAt: true, endsAt: true, locationName: true, locationAddress: true, ticketArtworkUrl: true } },
-      map: { select: { id: true, name: true, publicSlug: true, startsAt: true, endsAt: true, locationName: true, locationAddress: true } },
+      map: { select: { id: true, name: true, publicSlug: true, startsAt: true, startsAtLocal: true, endsAt: true, locationName: true, locationAddress: true } },
+      version: { select: { snapshot: true } },
       items: {
         include: {
           publicSeat: true,
@@ -1843,6 +1854,14 @@ export async function getPublicEventMapOrderTickets(orderId: string, accessToken
     throw new EventsError('INGRESSOS_INDISPONIVEIS', 'Os ingressos ainda estão sendo emitidos. Tente novamente em instantes.', 409);
   }
 
+  const ticketMapSnapshot = snapshotRecord(order.version.snapshot);
+  const ticketStartsAtLocal = typeof ticketMapSnapshot.startsAtLocal === 'string'
+    ? ticketMapSnapshot.startsAtLocal
+    : null;
+  const ticketStartsAt = typeof ticketMapSnapshot.startsAt === 'string'
+    ? new Date(ticketMapSnapshot.startsAt)
+    : order.map.startsAt ?? order.event.startsAt;
+
   return {
     id: order.id,
     buyerName: order.buyerName,
@@ -1852,7 +1871,8 @@ export async function getPublicEventMapOrderTickets(orderId: string, accessToken
     confirmedAt: (order.confirmedAt ?? order.paidAt ?? order.createdAt).toISOString(),
     event: {
       ...order.event,
-      startsAt: (order.map.startsAt ?? order.event.startsAt).toISOString(),
+      startsAt: ticketStartsAt.toISOString(),
+      startsAtLocal: ticketStartsAtLocal,
       endsAt: order.map.endsAt?.toISOString() ?? null,
       locationName: order.map.locationName ?? order.event.locationName,
       locationAddress: order.map.locationAddress ?? order.event.locationAddress,
@@ -1879,7 +1899,8 @@ export async function getEventMapOrderTicketsForAdmin(contaId: string, orderId: 
     where: { id: orderId, contaId, status: 'CONFIRMED' },
     include: {
       event: { select: { id: true, name: true, startsAt: true, endsAt: true, locationName: true, locationAddress: true, ticketArtworkUrl: true } },
-      map: { select: { id: true, name: true, publicSlug: true, startsAt: true, endsAt: true, locationName: true, locationAddress: true } },
+      map: { select: { id: true, name: true, publicSlug: true, startsAt: true, startsAtLocal: true, endsAt: true, locationName: true, locationAddress: true } },
+      version: { select: { snapshot: true } },
       items: {
         include: {
           publicSeat: true,
@@ -1898,6 +1919,14 @@ export async function getEventMapOrderTicketsForAdmin(contaId: string, orderId: 
     throw new EventsError('INGRESSOS_INDISPONIVEIS', 'Os ingressos ainda estão sendo emitidos.', 409);
   }
 
+  const ticketMapSnapshot = snapshotRecord(order.version.snapshot);
+  const ticketStartsAtLocal = typeof ticketMapSnapshot.startsAtLocal === 'string'
+    ? ticketMapSnapshot.startsAtLocal
+    : null;
+  const ticketStartsAt = typeof ticketMapSnapshot.startsAt === 'string'
+    ? new Date(ticketMapSnapshot.startsAt)
+    : order.map.startsAt ?? order.event.startsAt;
+
   return {
     id: order.id,
     buyerName: order.buyerName,
@@ -1907,7 +1936,8 @@ export async function getEventMapOrderTicketsForAdmin(contaId: string, orderId: 
     confirmedAt: (order.confirmedAt ?? order.paidAt ?? order.createdAt).toISOString(),
     event: {
       ...order.event,
-      startsAt: (order.map.startsAt ?? order.event.startsAt).toISOString(),
+      startsAt: ticketStartsAt.toISOString(),
+      startsAtLocal: ticketStartsAtLocal,
       endsAt: order.map.endsAt?.toISOString() ?? null,
       locationName: order.map.locationName ?? order.event.locationName,
       locationAddress: order.map.locationAddress ?? order.event.locationAddress,
@@ -1953,7 +1983,8 @@ export async function requestPublicOrderTicketEmailResend(orderId: string, acces
     where: { id: orderId, accessToken, status: 'CONFIRMED' },
     include: {
       event: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } },
-      map: { select: { name: true, publicSlug: true, startsAt: true, locationName: true, locationAddress: true } },
+      map: { select: { name: true, publicSlug: true, startsAt: true, startsAtLocal: true, locationName: true, locationAddress: true } },
+      version: { select: { snapshot: true } },
       items: { include: { ticket: true, publicSeat: { select: { lotName: true } } } },
     },
   });
@@ -1986,7 +2017,12 @@ export async function requestPublicOrderTicketEmailResend(orderId: string, acces
       buyerEmail: order.buyerEmail,
       buyerName: order.buyerName,
       eventName: `${order.event.name} · ${order.map.name}`,
-      eventStartsAt: order.map.startsAt ?? order.event.startsAt,
+      eventStartsAt: typeof snapshotRecord(order.version.snapshot).startsAt === 'string'
+        ? new Date(snapshotRecord(order.version.snapshot).startsAt as string)
+        : order.map.startsAt ?? order.event.startsAt,
+      eventStartsAtLocal: typeof snapshotRecord(order.version.snapshot).startsAtLocal === 'string'
+        ? snapshotRecord(order.version.snapshot).startsAtLocal as string
+        : null,
       eventLocation: [
         order.map.locationName ?? order.event.locationName,
         order.map.locationAddress ?? order.event.locationAddress,

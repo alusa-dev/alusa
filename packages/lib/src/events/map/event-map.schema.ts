@@ -174,13 +174,19 @@ export const eventMapDocumentSchema = z.object({
 });
 
 export const eventMapIdSchema = z.string().trim().min(1);
+const localDateTimeSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/).refine((value) => {
+  const date = new Date(`${value}:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString() === `${value}:00.000Z`;
+}, 'Informe uma data e hora válidas.');
 
 export const createEventMapSchema = z.object({
   name: requiredText('Informe o nome do mapa.').default('Mapa principal'),
   creationMode: z.enum(['blank', 'reference-plan']).default('blank'),
   templateMapId: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional()),
   startsAt: z.coerce.date().optional().nullable(),
+  startsAtLocal: localDateTimeSchema.optional().nullable(),
   endsAt: z.coerce.date().optional().nullable(),
+  endsAtLocal: localDateTimeSchema.optional().nullable(),
   locationName: z.preprocess(emptyToUndefined, z.string().trim().max(255).optional().nullable()),
   locationAddress: z.preprocess(emptyToUndefined, z.string().trim().max(500).optional().nullable()),
 }).superRefine((input, context) => {
@@ -301,7 +307,9 @@ export const updateEventMapSettingsSchema = z
   .object({
     name: requiredText('Informe o nome do mapa.').optional(),
     startsAt: z.coerce.date().optional().nullable(),
+    startsAtLocal: localDateTimeSchema.optional().nullable(),
     endsAt: z.coerce.date().optional().nullable(),
+    endsAtLocal: localDateTimeSchema.optional().nullable(),
     locationName: z.preprocess(emptyToUndefined, z.string().trim().max(255).optional().nullable()),
     locationAddress: z.preprocess(emptyToUndefined, z.string().trim().max(500).optional().nullable()),
     publicEnabled: z.boolean().optional(),
@@ -317,7 +325,9 @@ export const updateEventMapReferenceChartSchema = z.object({
 export const duplicateEventMapSchema = z.object({
   name: requiredText('Informe o nome do novo mapa.').optional(),
   startsAt: z.coerce.date().optional().nullable(),
+  startsAtLocal: localDateTimeSchema.optional().nullable(),
   endsAt: z.coerce.date().optional().nullable(),
+  endsAtLocal: localDateTimeSchema.optional().nullable(),
   locationName: z.preprocess(emptyToUndefined, z.string().trim().max(255).optional().nullable()),
   locationAddress: z.preprocess(emptyToUndefined, z.string().trim().max(500).optional().nullable()),
 }).superRefine((input, context) => {

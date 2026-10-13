@@ -11,6 +11,7 @@ export async function enqueuePublicOrderCreatedEmail(
     buyerName: string;
     eventName: string;
     eventStartsAt: Date;
+    eventStartsAtLocal?: string | null;
     statusPath: string;
     invoiceUrl: string | null;
     paymentMethod: string;
@@ -28,6 +29,7 @@ export async function enqueuePublicOrderCreatedEmail(
         buyerName: params.buyerName,
         eventName: params.eventName,
         eventStartsAt: params.eventStartsAt.toISOString(),
+        eventStartsAtLocal: params.eventStartsAtLocal ?? null,
         statusPath: params.statusPath,
         invoiceUrl: params.invoiceUrl,
         paymentMethod: params.paymentMethod,

@@ -90,7 +90,9 @@ export type EventMapDTO = {
   };
   name: string;
   startsAt?: string;
+  startsAtLocal?: string | null;
   endsAt?: string | null;
+  endsAtLocal?: string | null;
   locationName?: string | null;
   locationAddress?: string | null;
   status: EventMapStatus;

@@ -49,6 +49,7 @@ import {
   type StaffSeatReservationResult,
   type TicketLotDTO,
 } from '../events-service';
+import { formatMapSessionDateTime } from '../map/session-datetime';
 import { EventDateTimeField as DateTimeField } from '../shared/EventDateTimeField';
 import { EventField as Field } from '../shared/EventField';
 import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
@@ -72,7 +73,7 @@ export function SaleFormDialog({
   event: SchoolEventDTO;
   lots: TicketLotDTO[];
   scopedResources?: EventScopedResources;
-  publishedMaps: Array<{ id: string; name: string; startsAt: string }>;
+  publishedMaps: Array<{ id: string; name: string; startsAt: string; startsAtLocal?: string | null }>;
   trigger: React.ReactNode;
 }) {
   const queryClient = useQueryClient();
@@ -278,7 +279,7 @@ export function SaleFormDialog({
                       triggerClassName={wizardFieldInputClass}
                       options={publishedMaps.map((map) => ({
                         value: map.id,
-                        label: `${map.name} · ${new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(map.startsAt))}`,
+                        label: `${map.name} · ${formatMapSessionDateTime(map.startsAt, map.startsAtLocal)}`,
                       }))}
                       onValueChange={async (nextMapId) => {
                         if (nextMapId === selectedMapId) return;

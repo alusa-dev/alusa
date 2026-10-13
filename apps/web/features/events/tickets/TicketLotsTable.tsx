@@ -17,6 +17,7 @@ import {
 import { toast } from '@/components/ui/toast';
 
 import { deleteTicketLot, formatCurrency, type TicketLotDTO } from '../events-service';
+import { formatMapSessionDateTime } from '../map/session-datetime';
 import { EventEmptyState as EmptyState } from '../shared/EventEmptyState';
 import { EventPaginatedDataTable } from '../shared/EventPaginatedDataTable';
 import { EventSoftBadge as SoftBadge, type EventSoftBadgeTone } from '../shared/EventSoftBadge';
@@ -130,7 +131,7 @@ export function TicketLotsTable({
                 {lot.eventMap ? (
                   <span className="text-xs text-slate-500">
                     {lot.eventMap.name}
-                    {` · ${new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(lot.eventMap.startsAt ?? lot.event.startsAt))}`}
+                    {` · ${formatMapSessionDateTime(lot.eventMap.startsAt ?? lot.event.startsAt, lot.eventMap.startsAtLocal)}`}
                   </span>
                 ) : (
                   <span className="text-xs text-slate-500">Lote geral do evento</span>
