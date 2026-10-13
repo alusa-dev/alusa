@@ -188,7 +188,7 @@ describe('event map purchase schedule snapshots', () => {
   });
 
   it('allows staff reservation and sale for a legacy schedule using its UTC fallback', async () => {
-    const fixture = await createFixture();
+    const fixture = await createFixture({ lot: true });
     try {
       const held = await reserveStaffEventMapSeats(ctx(fixture.conta.id, fixture.user.id), fixture.event.id, fixture.map.id, { seatIds: [fixture.seat.id] });
       expect(held.reservationId).toBeTruthy();
