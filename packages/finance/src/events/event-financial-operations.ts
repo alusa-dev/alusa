@@ -14,6 +14,7 @@ import { recordEventAudit } from '@alusa/lib/events/event-audit.service';
 import { enqueueEventTicketEmail, buildPublicEventTicketSalePath } from '@alusa/lib/events/ticket-email-outbox';
 import { enqueueEventTicketWhatsAppNotification, EVENT_TICKET_WHATSAPP_CONSENT_VERSION } from '@alusa/lib/events/ticket-whatsapp-notification';
 import { syncPublicLotQuantity, releaseSeatsForTicketSale } from '@alusa/lib/events/map/event-map-order-operations';
+import { eventMapLocalDateTimeToDate } from '@alusa/lib/events/map/event-map.schema';
 import type {
   CreateEventFinancialEntryInput,
   UpdateEventFinancialEntryInput,
@@ -47,6 +48,14 @@ function toMoney(value: Prisma.Decimal | number | string | null | undefined): nu
   return Math.round((toNumber(value) + Number.EPSILON) * 100) / 100;
 }
 function decimal(value: number): Prisma.Decimal { return new Prisma.Decimal(value); }
+function getPinnedMapTicketSchedule(snapshot: Prisma.JsonValue | undefined) {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  const startsAtLocal = (snapshot as Prisma.JsonObject).startsAtLocal;
+  if (typeof startsAtLocal !== 'string') return null;
+  const startsAt = eventMapLocalDateTimeToDate(startsAtLocal);
+  if (!startsAt) return null;
+  return { startsAt, startsAtLocal };
+}
 async function lockEventParticipantForFinancialMutation(tx: Prisma.TransactionClient, contaId: string, eventId: string, participantId: string) {
   const [participant] = await tx.$queryRaw<Array<{ id: string }>>`
     SELECT p."id"
@@ -326,6 +335,10 @@ export async function markTicketSalePaid(ctx: EventsContext, saleId: string) {
         aluno: { select: { email: true } },
         responsavel: { select: { email: true } },
         tickets: { where: { status: 'VALID' }, select: { id: true } },
+        saleSeats: {
+          take: 1,
+          include: { publicSeat: { include: { version: { select: { snapshot: true } } } } },
+        },
       },
     });
     if (!current) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
@@ -352,6 +365,7 @@ export async function markTicketSalePaid(ctx: EventsContext, saleId: string) {
     });
 
     if (buyerEmail && current.tickets.length > 0) {
+      const pinnedSchedule = getPinnedMapTicketSchedule(current.saleSeats[0]?.publicSeat.version.snapshot);
       await enqueueEventTicketEmail(tx, {
         contaId: ctx.contaId,
         purchaseType: 'STAFF_SALE',
@@ -359,7 +373,8 @@ export async function markTicketSalePaid(ctx: EventsContext, saleId: string) {
         buyerEmail,
         buyerName: current.buyerName,
         eventName: current.event.name,
-        eventStartsAt: current.event.startsAt,
+        eventStartsAt: pinnedSchedule?.startsAt ?? current.event.startsAt,
+        eventStartsAtLocal: pinnedSchedule?.startsAtLocal ?? null,
         eventLocation: [current.event.locationName, current.event.locationAddress].filter(Boolean).join(' — ') || null,
         ticketType: current.lot.name,
         ticketCount: current.tickets.length,
