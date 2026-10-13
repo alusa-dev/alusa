@@ -667,6 +667,7 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
         if (buyerEmail) {
           await enqueueEventTicketEmail(tx, {
             contaId: ctx.contaId,
+            purchaseType: 'STAFF_SALE',
             purchaseId: sale.id,
             buyerEmail,
             buyerName: sale.buyerName,

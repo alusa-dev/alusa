@@ -1981,6 +1981,7 @@ export async function requestPublicOrderTicketEmailResend(orderId: string, acces
   await prisma.$transaction(async (tx) => {
     await enqueueEventTicketEmail(tx, {
       contaId: order.contaId,
+      purchaseType: 'PUBLIC_MAP_ORDER',
       purchaseId: order.id,
       buyerEmail: order.buyerEmail,
       buyerName: order.buyerName,

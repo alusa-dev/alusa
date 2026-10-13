@@ -190,6 +190,7 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
     if (buyerEmail && (saleStatus === 'PAID' || saleStatus === 'COMPLIMENTARY') && sale.accessToken) {
       await enqueueEventTicketEmail(tx, {
         contaId: ctx.contaId,
+        purchaseType: 'STAFF_SALE',
         purchaseId: sale.id,
         buyerEmail,
         buyerName: sale.buyerName,
@@ -395,6 +396,7 @@ export async function updateTicketSale(ctx: EventsContext, saleId: string, input
       if (buyerEmail && accessToken) {
         await enqueueEventTicketEmail(tx, {
           contaId: ctx.contaId,
+          purchaseType: 'STAFF_SALE',
           purchaseId: saleId,
           buyerEmail,
           buyerName: current.buyerName,

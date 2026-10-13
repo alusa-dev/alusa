@@ -354,6 +354,7 @@ export async function markTicketSalePaid(ctx: EventsContext, saleId: string) {
     if (buyerEmail && current.tickets.length > 0) {
       await enqueueEventTicketEmail(tx, {
         contaId: ctx.contaId,
+        purchaseType: 'STAFF_SALE',
         purchaseId: current.id,
         buyerEmail,
         buyerName: current.buyerName,
