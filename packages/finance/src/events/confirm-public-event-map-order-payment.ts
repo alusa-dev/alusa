@@ -61,6 +61,7 @@ export async function confirmPublicEventMapOrderPayment(params: {
       },
       include: {
         map: true,
+        version: { select: { snapshot: true } },
         event: { select: { name: true, startsAt: true, endsAt: true, locationName: true, locationAddress: true } },
         reservation: { include: { seats: { include: { publicSeat: true } } } },
         items: { include: { ticket: true, publicSeat: true } },
@@ -307,6 +308,16 @@ export async function confirmPublicEventMapOrderPayment(params: {
       },
     });
 
+    const publishedSnapshot = order.version.snapshot && typeof order.version.snapshot === 'object' && !Array.isArray(order.version.snapshot)
+      ? order.version.snapshot as Prisma.JsonObject
+      : {};
+    const publishedStartsAt = typeof publishedSnapshot.startsAt === 'string'
+      ? new Date(publishedSnapshot.startsAt)
+      : order.map.startsAt ?? order.event.startsAt;
+    const publishedStartsAtLocal = typeof publishedSnapshot.startsAtLocal === 'string'
+      ? publishedSnapshot.startsAtLocal
+      : null;
+
     await enqueueEventTicketEmail(tx, {
       contaId: order.contaId,
       purchaseType: 'PUBLIC_MAP_ORDER',
@@ -314,7 +325,8 @@ export async function confirmPublicEventMapOrderPayment(params: {
       buyerEmail: order.buyerEmail,
       buyerName: order.buyerName,
       eventName: `${order.event.name} · ${order.map.name}`,
-      eventStartsAt: order.map.startsAt ?? order.event.startsAt,
+      eventStartsAt: publishedStartsAt,
+      eventStartsAtLocal: publishedStartsAtLocal,
       eventLocation: [order.map.locationName, order.map.locationAddress].filter(Boolean).join(' — ') || null,
       ticketType: [...new Set(publicSeats.map((seat) => seat.lotName).filter(Boolean))].join(', ') || 'Ingresso',
       ticketCount: createdItems.length,

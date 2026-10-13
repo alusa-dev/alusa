@@ -4611,7 +4611,9 @@ model EventMap {
   eventId            String
   name               String
   startsAt           DateTime?
+  startsAtLocal      String?        @db.VarChar(16)
   endsAt             DateTime?
+  endsAtLocal        String?        @db.VarChar(16)
   locationName       String?
   locationAddress    String?
   status             EventMapStatus @default(DRAFT)

@@ -10,6 +10,7 @@ function ticketOrder(ticketArtworkUrl?: string) {
     event: {
       name: 'Festival de Dança',
       startsAt: '2026-11-14T20:00:00.000Z',
+      startsAtLocal: '2026-11-14T20:00',
       locationName: 'CCI',
       ticketArtworkUrl,
     },
@@ -29,6 +30,31 @@ function ticketOrder(ticketArtworkUrl?: string) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('event ticket PDF artwork', () => {
+  it('prints explicit civil session date and time independently of the server timezone', async () => {
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    try {
+      const pdf = await createEventTicketsPdf(ticketOrder());
+      const content = pdf.toString('latin1');
+
+      expect(content).toContain('14/11/2026');
+      expect(content).toContain('20h00');
+    } finally {
+      if (previousTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTimezone;
+    }
+  });
+
+  it('keeps legacy tickets on the previous runtime-local formatting path', async () => {
+    const order = ticketOrder();
+    delete (order.event as { startsAtLocal?: string }).startsAtLocal;
+    const date = new Date(order.event.startsAt);
+    const expectedDate = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
+    const expectedTime = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(date).replace(':', 'h');
+    const pdf = await createEventTicketsPdf(order);
+    expect(pdf.toString('latin1')).toContain(`${expectedDate} às ${expectedTime}`);
+  });
+
   it('embeds event artwork in the generated PDF', async () => {
     const artwork = await sharp({
       create: { width: 32, height: 32, channels: 3, background: { r: 92, g: 35, b: 160 } },

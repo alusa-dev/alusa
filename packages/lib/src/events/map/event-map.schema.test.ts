@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { eventMapDocumentSchema, publicCheckoutSchema } from './event-map.schema.js';
+import { createEventMapSchema, eventMapDocumentSchema, publicCheckoutSchema } from './event-map.schema.js';
+
+describe('event map local session date fields', () => {
+  it('accepts valid civil date-time fields and rejects malformed or impossible dates', () => {
+    expect(createEventMapSchema.parse({
+      name: 'Sessão', startsAtLocal: '2026-11-14T20:15', endsAtLocal: '2026-11-14T22:00',
+    })).toMatchObject({ startsAtLocal: '2026-11-14T20:15', endsAtLocal: '2026-11-14T22:00' });
+    expect(() => createEventMapSchema.parse({ name: 'Sessão', startsAtLocal: '2026-02-30T20:15' })).toThrow();
+    expect(() => createEventMapSchema.parse({ name: 'Sessão', startsAtLocal: '2026-11-14T20:15Z' })).toThrow();
+  });
+});
 
 describe('public ticket checkout consent', () => {
   const checkout = {

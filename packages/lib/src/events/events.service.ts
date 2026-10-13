@@ -848,7 +848,7 @@ export async function listEventResources(ctx: Pick<EventsContext, 'contaId'>) {
 
 const ticketLotInclude = {
   event: { select: { id: true, name: true, startsAt: true } },
-  eventMap: { select: { id: true, name: true, startsAt: true } },
+  eventMap: { select: { id: true, name: true, startsAt: true, startsAtLocal: true } },
 } satisfies Prisma.EventTicketLotInclude;
 
 export function mapTicketLot(lot: Prisma.EventTicketLotGetPayload<{ include: typeof ticketLotInclude }>) {

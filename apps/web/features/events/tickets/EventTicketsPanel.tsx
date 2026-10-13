@@ -69,6 +69,7 @@ export function EventTicketsPanel({ eventId, scopedResources }: { eventId: strin
                 id: map.id,
                 name: map.name,
                 startsAt: map.startsAt ?? map.event.startsAt,
+                startsAtLocal: map.startsAtLocal ?? null,
               }))}
               trigger={<Button className={PRIMARY_BUTTON_CLASS}><Plus className="h-4 w-4" /> Venda</Button>}
             />

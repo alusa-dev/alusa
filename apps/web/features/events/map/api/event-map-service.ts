@@ -107,7 +107,9 @@ export async function createEventMap(
     name: string;
     creationMode?: 'blank' | 'reference-plan';
     startsAt?: string | null;
+    startsAtLocal?: string | null;
     endsAt?: string | null;
+    endsAtLocal?: string | null;
     locationName?: string | null;
     locationAddress?: string | null;
   },
@@ -143,7 +145,9 @@ export async function saveEventMapSettings(
   payload: {
     name?: string;
     startsAt?: string | null;
+    startsAtLocal?: string | null;
     endsAt?: string | null;
+    endsAtLocal?: string | null;
     locationName?: string | null;
     locationAddress?: string | null;
     publicEnabled?: boolean;
@@ -177,7 +181,7 @@ export async function publishEventMap(
 export async function duplicateEventMap(
   eventId: string,
   mapId: string,
-  payload: { name: string; startsAt: string; endsAt?: string | null; locationName?: string | null; locationAddress?: string | null },
+  payload: { name: string; startsAt: string; startsAtLocal?: string | null; endsAt?: string | null; endsAtLocal?: string | null; locationName?: string | null; locationAddress?: string | null },
 ) {
   const json = await parseResponse<JsonEnvelope<EventMapDTO>>(
     await eventMapFetch(`/api/events/${eventId}/maps/${mapId}/duplicate`, {

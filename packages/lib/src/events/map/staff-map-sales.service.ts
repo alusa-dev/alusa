@@ -658,7 +658,7 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
             tickets: { where: { status: 'VALID' }, select: { id: true } },
             saleSeats: {
               take: 1,
-              include: { publicSeat: { include: { map: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } } } } },
+              include: { publicSeat: { include: { map: { select: { name: true, startsAt: true, startsAtLocal: true, locationName: true, locationAddress: true } } } } },
             },
           },
         });
@@ -673,6 +673,7 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
             buyerName: sale.buyerName,
             eventName: session ? `${sale.event.name} · ${session.name}` : sale.event.name,
             eventStartsAt: session?.startsAt ?? sale.event.startsAt,
+            eventStartsAtLocal: session?.startsAtLocal ?? null,
             eventLocation: [session?.locationName ?? sale.event.locationName, session?.locationAddress ?? sale.event.locationAddress].filter(Boolean).join(' — ') || null,
             ticketType: sale.lot.name,
             ticketCount: sale.tickets.length,
@@ -710,7 +711,7 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
           ticket: { select: { id: true, ticketCode: true, checkInCode: true, status: true } },
           publicSeat: {
             include: {
-              map: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } },
+              map: { select: { name: true, startsAt: true, startsAtLocal: true, locationName: true, locationAddress: true } },
             },
           },
         },
@@ -775,6 +776,7 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
     event: {
       ...sale.event,
       startsAt: (session?.startsAt ?? sale.event.startsAt).toISOString(),
+      startsAtLocal: session?.startsAtLocal ?? null,
       locationName: session?.locationName ?? sale.event.locationName,
       locationAddress: session?.locationAddress ?? sale.event.locationAddress,
     },

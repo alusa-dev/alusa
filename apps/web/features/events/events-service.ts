@@ -52,7 +52,7 @@ export type TicketLotDTO = {
   id: string;
   eventId: string;
   eventMapId: string | null;
-  eventMap: { id: string; name: string; startsAt: string | null } | null;
+  eventMap: { id: string; name: string; startsAt: string | null; startsAtLocal?: string | null } | null;
   event: { id: string; name: string; startsAt: string };
   name: string;
   ticketType: EventTicketType;

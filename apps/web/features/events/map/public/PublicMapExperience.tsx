@@ -52,6 +52,7 @@ import {
 } from './public-map-level-view';
 import { PublicMapViewport } from './PublicMapViewport';
 import { PublicMapSceneRenderer, buildPublicMapSceneItems } from './public-map-scene-render';
+import { formatMapSessionDateTime } from '../session-datetime';
 export { sortPublicMapRenderItems } from './public-map-scene-render';
 import type { EventMapObjectDTO } from '../api/event-map-service';
 import type { EventMapDocument } from '@alusa/domain';
@@ -94,13 +95,6 @@ type PublicObject = {
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat('pt-BR', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value));
 }
 
 function createCheckoutKey() {
@@ -641,7 +635,7 @@ export function PublicMapExperience({
             <div className="mt-2 flex flex-wrap justify-end gap-x-4 gap-y-1 text-sm text-white/80">
               <span className="inline-flex items-center gap-1.5">
                 <CalendarDays aria-hidden="true" className="h-4 w-4" />
-                {formatDate(map.event.startsAt)}
+                {formatMapSessionDateTime(map.event.startsAt, map.event.startsAtLocal)}
               </span>
               {map.event.locationName || map.event.locationAddress ? (
                 <span className="inline-flex items-center gap-1.5">

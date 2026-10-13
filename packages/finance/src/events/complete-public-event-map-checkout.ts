@@ -381,7 +381,10 @@ export async function completePublicEventMapCheckout(
         buyerEmail: updated.buyerEmail,
         buyerName: updated.buyerName,
         eventName: `${pending.map.event.name} · ${pending.map.name}`,
-        eventStartsAt: pending.map.startsAt ?? pending.map.event.startsAt,
+        eventStartsAt: pending.publishedMapSchedule.startsAt
+          ? new Date(pending.publishedMapSchedule.startsAt)
+          : pending.map.startsAt ?? pending.map.event.startsAt,
+        eventStartsAtLocal: pending.publishedMapSchedule.startsAtLocal,
         statusPath: publicOrderStatusPath(pending.map.publicSlug, updated.id, updated.accessToken),
         invoiceUrl: updated.invoiceUrl,
         paymentMethod: input.paymentMethod,
