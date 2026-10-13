@@ -38,6 +38,7 @@ import { toast } from '@/components/ui/toast';
 import { InfoCircle, MapPin } from '@/components/icons/icons';
 import { wizardFieldInputClass, wizardTextareaFieldClass } from '@/components/shared/wizard/field-styles';
 import { cn } from '@/lib/utils';
+import { formatPhoneBR } from '@/lib/formatters';
 
 import {
   createTicketSale,
@@ -80,6 +81,7 @@ export function SaleFormDialog({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [discardAlertOpen, setDiscardAlertOpen] = useState(false);
   const [formKey, setFormKey] = useState(0);
+  const [buyerPhone, setBuyerPhone] = useState('');
   const [seatSelection, setSeatSelection] = useState<SeatSelectionState>(null);
   const [selectedMapId, setSelectedMapId] = useState(() => (publishedMaps.length === 1 ? publishedMaps[0]!.id : ''));
 
@@ -104,6 +106,7 @@ export function SaleFormDialog({
       ]);
       toast.success({ title: 'Venda registrada', description: 'A venda de ingressos foi registrada com sucesso.' });
       setSeatSelection(null);
+      setBuyerPhone('');
       setPickerOpen(false);
       setFormKey((key) => key + 1);
       setOpen(false);
@@ -218,6 +221,7 @@ export function SaleFormDialog({
     setSeatSelection(null);
     setPickerOpen(false);
     setDiscardAlertOpen(false);
+    setBuyerPhone('');
     setFormKey((key) => key + 1);
     setOpen(false);
     if (holdToken) {
@@ -433,6 +437,8 @@ export function SaleFormDialog({
                       inputMode="tel"
                       autoComplete="tel"
                       placeholder="(00) 00000-0000"
+                      value={buyerPhone}
+                      onChange={(event) => setBuyerPhone(formatPhoneBR(event.currentTarget.value))}
                       className={wizardFieldInputClass}
                     />
                   </div>
