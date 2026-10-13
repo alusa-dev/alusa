@@ -6,24 +6,37 @@ import { markTicketSalePaid } from './event-financial-operations';
 describe('manual seated ticket sale schedule (database)', () => {
   afterAll(async () => prisma.$disconnect());
 
-  it('uses the published version schedule when a pending seated sale is marked paid', async () => {
+  it.each([
+    {
+      label: 'explicit local schedule',
+      snapshot: { startsAt: '2026-11-15T00:00:00.000Z', startsAtLocal: '2026-11-14T20:00' },
+      expectedStartsAt: '2026-11-14T20:00:00.000Z',
+      expectedStartsAtLocal: '2026-11-14T20:00',
+    },
+    {
+      label: 'legacy snapshot UTC schedule',
+      snapshot: { startsAt: '2026-11-14T20:00:00.000Z' },
+      expectedStartsAt: '2026-11-14T20:00:00.000Z',
+      expectedStartsAtLocal: null,
+    },
+  ])('uses the pinned $label when a pending seated sale is marked paid', async (schedule) => {
     const suffix = randomUUID();
     const conta = await prisma.conta.create({ data: { nome: `Ticket schedule ${suffix}` } });
     try {
       const user = await prisma.usuario.create({ data: {
         contaId: conta.id, nome: 'Ticket schedule test', email: `ticket-schedule-${suffix}@test.invalid`, senhaHash: 'integration-test',
       } });
-      const pinnedStartsAtLocal = '2026-11-14T20:00';
+      const pinnedStartsAtLocal = schedule.expectedStartsAtLocal;
       const event = await prisma.schoolEvent.create({ data: {
         contaId: conta.id, name: `Event ${suffix}`, type: 'OTHER', status: 'ACTIVE',
         startsAt: new Date('2026-11-15T00:00:00.000Z'),
       } });
       const map = await prisma.eventMap.create({ data: {
-        contaId: conta.id, eventId: event.id, name: `Map ${suffix}`, startsAtLocal: pinnedStartsAtLocal,
+        contaId: conta.id, eventId: event.id, name: `Map ${suffix}`, startsAt: new Date('2026-11-15T00:00:00.000Z'), startsAtLocal: pinnedStartsAtLocal,
       } });
       const version = await prisma.eventMapVersion.create({ data: {
         contaId: conta.id, eventMapId: map.id, version: 1, status: 'PUBLISHED',
-        snapshot: { startsAt: '2026-11-15T00:00:00.000Z', startsAtLocal: pinnedStartsAtLocal },
+        snapshot: schedule.snapshot,
       } });
       const seat = await prisma.eventMapPublicSeat.create({ data: {
         contaId: conta.id, eventId: event.id, eventMapId: map.id, versionId: version.id,
@@ -48,13 +61,13 @@ describe('manual seated ticket sale schedule (database)', () => {
       } });
 
       await prisma.schoolEvent.update({ where: { id: event.id }, data: { startsAt: new Date('2026-11-15T01:00:00.000Z') } });
-      await prisma.eventMap.update({ where: { id: map.id }, data: { startsAtLocal: '2026-11-14T21:00' } });
+      await prisma.eventMap.update({ where: { id: map.id }, data: { startsAtLocal: '2026-11-14T21:00', startsAt: new Date('2026-11-15T01:00:00.000Z') } });
       await markTicketSalePaid({ contaId: conta.id, userId: user.id }, sale.id);
 
       const outbox = await prisma.financeWebhookSideEffectOutbox.findFirst({
         where: { contaId: conta.id, effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL', dedupeKey: { contains: sale.id } },
       });
-      expect(outbox?.payload).toMatchObject({ eventStartsAt: '2026-11-14T20:00:00.000Z', eventStartsAtLocal: pinnedStartsAtLocal });
+      expect(outbox?.payload).toMatchObject({ eventStartsAt: schedule.expectedStartsAt, eventStartsAtLocal: pinnedStartsAtLocal });
     } finally {
       await prisma.conta.delete({ where: { id: conta.id } });
     }

@@ -300,4 +300,39 @@ describe('event map purchase schedule snapshots', () => {
       await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
     }
   });
+
+  it('uses the legacy version UTC schedule before mutable map/event times in public order status', async () => {
+    const fixture = await createFixture();
+    const accessToken = `order-${randomUUID()}`;
+    try {
+      await prisma.eventMapVersion.update({
+        where: { id: fixture.version.id },
+        data: { snapshot: { startsAt: '2026-11-14T20:00:00.000Z' } },
+      });
+      const order = await prisma.eventMapOrder.create({
+        data: {
+          contaId: fixture.conta.id,
+          eventId: fixture.event.id,
+          eventMapId: fixture.map.id,
+          versionId: fixture.version.id,
+          buyerName: 'Comprador Teste',
+          buyerEmail: 'ticket@example.test',
+          totalAmount: 20,
+          paymentMethod: 'PIX',
+          accessToken,
+        },
+      });
+      await prisma.eventMap.update({
+        where: { id: fixture.map.id },
+        data: { startsAtLocal: '2026-11-14T21:00', startsAt: new Date('2026-11-15T01:00:00.000Z') },
+      });
+      await prisma.schoolEvent.update({ where: { id: fixture.event.id }, data: { startsAt: new Date('2026-11-15T01:00:00.000Z') } });
+
+      const status = await getPublicEventMapOrderStatus(order.id, accessToken);
+      expect(status.event.startsAt).toBe('2026-11-14T20:00:00.000Z');
+      expect(status.event.startsAtLocal).toBeNull();
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
 });

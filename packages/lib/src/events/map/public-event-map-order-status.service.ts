@@ -5,7 +5,7 @@ import { isTicketPaymentBlocked } from '../ticket-checkin.service';
 import { isPublicOrderRefundActionPending } from './public-order-refund-action';
 import { publicOrderStatusPath, publicOrderTicketsPath } from './public-order-links';
 import { toMoney } from './event-map-order-operations';
-import { eventMapLocalDateTimeToDate } from './event-map.schema';
+import { eventMapLocalDateTimeToDate, eventMapSnapshotStartsAtToDate } from './event-map.schema';
 
 type EventTicketRecord = Prisma.EventTicketGetPayload<Prisma.EventTicketDefaultArgs>;
 function hasCompletePublicOrderTickets(order: { items: Array<{ ticket: EventTicketRecord | null }> }) {
@@ -51,7 +51,9 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
   const snapshot = order.version.snapshot;
   const snapshotRecord = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) ? snapshot as Prisma.JsonObject : null;
   const startsAtLocal = typeof snapshotRecord?.startsAtLocal === 'string' ? snapshotRecord.startsAtLocal : null;
-  const pinnedStartsAt = eventMapLocalDateTimeToDate(startsAtLocal);
+  const validStartsAtLocal = eventMapLocalDateTimeToDate(startsAtLocal);
+  const pinnedStartsAt = validStartsAtLocal
+    ?? eventMapSnapshotStartsAtToDate(snapshotRecord?.startsAt);
   let refundRequestUrl: string | null = null;
   const latePaymentBuyerRefundActionPending =
     order.paymentMethod === 'BOLETO' &&
@@ -120,7 +122,7 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
     event: {
       ...order.event,
       startsAt: (pinnedStartsAt ?? order.map.startsAt ?? order.event.startsAt).toISOString(),
-      startsAtLocal: pinnedStartsAt ? startsAtLocal : null,
+      startsAtLocal: validStartsAtLocal ? startsAtLocal : null,
       endsAt: order.map.endsAt?.toISOString() ?? null,
       locationName: order.map.locationName ?? order.event.locationName,
       locationAddress: order.map.locationAddress ?? order.event.locationAddress,

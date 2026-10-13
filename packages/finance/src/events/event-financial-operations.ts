@@ -14,7 +14,7 @@ import { recordEventAudit } from '@alusa/lib/events/event-audit.service';
 import { enqueueEventTicketEmail, buildPublicEventTicketSalePath } from '@alusa/lib/events/ticket-email-outbox';
 import { enqueueEventTicketWhatsAppNotification, EVENT_TICKET_WHATSAPP_CONSENT_VERSION } from '@alusa/lib/events/ticket-whatsapp-notification';
 import { syncPublicLotQuantity, releaseSeatsForTicketSale } from '@alusa/lib/events/map/event-map-order-operations';
-import { eventMapLocalDateTimeToDate } from '@alusa/lib/events/map/event-map.schema';
+import { eventMapLocalDateTimeToDate, eventMapSnapshotStartsAtToDate } from '@alusa/lib/events/map/event-map.schema';
 import type {
   CreateEventFinancialEntryInput,
   UpdateEventFinancialEntryInput,
@@ -50,11 +50,12 @@ function toMoney(value: Prisma.Decimal | number | string | null | undefined): nu
 function decimal(value: number): Prisma.Decimal { return new Prisma.Decimal(value); }
 function getPinnedMapTicketSchedule(snapshot: Prisma.JsonValue | undefined) {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  const startsAtLocal = (snapshot as Prisma.JsonObject).startsAtLocal;
-  if (typeof startsAtLocal !== 'string') return null;
-  const startsAt = eventMapLocalDateTimeToDate(startsAtLocal);
-  if (!startsAt) return null;
-  return { startsAt, startsAtLocal };
+  const snapshotRecord = snapshot as Prisma.JsonObject;
+  const startsAtLocal = snapshotRecord.startsAtLocal;
+  const localStartsAt = typeof startsAtLocal === 'string' ? eventMapLocalDateTimeToDate(startsAtLocal) : null;
+  if (localStartsAt && typeof startsAtLocal === 'string') return { startsAt: localStartsAt, startsAtLocal };
+  const snapshotStartsAt = eventMapSnapshotStartsAtToDate(snapshotRecord.startsAt);
+  return snapshotStartsAt ? { startsAt: snapshotStartsAt, startsAtLocal: null } : null;
 }
 async function lockEventParticipantForFinancialMutation(tx: Prisma.TransactionClient, contaId: string, eventId: string, participantId: string) {
   const [participant] = await tx.$queryRaw<Array<{ id: string }>>`
