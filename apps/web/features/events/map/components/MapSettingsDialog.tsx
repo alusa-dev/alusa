@@ -92,22 +92,20 @@ export function MapSettingsDialog({
       }
       const initialStartsAt = map.startsAt ?? map.event.startsAt;
       const initialEndsAt = map.endsAt;
-      if (nextStartsAt !== initialStartsAt) payload.startsAt = nextStartsAt;
-      if (startsAt !== (map.startsAtLocal ?? toLegacyDateTimeInput(initialStartsAt))) {
+      const initialStartsAtInput = map.startsAtLocal ?? toLegacyDateTimeInput(initialStartsAt);
+      const initialEndsAtInput = map.endsAtLocal ?? toLegacyDateTimeInput(initialEndsAt);
+      if (startsAt !== initialStartsAtInput) {
         payload.startsAtLocal = startsAt;
-        if (nextStartsAt !== initialStartsAt) payload.startsAt = nextStartsAt;
+        payload.startsAt = nextStartsAt;
       }
-      if (nextEndsAt !== initialEndsAt) payload.endsAt = nextEndsAt;
-      if (endsAt !== (map.endsAtLocal ?? toLegacyDateTimeInput(initialEndsAt))) {
+      if (endsAt !== initialEndsAtInput) {
         payload.endsAtLocal = endsAt || null;
-        if (nextEndsAt !== initialEndsAt) payload.endsAt = nextEndsAt;
+        payload.endsAt = nextEndsAt;
       }
       const nextLocationName = locationName.trim() || null;
       const nextLocationAddress = locationAddress.trim() || null;
       if (nextLocationName !== (map.locationName ?? null)) payload.locationName = nextLocationName;
       if (nextLocationAddress !== (map.locationAddress ?? null)) payload.locationAddress = nextLocationAddress;
-      if (map.startsAtLocal == null && startsAt) payload.startsAtLocal = startsAt;
-      if (map.endsAtLocal == null && endsAt) payload.endsAtLocal = endsAt;
       if (map.status === 'PUBLISHED' && publicEnabled !== Boolean(map.publicEnabled)) {
         payload.publicEnabled = publicEnabled;
       }

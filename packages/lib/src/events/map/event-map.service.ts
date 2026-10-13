@@ -42,6 +42,7 @@ import type {
   UpdateEventMapReferenceChartInput,
   UpdateEventMapSettingsInput,
 } from './event-map.schema';
+import { eventMapLocalDateTimeToDate } from './event-map.schema';
 
 export type { PublicCheckoutInput } from './event-map.schema';
 
@@ -468,8 +469,8 @@ export async function createEventMap(ctx: EventsContext, eventId: string, input:
     const event = await getEventForMapOrThrow(tx, ctx.contaId, eventId);
     assertNumberedSeatEvent(event);
 
-    const startsAt = input.startsAt ?? event.startsAt;
-    const endsAt = input.endsAt === undefined ? event.endsAt : input.endsAt;
+    const startsAt = eventMapLocalDateTimeToDate(input.startsAtLocal) ?? input.startsAt ?? event.startsAt;
+    const endsAt = eventMapLocalDateTimeToDate(input.endsAtLocal) ?? (input.endsAt === undefined ? event.endsAt : input.endsAt);
     if (startsAt && endsAt && endsAt <= startsAt) {
       throw new EventsError('HORARIO_SESSAO_INVALIDO', 'O término da sessão deve ser posterior ao início.', 422);
     }
@@ -980,8 +981,10 @@ export async function updateEventMapSettings(
     if (!current) throw new EventsError('MAPA_NAO_ENCONTRADO', 'Mapa do evento não encontrado.', 404);
     assertMapEditable(current);
 
-    const nextStartsAt = input.startsAt === undefined ? current.startsAt ?? current.event.startsAt : input.startsAt;
-    const nextEndsAt = input.endsAt === undefined ? current.endsAt : input.endsAt;
+    const localStartsAt = eventMapLocalDateTimeToDate(input.startsAtLocal);
+    const localEndsAt = eventMapLocalDateTimeToDate(input.endsAtLocal);
+    const nextStartsAt = localStartsAt ?? (input.startsAt === undefined ? current.startsAt ?? current.event.startsAt : input.startsAt);
+    const nextEndsAt = localEndsAt ?? (input.endsAt === undefined ? current.endsAt : input.endsAt);
     if (nextStartsAt && nextEndsAt && nextEndsAt <= nextStartsAt) {
       throw new EventsError('HORARIO_SESSAO_INVALIDO', 'O término da sessão deve ser posterior ao início.', 422);
     }
@@ -998,10 +1001,10 @@ export async function updateEventMapSettings(
       where: { id: mapId },
       data: {
         ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.startsAt !== undefined ? { startsAt: input.startsAt } : {}),
-        ...(input.startsAtLocal !== undefined ? { startsAtLocal: input.startsAtLocal } : {}),
-        ...(input.endsAt !== undefined ? { endsAt: input.endsAt } : {}),
-        ...(input.endsAtLocal !== undefined ? { endsAtLocal: input.endsAtLocal } : {}),
+        ...(localStartsAt ? { startsAt: localStartsAt } : input.startsAt !== undefined ? { startsAt: input.startsAt } : {}),
+        ...(input.startsAtLocal !== undefined ? { startsAtLocal: input.startsAtLocal } : input.startsAt !== undefined ? { startsAtLocal: null } : {}),
+        ...(localEndsAt ? { endsAt: localEndsAt } : input.endsAt !== undefined ? { endsAt: input.endsAt } : {}),
+        ...(input.endsAtLocal !== undefined ? { endsAtLocal: input.endsAtLocal } : input.endsAt !== undefined ? { endsAtLocal: null } : {}),
         ...(input.locationName !== undefined ? { locationName: input.locationName } : {}),
         ...(input.locationAddress !== undefined ? { locationAddress: input.locationAddress } : {}),
         ...(input.publicEnabled !== undefined ? { publicEnabled: input.publicEnabled } : {}),
@@ -1017,8 +1020,10 @@ export async function updateEventMapSettings(
       before: current,
       after: {
         name: input.name ?? current.name,
-        startsAt: input.startsAt ?? current.startsAt,
-        endsAt: input.endsAt ?? current.endsAt,
+        startsAt: localStartsAt ?? input.startsAt ?? current.startsAt,
+        startsAtLocal: input.startsAtLocal !== undefined ? input.startsAtLocal : input.startsAt !== undefined ? null : current.startsAtLocal,
+        endsAt: localEndsAt ?? input.endsAt ?? current.endsAt,
+        endsAtLocal: input.endsAtLocal !== undefined ? input.endsAtLocal : input.endsAt !== undefined ? null : current.endsAtLocal,
         locationName: input.locationName ?? current.locationName,
         locationAddress: input.locationAddress ?? current.locationAddress,
         publicEnabled: input.publicEnabled ?? current.publicEnabled,
@@ -1351,8 +1356,8 @@ export async function duplicateEventMap(
     }
 
     const source = await getMapRecordOrThrow(tx, ctx.contaId, eventId, mapId);
-    const sessionStartsAt = input.startsAt ?? source.startsAt ?? source.event.startsAt;
-    const sessionEndsAt = input.endsAt === undefined ? source.endsAt : input.endsAt;
+    const sessionStartsAt = eventMapLocalDateTimeToDate(input.startsAtLocal) ?? input.startsAt ?? source.startsAt ?? source.event.startsAt;
+    const sessionEndsAt = eventMapLocalDateTimeToDate(input.endsAtLocal) ?? (input.endsAt === undefined ? source.endsAt : input.endsAt);
     if (sessionStartsAt && sessionEndsAt && sessionEndsAt <= sessionStartsAt) {
       throw new EventsError('HORARIO_SESSAO_INVALIDO', 'O término da sessão deve ser posterior ao início.', 422);
     }
@@ -1394,9 +1399,9 @@ export async function duplicateEventMap(
         eventId,
         name: input.name ?? `${source.name} (cópia)`,
         startsAt: sessionStartsAt,
-        startsAtLocal: input.startsAtLocal === undefined ? source.startsAtLocal : input.startsAtLocal,
+        startsAtLocal: input.startsAtLocal === undefined ? (input.startsAt === undefined ? source.startsAtLocal : null) : input.startsAtLocal,
         endsAt: sessionEndsAt,
-        endsAtLocal: input.endsAtLocal === undefined ? source.endsAtLocal : input.endsAtLocal,
+        endsAtLocal: input.endsAtLocal === undefined ? (input.endsAt === undefined ? source.endsAtLocal : null) : input.endsAtLocal,
         locationName: input.locationName === undefined ? source.locationName : input.locationName,
         locationAddress: input.locationAddress === undefined ? source.locationAddress : input.locationAddress,
         status: 'DRAFT',
@@ -1649,8 +1654,8 @@ export async function getPublicEventMap(publicSlug: string) {
       name: typeof snapshotEvent.name === 'string' ? snapshotEvent.name : map.event.name,
       startsAt: publishedStartsAt.toISOString(),
       endsAt: publishedEndsAt?.toISOString() ?? null,
-      startsAtLocal: typeof snapshot.startsAtLocal === 'string' ? snapshot.startsAtLocal : map.startsAtLocal,
-      endsAtLocal: typeof snapshot.endsAtLocal === 'string' ? snapshot.endsAtLocal : map.endsAtLocal,
+      startsAtLocal: typeof snapshot.startsAtLocal === 'string' ? snapshot.startsAtLocal : null,
+      endsAtLocal: typeof snapshot.endsAtLocal === 'string' ? snapshot.endsAtLocal : null,
       locationName: typeof snapshot.locationName === 'string' || snapshot.locationName === null
         ? snapshot.locationName
         : map.locationName ?? map.event.locationName,

@@ -174,10 +174,16 @@ export const eventMapDocumentSchema = z.object({
 });
 
 export const eventMapIdSchema = z.string().trim().min(1);
-const localDateTimeSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/).refine((value) => {
+export function eventMapLocalDateTimeToDate(value?: string | null): Date | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
   const date = new Date(`${value}:00.000Z`);
-  return !Number.isNaN(date.getTime()) && date.toISOString() === `${value}:00.000Z`;
-}, 'Informe uma data e hora válidas.');
+  return !Number.isNaN(date.getTime()) && date.toISOString() === `${value}:00.000Z` ? date : null;
+}
+
+const localDateTimeSchema = z.string().refine(
+  (value) => eventMapLocalDateTimeToDate(value) !== null,
+  'Informe uma data e hora válidas.',
+);
 
 export const createEventMapSchema = z.object({
   name: requiredText('Informe o nome do mapa.').default('Mapa principal'),

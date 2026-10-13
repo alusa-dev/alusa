@@ -268,6 +268,8 @@ function paymentMethodLabel(method: string): string {
 async function sendEventPublicOrderCreatedEmail(payload: EventPublicOrderCreatedEmailPayload) {
   const statusUrl = buildAppUrl(payload.statusPath);
   const supportUrl = process.env.EMAIL_SUPPORT_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://alusa.app';
+  const eventDate = formatEventTemplateDateParts(payload.eventStartsAt, payload.eventStartsAtLocal);
+  const eventDateTime = `${eventDate.date} às ${eventDate.time.replace(':', 'h')}`;
   return sendResendTemplateEmail({
     templateId: RESEND_EVENT_ORDER_CREATED_TEMPLATE_ID,
     to: payload.buyerEmail,
@@ -283,8 +285,8 @@ async function sendEventPublicOrderCreatedEmail(payload: EventPublicOrderCreated
       PAYMENT_METHOD_HTML: escapeHtml(paymentMethodLabel(payload.paymentMethod)),
       EXPIRES_AT: formatEventDate(payload.expiresAt),
       EXPIRES_AT_HTML: escapeHtml(formatEventDate(payload.expiresAt)),
-      EVENT_DATE: formatEventTemplateDateParts(payload.eventStartsAt, payload.eventStartsAtLocal).date,
-      EVENT_DATE_HTML: escapeHtml(formatEventTemplateDateParts(payload.eventStartsAt, payload.eventStartsAtLocal).date),
+      EVENT_DATE: eventDateTime,
+      EVENT_DATE_HTML: escapeHtml(eventDateTime),
       PAYMENT_URL: payload.invoiceUrl || statusUrl,
       PAYMENT_URL_HTML: escapeHtml(payload.invoiceUrl || statusUrl),
       PAYMENT_CTA_LABEL: payload.invoiceUrl ? 'Ir para o pagamento' : 'Acompanhar pedido',
