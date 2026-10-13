@@ -1883,7 +1883,7 @@ export async function getPublicEventMapOrderTickets(orderId: string, accessToken
   const order = await prisma.eventMapOrder.findFirst({
     where: { id: orderId, accessToken, status: 'CONFIRMED' },
     include: {
-      event: { select: { id: true, name: true, startsAt: true, endsAt: true, locationName: true, locationAddress: true, ticketArtworkUrl: true } },
+      event: { select: { id: true, contaId: true, name: true, startsAt: true, endsAt: true, locationName: true, locationAddress: true, ticketArtworkUrl: true, ticketArtworkStorageKey: true } },
       map: { select: { id: true, name: true, publicSlug: true, startsAt: true, startsAtLocal: true, endsAt: true, locationName: true, locationAddress: true } },
       version: { select: { snapshot: true } },
       items: {
@@ -1948,7 +1948,7 @@ export async function getEventMapOrderTicketsForAdmin(contaId: string, orderId: 
   const order = await prisma.eventMapOrder.findFirst({
     where: { id: orderId, contaId, status: 'CONFIRMED' },
     include: {
-      event: { select: { id: true, name: true, startsAt: true, endsAt: true, locationName: true, locationAddress: true, ticketArtworkUrl: true } },
+      event: { select: { id: true, contaId: true, name: true, startsAt: true, endsAt: true, locationName: true, locationAddress: true, ticketArtworkUrl: true, ticketArtworkStorageKey: true } },
       map: { select: { id: true, name: true, publicSlug: true, startsAt: true, startsAtLocal: true, endsAt: true, locationName: true, locationAddress: true } },
       version: { select: { snapshot: true } },
       items: {
