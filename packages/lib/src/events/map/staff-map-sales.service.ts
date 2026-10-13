@@ -19,7 +19,7 @@ import { enqueueEventTicketWhatsAppNotification, EVENT_TICKET_WHATSAPP_CONSENT_V
 import { createCheckInCode, toCheckInCode } from './ticket-code';
 import { assertEventTicketSalesOpen, EventsError, type EventsContext } from '../events.service';
 import type { CreateTicketSaleInput } from '../events.schema';
-import { eventMapLocalDateTimeToDate } from './event-map.schema';
+import { eventMapDateToLocalDateTime, eventMapLocalDateTimeToDate } from './event-map.schema';
 
 type DbClient = Prisma.TransactionClient | typeof prisma;
 
@@ -221,10 +221,10 @@ async function getLockedPublishedStaffMapOrThrow(tx: Prisma.TransactionClient, c
     select: { snapshot: true },
   });
   const snapshot = version ? snapshotRecord(version.snapshot) : {};
-  const startsAtLocal = snapshot.startsAtLocal;
-  if (typeof startsAtLocal !== 'string' || !eventMapLocalDateTimeToDate(startsAtLocal)) {
-    throw new EventsError('HORARIO_SESSAO_NAO_CONFIRMADO', 'Confirme a data e o horário local da sessão nas configurações do mapa e publique novamente antes de reservar ou vender assentos.', 409);
-  }
+  const startsAtLocal = typeof snapshot.startsAtLocal === 'string'
+    ? snapshot.startsAtLocal
+    : eventMapDateToLocalDateTime(typeof snapshot.startsAt === 'string' ? snapshot.startsAt : null);
+  if (!eventMapLocalDateTimeToDate(startsAtLocal)) throw new EventsError('HORARIO_SESSAO_INVALIDO', 'O horário desta sessão é inválido.', 409);
   return current;
 }
 
@@ -518,10 +518,10 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
       select: { snapshot: true },
     });
     const schedule = publishedVersion ? snapshotRecord(publishedVersion.snapshot) : {};
-    const confirmedStartsAtLocal = schedule.startsAtLocal;
-    if (typeof confirmedStartsAtLocal !== 'string' || !eventMapLocalDateTimeToDate(confirmedStartsAtLocal)) {
-      throw new EventsError('HORARIO_SESSAO_NAO_CONFIRMADO', 'Confirme a data e o horário local da sessão nas configurações do mapa e publique novamente antes de vender assentos.', 409);
-    }
+    const confirmedStartsAtLocal = typeof schedule.startsAtLocal === 'string'
+      ? schedule.startsAtLocal
+      : eventMapDateToLocalDateTime(typeof schedule.startsAt === 'string' ? schedule.startsAt : null);
+    if (!eventMapLocalDateTimeToDate(confirmedStartsAtLocal)) throw new EventsError('HORARIO_SESSAO_INVALIDO', 'O horário desta sessão é inválido.', 409);
     const confirmedStartsAt = eventMapLocalDateTimeToDate(confirmedStartsAtLocal);
     if (reservation.event.ticketMode !== 'NUMBERED_SEATS') {
       throw new EventsError('EVENTO_SEM_ASSENTOS_NUMERADOS', 'Este evento não usa assentos numerados.', 409);
@@ -766,7 +766,9 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
   const firstPublicSeat = saleSeats[0]?.publicSeat ?? null;
   const session = firstPublicSeat?.map ?? null;
   const sessionSnapshot = firstPublicSeat ? snapshotRecord(firstPublicSeat.version.snapshot) : {};
-  const sessionStartsAtLocal = typeof sessionSnapshot.startsAtLocal === 'string' ? sessionSnapshot.startsAtLocal : null;
+  const sessionStartsAtLocal = typeof sessionSnapshot.startsAtLocal === 'string'
+    ? sessionSnapshot.startsAtLocal
+    : eventMapDateToLocalDateTime(typeof sessionSnapshot.startsAt === 'string' ? sessionSnapshot.startsAt : null);
   const sessionStartsAt = typeof sessionSnapshot.startsAt === 'string' ? new Date(sessionSnapshot.startsAt) : session?.startsAt ?? sale.event.startsAt;
   const items = printableSeats.length > 0
     ? printableSeats.map((seat) => ({

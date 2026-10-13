@@ -42,7 +42,7 @@ import type {
   UpdateEventMapReferenceChartInput,
   UpdateEventMapSettingsInput,
 } from './event-map.schema';
-import { eventMapLocalDateTimeToDate } from './event-map.schema';
+import { eventMapDateToLocalDateTime, eventMapLocalDateTimeToDate } from './event-map.schema';
 
 export type { PublicCheckoutInput } from './event-map.schema';
 
@@ -348,7 +348,7 @@ function mapEventMap(
     },
     name: record.name,
     startsAt: (record.startsAt ?? record.event.startsAt).toISOString(),
-    startsAtLocal: record.startsAtLocal,
+    startsAtLocal: record.startsAtLocal ?? eventMapDateToLocalDateTime(record.startsAt ?? record.event.startsAt),
     publishedSchedule,
     endsAt: record.endsAt?.toISOString() ?? null,
     endsAtLocal: record.endsAtLocal,
@@ -476,8 +476,11 @@ export async function listEventMaps(ctx: Pick<EventsContext, 'contaId'>, eventId
   const schedulesByVersionId = new Map(publishedVersions.flatMap((version) => {
     const snapshot = version.snapshot;
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
-    const startsAtLocal = (snapshot as Prisma.JsonObject).startsAtLocal;
-    if (typeof startsAtLocal !== 'string') return [];
+    const snapshotRecord = snapshot as Prisma.JsonObject;
+    const startsAtLocal = typeof snapshotRecord.startsAtLocal === 'string'
+      ? snapshotRecord.startsAtLocal
+      : eventMapDateToLocalDateTime(typeof snapshotRecord.startsAt === 'string' ? snapshotRecord.startsAt : null);
+    if (!startsAtLocal) return [];
     const startsAt = eventMapLocalDateTimeToDate(startsAtLocal);
     return startsAt ? [[version.id, { startsAt: startsAt.toISOString(), startsAtLocal }] as const] : [];
   }));
@@ -530,7 +533,7 @@ export async function createEventMap(ctx: EventsContext, eventId: string, input:
         eventId,
         name: input.name,
         startsAt,
-        startsAtLocal: input.startsAtLocal ?? null,
+        startsAtLocal: input.startsAtLocal ?? eventMapDateToLocalDateTime(startsAt),
         endsAt,
         endsAtLocal: input.endsAtLocal ?? null,
         locationName: input.locationName === undefined ? event.locationName : input.locationName,
@@ -1125,10 +1128,6 @@ export async function publishEventMap(
       })),
     });
 
-    if (!eventMapLocalDateTimeToDate(map.startsAtLocal)) {
-      throw new EventsError('HORARIO_SESSAO_NAO_CONFIRMADO', 'Confirme a data e o horário local da sessão nas configurações do mapa antes de publicar. Isso garante que novos ingressos exibam o horário escolhido.', 422);
-    }
-
     if (!publishValidation.ok) {
       throw new EventsError('MAPA_NAO_PUBLICAVEL', publishValidation.errors.join(' '), 422);
     }
@@ -1431,7 +1430,9 @@ export async function duplicateEventMap(
         eventId,
         name: input.name ?? `${source.name} (cópia)`,
         startsAt: sessionStartsAt,
-        startsAtLocal: input.startsAtLocal === undefined ? (input.startsAt === undefined ? source.startsAtLocal : null) : input.startsAtLocal,
+        startsAtLocal: input.startsAtLocal === undefined
+          ? (input.startsAt === undefined ? source.startsAtLocal ?? eventMapDateToLocalDateTime(source.startsAt ?? source.event.startsAt) : eventMapDateToLocalDateTime(sessionStartsAt))
+          : input.startsAtLocal,
         endsAt: sessionEndsAt,
         endsAtLocal: input.endsAtLocal === undefined ? (input.endsAt === undefined ? source.endsAtLocal : null) : input.endsAtLocal,
         locationName: input.locationName === undefined ? source.locationName : input.locationName,
@@ -1686,7 +1687,9 @@ export async function getPublicEventMap(publicSlug: string) {
       name: typeof snapshotEvent.name === 'string' ? snapshotEvent.name : map.event.name,
       startsAt: publishedStartsAt.toISOString(),
       endsAt: publishedEndsAt?.toISOString() ?? null,
-      startsAtLocal: typeof snapshot.startsAtLocal === 'string' ? snapshot.startsAtLocal : null,
+      startsAtLocal: typeof snapshot.startsAtLocal === 'string'
+        ? snapshot.startsAtLocal
+        : eventMapDateToLocalDateTime(typeof snapshot.startsAt === 'string' ? snapshot.startsAt : publishedStartsAt),
       endsAtLocal: typeof snapshot.endsAtLocal === 'string' ? snapshot.endsAtLocal : null,
       locationName: typeof snapshot.locationName === 'string' || snapshot.locationName === null
         ? snapshot.locationName
@@ -1796,10 +1799,11 @@ export async function reservePublicEventMapSeats(publicSlug: string, input: Publ
       where: { id: versionId, contaId: map.contaId, eventMapId: map.id, status: 'PUBLISHED' },
       select: { snapshot: true },
     });
-    const startsAtLocal = publishedVersion ? snapshotRecord(publishedVersion.snapshot).startsAtLocal : null;
-    if (typeof startsAtLocal !== 'string' || !eventMapLocalDateTimeToDate(startsAtLocal)) {
-      throw new EventsError('HORARIO_SESSAO_NAO_CONFIRMADO', 'Este mapa precisa ter a data e o horário da sessão confirmados e republicados pela escola antes de reservar assentos.', 409);
-    }
+    const versionSnapshot = publishedVersion ? snapshotRecord(publishedVersion.snapshot) : {};
+    const startsAtLocal = typeof versionSnapshot.startsAtLocal === 'string'
+      ? versionSnapshot.startsAtLocal
+      : eventMapDateToLocalDateTime(typeof versionSnapshot.startsAt === 'string' ? versionSnapshot.startsAt : null);
+    if (!eventMapLocalDateTimeToDate(startsAtLocal)) throw new EventsError('HORARIO_SESSAO_INVALIDO', 'O horário desta sessão é inválido.', 409);
 
     const lockedRows = await tx.$queryRaw<{ id: string }[]>`
       SELECT id FROM "EventMapPublicSeat"
@@ -1903,7 +1907,7 @@ export async function getPublicEventMapOrderTickets(orderId: string, accessToken
   const ticketMapSnapshot = snapshotRecord(order.version.snapshot);
   const ticketStartsAtLocal = typeof ticketMapSnapshot.startsAtLocal === 'string'
     ? ticketMapSnapshot.startsAtLocal
-    : null;
+    : eventMapDateToLocalDateTime(typeof ticketMapSnapshot.startsAt === 'string' ? ticketMapSnapshot.startsAt : order.map.startsAt ?? order.event.startsAt);
   const ticketStartsAt = typeof ticketMapSnapshot.startsAt === 'string'
     ? new Date(ticketMapSnapshot.startsAt)
     : order.map.startsAt ?? order.event.startsAt;
@@ -1968,7 +1972,7 @@ export async function getEventMapOrderTicketsForAdmin(contaId: string, orderId: 
   const ticketMapSnapshot = snapshotRecord(order.version.snapshot);
   const ticketStartsAtLocal = typeof ticketMapSnapshot.startsAtLocal === 'string'
     ? ticketMapSnapshot.startsAtLocal
-    : null;
+    : eventMapDateToLocalDateTime(typeof ticketMapSnapshot.startsAt === 'string' ? ticketMapSnapshot.startsAt : order.map.startsAt ?? order.event.startsAt);
   const ticketStartsAt = typeof ticketMapSnapshot.startsAt === 'string'
     ? new Date(ticketMapSnapshot.startsAt)
     : order.map.startsAt ?? order.event.startsAt;
@@ -2068,7 +2072,9 @@ export async function requestPublicOrderTicketEmailResend(orderId: string, acces
         : order.map.startsAt ?? order.event.startsAt,
       eventStartsAtLocal: typeof snapshotRecord(order.version.snapshot).startsAtLocal === 'string'
         ? snapshotRecord(order.version.snapshot).startsAtLocal as string
-        : null,
+        : eventMapDateToLocalDateTime(typeof snapshotRecord(order.version.snapshot).startsAt === 'string'
+          ? snapshotRecord(order.version.snapshot).startsAt as string
+          : order.map.startsAt ?? order.event.startsAt),
       eventLocation: [
         order.map.locationName ?? order.event.locationName,
         order.map.locationAddress ?? order.event.locationAddress,
