@@ -27,7 +27,7 @@ async function seedPublishedMapScenario(page: import('@playwright/test').Page) {
       name: 'Mostra de Dança Publicação E2E',
       type: 'PRESENTATION',
       status: 'PLANNING',
-      startsAt: addDays(new Date(), 20),
+      startsAt: new Date('2026-11-15T00:00:00.000Z'),
       locationName: 'Teatro E2E',
       hasTickets: true,
       ticketMode: 'NUMBERED_SEATS',
@@ -57,6 +57,8 @@ async function seedPublishedMapScenario(page: import('@playwright/test').Page) {
       eventId: event.id,
       name: 'Mapa público E2E',
       status: 'DRAFT',
+      startsAt: new Date('2026-11-15T00:00:00.000Z'),
+      startsAtLocal: '2026-11-14T20:00',
     },
   });
   const level = await prisma.eventMapLevel.create({

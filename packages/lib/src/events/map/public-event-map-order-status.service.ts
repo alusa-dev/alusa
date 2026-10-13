@@ -5,6 +5,7 @@ import { isTicketPaymentBlocked } from '../ticket-checkin.service';
 import { isPublicOrderRefundActionPending } from './public-order-refund-action';
 import { publicOrderStatusPath, publicOrderTicketsPath } from './public-order-links';
 import { toMoney } from './event-map-order-operations';
+import { eventMapLocalDateTimeToDate, eventMapSnapshotStartsAtToDate } from './event-map.schema';
 
 type EventTicketRecord = Prisma.EventTicketGetPayload<Prisma.EventTicketDefaultArgs>;
 function hasCompletePublicOrderTickets(order: { items: Array<{ ticket: EventTicketRecord | null }> }) {
@@ -17,6 +18,7 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
     include: {
       event: { select: { id: true, name: true, startsAt: true, endsAt: true, locationName: true, locationAddress: true } },
       map: { select: { id: true, name: true, publicSlug: true, startsAt: true, endsAt: true, locationName: true, locationAddress: true } },
+      version: { select: { snapshot: true } },
       reservation: {
         include: {
           seats: {
@@ -46,6 +48,12 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
     && !isTicketPaymentBlocked(order.paymentStatus)
     && hasCompletePublicOrderTickets(order);
   const ticketsUrl = ticketsAvailable ? publicOrderTicketsPath(order.id, order.accessToken) : null;
+  const snapshot = order.version.snapshot;
+  const snapshotRecord = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) ? snapshot as Prisma.JsonObject : null;
+  const startsAtLocal = typeof snapshotRecord?.startsAtLocal === 'string' ? snapshotRecord.startsAtLocal : null;
+  const validStartsAtLocal = eventMapLocalDateTimeToDate(startsAtLocal);
+  const pinnedStartsAt = validStartsAtLocal
+    ?? eventMapSnapshotStartsAtToDate(snapshotRecord?.startsAt);
   let refundRequestUrl: string | null = null;
   const latePaymentBuyerRefundActionPending =
     order.paymentMethod === 'BOLETO' &&
@@ -113,7 +121,8 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
     statusUrl: publicOrderStatusPath(order.map.publicSlug, order.id, order.accessToken),
     event: {
       ...order.event,
-      startsAt: (order.map.startsAt ?? order.event.startsAt).toISOString(),
+      startsAt: (pinnedStartsAt ?? order.map.startsAt ?? order.event.startsAt).toISOString(),
+      startsAtLocal: validStartsAtLocal ? startsAtLocal : null,
       endsAt: order.map.endsAt?.toISOString() ?? null,
       locationName: order.map.locationName ?? order.event.locationName,
       locationAddress: order.map.locationAddress ?? order.event.locationAddress,

@@ -91,6 +91,7 @@ export type EventMapDTO = {
   name: string;
   startsAt?: string;
   startsAtLocal?: string | null;
+  publishedSchedule?: { startsAt: string; startsAtLocal: string } | null;
   endsAt?: string | null;
   endsAtLocal?: string | null;
   locationName?: string | null;

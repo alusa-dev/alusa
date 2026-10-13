@@ -67,6 +67,7 @@ export function SaleFormDialog({
   lots,
   scopedResources,
   publishedMaps,
+  hasUnconfirmedPublishedMaps,
   trigger,
 }: {
   eventId: string;
@@ -74,6 +75,7 @@ export function SaleFormDialog({
   lots: TicketLotDTO[];
   scopedResources?: EventScopedResources;
   publishedMaps: Array<{ id: string; name: string; startsAt: string; startsAtLocal?: string | null }>;
+  hasUnconfirmedPublishedMaps?: boolean;
   trigger: React.ReactNode;
 }) {
   const queryClient = useQueryClient();
@@ -344,8 +346,15 @@ export function SaleFormDialog({
                     {!selectedMapId ? (
                       <p className="text-sm text-amber-800">
                         {publishedMaps.length === 0
-                          ? 'Publique um mapa antes de vender assentos na secretaria.'
+                          ? hasUnconfirmedPublishedMaps
+                            ? 'Há mapas publicados sem horário local confirmado. Confirme a data e a hora da sessão nas configurações do mapa e publique novamente para vender assentos.'
+                            : 'Publique um mapa antes de vender assentos na secretaria.'
                           : 'Selecione a sessão para escolher os assentos.'}
+                      </p>
+                    ) : null}
+                    {selectedMapId && hasUnconfirmedPublishedMaps ? (
+                      <p className="text-sm text-amber-800">
+                        Alguns mapas publicados ainda precisam da confirmação do horário local nas configurações antes de aceitar novas vendas.
                       </p>
                     ) : null}
                     {seatSelection ? (

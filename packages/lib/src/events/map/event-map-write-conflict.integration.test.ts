@@ -88,4 +88,34 @@ describe('event map optimistic concurrency', () => {
       await prisma.conta.deleteMany({ where: { id: conta.id } });
     }
   }, 15_000);
+
+  it('requires explicit local session time before publishing a legacy map', async () => {
+    const runId = randomUUID();
+    const conta = await prisma.conta.create({ data: { nome: `Legacy map schedule ${runId}` } });
+
+    try {
+      const event = await prisma.schoolEvent.create({
+        data: { contaId: conta.id, name: `Legacy map schedule ${runId}`, type: 'CULTURAL_SHOW', startsAt: new Date('2026-11-15T00:00:00.000Z') },
+      });
+      const map = await prisma.eventMap.create({
+        data: {
+          contaId: conta.id,
+          eventId: event.id,
+          name: 'Mapa legado',
+          levels: { create: { contaId: conta.id, name: 'Ambiente 1', sortOrder: 0, widthPx: 1440, heightPx: 900, unit: 'px' } },
+        },
+      });
+
+      await expect(publishEventMap(
+        { contaId: conta.id, userId: 'integration-test-user' },
+        event.id,
+        map.id,
+        map.updatedAt.toISOString(),
+      )).rejects.toMatchObject({ code: 'HORARIO_SESSAO_NAO_CONFIRMADO', status: 422 });
+      expect(await prisma.eventMapVersion.count({ where: { contaId: conta.id, eventMapId: map.id } })).toBe(0);
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: conta.id } });
+    }
+  }, 15_000);
+
 });

@@ -4,7 +4,7 @@ import { EventsError, assertEventTicketSalesOpen } from '../events.service';
 import { prisma } from '../../prisma';
 import { getPublicReservationExpiration } from './public-reservation-policy';
 import { decimal, lockEventMapForReservation, lockPublicEventMapReservation, toAuditJson, toMoney } from './event-map-order-operations';
-import type { PublicCheckoutInput } from './event-map.schema';
+import { eventMapLocalDateTimeToDate, type PublicCheckoutInput } from './event-map.schema';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -55,6 +55,7 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
     if (!publishedVersion) {
       throw new EventsError('MAPA_VERSAO_ALTERADA', 'A versão pública do mapa não está disponível. Atualize a página e tente novamente.', 409);
     }
+    const startsAtLocal = snapshotString(publishedVersion.snapshot, 'startsAtLocal');
     await lockPublicEventMapReservation(tx, { contaId: map.contaId, reservationId: input.reservationId });
 
     const lockedReservation = await tx.$queryRaw<Array<{ id: string }>>`
@@ -74,6 +75,9 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
       include: { seats: { include: { publicSeat: true } }, order: { include: { items: { include: { ticket: true } } } } },
     });
     if (!reservation) throw new EventsError('RESERVA_NAO_ENCONTRADA', 'Reserva não encontrada ou expirada.', 404);
+    if (!reservation.order && (!eventMapLocalDateTimeToDate(startsAtLocal))) {
+      throw new EventsError('HORARIO_SESSAO_NAO_CONFIRMADO', 'Este mapa precisa ter a data e o horário da sessão confirmados e republicados pela escola antes de iniciar uma nova compra.', 409);
+    }
     if (reservation.expiresAt < new Date()) throw new EventsError('RESERVA_EXPIRADA', 'A reserva expirou. Selecione os assentos novamente.', 409);
 
     const publicSeats = reservation.seats.map((entry) => entry.publicSeat);

@@ -26,7 +26,7 @@ import { SectionCard, StepHeader } from '@/components/shared/wizard/layout';
 import { wizardFieldInputClass } from '@/components/shared/wizard/field-styles';
 import { MapReferenceChartPanel } from './MapReferenceChartPanel';
 import { MAP_FLOATING_SHADOW_CLASS } from './map-toolbar-styles';
-import { mapSessionDateTimeToIso } from '../session-datetime';
+import { mapSessionDateTimeToIso, shouldCaptureEventMapLocalSchedule } from '../session-datetime';
 
 export function MapSettingsDialog({
   map,
@@ -49,6 +49,7 @@ export function MapSettingsDialog({
 }) {
   const [name, setName] = useState(map.name);
   const [startsAt, setStartsAt] = useState(() => map.startsAtLocal ?? toLegacyDateTimeInput(map.startsAt ?? map.event.startsAt));
+  const [confirmLegacySchedule, setConfirmLegacySchedule] = useState(false);
   const [endsAt, setEndsAt] = useState(() => map.endsAtLocal ?? toLegacyDateTimeInput(map.endsAt));
   const [locationName, setLocationName] = useState(map.locationName ?? '');
   const [locationAddress, setLocationAddress] = useState(map.locationAddress ?? '');
@@ -59,6 +60,7 @@ export function MapSettingsDialog({
     if (!open) return;
     setName(map.name);
     setStartsAt(map.startsAtLocal ?? toLegacyDateTimeInput(map.startsAt ?? map.event.startsAt));
+    setConfirmLegacySchedule(false);
     setEndsAt(map.endsAtLocal ?? toLegacyDateTimeInput(map.endsAt));
     setLocationName(map.locationName ?? '');
     setLocationAddress(map.locationAddress ?? '');
@@ -94,7 +96,13 @@ export function MapSettingsDialog({
       const initialEndsAt = map.endsAt;
       const initialStartsAtInput = map.startsAtLocal ?? toLegacyDateTimeInput(initialStartsAt);
       const initialEndsAtInput = map.endsAtLocal ?? toLegacyDateTimeInput(initialEndsAt);
-      if (startsAt !== initialStartsAtInput) {
+      if (shouldCaptureEventMapLocalSchedule({
+        currentLocal: map.startsAtLocal,
+        initialInput: initialStartsAtInput,
+        nextInput: startsAt,
+        explicitlyConfirmed: confirmLegacySchedule,
+      })) {
+        if (!nextStartsAt) throw new Error('Informe uma data e hora válidas para a sessão.');
         payload.startsAtLocal = startsAt;
         payload.startsAt = nextStartsAt;
       }
@@ -180,6 +188,15 @@ export function MapSettingsDialog({
                   className={wizardFieldInputClass}
                   required
                 />
+                {!map.startsAtLocal ? (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                    <p>Este mapa não tem um horário local confirmado. Confira a data e a hora exibidas acima e confirme antes de salvar; novos ingressos usarão esse horário.</p>
+                    <label className="mt-3 flex items-center gap-2">
+                      <Switch checked={confirmLegacySchedule} onCheckedChange={setConfirmLegacySchedule} />
+                      <span>Confirmo esta data e este horário da sessão</span>
+                    </label>
+                  </div>
+                ) : null}
               </div>
               <div className="space-y-1">
                 <Label htmlFor="map-session-end" className="text-xs">Término</Label>

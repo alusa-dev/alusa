@@ -333,7 +333,10 @@ async function getMapRecordOrThrow(db: DbClient, contaId: string, eventId: strin
   return map;
 }
 
-function mapEventMap(record: EventMapRecord | EventMapListRecord) {
+function mapEventMap(
+  record: EventMapRecord | EventMapListRecord,
+  publishedSchedule: { startsAt: string; startsAtLocal: string } | null = null,
+) {
   return {
     id: record.id,
     contaId: record.contaId,
@@ -346,6 +349,7 @@ function mapEventMap(record: EventMapRecord | EventMapListRecord) {
     name: record.name,
     startsAt: (record.startsAt ?? record.event.startsAt).toISOString(),
     startsAtLocal: record.startsAtLocal,
+    publishedSchedule,
     endsAt: record.endsAt?.toISOString() ?? null,
     endsAtLocal: record.endsAtLocal,
     locationName: record.locationName ?? record.event.locationName,
@@ -457,7 +461,31 @@ export async function listEventMaps(ctx: Pick<EventsContext, 'contaId'>, eventId
     orderBy: [{ updatedAt: 'desc' }],
   });
 
-  return sortEventMapsForDisplay(maps.map(mapEventMap));
+  const publishedVersionIds = maps.flatMap((map) => map.publishedVersionId ? [map.publishedVersionId] : []);
+  const publishedVersions = publishedVersionIds.length > 0
+    ? await prisma.eventMapVersion.findMany({
+        where: {
+          contaId: ctx.contaId,
+          eventMapId: { in: maps.map(({ id }) => id) },
+          id: { in: publishedVersionIds },
+          status: 'PUBLISHED',
+        },
+        select: { id: true, snapshot: true },
+      })
+    : [];
+  const schedulesByVersionId = new Map(publishedVersions.flatMap((version) => {
+    const snapshot = version.snapshot;
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
+    const startsAtLocal = (snapshot as Prisma.JsonObject).startsAtLocal;
+    if (typeof startsAtLocal !== 'string') return [];
+    const startsAt = eventMapLocalDateTimeToDate(startsAtLocal);
+    return startsAt ? [[version.id, { startsAt: startsAt.toISOString(), startsAtLocal }] as const] : [];
+  }));
+
+  return sortEventMapsForDisplay(maps.map((map) => mapEventMap(
+    map,
+    map.publishedVersionId ? schedulesByVersionId.get(map.publishedVersionId) ?? null : null,
+  )));
 }
 
 export async function getEventMap(ctx: Pick<EventsContext, 'contaId'>, eventId: string, mapId: string) {
@@ -1096,6 +1124,10 @@ export async function publishEventMap(
         publicVisible: seat.publicVisible,
       })),
     });
+
+    if (!eventMapLocalDateTimeToDate(map.startsAtLocal)) {
+      throw new EventsError('HORARIO_SESSAO_NAO_CONFIRMADO', 'Confirme a data e o horário local da sessão nas configurações do mapa antes de publicar. Isso garante que novos ingressos exibam o horário escolhido.', 422);
+    }
 
     if (!publishValidation.ok) {
       throw new EventsError('MAPA_NAO_PUBLICAVEL', publishValidation.errors.join(' '), 422);
@@ -1759,6 +1791,15 @@ export async function reservePublicEventMapSeats(publicSlug: string, input: Publ
       seats: seats.map((seat) => ({ id: seat.id, status: seat.status, publicVisible: seat.publicVisible })),
     });
     if (!selection.ok) throw new EventsError('ASSENTOS_INDISPONIVEIS', selection.reason, 409);
+
+    const publishedVersion = await tx.eventMapVersion.findFirst({
+      where: { id: versionId, contaId: map.contaId, eventMapId: map.id, status: 'PUBLISHED' },
+      select: { snapshot: true },
+    });
+    const startsAtLocal = publishedVersion ? snapshotRecord(publishedVersion.snapshot).startsAtLocal : null;
+    if (typeof startsAtLocal !== 'string' || !eventMapLocalDateTimeToDate(startsAtLocal)) {
+      throw new EventsError('HORARIO_SESSAO_NAO_CONFIRMADO', 'Este mapa precisa ter a data e o horário da sessão confirmados e republicados pela escola antes de reservar assentos.', 409);
+    }
 
     const lockedRows = await tx.$queryRaw<{ id: string }[]>`
       SELECT id FROM "EventMapPublicSeat"

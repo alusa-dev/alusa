@@ -57,7 +57,7 @@ async function seedEventMapBase(
       eventMapId: map.id,
       version: 1,
       status: 'PUBLISHED',
-      snapshot: { levels: [], sections: [], objects: [], seats: [] },
+      snapshot: { startsAt: '2026-02-10T19:00:00.000Z', startsAtLocal: '2026-02-10T19:00', levels: [], sections: [], objects: [], seats: [] },
       seatCount: 1,
       publishedAt: new Date(),
     },

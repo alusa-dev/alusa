@@ -180,6 +180,12 @@ export function eventMapLocalDateTimeToDate(value?: string | null): Date | null 
   return !Number.isNaN(date.getTime()) && date.toISOString() === `${value}:00.000Z` ? date : null;
 }
 
+export function eventMapSnapshotStartsAtToDate(value: unknown): Date | null {
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime()) && date.toISOString() === value ? date : null;
+}
+
 const localDateTimeSchema = z.string().refine(
   (value) => eventMapLocalDateTimeToDate(value) !== null,
   'Informe uma data e hora válidas.',
