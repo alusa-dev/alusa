@@ -1412,15 +1412,16 @@ export async function createBillingWebhookNotification(params: {
       prisma.eventTicketSale.findMany({
         where: { contaId: params.contaId, asaasPaymentId: params.asaasPaymentId },
         select: { id: true, eventMapOrderId: true },
-        take: 2,
       }),
     ]);
     const [eventTicketSale] = eventTicketSales;
+    const saleOrderIds = new Set(eventTicketSales.map((sale) => sale.eventMapOrderId));
+    const hasDivergentSaleOrigins = saleOrderIds.size > 1;
 
     if (eventMapOrder || eventTicketSale) {
       if (
-        eventTicketSales.length > 1 ||
-        (eventMapOrder && eventTicketSale && eventTicketSale.eventMapOrderId !== eventMapOrder.id)
+        hasDivergentSaleOrigins ||
+        (eventMapOrder && eventTicketSales.some((sale) => sale.eventMapOrderId !== eventMapOrder.id))
       ) {
         logInboxMetric('inbox.failed.origin_inconsistent', {
           failureReason: 'event_order_sale_link_conflict',
