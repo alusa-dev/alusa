@@ -26,11 +26,13 @@ export type LibOperationalEventName =
   | 'inbox.skipped.policy'
   | 'inbox.skipped.no_recipients'
   | 'inbox.skipped.no_entity'
+  | 'inbox.skipped.event_ticket_payment'
   | 'inbox.skipped.unsupported_event'
   | 'inbox.pending.enqueued'
   | 'inbox.pending.lease_lost'
   | 'inbox.pending.processed'
   | 'inbox.pending.failed'
+  | 'inbox.failed.origin_inconsistent'
   | 'inbox.overdue.emitted'
   | 'inbox.overdue.skipped'
   | 'inbox.retention.archived';
@@ -62,7 +64,7 @@ export function logLibOperationalEvent(params: {
   error?: unknown;
   severity?: 'info' | 'warn' | 'error';
   count?: number;
-  failureReason?: 'entity_missing' | 'payload_integrity' | 'retry_exhausted';
+  failureReason?: 'entity_missing' | 'payload_integrity' | 'retry_exhausted' | 'event_order_sale_link_conflict' | 'notification_result_unclassified';
 }): void {
   const now = Date.now();
   const bucketKey = `${params.eventName}:${params.failureReason ?? ''}`;
