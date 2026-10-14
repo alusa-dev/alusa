@@ -469,10 +469,13 @@ export type StaffSeatReservationResult = {
   totalAmount: number;
 };
 
-export async function getStaffEventMapSalesView(eventId: string, mapId: string) {
+export async function getStaffEventMapSalesView(eventId: string, mapId: string, holdToken?: string | null) {
   return (
     await parseResponse<JsonEnvelope<import('@alusa/lib/events/map/staff-map-sales.service').StaffEventMapSalesViewDTO>>(
-      await fetch(`/api/events/${eventId}/maps/${mapId}/staff-sales`, { cache: 'no-store' }),
+      await fetch(`/api/events/${eventId}/maps/${mapId}/staff-sales`, {
+        cache: 'no-store',
+        headers: holdToken ? { 'x-staff-reservation-token': holdToken } : undefined,
+      }),
     )
   ).data;
 }

@@ -169,14 +169,15 @@ export function SaleFormDialog({
   }
 
   async function clearSeatSelection() {
-    if (seatSelection?.holdToken) {
+    const holdToken = seatSelection?.holdToken;
+    setSeatSelection(null);
+    if (holdToken) {
       try {
-        await releaseStaffSeatReservation(eventId, seatSelection.holdToken);
+        await releaseStaffSeatReservation(eventId, holdToken);
       } catch {
         // best effort
       }
     }
-    setSeatSelection(null);
   }
 
   async function removeSeatChip(seatId: string) {
@@ -547,6 +548,7 @@ export function SaleFormDialog({
           initialHoldToken={seatSelection?.holdToken}
           initialSeatIds={seatSelection?.seats.map((seat) => seat.id)}
           onConfirm={setSeatSelection}
+          onHoldExpired={() => void clearSeatSelection()}
         />
       ) : null}
     </>
