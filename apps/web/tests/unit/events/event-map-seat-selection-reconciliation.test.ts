@@ -18,8 +18,8 @@ describe('event map seat selection reconciliation', () => {
 
   it('treats server availability as authoritative after a hold expires', () => {
     const result = reconcileStaffMapSeatSelection(
-      [{ id: 'expired', status: 'AVAILABLE' }, { id: 'sold', status: 'SOLD' }],
-      [{ id: 'expired', status: 'HELD' }, { id: 'sold', status: 'HELD' }],
+      [{ id: 'expired', status: 'AVAILABLE', isOwnHold: false }, { id: 'sold', status: 'SOLD', isOwnHold: false }],
+      [{ id: 'expired', status: 'HELD', isOwnHold: true }, { id: 'sold', status: 'HELD', isOwnHold: true }],
       ['expired', 'sold'],
       new Set(['expired', 'sold']),
     );
@@ -28,9 +28,22 @@ describe('event map seat selection reconciliation', () => {
     expect(result.selectedIds).toEqual(['expired']);
     expect(result.removedUnavailable).toBe(true);
     expect(result.expiredOwnHold).toBe(true);
-    expect(isSeatSelectable(result.seats[0]!, result.selectedIds, new Set(['expired']))).toBe(true);
-    expect(isSeatSelectable(result.seats[1]!, result.selectedIds, new Set(['sold']))).toBe(false);
-    expect(toggleStaffSeatSelection(result.seats[0]!, result.selectedIds, new Set(['expired']))).toEqual([]);
+    expect(isSeatSelectable(result.seats[0]!, result.selectedIds, new Set())).toBe(true);
+    expect(isSeatSelectable(result.seats[1]!, result.selectedIds, new Set())).toBe(false);
+    expect(toggleStaffSeatSelection(result.seats[0]!, result.selectedIds, new Set())).toEqual([]);
+  });
+
+  it('does not treat another staff user’s replacement hold as the current hold', () => {
+    const result = reconcileStaffMapSeatSelection(
+      [{ id: 'seat', status: 'HELD', isOwnHold: false }],
+      [{ id: 'seat', status: 'HELD', isOwnHold: true }],
+      ['seat'],
+      new Set(['seat']),
+    );
+
+    expect(result.selectedIds).toEqual([]);
+    expect(result.expiredOwnHold).toBe(true);
+    expect(isSeatSelectable(result.seats[0]!, [], new Set(['seat']))).toBe(false);
   });
 
   it('creates a fresh hold without sending an expired hold token', async () => {

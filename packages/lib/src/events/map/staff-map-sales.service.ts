@@ -241,7 +241,12 @@ function mapStaffReservationResult(
   };
 }
 
-export async function getStaffEventMapSalesView(ctx: Pick<EventsContext, 'contaId'>, eventId: string, mapId: string) {
+export async function getStaffEventMapSalesView(
+  ctx: Pick<EventsContext, 'contaId'>,
+  eventId: string,
+  mapId: string,
+  holdToken?: string | null,
+) {
   const map = await getPublishedStaffMapOrThrow(prisma, ctx.contaId, eventId, mapId);
   const version = await prisma.eventMapVersion.findFirst({
     where: { id: map.publishedVersionId!, contaId: ctx.contaId, eventMapId: map.id },
@@ -252,6 +257,22 @@ export async function getStaffEventMapSalesView(ctx: Pick<EventsContext, 'contaI
     where: { contaId: ctx.contaId, versionId: version.id },
     orderBy: [{ sectionName: 'asc' }, { rowLabel: 'asc' }, { seatNumber: 'asc' }, { displayLabel: 'asc' }],
   });
+  const ownReservation = holdToken
+    ? await prisma.eventMapReservation.findFirst({
+        where: {
+          contaId: ctx.contaId,
+          eventId,
+          eventMapId: mapId,
+          versionId: version.id,
+          holdToken,
+          source: 'STAFF_MANUAL',
+          status: 'HELD',
+          expiresAt: { gt: new Date() },
+        },
+        select: { seats: { select: { publicSeatId: true } } },
+      })
+    : null;
+  const ownSeatIds = new Set(ownReservation?.seats.map((seat) => seat.publicSeatId) ?? []);
   const snapshot = snapshotRecord(version.snapshot);
 
   return {
@@ -274,7 +295,7 @@ export async function getStaffEventMapSalesView(ctx: Pick<EventsContext, 'contaI
     sections: Array.isArray(snapshot.sections) ? snapshot.sections : [],
     objects: Array.isArray(snapshot.objects) ? snapshot.objects : [],
     document: snapshot.document && typeof snapshot.document === 'object' ? snapshot.document : null,
-    seats: seats.map(mapStaffSeat),
+    seats: seats.map((seat) => ({ ...mapStaffSeat(seat), isOwnHold: ownSeatIds.has(seat.id) })),
     counts: {
       seats: seats.length,
       availableSeats: seats.filter((seat) => seat.status === 'AVAILABLE').length,
