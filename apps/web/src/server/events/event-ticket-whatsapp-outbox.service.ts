@@ -333,7 +333,7 @@ export async function drainEventTicketWhatsAppNotifications(input: { limit?: num
 
 /** Post-commit targeted dispatch. Cron remains responsible for recovery/retries. */
 export async function dispatchEventTicketWhatsAppNotification(input: { contaId: string; notificationId: string }) {
-  await drainEventTicketWhatsAppNotifications({ ...input, limit: 1 });
+  await drainEventTicketWhatsAppNotifications({ ...input, limit: 1, notificationId: input.notificationId });
   const notification = await prisma.eventTicketWhatsAppNotification.findFirst({
     where: { id: input.notificationId, contaId: input.contaId },
     select: { status: true, whatsappJobId: true },
@@ -341,6 +341,11 @@ export async function dispatchEventTicketWhatsAppNotification(input: { contaId: 
   if (notification?.whatsappJobId) {
     const { drainWhatsAppOutbox } = await import('@/src/server/whatsapp/outbox.service');
     await drainWhatsAppOutbox({ limit: 1, contaId: input.contaId, jobId: notification.whatsappJobId });
+    const finalNotification = await prisma.eventTicketWhatsAppNotification.findFirst({
+      where: { id: input.notificationId, contaId: input.contaId },
+      select: { status: true },
+    });
+    return finalNotification?.status ?? null;
   }
   return notification?.status ?? null;
 }
@@ -362,4 +367,24 @@ export async function dispatchPublicOrderTicketWhatsAppNotification(input: { ord
   });
   if (!notification) return null;
   return dispatchEventTicketWhatsAppNotification({ contaId: order.contaId, notificationId: notification.id });
+}
+
+/** Dispatches staff-sale notifications created in the sale transaction. The cron remains the durable fallback. */
+export async function dispatchStaffSaleTicketWhatsAppNotifications(input: { contaId: string; saleIds: string[] }) {
+  if (input.saleIds.length === 0) return [];
+  const notifications = await prisma.eventTicketWhatsAppNotification.findMany({
+    where: {
+      contaId: input.contaId,
+      purchaseType: EventTicketWhatsAppPurchaseType.STAFF_SALE,
+      eventTicketSaleId: { in: input.saleIds },
+      status: { in: [EventTicketWhatsAppNotificationStatus.PENDING, EventTicketWhatsAppNotificationStatus.FAILED] },
+    },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  });
+  const results: (string | null)[] = [];
+  for (const notification of notifications) {
+    results.push(await dispatchEventTicketWhatsAppNotification({ contaId: input.contaId, notificationId: notification.id }));
+  }
+  return results;
 }

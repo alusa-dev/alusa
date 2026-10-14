@@ -7,6 +7,7 @@ import { POST as reserve } from '../reserve/route';
 import { POST as checkout } from '../checkout/route';
 
 const mocks = vi.hoisted(() => ({
+  after: vi.fn(),
   getMap: vi.fn(),
   reserve: vi.fn(),
   checkout: vi.fn(),
@@ -17,6 +18,10 @@ const mocks = vi.hoisted(() => ({
   rateLimit: vi.fn(async (): Promise<Response | null> => null),
 }));
 
+vi.mock('next/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('next/server')>();
+  return { ...actual, after: mocks.after };
+});
 vi.mock('@alusa/lib/events/map/event-map.service', () => ({
   getPublicEventMap: mocks.getMap,
   reservePublicEventMapSeats: mocks.reserve,
@@ -79,6 +84,7 @@ describe('public event map no-store headers', () => {
     expect(mapResponse.status).toBe(200);
     expect(reserveResponse.status).toBe(200);
     expect(checkoutResponse.status).toBe(200);
+    expect(mocks.after).toHaveBeenCalledTimes(1);
     for (const response of [mapResponse, reserveResponse, checkoutResponse]) {
       expect(response.headers.get('cache-control')).toBe(noStore);
     }
