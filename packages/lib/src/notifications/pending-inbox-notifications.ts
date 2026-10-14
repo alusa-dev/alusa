@@ -274,7 +274,7 @@ export async function processPendingInboxNotifications(params?: {
         sourceType: payload.sourceType ?? 'ASAAS_WEBHOOK',
       });
 
-      if (result.notificationId) {
+      if (result.outcome === 'completed' || result.outcome === 'not_applicable') {
         if (await updateClaimedPendingRow(row, {
           status: 'DONE',
           processedAt: new Date(),
@@ -288,6 +288,27 @@ export async function processPendingInboxNotifications(params?: {
             dedupeKey: row.dedupeKey,
             contaId: row.contaId,
             notificationId: result.notificationId,
+            outcome: result.outcome,
+            reason: result.reason,
+          });
+        }
+        continue;
+      }
+
+      if (result.outcome === 'inconsistent') {
+        if (await updateClaimedPendingRow(row, {
+          status: 'FAILED',
+          processedAt: new Date(),
+          lastError: result.reason ?? 'Origem financeira inconsistente',
+          processingToken: null,
+          processingStartedAt: null,
+          leaseUntil: null,
+        })) {
+          failed += 1;
+          logInboxMetric('inbox.failed.origin_inconsistent', {
+            dedupeKey: row.dedupeKey,
+            contaId: row.contaId,
+            failureReason: result.reason ?? 'origin_inconsistent',
           });
         }
         continue;

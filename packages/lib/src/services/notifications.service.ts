@@ -71,7 +71,13 @@ export interface CreateNotificationResult {
   notificationId: string | null;
   created: boolean;
   recipientCount: number;
+  reason?: 'policy_excluded' | 'no_recipients';
 }
+
+export type BillingWebhookNotificationResult = Omit<CreateNotificationResult, 'reason'> & {
+  outcome: 'completed' | 'not_applicable' | 'entity_missing' | 'inconsistent';
+  reason?: 'unsupported_event' | 'policy_excluded' | 'no_recipients' | 'event_ticket_payment' | 'event_order_sale_link_conflict' | 'entity_missing' | 'notification_result_unclassified';
+};
 
 function uniq(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
@@ -203,6 +209,7 @@ export async function createNotification(input: CreateNotificationInput): Promis
       notificationId: null,
       created: false,
       recipientCount: 0,
+      reason: 'policy_excluded',
     };
   }
 
@@ -218,6 +225,7 @@ export async function createNotification(input: CreateNotificationInput): Promis
         notificationId: null,
         created: false,
         recipientCount: 0,
+        reason: 'no_recipients',
       };
     }
 
@@ -395,7 +403,7 @@ async function createPaymentDigestNotification(params: {
 }): Promise<CreateNotificationResult> {
   const { input, payment, eventKey } = params;
   if (!isInternalNotificationTypeAllowed(input.type)) {
-    return { notificationId: null, created: false, recipientCount: 0 };
+    return { notificationId: null, created: false, recipientCount: 0, reason: 'policy_excluded' };
   }
 
   return prisma.$transaction(async (tx) => {
@@ -406,7 +414,7 @@ async function createPaymentDigestNotification(params: {
         dedupeKey: input.dedupeKey,
         type: input.type,
       });
-      return { notificationId: null, created: false, recipientCount: 0 };
+      return { notificationId: null, created: false, recipientCount: 0, reason: 'no_recipients' };
     }
 
     const alreadyProcessed = await tx.notificationDigestEvent.findUnique({
@@ -1262,11 +1270,11 @@ export async function createBillingWebhookNotification(params: {
   asaasPaymentId: string;
   occurredAt?: Date;
   sourceType?: 'ASAAS_WEBHOOK' | 'ASAAS_SYNC';
-}): Promise<CreateNotificationResult> {
+}): Promise<BillingWebhookNotificationResult> {
   const normalizedEvent = normalizeBillingNotificationEvent(params.eventName);
   if (!normalizedEvent) {
     logInboxMetric('inbox.skipped.unsupported_event', {});
-    return { notificationId: null, created: false, recipientCount: 0 };
+    return { outcome: 'not_applicable', reason: 'unsupported_event', notificationId: null, created: false, recipientCount: 0 };
   }
 
   if (!BILLING_INBOX_EVENTS.has(normalizedEvent)) {
@@ -1275,7 +1283,7 @@ export async function createBillingWebhookNotification(params: {
       asaasPaymentId: params.asaasPaymentId,
       sourceType: params.sourceType ?? 'ASAAS_WEBHOOK',
     });
-    return { notificationId: null, created: false, recipientCount: 0 };
+    return { outcome: 'not_applicable', reason: 'policy_excluded', notificationId: null, created: false, recipientCount: 0 };
   }
 
   const cobranca = await prisma.cobranca.findFirst({
@@ -1351,7 +1359,7 @@ export async function createBillingWebhookNotification(params: {
     };
 
     if (PAYMENT_DIGEST_EVENTS.has(normalizedEvent)) {
-      return createPaymentDigestNotification({
+      const result = await createPaymentDigestNotification({
         input: notificationInput,
         payment: {
           asaasPaymentId: params.asaasPaymentId,
@@ -1361,9 +1369,19 @@ export async function createBillingWebhookNotification(params: {
         },
         eventKey: buildPaymentDigestEventKey(normalizedEvent, params.asaasPaymentId),
       });
+      return {
+        ...result,
+        outcome: result.notificationId ? 'completed' : result.reason ? 'not_applicable' : 'inconsistent',
+        ...(!result.notificationId && !result.reason ? { reason: 'notification_result_unclassified' as const } : {}),
+      };
     }
 
-    return createNotification(notificationInput);
+    const result = await createNotification(notificationInput);
+    return {
+      ...result,
+      outcome: result.notificationId ? 'completed' : result.reason ? 'not_applicable' : 'inconsistent',
+      ...(!result.notificationId && !result.reason ? { reason: 'notification_result_unclassified' as const } : {}),
+    };
   }
 
   const charge = await prisma.charge.findUnique({
@@ -1386,6 +1404,49 @@ export async function createBillingWebhookNotification(params: {
   });
 
   if (!charge) {
+    const [eventMapOrder, eventTicketSales] = await Promise.all([
+      prisma.eventMapOrder.findFirst({
+        where: { contaId: params.contaId, asaasPaymentId: params.asaasPaymentId },
+        select: { id: true },
+      }),
+      prisma.eventTicketSale.findMany({
+        where: { contaId: params.contaId, asaasPaymentId: params.asaasPaymentId },
+        select: { id: true, eventMapOrderId: true },
+        take: 2,
+      }),
+    ]);
+    const [eventTicketSale] = eventTicketSales;
+
+    if (eventMapOrder || eventTicketSale) {
+      if (
+        eventTicketSales.length > 1 ||
+        (eventMapOrder && eventTicketSale && eventTicketSale.eventMapOrderId !== eventMapOrder.id)
+      ) {
+        logInboxMetric('inbox.failed.origin_inconsistent', {
+          failureReason: 'event_order_sale_link_conflict',
+        });
+        return {
+          outcome: 'inconsistent',
+          reason: 'event_order_sale_link_conflict',
+          notificationId: null,
+          created: false,
+          recipientCount: 0,
+        };
+      }
+      logInboxMetric('inbox.skipped.event_ticket_payment', {
+        contaId: params.contaId,
+        asaasPaymentId: params.asaasPaymentId,
+        origin: eventMapOrder ? 'EventMapOrder' : 'EventTicketSale',
+      });
+      return {
+        outcome: 'not_applicable',
+        reason: 'event_ticket_payment',
+        notificationId: null,
+        created: false,
+        recipientCount: 0,
+      };
+    }
+
     logInboxMetric('inbox.skipped.no_entity', {
       eventName: normalizedEvent,
       asaasPaymentId: params.asaasPaymentId,
@@ -1400,7 +1461,7 @@ export async function createBillingWebhookNotification(params: {
       occurredAt: params.occurredAt?.toISOString() ?? null,
       sourceType: params.sourceType ?? 'ASAAS_WEBHOOK',
     });
-    return { notificationId: null, created: false, recipientCount: 0 };
+    return { outcome: 'entity_missing', notificationId: null, created: false, recipientCount: 0 };
   }
 
   const content = resolveBillingNotificationContent({
@@ -1443,7 +1504,7 @@ export async function createBillingWebhookNotification(params: {
   };
 
   if (PAYMENT_DIGEST_EVENTS.has(normalizedEvent)) {
-    return createPaymentDigestNotification({
+      const result = await createPaymentDigestNotification({
       input: notificationInput,
         payment: {
         asaasPaymentId: params.asaasPaymentId,
@@ -1452,8 +1513,18 @@ export async function createBillingWebhookNotification(params: {
           description: charge.description,
         },
         eventKey: buildPaymentDigestEventKey(normalizedEvent, params.asaasPaymentId),
-      });
+    });
+    return {
+      ...result,
+      outcome: result.notificationId ? 'completed' : result.reason ? 'not_applicable' : 'inconsistent',
+      ...(!result.notificationId && !result.reason ? { reason: 'notification_result_unclassified' as const } : {}),
+    };
   }
 
-  return createNotification(notificationInput);
+  const result = await createNotification(notificationInput);
+  return {
+    ...result,
+    outcome: result.notificationId ? 'completed' : result.reason ? 'not_applicable' : 'inconsistent',
+    ...(!result.notificationId && !result.reason ? { reason: 'notification_result_unclassified' as const } : {}),
+  };
 }

@@ -36,7 +36,7 @@ export async function emitBillingNotificationCandidate(
     return { emitted: false };
   }
 
-  await createBillingWebhookNotification({
+  const result = await createBillingWebhookNotification({
     contaId: candidate.contaId,
     eventId: candidate.eventId ?? null,
     eventName: candidate.event,
@@ -44,6 +44,10 @@ export async function emitBillingNotificationCandidate(
     occurredAt: normalizeOccurredAt(candidate.occurredAt),
     sourceType,
   });
+
+  if (result.outcome === 'inconsistent') {
+    throw new Error(`Origem financeira inconsistente: ${result.reason ?? 'notification_result_unclassified'}`);
+  }
 
   return { emitted: true };
 }

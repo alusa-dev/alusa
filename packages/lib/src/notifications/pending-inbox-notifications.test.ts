@@ -55,7 +55,7 @@ describe('pending inbox notifications', () => {
     }));
     mocks.executeRaw.mockResolvedValue(0);
     mocks.updateMany.mockResolvedValue({ count: 1 });
-    mocks.createBillingWebhookNotification.mockResolvedValue({ notificationId: 'notification-1' });
+    mocks.createBillingWebhookNotification.mockResolvedValue({ outcome: 'completed', notificationId: 'notification-1' });
   });
 
   it('processa itens reivindicados e usa o fencing token ao finalizar', async () => {
@@ -106,5 +106,110 @@ describe('pending inbox notifications', () => {
 
     expect(mocks.create).not.toHaveBeenCalled();
     expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('conclui resultado não aplicável sem exigir notificationId', async () => {
+    mocks.queryRaw.mockResolvedValue([row()]);
+    mocks.createBillingWebhookNotification.mockResolvedValue({
+      outcome: 'not_applicable', reason: 'event_ticket_payment', notificationId: null,
+    });
+
+    const result = await processPendingInboxNotifications({ contaId: 'conta-1' });
+
+    expect(result).toEqual({ attempted: 1, processed: 1, failed: 0 });
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'DONE', lastError: null }),
+    }));
+  });
+
+  it('conclui notificação sem destinatários mesmo com notificationId nulo', async () => {
+    mocks.queryRaw.mockResolvedValue([row()]);
+    mocks.createBillingWebhookNotification.mockResolvedValue({
+      outcome: 'completed', notificationId: null, created: false, recipientCount: 0,
+    });
+
+    const result = await processPendingInboxNotifications({ contaId: 'conta-1' });
+
+    expect(result).toEqual({ attempted: 1, processed: 1, failed: 0 });
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'DONE' }),
+    }));
+  });
+
+  it('preserva retry para entidade local temporariamente ausente', async () => {
+    mocks.queryRaw.mockResolvedValue([row({ attempts: 2 })]);
+    mocks.createBillingWebhookNotification.mockResolvedValue({ outcome: 'entity_missing', notificationId: null });
+
+    const result = await processPendingInboxNotifications({ contaId: 'conta-1' });
+
+    expect(result).toEqual({ attempted: 1, processed: 0, failed: 0 });
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'PENDING', lastError: 'Entidade local ainda não disponível' }),
+    }));
+  });
+
+  it('marca entity_missing como FAILED ao esgotar tentativas', async () => {
+    mocks.queryRaw.mockResolvedValue([row({ attempts: 5, maxAttempts: 5 })]);
+    mocks.createBillingWebhookNotification.mockResolvedValue({ outcome: 'entity_missing', notificationId: null });
+
+    const result = await processPendingInboxNotifications({ contaId: 'conta-1' });
+
+    expect(result).toEqual({ attempted: 1, processed: 0, failed: 1 });
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: 'FAILED',
+        lastError: 'Entidade local não encontrada após tentativas máximas',
+      }),
+    }));
+  });
+
+  it('aplica retry para falha técnica transitória', async () => {
+    mocks.queryRaw.mockResolvedValue([row({ attempts: 2 })]);
+    mocks.createBillingWebhookNotification.mockRejectedValue(new Error('transient database failure'));
+
+    const result = await processPendingInboxNotifications({ contaId: 'conta-1' });
+
+    expect(result).toEqual({ attempted: 1, processed: 0, failed: 0 });
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'PENDING', lastError: 'transient database failure' }),
+    }));
+  });
+
+  it('falha falha técnica ao esgotar tentativas', async () => {
+    mocks.queryRaw.mockResolvedValue([row({ attempts: 5, maxAttempts: 5 })]);
+    mocks.createBillingWebhookNotification.mockRejectedValue(new Error('persistent database failure'));
+
+    const result = await processPendingInboxNotifications({ contaId: 'conta-1' });
+
+    expect(result).toEqual({ attempted: 1, processed: 0, failed: 1 });
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'FAILED', lastError: 'persistent database failure' }),
+    }));
+  });
+
+  it('não conta item como processado se o fencing token perdeu a lease', async () => {
+    mocks.queryRaw.mockResolvedValue([row()]);
+    mocks.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await processPendingInboxNotifications({ contaId: 'conta-1' });
+
+    expect(result).toEqual({ attempted: 1, processed: 0, failed: 0 });
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'pending-1', status: 'PROCESSING', processingToken: 'claim-1' }),
+    }));
+  });
+
+  it('falha conflito permanente de origem com motivo diagnosticável, sem retry', async () => {
+    mocks.queryRaw.mockResolvedValue([row({ attempts: 1 })]);
+    mocks.createBillingWebhookNotification.mockResolvedValue({
+      outcome: 'inconsistent', reason: 'event_order_sale_link_conflict', notificationId: null,
+    });
+
+    const result = await processPendingInboxNotifications({ contaId: 'conta-1' });
+
+    expect(result).toEqual({ attempted: 1, processed: 0, failed: 1 });
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'FAILED', lastError: 'event_order_sale_link_conflict' }),
+    }));
   });
 });
