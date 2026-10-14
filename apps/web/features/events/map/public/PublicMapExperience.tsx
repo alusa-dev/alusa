@@ -60,6 +60,14 @@ import type { EventMapDocument } from '@alusa/domain';
 import { formatCpfCnpjBR, formatPhoneBR, isValidCpfCnpjBR, isValidPhoneBR, onlyDigits } from '@/lib/formatters';
 
 type PublicSeat = PublicMapViewModel['seats'][number];
+export function reconcilePublicMapSeatSelection<T extends { id: string; status: string }>(
+  seats: T[],
+  selectedIds: string[],
+) {
+  const availableIds = new Set(seats.filter((seat) => seat.status === 'AVAILABLE').map((seat) => seat.id));
+  const nextSelectedIds = selectedIds.filter((seatId) => availableIds.has(seatId));
+  return { seats, selectedIds: nextSelectedIds, removedUnavailable: nextSelectedIds.length !== selectedIds.length };
+}
 type PublicMapOrderState = {
   orderId: string;
   accessToken: string;
@@ -121,12 +129,15 @@ export function PublicMapExperience({
   initialOrder?: PublicMapOrderState | null;
 }) {
   const [seats, setSeats] = useState<PublicSeat[]>(map.seats);
+  const seatRefreshInFlight = useRef(false);
   const panelLevels = useMemo(
     () => resolvePublicMapLevels(map.levels as PublicMapLevelView[]),
     [map.levels],
   );
   const [activeLevelId, setActiveLevelId] = useState(() => getDefaultPublicMapLevelId(panelLevels));
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const selectedIdsRef = useRef(selectedIds);
+  selectedIdsRef.current = selectedIds;
   const [step, setStep] = useState<'SELECTION' | 'IDENTIFICATION' | 'PAYMENT_METHOD' | 'CONFIRMATION'>(
     initialOrder ? 'CONFIRMATION' : 'SELECTION',
   );
@@ -178,6 +189,42 @@ export function PublicMapExperience({
       return getDefaultPublicMapLevelId(panelLevels);
     });
   }, [panelLevels]);
+
+  useEffect(() => {
+    if (mode !== 'public' || step !== 'SELECTION' || isSubmitting || typeof document === 'undefined') return;
+    let active = true;
+    const refreshSeats = async () => {
+      if (!active || document.visibilityState !== 'visible' || seatRefreshInFlight.current) return;
+      seatRefreshInFlight.current = true;
+      try {
+        const latestMap = await parseApiResponse<Pick<PublicMapViewModel, 'seats'>>(
+          await fetch(`/api/public/event-maps/${map.publicSlug}`, { cache: 'no-store' }),
+        );
+        if (!active) return;
+        const reconciliation = reconcilePublicMapSeatSelection(latestMap.seats, selectedIdsRef.current);
+        selectedIdsRef.current = reconciliation.selectedIds;
+        setSeats(reconciliation.seats);
+        setSelectedIds(reconciliation.selectedIds);
+        if (reconciliation.removedUnavailable) {
+          setError('Um ou mais assentos selecionados ficaram indisponíveis e foram removidos. Escolha outros assentos para continuar.');
+        }
+      } catch {
+        // Polling is best-effort; the next interval retries without interrupting selection.
+      } finally {
+        seatRefreshInFlight.current = false;
+      }
+    };
+    const interval = window.setInterval(() => void refreshSeats(), 9000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void refreshSeats();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [isSubmitting, map.publicSlug, mode, step]);
 
   const activeLevel = useMemo(
     () => getPublicMapLevelById(panelLevels, activeLevelId),
@@ -238,10 +285,13 @@ export function PublicMapExperience({
       setStep('SELECTION');
     }
 
-    setSelectedIds((current) => {
-      setCheckoutKey(createCheckoutKey());
-      return current.includes(seat.id) ? current.filter((seatId) => seatId !== seat.id) : [...current, seat.id];
-    });
+    const current = selectedIdsRef.current;
+    const next = current.includes(seat.id)
+      ? current.filter((seatId) => seatId !== seat.id)
+      : [...current, seat.id];
+    selectedIdsRef.current = next;
+    setSelectedIds(next);
+    setCheckoutKey(createCheckoutKey());
     setError(null);
   }
 
@@ -381,6 +431,7 @@ export function PublicMapExperience({
       setSeats((current) =>
         current.map((seat) => (selectedIds.includes(seat.id) ? { ...seat, status: 'HELD' } : seat)),
       );
+      selectedIdsRef.current = [];
       setSelectedIds([]);
       setCheckoutKey(createCheckoutKey());
       setStep('CONFIRMATION');
@@ -394,7 +445,9 @@ export function PublicMapExperience({
           );
           setSeats(latestMap.seats);
           const availableIds = new Set(latestMap.seats.filter((seat) => seat.status === 'AVAILABLE').map((seat) => seat.id));
-          setSelectedIds((current) => current.filter((seatId) => availableIds.has(seatId)));
+          const nextSelectedIds = selectedIdsRef.current.filter((seatId) => availableIds.has(seatId));
+          selectedIdsRef.current = nextSelectedIds;
+          setSelectedIds(nextSelectedIds);
         } catch {
           // Keep the conflict message visible; the next explicit refresh can retry.
         }

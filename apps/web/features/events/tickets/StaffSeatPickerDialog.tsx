@@ -8,7 +8,7 @@ import {
   type EventMapDocument,
 } from '@alusa/domain';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -45,10 +45,42 @@ function formatCurrency(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 }
 
-function isSeatSelectable(seat: StaffSeat, selectedIds: string[], ownHeldIds: Set<string>) {
+export function isSeatSelectable(seat: { id: string; status: string }, _selectedIds: string[], ownHeldIds: Set<string>) {
   if (seat.status === 'AVAILABLE') return true;
-  if (seat.status === 'HELD' && (ownHeldIds.has(seat.id) || selectedIds.includes(seat.id))) return true;
+  if (seat.status === 'HELD' && ownHeldIds.has(seat.id)) return true;
   return false;
+}
+
+export function toggleStaffSeatSelection<T extends { id: string; status: string }>(
+  seat: T,
+  selectedIds: string[],
+  ownHeldIds: Set<string>,
+) {
+  if (selectedIds.includes(seat.id)) return selectedIds.filter((seatId) => seatId !== seat.id);
+  if (!isSeatSelectable(seat, selectedIds, ownHeldIds)) return selectedIds;
+  return [...selectedIds, seat.id];
+}
+
+export function reconcileStaffMapSeatSelection<T extends { id: string; status: string }>(
+  latestSeats: T[],
+  currentSeats: T[],
+  selectedIds: string[],
+  ownHeldIds: Set<string>,
+) {
+  const seats = latestSeats;
+  const selectableIds = new Set(seats.filter((seat) =>
+    seat.status === 'AVAILABLE' || (seat.status === 'HELD' && ownHeldIds.has(seat.id)),
+  ).map((seat) => seat.id));
+  const nextSelectedIds = selectedIds.filter((seatId) => selectableIds.has(seatId));
+  const expiredOwnHold = currentSeats.some((previous) =>
+    ownHeldIds.has(previous.id) && latestSeats.find((seat) => seat.id === previous.id)?.status !== 'HELD',
+  );
+  return {
+    seats,
+    selectedIds: nextSelectedIds,
+    removedUnavailable: nextSelectedIds.length !== selectedIds.length,
+    expiredOwnHold,
+  };
 }
 
 export function StaffSeatPickerDialog({
@@ -59,6 +91,7 @@ export function StaffSeatPickerDialog({
   initialHoldToken,
   initialSeatIds,
   onConfirm,
+  onHoldExpired,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -67,6 +100,7 @@ export function StaffSeatPickerDialog({
   initialHoldToken?: string | null;
   initialSeatIds?: string[];
   onConfirm: (result: StaffSeatReservationResult) => void;
+  onHoldExpired?: () => void;
 }) {
   const [map, setMap] = useState<StaffEventMapSalesViewDTO | null>(null);
   const [loading, setLoading] = useState(false);
@@ -74,21 +108,89 @@ export function StaffSeatPickerDialog({
   const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>(initialSeatIds ?? []);
   const [activeLevelId, setActiveLevelId] = useState<string | null>(null);
+  const seatRefreshInFlight = useRef(false);
+  const mapRef = useRef(map);
+  const selectedIdsRef = useRef(selectedIds);
+  const ownHeldIdsRef = useRef(new Set(initialSeatIds ?? []));
+  const onHoldExpiredRef = useRef(onHoldExpired);
+  mapRef.current = map;
+  selectedIdsRef.current = selectedIds;
+  ownHeldIdsRef.current = new Set(initialSeatIds ?? []);
+  onHoldExpiredRef.current = onHoldExpired;
 
   useEffect(() => {
     if (!open) return;
-    setSelectedIds(initialSeatIds ?? []);
+    let active = true;
+    setSelectedIds([...ownHeldIdsRef.current]);
     setError(null);
     setLoading(true);
     getStaffEventMapSalesView(eventId, mapId)
       .then((data) => {
+        if (!active) return;
         setMap(data);
+        const initialIds = [...ownHeldIdsRef.current];
+        const reconciliation = reconcileStaffMapSeatSelection(
+          data.seats,
+          initialIds.map((id) => ({ id, status: 'HELD' })),
+          initialIds,
+          new Set(initialIds),
+        );
+        if (reconciliation.expiredOwnHold) {
+          setSelectedIds(reconciliation.selectedIds);
+          setError('A reserva expirou ou foi substituída. Confira os assentos disponíveis e confirme novamente para criar uma nova reserva.');
+          onHoldExpiredRef.current?.();
+        }
         const levels = resolvePublicMapLevels(data.levels as PublicMapLevelView[]);
         setActiveLevelId(getDefaultPublicMapLevelId(levels));
       })
-      .catch((loadError) => setError((loadError as Error).message))
-      .finally(() => setLoading(false));
-  }, [open, eventId, mapId, initialSeatIds]);
+      .catch((loadError) => { if (active) setError((loadError as Error).message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [open, eventId, mapId]);
+
+  useEffect(() => {
+    if (!open || submitting || !map || typeof document === 'undefined') return;
+    let active = true;
+    const refreshSeats = async () => {
+      if (!active || document.visibilityState !== 'visible' || seatRefreshInFlight.current) return;
+      seatRefreshInFlight.current = true;
+      try {
+        const latest = await getStaffEventMapSalesView(eventId, mapId);
+        if (!active) return;
+        const currentMap = mapRef.current;
+        if (!currentMap) return;
+        const reconciliation = reconcileStaffMapSeatSelection(
+          latest.seats,
+          currentMap.seats,
+          selectedIdsRef.current,
+          ownHeldIdsRef.current,
+        );
+        if (reconciliation.expiredOwnHold) {
+          setSelectedIds(reconciliation.selectedIds);
+          setError('A reserva expirou ou foi substituída. Confira os assentos disponíveis e confirme novamente para criar uma nova reserva.');
+          onHoldExpiredRef.current?.();
+        } else if (reconciliation.removedUnavailable) {
+          setSelectedIds(reconciliation.selectedIds);
+          setError('Um ou mais assentos selecionados ficaram indisponíveis e foram removidos. Escolha outros assentos para continuar.');
+        }
+        setMap({ ...currentMap, seats: reconciliation.seats });
+      } catch {
+        // Best-effort refresh; selection remains usable and the next interval retries.
+      } finally {
+        seatRefreshInFlight.current = false;
+      }
+    };
+    const interval = window.setInterval(() => void refreshSeats(), 9000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void refreshSeats();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [eventId, map !== null, mapId, open, submitting]);
 
   const panelLevels = useMemo(
     () => resolvePublicMapLevels((map?.levels ?? []) as PublicMapLevelView[]),
@@ -121,7 +223,7 @@ export function StaffSeatPickerDialog({
       sections: map.sections as Array<{ id: string; sortOrder?: number }>,
     });
   }, [activeLevel, levelObjects, levelSeats, map]);
-  const ownHeldIds = useMemo(() => new Set(initialSeatIds ?? []), [initialSeatIds]);
+  const ownHeldIds = ownHeldIdsRef.current;
   const selectedSeats = useMemo(
     () => (map?.seats ?? []).filter((seat) => selectedIds.includes(seat.id)),
     [map?.seats, selectedIds],
@@ -129,14 +231,9 @@ export function StaffSeatPickerDialog({
   const total = selectedSeats.reduce((sum, seat) => sum + seat.unitPrice, 0);
 
   function toggleSeat(seat: StaffSeat) {
-    if (!isSeatSelectable(seat, selectedIds, ownHeldIds)) return;
-    setSelectedIds((current) => {
-      if (current.includes(seat.id)) {
-        if (initialSeatIds?.includes(seat.id)) return current;
-        return current.filter((seatId) => seatId !== seat.id);
-      }
-      return [...current, seat.id];
-    });
+    const nextIds = toggleStaffSeatSelection(seat, selectedIds, ownHeldIds);
+    if (nextIds === selectedIds) return;
+    setSelectedIds(nextIds);
     setError(null);
   }
 
