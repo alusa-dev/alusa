@@ -159,6 +159,15 @@ export function StaffSeatPickerDialog({
         if (!active) return;
         const currentMap = mapRef.current;
         if (!currentMap) return;
+        if (latest.versionId !== currentMap.versionId) {
+          ownHeldIdsRef.current = new Set();
+          setMap(latest);
+          setSelectedIds([]);
+          setActiveLevelId(getDefaultPublicMapLevelId(resolvePublicMapLevels(latest.levels as PublicMapLevelView[])));
+          setError('O mapa foi atualizado. A seleção anterior foi limpa; escolha os assentos novamente.');
+          onHoldExpiredRef.current?.();
+          return;
+        }
         const reconciliation = reconcileStaffMapSeatSelection(
           latest.seats,
           currentMap.seats,
