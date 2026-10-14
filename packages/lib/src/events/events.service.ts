@@ -1187,12 +1187,35 @@ export async function listTicketSales(ctx: Pick<EventsContext, 'contaId'>, input
     : [];
   const usedTicketCountByOrder = new Map(usedTicketGroups.map((group) => [group.eventMapOrderId, group._count._all]));
 
+  const notifications = sales.length
+    ? await prisma.eventTicketWhatsAppNotification.findMany({
+      where: {
+        contaId: ctx.contaId,
+        OR: [
+          { eventTicketSaleId: { in: sales.map((sale) => sale.id) } },
+          ...(publicOrderIds.length ? [{ eventMapOrderId: { in: publicOrderIds } }] : []),
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { eventTicketSaleId: true, eventMapOrderId: true, status: true },
+    })
+    : [];
+  const latestWhatsAppStatus = new Map<string, (typeof notifications)[number]['status']>();
+  for (const notification of notifications) {
+    const purchaseId = notification.eventTicketSaleId ?? notification.eventMapOrderId;
+    if (purchaseId && !latestWhatsAppStatus.has(purchaseId)) {
+      latestWhatsAppStatus.set(purchaseId, notification.status);
+    }
+  }
+
   const mappedSales = sales.map((sale) => {
     const dto = mapTicketSale(sale);
+    const whatsappStatus = latestWhatsAppStatus.get(sale.eventMapOrderId ?? sale.id) ?? null;
     if (sale.eventMapOrderId) {
       const order = publicOrdersById.get(sale.eventMapOrderId);
       return {
         ...dto,
+        whatsappStatus,
         source: 'PUBLIC_ORDER' as const,
         asaasPaymentId: dto.asaasPaymentId ?? order?.asaasPaymentId ?? null,
         paymentStatus: dto.paymentStatus ?? order?.paymentStatus ?? null,
@@ -1216,6 +1239,7 @@ export async function listTicketSales(ctx: Pick<EventsContext, 'contaId'>, input
     if (sale.saleSeats.length > 0) {
       return {
         ...dto,
+        whatsappStatus,
         source: 'MANUAL_SALE' as const,
         sessionName: sale.saleSeats[0]?.publicSeat.map.name ?? null,
         hasSeatedTickets: true,
@@ -1229,7 +1253,7 @@ export async function listTicketSales(ctx: Pick<EventsContext, 'contaId'>, input
       };
     }
 
-    return dto;
+    return { ...dto, whatsappStatus };
   });
 
   return [...mappedSales, ...pendingOrders.map(mapPendingPublicOrderAsTicketSale)].sort(
