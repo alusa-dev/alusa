@@ -23,6 +23,7 @@
     "audit:job-contracts": "node scripts/audit-job-contracts.mjs",
     "audit:lib-boundaries": "node scripts/audit-lib-boundaries.mjs",
     "audit:package-graph": "node scripts/audit-package-graph.mjs",
+    "benchmark:events:reports": "dotenv -o -e .env.test -- node --expose-gc --import tsx scripts/benchmark-event-reports.mts",
     "audit:migration-safety": "node scripts/audit-migration-safety.mjs",
     "audit:e2e-rls-bootstrap": "node scripts/audit-e2e-rls-bootstrap.mjs",
     "check:nul-bytes": "node scripts/check-nul-bytes.mjs",

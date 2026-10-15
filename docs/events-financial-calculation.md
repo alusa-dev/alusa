@@ -25,12 +25,24 @@ vendas pagas, figurinos cobrados e outras receitas previstas.
 `receitaRealizada` usa apenas pagamentos efetivos, abatendo estornos. Uma
 inscrição pendente sem pagamento não compõe a receita realizada.
 
+Um estorno parcial reduz o valor recebido líquido, mas não classifica por si só
+o saldo aberto como vencido; inadimplência depende do vencimento e da regra
+acadêmica da Conta. Cancelamentos e estornos integrais não entram como saldo a
+receber.
+
 `saldoAReceber` é a diferença não negativa entre a receita prevista e a receita
 realizada. Ele representa o que ainda falta receber, não o lucro líquido.
 
 `resultadoPrevisto` é receita prevista menos custos previstos.
 
-`resultadoRealizado` é receita realizada menos custos pagos.
+Vendas são agrupadas no gráfico pelo dia civil da `Conta`, usando o fuso
+acadêmico da instituição para interpretar `paidAt`. Vencimentos persistidos
+como datas acadêmicas continuam comparados com o dia acadêmico atual da Conta;
+o fuso da máquina que atende a requisição não altera esses agrupamentos.
+
+`custosRealizados` considera pagamentos efetivos líquidos de estornos parciais;
+um custo integralmente estornado tem realização líquida zero.
+`resultadoRealizado` é receita realizada menos custos realizados líquidos.
 
 `lucroBruto` desconta somente custos diretos. `lucroLiquido` desconta todos os
 custos classificados como diretos, indiretos, financeiros ou tributários.

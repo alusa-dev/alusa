@@ -1,4 +1,16 @@
+import { Prisma } from '@prisma/client';
+import {
+  getEventNetRealizedAmount,
+  isEventCostExpectedStatus,
+  isEventCostRealizedStatus,
+  isEventRevenueExpectedStatus,
+  isEventRevenueRealizedStatus,
+} from '@alusa/domain/events';
+import { getAcademicDateKey, getCurrentAcademicDateKey } from '@alusa/shared';
+
 import { prisma } from '../prisma';
+
+type ReportDb = Prisma.TransactionClient | typeof prisma;
 
 export type EventReportDetail = {
   event: { id: string; name: string; startsAt: string; locationName: string | null; estimatedCapacity: number | null; status: 'DRAFT' | 'PLANNING' | 'ACTIVE' | 'FINISHED' | 'CANCELLED' | 'ARCHIVED' };
@@ -27,29 +39,37 @@ const number = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-export async function getEventReportDetail(contaId: string, eventId: string): Promise<EventReportDetail | null> {
-  const event = await prisma.schoolEvent.findFirst({
+export async function getEventReportDetail(
+  contaId: string,
+  eventId: string,
+  db: ReportDb = prisma,
+  now: Date = new Date(),
+): Promise<EventReportDetail | null> {
+  const event = await db.schoolEvent.findFirst({
     where: { id: eventId, contaId },
-    select: { id: true, name: true, startsAt: true, locationName: true, estimatedCapacity: true, status: true },
+    select: {
+      id: true, name: true, startsAt: true, locationName: true, estimatedCapacity: true, status: true,
+      conta: { select: { timezone: true } },
+    },
   });
   if (!event) return null;
 
   const where = { contaId, eventId };
-  const [participants, activeParticipants, participantDetails, sales, saleGroups, entries, payments, lots, checkIns] = await Promise.all([
-    prisma.eventParticipant.count({ where }),
-    prisma.eventParticipant.aggregate({
+  const [participants, activeParticipants, participantDetails, sales, entries, payments, lots, checkIns] = await Promise.all([
+    db.eventParticipant.count({ where }),
+    db.eventParticipant.aggregate({
       where: { ...where, cancelledAt: null },
       _sum: { registrationFeeOriginal: true, registrationFeeDiscount: true, registrationFeeCharged: true, feePaidAmount: true, feeRefundedAmount: true },
       _count: { _all: true },
     }),
-    prisma.eventParticipant.findMany({
+    db.eventParticipant.findMany({
       where: { ...where, cancelledAt: null },
       select: {
         type: true, registrationFeeCharged: true, feePaidAmount: true, isFeePaid: true,
         isFeeExempt: true, financialStatusSnapshot: true, revenueEntryId: true,
       },
     }),
-    prisma.eventTicketSale.findMany({
+    db.eventTicketSale.findMany({
       where,
       select: {
         id: true, lotId: true, status: true, quantity: true, totalAmount: true, refundedAmount: true,
@@ -57,38 +77,39 @@ export async function getEventReportDetail(contaId: string, eventId: string): Pr
         saleSeats: { where: { contaId }, select: { sectionName: true } },
       },
     }),
-    prisma.eventTicketSale.groupBy({ by: ['status'], where, _sum: { quantity: true, totalAmount: true, refundedAmount: true }, _count: { _all: true } }),
-    prisma.eventFinancialEntry.groupBy({
+    db.eventFinancialEntry.groupBy({
       by: ['type', 'status', 'category', 'originType'], where,
       _sum: { expectedAmount: true, actualAmount: true, refundedAmount: true, netAmount: true },
     }),
-    prisma.eventFinancialPayment.groupBy({ by: ['paymentMethod', 'status'], where: { ...where, financialEntry: { type: 'REVENUE', originType: { not: 'TICKET_SALE' } } }, _sum: { netAmount: true, amount: true, refundedAmount: true } }),
-    prisma.eventTicketLot.findMany({
+    db.eventFinancialPayment.groupBy({ by: ['paymentMethod', 'status'], where: { ...where, financialEntry: { type: 'REVENUE', originType: { not: 'TICKET_SALE' } } }, _sum: { netAmount: true, amount: true, refundedAmount: true } }),
+    db.eventTicketLot.findMany({
       where,
       select: { id: true, name: true, eventMapId: true, unitPrice: true, quantityTotal: true, quantitySold: true },
     }),
-    prisma.eventTicket.count({ where: { ...where, usedAt: { not: null }, cancelledAt: null } }),
+    db.eventTicket.count({ where: { ...where, usedAt: { not: null }, cancelledAt: null } }),
   ]);
 
   const studentParticipantsOnly = participantDetails.filter((participant) => participant.type === 'STUDENT');
   const studentEntryIds = participantDetails.map((participant) => participant.revenueEntryId).filter((id): id is string => Boolean(id));
   const studentEntries = studentEntryIds.length
-    ? await prisma.eventFinancialEntry.findMany({
+    ? await db.eventFinancialEntry.findMany({
       where: { contaId, eventId, id: { in: studentEntryIds } },
       select: { id: true, dueDate: true, status: true, netAmount: true, actualAmount: true, refundedAmount: true },
     })
     : [];
   const studentEntryById = new Map(studentEntries.map((entry) => [entry.id, entry]));
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const todayDateKey = getCurrentAcademicDateKey(now, event.conta.timezone);
   const participantPaymentStatus = (participant: (typeof participantDetails)[number]) => {
     const entry = studentEntryById.get(participant.revenueEntryId ?? '');
     const expected = number(participant.registrationFeeCharged);
     const exempt = participant.isFeeExempt || expected <= 0;
+    const dueDateKey = entry?.dueDate ? getAcademicDateKey(entry.dueDate) : null;
     const closed = !exempt && (['CANCELADO', 'ESTORNADO'].includes(participant.financialStatusSnapshot ?? '')
       || ['CANCELLED', 'CANCELED', 'REFUNDED'].includes(entry?.status ?? ''));
     const netPaid = entry
-      ? Math.max(number(entry.netAmount ?? (number(entry.actualAmount) - number(entry.refundedAmount))), 0)
+      ? entry.netAmount == null
+        ? getEventNetRealizedAmount(number(entry.actualAmount), number(entry.refundedAmount))
+        : Math.max(number(entry.netAmount), 0)
       : participant.isFeePaid
         ? expected
         : Math.max(number(participant.feePaidAmount), 0);
@@ -96,22 +117,41 @@ export async function getEventReportDetail(contaId: string, eventId: string): Pr
     const paid = !closed && !exempt && remaining <= 0;
     const overdue = !closed && !paid && !exempt && remaining > 0 && (
       participant.financialStatusSnapshot === 'ATRASADO'
-      || Boolean(entry?.dueDate && entry.dueDate < todayStart)
+      || Boolean(dueDateKey && dueDateKey < todayDateKey)
     );
     return { paid, exempt, closed, overdue, netPaid };
   };
   const participantPaymentStatuses = participantDetails.map((participant) => ({ participant, ...participantPaymentStatus(participant) }));
   const studentPaymentStatuses = participantPaymentStatuses.filter(({ participant }) => participant.type === 'STUDENT');
 
-  const eventMaps = lots.length ? await prisma.eventMap.findMany({ where: { ...where, id: { in: lots.map((lot) => lot.eventMapId).filter((id): id is string => Boolean(id)) } }, select: { id: true, name: true, startsAt: true } }) : [];
+  const eventMaps = lots.length ? await db.eventMap.findMany({ where: { ...where, id: { in: lots.map((lot) => lot.eventMapId).filter((id): id is string => Boolean(id)) } }, select: { id: true, name: true, startsAt: true } }) : [];
   const mapById = new Map(eventMaps.map((map) => [map.id, map]));
   const lotById = new Map(lots.map((lot) => [lot.id, lot]));
-  const group = new Map(saleGroups.map((row) => [row.status, row]));
-  const saleStatusSum = (status: string, key: 'quantity' | 'totalAmount' | 'refundedAmount') => number(group.get(status as never)?._sum?.[key]);
+  const saleTotalsByStatus = new Map<string, {
+    quantity: number;
+    totalAmount: Prisma.Decimal;
+    refundedAmount: Prisma.Decimal;
+  }>();
+  for (const sale of sales) {
+    const totals = saleTotalsByStatus.get(sale.status) ?? {
+      quantity: 0,
+      totalAmount: new Prisma.Decimal(0),
+      refundedAmount: new Prisma.Decimal(0),
+    };
+    totals.quantity += sale.quantity;
+    totals.totalAmount = totals.totalAmount.add(sale.totalAmount);
+    totals.refundedAmount = totals.refundedAmount.add(sale.refundedAmount);
+    saleTotalsByStatus.set(sale.status, totals);
+  }
+  const saleStatusSum = (status: string, key: 'quantity' | 'totalAmount' | 'refundedAmount') => {
+    const totals = saleTotalsByStatus.get(status);
+    if (!totals) return 0;
+    return key === 'quantity' ? totals.quantity : number(totals[key]);
+  };
   const paidSales = sales.filter((sale) => sale.status === 'PAID');
   const publicOrderIds = [...new Set(paidSales.map((sale) => sale.eventMapOrderId).filter((id): id is string => Boolean(id)))];
   const publicOrderItems = publicOrderIds.length
-    ? await prisma.eventMapOrderItem.findMany({
+    ? await db.eventMapOrderItem.findMany({
       where: { contaId, orderId: { in: publicOrderIds } },
       select: { orderId: true, lotId: true, sectionName: true },
     })
@@ -126,7 +166,7 @@ export async function getEventReportDetail(contaId: string, eventId: string): Pr
   const grossCollectedSales = sales.filter((sale) => sale.status === 'PAID' || sale.status === 'REFUNDED');
   const refundedTicketAmount = sales.reduce((sum, sale) => sum + Math.max(number(sale.refundedAmount), sale.status === 'REFUNDED' ? number(sale.totalAmount) : 0), 0);
   const ticketReceivedGross = grossCollectedSales.reduce((sum, sale) => sum + number(sale.totalAmount), 0);
-  const ticketReceivedNet = Math.max(ticketReceivedGross - refundedTicketAmount, 0);
+  const ticketReceivedNet = getEventNetRealizedAmount(ticketReceivedGross, refundedTicketAmount);
   const paymentTotals = new Map<string, number>();
   for (const payment of payments) {
     if (payment.status !== 'RECEIVED' && payment.status !== 'PAID') continue;
@@ -135,14 +175,14 @@ export async function getEventReportDetail(contaId: string, eventId: string): Pr
   }
   for (const sale of paidSales) {
     const key = sale.paymentMethod;
-    paymentTotals.set(key, (paymentTotals.get(key) ?? 0) + Math.max(number(sale.totalAmount) - number(sale.refundedAmount), 0));
+    paymentTotals.set(key, (paymentTotals.get(key) ?? 0) + getEventNetRealizedAmount(number(sale.totalAmount), number(sale.refundedAmount)));
   }
 
   const timelineByDay = new Map<string, number>();
   for (const sale of paidSales) {
     if (!sale.paidAt) continue;
-    const day = sale.paidAt.toISOString().slice(0, 10);
-    timelineByDay.set(day, (timelineByDay.get(day) ?? 0) + Math.max(number(sale.totalAmount) - number(sale.refundedAmount), 0));
+    const day = getCurrentAcademicDateKey(sale.paidAt, event.conta.timezone);
+    timelineByDay.set(day, (timelineByDay.get(day) ?? 0) + getEventNetRealizedAmount(number(sale.totalAmount), number(sale.refundedAmount)));
   }
 
   const totalPaidTicketQuantity = paidSales.reduce((sum, sale) => sum + sale.quantity, 0);
@@ -191,16 +231,18 @@ export async function getEventReportDetail(contaId: string, eventId: string): Pr
   const otherRevenueEntries = relevantEntries.filter((entry) => entry.type === 'REVENUE');
   const expectedRevenueEntries = otherRevenueEntries.filter((entry) => !['CANCELLED', 'REFUNDED'].includes(entry.status));
   const costEntries = relevantEntries.filter((entry) => entry.type === 'COST');
-  const expectedStatuses = new Set(['EXPECTED', 'PENDING', 'PARTIALLY_PAID', 'PAID', 'RECEIVED']);
-  const receivedStatuses = new Set(['PAID', 'RECEIVED', 'PARTIALLY_PAID', 'PARTIALLY_REFUNDED']);
-  const netFor = (entry: (typeof entries)[number]) => receivedStatuses.has(entry.status)
-    ? Math.max(number(entry._sum.netAmount ?? (number(entry._sum.actualAmount) - number(entry._sum.refundedAmount))), 0)
+  const realizedRevenueFor = (entry: (typeof entries)[number]) => isEventRevenueRealizedStatus(entry.status)
+    && entry._sum.actualAmount != null
+    ? getEventNetRealizedAmount(number(entry._sum.actualAmount), number(entry._sum.refundedAmount))
     : 0;
-  const expectedRevenueFor = (entry: (typeof entries)[number]) => entry.status === 'PARTIALLY_REFUNDED'
-    ? netFor(entry)
-    : expectedStatuses.has(entry.status) ? number(entry._sum.expectedAmount) : 0;
+  const realizedCostFor = (entry: (typeof entries)[number]) => isEventCostRealizedStatus(entry.status)
+    ? getEventNetRealizedAmount(number(entry._sum.actualAmount), number(entry._sum.refundedAmount))
+    : 0;
+  const expectedRevenueFor = (entry: (typeof entries)[number]) => isEventRevenueExpectedStatus(entry.status)
+    ? number(entry._sum.expectedAmount)
+    : 0;
   const expectedOtherRevenue = expectedRevenueEntries.reduce((sum, entry) => sum + expectedRevenueFor(entry), 0);
-  const receivedOtherRevenue = expectedRevenueEntries.reduce((sum, entry) => sum + netFor(entry), 0);
+  const receivedOtherRevenue = expectedRevenueEntries.reduce((sum, entry) => sum + realizedRevenueFor(entry), 0);
   const refundedOtherRevenue = otherRevenueEntries.reduce((sum, entry) => sum + number(entry._sum.refundedAmount), 0);
   const ticketLots = lots.map((lot) => ({
     id: lot.id, name: lot.name, mapId: lot.eventMapId, mapName: mapById.get(lot.eventMapId ?? '')?.name ?? null,
@@ -220,6 +262,10 @@ export async function getEventReportDetail(contaId: string, eventId: string): Pr
   const ticketCommitted = ticketReceivedNet + ticketPendingGross;
   const committedRevenue = participantExpected + ticketCommitted + expectedOtherRevenue;
   const receivedRevenue = Math.max(participantReceivedNet, 0) + ticketReceivedNet + receivedOtherRevenue;
+  // This is the remaining committed balance, not an overdue metric. A partial
+  // refund reduces net receipts while the obligation remains expected; only
+  // cancelled or fully refunded entries are excluded from expectedRevenueEntries.
+  const pendingCommittedRevenue = Math.max(committedRevenue - receivedRevenue, 0);
 
   return {
     event: { id: event.id, name: event.name, startsAt: event.startsAt.toISOString(), locationName: event.locationName, estimatedCapacity: event.estimatedCapacity, status: event.status },
@@ -241,9 +287,9 @@ export async function getEventReportDetail(contaId: string, eventId: string): Pr
       ticketOnlineSales: sales.filter((sale) => sale.status !== 'CANCELLED' && Boolean(sale.eventMapOrderId)).length,
       availableTicketQuantity: ticketLots.reduce((sum, lot) => sum + lot.available, 0),
       availableTicketPotential: ticketLots.reduce((sum, lot) => sum + lot.available * lot.unitPrice, 0),
-      checkIns, committedRevenue, receivedRevenue, refundedRevenueExcludingTickets: refundedOtherRevenue + participantRefunds, resultRealized: receivedRevenue - costEntries.reduce((sum, entry) => sum + netFor(entry), 0), resultCommitted: committedRevenue - costEntries.filter((entry) => expectedStatuses.has(entry.status)).reduce((sum, entry) => sum + number(entry._sum.expectedAmount), 0), pendingCommittedRevenue: Math.max(committedRevenue - receivedRevenue, 0),
-      costsExpected: costEntries.filter((entry) => expectedStatuses.has(entry.status)).reduce((sum, entry) => sum + number(entry._sum.expectedAmount), 0),
-      costsRealized: costEntries.reduce((sum, entry) => sum + netFor(entry), 0),
+      checkIns, committedRevenue, receivedRevenue, refundedRevenueExcludingTickets: refundedOtherRevenue + participantRefunds, resultRealized: receivedRevenue - costEntries.reduce((sum, entry) => sum + realizedCostFor(entry), 0), resultCommitted: committedRevenue - costEntries.filter((entry) => isEventCostExpectedStatus(entry.status)).reduce((sum, entry) => sum + number(entry._sum.expectedAmount), 0), pendingCommittedRevenue,
+      costsExpected: costEntries.filter((entry) => isEventCostExpectedStatus(entry.status)).reduce((sum, entry) => sum + number(entry._sum.expectedAmount), 0),
+      costsRealized: costEntries.reduce((sum, entry) => sum + realizedCostFor(entry), 0),
       otherRevenueExpected: expectedOtherRevenue,
       otherRevenueReceived: receivedOtherRevenue,
       otherRevenueRefunded: otherRevenueEntries.reduce((sum, entry) => sum + number(entry._sum.refundedAmount), 0),
@@ -256,8 +302,8 @@ export async function getEventReportDetail(contaId: string, eventId: string): Pr
     categories: relevantEntries.map((entry) => ({
       category: entry.category, type: entry.type, expected: entry.type === 'REVENUE'
         ? expectedRevenueFor(entry)
-        : expectedStatuses.has(entry.status) ? number(entry._sum.expectedAmount) : 0,
-      realized: netFor(entry),
+        : isEventCostExpectedStatus(entry.status) ? number(entry._sum.expectedAmount) : 0,
+      realized: entry.type === 'REVENUE' ? realizedRevenueFor(entry) : realizedCostFor(entry),
     })),
   };
 }

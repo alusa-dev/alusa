@@ -117,5 +117,10 @@ describe('event participant read models', () => {
     expect(prisma.eventCostumeAssignment.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ contaId: 'conta-a', eventId: 'event-1', alunoId: { in: ['student-1', 'student-2'] } }),
     }));
+    expect(prisma.standaloneInstallmentPlan.findMany).toHaveBeenCalled();
+    for (const [args] of vi.mocked(prisma.standaloneInstallmentPlan.findMany).mock.calls) {
+      expect(args.where.contaId).toBe('conta-a');
+      expect(args.include?.charges).toEqual({ where: { contaId: 'conta-a' } });
+    }
   });
 });

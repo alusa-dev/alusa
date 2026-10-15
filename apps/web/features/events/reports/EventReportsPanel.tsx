@@ -1,6 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import { useSession } from 'next-auth/react';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
@@ -11,7 +12,13 @@ import { EventGeneralReport } from './EventGeneralReport';
 import { EventSelectedReport } from './EventSelectedReport';
 
 export function EventReportsPanel({ eventId }: { eventId?: string }) {
-  const reports = useQuery({ queryKey: eventQueryKeys.reports(eventId), queryFn: () => getEventReports({ eventId }) });
+  const { data: session, status: sessionStatus } = useSession();
+  const contaId = session?.user?.contaId;
+  const reports = useQuery({
+    queryKey: eventQueryKeys.reports(eventId, undefined, contaId),
+    queryFn: () => getEventReports({ eventId }),
+    enabled: sessionStatus === 'authenticated' && Boolean(contaId),
+  });
   const data = reports.data;
   return (
     <Tabs defaultValue="general" variant="line" className="space-y-5">

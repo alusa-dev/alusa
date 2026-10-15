@@ -92,6 +92,103 @@ const eventInclude = {
 
 type SchoolEventRecord = Prisma.SchoolEventGetPayload<{ include: typeof eventInclude }>;
 
+// Reports need the same persisted metric inputs, but not buyer, contact,
+// ticket-art, costume, assignment, or participant profile fields.
+const eventReportSelect = (contaId: string) => ({
+  id: true,
+  contaId: true,
+  name: true,
+  ticketArtworkUrl: true,
+  description: true,
+  type: true,
+  status: true,
+  startsAt: true,
+  endsAt: true,
+  locationName: true,
+  locationAddress: true,
+  estimatedCapacity: true,
+  responsibleUserId: true,
+  createdByUserId: true,
+  hasTickets: true,
+  ticketMode: true,
+  hasCostumes: true,
+  hasFinancialControl: true,
+  notes: true,
+  registrationFee: true,
+  paymentInterestValue: true,
+  paymentFineValue: true,
+  paymentFineType: true,
+  paymentDiscountValue: true,
+  paymentDiscountType: true,
+  paymentDiscountDueDateLimitDays: true,
+  contratoModeloId: true,
+  createdAt: true,
+  updatedAt: true,
+  cancelledAt: true,
+  finishedAt: true,
+  archivedAt: true,
+  responsibleUser: {
+    select: {
+      id: true, nome: true,
+    },
+  },
+  createdBy: {
+    select: {
+      id: true, nome: true,
+    },
+  },
+  ticketSales: { where: { contaId }, select: { status: true, quantity: true, totalAmount: true } },
+  ticketLots: { where: { contaId }, select: { quantityTotal: true, quantitySold: true, unitPrice: true } },
+  costumes: { where: { contaId }, select: { id: true, schoolCost: true, quantity: true } },
+  assignments: { where: { contaId }, select: { revenueEntryId: true, status: true, billingMode: true, chargedValue: true, isPaid: true } },
+  financialEntries: {
+    where: { contaId },
+    select: {
+      id: true, type: true, status: true, expectedAmount: true, grossAmount: true,
+      discountAmount: true, netAmount: true, actualAmount: true, refundedAmount: true,
+      originType: true, originId: true, costClass: true, category: true, asaasPaymentId: true,
+      realizedAt: true,
+    },
+  },
+  participants: {
+    where: { contaId },
+    select: {
+      id: true, revenueEntryId: true, asaasPaymentId: true, asaasInstallmentId: true,
+      billingGroupId: true, balanceAmount: true, registrationFeeCharged: true,
+      registrationFeeOriginal: true, registrationFeeDiscount: true, feePaidAmount: true,
+      feeRefundedAmount: true, isFeePaid: true, isFeeExempt: true, cancelledAt: true,
+    },
+  },
+} satisfies Prisma.SchoolEventSelect);
+type EventReportRecord = Prisma.SchoolEventGetPayload<{ select: ReturnType<typeof eventReportSelect> }>;
+
+type ReportUserRecord = {
+  id: string;
+  nome: string;
+} | null;
+
+function mapReportUser(user: ReportUserRecord, authorizedUserIds: Set<string>) {
+  if (!user || !authorizedUserIds.has(user.id)) return null;
+  return { id: user.id, nome: user.nome };
+}
+
+function mapEventReport(
+  record: EventReportRecord,
+  paymentSnapshots: Map<string, ParticipantPaymentSnapshot>,
+  authorizedUserIds: Set<string>,
+) {
+  const dto = mapSchoolEvent(record, paymentSnapshots);
+  const responsibleUser = mapReportUser(record.responsibleUser, authorizedUserIds);
+  const createdBy = mapReportUser(record.createdBy, authorizedUserIds);
+  return {
+    ...dto,
+    responsibleUserId: responsibleUser ? record.responsibleUserId : null,
+    responsibleUser,
+    createdByUserId: createdBy ? record.createdByUserId : null,
+    createdBy,
+  };
+}
+
 function toNumber(value: Prisma.Decimal | number | string | null | undefined): number {
   if (value == null) return 0;
   if (value instanceof Prisma.Decimal) return value.toNumber();
@@ -184,7 +281,7 @@ export function applyParticipantPaymentSnapshotsToEntries<T extends { id: string
 }
 
 function buildMetrics(
-  record: Pick<SchoolEventRecord, 'ticketSales' | 'ticketLots' | 'financialEntries' | 'assignments' | 'costumes' | 'participants'>,
+  record: Pick<EventReportRecord, 'ticketSales' | 'ticketLots' | 'financialEntries' | 'assignments' | 'costumes' | 'participants'>,
   paymentSnapshots?: Map<string, ParticipantPaymentSnapshot>,
 ): EventMetrics {
   const financialEntries = applyParticipantPaymentSnapshotsToEntries(record.financialEntries, paymentSnapshots);
@@ -247,7 +344,7 @@ function buildMetrics(
   });
 }
 
-export function mapSchoolEvent(record: SchoolEventRecord, paymentSnapshots?: Map<string, ParticipantPaymentSnapshot>) {
+export function mapSchoolEvent(record: SchoolEventRecord | EventReportRecord, paymentSnapshots?: Map<string, ParticipantPaymentSnapshot>) {
   const metrics = buildMetrics(record, paymentSnapshots);
 
   return {
@@ -631,8 +728,25 @@ export async function inspectEventFinancialConsistency(
   };
 }
 
+async function assertEventResponsibleUserTenant(db: DbClient, contaId: string, responsibleUserId: string | null | undefined) {
+  if (!responsibleUserId) return;
+  const responsibleUser = await db.usuario.findFirst({
+    where: { id: responsibleUserId, status: 'ATIVO' },
+    select: { id: true, contaId: true, acessosConta: { select: { contaId: true, status: true } } },
+  });
+  const memberships = responsibleUser?.acessosConta ?? [];
+  const authorizedByMembership = memberships.some((membership) =>
+    membership.contaId === contaId && membership.status === 'ATIVO',
+  );
+  const authorizedByLegacyFallback = memberships.length === 0 && responsibleUser?.contaId === contaId;
+  if (!responsibleUser || (!authorizedByMembership && !authorizedByLegacyFallback)) {
+    throw new EventsError('RESPONSAVEL_NAO_ENCONTRADO', 'Responsável pelo evento não encontrado nesta conta.', 422);
+  }
+}
+
 export async function createSchoolEvent(ctx: EventsContext, input: CreateSchoolEventInput) {
   return prisma.$transaction(async (tx) => {
+    await assertEventResponsibleUserTenant(tx, ctx.contaId, input.responsibleUserId);
     if (input.contratoModeloId) {
       const modelo = await tx.contratoModelo.findFirst({
         where: { id: input.contratoModeloId, contaId: ctx.contaId, status: 'ATIVO' },
@@ -689,6 +803,7 @@ export async function updateSchoolEvent(ctx: EventsContext, eventId: string, inp
     if (current.status === 'ARCHIVED') {
       throw new EventsError('EVENTO_ARQUIVADO', 'Evento arquivado não pode ser editado.', 409);
     }
+    await assertEventResponsibleUserTenant(tx, ctx.contaId, input.responsibleUserId);
     if (input.contratoModeloId) {
       const modelo = await tx.contratoModelo.findFirst({
         where: { id: input.contratoModeloId, contaId: ctx.contaId, status: 'ATIVO' },
@@ -2149,14 +2264,28 @@ export async function listEventAudit(ctx: Pick<EventsContext, 'contaId'>, eventI
   }));
 }
 
-export async function getEventReports(ctx: Pick<EventsContext, 'contaId'>, input: { eventId?: string; compareWithEventId?: string } = {}) {
-  const events = await prisma.schoolEvent.findMany({
+export async function getEventReports(
+  ctx: Pick<EventsContext, 'contaId'>,
+  input: { eventId?: string; compareWithEventId?: string } = {},
+  db: DbClient = prisma,
+) {
+  const events = await db.schoolEvent.findMany({
     where: { contaId: ctx.contaId },
-    include: eventInclude,
+    select: eventReportSelect(ctx.contaId),
     orderBy: { startsAt: 'desc' },
   });
-  const paymentSnapshots = await buildParticipantPaymentSnapshots(ctx, events);
-  const mapped = events.map((event) => mapSchoolEvent(event, paymentSnapshots));
+  const userIds = [...new Set(events.flatMap((event) => [event.responsibleUser?.id, event.createdBy?.id]).filter((id): id is string => Boolean(id)))];
+  const [paymentSnapshots, memberships] = await Promise.all([
+    buildParticipantPaymentSnapshots(ctx, events, db),
+    userIds.length
+      ? db.usuarioConta.findMany({
+        where: { contaId: ctx.contaId, usuarioId: { in: userIds }, status: 'ATIVO' },
+        select: { usuarioId: true },
+      })
+      : Promise.resolve([]),
+  ]);
+  const authorizedUserIds = new Set(memberships.map((membership) => membership.usuarioId));
+  const mapped = events.map((event) => mapEventReport(event, paymentSnapshots, authorizedUserIds));
   const selected = input.eventId ? mapped.find((event) => event.id === input.eventId) ?? null : mapped[0] ?? null;
   const compareWith = input.compareWithEventId
     ? mapped.find((event) => event.id === input.compareWithEventId) ?? null
@@ -2461,7 +2590,7 @@ export async function loadEventBillingGroupCharges(
               ...(paymentIds.length > 0 ? [{ asaasInstallmentId: { in: paymentIds } }] : []),
             ],
           },
-          include: { charges: true },
+          include: { charges: { where: { contaId } } },
         })
       : [],
   ]);
@@ -2492,9 +2621,10 @@ export async function loadEventBillingGroupCharges(
 async function buildParticipantPaymentSnapshots(
   ctx: Pick<EventsContext, 'contaId'>,
   records: Array<{
-    participants: SchoolEventRecord['participants'];
-    financialEntries: SchoolEventRecord['financialEntries'];
+    participants: EventReportRecord['participants'];
+    financialEntries: EventReportRecord['financialEntries'];
   }>,
+  db: DbClient = prisma,
 ): Promise<Map<string, ParticipantPaymentSnapshot>> {
   const participants = records.flatMap((record) => record.participants);
   const entryById = new Map(records.flatMap((record) => record.financialEntries.map((entry) => [entry.id, entry])));
@@ -2514,7 +2644,7 @@ async function buildParticipantPaymentSnapshots(
 
   const revenueEntryIds = [...new Set(feeParticipants.map((participant) => participant.revenueEntryId).filter((id): id is string => Boolean(id)))];
   const manualPayments = revenueEntryIds.length > 0
-    ? await prisma.eventFinancialPayment.findMany({
+    ? await db.eventFinancialPayment.findMany({
         where: { contaId: ctx.contaId, financialEntryId: { in: revenueEntryIds } },
         select: { financialEntryId: true, status: true, amount: true, refundedAmount: true },
       })
@@ -2528,22 +2658,22 @@ async function buildParticipantPaymentSnapshots(
 
   const billingGroupIds = [...new Set(feeParticipants.map((participant) => participant.billingGroupId).filter((id): id is string => Boolean(id)))];
   const billingGroups = billingGroupIds.length > 0
-    ? await prisma.eventBillingGroup.findMany({ where: { contaId: ctx.contaId, id: { in: billingGroupIds } }, select: { id: true, standaloneChargeId: true, asaasPaymentId: true, asaasInstallmentId: true, balanceAmount: true } })
+    ? await db.eventBillingGroup.findMany({ where: { contaId: ctx.contaId, id: { in: billingGroupIds } }, select: { id: true, standaloneChargeId: true, asaasPaymentId: true, asaasInstallmentId: true, balanceAmount: true } })
     : [];
   const billingGroupById = new Map(billingGroups.map((group) => [group.id, group]));
-  const billingGroupCharges = await loadEventBillingGroupCharges(prisma, ctx.contaId, billingGroups);
+  const billingGroupCharges = await loadEventBillingGroupCharges(db, ctx.contaId, billingGroups);
 
   let plans: any[] = [];
   let directCharges: any[] = [];
   let planCharges: any[] = [];
 
   if (asaasPaymentIds.length > 0) {
-    plans = await prisma.standaloneInstallmentPlan.findMany({
+    plans = await db.standaloneInstallmentPlan.findMany({
       where: { contaId: ctx.contaId, asaasInstallmentId: { in: asaasPaymentIds } },
-      include: { charges: true },
+      include: { charges: { where: { contaId: ctx.contaId } } },
     });
 
-    directCharges = await prisma.charge.findMany({
+    directCharges = await db.charge.findMany({
       where: { contaId: ctx.contaId, asaasPaymentId: { in: asaasPaymentIds } },
     });
 
@@ -2553,7 +2683,7 @@ async function buildParticipantPaymentSnapshots(
     ]));
 
     if (planIds.length > 0) {
-      planCharges = await prisma.charge.findMany({
+      planCharges = await db.charge.findMany({
         where: { contaId: ctx.contaId, standaloneInstallmentPlanId: { in: planIds } },
       });
     }
@@ -2699,7 +2829,7 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
   if (asaasPaymentIds.length > 0) {
     plans = await prisma.standaloneInstallmentPlan.findMany({
       where: { contaId: ctx.contaId, asaasInstallmentId: { in: asaasPaymentIds } },
-      include: { charges: true },
+      include: { charges: { where: { contaId: ctx.contaId } } },
     });
 
     directCharges = await prisma.charge.findMany({
