@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
-import { getEventReportDetail } from '@alusa/lib';
+import { getEventReportDetail } from '@alusa/lib/events/event-report-detail.service';
 import { EventsError } from '@alusa/lib/events/events.service';
 
 import { getEventsContext, handleEventsRouteError } from '../../_helpers';

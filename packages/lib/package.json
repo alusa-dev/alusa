@@ -66,6 +66,10 @@
       "types": "./dist/events/events.service.d.ts",
       "default": "./dist/events/events.service.js"
     },
+    "./events/event-report-detail.service": {
+      "types": "./dist/events/event-report-detail.service.d.ts",
+      "default": "./dist/events/event-report-detail.service.js"
+    },
     "./events/events-payment-rules": {
       "types": "./dist/events/events-payment-rules.d.ts",
       "default": "./dist/events/events-payment-rules.js"
