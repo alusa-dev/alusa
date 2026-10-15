@@ -160,6 +160,25 @@ describe('events domain rules', () => {
     expect(metrics.custoRealizado).toBe(400);
   });
 
+  it('mantém o custo realizado líquido para figurino parcialmente reembolsado', () => {
+    const metrics = calculateEventMetrics({
+      costumes: [{ id: 'costume-1', schoolCost: 100, quantity: 1 }],
+      financialEntries: [{
+        id: 'costume-cost-1',
+        type: 'COST',
+        status: 'PARTIALLY_REFUNDED',
+        expectedAmount: 100,
+        actualAmount: 100,
+        refundedAmount: 30,
+        originType: 'COSTUME',
+        originId: 'costume-1',
+      }],
+    });
+
+    expect(metrics.custoPrevisto).toBe(100);
+    expect(metrics.custoRealizado).toBe(70);
+  });
+
   it('inclui receita parcialmente paga no previsto e reconhece o realizado líquido de estornos', () => {
     const metrics = calculateEventMetrics({
       financialEntries: [{

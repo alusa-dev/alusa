@@ -501,7 +501,7 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   const costumeCostRealizedById = new Map<string, number>();
   for (const entry of financialEntries) {
     if (entry.type !== 'COST' || entry.originType !== 'COSTUME' || !entry.originId) continue;
-    if (entry.status === 'PAID' || entry.status === 'PARTIALLY_PAID' || entry.status === 'REFUNDED') {
+    if (isEventCostRealizedStatus(entry.status)) {
       const netPaid = money(Math.max(money(entry.actualAmount) - money(entry.refundedAmount), 0));
       costumeCostRealizedById.set(entry.originId, money((costumeCostRealizedById.get(entry.originId) ?? 0) + netPaid));
     }
