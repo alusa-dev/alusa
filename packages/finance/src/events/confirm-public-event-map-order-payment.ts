@@ -14,6 +14,7 @@ import {
 } from '@alusa/lib/events/map/event-map-order-operations';
 import { isTicketPaymentBlocked, mayResolveChargebackPaymentHold } from '@alusa/domain/events';
 import { publicOrderStatusPath, publicOrderTicketsPath } from '@alusa/lib/events/map/public-order-links';
+import { parsePaymentDate } from '@alusa/shared';
 
 type EventMapPublicSeatRecord = Prisma.EventMapPublicSeatGetPayload<Prisma.EventMapPublicSeatDefaultArgs>;
 type EventMapOrderItemRecord = Prisma.EventMapOrderItemGetPayload<Prisma.EventMapOrderItemDefaultArgs>;
@@ -204,7 +205,11 @@ export async function confirmPublicEventMapOrderPayment(params: {
       createdItems.push({ item, ticket, seat });
     }
 
-    const paidAt = params.paidAt ? new Date(params.paidAt) : new Date();
+    const paidAt = params.paidAt
+      ? typeof params.paidAt === 'string'
+        ? parsePaymentDate(params.paidAt)
+        : params.paidAt
+      : new Date();
     const confirmedPaymentStatus = params.chargebackStatus?.trim().toUpperCase() === 'REVERSED'
       ? 'REVERSED'
       : params.paymentStatus;

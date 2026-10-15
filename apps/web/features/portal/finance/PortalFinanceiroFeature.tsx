@@ -17,6 +17,7 @@ import {
 } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { PortalFinanceiroListItemDTO } from '@/features/portal/dtos';
+import { formatPaymentDate } from '@alusa/shared';
 const PAYMENT_NOTICE =
   'Pagamentos e alterações de forma de pagamento são conduzidos pela secretaria da escola.';
 type Cobranca = PortalFinanceiroListItemDTO;
@@ -374,7 +375,7 @@ function CobrancaCard({
   const turmaNome = getTurmaNome(cobranca);
   const pagamentoPrincipal = cobranca.pagamentos[0];
   const dataPagamento = pagamentoPrincipal?.dataPagamento
-    ? new Date(pagamentoPrincipal.dataPagamento).toLocaleDateString('pt-BR')
+    ? formatPaymentDate(pagamentoPrincipal.dataPagamento) ?? 'Pagamento em processamento'
     : 'Pagamento em processamento';
 
   return (

@@ -205,6 +205,29 @@ describe('handlePaymentWebhook', () => {
     vi.mocked(prisma.charge.findMany).mockResolvedValue([] as never);
   });
 
+  it('rejeita antes de qualquer resolução quando todas as datas pagas do provider são inválidas', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay-invalid-dates',
+        status: 'CONFIRMED',
+        value: 100,
+        paymentDate: '2026-02-30',
+        clientPaymentDate: '   ',
+        creditDate: '2026-02-30T00:00:00.000Z',
+      },
+    });
+
+    expect(result).toEqual({ success: false, error: 'ASAAS_PAYMENT_DATE_INVALID' });
+    expect(mockResolvePaymentToLocalEntity).not.toHaveBeenCalled();
+    expect(prisma.cobranca.update).not.toHaveBeenCalled();
+    expect(prisma.charge.update).not.toHaveBeenCalled();
+    expect(prisma.pagamento.create).not.toHaveBeenCalled();
+    expect(prisma.lancamento.create).not.toHaveBeenCalled();
+  });
+
   it('observa pagamento de assinatura externa sem criar vínculos ou issues locais', async () => {
     const { prisma } = await import('@alusa/database');
     mockResolvePaymentToLocalEntity.mockResolvedValue({
@@ -564,7 +587,8 @@ describe('handlePaymentWebhook', () => {
         originalValue: 150,
         subscription: 'sub_asaas_1',
         dueDate: '2026-07-05',
-        paymentDate: '2026-06-18',
+        paymentDate: '2026-02-30',
+        clientPaymentDate: '2026-06-18',
         creditDate: '2026-07-20',
         billingType: 'CREDIT_CARD',
         externalReference: 'alusa:subscription:m_academic_1:cycle_1',

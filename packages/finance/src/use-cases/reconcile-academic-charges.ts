@@ -15,6 +15,7 @@ import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
 import { getPayment, isAsaasEnabled } from './asaas-ops';
 import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
 import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
+import { parsePaymentDate } from '@alusa/shared';
 
 type ReconciledCobranca = Pick<
   Cobranca,
@@ -46,14 +47,28 @@ const RECONCILIABLE_STATUSES: StatusCobranca[] = [
 
 function parseAsaasDate(value: string | null | undefined): Date | null {
   if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    try {
+      const parsed = parsePaymentDate(value);
+      parsed.setUTCHours(12);
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
   const parsed = new Date(`${value}T12:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function parseAsaasDateTime(value: string | null | undefined): Date | null {
   if (!value) return null;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? parseAsaasDate(value) : parsed;
+  try {
+    const parsed = parsePaymentDate(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  } catch {
+    // Invalid provider calendar dates are not reconciled as another day.
+  }
+  return parseAsaasDate(value);
 }
 
 function resolveFinanceStatus(params: { chargeType: string; nextChargeStatus: StatusCobranca }) {
@@ -133,14 +148,18 @@ export async function reconcileAcademicChargesWithAsaas(params: {
         parseAsaasDateTime(payment.clientPaymentDate) ??
         parseAsaasDateTime(payment.confirmedDate) ??
         parseAsaasDateTime(payment.creditDate);
+      const creditDate = parseAsaasDateTime(payment.creditDate);
+      if (payment.creditDate && !creditDate) continue;
+      const estimatedCreditDate = parseAsaasDateTime(payment.estimatedCreditDate);
+      if (payment.estimatedCreditDate && !estimatedCreditDate) continue;
       const liquidacaoStatus = resolveLiquidacaoFromAsaasPayment({
         asaasStatus: effectiveAsaasStatus,
-        creditDate: payment.creditDate,
+        creditDate,
         billingType: payment.billingType,
       });
       const liquidadoEm =
         liquidacaoStatus === 'DISPONIVEL'
-          ? (parseAsaasDateTime(payment.creditDate) ?? paymentDate)
+          ? (creditDate ?? paymentDate)
           : null;
       const feeValue =
         typeof payment.netValue === 'number'
@@ -155,8 +174,8 @@ export async function reconcileAcademicChargesWithAsaas(params: {
         asaasNetValue: payment.netValue,
         asaasOriginalValue: payment.originalValue ?? null,
         asaasFeeValue: feeValue,
-        asaasCreditDate: parseAsaasDateTime(payment.creditDate),
-        asaasEstimatedCreditDate: parseAsaasDateTime(payment.estimatedCreditDate),
+        asaasCreditDate: creditDate,
+        asaasEstimatedCreditDate: estimatedCreditDate,
         lastAsaasFetchAt: new Date(),
         liquidacaoStatus,
         liquidadoEm,
@@ -252,8 +271,8 @@ export async function reconcileAcademicChargesWithAsaas(params: {
             asaasNetValue: payment.netValue,
             asaasOriginalValue: payment.originalValue ?? null,
             asaasFeeValue: feeValue,
-            asaasCreditDate: parseAsaasDateTime(payment.creditDate),
-            asaasEstimatedCreditDate: parseAsaasDateTime(payment.estimatedCreditDate),
+            asaasCreditDate: creditDate,
+            asaasEstimatedCreditDate: estimatedCreditDate,
             lastAsaasFetchAt: new Date(),
             liquidacaoStatus,
             liquidadoEm,

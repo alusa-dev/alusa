@@ -9,6 +9,7 @@ import {
 import { resolvePayer } from '@alusa/domain';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
+import { parseOptionalPaymentDate } from '@alusa/shared';
 
 import { auditLogService } from '../foundation/audit-log.service';
 import { featureFlagsService } from '../foundation/feature-flags.service';
@@ -645,22 +646,29 @@ async function syncInstallmentPayments(params: {
         billingType: payment.billingType,
         deleted: payment.deleted,
       }) ?? payment.status;
-    const asaasSnapshot = {
+    const creditDate = parseOptionalPaymentDate(payment.creditDate);
+    const estimatedCreditDate = parseOptionalPaymentDate(payment.estimatedCreditDate);
+    const liquidacaoStatus = resolveLiquidacaoFromAsaasPayment({
+      asaasStatus: effectivePaymentStatus,
+      creditDate: payment.creditDate,
+      billingType: payment.billingType,
+    });
+    const asaasSnapshotUpdate = {
       asaasStatus: effectivePaymentStatus,
       asaasValue: payment.value,
       asaasNetValue: payment.netValue,
       asaasOriginalValue: payment.originalValue ?? null,
       asaasFeeValue: payment.value - payment.netValue,
-      asaasCreditDate: payment.creditDate ? new Date(payment.creditDate) : null,
-      asaasEstimatedCreditDate: payment.estimatedCreditDate
-        ? new Date(payment.estimatedCreditDate)
-        : null,
+      ...(creditDate === undefined ? {} : { asaasCreditDate: creditDate }),
+      ...(estimatedCreditDate === undefined ? {} : { asaasEstimatedCreditDate: estimatedCreditDate }),
       lastAsaasFetchAt: new Date(),
-      liquidacaoStatus: resolveLiquidacaoFromAsaasPayment({
-        asaasStatus: effectivePaymentStatus,
-        creditDate: payment.creditDate,
-        billingType: payment.billingType,
-      }),
+      ...(creditDate === undefined ? {} : { liquidacaoStatus }),
+    };
+    const asaasSnapshotCreate = {
+      ...asaasSnapshotUpdate,
+      asaasCreditDate: creditDate ?? null,
+      asaasEstimatedCreditDate: estimatedCreditDate ?? null,
+      liquidacaoStatus,
     };
 
     const syncedCharge = await prisma.charge.upsert({
@@ -685,7 +693,7 @@ async function syncInstallmentPayments(params: {
         invoiceUrl: payment.invoiceUrl ?? null,
         standaloneInstallmentPlanId: installmentPlanId,
         ...paymentRules,
-        ...asaasSnapshot,
+        ...asaasSnapshotUpdate,
       },
       create: {
         contaId,
@@ -704,7 +712,7 @@ async function syncInstallmentPayments(params: {
         invoiceUrl: payment.invoiceUrl ?? null,
         standaloneInstallmentPlanId: installmentPlanId,
         ...paymentRules,
-        ...asaasSnapshot,
+        ...asaasSnapshotCreate,
       },
     });
 

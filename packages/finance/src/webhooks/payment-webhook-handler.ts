@@ -1,4 +1,5 @@
 import { prisma } from '@alusa/database';
+import { parseOptionalPaymentDate } from '@alusa/shared';
 import { convergeStandaloneInstallmentPlanStatus } from '@alusa/lib/services/standalone-installment-plan-status.service';
 import type { PaymentStatus } from '@alusa/asaas';
 import { confirmPublicEventMapOrderPayment } from '../events/confirm-public-event-map-order-payment';
@@ -457,6 +458,18 @@ function computeLiquidacaoStatusFromPayload(payload: PaymentWebhookPayload): Liq
   });
 }
 
+function firstValidProviderDate(...values: Array<string | null | undefined>): Date | undefined {
+  for (const value of values) {
+    const parsed = parseOptionalPaymentDate(value);
+    if (parsed instanceof Date) return parsed;
+  }
+  return undefined;
+}
+
+function hasProviderDateCandidate(...values: Array<string | null | undefined>): boolean {
+  return values.some((value) => Boolean(value));
+}
+
 function normalizeAsaasPaymentSnapshotStatus(payload: PaymentWebhookPayload): string | null {
   return normalizeAsaasPaymentSnapshotStatusInput({
     eventName: payload.event,
@@ -506,6 +519,9 @@ function buildChargeAsaasSnapshotUpdate(
   },
 ): Record<string, unknown> {
   const p = payload.payment;
+  const creditDate = parseOptionalPaymentDate(p.creditDate);
+  const estimatedCreditDate = parseOptionalPaymentDate(p.estimatedCreditDate);
+  const liquidadoEm = firstValidProviderDate(p.creditDate, p.paymentDate, p.clientPaymentDate);
   const liquidacaoStatus = computeLiquidacaoStatusFromPayload(payload);
   const incomingAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload);
   const providerStatus = resolveMonotonicAsaasPaymentStatus({
@@ -522,14 +538,15 @@ function buildChargeAsaasSnapshotUpdate(
     asaasNetValue: p.netValue,
     asaasOriginalValue: p.originalValue ?? null,
     asaasFeeValue: p.value - p.netValue,
-    asaasCreditDate: p.creditDate ? new Date(p.creditDate) : null,
-    asaasEstimatedCreditDate: p.estimatedCreditDate ? new Date(p.estimatedCreditDate) : null,
+    ...(creditDate === undefined ? {} : { asaasCreditDate: creditDate }),
+    ...(estimatedCreditDate === undefined ? {} : { asaasEstimatedCreditDate: estimatedCreditDate }),
     lastAsaasFetchAt: new Date(),
-    liquidacaoStatus,
-    liquidadoEm:
-      liquidacaoStatus === 'DISPONIVEL'
-        ? new Date(p.creditDate ?? p.paymentDate ?? p.clientPaymentDate ?? Date.now())
+    ...(creditDate === undefined ? {} : { liquidacaoStatus }),
+    ...(creditDate === undefined ? {} : {
+      liquidadoEm: liquidacaoStatus === 'DISPONIVEL'
+        ? liquidadoEm ?? (p.creditDate || p.paymentDate || p.clientPaymentDate ? null : new Date())
         : null,
+    }),
     ...buildPaymentDocumentUpdate(payload),
   };
 }
@@ -870,8 +887,7 @@ async function handleStandaloneChargeWebhook(
     if (payload.event === 'PAYMENT_RECEIVED_IN_CASH_UNDONE') {
       updateData.paidAt = null;
     } else if (['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(internalStatus)) {
-      const providerPaidAtValue = p.clientPaymentDate ?? p.paymentDate ?? null;
-      const providerPaidAt = providerPaidAtValue ? new Date(providerPaidAtValue) : null;
+      const providerPaidAt = firstValidProviderDate(p.clientPaymentDate, p.paymentDate);
       if (providerPaidAt && !Number.isNaN(providerPaidAt.getTime())) {
         updateData.paidAt = charge.paidAt ?? providerPaidAt;
       }
@@ -1081,13 +1097,17 @@ async function updateEventFinancialEntryFromWebhook(
     refundedAt = new Date();
   } else if (paidCharges.length + cancelledCharges.length + refundedCharges.length === charges.length) {
     nextStatus = 'RECEIVED';
-    const paymentDateStr = p.clientPaymentDate ?? p.paymentDate ?? p.creditDate;
-    realizedAt = paymentDateStr ? new Date(paymentDateStr) : new Date();
+    const hasDateCandidate = hasProviderDateCandidate(p.clientPaymentDate, p.paymentDate, p.creditDate);
+    const providerPaidAt = firstValidProviderDate(p.clientPaymentDate, p.paymentDate, p.creditDate);
+    if (hasDateCandidate && !providerPaidAt) return;
+    realizedAt = providerPaidAt ?? new Date();
   } else {
     nextStatus = 'PENDING';
     if (paidCharges.length > 0) {
-      const paymentDateStr = p.clientPaymentDate ?? p.paymentDate ?? p.creditDate;
-      realizedAt = paymentDateStr ? new Date(paymentDateStr) : new Date();
+      const hasDateCandidate = hasProviderDateCandidate(p.clientPaymentDate, p.paymentDate, p.creditDate);
+      const providerPaidAt = firstValidProviderDate(p.clientPaymentDate, p.paymentDate, p.creditDate);
+      if (hasDateCandidate && !providerPaidAt) return;
+      realizedAt = providerPaidAt ?? new Date();
     }
   }
 
@@ -1166,6 +1186,24 @@ async function handlePaymentWebhookCore(
 ): Promise<PaymentWebhookResult> {
   try {
     const effectiveAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload) ?? payload.payment.status;
+    const paymentDateCandidates = [
+      payload.payment.clientPaymentDate,
+      payload.payment.paymentDate,
+      payload.payment.creditDate,
+    ];
+    const hasPaymentDateCandidate = hasProviderDateCandidate(...paymentDateCandidates);
+    if (
+      hasPaymentDateCandidate &&
+      (
+        ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(effectiveAsaasStatus) ||
+        ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH'].includes(payload.event)
+      ) &&
+      !firstValidProviderDate(...paymentDateCandidates)
+    ) {
+      // Reject before resolving or mutating local state so retries cannot leave
+      // a partially applied payment from a malformed provider payload.
+      return { success: false, error: 'ASAAS_PAYMENT_DATE_INVALID' };
+    }
     // Resolve tenant-scoped identity before confirming commands, processing
     // event-map payments, or applying any financial side effect. Reuse this
     // result below so conflict detection and normal routing share one snapshot.
@@ -1284,11 +1322,16 @@ async function handlePaymentWebhookCore(
       logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.command_confirmation.failed', operation: 'confirm_payment_command', error: commandError });
     }
 
-    const paidAt =
-      payload.payment.clientPaymentDate ??
-      payload.payment.paymentDate ??
-      payload.payment.creditDate ??
-      new Date().toISOString();
+    const hasEventMapDateCandidate = hasProviderDateCandidate(
+      payload.payment.clientPaymentDate,
+      payload.payment.paymentDate,
+      payload.payment.creditDate,
+    );
+    const paidAt = firstValidProviderDate(
+      payload.payment.clientPaymentDate,
+      payload.payment.paymentDate,
+      payload.payment.creditDate,
+    ) ?? (hasEventMapDateCandidate ? undefined : new Date());
     const chargebackStatusByEvent: Record<string, string> = {
       PAYMENT_CHARGEBACK_REQUESTED: 'REQUESTED',
       PAYMENT_CHARGEBACK_DISPUTE: 'IN_DISPUTE',
@@ -2964,21 +3007,26 @@ async function handlePaymentWebhookCore(
     // 4. Atualizar status da cobrança + campos asaas* (apenas se houver progressão de status)
     // IMPORTANTE: campos asaas* são sempre atualizados quando há progressão de status
     const p = payload.payment;
+    const parsedCreditDate = parseOptionalPaymentDate(p.creditDate);
+    const parsedEstimatedCreditDate = parseOptionalPaymentDate(p.estimatedCreditDate);
     const liquidacaoStatus = computeLiquidacaoStatusFromPayload(payload);
     const feeValue = p.value - p.netValue;
     const isConfirmed = internalStatus === 'CONFIRMED' || internalStatus === 'RECEIVED_IN_CASH';
-    const paymentDateStr = p.paymentDate ?? p.clientPaymentDate ?? p.creditDate;
-    const paymentDate = paymentDateStr ? new Date(paymentDateStr) : new Date();
+    const paymentDateCandidateExists = hasProviderDateCandidate(p.paymentDate, p.clientPaymentDate, p.creditDate);
+    const paymentDate = firstValidProviderDate(p.paymentDate, p.clientPaymentDate, p.creditDate) ??
+      (paymentDateCandidateExists ? undefined : new Date());
     const cobrancaSensitiveUpdate = buildCobrancaSensitiveUpdate({
       event: payload.event,
       internalStatus,
       occurredAt,
     });
-    const cobrancaPaymentUpdate = isConfirmed
+    const cobrancaPaymentUpdate = isConfirmed && paymentDate instanceof Date
       ? {
           dataPagamento: paymentDate,
           pagoEm: paymentDate,
         }
+      : isConfirmed
+        ? {}
       : payload.event === 'PAYMENT_RECEIVED_IN_CASH_UNDONE'
         ? {
             dataPagamento: null,
@@ -3010,12 +3058,14 @@ async function handlePaymentWebhookCore(
           asaasNetValue: p.netValue,
           asaasOriginalValue: p.originalValue ?? null,
           asaasFeeValue: feeValue,
-          asaasCreditDate: p.creditDate ? new Date(p.creditDate) : null,
-          asaasEstimatedCreditDate: p.estimatedCreditDate ? new Date(p.estimatedCreditDate) : null,
+          ...(parsedCreditDate === undefined ? {} : { asaasCreditDate: parsedCreditDate }),
+          ...(parsedEstimatedCreditDate === undefined ? {} : { asaasEstimatedCreditDate: parsedEstimatedCreditDate }),
           lastAsaasFetchAt: new Date(),
           // Liquidação: para RECEIVED_IN_CASH, usar paymentDate como data de liquidação
-          liquidacaoStatus,
-          liquidadoEm: liquidacaoStatus === 'DISPONIVEL' ? paymentDate : null,
+          ...(parsedCreditDate === undefined ? {} : { liquidacaoStatus }),
+          ...(parsedCreditDate === undefined ? {} : {
+            liquidadoEm: liquidacaoStatus === 'DISPONIVEL' ? paymentDate : null,
+          }),
           ...buildPaymentDocumentUpdate(payload),
           ...cobrancaSensitiveUpdate,
           ...cobrancaPaymentUpdate,
@@ -3034,12 +3084,14 @@ async function handlePaymentWebhookCore(
           asaasNetValue: p.netValue,
           asaasOriginalValue: p.originalValue ?? null,
           asaasFeeValue: feeValue,
-          asaasCreditDate: p.creditDate ? new Date(p.creditDate) : null,
-          asaasEstimatedCreditDate: p.estimatedCreditDate ? new Date(p.estimatedCreditDate) : null,
+          ...(parsedCreditDate === undefined ? {} : { asaasCreditDate: parsedCreditDate }),
+          ...(parsedEstimatedCreditDate === undefined ? {} : { asaasEstimatedCreditDate: parsedEstimatedCreditDate }),
           lastAsaasFetchAt: new Date(),
           // Liquidação: para RECEIVED_IN_CASH, usar paymentDate como data de liquidação
-          liquidacaoStatus,
-          liquidadoEm: liquidacaoStatus === 'DISPONIVEL' ? paymentDate : null,
+          ...(parsedCreditDate === undefined ? {} : { liquidacaoStatus }),
+          ...(parsedCreditDate === undefined ? {} : {
+            liquidadoEm: liquidacaoStatus === 'DISPONIVEL' ? paymentDate : null,
+          }),
           ...buildPaymentDocumentUpdate(payload),
           ...cobrancaSensitiveUpdate,
           ...cobrancaPaymentUpdate,
@@ -3098,8 +3150,7 @@ async function handlePaymentWebhookCore(
         decision: chargeStateDecision,
         now: occurredAt,
       });
-      const providerPaidAtValue = p.clientPaymentDate ?? p.paymentDate ?? null;
-      const parsedProviderPaidAt = providerPaidAtValue ? new Date(providerPaidAtValue) : null;
+      const parsedProviderPaidAt = firstValidProviderDate(p.clientPaymentDate, p.paymentDate);
       const chargePaidAtUpdate =
         chargeStateDecision.kind !== 'APPLY'
           ? {}

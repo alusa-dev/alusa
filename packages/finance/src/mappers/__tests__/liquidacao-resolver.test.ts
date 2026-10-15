@@ -115,6 +115,19 @@ describe('resolveLiquidacaoStatus', () => {
       });
       expect(result).toBe('DISPONIVEL');
     });
+
+    it('deve preservar a semântica civil para data-only e rejeitar data impossível', () => {
+      expect(resolveLiquidacaoStatus({
+        internalStatus: PAYMENT_STATUSES.CONFIRMED,
+        creditDate: '2024-01-10',
+        referenceDate: today,
+      })).toBe('DISPONIVEL');
+      expect(resolveLiquidacaoStatus({
+        internalStatus: PAYMENT_STATUSES.CONFIRMED,
+        creditDate: '2024-02-30',
+        referenceDate: today,
+      })).toBe('PENDENTE');
+    });
   });
 });
 
@@ -166,5 +179,9 @@ describe('getEstimatedAvailableDate', () => {
     const result = getEstimatedAvailableDate('2024-01-15T12:00:00Z');
     expect(result).toBeInstanceOf(Date);
     expect(result?.toISOString()).toBe('2024-01-15T12:00:00.000Z');
+  });
+
+  it('deve retornar null para data impossível', () => {
+    expect(getEstimatedAvailableDate('2024-02-30')).toBeNull();
   });
 });

@@ -2,6 +2,7 @@ import {
   normalizePaymentHistoryCategory,
   PAYMENT_HISTORY_CATEGORY_LABELS,
 } from './payment-history-categories';
+import { formatPaymentDate } from '@alusa/shared';
 
 type PaidReceiptPagamento = {
   id: string;
@@ -155,15 +156,8 @@ function formatCurrency(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 }
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
-  return new Intl.DateTimeFormat('pt-BR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  }).format(date);
+function formatDate(value: string | null | undefined, options: { dateOnly?: boolean } = {}) {
+  return formatPaymentDate(value, undefined, options) ?? '—';
 }
 
 function sanitizeFileName(value: string) {
@@ -439,7 +433,8 @@ function drawReceiptCard(
   width: number,
   height: number,
 ) {
-  const paidAt = item.pagamento?.dataPagamento ?? item.pagamento?.createdAt ?? item.createdAt;
+  const paymentDate = item.pagamento?.dataPagamento;
+  const paidAt = paymentDate ?? item.pagamento?.createdAt ?? item.createdAt;
   const value = item.pagamento?.valorPago ?? item.valor;
   const internalId = resolveInternalId(item);
   const origin = resolveReceiptOrigin(item);
@@ -494,7 +489,15 @@ function drawReceiptCard(
   drawValorGridCell(doc, innerX + colWidth, chargeGridY + rowHeight, colWidth, rowHeight, formatCurrency(value), item);
   drawGridCell(doc, innerX, chargeGridY + rowHeight * 2, colWidth, rowHeight, 'Tipo', resolveTypeLabel(item));
   drawGridCell(doc, innerX + colWidth, chargeGridY + rowHeight * 2, colWidth, rowHeight, 'Forma', resolvePaymentLabel(item));
-  drawGridCell(doc, innerX, chargeGridY + rowHeight * 3, colWidth, rowHeight, 'Pagamento', formatDate(paidAt));
+  drawGridCell(
+    doc,
+    innerX,
+    chargeGridY + rowHeight * 3,
+    colWidth,
+    rowHeight,
+    'Pagamento',
+    formatDate(paidAt, paymentDate ? {} : { dateOnly: false }),
+  );
   drawGridCell(doc, innerX + colWidth, chargeGridY + rowHeight * 3, colWidth, rowHeight, 'ID interno', internalId);
 
   const footerY = chargeGridY + rowHeight * 4 + footerGap;

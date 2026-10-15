@@ -5,6 +5,8 @@ const { prismaMock } = vi.hoisted(() => ({
     $transaction: vi.fn(),
     $queryRaw: vi.fn(),
     eventMapOrder: { findFirst: vi.fn(), updateMany: vi.fn() },
+    auditLog: { create: vi.fn() },
+    financeWebhookSideEffectOutbox: { createMany: vi.fn() },
   },
 }));
 
@@ -16,7 +18,7 @@ import { reconcileEventMapOrderFinancialStateFromAsaas } from './event-map-payme
 
 describe('event map payment confirmation lock', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     prismaMock.$transaction.mockImplementation(async (callback: (_tx: typeof prismaMock) => Promise<unknown>) => callback(prismaMock));
     prismaMock.$queryRaw.mockResolvedValue([{ id: 'order-1' }]);
     prismaMock.eventMapOrder.findFirst
@@ -57,5 +59,66 @@ describe('event map payment confirmation lock', () => {
 
     expect(result).toEqual({ orderId: 'order-1', status: 'PAYMENT_PENDING', financialOnly: true, blocked: true });
     expect(prismaMock.eventMapOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('preserves an Asaas date-only paidAt when persisting reconciled order dates', async () => {
+    vi.resetAllMocks();
+    prismaMock.$transaction.mockImplementation(async (callback: (_tx: typeof prismaMock) => Promise<unknown>) => callback(prismaMock));
+    prismaMock.$queryRaw.mockResolvedValue([{ id: 'order-1' }]);
+    prismaMock.eventMapOrder.findFirst
+      .mockResolvedValueOnce({ id: 'order-1', contaId: 'conta-1', status: 'PAYMENT_PENDING', asaasPaymentId: 'pay-1' })
+      .mockResolvedValueOnce({
+        id: 'order-1', contaId: 'conta-1', status: 'PAYMENT_PENDING', paymentStatus: 'PENDING',
+        reservation: null, map: { publishedVersionId: 'version-1' }, versionId: 'version-1',
+        confirmedAt: null, totalAmount: 60, eventId: 'event-1',
+      });
+    prismaMock.eventMapOrder.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.auditLog.create.mockResolvedValue({});
+
+    await reconcileEventMapOrderFinancialStateFromAsaas({
+      contaId: 'conta-1',
+      asaasPaymentId: 'pay-1',
+      externalReference: 'event-map-order:order-1',
+      paymentStatus: 'RECEIVED',
+      paidAt: '2026-03-27',
+    });
+
+    expect(prismaMock.eventMapOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        paidAt: new Date('2026-03-27T00:00:00.000Z'),
+        confirmedAt: new Date('2026-03-27T00:00:00.000Z'),
+      }),
+    }));
+  });
+
+  it('preserves Date inputs and rejects invalid paidAt values before opening a transaction', async () => {
+    prismaMock.$transaction.mockImplementation(async (callback: (_tx: typeof prismaMock) => Promise<unknown>) => callback(prismaMock));
+    prismaMock.$queryRaw.mockResolvedValue([{ id: 'order-1' }]);
+    prismaMock.eventMapOrder.findFirst
+      .mockResolvedValueOnce({ id: 'order-1', contaId: 'conta-1', status: 'PAYMENT_PENDING', asaasPaymentId: 'pay-1' })
+      .mockResolvedValueOnce({
+        id: 'order-1', contaId: 'conta-1', status: 'PAYMENT_PENDING', paymentStatus: 'PENDING',
+        reservation: null, map: { publishedVersionId: 'version-1' }, versionId: 'version-1',
+        confirmedAt: null, totalAmount: 60, eventId: 'event-1',
+      });
+    prismaMock.eventMapOrder.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.auditLog.create.mockResolvedValue({});
+    const paidAt = new Date('2026-03-27T14:15:00.000Z');
+    const result = await reconcileEventMapOrderFinancialStateFromAsaas({
+      contaId: 'conta-1', asaasPaymentId: 'pay-1', paymentStatus: 'RECEIVED', paidAt,
+    });
+    expect(result).toEqual({ orderId: 'order-1', status: 'CONFIRMED', financialOnly: true });
+    expect(prismaMock.eventMapOrder.updateMany.mock.calls[0][0].data.paidAt).toBe(paidAt);
+
+    vi.resetAllMocks();
+    await expect(reconcileEventMapOrderFinancialStateFromAsaas({
+      contaId: 'conta-1', asaasPaymentId: 'pay-1', paymentStatus: 'RECEIVED', paidAt: 'invalid',
+    })).resolves.toBeNull();
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+
+    await expect(reconcileEventMapOrderFinancialStateFromAsaas({
+      contaId: 'conta-1', asaasPaymentId: 'pay-1', paymentStatus: 'RECEIVED', paidAt: '2026-02-30',
+    })).rejects.toThrow(RangeError);
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 });

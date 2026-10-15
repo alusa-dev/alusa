@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { formatPaymentDate } from '@alusa/shared';
 import { ArrowLeftIcon, ChevronRightIcon } from 'react-native-heroicons/outline';
 
 import { EmptyState } from '@/components/feedback/EmptyState';
@@ -98,7 +99,7 @@ function InstallmentDetailContent({ detail }: { detail: InstallmentDetail }) {
 
 function InstallmentRow({ item, isLast }: { item: InstallmentItem; isLast: boolean }) {
   const virtual = item.id.startsWith('virtual-');
-  const detailText = item.dataPagamento ? `Pago em ${formatDate(item.dataPagamento)}` : `Vencimento ${formatDate(item.vencimento)}`;
+  const detailText = item.dataPagamento ? `Pago em ${formatPaymentDate(item.dataPagamento) ?? 'Não informado'}` : `Vencimento ${formatDate(item.vencimento)}`;
   const rowStyle = [styles.installmentRow, isLast ? null : styles.installmentRowDivider, virtual ? styles.installmentRowDisabled : null];
   const content = <><View style={styles.installmentNumber}><AppText variant="small" weight="medium">{item.numero}</AppText></View><View style={styles.rowCopy}><AppText weight="medium" numberOfLines={1}>{`Parcela ${item.numero}`}</AppText><AppText variant="small" tone="muted" numberOfLines={1}>{detailText}</AppText></View><View style={styles.rowTrailing}><View style={styles.rowAmount}><StatusPill status={statusFor(item.status)} align="end" /><AppText variant="body" weight="medium" numberOfLines={1}>{formatCurrency(item.valor)}</AppText></View>{!virtual ? <ChevronRightIcon color={colors.inkMuted} size={20} strokeWidth={1.8} /> : null}</View></>;
   if (virtual) return <View accessibilityLabel={`Parcela ${item.numero}, aguardando geração`} style={rowStyle}>{content}</View>;

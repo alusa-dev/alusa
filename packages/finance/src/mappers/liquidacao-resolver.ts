@@ -13,6 +13,7 @@
  */
 
 import { PAYMENT_STATUSES } from '@alusa/shared';
+import { parseOptionalPaymentDate } from '@alusa/shared';
 import type { PaymentStatus } from '@alusa/shared';
 
 export type LiquidacaoStatus = 'NAO_APLICAVEL' | 'PENDENTE' | 'DISPONIVEL';
@@ -50,7 +51,10 @@ export function resolveLiquidacaoStatus(input: LiquidacaoResolverInput): Liquida
     return 'PENDENTE';
   }
 
-  const parsedCreditDate = typeof creditDate === 'string' ? new Date(creditDate) : creditDate;
+  const parsedCreditDate = typeof creditDate === 'string'
+    ? parseOptionalPaymentDate(creditDate)
+    : creditDate;
+  if (!parsedCreditDate || Number.isNaN(parsedCreditDate.getTime())) return 'PENDENTE';
 
   // creditDate no futuro = PENDENTE
   // creditDate <= hoje = DISPONIVEL
@@ -81,5 +85,6 @@ export function isAvailableInAsaas(liquidacaoStatus: LiquidacaoStatus): boolean 
  */
 export function getEstimatedAvailableDate(creditDate?: Date | string | null): Date | null {
   if (!creditDate) return null;
-  return typeof creditDate === 'string' ? new Date(creditDate) : creditDate;
+  if (creditDate instanceof Date) return Number.isNaN(creditDate.getTime()) ? null : creditDate;
+  return parseOptionalPaymentDate(creditDate) ?? null;
 }

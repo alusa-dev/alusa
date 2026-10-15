@@ -17,6 +17,7 @@ vi.mock('@alusa/database', () => {
       charge: {
         findFirst: vi.fn(),
         create: vi.fn(),
+        upsert: vi.fn(),
       },
       asaasIntegrationJob: { update: vi.fn() },
     },
@@ -60,6 +61,9 @@ vi.mock('../../foundation/kyc-guard', () => ({
 describe('createStandaloneInstallmentPlan', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+
+    const { listInstallmentPayments } = await import('@alusa/asaas');
+    vi.mocked(listInstallmentPayments).mockReset();
 
     const { requireKycApproved } = await import('../../foundation/kyc-guard');
     vi.mocked(requireKycApproved).mockResolvedValue({ success: true, data: true } as never);
@@ -198,5 +202,53 @@ describe('createStandaloneInstallmentPlan', () => {
     // Standalone parcelamentos must not be written to the academic
     // AsaasIntegrationJob.installmentPlanId foreign key.
     expect(prisma.asaasIntegrationJob.update).not.toHaveBeenCalled();
+  });
+
+  it('preserva snapshots de crédito ao reconciliar datas explícitas inválidas', async () => {
+    const { prisma, loadAsaasCredentials } = await import('@alusa/database');
+    const { listInstallmentPayments } = await import('@alusa/asaas');
+
+    vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({ id: 'r1', nome: 'Resp' } as never);
+    vi.mocked(prisma.customer.findUnique).mockResolvedValueOnce({ id: 'cust1', asaasCustomerId: 'asaas_cus_1' } as never);
+    vi.mocked(prisma.standaloneInstallmentPlan.findUnique).mockResolvedValueOnce({
+      id: 'sip1',
+      externalReference: 'alusa:installment:sip1',
+      asaasInstallmentId: 'asaas_inst_1',
+      status: 'ACTIVE',
+      createdAt: new Date('2099-01-01T00:00:00.000Z'),
+      statusUpdatedAt: new Date('2099-01-01T00:00:00.000Z'),
+      payerType: 'RESPONSAVEL',
+      payerId: 'r1',
+    } as never);
+    vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'sandbox_x', contaId: 't1' } as never);
+    vi.mocked(listInstallmentPayments).mockResolvedValueOnce({
+      data: [{
+        id: 'pay_1',
+        dueDate: '2099-02-10',
+        value: 100,
+        status: 'CONFIRMED',
+        billingType: 'BOLETO',
+        creditDate: '2026-02-30',
+        estimatedCreditDate: '2026-02-30T00:00:00.000Z',
+      }],
+    } as never);
+    vi.mocked(prisma.charge.upsert).mockResolvedValueOnce({ id: 'charge1' } as never);
+
+    const result = await createStandaloneInstallmentPlan({
+      contaId: 't1',
+      payer: { type: 'responsavel', responsavelId: 'r1' },
+      installmentCount: 2,
+      billingType: 'BOLETO',
+      value: 100,
+      firstDueDate: '2099-01-10',
+      actor: { type: 'USER', id: 'u1' },
+    });
+
+    expect(result.success).toBe(true);
+    const update = vi.mocked(prisma.charge.upsert).mock.calls.at(-1)?.[0]?.update;
+    expect(update).toBeDefined();
+    expect(update).not.toHaveProperty('asaasCreditDate');
+    expect(update).not.toHaveProperty('asaasEstimatedCreditDate');
+    expect(update).not.toHaveProperty('liquidacaoStatus');
   });
 });

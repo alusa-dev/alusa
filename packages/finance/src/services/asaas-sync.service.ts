@@ -16,6 +16,7 @@ import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
 import { createHash } from 'crypto';
 import type { LiquidacaoStatus } from '@prisma/client';
 import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
+import { parseOptionalPaymentDate } from '@alusa/shared';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -296,9 +297,11 @@ function computeLiquidacaoStatus(snapshot: AsaasPaymentSnapshot): LiquidacaoStat
   // RECEIVED ou CONFIRMED = pagamento recebido
   if (snapshot.asaasStatus === 'RECEIVED' || snapshot.asaasStatus === 'CONFIRMED') {
     // Se creditDate preenchido, crédito já disponível
-    if (snapshot.creditDate) {
+    const creditDate = parseOptionalPaymentDate(snapshot.creditDate);
+    if (creditDate instanceof Date) {
       return 'DISPONIVEL';
     }
+    if (creditDate === undefined) return 'PENDENTE';
     // Se estimatedCreditDate, ainda aguardando
     if (snapshot.estimatedCreditDate) {
       return 'PENDENTE';
@@ -351,10 +354,16 @@ export async function persistAsaasPaymentSnapshot(
 
     // 2. Calcular status de liquidação
     const liquidacaoStatus = computeLiquidacaoStatus(snapshot);
+    const creditDate = parseOptionalPaymentDate(snapshot.creditDate);
+    const estimatedCreditDate = parseOptionalPaymentDate(snapshot.estimatedCreditDate);
+    const hasInvalidCreditDate = creditDate === undefined;
+    const hasInvalidEstimatedCreditDate = estimatedCreditDate === undefined;
     // Para RECEIVED_IN_CASH, creditDate é null - usar paymentDate como fallback
     const liquidacaoDateStr = snapshot.creditDate ?? snapshot.paymentDate;
     const liquidadoEm =
-      liquidacaoStatus === 'DISPONIVEL' && liquidacaoDateStr ? new Date(liquidacaoDateStr) : null;
+      !hasInvalidCreditDate && liquidacaoStatus === 'DISPONIVEL' && liquidacaoDateStr
+        ? parseOptionalPaymentDate(liquidacaoDateStr) ?? null
+        : null;
 
     // 3. Atualizar campos asaas*
     await prisma.cobranca.update({
@@ -365,14 +374,11 @@ export async function persistAsaasPaymentSnapshot(
         asaasNetValue: snapshot.netValue,
         asaasOriginalValue: snapshot.originalValue,
         asaasFeeValue: snapshot.feeValue,
-        asaasCreditDate: snapshot.creditDate ? new Date(snapshot.creditDate) : null,
-        asaasEstimatedCreditDate: snapshot.estimatedCreditDate
-          ? new Date(snapshot.estimatedCreditDate)
-          : null,
+        ...(hasInvalidCreditDate ? {} : { asaasCreditDate: creditDate }),
+        ...(hasInvalidEstimatedCreditDate ? {} : { asaasEstimatedCreditDate: estimatedCreditDate }),
         lastAsaasFetchAt: snapshot.fetchedAt,
         lastAsaasFetchHash: snapshot.snapshotHash,
-        liquidacaoStatus,
-        liquidadoEm,
+        ...(!hasInvalidCreditDate ? { liquidacaoStatus, liquidadoEm } : {}),
       },
     });
 
@@ -389,13 +395,10 @@ export async function persistAsaasPaymentSnapshot(
           asaasNetValue: snapshot.netValue,
           asaasOriginalValue: snapshot.originalValue,
           asaasFeeValue: snapshot.feeValue,
-          asaasCreditDate: snapshot.creditDate ? new Date(snapshot.creditDate) : null,
-          asaasEstimatedCreditDate: snapshot.estimatedCreditDate
-            ? new Date(snapshot.estimatedCreditDate)
-            : null,
+          ...(hasInvalidCreditDate ? {} : { asaasCreditDate: creditDate }),
+          ...(hasInvalidEstimatedCreditDate ? {} : { asaasEstimatedCreditDate: estimatedCreditDate }),
           lastAsaasFetchAt: snapshot.fetchedAt,
-          liquidacaoStatus,
-          liquidadoEm,
+          ...(!hasInvalidCreditDate ? { liquidacaoStatus, liquidadoEm } : {}),
         },
       });
     }

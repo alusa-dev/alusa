@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
+import { formatPaymentDate } from '@alusa/shared';
 import { formatCurrency, formatDate, type FinancialEntryDTO } from '../events-service';
 import { EventField as Field } from '../shared/EventField';
 import { getFinancialOriginActionLabel, getFinancialOriginLabel } from './financial-entry-ui';
@@ -37,7 +38,7 @@ export function FinancialEntryDetailsDialog({
     ['Status', EVENT_FINANCIAL_STATUS_LABELS[entry.status]],
     ['Origem', getFinancialOriginLabel(entry)],
     ['Vencimento', entry.dueDate ? formatDate(entry.dueDate) : '-'],
-    ['Realização', entry.realizedAt ? formatDate(entry.realizedAt) : '-'],
+    ['Realização', entry.realizedAt ? formatPaymentDate(entry.realizedAt) ?? '-' : '-'],
     ['Método', entry.paymentMethod ? EVENT_PAYMENT_METHOD_LABELS[entry.paymentMethod] : '-'],
     ['Fornecedor', entry.supplier || '-'],
   ];
@@ -85,7 +86,7 @@ export function FinancialEntryDetailsDialog({
                           <p className="text-xs font-medium leading-5 text-slate-500">Pagamento {index + 1}</p>
                           <p className="text-sm font-semibold leading-5 text-slate-900">{formatCurrency(payment.amount)}</p>
                           {payment.refundedAmount > 0 ? <p className="text-xs text-violet-700">Estornado: {formatCurrency(payment.refundedAmount)}</p> : null}
-                          <p className="text-xs leading-5 text-slate-500">{EVENT_PAYMENT_METHOD_LABELS[payment.paymentMethod]} · {formatDate(payment.paidAt)}</p>
+                          <p className="text-xs leading-5 text-slate-500">{EVENT_PAYMENT_METHOD_LABELS[payment.paymentMethod]} · {formatPaymentDate(payment.paidAt) ?? '-'}</p>
                         </div>
                         {payment.status === 'REFUNDED' ? <span className="shrink-0 text-xs font-medium text-violet-700">Estornado</span> : payment.refundedAmount > 0 ? <span className="shrink-0 text-xs font-medium text-violet-700">Parcialmente estornado</span> : null}
                       </div>

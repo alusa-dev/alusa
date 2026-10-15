@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, useRef } from 'react';
+import { formatPaymentDate } from '@alusa/shared';
 import type { ChangeEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft as ArrowLeft, Edit } from '@/components/icons/icons';
@@ -107,11 +108,6 @@ function parseBRL(display: string): number {
   const normalized = display.replace(/\./g, '').replace(',', '.');
   const num = parseFloat(normalized);
   return isNaN(num) ? 0 : num;
-}
-
-function formatDate(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('pt-BR');
 }
 
 type CobrancaDetalhes = {
@@ -823,7 +819,9 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
         // Se não houver nenhum comprovante disponível
         pushToast({
           title: 'Comprovante não disponível',
-          description: `Pagamento realizado em ${formatDate(pagamentoConfirmado.dataPagamento || pagamentoConfirmado.createdAt)}. Comprovante não encontrado.`,
+          description: `Pagamento realizado em ${pagamentoConfirmado.dataPagamento
+            ? formatPaymentDate(pagamentoConfirmado.dataPagamento) ?? '-'
+            : formatDate(pagamentoConfirmado.createdAt)}. Comprovante não encontrado.`,
           variant: 'warning',
         });
         return;
@@ -1518,7 +1516,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
               <label className={labelClass}>Data de Pagamento</label>
               <input
                 type="text"
-                value={formatDate(cobranca.dataPagamento)}
+                value={formatPaymentDate(cobranca.dataPagamento) ?? '-'}
                 disabled
                 className="w-full px-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed rounded-md"
               />
@@ -1610,7 +1608,9 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
                 <div>
                   <dt className="text-xs font-medium text-green-700">Data do Pagamento:</dt>
                   <dd className="text-sm text-green-900 font-semibold mt-0.5">
-                    {formatDate(pagamentoConfirmado.dataPagamento || pagamentoConfirmado.createdAt)}
+                    {pagamentoConfirmado.dataPagamento
+                      ? formatPaymentDate(pagamentoConfirmado.dataPagamento) ?? '-'
+                      : formatDate(pagamentoConfirmado.createdAt)}
                   </dd>
                 </div>
                 <div>

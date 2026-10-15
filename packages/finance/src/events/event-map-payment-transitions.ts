@@ -1,4 +1,5 @@
 import { prisma } from '@alusa/database';
+import { parsePaymentDate } from '@alusa/shared';
 import {
   cancelPublicEventMapOrder,
   decimal,
@@ -67,7 +68,11 @@ export async function reconcileEventMapOrderFinancialStateFromAsaas(params: Even
   const paymentStatus = (params.paymentStatus ?? '').trim().toUpperCase();
   if (!PAID_ASAAS_PAYMENT_STATUSES.has(paymentStatus)) return null;
 
-  const paidAt = params.paidAt ? new Date(params.paidAt) : new Date();
+  const paidAt = params.paidAt
+    ? typeof params.paidAt === 'string'
+      ? parsePaymentDate(params.paidAt)
+      : params.paidAt
+    : new Date();
   if (Number.isNaN(paidAt.getTime())) return null;
 
   return prisma.$transaction(async (tx) => {

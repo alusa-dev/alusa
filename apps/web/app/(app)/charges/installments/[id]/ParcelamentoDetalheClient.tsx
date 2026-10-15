@@ -13,6 +13,7 @@
  */
 
 import { useState } from 'react';
+import { formatPaymentDate } from '@alusa/shared';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronLeft as ArrowLeft, ExternalLink } from '@/components/icons/icons';
@@ -320,7 +321,7 @@ export function ParcelamentoDetalheClient({ id }: { id: string }) {
 
                   {/* Data de Pagamento */}
                   <div className="col-span-2 text-[13px] text-gray-500">
-                    {parcela.dataPagamento ? formatDate(parcela.dataPagamento) : '-'}
+                    {parcela.dataPagamento ? formatPaymentDate(parcela.dataPagamento) ?? '-' : '-'}
                   </div>
 
                   {/* Status */}

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
+import { formatPaymentDate } from '@alusa/shared';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -1261,7 +1262,7 @@ export function ParticipantDetailsFeature({
                     header: 'Pagamento',
                     align: 'left',
                     width: 'w-[14%]',
-                    render: (entry: any) => formatDate(entry.realizedAt),
+                    render: (entry: any) => formatPaymentDate(entry.realizedAt) ?? '-',
                   },
                   {
                     id: 'value',
@@ -1423,7 +1424,7 @@ export function ParticipantDetailsFeature({
               <TablePanel>
                 <DataTable
                   columns={[
-                    { id: 'date', header: 'Data', render: (payment: any) => formatDate(payment.paidAt) },
+                    { id: 'date', header: 'Data', render: (payment: any) => formatPaymentDate(payment.paidAt) ?? '-' },
                     { id: 'method', header: 'Forma', render: (payment: any) => EVENT_PAYMENT_METHOD_LABELS[payment.paymentMethod as keyof typeof EVENT_PAYMENT_METHOD_LABELS] ?? payment.paymentMethod },
                     { id: 'amount', header: 'Valor', align: 'right', render: (payment: any) => <span className="font-medium text-slate-900">{formatCurrency(payment.amount)}</span> },
                     { id: 'status', header: 'Status', align: 'center', render: (payment: any) => <SoftBadge tone={payment.status === 'REFUNDED' ? 'neutral' : 'success'}>{payment.status === 'REFUNDED' ? 'Estornado' : 'Recebido'}</SoftBadge> },

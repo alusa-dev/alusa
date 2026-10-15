@@ -8,6 +8,7 @@ import {
 import type { InstallmentStatus } from '@prisma/client';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
+import { parseOptionalPaymentDate } from '@alusa/shared';
 import { resolvePayer } from '@alusa/domain';
 import crypto from 'crypto';
 
@@ -386,10 +387,8 @@ export async function createInstallmentPlan(
             asaasNetValue: payment.netValue,
             asaasOriginalValue: payment.originalValue ?? null,
             asaasFeeValue: payment.value - payment.netValue,
-            asaasCreditDate: payment.creditDate ? new Date(payment.creditDate) : null,
-            asaasEstimatedCreditDate: payment.estimatedCreditDate
-              ? new Date(payment.estimatedCreditDate)
-              : null,
+            asaasCreditDate: parseOptionalPaymentDate(payment.creditDate) ?? null,
+            asaasEstimatedCreditDate: parseOptionalPaymentDate(payment.estimatedCreditDate) ?? null,
             lastAsaasFetchAt: new Date(),
             liquidacaoStatus: resolveLiquidacaoFromAsaasPayment({
               asaasStatus: effectivePaymentStatus,
@@ -411,10 +410,8 @@ export async function createInstallmentPlan(
           asaasNetValue: payment.netValue,
           asaasOriginalValue: payment.originalValue ?? null,
           asaasFeeValue: payment.value - payment.netValue,
-          asaasCreditDate: payment.creditDate ? new Date(payment.creditDate) : null,
-          asaasEstimatedCreditDate: payment.estimatedCreditDate
-            ? new Date(payment.estimatedCreditDate)
-            : null,
+          asaasCreditDate: parseOptionalPaymentDate(payment.creditDate) ?? null,
+          asaasEstimatedCreditDate: parseOptionalPaymentDate(payment.estimatedCreditDate) ?? null,
           lastAsaasFetchAt: new Date(),
           liquidacaoStatus: resolveLiquidacaoFromAsaasPayment({
             asaasStatus: effectivePaymentStatus,

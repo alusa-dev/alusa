@@ -284,6 +284,23 @@ describe('asaas-sync.service', () => {
       }
     });
 
+    it('returns PENDENTE for malformed creditDate, including unchanged snapshots', async () => {
+      mockPrisma.cobranca.findUnique.mockResolvedValue({ lastAsaasFetchHash: 'invalid-date-hash' });
+      mockPrisma.cobranca.update.mockResolvedValue({});
+
+      const result = await persistAsaasPaymentSnapshot('cobranca-1', {
+        ...mockSnapshot,
+        creditDate: '2026-02-30',
+        snapshotHash: 'invalid-date-hash',
+      });
+
+      expect(result).toMatchObject({ success: true, updated: false, liquidacaoStatus: 'PENDENTE' });
+      expect(mockPrisma.cobranca.update).toHaveBeenCalledWith({
+        where: { id: 'cobranca-1' },
+        data: { lastAsaasFetchAt: mockSnapshot.fetchedAt },
+      });
+    });
+
     it('computes NAO_APLICAVEL for PENDING status', async () => {
       mockPrisma.cobranca.findUnique.mockResolvedValue({ lastAsaasFetchHash: null });
       mockPrisma.cobranca.update.mockResolvedValue({});

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { formatPaymentDate } from '@alusa/shared';
 
 import {
   financialReportViewSchema,
@@ -114,7 +115,7 @@ export async function GET(request: NextRequest) {
         row.planoName,
         row.paymentMethod,
         formatDate(row.dueDate, timeZone),
-        formatDate(row.paidAt, timeZone),
+        formatPaymentDate(row.paidAt, timeZone) ?? '',
         formatDate(row.settledAt, timeZone),
         formatMoney(row.grossAmount),
         formatMoney(row.receivedAmount),

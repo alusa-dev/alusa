@@ -15,7 +15,7 @@ export * from './date-only';
 
 // Formatters
 export { formatCurrency, parseCurrency } from './formatters/currency';
-export { formatDate, formatDateISO, addDays, addMonths } from './formatters/date';
+export { formatDate, formatDateISO, formatPaymentDate, parsePaymentDate, parseOptionalPaymentDate, getPaymentDateKey, addDays, addMonths } from './formatters/date';
 
 // Types
 export type { Nullable, Optional, Maybe, Result, AsyncResult } from './types/common';

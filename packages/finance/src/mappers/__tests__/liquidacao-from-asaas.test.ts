@@ -42,6 +42,23 @@ describe('resolveLiquidacaoFromAsaasPayment', () => {
     ).toBe('PENDENTE');
   });
 
+  it('não normaliza um creditDate com dia de calendário impossível', () => {
+    expect(
+      resolveLiquidacaoFromAsaasPayment({
+        asaasStatus: 'CONFIRMED',
+        creditDate: '2026-02-30',
+        referenceDate: new Date('2026-03-10T12:00:00.000Z'),
+      }),
+    ).toBe('PENDENTE');
+    expect(
+      resolveLiquidacaoFromAsaasPayment({
+        asaasStatus: 'CONFIRMED',
+        creditDate: '2026-02-30T00:00:00.000Z',
+        referenceDate: new Date('2026-03-10T12:00:00.000Z'),
+      }),
+    ).toBe('PENDENTE');
+  });
+
   it('trata RECEIVED como CONFIRMED para liquidação', () => {
     expect(
       resolveLiquidacaoFromAsaasPayment({

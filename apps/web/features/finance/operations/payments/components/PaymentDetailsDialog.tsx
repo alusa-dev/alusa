@@ -14,6 +14,7 @@ import { Badge, type StatusType } from '@/components/ui/badge';
 import { ChargeDisplayStatusBadge } from '@/features/finance/operations/components/ChargeDisplayStatusBadge';
 import type { ChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { pushToast } from '@/components/ui/toast';
+import { formatPaymentDate } from '@alusa/shared';
 import { ClipboardDocumentCheck as Receipt, Eye } from '@/components/icons/icons';
 
 interface PaymentRecord {
@@ -220,7 +221,7 @@ export function PaymentDetailsDialog({
                       </p>
                       <p className="mt-2 text-lg font-semibold text-gray-700">
                         {pagamentos[0]?.dataPagamento
-                          ? formatDate(pagamentos[0].dataPagamento)
+                          ? formatPaymentDate(pagamentos[0].dataPagamento) ?? '—'
                           : '—'}
                       </p>
                     </div>
@@ -256,7 +257,7 @@ export function PaymentDetailsDialog({
                             <div>
                               <p className="text-xs text-gray-500 font-medium">Data Pagamento</p>
                               <p className="mt-1 text-gray-900">
-                                {pag.dataPagamento ? formatDate(pag.dataPagamento) : '—'}
+                                {pag.dataPagamento ? formatPaymentDate(pag.dataPagamento) ?? '—' : '—'}
                               </p>
                             </div>
                             <div>

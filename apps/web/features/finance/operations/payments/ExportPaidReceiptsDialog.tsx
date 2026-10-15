@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { getPaymentDateKey } from '@alusa/shared';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -180,9 +181,16 @@ export function ExportPaidReceiptsDialog({
     return items.filter((item) => {
       if (!isPaid(item)) return false;
 
-      const paidAt = item.pagamento?.dataPagamento ?? item.pagamento?.createdAt ?? item.createdAt;
-      if (dateFrom && new Date(paidAt) < new Date(`${dateFrom}T00:00:00`)) return false;
-      if (dateTo && new Date(paidAt) > new Date(`${dateTo}T23:59:59`)) return false;
+      const paymentDate = item.pagamento?.dataPagamento;
+      const paidAt = paymentDate ?? item.pagamento?.createdAt ?? item.createdAt;
+      const paidDateKey = getPaymentDateKey(
+        paidAt,
+        undefined,
+        paymentDate ? {} : { dateOnly: false },
+      );
+      if (!paidDateKey) return false;
+      if (dateFrom && paidDateKey < dateFrom) return false;
+      if (dateTo && paidDateKey > dateTo) return false;
 
       if (!chargeTypes.includes(normalizeChargeType(item))) return false;
       if (!paymentMethods.includes(normalizePaymentMethod(item))) return false;

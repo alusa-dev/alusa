@@ -11,6 +11,7 @@ import { AppText } from '@/components/primitives/AppText';
 import { billingService, type BillingChargeAction } from '@/features/billing/services/billing-service';
 import type { BillingCategory, BillingCharge } from '@/features/billing/types/billing';
 import { formatCurrency, formatDate } from '@/features/billing/utils/formatters';
+import { formatPaymentDate } from '@alusa/shared';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useAppRefresh } from '@/hooks/use-app-refresh';
 
@@ -109,7 +110,7 @@ function ChargeDetails({ charge, onEdit, onEditRules }: { charge: BillingCharge;
           <DetailRow label="Data de criação" value={charge.createdAt ? formatDate(charge.createdAt) : 'Não informado'} />
         </View>
         <DetailRow label="Forma de pagamento" value={formatPaymentMethod(charge.paymentMethod)} />
-        {charge.paidAt ? <DetailRow label="Pagamento em" value={formatDate(charge.paidAt)} /> : null}
+        {charge.paidAt ? <DetailRow label="Pagamento em" value={formatPaymentDate(charge.paidAt) ?? 'Não informado'} /> : null}
       </View>
 
       <ChargeRules charge={charge} onEdit={onEditRules} />

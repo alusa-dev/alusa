@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { formatPaymentDate } from '@alusa/shared';
 import { useFinanceLiveRefresh } from '@/features/finance/operations/hooks/useFinanceLiveRefresh';
 import { useRouter } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -262,7 +263,7 @@ export function StudentPaymentDetailsClient({
       cobranca.description ?? '',
       formatCurrency(resolveValorExibido(cobranca)),
       formatDate(cobranca.vencimento),
-      formatDate(cobranca.pagamento?.dataPagamento ?? null),
+      formatPaymentDate(cobranca.pagamento?.dataPagamento ?? null) ?? '—',
       resolveForma(cobranca),
       cobranca.payerName,
       cobranca.pagamento ? cobranca.pagamento.status : cobranca.status,

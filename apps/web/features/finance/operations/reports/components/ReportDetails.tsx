@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { formatPaymentDate } from '@alusa/shared';
 
 import { ExternalLink } from '@/components/icons/icons';
 import { DataTable, type DataTableColumn } from '@/components/layout/DataTable';
@@ -95,7 +96,9 @@ export function ReportDetailsTable({
       cellClassName: 'hidden sm:table-cell',
       render: (row) => (
         <span className="tabular-nums">
-          {formatReportDate(receipts ? row.paidAt : row.dueDate, timeZone)}
+          {receipts
+            ? formatPaymentDate(row.paidAt, timeZone) ?? '—'
+            : formatReportDate(row.dueDate, timeZone)}
         </span>
       ),
     },
@@ -110,7 +113,9 @@ export function ReportDetailsTable({
           <p className="truncate font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{row.payerName}</p>
           <p className="truncate text-xs text-gray-500">{row.studentName ?? row.description ?? 'Cobrança avulsa'}</p>
           <p className="mt-0.5 text-[11px] text-gray-500 tabular-nums sm:hidden">
-            {receipts ? 'Pago em' : 'Vence em'} {formatReportDate(receipts ? row.paidAt : row.dueDate, timeZone)}
+            {receipts ? 'Pago em' : 'Vence em'} {receipts
+              ? formatPaymentDate(row.paidAt, timeZone) ?? '—'
+              : formatReportDate(row.dueDate, timeZone)}
           </p>
           {contextLinks(row)}
         </div>
@@ -366,7 +371,7 @@ export function ReportDetailsDrawer({
               </DrawerSection>
               <DrawerSection title="Datas">
                 <DrawerValue label="Vencimento" value={formatReportDate(item.dueDate, timeZone)} />
-                <DrawerValue label="Pagamento" value={formatReportDate(item.paidAt, timeZone)} />
+                <DrawerValue label="Pagamento" value={formatPaymentDate(item.paidAt, timeZone) ?? '—'} />
                 <DrawerValue label="Liquidação" value={formatReportDate(item.settledAt, timeZone)} />
                 <DrawerValue label="Competência" value={formatReportDate(item.competenceAt, timeZone)} />
               </DrawerSection>

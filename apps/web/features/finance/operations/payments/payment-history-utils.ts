@@ -1,5 +1,6 @@
 import type { StatusType } from '@/components/ui/badge';
 import type { FinanceiroPagamentoHistoricoCobrancaDTO } from '@/features/finance/operations/dtos';
+import { formatPaymentDate } from '@alusa/shared';
 import {
   PAYMENT_HISTORY_CATEGORY_LABELS,
   type PaymentHistoryCategory,
@@ -49,15 +50,7 @@ export function formatCurrency(value: number) {
 
 export function formatDate(dateStr: string | null) {
   if (!dateStr) return '—';
-  try {
-    return new Intl.DateTimeFormat('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    }).format(new Date(dateStr));
-  } catch {
-    return '—';
-  }
+  return formatPaymentDate(dateStr) ?? '—';
 }
 
 export function getInitials(nome: string) {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { formatPaymentDate } from '@alusa/shared';
 import { ArrowLeftIcon, ChevronRightIcon } from 'react-native-heroicons/outline';
 
 import { EmptyState } from '@/components/feedback/EmptyState';
@@ -100,7 +101,7 @@ function SubscriptionDetailContent({ detail }: { detail: SubscriptionDetail }) {
 }
 
 function SubscriptionChargeRow({ charge, isLast }: { charge: SubscriptionChargeItem; isLast: boolean }) {
-  const detailText = charge.dataPagamento ? `Pago em ${formatDate(charge.dataPagamento)}` : `Vencimento ${formatDate(charge.vencimento)}`;
+  const detailText = charge.dataPagamento ? `Pago em ${formatPaymentDate(charge.dataPagamento) ?? 'Não informado'}` : `Vencimento ${formatDate(charge.vencimento)}`;
   return <Pressable accessibilityRole="button" accessibilityLabel={`Abrir detalhes da cobrança ${charge.numero}, ${statusLabel(charge.status)}, ${formatCurrency(charge.valor)}`} onPress={() => router.push({ pathname: '/(app)/billing/[chargeId]', params: { chargeId: charge.id } })} style={({ pressed }) => [styles.chargeRow, isLast ? null : styles.chargeRowDivider, pressed ? styles.pressed : null]}><View style={styles.chargeNumber}><AppText variant="small" weight="medium">{charge.numero}</AppText></View><View style={styles.rowCopy}><AppText weight="medium" numberOfLines={1}>{`Cobrança ${charge.numero}`}</AppText><AppText variant="small" tone="muted" numberOfLines={1}>{detailText}</AppText></View><View style={styles.rowTrailing}><View style={styles.rowAmount}><ChargeStatusPill charge={charge} align="end" /><AppText variant="body" weight="medium" numberOfLines={1}>{formatCurrency(charge.valor)}</AppText></View><ChevronRightIcon color={colors.inkMuted} size={20} strokeWidth={1.8} /></View></Pressable>;
 }
 

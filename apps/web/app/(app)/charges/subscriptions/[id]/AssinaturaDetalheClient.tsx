@@ -10,6 +10,7 @@
  */
 
 import { useState } from 'react';
+import { formatPaymentDate } from '@alusa/shared';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -429,7 +430,7 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
                       </div>
                       {cobranca.dataPagamento && (
                         <div className="mt-0.5 text-[11px] text-green-600">
-                          Pago em {formatDate(cobranca.dataPagamento)}
+                          Pago em {formatPaymentDate(cobranca.dataPagamento) ?? '-'}
                         </div>
                       )}
                       <div className="mt-2 text-[13px] font-semibold text-gray-900">
@@ -468,7 +469,7 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
                         </div>
                         {cobranca.dataPagamento && (
                           <div className="text-xs text-green-600">
-                            Pago em {formatDate(cobranca.dataPagamento)}
+                            Pago em {formatPaymentDate(cobranca.dataPagamento) ?? '-'}
                           </div>
                         )}
                       </div>

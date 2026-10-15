@@ -6,8 +6,12 @@ import {
   resolvePaymentHistoryDetailHref,
   resolveStandalonePaymentHistoryTipo,
 } from '@/features/finance/operations/payments/payment-history-categories';
+import { formatDate as formatPaymentHistoryDate } from '@/features/finance/operations/payments/payment-history-utils';
 
 describe('payment-history-categories', () => {
+  it('exibe o dia civil da data de pagamento serializada pelo backend', () => {
+    expect(formatPaymentHistoryDate('2026-03-27T00:00:00.000Z')).toBe('27/03/2026');
+  });
   it('normaliza tipos academicos e standalone para categorias canonicas', () => {
     expect(normalizePaymentHistoryCategory({ tipo: 'TAXA_MATRICULA' })).toBe('TAXA_MATRICULA');
     expect(normalizePaymentHistoryCategory({ tipo: 'MENSALIDADE' })).toBe('MENSALIDADE');
