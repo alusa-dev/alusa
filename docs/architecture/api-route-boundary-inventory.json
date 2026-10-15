@@ -1,9 +1,9 @@
 {
   "generatedAt": "deterministic",
-  "routeCount": 534,
+  "routeCount": 536,
   "summary": {
     "byApp": {
-      "web": 507,
+      "web": 509,
       "admin": 27
     },
     "byCategory": {
@@ -16,14 +16,14 @@
       "configuration": 11,
       "contracts": 14,
       "development": 4,
-      "events": 56,
+      "events": 57,
       "files": 5,
       "finance": 78,
       "identity": 23,
       "integrations": 5,
       "mobile": 47,
       "operations": 50,
-      "platform-billing": 7,
+      "platform-billing": 8,
       "portal": 8,
       "privacy": 4,
       "public": 18,
@@ -33,7 +33,7 @@
       "tenant": 7
     },
     "byProtection": {
-      "AUTH_USER": 282,
+      "AUTH_USER": 284,
       "CRON_SECRET": 47,
       "MOBILE_ACCESS_TOKEN": 43,
       "PUBLIC": 42,
@@ -41,9 +41,9 @@
       "TENANT_FINANCE": 61,
       "WEBHOOK_TOKEN": 4
     },
-    "withoutNearbyTest": 482,
+    "withoutNearbyTest": 484,
     "withoutAuthEvidence": 0,
-    "directPrisma": 0,
+    "directPrisma": 1,
     "directAsaas": 0
   },
   "routes": [
@@ -4043,6 +4043,27 @@
     },
     {
       "app": "web",
+      "file": "apps/web/app/api/events/reports/[eventId]/route.ts",
+      "path": "/api/events/reports/:eventId",
+      "category": "events",
+      "protection": "AUTH_USER",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantSession",
+        "withTenantSession",
+        "getEventsContext",
+        "getServerSession",
+        "resolveSessionAccess",
+        "authenticate"
+      ],
+      "hasDTOValidation": true,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
       "file": "apps/web/app/api/events/resources/route.ts",
       "path": "/api/events/resources",
       "category": "events",
@@ -5860,15 +5881,11 @@
       "tenantMode": "explicit-or-iterated",
       "authEvidence": true,
       "authEvidenceTokens": [
-        "resolveTenantScope",
-        "getServerSession",
-        "requireAdmin",
-        "resolveSessionAccess",
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
       "hasNearbyTest": false,
-      "directPrisma": false,
+      "directPrisma": true,
       "directAsaas": false
     },
     {
@@ -8279,6 +8296,26 @@
         "authenticate"
       ],
       "hasDTOValidation": true,
+      "hasNearbyTest": false,
+      "directPrisma": false,
+      "directAsaas": false
+    },
+    {
+      "app": "web",
+      "file": "apps/web/app/api/platform-billing/portal/return/route.ts",
+      "path": "/api/platform-billing/portal/return",
+      "category": "platform-billing",
+      "protection": "AUTH_USER",
+      "tenantMode": "authenticated-tenant",
+      "authEvidence": true,
+      "authEvidenceTokens": [
+        "resolveTenantSession",
+        "withTenantSession",
+        "getServerSession",
+        "resolveSessionAccess",
+        "authenticate"
+      ],
+      "hasDTOValidation": false,
       "hasNearbyTest": false,
       "directPrisma": false,
       "directAsaas": false

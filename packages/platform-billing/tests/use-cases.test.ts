@@ -116,7 +116,10 @@ describe('@alusa/platform-billing use cases', () => {
         findUnique: vi.fn(async () => null),
         upsert: vi.fn(async ({ create }) => ({ id: 'pbcs_prisma', ...create, status: 'CREATED' })),
       },
-      platformBillingAuditLog: { create: vi.fn(async () => ({ id: 'audit_prisma' })) },
+      platformBillingAuditLog: {
+        create: vi.fn(async () => ({ id: 'audit_prisma' })),
+        createMany: vi.fn(async () => ({ count: 1 })),
+      },
     };
     const store = createPrismaPlatformBillingStore(db as never);
     const stripeGateway = createStripeGatewayMock();
