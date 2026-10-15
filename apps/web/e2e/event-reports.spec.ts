@@ -78,7 +78,7 @@ test('event reports list opens an event-specific, explanatory report', async ({ 
     await expect(page.getByText(new RegExp(`^${label} ·`))).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Ingressos registrados', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Como ficaram as inscrições dos alunos?', exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Como as receitas foram pagas?', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Receitas e resultado do evento encerrado', exact: true })).toBeVisible();
     await expect(page.getByText(/ingressos disponíveis|Restam .* disponíveis/i)).toHaveCount(0);
   }
 
@@ -87,7 +87,7 @@ test('event reports list opens an event-specific, explanatory report', async ({ 
   await expect(page.getByText(/^Cancelado ·/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Ingressos do evento cancelado', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Como ficaram as inscrições dos alunos?', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Como as receitas foram pagas?', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Registros financeiros do evento cancelado', exact: true })).toBeVisible();
   await expect(page.getByText(/ingressos disponíveis|Restam .* disponíveis/i)).toHaveCount(0);
 
   await page.getByRole('link', { name: 'Relatórios de eventos' }).click();

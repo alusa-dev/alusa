@@ -28,6 +28,24 @@ export type EventFinancialEntryStatus =
   | 'CANCELLED'
   | 'REFUNDED'
   | 'PARTIALLY_REFUNDED';
+
+export function isEventRevenueExpectedStatus(status: string): boolean {
+  return status === 'EXPECTED' || status === 'PENDING' || status === 'RECEIVED'
+    || status === 'PARTIALLY_PAID' || status === 'PARTIALLY_REFUNDED';
+}
+
+export function isEventRevenueRealizedStatus(status: string): boolean {
+  return status === 'RECEIVED' || status === 'PENDING'
+    || status === 'PARTIALLY_PAID' || status === 'PARTIALLY_REFUNDED';
+}
+
+export function isEventCostExpectedStatus(status: string): boolean {
+  return status === 'EXPECTED' || status === 'PENDING' || status === 'PAID' || status === 'PARTIALLY_PAID';
+}
+
+export function isEventCostRealizedStatus(status: string): boolean {
+  return status === 'PAID' || status === 'PARTIALLY_PAID' || status === 'PARTIALLY_REFUNDED';
+}
 export type EventFinancialOriginType = 'MANUAL' | 'EVENT_REGISTRATION' | 'TICKET_SALE' | 'COSTUME' | 'COSTUME_ASSIGNMENT';
 
 export type EventParticipantFinancialStatus =
@@ -262,6 +280,13 @@ function money(value: number | string | null | undefined): number {
   if (value == null) return 0;
   const parsed = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function getEventNetRealizedAmount(
+  actualAmount: number | string | null | undefined,
+  refundedAmount: number | string | null | undefined,
+): number {
+  return Math.max(money(actualAmount) - money(refundedAmount), 0);
 }
 
 function roundMoney(value: number): number {
@@ -518,7 +543,7 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     if (actual > 0) {
       receitaRecebidaBruta += actual;
       receitaEstornada += refunded;
-      receitaRealizada += Math.max(actual - refunded, 0);
+      receitaRealizada += getEventNetRealizedAmount(actual, refunded);
     }
     if (Math.abs(gross - discount - expected) > 0.01) {
       consistencyIssues.push(`PARTICIPANT:${obligation.id}:gross_discount_mismatch`);
@@ -593,35 +618,37 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
       }
       receitaBrutaPrevista += gross;
       descontosPrevistos += discount;
-      if (entry.status === 'EXPECTED' || entry.status === 'PENDING' || entry.status === 'RECEIVED' || entry.status === 'PARTIALLY_PAID') {
+      if (isEventRevenueExpectedStatus(entry.status)) {
         receitaPrevista += expected;
       }
-      if (entry.status === 'RECEIVED' || entry.status === 'PENDING' || entry.status === 'PARTIALLY_PAID' || entry.status === 'PARTIALLY_REFUNDED') {
+      if (isEventRevenueRealizedStatus(entry.status)) {
         if (entry.actualAmount != null) {
           receitaRecebidaBruta += actual;
           receitaEstornada += refunded;
-          receitaRealizada += Math.max(actual - refunded, 0);
+          receitaRealizada += getEventNetRealizedAmount(actual, refunded);
         }
       }
     }
 
     if (entry.type === 'COST') {
       const costClass = entry.costClass ?? 'DIRECT';
-      if (entry.status === 'EXPECTED' || entry.status === 'PENDING' || entry.status === 'PAID' || entry.status === 'PARTIALLY_PAID') {
+      if (isEventCostExpectedStatus(entry.status)) {
         custoPrevisto += expected;
         if (costClass === 'DIRECT') custoDiretoPrevisto += expected;
         if (costClass === 'INDIRECT') custoIndiretoPrevisto += expected;
         if (costClass === 'FINANCIAL') taxasFinanceirasPrevistas += expected;
         if (costClass === 'TAX') impostosPrevistos += expected;
       }
-      if (entry.status === 'PAID' || entry.status === 'PARTIALLY_PAID') {
-        custoRealizado += actual;
-        if (costClass === 'DIRECT') custoDiretoRealizado += actual;
-        if (costClass === 'INDIRECT') custoIndiretoRealizado += actual;
-        if (costClass === 'FINANCIAL') taxasFinanceirasRealizadas += actual;
-        if (costClass === 'TAX') impostosRealizados += actual;
+      if (isEventCostRealizedStatus(entry.status)) {
+        const netActual = getEventNetRealizedAmount(actual, refunded);
+        custoRealizado += netActual;
+        if (costClass === 'DIRECT') custoDiretoRealizado += netActual;
+        if (costClass === 'INDIRECT') custoIndiretoRealizado += netActual;
+        if (costClass === 'FINANCIAL') taxasFinanceirasRealizadas += netActual;
+        if (costClass === 'TAX') impostosRealizados += netActual;
       }
       if (actual < 0) consistencyIssues.push(`COST:${entry.originId ?? 'unknown'}:negative_actual`);
+      if (refunded > actual) consistencyIssues.push(`COST:${entry.originId ?? 'unknown'}:refund_above_actual`);
     }
   }
 
@@ -644,7 +671,7 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
         if (actual > 0) {
           receitaRecebidaBruta += actual;
           receitaEstornada += refunded;
-          receitaRealizada += Math.max(actual - refunded, 0);
+          receitaRealizada += getEventNetRealizedAmount(actual, refunded);
         }
       } else if (assignment.isPaid) {
         // Legacy paid assignments may predate the individual payment ledger.

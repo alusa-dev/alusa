@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   calculateEventMetrics,
+  isEventCostExpectedStatus,
+  isEventCostRealizedStatus,
+  isEventRevenueExpectedStatus,
+  isEventRevenueRealizedStatus,
   validateSchoolEventStatusTransition,
   validateTicketLotStatusTransition,
   validateTicketSaleStatusTransition,
@@ -56,6 +60,34 @@ describe('events domain rules', () => {
     expect(metrics.figurinosPendentes).toBe(1);
     expect(metrics.figurinosEntregues).toBe(1);
     expect(metrics.figurinosDevolvidos).toBe(1);
+  });
+
+  it('expõe as classificações financeiras canônicas usadas pelos relatórios', () => {
+    expect(isEventRevenueExpectedStatus('PENDING')).toBe(true);
+    expect(isEventRevenueRealizedStatus('PENDING')).toBe(true);
+    expect(isEventRevenueExpectedStatus('PAID')).toBe(false);
+    expect(isEventRevenueRealizedStatus('PAID')).toBe(false);
+    expect(isEventCostExpectedStatus('PARTIALLY_PAID')).toBe(true);
+    expect(isEventCostRealizedStatus('PARTIALLY_PAID')).toBe(true);
+    expect(isEventCostRealizedStatus('PARTIALLY_REFUNDED')).toBe(true);
+    expect(isEventCostExpectedStatus('RECEIVED')).toBe(false);
+    expect(isEventCostRealizedStatus('RECEIVED')).toBe(false);
+  });
+
+  it('usa status e valores realizados conforme a classificação canônica de receita e custo', () => {
+    const metrics = calculateEventMetrics({
+      financialEntries: [
+        { type: 'REVENUE', status: 'PENDING', expectedAmount: 50, actualAmount: 20, refundedAmount: 5, originType: 'MANUAL' },
+        { type: 'REVENUE', status: 'PAID', expectedAmount: 30, actualAmount: 30, originType: 'MANUAL' },
+        { type: 'COST', status: 'PARTIALLY_PAID', expectedAmount: 50, actualAmount: 15, originType: 'MANUAL' },
+        { type: 'COST', status: 'RECEIVED', expectedAmount: 40, actualAmount: 40, originType: 'MANUAL' },
+      ],
+    });
+
+    expect(metrics.receitaPrevista).toBe(50);
+    expect(metrics.receitaRealizada).toBe(15);
+    expect(metrics.custoPrevisto).toBe(50);
+    expect(metrics.custoRealizado).toBe(15);
   });
 
   it('calcula corretamente figurinos, custos diretos/indiretos e estornos', () => {
@@ -143,6 +175,44 @@ describe('events domain rules', () => {
     expect(metrics.receitaPrevista).toBe(1000);
     expect(metrics.receitaRealizada).toBe(350);
     expect(metrics.saldoAReceber).toBe(650);
+  });
+
+  it('mantém a obrigação prevista após estorno parcial e calcula o saldo remanescente', () => {
+    const metrics = calculateEventMetrics({
+      financialEntries: [{
+        type: 'REVENUE', status: 'PARTIALLY_REFUNDED', expectedAmount: 90,
+        actualAmount: 90, refundedAmount: 30, netAmount: 60, originType: 'MANUAL',
+      }],
+    });
+
+    expect(metrics.receitaPrevista).toBe(90);
+    expect(metrics.receitaRealizada).toBe(60);
+    expect(metrics.saldoAReceber).toBe(30);
+  });
+
+  it('calcula o custo realizado líquido de estorno parcial e zera o estorno integral', () => {
+    const metrics = calculateEventMetrics({
+      financialEntries: [
+        { type: 'COST', status: 'PARTIALLY_REFUNDED', expectedAmount: 100, actualAmount: 100, refundedAmount: 30, originType: 'MANUAL' },
+        { type: 'COST', status: 'REFUNDED', expectedAmount: 50, actualAmount: 50, refundedAmount: 50, originType: 'MANUAL' },
+      ],
+    });
+
+    expect(metrics.custoRealizado).toBe(70);
+    expect(metrics.resultadoRealizado).toBe(-70);
+  });
+
+  it('sinaliza custo cujo estorno excede o valor efetivamente pago', () => {
+    const metrics = calculateEventMetrics({
+      financialEntries: [{
+        id: 'cost-with-invalid-refund', originId: 'cost-with-invalid-refund', type: 'COST', status: 'PARTIALLY_REFUNDED',
+        expectedAmount: 20, actualAmount: 10, refundedAmount: 15, originType: 'MANUAL',
+      }],
+    });
+
+    expect(metrics.custoRealizado).toBe(0);
+    expect(metrics.consistency.isConsistent).toBe(false);
+    expect(metrics.consistency.issues).toContain('COST:cost-with-invalid-refund:refund_above_actual');
   });
 
   it('ignora receitas financeiras automaticas para nao duplicar vendas', () => {

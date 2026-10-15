@@ -777,6 +777,7 @@
         "packages/lib/src/events/event-contracts.service.ts",
         "packages/lib/src/events/event-participant-discount.ts",
         "packages/lib/src/events/event-participant-removal-decision.service.ts",
+        "packages/lib/src/events/event-report-detail.service.ts",
         "packages/lib/src/events/events.service.ts",
         "packages/lib/src/events/map/event-map-payment-guard.ts",
         "packages/lib/src/events/map/event-map.service.ts",
@@ -801,6 +802,7 @@
       "declared": true,
       "compatibility": null,
       "files": [
+        "packages/lib/src/events/event-report-detail.service.ts",
         "packages/lib/src/events/events.schema.ts",
         "packages/lib/src/events/map/event-map.schema.ts",
         "packages/lib/src/utils/cpf-cnpj.ts",

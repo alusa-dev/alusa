@@ -162,8 +162,12 @@ jobs:
           pnpm --filter @alusa/observability build
           pnpm --filter @alusa/shared build
           pnpm --filter @alusa/domain build
-      - name: Mandatory auth and contaId regression tests
-        run: pnpm --filter @alusa/web exec vitest run tests/unit/auth tests/unit/with-tenant-session.test.ts tests/unit/prisma-tenant.test.ts tests/unit/password-change-otp.rls.integration.test.ts
+      - name: Mandatory auth, contaId and event report RLS regression tests
+        run: >-
+          pnpm --filter @alusa/web exec vitest run tests/unit/auth
+          tests/unit/with-tenant-session.test.ts tests/unit/prisma-tenant.test.ts
+          tests/unit/password-change-otp.rls.integration.test.ts
+          tests/integration/events-report-tenant-rls.integration.test.ts
 
   app-quality:
     name: Affected workspaces lint, typecheck and build

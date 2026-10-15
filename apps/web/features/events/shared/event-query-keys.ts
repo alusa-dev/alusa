@@ -8,7 +8,7 @@ export const eventQueryKeys = {
   costumes: (id?: string) => ['events', 'costumes', id ?? 'all'] as const,
   assignments: (id?: string) => ['events', 'assignments', id ?? 'all'] as const,
   finance: (id?: string, type?: string) => ['events', 'finance', id ?? 'all', type ?? 'all'] as const,
-  reports: (eventId?: string, compareWithEventId?: string) =>
-    ['events', 'reports', eventId ?? 'all', compareWithEventId ?? 'none'] as const,
+  reports: (eventId?: string, compareWithEventId?: string, contaId?: string | null) =>
+    ['events', 'reports', eventId ?? 'all', compareWithEventId ?? 'none', contaId ?? 'none'] as const,
   audit: (id: string) => ['events', 'audit', id] as const,
 };

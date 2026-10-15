@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useDeferredValue, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useSession } from 'next-auth/react';
 
 import { DataTable, type DataTableColumn } from '@/components/layout/DataTable';
 import { Pagination } from '@/components/layout/Pagination';
@@ -17,6 +18,8 @@ import { EventsFilters } from '../list/EventsFilters';
 type EventReportIndexItem = Awaited<ReturnType<typeof listEvents>>['data'][number];
 
 export function EventReportsIndex() {
+  const { data: session, status: sessionStatus } = useSession();
+  const contaId = session?.user?.contaId;
   const router = useRouter();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -24,7 +27,8 @@ export function EventReportsIndex() {
   const [type, setType] = useState('ALL');
   const deferredSearch = useDeferredValue(search.trim());
   const query = useQuery({
-    queryKey: [...eventQueryKeys.reports(), page, deferredSearch, status, type],
+    queryKey: [...eventQueryKeys.reports(undefined, undefined, contaId), page, deferredSearch, status, type],
+    enabled: sessionStatus === 'authenticated' && Boolean(contaId),
     queryFn: () => listEvents({
       page,
       pageSize: 25,
