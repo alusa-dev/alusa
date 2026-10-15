@@ -657,7 +657,7 @@ describe('previewInitialEnrollmentBilling', () => {
     );
   });
 
-  it('classifica contrato curto separado como cobrança avulsa', async () => {
+  it('bloqueia contrato curto separado sem prometer cobrança avulsa incompatível', async () => {
     const preview = await previewInitialEnrollmentBilling(
       {
         ...baseInput,
@@ -667,8 +667,9 @@ describe('previewInitialEnrollmentBilling', () => {
       { prisma: buildPrisma() as never },
     );
 
-    expect(preview.compatibility.compatible).toBe(true);
-    expect(preview.billingImpact.currentCycleAction).toBe('CREATE_ONE_TIME_CHARGE');
-    expect(preview.billingImpact.operationalMessage).toContain('cobrança avulsa');
+    expect(preview.compatibility.compatible).toBe(false);
+    expect(preview.compatibility.blockers.map((blocker) => blocker.code)).toContain('DATA_FIM_INVALIDA');
+    expect(preview.billingImpact.currentCycleAction).toBe('CREATE_SEPARATE');
+    expect(preview.billingImpact.operationalMessage).toContain('Ajuste');
   });
 });

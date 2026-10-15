@@ -176,7 +176,7 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
     firstChargeableDueDate && normalizedEndDate && normalizedEndDate < firstChargeableDueDate,
   );
   const shortContractWarning = contractEndsBeforeFirstDue
-    ? `O contrato termina antes da primeira recorrência (${formatDateLabel(firstChargeableDueDate)}). O preview avaliará uma cobrança avulsa em vez de criar uma assinatura inválida.`
+    ? `O contrato termina antes do primeiro vencimento (${formatDateLabel(firstChargeableDueDate)}). Ajuste a vigência ou o vencimento para permitir a cobrança recorrente.`
     : null;
   const contractEndError = contractEndsBeforeStart
     ? `A data de término precisa ser igual ou posterior a ${formatDateLabel(normalizedStartDate)}.`

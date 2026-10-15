@@ -122,15 +122,24 @@ function createPlatformBillingRequestKey(prefix: string): string {
 }
 
 export function PlatformBillingFeature({ checkoutState }: { checkoutState?: CheckoutState }) {
-  const { summary, loading, refresh } = usePlatformBilling();
+  const { summary, loading, refresh, refreshFailed } = usePlatformBilling();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [plansOpen, setPlansOpen] = useState(false);
   const [noticeDialog, setNoticeDialog] = useState<NoticeDialogState>(null);
+  const [planChangeSuccess, setPlanChangeSuccess] = useState<string | null>(null);
   const [pendingPlanAction, setPendingPlanAction] = useState<PendingPlanAction>(null);
   const [pendingCancellationAction, setPendingCancellationAction] = useState<'cancel_at_period_end' | 'undo_cancel' | null>(null);
   const actionIdempotencyKeysRef = useRef<Record<string, string>>({});
+  const lastSummaryRef = useRef(summary);
+
+  useEffect(() => {
+    if (summary && summary !== lastSummaryRef.current && planChangeSuccess) {
+      setPlanChangeSuccess(null);
+    }
+    lastSummaryRef.current = summary;
+  }, [planChangeSuccess, summary]);
 
   function getActionIdempotencyKey(scope: string): string {
     const existing = actionIdempotencyKeysRef.current[scope];
@@ -282,6 +291,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
   }
 
   function selectPlan(planCode: PublicPlan['code']) {
+    setPlanChangeSuccess(null);
     if (!hasActiveSubscription || summary?.account?.status === 'NOT_STARTED' || summary?.account?.status === 'CANCELED') {
       void startCheckout(planCode);
       return;
@@ -343,11 +353,26 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
       }
       setPlansOpen(false);
       setPendingPlanAction(null);
-      setNoticeDialog({
-        title: payload.message ?? 'Plano alterado com sucesso',
-        description: payload.detail ?? 'A alteração foi registrada.',
-      });
-      await refresh(true);
+      const currentCode = summary?.account?.planCode;
+      const isDowngrade = Boolean(currentCode && getPlanRank(planCode) < getPlanRank(currentCode));
+      if (isDowngrade) {
+        const currentName = currentCode ? planName(currentCode) : 'plano atual';
+        const targetName = planName(planCode);
+        const effectiveAt = summary?.account?.currentPeriodEnd ?? null;
+        setPlanChangeSuccess(
+          effectiveAt
+            ? `Seu plano ${currentName} continua ativo até ${formatDate(effectiveAt)} e, a partir dessa data, sua conta passa para o plano ${targetName}.`
+            : `Seu plano ${currentName} continua ativo até a renovação e, a partir dela, sua conta passa para o plano ${targetName}.`,
+        );
+        setNoticeDialog(null);
+      } else {
+        setNoticeDialog({
+          title: payload.message ?? 'Plano alterado com sucesso',
+          description: payload.detail ?? 'A alteração foi registrada.',
+        });
+      }
+      const summaryRefreshed = await refresh(true);
+      if (isDowngrade && summaryRefreshed) setPlanChangeSuccess(null);
       clearActionIdempotencyKey(scope);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Falha ao solicitar mudança de plano.';
@@ -400,7 +425,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
     }
   }
 
-  if (loading) {
+  if (loading && !summary) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-8 w-64" />
@@ -443,6 +468,12 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         </InfoCallout>
       ) : null}
 
+      {refreshFailed ? (
+        <InfoCallout variant="info" size="sm" showIcon>
+          Não foi possível atualizar agora. Os dados exibidos podem estar desatualizados.
+        </InfoCallout>
+      ) : null}
+
       {currentAccessStatus === 'GRACE_PERIOD' ? (
         <InfoCallout variant="warning" size="sm" showIcon>
           Pagamento pendente até {formatDate(summary.account?.gracePeriodEndsAt ?? null)}.
@@ -461,7 +492,11 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         </InfoCallout>
       ) : null}
 
-      {pendingChange && !isCancellationPendingChange ? (
+      {planChangeSuccess ? (
+        <InfoCallout variant="brand" size="sm" showIcon>
+          {planChangeSuccess}
+        </InfoCallout>
+      ) : pendingChange && !isCancellationPendingChange ? (
         <InfoCallout variant="brand" size="sm" showIcon>
           {getPlanChangeLabel(pendingChange, pendingChange.effectiveAt)}
         </InfoCallout>
@@ -687,6 +722,11 @@ function BillingHistoryDialog({
   onOpenChange: (_open: boolean) => void;
   invoices: BillingInvoice[];
 }) {
+  const nextPaymentAttempt = useMemo(() => invoices
+    .filter((invoice) => invoice.status === 'OPEN' && invoice.nextPaymentAttempt)
+    .map((invoice) => invoice.nextPaymentAttempt!)
+    .sort((left, right) => Date.parse(left) - Date.parse(right))[0] ?? null, [invoices]);
+
   const columns = useMemo<DataTableColumn<BillingInvoice>[]>(() => [
     {
       id: 'product',
@@ -729,16 +769,9 @@ function BillingHistoryDialog({
       width: 'w-[14%]',
       align: 'left',
       render: (invoice) => (
-        <div className="space-y-1">
-          <Badge variant={getInvoiceBadgeVariant(invoice)} size="sm">
-            {getInvoiceStatusLabel(invoice)}
-          </Badge>
-          {invoice.nextPaymentAttempt && invoice.status === 'OPEN' ? (
-            <p className="text-[11px] text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">
-              Próxima tentativa {formatDate(invoice.nextPaymentAttempt)}
-            </p>
-          ) : null}
-        </div>
+        <Badge variant={getInvoiceBadgeVariant(invoice)} size="sm">
+          {getInvoiceStatusLabel(invoice)}
+        </Badge>
       ),
     },
     {
@@ -778,8 +811,13 @@ function BillingHistoryDialog({
           <DialogTitle className="text-xl font-semibold text-gray-950 alusa-dark:text-[color:var(--color-text-primary)]">
             Histórico de faturamento
           </DialogTitle>
-          <DialogDescription className="text-sm text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
-            Consulte as faturas registradas da assinatura da Alusa.
+          <DialogDescription className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
+            <span>Consulte as faturas registradas da assinatura da Alusa.</span>
+            {nextPaymentAttempt ? (
+              <span className="font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-primary)]">
+                Próxima tentativa: {formatDate(nextPaymentAttempt)}
+              </span>
+            ) : null}
           </DialogDescription>
         </DialogHeader>
         <DataTable
@@ -1176,13 +1214,14 @@ function getBillingStatusLabel(status: BillingStatus) {
   }
 }
 
-function getPlanChangeLabel(change: BillingSummary['planChanges'][number], effectiveAt: string | null) {
+export function getPlanChangeLabel(change: BillingSummary['planChanges'][number], effectiveAt: string | null) {
   const target = change.toPlanCode ? planName(change.toPlanCode) : 'novo plano';
   if (change.type === 'UPGRADE') return `Alteração para ${target} aguarda confirmação do pagamento.`;
   if (change.type === 'DOWNGRADE') {
+    const current = change.fromPlanCode ? planName(change.fromPlanCode) : 'plano atual';
     return effectiveAt
-      ? `Plano alterado para ${target}. A mudança entra em vigor em ${formatDate(effectiveAt)}.`
-      : `Plano alterado para ${target}. A mudança entra em vigor no próximo ciclo.`;
+      ? `Seu plano ${current} continua ativo até ${formatDate(effectiveAt)} e, a partir dessa data, sua conta passa para o plano ${target}.`
+      : `Seu plano ${current} continua ativo até a renovação e, a partir dela, sua conta passa para o plano ${target}.`;
   }
   if (change.type === 'CANCEL_AT_PERIOD_END') return 'Assinatura cancelada. O acesso continua até o fim do período atual.';
   return 'Alteração de plano pendente.';

@@ -63,8 +63,12 @@ export type ApiOperationalEventName =
   | 'api.invoice_config.request.failed'
   | 'api.events.request.failed'
   | 'api.events.ticket_sale.email_outbox_drain.failed'
+  | 'api.events.ticket_sale.whatsapp_outbox.dispatched'
+  | 'api.events.ticket_sale.whatsapp_outbox_dispatch.failed'
   | 'api.events.payment_book.failed'
   | 'api.public_event_map.notification_sync.degraded'
+  | 'api.public_event_map.notification_sync.completed'
+  | 'api.public_event_map.notification_sync.failed'
   | 'api.portal.request.failed'
   | 'api.portal.finance.asaas_unavailable'
   | 'api.portal.finance.asaas_read.failed'
@@ -335,6 +339,8 @@ export function logApiOperationalEvent(params: {
   exhaustedCount?: number;
   ignoredCount?: number;
   replayedCount?: number;
+  durationMs?: number;
+  result?: string;
   outcome?: 'success' | 'partial_failure';
 }): void {
   const attributes = {
@@ -357,6 +363,8 @@ export function logApiOperationalEvent(params: {
       ? { replayedCount: params.replayedCount }
       : {}),
     ...(params.outcome ? { outcome: params.outcome } : {}),
+    ...(Number.isSafeInteger(params.durationMs) && (params.durationMs ?? -1) >= 0 ? { durationMs: params.durationMs } : {}),
+    ...(params.result ? { result: params.result } : {}),
   };
   const log = createStructuredLog({
     severity: params.severity,
@@ -382,6 +390,8 @@ export function logApiOperationalEvent(params: {
       'ignoredCount',
       'replayedCount',
       'outcome',
+      'durationMs',
+      'result',
     ],
   });
 

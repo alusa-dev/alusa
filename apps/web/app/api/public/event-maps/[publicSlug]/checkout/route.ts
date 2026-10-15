@@ -41,37 +41,56 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     const body = publicCheckoutSchema.parse(await request.json().catch(() => null));
     const data = await completePublicEventMapCheckout(publicSlug, body);
 
-    if (data.status === 'CONFIRMED' && data.ticketFulfillmentStatus === 'ISSUED') {
-      after(async () => {
+    const requestId = getRequestId(request);
+    after(async () => {
+      if (data.status === 'CONFIRMED' && data.ticketFulfillmentStatus === 'ISSUED') {
+        const startedAt = Date.now();
         try {
-          await dispatchPublicOrderTicketWhatsAppNotification({ orderId: data.orderId, accessToken: data.accessToken });
-        } catch {
-          // The durable notification and scheduled worker retain retry ownership.
+          const status = await dispatchPublicOrderTicketWhatsAppNotification({ orderId: data.orderId, accessToken: data.accessToken });
+          logApiOperationalEvent({
+            severity: status === 'FAILED' || status === 'DLQ' ? 'warn' : 'info',
+            eventName: 'api.events.ticket_sale.whatsapp_outbox.dispatched',
+            route: '/api/public/event-maps/[publicSlug]/checkout',
+            method: 'POST', requestId, itemCount: status ? 1 : 0,
+            durationMs: Date.now() - startedAt, result: status ?? 'NO_PENDING_NOTIFICATION',
+          });
+        } catch (error) {
+          logApiOperationalEvent({
+            severity: 'warn', eventName: 'api.events.ticket_sale.whatsapp_outbox_dispatch.failed',
+            route: '/api/public/event-maps/[publicSlug]/checkout', method: 'POST', requestId,
+            durationMs: Date.now() - startedAt, error,
+          });
         }
-      });
-    }
+      }
 
-    // O checkout público não oferece seleção de canais. Portanto, o contrato
-    // do ticket é aplicar explicitamente WhatsApp + e-mail ao customer usado
-    // pela cobrança, independentemente dos defaults globais da conta.
-    const order = await getPublicEventMapOrderCustomerContext(publicSlug, data.orderId);
-    if (order?.asaasCustomerId && process.env.PLAYWRIGHT_TEST !== 'true') {
-      const notificationSync = await syncCustomerNotificationChannels(
-        order.contaId,
-        order.asaasCustomerId,
-        { email: true, sms: false, whatsapp: body.whatsappConsent },
-      );
-      if (!notificationSync.success || notificationSync.warnings.length > 0) {
+      if (process.env.PLAYWRIGHT_TEST === 'true') return;
+      const startedAt = Date.now();
+      try {
+        // Channel synchronization is best-effort and runs after the checkout response.
+        const order = await getPublicEventMapOrderCustomerContext(publicSlug, data.orderId);
+        if (!order?.asaasCustomerId) return;
+        const notificationSync = await syncCustomerNotificationChannels(
+          order.contaId, order.asaasCustomerId,
+          { email: true, sms: false, whatsapp: body.whatsappConsent },
+        );
         logApiOperationalEvent({
-          severity: 'warn',
-          eventName: 'api.public_event_map.notification_sync.degraded',
-          route: '/api/public/event-maps/[publicSlug]/checkout',
-          method: 'POST',
-          requestId: getRequestId(request),
+          severity: !notificationSync.success || notificationSync.warnings.length > 0 ? 'warn' : 'info',
+          eventName: !notificationSync.success || notificationSync.warnings.length > 0
+            ? 'api.public_event_map.notification_sync.degraded'
+            : 'api.public_event_map.notification_sync.completed',
+          route: '/api/public/event-maps/[publicSlug]/checkout', method: 'POST', requestId,
           itemCount: notificationSync.warnings.length,
+          durationMs: Date.now() - startedAt,
+          result: notificationSync.success ? 'SUCCESS' : 'FAILED',
+        });
+      } catch (error) {
+        logApiOperationalEvent({
+          severity: 'warn', eventName: 'api.public_event_map.notification_sync.failed',
+          route: '/api/public/event-maps/[publicSlug]/checkout', method: 'POST', requestId,
+          durationMs: Date.now() - startedAt, error,
         });
       }
-    }
+    });
 
     return noStore(NextResponse.json({ data }));
   } catch (error) {

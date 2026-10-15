@@ -6,6 +6,7 @@ import {
   createPrismaPlatformBillingStore,
 } from '@alusa/platform-billing';
 import { z } from 'zod';
+import { platformBillingIdempotencyKeyDTOSchema } from '@/features/platform-billing/dtos';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
@@ -18,7 +19,7 @@ import {
 
 const trialSchema = z.object({
   planCode: z.enum(['STARTER', 'PREMIUM', 'PRO']),
-  idempotencyKey: z.string().trim().min(1).optional(),
+  idempotencyKey: z.string().trim().min(1).max(128).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -34,8 +35,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'PAYLOAD_INVALIDO' }, { status: 400 });
   }
 
-  const idempotencyKey = req.headers.get('idempotency-key')?.trim() || parsed.data.idempotencyKey;
-  if (!idempotencyKey) {
+  const rawIdempotencyKey = req.headers.get('idempotency-key')?.trim() || parsed.data.idempotencyKey;
+  if (!rawIdempotencyKey) {
     return NextResponse.json(
       {
         error: 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED',
@@ -44,6 +45,11 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+  const parsedIdempotencyKey = platformBillingIdempotencyKeyDTOSchema.safeParse(rawIdempotencyKey);
+  if (!parsedIdempotencyKey.success) {
+    return NextResponse.json({ error: 'PLATFORM_BILLING_INPUT_INVALID' }, { status: 400 });
+  }
+  const idempotencyKey = parsedIdempotencyKey.data;
 
   return withTenantSession(async ({ contaId, userId, tx }) => {
     const rate = await rateLimitAsync(

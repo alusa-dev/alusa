@@ -30,12 +30,17 @@ export const platformBillingWebhookListQueryDTOSchema = z.object({
 });
 
 export const platformBillingWebhookReplayInputDTOSchema = z.object({
-  ids: z.array(z.string().trim().min(1)).min(1).max(100),
+  ids: z.array(z.string().trim().min(1)).max(100).optional(),
+  notificationIds: z.array(z.string().trim().min(1)).max(100).optional(),
   reason: z.string().trim().min(5).max(500),
+}).refine((value) => Boolean(value.ids?.length || value.notificationIds?.length), {
+  message: 'Informe ao menos um evento ou uma notificação para replay.',
 });
 
 export const platformBillingPortalInputDTOSchema = z.object({
   returnPath: z.string().optional(),
 });
+
+export const platformBillingIdempotencyKeyDTOSchema = z.string().trim().min(1).max(128);
 
 export * from './platform-billing-summary';

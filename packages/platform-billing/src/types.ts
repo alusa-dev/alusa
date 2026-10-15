@@ -11,6 +11,7 @@ import type {
   StripeEnvironment,
   UpdateStripeSubscriptionPlanInput,
   StripeSubscriptionCheckoutSessionResult,
+  ScheduleStripeSubscriptionPlanChangeInput,
 } from '@alusa/stripe';
 import type { PlatformPlanCode, PublicPlatformPlanCode } from './plans';
 
@@ -98,10 +99,17 @@ export interface PlatformBillingAccountRecord {
   gracePeriodStartedAt: Date | null;
   accessStateVersion: number;
   lastProviderEventCreatedAt: Date | null;
+  lastStripeEventId?: string | null;
   lastReconciledAt: Date | null;
   pendingPlanCode: PlatformPlanCode | null;
   pendingChangeType: PlatformBillingPlanChangeType | null;
   pendingChangeEffectiveAt: Date | null;
+  trialSubscriptionClaimKey?: string | null;
+  trialSubscriptionClaimPhase?: string | null;
+  trialSubscriptionClaimedAt?: Date | null;
+  trialSubscriptionRequestExpiresAt?: Date | null;
+  pendingChangeOperationId: string | null;
+  pendingChangeClaimToken?: string | null;
 }
 
 export interface PlatformBillingCheckoutSessionRecord {
@@ -172,6 +180,8 @@ export interface PlatformBillingAuditLogInput {
   billingAccountId?: string;
   actorUserId?: string;
   action: string;
+  webhookEnvironment?: PlatformBillingEnvironment;
+  webhookEventId?: string;
   entityType?: string;
   entityId?: string;
   correlationId?: string;
@@ -194,6 +204,7 @@ export interface MarkPlatformBillingCheckoutPendingInput {
   planCode: PublicPlatformPlanCode;
   stripePriceId: string;
   pendingChangeType?: PlatformBillingPlanChangeType | null;
+  idempotencyKey: string;
 }
 
 export interface CreatePlatformBillingCheckoutSessionRecordInput {
@@ -214,9 +225,31 @@ export interface CreatePlatformBillingCheckoutSessionRecordInput {
 
 export interface UpdatePlatformBillingAccountFromStripeSubscriptionInput {
   accountId: string;
+  planChangeFinalization?: {
+    planChangeId: string;
+    contaId: string;
+    billingAccountId: string;
+    environment: PlatformBillingEnvironment;
+    stripeSubscriptionId: string;
+    stripePriceId: string;
+    toPlanCode: PlatformPlanCode;
+    type: 'UPGRADE' | 'DOWNGRADE';
+    applied: boolean;
+  };
+  expectedAccountSnapshot?: {
+    contaId: string;
+    environment: PlatformBillingEnvironment;
+    stripeSubscriptionId: string | null;
+    pendingChangeOperationId: string | null;
+    pendingChangeClaimToken: string | null;
+    trialSubscriptionClaimKey?: string | null;
+    lastProviderEventCreatedAt?: Date | null;
+    lastStripeEventId?: string | null;
+  };
   status: PlatformBillingAccountStatus;
   planCode: PlatformPlanCode | null;
   stripeSubscriptionId: string;
+  webhookLease?: { id: string; workerId: string };
   stripePriceId: string | null;
   currentPeriodEnd: Date | null;
   cancelAtPeriodEnd: boolean;
@@ -242,6 +275,7 @@ export interface UpdatePlatformBillingAccountFromStripeSubscriptionInput {
   pendingPlanCode?: PlatformPlanCode | null;
   pendingChangeType?: PlatformBillingPlanChangeType | null;
   pendingChangeEffectiveAt?: Date | null;
+  pendingChangeOperationId?: string | null;
 }
 
 export interface UpsertPlatformBillingInvoiceInput {
@@ -298,7 +332,24 @@ export interface PlatformBillingStore {
   }): Promise<PlatformBillingAccountRecord | null>;
   createAccount(_input: CreatePlatformBillingAccountInput): Promise<PlatformBillingAccountRecord>;
   attachCustomer(_input: AttachPlatformBillingCustomerInput): Promise<PlatformBillingAccountRecord>;
+  reserveTrialSubscriptionClaim(_input: {
+    contaId: string;
+    environment: PlatformBillingEnvironment;
+    idempotencyKey: string;
+  }): Promise<PlatformBillingAccountRecord>;
+  markTrialSubscriptionRequestStarted(_input: {
+    contaId: string;
+    environment: PlatformBillingEnvironment;
+    idempotencyKey: string;
+  }): Promise<void>;
+  releaseTrialSubscriptionClaim(_input: {
+    contaId: string;
+    environment: PlatformBillingEnvironment;
+    idempotencyKey: string;
+  }): Promise<void>;
   markCheckoutPending(_input: MarkPlatformBillingCheckoutPendingInput): Promise<PlatformBillingAccountRecord>;
+  markCheckoutRequestStarted(_input: { accountId: string; idempotencyKey: string }): Promise<void>;
+  clearCheckoutClaim?(_input: { contaId: string; environment: PlatformBillingEnvironment; idempotencyKey: string }): Promise<void>;
   updateAccountFromStripeSubscription(
     _input: UpdatePlatformBillingAccountFromStripeSubscriptionInput,
   ): Promise<PlatformBillingAccountRecord>;
@@ -332,8 +383,8 @@ export interface PlatformBillingStore {
     workerId?: string;
     processingTimeoutAt?: Date;
   }): Promise<PlatformBillingWebhookEventRecord>;
-  markWebhookEventProcessed(_input: { id: string; contaId?: string }): Promise<PlatformBillingWebhookEventRecord>;
-  markWebhookEventIgnored(_input: { id: string; contaId?: string }): Promise<PlatformBillingWebhookEventRecord>;
+  markWebhookEventProcessed(_input: { id: string; contaId?: string; workerId?: string }): Promise<PlatformBillingWebhookEventRecord>;
+  markWebhookEventIgnored(_input: { id: string; contaId?: string; workerId?: string }): Promise<PlatformBillingWebhookEventRecord>;
   markWebhookEventFailed(_input: {
     id: string;
     contaId?: string;
@@ -341,6 +392,7 @@ export interface PlatformBillingStore {
     errorCode?: string;
     nextAttemptAt?: Date;
     exhausted?: boolean;
+    workerId?: string;
   }): Promise<PlatformBillingWebhookEventRecord>;
   createAuditLog(_input: PlatformBillingAuditLogInput): Promise<void>;
 }
@@ -359,6 +411,8 @@ export interface PlatformBillingStripeGateway {
     _input: PreviewStripeSubscriptionPlanChangeInput,
   ): Promise<StripeSubscriptionPlanChangePreview>;
   updateSubscriptionPlan(_input: UpdateStripeSubscriptionPlanInput): Promise<StripeSubscriptionRecord>;
+  scheduleSubscriptionPlanChange(_input: ScheduleStripeSubscriptionPlanChangeInput): Promise<{ scheduleId: string; effectiveAt: Date }>;
+  releaseSubscriptionSchedule(_input: { scheduleId: string; idempotencyKey: string }): Promise<void>;
   updateSubscriptionCancelAtPeriodEnd(_input: {
     subscriptionId: string;
     cancelAtPeriodEnd: boolean;

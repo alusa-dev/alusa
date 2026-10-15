@@ -6,10 +6,12 @@ import {
   derivePlatformAccessStatus,
   derivePlatformRestrictionReason,
   resolvePlanCodeFromStripePriceId,
+  resolveStripePriceId,
   type PlatformBillingAccessStatus,
   type PlatformBillingAccountStatus,
   type PlatformBillingEnvironment,
   type PlatformPlanCode,
+  type PublicPlatformPlanCode,
 } from '@alusa/platform-billing';
 import {
   getStripeClient,
@@ -19,6 +21,7 @@ import {
   type StripeSubscriptionRecord,
 } from '@alusa/stripe';
 import { resolvePlatformBillingEnvironment } from './platform-billing-server';
+import { runWithTenant } from '@/lib/prisma-tenant';
 
 type ReconciliationAccount = {
   id: string;
@@ -50,7 +53,12 @@ type ReconciliationAccount = {
   pendingPlanCode: PlatformPlanCode | null;
   pendingChangeType: string | null;
   pendingChangeEffectiveAt: Date | null;
+  pendingChangeOperationId: string | null;
+  pendingChangeClaimToken: string | null;
+  lastProviderEventCreatedAt: Date | null;
+  lastStripeEventId: string | null;
   lastReconciledAt: Date | null;
+  updatedAt: Date;
 };
 
 type ReconciliationIssueInput = {
@@ -112,14 +120,24 @@ export async function reconcilePlatformBilling(input: {
       environment,
       ...(input.contaId ? { contaId: input.contaId } : {}),
     },
-    orderBy: { updatedAt: 'asc' },
+    // Rotate through accounts independently of unrelated updatedAt writes so
+    // accounts without subscriptions cannot permanently occupy the first page.
+    orderBy: [{ lastReconciledAt: 'asc' }, { createdAt: 'asc' }],
     take: limit,
   });
 
   const gateway = createDefaultPlatformBillingStripeGateway(process.env);
   let issues = 0;
 
-  for (const account of accounts) {
+  for (const candidate of accounts) {
+    await db.platformBillingAccount.updateMany({
+      where: { id: candidate.id, contaId: candidate.contaId, environment },
+      data: { lastReconciledAt: new Date() },
+    });
+    // Use a post-claim snapshot. The provider retrieval may take seconds, and
+    // a webhook or user action during that time must win over this stale read.
+    const account = await db.platformBillingAccount.findUnique({ where: { id: candidate.id } });
+    if (!account || account.contaId !== candidate.contaId || account.environment !== environment) continue;
     if (!account.stripeCustomerId) {
       await upsertIssue(db, {
         contaId: account.contaId,
@@ -336,10 +354,12 @@ export async function refreshPlatformBillingPaymentMethod(input: {
   prisma?: PrismaClient;
   contaId: string;
   environment?: PlatformBillingEnvironment;
+  /** Force a fresh provider read after the customer returns from Stripe Portal. */
+  force?: boolean;
 }): Promise<boolean> {
   const db = input.prisma ?? defaultPrisma;
   const environment = input.environment ?? resolvePlatformBillingEnvironment();
-  const account = await db.platformBillingAccount.findUnique({
+  const accountQuery = () => db.platformBillingAccount.findUnique({
     where: {
       uq_platform_billing_account_conta_env: {
         contaId: input.contaId,
@@ -347,6 +367,11 @@ export async function refreshPlatformBillingPaymentMethod(input: {
       },
     },
   });
+  const account = input.prisma
+    ? await accountQuery()
+    : await runWithTenant(input.contaId, (tx) => tx.platformBillingAccount.findUnique({
+        where: { uq_platform_billing_account_conta_env: { contaId: input.contaId, environment } },
+      }));
 
   if (!account?.stripeCustomerId) return false;
 
@@ -355,28 +380,46 @@ export async function refreshPlatformBillingPaymentMethod(input: {
     account.paymentMethodType === 'card' &&
     account.paymentMethodLast4,
   );
-  if (hasPaymentSnapshot) return false;
+  if (hasPaymentSnapshot && !input.force) return false;
 
   const paymentMethod = await resolvePaymentMethod(account, account.stripeCustomerId);
   if (!paymentMethod) return false;
 
-  await db.platformBillingAccount.update({
-    where: { id: account.id },
-    data: {
-      paymentMethodStatus: paymentMethod.status,
-      paymentMethodType: paymentMethod.type,
-      paymentMethodBrand: paymentMethod.brand,
-      paymentMethodLast4: paymentMethod.last4,
-      paymentMethodExpMonth: paymentMethod.expMonth,
-      paymentMethodExpYear: paymentMethod.expYear,
-      lastReconciledAt: new Date(),
-    },
-  });
+  const updateData = {
+    paymentMethodStatus: paymentMethod.status,
+    paymentMethodType: paymentMethod.type,
+    paymentMethodBrand: paymentMethod.brand,
+    paymentMethodLast4: paymentMethod.last4,
+    paymentMethodExpMonth: paymentMethod.expMonth,
+    paymentMethodExpYear: paymentMethod.expYear,
+    lastReconciledAt: new Date(),
+  };
+  const updated = input.prisma
+    ? await db.platformBillingAccount.updateMany({
+        where: {
+          id: account.id,
+          contaId: input.contaId,
+          environment,
+          stripeCustomerId: account.stripeCustomerId,
+          stripeSubscriptionId: account.stripeSubscriptionId,
+        },
+        data: updateData,
+      })
+    : await runWithTenant(input.contaId, (tx) => tx.platformBillingAccount.updateMany({
+        where: {
+          id: account.id,
+          contaId: input.contaId,
+          environment,
+          stripeCustomerId: account.stripeCustomerId,
+          stripeSubscriptionId: account.stripeSubscriptionId,
+        },
+        data: updateData,
+      }));
 
-  return true;
+  return updated.count > 0;
 }
 
-async function correctAccountFromStripeSubscription(
+export async function correctAccountFromStripeSubscription(
   prisma: PrismaClient,
   input: {
     account: ReconciliationAccount;
@@ -405,8 +448,16 @@ async function correctAccountFromStripeSubscription(
   const desiredAccessStatus = derivePlatformAccessStatus({ account: policyAccount, now });
   const restrictionReason = derivePlatformRestrictionReason({ account: policyAccount, now });
   const shouldClearPendingPlan = Boolean(
+    input.account.pendingChangeOperationId &&
+    (input.account.pendingChangeType === 'UPGRADE' ||
+      input.account.pendingChangeType === 'DOWNGRADE') &&
     input.account.pendingPlanCode &&
     input.account.pendingPlanCode === input.planCode &&
+    input.subscription.priceId === resolveStripePriceId({
+      planCode: input.account.pendingPlanCode as PublicPlatformPlanCode,
+      environment: input.environment,
+      source: process.env,
+    }) &&
     (desiredStatus === 'ACTIVE' ||
       desiredStatus === 'TRIALING' ||
       desiredStatus === 'PAST_DUE' ||
@@ -491,6 +542,9 @@ async function correctAccountFromStripeSubscription(
     update.pendingPlanCode = null;
     update.pendingChangeType = null;
     update.pendingChangeEffectiveAt = null;
+    update.pendingChangeOperationId = null;
+    update.pendingChangeClaimToken = null;
+    update.pendingChangeClaimedAt = null;
   }
   if (
     !input.subscription.cancelAtPeriodEnd &&
@@ -531,7 +585,59 @@ async function correctAccountFromStripeSubscription(
 
   update.lastStripeEventId = `reconciliation:${input.subscription.id}`;
 
-  await prisma.$transaction(async (tx) => {
+  class PendingPlanChangeCasLost extends Error {}
+
+  let applied: boolean;
+  try {
+    applied = await prisma.$transaction(async (tx) => {
+    const accountCas = await tx.platformBillingAccount.updateMany({
+      where: {
+        id: input.account.id,
+        contaId: input.account.contaId,
+        environment: input.environment,
+        updatedAt: input.account.updatedAt,
+        lastProviderEventCreatedAt: input.account.lastProviderEventCreatedAt,
+        lastStripeEventId: input.account.lastStripeEventId,
+        status: input.account.status,
+        accessStatus: input.account.accessStatus,
+        planCode: input.account.planCode,
+        stripePriceId: input.account.stripePriceId,
+        currentPeriodEnd: input.account.currentPeriodEnd,
+        cancelAtPeriodEnd: input.account.cancelAtPeriodEnd,
+        trialEndsAt: input.account.trialEndsAt,
+        stripeSubscriptionId: input.account.stripeSubscriptionId,
+        pendingChangeOperationId: input.account.pendingChangeOperationId,
+        pendingChangeClaimToken: input.account.pendingChangeClaimToken,
+      },
+      data: update,
+    });
+    if (accountCas.count !== 1) return false;
+
+    if (shouldClearPendingPlan && input.account.pendingChangeOperationId) {
+      const planChangeCas = await tx.platformBillingPlanChange.updateMany({
+        where: {
+          id: input.account.pendingChangeOperationId,
+          contaId: input.account.contaId,
+          billingAccountId: input.account.id,
+          environment: input.environment,
+          stripeSubscriptionId: input.subscription.id,
+          stripePriceId: input.subscription.priceId,
+          toPlanCode: input.account.pendingPlanCode,
+          type: input.account.pendingChangeType as 'UPGRADE' | 'DOWNGRADE',
+          status:
+            input.account.pendingChangeType === 'UPGRADE'
+              ? 'PENDING_PAYMENT'
+              : 'PENDING_EFFECTIVE_DATE',
+        },
+        data: {
+          status: 'APPLIED',
+          appliedAt: now,
+          stripePriceId: input.subscription.priceId,
+        },
+      });
+      if (planChangeCas.count !== 1) throw new PendingPlanChangeCasLost();
+    }
+
     for (const invoice of input.paidInvoices) {
       const priceId = invoice.priceId ?? input.subscription.priceId ?? input.account.stripePriceId;
       await tx.platformBillingInvoice.upsert({
@@ -598,12 +704,6 @@ async function correctAccountFromStripeSubscription(
         },
       });
     }
-    if (Object.keys(update).length > 0) {
-      await tx.platformBillingAccount.update({
-        where: { id: input.account.id },
-        data: update,
-      });
-    }
     if (hasStaleCancellationChange) {
       await tx.platformBillingPlanChange.updateMany({
         where: {
@@ -662,9 +762,14 @@ async function correctAccountFromStripeSubscription(
         resolvedAt: now,
       },
     });
-  });
+    return true;
+    });
+  } catch (error) {
+    if (error instanceof PendingPlanChangeCasLost) return false;
+    throw error;
+  }
 
-  return true;
+  return applied;
 }
 
 async function listPaidInvoices(customerId: string | null): Promise<StripeInvoiceRecord[]> {

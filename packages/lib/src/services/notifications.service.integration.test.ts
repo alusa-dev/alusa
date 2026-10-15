@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { prisma } from '@alusa/database';
 
 import { createBillingWebhookNotification } from './notifications.service';
+import { processPendingInboxNotifications } from '../notifications/pending-inbox-notifications';
 
 describe('notifications.service tenant isolation integration', () => {
   it('does not resolve a legacy payment from another tenant and creates the matching tenant notification', async () => {
@@ -96,19 +97,67 @@ describe('notifications.service tenant isolation integration', () => {
         },
       });
 
+      const eventB = await prisma.schoolEvent.create({
+        data: {
+          contaId: contaB.id,
+          name: `Notification event ${runId}`,
+          type: 'PRESENTATION',
+          status: 'PLANNING',
+          startsAt: new Date('2027-01-01T00:00:00.000Z'),
+          hasTickets: true,
+        },
+      });
+      const lotB = await prisma.eventTicketLot.create({
+        data: {
+          contaId: contaB.id,
+          eventId: eventB.id,
+          name: `Notification lot ${runId}`,
+          ticketType: 'FULL',
+          unitPrice: 100,
+          quantityTotal: 10,
+          quantitySold: 0,
+          saleStartsAt: new Date('2026-01-01T00:00:00.000Z'),
+          saleEndsAt: new Date('2027-01-01T00:00:00.000Z'),
+          status: 'ACTIVE',
+        },
+      });
+      const eventPaymentB = `pay_event_b_${runId}`;
+      const saleB = await prisma.eventTicketSale.create({
+        data: {
+          contaId: contaB.id,
+          eventId: eventB.id,
+          lotId: lotB.id,
+          buyerName: 'Event buyer B',
+          quantity: 1,
+          unitPriceSnapshot: 100,
+          totalAmount: 100,
+          paymentMethod: 'MANUAL_PIX',
+          asaasPaymentId: eventPaymentB,
+        },
+      });
+
       const wrongTenantResult = await createBillingWebhookNotification({
         contaId: contaA.id,
         eventName: 'PAYMENT_OVERDUE',
         asaasPaymentId: paymentB,
       });
-      expect(wrongTenantResult).toEqual({ notificationId: null, created: false, recipientCount: 0 });
+      expect(wrongTenantResult).toMatchObject({ outcome: 'entity_missing', notificationId: null });
+
+      const foreignEventResult = await createBillingWebhookNotification({
+        contaId: contaA.id,
+        eventName: 'PAYMENT_RECEIVED',
+        asaasPaymentId: eventPaymentB,
+      });
+      expect(foreignEventResult).toMatchObject({ outcome: 'entity_missing', notificationId: null });
+      expect(await prisma.eventTicketSale.findUniqueOrThrow({ where: { id: saleB.id }, select: { status: true } }))
+        .toEqual({ status: 'PENDING' });
 
       const pendingInboxAcrossTenants = await prisma.pendingInboxNotification.findMany({
         where: { contaId: { in: [contaA.id, contaB.id] } },
         select: { contaId: true, payload: true },
       });
-      expect(pendingInboxAcrossTenants).toHaveLength(1);
-      expect(pendingInboxAcrossTenants[0]).toMatchObject({
+      expect(pendingInboxAcrossTenants).toHaveLength(2);
+      expect(pendingInboxAcrossTenants.find((row) => (row.payload as { asaasPaymentId?: string }).asaasPaymentId === paymentB)).toMatchObject({
         contaId: contaA.id,
         payload: { asaasPaymentId: paymentB },
       });
@@ -129,6 +178,44 @@ describe('notifications.service tenant isolation integration', () => {
       });
       expect(correctTenantResult).toMatchObject({ created: true, recipientCount: 1 });
 
+      await prisma.charge.create({
+        data: {
+          contaId: contaA.id,
+          externalReference: `recovered-${runId}`,
+          asaasPaymentId: paymentB,
+          value: 100,
+          dueDate: new Date('2026-01-10T00:00:00.000Z'),
+          description: 'Recovered after local sync',
+          payerName: 'Responsible A',
+          billingType: 'PIX',
+        },
+      });
+      const pendingPayment = await prisma.pendingInboxNotification.findFirstOrThrow({
+        where: { contaId: contaA.id, dedupeKey: { contains: paymentB } },
+        select: { id: true },
+      });
+      await prisma.$executeRaw`
+        UPDATE "PendingInboxNotification"
+        SET "nextRetryAt" = CURRENT_TIMESTAMP - INTERVAL '1 minute'
+        WHERE "id" = ${pendingPayment.id} AND "contaId" = ${contaA.id}
+      `;
+      const claimableRows = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "PendingInboxNotification"
+        WHERE "id" = ${pendingPayment.id}
+          AND "status" = 'PENDING'::"PendingInboxNotificationStatus"
+          AND "nextRetryAt" <= CURRENT_TIMESTAMP AND "attempts" < "maxAttempts"
+      `;
+      expect(claimableRows).toHaveLength(1);
+      expect(await processPendingInboxNotifications({ contaId: contaA.id })).toMatchObject({ attempted: 1, processed: 1, failed: 0 });
+      expect(await processPendingInboxNotifications({ contaId: contaA.id })).toMatchObject({ attempted: 0, processed: 0, failed: 0 });
+      expect(await prisma.pendingInboxNotification.findFirstOrThrow({
+        where: { contaId: contaA.id, dedupeKey: { contains: paymentB } },
+        select: { status: true },
+      })).toEqual({ status: 'DONE' });
+      expect(await prisma.pendingInboxNotification.count({ where: { contaId: contaA.id, dedupeKey: { contains: paymentB } } })).toBe(1);
+      expect(await prisma.pendingInboxNotification.count({ where: { contaId: contaA.id, dedupeKey: { contains: eventPaymentB }, status: 'PENDING' } })).toBe(1);
+      expect(await prisma.notification.count({ where: { contaId: contaA.id, sourceId: paymentB } })).toBe(1);
+
       const notificationForA = await prisma.notification.findFirst({
         where: { contaId: contaA.id, entityType: 'Cobranca', entityId: cobrancaA.id },
         include: { recipients: true },
@@ -143,6 +230,10 @@ describe('notifications.service tenant isolation integration', () => {
         await prisma.notification.deleteMany({ where: { contaId: { in: contaIds } } });
         await prisma.auditLog.deleteMany({ where: { contaId: { in: contaIds }, action: 'notification.created' } });
         await prisma.cobranca.deleteMany({ where: { contaId: { in: contaIds } } });
+        await prisma.charge.deleteMany({ where: { contaId: { in: contaIds } } });
+        await prisma.eventTicketSale.deleteMany({ where: { contaId: { in: contaIds } } });
+        await prisma.eventTicketLot.deleteMany({ where: { contaId: { in: contaIds } } });
+        await prisma.schoolEvent.deleteMany({ where: { contaId: { in: contaIds } } });
         await prisma.matricula.deleteMany({ where: { contaId: { in: contaIds } } });
         await prisma.aluno.deleteMany({ where: { contaId: { in: contaIds } } });
         await prisma.usuario.deleteMany({ where: { contaId: { in: contaIds } } });

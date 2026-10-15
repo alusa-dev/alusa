@@ -35,5 +35,7 @@ function assertServerRuntime(): void {
 }
 
 function buildClientCacheKey(config: StripeRuntimeConfig): string {
-  return `${config.environment}:${config.apiVersion}:${config.secretKey.slice(0, 8)}`;
+  // Keep the credential only in process memory for equality checks; never log
+  // or expose this cache key. A short prefix can collide across rotations.
+  return `${config.environment}:${config.apiVersion}:${config.secretKey}`;
 }

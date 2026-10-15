@@ -55,6 +55,21 @@ function jsonError(status: number, code: string, message: string, details?: unkn
   );
 }
 
+function jsonFamilyProcessing(operation: FamilyEnrollmentOperationCollisionRecord) {
+  return NextResponse.json(
+    {
+      data: {
+        operationId: operation.id,
+        familyId: operation.familyGroupId,
+        operationStatus: operation.status,
+        state: 'PROCESSING',
+      },
+      meta: { code: 'OPERACAO_FAMILIAR_EM_ANDAMENTO' },
+    },
+    { status:  202, headers: { 'cache-control': 'no-store' } },
+  );
+}
+
 const FAMILY_ENROLLMENT_ACTIVE_OPERATION_STATUSES = [
   'PENDING',
   'PROCESSING',
@@ -235,21 +250,12 @@ async function resolveFamilyEnrollmentOperationCollision(input: {
     );
   }
   if (resolution.kind === 'IN_PROGRESS') {
-    return jsonError(
-      202,
-      'OPERACAO_FAMILIAR_EM_ANDAMENTO',
-      'Esta matrícula familiar já está sendo processada. Aguarde a confirmação antes de tentar novamente.',
-      {
-        operationId: resolution.operation.id,
-        familyId: resolution.operation.familyGroupId,
-        operationStatus: resolution.operation.status,
-      },
-    );
+    return jsonFamilyProcessing(resolution.operation);
   }
   if (resolution.kind === 'REQUIRES_RECONCILIATION') {
     return jsonError(
       409,
-      'NOVA_TENTATIVA_NECESSARIA',
+      'REQUIRES_RECONCILIATION',
       'A tentativa anterior exige reconciliação técnica antes de uma nova matrícula familiar.',
       {
         operationId: resolution.operation.id,
@@ -684,21 +690,12 @@ export async function executeCreateFamilyEnrollment(params: {
       })
     : null;
   if (existingOperationResolution?.kind === 'IN_PROGRESS') {
-    return jsonError(
-      202,
-      'OPERACAO_FAMILIAR_EM_ANDAMENTO',
-      'Esta matrícula familiar já está sendo processada. Aguarde a confirmação antes de tentar novamente.',
-      {
-        operationId: existingOperationResolution.operation.id,
-        familyId: existingOperationResolution.operation.familyGroupId,
-        operationStatus: existingOperationResolution.operation.status,
-      },
-    );
+    return jsonFamilyProcessing(existingOperationResolution.operation);
   }
   if (existingOperationResolution?.kind === 'REQUIRES_RECONCILIATION') {
     return jsonError(
       409,
-      'NOVA_TENTATIVA_NECESSARIA',
+      'REQUIRES_RECONCILIATION',
       'A tentativa anterior exige reconciliação técnica antes de uma nova matrícula familiar.',
       {
         operationId: existingOperationResolution.operation.id,

@@ -1,8 +1,9 @@
 # Project defaults for the Alusa Codex workflow.
-model = "gpt-6-luna"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "medium"
 
 [agents]
-max_concurrent_threads_per_session = 1
+enabled = true
+max_concurrent_threads_per_session = 3
 default_subagent_model = "gpt-6-luna"
 default_subagent_reasoning_effort = "medium"

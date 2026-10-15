@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
+import { processFinanceWebhookSideEffectOutboxEvent } from '@alusa/finance';
 import { addDays, subDays } from 'date-fns';
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -151,6 +152,41 @@ async function getAdminMap(page: import('@playwright/test').Page, eventId: strin
   return (await response.json()).data;
 }
 
+async function publishScenarioMap(page: import('@playwright/test').Page, eventId: string, mapId: string) {
+  await page.goto(`/events/${eventId}/maps/${mapId}/editor`);
+  await expect(page.getByTestId('event-map-editor')).toBeVisible({ timeout: EVENT_MAP_EDITOR_LOAD_TIMEOUT_MS });
+  const saveResponse = page.waitForResponse((response) => response.url().includes(`/api/events/${eventId}/maps/${mapId}`) && response.request().method() === 'PATCH');
+  await page.getByTestId('save-map-button').click();
+  await saveResponse;
+  const publishResponse = page.waitForResponse((response) => response.url().includes(`/api/events/${eventId}/maps/${mapId}/publish`) && response.ok());
+  await page.getByRole('button', { name: /Publicar/ }).click();
+  await page.getByRole('dialog').getByRole('button', { name: /Confirmar publicação/ }).click();
+  await publishResponse;
+
+  const published = await getAdminMap(page, eventId, mapId);
+  expect(published.status).toBe('PUBLISHED');
+  expect(published.publicUrl).toMatch(/^\/m\/map_/);
+  return published;
+}
+
+async function processBillingNotificationOutbox(contaId: string, asaasPaymentId: string) {
+  const findEffects = () => prisma.financeWebhookSideEffectOutbox.findMany({
+    where: { contaId, effectType: 'BILLING_NOTIFICATION' },
+    select: { id: true, payload: true },
+  });
+  const matchesPayment = (payload: unknown) =>
+    (payload as { candidate?: { asaasPaymentId?: string } }).candidate?.asaasPaymentId === asaasPaymentId;
+
+  await expect.poll(async () => (await findEffects()).filter((row) => matchesPayment(row.payload)).length).toBe(1);
+  const matchingEffects = (await findEffects()).filter((row) => matchesPayment(row.payload));
+  expect(matchingEffects).toHaveLength(1);
+  const effectId = matchingEffects[0].id;
+  await processFinanceWebhookSideEffectOutboxEvent(effectId);
+  await expect.poll(() => prisma.financeWebhookSideEffectOutbox.findUniqueOrThrow({
+    where: { id: effectId }, select: { status: true },
+  }).then((row) => row.status)).toBe('PROCESSED');
+}
+
 async function seedReleasedPaidOrder(params: {
   contaId: string;
   eventId: string;
@@ -226,6 +262,124 @@ async function seedReleasedPaidOrder(params: {
 test.describe('event map publication, public sales and ticket delivery', () => {
   test.describe.configure({ timeout: 120_000 });
   test.use({ viewport: { width: 1600, height: 1000 } });
+
+  test('BILLING_WEBHOOK conclui evento de ingresso sem inbox ou notificação duplicada', async ({ page }) => {
+    const { event, map } = await seedPublishedMapScenario(page);
+    await page.route('**/api/account/verification-status**', (route) => route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: null, reason: 'NOT_READY' }),
+    }));
+    const published = await publishScenarioMap(page, event.id, map.id);
+    const publicMapResponse = await page.request.get(`/api/public/event-maps/${published.publicSlug}`);
+    expect(publicMapResponse.status()).toBe(200);
+    const publicMap = (await publicMapResponse.json()).data;
+    const seats = publicMap.seats.filter((seat: { technicalCode: string }) => ['A1', 'A2'].includes(seat.technicalCode));
+    expect(seats).toHaveLength(2);
+
+    const reservationResponse = await page.request.post(`/api/public/event-maps/${published.publicSlug}/reserve`, {
+      data: { seatIds: seats.map((seat: { id: string }) => seat.id), checkoutKey: `billing-webhook-${randomUUID()}` },
+    });
+    expect(reservationResponse.status(), await reservationResponse.text()).toBe(200);
+    const reservation = (await reservationResponse.json()).data;
+    const checkoutResponse = await page.request.post(`/api/public/event-maps/${published.publicSlug}/checkout`, {
+      data: {
+        reservationId: reservation.reservationId,
+        holdToken: reservation.holdToken,
+        buyerName: 'Comprador BILLING_WEBHOOK',
+        buyerEmail: 'billing-webhook@example.test',
+        buyerDocument: '52998224725',
+        buyerPhone: '11987654321',
+        whatsappConsent: true,
+        paymentMethod: 'PIX',
+      },
+    });
+    expect(checkoutResponse.status(), await checkoutResponse.text()).toBe(200);
+
+    const order = await prisma.eventMapOrder.findFirstOrThrow({
+      where: { contaId: event.contaId, buyerEmail: 'billing-webhook@example.test' },
+      select: { id: true, asaasPaymentId: true, totalAmount: true, accessToken: true },
+    });
+    expect(order.asaasPaymentId).toBeTruthy();
+    expect(order.asaasPaymentId).toBe(`playwright-event-map-order:${order.id}`);
+
+    const accountWebhookToken = `event-map-billing-webhook-${randomUUID()}`;
+    const financeProfile = await prisma.financeProfile.upsert({
+      where: { contaId: event.contaId }, update: {}, create: { contaId: event.contaId }, select: { id: true },
+    });
+    await prisma.asaasAccount.upsert({
+      where: { financeProfileId: financeProfile.id },
+      update: { webhookAuthTokenHash: createHash('sha256').update(accountWebhookToken).digest('hex') },
+      create: {
+        financeProfileId: financeProfile.id,
+        webhookAuthTokenHash: createHash('sha256').update(accountWebhookToken).digest('hex'),
+      },
+    });
+    const webhookPayload = {
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: order.asaasPaymentId,
+        customer: 'playwright-customer',
+        billingType: 'PIX',
+        status: 'RECEIVED',
+        value: Number(order.totalAmount),
+        netValue: Number(order.totalAmount),
+        paymentDate: new Date().toISOString().slice(0, 10),
+        externalReference: `event-map-order:${order.id}`,
+      },
+    };
+    const webhookResponses = await Promise.all(Array.from({ length: 3 }, (_, index) =>
+      page.request.post('/api/webhooks/asaas', {
+        headers: { 'asaas-access-token': accountWebhookToken },
+        data: { ...webhookPayload, id: `evt-billing-webhook-${index}-${randomUUID()}` },
+      }),
+    ));
+    expect(webhookResponses.map((response) => response.status())).toEqual([200, 200, 200]);
+
+    await expect.poll(() => prisma.eventMapOrder.findUniqueOrThrow({
+      where: { id: order.id }, select: { status: true, ticketFulfillmentStatus: true },
+    })).toEqual({ status: 'CONFIRMED', ticketFulfillmentStatus: 'ISSUED' });
+    expect(await prisma.eventMapOrder.count({ where: { contaId: event.contaId, id: order.id } })).toBe(1);
+    expect(await prisma.eventTicketSale.count({ where: { contaId: event.contaId, eventMapOrderId: order.id } })).toBe(1);
+    expect(await prisma.eventTicket.count({ where: { contaId: event.contaId, eventMapOrderId: order.id } })).toBe(2);
+    const ticketPdf = await page.request.get(
+      `/api/public/event-map-orders/${order.id}/tickets?token=${encodeURIComponent(order.accessToken)}`,
+    );
+    expect(ticketPdf.status()).toBe(200);
+    expect(ticketPdf.headers()['content-type']).toContain('application/pdf');
+    expect((await ticketPdf.body()).subarray(0, 4).toString()).toBe('%PDF');
+
+    await processBillingNotificationOutbox(event.contaId, order.asaasPaymentId);
+    expect(await prisma.pendingInboxNotification.count({
+      where: { contaId: event.contaId, kind: 'BILLING_WEBHOOK', dedupeKey: { contains: order.asaasPaymentId } },
+    })).toBe(0);
+    expect(await prisma.notification.count({ where: { contaId: event.contaId, sourceId: order.asaasPaymentId } })).toBe(0);
+
+    const contaB = await prisma.conta.create({ data: { nome: `Tenant spoof ${randomUUID()}` } });
+    const financeProfileB = await prisma.financeProfile.create({ data: { contaId: contaB.id }, select: { id: true } });
+    const tenantBWebhookToken = `tenant-b-spoof-${randomUUID()}`;
+    await prisma.asaasAccount.create({
+      data: {
+        financeProfileId: financeProfileB.id,
+        webhookAuthTokenHash: createHash('sha256').update(tenantBWebhookToken).digest('hex'),
+      },
+    });
+    const spoofEventId = `evt-tenant-b-spoof-${randomUUID()}`;
+    const spoofResponse = await page.request.post('/api/webhooks/asaas', {
+      headers: { 'asaas-access-token': tenantBWebhookToken },
+      data: { ...webhookPayload, id: spoofEventId },
+    });
+    expect(spoofResponse.status()).toBe(200);
+    await expect.poll(() => prisma.webhookAsaas.findFirst({
+      where: { contaId: contaB.id, eventId: spoofEventId }, select: { status: true },
+    }).then((row) => row?.status ?? null)).toMatch(/^(ERRO|EXAURIDO|PROCESSADO)$/);
+    expect(await prisma.eventMapOrder.findUniqueOrThrow({
+      where: { id: order.id }, select: { contaId: true, status: true, ticketFulfillmentStatus: true },
+    })).toEqual({ contaId: event.contaId, status: 'CONFIRMED', ticketFulfillmentStatus: 'ISSUED' });
+    expect(await prisma.eventTicket.count({ where: { contaId: contaB.id, eventMapOrderId: order.id } })).toBe(0);
+    expect(await prisma.eventTicketSale.count({ where: { contaId: event.contaId, eventMapOrderId: order.id } })).toBe(1);
+    expect(await prisma.eventTicket.count({ where: { contaId: event.contaId, eventMapOrderId: order.id } })).toBe(2);
+  });
 
   test('publishes a map, sells selected seats, generates PDF tickets and preserves draft/public version rules', async ({ page }) => {
     const { event, map } = await seedPublishedMapScenario(page);
@@ -326,6 +480,7 @@ test.describe('event map publication, public sales and ticket delivery', () => {
       }),
     ]);
     expect(competingReservations.map((response) => response.status()).sort()).toEqual([200, 409]);
+    const acquiredSeatReservation = (await competingReservations.find((response) => response.status() === 200)!.json()).data;
 
     // The page still has the pre-race snapshot. A failed hold must refresh it
     // in place so the now-held seat becomes visibly non-interactive.
@@ -334,10 +489,33 @@ test.describe('event map publication, public sales and ticket delivery', () => {
     await page.getByLabel('Nome Completo').fill('Cliente conflito');
     await page.getByLabel('E-mail').fill('cliente.conflito@example.com');
     await page.getByLabel('CPF ou CNPJ').fill('52998224725');
-    await page.getByLabel('Número (Whatsapp)').fill('11987654321');
+    await page.getByLabel('Número do WhatsApp', { exact: true }).fill('11987654321');
+    await page.getByLabel('Confirme o número do WhatsApp').fill('11987654321');
+    await page.getByLabel('Aceito receber cobranças e notificações sobre meus ingressos pelo WhatsApp.').check();
+    await expect(page.getByRole('button', { name: /^Avançar$/ })).toBeEnabled();
     await page.getByRole('button', { name: /^Avançar$/ }).click();
     await page.getByRole('button', { name: /Confirmar e Reservar/ }).click();
     await expect(page.getByTestId('public-seat-A4')).toHaveClass(/cursor-not-allowed/);
+
+    const mapWhileSeatIsHeld = await getAdminMap(page, event.id, map.id);
+    const publishWhileSeatIsHeld = await page.request.post(`/api/events/${event.id}/maps/${map.id}/publish`, {
+      data: { expectedUpdatedAt: mapWhileSeatIsHeld.updatedAt },
+    });
+    expect(publishWhileSeatIsHeld.status()).toBe(409);
+    expect((await publishWhileSeatIsHeld.json()).error.code).toBe('MAPA_COM_RESERVAS_ATIVAS');
+
+    // Release the successful synthetic contender so the later republish can
+    // test draft versioning independently of this reservation guard.
+    await prisma.$transaction([
+      prisma.eventMapPublicSeat.updateMany({
+        where: { contaId: event.contaId, versionId: publicMap.versionId, id: contestedSeat.id, status: 'HELD' },
+        data: { status: 'AVAILABLE' },
+      }),
+      prisma.eventMapReservation.updateMany({
+        where: { id: acquiredSeatReservation.reservationId, contaId: event.contaId, status: 'HELD' },
+        data: { status: 'CANCELLED', cancelledAt: new Date() },
+      }),
+    ]);
 
     // Two first checkouts for one reservation must converge on the single
     // reservationId order constraint before either can create a second charge.
@@ -355,6 +533,7 @@ test.describe('event map publication, public sales and ticket delivery', () => {
       buyerEmail: 'cliente.corrida@example.com',
       buyerDocument: '52998224725',
       buyerPhone: '11987654321',
+      whatsappConsent: true,
       paymentMethod: 'PIX',
     };
     const firstCheckouts = await Promise.all([
@@ -362,7 +541,8 @@ test.describe('event map publication, public sales and ticket delivery', () => {
       page.request.post(`/api/public/event-maps/${published.publicSlug}/checkout`, { data: sharedCheckout }),
     ]);
     const firstCheckoutStatuses = firstCheckouts.map((response) => response.status());
-    expect(firstCheckoutStatuses.every((status) => status === 200 || status === 409)).toBe(true);
+    const firstCheckoutBodies = await Promise.all(firstCheckouts.map((response) => response.text()));
+    expect(firstCheckoutStatuses.every((status) => status === 200 || status === 409), JSON.stringify({ firstCheckoutStatuses, firstCheckoutBodies })).toBe(true);
     expect(firstCheckoutStatuses.includes(200)).toBe(true);
     const racedOrder = await prisma.eventMapOrder.findFirstOrThrow({
       where: { contaId: event.contaId, reservationId: raceReservation.reservationId },
@@ -408,7 +588,10 @@ test.describe('event map publication, public sales and ticket delivery', () => {
     await page.getByLabel('Nome Completo').fill('Comprador com resposta perdida');
     await page.getByLabel('E-mail').fill('cliente.e2e@example.com');
     await page.getByLabel('CPF ou CNPJ').fill('52998224725');
-    await page.getByLabel('Número (Whatsapp)').fill('11987654321');
+    await page.getByLabel('Número do WhatsApp', { exact: true }).fill('11987654321');
+    await page.getByLabel('Confirme o número do WhatsApp').fill('11987654321');
+    await page.getByLabel('Aceito receber cobranças e notificações sobre meus ingressos pelo WhatsApp.').check();
+    await expect(page.getByRole('button', { name: /^Avançar$/ })).toBeEnabled();
     await page.getByRole('button', { name: /^Avançar$/ }).click();
     const checkoutResponsePromise = page.waitForResponse((response) =>
       response.url().includes(`/api/public/event-maps/${published.publicSlug}/checkout`) &&
@@ -438,6 +621,7 @@ test.describe('event map publication, public sales and ticket delivery', () => {
         buyerEmail: 'cliente.e2e@example.com',
         buyerDocument: '52998224725',
         buyerPhone: '11987654321',
+        whatsappConsent: true,
         paymentMethod: 'PIX',
       },
     });
@@ -483,6 +667,12 @@ test.describe('event map publication, public sales and ticket delivery', () => {
       }),
     ));
     expect(webhookResponses.map((response) => response.status())).toEqual([200, 200, 200]);
+
+    await processBillingNotificationOutbox(event.contaId, pendingOrder.asaasPaymentId!);
+
+    const billingNotificationKey = `pending:billing:${event.contaId}:PAYMENT_RECEIVED:${pendingOrder.asaasPaymentId}`;
+    expect(await prisma.pendingInboxNotification.count({ where: { dedupeKey: billingNotificationKey } })).toBe(0);
+    expect(await prisma.notification.count({ where: { contaId: event.contaId, sourceId: pendingOrder.asaasPaymentId } })).toBe(0);
 
     await expect.poll(async () => (await prisma.eventMapOrder.findUniqueOrThrow({
       where: { id: pendingOrder.id },
@@ -768,6 +958,7 @@ test.describe('event map publication, public sales and ticket delivery', () => {
     };
     const patchResponse = await page.request.patch(`/api/events/${event.id}/maps/${map.id}`, {
       data: {
+        expectedUpdatedAt: draft.updatedAt,
         name: draft.name,
         levels: draft.levels,
         sections: draft.sections,
@@ -776,13 +967,17 @@ test.describe('event map publication, public sales and ticket delivery', () => {
       },
     });
     expect(patchResponse.status()).toBe(200);
+    const updatedDraft = (await patchResponse.json()).data;
 
     const stillOldPublic = await page.request.get(`/api/public/event-maps/${published.publicSlug}`);
     expect(((await stillOldPublic.json()).data.seats as unknown[])).toHaveLength(4);
 
-    const republishResponse = await page.request.post(`/api/events/${event.id}/maps/${map.id}/publish`);
-    expect(republishResponse.status()).toBe(200);
-    const republished = (await republishResponse.json()).data;
+    const republishResponse = await page.request.post(`/api/events/${event.id}/maps/${map.id}/publish`, {
+      data: { expectedUpdatedAt: updatedDraft.updatedAt },
+    });
+    const republishBody = await republishResponse.text();
+    expect(republishResponse.status(), republishBody).toBe(200);
+    const republished = JSON.parse(republishBody).data;
     expect(republished.versions[0].version).toBe(2);
 
     const publicAfterRepublish = await page.request.get(`/api/public/event-maps/${published.publicSlug}`);

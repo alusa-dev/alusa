@@ -11,20 +11,31 @@ import {
   assertCanManagePlatformBilling,
   resolvePlatformBillingActor,
 } from '@/src/server/platform-billing/platform-billing-server';
-import { platformBillingPortalInputDTOSchema } from '@/features/platform-billing/dtos';
+import {
+  platformBillingIdempotencyKeyDTOSchema,
+  platformBillingPortalInputDTOSchema,
+} from '@/features/platform-billing/dtos';
 
 export async function POST(req: NextRequest) {
   const requestIp = ipFromRequest(req);
   const body = await readBody(req);
   const parsedBody = platformBillingPortalInputDTOSchema.safeParse(body);
   const returnPath = readSafeReturnPath(parsedBody.success ? parsedBody.data : null);
-  const idempotencyKey = req.headers.get('idempotency-key')?.trim();
-  if (!idempotencyKey) {
+  const rawIdempotencyKey = req.headers.get('idempotency-key')?.trim();
+  if (!rawIdempotencyKey) {
     return NextResponse.json(
       { error: 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED', message: 'A chave de idempotência é obrigatória.' },
       { status: 400 },
     );
   }
+  const parsedIdempotencyKey = platformBillingIdempotencyKeyDTOSchema.safeParse(rawIdempotencyKey);
+  if (!parsedIdempotencyKey.success) {
+    return NextResponse.json(
+      { error: 'PLATFORM_BILLING_INPUT_INVALID', message: 'A chave de idempotência deve ter até 128 caracteres.' },
+      { status: 400 },
+    );
+  }
+  const idempotencyKey = parsedIdempotencyKey.data;
 
   return withTenantSession(async ({ contaId, userId, tx }) => {
     const rate = await rateLimitAsync(`platform-billing:portal:${contaId}:${userId}:${requestIp}`, 30, 10 * 60_000);
@@ -45,7 +56,7 @@ export async function POST(req: NextRequest) {
       result = await createPlatformBillingPortalSession(
         {
           contaId,
-          returnUrl: `${origin}${returnPath}`,
+          returnUrl: `${origin}/api/platform-billing/portal/return?returnPath=${encodeURIComponent(returnPath)}`,
           actorUserId: userId,
           idempotencyKey,
           correlationId: idempotencyKey,

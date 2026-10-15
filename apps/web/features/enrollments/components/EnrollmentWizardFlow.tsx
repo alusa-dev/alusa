@@ -162,6 +162,9 @@ export function EnrollmentWizardFlow({
   });
 
   const { submit: submitFamiliar, loading: submittingFamiliar } = useMatriculaFamiliarSubmit({
+    onAttemptResume: () => {
+      toast.info('Existe uma tentativa familiar pendente. A confirmação original será reenviada; alterações atuais não serão enviadas.');
+    },
     onSuccess: (outcome) => {
       setFamilyOutcome(outcome);
     },

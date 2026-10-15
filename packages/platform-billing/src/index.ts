@@ -47,6 +47,7 @@ export {
   createPlatformBillingCheckoutSession,
   createPlatformBillingPortalSession,
   createPlatformBillingTrialWithoutPaymentMethod,
+  schedulePlatformBillingDowngrade,
 } from './use-cases';
 export {
   enqueuePlatformBillingWebhookEvent,
@@ -70,6 +71,8 @@ export type {
   CreatePlatformBillingTrialWithoutPaymentMethodDeps,
   CreatePlatformBillingTrialWithoutPaymentMethodInput,
   CreatePlatformBillingTrialWithoutPaymentMethodResult,
+  SchedulePlatformBillingDowngradeDeps,
+  SchedulePlatformBillingDowngradeInput,
 } from './use-cases';
 export type {
   ProcessPlatformBillingWebhookInput,

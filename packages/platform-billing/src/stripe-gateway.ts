@@ -6,6 +6,8 @@ import {
   getStripeClient,
   previewStripeSubscriptionPlanChange,
   retrieveStripeSubscription,
+  releaseStripeSubscriptionSchedule,
+  scheduleStripeSubscriptionPlanChange,
   updateStripeSubscriptionCancelAtPeriodEnd,
   updateStripeSubscriptionPlan,
 } from '@alusa/stripe';
@@ -24,6 +26,8 @@ export function createDefaultPlatformBillingStripeGateway(source?: StripeEnvSour
     retrieveSubscription: (subscriptionId) => retrieveStripeSubscription(client, subscriptionId),
     previewSubscriptionPlanChange: (input) => previewStripeSubscriptionPlanChange(client, input),
     updateSubscriptionPlan: (input) => updateStripeSubscriptionPlan(client, input),
+    scheduleSubscriptionPlanChange: (input) => scheduleStripeSubscriptionPlanChange(client, input),
+    releaseSubscriptionSchedule: (input) => releaseStripeSubscriptionSchedule(client, input),
     updateSubscriptionCancelAtPeriodEnd: (input) => updateStripeSubscriptionCancelAtPeriodEnd(client, input),
   };
 }

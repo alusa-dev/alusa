@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
@@ -53,7 +54,8 @@ export function EventTicketsPanel({ eventId, scopedResources }: { eventId: strin
           <TabsTrigger value="lots">Lotes</TabsTrigger>
           <TabsTrigger value="check-ins">Check-ins</TabsTrigger>
         </TabsList>
-        <div className="flex flex-wrap gap-2 md:justify-end">
+        <div className="flex flex-wrap items-center gap-2 md:justify-end">
+          <Link href={`/events/reports/${eventId}`} className="px-2 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">Ver desempenho</Link>
           <LotFormDialog
             eventId={eventId}
             ticketMode={event?.ticketMode ?? 'SIMPLE'}

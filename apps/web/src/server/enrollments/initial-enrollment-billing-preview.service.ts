@@ -756,10 +756,10 @@ export async function previewInitialEnrollmentBilling(
   let operationalMessage: string;
   if (strategy === 'CREATE_SEPARATE') {
     if (contractEndsBeforeApplication) {
-      currentCycleAction = 'CREATE_ONE_TIME_CHARGE';
+      currentCycleAction = 'CREATE_SEPARATE';
       operationalMessage =
-        'O contrato termina antes da primeira recorrência. A mensalidade deve ser emitida como cobrança avulsa, sem criar uma assinatura recorrente.';
-      warnings.push(operationalMessage);
+        'A vigência termina antes do primeiro vencimento. Ajuste a data de término ou o vencimento para permitir a cobrança recorrente.';
+      blockers.push({ code: 'DATA_FIM_INVALIDA', message: operationalMessage });
     } else {
       currentCycleAction = 'CREATE_SEPARATE';
       operationalMessage = 'Será criada uma cobrança recorrente separada para esta matrícula.';

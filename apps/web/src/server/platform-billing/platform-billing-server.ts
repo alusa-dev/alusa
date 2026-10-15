@@ -24,7 +24,7 @@ export async function resolvePlatformBillingActor(params: {
         id: params.userId,
         contaId: params.contaId,
       },
-      select: { id: true, nome: true, email: true, role: true },
+      select: { id: true, nome: true, email: true, role: true, status: true },
     }),
     params.tx.usuarioConta.findUnique({
       where: {
@@ -37,16 +37,21 @@ export async function resolvePlatformBillingActor(params: {
     }),
     params.tx.conta.findUnique({
       where: { id: params.contaId },
-      select: { id: true, nome: true },
+      select: { id: true, nome: true, status: true, deletedAt: true },
     }),
   ]);
 
-  const role = (membership?.role ?? user?.role ?? '').toString().toUpperCase();
+  const role = (membership?.role ?? '').toString().toUpperCase();
+  const activeAuthorizationContext =
+    user?.status === 'ATIVO' &&
+    membership?.status === 'ATIVO' &&
+    conta?.status === 'ATIVO' &&
+    !conta.deletedAt;
   return {
     user,
     conta,
     role,
-    canManagePlatformBilling: PLATFORM_BILLING_MANAGE_ROLES.has(role),
+    canManagePlatformBilling: activeAuthorizationContext && PLATFORM_BILLING_MANAGE_ROLES.has(role),
   };
 }
 

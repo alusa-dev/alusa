@@ -220,6 +220,7 @@ function buildAccount(input: Partial<PlatformBillingAccountRecord>): PlatformBil
     pendingPlanCode: null,
     pendingChangeType: null,
     pendingChangeEffectiveAt: null,
+    pendingChangeOperationId: null,
     ...input,
   };
 }

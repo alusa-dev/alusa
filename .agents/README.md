@@ -8,7 +8,7 @@ Contratos canônicos de especialistas de IA para o monorepo Alusa.
 |------------|--------------|
 | **Cursor** | **`alusa-orchestrator` / `#orchestrator`** (pipeline multi-agente) · Skill `alusa` / `#alusa` · `alusa-education-domain` / `#education-domain` · `core` / `#core` · `tenant` / `#tenant` · `alusa-tenant-security-auditor` / `#tenant-audit` · `alusa-prisma-data-integrity` / `#prisma-integrity` · `asaas` / `#asaas` · `asaas-client` / `#asaas-client` · `alusa-webhook-reliability` / `#webhook-reliability` · `finance-sync` / `#finance-sync` · `alusa-test-adversarial` / `#test-adversarial` · `alusa-architecture-reviewer` / `#architecture-review` · `chrome-devtools` / `#chrome-devtools` |
 | **Copilot** | **`@Alusa Delivery Orchestrator`** · `@Alusa Product Context` · `@Alusa Education Domain Specialist` · `@Alusa Core` · `@Multitenancy Isolation` · `@Alusa Tenant Security Auditor` · `@Alusa Prisma Data Integrity Specialist` · `@Asaas MCP Specialist` · `@Asaas HTTP Client Specialist` · `@Alusa Webhook Reliability Specialist` · `@Financial Sync Specialist` · `@Alusa Adversarial Testing Specialist` · `@Alusa Architecture Reviewer` · `@Chrome DevTools MCP Specialist` |
-| **Codex** | Skill **`$alusa-delivery-workflow`** para orquestração; somente GPT-6 Luna. Medium é o padrão para trabalho delimitado, High para mudanças substanciais e Extra High (`xhigh`) para casos excepcionalmente difíceis. No máximo um subagente ativo e revisores read-only conforme risco. |
+| **Codex** | Skill **`$alusa-delivery-workflow`**; coordenador GPT-6.1 Sol Medium, sem implementar código de produto; um `alusa-core-worker` GPT-6 Luna Medium para alterações. Consulte abaixo as regras de revisão por risco. |
 | **Qualquer** | “Siga `.agents/alusa-orchestrator.md`” (coordenação) · `.agents/alusa.md`, `.agents/alusa-education-domain.md`, `.agents/core.md`, `.agents/tenant.md`, `.agents/alusa-tenant-security-auditor.md`, `.agents/alusa-prisma-data-integrity.md`, `.agents/asaas.md`, `.agents/asaas-client.md`, `.agents/alusa-webhook-reliability.md`, `.agents/finance-sync.md`, `.agents/alusa-test-adversarial.md`, `.agents/alusa-architecture-reviewer.md` ou `.agents/chrome-devtools.md` |
 
 ## Mapa de agentes
@@ -39,6 +39,28 @@ alusa-orchestrator (coordenação — roteamento + síntese)
   → core (implementação universal)
   → tenant | … | alusa-test-adversarial | alusa-architecture-reviewer (gate final) | …
 ```
+
+## Contratos e perfis Codex
+
+Os arquivos `.agents/*.md` são os contratos canônicos dos especialistas e permanecem a fonte de regras do projeto. Os perfis `.codex/agents/*.toml` são instruções executáveis específicas do Codex app/CLI; devem apontar para esses contratos e declarar permissões apropriadas. Além dos perfis já existentes de implementação, decisão e revisão tenant, os perfis read-only de Prisma/data integrity, webhook reliability, testes adversariais e architecture reviewer atendem aos gates necessários, sem perfis para cada especialista.
+
+| Contrato canônico | Perfil executável Codex |
+|-------------------|------------------------|
+| `alusa-prisma-data-integrity` | `alusa-prisma-reviewer` |
+| `alusa-webhook-reliability` | `alusa-webhook-reviewer` |
+| `alusa-test-adversarial` | `alusa-adversarial-reviewer` |
+| `alusa-architecture-reviewer` | `alusa-architecture-reviewer` |
+| `alusa-tenant-security-auditor` | `alusa-tenant-reviewer` |
+
+No Codex, `.codex/config.toml` ativa agentes com `[agents] enabled = true`, usa GPT-6 Luna Medium como subagente padrão e limita threads spawned por sessão com `max_concurrent_threads_per_session = 3`.
+
+- O coordenador usa sempre GPT-6.1 Sol Medium e não implementa código de produto. Toda edição é delegada a um único `alusa-core-worker` GPT-6 Luna Medium.
+- Tarefa trivial/pequena: somente o worker, sem advisor, especialista ou revisor. Trabalho normal/material: no máximo um revisor read-only mais pertinente; gate de arquitetura somente se materialidade/risco exigir. Mudança crítica tenant/financeiro/webhook/schema: mínimo de revisões exigido pelos contratos, paralelizando as independentes; arquitetura por último quando exigida.
+- Revisores usam GPT-6 Luna High, permanecem read-only e retornam findings acionáveis.
+- `alusa-decision-advisor` é read-only, usa sempre GPT-6.1 Sol Medium e só atende decisão de alto impacto ainda sem solução após consultar código e contratos.
+- Delegações recebem escopo/arquivos exatos e apenas contratos pertinentes. Leia somente código relacionado e devolva síntese curta, sem logs ou diffs extensos.
+
+`agent.multi_agent.enabled` e `max_concurrent_subagents` das páginas Agents API configuram sessões da Agents API e **não** são opções do Codex app/CLI. Para Codex, consulte [Subagents](https://developers.openai.com/codex/subagents/) e a [referência de configuração](https://developers.openai.com/codex/config-reference/).
 
 ## Hierarquia de fonte de verdade
 

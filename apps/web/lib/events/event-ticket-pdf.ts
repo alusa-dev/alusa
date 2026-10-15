@@ -4,6 +4,7 @@ import path from 'node:path';
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
 import { formatCheckInCode } from '@alusa/lib/events/map/ticket-code';
+import { getStorageObject } from '@/lib/r2-storage';
 
 const CODE_128_PATTERNS = [
   '212222', '222122', '222221', '121223', '121322', '131222', '122213', '122312', '132212', '221213',
@@ -45,11 +46,14 @@ type EventTicketPdfOrder = {
   sessionName?: string | null;
   totalAmount: number;
   event: {
+    id: string;
+    contaId?: string;
     name: string;
     startsAt: string;
     locationName?: string | null;
     locationAddress?: string | null;
     ticketArtworkUrl?: string | null;
+    ticketArtworkStorageKey?: string | null;
   };
   items: Array<{
     sectionName: string;
@@ -200,9 +204,33 @@ function drawQrCode(doc: jsPDF, value: string, x: number, y: number, size: numbe
   }
 }
 
-async function loadEventArtwork(url?: string | null) {
+function eventArtworkStorageKey(url: string, storageKey: string | null | undefined, contaId: string | undefined, eventId: string) {
+  if (!storageKey || !contaId) return null;
+  const key = storageKey;
+  const segments = key.split('/');
+  if (
+    segments.length !== 5 ||
+    segments[0] !== 'uploads' ||
+    segments[1] !== 'event-ticket-artwork' ||
+    segments[2] !== contaId ||
+    segments[3] !== eventId ||
+    !/^[\w-]+\.jpg$/i.test(segments[4])
+  ) return null;
+  if (url !== `/api/files/${encodeURI(key)}`) return null;
+  return key;
+}
+
+async function loadEventArtwork(url: string | null | undefined, event: Pick<EventTicketPdfOrder['event'], 'id' | 'contaId' | 'ticketArtworkStorageKey'>) {
   if (!url) return null;
   try {
+    const storageKey = eventArtworkStorageKey(url, event.ticketArtworkStorageKey, event.contaId, event.id);
+    if (storageKey) {
+      const object = await getStorageObject(storageKey);
+      if (!object.Body || (object.ContentLength && object.ContentLength > 3 * 1024 * 1024)) return null;
+      const bytes = await object.Body.transformToByteArray();
+      if (bytes.byteLength > 3 * 1024 * 1024) return null;
+      return `data:image/jpeg;base64,${Buffer.from(bytes).toString('base64')}`;
+    }
     if (url.startsWith('/uploads/')) {
       const absolute = path.join(process.cwd(), 'public', url.slice(1));
       return `data:image/jpeg;base64,${readFileSync(absolute).toString('base64')}`;
@@ -260,7 +288,7 @@ function drawTicketImage(doc: jsPDF, x: number, y: number, size: number, radius:
 }
 
 export async function createEventTicketsPdf(order: EventTicketPdfOrder): Promise<Buffer> {
-  const eventImage = await loadEventArtwork(order.event.ticketArtworkUrl);
+  const eventImage = await loadEventArtwork(order.event.ticketArtworkUrl, order.event);
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();

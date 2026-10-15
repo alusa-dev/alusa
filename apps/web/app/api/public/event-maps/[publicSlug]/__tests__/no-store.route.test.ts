@@ -17,6 +17,11 @@ const mocks = vi.hoisted(() => ({
   rateLimit: vi.fn(async (): Promise<Response | null> => null),
 }));
 
+vi.mock('next/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('next/server')>();
+  return { ...actual, after: vi.fn() };
+});
+
 vi.mock('@alusa/lib/events/map/event-map.service', () => ({
   getPublicEventMap: mocks.getMap,
   reservePublicEventMapSeats: mocks.reserve,

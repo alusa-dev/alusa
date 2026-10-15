@@ -14,8 +14,9 @@ type PlatformBillingContextValue = {
   summary: PlatformBillingSummaryDTO | null;
   access: PlatformBillingAccessDTO | null;
   loading: boolean;
+  refreshFailed: boolean;
   userId: string | null;
-  refresh: (_force?: boolean) => Promise<void>;
+  refresh: (_force?: boolean) => Promise<boolean>;
 };
 
 const PlatformBillingContext = createContext<PlatformBillingContextValue | null>(null);
@@ -24,8 +25,10 @@ export function PlatformBillingProvider({ children }: { children: ReactNode }) {
   const { data: session, status: sessionStatus } = useSession();
   const [summary, setSummary] = useState<PlatformBillingSummaryDTO | null>(null);
   const [access, setAccess] = useState<PlatformBillingAccessDTO | null>(null);
+  const [refreshFailed, setRefreshFailed] = useState(false);
   const lastFetchedAtRef = useRef(0);
-  const inFlightRef = useRef<Promise<void> | null>(null);
+  const inFlightRef = useRef<{ promise: Promise<boolean> } | null>(null);
+  const requestIdRef = useRef(0);
   // Start conservatively so write actions cannot open before the first billing
   // policy response is available.
   const [loading, setLoading] = useState(true);
@@ -34,23 +37,29 @@ export function PlatformBillingProvider({ children }: { children: ReactNode }) {
   const canRead = role === 'ADMIN' || role === 'FINANCEIRO';
 
   useEffect(() => {
+    requestIdRef.current += 1;
+    inFlightRef.current = null;
     lastFetchedAtRef.current = 0;
     setSummary(null);
     setAccess(null);
+    setRefreshFailed(false);
+    setLoading(true);
   }, [userId]);
 
   const refresh = useCallback(async (force = false) => {
     if (!canRead) {
       setSummary(null);
       setAccess(null);
+      setRefreshFailed(false);
       setLoading(false);
-      return;
+      return false;
     }
 
-    if (!force && summary && Date.now() - lastFetchedAtRef.current < 5 * 60_000) return;
-    if (inFlightRef.current) return inFlightRef.current;
+    if (!force && summary && Date.now() - lastFetchedAtRef.current < 5 * 60_000) return true;
+    if (inFlightRef.current && !force) return inFlightRef.current.promise;
 
-    setLoading(true);
+    const requestId = ++requestIdRef.current;
+    if (!summary) setLoading(true);
     const request = (async () => {
       try {
         const response = await fetch('/api/platform-billing/summary', {
@@ -58,25 +67,30 @@ export function PlatformBillingProvider({ children }: { children: ReactNode }) {
           headers: { accept: 'application/json' },
         });
         if (!response.ok) {
-          setSummary(null);
-          setAccess(null);
-          return;
+          if (summary && requestId === requestIdRef.current) setRefreshFailed(true);
+          return false;
         }
 
         const parsed = platformBillingSummaryDTOSchema.parse(await response.json());
-        setSummary(parsed);
-        setAccess(parsed.access);
-        lastFetchedAtRef.current = Date.now();
+        if (requestId === requestIdRef.current) {
+          setSummary(parsed);
+          setAccess(parsed.access);
+          setRefreshFailed(false);
+          lastFetchedAtRef.current = Date.now();
+        }
+        return requestId === requestIdRef.current;
       } catch (error) {
         logClientOperationalEvent('platform_billing.summary.load_failed', error);
-        setSummary(null);
-        setAccess(null);
+        if (summary && requestId === requestIdRef.current) setRefreshFailed(true);
+        return false;
       } finally {
-        setLoading(false);
-        inFlightRef.current = null;
+        if (requestId === requestIdRef.current) {
+          setLoading(false);
+          inFlightRef.current = null;
+        }
       }
     })();
-    inFlightRef.current = request;
+    inFlightRef.current = { promise: request };
     return request;
   }, [canRead, summary]);
 
@@ -84,6 +98,7 @@ export function PlatformBillingProvider({ children }: { children: ReactNode }) {
     if (sessionStatus !== 'authenticated') {
       setSummary(null);
       setAccess(null);
+      setRefreshFailed(false);
       setLoading(false);
       return;
     }
@@ -113,9 +128,9 @@ export function PlatformBillingProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [canRead, refresh, sessionStatus]);
+  }, [canRead, refresh, sessionStatus, userId]);
 
-  const value = useMemo(() => ({ summary, access, loading, userId, refresh }), [access, loading, refresh, summary, userId]);
+  const value = useMemo(() => ({ summary, access, loading, refreshFailed, userId, refresh }), [access, loading, refresh, refreshFailed, summary, userId]);
   return <PlatformBillingContext.Provider value={value}>{children}</PlatformBillingContext.Provider>;
 }
 

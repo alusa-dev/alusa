@@ -716,7 +716,7 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
         },
       },
       tickets: { where: { status: 'VALID' }, select: { id: true, ticketCode: true, checkInCode: true, status: true }, orderBy: { createdAt: 'asc' } },
-      event: { select: { id: true, name: true, startsAt: true, locationName: true, locationAddress: true, ticketArtworkUrl: true } },
+      event: { select: { id: true, contaId: true, name: true, startsAt: true, locationName: true, locationAddress: true, ticketArtworkUrl: true, ticketArtworkStorageKey: true } },
       lot: { select: { name: true } },
     },
   });

@@ -1,7 +1,7 @@
 import type { StripeWebhookEvent } from '@alusa/stripe';
 import { computeGracePeriodEnd } from './access-policy';
 import { PlatformBillingError } from './errors';
-import { resolvePlanCodeFromStripePriceId } from './price-mapping';
+import { resolvePlanCodeFromStripePriceId, resolveStripePriceId } from './price-mapping';
 import type { PlatformPlanCode } from './plans';
 import type {
   PlatformBillingAccountStatus,
@@ -14,6 +14,8 @@ export interface ProcessPlatformBillingWebhookInput {
   event: StripeWebhookEvent;
   environment: PlatformBillingEnvironment;
   envSource?: Record<string, string | undefined>;
+  workerId?: string;
+  inboxId?: string;
 }
 
 export interface ProcessPlatformBillingWebhookResult {
@@ -35,14 +37,18 @@ type StripeObject = Record<string, unknown>;
 
 const SUPPORTED_EVENTS = new Set([
   'checkout.session.completed',
+  'checkout.session.expired',
   'customer.subscription.created',
   'customer.subscription.updated',
   'customer.subscription.deleted',
   'customer.subscription.paused',
   'customer.subscription.resumed',
   'customer.subscription.trial_will_end',
+  'customer.subscription.pending_update_applied',
+  'customer.subscription.pending_update_expired',
   'invoice.created',
   'invoice.finalized',
+  'invoice.finalization_failed',
   'invoice.updated',
   'invoice.paid',
   'invoice.payment_succeeded',
@@ -82,6 +88,7 @@ export async function processPlatformBillingWebhookEvent(
       contaId: maybeContaId,
       error: error instanceof Error ? error.message : String(error),
       errorCode: error instanceof PlatformBillingError ? error.code : undefined,
+      workerId: input.workerId,
     });
     throw error;
   }
@@ -112,14 +119,14 @@ export async function enqueuePlatformBillingWebhookEvent(
 }
 
 export async function processPersistedPlatformBillingWebhookEvent(
-  input: ProcessPlatformBillingWebhookInput & { inboxId: string },
+  input: ProcessPlatformBillingWebhookInput & { inboxId: string; deferFinalize?: boolean },
   store: PlatformBillingStore,
 ): Promise<ProcessPlatformBillingWebhookResult> {
   const eventObject = input.event.data.object as unknown as StripeObject;
   const maybeContaId = readMetadata(eventObject).contaId;
 
   if (!SUPPORTED_EVENTS.has(input.event.type)) {
-    const ignored = await store.markWebhookEventIgnored({ id: input.inboxId, contaId: maybeContaId });
+    const ignored = await store.markWebhookEventIgnored({ id: input.inboxId, contaId: maybeContaId, workerId: input.workerId });
     return {
       eventId: input.event.id,
       eventType: input.event.type,
@@ -133,13 +140,17 @@ export async function processPersistedPlatformBillingWebhookEvent(
   try {
     if (input.event.type === 'checkout.session.completed') {
       contaId = await processCheckoutCompleted(eventObject, input, store);
+    } else if (input.event.type === 'checkout.session.expired') {
+      contaId = await processCheckoutExpired(eventObject, input, store);
     } else if (input.event.type.startsWith('customer.subscription.')) {
       contaId = await processSubscriptionEvent(eventObject, input, store);
     } else if (input.event.type.startsWith('invoice.')) {
       contaId = await processInvoiceEvent(eventObject, input, store);
     }
 
-    await store.markWebhookEventProcessed({ id: input.inboxId, contaId: contaId ?? undefined });
+    if (!input.deferFinalize) {
+      await store.markWebhookEventProcessed({ id: input.inboxId, contaId: contaId ?? undefined, workerId: input.workerId });
+    }
     return {
       eventId: input.event.id,
       eventType: input.event.type,
@@ -147,6 +158,9 @@ export async function processPersistedPlatformBillingWebhookEvent(
       contaId,
     };
   } catch (error) {
+    if (error instanceof PlatformBillingError) {
+      throw error;
+    }
     throw new PlatformBillingError(
       'Platform billing webhook processing failed.',
       'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED',
@@ -172,34 +186,24 @@ async function processCheckoutCompleted(
   const account =
     (await store.findAccountByStripeCustomerId({ environment: input.environment, stripeCustomerId: customerId })) ??
     (await store.createAccount({ contaId, environment: input.environment, stripeCustomerId: customerId }));
+  if (account.contaId !== contaId) {
+    throw new PlatformBillingError('Checkout customer is bound to another Conta.', 'PLATFORM_BILLING_WEBHOOK_INVALID');
+  }
+  // Checkout completion is not a canonical payment or subscription-state
+  // signal (a trial checkout may complete with no amount paid). Subscription
+  // and invoice resources drive activation independently.
 
-  await store.updateAccountFromStripeSubscription({
-    accountId: account.id,
-    status: session.payment_status === 'paid' ? 'ACTIVE' : 'CHECKOUT_PENDING',
-    accessStatus: session.payment_status === 'paid' ? 'ACTIVE' : 'PENDING',
-    planCode: session.payment_status === 'paid' ? parsePlanCode(metadata.planCode) ?? account.planCode : account.planCode,
-    stripeSubscriptionId: subscriptionId,
-    stripePriceId: session.payment_status === 'paid' ? account.stripePriceId : account.stripePriceId,
-    currentPeriodEnd: account.currentPeriodEnd,
-    cancelAtPeriodEnd: account.cancelAtPeriodEnd,
-    trialEndsAt: account.trialEndsAt,
-    lastStripeEventId: input.event.id,
-    firstPaidAt: session.payment_status === 'paid' ? new Date() : undefined,
-    lastSuccessfulPaymentAt: session.payment_status === 'paid' ? new Date() : undefined,
-    lastProviderEventCreatedAt: readUnixDate(input.event.created),
-  });
-
-  await store.resolveOpenIssuesForPaidAccount?.({
-    contaId,
-    billingAccountId: account.id,
-    environment: input.environment,
-    correlationId: input.event.id,
-  });
+  const checkoutRequestKey = readString(metadata.checkoutRequestKey);
+  if (checkoutRequestKey) {
+    await store.clearCheckoutClaim?.({ contaId, environment: input.environment, idempotencyKey: checkoutRequestKey });
+  }
 
   await store.createAuditLog({
     contaId,
     billingAccountId: account.id,
     action: 'PLATFORM_BILLING_CHECKOUT_COMPLETED',
+    webhookEnvironment: input.environment,
+    webhookEventId: input.event.id,
     entityType: 'StripeCheckoutSession',
     entityId: readString(session.id) ?? undefined,
     correlationId: input.event.id,
@@ -210,6 +214,24 @@ async function processCheckoutCompleted(
     },
   });
 
+  return contaId;
+}
+
+async function processCheckoutExpired(
+  session: StripeObject,
+  input: ProcessPlatformBillingWebhookInput,
+  store: PlatformBillingStore,
+): Promise<string | null> {
+  const metadata = readMetadata(session);
+  const contaId = metadata.contaId;
+  const checkoutRequestKey = readString(metadata.checkoutRequestKey);
+  const customerId = readStripeId(session.customer);
+  if (!contaId || !checkoutRequestKey || !customerId) return contaId ?? null;
+  const account = await store.findAccountByStripeCustomerId({ environment: input.environment, stripeCustomerId: customerId });
+  if (!account || account.contaId !== contaId) {
+    throw new PlatformBillingError('Expired Checkout customer is not bound to this Conta.', 'PLATFORM_BILLING_WEBHOOK_INVALID');
+  }
+  await store.clearCheckoutClaim?.({ contaId, environment: input.environment, idempotencyKey: checkoutRequestKey });
   return contaId;
 }
 
@@ -244,20 +266,83 @@ async function processSubscriptionEvent(
   }
 
   if (!account) return metadata.contaId ?? null;
+  if (metadata.contaId && account.contaId !== metadata.contaId) {
+    throw new PlatformBillingError('Stripe subscription is bound to another Conta.', 'PLATFORM_BILLING_WEBHOOK_INVALID');
+  }
+  if (account.stripeSubscriptionId && account.stripeSubscriptionId !== subscriptionId) {
+    // A late event from a superseded subscription must not replace the current
+    // subscription bound to this Conta.
+    return account.contaId;
+  }
 
   const planCode = priceId ? resolvePlanCodeSafely(priceId, input) : account.planCode;
   const status = mapSubscriptionStatus(readString(subscription.status));
+  const pendingPlanCode = account.pendingPlanCode;
+  const pendingPlanChangeId = account.pendingChangeOperationId;
+  const pendingChangeType = account.pendingChangeType === 'UPGRADE' || account.pendingChangeType === 'DOWNGRADE'
+    ? account.pendingChangeType
+    : null;
   const paymentMethod = readPaymentMethodFromSubscription(subscription);
   const shouldCommitPlan = shouldCommitPlanFromSubscriptionStatus(status);
   const accountPlanCode = shouldCommitPlan ? planCode : account.planCode;
-  const shouldClearPendingPlan = Boolean(shouldCommitPlan && account.pendingPlanCode && planCode === account.pendingPlanCode);
+  const pendingUpdateExpired = input.event.type === 'customer.subscription.pending_update_expired';
+  const hasCanonicalPendingUpdate = Boolean(subscription.pending_update);
+  const confirmsPendingPlanApplied = Boolean(
+    pendingPlanCode && shouldCommitPlan
+    && planCode === pendingPlanCode && priceId === resolveStripePriceId({
+      planCode: pendingPlanCode,
+      environment: input.environment,
+      source: input.envSource,
+    }),
+  );
+  const confirmsPendingUpdateExpired = Boolean(
+    pendingUpdateExpired && pendingPlanCode
+    && account.pendingChangeType === 'UPGRADE'
+    && account.pendingChangeOperationId
+    && readMetadata(subscription).planChangeId === account.pendingChangeOperationId
+    && !hasCanonicalPendingUpdate
+    && priceId && priceId === account.stripePriceId,
+  );
+  const shouldClearPendingPlan = Boolean(
+    pendingPlanCode && (
+      confirmsPendingPlanApplied || confirmsPendingUpdateExpired
+    ),
+  );
+  const planChangeFinalization = pendingPlanChangeId && pendingPlanCode && pendingChangeType
+    && (confirmsPendingPlanApplied || confirmsPendingUpdateExpired)
+    ? {
+        planChangeId: pendingPlanChangeId,
+        contaId: account.contaId,
+        billingAccountId: account.id,
+        environment: input.environment,
+        stripeSubscriptionId: subscriptionId,
+        stripePriceId: resolveStripePriceId({
+          planCode: pendingPlanCode,
+          environment: input.environment,
+          source: input.envSource,
+        }),
+        toPlanCode: pendingPlanCode,
+        type: pendingChangeType,
+        applied: confirmsPendingPlanApplied,
+      }
+    : undefined;
   const isTerminalCancellation = status === 'CANCELED' || status === 'INCOMPLETE_EXPIRED';
   const updated = await store.updateAccountFromStripeSubscription({
     accountId: account.id,
+    expectedAccountSnapshot: {
+      contaId: account.contaId,
+      environment: account.environment,
+      stripeSubscriptionId: account.stripeSubscriptionId,
+      pendingChangeOperationId: account.pendingChangeOperationId,
+      pendingChangeClaimToken: account.pendingChangeClaimToken ?? null,
+      lastProviderEventCreatedAt: account.lastProviderEventCreatedAt,
+      lastStripeEventId: account.lastStripeEventId ?? null,
+    },
     status,
     accessStatus: mapAccessStatusFromSubscription(status),
     planCode: accountPlanCode,
     stripeSubscriptionId: subscriptionId,
+    webhookLease: input.workerId && input.inboxId ? { id: input.inboxId, workerId: input.workerId } : undefined,
     stripePriceId: shouldCommitPlan ? priceId : account.stripePriceId,
     currentPeriodEnd: readSubscriptionCurrentPeriodEnd(subscription),
     cancelAtPeriodEnd: isTerminalCancellation ? false : subscription.cancel_at_period_end === true,
@@ -275,6 +360,8 @@ async function processSubscriptionEvent(
     pendingPlanCode: shouldClearPendingPlan ? null : undefined,
     pendingChangeType: shouldClearPendingPlan ? null : undefined,
     pendingChangeEffectiveAt: shouldClearPendingPlan ? null : undefined,
+    pendingChangeOperationId: shouldClearPendingPlan ? null : undefined,
+    planChangeFinalization,
     lastStripeEventId: input.event.id,
   });
 
@@ -282,6 +369,8 @@ async function processSubscriptionEvent(
     contaId: updated.contaId,
     billingAccountId: updated.id,
     action: 'PLATFORM_BILLING_SUBSCRIPTION_SYNCED',
+    webhookEnvironment: input.environment,
+    webhookEventId: input.event.id,
     entityType: 'StripeSubscription',
     entityId: subscriptionId,
     correlationId: input.event.id,
@@ -314,24 +403,44 @@ async function processInvoiceEvent(
           stripeSubscriptionId: subscriptionId,
         })
       : null) ??
-    (await store.findAccountByStripeCustomerId({
+    (!subscriptionId ? await store.findAccountByStripeCustomerId({
       environment: input.environment,
       stripeCustomerId: customerId,
-    }));
+    }) : null);
 
-  if (!account) return null;
+  if (!account) {
+    throw new PlatformBillingError(
+      'Stripe invoice could not be bound to a platform billing account.',
+      'PLATFORM_BILLING_ACCOUNT_NOT_FOUND',
+      { invoiceId, subscriptionId, environment: input.environment },
+    );
+  }
+  const invoiceContaId = readMetadata(invoice).contaId;
+  if (invoiceContaId && invoiceContaId !== account.contaId) {
+    throw new PlatformBillingError('Stripe invoice is bound to another Conta.', 'PLATFORM_BILLING_WEBHOOK_INVALID');
+  }
 
-  const priceId = readInvoicePriceId(invoice) ?? account.stripePriceId;
+  const invoicePrice = readInvoicePriceId(invoice);
+  if (invoicePrice.ambiguous) {
+    throw new PlatformBillingError('Stripe invoice contains multiple distinct non-proration prices.', 'PLATFORM_BILLING_WEBHOOK_INVALID', { invoiceId });
+  }
+  const priceId = invoicePrice.priceId ?? account.stripePriceId;
   const planCode = priceId ? resolvePlanCodeSafely(priceId, input) : account.planCode;
   const isPaymentFailedEvent = input.event.type === 'invoice.payment_failed' || input.event.type === 'invoice.payment_action_required';
   const isPaymentPaidEvent = input.event.type === 'invoice.paid' || input.event.type === 'invoice.payment_succeeded';
   const invoiceFailure = readInvoicePaymentFailure(invoice);
   const nextPaymentAttempt = readUnixDate(invoice.next_payment_attempt);
-  const failedAt = isPaymentFailedEvent ? new Date() : isPaymentPaidEvent ? null : undefined;
-
   const invoiceStatus = mapInvoiceStatus(readString(invoice.status));
   const amountDue = readNumber(invoice.amount_due) ?? 0;
   const amountPaid = readNumber(invoice.amount_paid) ?? 0;
+  const effectiveFailure = isPaymentFailedEvent && invoiceStatus !== 'PAID';
+  const subscriptionToPersist = subscriptionId ?? account.stripeSubscriptionId;
+  const paidConversion = isPaymentPaidEvent && amountPaid > 0 &&
+    invoiceStatus === 'PAID' && subscriptionId !== null &&
+    subscriptionId === account.stripeSubscriptionId;
+  const failedAt = effectiveFailure
+    ? readUnixDate(input.event.created) ?? new Date()
+    : isPaymentPaidEvent ? null : undefined;
   const attemptCount = readNumber(invoice.attempt_count) ?? 0;
 
   await store.upsertInvoice({
@@ -353,7 +462,8 @@ async function processInvoiceEvent(
     periodStart: readUnixDate(invoice.period_start) ?? undefined,
     periodEnd: readUnixDate(invoice.period_end) ?? undefined,
     dueDate: readUnixDate(invoice.due_date) ?? undefined,
-    paidAt: readUnixDate(invoice.status_transitions && (invoice.status_transitions as StripeObject).paid_at) ?? undefined,
+    paidAt: readUnixDate(invoice.status_transitions && (invoice.status_transitions as StripeObject).paid_at)
+      ?? (paidConversion ? readUnixDate(input.event.created) ?? new Date() : undefined),
     failedAt,
     attempted: readBoolean(invoice.attempted) ?? false,
     attemptCount,
@@ -368,6 +478,8 @@ async function processInvoiceEvent(
     contaId: account.contaId,
     billingAccountId: account.id,
     action: resolveInvoiceAuditAction(input.event.type),
+    webhookEnvironment: input.environment,
+    webhookEventId: input.event.id,
     entityType: 'StripeInvoice',
     entityId: invoiceId,
     correlationId: input.event.id,
@@ -383,59 +495,70 @@ async function processInvoiceEvent(
     },
   });
 
-  const subscriptionToPersist = subscriptionId ?? account.stripeSubscriptionId;
-  if (subscriptionToPersist && (isPaymentFailedEvent || isPaymentPaidEvent)) {
-    const paymentStateChangedAt = failedAt ?? new Date();
+  if (subscriptionToPersist && (effectiveFailure || paidConversion)) {
+    const paymentStateChangedAt = failedAt ?? readUnixDate(input.event.created) ?? new Date();
     const graceEligible = isPaymentPaidSubscriptionEligible(account);
     const nextStatus = resolveInvoicePaymentAccountStatus({
       accountStatus: account.status,
       trialEndsAt: account.trialEndsAt,
-      isPaymentFailed: isPaymentFailedEvent,
+      isPaymentFailed: effectiveFailure,
       graceEligible,
     });
-    const nextAccessStatus = isPaymentFailedEvent && !graceEligible
+    const nextAccessStatus = effectiveFailure && !graceEligible
       ? 'RESTRICTED'
       : mapAccessStatusFromSubscription(nextStatus);
-    await store.updateAccountFromStripeSubscription({
+    const updatedAccount = await store.updateAccountFromStripeSubscription({
       accountId: account.id,
+      expectedAccountSnapshot: {
+        contaId: account.contaId,
+        environment: account.environment,
+        stripeSubscriptionId: account.stripeSubscriptionId,
+        pendingChangeOperationId: account.pendingChangeOperationId,
+        pendingChangeClaimToken: account.pendingChangeClaimToken ?? null,
+        lastProviderEventCreatedAt: account.lastProviderEventCreatedAt,
+        lastStripeEventId: account.lastStripeEventId ?? null,
+      },
       status: nextStatus,
       accessStatus: nextAccessStatus,
       planCode,
       stripeSubscriptionId: subscriptionToPersist,
+      webhookLease: input.workerId && input.inboxId ? { id: input.inboxId, workerId: input.workerId } : undefined,
       stripePriceId: priceId,
       currentPeriodEnd: account.currentPeriodEnd,
       cancelAtPeriodEnd: account.cancelAtPeriodEnd,
       trialEndsAt: account.trialEndsAt,
-      gracePeriodEndsAt: isPaymentFailedEvent && graceEligible
-        ? computeGracePeriodEnd({ failedAt: paymentStateChangedAt })
+      gracePeriodEndsAt: effectiveFailure && graceEligible
+        ? account.gracePeriodEndsAt ?? computeGracePeriodEnd({ failedAt: paymentStateChangedAt })
         : null,
-      restrictedAt: isPaymentFailedEvent && !graceEligible ? paymentStateChangedAt : null,
-      lastPaymentFailedAt: isPaymentFailedEvent ? paymentStateChangedAt : null,
-      firstPaidAt: isPaymentPaidEvent ? account.firstPaidAt ?? paymentStateChangedAt : undefined,
-      lastSuccessfulPaymentAt: isPaymentPaidEvent ? paymentStateChangedAt : undefined,
-      restrictionReason: isPaymentFailedEvent && !graceEligible
+      restrictedAt: effectiveFailure && !graceEligible ? paymentStateChangedAt : null,
+      lastPaymentFailedAt: effectiveFailure ? paymentStateChangedAt : null,
+      firstPaidAt: paidConversion ? account.firstPaidAt ?? paymentStateChangedAt : undefined,
+      lastSuccessfulPaymentAt: paidConversion ? paymentStateChangedAt : undefined,
+      restrictionReason: effectiveFailure && !graceEligible
         ? account.firstPaidAt || account.lastSuccessfulPaymentAt
           ? account.paymentMethodStatus === 'MISSING'
             ? 'PAYMENT_METHOD_MISSING'
             : 'PAYMENT_PAST_DUE'
           : 'FIRST_PAYMENT_INCOMPLETE'
         : null,
-      gracePeriodStartedAt: isPaymentFailedEvent && graceEligible ? paymentStateChangedAt : null,
+      gracePeriodStartedAt: effectiveFailure && graceEligible
+        ? account.gracePeriodStartedAt ?? paymentStateChangedAt
+        : null,
       lastProviderEventCreatedAt: readUnixDate(input.event.created),
-      pendingChangeType: isPaymentFailedEvent && graceEligible
+      pendingChangeType: effectiveFailure && graceEligible
         ? 'PAYMENT_RECOVERY'
-        : account.pendingChangeType === 'PAYMENT_RECOVERY'
+        : paidConversion && account.pendingChangeType === 'PAYMENT_RECOVERY'
           ? null
           : undefined,
-      pendingChangeEffectiveAt: isPaymentFailedEvent && graceEligible
+      pendingChangeEffectiveAt: effectiveFailure && graceEligible
         ? nextPaymentAttempt
-        : account.pendingChangeType === 'PAYMENT_RECOVERY'
+        : paidConversion && account.pendingChangeType === 'PAYMENT_RECOVERY'
           ? null
           : undefined,
       lastStripeEventId: input.event.id,
     });
 
-    if (isPaymentPaidEvent) {
+    if (paidConversion && updatedAccount.lastStripeEventId === input.event.id) {
       await store.resolveOpenIssuesForPaidAccount?.({
         contaId: account.contaId,
         billingAccountId: account.id,
@@ -555,11 +678,6 @@ function resolvePlanCodeSafely(
   }
 }
 
-function parsePlanCode(value: string | undefined): PlatformPlanCode | null {
-  if (value === 'STARTER' || value === 'PREMIUM' || value === 'PRO' || value === 'CUSTOM') return value;
-  return null;
-}
-
 function readPaymentMethodFromSubscription(subscription: StripeObject): {
   status: 'MISSING' | 'PRESENT' | 'UNKNOWN';
   type?: string;
@@ -623,9 +741,25 @@ function readSubscriptionCurrentPeriodEnd(subscription: StripeObject): Date | nu
   return readUnixDate(subscription.current_period_end) ?? readUnixDate(items?.data?.[0]?.current_period_end);
 }
 
-function readInvoicePriceId(invoice: StripeObject): string | null {
-  const lines = invoice.lines as { data?: Array<{ price?: { id?: string } }> } | undefined;
-  return lines?.data?.[0]?.price?.id ?? null;
+function readInvoicePriceId(invoice: StripeObject): { priceId: string | null; ambiguous: boolean } {
+  const lines = readRecord(invoice.lines).data;
+  if (!Array.isArray(lines)) return { priceId: null, ambiguous: false };
+  const prices = new Set<string>();
+  for (const value of lines) {
+    const line = readRecord(value);
+    const subscriptionItemDetails = readRecord(readRecord(line.parent).subscription_item_details);
+    const legacySubscriptionItemDetails = readRecord(line.subscription_item_details);
+    if (
+      line.proration === true
+      || subscriptionItemDetails.proration === true
+      || legacySubscriptionItemDetails.proration === true
+    ) continue;
+    const pricingPrice = readStripeId(readRecord(readRecord(line.pricing).price_details).price);
+    const legacyPrice = readStripeId(line.price);
+    const priceId = pricingPrice ?? legacyPrice;
+    if (priceId) prices.add(priceId);
+  }
+  return { priceId: prices.size === 1 ? [...prices][0]! : null, ambiguous: prices.size > 1 };
 }
 
 function readNestedString(value: StripeObject, path: string[]): string | null {

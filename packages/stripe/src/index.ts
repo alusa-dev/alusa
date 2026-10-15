@@ -8,9 +8,14 @@ export {
   previewStripeSubscriptionPlanChange,
   retrieveStripeDefaultPaymentMethod,
   retrieveStripeSubscription,
+  retrieveStripeSubscriptionEventObject,
+  retrieveStripeInvoiceEventObject,
+  releaseStripeSubscriptionSchedule,
+  scheduleStripeSubscriptionPlanChange,
   updateStripeSubscriptionCancelAtPeriodEnd,
   updateStripeSubscriptionPlan,
 } from './billing';
+export { StripeScheduleUpdateRecoveryError } from './billing';
 export type {
   CreateStripeBillingCustomerInput,
   CreateStripeBillingPortalSessionInput,
@@ -26,6 +31,7 @@ export type {
   StripeBillingPortalSessionResult,
   StripeSubscriptionCheckoutSessionResult,
   UpdateStripeSubscriptionPlanInput,
+  ScheduleStripeSubscriptionPlanChangeInput,
 } from './billing';
 export { DEFAULT_STRIPE_API_VERSION, parseStripeEnvironment, parseStripeRuntimeConfig, parseStripeWebhookSecret } from './config';
 export { StripeIntegrationError } from './errors';

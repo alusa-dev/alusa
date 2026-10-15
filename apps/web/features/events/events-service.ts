@@ -13,6 +13,7 @@ import type {
   SchoolEventStatus,
   SchoolEventType,
 } from '@alusa/shared';
+import type { EventTicketWhatsAppNotificationStatus } from '@prisma/client';
 import type { SchoolEventDTO } from '@alusa/lib/events/events.service';
 
 export type { SchoolEventDTO };
@@ -74,6 +75,7 @@ export type TicketSaleDTO = {
   lot: { id: string; name: string; ticketType: EventTicketType };
   buyerName: string;
   whatsappAvailable?: boolean;
+  whatsappStatus?: EventTicketWhatsAppNotificationStatus | null;
   aluno: { id: string; nome: string } | null;
   responsavel: { id: string; nome: string } | null;
   quantity: number;
@@ -777,4 +779,13 @@ export async function quitarEventParticipantFee(
     body: JSON.stringify({ paymentMethod, idempotencyKey }),
   });
   return (await parseResponse<JsonEnvelope<EventParticipantDTO>>(response)).data;
+}
+
+export type EventReportDetailDTO = import('@alusa/lib/events/event-report-detail.service').EventReportDetail;
+
+export async function getEventReportDetail(eventId: string): Promise<EventReportDetailDTO> {
+  const json = await parseResponse<JsonEnvelope<EventReportDetailDTO>>(
+    await fetch(`/api/events/reports/${encodeURIComponent(eventId)}`, { cache: 'no-store' }),
+  );
+  return json.data;
 }

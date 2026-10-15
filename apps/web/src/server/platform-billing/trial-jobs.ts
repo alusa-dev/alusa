@@ -38,7 +38,7 @@ export async function expirePlatformBillingTrials(input: {
       environment,
       status: 'TRIALING',
       trialEndsAt: { lte: now },
-      accessStatus: { not: 'CANCELED' },
+      accessStatus: { in: ['ACTIVE', 'PENDING'] },
       OR: [{ firstPaidAt: null, lastSuccessfulPaymentAt: null }],
     },
     orderBy: { trialEndsAt: 'asc' },
@@ -65,7 +65,7 @@ export async function expirePlatformBillingTrials(input: {
           id: account.id,
           status: 'TRIALING',
           trialEndsAt: { lte: now },
-          accessStatus: { not: 'CANCELED' },
+          accessStatus: { in: ['ACTIVE', 'PENDING'] },
           OR: [{ firstPaidAt: null, lastSuccessfulPaymentAt: null }],
         },
         data: {

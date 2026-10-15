@@ -4057,6 +4057,17 @@ model PlatformBillingAccount {
   pendingPlanCode            PlatformBillingPlanCode?
   pendingChangeType          PlatformBillingPlanChangeType?
   pendingChangeEffectiveAt   DateTime?
+  pendingChangeOperationId          String?
+  pendingChangeClaimToken           String?
+  pendingChangeClaimedAt            DateTime?
+  checkoutClaimKey                  String?
+  checkoutClaimPhase                String?
+  checkoutClaimedAt                 DateTime?
+  checkoutRequestExpiresAt          DateTime?
+  trialSubscriptionClaimKey         String?
+  trialSubscriptionClaimPhase       String?
+  trialSubscriptionClaimedAt        DateTime?
+  trialSubscriptionRequestExpiresAt DateTime?
   lastStripeEventId          String?
   createdAt                  DateTime                           @default(now())
   updatedAt                  DateTime                           @updatedAt
@@ -4076,6 +4087,7 @@ model PlatformBillingAccount {
   @@index([contaId, planCode], name: "idx_platform_billing_account_conta_plan")
   @@index([environment, accessStatus], name: "idx_platform_billing_account_env_access")
   @@index([pendingChangeEffectiveAt], name: "idx_platform_billing_account_pending_effective")
+  @@index([contaId, environment, pendingChangeOperationId], name: "idx_platform_billing_account_pending_operation")
 }
 
 model PlatformBillingCheckoutSession {
@@ -4183,12 +4195,35 @@ model PlatformBillingWebhookEvent {
   @@index([correlationId], name: "idx_platform_billing_webhook_correlation")
 }
 
+model PlatformBillingNotificationOutbox {
+  id            String                     @id @default(cuid())
+  environment   PlatformBillingEnvironment
+  eventId       String
+  eventType     String
+  contaId       String?
+  status        String                     @default("PENDING")
+  attempts      Int                        @default(0)
+  nextAttemptAt DateTime                   @default(now())
+  lockedAt      DateTime?
+  workerId      String?
+  deliveredAt   DateTime?
+  lastError     String?
+  createdAt     DateTime                   @default(now())
+  updatedAt     DateTime                   @updatedAt
+
+  @@unique([environment, eventId], name: "uq_platform_billing_notification_env_event")
+  @@index([status, nextAttemptAt], name: "idx_platform_billing_notification_status_next")
+  @@index([contaId, status], name: "idx_platform_billing_notification_conta_status")
+}
+
 model PlatformBillingAuditLog {
   id               String   @id @default(cuid())
   contaId          String
   billingAccountId String?
   actorUserId      String?
   action           String
+  webhookEnvironment PlatformBillingEnvironment?
+  webhookEventId     String?
   entityType       String?
   entityId         String?
   correlationId    String?
@@ -4199,6 +4234,7 @@ model PlatformBillingAuditLog {
   billingAccount PlatformBillingAccount? @relation(fields: [billingAccountId], references: [id], onDelete: SetNull)
   actor          Usuario?                @relation("PlatformBillingAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
 
+  @@unique([webhookEnvironment, webhookEventId, action], name: "uq_platform_billing_audit_webhook_event_action")
   @@index([contaId, createdAt], name: "idx_platform_billing_audit_conta_created")
   @@index([contaId, action, createdAt], name: "idx_platform_billing_audit_conta_action")
   @@index([contaId, entityType, entityId], name: "idx_platform_billing_audit_entity")
@@ -4911,10 +4947,10 @@ model EventMapOrder {
   tickets     EventTicket[]
   whatsappNotifications EventTicketWhatsAppNotification[]
 
+  @@unique([contaId, asaasPaymentId], name: "uq_event_map_order_conta_asaas_payment")
   @@index([contaId, eventMapId, versionId, status], name: "idx_event_map_order_conta_map_version_status")
   @@index([contaId, status, ticketFulfillmentStatus, updatedAt], name: "idx_event_map_order_conta_fulfillment")
   @@index([contaId, eventId, createdAt], name: "idx_event_map_order_conta_event_created")
-  @@unique([contaId, asaasPaymentId], name: "uq_event_map_order_conta_asaas_payment")
   @@index([contaId, expiresAt, status], name: "idx_event_map_order_conta_expires_status")
 }
 
@@ -4963,10 +4999,10 @@ model EventTicket {
   sale      EventTicketSale?     @relation(fields: [eventTicketSaleId], references: [id], onDelete: Cascade)
   saleSeat  EventTicketSaleSeat? @relation(fields: [saleSeatId], references: [id], onDelete: Cascade)
 
+  @@unique([contaId, checkInCode], name: "uq_event_ticket_conta_check_in_code", map: "uq_event_ticket_conta_check_in_code")
   @@index([contaId, eventId, status], name: "idx_event_ticket_conta_event_status")
   @@index([contaId, eventMapOrderId], name: "idx_event_ticket_conta_order")
   @@index([contaId, eventTicketSaleId], name: "idx_event_ticket_conta_sale")
-  @@unique([contaId, checkInCode], name: "uq_event_ticket_conta_check_in_code", map: "uq_event_ticket_conta_check_in_code")
 }
 
 model EventTicketSale {
@@ -5216,10 +5252,10 @@ model EventFinancialPayment {
   participant    EventParticipant?   @relation(fields: [participantId], references: [id], onDelete: SetNull)
   createdBy      Usuario?            @relation("EventFinancialPaymentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
+  @@unique([contaId, idempotencyKey], name: "uq_event_financial_payment_conta_idempotency")
   @@index([contaId, financialEntryId, status], name: "idx_event_financial_payment_entry_status")
   @@index([contaId, participantId, status], name: "idx_event_financial_payment_participant_status")
   @@index([contaId, eventId, paidAt], name: "idx_event_financial_payment_event_paid")
-  @@unique([contaId, idempotencyKey], name: "uq_event_financial_payment_conta_idempotency")
 }
 
 model EventParticipant {
@@ -7830,11 +7866,11 @@ model PayerChangeOperacao {
   matricula Matricula @relation(fields: [matriculaId], references: [id])
   createdBy Usuario?  @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
+  @@unique([contaId, idempotencyKey], name: "uq_payer_change_operacao_conta_idempotency")
   @@index([contaId])
   @@index([contaId, status], name: "idx_payer_change_operacao_conta_status")
   @@index([contaId, createdAt], name: "idx_payer_change_operacao_conta_created")
   @@index([contaId, matriculaId], name: "idx_payer_change_operacao_conta_matricula")
-  @@unique([contaId, idempotencyKey], name: "uq_payer_change_operacao_conta_idempotency")
   @@index([contaId, correlationId], name: "idx_payer_change_operacao_conta_correlation")
   @@index([matriculaId])
   @@index([status])
@@ -8239,7 +8275,6 @@ model ProductVariantOption {
 
   @@id([variantId, optionValueId])
 }
-
 
 model TenantUploadQuota {
   id            String   @id @default(cuid())

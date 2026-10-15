@@ -31,7 +31,7 @@ export function EventsFilters({
   onTypeChange: (value: string) => void;
 }) {
   return (
-    <div className="flex w-full flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-end lg:gap-2">
+    <div className="flex w-full flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between lg:gap-2">
       <div className="relative w-full min-w-0 shrink-0 lg:w-[360px] xl:w-[420px]">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <Input
@@ -41,7 +41,7 @@ export function EventsFilters({
           className={cn(FILTER_INPUT_CLASS, 'pl-10')}
         />
       </div>
-      <div className="grid min-w-0 grid-cols-2 gap-2 lg:contents">
+      <div className="grid min-w-0 grid-cols-2 gap-2 lg:flex lg:shrink-0 lg:gap-2">
         <Select value={status} onValueChange={onStatusChange}>
           <SelectTrigger className="h-10 w-full min-w-0 border-slate-200 bg-white shadow-none lg:w-[170px]">
             <SelectValue placeholder="Todos os status" />

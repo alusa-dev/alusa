@@ -25,7 +25,6 @@ export async function processStripePlatformWebhook(input: {
         prisma,
         limit: 10,
         environment: config.environment,
-        workerId: 'stripe-webhook-inline-drain',
       })
     : null;
   return { config, result, drainResult };
