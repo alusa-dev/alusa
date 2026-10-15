@@ -1,5 +1,23 @@
 import type Stripe from 'stripe';
 
+/**
+ * A schedule has already been created or was already attached to the
+ * subscription when its phase update failed. The remote workflow therefore
+ * has an effect even when Stripe classifies the update request itself as a
+ * definitive 4xx. Callers must retain their operation claim and retry using
+ * the same idempotency key so the owned schedule can be completed.
+ */
+export class StripeScheduleUpdateRecoveryError extends Error {
+  readonly code = 'STRIPE_SCHEDULE_UPDATE_RECOVERY_REQUIRED';
+  override readonly cause: unknown;
+
+  constructor(cause: unknown) {
+    super('Stripe schedule exists but its phase update failed; retry the same plan change to recover it.');
+    this.name = 'StripeScheduleUpdateRecoveryError';
+    this.cause = cause;
+  }
+}
+
 export interface CreateStripeBillingCustomerInput {
   name: string;
   email?: string;
@@ -124,6 +142,14 @@ export interface UpdateStripeSubscriptionPlanInput {
   idempotencyKey?: string;
 }
 
+export interface ScheduleStripeSubscriptionPlanChangeInput {
+  subscriptionId: string;
+  priceId: string;
+  effectiveAt: Date;
+  metadata: Record<string, string>;
+  idempotencyKey: string;
+}
+
 export async function createStripeBillingCustomer(
   client: Stripe,
   input: CreateStripeBillingCustomerInput,
@@ -236,19 +262,38 @@ export async function retrieveStripeSubscription(
   return toSubscriptionRecord(subscription);
 }
 
+export async function retrieveStripeSubscriptionEventObject(
+  client: Stripe,
+  subscriptionId: string,
+): Promise<Record<string, unknown>> {
+  return readRecord(await client.subscriptions.retrieve(subscriptionId));
+}
+
+export async function retrieveStripeInvoiceEventObject(
+  client: Stripe,
+  invoiceId: string,
+): Promise<Record<string, unknown>> {
+  return readRecord(await client.invoices.retrieve(invoiceId));
+}
+
 export async function listStripePaidInvoices(
   client: Stripe,
   customerId: string,
 ): Promise<StripeInvoiceRecord[]> {
-  const invoices = await client.invoices.list({
-    customer: customerId,
-    status: 'paid',
-    limit: 100,
-  });
+  const result: StripeInvoiceRecord[] = [];
+  let startingAfter: string | undefined;
+  do {
+    const page = await client.invoices.list({
+      customer: customerId,
+      status: 'paid',
+      limit: 100,
+      ...(startingAfter ? { starting_after: startingAfter } : {}),
+    });
+    result.push(...page.data.map(toInvoiceRecord).filter((invoice) => invoice.amountPaid > 0));
+    startingAfter = page.has_more ? page.data.at(-1)?.id : undefined;
+  } while (startingAfter);
 
-  return invoices.data
-    .map(toInvoiceRecord)
-    .filter((invoice) => invoice.amountPaid > 0);
+  return result;
 }
 
 export async function retrieveStripeDefaultPaymentMethod(
@@ -256,18 +301,14 @@ export async function retrieveStripeDefaultPaymentMethod(
   input: RetrieveStripeDefaultPaymentMethodInput,
 ): Promise<StripeDefaultPaymentMethodRecord | null> {
   if (input.subscriptionId) {
-    try {
-      const subscription = await client.subscriptions.retrieve(input.subscriptionId, {
-        expand: ['default_payment_method'],
-      });
-      const subscriptionPaymentMethod = await resolvePaymentMethodRecord(
-        client,
-        readRecord(subscription).default_payment_method,
-      );
-      if (subscriptionPaymentMethod) return subscriptionPaymentMethod;
-    } catch {
-      // Customer invoice settings are the fallback source for the default payment method.
-    }
+    const subscription = await client.subscriptions.retrieve(input.subscriptionId, {
+      expand: ['default_payment_method'],
+    });
+    const subscriptionPaymentMethod = await resolvePaymentMethodRecord(
+      client,
+      readRecord(subscription).default_payment_method,
+    );
+    if (subscriptionPaymentMethod) return subscriptionPaymentMethod;
   }
 
   const customer = await client.customers.retrieve(input.customerId, {
@@ -348,6 +389,114 @@ export async function updateStripeSubscriptionPlan(
   return toSubscriptionRecord(updated);
 }
 
+export async function scheduleStripeSubscriptionPlanChange(
+  client: Stripe,
+  input: ScheduleStripeSubscriptionPlanChangeInput,
+): Promise<{ scheduleId: string; effectiveAt: Date }> {
+  const subscription = await client.subscriptions.retrieve(input.subscriptionId, { expand: ['schedule'] });
+  const attachedScheduleValue = readRecord(subscription).schedule;
+  const attachedSchedule = readRecord(attachedScheduleValue);
+  const attachedScheduleId = readStripeId(attachedScheduleValue);
+  let schedule: Stripe.SubscriptionSchedule;
+  if (attachedScheduleId) {
+    schedule = attachedSchedule.phases
+      ? attachedSchedule as unknown as Stripe.SubscriptionSchedule
+      : await client.subscriptionSchedules.retrieve(attachedScheduleId);
+    if (schedule.metadata?.alusaPlanChangeKey !== input.idempotencyKey) {
+      throw new Error('Stripe subscription is already managed by another schedule; refusing to replace it.');
+    }
+    const effectiveAt = Math.floor(input.effectiveAt.getTime() / 1000);
+    const targetIsScheduled = schedule.phases.some((phase) =>
+      phase.start_date === effectiveAt && phase.items.some((item) => readStripeId(item.price) === input.priceId),
+    );
+    if (targetIsScheduled) return { scheduleId: schedule.id, effectiveAt: input.effectiveAt };
+  } else {
+    schedule = await client.subscriptionSchedules.create(
+      {
+        from_subscription: input.subscriptionId,
+        metadata: { ...input.metadata, alusaPlanChangeKey: input.idempotencyKey },
+      },
+      buildRequestOptions(`${input.idempotencyKey}:create`),
+    );
+  }
+  const currentPhase = schedule.phases.find((phase) =>
+    phase.start_date === schedule.current_phase?.start_date,
+  ) ?? schedule.phases.at(-1);
+  if (!currentPhase || currentPhase.items.length !== 1) {
+    await client.subscriptionSchedules.release(schedule.id).catch(() => undefined);
+    throw new Error('Stripe schedule must contain exactly one current subscription item.');
+  }
+  if (!readStripeId(currentPhase.items[0]?.price)) {
+    await client.subscriptionSchedules.release(schedule.id).catch(() => undefined);
+    throw new Error('Stripe schedule phase contains an invalid price.');
+  }
+
+  const effectiveAt = Math.floor(input.effectiveAt.getTime() / 1000);
+  const phaseItems = currentPhase.items.map((item, index) => {
+    const existingPrice = readStripeId(item.price);
+    if (!existingPrice) throw new Error('Stripe schedule phase contains an invalid price.');
+    return {
+      price: index === 0 ? input.priceId : existingPrice,
+      ...(item.quantity ? { quantity: item.quantity } : {}),
+    };
+  });
+  const sharedPhaseSettings = {
+    ...(currentPhase.collection_method ? { collection_method: currentPhase.collection_method } : {}),
+    ...(currentPhase.default_payment_method ? { default_payment_method: readStripeId(currentPhase.default_payment_method)! } : {}),
+    ...(currentPhase.default_tax_rates ? { default_tax_rates: currentPhase.default_tax_rates.map((rate) => rate.id) } : {}),
+    ...(currentPhase.discounts?.length ? { discounts: currentPhase.discounts.map((discount) => ({ coupon: readStripeId(discount.coupon) ?? undefined, promotion_code: readStripeId(discount.promotion_code) ?? undefined })) } : {}),
+    ...(currentPhase.automatic_tax ? { automatic_tax: { enabled: currentPhase.automatic_tax.enabled } } : {}),
+    ...(currentPhase.billing_thresholds ? { billing_thresholds: currentPhase.billing_thresholds as Stripe.SubscriptionScheduleUpdateParams.Phase.BillingThresholds } : {}),
+    ...(currentPhase.description ? { description: currentPhase.description } : {}),
+    ...(currentPhase.application_fee_percent !== null ? { application_fee_percent: currentPhase.application_fee_percent } : {}),
+    ...(currentPhase.billing_cycle_anchor ? { billing_cycle_anchor: currentPhase.billing_cycle_anchor } : {}),
+    ...(currentPhase.invoice_settings ? { invoice_settings: currentPhase.invoice_settings as Stripe.SubscriptionScheduleUpdateParams.Phase.InvoiceSettings } : {}),
+    ...(currentPhase.metadata ? { metadata: { ...currentPhase.metadata, ...input.metadata } } : { metadata: input.metadata }),
+    proration_behavior: 'none' as const,
+  };
+  try {
+    await client.subscriptionSchedules.update(schedule.id, {
+      end_behavior: 'release',
+      metadata: { ...schedule.metadata, ...input.metadata, alusaPlanChangeKey: input.idempotencyKey },
+      phases: [
+        {
+          start_date: currentPhase.start_date,
+          end_date: effectiveAt,
+          items: currentPhase.items.map((item) => ({
+            price: readStripeId(item.price)!,
+            ...(item.quantity ? { quantity: item.quantity } : {}),
+          })),
+          ...sharedPhaseSettings,
+        },
+        {
+          start_date: effectiveAt,
+          items: phaseItems,
+          ...sharedPhaseSettings,
+        },
+      ],
+      proration_behavior: 'none',
+    }, buildRequestOptions(`${input.idempotencyKey}:update`));
+  } catch (error) {
+    // Keep the owned schedule attached. Its create-time metadata makes this
+    // partial state discoverable, and a same-key retry can safely finish the
+    // update instead of encountering a released, unowned schedule.
+    throw new StripeScheduleUpdateRecoveryError(error);
+  }
+
+  return { scheduleId: schedule.id, effectiveAt: input.effectiveAt };
+}
+
+export async function releaseStripeSubscriptionSchedule(
+  client: Stripe,
+  input: { scheduleId: string; idempotencyKey?: string },
+): Promise<void> {
+  await client.subscriptionSchedules.release(
+    input.scheduleId,
+    {},
+    buildRequestOptions(input.idempotencyKey),
+  );
+}
+
 export async function updateStripeSubscriptionCancelAtPeriodEnd(
   client: Stripe,
   input: {
@@ -395,14 +544,18 @@ function toInvoiceRecord(invoice: Stripe.Invoice): StripeInvoiceRecord {
   const statusTransitions = readRecord(raw.status_transitions);
   const paymentError = readRecord(raw.last_finalization_error ?? raw.last_payment_error);
   const lines = readRecord(raw.lines);
-  const firstLine = Array.isArray(lines.data) ? readRecord(lines.data[0]) : {};
-  const firstPrice = readRecord(firstLine.price);
+  const lineRecords = Array.isArray(lines.data) ? lines.data.map(readRecord) : [];
+  const priceCandidates = lineRecords
+    .filter((line) => !isInvoiceLineProration(line))
+    .map((line) => readStripeId(line.price) ?? readStripeId(readRecord(readRecord(line.pricing).price_details).price))
+    .filter((value): value is string => Boolean(value));
+  const uniquePriceCandidates = [...new Set(priceCandidates)];
 
   return {
     id: invoice.id,
     customerId: readStripeId(invoice.customer) ?? '',
     subscriptionId: readString(raw.subscription) ?? readString(readRecord(raw.subscription).id) ?? readNestedString(raw, ['parent', 'subscription_details', 'subscription']),
-    priceId: readString(firstPrice.id),
+    priceId: uniquePriceCandidates.length === 1 ? uniquePriceCandidates[0] : null,
     number: readString(invoice.number),
     status: readString(invoice.status),
     amountDue: invoice.amount_due ?? 0,
@@ -422,6 +575,15 @@ function toInvoiceRecord(invoice: Stripe.Invoice): StripeInvoiceRecord {
     lastPaymentErrorMessage: readString(paymentError.message),
     raw,
   };
+}
+
+function isInvoiceLineProration(line: Record<string, unknown>): boolean {
+  const modernDetails = readRecord(readRecord(line.parent).subscription_item_details);
+  const legacyDetails = readRecord(line.subscription_item_details);
+
+  return line.proration === true
+    || modernDetails.proration === true
+    || legacyDetails.proration === true;
 }
 
 async function resolvePaymentMethodRecord(
@@ -478,9 +640,13 @@ function readNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function readStripeId(value: string | { id?: string } | null): string | null {
+function readStripeId(value: unknown): string | null {
   if (typeof value === 'string') return value;
-  return value?.id ?? null;
+  if (value && typeof value === 'object' && 'id' in value) {
+    const id = (value as { id?: unknown }).id;
+    return typeof id === 'string' ? id : null;
+  }
+  return null;
 }
 
 function readUnixDate(value: unknown): Date | null {

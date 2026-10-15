@@ -2,6 +2,7 @@
 import type { StripeWebhookEvent } from '@alusa/stripe';
 import {
   processPlatformBillingWebhookEvent,
+  processPersistedPlatformBillingWebhookEvent,
   type PlatformBillingAccountRecord,
   type PlatformBillingAuditLogInput,
   type PlatformBillingCheckoutSessionRecord,
@@ -19,6 +20,346 @@ const envSource = {
 };
 
 describe('@alusa/platform-billing webhooks', () => {
+  it('rejects cross-Conta subscription metadata and leaves both tenant accounts unchanged', async () => {
+    const store = createMemoryStore([
+      buildAccount({ id: 'pba_a', contaId: 'conta_a', status: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_a', stripeSubscriptionId: 'sub_a', stripePriceId: 'price_starter_test' }),
+      buildAccount({ id: 'pba_b', contaId: 'conta_b', status: 'PAST_DUE', planCode: 'PREMIUM', stripeCustomerId: 'cus_b', stripeSubscriptionId: 'sub_b', stripePriceId: 'price_premium_test' }),
+    ]);
+    const before = structuredClone(store.accounts);
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_cross_conta_subscription', 'customer.subscription.updated', {
+        id: 'sub_a', customer: 'cus_a', status: 'active', cancel_at_period_end: false,
+        metadata: { contaId: 'conta_b' }, items: { data: [{ price: { id: 'price_pro_test' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_INVALID' });
+    expect(store.accounts).toEqual(before);
+  });
+
+  it('rejects cross-Conta checkout metadata without changing either account', async () => {
+    const store = createMemoryStore([
+      buildAccount({ id: 'pba_a', contaId: 'conta_a', status: 'PAST_DUE', accessStatus: 'RESTRICTED', stripeCustomerId: 'cus_a', stripeSubscriptionId: 'sub_a' }),
+      buildAccount({ id: 'pba_b', contaId: 'conta_b', status: 'ACTIVE', accessStatus: 'ACTIVE', stripeCustomerId: 'cus_b', stripeSubscriptionId: 'sub_b' }),
+    ]);
+    const before = structuredClone(store.accounts);
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_cross_conta_checkout', 'checkout.session.completed', {
+        id: 'cs_cross', customer: 'cus_a', subscription: 'sub_a', payment_status: 'paid',
+        metadata: { contaId: 'conta_b' },
+      }),
+      environment: 'TEST', envSource,
+    }, store)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_INVALID' });
+    expect(store.accounts).toEqual(before);
+  });
+
+  it('rejects cross-Conta invoice metadata without changing either account or invoice history', async () => {
+    const store = createMemoryStore([
+      buildAccount({ id: 'pba_a', contaId: 'conta_a', status: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_a', stripeSubscriptionId: 'sub_a', stripePriceId: 'price_starter_test' }),
+      buildAccount({ id: 'pba_b', contaId: 'conta_b', status: 'PAST_DUE', planCode: 'PREMIUM', stripeCustomerId: 'cus_b', stripeSubscriptionId: 'sub_b', stripePriceId: 'price_premium_test' }),
+    ]);
+    const before = structuredClone(store.accounts);
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_cross_conta_invoice', 'invoice.paid', {
+        id: 'in_cross', customer: 'cus_a', subscription: 'sub_a', status: 'paid',
+        amount_due: 1000, amount_paid: 1000, currency: 'brl',
+        metadata: { contaId: 'conta_b' },
+        lines: { data: [{ pricing: { price_details: { price: 'price_starter_test' } } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_INVALID' });
+    expect(store.accounts).toEqual(before);
+    expect(store.invoices).toEqual([]);
+  });
+
+  it('finalizes a plan change when a canonical subscription update confirms the target price', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'ACTIVE', accessStatus: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1', stripePriceId: 'price_starter_test', pendingPlanCode: 'PREMIUM',
+      pendingChangeType: 'UPGRADE', pendingChangeOperationId: 'pbc_owner',
+    })]);
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_subscription_target_confirmed', 'customer.subscription.updated', {
+        id: 'sub_1', customer: 'cus_1', status: 'active', cancel_at_period_end: false,
+        pending_update: null, metadata: { contaId: 'conta_1' },
+        items: { data: [{ price: { id: 'price_premium_test' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({ planCode: 'PREMIUM', stripePriceId: 'price_premium_test', pendingPlanCode: null });
+    expect(store.planChangeFinalizations).toEqual([expect.objectContaining({
+      planChangeId: 'pbc_owner', contaId: 'conta_1', billingAccountId: 'pba_1',
+      environment: 'TEST', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_premium_test', applied: true,
+    })]);
+  });
+
+  it('finalizes only the operation that owns the account when two changes target the same price', async () => {
+    const store = createMemoryStore([buildAccount({
+      id: 'pba_1', contaId: 'conta_1', status: 'ACTIVE', accessStatus: 'ACTIVE', planCode: 'STARTER',
+      stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_starter_test',
+      pendingPlanCode: 'PREMIUM', pendingChangeType: 'UPGRADE', pendingChangeOperationId: 'pbc_winner',
+    })]);
+    const losingOperationId = 'pbc_loser';
+
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_two_same_target', 'customer.subscription.pending_update_applied', {
+        id: 'sub_1', customer: 'cus_1', status: 'active', cancel_at_period_end: false,
+        pending_update: null, metadata: { contaId: 'conta_1', planChangeId: 'pbc_winner' },
+        items: { data: [{ price: { id: 'price_premium_test' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+
+    expect(store.accounts[0]).toMatchObject({ planCode: 'PREMIUM', pendingPlanCode: null });
+    expect(store.planChangeFinalizations).toEqual([expect.objectContaining({
+      planChangeId: 'pbc_winner', contaId: 'conta_1', billingAccountId: 'pba_1',
+      stripeSubscriptionId: 'sub_1', applied: true,
+    })]);
+    expect(store.planChangeFinalizations.some((operation) => operation.planChangeId === losingOperationId)).toBe(false);
+  });
+
+  it('retries atomically when plan-change finalization fails before commit', async () => {
+    const store = createMemoryStore([buildAccount({
+      id: 'pba_1', contaId: 'conta_1', status: 'ACTIVE', accessStatus: 'ACTIVE', planCode: 'STARTER',
+      stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_starter_test',
+      pendingPlanCode: 'PREMIUM', pendingChangeType: 'UPGRADE', pendingChangeOperationId: 'pbc_retry',
+    })]);
+    const account = store.accounts[0]!;
+    const update = store.updateAccountFromStripeSubscription.bind(store);
+    let failOnce = true;
+    store.updateAccountFromStripeSubscription = async (input) => {
+      if (input.planChangeFinalization && failOnce) {
+        failOnce = false;
+        throw new Error('plan-change transaction failed');
+      }
+      return update(input);
+    };
+    const event = stripeEvent('evt_atomic_finalize_retry', 'customer.subscription.updated', {
+      id: 'sub_1', customer: 'cus_1', status: 'active', cancel_at_period_end: false,
+      pending_update: null, metadata: { contaId: 'conta_1', planChangeId: 'pbc_retry' },
+      items: { data: [{ price: { id: 'price_premium_test' } }] },
+    });
+
+    await expect(processPlatformBillingWebhookEvent({ event, environment: 'TEST', envSource }, store))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED' });
+    expect(account).toMatchObject({
+      planCode: 'STARTER', pendingPlanCode: 'PREMIUM', pendingChangeOperationId: 'pbc_retry',
+    });
+    expect(store.planChangeFinalizations).toEqual([]);
+
+    const inboxId = store.webhookEvents[0]!.id;
+    await store.markWebhookEventProcessing({ id: inboxId, contaId: 'conta_1' });
+    await processPersistedPlatformBillingWebhookEvent({
+      event, environment: 'TEST', envSource, inboxId,
+    }, store);
+    expect(account).toMatchObject({ planCode: 'PREMIUM', pendingPlanCode: null, pendingChangeOperationId: null });
+    expect(store.planChangeFinalizations).toEqual([expect.objectContaining({ planChangeId: 'pbc_retry', applied: true })]);
+  });
+
+  it('keeps the pending downgrade claim when the subscription price is not the configured target price', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'ACTIVE', accessStatus: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1', stripePriceId: 'price_starter_test', pendingPlanCode: 'PREMIUM',
+      pendingChangeType: 'DOWNGRADE', pendingChangeOperationId: 'pbc_1',
+    })]);
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_wrong_target_price', 'customer.subscription.updated', {
+        id: 'sub_1', customer: 'cus_1', status: 'active', cancel_at_period_end: false,
+        pending_update: null, metadata: { contaId: 'conta_1' },
+        items: { data: [{ price: { id: 'price_pro_test' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({ pendingPlanCode: 'PREMIUM', pendingChangeOperationId: 'pbc_1' });
+    expect(store.planChangeFinalizations).toEqual([]);
+  });
+
+  it('does not let an old subscription snapshot clear a newer plan-change claim', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'ACTIVE', accessStatus: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1', stripePriceId: 'price_starter_test', pendingPlanCode: 'PREMIUM',
+      pendingChangeType: 'DOWNGRADE', pendingChangeOperationId: 'pbc_old',
+    })]);
+    const account = store.accounts[0]!;
+    const update = store.updateAccountFromStripeSubscription.bind(store);
+    store.updateAccountFromStripeSubscription = async (input) => {
+      account.pendingPlanCode = 'PRO';
+      account.pendingChangeOperationId = 'pbc_new';
+      account.pendingChangeClaimToken = 'claim_new';
+      return update(input);
+    };
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_old_plan_snapshot', 'customer.subscription.updated', {
+        id: 'sub_1', customer: 'cus_1', status: 'active', cancel_at_period_end: false,
+        pending_update: null, metadata: { contaId: 'conta_1' },
+        items: { data: [{ price: { id: 'price_premium_test' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED' });
+    expect(account).toMatchObject({ pendingPlanCode: 'PRO', pendingChangeOperationId: 'pbc_new', pendingChangeClaimToken: 'claim_new' });
+    expect(store.planChangeFinalizations).toEqual([]);
+  });
+
+  it('does not finalize a plan change from a stale pending_update_applied event rejected by account CAS', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'ACTIVE', accessStatus: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1', stripePriceId: 'price_starter_test', pendingPlanCode: 'PREMIUM',
+      pendingChangeType: 'UPGRADE', lastProviderEventCreatedAt: new Date(1_800_000_000 * 1000),
+    })]);
+    const account = store.accounts[0]!;
+    const originalUpdate = store.updateAccountFromStripeSubscription.bind(store);
+    store.updateAccountFromStripeSubscription = async (input) => {
+      if (input.lastProviderEventCreatedAt && account.lastProviderEventCreatedAt
+        && account.lastProviderEventCreatedAt > input.lastProviderEventCreatedAt) return account;
+      return originalUpdate(input);
+    };
+    await processPlatformBillingWebhookEvent({
+      event: {
+        ...stripeEvent('evt_old_pending_applied', 'customer.subscription.pending_update_applied', {
+          id: 'sub_1', customer: 'cus_1', status: 'active', cancel_at_period_end: false,
+          pending_update: null, metadata: { contaId: 'conta_1' },
+          items: { data: [{ price: { id: 'price_starter_test' } }] },
+        }),
+        created: 1_700_000_000,
+      } as StripeWebhookEvent,
+      environment: 'TEST', envSource,
+    }, store);
+    expect(account).toMatchObject({ planCode: 'STARTER', stripePriceId: 'price_starter_test', pendingPlanCode: 'PREMIUM' });
+    expect(store.planChangeFinalizations).toEqual([]);
+  });
+
+  it.each(['unpaid', 'no_payment_required'])('checkout completion with payment_status=%s does not resolve payment issues', async (paymentStatus) => {
+    const store = createMemoryStore([buildAccount({
+      status: 'PAST_DUE', accessStatus: 'RESTRICTED', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1',
+    })]);
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_checkout_trial', 'checkout.session.completed', {
+        id: 'cs_trial', customer: 'cus_1', subscription: 'sub_1', payment_status: paymentStatus,
+        metadata: { contaId: 'conta_1' },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]?.accessStatus).toBe('RESTRICTED');
+    expect(store.paidIssueResolutions).toEqual([]);
+  });
+
+  it('binds the Checkout subscription for reconciliation without granting access', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'CHECKOUT_PENDING', accessStatus: 'PENDING', stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: null, pendingPlanCode: 'STARTER',
+    })]);
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_checkout_bind', 'checkout.session.completed', {
+        id: 'cs_bind', customer: 'cus_1', subscription: 'sub_checkout', payment_status: 'unpaid',
+        metadata: { contaId: 'conta_1', checkoutRequestKey: 'checkout-key' },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({
+      stripeSubscriptionId: 'sub_checkout', status: 'CHECKOUT_PENDING', accessStatus: 'PENDING',
+    });
+  });
+
+  it('does not fail a plan change from stale pending_update_expired after the account CAS rejects it', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'ACTIVE', accessStatus: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1', stripePriceId: 'price_starter_test', pendingPlanCode: 'PREMIUM',
+      pendingChangeType: 'UPGRADE', pendingChangeOperationId: 'pbc_upgrade_old',
+      lastProviderEventCreatedAt: new Date(1_800_000_000 * 1000),
+    })]);
+    const account = store.accounts[0]!;
+    store.updateAccountFromStripeSubscription = async () => account;
+    await processPlatformBillingWebhookEvent({
+      event: {
+        ...stripeEvent('evt_old_pending_expired', 'customer.subscription.pending_update_expired', {
+          id: 'sub_1', customer: 'cus_1', status: 'active', cancel_at_period_end: false,
+          pending_update: null, metadata: { contaId: 'conta_1', planChangeId: 'pbc_upgrade_old' },
+          items: { data: [{ price: { id: 'price_starter_test' } }] },
+        }),
+        created: 1_700_000_001,
+      } as StripeWebhookEvent,
+      environment: 'TEST', envSource,
+    }, store);
+    expect(account).toMatchObject({ planCode: 'STARTER', stripePriceId: 'price_starter_test', pendingPlanCode: 'PREMIUM' });
+    expect(store.planChangeFinalizations).toEqual([]);
+  });
+
+  it('ignores an old upgrade expiration after a new downgrade claim is reserved', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'ACTIVE', accessStatus: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1', stripePriceId: 'price_starter_test', pendingPlanCode: 'PRO',
+      pendingChangeType: 'DOWNGRADE', pendingChangeOperationId: 'pbc_downgrade_new',
+      pendingChangeClaimToken: 'claim_downgrade_new',
+    })]);
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_expired_old_upgrade', 'customer.subscription.pending_update_expired', {
+        id: 'sub_1', customer: 'cus_1', status: 'active', cancel_at_period_end: false,
+        pending_update: null, metadata: { contaId: 'conta_1', planChangeId: 'pbc_upgrade_old' },
+        items: { data: [{ price: { id: 'price_starter_test' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({
+      pendingPlanCode: 'PRO', pendingChangeType: 'DOWNGRADE',
+      pendingChangeOperationId: 'pbc_downgrade_new', pendingChangeClaimToken: 'claim_downgrade_new',
+    });
+    expect(store.planChangeFinalizations).toEqual([]);
+  });
+
+  it('expires only the matching pending upgrade operation', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'ACTIVE', accessStatus: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_1', stripePriceId: 'price_starter_test', pendingPlanCode: 'PREMIUM',
+      pendingChangeType: 'UPGRADE', pendingChangeOperationId: 'pbc_upgrade_current',
+    })]);
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_expired_current_upgrade', 'customer.subscription.pending_update_expired', {
+        id: 'sub_1', customer: 'cus_1', status: 'active', cancel_at_period_end: false,
+        pending_update: null, metadata: { contaId: 'conta_1', planChangeId: 'pbc_upgrade_current' },
+        items: { data: [{ price: { id: 'price_starter_test' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({ pendingPlanCode: null, pendingChangeOperationId: null });
+    expect(store.planChangeFinalizations).toEqual([expect.objectContaining({
+      stripeSubscriptionId: 'sub_1', stripePriceId: 'price_premium_test', applied: false,
+    })]);
+  });
+
+  it('resolves current invoice price from pricing.price_details and ignores proration lines', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_starter_test',
+    })]);
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_invoice_nested_price', 'invoice.paid', {
+        id: 'in_nested', customer: 'cus_1', subscription: 'sub_1', status: 'paid', amount_due: 1000,
+        amount_paid: 1000, currency: 'brl', lines: { data: [
+          { proration: true, pricing: { price_details: { price: 'price_pro_test' } } },
+          { pricing: { price_details: { price: 'price_premium_test' } } },
+        ] },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.invoices[0]?.stripePriceId).toBe('price_premium_test');
+  });
+
+  it('rejects an invoice with multiple distinct non-proration prices instead of guessing', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_starter_test',
+    })]);
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_invoice_ambiguous_prices', 'invoice.paid', {
+        id: 'in_ambiguous', customer: 'cus_1', subscription: 'sub_1', status: 'paid', amount_due: 1000,
+        amount_paid: 1000, currency: 'brl', lines: { data: [
+          { pricing: { price_details: { price: 'price_starter_test' } } },
+          { pricing: { price_details: { price: 'price_premium_test' } } },
+        ] },
+      }),
+      environment: 'TEST', envSource,
+    }, store)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_INVALID' });
+    expect(store.invoices).toEqual([]);
+    expect(store.accounts[0]?.lastSuccessfulPaymentAt).toBeNull();
+  });
+
   it('sincroniza assinatura Stripe para account comercial da plataforma', async () => {
     const store = createMemoryStore([
       buildAccount({
@@ -143,6 +484,32 @@ describe('@alusa/platform-billing webhooks', () => {
     ]);
   });
 
+  it('does not resolve paid issues when a concurrent newer Stripe event won the account CAS', async () => {
+    const account = buildAccount({
+      status: 'PAST_DUE', accessStatus: 'GRACE_PERIOD', planCode: 'STARTER',
+      stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_starter_test',
+      lastProviderEventCreatedAt: new Date('2026-10-12T00:00:10.000Z'),
+    });
+    const store = createMemoryStore([account]);
+    store.updateAccountFromStripeSubscription = async () => ({
+      ...account,
+      status: 'CANCELED', accessStatus: 'RESTRICTED',
+      lastProviderEventCreatedAt: new Date('2026-10-12T00:00:30.000Z'),
+      lastStripeEventId: 'evt_newer_canceled',
+    });
+
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_old_paid', 'invoice.paid', {
+        id: 'in_paid_old', customer: 'cus_1', subscription: 'sub_1', status: 'paid',
+        amount_due: 14900, amount_paid: 14900, currency: 'brl',
+        lines: { data: [{ pricing: { price_details: { price: 'price_starter_test' } } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+
+    expect(store.paidIssueResolutions).toEqual([]);
+  });
+
   it('preserva status TRIALING quando invoice paid chega durante teste gratis', async () => {
     const trialEndsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const store = createMemoryStore([
@@ -188,6 +555,54 @@ describe('@alusa/platform-billing webhooks', () => {
       stripePriceId: 'price_premium_test',
       trialEndsAt,
     });
+    expect(store.accounts[0]?.lastSuccessfulPaymentAt).toBeNull();
+    expect(store.paidIssueResolutions).toEqual([]);
+  });
+
+  it('não associa invoice a uma conta apenas pelo customer quando a subscription diverge', async () => {
+    const store = createMemoryStore([
+      buildAccount({
+        status: 'ACTIVE',
+        accessStatus: 'ACTIVE',
+        stripeCustomerId: 'cus_1',
+        stripeSubscriptionId: 'sub_current',
+      }),
+    ]);
+
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_invoice_wrong_subscription', 'invoice.paid', {
+        id: 'in_wrong_subscription', customer: 'cus_1', subscription: 'sub_old',
+        status: 'paid', amount_due: 27900, amount_paid: 27900,
+      }),
+      environment: 'TEST', envSource,
+    }, store)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_ACCOUNT_NOT_FOUND' });
+    expect(store.invoices).toHaveLength(0);
+    expect(store.accounts[0]?.stripeSubscriptionId).toBe('sub_current');
+  });
+
+  it('não desliza o início do período de regularização em falhas repetidas', async () => {
+    const startedAt = new Date('2026-10-01T12:00:00.000Z');
+    const gracePeriodEndsAt = new Date('2026-10-08T12:00:00.000Z');
+    const store = createMemoryStore([
+      buildAccount({
+        status: 'PAST_DUE', accessStatus: 'GRACE_PERIOD', stripeCustomerId: 'cus_1',
+        stripeSubscriptionId: 'sub_1', firstPaidAt: new Date('2026-05-01T00:00:00.000Z'),
+        paymentMethodStatus: 'PRESENT', gracePeriodStartedAt: startedAt, gracePeriodEndsAt,
+      }),
+    ]);
+
+    for (const [eventId, created] of [['evt_failed_again_1', 1_791_000_000], ['evt_failed_again_2', 1_791_086_400]] as const) {
+      await processPlatformBillingWebhookEvent({
+        event: { ...stripeEvent(eventId, 'invoice.payment_failed', {
+          id: 'in_retry', customer: 'cus_1', subscription: 'sub_1', status: 'open',
+          amount_due: 27900, amount_paid: 0,
+        }), created },
+        environment: 'TEST', envSource,
+      }, store);
+    }
+
+    expect(store.accounts[0]?.gracePeriodStartedAt).toEqual(startedAt);
+    expect(store.accounts[0]?.gracePeriodEndsAt).toEqual(gracePeriodEndsAt);
   });
 
   it('abre periodo de regularizacao quando a cobranca da assinatura falha', async () => {
@@ -575,10 +990,13 @@ function buildAccount(input: Partial<PlatformBillingAccountRecord>): PlatformBil
     gracePeriodStartedAt: null,
     accessStateVersion: 0,
     lastProviderEventCreatedAt: null,
+    lastStripeEventId: null,
     lastReconciledAt: null,
     pendingPlanCode: null,
     pendingChangeType: null,
     pendingChangeEffectiveAt: null,
+    pendingChangeOperationId: null,
+    pendingChangeClaimToken: null,
     ...input,
   };
 }
@@ -590,6 +1008,10 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
   const webhookEvents: PlatformBillingWebhookEventRecord[] = [];
   const auditLogs: PlatformBillingAuditLogInput[] = [];
   const paidIssueResolutions: Array<{ billingAccountId: string; correlationId?: string }> = [];
+  const planChangeFinalizations: Array<{
+    planChangeId: string; contaId: string; billingAccountId: string;
+    environment: 'TEST' | 'LIVE'; stripeSubscriptionId: string; stripePriceId: string | null; applied: boolean;
+  }> = [];
 
   const store: PlatformBillingStore & {
     accounts: PlatformBillingAccountRecord[];
@@ -597,12 +1019,17 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
     webhookEvents: PlatformBillingWebhookEventRecord[];
     auditLogs: PlatformBillingAuditLogInput[];
     paidIssueResolutions: Array<{ billingAccountId: string; correlationId?: string }>;
+    planChangeFinalizations: Array<{
+      planChangeId: string; contaId: string; billingAccountId: string;
+      environment: 'TEST' | 'LIVE'; stripeSubscriptionId: string; stripePriceId: string | null; applied: boolean;
+    }>;
   } = {
     accounts,
     invoices,
     webhookEvents,
     auditLogs,
     paidIssueResolutions,
+    planChangeFinalizations,
     async findAccount(input) {
       return accounts.find((account) => account.contaId === input.contaId && account.environment === input.environment) ?? null;
     },
@@ -636,10 +1063,31 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
       account.stripePriceId = input.stripePriceId;
       return account;
     },
+    async markCheckoutRequestStarted() {},
+    async bindCheckoutSubscription(input) {
+      const account = accounts.find((item) => item.id === input.accountId
+        && item.contaId === input.contaId && item.environment === input.environment
+        && item.stripeCustomerId === input.stripeCustomerId);
+      if (account) account.stripeSubscriptionId = input.stripeSubscriptionId;
+    },
+    async clearCheckoutClaim() {},
     async updateAccountFromStripeSubscription(input) {
       const account = accounts.find((item) => item.id === input.accountId);
       if (!account) throw new Error('account not found');
+      if (input.expectedAccountSnapshot && (
+        account.contaId !== input.expectedAccountSnapshot.contaId
+        || account.environment !== input.expectedAccountSnapshot.environment
+        || account.stripeSubscriptionId !== input.expectedAccountSnapshot.stripeSubscriptionId
+        || account.pendingChangeOperationId !== input.expectedAccountSnapshot.pendingChangeOperationId
+        || (account.pendingChangeClaimToken ?? null) !== input.expectedAccountSnapshot.pendingChangeClaimToken
+        || (input.expectedAccountSnapshot.lastProviderEventCreatedAt !== undefined
+          && account.lastProviderEventCreatedAt?.getTime() !== input.expectedAccountSnapshot.lastProviderEventCreatedAt?.getTime())
+        || (input.expectedAccountSnapshot.lastStripeEventId !== undefined
+          && (account.lastStripeEventId ?? null) !== input.expectedAccountSnapshot.lastStripeEventId)
+      )) throw new Error('Stripe account snapshot changed before subscription state could be applied.');
       account.status = input.status;
+      account.lastProviderEventCreatedAt = input.lastProviderEventCreatedAt ?? account.lastProviderEventCreatedAt;
+      account.lastStripeEventId = input.lastStripeEventId;
       account.planCode = input.planCode;
       account.stripeSubscriptionId = input.stripeSubscriptionId;
       account.stripePriceId = input.stripePriceId;
@@ -655,10 +1103,15 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
       account.pendingPlanCode = input.pendingPlanCode === undefined ? account.pendingPlanCode : input.pendingPlanCode;
       account.pendingChangeType = input.pendingChangeType === undefined ? account.pendingChangeType : input.pendingChangeType;
       account.pendingChangeEffectiveAt = input.pendingChangeEffectiveAt === undefined ? account.pendingChangeEffectiveAt : input.pendingChangeEffectiveAt;
+      if (input.pendingChangeOperationId !== undefined) {
+        account.pendingChangeOperationId = input.pendingChangeOperationId;
+        account.pendingChangeClaimToken = null;
+      }
       if (!input.cancelAtPeriodEnd && account.pendingChangeType === 'CANCEL_AT_PERIOD_END') {
         account.pendingChangeType = null;
         account.pendingChangeEffectiveAt = null;
       }
+      if (input.planChangeFinalization) planChangeFinalizations.push(input.planChangeFinalization);
       return account;
     },
     async resolveOpenIssuesForPaidAccount(input) {

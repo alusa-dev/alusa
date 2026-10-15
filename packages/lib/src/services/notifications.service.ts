@@ -1416,7 +1416,7 @@ export async function createBillingWebhookNotification(params: {
     ]);
     const [eventTicketSale] = eventTicketSales;
     const saleOrderIds = new Set(eventTicketSales.map((sale) => sale.eventMapOrderId));
-    const hasDivergentSaleOrigins = saleOrderIds.size > 1;
+    const hasDivergentSaleOrigins = saleOrderIds.size > 1 || (eventTicketSales.length > 1 && saleOrderIds.has(null));
 
     if (eventMapOrder || eventTicketSale) {
       if (

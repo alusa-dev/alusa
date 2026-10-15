@@ -21,17 +21,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'PAYLOAD_INVALIDO', details: parsed.error.flatten() }, { status: 400 });
   }
 
+  if (parsed.data.scope === 'batch' && sessionUser.role !== 'SUPER_ADMIN') {
+    return NextResponse.json({ error: 'SEM_PERMISSAO' }, { status: 403 });
+  }
+  if (parsed.data.scope === 'current_account' && !sessionUser.contaId) {
+    return NextResponse.json({ error: 'SEM_PERMISSAO' }, { status: 403 });
+  }
+
   const result = await reconcilePlatformBilling({
-    contaId: parsed.data.scope === 'current_account' ? sessionUser.contaId : undefined,
+    contaId: parsed.data.scope === 'current_account' ? sessionUser.contaId! : undefined,
     limit: parsed.data.limit,
   });
 
   return NextResponse.json(result);
 }
 
-async function requireAdminSession(): Promise<{ id: string; contaId: string } | null> {
+async function requireAdminSession(): Promise<{ id: string; contaId: string | null; role: string } | null> {
   const session = await getServerSession(authOptions);
   const user = (session as { user?: { id?: string; contaId?: string; role?: string } } | null)?.user;
-  if (!user?.id || !user.contaId || String(user.role).toUpperCase() !== 'ADMIN') return null;
-  return { id: user.id, contaId: user.contaId };
+  const role = String(user?.role ?? '').toUpperCase();
+  if (!user?.id || (role !== 'ADMIN' && role !== 'SUPER_ADMIN')) return null;
+  if (role !== 'SUPER_ADMIN' && !user.contaId) return null;
+  return { id: user.id, contaId: user.contaId ?? null, role };
 }

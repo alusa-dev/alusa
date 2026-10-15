@@ -1,6 +1,6 @@
 name = "alusa-decision-advisor"
-description = "One-off read-only advisor for a high-impact Alusa product or architecture decision that cannot be resolved from the task and code alone. Uses GPT-6 Luna; choose reasoning effort for the decision complexity."
-model = "gpt-6-luna"
+description = "One-off read-only advisor for a high-impact unresolved Alusa product or architecture decision. Always uses GPT-6.1 Sol Medium."
+model = "gpt-6.1-sol"
 model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 

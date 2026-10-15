@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { PlatformBillingError } from './errors';
 import type { PrismaClient } from '@prisma/client';
 import type {
   AttachPlatformBillingCustomerInput,
@@ -21,6 +22,7 @@ type PlatformBillingPrismaClientBase = Pick<
   | 'platformBillingAuditLog'
   | 'platformBillingIssue'
   | 'platformBillingPlanChange'
+  | '$queryRaw'
   | '$executeRaw'
 >;
 
@@ -103,32 +105,265 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
       return toAccountRecord(account);
     },
 
-    markCheckoutPending: async (input) => {
-      const reactivationData = input.pendingChangeType === 'REACTIVATE'
-        ? {
-            status: 'CANCELED' as const,
-            accessStatus: 'CANCELED' as const,
-          }
-        : {
-            status: 'CHECKOUT_PENDING' as const,
-            accessStatus: 'PENDING' as const,
-          };
-      const account = await db.platformBillingAccount.update({
-        where: { id: input.accountId },
+    reserveTrialSubscriptionClaim: async (input) => {
+      const now = new Date();
+      const staleClaimBefore = new Date(now.getTime() - 5 * 60_000);
+      await db.platformBillingAccount.upsert({
+        where: {
+          uq_platform_billing_account_conta_env: {
+            contaId: input.contaId,
+            environment: input.environment,
+          },
+        },
+        create: {
+          contaId: input.contaId,
+          environment: input.environment,
+          status: 'NOT_STARTED',
+          accessStatus: 'PENDING',
+          trialSubscriptionClaimKey: input.idempotencyKey,
+          trialSubscriptionClaimPhase: 'CLAIMED',
+          trialSubscriptionClaimedAt: now,
+        },
+        update: {},
+      });
+
+      const claimed = await db.platformBillingAccount.updateMany({
+        where: {
+          contaId: input.contaId,
+          environment: input.environment,
+          stripeSubscriptionId: null,
+          trialEndsAt: null,
+          checkoutClaimKey: null,
+          OR: [
+            { trialSubscriptionClaimKey: null },
+            {
+              trialSubscriptionClaimPhase: 'CLAIMED',
+              trialSubscriptionClaimedAt: { lt: staleClaimBefore },
+            },
+          ],
+        },
         data: {
-          ...reactivationData,
+          trialSubscriptionClaimKey: input.idempotencyKey,
+          trialSubscriptionClaimPhase: 'CLAIMED',
+          trialSubscriptionClaimedAt: now,
+          trialSubscriptionRequestExpiresAt: null,
+        },
+      });
+      const current = await db.platformBillingAccount.findUniqueOrThrow({
+        where: {
+          uq_platform_billing_account_conta_env: {
+            contaId: input.contaId,
+            environment: input.environment,
+          },
+        },
+      });
+      if (claimed.count === 1) return toAccountRecord(current);
+      if (current.stripeSubscriptionId || current.trialEndsAt) return toAccountRecord(current);
+      if (current.trialSubscriptionClaimKey === input.idempotencyKey) {
+        if (current.trialSubscriptionClaimPhase === 'CLAIMED') return toAccountRecord(current);
+        if (
+          current.trialSubscriptionClaimPhase === 'REQUESTING'
+          && current.trialSubscriptionRequestExpiresAt instanceof Date
+          && current.trialSubscriptionRequestExpiresAt > now
+        ) return toAccountRecord(current);
+        throw new PlatformBillingError(
+          'Trial subscription request may have reached Stripe; retry with the same key within the recovery window or reconcile manually.',
+          'PLATFORM_BILLING_RECONCILIATION_FAILED',
+          { contaId: input.contaId, environment: input.environment },
+        );
+      }
+      throw new PlatformBillingError(
+        current.trialSubscriptionClaimPhase === 'REQUESTING'
+          ? 'A trial subscription request is already in progress or requires reconciliation.'
+          : 'A trial subscription is already being created for this account.',
+        current.trialSubscriptionClaimPhase === 'REQUESTING'
+          ? 'PLATFORM_BILLING_RECONCILIATION_FAILED'
+          : 'PLATFORM_BILLING_IDEMPOTENCY_CONFLICT',
+        { contaId: input.contaId, environment: input.environment },
+      );
+    },
+
+    markTrialSubscriptionRequestStarted: async (input) => {
+      const now = new Date();
+      const requestExpiresAt = new Date(now.getTime() + 20 * 60 * 60_000);
+      const changed = await db.platformBillingAccount.updateMany({
+        where: {
+          contaId: input.contaId,
+          environment: input.environment,
+          trialSubscriptionClaimKey: input.idempotencyKey,
+          trialSubscriptionClaimPhase: 'CLAIMED',
+        },
+        data: {
+          trialSubscriptionClaimPhase: 'REQUESTING',
+          trialSubscriptionRequestExpiresAt: requestExpiresAt,
+        },
+      });
+      if (changed.count === 1) return;
+      const current = await db.platformBillingAccount.findUniqueOrThrow({
+        where: {
+          uq_platform_billing_account_conta_env: {
+            contaId: input.contaId,
+            environment: input.environment,
+          },
+        },
+      });
+      if (
+        current.trialSubscriptionClaimKey === input.idempotencyKey
+        && current.trialSubscriptionClaimPhase === 'REQUESTING'
+        && current.trialSubscriptionRequestExpiresAt instanceof Date
+        && current.trialSubscriptionRequestExpiresAt > now
+      ) return;
+      throw new PlatformBillingError(
+        'Trial subscription claim expired or changed before the Stripe request started.',
+        'PLATFORM_BILLING_RECONCILIATION_FAILED',
+        { contaId: input.contaId, environment: input.environment },
+      );
+    },
+
+    releaseTrialSubscriptionClaim: async (input) => {
+      await db.platformBillingAccount.updateMany({
+        where: {
+          contaId: input.contaId,
+          environment: input.environment,
+          trialSubscriptionClaimKey: input.idempotencyKey,
+        },
+        data: {
+          trialSubscriptionClaimKey: null,
+          trialSubscriptionClaimPhase: null,
+          trialSubscriptionClaimedAt: null,
+          trialSubscriptionRequestExpiresAt: null,
+        },
+      });
+    },
+
+    markCheckoutPending: async (input) => {
+      // Keep the last known access state while Checkout is open. Repeated or
+      // abandoned Checkout attempts must not revoke an existing subscription.
+      const now = new Date();
+      const claim = await db.platformBillingAccount.updateMany({
+        where: {
+          id: input.accountId,
+          trialSubscriptionClaimKey: null,
+          AND: [
+            { OR: [
+              { stripeSubscriptionId: null },
+              { status: { in: ['CANCELED', 'INCOMPLETE_EXPIRED'] } },
+            ] },
+            { OR: [
+              { checkoutClaimKey: null },
+              { checkoutClaimPhase: 'CLAIMED', checkoutClaimedAt: { lt: new Date(now.getTime() - 5 * 60_000) } },
+            ] },
+          ],
+          status: { notIn: ['ACTIVE', 'TRIALING', 'PAST_DUE', 'UNPAID', 'PAUSED'] },
+        },
+        data: {
+          status: input.pendingChangeType === 'REACTIVATE' ? 'CANCELED' : 'CHECKOUT_PENDING',
           pendingPlanCode: input.planCode,
           pendingChangeType: input.pendingChangeType ?? null,
           pendingChangeEffectiveAt: null,
+          checkoutClaimKey: input.idempotencyKey,
+          checkoutClaimPhase: 'CLAIMED',
+          checkoutClaimedAt: now,
+          checkoutRequestExpiresAt: null,
         },
+      });
+      if (claim.count === 0) {
+        const current = await db.platformBillingAccount.findUniqueOrThrow({ where: { id: input.accountId } });
+        if (current.checkoutClaimKey === input.idempotencyKey
+          && current.checkoutClaimPhase === 'REQUESTING'
+          && current.checkoutRequestExpiresAt instanceof Date
+          && current.checkoutRequestExpiresAt > now) {
+          return toAccountRecord(current);
+        }
+        throw new PlatformBillingError(
+          current.stripeSubscriptionId ? 'An active platform billing subscription already exists.' : current.checkoutClaimPhase === 'REQUESTING'
+            ? 'Checkout claim expired after the Stripe request may have started; reconcile Stripe before retrying with a new key.'
+            : 'A Checkout session is already being created for this account.',
+          current.stripeSubscriptionId ? 'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS' : current.checkoutClaimPhase === 'REQUESTING'
+            ? 'PLATFORM_BILLING_CHECKOUT_RECONCILIATION_REQUIRED' : 'PLATFORM_BILLING_CHECKOUT_IN_PROGRESS',
+        );
+      }
+      const account = await db.platformBillingAccount.findUniqueOrThrow({
+        where: { id: input.accountId },
       });
 
       return toAccountRecord(account);
     },
 
+    markCheckoutRequestStarted: async ({ accountId, idempotencyKey }) => {
+      const now = new Date();
+      const requestExpiresAt = new Date(now.getTime() + 20 * 60 * 60_000);
+      const changed = await db.platformBillingAccount.updateMany({
+        where: { id: accountId, checkoutClaimKey: idempotencyKey, checkoutClaimPhase: 'CLAIMED' },
+        data: { checkoutClaimPhase: 'REQUESTING', checkoutRequestExpiresAt: requestExpiresAt },
+      });
+      if (changed.count === 1) return;
+      const current = await db.platformBillingAccount.findUniqueOrThrow({ where: { id: accountId } });
+      if (current.checkoutClaimKey === idempotencyKey
+        && current.checkoutClaimPhase === 'REQUESTING'
+        && current.checkoutRequestExpiresAt instanceof Date
+        && current.checkoutRequestExpiresAt > now) return;
+      throw new PlatformBillingError(
+        'Checkout claim expired after the Stripe request may have started; reconcile Stripe before retrying.',
+        'PLATFORM_BILLING_CHECKOUT_RECONCILIATION_REQUIRED',
+      );
+    },
+
+    bindCheckoutSubscription: async (input) => {
+      // Bind the provider resource as soon as Checkout completes so the
+      // reconciliation job can recover even if the subscription webhook is
+      // delayed or lost. This deliberately does not change status/access.
+      await db.platformBillingAccount.updateMany({
+        where: {
+          id: input.accountId,
+          contaId: input.contaId,
+          environment: input.environment,
+          stripeCustomerId: input.stripeCustomerId,
+          checkoutClaimKey: input.idempotencyKey,
+        },
+        data: {
+          stripeSubscriptionId: input.stripeSubscriptionId,
+          checkoutClaimKey: null,
+          checkoutClaimPhase: null,
+          checkoutClaimedAt: null,
+          checkoutRequestExpiresAt: null,
+        },
+      });
+    },
+
+    clearCheckoutClaim: async ({ contaId, environment, idempotencyKey }) => {
+      await db.platformBillingAccount.updateMany({
+        where: { contaId, environment, checkoutClaimKey: idempotencyKey, status: 'CHECKOUT_PENDING' },
+        data: { status: 'NOT_STARTED', accessStatus: 'PENDING' },
+      });
+      await db.platformBillingAccount.updateMany({
+        where: { contaId, environment, checkoutClaimKey: idempotencyKey },
+        data: {
+          checkoutClaimKey: null,
+          checkoutClaimPhase: null,
+          checkoutClaimedAt: null,
+          checkoutRequestExpiresAt: null,
+          pendingPlanCode: null,
+          pendingChangeType: null,
+          pendingChangeEffectiveAt: null,
+        },
+      });
+    },
+
     updateAccountFromStripeSubscription: async (input) => {
       const now = new Date();
       const account = await runWithOptionalTransaction(db, async (tx) => {
+        if (input.webhookLease) {
+          const lease = await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT "id"
+            FROM "PlatformBillingWebhookEvent"
+            WHERE "id" = ${input.webhookLease.id}
+              AND "workerId" = ${input.webhookLease.workerId}
+              AND "status" = 'PROCESSING'::"PlatformBillingWebhookEventStatus"
+            FOR UPDATE
+          `;
+          if (lease.length !== 1) throw new Error('Stripe webhook lease was lost before billing state mutation.');
+        }
         const current = await tx.platformBillingAccount.findUniqueOrThrow({
           where: { id: input.accountId },
         });
@@ -140,9 +375,7 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
           return current;
         }
 
-        await tx.platformBillingAccount.update({
-          where: { id: input.accountId },
-          data: {
+        const accountUpdate = {
             status: input.status,
             planCode: input.planCode,
             stripeSubscriptionId: input.stripeSubscriptionId,
@@ -170,12 +403,82 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
             pendingPlanCode: input.pendingPlanCode,
             pendingChangeType: input.pendingChangeType,
             pendingChangeEffectiveAt: input.pendingChangeEffectiveAt,
+            ...(input.pendingChangeOperationId !== undefined
+              ? {
+                  pendingChangeOperationId: input.pendingChangeOperationId,
+                  pendingChangeClaimToken: null,
+                  pendingChangeClaimedAt: null,
+                }
+              : {}),
             lastStripeEventId: input.lastStripeEventId,
+            ...(input.stripeSubscriptionId ? {
+              checkoutClaimKey: null,
+              checkoutClaimPhase: null,
+              checkoutClaimedAt: null,
+              checkoutRequestExpiresAt: null,
+              trialSubscriptionClaimKey: null,
+              trialSubscriptionClaimPhase: null,
+              trialSubscriptionClaimedAt: null,
+              trialSubscriptionRequestExpiresAt: null,
+            } : {}),
             ...(input.accessStatus && input.accessStatus !== current.accessStatus
               ? { accessStateVersion: { increment: 1 } }
               : {}),
-          },
-        });
+          };
+        if (input.expectedAccountSnapshot) {
+          const snapshot = input.expectedAccountSnapshot;
+          const changed = await tx.platformBillingAccount.updateMany({
+            where: {
+              id: input.accountId,
+              contaId: snapshot.contaId,
+              environment: snapshot.environment,
+              stripeSubscriptionId: snapshot.stripeSubscriptionId,
+              pendingChangeOperationId: snapshot.pendingChangeOperationId,
+              pendingChangeClaimToken: snapshot.pendingChangeClaimToken,
+              ...(snapshot.trialSubscriptionClaimKey !== undefined
+                ? { trialSubscriptionClaimKey: snapshot.trialSubscriptionClaimKey }
+                : {}),
+              ...(snapshot.lastProviderEventCreatedAt !== undefined
+                ? { lastProviderEventCreatedAt: snapshot.lastProviderEventCreatedAt }
+                : {}),
+              ...(snapshot.lastStripeEventId !== undefined
+                ? { lastStripeEventId: snapshot.lastStripeEventId }
+                : {}),
+            },
+            data: accountUpdate,
+          });
+          if (changed.count !== 1) {
+            throw new Error('Stripe account snapshot changed before subscription state could be applied.');
+          }
+        } else {
+          await tx.platformBillingAccount.update({
+            where: { id: input.accountId },
+            data: accountUpdate,
+          });
+        }
+
+        if (input.planChangeFinalization) {
+          const finalization = input.planChangeFinalization;
+          const finalized = await tx.platformBillingPlanChange.updateMany({
+            where: {
+              id: finalization.planChangeId,
+              contaId: finalization.contaId,
+              billingAccountId: finalization.billingAccountId,
+              environment: finalization.environment,
+              stripeSubscriptionId: finalization.stripeSubscriptionId,
+              stripePriceId: finalization.stripePriceId,
+              toPlanCode: finalization.toPlanCode,
+              type: finalization.type,
+              status: finalization.type === 'UPGRADE' ? 'PENDING_PAYMENT' : 'PENDING_EFFECTIVE_DATE',
+            },
+            data: finalization.applied
+              ? { status: 'APPLIED', appliedAt: now, lastError: null, stripePriceId: finalization.stripePriceId }
+              : { status: 'FAILED', failedAt: now, lastError: 'Stripe pending update expired before payment.' },
+          });
+          if (finalized.count !== 1) {
+            throw new Error('Stripe plan-change operation could not be finalized; account update was rolled back.');
+          }
+        }
 
         if (!input.cancelAtPeriodEnd) {
           await tx.platformBillingPlanChange.updateMany({
@@ -317,71 +620,85 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
     },
 
     upsertInvoice: async (input) => {
-      const invoice = await db.platformBillingInvoice.upsert({
-        where: {
+      return runWithOptionalTransaction(db, async (tx) => {
+        const invoiceKey = `${input.environment}:${input.stripeInvoiceId}`;
+        await tx.$queryRaw`SELECT 1 AS "locked"
+          FROM (SELECT pg_advisory_xact_lock(hashtextextended(${invoiceKey}, 0))) AS "invoice_lock"`;
+        const uniqueWhere = {
           uq_platform_billing_invoice_env_invoice: {
             environment: input.environment,
             stripeInvoiceId: input.stripeInvoiceId,
           },
-        },
-        create: {
-          contaId: input.contaId,
-          billingAccountId: input.billingAccountId,
-          environment: input.environment,
-          stripeInvoiceId: input.stripeInvoiceId,
-          stripeCustomerId: input.stripeCustomerId,
-          stripeSubscriptionId: input.stripeSubscriptionId,
-          stripePriceId: input.stripePriceId,
-          planCode: input.planCode,
-          number: input.number,
-          status: input.status,
-          amountDue: input.amountDue,
-          amountPaid: input.amountPaid,
-          currency: input.currency,
-          hostedInvoiceUrl: input.hostedInvoiceUrl,
-          invoicePdf: input.invoicePdf,
-          periodStart: input.periodStart,
-          periodEnd: input.periodEnd,
-          dueDate: input.dueDate,
-          paidAt: input.paidAt,
-          failedAt: input.failedAt,
-          attempted: input.attempted,
-          attemptCount: input.attemptCount,
-          nextPaymentAttempt: input.nextPaymentAttempt,
-          lastPaymentErrorCode: input.lastPaymentErrorCode,
-          lastPaymentErrorMessage: input.lastPaymentErrorMessage,
-          raw: toPrismaJson(input.raw),
-          lastStripeEventId: input.lastStripeEventId,
-        },
-        update: {
-          billingAccountId: input.billingAccountId,
-          stripeCustomerId: input.stripeCustomerId,
-          stripeSubscriptionId: input.stripeSubscriptionId,
-          stripePriceId: input.stripePriceId,
-          planCode: input.planCode,
-          number: input.number,
-          status: input.status,
-          amountDue: input.amountDue,
-          amountPaid: input.amountPaid,
-          currency: input.currency,
-          hostedInvoiceUrl: input.hostedInvoiceUrl,
-          invoicePdf: input.invoicePdf,
-          periodStart: input.periodStart,
-          periodEnd: input.periodEnd,
-          dueDate: input.dueDate,
-          paidAt: input.paidAt,
-          failedAt: input.failedAt,
-          attempted: input.attempted,
-          attemptCount: input.attemptCount,
-          nextPaymentAttempt: input.nextPaymentAttempt,
-          lastPaymentErrorCode: input.lastPaymentErrorCode,
-          lastPaymentErrorMessage: input.lastPaymentErrorMessage,
-          raw: toPrismaJson(input.raw),
-          lastStripeEventId: input.lastStripeEventId,
-        },
-      });
+        };
+        const existingInvoice = await tx.platformBillingInvoice.findUnique({ where: uniqueWhere });
+        if (existingInvoice && existingInvoice.contaId !== input.contaId) {
+          throw new PlatformBillingError(
+            'Stripe invoice is already bound to a different Conta.',
+            'PLATFORM_BILLING_WEBHOOK_INVALID',
+            { stripeInvoiceId: input.stripeInvoiceId },
+          );
+        }
 
-      return toInvoiceRecord(invoice);
+        const preservePaid = existingInvoice?.status === 'PAID';
+        const amountPaid = preservePaid
+          ? Math.max(existingInvoice.amountPaid, input.amountPaid)
+          : input.amountPaid;
+        const data = {
+          billingAccountId: input.billingAccountId,
+          stripeCustomerId: input.stripeCustomerId,
+          stripeSubscriptionId: input.stripeSubscriptionId,
+          stripePriceId: input.stripePriceId,
+          planCode: input.planCode,
+          number: input.number,
+          status: preservePaid ? 'PAID' as const : input.status,
+          amountDue: input.amountDue,
+          amountPaid,
+          currency: input.currency,
+          hostedInvoiceUrl: input.hostedInvoiceUrl,
+          invoicePdf: input.invoicePdf,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          dueDate: input.dueDate,
+          paidAt: preservePaid ? existingInvoice.paidAt ?? input.paidAt : input.paidAt,
+          failedAt: preservePaid ? null : input.failedAt,
+          attempted: input.attempted,
+          attemptCount: input.attemptCount,
+          nextPaymentAttempt: preservePaid ? null : input.nextPaymentAttempt,
+          lastPaymentErrorCode: preservePaid ? null : input.lastPaymentErrorCode,
+          lastPaymentErrorMessage: preservePaid ? null : input.lastPaymentErrorMessage,
+          raw: toPrismaJson(input.raw),
+          lastStripeEventId: input.lastStripeEventId,
+        };
+
+        if (!existingInvoice) {
+          const invoice = await tx.platformBillingInvoice.create({
+            data: {
+              contaId: input.contaId,
+              environment: input.environment,
+              stripeInvoiceId: input.stripeInvoiceId,
+              ...data,
+            },
+          });
+          return toInvoiceRecord(invoice);
+        }
+
+        const changed = await tx.platformBillingInvoice.updateMany({
+          where: {
+            id: existingInvoice.id,
+            contaId: input.contaId,
+            environment: input.environment,
+            stripeInvoiceId: input.stripeInvoiceId,
+            status: existingInvoice.status,
+            amountPaid: existingInvoice.amountPaid,
+            paidAt: existingInvoice.paidAt,
+            lastStripeEventId: existingInvoice.lastStripeEventId,
+          },
+          data,
+        });
+        if (changed.count !== 1) throw new Error('Stripe invoice changed during webhook persistence; retry the event.');
+        const invoice = await tx.platformBillingInvoice.findUniqueOrThrow({ where: { id: existingInvoice.id } });
+        return toInvoiceRecord(invoice);
+      });
     },
 
     upsertWebhookEvent: async (input) => {
@@ -459,8 +776,8 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
     },
 
     markWebhookEventProcessed: async (input) => {
-      const record = await db.platformBillingWebhookEvent.update({
-        where: { id: input.id },
+      const updated = await db.platformBillingWebhookEvent.updateMany({
+        where: { id: input.id, ...(input.workerId ? { workerId: input.workerId, status: 'PROCESSING' } : {}) },
         data: {
           status: 'PROCESSED',
           contaId: input.contaId,
@@ -472,12 +789,14 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
           lastErrorCode: null,
         },
       });
+      if (updated.count !== 1) throw new Error('Stripe webhook lease was lost before completion.');
+      const record = await db.platformBillingWebhookEvent.findUniqueOrThrow({ where: { id: input.id } });
       return toWebhookEventRecord(record);
     },
 
     markWebhookEventIgnored: async (input) => {
-      const record = await db.platformBillingWebhookEvent.update({
-        where: { id: input.id },
+      const updated = await db.platformBillingWebhookEvent.updateMany({
+        where: { id: input.id, ...(input.workerId ? { workerId: input.workerId, status: 'PROCESSING' } : {}) },
         data: {
           status: 'IGNORED',
           contaId: input.contaId,
@@ -487,12 +806,14 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
           workerId: null,
         },
       });
+      if (updated.count !== 1) throw new Error('Stripe webhook lease was lost before completion.');
+      const record = await db.platformBillingWebhookEvent.findUniqueOrThrow({ where: { id: input.id } });
       return toWebhookEventRecord(record);
     },
 
     markWebhookEventFailed: async (input) => {
-      const record = await db.platformBillingWebhookEvent.update({
-        where: { id: input.id },
+      const updated = await db.platformBillingWebhookEvent.updateMany({
+        where: { id: input.id, ...(input.workerId ? { workerId: input.workerId, status: 'PROCESSING' } : {}) },
         data: {
           status: input.exhausted ? 'EXHAUSTED' : 'FAILED',
           contaId: input.contaId,
@@ -502,40 +823,29 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
           lastError: input.error.slice(0, 1000),
           lastErrorCode: input.errorCode,
           exhaustedAt: input.exhausted ? new Date() : null,
+          ...(!input.exhausted && input.nextAttemptAt ? { nextAttemptAt: input.nextAttemptAt } : {}),
         },
       });
-
-      if (!input.exhausted && input.nextAttemptAt) {
-        const delayMs = Math.max(0, input.nextAttemptAt.getTime() - Date.now());
-        await db.$executeRaw`
-          UPDATE "PlatformBillingWebhookEvent"
-          SET
-            "nextAttemptAt" = LOCALTIMESTAMP + (${delayMs}::text || ' milliseconds')::interval,
-            "updatedAt" = LOCALTIMESTAMP
-          WHERE "id" = ${input.id}
-        `;
-
-        const refreshed = await db.platformBillingWebhookEvent.findUniqueOrThrow({
-          where: { id: input.id },
-        });
-        return toWebhookEventRecord(refreshed);
-      }
-
+      if (updated.count !== 1) throw new Error('Stripe webhook lease was lost before failure finalization.');
+      const record = await db.platformBillingWebhookEvent.findUniqueOrThrow({ where: { id: input.id } });
       return toWebhookEventRecord(record);
     },
 
     createAuditLog: async (input) => {
-      await db.platformBillingAuditLog.create({
-        data: {
+      await db.platformBillingAuditLog.createMany({
+        data: [{
           contaId: input.contaId,
           billingAccountId: input.billingAccountId,
           actorUserId: input.actorUserId,
           action: input.action,
+          webhookEnvironment: input.webhookEnvironment,
+          webhookEventId: input.webhookEventId,
           entityType: input.entityType,
           entityId: input.entityId,
           correlationId: input.correlationId,
           metadata: toPrismaJson(input.metadata),
-        },
+        }],
+        skipDuplicates: true,
       });
     },
   };
@@ -571,10 +881,17 @@ function toAccountRecord(account: {
   gracePeriodStartedAt: Date | null;
   accessStateVersion: number;
   lastProviderEventCreatedAt: Date | null;
+  lastStripeEventId?: string | null;
   lastReconciledAt: Date | null;
   pendingPlanCode: string | null;
   pendingChangeType: string | null;
   pendingChangeEffectiveAt: Date | null;
+  pendingChangeOperationId: string | null;
+  pendingChangeClaimToken: string | null;
+  trialSubscriptionClaimKey?: string | null;
+  trialSubscriptionClaimPhase?: string | null;
+  trialSubscriptionClaimedAt?: Date | null;
+  trialSubscriptionRequestExpiresAt?: Date | null;
 }): PlatformBillingAccountRecord {
   return {
     id: account.id,
@@ -606,10 +923,17 @@ function toAccountRecord(account: {
     gracePeriodStartedAt: account.gracePeriodStartedAt,
     accessStateVersion: account.accessStateVersion,
     lastProviderEventCreatedAt: account.lastProviderEventCreatedAt,
+    lastStripeEventId: account.lastStripeEventId ?? null,
     lastReconciledAt: account.lastReconciledAt,
     pendingPlanCode: account.pendingPlanCode as PlatformBillingAccountRecord['pendingPlanCode'],
     pendingChangeType: account.pendingChangeType as PlatformBillingAccountRecord['pendingChangeType'],
     pendingChangeEffectiveAt: account.pendingChangeEffectiveAt,
+    pendingChangeOperationId: account.pendingChangeOperationId,
+    pendingChangeClaimToken: account.pendingChangeClaimToken,
+    trialSubscriptionClaimKey: account.trialSubscriptionClaimKey ?? null,
+    trialSubscriptionClaimPhase: account.trialSubscriptionClaimPhase ?? null,
+    trialSubscriptionClaimedAt: account.trialSubscriptionClaimedAt ?? null,
+    trialSubscriptionRequestExpiresAt: account.trialSubscriptionRequestExpiresAt ?? null,
   };
 }
 

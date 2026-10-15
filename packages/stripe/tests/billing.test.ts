@@ -4,10 +4,96 @@ import {
   createStripeBillingPortalSession,
   createStripeSubscriptionCheckoutSession,
   createStripeTrialSubscriptionWithoutPaymentMethod,
+  releaseStripeSubscriptionSchedule,
   retrieveStripeDefaultPaymentMethod,
+  scheduleStripeSubscriptionPlanChange,
 } from '../src';
 
 describe('@alusa/stripe billing operations', () => {
+  it('releases a subscription schedule with a stable idempotency key', async () => {
+    const release = vi.fn(async () => ({}));
+    const client = { subscriptionSchedules: { release } };
+    await releaseStripeSubscriptionSchedule(client as never, {
+      scheduleId: 'sched_1', idempotencyKey: 'idem_release_1',
+    });
+    expect(release).toHaveBeenCalledWith('sched_1', {}, { idempotencyKey: 'idem_release_1' });
+  });
+
+  it('schedules downgrade at renewal and releases schedule after the target phase', async () => {
+    const client = {
+      subscriptions: { retrieve: vi.fn(async () => ({ id: 'sub_1', schedule: null })) },
+      subscriptionSchedules: {
+        create: vi.fn(async () => ({
+          id: 'sched_1', metadata: {}, current_phase: { start_date: 1_700_000_000 },
+          phases: [{ start_date: 1_700_000_000, end_date: 1_800_000_000, items: [{ price: 'price_current', quantity: 2 }] }],
+        })),
+        update: vi.fn(async () => ({})),
+        release: vi.fn(async () => ({})),
+      },
+    };
+    const effectiveAt = new Date(1_800_000_000 * 1000);
+    await expect(scheduleStripeSubscriptionPlanChange(client as never, {
+      subscriptionId: 'sub_1', priceId: 'price_target', effectiveAt,
+      metadata: { contaId: 'conta_1', planCode: 'STARTER' }, idempotencyKey: 'idem_downgrade',
+    })).resolves.toEqual({ scheduleId: 'sched_1', effectiveAt });
+    expect(client.subscriptionSchedules.update).toHaveBeenCalledWith('sched_1', expect.objectContaining({
+      end_behavior: 'release',
+      phases: expect.arrayContaining([
+        expect.objectContaining({ end_date: 1_800_000_000, items: [{ price: 'price_current', quantity: 2 }] }),
+        expect.objectContaining({ start_date: 1_800_000_000, items: [{ price: 'price_target', quantity: 2 }] }),
+      ]),
+    }), { idempotencyKey: 'idem_downgrade:update' });
+  });
+
+  it('refuses to replace a schedule owned by another operation', async () => {
+    const client = {
+      subscriptions: { retrieve: vi.fn(async () => ({ id: 'sub_1', schedule: 'sched_existing' })) },
+      subscriptionSchedules: { retrieve: vi.fn(async () => ({ id: 'sched_existing', metadata: { owner: 'other' }, phases: [] })) },
+    };
+    await expect(scheduleStripeSubscriptionPlanChange(client as never, {
+      subscriptionId: 'sub_1', priceId: 'price_target', effectiveAt: new Date(), metadata: {}, idempotencyKey: 'idem_new',
+    })).rejects.toThrow(/already managed by another schedule/);
+  });
+
+  it('recovers an owned schedule after update failure without releasing or recreating it', async () => {
+    const createdSchedule = {
+      id: 'sched_recover',
+      metadata: { alusaPlanChangeKey: 'idem_recover', contaId: 'conta_1' },
+      current_phase: { start_date: 1_700_000_000 },
+      phases: [{ start_date: 1_700_000_000, end_date: 1_800_000_000, items: [{ price: 'price_current', quantity: 1 }] }],
+    };
+    const client = {
+      subscriptions: {
+        retrieve: vi.fn()
+          .mockResolvedValueOnce({ id: 'sub_1', schedule: null })
+          .mockResolvedValueOnce({ id: 'sub_1', schedule: createdSchedule }),
+      },
+      subscriptionSchedules: {
+        create: vi.fn(async () => createdSchedule),
+        update: vi.fn().mockRejectedValueOnce(Object.assign(new Error('invalid update'), {
+          type: 'StripeInvalidRequestError', statusCode: 400,
+        })).mockResolvedValueOnce({}),
+        release: vi.fn(async () => ({})),
+      },
+    };
+    const input = {
+      subscriptionId: 'sub_1', priceId: 'price_target', effectiveAt: new Date(1_800_000_000 * 1000),
+      metadata: { contaId: 'conta_1' }, idempotencyKey: 'idem_recover',
+    };
+    await expect(scheduleStripeSubscriptionPlanChange(client as never, input)).rejects.toMatchObject({
+      name: 'StripeScheduleUpdateRecoveryError',
+      code: 'STRIPE_SCHEDULE_UPDATE_RECOVERY_REQUIRED',
+      cause: expect.objectContaining({ type: 'StripeInvalidRequestError', statusCode: 400 }),
+    });
+    await expect(scheduleStripeSubscriptionPlanChange(client as never, input)).resolves.toMatchObject({ scheduleId: 'sched_recover' });
+    expect(client.subscriptionSchedules.create).toHaveBeenCalledTimes(1);
+    expect(client.subscriptionSchedules.create).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ alusaPlanChangeKey: 'idem_recover', contaId: 'conta_1' }),
+    }), expect.anything());
+    expect(client.subscriptionSchedules.update).toHaveBeenCalledTimes(2);
+    expect(client.subscriptionSchedules.release).not.toHaveBeenCalled();
+  });
+
   it('cria customer Stripe com metadata de plataforma e idempotency key', async () => {
     const client = {
       customers: {
@@ -251,5 +337,27 @@ describe('@alusa/stripe billing operations', () => {
       expand: ['invoice_settings.default_payment_method'],
     });
     expect(client.paymentMethods.retrieve).toHaveBeenCalledWith('pm_test_2');
+  });
+
+  it('propaga falha ao consultar a assinatura sem mascará-la com o cartão do customer', async () => {
+    const client = {
+      subscriptions: {
+        retrieve: vi.fn().mockRejectedValue(new Error('Stripe subscription unavailable')),
+      },
+      customers: {
+        retrieve: vi.fn(async () => ({
+          id: 'cus_test_1',
+          invoice_settings: { default_payment_method: 'pm_customer_default' },
+        })),
+      },
+      paymentMethods: { retrieve: vi.fn() },
+    };
+
+    await expect(retrieveStripeDefaultPaymentMethod(client as never, {
+      customerId: 'cus_test_1',
+      subscriptionId: 'sub_test_1',
+    })).rejects.toThrow('Stripe subscription unavailable');
+
+    expect(client.customers.retrieve).not.toHaveBeenCalled();
   });
 });

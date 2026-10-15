@@ -783,3 +783,12 @@ export async function quitarEventParticipantFee(
   });
   return (await parseResponse<JsonEnvelope<EventParticipantDTO>>(response)).data;
 }
+
+export type EventReportDetailDTO = import('@alusa/lib/events/event-report-detail.service').EventReportDetail;
+
+export async function getEventReportDetail(eventId: string): Promise<EventReportDetailDTO> {
+  const json = await parseResponse<JsonEnvelope<EventReportDetailDTO>>(
+    await fetch(`/api/events/reports/${encodeURIComponent(eventId)}`, { cache: 'no-store' }),
+  );
+  return json.data;
+}

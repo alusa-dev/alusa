@@ -1,38 +1,54 @@
 ---
 name: alusa-delivery-workflow
-description: Coordinate Alusa code changes in Codex using GPT-6 Luna at a task-appropriate reasoning effort, the existing specialist contracts, and risk-based read-only review. Use when implementing, fixing, or reviewing a change in this repository.
+description: Coordinate Alusa code changes in Codex using the canonical specialist contracts, one implementation worker, and risk-based read-only review. Use for implementing, fixing, or reviewing a change in this repository.
 ---
 
 # Alusa delivery workflow
 
-Use this skill as the operational entry point. `.agents/alusa-orchestrator.md` is the canonical delivery contract; `AGENTS.md` and the relevant `.agents/*.md` files remain the source of project rules.
+Use this skill as the Codex operational entry point. `.agents/alusa-orchestrator.md` is the canonical delivery contract; `AGENTS.md` and relevant `.agents/*.md` contracts define project rules.
+
+## Contracts, profiles, and configuration
+
+- `.agents/*.md` are canonical specialist contracts, independent of agent runtime.
+- `.codex/agents/*.toml` are executable Codex app/CLI profiles. Each profile points to its canonical contract and applies runtime permissions; it does not replace the contract.
+- Project Codex configuration is `.codex/config.toml`: primary coordinator GPT-6.1 Sol Medium; `[agents] enabled = true`, `max_concurrent_threads_per_session = 3`, and GPT-6 Luna Medium subagent defaults. Use only the focused profiles below; do not create profiles for every specialist without a routing need.
+- The `agent.multi_agent.enabled` setting in OpenAI Agents API docs configures **Agents API sessions**, not Codex app/CLI. For Codex, use `[agents]` in `.codex/config.toml` and custom profiles under `.codex/agents/`, as documented in [Codex subagents](https://developers.openai.com/codex/subagents/) and the [Codex config reference](https://developers.openai.com/codex/config-reference/).
+
+| Canonical contract (`.agents/*.md`) | Codex profile (`.codex/agents/*.toml`) |
+|-------------------------------------|---------------------------------------|
+| `alusa-prisma-data-integrity` | `alusa-prisma-reviewer` |
+| `alusa-webhook-reliability` | `alusa-webhook-reviewer` |
+| `alusa-test-adversarial` | `alusa-adversarial-reviewer` |
+| `alusa-architecture-reviewer` | `alusa-architecture-reviewer` |
+| `alusa-tenant-security-auditor` | `alusa-tenant-reviewer` |
 
 ## Model and delegation policy
 
-- Use GPT-6 Luna exclusively in the primary session and every subagent.
-- Default to Medium for bounded analysis, routine work, and simple implementation. Use High for substantial changes, complex debugging, and multi-layer decisions. Use Extra High (`xhigh`) only for unusually difficult work or deep review where the expected quality gain justifies the added reasoning cost.
-- Keep routine analysis, task classification, execution, and final synthesis in the primary session.
-- Use `alusa-decision-advisor` at most once for a bounded, high-impact decision that remains unresolved after checking user instructions and relevant code/contracts. It uses GPT-6 Luna, is read-only, and never implements or performs a general review.
-- Use `alusa-core-worker` as the sole implementation worker for a delivery task; set its reasoning effort based on scope rather than assigning High to every task.
-- Do not spawn agents for trivial changes or for work that depends on one short sequential reasoning chain.
-- Delegate only independent, bounded reviews. Use `alusa-tenant-reviewer` (GPT-6 Luna High) only when the diff touches tenant authorization, tenant-scoped data, cache, jobs, or webhooks.
-- Keep at most one subagent active. Do not delegate the same files to multiple implementers.
-- Subagents consume additional usage. Prefer one worker and zero or one reviewer; invoke additional specialists only when required by `AGENTS.md`, the relevant contracts, or the risk matrix in `.agents/alusa-orchestrator.md`.
-- Start subagents with no inherited conversation history by default (`fork_turns: "none"`). Give them the user request, a short scope summary, exact paths, and only the applicable contract. Include a few recent turns only when a decision depends on that history.
-- Request concise findings and summaries; do not copy raw logs, full diffs, or broad exploration notes back into the primary thread.
+- The primary coordinator always uses GPT-6.1 Sol Medium.
+- The coordinator performs intake, analysis, routing, and synthesis only; it never implements product code. Every task editing product code/files goes to one `alusa-core-worker` (GPT-6 Luna Medium). Preserve Medium for the worker.
+- Do not add advisor, specialist, or reviewer agents for trivial/small tasks. Delegate edits to one core worker only; the coordinator may handle analysis-only work without editing files.
+- For normal/material work, use one worker plus at most one most-relevant read-only reviewer. Run the architecture gate only if materiality or risk requires it.
+- For critical tenant, finance, webhook, or schema changes, use the minimum reviewers required by applicable contracts. Independent reviews may run in parallel within the configured limit; run architecture review last when required.
+- Use `alusa-decision-advisor` only for a high-impact decision still unresolved after checking relevant code and contracts. It is read-only, always uses GPT-6.1 Sol Medium, and never implements or performs a general review. Do not use it for routine or trivial tasks.
+- The default subagent is GPT-6 Luna Medium. Specialized reviewers use GPT-6 Luna High and remain strictly read-only.
+- For critical changes, independent read-only specialist reviews may run in parallel within the Codex session limit of three spawned agents. Select only the minimum set required by risk and repository contracts.
+- For a material delivery or review that requires the architecture gate, run the `alusa-architecture-reviewer` profile last, after every applicable specialist review has completed. Do not spawn it for trivial changes that do not warrant a review gate. If a finding needs code changes, route the fix to `alusa-core-worker`, then rerun affected reviews and the architecture gate when still warranted.
+- Reviewers do not edit files. They return actionable findings with severity, exact file and line, evidence, impact, and a suggested correction. No finding should be silently fixed by a reviewer; the orchestrator decides and routes remediation.
+- Start subagents without inherited conversation history by default. Provide exact scope and paths, a short summary, and only applicable contracts. Inspect only directly related code; avoid broad repository reads. Ask for concise findings, not logs or extended diffs, and stop or redirect work that leaves scope or makes no progress.
 
 ## Delivery sequence
 
 1. Read `.agents/alusa-orchestrator.md`; classify the request as analysis, delivery, review, or hotfix.
-2. Inspect the relevant code and read only the specialist contracts required by the affected domain. Ask `alusa` first when product scope is uncertain.
-3. For explicit implementation requests, delegate a focused task to `alusa-core-worker`, naming the exact scope, likely paths, applicable specialist contracts, and acceptance criteria. Keep implementation sequential and pass only the necessary context.
-4. After implementation, select the smallest reviewer set required by risk and repository contracts. Use `alusa-tenant-reviewer` for tenant-sensitive changes. For schema, webhook, financial, or other critical flows, follow the specific reviewers and final gate named in `.agents/alusa-orchestrator.md`; do not replace them with this generic reviewer.
-5. Resolve findings or report blockers, run relevant checks, and synthesize the result using the Delivery Brief structure in `.agents/alusa-orchestrator.md` when the change warrants a brief.
+2. Inspect relevant code and read only specialist contracts required by affected domains. Resolve product ambiguity through `alusa`.
+3. For explicit implementation, delegate the bounded scope to `alusa-core-worker`; keep one implementation worker active.
+4. Select no reviewer for trivial edits, at most one most-relevant reviewer for normal/material work, or the minimum required by applicable contracts for critical risks. Parallelize independent critical reviews within the configured limit. Route Prisma risk to `alusa-prisma-reviewer`, webhook risk to `alusa-webhook-reviewer`, adversarial test risk to `alusa-adversarial-reviewer`, and tenant risk to `alusa-tenant-reviewer`; each follows its canonical contract in `.agents/*.md`.
+5. Resolve findings through the core worker and rerun affected reviews as needed. For material deliveries/reviews requiring the gate, finish with the `alusa-architecture-reviewer` profile after all other applicable reviews.
+6. Run relevant checks and synthesize the result using the Delivery Brief structure when warranted.
 
 ## Reviewer handoff
 
-Give each reviewer the user request, a concise change summary, the diff or changed paths, and its canonical specialist contract. Ask for concrete findings with file and line references. Reviewers are read-only and must not broaden scope.
+Give each reviewer the request, a concise change summary, changed paths or diff, and its canonical specialist contract. Ask for concrete findings with file and line references. Reviewers are read-only and must not broaden scope.
 
 ## Completion report
 
-Report what changed, which specialist contracts/reviewers were used, checks and outcomes, and unresolved risks. Do not claim a reviewer ran unless it actually ran. For analysis-only requests, do not delegate implementation or modify files.
+Report what changed, which contracts/reviews were used, checks and outcomes, and unresolved risks. Do not claim a reviewer ran unless it actually ran. For analysis-only requests, do not delegate implementation or modify files.

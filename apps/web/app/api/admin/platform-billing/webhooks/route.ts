@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { platformBillingWebhookListQueryDTOSchema } from '@/features/platform-billing/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { resolvePlatformBillingEnvironment } from '@/src/server/platform-billing/platform-billing-server';
-import { listStripeWebhookEvents } from '@/src/server/platform-billing/webhook-worker';
+import { listPlatformBillingNotificationOutbox, listStripeWebhookEvents } from '@/src/server/platform-billing/webhook-worker';
 
 export const runtime = 'nodejs';
 
@@ -19,12 +19,16 @@ export async function GET(req: NextRequest) {
   });
   const environment = resolvePlatformBillingEnvironment();
 
-  const events = await listStripeWebhookEvents({
+  const [events, notifications] = await Promise.all([listStripeWebhookEvents({
     contaId: sessionUser.contaId,
     environment,
     status: query.status,
     limit: query.limit,
-  });
+  }), listPlatformBillingNotificationOutbox({
+    contaId: sessionUser.contaId,
+    environment,
+    limit: query.limit,
+  })]);
 
   return NextResponse.json({
     environment,
@@ -35,6 +39,13 @@ export async function GET(req: NextRequest) {
       nextAttemptAt: event.nextAttemptAt?.toISOString() ?? null,
       exhaustedAt: event.exhaustedAt?.toISOString() ?? null,
       lastError: event.lastError ? event.lastError.slice(0, 500) : null,
+    })),
+    notifications: notifications.map((notification) => ({
+      ...notification,
+      createdAt: notification.createdAt.toISOString(),
+      nextAttemptAt: notification.nextAttemptAt.toISOString(),
+      deliveredAt: notification.deliveredAt?.toISOString() ?? null,
+      lastError: notification.lastError ? notification.lastError.slice(0, 500) : null,
     })),
   });
 }

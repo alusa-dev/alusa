@@ -33,5 +33,5 @@ async function isAuthorizedWorkerRequest(req: NextRequest): Promise<boolean> {
 
   const session = await getServerSession(authOptions);
   const role = (session as { user?: { role?: string } } | null)?.user?.role;
-  return String(role ?? '').toUpperCase() === 'ADMIN';
+  return String(role ?? '').toUpperCase() === 'SUPER_ADMIN';
 }

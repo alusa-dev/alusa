@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { Prisma, type PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '@/lib/prisma';
-import type { StripeWebhookEvent } from '@alusa/stripe';
+import {
+  getStripeClient,
+  retrieveStripeInvoiceEventObject,
+  retrieveStripeSubscriptionEventObject,
+  type StripeWebhookEvent,
+} from '@alusa/stripe';
 import {
   PlatformBillingError,
   classifyPlatformBillingWebhookError,
@@ -27,6 +32,14 @@ type ClaimedStripeWebhookEvent = {
   payload: unknown;
 };
 
+type ClaimedBillingNotification = {
+  id: string;
+  eventId: string;
+  eventType: string;
+  contaId: string | null;
+  attempts: number;
+};
+
 export type DrainStripeWebhookWorkerResult = {
   workerId: string;
   claimed: number;
@@ -34,6 +47,7 @@ export type DrainStripeWebhookWorkerResult = {
   failed: number;
   exhausted: number;
   ignored: number;
+  notifications: { claimed: number; delivered: number; failed: number; exhausted: number };
 };
 
 export type ListStripeWebhookEventsInput = {
@@ -58,14 +72,28 @@ export type ListedStripeWebhookEvent = {
   correlationId: string | null;
 };
 
+export type ListedBillingNotification = {
+  id: string;
+  eventId: string;
+  eventType: string;
+  status: string;
+  attempts: number;
+  createdAt: Date;
+  nextAttemptAt: Date;
+  deliveredAt: Date | null;
+  lastError: string | null;
+};
+
 const DEFAULT_BATCH_LIMIT = 25;
 const PROCESSING_TIMEOUT_MS = 2 * 60_000;
+const MAX_NOTIFICATION_DELIVERY_ATTEMPTS = 8;
 
 export async function drainStripeWebhookWorker(input: {
   prisma?: PrismaClient;
   limit?: number;
   workerId?: string;
   environment?: PlatformBillingEnvironment;
+  eventIds?: string[];
 }): Promise<DrainStripeWebhookWorkerResult> {
   const db = input.prisma ?? defaultPrisma;
   const workerId = input.workerId ?? `stripe-worker-${randomUUID()}`;
@@ -73,12 +101,14 @@ export async function drainStripeWebhookWorker(input: {
   const limit = Math.max(1, Math.min(input.limit ?? DEFAULT_BATCH_LIMIT, 100));
   await recoverTimedOutStripeWebhookEvents(db, {
     environment,
+    eventIds: input.eventIds,
   });
 
   const claimed = await claimStripeWebhookEvents(db, {
     environment,
     limit,
     workerId,
+    eventIds: input.eventIds,
   });
 
   const result: DrainStripeWebhookWorkerResult = {
@@ -88,18 +118,22 @@ export async function drainStripeWebhookWorker(input: {
     failed: 0,
     exhausted: 0,
     ignored: 0,
+    notifications: { claimed: 0, delivered: 0, failed: 0, exhausted: 0 },
   };
 
   const store = createPrismaPlatformBillingStore(db);
 
   for (const event of orderStripeWebhookEventsForProcessing(claimed)) {
     try {
+      const canonicalEvent = await retrieveCanonicalStripeEvent(event.payload as StripeWebhookEvent);
       const processed = await processPersistedPlatformBillingWebhookEvent(
         {
-          event: event.payload as StripeWebhookEvent,
+          event: canonicalEvent,
           environment,
           envSource: process.env,
+          workerId,
           inboxId: event.id,
+          deferFinalize: true,
         },
         store,
       );
@@ -108,12 +142,20 @@ export async function drainStripeWebhookWorker(input: {
         result.ignored += 1;
       } else {
         result.processed += 1;
-        await notifyPlatformBillingEvent({
-          contaId: processed.contaId,
-          eventId: event.eventId,
-          eventType: event.eventType,
-        }).catch((notificationError) => {
-          logStripeWebhookWorker('webhook_notification_failed', { error: notificationError });
+        await db.platformBillingNotificationOutbox.upsert({
+          where: { uq_platform_billing_notification_env_event: { environment, eventId: event.eventId } },
+          create: {
+            environment,
+            eventId: event.eventId,
+            eventType: resolveCanonicalNotificationEventType(event.eventType, canonicalEvent),
+            contaId: processed.contaId,
+          },
+          update: {},
+        });
+        await store.markWebhookEventProcessed({
+          id: event.id,
+          contaId: processed.contaId ?? undefined,
+          workerId,
         });
       }
     } catch (error) {
@@ -133,6 +175,7 @@ export async function drainStripeWebhookWorker(input: {
         errorCode: sanitizedError.code,
         nextAttemptAt,
         exhausted,
+        workerId,
       });
 
       if (exhausted) {
@@ -147,7 +190,107 @@ export async function drainStripeWebhookWorker(input: {
     }
   }
 
+  result.notifications = await drainPlatformBillingNotificationOutbox({ prisma: db, limit, eventIds: input.eventIds });
+
   return result;
+}
+
+export async function drainPlatformBillingNotificationOutbox(input: {
+  prisma?: PrismaClient;
+  limit?: number;
+  workerId?: string;
+  environment?: PlatformBillingEnvironment;
+  eventIds?: string[];
+}): Promise<{ claimed: number; delivered: number; failed: number; exhausted: number }> {
+  const db = input.prisma ?? defaultPrisma;
+  const workerId = input.workerId ?? `stripe-notify-${randomUUID()}`;
+  const environment = input.environment ?? resolvePlatformBillingEnvironment();
+  const limit = Math.max(1, Math.min(input.limit ?? DEFAULT_BATCH_LIMIT, 100));
+  const eventIds = input.eventIds === undefined ? null : input.eventIds;
+  const records = await db.$transaction((tx) => tx.$queryRaw<ClaimedBillingNotification[]>`
+    UPDATE "PlatformBillingNotificationOutbox"
+    SET "status" = 'PROCESSING', "workerId" = ${workerId}, "lockedAt" = LOCALTIMESTAMP,
+        "attempts" = "attempts" + 1, "updatedAt" = LOCALTIMESTAMP
+    WHERE "id" IN (
+      SELECT "id" FROM "PlatformBillingNotificationOutbox"
+      WHERE "environment" = ${environment}::"PlatformBillingEnvironment"
+        AND (${eventIds}::text[] IS NULL OR "eventId" = ANY(${eventIds}::text[]))
+        AND (("status" = 'PENDING')
+          OR ("status" = 'FAILED' AND "nextAttemptAt" <= LOCALTIMESTAMP)
+          OR ("status" = 'PROCESSING' AND "lockedAt" < LOCALTIMESTAMP - INTERVAL '2 minutes'))
+      ORDER BY "createdAt" ASC LIMIT ${limit} FOR UPDATE SKIP LOCKED
+    ) RETURNING "id", "eventId", "eventType", "contaId", "attempts"
+  `);
+  let delivered = 0;
+  let failed = 0;
+  let exhausted = 0;
+  for (const record of records) {
+    try {
+      await notifyPlatformBillingEvent({ contaId: record.contaId, eventId: record.eventId, eventType: record.eventType });
+      const update = await db.platformBillingNotificationOutbox.updateMany({
+        where: { id: record.id, status: 'PROCESSING', workerId },
+        data: { status: 'DELIVERED', deliveredAt: new Date(), lockedAt: null, workerId: null, lastError: null },
+      });
+      if (update.count === 1) delivered += 1;
+    } catch (error) {
+      const delay = Math.min(60 * 60_000, 30_000 * 2 ** Math.min(record.attempts - 1, 7));
+      await db.platformBillingNotificationOutbox.updateMany({
+        where: { id: record.id, status: 'PROCESSING', workerId },
+        data: record.attempts >= MAX_NOTIFICATION_DELIVERY_ATTEMPTS
+          ? { status: 'EXHAUSTED', lockedAt: null, workerId: null, lastError: sanitizeWebhookWorkerError(error).message }
+          : { status: 'FAILED', nextAttemptAt: new Date(Date.now() + delay), lockedAt: null, workerId: null, lastError: sanitizeWebhookWorkerError(error).message },
+      });
+      if (record.attempts >= MAX_NOTIFICATION_DELIVERY_ATTEMPTS) {
+        exhausted += 1;
+        logStripeWebhookWorker('notification_exhausted', { error });
+      } else {
+        failed += 1;
+        logStripeWebhookWorker('notification_retry_scheduled', { error });
+      }
+    }
+  }
+  return { claimed: records.length, delivered, failed, exhausted };
+}
+
+export function resolveCanonicalNotificationEventType(
+  receivedEventType: string,
+  canonicalEvent: StripeWebhookEvent,
+): string {
+  if (receivedEventType === 'invoice.payment_failed') {
+    const invoice = canonicalEvent.data.object as unknown as Record<string, unknown>;
+    if (invoice.status === 'paid' || invoice.paid === true) return 'invoice.paid';
+  }
+  return receivedEventType;
+}
+
+async function retrieveCanonicalStripeEvent(event: StripeWebhookEvent): Promise<StripeWebhookEvent> {
+  const raw = event.data.object as unknown as Record<string, unknown>;
+  const id = typeof raw.id === 'string' ? raw.id : null;
+  if (!id) return event;
+
+  const client = getStripeClient(process.env);
+  try {
+    let canonical: Record<string, unknown> | null = null;
+    if (event.type.startsWith('customer.subscription.')) {
+      canonical = await retrieveStripeSubscriptionEventObject(client, id);
+    } else if (event.type.startsWith('invoice.')) {
+      canonical = await retrieveStripeInvoiceEventObject(client, id);
+    }
+    if (!canonical) return event;
+    return {
+      ...event,
+      data: { ...event.data, object: canonical as never },
+    } as unknown as StripeWebhookEvent;
+  } catch (error) {
+    // A deleted subscription may no longer be retrievable; the signed deleted
+    // event itself is then the provider's terminal snapshot. Other retrieval
+    // failures retry the inbox event instead of applying stale event data.
+    const statusCode = error && typeof error === 'object' && 'statusCode' in error
+      ? (error as { statusCode?: unknown }).statusCode
+      : null;
+    if (event.type === 'customer.subscription.deleted' && statusCode === 404) return event;
+    throw error;
+  }
 }
 
 export async function listStripeWebhookEvents(
@@ -177,6 +320,56 @@ export async function listStripeWebhookEvents(
       correlationId: true,
     },
   });
+}
+
+export async function listPlatformBillingNotificationOutbox(input: {
+  contaId: string;
+  environment: PlatformBillingEnvironment;
+  limit: number;
+}): Promise<ListedBillingNotification[]> {
+  return defaultPrisma.platformBillingNotificationOutbox.findMany({
+    where: { contaId: input.contaId, environment: input.environment, status: { in: ['FAILED', 'EXHAUSTED', 'PENDING', 'PROCESSING'] } },
+    orderBy: [{ createdAt: 'desc' }],
+    take: Math.max(1, Math.min(input.limit, 100)),
+    select: { id: true, eventId: true, eventType: true, status: true, attempts: true, createdAt: true, nextAttemptAt: true, deliveredAt: true, lastError: true },
+  });
+}
+
+export async function replayPlatformBillingNotifications(input: {
+  prisma?: PrismaClient;
+  ids: string[];
+  contaId: string;
+  actorUserId: string;
+  reason: string;
+  environment?: PlatformBillingEnvironment;
+}): Promise<{ replayed: number }> {
+  const db = input.prisma ?? defaultPrisma;
+  const environment = input.environment ?? resolvePlatformBillingEnvironment();
+  const ids = [...new Set(input.ids.map((id) => id.trim()).filter(Boolean))].slice(0, 100);
+  if (!ids.length) return { replayed: 0 };
+  const updated = await db.platformBillingNotificationOutbox.updateMany({
+    where: { id: { in: ids }, contaId: input.contaId, environment, status: 'EXHAUSTED' },
+    data: { status: 'PENDING', attempts: 0, nextAttemptAt: new Date(), lockedAt: null, workerId: null, lastError: null, deliveredAt: null },
+  });
+  if (updated.count) {
+    const records = await db.platformBillingNotificationOutbox.findMany({
+      where: { id: { in: ids }, contaId: input.contaId, environment, status: 'PENDING' },
+      select: { id: true, eventId: true, eventType: true },
+    });
+    await db.platformBillingAuditLog.createMany({
+      data: records.map((record) => ({
+        contaId: input.contaId,
+        actorUserId: input.actorUserId,
+        action: 'PLATFORM_BILLING_NOTIFICATION_REPLAY_REQUESTED',
+        entityType: 'PlatformBillingNotificationOutbox',
+        entityId: record.id,
+        correlationId: record.eventId,
+        metadata: { reason: input.reason, eventType: record.eventType },
+      })),
+      skipDuplicates: true,
+    });
+  }
+  return { replayed: updated.count };
 }
 
 function orderStripeWebhookEventsForProcessing(
@@ -226,19 +419,9 @@ export async function replayStripeWebhookEvents(input: {
       workerId: null,
       lastError: null,
       lastErrorCode: null,
+      nextAttemptAt: new Date(),
     },
   });
-
-  if (updated.count > 0) {
-    await db.$executeRaw`
-      UPDATE "PlatformBillingWebhookEvent"
-      SET
-        "nextAttemptAt" = LOCALTIMESTAMP,
-        "updatedAt" = LOCALTIMESTAMP
-      WHERE "id" IN (${Prisma.join(ids)})
-        AND "environment" = ${environment}::"PlatformBillingEnvironment"
-    `;
-  }
 
   const events = await db.platformBillingWebhookEvent.findMany({
     where: { id: { in: ids }, ...(input.contaId ? { contaId: input.contaId } : {}), environment },
@@ -270,19 +453,21 @@ export async function replayStripeWebhookEvents(input: {
 
 async function recoverTimedOutStripeWebhookEvents(
   prisma: PrismaClient,
-  input: { environment: PlatformBillingEnvironment },
+  input: { environment: PlatformBillingEnvironment; eventIds?: string[] },
 ): Promise<void> {
+  const eventIds = input.eventIds === undefined ? null : input.eventIds;
   await prisma.$executeRaw`
     UPDATE "PlatformBillingWebhookEvent"
     SET
       "status" = 'FAILED',
       "lockedAt" = NULL,
       "workerId" = NULL,
-      "nextAttemptAt" = LOCALTIMESTAMP,
+      "nextAttemptAt" = LOCALTIMESTAMP - INTERVAL '1 millisecond',
       "lastError" = 'Processing timeout expired before worker completion.',
       "lastErrorCode" = 'PROCESSING_TIMEOUT',
       "updatedAt" = LOCALTIMESTAMP
     WHERE "environment" = ${input.environment}::"PlatformBillingEnvironment"
+      AND (${eventIds}::text[] IS NULL OR "eventId" = ANY(${eventIds}::text[]))
       AND "status" = 'PROCESSING'
       AND "processingTimeoutAt" <= LOCALTIMESTAMP
   `;
@@ -294,8 +479,10 @@ async function claimStripeWebhookEvents(
     environment: PlatformBillingEnvironment;
     limit: number;
     workerId: string;
+    eventIds?: string[];
   },
 ): Promise<ClaimedStripeWebhookEvent[]> {
+  const eventIds = input.eventIds === undefined ? null : input.eventIds;
   return prisma.$transaction(async (tx) => {
     return tx.$queryRaw<ClaimedStripeWebhookEvent[]>`
       UPDATE "PlatformBillingWebhookEvent"
@@ -311,6 +498,7 @@ async function claimStripeWebhookEvents(
         SELECT "id"
         FROM "PlatformBillingWebhookEvent"
         WHERE "environment" = ${input.environment}::"PlatformBillingEnvironment"
+          AND (${eventIds}::text[] IS NULL OR "eventId" = ANY(${eventIds}::text[]))
           AND "status" IN ('PENDING', 'RECEIVED', 'FAILED')
           AND "nextAttemptAt" <= LOCALTIMESTAMP
         ORDER BY "receivedAt" ASC
@@ -353,7 +541,9 @@ type StripeWebhookWorkerLogEvent =
   | 'webhook_notification_failed'
   | 'webhook_exhausted'
   | 'webhook_retry_scheduled'
-  | 'webhook_replay_requested';
+  | 'webhook_replay_requested'
+  | 'notification_exhausted'
+  | 'notification_retry_scheduled';
 
 const STRIPE_WEBHOOK_WORKER_EVENT_NAMES: Record<
   StripeWebhookWorkerLogEvent,
@@ -363,6 +553,8 @@ const STRIPE_WEBHOOK_WORKER_EVENT_NAMES: Record<
   webhook_exhausted: 'api.platform_billing.stripe_webhook.worker.exhausted',
   webhook_retry_scheduled: 'api.platform_billing.stripe_webhook.worker.retry_scheduled',
   webhook_replay_requested: 'api.platform_billing.stripe_webhook.worker.replay_requested',
+  notification_exhausted: 'api.platform_billing.stripe_webhook.worker.exhausted',
+  notification_retry_scheduled: 'api.platform_billing.stripe_webhook.worker.retry_scheduled',
 };
 
 function logStripeWebhookWorker(

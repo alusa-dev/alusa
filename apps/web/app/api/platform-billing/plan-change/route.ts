@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { platformBillingIdempotencyKeyDTOSchema } from '@/features/platform-billing/dtos';
 import { PlatformBillingError } from '@alusa/platform-billing';
 import { z } from 'zod';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
@@ -12,7 +13,7 @@ import { requestPlatformPlanChangeFromHttp } from '@/src/server/platform-billing
 
 const planChangeSchema = z.object({
   targetPlanCode: z.enum(['STARTER', 'PREMIUM', 'PRO']),
-  idempotencyKey: z.string().trim().min(1).optional(),
+  idempotencyKey: z.string().trim().min(1).max(128).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -20,8 +21,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   const parsed = planChangeSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'PAYLOAD_INVALIDO' }, { status: 400 });
-  const idempotencyKey = req.headers.get('idempotency-key')?.trim() || parsed.data.idempotencyKey;
-  if (!idempotencyKey) {
+  const rawIdempotencyKey = req.headers.get('idempotency-key')?.trim() || parsed.data.idempotencyKey;
+  if (!rawIdempotencyKey) {
     return NextResponse.json(
       {
         error: 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED',
@@ -30,6 +31,11 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+  const parsedIdempotencyKey = platformBillingIdempotencyKeyDTOSchema.safeParse(rawIdempotencyKey);
+  if (!parsedIdempotencyKey.success) {
+    return NextResponse.json({ error: 'PLATFORM_BILLING_INPUT_INVALID' }, { status: 400 });
+  }
+  const idempotencyKey = parsedIdempotencyKey.data;
 
   return withTenantSession(async ({ contaId, userId, tx }) => {
     const rate = await rateLimitAsync(

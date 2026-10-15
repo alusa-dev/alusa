@@ -19,7 +19,7 @@ import { prisma } from '../../prisma';
 import { assertEventTicketSalesOpen, EventsError, type EventsContext } from '../events.service';
 import { enqueueEventTicketEmail } from '../ticket-email-outbox';
 import { enqueueEventTicketWhatsAppNotification, EVENT_TICKET_WHATSAPP_CONSENT_VERSION } from '../ticket-whatsapp-notification';
-import { createCheckInCode, toCheckInCode } from './ticket-code';
+import { toCheckInCode } from './ticket-code';
 import {
   isTicketPaymentBlocked,
   markEventTicketUsed,
@@ -36,7 +36,6 @@ export { cancelPublicEventMapOrder, lockPublicEventMapReservation } from './even
 import type {
   CreateEventMapInput,
   DuplicateEventMapInput,
-  PublicCheckoutInput,
   PublicSeatReservationInput,
   UpdateEventMapDraftInput,
   UpdateEventMapReferenceChartInput,
@@ -119,10 +118,6 @@ function createLocalId(prefix: string) {
 
 function createPublicToken(prefix: string) {
   return `${prefix}_${globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`;
-}
-
-function normalizeDocument(document: string | null | undefined) {
-  return document?.replace(/\D/g, '') ?? '';
 }
 
 function publicMapPath(publicSlug: string | null | undefined) {

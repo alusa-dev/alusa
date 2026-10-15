@@ -442,6 +442,19 @@ describe('notifications.service', () => {
     expect(enqueuePending).not.toHaveBeenCalled();
   });
 
+  it('marca múltiplas vendas sem pedido público vinculado como inconsistentes', async () => {
+    prismaMock.eventTicketSale.findMany.mockResolvedValue([
+      { id: 'sale-1', eventMapOrderId: null }, { id: 'sale-2', eventMapOrderId: null },
+    ]);
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-ticket',
+    });
+
+    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'event_order_sale_link_conflict' });
+    expect(enqueuePending).not.toHaveBeenCalled();
+  });
+
   it('marca vendas com pedidos de origem divergentes como inconsistentes', async () => {
     prismaMock.eventTicketSale.findMany.mockResolvedValue([
       { id: 'sale-1', eventMapOrderId: 'order-1' }, { id: 'sale-2', eventMapOrderId: 'order-2' },

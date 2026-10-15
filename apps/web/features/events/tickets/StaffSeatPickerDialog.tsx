@@ -108,6 +108,7 @@ export function StaffSeatPickerDialog({
   const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>(initialSeatIds ?? []);
   const [activeLevelId, setActiveLevelId] = useState<string | null>(null);
+  const hasMap = map !== null;
   const seatRefreshInFlight = useRef(false);
   const mapRef = useRef(map);
   const selectedIdsRef = useRef(selectedIds);
@@ -149,7 +150,7 @@ export function StaffSeatPickerDialog({
   }, [open, eventId, mapId]);
 
   useEffect(() => {
-    if (!open || submitting || !map || typeof document === 'undefined') return;
+    if (!open || submitting || !mapRef.current || typeof document === 'undefined') return;
     let active = true;
     const refreshSeats = async () => {
       if (!active || document.visibilityState !== 'visible' || seatRefreshInFlight.current) return;
@@ -200,7 +201,7 @@ export function StaffSeatPickerDialog({
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [eventId, initialHoldToken, map !== null, mapId, open, submitting]);
+  }, [eventId, hasMap, initialHoldToken, mapId, open, submitting]);
 
   const panelLevels = useMemo(
     () => resolvePublicMapLevels((map?.levels ?? []) as PublicMapLevelView[]),

@@ -69,6 +69,7 @@ export async function notifyPlatformBillingEvent(input: {
       requestId: crypto.randomUUID(),
       error,
     });
+    throw error;
   });
 }
 
@@ -176,21 +177,21 @@ function mapPlatformBillingEventToNotification(
 ): PlatformBillingNotification | null {
   if (eventType === 'checkout.session.completed') {
     return {
-      severity: NotificationSeverity.SUCCESS,
-      title: 'Pagamento da assinatura concluído',
-      message: 'A assinatura foi confirmada e será refletida no plano da conta.',
+      severity: NotificationSeverity.INFO,
+      title: 'Checkout da assinatura concluído',
+      message: 'Stripe registrou a conclusão do checkout. O estado de pagamento e acesso será sincronizado após validação da assinatura.',
     };
   }
 
   if (eventType === 'customer.subscription.created') {
     return {
-      severity: NotificationSeverity.SUCCESS,
-      title: 'Assinatura iniciada',
+      severity: NotificationSeverity.INFO,
+      title: 'Assinatura criada',
       message:
-        'A assinatura da Alusa está ativa. Acompanhe o plano e o pagamento em Plano e faturamento.',
+        'Stripe registrou uma assinatura para a conta. Consulte o status atual em Plano e faturamento.',
       email: {
-        subject: 'Assinatura iniciada na Alusa',
-        preview: 'A assinatura da conta está ativa.',
+        subject: 'Assinatura criada na Alusa',
+        preview: 'Stripe registrou uma assinatura para a conta.',
         actionLabel: 'Acompanhar assinatura',
       },
     };
@@ -199,11 +200,11 @@ function mapPlatformBillingEventToNotification(
   if (eventType === 'invoice.paid' || eventType === 'invoice.payment_succeeded') {
     return {
       severity: NotificationSeverity.SUCCESS,
-      title: 'Pagamento da assinatura confirmado',
-      message: 'A assinatura da Alusa foi regularizada.',
+      title: 'Pagamento de fatura confirmado',
+      message: 'Stripe confirmou o pagamento de uma fatura da assinatura. Consulte o status atual em Plano e faturamento.',
       email: {
-        subject: 'Pagamento da assinatura confirmado',
-        preview: 'A assinatura da Alusa foi regularizada.',
+        subject: 'Pagamento de fatura confirmado',
+        preview: 'Stripe confirmou o pagamento de uma fatura da assinatura.',
       },
     };
   }
@@ -213,7 +214,7 @@ function mapPlatformBillingEventToNotification(
       severity: NotificationSeverity.WARNING,
       title: 'Pagamento da assinatura pendente',
       message:
-        'A conta entrou em período de regularização. Atualize o pagamento em Plano e faturamento.',
+        'Stripe sinalizou falha ou ação necessária em uma cobrança da assinatura. Verifique o pagamento em Plano e faturamento.',
       email: {
         subject: 'Pagamento da assinatura pendente',
         preview: 'Atualize o pagamento para evitar restrições no acesso.',

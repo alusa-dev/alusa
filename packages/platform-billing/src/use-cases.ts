@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { parseStripeRuntimeConfig } from '@alusa/stripe';
-import type { StripeEnvSource } from '@alusa/stripe';
+import type { StripeEnvSource, StripeSubscriptionRecord } from '@alusa/stripe';
 import { z } from 'zod';
 import { PlatformBillingError } from './errors';
 import { parsePublicCheckoutPlanCode, resolveStripePriceId } from './price-mapping';
@@ -7,12 +8,15 @@ import { getPlatformPlan } from './plans';
 import { createDefaultPlatformBillingStripeGateway } from './stripe-gateway';
 import type {
   PlatformBillingAccountRecord,
+  PlatformBillingAuditLogInput,
   PlatformBillingCheckoutSessionRecord,
   PlatformBillingStore,
   PlatformBillingStripeGateway,
 } from './types';
+import type { PlatformPlanCode, PublicPlatformPlanCode } from './plans';
 
 const nonEmptyString = z.string().trim().min(1);
+const idempotencyKeySchema = nonEmptyString.max(128);
 const urlSchema = z.string().trim().url();
 
 const createCheckoutInputSchema = z.object({
@@ -23,7 +27,7 @@ const createCheckoutInputSchema = z.object({
   successUrl: urlSchema,
   cancelUrl: urlSchema,
   actorUserId: nonEmptyString.optional(),
-  idempotencyKey: nonEmptyString,
+  idempotencyKey: idempotencyKeySchema,
   correlationId: nonEmptyString.optional(),
 });
 
@@ -31,7 +35,7 @@ const createPortalInputSchema = z.object({
   contaId: nonEmptyString,
   returnUrl: urlSchema,
   actorUserId: nonEmptyString.optional(),
-  idempotencyKey: nonEmptyString,
+  idempotencyKey: idempotencyKeySchema,
   correlationId: nonEmptyString.optional(),
 });
 
@@ -41,7 +45,7 @@ const createTrialWithoutPaymentMethodInputSchema = z.object({
   billingEmail: z.string().trim().email().optional(),
   planCode: z.unknown(),
   actorUserId: nonEmptyString.optional(),
-  idempotencyKey: nonEmptyString,
+  idempotencyKey: idempotencyKeySchema,
   correlationId: nonEmptyString.optional(),
 });
 
@@ -115,6 +119,182 @@ export interface CreatePlatformBillingPortalSessionResult {
   portalUrl: string;
 }
 
+export interface SchedulePlatformBillingDowngradeInput {
+  contaId: string;
+  billingAccountId: string;
+  actorUserId: string;
+  environment: 'TEST' | 'LIVE';
+  idempotencyKey: string;
+  planChange: {
+    id: string;
+    fromPlanCode: PlatformPlanCode;
+    toPlanCode: PublicPlatformPlanCode;
+    stripeSubscriptionId: string;
+    stripePriceId: string;
+    effectiveAt: Date;
+  };
+  account: {
+    planCode: PlatformPlanCode;
+    stripeSubscriptionId: string;
+    pendingPlanCode: PlatformPlanCode | null;
+    pendingChangeOperationId: string | null;
+  };
+  activeStudents: number;
+}
+
+export interface SchedulePlatformBillingDowngradeDeps {
+  now?: () => Date;
+  stripeGateway: Pick<PlatformBillingStripeGateway, 'scheduleSubscriptionPlanChange'>;
+  store: {
+    reservePendingPlan(_input: {
+      contaId: string;
+      environment: 'TEST' | 'LIVE';
+      billingAccountId: string;
+      stripeSubscriptionId: string;
+      fromPlanCode: PlatformPlanCode;
+      toPlanCode: PublicPlatformPlanCode;
+      effectiveAt: Date;
+      operationId: string;
+      claimToken: string;
+      claimAt: Date;
+      claimExpiresBefore: Date;
+    }): Promise<boolean>;
+    releasePendingPlanClaim(_input: { billingAccountId: string; operationId: string; claimToken: string }): Promise<void>;
+    completePendingPlanClaim(_input: { billingAccountId: string; operationId: string; claimToken: string; effectiveAt: Date }): Promise<boolean>;
+    persistSchedule(_input: {
+      planChangeId: string;
+      scheduleId: string;
+      activeStudents: number;
+      claimToken: string;
+    }): Promise<boolean>;
+    createAuditLog(_input: PlatformBillingAuditLogInput): Promise<void>;
+  };
+}
+
+/**
+ * Reserves the tenant account before calling Stripe. The Stripe idempotency
+ * key is anchored to the durable plan-change ID, so lease recovery for the same
+ * operation replays the identical provider request. Ambiguous provider errors
+ * keep the claim; only an explicit Stripe invalid-request response is known to
+ * have had no side effect and may release it.
+ */
+export async function schedulePlatformBillingDowngrade(
+  input: SchedulePlatformBillingDowngradeInput,
+  deps: SchedulePlatformBillingDowngradeDeps,
+): Promise<{ scheduleId: string; effectiveAt: Date }> {
+  if (
+    input.account.stripeSubscriptionId !== input.planChange.stripeSubscriptionId
+    || input.account.planCode !== input.planChange.fromPlanCode
+    || (input.account.pendingPlanCode && input.account.pendingPlanCode !== input.planChange.toPlanCode)
+    || (input.account.pendingPlanCode === input.planChange.toPlanCode
+      && input.account.pendingChangeOperationId !== input.planChange.id)
+  ) {
+    throw new PlatformBillingError(
+      'Account plan changed before downgrade scheduling or recovery.',
+      'PLATFORM_BILLING_REPLAY_INVALID',
+      { contaId: input.contaId, planChangeId: input.planChange.id },
+    );
+  }
+
+  const now = deps.now?.() ?? new Date();
+  const claimToken = randomUUID();
+  const reserved = await deps.store.reservePendingPlan({
+    contaId: input.contaId,
+    environment: input.environment,
+    billingAccountId: input.billingAccountId,
+    stripeSubscriptionId: input.planChange.stripeSubscriptionId,
+    fromPlanCode: input.planChange.fromPlanCode,
+    toPlanCode: input.planChange.toPlanCode,
+    effectiveAt: input.planChange.effectiveAt,
+    operationId: input.planChange.id,
+    claimToken,
+    claimAt: now,
+    claimExpiresBefore: new Date(now.getTime() - 5 * 60_000),
+  });
+  if (!reserved) {
+    throw new PlatformBillingError(
+      'Another downgrade operation currently owns the account reservation.',
+      'PLATFORM_BILLING_PLAN_CHANGE_IN_PROGRESS',
+      { contaId: input.contaId, planChangeId: input.planChange.id },
+    );
+  }
+
+  let schedule: { scheduleId: string; effectiveAt: Date };
+  try {
+    schedule = await deps.stripeGateway.scheduleSubscriptionPlanChange({
+      subscriptionId: input.planChange.stripeSubscriptionId,
+      priceId: input.planChange.stripePriceId,
+      effectiveAt: input.planChange.effectiveAt,
+      metadata: {
+        contaId: input.contaId,
+        planCode: input.planChange.toPlanCode,
+        billingContext: 'platform',
+        planChangeId: input.planChange.id,
+      },
+      idempotencyKey: stripeIdempotencyKey(
+        input.environment,
+        input.contaId,
+        `plan-change:${input.planChange.id}`,
+        'stripe-downgrade',
+      ),
+    });
+  } catch (error) {
+    if (isDefinitiveStripeNoEffect(error)) {
+      await deps.store.releasePendingPlanClaim({
+        billingAccountId: input.billingAccountId,
+        operationId: input.planChange.id,
+        claimToken,
+      });
+    }
+    throw error;
+  }
+
+  const persisted = await deps.store.persistSchedule({
+    planChangeId: input.planChange.id,
+    scheduleId: schedule.scheduleId,
+    activeStudents: input.activeStudents,
+    claimToken,
+  });
+  if (!persisted) {
+    throw new PlatformBillingError(
+      'Downgrade schedule exists, but this worker no longer owns the claim; retry with the same plan change.',
+      'PLATFORM_BILLING_PLAN_CHANGE_IN_PROGRESS',
+      { contaId: input.contaId, planChangeId: input.planChange.id },
+    );
+  }
+  const completed = await deps.store.completePendingPlanClaim({
+    billingAccountId: input.billingAccountId,
+    operationId: input.planChange.id,
+    claimToken,
+    effectiveAt: schedule.effectiveAt,
+  });
+  if (!completed) {
+    throw new PlatformBillingError(
+      'Downgrade schedule persisted but its account reservation could not be finalized; retry after the claim lease expires.',
+      'PLATFORM_BILLING_PLAN_CHANGE_IN_PROGRESS',
+      { contaId: input.contaId, planChangeId: input.planChange.id },
+    );
+  }
+  await deps.store.createAuditLog({
+    contaId: input.contaId,
+    billingAccountId: input.billingAccountId,
+    actorUserId: input.actorUserId,
+    action: 'PLATFORM_BILLING_DOWNGRADE_SCHEDULED',
+    entityType: 'PlatformBillingPlanChange',
+    entityId: input.planChange.id,
+    correlationId: input.idempotencyKey,
+    metadata: { fromPlanCode: input.planChange.fromPlanCode, toPlanCode: input.planChange.toPlanCode },
+  });
+
+  return schedule;
+}
+
+function isDefinitiveStripeNoEffect(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { type?: unknown; statusCode?: unknown };
+  return candidate.type === 'StripeInvalidRequestError' && candidate.statusCode === 400;
+}
+
 export async function createPlatformBillingCheckoutSession(
   input: CreatePlatformBillingCheckoutSessionInput,
   deps: CreatePlatformBillingCheckoutSessionDeps,
@@ -165,34 +345,62 @@ export async function createPlatformBillingCheckoutSession(
     contaName: parsed.contaName,
     billingEmail: parsed.billingEmail,
     environment: config.environment,
-    idempotencyKey: `${parsed.idempotencyKey}:customer`,
+    idempotencyKey: accountCustomerStripeIdempotencyKey(config.environment, parsed.contaId),
   });
   const trialDays = resolveTrialDaysForCheckout(account, planCode);
   const isReactivation = isReactivationCheckoutAccount(account);
 
-  const checkoutSession = await stripeGateway.createCheckoutSession({
-    customerId: account.stripeCustomerId,
-    priceId: stripePriceId,
-    successUrl: parsed.successUrl,
-    cancelUrl: parsed.cancelUrl,
-    clientReferenceId: parsed.contaId,
-    metadata: {
-      contaId: parsed.contaId,
-      planCode,
-      billingContext: 'platform',
-      trialDays: trialDays ? String(trialDays) : '0',
-      flow: isReactivation ? 'reactivation' : 'subscription',
-    },
-    trialDays,
-    idempotencyKey: `${parsed.idempotencyKey}:checkout`,
-  });
+  if (account.stripeSubscriptionId && !isReactivation) {
+    throw new PlatformBillingError(
+      'An active or pending Stripe subscription already exists for this account.',
+      'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS',
+      { contaId: parsed.contaId, environment: config.environment },
+    );
+  }
 
+  // Claim the account before calling Stripe so two different requests cannot
+  // both pass the local eligibility check and create subscriptions.
   await deps.store.markCheckoutPending({
     accountId: account.id,
     planCode,
     stripePriceId,
     pendingChangeType: isReactivation ? 'REACTIVATE' : null,
+    idempotencyKey: parsed.idempotencyKey,
   });
+  await deps.store.markCheckoutRequestStarted({ accountId: account.id, idempotencyKey: parsed.idempotencyKey });
+
+  let checkoutSession: Awaited<ReturnType<PlatformBillingStripeGateway['createCheckoutSession']>>;
+  try {
+    checkoutSession = await stripeGateway.createCheckoutSession({
+      customerId: account.stripeCustomerId,
+      priceId: stripePriceId,
+      successUrl: parsed.successUrl,
+      cancelUrl: parsed.cancelUrl,
+      clientReferenceId: parsed.contaId,
+      metadata: {
+        contaId: parsed.contaId,
+        planCode,
+        billingContext: 'platform',
+        trialDays: trialDays ? String(trialDays) : '0',
+        flow: isReactivation ? 'reactivation' : 'subscription',
+        checkoutRequestKey: parsed.idempotencyKey,
+      },
+      trialDays,
+      idempotencyKey: stripeIdempotencyKey(config.environment, parsed.contaId, 'checkout', parsed.idempotencyKey),
+    });
+  } catch (error) {
+    // A Stripe 400 is a definitive rejection: Stripe did not create a Checkout
+    // Session, so release this request's claim. Network/5xx failures remain
+    // claimed because Stripe may have accepted the request before the failure.
+    if (isDefinitiveStripeNoEffect(error)) {
+      await deps.store.clearCheckoutClaim({
+        contaId: parsed.contaId,
+        environment: config.environment,
+        idempotencyKey: parsed.idempotencyKey,
+      });
+    }
+    throw error;
+  }
 
   const record = await deps.store.createCheckoutSession({
     contaId: parsed.contaId,
@@ -252,34 +460,6 @@ export async function createPlatformBillingTrialWithoutPaymentMethod(
   });
 
   const stripeGateway = deps.stripeGateway ?? createDefaultPlatformBillingStripeGateway(input.envSource);
-  const account = await ensureBillingAccount({
-    store: deps.store,
-    stripeGateway,
-    contaId: parsed.contaId,
-    contaName: parsed.contaName,
-    billingEmail: parsed.billingEmail,
-    environment: config.environment,
-    idempotencyKey: `${parsed.idempotencyKey}:customer`,
-  });
-
-  if (account.stripeSubscriptionId) {
-    return {
-      billingAccountId: account.id,
-      stripeSubscriptionId: account.stripeSubscriptionId,
-      trialEndsAt: account.trialEndsAt,
-      reused: true,
-      account,
-    };
-  }
-
-  if (account.trialEndsAt) {
-    throw new PlatformBillingError(
-      'Platform billing trial was already used for this account.',
-      'PLATFORM_BILLING_TRIAL_ALREADY_USED',
-      { contaId: parsed.contaId, environment: config.environment },
-    );
-  }
-
   const trialDays = getPlatformPlan(planCode).trialDays;
   if (!trialDays || trialDays <= 0) {
     throw new PlatformBillingError(
@@ -289,35 +469,109 @@ export async function createPlatformBillingTrialWithoutPaymentMethod(
     );
   }
 
-  const subscription = await stripeGateway.createTrialSubscriptionWithoutPaymentMethod({
-    customerId: account.stripeCustomerId,
-    priceId: stripePriceId,
-    metadata: {
-      contaId: parsed.contaId,
-      planCode,
-      billingContext: 'platform',
-      trialDays: String(trialDays),
-      source: 'finance-wizard-register-later',
-    },
-    trialDays,
-    idempotencyKey: `${parsed.idempotencyKey}:trial-subscription`,
+  const account = await deps.store.reserveTrialSubscriptionClaim({
+    contaId: parsed.contaId,
+    environment: config.environment,
+    idempotencyKey: parsed.idempotencyKey,
+  });
+  if (account.stripeSubscriptionId) {
+    return {
+      billingAccountId: account.id,
+      stripeSubscriptionId: account.stripeSubscriptionId,
+      trialEndsAt: account.trialEndsAt,
+      reused: true,
+      account,
+    };
+  }
+  if (account.trialEndsAt) {
+    throw new PlatformBillingError(
+      'Platform billing trial was already used for this account.',
+      'PLATFORM_BILLING_TRIAL_ALREADY_USED',
+      { contaId: parsed.contaId, environment: config.environment },
+    );
+  }
+
+  await deps.store.markTrialSubscriptionRequestStarted({
+    contaId: parsed.contaId,
+    environment: config.environment,
+    idempotencyKey: parsed.idempotencyKey,
   });
 
-  const updated = await deps.store.updateAccountFromStripeSubscription({
-    accountId: account.id,
-    status: 'TRIALING',
-    accessStatus: 'ACTIVE',
-    planCode,
-    stripeSubscriptionId: subscription.id,
-    stripePriceId,
-    currentPeriodEnd: subscription.currentPeriodEnd,
-    cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
-    trialEndsAt: subscription.trialEndsAt,
-    pendingPlanCode: null,
-    pendingChangeType: null,
-    pendingChangeEffectiveAt: null,
-    lastStripeEventId: 'local:trial_without_payment_method',
-  });
+  let accountWithCustomer: PlatformBillingAccountRecord & { stripeCustomerId: string };
+  let subscription: StripeSubscriptionRecord;
+  try {
+    accountWithCustomer = await ensureBillingAccount({
+      store: deps.store,
+      stripeGateway,
+      contaId: parsed.contaId,
+      contaName: parsed.contaName,
+      billingEmail: parsed.billingEmail,
+      environment: config.environment,
+      idempotencyKey: accountCustomerStripeIdempotencyKey(config.environment, parsed.contaId),
+    });
+
+    subscription = await stripeGateway.createTrialSubscriptionWithoutPaymentMethod({
+      customerId: accountWithCustomer.stripeCustomerId,
+      priceId: stripePriceId,
+      metadata: {
+        contaId: parsed.contaId,
+        planCode,
+        billingContext: 'platform',
+        trialDays: String(trialDays),
+        source: 'finance-wizard-register-later',
+      },
+      trialDays,
+      idempotencyKey: stripeIdempotencyKey(config.environment, parsed.contaId, 'trial-subscription', parsed.idempotencyKey),
+    });
+  } catch (error) {
+    if (isDefinitiveStripeNoEffect(error)) {
+      await deps.store.releaseTrialSubscriptionClaim({
+        contaId: parsed.contaId,
+        environment: config.environment,
+        idempotencyKey: parsed.idempotencyKey,
+      });
+    }
+    throw error;
+  }
+
+  let updated: PlatformBillingAccountRecord;
+  try {
+    updated = await deps.store.updateAccountFromStripeSubscription({
+      accountId: account.id,
+      expectedAccountSnapshot: {
+        contaId: parsed.contaId,
+        environment: config.environment,
+        stripeSubscriptionId: null,
+        pendingChangeOperationId: account.pendingChangeOperationId,
+        pendingChangeClaimToken: account.pendingChangeClaimToken ?? null,
+        trialSubscriptionClaimKey: parsed.idempotencyKey,
+      },
+      status: 'TRIALING',
+      accessStatus: 'ACTIVE',
+      planCode,
+      stripeSubscriptionId: subscription.id,
+      stripePriceId,
+      currentPeriodEnd: subscription.currentPeriodEnd,
+      cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+      trialEndsAt: subscription.trialEndsAt,
+      pendingPlanCode: null,
+      pendingChangeType: null,
+      pendingChangeEffectiveAt: null,
+      lastStripeEventId: 'local:trial_without_payment_method',
+    });
+  } catch (error) {
+    const current = await deps.store.findAccount({ contaId: parsed.contaId, environment: config.environment });
+    if (current?.stripeSubscriptionId === subscription.id) {
+      return {
+        billingAccountId: current.id,
+        stripeSubscriptionId: subscription.id,
+        trialEndsAt: current.trialEndsAt,
+        reused: true,
+        account: current,
+      };
+    }
+    throw error;
+  }
 
   await deps.store.createAuditLog({
     contaId: parsed.contaId,
@@ -397,7 +651,7 @@ export async function createPlatformBillingPortalSession(
     customerId: account.stripeCustomerId,
     returnUrl: parsed.returnUrl,
     configurationId: input.envSource?.STRIPE_BILLING_PORTAL_CONFIGURATION_ID ?? process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID,
-    idempotencyKey: parsed.idempotencyKey,
+    idempotencyKey: stripeIdempotencyKey(config.environment, parsed.contaId, 'portal', parsed.idempotencyKey),
   });
 
   await deps.store.createAuditLog({
@@ -463,11 +717,30 @@ async function ensureBillingAccount(input: {
   }) as Promise<PlatformBillingAccountRecord & { stripeCustomerId: string }>;
 }
 
+function stripeIdempotencyKey(
+  environment: 'TEST' | 'LIVE',
+  contaId: string,
+  operation: string,
+  requestKey: string,
+): string {
+  // Stripe scopes keys to the Stripe account, so include our tenant and
+  // environment namespace to prevent accidental collisions between tenants.
+  const key = `alusa:${environment}:${contaId}:${operation}:${requestKey}`;
+  if (key.length > 255) {
+    throw new PlatformBillingError('Stripe idempotency key exceeds the provider limit.', 'PLATFORM_BILLING_INPUT_INVALID');
+  }
+  return key;
+}
+
+function accountCustomerStripeIdempotencyKey(environment: 'TEST' | 'LIVE', contaId: string): string {
+  return stripeIdempotencyKey(environment, contaId, 'customer', 'platform-account');
+}
+
 function parseCheckoutInput(input: CreatePlatformBillingCheckoutSessionInput) {
   const parsed = createCheckoutInputSchema.safeParse(input);
 
   if (!parsed.success) {
-    const missingIdempotency = parsed.error.issues.some((issue) => issue.path.includes('idempotencyKey'));
+    const missingIdempotency = !input.idempotencyKey?.trim();
     throw new PlatformBillingError(
       missingIdempotency ? 'Checkout idempotency key is required.' : 'Platform billing input is invalid.',
       missingIdempotency ? 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED' : 'PLATFORM_BILLING_INPUT_INVALID',
@@ -482,7 +755,7 @@ function parsePortalInput(input: CreatePlatformBillingPortalSessionInput) {
   const parsed = createPortalInputSchema.safeParse(input);
 
   if (!parsed.success) {
-    const missingIdempotency = parsed.error.issues.some((issue) => issue.path.includes('idempotencyKey'));
+    const missingIdempotency = !input.idempotencyKey?.trim();
     throw new PlatformBillingError(
       missingIdempotency ? 'Portal idempotency key is required.' : 'Platform billing input is invalid.',
       missingIdempotency ? 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED' : 'PLATFORM_BILLING_INPUT_INVALID',
@@ -499,7 +772,7 @@ function parseTrialWithoutPaymentMethodInput(input: CreatePlatformBillingTrialWi
   const parsed = createTrialWithoutPaymentMethodInputSchema.safeParse(input);
 
   if (!parsed.success) {
-    const missingIdempotency = parsed.error.issues.some((issue) => issue.path.includes('idempotencyKey'));
+    const missingIdempotency = !input.idempotencyKey?.trim();
     throw new PlatformBillingError(
       missingIdempotency ? 'Trial idempotency key is required.' : 'Platform billing input is invalid.',
       missingIdempotency ? 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED' : 'PLATFORM_BILLING_INPUT_INVALID',
