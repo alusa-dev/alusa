@@ -73,7 +73,7 @@ export async function getEventReportDetail(
       where,
       select: {
         id: true, lotId: true, status: true, quantity: true, totalAmount: true, refundedAmount: true,
-        paymentMethod: true, paidAt: true, eventMapOrderId: true,
+        paymentMethod: true, paidAt: true, paymentProvider: true, eventMapOrderId: true,
         saleSeats: { where: { contaId }, select: { sectionName: true } },
       },
     }),
@@ -181,7 +181,14 @@ export async function getEventReportDetail(
   const timelineByDay = new Map<string, number>();
   for (const sale of paidSales) {
     if (!sale.paidAt) continue;
-    const day = getCurrentAcademicDateKey(sale.paidAt, event.conta.timezone);
+    const isAsaasDateOnly = sale.paymentProvider === 'ASAAS'
+      && sale.paidAt.getUTCHours() === 0
+      && sale.paidAt.getUTCMinutes() === 0
+      && sale.paidAt.getUTCSeconds() === 0
+      && sale.paidAt.getUTCMilliseconds() === 0;
+    const day = isAsaasDateOnly
+      ? getAcademicDateKey(sale.paidAt) ?? getCurrentAcademicDateKey(sale.paidAt, event.conta.timezone)
+      : getCurrentAcademicDateKey(sale.paidAt, event.conta.timezone);
     timelineByDay.set(day, (timelineByDay.get(day) ?? 0) + getEventNetRealizedAmount(number(sale.totalAmount), number(sale.refundedAmount)));
   }
 

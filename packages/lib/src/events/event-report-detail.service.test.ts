@@ -186,4 +186,27 @@ describe('getEventReportDetail', () => {
 
     expect(report?.timeline).toEqual([{ day: '2026-10-01', amount: 100 }]);
   });
+
+  it('preserves Asaas date-only payment days while converting real payment instants to the Conta timezone', async () => {
+    db.eventTicketSale.findMany.mockResolvedValue([
+      {
+        id: 'sale-asaas-date-only', lotId: 'lot-a', status: 'PAID', quantity: 1,
+        totalAmount: 100, refundedAmount: 0, paymentMethod: 'PIX', paymentProvider: 'ASAAS',
+        paidAt: new Date('2026-10-02T00:00:00.000Z'), eventMapOrderId: null, saleSeats: [],
+      },
+      {
+        id: 'sale-real-instant', lotId: 'lot-a', status: 'PAID', quantity: 1,
+        totalAmount: 50, refundedAmount: 0, paymentMethod: 'PIX', paymentProvider: 'OTHER',
+        paidAt: new Date('2026-10-02T02:30:00.000Z'), eventMapOrderId: null, saleSeats: [],
+      },
+    ]);
+
+    const report = await getEventReportDetail('tenant-a', 'event-a');
+
+    expect(report?.timeline).toEqual([
+      { day: '2026-10-01', amount: 50 },
+      { day: '2026-10-02', amount: 100 },
+    ]);
+    expect(db.eventTicketSale.findMany.mock.calls[0][0].select.paymentProvider).toBe(true);
+  });
 });
