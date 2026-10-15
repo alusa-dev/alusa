@@ -19,7 +19,7 @@ vi.mock('@/src/server/platform-billing/platform-billing-notifications', () => ({
   notifyPlatformBillingEvent: notifyMock,
 }));
 
-import { drainPlatformBillingNotificationOutbox, drainStripeWebhookWorker } from '@/src/server/platform-billing/webhook-worker';
+import { drainStripeWebhookWorker } from '@/src/server/platform-billing/webhook-worker';
 
 const databaseName = process.env.DATABASE_URL
   ? new URL(process.env.DATABASE_URL).pathname.replace(/^\//, '')
@@ -232,16 +232,7 @@ describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL ret
       `;
       const retry = await drainStripeWebhookWorker({ prisma: db, ...scope });
       expect(retry).toMatchObject({ claimed: 1, processed: 1, failed: 0, exhausted: 0 });
-
-      await prisma.$executeRaw`
-        UPDATE "PlatformBillingNotificationOutbox"
-        SET "nextAttemptAt" = LOCALTIMESTAMP - INTERVAL '1 second'
-        WHERE "environment" = ${'TEST'}::"PlatformBillingEnvironment" AND "eventId" = ${eventId}
-      `;
-      const notificationDrain = await drainPlatformBillingNotificationOutbox({
-        prisma: db, environment: 'TEST', workerId: `notify-${suffix}`, eventIds: [eventId],
-      });
-      expect(notificationDrain).toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
+      expect(retry.notifications).toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
 
       expect(await prisma.platformBillingWebhookEvent.findUniqueOrThrow({ where: { uq_platform_billing_webhook_env_event: { environment: 'TEST', eventId } } }))
         .toMatchObject({ status: 'PROCESSED', attempts: 3, contaId });

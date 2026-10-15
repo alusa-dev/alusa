@@ -10,7 +10,7 @@ vi.mock('../../../app/api/events/_helpers', () => ({
   getEventsContext: mocks.getEventsContext,
   handleEventsRouteError: mocks.handleEventsRouteError,
 }));
-vi.mock('@alusa/lib', () => ({ getEventReportDetail: mocks.getEventReportDetail }));
+vi.mock('@alusa/lib/events/event-report-detail.service', () => ({ getEventReportDetail: mocks.getEventReportDetail }));
 vi.mock('@alusa/lib/events/events.service', () => ({ EventsError: class EventsError extends Error {} }));
 
 import { GET } from '../../../app/api/events/reports/[eventId]/route';

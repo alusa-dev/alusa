@@ -210,7 +210,8 @@ export async function drainPlatformBillingNotificationOutbox(input: {
       SELECT "id" FROM "PlatformBillingNotificationOutbox"
       WHERE "environment" = ${environment}::"PlatformBillingEnvironment"
         AND (${eventIds}::text[] IS NULL OR "eventId" = ANY(${eventIds}::text[]))
-        AND (("status" IN ('PENDING', 'FAILED') AND "nextAttemptAt" <= LOCALTIMESTAMP)
+        AND (("status" = 'PENDING')
+          OR ("status" = 'FAILED' AND "nextAttemptAt" <= LOCALTIMESTAMP)
           OR ("status" = 'PROCESSING' AND "lockedAt" < LOCALTIMESTAMP - INTERVAL '2 minutes'))
       ORDER BY "createdAt" ASC LIMIT ${limit} FOR UPDATE SKIP LOCKED
     ) RETURNING "id", "eventId", "eventType", "contaId", "attempts"
