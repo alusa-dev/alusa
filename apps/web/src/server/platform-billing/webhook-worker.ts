@@ -445,7 +445,7 @@ async function recoverTimedOutStripeWebhookEvents(
       "status" = 'FAILED',
       "lockedAt" = NULL,
       "workerId" = NULL,
-      "nextAttemptAt" = LOCALTIMESTAMP,
+      "nextAttemptAt" = LOCALTIMESTAMP - INTERVAL '1 millisecond',
       "lastError" = 'Processing timeout expired before worker completion.',
       "lastErrorCode" = 'PROCESSING_TIMEOUT',
       "updatedAt" = LOCALTIMESTAMP

@@ -19,6 +19,7 @@ import { enqueueEventTicketWhatsAppNotification, EVENT_TICKET_WHATSAPP_CONSENT_V
 import { createCheckInCode, toCheckInCode } from './ticket-code';
 import { assertEventTicketSalesOpen, EventsError, type EventsContext } from '../events.service';
 import type { CreateTicketSaleInput } from '../events.schema';
+import { eventMapDateToLocalDateTime, eventMapLocalDateTimeToDate } from './event-map.schema';
 
 type DbClient = Prisma.TransactionClient | typeof prisma;
 
@@ -215,6 +216,15 @@ async function getLockedPublishedStaffMapOrThrow(tx: Prisma.TransactionClient, c
   if (current.publishedVersionId !== initial.publishedVersionId) {
     throw new EventsError('MAPA_VERSAO_ALTERADA', 'A versão do mapa mudou. Atualize a tela antes de reservar assentos.', 409);
   }
+  const version = await tx.eventMapVersion.findFirst({
+    where: { id: current.publishedVersionId!, contaId, eventMapId: mapId, status: 'PUBLISHED' },
+    select: { snapshot: true },
+  });
+  const snapshot = version ? snapshotRecord(version.snapshot) : {};
+  const startsAtLocal = typeof snapshot.startsAtLocal === 'string'
+    ? snapshot.startsAtLocal
+    : eventMapDateToLocalDateTime(typeof snapshot.startsAt === 'string' ? snapshot.startsAt : null);
+  if (!eventMapLocalDateTimeToDate(startsAtLocal)) throw new EventsError('HORARIO_SESSAO_INVALIDO', 'O horário desta sessão é inválido.', 409);
   return current;
 }
 
@@ -231,7 +241,12 @@ function mapStaffReservationResult(
   };
 }
 
-export async function getStaffEventMapSalesView(ctx: Pick<EventsContext, 'contaId'>, eventId: string, mapId: string) {
+export async function getStaffEventMapSalesView(
+  ctx: Pick<EventsContext, 'contaId'>,
+  eventId: string,
+  mapId: string,
+  holdToken?: string | null,
+) {
   const map = await getPublishedStaffMapOrThrow(prisma, ctx.contaId, eventId, mapId);
   const version = await prisma.eventMapVersion.findFirst({
     where: { id: map.publishedVersionId!, contaId: ctx.contaId, eventMapId: map.id },
@@ -242,6 +257,22 @@ export async function getStaffEventMapSalesView(ctx: Pick<EventsContext, 'contaI
     where: { contaId: ctx.contaId, versionId: version.id },
     orderBy: [{ sectionName: 'asc' }, { rowLabel: 'asc' }, { seatNumber: 'asc' }, { displayLabel: 'asc' }],
   });
+  const ownReservation = holdToken
+    ? await prisma.eventMapReservation.findFirst({
+        where: {
+          contaId: ctx.contaId,
+          eventId,
+          eventMapId: mapId,
+          versionId: version.id,
+          holdToken,
+          source: 'STAFF_MANUAL',
+          status: 'HELD',
+          expiresAt: { gt: new Date() },
+        },
+        select: { seats: { select: { publicSeatId: true } } },
+      })
+    : null;
+  const ownSeatIds = new Set(ownReservation?.seats.map((seat) => seat.publicSeatId) ?? []);
   const snapshot = snapshotRecord(version.snapshot);
 
   return {
@@ -264,7 +295,7 @@ export async function getStaffEventMapSalesView(ctx: Pick<EventsContext, 'contaI
     sections: Array.isArray(snapshot.sections) ? snapshot.sections : [],
     objects: Array.isArray(snapshot.objects) ? snapshot.objects : [],
     document: snapshot.document && typeof snapshot.document === 'object' ? snapshot.document : null,
-    seats: seats.map(mapStaffSeat),
+    seats: seats.map((seat) => ({ ...mapStaffSeat(seat), isOwnHold: ownSeatIds.has(seat.id) })),
     counts: {
       seats: seats.length,
       availableSeats: seats.filter((seat) => seat.status === 'AVAILABLE').length,
@@ -503,6 +534,16 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
     if (reservation.createdByUserId && reservation.createdByUserId !== ctx.userId) {
       throw new EventsError('RESERVA_INVALIDA', 'Esta reserva pertence a outro usuário.', 403);
     }
+    const publishedVersion = await tx.eventMapVersion.findFirst({
+      where: { id: reservation.versionId, contaId: ctx.contaId, eventMapId: reservation.eventMapId, status: 'PUBLISHED' },
+      select: { snapshot: true },
+    });
+    const schedule = publishedVersion ? snapshotRecord(publishedVersion.snapshot) : {};
+    const confirmedStartsAtLocal = typeof schedule.startsAtLocal === 'string'
+      ? schedule.startsAtLocal
+      : eventMapDateToLocalDateTime(typeof schedule.startsAt === 'string' ? schedule.startsAt : null);
+    if (!eventMapLocalDateTimeToDate(confirmedStartsAtLocal)) throw new EventsError('HORARIO_SESSAO_INVALIDO', 'O horário desta sessão é inválido.', 409);
+    const confirmedStartsAt = eventMapLocalDateTimeToDate(confirmedStartsAtLocal);
     if (reservation.event.ticketMode !== 'NUMBERED_SEATS') {
       throw new EventsError('EVENTO_SEM_ASSENTOS_NUMERADOS', 'Este evento não usa assentos numerados.', 409);
     }
@@ -658,7 +699,7 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
             tickets: { where: { status: 'VALID' }, select: { id: true } },
             saleSeats: {
               take: 1,
-              include: { publicSeat: { include: { map: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } } } } },
+              include: { publicSeat: { include: { map: { select: { name: true, startsAt: true, startsAtLocal: true, locationName: true, locationAddress: true } } } } },
             },
           },
         });
@@ -672,7 +713,8 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
             buyerEmail,
             buyerName: sale.buyerName,
             eventName: session ? `${sale.event.name} · ${session.name}` : sale.event.name,
-            eventStartsAt: session?.startsAt ?? sale.event.startsAt,
+            eventStartsAt: confirmedStartsAt ?? sale.event.startsAt,
+            eventStartsAtLocal: confirmedStartsAtLocal,
             eventLocation: [session?.locationName ?? sale.event.locationName, session?.locationAddress ?? sale.event.locationAddress].filter(Boolean).join(' — ') || null,
             ticketType: sale.lot.name,
             ticketCount: sale.tickets.length,
@@ -711,6 +753,7 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
           publicSeat: {
             include: {
               map: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } },
+              version: { select: { snapshot: true } },
             },
           },
         },
@@ -741,7 +784,13 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
   const printableSeats = saleSeats.filter(
     (seat) => seat.ticket?.ticketCode && seat.ticket.status === 'VALID',
   );
-  const session = saleSeats[0]?.publicSeat.map ?? null;
+  const firstPublicSeat = saleSeats[0]?.publicSeat ?? null;
+  const session = firstPublicSeat?.map ?? null;
+  const sessionSnapshot = firstPublicSeat ? snapshotRecord(firstPublicSeat.version.snapshot) : {};
+  const sessionStartsAtLocal = typeof sessionSnapshot.startsAtLocal === 'string'
+    ? sessionSnapshot.startsAtLocal
+    : eventMapDateToLocalDateTime(typeof sessionSnapshot.startsAt === 'string' ? sessionSnapshot.startsAt : null);
+  const sessionStartsAt = typeof sessionSnapshot.startsAt === 'string' ? new Date(sessionSnapshot.startsAt) : session?.startsAt ?? sale.event.startsAt;
   const items = printableSeats.length > 0
     ? printableSeats.map((seat) => ({
         id: seat.id,
@@ -774,7 +823,8 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
     sessionName: session?.name ?? null,
     event: {
       ...sale.event,
-      startsAt: (session?.startsAt ?? sale.event.startsAt).toISOString(),
+      startsAt: sessionStartsAt.toISOString(),
+      startsAtLocal: sessionStartsAtLocal,
       locationName: session?.locationName ?? sale.event.locationName,
       locationAddress: session?.locationAddress ?? sale.event.locationAddress,
     },

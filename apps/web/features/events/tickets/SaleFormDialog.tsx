@@ -49,6 +49,7 @@ import {
   type StaffSeatReservationResult,
   type TicketLotDTO,
 } from '../events-service';
+import { formatMapSessionDateTime } from '../map/session-datetime';
 import { EventDateTimeField as DateTimeField } from '../shared/EventDateTimeField';
 import { EventField as Field } from '../shared/EventField';
 import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
@@ -66,13 +67,15 @@ export function SaleFormDialog({
   lots,
   scopedResources,
   publishedMaps,
+  hasUnconfirmedPublishedMaps,
   trigger,
 }: {
   eventId: string;
   event: SchoolEventDTO;
   lots: TicketLotDTO[];
   scopedResources?: EventScopedResources;
-  publishedMaps: Array<{ id: string; name: string; startsAt: string }>;
+  publishedMaps: Array<{ id: string; name: string; startsAt: string; startsAtLocal?: string | null }>;
+  hasUnconfirmedPublishedMaps?: boolean;
   trigger: React.ReactNode;
 }) {
   const queryClient = useQueryClient();
@@ -279,7 +282,7 @@ export function SaleFormDialog({
                       triggerClassName={wizardFieldInputClass}
                       options={publishedMaps.map((map) => ({
                         value: map.id,
-                        label: `${map.name} · ${new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(map.startsAt))}`,
+                        label: `${map.name} · ${formatMapSessionDateTime(map.startsAt, map.startsAtLocal)}`,
                       }))}
                       onValueChange={async (nextMapId) => {
                         if (nextMapId === selectedMapId) return;
@@ -344,8 +347,15 @@ export function SaleFormDialog({
                     {!selectedMapId ? (
                       <p className="text-sm text-amber-800">
                         {publishedMaps.length === 0
-                          ? 'Publique um mapa antes de vender assentos na secretaria.'
+                          ? hasUnconfirmedPublishedMaps
+                            ? 'Há mapas publicados sem horário local confirmado. Confirme a data e a hora da sessão nas configurações do mapa e publique novamente para vender assentos.'
+                            : 'Publique um mapa antes de vender assentos na secretaria.'
                           : 'Selecione a sessão para escolher os assentos.'}
+                      </p>
+                    ) : null}
+                    {selectedMapId && hasUnconfirmedPublishedMaps ? (
+                      <p className="text-sm text-amber-800">
+                        Alguns mapas publicados ainda precisam da confirmação do horário local nas configurações antes de aceitar novas vendas.
                       </p>
                     ) : null}
                     {seatSelection ? (

@@ -4,9 +4,15 @@ import { EventsError, assertEventTicketSalesOpen } from '../events.service';
 import { prisma } from '../../prisma';
 import { getPublicReservationExpiration } from './public-reservation-policy';
 import { decimal, lockEventMapForReservation, lockPublicEventMapReservation, toAuditJson, toMoney } from './event-map-order-operations';
-import type { PublicCheckoutInput } from './event-map.schema';
+import { eventMapDateToLocalDateTime, eventMapLocalDateTimeToDate, type PublicCheckoutInput } from './event-map.schema';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
+
+function snapshotString(snapshot: Prisma.JsonValue, key: string) {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  const value = (snapshot as Prisma.JsonObject)[key];
+  return typeof value === 'string' ? value : null;
+}
 
 function createPublicToken(prefix: string) {
   return `${prefix}_${globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`;
@@ -42,6 +48,15 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
     if (map.id !== initialMap.id || map.publishedVersionId !== expectedVersionId || !map.publicEnabled) {
       throw new EventsError('MAPA_VERSAO_ALTERADA', 'A versão pública do mapa mudou. Atualize a página e selecione os assentos novamente.', 409);
     }
+    const publishedVersion = await tx.eventMapVersion.findFirst({
+      where: { id: expectedVersionId, contaId: map.contaId, eventMapId: map.id, status: 'PUBLISHED' },
+      select: { snapshot: true },
+    });
+    if (!publishedVersion) {
+      throw new EventsError('MAPA_VERSAO_ALTERADA', 'A versão pública do mapa não está disponível. Atualize a página e tente novamente.', 409);
+    }
+    const startsAtLocal = snapshotString(publishedVersion.snapshot, 'startsAtLocal')
+      ?? eventMapDateToLocalDateTime(snapshotString(publishedVersion.snapshot, 'startsAt'));
     await lockPublicEventMapReservation(tx, { contaId: map.contaId, reservationId: input.reservationId });
 
     const lockedReservation = await tx.$queryRaw<Array<{ id: string }>>`
@@ -61,6 +76,7 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
       include: { seats: { include: { publicSeat: true } }, order: { include: { items: { include: { ticket: true } } } } },
     });
     if (!reservation) throw new EventsError('RESERVA_NAO_ENCONTRADA', 'Reserva não encontrada ou expirada.', 404);
+    if (!eventMapLocalDateTimeToDate(startsAtLocal)) throw new EventsError('HORARIO_SESSAO_INVALIDO', 'O horário desta sessão é inválido.', 409);
     if (reservation.expiresAt < new Date()) throw new EventsError('RESERVA_EXPIRADA', 'A reserva expirou. Selecione os assentos novamente.', 409);
 
     const publicSeats = reservation.seats.map((entry) => entry.publicSeat);
@@ -103,6 +119,16 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
       },
     });
     await tx.auditLog.create({ data: { contaId: map.contaId, actorType: 'SYSTEM', actorId: null, action: 'events.map.public.checkout', entityType: 'EventMapOrder', entityId: order.id, metadata: toAuditJson({ eventId: map.eventId, eventMapId: map.id, versionId: map.publishedVersionId, seats: publicSeats.map((seat) => seat.technicalCode), totalAmount, expiresAt: expiresAt.toISOString() }) } });
-    return { order, map, publicSeats, totalAmount, expiresAt };
+    return {
+      order,
+      map,
+      publishedMapSchedule: {
+        startsAt: snapshotString(publishedVersion.snapshot, 'startsAt'),
+        startsAtLocal,
+      },
+      publicSeats,
+      totalAmount,
+      expiresAt,
+    };
   });
 }

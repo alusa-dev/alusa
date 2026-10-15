@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { formatDateTime } from '../../events-service';
+import { formatMapSessionDateTime } from '../session-datetime';
 import type { SchoolEventDTO } from '../../events-service';
 import { deleteEventMap, listEventMaps, publishEventMap } from '../api/event-map-service';
 import type { EventMapDTO } from '../api/event-map-service';
@@ -204,7 +204,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
                     <h3 className="truncate text-base font-semibold text-slate-950">{map.name}</h3>
                   </div>
                   <p className="mt-1 text-xs text-slate-500">
-                    {formatDateTime(map.startsAt ?? map.event.startsAt)}
+                    {formatMapSessionDateTime(map.startsAt ?? map.event.startsAt, map.startsAtLocal)}
                     {map.locationName ? ` · ${map.locationName}` : ''}
                   </p>
                 </div>

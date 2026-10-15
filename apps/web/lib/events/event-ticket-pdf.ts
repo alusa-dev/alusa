@@ -50,6 +50,7 @@ type EventTicketPdfOrder = {
     contaId?: string;
     name: string;
     startsAt: string;
+    startsAtLocal?: string | null;
     locationName?: string | null;
     locationAddress?: string | null;
     ticketArtworkUrl?: string | null;
@@ -69,13 +70,20 @@ function formatCurrency(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 }
 
-function formatDate(value: string) {
+function formatDate(value: string, startsAtLocal?: string | null) {
+  if (startsAtLocal) {
+    const date = new Date(`${startsAtLocal}:00.000Z`);
+    if (!Number.isNaN(date.getTime())) {
+      return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' }).format(date);
+    }
+  }
   return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(value));
 }
 
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' })
-    .format(new Date(value))
+function formatTime(value: string, startsAtLocal?: string | null) {
+  const dateValue = startsAtLocal ? `${startsAtLocal}:00.000Z` : value;
+  return new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', ...(startsAtLocal ? { timeZone: 'UTC' } : {}) })
+    .format(new Date(dateValue))
     .replace(':', 'h');
 }
 
@@ -314,7 +322,7 @@ export async function createEventTicketsPdf(order: EventTicketPdfOrder): Promise
   const qrX = bodyCol2X + (bodyColWidth - qrSize) / 2;
   // Keep the entire QR quiet zone clear, including the location's wrapped lines.
   const locationWidth = qrX - bodyContentX - 10;
-  const eventTime = formatTime(order.event.startsAt);
+  const eventTime = formatTime(order.event.startsAt, order.event.startsAtLocal);
   const eventTitle = order.sessionName ? `${order.event.name} · ${order.sessionName}` : order.event.name;
   let y = marginY;
 
@@ -389,7 +397,7 @@ export async function createEventTicketsPdf(order: EventTicketPdfOrder): Promise
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.7);
     doc.setTextColor(15, 23, 42); // slate-900
-    doc.text(`${formatDate(order.event.startsAt)} às ${eventTime}`, bodyContentX, y + 104, { maxWidth: bodyColWidth });
+    doc.text(`${formatDate(order.event.startsAt, order.event.startsAtLocal)} às ${eventTime}`, bodyContentX, y + 104, { maxWidth: bodyColWidth });
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.2);

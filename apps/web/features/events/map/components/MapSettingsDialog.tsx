@@ -26,6 +26,7 @@ import { SectionCard, StepHeader } from '@/components/shared/wizard/layout';
 import { wizardFieldInputClass } from '@/components/shared/wizard/field-styles';
 import { MapReferenceChartPanel } from './MapReferenceChartPanel';
 import { MAP_FLOATING_SHADOW_CLASS } from './map-toolbar-styles';
+import { mapSessionDateTimeToIso } from '../session-datetime';
 
 export function MapSettingsDialog({
   map,
@@ -47,8 +48,8 @@ export function MapSettingsDialog({
   onReferenceChartEditingChange: (_editing: boolean) => void;
 }) {
   const [name, setName] = useState(map.name);
-  const [startsAt, setStartsAt] = useState(() => toDateTimeInputValue(map.startsAt ?? map.event.startsAt));
-  const [endsAt, setEndsAt] = useState(() => toDateTimeInputValue(map.endsAt));
+  const [startsAt, setStartsAt] = useState(() => map.startsAtLocal ?? toLegacyDateTimeInput(map.startsAt ?? map.event.startsAt));
+  const [endsAt, setEndsAt] = useState(() => map.endsAtLocal ?? toLegacyDateTimeInput(map.endsAt));
   const [locationName, setLocationName] = useState(map.locationName ?? '');
   const [locationAddress, setLocationAddress] = useState(map.locationAddress ?? '');
   const [publicEnabled, setPublicEnabled] = useState(Boolean(map.publicEnabled));
@@ -57,8 +58,8 @@ export function MapSettingsDialog({
   useEffect(() => {
     if (!open) return;
     setName(map.name);
-    setStartsAt(toDateTimeInputValue(map.startsAt ?? map.event.startsAt));
-    setEndsAt(toDateTimeInputValue(map.endsAt));
+    setStartsAt(map.startsAtLocal ?? toLegacyDateTimeInput(map.startsAt ?? map.event.startsAt));
+    setEndsAt(map.endsAtLocal ?? toLegacyDateTimeInput(map.endsAt));
     setLocationName(map.locationName ?? '');
     setLocationAddress(map.locationAddress ?? '');
     setPublicEnabled(Boolean(map.publicEnabled));
@@ -74,7 +75,9 @@ export function MapSettingsDialog({
       const payload: {
         name?: string;
         startsAt?: string | null;
+        startsAtLocal?: string | null;
         endsAt?: string | null;
+        endsAtLocal?: string | null;
         locationName?: string | null;
         locationAddress?: string | null;
         publicEnabled?: boolean;
@@ -89,8 +92,17 @@ export function MapSettingsDialog({
       }
       const initialStartsAt = map.startsAt ?? map.event.startsAt;
       const initialEndsAt = map.endsAt;
-      if (nextStartsAt !== initialStartsAt) payload.startsAt = nextStartsAt;
-      if (nextEndsAt !== initialEndsAt) payload.endsAt = nextEndsAt;
+      const initialStartsAtInput = map.startsAtLocal ?? toLegacyDateTimeInput(initialStartsAt);
+      const initialEndsAtInput = map.endsAtLocal ?? toLegacyDateTimeInput(initialEndsAt);
+      if (startsAt !== initialStartsAtInput || !map.startsAtLocal) {
+        if (!nextStartsAt) throw new Error('Informe uma data e hora válidas para a sessão.');
+        payload.startsAtLocal = startsAt;
+        payload.startsAt = nextStartsAt;
+      }
+      if (endsAt !== initialEndsAtInput) {
+        payload.endsAtLocal = endsAt || null;
+        payload.endsAt = nextEndsAt;
+      }
       const nextLocationName = locationName.trim() || null;
       const nextLocationAddress = locationAddress.trim() || null;
       if (nextLocationName !== (map.locationName ?? null)) payload.locationName = nextLocationName;
@@ -297,15 +309,13 @@ export function MapSettingsDialog({
   );
 }
 
-function toDateTimeInputValue(value?: string | null) {
+function toLegacyDateTimeInput(value?: string | null) {
   if (!value) return '';
   const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return '';
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 16);
 }
 
 function toDateTimeIso(value: string) {
-  if (!value) return null;
-  const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
+  return value ? mapSessionDateTimeToIso(value) : null;
 }

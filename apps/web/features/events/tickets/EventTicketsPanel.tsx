@@ -67,11 +67,13 @@ export function EventTicketsPanel({ eventId, scopedResources }: { eventId: strin
               event={event}
               lots={lotRows}
               scopedResources={scopedResources}
-              publishedMaps={publishedMaps.map((map: EventMapDTO) => ({
+              publishedMaps={publishedMaps.flatMap((map: EventMapDTO) => map.publishedSchedule ? [{
                 id: map.id,
                 name: map.name,
-                startsAt: map.startsAt ?? map.event.startsAt,
-              }))}
+                startsAt: map.publishedSchedule.startsAt,
+                startsAtLocal: map.publishedSchedule.startsAtLocal,
+              }] : [])}
+              hasUnconfirmedPublishedMaps={publishedMaps.some((map: EventMapDTO) => !map.publishedSchedule)}
               trigger={<Button className={PRIMARY_BUTTON_CLASS}><Plus className="h-4 w-4" /> Venda</Button>}
             />
           ) : null}

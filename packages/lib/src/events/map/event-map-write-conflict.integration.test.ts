@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import { prisma } from '../../prisma';
-import { publishEventMap, updateEventMapDraft } from './event-map.service';
+import { getEventMap, publishEventMap, updateEventMapDraft } from './event-map.service';
 
 describe('event map optimistic concurrency', () => {
   it('rejects stale draft saves and publication without overwriting the newer state', async () => {
@@ -88,4 +88,37 @@ describe('event map optimistic concurrency', () => {
       await prisma.conta.deleteMany({ where: { id: conta.id } });
     }
   }, 15_000);
+
+  it('applies an automatic local schedule to a legacy map without a confirmation gate', async () => {
+    const runId = randomUUID();
+    const conta = await prisma.conta.create({ data: { nome: `Legacy map schedule ${runId}` } });
+
+    try {
+      const event = await prisma.schoolEvent.create({
+        data: { contaId: conta.id, name: `Legacy map schedule ${runId}`, type: 'CULTURAL_SHOW', startsAt: new Date('2026-11-15T00:00:00.000Z') },
+      });
+      const map = await prisma.eventMap.create({
+        data: {
+          contaId: conta.id,
+          eventId: event.id,
+          name: 'Mapa legado',
+          levels: { create: { contaId: conta.id, name: 'Ambiente 1', sortOrder: 0, widthPx: 1440, heightPx: 900, unit: 'px' } },
+        },
+      });
+
+      await expect(publishEventMap(
+        { contaId: conta.id, userId: 'integration-test-user' },
+        event.id,
+        map.id,
+        map.updatedAt.toISOString(),
+      )).rejects.toMatchObject({ code: 'MAPA_NAO_PUBLICAVEL', status: 422 });
+      await expect(getEventMap({ contaId: conta.id }, event.id, map.id)).resolves.toMatchObject({
+        startsAtLocal: '2026-11-15T00:00',
+      });
+      expect(await prisma.eventMapVersion.count({ where: { contaId: conta.id, eventMapId: map.id } })).toBe(0);
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: conta.id } });
+    }
+  }, 15_000);
+
 });

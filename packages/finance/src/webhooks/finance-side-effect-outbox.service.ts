@@ -65,6 +65,7 @@ type EventPublicOrderTicketEmailPayload = {
   buyerName: string;
   eventName: string;
   eventStartsAt: string;
+  eventStartsAtLocal?: string | null;
   eventLocation?: string | null;
   ticketType?: string | null;
   ticketCount: number;
@@ -79,6 +80,7 @@ type EventPublicOrderCreatedEmailPayload = {
   buyerName: string;
   eventName: string;
   eventStartsAt: string;
+  eventStartsAtLocal?: string | null;
   statusPath: string;
   invoiceUrl: string | null;
   paymentMethod: string;
@@ -167,17 +169,19 @@ function formatEventDate(value: string): string {
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
 
-function formatEventTemplateDateParts(value: string) {
-  const date = new Date(value);
+function formatEventTemplateDateParts(value: string, localValue?: string | null) {
+  const hasLocal = Boolean(localValue && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(localValue));
+  const date = new Date(hasLocal ? `${localValue}:00.000Z` : value);
+  const timeZone = hasLocal ? 'UTC' : EVENT_TIME_ZONE;
   return {
     date: new Intl.DateTimeFormat('pt-BR', {
-      timeZone: EVENT_TIME_ZONE,
+      timeZone,
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
     }).format(date),
     time: new Intl.DateTimeFormat('pt-BR', {
-      timeZone: EVENT_TIME_ZONE,
+      timeZone,
       hour: '2-digit',
       minute: '2-digit',
     }).format(date),
@@ -229,7 +233,7 @@ async function sendResendTemplateEmail(params: {
 }
 
 async function sendEventPublicOrderTicketEmail(payload: EventPublicOrderTicketEmailPayload) {
-  const eventDate = formatEventTemplateDateParts(payload.eventStartsAt);
+  const eventDate = formatEventTemplateDateParts(payload.eventStartsAt, payload.eventStartsAtLocal);
   const ticketsUrl = buildAppUrl(payload.ticketsPath);
   const supportUrl = process.env.EMAIL_SUPPORT_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://alusa.app';
 
@@ -264,6 +268,8 @@ function paymentMethodLabel(method: string): string {
 async function sendEventPublicOrderCreatedEmail(payload: EventPublicOrderCreatedEmailPayload) {
   const statusUrl = buildAppUrl(payload.statusPath);
   const supportUrl = process.env.EMAIL_SUPPORT_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://alusa.app';
+  const eventDate = formatEventTemplateDateParts(payload.eventStartsAt, payload.eventStartsAtLocal);
+  const eventDateTime = `${eventDate.date} às ${eventDate.time.replace(':', 'h')}`;
   return sendResendTemplateEmail({
     templateId: RESEND_EVENT_ORDER_CREATED_TEMPLATE_ID,
     to: payload.buyerEmail,
@@ -279,8 +285,8 @@ async function sendEventPublicOrderCreatedEmail(payload: EventPublicOrderCreated
       PAYMENT_METHOD_HTML: escapeHtml(paymentMethodLabel(payload.paymentMethod)),
       EXPIRES_AT: formatEventDate(payload.expiresAt),
       EXPIRES_AT_HTML: escapeHtml(formatEventDate(payload.expiresAt)),
-      EVENT_DATE: formatEventDate(payload.eventStartsAt),
-      EVENT_DATE_HTML: escapeHtml(formatEventDate(payload.eventStartsAt)),
+      EVENT_DATE: eventDateTime,
+      EVENT_DATE_HTML: escapeHtml(eventDateTime),
       PAYMENT_URL: payload.invoiceUrl || statusUrl,
       PAYMENT_URL_HTML: escapeHtml(payload.invoiceUrl || statusUrl),
       PAYMENT_CTA_LABEL: payload.invoiceUrl ? 'Ir para o pagamento' : 'Acompanhar pedido',

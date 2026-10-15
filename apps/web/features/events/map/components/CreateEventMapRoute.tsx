@@ -12,21 +12,16 @@ import { cn } from '@/lib/utils';
 
 import { createEventMap, deleteEventMap, duplicateEventMap, listEventMaps, uploadEventMapReferenceChart } from '../api/event-map-service';
 import { getEvent } from '../../events-service';
+import { mapSessionDateTimeToIso } from '../session-datetime';
 
 type CreationIntent = 'blank' | 'reference-plan';
 
-function toLocalDateTimeInput(value: string | null | undefined) {
+function toLegacyLocalDateTimeInput(value?: string | null) {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
-  return date.toISOString().slice(0, 16);
-}
-
-function fromLocalDateTimeInput(value: string) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 export function CreateEventMapRoute({ eventId }: { eventId: string }) {
@@ -51,8 +46,8 @@ export function CreateEventMapRoute({ eventId }: { eventId: string }) {
     const template = mapsQuery.data?.find((map) => map.id === templateMapId);
     const mapsCount = mapsQuery.data?.length ?? 0;
     setSessionName(template ? `${template.name} (cópia)` : `Sessão ${String(mapsCount + 1).padStart(2, '0')}`);
-    setStartsAt(toLocalDateTimeInput(template?.startsAt ?? eventQuery.data?.startsAt));
-    setEndsAt(toLocalDateTimeInput(template ? template.endsAt : eventQuery.data?.endsAt));
+    setStartsAt(template?.startsAtLocal ?? toLegacyLocalDateTimeInput(template?.startsAt ?? eventQuery.data?.startsAt));
+    setEndsAt(template?.endsAtLocal ?? toLegacyLocalDateTimeInput(template ? template.endsAt : eventQuery.data?.endsAt));
     setLocationName(template ? template.locationName ?? '' : eventQuery.data?.locationName ?? '');
     setLocationAddress(template ? template.locationAddress ?? '' : eventQuery.data?.locationAddress ?? '');
     setSessionFieldsReady(true);
@@ -60,8 +55,8 @@ export function CreateEventMapRoute({ eventId }: { eventId: string }) {
 
   async function createAndOpen(creationMode: CreationIntent, referenceFile?: File) {
     const trimmedSessionName = sessionName.trim();
-    const sessionStartsAt = fromLocalDateTimeInput(startsAt);
-    const sessionEndsAt = fromLocalDateTimeInput(endsAt);
+    const sessionStartsAt = mapSessionDateTimeToIso(startsAt);
+    const sessionEndsAt = endsAt ? mapSessionDateTimeToIso(endsAt) : null;
     if (!trimmedSessionName || !sessionStartsAt) {
       toast.error({ title: 'Informe o nome e o horário da sessão' });
       return;
@@ -78,7 +73,9 @@ export function CreateEventMapRoute({ eventId }: { eventId: string }) {
       const session = {
         name: trimmedSessionName,
         startsAt: sessionStartsAt,
+        startsAtLocal: startsAt,
         endsAt: sessionEndsAt,
+        endsAtLocal: endsAt || null,
         locationName: locationName.trim() || null,
         locationAddress: locationAddress.trim() || null,
       };

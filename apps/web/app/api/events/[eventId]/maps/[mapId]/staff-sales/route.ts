@@ -11,11 +11,12 @@ type RouteContext = {
   params: Promise<{ eventId: string; mapId: string }>;
 };
 
-export async function GET(_request: Request, { params }: RouteContext) {
+export async function GET(request: Request, { params }: RouteContext) {
   try {
     const { eventId, mapId } = await params;
     const ctx = await getEventsContext('eventTickets.createSale');
-    return NextResponse.json({ data: await getStaffEventMapSalesView(ctx, eventId, mapId) });
+    const holdToken = request.headers.get('x-staff-reservation-token');
+    return NextResponse.json({ data: await getStaffEventMapSalesView(ctx, eventId, mapId, holdToken) });
   } catch (error) {
     return handleEventsRouteError(error, 'ERRO_CARREGAR_MAPA_VENDA_SECRETARIA');
   }

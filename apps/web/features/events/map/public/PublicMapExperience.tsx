@@ -52,6 +52,7 @@ import {
 } from './public-map-level-view';
 import { PublicMapViewport } from './PublicMapViewport';
 import { PublicMapSceneRenderer, buildPublicMapSceneItems } from './public-map-scene-render';
+import { formatMapSessionDateTime } from '../session-datetime';
 export { sortPublicMapRenderItems } from './public-map-scene-render';
 import type { EventMapObjectDTO } from '../api/event-map-service';
 import type { EventMapDocument } from '@alusa/domain';
@@ -104,13 +105,6 @@ function formatCurrency(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 }
 
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat('pt-BR', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value));
-}
-
 function createCheckoutKey() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -136,6 +130,7 @@ export function PublicMapExperience({
 }) {
   const [seats, setSeats] = useState<PublicSeat[]>(map.seats);
   const seatRefreshInFlight = useRef(false);
+  const [mapVersionChanged, setMapVersionChanged] = useState(false);
   const panelLevels = useMemo(
     () => resolvePublicMapLevels(map.levels as PublicMapLevelView[]),
     [map.levels],
@@ -197,16 +192,22 @@ export function PublicMapExperience({
   }, [panelLevels]);
 
   useEffect(() => {
-    if (mode !== 'public' || step !== 'SELECTION' || isSubmitting || typeof document === 'undefined') return;
+    if (mode !== 'public' || step !== 'SELECTION' || isSubmitting || mapVersionChanged || typeof document === 'undefined') return;
     let active = true;
     const refreshSeats = async () => {
       if (!active || document.visibilityState !== 'visible' || seatRefreshInFlight.current) return;
       seatRefreshInFlight.current = true;
       try {
-        const latestMap = await parseApiResponse<Pick<PublicMapViewModel, 'seats'>>(
+        const latestMap = await parseApiResponse<Pick<PublicMapViewModel, 'seats' | 'versionId'>>(
           await fetch(`/api/public/event-maps/${map.publicSlug}`, { cache: 'no-store' }),
         );
         if (!active) return;
+        if (latestMap.versionId !== map.versionId) {
+          selectedIdsRef.current = [];
+          setSelectedIds([]);
+          setMapVersionChanged(true);
+          return;
+        }
         const reconciliation = reconcilePublicMapSeatSelection(latestMap.seats, selectedIdsRef.current);
         selectedIdsRef.current = reconciliation.selectedIds;
         setSeats(reconciliation.seats);
@@ -230,7 +231,7 @@ export function PublicMapExperience({
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [isSubmitting, map.publicSlug, mode, step]);
+  }, [isSubmitting, map.publicSlug, map.versionId, mapVersionChanged, mode, step]);
 
   const activeLevel = useMemo(
     () => getPublicMapLevelById(panelLevels, activeLevelId),
@@ -283,7 +284,7 @@ export function PublicMapExperience({
   }, [buyerName, buyerEmail, buyerDocument, buyerPhone, hasValidPhoneConfirmation, phoneConfirmationMatches, whatsappConsent]);
 
   function toggleSeat(seat: PublicSeat) {
-    if (seat.status !== 'AVAILABLE' || mode === 'preview') return;
+    if (seat.status !== 'AVAILABLE' || mode === 'preview' || mapVersionChanged) return;
     if (step === 'CONFIRMATION') return;
     
     // Auto return to first step when updating selection
@@ -694,7 +695,7 @@ export function PublicMapExperience({
             <div className="mt-2 flex flex-wrap justify-end gap-x-4 gap-y-1 text-sm text-white/80">
               <span className="inline-flex items-center gap-1.5">
                 <CalendarDays aria-hidden="true" className="h-4 w-4" />
-                {formatDate(map.event.startsAt)}
+                {formatMapSessionDateTime(map.event.startsAt, map.event.startsAtLocal)}
               </span>
               {map.event.locationName || map.event.locationAddress ? (
                 <span className="inline-flex items-center gap-1.5">
@@ -716,6 +717,14 @@ export function PublicMapExperience({
               : ' gap-3 px-3 py-4 sm:gap-4 sm:px-4 sm:py-5'
         }`}
       >
+        {mapVersionChanged && step === 'SELECTION' ? (
+          <div className="col-span-full flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+            <p>O mapa foi atualizado enquanto você escolhia os assentos. Atualize para ver a versão mais recente.</p>
+            <Button type="button" variant="outline" onClick={() => window.location.reload()} className="shrink-0">
+              Atualizar mapa
+            </Button>
+          </div>
+        ) : null}
         <section className={`min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm ${
           isPublicFlow && step !== 'SELECTION' ? 'hidden' : ''
         } ${
@@ -790,7 +799,7 @@ export function PublicMapExperience({
               <PublicMapSceneRenderer
                 items={levelRenderItems}
                 selectedSeatIds={selectedIds}
-                isSeatInteractive={(seat) => mode === 'public' && seat.status === 'AVAILABLE'}
+                isSeatInteractive={(seat) => mode === 'public' && !mapVersionChanged && seat.status === 'AVAILABLE'}
                 onSeatClick={toggleSeat}
               />
           </PublicMapViewport>
@@ -880,7 +889,7 @@ export function PublicMapExperience({
                   <span className="text-slate-600">Total</span>
                   <strong className="text-base text-slate-950">{formatCurrency(total)}</strong>
                 </div>
-                {selectedSeats.length > 0 && (
+                {selectedSeats.length > 0 && !mapVersionChanged && (
                   <Button
                     type="button"
                     className="mt-4 w-full bg-brand-accent text-white hover:bg-brand-accent/90"
@@ -917,7 +926,7 @@ export function PublicMapExperience({
                   <span className="text-slate-500">Total</span>
                   <strong className="text-base">{formatCurrency(total)}</strong>
                 </div>
-                {selectedSeats.length > 0 && (
+                {selectedSeats.length > 0 && !mapVersionChanged && (
                 <Button
                   type="button"
                   className="mt-4 w-full bg-brand-accent text-white hover:bg-brand-accent/90"

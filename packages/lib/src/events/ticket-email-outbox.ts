@@ -8,6 +8,7 @@ type EventTicketEmailOutboxParams = {
   buyerName: string;
   eventName: string;
   eventStartsAt: Date;
+  eventStartsAtLocal?: string | null;
   eventLocation?: string | null;
   ticketType?: string | null;
   ticketCount: number;
@@ -45,6 +46,7 @@ export async function enqueueEventTicketEmail(
         buyerName: params.buyerName,
         eventName: params.eventName,
         eventStartsAt: params.eventStartsAt.toISOString(),
+        eventStartsAtLocal: params.eventStartsAtLocal ?? null,
         eventLocation: params.eventLocation ?? null,
         ticketType: params.ticketType ?? null,
         ticketCount: params.ticketCount,

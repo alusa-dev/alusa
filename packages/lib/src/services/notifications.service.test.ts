@@ -401,7 +401,7 @@ describe('notifications.service', () => {
     expect(prismaMock.eventMapOrder.findFirst).toHaveBeenCalledWith({
       where: { contaId: 'conta-a', asaasPaymentId: 'pay-ticket' }, select: { id: true },
     });
-    expect(prismaMock.eventTicketSale.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { contaId: 'conta-a', asaasPaymentId: 'pay-ticket' }, take: 2 }));
+    expect(prismaMock.eventTicketSale.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { contaId: 'conta-a', asaasPaymentId: 'pay-ticket' } }));
     expect(enqueuePending).not.toHaveBeenCalled();
     expect(txMock.notification.createMany).not.toHaveBeenCalled();
   });
@@ -428,9 +428,36 @@ describe('notifications.service', () => {
     expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'event_ticket_payment' });
   });
 
-  it('marca vendas múltiplas para o mesmo pagamento como inconsistentes', async () => {
+  it('aceita vendas de vários lotes vinculadas ao mesmo pedido público', async () => {
+    prismaMock.eventMapOrder.findFirst.mockResolvedValue({ id: 'order-1' });
+    prismaMock.eventTicketSale.findMany.mockResolvedValue([
+      { id: 'sale-1', eventMapOrderId: 'order-1' }, { id: 'sale-2', eventMapOrderId: 'order-1' },
+    ]);
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-ticket',
+    });
+
+    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'event_ticket_payment', notificationId: null });
+    expect(enqueuePending).not.toHaveBeenCalled();
+  });
+
+  it('marca múltiplas vendas sem pedido público vinculado como inconsistentes', async () => {
     prismaMock.eventTicketSale.findMany.mockResolvedValue([
       { id: 'sale-1', eventMapOrderId: null }, { id: 'sale-2', eventMapOrderId: null },
+    ]);
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-ticket',
+    });
+
+    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'event_order_sale_link_conflict' });
+    expect(enqueuePending).not.toHaveBeenCalled();
+  });
+
+  it('marca vendas com pedidos de origem divergentes como inconsistentes', async () => {
+    prismaMock.eventTicketSale.findMany.mockResolvedValue([
+      { id: 'sale-1', eventMapOrderId: 'order-1' }, { id: 'sale-2', eventMapOrderId: 'order-2' },
     ]);
 
     const result = await createBillingWebhookNotification({
