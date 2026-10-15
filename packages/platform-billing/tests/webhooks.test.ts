@@ -242,6 +242,23 @@ describe('@alusa/platform-billing webhooks', () => {
     expect(store.paidIssueResolutions).toEqual([]);
   });
 
+  it('binds the Checkout subscription for reconciliation without granting access', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'CHECKOUT_PENDING', accessStatus: 'PENDING', stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: null, pendingPlanCode: 'STARTER',
+    })]);
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_checkout_bind', 'checkout.session.completed', {
+        id: 'cs_bind', customer: 'cus_1', subscription: 'sub_checkout', payment_status: 'unpaid',
+        metadata: { contaId: 'conta_1', checkoutRequestKey: 'checkout-key' },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({
+      stripeSubscriptionId: 'sub_checkout', status: 'CHECKOUT_PENDING', accessStatus: 'PENDING',
+    });
+  });
+
   it('does not fail a plan change from stale pending_update_expired after the account CAS rejects it', async () => {
     const store = createMemoryStore([buildAccount({
       status: 'ACTIVE', accessStatus: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_1',
@@ -1047,6 +1064,13 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
       return account;
     },
     async markCheckoutRequestStarted() {},
+    async bindCheckoutSubscription(input) {
+      const account = accounts.find((item) => item.id === input.accountId
+        && item.contaId === input.contaId && item.environment === input.environment
+        && item.stripeCustomerId === input.stripeCustomerId);
+      if (account) account.stripeSubscriptionId = input.stripeSubscriptionId;
+    },
+    async clearCheckoutClaim() {},
     async updateAccountFromStripeSubscription(input) {
       const account = accounts.find((item) => item.id === input.accountId);
       if (!account) throw new Error('account not found');

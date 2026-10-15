@@ -195,7 +195,14 @@ async function processCheckoutCompleted(
 
   const checkoutRequestKey = readString(metadata.checkoutRequestKey);
   if (checkoutRequestKey) {
-    await store.clearCheckoutClaim?.({ contaId, environment: input.environment, idempotencyKey: checkoutRequestKey });
+    await store.bindCheckoutSubscription({
+      accountId: account.id,
+      contaId,
+      environment: input.environment,
+      stripeCustomerId: customerId,
+      stripeSubscriptionId: subscriptionId,
+      idempotencyKey: checkoutRequestKey,
+    });
   }
 
   await store.createAuditLog({

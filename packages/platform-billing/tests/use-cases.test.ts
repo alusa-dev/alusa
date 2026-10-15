@@ -26,6 +26,27 @@ const envSource = {
 };
 
 describe('@alusa/platform-billing use cases', () => {
+  it('binds the Checkout subscription only to the matching Conta, customer and request claim', async () => {
+    const updateMany = vi.fn(async () => ({ count: 1 }));
+    const store = createPrismaPlatformBillingStore({
+      platformBillingAccount: { updateMany },
+    } as never);
+    await store.bindCheckoutSubscription({
+      accountId: 'pba_a', contaId: 'conta_a', environment: 'TEST', stripeCustomerId: 'cus_a',
+      stripeSubscriptionId: 'sub_a', idempotencyKey: 'checkout-a',
+    });
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'pba_a', contaId: 'conta_a', environment: 'TEST',
+        stripeCustomerId: 'cus_a', checkoutClaimKey: 'checkout-a',
+      },
+      data: {
+        stripeSubscriptionId: 'sub_a', checkoutClaimKey: null, checkoutClaimPhase: null,
+        checkoutClaimedAt: null, checkoutRequestExpiresAt: null,
+      },
+    });
+  });
+
   it('fences a delayed webhook account write with the provider event snapshot CAS', async () => {
     const oldProviderAt = new Date('2026-10-12T00:00:10.000Z');
     const newerProviderAt = new Date('2026-10-12T00:00:30.000Z');
@@ -522,6 +543,46 @@ describe('@alusa/platform-billing use cases', () => {
     const retried = await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
     expect(retried.checkoutSessionId).toBe('cs_test_1');
     expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(2);
+    expect(stripeGateway.createCheckoutSession.mock.calls.map(([call]) => call.idempotencyKey))
+      .toEqual(['alusa:TEST:conta_1:checkout:idem_1', 'alusa:TEST:conta_1:checkout:idem_1']);
+  });
+
+  it('libera o claim quando Stripe rejeita Checkout sem criar sessão', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.createCheckoutSession = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('invalid checkout request'), {
+        type: 'StripeInvalidRequestError', statusCode: 400,
+      }))
+      .mockResolvedValueOnce({
+        id: 'cs_test_retry', url: 'https://checkout.stripe.test/retry',
+        expiresAt: new Date('2026-06-28T12:00:00.000Z'),
+      });
+
+    await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+      .rejects.toThrow('invalid checkout request');
+    expect(store.accounts[0]).toMatchObject({ status: 'NOT_STARTED', pendingPlanCode: null });
+    await expect(createPlatformBillingCheckoutSession(
+      { ...buildCheckoutInput(), idempotencyKey: 'idem_retry' }, { store, stripeGateway },
+    )).resolves.toMatchObject({ checkoutSessionId: 'cs_test_retry' });
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserva o claim quando a resposta do Stripe é ambígua e retoma com a mesma chave', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.createCheckoutSession = vi.fn()
+      .mockRejectedValueOnce(new Error('connection reset after request'))
+      .mockResolvedValueOnce({
+        id: 'cs_test_recovered', url: 'https://checkout.stripe.test/recovered',
+        expiresAt: new Date('2026-06-28T12:00:00.000Z'),
+      });
+
+    await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+      .rejects.toThrow('connection reset after request');
+    expect(store.accounts[0]?.status).toBe('CHECKOUT_PENDING');
+    await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+      .resolves.toMatchObject({ checkoutSessionId: 'cs_test_recovered' });
     expect(stripeGateway.createCheckoutSession.mock.calls.map(([call]) => call.idempotencyKey))
       .toEqual(['alusa:TEST:conta_1:checkout:idem_1', 'alusa:TEST:conta_1:checkout:idem_1']);
   });
@@ -1082,6 +1143,26 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
       const claim = checkoutClaims.get(input.accountId);
       if (!claim || claim.key !== input.idempotencyKey) throw new Error('claim missing');
       claim.phase = 'REQUESTING';
+    },
+    async bindCheckoutSubscription(input) {
+      const account = accounts.find((item) => item.id === input.accountId
+        && item.contaId === input.contaId && item.environment === input.environment
+        && item.stripeCustomerId === input.stripeCustomerId);
+      const claim = checkoutClaims.get(input.accountId);
+      if (!account || claim?.key !== input.idempotencyKey) return;
+      account.stripeSubscriptionId = input.stripeSubscriptionId;
+      checkoutClaims.delete(input.accountId);
+    },
+    async clearCheckoutClaim(input) {
+      const account = accounts.find((item) => item.contaId === input.contaId && item.environment === input.environment);
+      if (!account || checkoutClaims.get(account.id)?.key !== input.idempotencyKey) return;
+      checkoutClaims.delete(account.id);
+      if (account.status === 'CHECKOUT_PENDING') {
+        account.status = 'NOT_STARTED';
+        account.accessStatus = 'PENDING';
+      }
+      account.pendingPlanCode = null;
+      account.pendingChangeType = null;
     },
     async updateAccountFromStripeSubscription(input) {
       const account = accounts.find((item) => item.id === input.accountId);

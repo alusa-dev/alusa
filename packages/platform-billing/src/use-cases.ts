@@ -369,23 +369,38 @@ export async function createPlatformBillingCheckoutSession(
   });
   await deps.store.markCheckoutRequestStarted({ accountId: account.id, idempotencyKey: parsed.idempotencyKey });
 
-  const checkoutSession = await stripeGateway.createCheckoutSession({
-    customerId: account.stripeCustomerId,
-    priceId: stripePriceId,
-    successUrl: parsed.successUrl,
-    cancelUrl: parsed.cancelUrl,
-    clientReferenceId: parsed.contaId,
-    metadata: {
-      contaId: parsed.contaId,
-      planCode,
-      billingContext: 'platform',
-      trialDays: trialDays ? String(trialDays) : '0',
-      flow: isReactivation ? 'reactivation' : 'subscription',
-      checkoutRequestKey: parsed.idempotencyKey,
-    },
-    trialDays,
-    idempotencyKey: stripeIdempotencyKey(config.environment, parsed.contaId, 'checkout', parsed.idempotencyKey),
-  });
+  let checkoutSession: Awaited<ReturnType<PlatformBillingStripeGateway['createCheckoutSession']>>;
+  try {
+    checkoutSession = await stripeGateway.createCheckoutSession({
+      customerId: account.stripeCustomerId,
+      priceId: stripePriceId,
+      successUrl: parsed.successUrl,
+      cancelUrl: parsed.cancelUrl,
+      clientReferenceId: parsed.contaId,
+      metadata: {
+        contaId: parsed.contaId,
+        planCode,
+        billingContext: 'platform',
+        trialDays: trialDays ? String(trialDays) : '0',
+        flow: isReactivation ? 'reactivation' : 'subscription',
+        checkoutRequestKey: parsed.idempotencyKey,
+      },
+      trialDays,
+      idempotencyKey: stripeIdempotencyKey(config.environment, parsed.contaId, 'checkout', parsed.idempotencyKey),
+    });
+  } catch (error) {
+    // A Stripe 400 is a definitive rejection: Stripe did not create a Checkout
+    // Session, so release this request's claim. Network/5xx failures remain
+    // claimed because Stripe may have accepted the request before the failure.
+    if (isDefinitiveStripeNoEffect(error)) {
+      await deps.store.clearCheckoutClaim({
+        contaId: parsed.contaId,
+        environment: config.environment,
+        idempotencyKey: parsed.idempotencyKey,
+      });
+    }
+    throw error;
+  }
 
   const record = await deps.store.createCheckoutSession({
     contaId: parsed.contaId,

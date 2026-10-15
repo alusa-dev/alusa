@@ -309,7 +309,33 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
       );
     },
 
+    bindCheckoutSubscription: async (input) => {
+      // Bind the provider resource as soon as Checkout completes so the
+      // reconciliation job can recover even if the subscription webhook is
+      // delayed or lost. This deliberately does not change status/access.
+      await db.platformBillingAccount.updateMany({
+        where: {
+          id: input.accountId,
+          contaId: input.contaId,
+          environment: input.environment,
+          stripeCustomerId: input.stripeCustomerId,
+          checkoutClaimKey: input.idempotencyKey,
+        },
+        data: {
+          stripeSubscriptionId: input.stripeSubscriptionId,
+          checkoutClaimKey: null,
+          checkoutClaimPhase: null,
+          checkoutClaimedAt: null,
+          checkoutRequestExpiresAt: null,
+        },
+      });
+    },
+
     clearCheckoutClaim: async ({ contaId, environment, idempotencyKey }) => {
+      await db.platformBillingAccount.updateMany({
+        where: { contaId, environment, checkoutClaimKey: idempotencyKey, status: 'CHECKOUT_PENDING' },
+        data: { status: 'NOT_STARTED', accessStatus: 'PENDING' },
+      });
       await db.platformBillingAccount.updateMany({
         where: { contaId, environment, checkoutClaimKey: idempotencyKey },
         data: {

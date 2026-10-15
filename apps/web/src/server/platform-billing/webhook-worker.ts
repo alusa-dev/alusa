@@ -144,7 +144,12 @@ export async function drainStripeWebhookWorker(input: {
         result.processed += 1;
         await db.platformBillingNotificationOutbox.upsert({
           where: { uq_platform_billing_notification_env_event: { environment, eventId: event.eventId } },
-          create: { environment, eventId: event.eventId, eventType: event.eventType, contaId: processed.contaId },
+          create: {
+            environment,
+            eventId: event.eventId,
+            eventType: resolveCanonicalNotificationEventType(event.eventType, canonicalEvent),
+            contaId: processed.contaId,
+          },
           update: {},
         });
         await store.markWebhookEventProcessed({
@@ -245,6 +250,17 @@ export async function drainPlatformBillingNotificationOutbox(input: {
     }
   }
   return { claimed: records.length, delivered, failed, exhausted };
+}
+
+export function resolveCanonicalNotificationEventType(
+  receivedEventType: string,
+  canonicalEvent: StripeWebhookEvent,
+): string {
+  if (receivedEventType === 'invoice.payment_failed') {
+    const invoice = canonicalEvent.data.object as unknown as Record<string, unknown>;
+    if (invoice.status === 'paid' || invoice.paid === true) return 'invoice.paid';
+  }
+  return receivedEventType;
 }
 
 async function retrieveCanonicalStripeEvent(event: StripeWebhookEvent): Promise<StripeWebhookEvent> {

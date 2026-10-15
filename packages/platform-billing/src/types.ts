@@ -349,7 +349,15 @@ export interface PlatformBillingStore {
   }): Promise<void>;
   markCheckoutPending(_input: MarkPlatformBillingCheckoutPendingInput): Promise<PlatformBillingAccountRecord>;
   markCheckoutRequestStarted(_input: { accountId: string; idempotencyKey: string }): Promise<void>;
-  clearCheckoutClaim?(_input: { contaId: string; environment: PlatformBillingEnvironment; idempotencyKey: string }): Promise<void>;
+  bindCheckoutSubscription(_input: {
+    accountId: string;
+    contaId: string;
+    environment: PlatformBillingEnvironment;
+    stripeCustomerId: string;
+    stripeSubscriptionId: string;
+    idempotencyKey: string;
+  }): Promise<void>;
+  clearCheckoutClaim(_input: { contaId: string; environment: PlatformBillingEnvironment; idempotencyKey: string }): Promise<void>;
   updateAccountFromStripeSubscription(
     _input: UpdatePlatformBillingAccountFromStripeSubscriptionInput,
   ): Promise<PlatformBillingAccountRecord>;

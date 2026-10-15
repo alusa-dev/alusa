@@ -37,7 +37,7 @@ vi.mock('./platform-billing-notifications', () => ({
   notifyPlatformBillingEvent: vi.fn(),
 }));
 
-import { drainPlatformBillingNotificationOutbox, drainStripeWebhookWorker, listPlatformBillingNotificationOutbox, listStripeWebhookEvents, replayPlatformBillingNotifications, replayStripeWebhookEvents } from './webhook-worker';
+import { drainPlatformBillingNotificationOutbox, drainStripeWebhookWorker, listPlatformBillingNotificationOutbox, listStripeWebhookEvents, replayPlatformBillingNotifications, replayStripeWebhookEvents, resolveCanonicalNotificationEventType } from './webhook-worker';
 import { notifyPlatformBillingEvent } from './platform-billing-notifications';
 import { classifyPlatformBillingWebhookError, createPrismaPlatformBillingStore, PlatformBillingError, processPersistedPlatformBillingWebhookEvent } from '@alusa/platform-billing';
 
@@ -51,6 +51,18 @@ describe('platform billing webhook worker persistence boundary', () => {
     prismaMock.platformBillingNotificationOutbox.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.$queryRaw.mockResolvedValue([]);
     prismaMock.$transaction.mockImplementation(async (callback: (_tx: unknown) => unknown) => callback(prismaMock));
+  });
+
+  it('does not notify a stale payment failure after canonical invoice retrieval confirms payment', () => {
+    const canonicalEvent = {
+      id: 'evt-old-failure', type: 'invoice.payment_failed',
+      data: { object: { id: 'in-1', status: 'paid' } },
+    } as never;
+    expect(resolveCanonicalNotificationEventType('invoice.payment_failed', canonicalEvent)).toBe('invoice.paid');
+    expect(resolveCanonicalNotificationEventType('invoice.payment_failed', {
+      id: 'evt-old-failure', type: 'invoice.payment_failed',
+      data: { object: { id: 'in-1', status: 'open' } },
+    } as never)).toBe('invoice.payment_failed');
   });
 
   it('lista apenas eventos do tenant autenticado', async () => {
