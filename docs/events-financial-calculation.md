@@ -22,6 +22,11 @@ dupla contagem.
 `receitaPrevista` usa o valor líquido das obrigações ativas, vendas pendentes,
 vendas pagas, figurinos cobrados e outras receitas previstas.
 
+Para lançamentos de receita, `receitaBrutaPrevista` e `descontosPrevistos` usam
+a mesma população elegível de `receitaPrevista`: `CANCELLED` e `REFUNDED` ficam
+fora, enquanto `PARTIALLY_REFUNDED` permanece elegível conforme a classificação
+de status. Isso não altera a semântica histórica de `receitaRealizada`.
+
 `receitaRealizada` usa apenas pagamentos efetivos, abatendo estornos. Uma
 inscrição pendente sem pagamento não compõe a receita realizada.
 

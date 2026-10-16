@@ -189,9 +189,26 @@ describe('getEventReportDetail', () => {
       contaId: 'tenant-a', financialEntryId: { in: ['entry-a'] },
     });
     expect(db.standaloneInstallmentPlan.findMany.mock.calls.length).toBeGreaterThan(0);
+    const chargeProjection = {
+      id: true,
+      dueDate: true,
+      asaasPaymentId: true,
+      standaloneInstallmentPlanId: true,
+      status: true,
+      statusUpdatedAt: true,
+      value: true,
+      paidValue: true,
+      amount: true,
+      refundedValue: true,
+    };
     for (const [args] of db.standaloneInstallmentPlan.findMany.mock.calls) {
       expect(args.where.contaId).toBe('tenant-a');
       expect(JSON.stringify(args.where)).toContain('asaas-payment-a');
+      expect(args.select).toEqual({
+        id: true,
+        asaasInstallmentId: true,
+        charges: { where: { contaId: 'tenant-a' }, select: chargeProjection },
+      });
     }
 
     db.eventParticipant.aggregate.mockResolvedValue({ _count: { _all: 1 }, _sum: { registrationFeeOriginal: 100, registrationFeeDiscount: 0, registrationFeeCharged: 100, feePaidAmount: 0, feeRefundedAmount: 0 } });

@@ -213,6 +213,19 @@ describe('getEventReports tenant isolation', () => {
     });
     expect(tenantACalls.payments.map(([args]) => args.where.financialEntryId.in)).toEqual([['entry-a']]);
     expect(tenantACalls.groups.map(([args]) => args.where.id.in)).toEqual([['group-a']]);
+    const chargeProjection = {
+      id: true,
+      dueDate: true,
+      asaasPaymentId: true,
+      standaloneInstallmentPlanId: true,
+      status: true,
+      statusUpdatedAt: true,
+      value: true,
+      paidValue: true,
+      amount: true,
+      refundedValue: true,
+    };
+    expect(tenantACalls.charges.map(([args]) => args.select)).toEqual([chargeProjection, chargeProjection]);
     expect(JSON.stringify(tenantACalls.charges)).toContain('payment-a');
     expect(JSON.stringify(tenantACalls.charges)).not.toContain('payment-b');
     expect(JSON.stringify(tenantACalls.charges)).not.toContain('charge-b');
@@ -232,7 +245,11 @@ describe('getEventReports tenant isolation', () => {
     expect(JSON.stringify(tenantACalls.plans)).toContain('payment-a');
     expect(JSON.stringify(tenantACalls.plans)).not.toContain('payment-b');
     for (const [args] of tenantACalls.plans) {
-      expect(args.include.charges.where).toEqual({ contaId: 'tenant-a' });
+      expect(args.select).toEqual({
+        id: true,
+        asaasInstallmentId: true,
+        charges: { where: { contaId: 'tenant-a' }, select: chargeProjection },
+      });
     }
   });
 

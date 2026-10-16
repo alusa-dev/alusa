@@ -2572,6 +2572,19 @@ export function allocateChargesToParticipant(charges: any[], participantBalance:
   }));
 }
 
+const eventPaymentChargeSelect = {
+  id: true,
+  dueDate: true,
+  asaasPaymentId: true,
+  standaloneInstallmentPlanId: true,
+  status: true,
+  statusUpdatedAt: true,
+  value: true,
+  paidValue: true,
+  amount: true,
+  refundedValue: true,
+} as const;
+
 export async function loadEventBillingGroupCharges(
   db: DbClient,
   contaId: string,
@@ -2580,7 +2593,7 @@ export async function loadEventBillingGroupCharges(
   if (groups.length === 0) return new Map<string, any[]>();
 
   const standaloneIds = groups.map((group) => group.standaloneChargeId).filter((id): id is string => Boolean(id));
-  const paymentIds = groups.flatMap((group) => [group.asaasPaymentId, group.asaasInstallmentId]).filter((id): id is string => Boolean(id));
+  const paymentIds = [...new Set(groups.flatMap((group) => [group.asaasPaymentId, group.asaasInstallmentId]).filter((id): id is string => Boolean(id)))];
   const [directCharges, plans] = await Promise.all([
     standaloneIds.length > 0 || paymentIds.length > 0
       ? db.charge.findMany({
@@ -2591,6 +2604,7 @@ export async function loadEventBillingGroupCharges(
               ...(paymentIds.length > 0 ? [{ asaasPaymentId: { in: paymentIds } }] : []),
             ],
           },
+          select: eventPaymentChargeSelect,
         })
       : [],
     standaloneIds.length > 0 || paymentIds.length > 0
@@ -2602,7 +2616,11 @@ export async function loadEventBillingGroupCharges(
               ...(paymentIds.length > 0 ? [{ asaasInstallmentId: { in: paymentIds } }] : []),
             ],
           },
-          include: { charges: { where: { contaId } } },
+          select: {
+            id: true,
+            asaasInstallmentId: true,
+            charges: { where: { contaId }, select: eventPaymentChargeSelect },
+          },
         })
       : [],
   ]);
@@ -2653,13 +2671,13 @@ export async function buildParticipantPaymentSnapshots(
   const feeParticipants = participants.filter((participant) =>
     participant.revenueEntryId || participant.asaasPaymentId || participant.asaasInstallmentId,
   );
-  const asaasPaymentIds = feeParticipants
+  const asaasPaymentIds = [...new Set(feeParticipants
     .flatMap((participant) => [
       entryById.get(participant.revenueEntryId ?? '')?.asaasPaymentId,
       participant.asaasPaymentId,
       participant.asaasInstallmentId,
     ])
-    .filter((id): id is string => Boolean(id));
+    .filter((id): id is string => Boolean(id)))];
 
   const snapshots = new Map<string, ParticipantPaymentSnapshot>();
   if (feeParticipants.length === 0) return snapshots;
@@ -2692,11 +2710,16 @@ export async function buildParticipantPaymentSnapshots(
   if (asaasPaymentIds.length > 0) {
     plans = await db.standaloneInstallmentPlan.findMany({
       where: { contaId: ctx.contaId, asaasInstallmentId: { in: asaasPaymentIds } },
-      include: { charges: { where: { contaId: ctx.contaId } } },
+      select: {
+        id: true,
+        asaasInstallmentId: true,
+        charges: { where: { contaId: ctx.contaId }, select: eventPaymentChargeSelect },
+      },
     });
 
     directCharges = await db.charge.findMany({
       where: { contaId: ctx.contaId, asaasPaymentId: { in: asaasPaymentIds } },
+      select: eventPaymentChargeSelect,
     });
 
     const planIds = Array.from(new Set([
@@ -2707,6 +2730,7 @@ export async function buildParticipantPaymentSnapshots(
     if (planIds.length > 0) {
       planCharges = await db.charge.findMany({
         where: { contaId: ctx.contaId, standaloneInstallmentPlanId: { in: planIds } },
+        select: eventPaymentChargeSelect,
       });
     }
   }

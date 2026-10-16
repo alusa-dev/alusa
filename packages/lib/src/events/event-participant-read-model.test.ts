@@ -118,9 +118,26 @@ describe('event participant read models', () => {
       where: expect.objectContaining({ contaId: 'conta-a', eventId: 'event-1', alunoId: { in: ['student-1', 'student-2'] } }),
     }));
     expect(prisma.standaloneInstallmentPlan.findMany).toHaveBeenCalled();
-    for (const [args] of vi.mocked(prisma.standaloneInstallmentPlan.findMany).mock.calls) {
+    const projectedPlanQueries = vi.mocked(prisma.standaloneInstallmentPlan.findMany).mock.calls
+      .filter(([args]) => args.select?.charges);
+    expect(projectedPlanQueries.length).toBeGreaterThan(0);
+    for (const [args] of projectedPlanQueries) {
       expect(args.where.contaId).toBe('conta-a');
-      expect(args.include?.charges).toEqual({ where: { contaId: 'conta-a' } });
+      expect(args.select?.charges).toEqual({
+        where: { contaId: 'conta-a' },
+        select: {
+          id: true,
+          dueDate: true,
+          asaasPaymentId: true,
+          standaloneInstallmentPlanId: true,
+          status: true,
+          statusUpdatedAt: true,
+          value: true,
+          paidValue: true,
+          amount: true,
+          refundedValue: true,
+        },
+      });
     }
   });
 

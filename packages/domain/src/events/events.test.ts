@@ -357,6 +357,25 @@ describe('events domain rules', () => {
     expect(metrics.consistency.isConsistent).toBe(true);
   });
 
+  it('exclui receita cancelada ou estornada das previsões bruta e líquida sem alterar a realizada', () => {
+    const metrics = calculateEventMetrics({
+      financialEntries: [
+        { type: 'REVENUE', status: 'CANCELLED', expectedAmount: 80, grossAmount: 100, discountAmount: 20, actualAmount: 0, originType: 'MANUAL' },
+        { type: 'REVENUE', status: 'REFUNDED', expectedAmount: 160, grossAmount: 200, discountAmount: 40, actualAmount: 200, refundedAmount: 200, originType: 'MANUAL' },
+        { type: 'REVENUE', status: 'EXPECTED', expectedAmount: 80, grossAmount: 100, discountAmount: 20, actualAmount: 0, originType: 'MANUAL' },
+        { type: 'REVENUE', status: 'PENDING', expectedAmount: 80, grossAmount: 100, discountAmount: 20, actualAmount: 0, originType: 'MANUAL' },
+        { type: 'REVENUE', status: 'RECEIVED', expectedAmount: 80, grossAmount: 100, discountAmount: 20, actualAmount: 80, originType: 'MANUAL' },
+        { type: 'REVENUE', status: 'PARTIALLY_PAID', expectedAmount: 80, grossAmount: 100, discountAmount: 20, actualAmount: 40, originType: 'MANUAL' },
+        { type: 'REVENUE', status: 'PARTIALLY_REFUNDED', expectedAmount: 80, grossAmount: 100, discountAmount: 20, actualAmount: 80, refundedAmount: 20, originType: 'MANUAL' },
+      ],
+    });
+
+    expect(metrics.receitaPrevista).toBe(400);
+    expect(metrics.receitaBrutaPrevista).toBe(500);
+    expect(metrics.descontosPrevistos).toBe(100);
+    expect(metrics.receitaRealizada).toBe(180);
+  });
+
   it('inclui obrigações antigas sem lançamento local sem duplicar entradas vinculadas', () => {
     const metrics = calculateEventMetrics({
       participantObligations: [

@@ -636,10 +636,10 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
       if (refunded > actual) {
         consistencyIssues.push(`REVENUE:${entry.originId ?? 'unknown'}:refund_above_actual`);
       }
-      receitaBrutaPrevista += gross;
-      descontosPrevistos += discount;
       if (isEventRevenueExpectedStatus(entry.status)) {
         receitaPrevista += expected;
+        receitaBrutaPrevista += gross;
+        descontosPrevistos += discount;
       }
       if (isEventRevenueRealizedStatus(entry.status)) {
         if (entry.actualAmount != null) {
