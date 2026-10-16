@@ -5,7 +5,7 @@ import { prisma } from '../../prisma';
 import { preparePublicEventMapCheckout } from './public-event-map-checkout-persistence';
 import { getPublicEventMap, listEventMaps, reservePublicEventMapSeats } from './event-map.service';
 import { getPublicEventMapOrderStatus } from './public-event-map-order-status.service';
-import { createSeatedTicketSale, getPublicStaffSaleTickets, reserveStaffEventMapSeats } from './staff-map-sales.service';
+import { createSeatedTicketSale, getPublicStaffSaleTickets, getStaffEventMapSalesView, reserveStaffEventMapSeats } from './staff-map-sales.service';
 import { updateTicketLot } from '../events.service';
 
 const validLocal = '2026-11-14T20:00';
@@ -127,6 +127,69 @@ const checkoutInput = (reservation: { id: string; holdToken: string }) => ({
 });
 
 describe('event map purchase schedule snapshots', () => {
+  it('keeps public and staff DTOs intact with narrow Prisma seat projections', async () => {
+    const fixture = await createFixture({ lot: true });
+    try {
+      await prisma.eventMapPublicSeat.create({
+        data: {
+          contaId: fixture.conta.id,
+          eventId: fixture.event.id,
+          eventMapId: fixture.map.id,
+          versionId: fixture.version.id,
+          originalSeatId: `hidden-${randomUUID()}`,
+          sectionName: 'Pista',
+          lotId: fixture.lot?.id,
+          lotName: fixture.lot?.name,
+          unitPrice: 20,
+          technicalCode: `H-${randomUUID()}`,
+          displayLabel: 'A2',
+          status: 'AVAILABLE',
+          publicVisible: false,
+          x: 20,
+          y: 10,
+        },
+      });
+
+      const publicView = await getPublicEventMap(fixture.map.publicSlug!);
+      expect(publicView).toMatchObject({
+        publicSlug: fixture.map.publicSlug,
+        mapId: fixture.map.id,
+        versionId: fixture.version.id,
+        version: fixture.version.version,
+        name: fixture.map.name,
+        event: { id: fixture.event.id, name: fixture.event.name, status: fixture.event.status },
+        counts: { seats: 1, availableSeats: 1, soldSeats: 0, heldSeats: 0 },
+      });
+      expect(publicView.seats).toEqual([expect.objectContaining({
+        id: fixture.seat.id,
+        originalSeatId: fixture.seat.originalSeatId,
+        status: 'AVAILABLE',
+        publicVisible: true,
+        technicalCode: fixture.seat.technicalCode,
+        displayLabel: fixture.seat.displayLabel,
+        unitPrice: 20,
+        x: 10,
+        y: 10,
+      })]);
+
+      const staffView = await getStaffEventMapSalesView(ctx(fixture.conta.id, fixture.user.id), fixture.event.id, fixture.map.id);
+      expect(staffView).toMatchObject({
+        mapId: fixture.map.id,
+        versionId: fixture.version.id,
+        version: fixture.version.version,
+        name: fixture.map.name,
+        event: { id: fixture.event.id, name: fixture.event.name, status: fixture.event.status, ticketMode: fixture.event.ticketMode },
+        counts: { seats: 2, availableSeats: 2, soldSeats: 0, heldSeats: 0 },
+      });
+      expect(staffView.seats).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: fixture.seat.id, publicVisible: true, isOwnHold: false }),
+        expect.objectContaining({ displayLabel: 'A2', publicVisible: false, isOwnHold: false }),
+      ]));
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
   it('returns a timezone-independent local schedule for a legacy public map snapshot', async () => {
     const fixture = await createFixture();
     try {

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { prisma } from '@alusa/database';
 
 import {
@@ -23,8 +24,11 @@ export type ProcessAsaasNotificationPreferenceOutboxResult = {
   updated: number;
   unchanged: number;
   failed: number;
+  exhausted: number;
   errors: Array<{ id: string; contaId: string; asaasCustomerId: string; message: string }>;
 };
+
+const MAX_ATTEMPTS = 8;
 
 function clampInt(value: number | undefined, fallback: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return fallback;
@@ -59,6 +63,7 @@ export async function enqueueAsaasNotificationPreferenceSync(
       attempts: 0,
       nextAttemptAt: new Date(),
       processingAt: null,
+      claimToken: null,
       processedAt: null,
       lastError: null,
       lastErrorAt: null,
@@ -125,15 +130,39 @@ export async function processAsaasNotificationPreferenceOutbox(
     updated: 0,
     unchanged: 0,
     failed: 0,
+    exhausted: 0,
     errors: [],
   };
 
   for (const row of rows) {
+    if (row.attempts >= MAX_ATTEMPTS) {
+      const exhausted = await prisma.asaasNotificationPreferenceOutbox.updateMany({
+        where: {
+          id: row.id,
+          contaId: row.contaId,
+          status: row.status,
+          processingAt: row.processingAt,
+          claimToken: row.claimToken,
+        },
+        data: { status: 'EXHAUSTED', processingAt: null, claimToken: null },
+      });
+      if (exhausted.count > 0) result.exhausted += 1;
+      continue;
+    }
+
+    const claimToken = randomUUID();
     const claimed = await prisma.asaasNotificationPreferenceOutbox.updateMany({
-      where: { id: row.id, status: row.status },
+      where: {
+        id: row.id,
+        contaId: row.contaId,
+        status: row.status,
+        processingAt: row.processingAt,
+        claimToken: row.claimToken,
+      },
       data: {
         status: 'PROCESSING',
         processingAt: new Date(),
+        claimToken,
         attempts: { increment: 1 },
       },
     });
@@ -146,32 +175,38 @@ export async function processAsaasNotificationPreferenceOutbox(
         row.contaId,
         row.asaasCustomerId,
       );
-      await prisma.asaasNotificationPreferenceOutbox.update({
-        where: { id: row.id },
+      const completed = await prisma.asaasNotificationPreferenceOutbox.updateMany({
+        where: { id: row.id, contaId: row.contaId, status: 'PROCESSING', claimToken },
         data: {
           status: 'DONE',
           processingAt: null,
+          claimToken: null,
           processedAt: new Date(),
           lastError: null,
           lastErrorAt: null,
         },
       });
+      if (completed.count === 0) continue;
       result.processed += 1;
       if (sync.updated) result.updated += 1;
       else result.unchanged += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await prisma.asaasNotificationPreferenceOutbox.update({
-        where: { id: row.id },
+      const exhausted = attempts >= MAX_ATTEMPTS;
+      const failed = await prisma.asaasNotificationPreferenceOutbox.updateMany({
+        where: { id: row.id, contaId: row.contaId, status: 'PROCESSING', claimToken },
         data: {
-          status: 'FAILED',
+          status: exhausted ? 'EXHAUSTED' : 'FAILED',
           processingAt: null,
-          nextAttemptAt: nextAttemptDate(attempts),
+          claimToken: null,
+          ...(exhausted ? {} : { nextAttemptAt: nextAttemptDate(attempts) }),
           lastError: message,
           lastErrorAt: new Date(),
         },
       });
+      if (failed.count === 0) continue;
       result.failed += 1;
+      if (exhausted) result.exhausted += 1;
       result.errors.push({
         id: row.id,
         contaId: row.contaId,

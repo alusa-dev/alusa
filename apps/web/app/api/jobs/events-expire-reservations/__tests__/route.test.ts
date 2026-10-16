@@ -5,12 +5,26 @@ const {
   expireEventMapReservations,
   resolveTenantScope,
   ensureEventAsaasPaymentProviderRegistered,
+  logJobResult,
+  logJobFailure,
+  startJobRun,
+  resolveTenantScopeForJob,
 } = vi.hoisted(() => ({
   expireEventMapReservations: vi.fn(),
   resolveTenantScope: vi.fn(),
   ensureEventAsaasPaymentProviderRegistered: vi.fn(),
+  logJobResult: vi.fn(),
+  logJobFailure: vi.fn(),
+  startJobRun: vi.fn(() => ({ startedAt: Date.now(), correlationId: 'test-run-id' })),
+  resolveTenantScopeForJob: vi.fn((_jobName: string, resolve: () => Promise<unknown>) => resolve()),
 }));
 
+vi.mock('@/src/server/jobs/job-observability', () => ({
+  startJobRun,
+  resolveTenantScopeForJob,
+  logJobResult,
+  logJobFailure: vi.fn(),
+}));
 vi.mock('@alusa/finance', () => ({ expireEventMapReservations }));
 vi.mock('@/lib/auth/tenant-scope', () => ({ resolveTenantScope }));
 vi.mock('@/src/server/events/register-event-asaas-payment-provider', () => ({
@@ -39,6 +53,7 @@ describe('GET /api/jobs/events-expire-reservations', () => {
       new Request('http://localhost/api/jobs/events-expire-reservations?limit=0'),
     );
     expect(response.status).toBe(200);
+    expect(logJobResult).toHaveBeenCalledWith('events-expire-reservations', expect.objectContaining({ startedAt: expect.any(Number), correlationId: expect.any(String) }), emptyResult, expect.objectContaining({ workStatus: 'empty' }));
     expect(await response.json()).toMatchObject({
       success: true,
       outcome: 'completed',
@@ -85,5 +100,8 @@ describe('GET /api/jobs/events-expire-reservations', () => {
     const response = await GET(new Request('http://localhost/api/jobs/events-expire-reservations'));
     expect(response.status).toBe(403);
     expect(expireEventMapReservations).not.toHaveBeenCalled();
+    expect(startJobRun).not.toHaveBeenCalled();
+    expect(logJobResult).not.toHaveBeenCalled();
+    expect(logJobFailure).not.toHaveBeenCalled();
   });
 });

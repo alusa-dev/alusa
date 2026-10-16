@@ -1582,11 +1582,22 @@ async function getPublicMapShellOrThrow(db: DbClient, publicSlug: string) {
       publicEnabled: true,
       publishedVersionId: { not: null },
     },
-    include: {
+    select: {
+      id: true,
+      contaId: true,
+      eventId: true,
+      name: true,
+      startsAt: true,
+      endsAt: true,
+      locationName: true,
+      locationAddress: true,
+      status: true,
+      publishedVersionId: true,
+      publicSlug: true,
+      publicEnabled: true,
       event: {
         select: {
           id: true,
-          contaId: true,
           name: true,
           startsAt: true,
           endsAt: true,
@@ -1606,7 +1617,29 @@ async function getPublicMapShellOrThrow(db: DbClient, publicSlug: string) {
   return map;
 }
 
-type EventMapPublicSeatRecord = Prisma.EventMapPublicSeatGetPayload<Prisma.EventMapPublicSeatDefaultArgs>;
+const publicMapSeatSelect = {
+  id: true,
+  originalSeatId: true,
+  levelId: true,
+  sectionId: true,
+  metadata: true,
+  sectionName: true,
+  lotId: true,
+  lotName: true,
+  unitPrice: true,
+  technicalCode: true,
+  displayLabel: true,
+  rowLabel: true,
+  seatNumber: true,
+  status: true,
+  accessible: true,
+  publicVisible: true,
+  x: true,
+  y: true,
+  size: true,
+  rotation: true,
+} satisfies Prisma.EventMapPublicSeatSelect;
+type EventMapPublicSeatRecord = Prisma.EventMapPublicSeatGetPayload<{ select: typeof publicMapSeatSelect }>;
 type EventTicketRecord = Prisma.EventTicketGetPayload<Prisma.EventTicketDefaultArgs>;
 function hasCompletePublicOrderTickets(order: { items: Array<{ ticket: EventTicketRecord | null }> }) {
   return order.items.length > 0 && order.items.every((item) => Boolean(item.ticket));
@@ -1652,12 +1685,14 @@ export async function getPublicEventMap(publicSlug: string) {
   const map = await getPublicMapShellOrThrow(prisma, publicSlug);
   const version = await prisma.eventMapVersion.findFirst({
     where: { id: map.publishedVersionId!, contaId: map.contaId, eventMapId: map.id },
+    select: { id: true, version: true, snapshot: true, publishedAt: true },
   });
   if (!version) throw new EventsError('VERSAO_PUBLICA_NAO_ENCONTRADA', 'Versão pública não encontrada.', 404);
 
   const seats = await prisma.eventMapPublicSeat.findMany({
     where: { contaId: map.contaId, versionId: version.id, publicVisible: true },
     orderBy: [{ sectionName: 'asc' }, { rowLabel: 'asc' }, { seatNumber: 'asc' }, { displayLabel: 'asc' }],
+    select: publicMapSeatSelect,
   });
   const snapshot = snapshotRecord(version.snapshot);
   const snapshotEvent = snapshotRecord(snapshot.event);
@@ -1784,6 +1819,7 @@ export async function reservePublicEventMapSeats(publicSlug: string, input: Publ
 
     const seats = await tx.eventMapPublicSeat.findMany({
       where: { contaId: map.contaId, versionId, id: { in: input.seatIds } },
+      select: publicMapSeatSelect,
     });
     const selection = validatePublicSeatSelection({
       requestedSeatIds: input.seatIds,

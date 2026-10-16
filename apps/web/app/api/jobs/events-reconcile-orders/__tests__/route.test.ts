@@ -1,10 +1,13 @@
 /** @vitest-environment node */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { reconcilePendingEventMapOrders, resolveTenantScope } = vi.hoisted(() => ({
+const { reconcilePendingEventMapOrders, resolveTenantScope, logJobResult } = vi.hoisted(() => ({
   reconcilePendingEventMapOrders: vi.fn(),
-  resolveTenantScope: vi.fn(),
+  resolveTenantScope: vi.fn(), logJobResult: vi.fn(), logJobFailure: vi.fn(),
 }));
+vi.mock('@/src/server/jobs/job-observability', () => ({
+  resolveTenantScopeForJob: (_name: string, resolve: () => unknown) => resolve(),
+  startJobRun: vi.fn(() => ({ startedAt: Date.now(), correlationId: 'test-run-id' })), logJobResult, logJobFailure: vi.fn() }));
 vi.mock('@alusa/finance', () => ({ reconcilePendingEventMapOrders }));
 vi.mock('@/lib/auth/tenant-scope', () => ({ resolveTenantScope }));
 
@@ -27,6 +30,10 @@ describe('GET /api/jobs/events-reconcile-orders', () => {
   });
 
   it('trata execução vazia e skippedDueToLock como normal', async () => {
+    const emptyResponse = await GET(new Request('http://localhost/api/jobs/events-reconcile-orders'));
+    expect(emptyResponse.status).toBe(200);
+    expect(logJobResult).toHaveBeenCalledWith('events-reconcile-orders', expect.objectContaining({ startedAt: expect.any(Number), correlationId: expect.any(String) }), emptyResult, expect.objectContaining({ workStatus: 'empty' }));
+    logJobResult.mockClear();
     reconcilePendingEventMapOrders.mockResolvedValue({ ...emptyResult, skippedDueToLock: true });
     const response = await GET(new Request('http://localhost/api/jobs/events-reconcile-orders'));
     expect(response.status).toBe(200);

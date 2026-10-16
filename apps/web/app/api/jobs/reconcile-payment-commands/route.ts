@@ -6,7 +6,13 @@ import {
   reconcilePendingPaymentCommands,
 } from '@alusa/finance';
 import { reconcileEnrollmentCreationOperations } from '@/src/server/enrollments/reconcile-enrollment-creation-operations';
-import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
+import {
+  resolveTenantScopeForJob,
+  startJobRun,
+  logJobFailure,
+  logJobResult,
+  type JobRunContext,
+} from '@/src/server/jobs/job-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -19,14 +25,14 @@ type StageResult<T> =
 
 async function runStage<T>(
   stage: ReconciliationStage,
-  startedAt: number,
+  startedAt: JobRunContext,
   run: () => Promise<T>,
 ): Promise<StageResult<T>> {
   try {
     return { ok: true, value: await run() };
   } catch (error) {
     const correlationId = randomUUID();
-    logJobFailure('reconcile-payment-commands', startedAt, error, { failedStages: 1 });
+    if (startedAt) logJobFailure('reconcile-payment-commands', startedAt, error, { failedStages: 1 });
     return { ok: false, stage, correlationId };
   }
 }
@@ -44,16 +50,17 @@ async function runStage<T>(
  * - staleOlderThanMinutes (opcional): idade para abrir divergência, default 10.
  */
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('reconcile-payment-commands', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) {
       return tenantScope.response;
     }
+    startedAt = startJobRun('reconcile-payment-commands');
 
     const limitRaw = Number(url.searchParams.get('limit') ?? '50');
     const pollOlderThanSecondsRaw = Number(url.searchParams.get('pollOlderThanSeconds') ?? '30');
@@ -112,8 +119,17 @@ async function run(req: Request) {
     const commands = commandsResult.value;
     const creations = creationsResult.value;
     const enrollmentCreations = enrollmentCreationsResult.value;
-    logJobResult('reconcile-payment-commands', startedAt, commands, {
+    const scannedCount = commands.scanned + commands.stale.processed + creations.scanned + enrollmentCreations.inspected;
+    const confirmedWorkCount = commands.synced + commands.stale.marked + creations.recovered;
+    logJobResult('reconcile-payment-commands', startedAt, {
+      commandsScanned: commands.scanned,
+      staleCommandsScanned: commands.stale.processed,
+      staleCommandsMarked: commands.stale.marked,
+      outboundOperationsScanned: creations.scanned,
+      enrollmentCreationsInspected: enrollmentCreations.inspected,
+    }, {
       failedStages: 0,
+      workStatus: confirmedWorkCount > 0 ? 'worked' : scannedCount === 0 ? 'empty' : 'unknown',
     });
     // Preserva o contrato legado em `result` e expõe a nova trilha separadamente.
     return NextResponse.json({
@@ -124,7 +140,7 @@ async function run(req: Request) {
     });
   } catch (error) {
     const correlationId = randomUUID();
-    logJobFailure('reconcile-payment-commands', startedAt, error);
+    if (startedAt) logJobFailure('reconcile-payment-commands', startedAt, error);
     return NextResponse.json(
       {
         error: {

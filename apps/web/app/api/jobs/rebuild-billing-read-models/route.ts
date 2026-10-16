@@ -1,4 +1,4 @@
-import { logJobFailure } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import {
   rebuildFinanceBillingReadModels,
@@ -21,14 +21,15 @@ function clampPositiveInt(value: string | null, fallback: number, max: number) {
 }
 
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('rebuild-billing-read-models', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) return tenantScope.response;
+    startedAt = startJobRun('rebuild-billing-read-models');
 
     const limit = clampPositiveInt(url.searchParams.get('limit'), 100, 500);
     const maxAccounts = clampPositiveInt(url.searchParams.get('maxAccounts'), 20, 100);
@@ -52,13 +53,32 @@ async function run(req: Request) {
         })
       : null;
 
+    const failed = projection.failed + (remote?.failed ?? 0);
+    logJobResult('rebuild-billing-read-models', startedAt, {
+      accounts: projection.accounts + (remote?.accounts ?? 0),
+      subscriptionsProjected: projection.subscriptionsProjected,
+      installmentsProjected: projection.installmentsProjected,
+      remoteSubscriptionsRefreshed: remote?.remoteSubscriptionsRefreshed ?? 0,
+      remoteInstallmentsRefreshed: remote?.remoteInstallmentsRefreshed ?? 0,
+      missingCredentials: projection.missingCredentials + (remote?.missingCredentials ?? 0),
+      failed,
+    }, {
+      partialFailure: failed > 0,
+      workStatus: projection.subscriptionsProjected + projection.installmentsProjected +
+        (remote?.remoteSubscriptionsRefreshed ?? 0) + (remote?.remoteInstallmentsRefreshed ?? 0) > 0
+        ? 'worked'
+        : failed > 0 || projection.missingCredentials + (remote?.missingCredentials ?? 0) > 0
+          ? 'unknown'
+          : 'empty',
+    });
+
     return NextResponse.json({
       success: projection.failed === 0 && (!remote || remote.failed === 0),
       projection,
       remote,
     });
   } catch (error) {
-    logJobFailure('rebuild-billing-read-models', startedAt, error);
+    if (startedAt) logJobFailure('rebuild-billing-read-models', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconstruir os read models financeiros.');
   }
 }

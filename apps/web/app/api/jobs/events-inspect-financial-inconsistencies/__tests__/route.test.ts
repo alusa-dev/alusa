@@ -1,12 +1,16 @@
 /** @vitest-environment node */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { inspectEventFinancialInconsistencies, resolveTenantScope } = vi.hoisted(() => ({
+const { inspectEventFinancialInconsistencies, resolveTenantScope, logJobResult } = vi.hoisted(() => ({
   inspectEventFinancialInconsistencies: vi.fn(),
   resolveTenantScope: vi.fn(),
+  logJobResult: vi.fn(),
 }));
 vi.mock('@alusa/finance', () => ({ inspectEventFinancialInconsistencies }));
 vi.mock('@/lib/auth/tenant-scope', () => ({ resolveTenantScope }));
+vi.mock('@/src/server/jobs/job-observability', () => ({
+  resolveTenantScopeForJob: (_name: string, resolve: () => unknown) => resolve(),
+  startJobRun: vi.fn(() => ({ startedAt: Date.now(), correlationId: 'test-run-id' })), logJobResult, logJobFailure: vi.fn() }));
 
 import { GET } from '../route';
 
@@ -24,6 +28,7 @@ describe('GET /api/jobs/events-inspect-financial-inconsistencies', () => {
   });
 
   it('retorna contagens seguras para inspeção sem findings', async () => {
+    inspectEventFinancialInconsistencies.mockResolvedValue({ ...emptyResult, inspected: 7 });
     const response = await GET(
       new Request('http://localhost/api/jobs/events-inspect-financial-inconsistencies'),
     );
@@ -31,13 +36,14 @@ describe('GET /api/jobs/events-inspect-financial-inconsistencies', () => {
     expect(await response.json()).toMatchObject({
       success: true,
       outcome: 'completed',
-      job: { inspected: 0, findingCount: 0 },
+      job: { inspected: 7, findingCount: 0 },
     });
     expect(inspectEventFinancialInconsistencies).toHaveBeenCalledWith({
       contaId: 'conta-1',
       limit: 200,
       maxAccounts: 20,
     });
+    expect(logJobResult).toHaveBeenCalledWith('events-inspect-financial-inconsistencies', expect.objectContaining({ startedAt: expect.any(Number), correlationId: expect.any(String) }), expect.objectContaining({ inspected: 7 }), expect.objectContaining({ workStatus: 'empty' }));
   });
 
   it('não expõe detalhes das findings no HTTP', async () => {

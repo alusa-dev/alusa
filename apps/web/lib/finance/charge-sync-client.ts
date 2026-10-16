@@ -3,9 +3,15 @@
 const inFlightByChargeId = new Map<string, Promise<boolean>>();
 const lastAttemptByChargeId = new Map<string, number>();
 
+export type ChargeSyncSource = 'automatic_fallback' | 'explicit_action';
+
 export async function requestCobrancaAsaasSync(
   id: string,
-  options: { throttleMs?: number; endpoint?: (_id: string) => string } = {},
+  options: {
+    throttleMs?: number;
+    endpoint?: (_id: string) => string;
+    source?: ChargeSyncSource;
+  } = {},
 ): Promise<boolean> {
   const normalizedId = id.trim();
   if (!normalizedId) return false;
@@ -22,9 +28,10 @@ export async function requestCobrancaAsaasSync(
   if (now - lastAttempt < throttleMs) return false;
 
   lastAttemptByChargeId.set(requestKey, now);
+  const source = options.source === 'automatic_fallback' ? options.source : 'explicit_action';
   const request = fetch(endpoint(normalizedId), {
     method: 'POST',
-    headers: { Accept: 'application/json' },
+    headers: { Accept: 'application/json', 'x-alusa-sync-source': source },
   })
     .then((response) => response.ok)
     .catch(() => false)

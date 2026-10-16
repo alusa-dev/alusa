@@ -83,7 +83,11 @@ export function useVisibleChargeConvergence({
 
       const results = await Promise.allSettled(
         candidates.map((item) =>
-          requestCobrancaAsaasSync(item.id, { throttleMs, endpoint: syncEndpoint }),
+          requestCobrancaAsaasSync(item.id, {
+            throttleMs,
+            endpoint: syncEndpoint,
+            source: 'automatic_fallback',
+          }),
         ),
       );
 

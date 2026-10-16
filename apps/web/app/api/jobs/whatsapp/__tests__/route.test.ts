@@ -10,12 +10,14 @@ const {
   drainWhatsAppWebhooks,
   drainEventTicketWhatsAppNotifications,
   resolveTenantScope,
+  logJobResult,
 } = vi.hoisted(() => ({
   drainContractWhatsAppNotifications: vi.fn(),
   drainWhatsAppOutbox: vi.fn(),
   drainWhatsAppWebhooks: vi.fn(),
   drainEventTicketWhatsAppNotifications: vi.fn(),
   resolveTenantScope: vi.fn(),
+  logJobResult: vi.fn(),
 }));
 
 vi.mock('@/src/server/whatsapp/outbox.service', () => ({
@@ -25,6 +27,9 @@ vi.mock('@/src/server/whatsapp/outbox.service', () => ({
 }));
 vi.mock('@/src/server/events/event-ticket-whatsapp-outbox.service', () => ({ drainEventTicketWhatsAppNotifications }));
 vi.mock('@/lib/auth/tenant-scope', () => ({ resolveTenantScope }));
+vi.mock('@/src/server/jobs/job-observability', () => ({
+  resolveTenantScopeForJob: (_name: string, resolve: () => unknown) => resolve(),
+  startJobRun: vi.fn(() => ({ startedAt: Date.now(), correlationId: 'test-run-id' })), logJobResult, logJobFailure: vi.fn() }));
 
 import { GET } from '../route';
 
@@ -78,6 +83,23 @@ describe('GET /api/jobs/whatsapp', () => {
 
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({ success: false, outcome: 'partial' });
+  });
+
+  it('registra volume separado e sanitizado de cada fila', async () => {
+    drainContractWhatsAppNotifications.mockResolvedValue({ ...emptyContract, claimed: 2, retried: 1 });
+    drainEventTicketWhatsAppNotifications.mockResolvedValue({ ...emptyTicket, claimed: 3 });
+    drainWhatsAppOutbox.mockResolvedValue({ ...emptyOutbox, claimed: 4, sent: 3 });
+    drainWhatsAppWebhooks.mockResolvedValue({ ...emptyWebhooks, claimed: 5, processed: 4 });
+    await GET(new Request('http://localhost/api/jobs/whatsapp'));
+    expect(logJobResult).toHaveBeenCalledWith('whatsapp', expect.objectContaining({ startedAt: expect.any(Number), correlationId: expect.any(String) }), expect.objectContaining({
+      contractNotificationsClaimed: 2,
+      contractNotificationsRetried: 1,
+      eventTicketNotificationsClaimed: 3,
+      whatsappOutboxClaimed: 4,
+      whatsappOutboxSent: 3,
+      whatsappWebhooksClaimed: 5,
+      whatsappWebhooksProcessed: 4,
+    }), expect.any(Object));
   });
 
   it('retorna erro operacional estável quando o worker falha', async () => {

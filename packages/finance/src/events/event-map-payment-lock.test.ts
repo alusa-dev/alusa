@@ -66,7 +66,8 @@ describe('event map payment confirmation lock', () => {
     prismaMock.$transaction.mockImplementation(async (callback: (_tx: typeof prismaMock) => Promise<unknown>) => callback(prismaMock));
     prismaMock.$queryRaw.mockResolvedValue([{ id: 'order-1' }]);
     prismaMock.eventMapOrder.findFirst
-      .mockResolvedValueOnce({ id: 'order-1', contaId: 'conta-1', status: 'PAYMENT_PENDING', asaasPaymentId: 'pay-1' })
+      .mockResolvedValueOnce({ id: 'order-1', reservationId: null, asaasPaymentId: 'pay-1' })
+      .mockResolvedValueOnce({ id: 'order-1', reservationId: null, asaasPaymentId: 'pay-1' })
       .mockResolvedValueOnce({
         id: 'order-1', contaId: 'conta-1', status: 'PAYMENT_PENDING', paymentStatus: 'PENDING',
         reservation: null, map: { publishedVersionId: 'version-1' }, versionId: 'version-1',
@@ -92,6 +93,7 @@ describe('event map payment confirmation lock', () => {
   });
 
   it('preserves Date inputs and rejects invalid paidAt values before opening a transaction', async () => {
+    vi.resetAllMocks();
     prismaMock.$transaction.mockImplementation(async (callback: (_tx: typeof prismaMock) => Promise<unknown>) => callback(prismaMock));
     prismaMock.$queryRaw.mockResolvedValue([{ id: 'order-1' }]);
     prismaMock.eventMapOrder.findFirst

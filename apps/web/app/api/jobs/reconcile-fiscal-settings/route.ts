@@ -1,4 +1,4 @@
-import { logJobFailure } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 
 import { reconcileFiscalSettingsJobQueryDTOSchema } from '@/features/jobs/dtos';
@@ -26,20 +26,21 @@ function jsonError(status: number, code: string, message: string) {
  * - maxAccounts (opcional): limite do cron multi-tenant, default 20
  */
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const query = reconcileFiscalSettingsJobQueryDTOSchema.parse({
-      contaId: url.searchParams.get('contaId'),
-      maxAccounts: url.searchParams.get('maxAccounts'),
-    });
-    const tenantScope = await resolveTenantScope(req, {
+        const tenantScope = await resolveTenantScopeForJob('reconcile-fiscal-settings', () => resolveTenantScope(req, {
       allowCron: true,
-      requestedContaId: query.contaId,
-    });
+      requestedContaId: url.searchParams.get('contaId'),
+    }));
     if (!tenantScope.ok) {
       return tenantScope.response;
     }
+    startedAt = startJobRun('reconcile-fiscal-settings');
+const query = reconcileFiscalSettingsJobQueryDTOSchema.parse({
+      contaId: url.searchParams.get('contaId'),
+      maxAccounts: url.searchParams.get('maxAccounts'),
+    });
 
     const maxAccounts = query.maxAccounts;
     const contaIds = tenantScope.contaId
@@ -70,6 +71,12 @@ async function run(req: Request) {
         error: item.value.result.success ? null : item.value.result.error,
       };
     });
+    const failed = reconciled.filter((item) => !item.success).length;
+    logJobResult('reconcile-fiscal-settings', startedAt, {
+      processed: reconciled.length,
+      failed,
+      reconciled: reconciled.length - failed,
+    }, { partialFailure: failed > 0, workStatus: reconciled.length - failed > 0 ? 'worked' : failed > 0 || tenantScope.contaId ? 'unknown' : 'empty' });
 
     return NextResponse.json({
       success: reconciled.every((item) => item.success),
@@ -78,7 +85,7 @@ async function run(req: Request) {
       reconciled,
     });
   } catch (error) {
-    logJobFailure('reconcile-fiscal-settings', startedAt, error);
+    if (startedAt) logJobFailure('reconcile-fiscal-settings', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconciliar as configurações fiscais.');
   }
 }

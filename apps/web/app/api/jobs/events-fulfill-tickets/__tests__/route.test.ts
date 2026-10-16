@@ -4,11 +4,14 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { reconcilePendingEventMapTicketFulfillment, resolveTenantScope } = vi.hoisted(() => ({
+const { reconcilePendingEventMapTicketFulfillment, resolveTenantScope, logJobResult } = vi.hoisted(() => ({
   reconcilePendingEventMapTicketFulfillment: vi.fn(),
-  resolveTenantScope: vi.fn(),
+  resolveTenantScope: vi.fn(), logJobResult: vi.fn(), logJobFailure: vi.fn(),
 }));
 
+vi.mock('@/src/server/jobs/job-observability', () => ({
+  resolveTenantScopeForJob: (_name: string, resolve: () => unknown) => resolve(),
+  startJobRun: vi.fn(() => ({ startedAt: Date.now(), correlationId: 'test-run-id' })), logJobResult, logJobFailure: vi.fn() }));
 vi.mock('@alusa/finance', () => ({ reconcilePendingEventMapTicketFulfillment }));
 vi.mock('@/lib/auth/tenant-scope', () => ({ resolveTenantScope }));
 
@@ -33,6 +36,7 @@ describe('GET /api/jobs/events-fulfill-tickets', () => {
     const response = await GET(new Request('http://localhost/api/jobs/events-fulfill-tickets?limit=0'));
 
     expect(response.status).toBe(200);
+    expect(logJobResult).toHaveBeenCalledWith('events-fulfill-tickets', expect.objectContaining({ startedAt: expect.any(Number), correlationId: expect.any(String) }), emptyResult, expect.objectContaining({ workStatus: 'empty' }));
     expect(await response.json()).toMatchObject({ success: true, outcome: 'completed', job: { processed: 0, issued: 0 } });
     expect(reconcilePendingEventMapTicketFulfillment).toHaveBeenCalledWith({
       contaId: undefined,

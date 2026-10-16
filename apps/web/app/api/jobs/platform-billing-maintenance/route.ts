@@ -1,4 +1,4 @@
-import { logJobFailure } from '@/src/server/jobs/job-observability';
+import { recordJobRequestRejected, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { expirePlatformBillingGracePeriods } from '@/src/server/platform-billing/grace-period-jobs';
@@ -19,7 +19,6 @@ export async function POST(req: Request) {
 }
 
 async function run(req: Request) {
-  const startedAt = Date.now();
   // This endpoint drains global platform billing state across tenants. A
   // tenant ADMIN session must never authorize that operation.
   const configuredCronToken = process.env.CRON_SECRET_TOKEN ?? process.env.CRON_SECRET;
@@ -28,9 +27,11 @@ async function run(req: Request) {
     : null;
   const cronToken = req.headers.get('x-cron-token');
   if (!configuredCronToken || (cronToken !== configuredCronToken && bearerToken !== configuredCronToken)) {
+    recordJobRequestRejected('platform-billing-maintenance', 401);
     return NextResponse.json({ error: { code: 'NAO_AUTORIZADO', message: 'Credencial de cron inválida.' } }, { status: 401 });
   }
 
+  const startedAt = startJobRun('platform-billing-maintenance');
   try {
     const url = new URL(req.url);
     const limit = Number(url.searchParams.get('limit') ?? '100');
@@ -41,6 +42,32 @@ async function run(req: Request) {
     const trials = await expirePlatformBillingTrials({ limit: safeLimit });
     const gracePeriods = await expirePlatformBillingGracePeriods({ limit: safeLimit });
     const reconciliation = await reconcilePlatformBilling({ limit: safeLimit });
+
+    const failed = webhooks.failed + webhooks.notifications.failed + planChanges.failed;
+    logJobResult('platform-billing-maintenance', startedAt, {
+      webhooksProcessed: webhooks.processed,
+      webhooksFailed: webhooks.failed,
+      webhooksExhausted: webhooks.exhausted,
+      webhookNotificationsClaimed: webhooks.notifications.claimed,
+      webhookNotificationsDelivered: webhooks.notifications.delivered,
+      webhookNotificationsFailed: webhooks.notifications.failed,
+      webhookNotificationsExhausted: webhooks.notifications.exhausted,
+      planChangesChecked: planChanges.checked,
+      planChangesSubmitted: planChanges.submitted,
+      planChangesFailed: planChanges.failed,
+      trialsChecked: trials.checked,
+      trialsRestricted: trials.restricted,
+      trialsNotified: trials.notified,
+      gracePeriodsChecked: gracePeriods.checked,
+      gracePeriodsRestricted: gracePeriods.restricted,
+      gracePeriodsNotified: gracePeriods.notified,
+      billingAccountsChecked: reconciliation.checkedAccounts,
+      billingIssues: reconciliation.issues,
+    }, {
+      partialFailure: failed > 0,
+      workStatus: webhooks.processed + webhooks.notifications.claimed + planChanges.checked +
+        trials.checked + gracePeriods.checked + reconciliation.issues > 0 ? 'worked' : 'unknown',
+    });
 
     return NextResponse.json({
       success: true,

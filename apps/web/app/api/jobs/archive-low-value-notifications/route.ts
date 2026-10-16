@@ -1,4 +1,4 @@
-import { logJobFailure } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { archiveLowValueNotifications } from '@alusa/lib/notifications/retention';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
@@ -23,19 +23,23 @@ function clamp(value: string | null, fallback: number, max: number) {
  * operacional atual. O histórico de auditoria permanece preservado.
  */
 export async function POST(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('archive-low-value-notifications', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) return tenantScope.response;
+    startedAt = startJobRun('archive-low-value-notifications');
 
     const result = await archiveLowValueNotifications({
       contaId: tenantScope.contaId,
       olderThanDays: clamp(url.searchParams.get('olderThanDays'), 30, 3650),
       limit: clamp(url.searchParams.get('limit'), 500, 5000),
+    });
+    logJobResult('archive-low-value-notifications', startedAt, { archived: result.archived }, {
+      workStatus: result.archived > 0 ? 'worked' : 'empty',
     });
 
     return NextResponse.json({
@@ -44,7 +48,7 @@ export async function POST(req: Request) {
       cutoff: result.cutoff.toISOString(),
     });
   } catch (error) {
-    logJobFailure('archive-low-value-notifications', startedAt, error);
+    if (startedAt) logJobFailure('archive-low-value-notifications', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível arquivar as notificações antigas.');
   }
 }

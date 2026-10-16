@@ -5,7 +5,6 @@ const prismaMock = {
     upsert: vi.fn(),
     findMany: vi.fn(),
     updateMany: vi.fn(),
-    update: vi.fn(),
   },
 };
 
@@ -30,7 +29,6 @@ describe('asaas-notification-preference-outbox.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     prismaMock.asaasNotificationPreferenceOutbox.upsert.mockResolvedValue({});
-    prismaMock.asaasNotificationPreferenceOutbox.update.mockResolvedValue({});
     prismaMock.asaasNotificationPreferenceOutbox.updateMany.mockResolvedValue({ count: 1 });
   });
 
@@ -82,15 +80,15 @@ describe('asaas-notification-preference-outbox.service', () => {
 
     expect(prismaMock.asaasNotificationPreferenceOutbox.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'outbox-1', status: 'PENDING' },
-        data: expect.objectContaining({ status: 'PROCESSING' }),
+        where: expect.objectContaining({ id: 'outbox-1', status: 'PENDING' }),
+        data: expect.objectContaining({ status: 'PROCESSING', claimToken: expect.any(String) }),
       }),
     );
     expect(applyAsaasNotificationPreferencesToCustomer).toHaveBeenCalledWith('conta-1', 'cus_1');
-    expect(prismaMock.asaasNotificationPreferenceOutbox.update).toHaveBeenCalledWith(
+    expect(prismaMock.asaasNotificationPreferenceOutbox.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'outbox-1' },
-        data: expect.objectContaining({ status: 'DONE', lastError: null }),
+        where: expect.objectContaining({ id: 'outbox-1', contaId: 'conta-1', status: 'PROCESSING', claimToken: expect.any(String) }),
+        data: expect.objectContaining({ status: 'DONE', claimToken: null, lastError: null }),
       }),
     );
     expect(result).toMatchObject({ processed: 1, updated: 1, failed: 0 });
@@ -110,11 +108,12 @@ describe('asaas-notification-preference-outbox.service', () => {
 
     const result = await processAsaasNotificationPreferenceOutbox({ limit: 10 });
 
-    expect(prismaMock.asaasNotificationPreferenceOutbox.update).toHaveBeenCalledWith(
+    expect(prismaMock.asaasNotificationPreferenceOutbox.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'outbox-2' },
+        where: expect.objectContaining({ id: 'outbox-2', status: 'PROCESSING', claimToken: expect.any(String) }),
         data: expect.objectContaining({
           status: 'FAILED',
+          claimToken: null,
           lastError: 'asaas down',
           nextAttemptAt: expect.any(Date),
         }),
@@ -124,5 +123,161 @@ describe('asaas-notification-preference-outbox.service', () => {
     expect(result.errors[0]).toEqual(
       expect.objectContaining({ id: 'outbox-2', asaasCustomerId: 'cus_2' }),
     );
+  });
+
+  it('persists a tenant-scoped retry, recovers it when due, and suppresses DONE duplicates', async () => {
+    const startedAt = new Date('2026-10-16T12:00:00.000Z');
+    const rows = new Map([
+      ['outbox-a', {
+        id: 'outbox-a', contaId: 'conta-a', asaasCustomerId: 'cus-a',
+        status: 'FAILED', attempts: 1, nextAttemptAt: startedAt, processingAt: null, claimToken: null,
+      }],
+      ['outbox-b', {
+        id: 'outbox-b', contaId: 'conta-b', asaasCustomerId: 'cus-b',
+        status: 'FAILED', attempts: 4, nextAttemptAt: startedAt, processingAt: null, claimToken: null,
+      }],
+    ]);
+    const eligibleRows = (contaId: string | undefined, now: Date) => [...rows.values()]
+      .filter((row) => (!contaId || row.contaId === contaId)
+        && (row.status === 'PENDING' || row.status === 'FAILED')
+        && row.nextAttemptAt <= now);
+    const expectedQueueQuery = (now: Date) => expect.objectContaining({
+      where: {
+        contaId: 'conta-a',
+        OR: [
+          {
+            status: { in: ['PENDING', 'FAILED'] },
+            nextAttemptAt: { lte: now },
+          },
+          {
+            status: 'PROCESSING',
+            processingAt: { lt: new Date(now.getTime() - 15 * 60_000) },
+          },
+        ],
+      },
+    });
+
+    vi.useFakeTimers();
+    vi.setSystemTime(startedAt);
+    prismaMock.asaasNotificationPreferenceOutbox.findMany.mockImplementation(async ({ where }) =>
+      eligibleRows(where.contaId, new Date()),
+    );
+    prismaMock.asaasNotificationPreferenceOutbox.updateMany.mockImplementation(async ({ where, data }) => {
+      const row = rows.get(where.id);
+      if (!row || row.status !== where.status
+        || (where.processingAt !== undefined && row.processingAt !== where.processingAt)
+        || (where.claimToken !== undefined && row.claimToken !== where.claimToken)) return { count: 0 };
+      const nextRow = { ...row, ...data };
+      if (data.attempts && typeof data.attempts === 'object' && 'increment' in data.attempts) {
+        nextRow.attempts = row.attempts + data.attempts.increment;
+      }
+      rows.set(row.id, nextRow);
+      return { count: 1 };
+    });
+    vi.mocked(applyAsaasNotificationPreferencesToCustomer)
+      .mockRejectedValueOnce(new Error('temporary Asaas outage'))
+      .mockResolvedValueOnce({ updated: true, total: 2 });
+
+    try {
+      const firstAttempt = await processAsaasNotificationPreferenceOutbox({ contaId: 'conta-a' });
+      const expectedRetryAt = new Date(startedAt.getTime() + 4 * 60_000);
+
+      expect(firstAttempt).toMatchObject({ scanned: 1, failed: 1, processed: 0 });
+      expect(rows.get('outbox-a')).toMatchObject({
+        status: 'FAILED', attempts: 2, claimToken: null, lastError: 'temporary Asaas outage', nextAttemptAt: expectedRetryAt,
+      });
+      expect(rows.get('outbox-b')).toMatchObject({ status: 'FAILED', attempts: 4, nextAttemptAt: startedAt });
+      expect(prismaMock.asaasNotificationPreferenceOutbox.findMany).toHaveBeenNthCalledWith(
+        1, expectedQueueQuery(startedAt),
+      );
+      expect(applyAsaasNotificationPreferencesToCustomer).toHaveBeenCalledTimes(1);
+      expect(applyAsaasNotificationPreferencesToCustomer).toHaveBeenCalledWith('conta-a', 'cus-a');
+
+      const beforeDue = await processAsaasNotificationPreferenceOutbox({ contaId: 'conta-a' });
+      expect(beforeDue).toMatchObject({ scanned: 0, processed: 0, failed: 0 });
+      expect(prismaMock.asaasNotificationPreferenceOutbox.findMany).toHaveBeenNthCalledWith(
+        2, expectedQueueQuery(startedAt),
+      );
+      expect(applyAsaasNotificationPreferencesToCustomer).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(4 * 60_000 + 1);
+      const recoveryTime = new Date(startedAt.getTime() + 4 * 60_000 + 1);
+      const recovered = await processAsaasNotificationPreferenceOutbox({ contaId: 'conta-a' });
+
+      expect(recovered).toMatchObject({ scanned: 1, processed: 1, failed: 0, updated: 1 });
+      expect(prismaMock.asaasNotificationPreferenceOutbox.findMany).toHaveBeenNthCalledWith(
+        3, expectedQueueQuery(recoveryTime),
+      );
+      expect(rows.get('outbox-a')).toMatchObject({ status: 'DONE', attempts: 3, claimToken: null, lastError: null });
+      expect(rows.get('outbox-b')).toMatchObject({ status: 'FAILED', attempts: 4 });
+      expect(applyAsaasNotificationPreferencesToCustomer).toHaveBeenNthCalledWith(2, 'conta-a', 'cus-a');
+
+      const afterDone = await processAsaasNotificationPreferenceOutbox({ contaId: 'conta-a' });
+      expect(afterDone).toMatchObject({ scanned: 0, processed: 0, failed: 0 });
+      expect(prismaMock.asaasNotificationPreferenceOutbox.findMany).toHaveBeenNthCalledWith(
+        4, expectedQueueQuery(recoveryTime),
+      );
+      expect(rows.get('outbox-a')).toMatchObject({ status: 'DONE', attempts: 3 });
+      expect(rows.get('outbox-b')).toMatchObject({ status: 'FAILED', attempts: 4 });
+      expect(applyAsaasNotificationPreferencesToCustomer).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('não finaliza a operação se outro worker substituiu o fencing token', async () => {
+    prismaMock.asaasNotificationPreferenceOutbox.findMany.mockResolvedValue([{
+      id: 'outbox-stale',
+      contaId: 'conta-a',
+      asaasCustomerId: 'cus-a',
+      status: 'PENDING',
+      attempts: 0,
+      processingAt: null,
+      claimToken: null,
+    }]);
+    prismaMock.asaasNotificationPreferenceOutbox.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    vi.mocked(applyAsaasNotificationPreferencesToCustomer).mockResolvedValue({ updated: true, total: 1 });
+
+    const result = await processAsaasNotificationPreferenceOutbox({ contaId: 'conta-a' });
+
+    expect(result).toMatchObject({ scanned: 1, processed: 0, failed: 0, exhausted: 0 });
+    expect(prismaMock.asaasNotificationPreferenceOutbox.updateMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'PROCESSING', claimToken: expect.any(String) }),
+        data: expect.objectContaining({ status: 'DONE', claimToken: null }),
+      }),
+    );
+  });
+
+  it('move registros que atingiram o limite para EXHAUSTED sem nova chamada externa', async () => {
+    prismaMock.asaasNotificationPreferenceOutbox.findMany.mockResolvedValue([{
+      id: 'outbox-exhausted',
+      contaId: 'conta-a',
+      asaasCustomerId: 'cus-a',
+      status: 'FAILED',
+      attempts: 8,
+      processingAt: null,
+      claimToken: null,
+    }]);
+
+    const result = await processAsaasNotificationPreferenceOutbox({ contaId: 'conta-a' });
+
+    expect(result).toMatchObject({ scanned: 1, failed: 0, exhausted: 1 });
+    expect(prismaMock.asaasNotificationPreferenceOutbox.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'outbox-exhausted',
+          contaId: 'conta-a',
+          status: 'FAILED',
+          processingAt: null,
+          claimToken: null,
+        }),
+        data: { status: 'EXHAUSTED', processingAt: null, claimToken: null },
+      }),
+    );
+    expect(applyAsaasNotificationPreferencesToCustomer).not.toHaveBeenCalled();
   });
 });

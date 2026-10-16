@@ -100,7 +100,10 @@ export async function releaseWebhookJobLock(params: {
       workerId: params.workerId,
     },
     data: {
-      lockedUntil: now,
+      // Acquisition uses the strict predicate lockedUntil < lockedAt. Writing
+      // the exact release instant can remain unavailable at DB timestamp
+      // precision; a past lease makes release immediately observable.
+      lockedUntil: new Date(0),
       lastHeartbeatAt: now,
     },
   });

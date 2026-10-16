@@ -1,4 +1,4 @@
-import { logJobFailure } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { processPendingInboxNotifications } from '@alusa/lib/notifications/pending-inbox-notifications';
@@ -16,16 +16,17 @@ function jsonError(status: number, code: string, message: string) {
  * Reprocessa notificações internas enfileiradas (ex.: webhook antes da entidade local).
  */
 async function runProcessPendingInboxNotifications(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('process-pending-inbox-notifications', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) {
       return tenantScope.response;
     }
+    startedAt = startJobRun('process-pending-inbox-notifications');
 
     const limitRaw = Number(url.searchParams.get('limit') ?? '50');
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, limitRaw)) : 50;
@@ -34,6 +35,14 @@ async function runProcessPendingInboxNotifications(req: Request) {
       contaId: tenantScope.contaId ?? undefined,
       limit,
     });
+    logJobResult('process-pending-inbox-notifications', startedAt, {
+      attempted: result.attempted,
+      processed: result.processed,
+      failed: result.failed,
+    }, {
+      partialFailure: result.failed > 0,
+      workStatus: result.attempted > 0 ? 'worked' : result.failed > 0 ? 'unknown' : 'empty',
+    });
 
     return NextResponse.json({
       success: result.failed === 0,
@@ -41,7 +50,7 @@ async function runProcessPendingInboxNotifications(req: Request) {
       ...result,
     });
   } catch (error) {
-    logJobFailure('process-pending-inbox-notifications', startedAt, error);
+    if (startedAt) logJobFailure('process-pending-inbox-notifications', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível processar a fila de notificações.');
   }
 }

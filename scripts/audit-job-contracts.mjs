@@ -1,6 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { URL } from 'node:url';
+import {
+  validateTerminalContext,
+  validateGlobalCronAuth,
+  validateWorkStatusCompletion,
+} from './job-contract-terminal-context.mjs';
 
 const root = process.cwd();
 const failures = [];
@@ -47,7 +52,18 @@ for (const entry of entries) {
   const source = fs.readFileSync(file, 'utf8');
   if (!source.includes("dynamic = 'force-dynamic'")) failures.push(`${entry.route} não declara force-dynamic.`);
   if (!/maxDuration\s*=/.test(source)) failures.push(`${entry.route} não declara maxDuration.`);
-  if (!source.includes('resolveTenantScope')) failures.push(`${entry.route} não resolve escopo de tenant.`);
+  if (!source.includes('logJobResult(')) failures.push(`${entry.route} não registra conclusão do job.`);
+  if (!source.includes('startJobRun(')) failures.push(`${entry.route} não registra início/correlação da execução.`);
+  failures.push(...validateWorkStatusCompletion(source, entry.route));
+  failures.push(...validateTerminalContext(source, entry.route));
+  const scope = entry.scope ?? 'tenant';
+  if (!['tenant', 'global'].includes(scope)) {
+    failures.push(`${entry.id} possui scope inválido: ${scope}. Use tenant ou global.`);
+  } else if (scope === 'global') {
+    failures.push(...validateGlobalCronAuth(source, entry.route));
+  } else if (!source.includes('resolveTenantScope')) {
+    failures.push(`${entry.route} não resolve escopo de tenant.`);
+  }
 }
 
 const cronKeys = crons.map((cron) => {
@@ -74,5 +90,5 @@ if (failures.length > 0) {
   for (const failure of failures) console.error(`- ${failure}`);
   process.exitCode = 1;
 } else {
-  console.log('[job-contracts] OK: cron, ownership, tenant scope, runtime e exclusão mútua alinhados.');
+  console.log('[job-contracts] OK: cron, ownership, início/conclusão, auth/scope, runtime e exclusão mútua alinhados.');
 }

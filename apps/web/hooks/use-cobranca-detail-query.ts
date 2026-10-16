@@ -39,7 +39,7 @@ async function syncPendingChargeIfNeeded(
   if (!shouldConvergePendingCharge(data)) return false;
 
   const throttleMs = burstActive ? SYNC_BURST_THROTTLE_MS : SYNC_THROTTLE_MS;
-  return requestCobrancaAsaasSync(id, { throttleMs });
+  return requestCobrancaAsaasSync(id, { throttleMs, source: 'automatic_fallback' });
 }
 
 async function fetchCobrancaDetail(

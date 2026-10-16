@@ -5,7 +5,7 @@ import {
   reconcileFinanceWebhooksJob,
   syncPaymentStateFromAsaas,
 } from '@alusa/finance';
-import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -36,16 +36,17 @@ function jsonError(status: number, code: string, message: string) {
  * - includeGaps (opcional): se true inclui detecção de gaps local (default true no cron)
  */
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('reconcile-finance-webhooks', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) {
       return tenantScope.response;
     }
+    startedAt = startJobRun('reconcile-finance-webhooks');
 
     const contaId = tenantScope.contaId;
     const asaasPaymentId = url.searchParams.get('asaasPaymentId')?.trim();
@@ -65,7 +66,10 @@ async function run(req: Request) {
         return jsonError(422, 'PAGAMENTO_NAO_RECONCILIADO', result.error);
       }
 
-      logJobResult('reconcile-finance-webhooks', startedAt, result, { targetedPayment: true });
+      logJobResult('reconcile-finance-webhooks', startedAt, result, {
+        targetedPayment: true,
+        workStatus: 'worked',
+      });
 
       return NextResponse.json({
         success: true,
@@ -121,9 +125,12 @@ async function run(req: Request) {
       );
 
       const accountResult = job.results[0];
+      const reconcile = accountResult?.reconcile;
+      const checked = (reconcile?.checkedPayments ?? 0) + (reconcile?.checkedSubscriptions ?? 0) + (reconcile?.checkedInstallments ?? 0);
       logJobResult('reconcile-finance-webhooks', startedAt, job, {
         targetedAccount: true,
         partial: job.outcome === 'partial',
+        workStatus: job.skippedDueToLock || job.outcome !== 'completed' ? 'unknown' : checked > 0 ? 'worked' : 'empty',
       });
       return NextResponse.json({
         success: job.outcome === 'completed',
@@ -139,9 +146,11 @@ async function run(req: Request) {
       () => reconcileFinanceWebhooksJob({ ...commonJobOptions, maxAccounts }),
     );
 
+    const checked = job.results.reduce((total, item) => total + (item.reconcile?.checkedPayments ?? 0) + (item.reconcile?.checkedSubscriptions ?? 0) + (item.reconcile?.checkedInstallments ?? 0), 0);
     logJobResult('reconcile-finance-webhooks', startedAt, job, {
       targetedAccount: false,
       partial: job.outcome === 'partial',
+      workStatus: job.skippedDueToLock || job.outcome !== 'completed' ? 'unknown' : checked > 0 ? 'worked' : 'empty',
     });
 
     return NextResponse.json({
@@ -150,7 +159,7 @@ async function run(req: Request) {
       job,
     }, { status: job.outcome === 'failed' ? 502 : job.outcome === 'partial' ? 207 : 200 });
   } catch (error) {
-    logJobFailure('reconcile-finance-webhooks', startedAt, error);
+    if (startedAt) logJobFailure('reconcile-finance-webhooks', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível concluir a reconciliação financeira.');
   }
 }

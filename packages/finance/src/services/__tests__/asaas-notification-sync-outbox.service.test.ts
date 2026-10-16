@@ -120,7 +120,13 @@ describe('asaas-notification-sync-outbox.service', () => {
     expect(prismaMock.asaasNotificationSyncOutbox.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ id: 'outbox-1', contaId: 'conta-1' }),
-        data: expect.objectContaining({ status: 'DONE' }),
+        data: expect.objectContaining({ status: 'PROCESSING', claimToken: expect.any(String) }),
+      }),
+    );
+    expect(prismaMock.asaasNotificationSyncOutbox.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 'outbox-1', contaId: 'conta-1', status: 'PROCESSING', claimToken: expect.any(String) }),
+        data: expect.objectContaining({ status: 'DONE', claimToken: null }),
       }),
     );
     expect(auditRecordMock.mock.calls.map(([call]) => call.action)).toEqual([
@@ -186,5 +192,104 @@ describe('asaas-notification-sync-outbox.service', () => {
       }),
     );
     expect(exhaustedResult).toMatchObject({ failed: 1, exhausted: 1 });
+  });
+
+  it('não finaliza nem reporta sucesso após perder o fencing token', async () => {
+    prismaMock.asaasNotificationSyncOutbox.findMany.mockResolvedValue([{
+      id: 'outbox-stale',
+      contaId: 'conta-a',
+      asaasCustomerId: 'cus-a',
+      status: 'PENDING',
+      attempts: 0,
+      maxAttempts: 8,
+      processingAt: null,
+      claimToken: null,
+      requestedChannels: ['EMAIL'],
+    }]);
+    prismaMock.asaasNotificationSyncOutbox.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+
+    const result = await processAsaasNotificationSyncOutbox({ contaId: 'conta-a' });
+
+    expect(result).toMatchObject({ scanned: 1, processed: 0, failed: 0, exhausted: 0 });
+    expect(prismaMock.asaasNotificationSyncOutbox.updateMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'PROCESSING', claimToken: expect.any(String) }),
+        data: expect.objectContaining({ status: 'DONE', claimToken: null }),
+      }),
+    );
+  });
+
+  it('recupera e marca EXHAUSTED um registro PROCESSING vencido no limite', async () => {
+    const staleAt = new Date(Date.now() - 30 * 60_000);
+    prismaMock.asaasNotificationSyncOutbox.findMany.mockResolvedValue([{
+      id: 'outbox-stale-exhausted',
+      contaId: 'conta-a',
+      asaasCustomerId: 'cus-a',
+      status: 'PROCESSING',
+      attempts: 3,
+      maxAttempts: 3,
+      processingAt: staleAt,
+      claimToken: 'expired-claim',
+      requestedChannels: ['EMAIL'],
+    }]);
+
+    const result = await processAsaasNotificationSyncOutbox({ contaId: 'conta-a' });
+
+    expect(result).toMatchObject({ scanned: 1, processed: 0, failed: 0, exhausted: 1 });
+    expect(prismaMock.asaasNotificationSyncOutbox.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'outbox-stale-exhausted',
+          contaId: 'conta-a',
+          status: 'PROCESSING',
+          attempts: { gte: 3 },
+          processingAt: staleAt,
+          claimToken: 'expired-claim',
+        }),
+        data: { status: 'EXHAUSTED', processingAt: null, claimToken: null },
+      }),
+    );
+    expect(auditRecordMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'finance.notification_sync.exhausted',
+      entity: { type: 'AsaasNotification', id: 'cus-a' },
+      metadata: expect.objectContaining({ status: 'EXHAUSTED', outboxId: 'outbox-stale-exhausted' }),
+    }));
+    expect(ensureCustomerNotificationsEnabledMock).not.toHaveBeenCalled();
+  });
+
+  it('aplica o limite do caller a PROCESSING stale mesmo quando a linha persiste um limite maior', async () => {
+    const staleAt = new Date(Date.now() - 30 * 60_000);
+    prismaMock.asaasNotificationSyncOutbox.findMany.mockResolvedValue([{
+      id: 'outbox-stale-caller-cap',
+      contaId: 'conta-a',
+      asaasCustomerId: 'cus-a',
+      status: 'PROCESSING',
+      attempts: 2,
+      maxAttempts: 8,
+      processingAt: staleAt,
+      claimToken: 'expired-claim',
+      requestedChannels: ['EMAIL'],
+    }]);
+
+    const result = await processAsaasNotificationSyncOutbox({ contaId: 'conta-a', maxAttempts: 2 });
+
+    expect(result).toMatchObject({ scanned: 1, processed: 0, failed: 0, exhausted: 1 });
+    expect(prismaMock.asaasNotificationSyncOutbox.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'outbox-stale-caller-cap',
+          contaId: 'conta-a',
+          status: 'PROCESSING',
+          attempts: { gte: 2 },
+          processingAt: staleAt,
+          claimToken: 'expired-claim',
+        }),
+        data: { status: 'EXHAUSTED', processingAt: null, claimToken: null },
+      }),
+    );
+    expect(ensureCustomerNotificationsEnabledMock).not.toHaveBeenCalled();
   });
 });

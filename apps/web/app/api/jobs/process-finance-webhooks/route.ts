@@ -8,7 +8,7 @@ import {
   runWebhookQueuePreflight,
 } from '@alusa/finance';
 import { apiJsonError } from '@/lib/api/standard-response';
-import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, logJobFailure, logJobResult, startJobRun } from '@/src/server/jobs/job-observability';
 import { ensureEventAsaasPaymentProviderRegistered } from '@/src/server/events/register-event-asaas-payment-provider';
 
 export const dynamic = 'force-dynamic';
@@ -31,16 +31,17 @@ function jsonError(status: number, code: string, message: string) {
  * - skipPreflight (opcional): se "true", pula stuck recovery e marcação DLQ.
  */
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('process-finance-webhooks', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) {
       return tenantScope.response;
     }
+    startedAt = startJobRun('process-finance-webhooks');
 
     const contaId = tenantScope.contaId;
     ensureEventAsaasPaymentProviderRegistered();
@@ -89,15 +90,33 @@ async function run(req: Request) {
       processed,
       sideEffects,
     };
-    logJobResult('process-finance-webhooks', startedAt, {
+    const counts = {
       processed: processed.processed,
       failed: processed.failed,
+      skipped: processed.skipped,
+      recovered: preflight?.stuck.recovered ?? 0,
+      marked: preflight?.exhausted.marked ?? 0,
       sideEffectsProcessed: sideEffects.processed,
       sideEffectsFailed: sideEffects.failed,
-    }, { hasTenantScope: Boolean(contaId) });
+    };
+    const partialFailure = processed.failed > 0 || sideEffects.failed > 0;
+    // A zero result cannot prove an empty run: the side-effect drain promotes
+    // exhausted legacy rows, but this route's service wrapper does not expose
+    // that operation's marked count. Keep the classification unknown until
+    // every state-changing stage has observable completion counts.
+    const workStatus = Object.entries(counts).some(
+      ([field, count]) => field !== 'skipped' && count > 0,
+    )
+      ? 'worked'
+      : 'unknown';
+    logJobResult('process-finance-webhooks', startedAt, counts, {
+      hasTenantScope: Boolean(contaId),
+      partialFailure,
+      workStatus,
+    });
     return NextResponse.json(response);
   } catch (error) {
-    logJobFailure('process-finance-webhooks', startedAt, error);
+    if (startedAt) logJobFailure('process-finance-webhooks', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível processar os webhooks financeiros.');
   }
 }

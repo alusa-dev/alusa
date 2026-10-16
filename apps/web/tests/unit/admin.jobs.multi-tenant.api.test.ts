@@ -109,6 +109,12 @@ describe('admin jobs multi-tenant isolation', () => {
       driftsFound: 0,
       driftsRepaired: 0,
       errors: [],
+      health: {
+        checkedAccounts: 1,
+        recoveredSuccessfully: 0,
+        errors: 0,
+        recoveryFailed: 0,
+      },
     } as never);
     vi.mocked(archiveProcessedWebhooks).mockResolvedValue({ archived: 1 } as never);
     vi.mocked(syncPaymentStateFromAsaas).mockResolvedValue({ success: true, paymentStatus: 'CONFIRMED', appliedEvent: 'PAYMENT_CONFIRMED' } as never);
