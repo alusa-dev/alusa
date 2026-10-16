@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { shouldRefetchQueryOnWindowFocus } from '@/lib/query/query-error-policy';
 
 import { EventCostumesPanel } from './costumes/EventCostumesPanel';
 import { EventDangerZone } from './detail/EventDangerZone';
@@ -24,7 +25,7 @@ export function EventDetailFeature({ eventId }: { eventId: string }) {
     staleTime: 0,
     gcTime: 0,
     refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: (query) => shouldRefetchQueryOnWindowFocus(query.state.error),
   });
   const participantsQuery = useQuery({
     queryKey: ['events', 'participants', eventId],

@@ -22,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { toast } from '@/components/ui/toast';
+import { shouldContinueQueryPolling, shouldRefetchQueryOnWindowFocus } from '@/lib/query/query-error-policy';
 
 import type { SchoolEventDTO } from '../../events-service';
 import { EventSoftBadge } from '../../shared/EventSoftBadge';
@@ -144,8 +145,8 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
       if (statusFilter !== 'ALL') query.set('status', statusFilter);
       return parseResponse<OrdersResponse>(await fetch(`/api/events/${event.id}/public-orders?${query}`));
     },
-    refetchInterval: 15_000,
-    refetchOnWindowFocus: true,
+    refetchInterval: (query) => shouldContinueQueryPolling(query.state.error) ? 15_000 : false,
+    refetchOnWindowFocus: (query) => shouldRefetchQueryOnWindowFocus(query.state.error),
   });
 
   const verifyMutation = useMutation({

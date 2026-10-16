@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { StatusCobranca } from '@prisma/client';
 
 import { requestCobrancaAsaasSync } from '@/lib/finance/charge-sync-client';
+import { shouldContinueQueryPolling, shouldRefetchQueryOnWindowFocus } from '@/lib/query/query-error-policy';
 
 const TERMINAL_STATUSES = new Set<StatusCobranca>([
   'PAGO',
@@ -104,10 +105,12 @@ export function useCobrancaDetailQuery(id: string, options?: { awaitingWebhookBu
           void queryClient.invalidateQueries({ queryKey: ['cobranca', id] });
         },
       }),
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: (query) => shouldRefetchQueryOnWindowFocus(query.state.error),
     staleTime: 5_000,
     refetchInterval: (query) =>
-      resolveRefetchInterval(query.state.data?.status as StatusCobranca | undefined, burstActive),
+      shouldContinueQueryPolling(query.state.error)
+        ? resolveRefetchInterval(query.state.data?.status as StatusCobranca | undefined, burstActive)
+        : false,
   });
 }
 
