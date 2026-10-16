@@ -462,6 +462,38 @@ describe('getEventReportDetail', () => {
     expect(report?.categories).toContainEqual({ category: 'Cobranças de figurinos', type: 'REVENUE', expected: 25, realized: 0 });
   });
 
+  it('excludes fully refunded linked costume charges from expected and received revenue', async () => {
+    db.eventFinancialEntry.groupBy.mockResolvedValue([]);
+    db.eventCostumeAssignment.findMany.mockResolvedValue([
+      { revenueEntryId: 'assignment-entry-refunded', status: 'DELIVERED', billingMode: 'SEPARATE_CHARGE', chargedValue: 40, isPaid: true },
+    ]);
+    db.eventFinancialEntry.findMany.mockResolvedValue([
+      { id: 'assignment-entry-refunded', status: 'REFUNDED', actualAmount: 40, refundedAmount: 0 },
+    ]);
+
+    const report = await getEventReportDetail('tenant-a', 'event-a');
+
+    expect(report?.totals.otherRevenueExpected).toBe(0);
+    expect(report?.totals.otherRevenueReceived).toBe(0);
+    expect(report?.totals.otherRevenueRefunded).toBe(40);
+    expect(report?.categories).not.toContainEqual(expect.objectContaining({ category: 'Cobranças de figurinos', type: 'REVENUE' }));
+    const assignmentEntryQuery = db.eventFinancialEntry.findMany.mock.calls.find(([args]) => args.where.id?.in?.includes('assignment-entry-refunded'));
+    expect(assignmentEntryQuery?.[0].select).toMatchObject({ status: true, actualAmount: true, refundedAmount: true });
+  });
+
+  it('infers integral refunds for generic revenue groups with missing refund totals', async () => {
+    db.eventFinancialEntry.groupBy.mockResolvedValue([
+      { type: 'REVENUE', status: 'REFUNDED', category: 'Serviço', originType: 'MANUAL', _sum: { expectedAmount: 50, actualAmount: 50, refundedAmount: 0, netAmount: 50 } },
+    ]);
+
+    const report = await getEventReportDetail('tenant-a', 'event-a');
+
+    expect(report?.totals.otherRevenueExpected).toBe(0);
+    expect(report?.totals.otherRevenueReceived).toBe(0);
+    expect(report?.totals.otherRevenueRefunded).toBe(50);
+    expect(report?.categories).toContainEqual({ category: 'Serviço', type: 'REVENUE', expected: 0, realized: 0 });
+  });
+
   it('keeps legacy expected costume costs when linked entries are pending or cancelled', async () => {
     db.eventFinancialEntry.groupBy.mockResolvedValue([]);
     db.eventCostume.findMany.mockResolvedValue([

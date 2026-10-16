@@ -604,6 +604,11 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
       ingressosPagos += sale.quantity;
     }
 
+    if (sale.status === 'REFUNDED') {
+      receitaRecebidaBruta += total;
+      receitaEstornada += Math.max(money(sale.refundedAmount), total);
+    }
+
     if (sale.status === 'COMPLIMENTARY') {
       cortesias += sale.quantity;
       ingressosVendidos += sale.quantity;
@@ -648,6 +653,10 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
           receitaRealizada += getEventNetRealizedAmount(actual, refunded);
         }
       }
+      if (entry.status === 'REFUNDED' && entry.actualAmount != null) {
+        receitaRecebidaBruta += actual;
+        receitaEstornada += Math.max(refunded, actual);
+      }
     }
 
     if (entry.type === 'COST') {
@@ -682,16 +691,24 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     if (assignment.billingMode !== 'SEPARATE_CHARGE') continue;
     const value = money(assignment.chargedValue);
     if (value > 0) {
-      receitaPrevista += value;
-      receitaBrutaPrevista += value;
       const entry = assignment.revenueEntryId ? financialEntryById.get(assignment.revenueEntryId) : undefined;
+      const fullyRefunded = entry?.status === 'REFUNDED';
+      if (!fullyRefunded) {
+        receitaPrevista += value;
+        receitaBrutaPrevista += value;
+      }
       if (entry) {
         const actual = money(entry.actualAmount);
-        const refunded = money(entry.refundedAmount);
+        const refunded = fullyRefunded
+          ? Math.max(money(entry.refundedAmount), actual, value)
+          : money(entry.refundedAmount);
         if (actual > 0) {
-          receitaRecebidaBruta += actual;
+          receitaRecebidaBruta += fullyRefunded ? Math.max(actual, value) : actual;
           receitaEstornada += refunded;
-          receitaRealizada += getEventNetRealizedAmount(actual, refunded);
+          if (!fullyRefunded) receitaRealizada += getEventNetRealizedAmount(actual, refunded);
+        } else if (fullyRefunded) {
+          receitaRecebidaBruta += value;
+          receitaEstornada += refunded;
         }
       } else if (assignment.isPaid) {
         // Legacy paid assignments may predate the individual payment ledger.

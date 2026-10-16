@@ -151,7 +151,7 @@ export async function getEventReportDetail(
   const assignmentEntries = assignmentEntryIds.length
     ? await db.eventFinancialEntry.findMany({
       where: { contaId, eventId, id: { in: assignmentEntryIds } },
-      select: { id: true, actualAmount: true, refundedAmount: true },
+      select: { id: true, status: true, actualAmount: true, refundedAmount: true },
     })
     : [];
   const studentEntryById = new Map(studentEntries.map((entry) => [entry.id, entry]));
@@ -372,13 +372,18 @@ export async function getEventReportDetail(
     if (assignment.status === 'CANCELLED' || assignment.billingMode !== 'SEPARATE_CHARGE') return amounts;
     const value = number(assignment.chargedValue);
     if (value <= 0) return amounts;
-    amounts.expected += value;
     const entry = assignment.revenueEntryId ? assignmentEntryById.get(assignment.revenueEntryId) : undefined;
+    const fullyRefunded = entry?.status === 'REFUNDED';
+    if (!fullyRefunded) amounts.expected += value;
     if (entry) {
       const actual = number(entry.actualAmount);
-      const refunded = number(entry.refundedAmount);
+      const refunded = fullyRefunded
+        ? Math.max(number(entry.refundedAmount), actual, value)
+        : number(entry.refundedAmount);
       if (actual > 0) {
-        amounts.received += getEventNetRealizedAmount(actual, refunded);
+        if (!fullyRefunded) amounts.received += getEventNetRealizedAmount(actual, refunded);
+        amounts.refunded += refunded;
+      } else if (fullyRefunded) {
         amounts.refunded += refunded;
       }
     } else if (assignment.isPaid) {
@@ -402,7 +407,9 @@ export async function getEventReportDetail(
     + legacyAssignmentRevenue.expected;
   const receivedOtherRevenue = expectedRevenueEntries.reduce((sum, entry) => sum + realizedRevenueFor(entry), 0)
     + legacyAssignmentRevenue.received;
-  const refundedOtherRevenue = otherRevenueEntries.reduce((sum, entry) => sum + number(entry._sum.refundedAmount), 0) + legacyAssignmentRevenue.refunded;
+  const refundedOtherRevenue = otherRevenueEntries.reduce((sum, entry) => sum + (entry.status === 'REFUNDED'
+    ? Math.max(number(entry._sum.refundedAmount), number(entry._sum.actualAmount))
+    : number(entry._sum.refundedAmount)), 0) + legacyAssignmentRevenue.refunded;
   const ticketLots = lots.map((lot) => ({
     id: lot.id, name: lot.name, mapId: lot.eventMapId, mapName: mapById.get(lot.eventMapId ?? '')?.name ?? null,
     mapStartsAt: mapById.get(lot.eventMapId ?? '')?.startsAt?.toISOString() ?? null,

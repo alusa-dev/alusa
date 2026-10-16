@@ -13,6 +13,50 @@ import {
 } from './index';
 
 describe('events domain rules', () => {
+  it('excludes fully refunded separate-charge costume assignments from receivable and realization', () => {
+    const metrics = calculateEventMetrics({
+      costumeAssignments: [{ revenueEntryId: 'assignment-entry', status: 'DELIVERED', billingMode: 'SEPARATE_CHARGE', chargedValue: 40, isPaid: true }],
+      financialEntries: [{
+        id: 'assignment-entry', type: 'REVENUE', status: 'REFUNDED', expectedAmount: 40,
+        actualAmount: 40, refundedAmount: 0, originType: 'COSTUME_ASSIGNMENT',
+      }],
+    });
+
+    expect(metrics.receitaPrevista).toBe(0);
+    expect(metrics.receitaRealizada).toBe(0);
+    expect(metrics.receitaRecebidaBruta).toBe(40);
+    expect(metrics.receitaEstornada).toBe(40);
+    expect(metrics.saldoAReceber).toBe(0);
+  });
+
+  it('includes gross and refunded amounts for fully refunded ticket sales without treating them as open or paid', () => {
+    const metrics = calculateEventMetrics({
+      ticketSales: [{ status: 'REFUNDED', quantity: 1, totalAmount: 40, refundedAmount: 0 }],
+    });
+
+    expect(metrics.receitaPrevista).toBe(0);
+    expect(metrics.receitaRealizada).toBe(0);
+    expect(metrics.receitaRecebidaBruta).toBe(40);
+    expect(metrics.receitaEstornada).toBe(40);
+    expect(metrics.ingressosVendidos).toBe(0);
+    expect(metrics.saldoAReceber).toBe(0);
+  });
+
+  it('keeps fully refunded generic revenue out of forecast and net realization while retaining gross and refund history', () => {
+    const metrics = calculateEventMetrics({
+      financialEntries: [{
+        type: 'REVENUE', status: 'REFUNDED', expectedAmount: 50, actualAmount: 50,
+        refundedAmount: 0, originType: 'MANUAL', category: 'Serviço',
+      }],
+    });
+
+    expect(metrics.receitaPrevista).toBe(0);
+    expect(metrics.receitaRealizada).toBe(0);
+    expect(metrics.receitaRecebidaBruta).toBe(50);
+    expect(metrics.receitaEstornada).toBe(50);
+    expect(metrics.saldoAReceber).toBe(0);
+  });
+
   it('applies lot status and inclusive sale window boundaries', () => {
     const now = new Date('2026-10-15T12:00:00.000Z');
     expect(isEventTicketLotOpenForSale({ status: 'ACTIVE', saleStartsAt: new Date('2026-10-15T12:01:00.000Z') }, now)).toBe(false);
