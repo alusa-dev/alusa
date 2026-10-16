@@ -41,7 +41,7 @@
       "TENANT_FINANCE": 61,
       "WEBHOOK_TOKEN": 4
     },
-    "withoutNearbyTest": 484,
+    "withoutNearbyTest": 466,
     "withoutAuthEvidence": 0,
     "directPrisma": 1,
     "directAsaas": 0
@@ -5568,7 +5568,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -5668,7 +5668,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -5708,7 +5708,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -5868,7 +5868,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": true,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -5881,10 +5881,11 @@
       "tenantMode": "explicit-or-iterated",
       "authEvidence": true,
       "authEvidenceTokens": [
+        "resolveTenantScope",
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": true,
       "directAsaas": false
     },
@@ -5904,7 +5905,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -5944,7 +5945,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -6024,7 +6025,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -6084,7 +6085,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -6104,7 +6105,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -6164,7 +6165,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -6204,7 +6205,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": true,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -6224,7 +6225,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -6264,7 +6265,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -6364,7 +6365,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": true,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -6384,7 +6385,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -6404,7 +6405,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
@@ -6424,7 +6425,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": false,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
