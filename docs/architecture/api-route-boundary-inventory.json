@@ -41,7 +41,7 @@
       "TENANT_FINANCE": 61,
       "WEBHOOK_TOKEN": 4
     },
-    "withoutNearbyTest": 466,
+    "withoutNearbyTest": 465,
     "withoutAuthEvidence": 0,
     "directPrisma": 1,
     "directAsaas": 0
@@ -6185,7 +6185,7 @@
         "CRON_SECRET"
       ],
       "hasDTOValidation": true,
-      "hasNearbyTest": false,
+      "hasNearbyTest": true,
       "directPrisma": false,
       "directAsaas": false
     },
