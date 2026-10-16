@@ -137,6 +137,34 @@ describe('getEventReportDetail', () => {
     expect(db.eventTicketLot.findMany.mock.calls[0][0].select.status).toBe(true);
   });
 
+  it('excludes an unlinked legacy registration fee when participant obligations exist', async () => {
+    db.eventFinancialEntry.groupBy.mockResolvedValue([{
+      type: 'REVENUE', status: 'RECEIVED', category: '  TAXA DE INSCRIÇÃO  ', originType: 'MANUAL', originId: null,
+      _sum: { expectedAmount: 75, actualAmount: 75, refundedAmount: 0, netAmount: 75 },
+    }]);
+
+    const report = await getEventReportDetail('tenant-a', 'event-a');
+
+    expect(report?.totals.otherRevenueExpected).toBe(0);
+    expect(report?.totals.otherRevenueReceived).toBe(0);
+    expect(report?.categories).not.toContainEqual(expect.objectContaining({ category: '  TAXA DE INSCRIÇÃO  ' }));
+  });
+
+  it('keeps an unlinked legacy registration fee when there are no participant obligations', async () => {
+    db.eventParticipant.aggregate.mockResolvedValue({ _count: { _all: 0 }, _sum: {} });
+    db.eventParticipant.findMany.mockResolvedValue([]);
+    db.eventFinancialEntry.groupBy.mockResolvedValue([{
+      type: 'REVENUE', status: 'RECEIVED', category: 'Taxa de inscricao', originType: 'MANUAL', originId: null,
+      _sum: { expectedAmount: 75, actualAmount: 75, refundedAmount: 0, netAmount: 75 },
+    }]);
+
+    const report = await getEventReportDetail('tenant-a', 'event-a');
+
+    expect(report?.totals.otherRevenueExpected).toBe(75);
+    expect(report?.totals.otherRevenueReceived).toBe(75);
+    expect(report?.categories).toContainEqual({ category: 'Taxa de inscricao', type: 'REVENUE', expected: 75, realized: 75 });
+  });
+
   it('does not query event data when the selected id belongs to another tenant', async () => {
     db.schoolEvent.findFirst.mockResolvedValue(null);
     await expect(getEventReportDetail('tenant-a', 'event-from-tenant-b')).resolves.toBeNull();

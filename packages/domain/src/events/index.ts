@@ -313,7 +313,7 @@ function isAutomaticEventFinance(entry: EventMetricFinancialEntry): boolean {
     && (entry.originType === 'TICKET_SALE' || entry.originType === 'COSTUME_ASSIGNMENT' || entry.originType === 'COSTUME');
 }
 
-function isUnlinkedParticipantFeeEntry(entry: EventMetricFinancialEntry): boolean {
+export function isUnlinkedEventParticipantFeeEntry(entry: Pick<EventMetricFinancialEntry, 'type' | 'originType' | 'originId' | 'category'>): boolean {
   if (entry.type !== 'REVENUE' || entry.originType !== 'MANUAL' || entry.originId) return false;
 
   const normalizedCategory = (entry.category ?? '')
@@ -536,7 +536,7 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   // available. This prevents double counting without hiding unpaid students.
   const unresolvedUnlinkedRevenueEntries = participantObligations.length > 0
     ? financialEntries.filter((entry) =>
-      isUnlinkedParticipantFeeEntry(entry) && !linkedParticipantEntryIds.has(entry.id ?? ''),
+      isUnlinkedEventParticipantFeeEntry(entry) && !linkedParticipantEntryIds.has(entry.id ?? ''),
     )
     : [];
   const unresolvedUnlinkedRevenueEntryIds = new Set(

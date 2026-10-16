@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import {
   getEventNetRealizedAmount,
+  isUnlinkedEventParticipantFeeEntry,
   isEventCostExpectedStatus,
   isEventCostRealizedStatus,
   isEventRevenueExpectedStatus,
@@ -78,7 +79,7 @@ export async function getEventReportDetail(
       },
     }),
     db.eventFinancialEntry.groupBy({
-      by: ['type', 'status', 'category', 'originType'], where,
+      by: ['type', 'status', 'category', 'originType', 'originId'], where,
       _sum: { expectedAmount: true, actualAmount: true, refundedAmount: true, netAmount: true },
     }),
     db.eventFinancialPayment.groupBy({ by: ['paymentMethod', 'status'], where: { ...where, financialEntry: { type: 'REVENUE', originType: { not: 'TICKET_SALE' } } }, _sum: { netAmount: true, amount: true, refundedAmount: true } }),
@@ -247,7 +248,31 @@ export async function getEventReportDetail(
     .map(([id, value]) => ({ id, ...value, share: totalPaidTicketQuantity > 0 ? value.quantity / totalPaidTicketQuantity : 0 }))
     .sort((a, b) => b.quantity - a.quantity || a.sectorName.localeCompare(b.sectorName, 'pt-BR'));
 
-  const relevantEntries = entries.filter((entry) => !['TICKET_SALE', 'EVENT_REGISTRATION'].includes(entry.originType));
+  const hasParticipantObligations = activeParticipants._count._all > 0;
+  const relevantEntryGroups = entries.filter((entry) =>
+    !['TICKET_SALE', 'EVENT_REGISTRATION'].includes(entry.originType)
+    && !(hasParticipantObligations && isUnlinkedEventParticipantFeeEntry({
+      type: entry.type,
+      originType: entry.originType,
+      originId: entry.originId,
+      category: entry.category,
+    })),
+  );
+  // Keep the report's prior status/category grouping after filtering by originId.
+  const relevantEntryGroupsByCategory = new Map<string, (typeof relevantEntryGroups)[number]>();
+  for (const entry of relevantEntryGroups) {
+    const key = JSON.stringify([entry.type, entry.status, entry.category, entry.originType]);
+    const current = relevantEntryGroupsByCategory.get(key);
+    if (!current) {
+      relevantEntryGroupsByCategory.set(key, entry);
+      continue;
+    }
+    for (const field of ['expectedAmount', 'actualAmount', 'refundedAmount', 'netAmount'] as const) {
+      if (current._sum[field] == null && entry._sum[field] == null) continue;
+      current._sum[field] = new Prisma.Decimal(number(current._sum[field]) + number(entry._sum[field]));
+    }
+  }
+  const relevantEntries = [...relevantEntryGroupsByCategory.values()];
   const otherRevenueEntries = relevantEntries.filter((entry) => entry.type === 'REVENUE' && entry.originType !== 'COSTUME_ASSIGNMENT');
   const expectedRevenueEntries = otherRevenueEntries.filter((entry) => !['CANCELLED', 'REFUNDED'].includes(entry.status));
   const costEntries = relevantEntries.filter((entry) => entry.type === 'COST' && entry.originType !== 'COSTUME');
