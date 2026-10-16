@@ -5,7 +5,10 @@ const db = vi.hoisted(() => ({
   eventParticipant: { count: vi.fn(), aggregate: vi.fn(), findMany: vi.fn(), groupBy: vi.fn() },
   eventTicketSale: { findMany: vi.fn() },
   eventFinancialEntry: { groupBy: vi.fn(), findMany: vi.fn() },
-  eventFinancialPayment: { groupBy: vi.fn() },
+  eventFinancialPayment: { groupBy: vi.fn(), findMany: vi.fn() },
+  eventBillingGroup: { findMany: vi.fn() },
+  charge: { findMany: vi.fn() },
+  standaloneInstallmentPlan: { findMany: vi.fn() },
   eventCostume: { findMany: vi.fn() },
   eventCostumeAssignment: { findMany: vi.fn() },
   eventTicketLot: { findMany: vi.fn() },
@@ -82,6 +85,10 @@ describe('getEventReportDetail', () => {
     db.eventMap.findMany.mockResolvedValue([{ id: 'map-a', name: 'Sessão 1', startsAt: new Date('2026-10-01T12:00:00Z') }]);
     db.eventMapOrderItem.findMany.mockResolvedValue([]);
     db.eventTicket.count.mockResolvedValue(1);
+    db.eventFinancialPayment.findMany.mockResolvedValue([]);
+    db.eventBillingGroup.findMany.mockResolvedValue([]);
+    db.charge.findMany.mockResolvedValue([]);
+    db.standaloneInstallmentPlan.findMany.mockResolvedValue([]);
   });
 
   it('scopes every read to the authenticated tenant and returns only aggregates/projections', async () => {
@@ -135,6 +142,127 @@ describe('getEventReportDetail', () => {
     expect(db.eventFinancialPayment.groupBy.mock.calls[0][0].where.financialEntry).toEqual({ type: 'REVENUE', originType: { not: 'TICKET_SALE' } });
     expect(db.eventTicketSale.findMany).toHaveBeenCalledTimes(1);
     expect(db.eventTicketLot.findMany.mock.calls[0][0].select.status).toBe(true);
+  });
+
+  it('uses the grouped Asaas charge snapshot for participant receipts and paid status', async () => {
+    const decimal = (value: number) => ({ toNumber: () => value, valueOf: () => value });
+    db.eventParticipant.count.mockResolvedValue(1);
+    db.eventParticipant.aggregate.mockResolvedValue({ _count: { _all: 1 }, _sum: { registrationFeeOriginal: 100, registrationFeeDiscount: 0, registrationFeeCharged: 100, feePaidAmount: 20, feeRefundedAmount: 0 } });
+    db.eventParticipant.findMany.mockResolvedValue([{
+      id: 'participant-a', type: 'STUDENT', revenueEntryId: 'entry-a', registrationFeeCharged: decimal(100),
+      feePaidAmount: 20, isFeePaid: false, isFeeExempt: false, financialStatusSnapshot: 'PENDENTE',
+      asaasPaymentId: null, asaasInstallmentId: null, billingGroupId: 'group-a', balanceAmount: decimal(80),
+      registrationFeeOriginal: decimal(100), registrationFeeDiscount: decimal(0), feeRefundedAmount: decimal(0), cancelledAt: null,
+    }]);
+    db.eventTicketSale.findMany.mockResolvedValue([]);
+    db.eventCostume.findMany.mockResolvedValue([]);
+    db.eventCostumeAssignment.findMany.mockResolvedValue([]);
+    db.eventFinancialEntry.groupBy.mockResolvedValue([]);
+    db.eventFinancialPayment.groupBy.mockResolvedValue([]);
+    db.eventTicketLot.findMany.mockResolvedValue([]);
+    db.eventTicket.count.mockResolvedValue(0);
+    db.eventFinancialEntry.findMany.mockResolvedValue([{
+      id: 'entry-a', dueDate: new Date('2026-10-20T00:00:00Z'), status: 'PENDING', actualAmount: 20,
+      refundedAmount: 0, netAmount: 20, asaasPaymentId: null, realizedAt: null,
+    }]);
+    db.eventBillingGroup.findMany.mockResolvedValue([{
+      id: 'group-a', standaloneChargeId: null, asaasPaymentId: 'asaas-payment-a', asaasInstallmentId: null,
+      balanceAmount: decimal(80),
+    }]);
+    db.charge.findMany.mockResolvedValue([{
+      id: 'charge-a', contaId: 'tenant-a', asaasPaymentId: 'asaas-payment-a', value: 80,
+      paidValue: 80, amount: 80, refundedValue: 0, status: 'RECEIVED', statusUpdatedAt: new Date('2026-10-15T12:00:00Z'),
+    }]);
+
+    const report = await getEventReportDetail('tenant-a', 'event-a');
+
+    expect(report?.totals).toMatchObject({
+      registrationCommitted: 100,
+      registrationReceived: 100,
+      pendingCommittedRevenue: 0,
+      paidStudentParticipants: 1,
+      pendingStudentParticipants: 0,
+    });
+    expect(db.eventBillingGroup.findMany.mock.calls[0][0].where).toEqual({ contaId: 'tenant-a', id: { in: ['group-a'] } });
+    expect(db.charge.findMany.mock.calls[0][0].where.contaId).toBe('tenant-a');
+    expect(db.eventFinancialPayment.findMany.mock.calls[0][0].where).toEqual({
+      contaId: 'tenant-a', financialEntryId: { in: ['entry-a'] },
+    });
+    expect(db.standaloneInstallmentPlan.findMany.mock.calls.length).toBeGreaterThan(0);
+    for (const [args] of db.standaloneInstallmentPlan.findMany.mock.calls) {
+      expect(args.where.contaId).toBe('tenant-a');
+      expect(JSON.stringify(args.where)).toContain('asaas-payment-a');
+    }
+
+    db.eventParticipant.aggregate.mockResolvedValue({ _count: { _all: 1 }, _sum: { registrationFeeOriginal: 100, registrationFeeDiscount: 0, registrationFeeCharged: 100, feePaidAmount: 0, feeRefundedAmount: 0 } });
+    db.eventParticipant.findMany.mockResolvedValue([{
+      id: 'participant-a', type: 'STUDENT', revenueEntryId: 'entry-a', registrationFeeCharged: decimal(100),
+      feePaidAmount: 0, isFeePaid: false, isFeeExempt: false, financialStatusSnapshot: 'PENDENTE',
+      asaasPaymentId: null, asaasInstallmentId: null, billingGroupId: 'group-a', balanceAmount: decimal(100),
+      registrationFeeOriginal: decimal(100), registrationFeeDiscount: decimal(0), feeRefundedAmount: decimal(0), cancelledAt: null,
+    }]);
+    db.eventFinancialEntry.findMany.mockResolvedValue([{
+      id: 'entry-a', dueDate: new Date('2026-10-20T00:00:00Z'), status: 'PENDING', actualAmount: 0,
+      refundedAmount: 0, netAmount: 0, asaasPaymentId: null, realizedAt: null,
+    }]);
+    db.eventBillingGroup.findMany.mockResolvedValue([{
+      id: 'group-a', standaloneChargeId: null, asaasPaymentId: 'asaas-payment-a', asaasInstallmentId: null,
+      balanceAmount: decimal(100),
+    }]);
+    db.charge.findMany.mockResolvedValue([{
+      id: 'charge-a', contaId: 'tenant-a', asaasPaymentId: 'asaas-payment-a', value: 100,
+      paidValue: 100, amount: 100, refundedValue: 100, status: 'REFUNDED', statusUpdatedAt: new Date('2026-10-15T12:00:00Z'),
+    }]);
+
+    const refundedReport = await getEventReportDetail('tenant-a', 'event-a');
+
+    expect(refundedReport?.totals).toMatchObject({
+      registrationCommitted: 0,
+      registrationReceived: 0,
+      pendingCommittedRevenue: 0,
+      closedStudentParticipants: 1,
+      paidStudentParticipants: 0,
+    });
+  });
+
+  it('uses a directly linked Asaas payment snapshot and keeps unlinked participants on the legacy fallback', async () => {
+    const decimal = (value: number) => ({ toNumber: () => value, valueOf: () => value });
+    db.eventParticipant.count.mockResolvedValue(2);
+    db.eventParticipant.aggregate.mockResolvedValue({ _count: { _all: 2 }, _sum: { registrationFeeOriginal: 120, registrationFeeDiscount: 0, registrationFeeCharged: 120, feePaidAmount: 20, feeRefundedAmount: 0 } });
+    db.eventParticipant.findMany.mockResolvedValue([{
+      id: 'participant-direct', type: 'STUDENT', revenueEntryId: null, registrationFeeCharged: decimal(100),
+      feePaidAmount: 0, isFeePaid: false, isFeeExempt: false, financialStatusSnapshot: 'PENDENTE',
+      asaasPaymentId: 'asaas-direct', asaasInstallmentId: null, billingGroupId: null, balanceAmount: decimal(100),
+      registrationFeeOriginal: decimal(100), registrationFeeDiscount: decimal(0), feeRefundedAmount: decimal(0), cancelledAt: null,
+    }, {
+      id: 'participant-unlinked', type: 'STUDENT', revenueEntryId: null, registrationFeeCharged: decimal(20),
+      feePaidAmount: 20, isFeePaid: false, isFeeExempt: false, financialStatusSnapshot: 'QUITADO',
+      asaasPaymentId: null, asaasInstallmentId: null, billingGroupId: null, balanceAmount: decimal(0),
+      registrationFeeOriginal: decimal(20), registrationFeeDiscount: decimal(0), feeRefundedAmount: decimal(0), cancelledAt: null,
+    }]);
+    db.eventTicketSale.findMany.mockResolvedValue([]);
+    db.eventCostume.findMany.mockResolvedValue([]);
+    db.eventCostumeAssignment.findMany.mockResolvedValue([]);
+    db.eventFinancialEntry.groupBy.mockResolvedValue([]);
+    db.eventFinancialEntry.findMany.mockResolvedValue([]);
+    db.eventFinancialPayment.groupBy.mockResolvedValue([]);
+    db.eventTicketLot.findMany.mockResolvedValue([]);
+    db.eventTicket.count.mockResolvedValue(0);
+    db.charge.findMany.mockResolvedValue([{
+      id: 'charge-direct', contaId: 'tenant-a', asaasPaymentId: 'asaas-direct', value: 100,
+      paidValue: 100, amount: 100, refundedValue: 0, status: 'RECEIVED', statusUpdatedAt: new Date('2026-10-15T12:00:00Z'),
+    }]);
+
+    const report = await getEventReportDetail('tenant-a', 'event-a');
+
+    expect(report?.totals).toMatchObject({
+      registrationCommitted: 120,
+      registrationReceived: 120,
+      pendingCommittedRevenue: 0,
+      paidStudentParticipants: 2,
+      pendingStudentParticipants: 0,
+    });
+    expect(db.charge.findMany.mock.calls[0][0].where).toMatchObject({ contaId: 'tenant-a', asaasPaymentId: { in: ['asaas-direct'] } });
   });
 
   it('excludes an unlinked legacy registration fee when participant obligations exist', async () => {

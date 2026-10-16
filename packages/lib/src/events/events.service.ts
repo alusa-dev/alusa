@@ -2630,11 +2630,21 @@ export async function loadEventBillingGroupCharges(
   return chargesByGroup;
 }
 
-async function buildParticipantPaymentSnapshots(
+export async function buildParticipantPaymentSnapshots(
   ctx: Pick<EventsContext, 'contaId'>,
   records: Array<{
-    participants: EventReportRecord['participants'];
-    financialEntries: EventReportRecord['financialEntries'];
+    participants: Array<{
+      id: string;
+      revenueEntryId: string | null;
+      asaasPaymentId: string | null;
+      asaasInstallmentId: string | null;
+      billingGroupId: string | null;
+      balanceAmount: Prisma.Decimal;
+      registrationFeeCharged: Prisma.Decimal;
+      isFeePaid: boolean;
+      isFeeExempt: boolean;
+    }>;
+    financialEntries: Array<Pick<EventFinancialEntry, 'id' | 'asaasPaymentId' | 'actualAmount' | 'refundedAmount' | 'status' | 'realizedAt'>>;
   }>,
   db: DbClient = prisma,
 ): Promise<Map<string, ParticipantPaymentSnapshot>> {
@@ -2711,8 +2721,8 @@ async function buildParticipantPaymentSnapshots(
     if (group) {
       participantCharges = allocateChargesToParticipant(
         billingGroupCharges.get(group.id) ?? [],
-        participant.balanceAmount.toNumber(),
-        group.balanceAmount.toNumber(),
+        toMoney(participant.balanceAmount),
+        toMoney(group.balanceAmount),
       );
     } else if (asaasPaymentId) {
       const direct = directCharges.filter((charge) => charge.asaasPaymentId === asaasPaymentId);
@@ -2736,7 +2746,7 @@ async function buildParticipantPaymentSnapshots(
     }
 
     const payment = calculateParticipantPayment(
-      participant.registrationFeeCharged.toNumber(),
+      toMoney(participant.registrationFeeCharged),
       participant.isFeePaid,
       entry,
       participantCharges,

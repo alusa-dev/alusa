@@ -10,6 +10,7 @@ import {
 import { EVENT_COSTUME_CATEGORY_LABELS, getAcademicDateKey, getCurrentAcademicDateKey } from '@alusa/shared';
 
 import { prisma } from '../prisma';
+import { buildParticipantPaymentSnapshots } from './events.service';
 
 type ReportDb = Prisma.TransactionClient | typeof prisma;
 
@@ -66,8 +67,10 @@ export async function getEventReportDetail(
     db.eventParticipant.findMany({
       where: { ...where, cancelledAt: null },
       select: {
-        type: true, registrationFeeCharged: true, feePaidAmount: true, isFeePaid: true,
+        id: true, type: true, registrationFeeCharged: true, feePaidAmount: true, isFeePaid: true,
         isFeeExempt: true, financialStatusSnapshot: true, revenueEntryId: true,
+        asaasPaymentId: true, asaasInstallmentId: true, billingGroupId: true, balanceAmount: true,
+        registrationFeeOriginal: true, registrationFeeDiscount: true, feeRefundedAmount: true, cancelledAt: true,
       },
     }),
     db.eventTicketSale.findMany({
@@ -101,7 +104,10 @@ export async function getEventReportDetail(
   const studentEntries = studentEntryIds.length
     ? await db.eventFinancialEntry.findMany({
       where: { contaId, eventId, id: { in: studentEntryIds } },
-      select: { id: true, dueDate: true, status: true, netAmount: true, actualAmount: true, refundedAmount: true },
+      select: {
+        id: true, dueDate: true, status: true, netAmount: true, actualAmount: true,
+        refundedAmount: true, asaasPaymentId: true, realizedAt: true,
+      },
     })
     : [];
   const assignmentEntryIds = [...new Set(costumeAssignments.map((assignment) => assignment.revenueEntryId).filter((id): id is string => Boolean(id)))];
@@ -112,21 +118,32 @@ export async function getEventReportDetail(
     })
     : [];
   const studentEntryById = new Map(studentEntries.map((entry) => [entry.id, entry]));
+  const participantSnapshots = await buildParticipantPaymentSnapshots(
+    { contaId },
+    [{
+      participants: studentParticipantsOnly,
+      financialEntries: studentEntries,
+    }],
+    db,
+  );
   const todayDateKey = getCurrentAcademicDateKey(now, event.conta.timezone);
   const participantPaymentStatus = (participant: (typeof participantDetails)[number]) => {
     const entry = studentEntryById.get(participant.revenueEntryId ?? '');
     const expected = number(participant.registrationFeeCharged);
     const exempt = participant.isFeeExempt || expected <= 0;
     const dueDateKey = entry?.dueDate ? getAcademicDateKey(entry.dueDate) : null;
+    const snapshot = participantSnapshots.get(participant.revenueEntryId ?? participant.id);
     const closed = !exempt && (['CANCELADO', 'ESTORNADO'].includes(participant.financialStatusSnapshot ?? '')
-      || ['CANCELLED', 'CANCELED', 'REFUNDED'].includes(entry?.status ?? ''));
-    const netPaid = entry
+      || ['CANCELLED', 'CANCELED', 'REFUNDED'].includes(entry?.status ?? '')
+      || snapshot?.entryStatus === 'CANCELLED'
+      || snapshot?.entryStatus === 'REFUNDED');
+    const netPaid = snapshot?.netPaid ?? (entry
       ? entry.netAmount == null
         ? getEventNetRealizedAmount(number(entry.actualAmount), number(entry.refundedAmount))
         : Math.max(number(entry.netAmount), 0)
       : participant.isFeePaid
         ? expected
-        : Math.max(number(participant.feePaidAmount), 0);
+        : Math.max(number(participant.feePaidAmount), 0));
     const remaining = Math.max(expected - netPaid, 0);
     const paid = !closed && !exempt && remaining <= 0;
     const overdue = !closed && !paid && !exempt && remaining > 0 && (
