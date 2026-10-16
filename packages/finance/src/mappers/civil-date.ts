@@ -39,6 +39,17 @@ export function parseCivilDatePreservingInstant(value: string | null | undefined
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+/** Returns the first parseable date, preserving the caller's source preference order. */
+export function parseFirstValidCivilDatePreservingInstant(
+  ...values: Array<string | null | undefined>
+): Date | null {
+  for (const value of values) {
+    const parsed = parseCivilDatePreservingInstant(value);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
 /** Returns null for an omitted value and undefined for an invalid value. */
 export function parseOptionalCivilDatePreservingInstant(
   value: string | null | undefined,

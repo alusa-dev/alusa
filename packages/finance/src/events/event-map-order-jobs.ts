@@ -2,7 +2,7 @@ import { prisma } from '@alusa/database';
 import { Prisma } from '@prisma/client';
 import { loadDecryptedAsaasCredentials } from '../foundation/load-decrypted-asaas-credentials';
 import { getEventAsaasPaymentProvider, type EventAsaasPayment } from './event-asaas-payment-provider';
-import { parseCivilDatePreservingInstant } from '../mappers/civil-date';
+import { parseFirstValidCivilDatePreservingInstant } from '../mappers/civil-date';
 import { recordPublicOrderTicketFulfillmentFailure } from './record-public-order-ticket-fulfillment-failure';
 import { lockPublicEventMapReservation } from '@alusa/lib/events/map/event-map-order-operations';
 import {
@@ -232,7 +232,11 @@ async function confirmExpiredOrderPayment(params: {
     externalReference: `event-map-order:${params.orderId}`,
     paymentStatus: params.status,
     invoiceUrl: params.payment.invoiceUrl ?? null,
-    paidAt: parseCivilDatePreservingInstant(params.payment.paymentDate ?? params.payment.clientPaymentDate) ?? new Date(),
+    paidAt:
+      parseFirstValidCivilDatePreservingInstant(
+        params.payment.paymentDate,
+        params.payment.clientPaymentDate,
+      ) ?? new Date(),
     paidAmount: params.payment.value ?? null,
     allowReleasedReservation: true,
   };

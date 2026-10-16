@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   parseCivilDatePreservingInstant,
+  parseFirstValidCivilDatePreservingInstant,
   parseOptionalCivilDatePreservingInstant,
 } from '../civil-date';
 
@@ -33,6 +34,14 @@ describe('parseCivilDatePreservingInstant', () => {
   it('rejeita data civil inválida', () => {
     expect(parseCivilDatePreservingInstant('2026-02-30')).toBeNull();
     expect(parseCivilDatePreservingInstant('2026-02-30T00:00:00.000Z')).toBeNull();
+  });
+
+  it('escolhe a primeira data válida respeitando a preferência entre fontes', () => {
+    expect(parseFirstValidCivilDatePreservingInstant('2026-02-30', '2026-10-14')?.toISOString())
+      .toBe('2026-10-14T12:00:00.000Z');
+    expect(parseFirstValidCivilDatePreservingInstant('2026-10-13', '2026-10-14')?.toISOString())
+      .toBe('2026-10-13T12:00:00.000Z');
+    expect(parseFirstValidCivilDatePreservingInstant('invalid', null)).toBeNull();
   });
 
   it('distingue data ausente de valor inválido para preservar dados já persistidos', () => {

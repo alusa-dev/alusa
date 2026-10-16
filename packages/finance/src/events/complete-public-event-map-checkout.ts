@@ -14,7 +14,7 @@ import {
 } from './event-asaas-payment-provider';
 import { EventsError } from '@alusa/domain/events';
 import { loadDecryptedAsaasCredentials } from '../foundation/load-decrypted-asaas-credentials';
-import { parseCivilDatePreservingInstant } from '../mappers/civil-date';
+import { parseFirstValidCivilDatePreservingInstant } from '../mappers/civil-date';
 import { logEventsFinance } from './events-finance-observability';
 
 const PAID_ASAAS_PAYMENT_STATUSES = new Set([
@@ -344,7 +344,11 @@ export async function completePublicEventMapCheckout(
           externalReference,
           paymentStatus,
           invoiceUrl: payment.invoiceUrl ?? null,
-          paidAt: parseCivilDatePreservingInstant(payment.paymentDate ?? payment.clientPaymentDate) ?? new Date(),
+          paidAt:
+            parseFirstValidCivilDatePreservingInstant(
+              payment.paymentDate,
+              payment.clientPaymentDate,
+            ) ?? new Date(),
           paidAmount: payment.value ?? null,
           allowReleasedReservation: true,
         };

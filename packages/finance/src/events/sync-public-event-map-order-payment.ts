@@ -1,7 +1,7 @@
 import { prisma } from '@alusa/database';
 import { EventsError } from '@alusa/domain/events';
 import { getEventAsaasPaymentProvider } from './event-asaas-payment-provider';
-import { parseCivilDatePreservingInstant } from '../mappers/civil-date';
+import { parseFirstValidCivilDatePreservingInstant } from '../mappers/civil-date';
 import { getPublicEventMapOrderStatus } from '@alusa/lib/events/map/public-event-map-order-status.service';
 import { confirmPublicEventMapOrderPayment } from './confirm-public-event-map-order-payment';
 import { reconcileEventMapOrderFinancialStateFromAsaas } from './event-map-payment-transitions';
@@ -177,7 +177,11 @@ async function syncPublicEventMapOrderPaymentUnlocked(
     };
   }
 
-  const paidAt = parseCivilDatePreservingInstant(payment.paymentDate ?? payment.clientPaymentDate) ?? new Date();
+  const paidAt =
+    parseFirstValidCivilDatePreservingInstant(
+      payment.paymentDate,
+      payment.clientPaymentDate,
+    ) ?? new Date();
   const paymentParams = {
     contaId: order.contaId,
     asaasPaymentId: order.asaasPaymentId,
