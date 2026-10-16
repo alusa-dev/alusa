@@ -6,11 +6,19 @@ import { preparePublicEventMapCheckout } from './public-event-map-checkout-persi
 import { getPublicEventMap, listEventMaps, reservePublicEventMapSeats } from './event-map.service';
 import { getPublicEventMapOrderStatus } from './public-event-map-order-status.service';
 import { createSeatedTicketSale, getPublicStaffSaleTickets, reserveStaffEventMapSeats } from './staff-map-sales.service';
+import { updateTicketLot } from '../events.service';
 
 const validLocal = '2026-11-14T20:00';
 const ctx = (contaId: string, userId: string) => ({ contaId, userId });
 
-async function createFixture(options: { startsAtLocal?: string; seatStatus?: 'AVAILABLE' | 'HELD'; lot?: boolean } = {}) {
+async function createFixture(options: {
+  startsAtLocal?: string;
+  seatStatus?: 'AVAILABLE' | 'HELD';
+  lot?: boolean;
+  lotStatus?: 'ACTIVE' | 'CLOSED';
+  saleStartsAt?: Date | null;
+  saleEndsAt?: Date | null;
+} = {}) {
   const tag = randomUUID();
   const conta = await prisma.conta.create({ data: { nome: `Ticket schedule ${tag}` } });
   const user = await prisma.usuario.create({
@@ -62,7 +70,9 @@ async function createFixture(options: { startsAtLocal?: string; seatStatus?: 'AV
       ticketType: 'FULL',
       unitPrice: 20,
       quantityTotal: 10,
-      status: 'ACTIVE',
+      status: options.lotStatus ?? 'ACTIVE',
+      saleStartsAt: options.saleStartsAt ?? null,
+      saleEndsAt: options.saleEndsAt ?? null,
     },
   }) : null;
   const seat = await prisma.eventMapPublicSeat.create({
@@ -145,6 +155,47 @@ describe('event map purchase schedule snapshots', () => {
     }
   });
 
+  it.each([
+    ['before the lot sale starts', { saleStartsAt: new Date(Date.now() + 3_600_000) }, 'VENDA_FORA_DO_PERIODO'],
+    ['during the lot sale window', { saleStartsAt: new Date(Date.now() - 3_600_000), saleEndsAt: new Date(Date.now() + 3_600_000) }, null],
+    ['after the lot sale ends', { saleEndsAt: new Date(Date.now() - 3_600_000) }, 'VENDA_FORA_DO_PERIODO'],
+    ['when the lot is inactive', { lotStatus: 'CLOSED' as const }, 'LOTE_INATIVO'],
+  ])('applies the lot sale window to public seat holds %s', async (_label, lotOptions, expectedCode) => {
+    const fixture = await createFixture({ lot: true, ...lotOptions });
+    try {
+      const attempt = reservePublicEventMapSeats(fixture.map.publicSlug!, { seatIds: [fixture.seat.id] });
+      if (expectedCode) {
+        await expect(attempt).rejects.toMatchObject({ code: expectedCode, status: 409 });
+        expect(await prisma.eventMapReservation.count({ where: { contaId: fixture.conta.id } })).toBe(0);
+        expect((await prisma.eventMapPublicSeat.findUniqueOrThrow({ where: { id: fixture.seat.id } })).status).toBe('AVAILABLE');
+      } else {
+        await expect(attempt).resolves.toMatchObject({ reservationId: expect.any(String) });
+      }
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('reuses an existing public reservation idempotently after its lot closes', async () => {
+    const fixture = await createFixture({
+      lot: true,
+      saleStartsAt: new Date(Date.now() - 3_600_000),
+      saleEndsAt: new Date(Date.now() + 3_600_000),
+    });
+    const checkoutKey = `checkout-${randomUUID()}`;
+    try {
+      const initial = await reservePublicEventMapSeats(fixture.map.publicSlug!, { seatIds: [fixture.seat.id], checkoutKey });
+      await updateTicketLot(ctx(fixture.conta.id, fixture.user.id), fixture.lot!.id, {
+        status: 'CLOSED', saleEndsAt: new Date(Date.now() - 60_000),
+      });
+      await expect(reservePublicEventMapSeats(fixture.map.publicSlug!, { seatIds: [fixture.seat.id], checkoutKey }))
+        .resolves.toMatchObject({ reservationId: initial.reservationId, holdToken: initial.holdToken });
+      expect(await prisma.eventMapReservation.count({ where: { contaId: fixture.conta.id } })).toBe(1);
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
   it('allows checkout on a legacy version and snapshots its automatic fallback', async () => {
     const fixture = await createFixture({ seatStatus: 'HELD' });
     try {
@@ -187,6 +238,39 @@ describe('event map purchase schedule snapshots', () => {
     }
   });
 
+  it('preserves an initiated public order when its lot later closes', async () => {
+    const fixture = await createFixture({
+      seatStatus: 'HELD',
+      lot: true,
+      saleStartsAt: new Date(Date.now() - 3_600_000),
+      saleEndsAt: new Date(Date.now() + 3_600_000),
+    });
+    try {
+      const reservation = await createReservation(fixture, 'PUBLIC_CHECKOUT');
+      const started = await preparePublicEventMapCheckout(fixture.map.publicSlug!, checkoutInput(reservation));
+      const paymentIdentity = started.order.id;
+      const asaasPaymentId = `pay_${randomUUID()}`;
+      await prisma.eventMapOrder.update({
+        where: { id: paymentIdentity },
+        data: { asaasPaymentId, paymentStatus: 'PENDING' },
+      });
+      const orderBeforeClose = await prisma.eventMapOrder.findFirstOrThrow({ where: { id: paymentIdentity, contaId: fixture.conta.id } });
+      await updateTicketLot(ctx(fixture.conta.id, fixture.user.id), fixture.lot!.id, {
+        status: 'CLOSED', saleEndsAt: new Date(Date.now() - 60_000),
+      });
+
+      await expect(preparePublicEventMapCheckout(fixture.map.publicSlug!, checkoutInput(reservation)))
+        .resolves.toMatchObject({ order: { id: paymentIdentity, asaasPaymentId, paymentStatus: 'PENDING' } });
+      expect(await prisma.eventMapOrder.count({ where: { contaId: fixture.conta.id } })).toBe(1);
+      expect(await prisma.eventTicket.count({ where: { contaId: fixture.conta.id, eventMapOrderId: paymentIdentity } })).toBe(0);
+      expect(await prisma.eventMapOrder.findFirstOrThrow({ where: { id: paymentIdentity, contaId: fixture.conta.id } }))
+        .toMatchObject({ asaasPaymentId: orderBeforeClose.asaasPaymentId, paymentStatus: orderBeforeClose.paymentStatus, status: orderBeforeClose.status });
+      expect((await prisma.eventMapPublicSeat.findUniqueOrThrow({ where: { id: fixture.seat.id } })).status).toBe('HELD');
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
   it('allows staff reservation and sale for a legacy schedule using its UTC fallback', async () => {
     const fixture = await createFixture({ lot: true });
     try {
@@ -204,6 +288,35 @@ describe('event map purchase schedule snapshots', () => {
       expect(sale.primarySaleId).toBeTruthy();
       expect(await prisma.eventTicketSale.count({ where: { contaId: fixture.conta.id } })).toBe(1);
       expect((await prisma.eventMapPublicSeat.findUniqueOrThrow({ where: { id: fixture.seat.id } })).status).toBe('SOLD');
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('lets a valid short staff hold finish after its lot sale window closes', async () => {
+    const fixture = await createFixture({
+      lot: true,
+      saleStartsAt: new Date(Date.now() - 3_600_000),
+      saleEndsAt: new Date(Date.now() + 3_600_000),
+    });
+    try {
+      const reservation = await reserveStaffEventMapSeats(ctx(fixture.conta.id, fixture.user.id), fixture.event.id, fixture.map.id, { seatIds: [fixture.seat.id] });
+      await updateTicketLot(ctx(fixture.conta.id, fixture.user.id), fixture.lot!.id, {
+        status: 'CLOSED', saleEndsAt: new Date(Date.now() - 60_000),
+      });
+      const sale = await createSeatedTicketSale(ctx(fixture.conta.id, fixture.user.id), {
+        eventId: fixture.event.id,
+        buyerName: 'Comprador Teste',
+        paymentMethod: 'COMPLIMENTARY',
+        status: 'COMPLIMENTARY',
+        holdToken: reservation.holdToken,
+      });
+      expect(sale.primarySaleId).toBeTruthy();
+      expect(await prisma.eventTicketSale.count({ where: { contaId: fixture.conta.id } })).toBe(1);
+      expect(await prisma.eventTicket.count({ where: { contaId: fixture.conta.id } })).toBe(1);
+      expect((await prisma.eventMapReservation.findUniqueOrThrow({ where: { id: reservation.reservationId } })).status).toBe('CONSUMED');
+      expect((await prisma.eventMapPublicSeat.findUniqueOrThrow({ where: { id: fixture.seat.id } })).status).toBe('SOLD');
+      expect((await prisma.eventTicketLot.findFirstOrThrow({ where: { id: fixture.lot!.id, contaId: fixture.conta.id } })).status).toBe('CLOSED');
     } finally {
       await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
     }

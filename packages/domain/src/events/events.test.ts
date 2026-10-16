@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   calculateEventMetrics,
+  isEventTicketLotOpenForSale,
   isEventCostExpectedStatus,
   isEventCostRealizedStatus,
   isEventRevenueExpectedStatus,
@@ -12,6 +13,14 @@ import {
 } from './index';
 
 describe('events domain rules', () => {
+  it('applies lot status and inclusive sale window boundaries', () => {
+    const now = new Date('2026-10-15T12:00:00.000Z');
+    expect(isEventTicketLotOpenForSale({ status: 'ACTIVE', saleStartsAt: new Date('2026-10-15T12:01:00.000Z') }, now)).toBe(false);
+    expect(isEventTicketLotOpenForSale({ status: 'ACTIVE', saleStartsAt: new Date('2026-10-15T11:00:00.000Z'), saleEndsAt: new Date('2026-10-15T13:00:00.000Z') }, now)).toBe(true);
+    expect(isEventTicketLotOpenForSale({ status: 'ACTIVE', saleEndsAt: new Date('2026-10-15T11:59:00.000Z') }, now)).toBe(false);
+    expect(isEventTicketLotOpenForSale({ status: 'CLOSED' }, now)).toBe(false);
+  });
+
   it('calcula previsto, realizado, resultado, ticket medio e ocupacao', () => {
     const metrics = calculateEventMetrics({
       ticketLots: [{ status: 'ACTIVE', quantityTotal: 100, quantitySold: 35 }],

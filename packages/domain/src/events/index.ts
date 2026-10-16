@@ -4,6 +4,19 @@ export * from './ticket-payment-eligibility';
 export type EventTicketMode = 'NONE' | 'SIMPLE' | 'NUMBERED_SEATS';
 export type EventTicketLotStatus = 'DRAFT' | 'ACTIVE' | 'SOLD_OUT' | 'CLOSED' | 'CANCELLED' | 'ARCHIVED';
 export type EventTicketSaleStatus = 'PENDING' | 'PAID' | 'CANCELLED' | 'REFUNDED' | 'COMPLIMENTARY';
+
+export type EventTicketLotSaleWindow = {
+  status: string;
+  saleStartsAt?: Date | null;
+  saleEndsAt?: Date | null;
+};
+
+/** Whether a lot may accept a new ticket hold or sale at the supplied instant. */
+export function isEventTicketLotOpenForSale(lot: EventTicketLotSaleWindow, now = new Date()): boolean {
+  return lot.status === 'ACTIVE'
+    && (!lot.saleStartsAt || lot.saleStartsAt.getTime() <= now.getTime())
+    && (!lot.saleEndsAt || lot.saleEndsAt.getTime() >= now.getTime());
+}
 export type EventCostumeAssignmentStatus =
   | 'PENDING'
   | 'ORDERED'

@@ -5,6 +5,7 @@ import {
   canEditEventMapDraft,
   countTicketLotCapacitiesFromMap,
   decideEventMapDeletion,
+  isEventTicketLotOpenForSale,
   isPublicEventMapVisible,
   MAX_EVENT_MAPS_PER_EVENT,
   sortEventMapsForDisplay,
@@ -1790,6 +1791,25 @@ export async function reservePublicEventMapSeats(publicSlug: string, input: Publ
     });
     if (!selection.ok) throw new EventsError('ASSENTOS_INDISPONIVEIS', selection.reason, 409);
 
+    const selectedSeats = seats.filter((seat) => selection.seatIds.includes(seat.id));
+    const lotIds = [...new Set(selectedSeats.map((seat) => seat.lotId).filter((id): id is string => Boolean(id)))];
+    if (lotIds.length > 0) {
+      await tx.$queryRaw`SELECT id FROM "EventTicketLot" WHERE "contaId" = ${map.contaId} AND "eventId" = ${map.eventId} AND id IN (${Prisma.join(lotIds)}) ORDER BY id FOR UPDATE`;
+    }
+    const lots = await tx.eventTicketLot.findMany({
+      where: { contaId: map.contaId, eventId: map.eventId, id: { in: lotIds } },
+      select: { id: true, status: true, saleStartsAt: true, saleEndsAt: true },
+    });
+    const lotsById = new Map(lots.map((lot) => [lot.id, lot]));
+    const now = new Date();
+    for (const seat of selectedSeats) {
+      if (!seat.lotId) continue;
+      const lot = lotsById.get(seat.lotId);
+      if (!lot) throw new EventsError('LOTE_NAO_ENCONTRADO', 'Lote vinculado ao assento não encontrado.', 409);
+      if (lot.status !== 'ACTIVE') throw new EventsError('LOTE_INATIVO', 'Lote inativo para um dos assentos selecionados.', 409);
+      if (!isEventTicketLotOpenForSale(lot, now)) throw new EventsError('VENDA_FORA_DO_PERIODO', 'As vendas deste lote estão fora do período.', 409);
+    }
+
     const publishedVersion = await tx.eventMapVersion.findFirst({
       where: { id: versionId, contaId: map.contaId, eventMapId: map.id, status: 'PUBLISHED' },
       select: { snapshot: true },
@@ -1845,7 +1865,6 @@ export async function reservePublicEventMapSeats(publicSlug: string, input: Publ
       })),
     });
 
-    const selectedSeats = seats.filter((seat) => selection.seatIds.includes(seat.id));
     return {
       reservationId: reservation.id,
       holdToken: reservation.holdToken,

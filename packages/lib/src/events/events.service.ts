@@ -1074,20 +1074,23 @@ export async function createTicketLot(ctx: EventsContext, input: CreateTicketLot
 
 export async function updateTicketLot(ctx: EventsContext, lotId: string, input: UpdateTicketLotInput) {
   return prisma.$transaction(async (tx) => {
+    const candidate = await tx.eventTicketLot.findFirst({
+      where: { id: lotId, contaId: ctx.contaId },
+      select: { eventId: true },
+    });
+    if (!candidate) throw new EventsError('LOTE_NAO_ENCONTRADO', 'Lote não encontrado.', 404);
+
+    // Match lot creation's event → lot lock order, then reread the lot only
+    // after its row lock so holds and eligibility updates serialize.
+    await tx.$queryRaw`SELECT id FROM "SchoolEvent" WHERE id = ${candidate.eventId} AND "contaId" = ${ctx.contaId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM "EventTicketLot" WHERE id = ${lotId} AND "contaId" = ${ctx.contaId} AND "eventId" = ${candidate.eventId} FOR UPDATE`;
+
     const current = await tx.eventTicketLot.findFirst({
       where: { id: lotId, contaId: ctx.contaId },
       include: { event: true },
     });
     if (!current) throw new EventsError('LOTE_NAO_ENCONTRADO', 'Lote não encontrado.', 404);
     assertOperationalEvent(current.event.status);
-
-    if (input.name && input.name !== current.name) {
-      await tx.$queryRaw(Prisma.sql`
-        SELECT "id" FROM "SchoolEvent"
-        WHERE "id" = ${current.eventId} AND "contaId" = ${ctx.contaId}
-        FOR UPDATE
-      `);
-    }
 
     if (input.name && input.name !== current.name) {
       const existing = await tx.eventTicketLot.findFirst({

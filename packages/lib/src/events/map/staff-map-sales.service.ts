@@ -2,6 +2,7 @@ import { EventTicketWhatsAppPurchaseType, Prisma } from '@prisma/client';
 
 import {
   groupStaffSeatsByLot,
+  isEventTicketLotOpenForSale,
   STAFF_SEAT_RESERVATION_TTL_MINUTES,
   canPrintStaffSaleTickets,
   validateStaffSeatSelection,
@@ -311,9 +312,11 @@ async function applyStaffSeatHold(
   tx: Prisma.TransactionClient,
   params: {
     contaId: string;
+    eventId: string;
     versionId: string;
     seatIds: string[];
     ownHeldSeatIds: string[];
+    preserveExistingHold?: boolean;
   },
 ) {
   const seats = await tx.eventMapPublicSeat.findMany({
@@ -325,6 +328,25 @@ async function applyStaffSeatHold(
     ownHeldSeatIds: params.ownHeldSeatIds,
   });
   if (!selection.ok) throw new EventsError('ASSENTOS_INDISPONIVEIS', selection.reason, 409);
+
+  const lotIds = [...new Set(seats.filter((seat) => selection.seatIds.includes(seat.id)).map((seat) => seat.lotId).filter((id): id is string => Boolean(id)))];
+  if (lotIds.length > 0) {
+    await tx.$queryRaw`SELECT id FROM "EventTicketLot" WHERE "contaId" = ${params.contaId} AND "eventId" = ${params.eventId} AND id IN (${Prisma.join(lotIds)}) ORDER BY id FOR UPDATE`;
+  }
+  const lots = await tx.eventTicketLot.findMany({
+    where: { contaId: params.contaId, eventId: params.eventId, id: { in: lotIds } },
+    select: { id: true, status: true, saleStartsAt: true, saleEndsAt: true },
+  });
+  const lotsById = new Map(lots.map((lot) => [lot.id, lot]));
+  const now = new Date();
+  if (!params.preserveExistingHold) {
+    for (const seat of seats.filter((entry) => selection.seatIds.includes(entry.id))) {
+      const lot = seat.lotId ? lotsById.get(seat.lotId) : undefined;
+      if (!lot) throw new EventsError('LOTE_NAO_ENCONTRADO', 'Lote vinculado ao assento não encontrado.', 409);
+      if (lot.status !== 'ACTIVE') throw new EventsError('LOTE_INATIVO', 'Lote inativo para um dos assentos selecionados.', 409);
+      if (!isEventTicketLotOpenForSale(lot, now)) throw new EventsError('VENDA_FORA_DO_PERIODO', 'As vendas deste lote estão fora do período.', 409);
+    }
+  }
 
   const toRelease = params.ownHeldSeatIds.filter((seatId) => !selection.seatIds.includes(seatId));
   if (toRelease.length > 0) {
@@ -390,11 +412,17 @@ export async function reserveStaffEventMapSeats(
       }
 
       const ownHeldSeatIds = existing.seats.map((entry) => entry.publicSeatId);
+      const sortedExistingSeatIds = [...ownHeldSeatIds].sort();
+      const requestedSeatIds = [...new Set(input.seatIds)].sort();
+      const preserveExistingHold = sortedExistingSeatIds.length === requestedSeatIds.length
+        && sortedExistingSeatIds.every((seatId, index) => seatId === requestedSeatIds[index]);
       const selectedSeats = await applyStaffSeatHold(tx, {
         contaId: ctx.contaId,
+        eventId,
         versionId,
         seatIds: input.seatIds,
         ownHeldSeatIds,
+        preserveExistingHold,
       });
 
       const expiresAt = addMinutes(new Date(), STAFF_SEAT_RESERVATION_TTL_MINUTES);
@@ -424,6 +452,7 @@ export async function reserveStaffEventMapSeats(
 
     const selectedSeats = await applyStaffSeatHold(tx, {
       contaId: ctx.contaId,
+      eventId,
       versionId,
       seatIds: input.seatIds,
       ownHeldSeatIds: [],
@@ -579,14 +608,15 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
     const createdSaleIds: string[] = [];
 
     for (const [lotId, groupSeats] of lotGroups) {
-      await tx.$queryRaw`SELECT id FROM "EventTicketLot" WHERE id = ${lotId} AND "contaId" = ${ctx.contaId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM "EventTicketLot" WHERE id = ${lotId} AND "contaId" = ${ctx.contaId} AND "eventId" = ${input.eventId} FOR UPDATE`;
 
       const lot = await tx.eventTicketLot.findFirst({
         where: { id: lotId, contaId: ctx.contaId, eventId: input.eventId },
         include: { event: true },
       });
       if (!lot) throw new EventsError('LOTE_NAO_ENCONTRADO', 'Lote vinculado ao assento não encontrado.', 404);
-      if (lot.status !== 'ACTIVE') throw new EventsError('LOTE_INATIVO', 'Lote inativo para um dos assentos selecionados.', 409);
+      // A held seat was checked while reserving. Let this short hold finish if
+      // the lot closes meanwhile; new holds still require a currently open lot.
 
       const lotTotal = groupSeats.reduce((sum, seat) => sum + toMoney(seat.unitPrice), 0);
       const unitPrice = groupSeats.length > 0 ? lotTotal / groupSeats.length : 0;
@@ -677,7 +707,9 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
         _sum: { quantity: true },
       });
       const quantitySold = sold._sum.quantity ?? 0;
-      const nextStatus = quantitySold >= lot.quantityTotal ? 'SOLD_OUT' : 'ACTIVE';
+      const nextStatus = lot.status === 'ACTIVE'
+        ? (quantitySold >= lot.quantityTotal ? 'SOLD_OUT' : 'ACTIVE')
+        : lot.status;
       await tx.eventTicketLot.update({
         where: { id: lotId },
         data: { quantitySold, status: nextStatus },

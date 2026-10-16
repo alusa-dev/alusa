@@ -1,6 +1,6 @@
 import { EventTicketWhatsAppPurchaseType, Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '@alusa/database';
-import { EventsError, validateTicketSaleStatusTransition } from '@alusa/domain/events';
+import { EventsError, isEventTicketLotOpenForSale, validateTicketSaleStatusTransition } from '@alusa/domain/events';
 import { assertEventTicketSalesOpen } from '@alusa/lib/events/events.service';
 import { assertEventScopedTicketSaleLinks } from '@alusa/lib/events/event-participant-scope';
 import { mapTicketSale } from '@alusa/lib/events/event-financial-read-models';
@@ -84,7 +84,7 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
   const quantity = input.quantity;
 
   return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "EventTicketLot" WHERE id = ${lotId} AND "contaId" = ${ctx.contaId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM "EventTicketLot" WHERE id = ${lotId} AND "contaId" = ${ctx.contaId} AND "eventId" = ${input.eventId} FOR UPDATE`;
 
     const lot = await tx.eventTicketLot.findFirst({
       where: { id: lotId, contaId: ctx.contaId, eventId: input.eventId },
@@ -98,11 +98,14 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
     }
 
     const now = new Date();
-    if (lot.saleStartsAt && lot.saleStartsAt > now) {
-      throw new EventsError('VENDA_FORA_DO_PERIODO', 'As vendas deste lote ainda não começaram.', 409);
-    }
-    if (lot.saleEndsAt && lot.saleEndsAt < now) {
-      throw new EventsError('VENDA_FORA_DO_PERIODO', 'As vendas deste lote já encerraram.', 409);
+    if (!isEventTicketLotOpenForSale(lot, now)) {
+      if (lot.saleStartsAt && lot.saleStartsAt > now) {
+        throw new EventsError('VENDA_FORA_DO_PERIODO', 'As vendas deste lote ainda não começaram.', 409);
+      }
+      if (lot.saleEndsAt && lot.saleEndsAt < now) {
+        throw new EventsError('VENDA_FORA_DO_PERIODO', 'As vendas deste lote já encerraram.', 409);
+      }
+      throw new EventsError('LOTE_INATIVO', 'Somente lotes ativos podem receber vendas.', 409);
     }
 
     const sold = await tx.eventTicketSale.aggregate({
