@@ -6,7 +6,7 @@ import {
   isEventRevenueExpectedStatus,
   isEventRevenueRealizedStatus,
 } from '@alusa/domain/events';
-import { getAcademicDateKey, getCurrentAcademicDateKey } from '@alusa/shared';
+import { EVENT_COSTUME_CATEGORY_LABELS, getAcademicDateKey, getCurrentAcademicDateKey } from '@alusa/shared';
 
 import { prisma } from '../prisma';
 
@@ -55,7 +55,7 @@ export async function getEventReportDetail(
   if (!event) return null;
 
   const where = { contaId, eventId };
-  const [participants, activeParticipants, participantDetails, sales, entries, payments, lots, checkIns] = await Promise.all([
+  const [participants, activeParticipants, participantDetails, sales, entries, payments, lots, checkIns, costumes, costumeAssignments, costumeEntries] = await Promise.all([
     db.eventParticipant.count({ where }),
     db.eventParticipant.aggregate({
       where: { ...where, cancelledAt: null },
@@ -87,6 +87,12 @@ export async function getEventReportDetail(
       select: { id: true, name: true, eventMapId: true, status: true, unitPrice: true, quantityTotal: true, quantitySold: true },
     }),
     db.eventTicket.count({ where: { ...where, usedAt: { not: null }, cancelledAt: null } }),
+    db.eventCostume.findMany({ where, select: { id: true, category: true, schoolCost: true, quantity: true } }),
+    db.eventCostumeAssignment.findMany({ where, select: { revenueEntryId: true, status: true, billingMode: true, chargedValue: true, isPaid: true } }),
+    db.eventFinancialEntry.findMany({
+      where: { ...where, originType: 'COSTUME' },
+      select: { id: true, type: true, status: true, originType: true, originId: true, category: true, expectedAmount: true, actualAmount: true, refundedAmount: true },
+    }),
   ]);
 
   const studentParticipantsOnly = participantDetails.filter((participant) => participant.type === 'STUDENT');
@@ -95,6 +101,13 @@ export async function getEventReportDetail(
     ? await db.eventFinancialEntry.findMany({
       where: { contaId, eventId, id: { in: studentEntryIds } },
       select: { id: true, dueDate: true, status: true, netAmount: true, actualAmount: true, refundedAmount: true },
+    })
+    : [];
+  const assignmentEntryIds = [...new Set(costumeAssignments.map((assignment) => assignment.revenueEntryId).filter((id): id is string => Boolean(id)))];
+  const assignmentEntries = assignmentEntryIds.length
+    ? await db.eventFinancialEntry.findMany({
+      where: { contaId, eventId, id: { in: assignmentEntryIds } },
+      select: { id: true, actualAmount: true, refundedAmount: true },
     })
     : [];
   const studentEntryById = new Map(studentEntries.map((entry) => [entry.id, entry]));
@@ -235,9 +248,9 @@ export async function getEventReportDetail(
     .sort((a, b) => b.quantity - a.quantity || a.sectorName.localeCompare(b.sectorName, 'pt-BR'));
 
   const relevantEntries = entries.filter((entry) => !['TICKET_SALE', 'EVENT_REGISTRATION'].includes(entry.originType));
-  const otherRevenueEntries = relevantEntries.filter((entry) => entry.type === 'REVENUE');
+  const otherRevenueEntries = relevantEntries.filter((entry) => entry.type === 'REVENUE' && entry.originType !== 'COSTUME_ASSIGNMENT');
   const expectedRevenueEntries = otherRevenueEntries.filter((entry) => !['CANCELLED', 'REFUNDED'].includes(entry.status));
-  const costEntries = relevantEntries.filter((entry) => entry.type === 'COST');
+  const costEntries = relevantEntries.filter((entry) => entry.type === 'COST' && entry.originType !== 'COSTUME');
   const realizedRevenueFor = (entry: (typeof entries)[number]) => isEventRevenueRealizedStatus(entry.status)
     && entry._sum.actualAmount != null
     ? getEventNetRealizedAmount(number(entry._sum.actualAmount), number(entry._sum.refundedAmount))
@@ -248,9 +261,69 @@ export async function getEventReportDetail(
   const expectedRevenueFor = (entry: (typeof entries)[number]) => isEventRevenueExpectedStatus(entry.status)
     ? number(entry._sum.expectedAmount)
     : 0;
-  const expectedOtherRevenue = expectedRevenueEntries.reduce((sum, entry) => sum + expectedRevenueFor(entry), 0);
-  const receivedOtherRevenue = expectedRevenueEntries.reduce((sum, entry) => sum + realizedRevenueFor(entry), 0);
-  const refundedOtherRevenue = otherRevenueEntries.reduce((sum, entry) => sum + number(entry._sum.refundedAmount), 0);
+  const costumeIds = new Set(costumes.map((costume) => costume.id));
+  const costumeEntriesByOrigin = new Map<string, typeof costumeEntries>();
+  for (const entry of costumeEntries) {
+    if (!entry.originId || !costumeIds.has(entry.originId)) continue;
+    const linked = costumeEntriesByOrigin.get(entry.originId) ?? [];
+    linked.push(entry);
+    costumeEntriesByOrigin.set(entry.originId, linked);
+  }
+  const costumeCategoryTotals = new Map<string, { expected: number; realized: number }>();
+  let costumeCostExpected = 0;
+  let costumeCostRealized = 0;
+  for (const costume of costumes) {
+    const expected = number(costume.schoolCost) * costume.quantity;
+    const linkedEntries = costumeEntriesByOrigin.get(costume.id) ?? [];
+    const realized = linkedEntries.length
+      ? linkedEntries.reduce((sum, entry) => sum + (entry.type === 'COST' && isEventCostRealizedStatus(entry.status)
+        ? getEventNetRealizedAmount(number(entry.actualAmount), number(entry.refundedAmount))
+        : 0), 0)
+      : expected;
+    costumeCostExpected += expected;
+    costumeCostRealized += realized;
+    const category = EVENT_COSTUME_CATEGORY_LABELS[costume.category];
+    const totals = costumeCategoryTotals.get(category) ?? { expected: 0, realized: 0 };
+    totals.expected += expected;
+    totals.realized += realized;
+    costumeCategoryTotals.set(category, totals);
+  }
+  const assignmentEntryById = new Map(assignmentEntries.map((entry) => [entry.id, entry]));
+  const legacyAssignmentRevenue = costumeAssignments.reduce((amounts, assignment) => {
+    if (assignment.status === 'CANCELLED' || assignment.billingMode !== 'SEPARATE_CHARGE') return amounts;
+    const value = number(assignment.chargedValue);
+    if (value <= 0) return amounts;
+    amounts.expected += value;
+    const entry = assignment.revenueEntryId ? assignmentEntryById.get(assignment.revenueEntryId) : undefined;
+    if (entry) {
+      const actual = number(entry.actualAmount);
+      const refunded = number(entry.refundedAmount);
+      if (actual > 0) {
+        amounts.received += getEventNetRealizedAmount(actual, refunded);
+        amounts.refunded += refunded;
+      }
+    } else if (assignment.isPaid) {
+      amounts.received += value;
+    }
+    return amounts;
+  }, { expected: 0, received: 0, refunded: 0 });
+  const detachedCostumeEntries = costumeEntries.filter((entry) => entry.type === 'COST' && entry.originId && !costumeIds.has(entry.originId));
+  const detachedCostumeEntriesByCategory = new Map<string, { expected: number; realized: number }>();
+  for (const entry of detachedCostumeEntries) {
+    const totals = detachedCostumeEntriesByCategory.get(entry.category) ?? { expected: 0, realized: 0 };
+    if (isEventCostExpectedStatus(entry.status)) totals.expected += number(entry.expectedAmount);
+    if (isEventCostRealizedStatus(entry.status)) totals.realized += getEventNetRealizedAmount(number(entry.actualAmount), number(entry.refundedAmount));
+    detachedCostumeEntriesByCategory.set(entry.category, totals);
+  }
+  const legacyAssignmentCategory = {
+    expected: legacyAssignmentRevenue.expected,
+    realized: legacyAssignmentRevenue.received,
+  };
+  const expectedOtherRevenue = expectedRevenueEntries.reduce((sum, entry) => sum + expectedRevenueFor(entry), 0)
+    + legacyAssignmentRevenue.expected;
+  const receivedOtherRevenue = expectedRevenueEntries.reduce((sum, entry) => sum + realizedRevenueFor(entry), 0)
+    + legacyAssignmentRevenue.received;
+  const refundedOtherRevenue = otherRevenueEntries.reduce((sum, entry) => sum + number(entry._sum.refundedAmount), 0) + legacyAssignmentRevenue.refunded;
   const ticketLots = lots.map((lot) => ({
     id: lot.id, name: lot.name, mapId: lot.eventMapId, mapName: mapById.get(lot.eventMapId ?? '')?.name ?? null,
     mapStartsAt: mapById.get(lot.eventMapId ?? '')?.startsAt?.toISOString() ?? null,
@@ -277,6 +350,14 @@ export async function getEventReportDetail(
   // refund reduces net receipts while the obligation remains expected; only
   // cancelled or fully refunded entries are excluded from expectedRevenueEntries.
   const pendingCommittedRevenue = Math.max(committedRevenue - receivedRevenue, 0);
+  const detachedCostExpected = detachedCostumeEntries.reduce((sum, entry) => sum + (isEventCostExpectedStatus(entry.status) ? number(entry.expectedAmount) : 0), 0);
+  const detachedCostRealized = detachedCostumeEntries.reduce((sum, entry) => sum + (isEventCostRealizedStatus(entry.status)
+    ? getEventNetRealizedAmount(number(entry.actualAmount), number(entry.refundedAmount))
+    : 0), 0);
+  const otherCostExpected = costEntries.filter((entry) => isEventCostExpectedStatus(entry.status)).reduce((sum, entry) => sum + number(entry._sum.expectedAmount), 0);
+  const otherCostRealized = costEntries.reduce((sum, entry) => sum + realizedCostFor(entry), 0);
+  const costsExpected = otherCostExpected + costumeCostExpected + detachedCostExpected;
+  const costsRealized = otherCostRealized + costumeCostRealized + detachedCostRealized;
 
   return {
     event: { id: event.id, name: event.name, startsAt: event.startsAt.toISOString(), locationName: event.locationName, estimatedCapacity: event.estimatedCapacity, status: event.status },
@@ -298,23 +379,29 @@ export async function getEventReportDetail(
       ticketOnlineSales: sales.filter((sale) => sale.status !== 'CANCELLED' && Boolean(sale.eventMapOrderId)).length,
       availableTicketQuantity: ticketLots.reduce((sum, lot) => sum + lot.available, 0),
       availableTicketPotential: ticketLots.reduce((sum, lot) => sum + lot.available * lot.unitPrice, 0),
-      checkIns, committedRevenue, receivedRevenue, refundedRevenueExcludingTickets: refundedOtherRevenue + participantRefunds, resultRealized: receivedRevenue - costEntries.reduce((sum, entry) => sum + realizedCostFor(entry), 0), resultCommitted: committedRevenue - costEntries.filter((entry) => isEventCostExpectedStatus(entry.status)).reduce((sum, entry) => sum + number(entry._sum.expectedAmount), 0), pendingCommittedRevenue,
-      costsExpected: costEntries.filter((entry) => isEventCostExpectedStatus(entry.status)).reduce((sum, entry) => sum + number(entry._sum.expectedAmount), 0),
-      costsRealized: costEntries.reduce((sum, entry) => sum + realizedCostFor(entry), 0),
+      checkIns, committedRevenue, receivedRevenue, refundedRevenueExcludingTickets: refundedOtherRevenue + participantRefunds, resultRealized: receivedRevenue - costsRealized, resultCommitted: committedRevenue - costsExpected, pendingCommittedRevenue,
+      costsExpected,
+      costsRealized,
       otherRevenueExpected: expectedOtherRevenue,
       otherRevenueReceived: receivedOtherRevenue,
-      otherRevenueRefunded: otherRevenueEntries.reduce((sum, entry) => sum + number(entry._sum.refundedAmount), 0),
+      otherRevenueRefunded: refundedOtherRevenue,
     },
     payments: [...paymentTotals].map(([method, netReceived]) => ({ method, netReceived })),
     timeline: [...timelineByDay].sort(([a], [b]) => a.localeCompare(b)).map(([day, amount]) => ({ day, amount })),
     salesByOrigin,
     salesBySessionSector,
     lots: ticketLots,
-    categories: relevantEntries.map((entry) => ({
+    categories: [
+      ...relevantEntries.filter((entry) => !(entry.type === 'COST' && entry.originType === 'COSTUME')
+        && !(entry.type === 'REVENUE' && entry.originType === 'COSTUME_ASSIGNMENT')).map((entry) => ({
       category: entry.category, type: entry.type, expected: entry.type === 'REVENUE'
         ? expectedRevenueFor(entry)
         : isEventCostExpectedStatus(entry.status) ? number(entry._sum.expectedAmount) : 0,
       realized: entry.type === 'REVENUE' ? realizedRevenueFor(entry) : realizedCostFor(entry),
-    })),
+      })),
+      ...[...costumeCategoryTotals].map(([category, totals]) => ({ category, type: 'COST', ...totals })),
+      ...[...detachedCostumeEntriesByCategory].map(([category, totals]) => ({ category, type: 'COST', ...totals })),
+      ...(legacyAssignmentCategory.expected > 0 ? [{ category: 'Cobranças de figurinos', type: 'REVENUE', ...legacyAssignmentCategory }] : []),
+    ],
   };
 }

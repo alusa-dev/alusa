@@ -6,6 +6,8 @@ const db = vi.hoisted(() => ({
   eventTicketSale: { findMany: vi.fn() },
   eventFinancialEntry: { groupBy: vi.fn(), findMany: vi.fn() },
   eventFinancialPayment: { groupBy: vi.fn() },
+  eventCostume: { findMany: vi.fn() },
+  eventCostumeAssignment: { findMany: vi.fn() },
   eventTicketLot: { findMany: vi.fn() },
   eventMap: { findMany: vi.fn() },
   eventMapOrderItem: { findMany: vi.fn() },
@@ -59,6 +61,17 @@ describe('getEventReportDetail', () => {
       { type: 'REVENUE', status: 'RECEIVED', category: 'Ingresso', originType: 'TICKET_SALE', _sum: { expectedAmount: 100, actualAmount: 100, refundedAmount: 0, netAmount: 100 } },
     ]);
     db.eventFinancialPayment.groupBy.mockResolvedValue([{ paymentMethod: 'CASH', status: 'RECEIVED', _sum: { netAmount: 15, amount: 20, refundedAmount: 5 } }, { paymentMethod: 'PIX', status: 'RECEIVED', _sum: { netAmount: 70, amount: 80, refundedAmount: 10 } }, { paymentMethod: 'TRANSFER', status: 'REFUNDED', _sum: { netAmount: 0, amount: 5, refundedAmount: 5 } }]);
+    db.eventCostume.findMany.mockResolvedValue([]);
+    db.eventCostumeAssignment.findMany.mockResolvedValue([]);
+    db.eventFinancialEntry.findMany.mockImplementation(({ where }: { where: { id?: unknown } }) => where.id
+      ? Promise.resolve([
+        { id: 'entry-overdue', dueDate: new Date('2020-01-01T00:00:00Z'), status: 'PENDING', actualAmount: 30, refundedAmount: 5, netAmount: 25 },
+        { id: 'entry-cancelled', dueDate: new Date('2020-01-01T00:00:00Z'), status: 'CANCELLED', refundedAmount: 0 },
+        { id: 'entry-partial-refund', dueDate: new Date('2020-01-01T00:00:00Z'), status: 'PARTIALLY_REFUNDED', actualAmount: 100, refundedAmount: 30, netAmount: 70 },
+        { id: 'entry-refunded', dueDate: new Date('2020-01-01T00:00:00Z'), status: 'REFUNDED', refundedAmount: 30 },
+        { id: 'entry-nonstudent-cancelled', dueDate: new Date('2020-01-01T00:00:00Z'), status: 'CANCELLED', refundedAmount: 0 },
+      ])
+      : Promise.resolve([]));
     db.eventTicketLot.findMany.mockResolvedValue([
       { id: 'lot-a', name: 'Lote A', eventMapId: 'map-a', status: 'ACTIVE', unitPrice: 20, quantityTotal: 5, quantitySold: 3 },
       ...(['DRAFT', 'CLOSED', 'CANCELLED', 'ARCHIVED'] as const).map((status, index) => ({
@@ -106,11 +119,12 @@ describe('getEventReportDetail', () => {
     for (const delegate of [db.eventParticipant.count, db.eventParticipant.aggregate, db.eventParticipant.findMany, db.eventTicketSale.findMany, db.eventFinancialEntry.groupBy, db.eventFinancialPayment.groupBy, db.eventTicketLot.findMany, db.eventTicket.count]) {
       expect(delegate.mock.calls[0][0].where).toMatchObject({ contaId: 'tenant-a', eventId: 'event-a' });
     }
-    expect(db.eventFinancialEntry.findMany.mock.calls[0][0].where).toMatchObject({ contaId: 'tenant-a', eventId: 'event-a' });
-    expect(db.eventFinancialEntry.findMany.mock.calls[0][0].where.id.in).toEqual(expect.arrayContaining([
+    const participantEntryQuery = db.eventFinancialEntry.findMany.mock.calls.find(([args]) => args.where.id);
+    expect(participantEntryQuery?.[0].where).toMatchObject({ contaId: 'tenant-a', eventId: 'event-a' });
+    expect(participantEntryQuery?.[0].where.id.in).toEqual(expect.arrayContaining([
       'entry-overdue', 'entry-cancelled', 'entry-partial-refund', 'entry-refunded', 'entry-nonstudent-cancelled',
     ]));
-    expect(db.eventFinancialEntry.findMany.mock.calls[0][0].select).toMatchObject({
+    expect(participantEntryQuery?.[0].select).toMatchObject({
       netAmount: true, actualAmount: true, refundedAmount: true,
     });
     expect(db.eventParticipant.findMany.mock.calls[0][0].select.isFeePaid).toBe(true);
@@ -128,6 +142,88 @@ describe('getEventReportDetail', () => {
     await expect(getEventReportDetail('tenant-a', 'event-from-tenant-b')).resolves.toBeNull();
     expect(db.eventTicketSale.findMany).not.toHaveBeenCalled();
     expect(db.schoolEvent.findFirst.mock.calls[0][0].where).toEqual({ id: 'event-from-tenant-b', contaId: 'tenant-a' });
+  });
+
+  it('includes legacy costume costs and paid separate charges without financial entries', async () => {
+    db.eventFinancialEntry.groupBy.mockResolvedValue([]);
+    db.eventCostume.findMany.mockResolvedValue([{ id: 'costume-legacy', category: 'CLOTHING', schoolCost: 25, quantity: 2 }]);
+    db.eventCostumeAssignment.findMany.mockResolvedValue([
+      { revenueEntryId: null, status: 'DELIVERED', billingMode: 'SEPARATE_CHARGE', chargedValue: 30, isPaid: true },
+    ]);
+
+    const report = await getEventReportDetail('tenant-a', 'event-a');
+
+    expect(report?.totals).toMatchObject({ costsExpected: 50, costsRealized: 50, otherRevenueExpected: 30, otherRevenueReceived: 30 });
+    expect(report?.totals.resultRealized).toBe(report!.totals.receivedRevenue - 50);
+    expect(report?.categories).toContainEqual({ category: 'Roupa', type: 'COST', expected: 50, realized: 50 });
+    expect(report?.categories).toContainEqual({ category: 'Cobranças de figurinos', type: 'REVENUE', expected: 30, realized: 30 });
+    expect(db.eventCostume.findMany.mock.calls[0][0].where).toEqual({ contaId: 'tenant-a', eventId: 'event-a' });
+    expect(db.eventCostumeAssignment.findMany.mock.calls[0][0].where).toEqual({ contaId: 'tenant-a', eventId: 'event-a' });
+    expect(db.eventFinancialEntry.findMany.mock.calls.find(([args]) => args.where.originType)?.[0].where).toEqual({
+      contaId: 'tenant-a', eventId: 'event-a', originType: 'COSTUME',
+    });
+  });
+
+  it('does not add legacy costume or assignment amounts when linked entries exist', async () => {
+    db.eventFinancialEntry.groupBy.mockResolvedValue([
+      { type: 'COST', status: 'PARTIALLY_PAID', category: 'Figurinos', originType: 'COSTUME', _sum: { expectedAmount: 12, actualAmount: 5, refundedAmount: 0, netAmount: 5 } },
+      { type: 'REVENUE', status: 'PARTIALLY_PAID', category: 'Cobrança de figurino', originType: 'COSTUME_ASSIGNMENT', _sum: { expectedAmount: 40, actualAmount: 15, refundedAmount: 0, netAmount: 15 } },
+    ]);
+    db.eventCostume.findMany.mockResolvedValue([{ id: 'costume-linked', category: 'CLOTHING', schoolCost: 50, quantity: 1 }]);
+    db.eventCostumeAssignment.findMany.mockResolvedValue([
+      { revenueEntryId: 'assignment-entry', status: 'DELIVERED', billingMode: 'SEPARATE_CHARGE', chargedValue: 40, isPaid: true },
+    ]);
+    db.eventFinancialEntry.findMany.mockResolvedValue([
+      { id: 'cost-entry', type: 'COST', status: 'PARTIALLY_PAID', originType: 'COSTUME', originId: 'costume-linked', actualAmount: 5, refundedAmount: 0 },
+      { id: 'assignment-entry', type: 'REVENUE', status: 'PARTIALLY_PAID', originType: 'COSTUME_ASSIGNMENT', originId: 'assignment-1', actualAmount: 15, refundedAmount: 0 },
+    ]);
+
+    const report = await getEventReportDetail('tenant-a', 'event-a');
+
+    expect(report?.totals.costsExpected).toBe(50);
+    expect(report?.totals.costsRealized).toBe(5);
+    expect(report?.totals.otherRevenueExpected).toBe(40);
+    expect(report?.totals.otherRevenueReceived).toBe(15);
+    expect(report?.categories).toContainEqual({ category: 'Roupa', type: 'COST', expected: 50, realized: 5 });
+    expect(report?.categories).toContainEqual({ category: 'Cobranças de figurinos', type: 'REVENUE', expected: 40, realized: 15 });
+    expect(db.eventFinancialEntry.findMany.mock.calls.find(([args]) => args.where.id?.in?.includes('assignment-entry'))?.[0].where).toEqual({
+      contaId: 'tenant-a', eventId: 'event-a', id: { in: ['assignment-entry'] },
+    });
+  });
+
+  it('does not use legacy paid fallback when a linked assignment entry exists without receipts', async () => {
+    db.eventFinancialEntry.groupBy.mockResolvedValue([]);
+    db.eventCostumeAssignment.findMany.mockResolvedValue([
+      { revenueEntryId: 'assignment-entry-pending', status: 'DELIVERED', billingMode: 'SEPARATE_CHARGE', chargedValue: 25, isPaid: true },
+    ]);
+    db.eventFinancialEntry.findMany.mockResolvedValue([
+      { id: 'assignment-entry-pending', actualAmount: 0, refundedAmount: 0 },
+    ]);
+
+    const report = await getEventReportDetail('tenant-a', 'event-a');
+
+    expect(report?.totals.otherRevenueExpected).toBe(25);
+    expect(report?.totals.otherRevenueReceived).toBe(0);
+    expect(report?.categories).toContainEqual({ category: 'Cobranças de figurinos', type: 'REVENUE', expected: 25, realized: 0 });
+  });
+
+  it('keeps legacy expected costume costs when linked entries are pending or cancelled', async () => {
+    db.eventFinancialEntry.groupBy.mockResolvedValue([]);
+    db.eventCostume.findMany.mockResolvedValue([
+      { id: 'costume-pending', category: 'CLOTHING', schoolCost: 10, quantity: 1 },
+      { id: 'costume-cancelled', category: 'SHOES', schoolCost: 20, quantity: 1 },
+    ]);
+    db.eventFinancialEntry.findMany.mockResolvedValue([
+      { id: 'cost-entry-pending', type: 'COST', status: 'PENDING', originType: 'COSTUME', originId: 'costume-pending', category: 'Roupa', expectedAmount: 10, actualAmount: 0, refundedAmount: 0 },
+      { id: 'cost-entry-cancelled', type: 'COST', status: 'CANCELLED', originType: 'COSTUME', originId: 'costume-cancelled', category: 'Calçado', expectedAmount: 20, actualAmount: 0, refundedAmount: 0 },
+    ]);
+
+    const report = await getEventReportDetail('tenant-a', 'event-a');
+
+    expect(report?.totals.costsExpected).toBe(30);
+    expect(report?.totals.costsRealized).toBe(0);
+    expect(report?.categories).toContainEqual({ category: 'Roupa', type: 'COST', expected: 10, realized: 0 });
+    expect(report?.categories).toContainEqual({ category: 'Calçado', type: 'COST', expected: 20, realized: 0 });
   });
 
   it('treats the pending committed total as open balance, not delinquency', async () => {
