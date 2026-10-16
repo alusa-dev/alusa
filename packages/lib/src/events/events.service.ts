@@ -139,7 +139,7 @@ const eventReportSelect = (contaId: string) => ({
     },
   },
   ticketSales: { where: { contaId }, select: { status: true, quantity: true, totalAmount: true, refundedAmount: true } },
-  ticketLots: { where: { contaId }, select: { quantityTotal: true, quantitySold: true, unitPrice: true } },
+  ticketLots: { where: { contaId }, select: { status: true, quantityTotal: true, quantitySold: true, unitPrice: true } },
   costumes: { where: { contaId }, select: { id: true, schoolCost: true, quantity: true } },
   assignments: { where: { contaId }, select: { revenueEntryId: true, status: true, billingMode: true, chargedValue: true, isPaid: true } },
   financialEntries: {
@@ -295,6 +295,7 @@ function buildMetrics(
       refundedAmount: toMoney(sale.refundedAmount),
     })),
     ticketLots: record.ticketLots.map((lot) => ({
+      status: lot.status,
       quantityTotal: lot.quantityTotal,
       quantitySold: lot.quantitySold,
       unitPrice: toMoney(lot.unitPrice),
@@ -983,7 +984,7 @@ export function mapTicketLot(lot: Prisma.EventTicketLotGetPayload<{ include: typ
     unitPrice: toMoney(lot.unitPrice),
     quantityTotal: lot.quantityTotal,
     quantitySold: lot.quantitySold,
-    quantityAvailable: Math.max(lot.quantityTotal - lot.quantitySold, 0),
+    quantityAvailable: lot.status === 'ACTIVE' ? Math.max(lot.quantityTotal - lot.quantitySold, 0) : 0,
     saleStartsAt: toIso(lot.saleStartsAt),
     saleEndsAt: toIso(lot.saleEndsAt),
     status: lot.status,

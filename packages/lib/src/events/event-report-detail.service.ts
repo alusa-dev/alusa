@@ -84,7 +84,7 @@ export async function getEventReportDetail(
     db.eventFinancialPayment.groupBy({ by: ['paymentMethod', 'status'], where: { ...where, financialEntry: { type: 'REVENUE', originType: { not: 'TICKET_SALE' } } }, _sum: { netAmount: true, amount: true, refundedAmount: true } }),
     db.eventTicketLot.findMany({
       where,
-      select: { id: true, name: true, eventMapId: true, unitPrice: true, quantityTotal: true, quantitySold: true },
+      select: { id: true, name: true, eventMapId: true, status: true, unitPrice: true, quantityTotal: true, quantitySold: true },
     }),
     db.eventTicket.count({ where: { ...where, usedAt: { not: null }, cancelledAt: null } }),
   ]);
@@ -255,7 +255,8 @@ export async function getEventReportDetail(
     id: lot.id, name: lot.name, mapId: lot.eventMapId, mapName: mapById.get(lot.eventMapId ?? '')?.name ?? null,
     mapStartsAt: mapById.get(lot.eventMapId ?? '')?.startsAt?.toISOString() ?? null,
     sold: lot.quantitySold, total: lot.quantityTotal,
-    available: Math.max(lot.quantityTotal - lot.quantitySold, 0), unitPrice: number(lot.unitPrice),
+    available: lot.status === 'ACTIVE' ? Math.max(lot.quantityTotal - lot.quantitySold, 0) : 0,
+    unitPrice: number(lot.unitPrice),
   }));
   const ticketPendingGross = saleStatusSum('PENDING', 'totalAmount');
   const ticketPaidGross = paidSales.reduce((sum, sale) => sum + number(sale.totalAmount), 0);

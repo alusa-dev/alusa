@@ -14,7 +14,7 @@ import {
 describe('events domain rules', () => {
   it('calcula previsto, realizado, resultado, ticket medio e ocupacao', () => {
     const metrics = calculateEventMetrics({
-      ticketLots: [{ quantityTotal: 100, quantitySold: 35 }],
+      ticketLots: [{ status: 'ACTIVE', quantityTotal: 100, quantitySold: 35 }],
       ticketSales: [
         { status: 'PAID', quantity: 20, totalAmount: 1000 },
         { status: 'PENDING', quantity: 10, totalAmount: 500 },
@@ -295,7 +295,7 @@ describe('events domain rules', () => {
   it('calcula receita prevista incluindo ingressos potenciais nao vendidos do lote', () => {
     const metrics = calculateEventMetrics({
       ticketLots: [
-        { quantityTotal: 100, quantitySold: 30, unitPrice: 50 }, // 70 unsold * 50 = 3500 potential
+        { status: 'ACTIVE', quantityTotal: 100, quantitySold: 30, unitPrice: 50 }, // 70 unsold * 50 = 3500 potential
       ],
       ticketSales: [
         { status: 'PAID', quantity: 20, totalAmount: 1000 },
@@ -305,6 +305,21 @@ describe('events domain rules', () => {
 
     // 1000 (PAID sales) + 500 (PENDING sales) + (100 - 30) * 50 (unsold potential) = 1500 + 3500 = 5000
     expect(metrics.receitaPrevista).toBe(5000);
+  });
+
+  it('conta apenas lotes ACTIVE no inventário e potencial, preservando vendas históricas', () => {
+    const inactiveStatuses = ['DRAFT', 'CLOSED', 'CANCELLED', 'ARCHIVED', 'SOLD_OUT'] as const;
+    const metrics = calculateEventMetrics({
+      ticketLots: [
+        { status: 'ACTIVE', quantityTotal: 10, quantitySold: 2, unitPrice: 10 },
+        ...inactiveStatuses.map((status) => ({ status, quantityTotal: 10, quantitySold: 2, unitPrice: 10 })),
+      ],
+      ticketSales: [{ status: 'PAID', quantity: 2, totalAmount: 100 }],
+    });
+
+    expect(metrics.ingressosDisponiveis).toBe(8);
+    expect(metrics.receitaPrevista).toBe(180);
+    expect(metrics.receitaRealizada).toBe(100);
   });
 
   it('mantém receita realizada zerada quando todas as inscrições estão pendentes', () => {

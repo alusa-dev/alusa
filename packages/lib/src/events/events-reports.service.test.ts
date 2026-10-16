@@ -96,7 +96,7 @@ const eventAWithForeignChildren = {
     id: 'responsible-b', nome: 'Nome privado B', email: 'private-b@example.invalid', contaId: 'tenant-b', acessosConta: [],
   },
   ticketSales: [{ contaId: 'tenant-b', status: 'PENDING', quantity: 1, totalAmount: new Prisma.Decimal(999) }],
-  ticketLots: [{ contaId: 'tenant-b', quantityTotal: 10, quantitySold: 0, unitPrice: new Prisma.Decimal(999) }],
+  ticketLots: [{ contaId: 'tenant-b', status: 'ACTIVE', quantityTotal: 10, quantitySold: 0, unitPrice: new Prisma.Decimal(999) }],
   costumes: [{ contaId: 'tenant-b', id: 'costume-b', schoolCost: new Prisma.Decimal(999), quantity: 1 }],
   assignments: [{ contaId: 'tenant-b', revenueEntryId: null, status: 'PENDING', billingMode: 'SEPARATE_CHARGE', chargedValue: new Prisma.Decimal(999), isPaid: false }],
   financialEntries: [{

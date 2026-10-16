@@ -179,6 +179,7 @@ export type EventMetricTicketSale = {
 };
 
 export type EventMetricTicketLot = {
+  status: EventTicketLotStatus;
   quantityTotal: number;
   quantitySold: number;
   unitPrice?: number;
@@ -688,14 +689,16 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   }
 
   for (const lot of ticketLots) {
+    if (lot.status !== 'ACTIVE') continue;
     const unsoldQty = Math.max(lot.quantityTotal - lot.quantitySold, 0);
     const lotPrice = lot.unitPrice ?? 0;
     receitaPrevista += unsoldQty * lotPrice;
     receitaBrutaPrevista += unsoldQty * lotPrice;
   }
 
-  const totalCapacity = ticketLots.reduce((sum, lot) => sum + lot.quantityTotal, 0);
-  const lotSold = ticketLots.reduce((sum, lot) => sum + lot.quantitySold, 0);
+  const activeTicketLots = ticketLots.filter((lot) => lot.status === 'ACTIVE');
+  const totalCapacity = activeTicketLots.reduce((sum, lot) => sum + lot.quantityTotal, 0);
+  const lotSold = activeTicketLots.reduce((sum, lot) => sum + lot.quantitySold, 0);
   const ingressosDisponiveis = Math.max(totalCapacity - lotSold, 0);
   const resultadoPrevisto = receitaPrevista - custoPrevisto;
   const resultadoRealizado = receitaRealizada - custoRealizado;

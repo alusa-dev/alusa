@@ -59,7 +59,13 @@ describe('getEventReportDetail', () => {
       { type: 'REVENUE', status: 'RECEIVED', category: 'Ingresso', originType: 'TICKET_SALE', _sum: { expectedAmount: 100, actualAmount: 100, refundedAmount: 0, netAmount: 100 } },
     ]);
     db.eventFinancialPayment.groupBy.mockResolvedValue([{ paymentMethod: 'CASH', status: 'RECEIVED', _sum: { netAmount: 15, amount: 20, refundedAmount: 5 } }, { paymentMethod: 'PIX', status: 'RECEIVED', _sum: { netAmount: 70, amount: 80, refundedAmount: 10 } }, { paymentMethod: 'TRANSFER', status: 'REFUNDED', _sum: { netAmount: 0, amount: 5, refundedAmount: 5 } }]);
-    db.eventTicketLot.findMany.mockResolvedValue([{ id: 'lot-a', name: 'Lote A', eventMapId: 'map-a', unitPrice: 20, quantityTotal: 5, quantitySold: 3 }]);
+    db.eventTicketLot.findMany.mockResolvedValue([
+      { id: 'lot-a', name: 'Lote A', eventMapId: 'map-a', status: 'ACTIVE', unitPrice: 20, quantityTotal: 5, quantitySold: 3 },
+      ...(['DRAFT', 'CLOSED', 'CANCELLED', 'ARCHIVED'] as const).map((status, index) => ({
+        id: `lot-${status.toLowerCase()}`, name: `Lote ${status}`, eventMapId: null, status,
+        unitPrice: 50, quantityTotal: 10, quantitySold: 2 + index,
+      })),
+    ]);
     db.eventMap.findMany.mockResolvedValue([{ id: 'map-a', name: 'Sessão 1', startsAt: new Date('2026-10-01T12:00:00Z') }]);
     db.eventMapOrderItem.findMany.mockResolvedValue([]);
     db.eventTicket.count.mockResolvedValue(1);
@@ -83,6 +89,7 @@ describe('getEventReportDetail', () => {
     ]));
     expect(report?.timeline).toEqual([{ day: '2026-10-01', amount: 80 }]);
     expect(report?.lots[0]).toMatchObject({ mapName: 'Sessão 1', sold: 3, total: 5 });
+    expect(report?.lots.slice(1).every((lot) => lot.available === 0)).toBe(true);
     expect(report?.categories).toContainEqual({ category: 'Estorno parcial', type: 'REVENUE', expected: 90, realized: 60 });
     expect(report?.categories).toContainEqual({ category: 'Receita pendente parcialmente paga', type: 'REVENUE', expected: 25, realized: 8 });
     expect(report?.categories).toContainEqual({ category: 'Receita marcada paga', type: 'REVENUE', expected: 0, realized: 0 });
@@ -113,6 +120,7 @@ describe('getEventReportDetail', () => {
     expect(db.eventTicketSale.findMany.mock.calls[0][0].select).not.toHaveProperty('lot');
     expect(db.eventFinancialPayment.groupBy.mock.calls[0][0].where.financialEntry).toEqual({ type: 'REVENUE', originType: { not: 'TICKET_SALE' } });
     expect(db.eventTicketSale.findMany).toHaveBeenCalledTimes(1);
+    expect(db.eventTicketLot.findMany.mock.calls[0][0].select.status).toBe(true);
   });
 
   it('does not query event data when the selected id belongs to another tenant', async () => {
