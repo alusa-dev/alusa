@@ -618,11 +618,11 @@
           "lifecycle": "active-migration",
           "implemented": true,
           "consumers": {
-            "total": 161,
+            "total": 174,
             "bySurface": {
               "packages": 1,
               "scripts": 3,
-              "web": 157
+              "web": 170
             },
             "files": [
               {
@@ -667,7 +667,7 @@
               },
               {
                 "file": "apps/web/app/api/cobrancas/[id]/sync-asaas/route.ts",
-                "occurrences": 1
+                "occurrences": 2
               },
               {
                 "file": "apps/web/app/api/cobrancas/[id]/undo-receive-in-cash/route.ts",
@@ -774,6 +774,10 @@
                 "occurrences": 2
               },
               {
+                "file": "apps/web/src/server/finance/charge-sync-observability.ts",
+                "occurrences": 3
+              },
+              {
                 "file": "apps/web/src/server/finance/refund-charge.service.ts",
                 "occurrences": 2
               },
@@ -787,7 +791,11 @@
               },
               {
                 "file": "apps/web/tests/unit/charge-sync-client.test.ts",
-                "occurrences": 1
+                "occurrences": 2
+              },
+              {
+                "file": "apps/web/tests/unit/charge-sync-observability.test.ts",
+                "occurrences": 6
               },
               {
                 "file": "apps/web/tests/unit/cobrancas.arquivos.api.test.ts",
@@ -803,7 +811,7 @@
               },
               {
                 "file": "apps/web/tests/unit/cobrancas.id.get.test.ts",
-                "occurrences": 12
+                "occurrences": 14
               },
               {
                 "file": "apps/web/tests/unit/cobrancas.id.put.test.ts",
