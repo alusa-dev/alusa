@@ -69,7 +69,7 @@ const EXPENSIVE_POLICY: RateLimitPolicy = {
 };
 
 const REPORT_POLICY: RateLimitPolicy = {
-  name: 'report-read',
+  name: 'financial-report-read',
   // Report pages load selected views and supporting summaries. Leave room for
   // navigation and filter changes while bounding database-heavy reads.
   limit: 60,
@@ -271,6 +271,7 @@ export const apiRateLimitPolicyNames = [
   MUTATION_POLICY.name,
   FINANCIAL_POLICY.name,
   EXPENSIVE_POLICY.name,
+  REPORT_POLICY.name,
   ADMIN_POLICY.name,
   PUBLIC_WRITE_POLICY.name,
   PUBLIC_TELEMETRY_POLICY.name,

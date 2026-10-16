@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { enforceApiRateLimit } from '@/lib/security/api-rate-limit';
+import { apiRateLimitPolicyNames, enforceApiRateLimit } from '@/lib/security/api-rate-limit';
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -9,6 +9,11 @@ afterEach(() => {
 });
 
 describe('API rate limit policy', () => {
+  it('exposes the canonical financial report read policy name', () => {
+    expect(apiRateLimitPolicyNames).toContain('financial-report-read');
+    expect(apiRateLimitPolicyNames).not.toContain('report-read');
+  });
+
   it('does not rate-limit webhook/auth namespaces globally', async () => {
     process.env.RATE_LIMIT_DISABLE_IN_DEV = 'false';
 
