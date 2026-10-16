@@ -258,6 +258,7 @@ export async function getEventReportDetail(
     available: Math.max(lot.quantityTotal - lot.quantitySold, 0), unitPrice: number(lot.unitPrice),
   }));
   const ticketPendingGross = saleStatusSum('PENDING', 'totalAmount');
+  const ticketPaidGross = paidSales.reduce((sum, sale) => sum + number(sale.totalAmount), 0);
   const participantExpected = participantPaymentStatuses.reduce((sum, item) =>
     sum + (!item.closed && !item.exempt ? number(item.participant.registrationFeeCharged) : 0), 0);
   const participantGross = number(activeParticipants._sum.registrationFeeOriginal);
@@ -266,7 +267,9 @@ export async function getEventReportDetail(
   const participantReceivedNet = participantPaymentStatuses.reduce((sum, item) =>
     sum + (!item.closed ? item.netPaid : 0), 0);
   const participantRefunds = number(activeParticipants._sum.feeRefundedAmount);
-  const ticketCommitted = ticketReceivedNet + ticketPendingGross;
+  // Commitment tracks the gross price of still-paid tickets and pending orders.
+  // Refunds reduce cash received, not the original paid-ticket commitment.
+  const ticketCommitted = ticketPaidGross + ticketPendingGross;
   const committedRevenue = participantExpected + ticketCommitted + expectedOtherRevenue;
   const receivedRevenue = Math.max(participantReceivedNet, 0) + ticketReceivedNet + receivedOtherRevenue;
   // This is the remaining committed balance, not an overdue metric. A partial

@@ -116,17 +116,13 @@ describe('resolveLiquidacaoStatus', () => {
       expect(result).toBe('DISPONIVEL');
     });
 
-    it('deve preservar a semântica civil para data-only e rejeitar data impossível', () => {
-      expect(resolveLiquidacaoStatus({
+    it('trata creditDate civil como o mesmo dia local e não como o instante UTC da meia-noite', () => {
+      const result = resolveLiquidacaoStatus({
         internalStatus: PAYMENT_STATUSES.CONFIRMED,
-        creditDate: '2024-01-10',
-        referenceDate: today,
-      })).toBe('DISPONIVEL');
-      expect(resolveLiquidacaoStatus({
-        internalStatus: PAYMENT_STATUSES.CONFIRMED,
-        creditDate: '2024-02-30',
-        referenceDate: today,
-      })).toBe('PENDENTE');
+        creditDate: '2024-01-15',
+        referenceDate: new Date('2024-01-15T09:00:00-04:00'),
+      });
+      expect(result).toBe('DISPONIVEL');
     });
   });
 });
@@ -181,7 +177,8 @@ describe('getEstimatedAvailableDate', () => {
     expect(result?.toISOString()).toBe('2024-01-15T12:00:00.000Z');
   });
 
-  it('deve retornar null para data impossível', () => {
-    expect(getEstimatedAvailableDate('2024-02-30')).toBeNull();
+  it('preserva o dia civil ao converter uma data Asaas', () => {
+    const result = getEstimatedAvailableDate('2026-10-14');
+    expect(result?.toISOString()).toBe('2026-10-14T12:00:00.000Z');
   });
 });

@@ -22,6 +22,7 @@ import {
 } from './payment-command-ledger';
 import { resolveOperationalChargePayment } from './resolve-operational-charge-payment';
 import { fulfillReservedSaleOnPayment } from './store-inventory';
+import { parseCivilDatePreservingInstant } from '../mappers/civil-date';
 
 // Status que permitem marcação como pago
 const PAYABLE_STATUSES = new Set<StatusCobranca>([
@@ -49,12 +50,11 @@ function resolvePaymentDateString(dataPagamento: Date | string | undefined): str
   }
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(dataPagamento)) {
-    const date = new Date(`${dataPagamento}T12:00:00.000Z`);
-    return Number.isNaN(date.getTime()) ? null : dataPagamento;
+    return parseCivilDatePreservingInstant(dataPagamento) ? dataPagamento : null;
   }
 
-  const parsed = new Date(dataPagamento);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+  const parsed = parseCivilDatePreservingInstant(dataPagamento);
+  return parsed ? parsed.toISOString().slice(0, 10) : null;
 }
 
 export interface MarkChargeAsPaidInput {
@@ -181,9 +181,11 @@ export async function markChargeAsPaid(
   }
 
   const paymentDateStr = resolvePaymentDateString(dataPagamento);
-  if (!paymentDateStr) {
+  const paymentDate = parseCivilDatePreservingInstant(paymentDateStr);
+  if (!paymentDate) {
     return { success: false, error: 'Data de pagamento inválida', code: 'INVALID_PAYMENT_DATE' };
   }
+  const normalizedPaymentDateStr = paymentDate.toISOString().slice(0, 10);
 
   let asaasProcessed = false;
   let isOffline = true;
@@ -232,7 +234,7 @@ export async function markChargeAsPaid(
         chargeId: standaloneCharge?.id ?? null,
         cobrancaId: cobranca?.id ?? null,
         metadata: {
-          paymentDate: paymentDateStr,
+          paymentDate: normalizedPaymentDateStr,
           amount,
           notifyCustomer,
         },
@@ -241,7 +243,7 @@ export async function markChargeAsPaid(
 
       // Chamar confirmCashPayment no Asaas
       try {
-        await confirmCashPayment(asaasPaymentId, paymentDateStr, amount, notifyCustomer, {
+        await confirmCashPayment(asaasPaymentId, normalizedPaymentDateStr, amount, notifyCustomer, {
           contaId,
         });
         await markPaymentCommandSent({
@@ -279,7 +281,7 @@ export async function markChargeAsPaid(
           where: { id: chargeId, matricula: { aluno: { contaId } } },
           data: {
             status: StatusCobranca.PAGO,
-            dataPagamento: new Date(paymentDateStr),
+            dataPagamento: paymentDate,
             formaPagamento: 'INDEFINIDO', // Marcado manualmente
           },
         });
@@ -294,7 +296,7 @@ export async function markChargeAsPaid(
             contaId,
             cobrancaId: chargeId,
             valorPago: cobranca.valor,
-            dataPagamento: new Date(paymentDateStr),
+            dataPagamento: paymentDate,
             formaPagamento: formaPagamentoManual,
             status: 'CONFIRMADO',
             // observacao registrada apenas na auditoria (Pagamento não tem esse campo)
@@ -307,7 +309,7 @@ export async function markChargeAsPaid(
         where: { id: chargeId, contaId },
         data: {
           status: ChargeStatus.PAID,
-          statusUpdatedAt: new Date(paymentDateStr),
+          statusUpdatedAt: paymentDate,
         },
       });
 
@@ -367,7 +369,7 @@ export async function markChargeAsPaid(
       commandJobId,
       asaasProcessed,
       isOffline,
-      paymentDate: paymentDateStr,
+      paymentDate: normalizedPaymentDateStr,
       formaPagamento: formaPagamentoManual,
       observacao,
       idempotentAlreadyPaid,

@@ -5,6 +5,8 @@ import {
   syncPublicLotQuantity,
   toMoney,
 } from '@alusa/lib/events/map/event-map-order-operations';
+import { isTicketPaymentBlocked } from '@alusa/domain/events';
+import { logEventsFinance } from './events-finance-observability';
 
 export async function refundEventTicketSalesByPayment(params: {
   contaId: string;
@@ -34,54 +36,80 @@ export async function refundEventTicketSalesByPayment(params: {
     const now = new Date();
     const refundedSaleIds: string[] = [];
     const affectedLotIds = new Set<string>();
+    let allSalesFullyRefunded = true;
+    const totalGross = toMoney(sales.reduce((sum, sale) => sum + toMoney(sale.totalAmount), 0));
+    const persistedRefundTotal = toMoney(sales.reduce((sum, sale) => sum + Math.max(toMoney(sale.refundedAmount), 0), 0));
+    const overRefundedSaleCount = sales.filter(
+      (sale) => toMoney(sale.refundedAmount) > toMoney(sale.totalAmount),
+    ).length;
+    if (overRefundedSaleCount > 0) {
+      logEventsFinance(
+        'finance.events.ticket_sale.refund_amount_over_gross',
+        { errors: overRefundedSaleCount },
+        'warn',
+      );
+    }
+    const providerRefundTotal = params.refundedAmount == null
+      ? null
+      : Math.min(totalGross, Math.max(toMoney(params.refundedAmount), 0));
+    const cumulativeRefundTarget = params.isFinalRefund
+      ? totalGross
+      : providerRefundTotal == null
+        ? null
+        : Math.min(totalGross, Math.max(persistedRefundTotal, providerRefundTotal));
+    let refundIncrementRemaining = cumulativeRefundTarget == null
+      ? 0
+      : Math.max(cumulativeRefundTarget - persistedRefundTotal, 0);
+
     for (const sale of sales) {
-      if (!params.isFinalRefund) {
-        if (sale.status === 'REFUNDED') continue;
-        await tx.eventTicketSale.update({
-          where: { id: sale.id, contaId: params.contaId },
-          data: { paymentStatus: params.paymentStatus },
-        });
-        await tx.eventFinancialEntry.updateMany({
-          where: { contaId: params.contaId, originType: 'TICKET_SALE', originId: sale.id },
-          data: { paymentStatus: params.paymentStatus },
-        });
-        continue;
-      }
+      const saleAmount = toMoney(sale.totalAmount);
+      // Preserve each persisted row's distribution. Allocate only the new
+      // cumulative provider increment, in stable sale-ID order, within the
+      // remaining amount for that sale.
+      const previousRefund = Math.max(toMoney(sale.refundedAmount), 0);
+      const saleCapacity = Math.max(saleAmount - previousRefund, 0);
+      const saleIncrement = cumulativeRefundTarget == null
+        ? 0
+        : Math.min(saleCapacity, refundIncrementRemaining);
+      refundIncrementRemaining = Math.max(refundIncrementRemaining - saleIncrement, 0);
+      const refundedAmount = toMoney(previousRefund + saleIncrement);
+      const hasRefundAmount = cumulativeRefundTarget != null;
+      const isFullyRefunded = params.isFinalRefund || sale.status === 'REFUNDED' ||
+        (hasRefundAmount && saleAmount > 0 && refundedAmount >= saleAmount);
+      if (!isFullyRefunded) allSalesFullyRefunded = false;
+      const paymentStatus = sale.status === 'REFUNDED'
+        ? sale.paymentStatus ?? params.paymentStatus
+        : isTicketPaymentBlocked(sale.paymentStatus)
+          ? sale.paymentStatus
+          : params.paymentStatus;
 
-      if (sale.status === 'REFUNDED') {
-        await tx.eventTicketSale.update({
-          where: { id: sale.id, contaId: params.contaId },
-          data: { paymentStatus: params.paymentStatus },
-        });
-        await tx.eventFinancialEntry.updateMany({
-          where: { contaId: params.contaId, originType: 'TICKET_SALE', originId: sale.id },
-          data: { paymentStatus: params.paymentStatus },
-        });
-        continue;
-      }
-
-      const refundedAmount = params.refundedAmount == null
-        ? toMoney(sale.totalAmount)
-        : Math.min(toMoney(sale.totalAmount), Math.max(toMoney(params.refundedAmount), 0));
       await tx.eventTicketSale.update({
         where: { id: sale.id, contaId: params.contaId },
         data: {
-          status: 'REFUNDED',
-          refundedAt: now,
-          refundedAmount: decimal(refundedAmount),
-          paymentStatus: params.paymentStatus,
+          ...(isFullyRefunded ? { status: 'REFUNDED' as const, refundedAt: now } : {}),
+          ...(hasRefundAmount ? { refundedAmount: decimal(refundedAmount) } : {}),
+          paymentStatus,
         },
       });
-      refundedSaleIds.push(sale.id);
-      affectedLotIds.add(sale.lotId);
+      if (isFullyRefunded && sale.status !== 'REFUNDED') {
+        refundedSaleIds.push(sale.id);
+        affectedLotIds.add(sale.lotId);
+      }
       await tx.eventFinancialEntry.updateMany({
         where: { contaId: params.contaId, originType: 'TICKET_SALE', originId: sale.id },
         data: {
-          status: 'REFUNDED',
-          refundedAt: now,
-          refundedAmount: decimal(refundedAmount),
-          netAmount: decimal(Math.max(toMoney(sale.totalAmount) - refundedAmount, 0)),
-          paymentStatus: params.paymentStatus,
+          ...(isFullyRefunded
+            ? { status: 'REFUNDED' as const, refundedAt: now }
+            : hasRefundAmount && refundedAmount > 0
+              ? { status: 'PARTIALLY_REFUNDED' as const, refundedAt: now }
+              : {}),
+          ...(hasRefundAmount
+            ? {
+              refundedAmount: decimal(refundedAmount),
+              netAmount: decimal(Math.max(saleAmount - refundedAmount, 0)),
+            }
+            : {}),
+          paymentStatus,
         },
       });
     }
@@ -93,7 +121,6 @@ export async function refundEventTicketSalesByPayment(params: {
       await syncPublicLotQuantity(tx, params.contaId, lotId);
     }
 
-    const allRefunded = sales.every((sale) => sale.status === 'REFUNDED' || params.isFinalRefund);
-    return { count: sales.length, status: allRefunded ? 'REFUNDED' : params.paymentStatus };
+    return { count: sales.length, status: allSalesFullyRefunded ? 'REFUNDED' : params.paymentStatus };
   });
 }

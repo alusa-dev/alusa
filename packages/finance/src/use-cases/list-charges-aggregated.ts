@@ -68,8 +68,9 @@ function mapEventFinancialEntryStatus(status: string): UnifiedChargeStatus {
     case 'CANCELLED':
       return 'CANCELED';
     case 'REFUNDED':
-    case 'PARTIALLY_REFUNDED':
       return 'REFUNDED';
+    case 'PARTIALLY_REFUNDED':
+      return 'PARTIALLY_REFUNDED';
     case 'EXPECTED':
     case 'PENDING':
     default:
@@ -86,6 +87,8 @@ function mapEventTicketSaleStatus(status: string): UnifiedChargeStatus {
       return 'CANCELED';
     case 'REFUNDED':
       return 'REFUNDED';
+    case 'PARTIALLY_REFUNDED':
+      return 'PARTIALLY_REFUNDED';
     case 'PENDING':
     default:
       return 'PENDING';
@@ -100,8 +103,9 @@ function mapEventMapOrderStatus(status: string): UnifiedChargeStatus {
     case 'EXPIRED':
       return 'CANCELED';
     case 'REFUNDED':
-    case 'PARTIALLY_REFUNDED':
       return 'REFUNDED';
+    case 'PARTIALLY_REFUNDED':
+      return 'PARTIALLY_REFUNDED';
     case 'PAYMENT_PENDING':
     default:
       return 'PENDING';
@@ -134,7 +138,7 @@ function resolveEventFinancialPayerName(
 
 function matchesStatusView(status: UnifiedChargeStatus, statusView: 'open' | 'paid' | 'all') {
   if (statusView === 'all') return true;
-  if (statusView === 'paid') return status === 'PAID';
+  if (statusView === 'paid') return status === 'PAID' || status === 'PARTIALLY_REFUNDED';
   return ['PENDING', 'PROCESSING', 'OVERDUE'].includes(status);
 }
 
@@ -227,7 +231,10 @@ export async function listChargesAggregated(
     });
   } else if (statusView === 'paid') {
     addAndCondition(academicWhere, {
-      OR: [{ status: 'PAGO' }, { asaasStatus: { in: [...ASAAS_PAID_UNIFIED_STATUSES] } }],
+      OR: [
+        { status: { in: ['PAGO', 'ESTORNADO_PARCIAL'] } },
+        { asaasStatus: { in: [...ASAAS_PAID_UNIFIED_STATUSES] } },
+      ],
     });
   }
 

@@ -1,5 +1,4 @@
 import { prisma } from '@alusa/database';
-import { parseOptionalPaymentDate } from '@alusa/shared';
 import { convergeStandaloneInstallmentPlanStatus } from '@alusa/lib/services/standalone-installment-plan-status.service';
 import type { PaymentStatus } from '@alusa/asaas';
 import { confirmPublicEventMapOrderPayment } from '../events/confirm-public-event-map-order-payment';
@@ -52,6 +51,10 @@ import type {
 import { mapAsaasPaymentStatusToCobranca } from '../mappers/charge-status/asaas-to-internal';
 import { resolveMonotonicAsaasPaymentStatus } from '../mappers/asaas-snapshot-monotonicity';
 import { normalizeAsaasPaymentSnapshotStatus as normalizeAsaasPaymentSnapshotStatusInput } from '../mappers/asaas-payment-snapshot-status';
+import {
+  parseCivilDatePreservingInstant,
+  parseOptionalCivilDatePreservingInstant,
+} from '../mappers/civil-date';
 import {
   projectAcademicEnrollmentFeeState,
   projectFamilyEnrollmentFeeState,
@@ -165,8 +168,23 @@ export type PaymentWebhookPayload = {
     /** Indica remoção lógica do payment no Asaas */
     deleted?: boolean | null;
     chargeback?: { status?: string | null; reason?: string | null } | null;
+    refunds?: Array<{ status?: string | null; value?: number | null }> | null;
   };
 };
+
+function getCompletedRefundTotal(refunds: PaymentWebhookPayload['payment']['refunds']): number | null {
+  if (!Array.isArray(refunds)) return null;
+  let completedCount = 0;
+  const total = refunds.reduce((sum, refund) => {
+    if (refund.status?.trim().toUpperCase() !== 'DONE' || typeof refund.value !== 'number' || !Number.isFinite(refund.value)) {
+      return sum;
+    }
+    completedCount += 1;
+    return sum + Math.max(refund.value, 0);
+  }, 0);
+  if (completedCount === 0) return null;
+  return Math.round((total + Number.EPSILON) * 100) / 100;
+}
 
 export type PaymentWebhookResult = {
   success: boolean;
@@ -259,12 +277,33 @@ function buildCobrancaSensitiveUpdate(params: {
   event: string;
   internalStatus: string;
   occurredAt: Date;
+  currentRefundedAmount?: unknown;
+  completedRefundTotal?: number | null;
+  paymentAmount?: number;
 }): Record<string, unknown> {
   if (params.event === 'PAYMENT_PARTIALLY_REFUNDED') {
     return {
       estornadoEm: params.occurredAt,
       estornadoMotivo: 'Webhook Asaas: estorno parcial',
       estornadoPor: 'ASAAS_WEBHOOK',
+      ...(params.completedRefundTotal == null
+        ? {}
+        : {
+            estornadoValor: Math.max(
+              0,
+              Math.min(
+                typeof params.paymentAmount === 'number' && Number.isFinite(params.paymentAmount)
+                  ? Math.max(params.paymentAmount, 0)
+                  : Number.POSITIVE_INFINITY,
+                Math.max(
+                  Number.isFinite(Number(params.currentRefundedAmount))
+                    ? Math.max(Number(params.currentRefundedAmount), 0)
+                    : 0,
+                  params.completedRefundTotal,
+                ),
+              ),
+            ),
+          }),
     };
   }
 
@@ -460,14 +499,14 @@ function computeLiquidacaoStatusFromPayload(payload: PaymentWebhookPayload): Liq
 
 function firstValidProviderDate(...values: Array<string | null | undefined>): Date | undefined {
   for (const value of values) {
-    const parsed = parseOptionalPaymentDate(value);
-    if (parsed instanceof Date) return parsed;
+    const parsed = parseCivilDatePreservingInstant(value);
+    if (parsed) return parsed;
   }
   return undefined;
 }
 
 function hasProviderDateCandidate(...values: Array<string | null | undefined>): boolean {
-  return values.some((value) => Boolean(value));
+  return values.some((value) => value != null && value !== '');
 }
 
 function normalizeAsaasPaymentSnapshotStatus(payload: PaymentWebhookPayload): string | null {
@@ -519,9 +558,8 @@ function buildChargeAsaasSnapshotUpdate(
   },
 ): Record<string, unknown> {
   const p = payload.payment;
-  const creditDate = parseOptionalPaymentDate(p.creditDate);
-  const estimatedCreditDate = parseOptionalPaymentDate(p.estimatedCreditDate);
-  const liquidadoEm = firstValidProviderDate(p.creditDate, p.paymentDate, p.clientPaymentDate);
+  const creditDate = parseOptionalCivilDatePreservingInstant(p.creditDate);
+  const estimatedCreditDate = parseOptionalCivilDatePreservingInstant(p.estimatedCreditDate);
   const liquidacaoStatus = computeLiquidacaoStatusFromPayload(payload);
   const incomingAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload);
   const providerStatus = resolveMonotonicAsaasPaymentStatus({
@@ -541,10 +579,10 @@ function buildChargeAsaasSnapshotUpdate(
     ...(creditDate === undefined ? {} : { asaasCreditDate: creditDate }),
     ...(estimatedCreditDate === undefined ? {} : { asaasEstimatedCreditDate: estimatedCreditDate }),
     lastAsaasFetchAt: new Date(),
-    ...(creditDate === undefined ? {} : { liquidacaoStatus }),
     ...(creditDate === undefined ? {} : {
+      liquidacaoStatus,
       liquidadoEm: liquidacaoStatus === 'DISPONIVEL'
-        ? liquidadoEm ?? (p.creditDate || p.paymentDate || p.clientPaymentDate ? null : new Date())
+        ? firstValidProviderDate(p.creditDate, p.paymentDate, p.clientPaymentDate) ?? new Date()
         : null,
     }),
     ...buildPaymentDocumentUpdate(payload),
@@ -600,6 +638,7 @@ type CobrancaSelect = {
   version: true;
   tipo: true;
   formaPagamento: true;
+  estornadoValor: true;
 };
 
 const COBRANCA_SELECT: CobrancaSelect = {
@@ -612,6 +651,7 @@ const COBRANCA_SELECT: CobrancaSelect = {
   version: true,
   tipo: true,
   formaPagamento: true,
+  estornadoValor: true,
 };
 
 /**
@@ -1029,10 +1069,22 @@ async function updateEventFinancialEntryFromWebhook(
         ...(subscriptionId ? [{ asaasPaymentId: subscriptionId }] : []),
       ],
     },
-    select: { id: true, expectedAmount: true },
+    select: { id: true, refundedAmount: true, status: true },
   });
 
   if (!entry) return;
+
+  // An older PAYMENT_RECEIVED snapshot must not erase a refund already applied
+  // to this financial entry. Refund events update the same local projection.
+  const stalePaidEvents = new Set([
+    'PAYMENT_RECEIVED',
+    'PAYMENT_CONFIRMED',
+    'PAYMENT_RECEIVED_IN_CASH',
+  ]);
+  if (
+    ['PARTIALLY_REFUNDED', 'REFUNDED'].includes(entry.status) &&
+    stalePaidEvents.has(payload.event)
+  ) return;
 
   // Let's load all charges for this plan/payment to compute dynamic values
   let charges: any[] = [];
@@ -1090,30 +1142,27 @@ async function updateEventFinancialEntryFromWebhook(
     nextStatus = 'CANCELLED';
     cancelledAt = new Date();
   } else if (payload.event === 'PAYMENT_PARTIALLY_REFUNDED') {
-    nextStatus = 'PARTIALLY_REFUNDED';
+    nextStatus = entry.status === 'REFUNDED' ? 'REFUNDED' : 'PARTIALLY_REFUNDED';
     refundedAt = new Date();
   } else if (refundedCharges.length > 0 && (refundedCharges.length + cancelledCharges.length === charges.length)) {
     nextStatus = 'REFUNDED';
     refundedAt = new Date();
   } else if (paidCharges.length + cancelledCharges.length + refundedCharges.length === charges.length) {
     nextStatus = 'RECEIVED';
-    const hasDateCandidate = hasProviderDateCandidate(p.clientPaymentDate, p.paymentDate, p.creditDate);
-    const providerPaidAt = firstValidProviderDate(p.clientPaymentDate, p.paymentDate, p.creditDate);
-    if (hasDateCandidate && !providerPaidAt) return;
-    realizedAt = providerPaidAt ?? new Date();
+    realizedAt = firstValidProviderDate(p.clientPaymentDate, p.paymentDate, p.creditDate) ?? new Date();
   } else {
     nextStatus = 'PENDING';
     if (paidCharges.length > 0) {
-      const hasDateCandidate = hasProviderDateCandidate(p.clientPaymentDate, p.paymentDate, p.creditDate);
-      const providerPaidAt = firstValidProviderDate(p.clientPaymentDate, p.paymentDate, p.creditDate);
-      if (hasDateCandidate && !providerPaidAt) return;
-      realizedAt = providerPaidAt ?? new Date();
+      realizedAt = firstValidProviderDate(p.clientPaymentDate, p.paymentDate, p.creditDate) ?? new Date();
     }
   }
 
   const actualAmount = totalPaid > 0 ? totalPaid : null;
+  const completedRefundTotal = getCompletedRefundTotal(p.refunds);
   const refundedAmount = payload.event === 'PAYMENT_PARTIALLY_REFUNDED'
-    ? Math.min(Number(p.value ?? 0), totalPaid || Number(entry.expectedAmount))
+    ? completedRefundTotal == null
+      ? Number(entry.refundedAmount ?? 0)
+      : Math.max(Number(entry.refundedAmount ?? 0), completedRefundTotal)
     : totalRefunded;
   const netAmount = actualAmount == null ? null : Math.max(actualAmount - refundedAmount, 0);
 
@@ -1191,17 +1240,14 @@ async function handlePaymentWebhookCore(
       payload.payment.paymentDate,
       payload.payment.creditDate,
     ];
-    const hasPaymentDateCandidate = hasProviderDateCandidate(...paymentDateCandidates);
     if (
-      hasPaymentDateCandidate &&
+      hasProviderDateCandidate(...paymentDateCandidates) &&
       (
         ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(effectiveAsaasStatus) ||
         ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH'].includes(payload.event)
       ) &&
       !firstValidProviderDate(...paymentDateCandidates)
     ) {
-      // Reject before resolving or mutating local state so retries cannot leave
-      // a partially applied payment from a malformed provider payload.
       return { success: false, error: 'ASAAS_PAYMENT_DATE_INVALID' };
     }
     // Resolve tenant-scoped identity before confirming commands, processing
@@ -1322,16 +1368,9 @@ async function handlePaymentWebhookCore(
       logPaymentWebhookDiagnostic({ severity: 'warn', eventName: 'finance.payment_webhook.command_confirmation.failed', operation: 'confirm_payment_command', error: commandError });
     }
 
-    const hasEventMapDateCandidate = hasProviderDateCandidate(
-      payload.payment.clientPaymentDate,
-      payload.payment.paymentDate,
-      payload.payment.creditDate,
-    );
-    const paidAt = firstValidProviderDate(
-      payload.payment.clientPaymentDate,
-      payload.payment.paymentDate,
-      payload.payment.creditDate,
-    ) ?? (hasEventMapDateCandidate ? undefined : new Date());
+    const hasEventMapDateCandidate = hasProviderDateCandidate(...paymentDateCandidates);
+    const paidAt = firstValidProviderDate(...paymentDateCandidates)?.toISOString()
+      ?? (hasEventMapDateCandidate ? undefined : new Date().toISOString());
     const chargebackStatusByEvent: Record<string, string> = {
       PAYMENT_CHARGEBACK_REQUESTED: 'REQUESTED',
       PAYMENT_CHARGEBACK_DISPUTE: 'IN_DISPUTE',
@@ -1345,6 +1384,7 @@ async function handlePaymentWebhookCore(
       ?? chargebackStatusByEvent[payload.event]
       ?? null;
     const isFinalRefundEvent = payload.event === 'PAYMENT_REFUNDED' || effectiveAsaasStatus === 'REFUNDED';
+    const completedRefundTotal = getCompletedRefundTotal(payload.payment.refunds);
     const knownEventMapOrder = eventMapOrderByPayment ?? eventMapOrder;
     const normalizedOrderPaymentStatus = knownEventMapOrder?.paymentStatus?.trim().toUpperCase() ?? null;
     const orderAlreadyRefunded = isEventMapOrderRefundFinalized(
@@ -1367,14 +1407,34 @@ async function handlePaymentWebhookCore(
         contaId,
         asaasPaymentId: payload.payment.id,
         externalReference: payload.payment.externalReference,
-        refundedAmount: payload.payment.value,
+        refundedAmount: completedRefundTotal ?? undefined,
       });
       await refundEventTicketSalesByPayment({
         contaId,
         paymentId: payload.payment.id,
         paymentStatus: effectiveAsaasStatus,
         isFinalRefund: true,
-        refundedAmount: payload.payment.value,
+        refundedAmount: completedRefundTotal ?? undefined,
+      });
+    } else if (payload.event === 'PAYMENT_PARTIALLY_REFUNDED') {
+      // A completed partial refund is an explicit financial transition. Route
+      // it even when the order is held for a refund/chargeback; the projector
+      // preserves the hold while applying the refund amount.
+      if (completedRefundTotal != null) {
+        await refundPublicEventMapOrderByPayment({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+          externalReference: payload.payment.externalReference,
+          refundedAmount: completedRefundTotal,
+          partial: true,
+        });
+      }
+      await refundEventTicketSalesByPayment({
+        contaId,
+        paymentId: payload.payment.id,
+        paymentStatus: 'PARTIALLY_REFUNDED',
+        isFinalRefund: false,
+        refundedAmount: completedRefundTotal,
       });
     } else if (
       orderPaymentBlocked &&
@@ -1464,21 +1524,6 @@ async function handlePaymentWebhookCore(
         externalReference: payload.payment.externalReference,
         paymentStatus: effectiveAsaasStatus,
         invoiceUrl: payload.payment.invoiceUrl ?? null,
-      });
-    } else if (payload.event === 'PAYMENT_PARTIALLY_REFUNDED') {
-      await refundPublicEventMapOrderByPayment({
-        contaId,
-        asaasPaymentId: payload.payment.id,
-        externalReference: payload.payment.externalReference,
-        refundedAmount: payload.payment.value,
-        partial: true,
-      });
-      await refundEventTicketSalesByPayment({
-        contaId,
-        paymentId: payload.payment.id,
-        paymentStatus: effectiveAsaasStatus,
-        isFinalRefund: false,
-        refundedAmount: payload.payment.value,
       });
     } else if (payload.event === 'PAYMENT_REFUND_IN_PROGRESS' || payload.event === 'PAYMENT_REFUND_DENIED') {
       await markPublicEventMapOrderRefundProcessingByPayment({
@@ -1641,6 +1686,7 @@ async function handlePaymentWebhookCore(
     const paymentIdSelect = {
       id: true, matriculaId: true, status: true, asaasPaymentId: true, asaasId: true,
       asaasStatus: true, providerStatus: true, version: true, tipo: true, formaPagamento: true,
+      estornadoValor: true,
     } as const;
     const cobrancaByAsaasPaymentId = await prisma.cobranca.findFirst({
       where: {
@@ -1740,6 +1786,7 @@ async function handlePaymentWebhookCore(
         select: {
           id: true, matriculaId: true, status: true, asaasPaymentId: true, asaasId: true,
           asaasStatus: true, providerStatus: true, version: true, tipo: true, formaPagamento: true,
+          estornadoValor: true,
         },
       });
     } else if (!cobranca && !cobrancaMappingConflict && referenceCobrancaIds.length > 1) {
@@ -1752,6 +1799,7 @@ async function handlePaymentWebhookCore(
         select: {
           id: true, matriculaId: true, status: true, asaasPaymentId: true, asaasId: true,
           asaasStatus: true, providerStatus: true, version: true, tipo: true, formaPagamento: true,
+          estornadoValor: true,
         },
         take: 2,
       });
@@ -1833,6 +1881,7 @@ async function handlePaymentWebhookCore(
             version: true,
             tipo: true,
             formaPagamento: true,
+            estornadoValor: true,
           },
         });
 
@@ -1874,6 +1923,7 @@ async function handlePaymentWebhookCore(
                 version: true,
                 tipo: true,
                 formaPagamento: true,
+                estornadoValor: true,
               },
             });
             if (linkedToPayment) {
@@ -2583,6 +2633,7 @@ async function handlePaymentWebhookCore(
             version: true,
             tipo: true,
             formaPagamento: true,
+            estornadoValor: true,
           },
         });
         if (linkedToPayment) {
@@ -3007,26 +3058,27 @@ async function handlePaymentWebhookCore(
     // 4. Atualizar status da cobrança + campos asaas* (apenas se houver progressão de status)
     // IMPORTANTE: campos asaas* são sempre atualizados quando há progressão de status
     const p = payload.payment;
-    const parsedCreditDate = parseOptionalPaymentDate(p.creditDate);
-    const parsedEstimatedCreditDate = parseOptionalPaymentDate(p.estimatedCreditDate);
+    const parsedCreditDate = parseOptionalCivilDatePreservingInstant(p.creditDate);
+    const parsedEstimatedCreditDate = parseOptionalCivilDatePreservingInstant(p.estimatedCreditDate);
     const liquidacaoStatus = computeLiquidacaoStatusFromPayload(payload);
     const feeValue = p.value - p.netValue;
     const isConfirmed = internalStatus === 'CONFIRMED' || internalStatus === 'RECEIVED_IN_CASH';
-    const paymentDateCandidateExists = hasProviderDateCandidate(p.paymentDate, p.clientPaymentDate, p.creditDate);
-    const paymentDate = firstValidProviderDate(p.paymentDate, p.clientPaymentDate, p.creditDate) ??
-      (paymentDateCandidateExists ? undefined : new Date());
+    const hasPaymentDateCandidate = hasProviderDateCandidate(p.paymentDate, p.clientPaymentDate, p.creditDate);
+    const paymentDate = firstValidProviderDate(p.paymentDate, p.clientPaymentDate, p.creditDate)
+      ?? (hasPaymentDateCandidate ? undefined : new Date());
     const cobrancaSensitiveUpdate = buildCobrancaSensitiveUpdate({
       event: payload.event,
       internalStatus,
       occurredAt,
+      currentRefundedAmount: cobranca.estornadoValor,
+      completedRefundTotal: getCompletedRefundTotal(payload.payment.refunds),
+      paymentAmount: payload.payment.value,
     });
     const cobrancaPaymentUpdate = isConfirmed && paymentDate instanceof Date
       ? {
           dataPagamento: paymentDate,
           pagoEm: paymentDate,
         }
-      : isConfirmed
-        ? {}
       : payload.event === 'PAYMENT_RECEIVED_IN_CASH_UNDONE'
         ? {
             dataPagamento: null,
@@ -3062,8 +3114,8 @@ async function handlePaymentWebhookCore(
           ...(parsedEstimatedCreditDate === undefined ? {} : { asaasEstimatedCreditDate: parsedEstimatedCreditDate }),
           lastAsaasFetchAt: new Date(),
           // Liquidação: para RECEIVED_IN_CASH, usar paymentDate como data de liquidação
-          ...(parsedCreditDate === undefined ? {} : { liquidacaoStatus }),
           ...(parsedCreditDate === undefined ? {} : {
+            liquidacaoStatus,
             liquidadoEm: liquidacaoStatus === 'DISPONIVEL' ? paymentDate : null,
           }),
           ...buildPaymentDocumentUpdate(payload),
@@ -3088,8 +3140,8 @@ async function handlePaymentWebhookCore(
           ...(parsedEstimatedCreditDate === undefined ? {} : { asaasEstimatedCreditDate: parsedEstimatedCreditDate }),
           lastAsaasFetchAt: new Date(),
           // Liquidação: para RECEIVED_IN_CASH, usar paymentDate como data de liquidação
-          ...(parsedCreditDate === undefined ? {} : { liquidacaoStatus }),
           ...(parsedCreditDate === undefined ? {} : {
+            liquidacaoStatus,
             liquidadoEm: liquidacaoStatus === 'DISPONIVEL' ? paymentDate : null,
           }),
           ...buildPaymentDocumentUpdate(payload),

@@ -175,6 +175,7 @@ export type EventMetricTicketSale = {
   status: EventTicketSaleStatus;
   quantity: number;
   totalAmount: number | string | null;
+  refundedAmount?: number | string | null;
 };
 
 export type EventMetricTicketLot = {
@@ -482,6 +483,7 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   let receitaRealizada = 0;
   let receitaRecebidaBruta = 0;
   let receitaEstornada = 0;
+  let receitaLiquidaIngressos = 0;
   let custoPrevisto = 0;
   let custoRealizado = 0;
   let custoDiretoPrevisto = 0;
@@ -576,10 +578,14 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     }
 
     if (sale.status === 'PAID') {
+      const refunded = money(sale.refundedAmount);
+      const netPaid = getEventNetRealizedAmount(total, refunded);
       receitaPrevista += total;
       receitaBrutaPrevista += total;
-      receitaRealizada += total;
+      receitaRealizada += netPaid;
       receitaRecebidaBruta += total;
+      receitaEstornada += refunded;
+      receitaLiquidaIngressos += netPaid;
       ingressosVendidos += sale.quantity;
       ingressosPagos += sale.quantity;
     }
@@ -724,7 +730,7 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     ingressosVendidos,
     ingressosDisponiveis,
     cortesias,
-    ticketMedio: ingressosPagos > 0 ? roundMoney(receitaRecebidaBruta / ingressosPagos) : null,
+    ticketMedio: ingressosPagos > 0 ? roundMoney(receitaLiquidaIngressos / ingressosPagos) : null,
     receitaRecebidaBruta: roundMoney(receitaRecebidaBruta),
     receitaEstornada: roundMoney(receitaEstornada),
     receitaRecebidaLiquida: roundMoney(receitaRealizada),

@@ -656,6 +656,22 @@ describe('listOperationalCharges', () => {
     });
   });
 
+  it('não expõe venda parcialmente estornada na fila operacional como pagamento pendente', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([]);
+    mockChargeFindMany(db);
+    db.eventTicketSale.findMany.mockResolvedValue([{
+      id: 'sale_partial', eventId: 'evt_1', buyerName: 'Comprador', alunoId: null,
+      quantity: 1, totalAmount: 100, paymentMethod: 'PIX', status: 'PARTIALLY_REFUNDED',
+      soldAt: new Date('2025-06-11T12:00:00.000Z'), asaasPaymentId: 'pay_partial',
+      revenueEntryId: null, event: { name: 'Festival' },
+    }]);
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
+
+    expect(result.items).toHaveLength(0);
+  });
+
   it('usa somente o estado local da cobrança standalone e não muta dados durante a listagem', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([]);

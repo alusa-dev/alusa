@@ -248,6 +248,41 @@ describe('listChargesAggregated', () => {
     });
   });
 
+  it('exibe estornos parciais de eventos como parciais no paid view', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    vi.mocked(prisma.cobranca.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.charge.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.cobranca.count).mockResolvedValueOnce(0 as never);
+    vi.mocked(prisma.charge.count).mockResolvedValueOnce(0 as never);
+    vi.mocked(prisma.eventFinancialEntry.findMany).mockResolvedValueOnce([{
+      id: 'entry-partial', eventId: 'evt-1', category: 'Inscrição', description: 'Taxa',
+      expectedAmount: 100, dueDate: new Date('2026-01-10T00:00:00.000Z'),
+      status: 'PARTIALLY_REFUNDED', paymentMethod: 'PIX', asaasPaymentId: 'pay-entry',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'), payments: [], event: { name: 'Festival' },
+    }] as never);
+    vi.mocked(prisma.eventTicketSale.findMany).mockResolvedValueOnce([{
+      id: 'sale-partial', eventId: 'evt-1', buyerName: 'Comprador', quantity: 1,
+      totalAmount: 100, paymentMethod: 'PIX', status: 'PARTIALLY_REFUNDED',
+      soldAt: new Date('2026-01-02T00:00:00.000Z'), asaasPaymentId: 'pay-sale',
+      createdAt: new Date('2026-01-02T00:00:00.000Z'), alunoId: null, event: { name: 'Festival' },
+    }] as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockResolvedValueOnce([{
+      id: 'order-partial', eventId: 'evt-1', buyerName: 'Comprador', totalAmount: 100,
+      status: 'PARTIALLY_REFUNDED', paymentMethod: 'PIX', paymentProvider: null,
+      asaasPaymentId: 'pay-order', expiresAt: null,
+      createdAt: new Date('2026-01-03T00:00:00.000Z'), invoiceUrl: null, event: { name: 'Festival' },
+    }] as never);
+
+    const result = await listChargesAggregated({ contaId: 'c1', statusView: 'paid', groupInstallments: false });
+
+    expect(result.items).toHaveLength(3);
+    expect(result.items.map(({ status }) => status)).toEqual([
+      'PARTIALLY_REFUNDED', 'PARTIALLY_REFUNDED', 'PARTIALLY_REFUNDED',
+    ]);
+    expect(result.items.every(({ displayStatus }) => displayStatus?.label === 'Estorno parcial')).toBe(true);
+  });
+
   it('não deve listar alocação interna de evento já materializada no Asaas', async () => {
     const { prisma } = await import('@alusa/database');
 

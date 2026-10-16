@@ -29,7 +29,7 @@ describe('normalizeCobrancaStatus', () => {
     ['CANCELAMENTO_PENDENTE', 'CANCELED'],
     ['CANCELADO', 'CANCELED'],
     ['ESTORNADO', 'REFUNDED'],
-    ['ESTORNADO_PARCIAL', 'REFUNDED'],
+    ['ESTORNADO_PARCIAL', 'PARTIALLY_REFUNDED'],
   ])('mapeia %s → %s', (input, expected) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(normalizeCobrancaStatus(input as any)).toBe(expected);
@@ -87,7 +87,7 @@ describe('resolveUnifiedChargeStatus', () => {
   it('normaliza status de exibição independentes do Asaas', () => {
     expect(normalizeUnifiedChargeStatus('RECEIVED_IN_CASH')).toBe('PAID');
     expect(normalizeUnifiedChargeStatus('CANCELADO')).toBe('CANCELED');
-    expect(normalizeUnifiedChargeStatus('ESTORNADO_PARCIAL')).toBe('REFUNDED');
+    expect(normalizeUnifiedChargeStatus('ESTORNADO_PARCIAL')).toBe('PARTIALLY_REFUNDED');
   });
 });
 
@@ -104,7 +104,16 @@ describe('isOperationalStatus', () => {
     expect(isOperationalStatus('PAID')).toBe(false);
     expect(isOperationalStatus('CANCELED')).toBe(false);
     expect(isOperationalStatus('REFUNDED')).toBe(false);
+    expect(isOperationalStatus('PARTIALLY_REFUNDED')).toBe(false);
     expect(isOperationalStatus('PROCESSING')).toBe(false);
+  });
+
+  it('apresenta estorno parcial como estado terminal liquidado', () => {
+    expect(TERMINAL_STATUSES).toContain('PARTIALLY_REFUNDED');
+    expect(getUnifiedStatusBadge('PARTIALLY_REFUNDED')).toMatchObject({
+      label: 'Estorno parcial',
+      variant: 'neutral',
+    });
   });
 });
 
@@ -242,11 +251,12 @@ describe('constantes de status', () => {
     expect(OPERATIONAL_STATUSES).toHaveLength(2);
   });
 
-  it('TERMINAL_STATUSES contém PAID, CANCELED, REFUNDED', () => {
+  it('TERMINAL_STATUSES contém PAID, CANCELED, PARTIALLY_REFUNDED e REFUNDED', () => {
     expect(TERMINAL_STATUSES).toContain('PAID');
     expect(TERMINAL_STATUSES).toContain('CANCELED');
     expect(TERMINAL_STATUSES).toContain('REFUNDED');
-    expect(TERMINAL_STATUSES).toHaveLength(3);
+    expect(TERMINAL_STATUSES).toContain('PARTIALLY_REFUNDED');
+    expect(TERMINAL_STATUSES).toHaveLength(4);
   });
 
   it('não há sobreposição entre operacional e terminal', () => {

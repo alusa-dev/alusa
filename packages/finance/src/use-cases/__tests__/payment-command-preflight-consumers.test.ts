@@ -14,6 +14,9 @@ vi.mock('@alusa/database', () => ({
       findFirst: vi.fn(),
       updateMany: vi.fn(),
     },
+    pagamento: {
+      create: vi.fn(),
+    },
   },
 }));
 
@@ -220,6 +223,35 @@ describe('payment-command-preflight consumers', () => {
       asaasPaymentId: 'pay_1',
       eventName: 'PAYMENT_RECEIVED',
     });
+  });
+
+  it('preserva a data civil escolhida ao registrar pagamento manual offline', async () => {
+    vi.mocked(isAsaasEnabled).mockReturnValue(false);
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
+      id: 'cob-offline-date',
+      status: 'PENDENTE',
+      valor: 100,
+      asaasPaymentId: null,
+      matricula: { aluno: { contaId: 'conta-1' } },
+    } as never);
+    vi.mocked(prisma.cobranca.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+    vi.mocked(prisma.pagamento.create).mockResolvedValueOnce({ id: 'payment-1' } as never);
+
+    const result = await markChargeAsPaid({
+      chargeId: 'cob-offline-date',
+      contaId: 'conta-1',
+      userId: 'user-1',
+      dataPagamento: '2026-10-14',
+    });
+
+    expect(result).toMatchObject({ success: true });
+    const civilDate = new Date('2026-10-14T12:00:00.000Z');
+    expect(prisma.cobranca.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ dataPagamento: civilDate }),
+    }));
+    expect(prisma.pagamento.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ dataPagamento: civilDate }),
+    }));
   });
 
   it('baixa Charge offline e cumpre estoque reservado da venda', async () => {

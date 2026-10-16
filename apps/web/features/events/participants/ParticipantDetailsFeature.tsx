@@ -64,6 +64,7 @@ import { buildEventFeeReceiptInput } from './event-fee-receipt';
 import { isPublicOrderPaymentBlocked } from '../map/components/public-order-admin-utils';
 import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
 import { ShareContractDialog } from '@/features/contracts/components/ShareContractDialog';
+import { getTicketSaleFinancialSummary } from '../tickets/ticket-sale-ui';
 
 type EditSection = 'cadastro' | 'figurinos' | null;
 
@@ -1894,6 +1895,7 @@ export function ParticipantDetailsFeature({
                   </div>
                   <div className="divide-y divide-slate-200">
                     {ticketSales.map((sale: any) => {
+                      const financial = getTicketSaleFinancialSummary(sale);
                       const paymentMethodLabel =
                         sale.paymentMethodLabel ||
                         EVENT_PAYMENT_METHOD_LABELS[sale.paymentMethod as keyof typeof EVENT_PAYMENT_METHOD_LABELS] ||
@@ -1917,10 +1919,18 @@ export function ParticipantDetailsFeature({
                             {sale.lot.name}
                           </span>
                           <span className="px-6 py-5 tabular-nums">{formatDate(sale.soldAt)}</span>
-                          <span className="px-6 py-5 text-right font-medium tabular-nums text-slate-900">{formatCurrency(sale.totalAmount)}</span>
+                          <span className="space-y-0.5 px-6 py-5 text-right tabular-nums text-slate-900">
+                            {financial.hasRefund ? (
+                              <>
+                                <span className="block text-xs font-normal text-slate-500">Bruto {formatCurrency(financial.grossAmount)}</span>
+                                <span className="block text-xs font-normal text-violet-700">Estornado {formatCurrency(financial.refundedAmount)}</span>
+                                <strong className="block font-semibold">Líquido {formatCurrency(financial.netAmount)}</strong>
+                              </>
+                            ) : formatCurrency(financial.grossAmount)}
+                          </span>
                           <span className="min-w-0 whitespace-normal break-words px-6 py-5 text-center text-xs font-medium text-slate-600" title={paymentMethodLabel}>{paymentMethodLabel}</span>
                           <span className="px-6 py-5 text-center">
-                            <SoftBadge tone={tone as any}>{EXTENDED_TICKET_SALE_STATUS_LABELS[sale.status as keyof typeof EXTENDED_TICKET_SALE_STATUS_LABELS] || sale.status}</SoftBadge>
+                            <SoftBadge tone={(financial.label ? financial.tone : tone) as any}>{financial.label ?? EXTENDED_TICKET_SALE_STATUS_LABELS[sale.status as keyof typeof EXTENDED_TICKET_SALE_STATUS_LABELS] ?? sale.status}</SoftBadge>
                           </span>
                           <span className="flex justify-end px-6 py-5">{renderTicketActions(sale)}</span>
                         </div>

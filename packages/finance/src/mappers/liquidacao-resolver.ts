@@ -13,8 +13,8 @@
  */
 
 import { PAYMENT_STATUSES } from '@alusa/shared';
-import { parseOptionalPaymentDate } from '@alusa/shared';
 import type { PaymentStatus } from '@alusa/shared';
+import { parseCivilDatePreservingInstant } from './civil-date';
 
 export type LiquidacaoStatus = 'NAO_APLICAVEL' | 'PENDENTE' | 'DISPONIVEL';
 
@@ -52,13 +52,13 @@ export function resolveLiquidacaoStatus(input: LiquidacaoResolverInput): Liquida
   }
 
   const parsedCreditDate = typeof creditDate === 'string'
-    ? parseOptionalPaymentDate(creditDate)
+    ? parseCivilDatePreservingInstant(creditDate)
     : creditDate;
-  if (!parsedCreditDate || Number.isNaN(parsedCreditDate.getTime())) return 'PENDENTE';
+  if (!parsedCreditDate) return 'PENDENTE';
 
   // creditDate no futuro = PENDENTE
   // creditDate <= hoje = DISPONIVEL
-  if (parsedCreditDate > now) {
+  if (parsedCreditDate.toISOString().slice(0, 10) > now.toISOString().slice(0, 10)) {
     return 'PENDENTE';
   }
 
@@ -85,6 +85,5 @@ export function isAvailableInAsaas(liquidacaoStatus: LiquidacaoStatus): boolean 
  */
 export function getEstimatedAvailableDate(creditDate?: Date | string | null): Date | null {
   if (!creditDate) return null;
-  if (creditDate instanceof Date) return Number.isNaN(creditDate.getTime()) ? null : creditDate;
-  return parseOptionalPaymentDate(creditDate) ?? null;
+  return typeof creditDate === 'string' ? parseCivilDatePreservingInstant(creditDate) : creditDate;
 }

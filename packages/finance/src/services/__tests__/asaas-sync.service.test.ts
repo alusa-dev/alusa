@@ -241,10 +241,29 @@ describe('asaas-sync.service', () => {
             asaasValue: 150,
             asaasNetValue: 142.5,
             asaasFeeValue: 7.5,
+            asaasCreditDate: new Date('2024-01-17T12:00:00.000Z'),
+            asaasEstimatedCreditDate: new Date('2024-01-17T12:00:00.000Z'),
+            liquidadoEm: new Date('2024-01-17T12:00:00.000Z'),
             liquidacaoStatus: 'DISPONIVEL',
           }),
         })
       );
+    });
+
+    it('persists an Asaas civil credit date at noon UTC to preserve its Brazilian calendar day', async () => {
+      mockPrisma.cobranca.findUnique.mockResolvedValue({ lastAsaasFetchHash: null });
+      mockPrisma.cobranca.update.mockResolvedValue({});
+
+      await persistAsaasPaymentSnapshot('cobranca-1', {
+        ...mockSnapshot,
+        creditDate: '2026-10-14',
+        paymentDate: '2026-10-14',
+        snapshotHash: 'civil-date',
+      });
+
+      const update = mockPrisma.cobranca.update.mock.calls[0][0];
+      expect(update.data.asaasCreditDate).toEqual(new Date('2026-10-14T12:00:00.000Z'));
+      expect(update.data.liquidadoEm).toEqual(new Date('2026-10-14T12:00:00.000Z'));
     });
 
     it('skips update when hash unchanged', async () => {
@@ -299,6 +318,24 @@ describe('asaas-sync.service', () => {
         where: { id: 'cobranca-1' },
         data: { lastAsaasFetchAt: mockSnapshot.fetchedAt },
       });
+    });
+
+    it('preserves persisted credit fields when a changed snapshot contains an invalid date', async () => {
+      mockPrisma.cobranca.findUnique.mockResolvedValue({ lastAsaasFetchHash: 'old-hash' });
+      mockPrisma.cobranca.update.mockResolvedValue({});
+      mockPrisma.charge.findFirst.mockResolvedValue(null);
+
+      await persistAsaasPaymentSnapshot('cobranca-1', {
+        ...mockSnapshot,
+        creditDate: '2026-02-30',
+        snapshotHash: 'new-hash',
+      });
+
+      const data = mockPrisma.cobranca.update.mock.calls[0]?.[0]?.data;
+      expect(data).not.toHaveProperty('asaasCreditDate');
+      expect(data).not.toHaveProperty('liquidacaoStatus');
+      expect(data).not.toHaveProperty('liquidadoEm');
+      expect(data).toHaveProperty('asaasEstimatedCreditDate');
     });
 
     it('computes NAO_APLICAVEL for PENDING status', async () => {

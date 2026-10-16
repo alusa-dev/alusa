@@ -5,7 +5,7 @@ import { EventEmptyState as EmptyState } from '../shared/EventEmptyState';
 import { EventPaginatedDataTable } from '../shared/EventPaginatedDataTable';
 import { EventSoftBadge as SoftBadge } from '../shared/EventSoftBadge';
 import { TicketActions } from './TicketActions';
-import { EXTENDED_TICKET_SALE_STATUS_LABELS, getTicketSaleTone } from './ticket-sale-ui';
+import { EXTENDED_TICKET_SALE_STATUS_LABELS, getTicketSaleFinancialSummary, getTicketSaleTone } from './ticket-sale-ui';
 
 function getWhatsAppStatus(status: TicketSaleDTO['whatsappStatus']) {
   switch (status) {
@@ -56,8 +56,20 @@ export function TicketSalesTable({
           ),
         },
         { id: 'qty', header: 'Qtd.', width: 'w-[8%]', align: 'right', render: (sale: TicketSaleDTO) => sale.quantity },
-        { id: 'total', header: 'Total', width: 'w-[12%]', align: 'right', render: (sale: TicketSaleDTO) => formatCurrency(sale.totalAmount) },
-        { id: 'status', header: 'Status', width: 'w-[12%]', align: 'center', render: (sale: TicketSaleDTO) => <SoftBadge tone={getTicketSaleTone(sale.status)}>{EXTENDED_TICKET_SALE_STATUS_LABELS[sale.status]}</SoftBadge> },
+        { id: 'total', header: 'Total', width: 'w-[12%]', align: 'right', render: (sale: TicketSaleDTO) => {
+          const financial = getTicketSaleFinancialSummary(sale);
+          return financial.hasRefund ? (
+            <div className="space-y-0.5 text-right tabular-nums">
+              <span className="block text-xs text-slate-500">Bruto {formatCurrency(financial.grossAmount)}</span>
+              <span className="block text-xs text-violet-700">Estornado {formatCurrency(financial.refundedAmount)}</span>
+              <strong className="block font-semibold text-slate-900">Líquido {formatCurrency(financial.netAmount)}</strong>
+            </div>
+          ) : formatCurrency(financial.grossAmount);
+        } },
+        { id: 'status', header: 'Status', width: 'w-[12%]', align: 'center', render: (sale: TicketSaleDTO) => {
+          const financial = getTicketSaleFinancialSummary(sale);
+          return <SoftBadge tone={financial.label ? financial.tone : getTicketSaleTone(sale.status)}>{financial.label ?? EXTENDED_TICKET_SALE_STATUS_LABELS[sale.status]}</SoftBadge>;
+        } },
         { id: 'whatsapp', header: 'WhatsApp', width: 'w-[13%]', align: 'center', render: (sale: TicketSaleDTO) => {
           const whatsapp = getWhatsAppStatus(sale.whatsappStatus);
           return <SoftBadge tone={whatsapp.tone}>{whatsapp.label}</SoftBadge>;

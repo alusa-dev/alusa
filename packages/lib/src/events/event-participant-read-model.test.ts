@@ -123,4 +123,17 @@ describe('event participant read models', () => {
       expect(args.include?.charges).toEqual({ where: { contaId: 'conta-a' } });
     }
   });
+
+  it('counts only paid or complimentary tickets and subtracts cumulative refunds from paid ticket spend', async () => {
+    vi.mocked(prisma.eventParticipant.findMany).mockResolvedValue([participant() as never] as never);
+    vi.mocked(prisma.eventTicketSale.findMany).mockResolvedValue([
+      { alunoId: 'student-1', status: 'PAID', quantity: 2, totalAmount: new Prisma.Decimal(100), refundedAmount: new Prisma.Decimal(25) },
+      { alunoId: 'student-1', status: 'COMPLIMENTARY', quantity: 1, totalAmount: new Prisma.Decimal(0), refundedAmount: new Prisma.Decimal(0) },
+      { alunoId: 'student-1', status: 'REFUNDED', quantity: 4, totalAmount: new Prisma.Decimal(120), refundedAmount: new Prisma.Decimal(120) },
+    ] as never);
+
+    const [result] = await listEventParticipants({ contaId: 'conta-a' }, 'event-1');
+
+    expect(result.metrics).toMatchObject({ ticketsBought: 3, ticketsValue: 75, totalSpent: 175 });
+  });
 });

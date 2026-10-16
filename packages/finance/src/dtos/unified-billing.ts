@@ -22,6 +22,7 @@ export const OPERATIONAL_STATUSES: readonly UnifiedChargeStatus[] = [
 export const TERMINAL_STATUSES: readonly UnifiedChargeStatus[] = [
   'PAID',
   'CANCELED',
+  'PARTIALLY_REFUNDED',
   'REFUNDED',
 ] as const;
 
@@ -58,6 +59,7 @@ const BADGE_MAP: Record<UnifiedChargeStatus, Omit<UnifiedStatusBadge, 'status'>>
   OVERDUE: { label: 'Vencido', variant: 'danger' },
   CANCELED: { label: 'Cancelado', variant: 'neutral' },
   REFUNDED: { label: 'Estornado', variant: 'neutral' },
+  PARTIALLY_REFUNDED: { label: 'Estorno parcial', variant: 'neutral' },
 };
 
 export function getUnifiedStatusBadge(status: UnifiedChargeStatus): UnifiedStatusBadge {
@@ -212,7 +214,7 @@ const COBRANCA_TO_UNIFIED: Record<StatusCobranca, UnifiedChargeStatus> = {
   CANCELAMENTO_PENDENTE: 'CANCELED',
   CANCELADO: 'CANCELED',
   ESTORNADO: 'REFUNDED',
-  ESTORNADO_PARCIAL: 'REFUNDED',
+  ESTORNADO_PARCIAL: 'PARTIALLY_REFUNDED',
 };
 
 const CHARGE_TO_UNIFIED: Record<ChargeStatus, UnifiedChargeStatus> = {
@@ -268,9 +270,9 @@ const DISPLAY_STATUS_TO_UNIFIED: Record<string, UnifiedChargeStatus> = {
   EXPIRED: 'CANCELED',
 
   ESTORNADO: 'REFUNDED',
-  ESTORNADO_PARCIAL: 'REFUNDED',
+  ESTORNADO_PARCIAL: 'PARTIALLY_REFUNDED',
+  PARTIALLY_REFUNDED: 'PARTIALLY_REFUNDED',
   REFUNDED: 'REFUNDED',
-  PARTIALLY_REFUNDED: 'REFUNDED',
   REFUND_REQUESTED: 'REFUNDED',
   REFUND_IN_PROGRESS: 'REFUNDED',
   CHARGEBACK_REQUESTED: 'REFUNDED',

@@ -72,7 +72,7 @@ describe('getEventReportDetail', () => {
       participants: 3, cancelledParticipants: 1, registrationCommitted: 295, registrationReceived: 150,
       activeStudentParticipants: 8, paidStudentParticipants: 2, pendingStudentParticipants: 1,
       overdueStudentParticipants: 2, exemptStudentParticipants: 1, closedStudentParticipants: 2,
-      registrationRefunded: 10, committedRevenue: 580, receivedRevenue: 313, pendingCommittedRevenue: 267, resultRealized: 223, costsExpected: 30, costsRealized: 90,
+      registrationRefunded: 10, committedRevenue: 600, receivedRevenue: 313, pendingCommittedRevenue: 287, resultRealized: 223, costsExpected: 30, costsRealized: 90,
       ticketReceivedGross: 150, ticketRefunded: 70, ticketReceivedNet: 80,
       ticketPendingRevenue: 40, otherRevenueExpected: 165, otherRevenueReceived: 83, otherRevenueRefunded: 37,
       ticketManualSales: 1, ticketOnlineSales: 2, availableTicketQuantity: 2, availableTicketPotential: 40,
@@ -89,7 +89,10 @@ describe('getEventReportDetail', () => {
     expect(report?.categories).toContainEqual({ category: 'Estrutura', type: 'COST', expected: 30, realized: 20 });
     expect(report?.categories).toContainEqual({ category: 'Estorno parcial de custo', type: 'COST', expected: 0, realized: 70 });
     expect(report?.categories).toContainEqual({ category: 'Custo com status recebido', type: 'COST', expected: 0, realized: 0 });
-    expect(report?.totals.pendingCommittedRevenue).toBe(267);
+    expect(report?.totals.pendingCommittedRevenue).toBe(
+      report?.totals.committedRevenue - report?.totals.receivedRevenue,
+    );
+    expect(report?.totals.pendingCommittedRevenue).toBe(287);
     expect(JSON.stringify(report)).not.toMatch(/buyerName|buyerEmail|buyerPhone|aluno|responsavel|displayName/i);
 
     expect(db.schoolEvent.findFirst.mock.calls[0][0].where).toEqual({ id: 'event-a', contaId: 'tenant-a' });

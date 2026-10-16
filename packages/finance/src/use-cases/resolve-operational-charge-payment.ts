@@ -13,6 +13,8 @@ export type ResolvedOperationalChargePayment = {
   invoiceUrl: string | null;
   billingType: string | null;
   localStatus: 'PENDING' | 'OVERDUE' | 'PAID' | 'CANCELED' | 'REFUNDED' | 'PROCESSING';
+  /** Persisted domain status for display; localStatus remains action-safe. */
+  rawLocalStatus?: string;
   value: number;
   dueDate: Date | null;
   payerName: string;
@@ -52,8 +54,9 @@ function mapEventFinancialEntryStatus(status: string): ResolvedOperationalCharge
       return 'PROCESSING';
     case 'CANCELLED':
       return 'CANCELED';
-    case 'REFUNDED':
     case 'PARTIALLY_REFUNDED':
+      return 'PAID';
+    case 'REFUNDED':
       return 'REFUNDED';
     case 'EXPECTED':
     case 'PENDING':
@@ -69,6 +72,8 @@ function mapEventTicketSaleStatus(status: string): ResolvedOperationalChargePaym
       return 'PAID';
     case 'CANCELLED':
       return 'CANCELED';
+    case 'PARTIALLY_REFUNDED':
+      return 'PAID';
     case 'REFUNDED':
       return 'REFUNDED';
     case 'PENDING':
@@ -88,9 +93,9 @@ function mapEventMapOrderStatus(status: string): ResolvedOperationalChargePaymen
     case 'CANCELLED':
     case 'EXPIRED':
       return 'CANCELED';
-    case 'REFUNDED':
     case 'PARTIALLY_REFUNDED':
-      return 'REFUNDED';
+      return 'PAID';
+    case 'REFUNDED':
     case 'PAYMENT_PENDING':
     default:
       return 'PENDING';
@@ -302,6 +307,7 @@ export async function resolveOperationalChargePayment(
       operationalId,
       kind: parsed.kind,
       entityId: entry.id,
+      rawLocalStatus: entry.status,
       contaId,
       eventId: entry.eventId,
       asaasPaymentId: entry.asaasPaymentId,
@@ -340,6 +346,7 @@ export async function resolveOperationalChargePayment(
       operationalId,
       kind: parsed.kind,
       entityId: sale.id,
+      rawLocalStatus: sale.status,
       contaId,
       eventId: sale.eventId,
       asaasPaymentId: sale.asaasPaymentId,
@@ -388,6 +395,7 @@ export async function resolveOperationalChargePayment(
     operationalId,
     kind: 'event-map-order',
     entityId: order.id,
+    rawLocalStatus: order.status,
     contaId,
     eventId: order.eventId,
     asaasPaymentId: order.asaasPaymentId,

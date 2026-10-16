@@ -196,6 +196,45 @@ describe('resolve-operational-charge-payment', () => {
     expect(resolved?.eventDetails?.ticketsUrl).toBeNull();
   });
 
+  it('mantém venda de ingresso parcialmente estornada liquidada para ações e expõe o estado bruto', async () => {
+    vi.mocked(prisma.eventTicketSale.findFirst).mockResolvedValue({
+      id: 'sale_partial', contaId: 'conta-1', eventId: 'event-1', buyerName: 'Comprador',
+      alunoId: null, quantity: 1, totalAmount: 100, paymentMethod: 'PIX',
+      status: 'PARTIALLY_REFUNDED', soldAt: new Date('2026-06-02T12:00:00.000Z'),
+      paidAt: new Date('2026-06-02T12:00:00.000Z'), asaasPaymentId: 'pay_partial',
+      refundedAmount: 25, event: { id: 'event-1', name: 'Festival' }, saleSeats: [],
+    } as never);
+
+    const resolved = await resolveOperationalChargePayment('conta-1', 'event-ticket-sale:sale_partial');
+
+    expect(resolved).toMatchObject({ localStatus: 'PAID', rawLocalStatus: 'PARTIALLY_REFUNDED', refundedAmount: 25 });
+  });
+
+  it.each([
+    ['entry', 'event-entry:entry_partial', 'PARTIALLY_REFUNDED'],
+    ['order', 'event-map-order:order_partial', 'PARTIALLY_REFUNDED'],
+  ])('preserva pagamento parcial de %s como PAID para ações', async (kind, operationalId, status) => {
+    if (kind === 'entry') {
+      vi.mocked(prisma.eventFinancialEntry.findFirst).mockResolvedValue({
+        id: 'entry_partial', eventId: 'event-1', status, expectedAmount: 100,
+        actualAmount: 100, paymentProvider: 'ASAAS', asaasPaymentId: 'pay_partial',
+        description: 'Inscrição', category: 'Taxa', dueDate: null, realizedAt: new Date(),
+        refundedAmount: 25, proofUrl: null, paymentMethod: 'PIX', event: { id: 'event-1', name: 'Festival' },
+      } as never);
+    } else {
+      vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValue({
+        id: 'order_partial', contaId: 'conta-1', eventId: 'event-1', buyerName: 'Comprador',
+        totalAmount: 100, status, paymentMethod: 'PIX', paymentProvider: null,
+        asaasPaymentId: 'pay_partial', paymentStatus: 'PARTIALLY_REFUNDED', invoiceUrl: null,
+        expiresAt: null, createdAt: new Date(), paidAt: new Date(), refundedAmount: 25,
+        event: { id: 'event-1', name: 'Festival' }, items: [],
+      } as never);
+    }
+
+    const resolved = await resolveOperationalChargePayment('conta-1', operationalId);
+    expect(resolved).toMatchObject({ localStatus: 'PAID', rawLocalStatus: status, refundedAmount: 25 });
+  });
+
   it('marca pedido de mapa como atrasado quando expiresAt passou', async () => {
     vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValue({
       id: 'order_1',

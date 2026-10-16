@@ -81,9 +81,9 @@ describe('reconcileAcademicChargesWithAsaas invalid calendar dates', () => {
   });
 
   it.each([
-    ['creditDate', { creditDate: '2026-02-30' }],
-    ['estimatedCreditDate', { estimatedCreditDate: '2026-02-30T00:00:00.000Z' }],
-  ])('skips the record without writes or projections when %s is invalid', async (_field, invalidDate) => {
+    ['creditDate', { creditDate: '2026-02-30' }, 'asaasCreditDate'],
+    ['estimatedCreditDate', { estimatedCreditDate: '2026-02-30T00:00:00.000Z' }, 'asaasEstimatedCreditDate'],
+  ])('preserves prior snapshot data when %s is invalid', async (field, invalidDate, dbField) => {
     mocks.getPayment.mockResolvedValueOnce({
       status: 'CONFIRMED',
       billingType: 'BOLETO',
@@ -95,25 +95,23 @@ describe('reconcileAcademicChargesWithAsaas invalid calendar dates', () => {
       netValue: 98,
       ...invalidDate,
     });
+    mocks.cobrancaUpdate.mockResolvedValue(existingCobranca);
 
     const result = await reconcileAcademicChargesWithAsaas({ contaId: 'conta-1' });
 
-    expect(result).toMatchObject({ checked: 1, updated: 0 });
-    expect(result.items.size).toBe(0);
-    expect(existingCobranca).toMatchObject({
-      status: 'PENDENTE',
-      asaasStatus: 'PENDING',
-      liquidacaoStatus: 'PENDENTE',
-      liquidadoEm: new Date('2026-01-11T12:00:00.000Z'),
-      dataPagamento: null,
-      pagoEm: null,
-    });
-    expect(mocks.resolveLiquidacao).not.toHaveBeenCalled();
-    expect(prisma.cobranca.update).not.toHaveBeenCalled();
-    expect(prisma.matricula.updateMany).not.toHaveBeenCalled();
-    expect(prisma.charge.update).not.toHaveBeenCalled();
-    expect(mocks.updateFinanceStatus).not.toHaveBeenCalled();
-    expect(mocks.projectByChargeId).not.toHaveBeenCalled();
-    expect(mocks.projectByCobrancaId).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ checked: 1, updated: 1 });
+    expect(prisma.cobranca.update).toHaveBeenCalledOnce();
+    expect(prisma.charge.update).toHaveBeenCalledOnce();
+    const cobrancaUpdate = vi.mocked(prisma.cobranca.update).mock.calls[0]?.[0]?.data;
+    const chargeUpdate = vi.mocked(prisma.charge.update).mock.calls[0]?.[0]?.data;
+    expect(cobrancaUpdate).not.toHaveProperty(dbField);
+    expect(chargeUpdate).not.toHaveProperty(dbField);
+    if (field === 'creditDate') {
+      expect(cobrancaUpdate).not.toHaveProperty('liquidacaoStatus');
+      expect(cobrancaUpdate).not.toHaveProperty('liquidadoEm');
+      expect(chargeUpdate).not.toHaveProperty('liquidacaoStatus');
+      expect(chargeUpdate).not.toHaveProperty('liquidadoEm');
+      expect(mocks.resolveLiquidacao).not.toHaveBeenCalled();
+    }
   });
 });

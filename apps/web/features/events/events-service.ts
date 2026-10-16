@@ -81,6 +81,7 @@ export type TicketSaleDTO = {
   quantity: number;
   unitPriceSnapshot: number;
   totalAmount: number;
+  refundedAmount: number;
   paymentMethod: EventPaymentMethod | string | null;
   paymentMethodLabel?: string | null;
   status: EventTicketSaleStatus | 'RESERVED';

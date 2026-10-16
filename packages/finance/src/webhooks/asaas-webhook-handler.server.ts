@@ -109,6 +109,7 @@ type AsaasWebhookBody = {
     nossoNumero?: string;
     creditDate?: string;
     estimatedCreditDate?: string;
+    refunds?: Array<{ status?: string | null; value?: number | null }> | null;
     chargeback?: {
       status?: string | null;
       reason?: string | null;
@@ -279,6 +280,7 @@ async function processAsaasWebhookForRecord(params: {
     event: string;
     eventId: string | null;
     asaasPaymentId: string;
+    asaasSubscriptionId: string | null;
     occurredAt: string | null;
   };
 }> {
@@ -341,6 +343,12 @@ async function processAsaasWebhookForRecord(params: {
           creditDate: payload.payment.creditDate ?? null,
           estimatedCreditDate: payload.payment.estimatedCreditDate ?? null,
           deleted: typeof payload.payment.deleted === 'boolean' ? payload.payment.deleted : null,
+          refunds: Array.isArray(payload.payment.refunds)
+            ? payload.payment.refunds.map((refund) => ({
+              status: refund.status ?? null,
+              value: typeof refund.value === 'number' ? refund.value : null,
+            }))
+            : null,
           chargeback: payload.payment.chargeback ?? null,
         },
       });
@@ -405,6 +413,7 @@ async function processAsaasWebhookForRecord(params: {
               event,
               eventId: payload.id ?? null,
               asaasPaymentId: payload.payment.id,
+              asaasSubscriptionId: payload.payment.subscription ?? null,
               occurredAt,
             }
           : undefined,
@@ -1022,6 +1031,7 @@ export async function processAsaasWebhookQueue(params?: {
     event: string;
     eventId: string | null;
     asaasPaymentId: string;
+    asaasSubscriptionId: string | null;
     occurredAt: string | null;
   }>;
 }> {
@@ -1035,6 +1045,7 @@ export async function processAsaasWebhookQueue(params?: {
     event: string;
     eventId: string | null;
     asaasPaymentId: string;
+    asaasSubscriptionId: string | null;
     occurredAt: string | null;
   }> = [];
 

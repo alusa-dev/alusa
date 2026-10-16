@@ -3,6 +3,7 @@ import {
   eventParticipantScalarSelect,
   type EventsContext,
 } from '@alusa/lib/events/events.service';
+import { getEventNetRealizedAmount } from '@alusa/domain/events';
 import { listEventContractsByStudent } from '@alusa/lib/events/event-contracts.service';
 
 import { eventParticipantRepository } from './event-participant.repository';
@@ -143,13 +144,14 @@ export async function getEventParticipantDetail(input: {
           : Math.max(order.items.length, 0);
         const mappedStatus = order.status === 'PAYMENT_PENDING'
           ? 'RESERVED'
-          : order.status === 'PARTIALLY_REFUNDED' ? 'REFUNDED' : 'PAID';
+          : 'PAID';
         const soldAt = order.paidAt ?? order.confirmedAt ?? order.createdAt;
         return {
           id: order.id,
           buyerName: order.buyerName,
           quantity,
           totalAmount: order.totalAmount,
+          refundedAmount: order.refundedAmount,
           paymentMethod: order.paymentMethod ?? null,
           paymentMethodLabel: order.paymentMethod
             ? (publicOrderPaymentMethodLabels[order.paymentMethod] ?? order.paymentMethod)
@@ -270,7 +272,10 @@ export async function getEventParticipantDetail(input: {
     .reduce((sum, sale) => sum + sale.quantity, 0);
   const ticketsValue = ticketSales
     .filter((sale) => sale.status === 'PAID')
-    .reduce((sum, sale) => sum + (typeof sale.totalAmount?.toNumber === 'function' ? sale.totalAmount.toNumber() : Number(sale.totalAmount ?? 0)), 0);
+    .reduce((sum, sale) => sum + getEventNetRealizedAmount(
+      typeof sale.totalAmount?.toNumber === 'function' ? sale.totalAmount.toNumber() : Number(sale.totalAmount ?? 0),
+      typeof sale.refundedAmount?.toNumber === 'function' ? sale.refundedAmount.toNumber() : Number(sale.refundedAmount ?? 0),
+    ), 0);
   const feeValue = participant.registrationFeeCharged.toNumber();
   const totalSpent = feeValue + costumesValue + ticketsValue;
   const feeEntry = participant.revenueEntryId

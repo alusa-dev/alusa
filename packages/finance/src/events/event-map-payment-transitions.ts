@@ -16,6 +16,7 @@ import {
   isTicketPaymentBlocked,
   mayResolveChargebackPaymentHold,
 } from '@alusa/domain/events';
+import { logEventsFinance } from './events-finance-observability';
 
 const PAID_ASAAS_PAYMENT_STATUSES = new Set([
   'CONFIRMED',
@@ -234,8 +235,41 @@ export async function refundPublicEventMapOrderByPayment(params: EventMapPayment
     if (!order) return null;
     if (order.status === 'REFUNDED') return { orderId: order.id, status: order.status };
 
-    const refundedAmount = params.refundedAmount ?? toMoney(order.totalAmount);
-    const status = params.partial && refundedAmount < toMoney(order.totalAmount) ? 'PARTIALLY_REFUNDED' : 'REFUNDED';
+    const persistedOrderRefund = Math.max(toMoney(order.refundedAmount), 0);
+    const sales = await tx.eventTicketSale.findMany({
+      where: { contaId: order.contaId, eventMapOrderId: order.id },
+      orderBy: { id: 'asc' },
+    });
+    const orderTotal = toMoney(order.totalAmount);
+    const overRefundedSaleCount = sales.filter(
+      (sale) => toMoney(sale.refundedAmount) > toMoney(sale.totalAmount),
+    ).length;
+    const overRefundedOrderCount = persistedOrderRefund > orderTotal ? 1 : 0;
+    const overRefundedCount = overRefundedSaleCount + overRefundedOrderCount;
+    if (overRefundedCount > 0) {
+      logEventsFinance(
+        'finance.events.ticket_sale.refund_amount_over_gross',
+        { errors: overRefundedCount },
+        'warn',
+      );
+    }
+    const persistedSaleRefunds = sales.reduce(
+      (total, sale) => toMoney(total + toMoney(sale.refundedAmount)),
+      0,
+    );
+    const providerRefundTotal = Math.min(orderTotal, Math.max(
+      params.refundedAmount == null ? orderTotal : toMoney(params.refundedAmount),
+      0,
+    ));
+    const cumulativeRefund = Math.min(orderTotal, Math.max(
+      providerRefundTotal,
+      persistedOrderRefund,
+      persistedSaleRefunds,
+    ));
+    const status = params.partial && providerRefundTotal < orderTotal ? 'PARTIALLY_REFUNDED' : 'REFUNDED';
+    const paymentHeld = status !== 'REFUNDED' && isTicketPaymentBlocked(order.paymentStatus);
+    const projectedOrderStatus = paymentHeld ? order.status : status;
+    const projectedPaymentStatus = paymentHeld ? order.paymentStatus : status;
     const now = new Date();
     if (status === 'REFUNDED') {
       await tx.eventTicket.updateMany({
@@ -250,38 +284,62 @@ export async function refundPublicEventMapOrderByPayment(params: EventMapPayment
         data: { status: 'AVAILABLE' },
       });
     }
-    const sales = await tx.eventTicketSale.findMany({
-      where: { contaId: order.contaId, eventMapOrderId: order.id },
-    });
-    let remainingRefund = refundedAmount;
+    let remainingIncrement = toMoney(Math.max(cumulativeRefund - persistedSaleRefunds, 0));
     for (const sale of sales) {
       const saleTotal = toMoney(sale.totalAmount);
-      const saleRefund = status === 'REFUNDED' ? saleTotal : Math.min(saleTotal, Math.max(remainingRefund, 0));
-      remainingRefund = Math.max(remainingRefund - saleRefund, 0);
+      const persistedRefund = Math.max(0, toMoney(sale.refundedAmount));
+      const saleCapacity = Math.max(saleTotal - persistedRefund, 0);
+      const saleRefund = status === 'REFUNDED'
+        ? Math.max(saleTotal, persistedRefund)
+        : toMoney(persistedRefund + Math.min(saleCapacity, remainingIncrement));
+      remainingIncrement = toMoney(Math.max(remainingIncrement - (saleRefund - persistedRefund), 0));
+      const saleFullyRefunded = status === 'REFUNDED' || (saleTotal > 0 && saleRefund >= saleTotal);
+      const saleHasRefund = saleRefund > 0;
+      const projectedSalePaymentStatus = status === 'REFUNDED'
+        ? status
+        : saleHasRefund
+          ? paymentHeld
+            ? order.paymentStatus
+            : isTicketPaymentBlocked(sale.paymentStatus)
+              ? sale.paymentStatus
+              : status
+          : sale.paymentStatus;
       await tx.eventTicketSale.update({
-        where: { id: sale.id },
+        where: { id: sale.id, contaId: order.contaId, eventMapOrderId: order.id },
         data: {
-          status: status === 'REFUNDED' ? 'REFUNDED' : sale.status,
-          refundedAt: now,
+          status: saleFullyRefunded ? 'REFUNDED' : sale.status,
+          ...(saleHasRefund || status === 'REFUNDED' ? { refundedAt: now } : {}),
           refundedAmount: decimal(saleRefund),
-          paymentStatus: status,
+          paymentStatus: projectedSalePaymentStatus,
         },
       });
       await tx.eventFinancialEntry.updateMany({
         where: { contaId: order.contaId, originType: 'TICKET_SALE', originId: sale.id },
         data: {
-          status: status === 'REFUNDED' ? 'REFUNDED' : 'PARTIALLY_REFUNDED',
-          refundedAt: now,
+          ...(saleFullyRefunded
+            ? { status: 'REFUNDED' as const }
+            : saleHasRefund
+              ? { status: 'PARTIALLY_REFUNDED' as const }
+              : {}),
+          ...(saleHasRefund || status === 'REFUNDED' ? { refundedAt: now } : {}),
           refundedAmount: decimal(saleRefund),
           netAmount: decimal(Math.max(toMoney(sale.totalAmount) - saleRefund, 0)),
-          paymentStatus: status,
+          paymentStatus: projectedSalePaymentStatus,
         },
       });
       await syncPublicLotQuantity(tx, order.contaId, sale.lotId);
     }
     const updated = await tx.eventMapOrder.updateMany({
       where: { id: order.id, contaId: params.contaId },
-      data: { status, refundedAt: now, refundedAmount: decimal(refundedAmount), paymentStatus: status },
+      data: {
+        status: projectedOrderStatus,
+        refundedAt: now,
+        refundedAmount: decimal(Math.max(
+          status === 'REFUNDED' ? orderTotal : cumulativeRefund,
+          persistedOrderRefund,
+        )),
+        paymentStatus: projectedPaymentStatus,
+      },
     });
     if (updated.count !== 1) return null;
     return { orderId: order.id, status };

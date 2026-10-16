@@ -54,7 +54,7 @@ describe('events domain rules', () => {
     expect(metrics.lucroBrutoRealizado).toBe(950);
     expect(metrics.lucroLiquidoPrevisto).toBe(1400);
     expect(metrics.lucroLiquidoRealizado).toBe(950);
-    expect(metrics.ticketMedio).toBe(60);
+    expect(metrics.ticketMedio).toBe(50);
     expect(metrics.taxaOcupacao).toBe(0.35);
     expect(metrics.cortesias).toBe(5);
     expect(metrics.figurinosPendentes).toBe(1);
@@ -250,6 +250,22 @@ describe('events domain rules', () => {
 
     expect(metrics.receitaPrevista).toBe(100);
     expect(metrics.receitaRealizada).toBe(100);
+  });
+
+  it('desconta estorno parcial da receita realizada e do ticket medio sem misturar outras receitas', () => {
+    const metrics = calculateEventMetrics({
+      ticketSales: [{ status: 'PAID', quantity: 2, totalAmount: 100, refundedAmount: 25 }],
+      financialEntries: [{
+        type: 'REVENUE', status: 'RECEIVED', expectedAmount: 50, actualAmount: 50, originType: 'MANUAL',
+      }],
+    });
+
+    expect(metrics.receitaRealizada).toBe(125);
+    expect(metrics.receitaRecebidaBruta).toBe(150);
+    expect(metrics.receitaEstornada).toBe(25);
+    expect(metrics.receitaRecebidaLiquida).toBe(125);
+    expect(metrics.saldoAReceber).toBe(25);
+    expect(metrics.ticketMedio).toBe(37.5);
   });
 
   it('soma no realizado apenas valores financeiros realmente recebidos', () => {

@@ -78,6 +78,7 @@ export function mapTicketSale(
     quantity: sale.quantity,
     unitPriceSnapshot: toMoney(sale.unitPriceSnapshot),
     totalAmount: toMoney(sale.totalAmount),
+    refundedAmount: toMoney(sale.refundedAmount),
     paymentMethod: sale.paymentMethod,
     status: sale.status,
     soldAt: sale.soldAt.toISOString(),

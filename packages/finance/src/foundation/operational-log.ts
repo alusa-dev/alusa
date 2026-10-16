@@ -119,6 +119,7 @@ export type FinanceOperationalEventName =
   | 'finance.events.public_event_map.refund_reconcile.job.completed'
   | 'finance.events.public_event_map.ticket_fulfillment.job.completed'
   | 'finance.events.public_event_map.financial_inconsistencies.inspect'
+  | 'finance.events.ticket_sale.refund_amount_over_gross'
   | 'finance.http.charge_detail.cache_write.failed'
   | 'finance.http.charge_detail.asaas_read.failed'
   | 'finance.http.charge_detail.asaas_unavailable'

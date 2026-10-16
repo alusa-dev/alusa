@@ -3,7 +3,7 @@
  * Usado por webhooks, reconcile e APIs — evita drift entre caminhos.
  */
 import type { LiquidacaoStatus } from '@prisma/client';
-import { parsePaymentDate } from '@alusa/shared';
+import { parseCivilDatePreservingInstant } from './civil-date';
 
 export type ResolveLiquidacaoFromAsaasInput = {
   asaasStatus: string | null | undefined;
@@ -16,12 +16,8 @@ function normalizeCreditDateDay(creditDate?: Date | string | null): string | nul
   if (!creditDate) return null;
 
   if (typeof creditDate === 'string') {
-    try {
-      const parsed = parsePaymentDate(creditDate);
-      return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
-    } catch {
-      return null;
-    }
+    const parsed = parseCivilDatePreservingInstant(creditDate);
+    return parsed ? parsed.toISOString().slice(0, 10) : null;
   }
 
   if (Number.isNaN(creditDate.getTime())) return null;

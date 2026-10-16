@@ -10,6 +10,7 @@ import {
   EventsError,
   buildStaffSaleTicketsUrl,
   calculateEventMetrics,
+  getEventNetRealizedAmount,
   resolveEventParticipantPayment,
   validateCostumeAssignmentStatusTransition,
   validateSchoolEventStatusTransition,
@@ -137,7 +138,7 @@ const eventReportSelect = (contaId: string) => ({
       id: true, nome: true,
     },
   },
-  ticketSales: { where: { contaId }, select: { status: true, quantity: true, totalAmount: true } },
+  ticketSales: { where: { contaId }, select: { status: true, quantity: true, totalAmount: true, refundedAmount: true } },
   ticketLots: { where: { contaId }, select: { quantityTotal: true, quantitySold: true, unitPrice: true } },
   costumes: { where: { contaId }, select: { id: true, schoolCost: true, quantity: true } },
   assignments: { where: { contaId }, select: { revenueEntryId: true, status: true, billingMode: true, chargedValue: true, isPaid: true } },
@@ -291,6 +292,7 @@ function buildMetrics(
       status: sale.status,
       quantity: sale.quantity,
       totalAmount: toMoney(sale.totalAmount),
+      refundedAmount: toMoney(sale.refundedAmount),
     })),
     ticketLots: record.ticketLots.map((lot) => ({
       quantityTotal: lot.quantityTotal,
@@ -2303,6 +2305,12 @@ export async function getEventReports(
     },
     { receita: 0, custo: 0, resultado: 0, ingressos: 0, lucrativos: 0, prejuizo: 0 },
   );
+  const paidTicketSales = events.flatMap((event) => event.ticketSales.filter((sale) => sale.status === 'PAID'));
+  const paidTicketQuantity = paidTicketSales.reduce((sum, sale) => sum + sale.quantity, 0);
+  const paidTicketRevenue = paidTicketSales.reduce(
+    (sum, sale) => sum + getEventNetRealizedAmount(toMoney(sale.totalAmount), toMoney(sale.refundedAmount)),
+    0,
+  );
 
   const ranking = [...mapped]
     .sort((a, b) => b.metrics.resultadoRealizado - a.metrics.resultadoRealizado)
@@ -2312,7 +2320,7 @@ export async function getEventReports(
     general: {
       ...total,
       margemMedia: total.receita > 0 ? total.resultado / total.receita : null,
-      ticketMedio: total.ingressos > 0 ? total.receita / total.ingressos : null,
+      ticketMedio: paidTicketQuantity > 0 ? paidTicketRevenue / paidTicketQuantity : null,
       ranking,
     },
     selected,
@@ -2868,8 +2876,11 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
     let ticketsValue = 0;
     if (part.alunoId) {
       const ticketSales = ticketSalesByAluno.get(part.alunoId) ?? [];
-      ticketsBought = ticketSales.reduce((sum, s) => sum + s.quantity, 0);
-      ticketsValue = ticketSales.reduce((sum, s) => sum + s.totalAmount.toNumber(), 0);
+      const validTicketSales = ticketSales.filter((sale) => ['PAID', 'COMPLIMENTARY'].includes(sale.status));
+      ticketsBought = validTicketSales.reduce((sum, sale) => sum + sale.quantity, 0);
+      ticketsValue = validTicketSales
+        .filter((sale) => sale.status === 'PAID')
+        .reduce((sum, sale) => sum + getEventNetRealizedAmount(toMoney(sale.totalAmount), toMoney(sale.refundedAmount)), 0);
     }
 
     const feeValue = part.registrationFeeCharged.toNumber();

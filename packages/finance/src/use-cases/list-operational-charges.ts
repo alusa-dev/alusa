@@ -10,7 +10,7 @@ import {
   ASAAS_NON_OPEN_UNIFIED_STATUSES,
 } from '../dtos/unified-billing';
 import { parseExternalReference } from '../core';
-import { resolveChargeDisplayStatus, unifiedChargeStatusToLocal } from '../mappers/asaas-display-status';
+import { resolveChargeDisplayStatus } from '../mappers/asaas-display-status';
 import { isMaterializedGroupedEventEntry } from '../mappers/event-billing-entry';
 import { resolveEventPayerName } from '../mappers/event-payer';
 import {
@@ -156,8 +156,9 @@ function mapEventFinancialEntryStatus(status: string): UnifiedChargeItem['status
     case 'CANCELLED':
       return 'CANCELED';
     case 'REFUNDED':
-    case 'PARTIALLY_REFUNDED':
       return 'REFUNDED';
+    case 'PARTIALLY_REFUNDED':
+      return 'PARTIALLY_REFUNDED';
     case 'EXPECTED':
     case 'PENDING':
     default:
@@ -174,6 +175,8 @@ function mapEventTicketSaleStatus(status: string): UnifiedChargeItem['status'] {
       return 'CANCELED';
     case 'REFUNDED':
       return 'REFUNDED';
+    case 'PARTIALLY_REFUNDED':
+      return 'PARTIALLY_REFUNDED';
     case 'PENDING':
     default:
       return 'PENDING';
@@ -188,8 +191,9 @@ function mapEventMapOrderStatus(status: string): UnifiedChargeItem['status'] {
     case 'EXPIRED':
       return 'CANCELED';
     case 'REFUNDED':
-    case 'PARTIALLY_REFUNDED':
       return 'REFUNDED';
+    case 'PARTIALLY_REFUNDED':
+      return 'PARTIALLY_REFUNDED';
     case 'PAYMENT_PENDING':
     default:
       return 'PENDING';
@@ -218,7 +222,7 @@ function buildItemDisplayStatus(input: {
 }
 
 function shouldExposeInOperationalQueue(params: {
-  status: 'PENDING' | 'OVERDUE' | 'PAID' | 'PROCESSING' | 'CANCELED' | 'REFUNDED';
+  status: UnifiedChargeItem['status'];
   dueDate: Date | null;
   isInstallment: boolean;
   now: Date;
@@ -1236,7 +1240,7 @@ async function buildOperationalChargesCollection(
       asaasStatus: null,
       liquidacaoStatus: null,
       displayStatus: buildItemDisplayStatus({
-        localStatus: unifiedChargeStatusToLocal(unifiedStatus),
+        localStatus: entry.status,
         asaasPaymentId: entry.asaasPaymentId,
       }),
       chargeType: 'ONE_TIME' as const,
@@ -1271,7 +1275,7 @@ async function buildOperationalChargesCollection(
       asaasStatus: null,
       liquidacaoStatus: null,
       displayStatus: buildItemDisplayStatus({
-        localStatus: unifiedChargeStatusToLocal(unifiedStatus),
+        localStatus: sale.status,
         asaasPaymentId: sale.asaasPaymentId,
       }),
       chargeType: 'ONE_TIME' as const,
@@ -1306,7 +1310,7 @@ async function buildOperationalChargesCollection(
       asaasStatus: null,
       liquidacaoStatus: null,
       displayStatus: buildItemDisplayStatus({
-        localStatus: unifiedChargeStatusToLocal(unifiedStatus),
+        localStatus: order.status,
         asaasPaymentId: order.asaasPaymentId,
       }),
       chargeType: 'ONE_TIME' as const,

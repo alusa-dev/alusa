@@ -46,4 +46,5 @@ export type UnifiedChargeStatus =
   | 'PAID'         // PAGO, PAID
   | 'OVERDUE'      // ATRASADO, OVERDUE
   | 'CANCELED'     // CANCELADO, CANCELED, CANCELAMENTO_PENDENTE
-  | 'REFUNDED';    // ESTORNADO, ESTORNADO_PARCIAL, REFUNDED
+  | 'PARTIALLY_REFUNDED' // Estorno parcial; settled, but not fully refunded.
+  | 'REFUNDED';    // ESTORNADO, REFUNDED

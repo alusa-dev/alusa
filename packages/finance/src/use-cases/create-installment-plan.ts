@@ -8,7 +8,6 @@ import {
 import type { InstallmentStatus } from '@prisma/client';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
-import { parseOptionalPaymentDate } from '@alusa/shared';
 import { resolvePayer } from '@alusa/domain';
 import crypto from 'crypto';
 
@@ -31,6 +30,7 @@ import {
 import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
 import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
+import { parseCivilDatePreservingInstant, parseOptionalCivilDatePreservingInstant } from '../mappers/civil-date';
 
 export type CreateInstallmentPlanInput = {
   contaId: string;
@@ -387,8 +387,8 @@ export async function createInstallmentPlan(
             asaasNetValue: payment.netValue,
             asaasOriginalValue: payment.originalValue ?? null,
             asaasFeeValue: payment.value - payment.netValue,
-            asaasCreditDate: parseOptionalPaymentDate(payment.creditDate) ?? null,
-            asaasEstimatedCreditDate: parseOptionalPaymentDate(payment.estimatedCreditDate) ?? null,
+            asaasCreditDate: parseCivilDatePreservingInstant(payment.creditDate),
+            asaasEstimatedCreditDate: parseCivilDatePreservingInstant(payment.estimatedCreditDate),
             lastAsaasFetchAt: new Date(),
             liquidacaoStatus: resolveLiquidacaoFromAsaasPayment({
               asaasStatus: effectivePaymentStatus,
@@ -404,20 +404,22 @@ export async function createInstallmentPlan(
           updated.externalReference,
           payment.id,
         );
+        const creditDate = parseOptionalCivilDatePreservingInstant(payment.creditDate);
+        const estimatedCreditDate = parseOptionalCivilDatePreservingInstant(payment.estimatedCreditDate);
         const chargeSnapshot = {
           asaasStatus: effectivePaymentStatus,
           asaasValue: payment.value,
           asaasNetValue: payment.netValue,
           asaasOriginalValue: payment.originalValue ?? null,
           asaasFeeValue: payment.value - payment.netValue,
-          asaasCreditDate: parseOptionalPaymentDate(payment.creditDate) ?? null,
-          asaasEstimatedCreditDate: parseOptionalPaymentDate(payment.estimatedCreditDate) ?? null,
+          ...(creditDate !== undefined ? { asaasCreditDate: creditDate } : {}),
+          ...(estimatedCreditDate !== undefined ? { asaasEstimatedCreditDate: estimatedCreditDate } : {}),
           lastAsaasFetchAt: new Date(),
-          liquidacaoStatus: resolveLiquidacaoFromAsaasPayment({
+          ...(creditDate !== undefined ? { liquidacaoStatus: resolveLiquidacaoFromAsaasPayment({
             asaasStatus: effectivePaymentStatus,
             creditDate: payment.creditDate,
             billingType: payment.billingType,
-          }),
+          }) } : {}),
         };
 
         await prisma.charge.upsert({

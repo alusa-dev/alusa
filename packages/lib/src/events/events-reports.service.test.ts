@@ -152,6 +152,24 @@ describe('getEventReports tenant isolation', () => {
     db.standaloneInstallmentPlan.findMany.mockResolvedValue([]);
   });
 
+  it('calcula o ticket medio geral somente com receita liquida e quantidade de ingressos pagos', async () => {
+    db.schoolEvent.findMany.mockResolvedValueOnce([{
+      ...reportsByTenant['tenant-a'],
+      ticketSales: [{
+        contaId: 'tenant-a', status: 'PAID', quantity: 2,
+        totalAmount: new Prisma.Decimal(100), refundedAmount: new Prisma.Decimal(20),
+      }],
+    }] as never);
+
+    const report = await getEventReports({ contaId: 'tenant-a' });
+
+    // R$ 10 of participant revenue is included in overall revenue, but not ticket average.
+    expect(report.general.receita).toBe(90);
+    expect(report.general.ingressos).toBe(2);
+    expect(report.general.ticketMedio).toBe(40);
+    expect(db.schoolEvent.findMany.mock.calls[0]?.[0].select.ticketSales.select.refundedAmount).toBe(true);
+  });
+
   it('keeps aggregate and downstream payment snapshot queries inside each tenant', async () => {
     const tenantA = await getEventReports({ contaId: 'tenant-a' });
     const tenantACalls = {

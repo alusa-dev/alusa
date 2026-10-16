@@ -42,6 +42,14 @@ export interface AsaasWebhookPayment {
   
   // Campos de refund/chargeback
   refundedDate?: string | null;
+  refunds?: Array<{
+    dateCreated?: string | null;
+    status?: string | null;
+    value?: number | null;
+    description?: string | null;
+    endToEndIdentifier?: string | null;
+    transactionReceiptUrl?: string | null;
+  }> | null;
   chargebackDate?: string | null;
   chargeback?: {
     status?: string | null;
