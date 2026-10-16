@@ -301,10 +301,10 @@ describe('events domain rules', () => {
     expect(metrics.receitaRealizada).toBe(325);
   });
 
-  it('calcula receita prevista incluindo ingressos potenciais nao vendidos do lote', () => {
+  it('mantém ingressos não vendidos como disponibilidade, sem incluí-los na receita prevista', () => {
     const metrics = calculateEventMetrics({
       ticketLots: [
-        { status: 'ACTIVE', quantityTotal: 100, quantitySold: 30, unitPrice: 50 }, // 70 unsold * 50 = 3500 potential
+        { status: 'ACTIVE', quantityTotal: 100, quantitySold: 30, unitPrice: 50 },
       ],
       ticketSales: [
         { status: 'PAID', quantity: 20, totalAmount: 1000 },
@@ -312,11 +312,16 @@ describe('events domain rules', () => {
       ],
     });
 
-    // 1000 (PAID sales) + 500 (PENDING sales) + (100 - 30) * 50 (unsold potential) = 1500 + 3500 = 5000
-    expect(metrics.receitaPrevista).toBe(5000);
+    // Only recorded paid and pending sales count; unsold inventory remains a separate metric.
+    expect(metrics.receitaPrevista).toBe(1500);
+    expect(metrics.receitaBrutaPrevista).toBe(1500);
+    expect(metrics.receitaRealizada).toBe(1000);
+    expect(metrics.saldoAReceber).toBe(500);
+    expect(metrics.resultadoPrevisto).toBe(1500);
+    expect(metrics.ingressosDisponiveis).toBe(70);
   });
 
-  it('conta apenas lotes ACTIVE no inventário e potencial, preservando vendas históricas', () => {
+  it('conta apenas lotes ACTIVE no inventário, sem projetar unidades não vendidas', () => {
     const inactiveStatuses = ['DRAFT', 'CLOSED', 'CANCELLED', 'ARCHIVED', 'SOLD_OUT'] as const;
     const metrics = calculateEventMetrics({
       ticketLots: [
@@ -327,7 +332,7 @@ describe('events domain rules', () => {
     });
 
     expect(metrics.ingressosDisponiveis).toBe(8);
-    expect(metrics.receitaPrevista).toBe(180);
+    expect(metrics.receitaPrevista).toBe(100);
     expect(metrics.receitaRealizada).toBe(100);
   });
 
