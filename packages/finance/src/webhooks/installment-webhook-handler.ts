@@ -58,9 +58,9 @@ async function computeStatusViaAsaas(params: {
   contaId: string;
   asaasInstallmentId: string;
   installmentCount: number;
-}): Promise<{ status: InstallmentStatus; method: 'asaas'; details: Record<string, unknown> } | null> {
+}): Promise<{ status: InstallmentStatus | null; method: 'asaas'; details: Record<string, unknown> } | null> {
   const credentials = await loadAsaasCredentials(params.contaId);
-  if (!credentials?.apiKey) return null;
+  if (!credentials?.apiKey) return { status: null, method: 'asaas', details: { lookupComplete: false } };
 
   const installment = await getInstallment({
     apiKey: credentials.apiKey,
@@ -74,7 +74,7 @@ async function computeStatusViaAsaas(params: {
     return null;
   });
 
-  if (!installment) return null;
+  if (!installment) return { status: null, method: 'asaas', details: { lookupComplete: false } };
 
   if (installment.deleted) {
     return {
@@ -85,13 +85,16 @@ async function computeStatusViaAsaas(params: {
   }
 
   const payments: Array<{ id: string; status: string; deleted?: boolean }> = [];
+  const seenIds = new Set<string>();
+  const pageSize = 100;
   let offset = 0;
+  let expectedTotalCount: number | undefined;
 
   while (true) {
     const page = await listInstallmentPayments({
       apiKey: credentials.apiKey,
       installmentId: params.asaasInstallmentId,
-      limit: 100,
+      limit: pageSize,
       offset,
     }).catch((error) => {
       logFinanceOperationalEvent({
@@ -102,9 +105,33 @@ async function computeStatusViaAsaas(params: {
       return null;
     });
 
-    if (!page) return null;
+    if (
+      !page ||
+      typeof page.hasMore !== 'boolean' ||
+      !Array.isArray(page.data) ||
+      !Number.isInteger(page.totalCount) ||
+      page.totalCount < 0 ||
+      (expectedTotalCount !== undefined && page.totalCount !== expectedTotalCount)
+    ) {
+      logFinanceOperationalEvent({
+        severity: 'error',
+        eventName: 'finance.webhook.installment.payments_lookup.failed',
+        error: new Error('ASAAS_INSTALLMENT_PAYMENT_PAGE_INVALID_OR_INCONSISTENT'),
+      });
+      return { status: null, method: 'asaas', details: { lookupComplete: false } };
+    }
+    expectedTotalCount ??= page.totalCount;
 
     for (const item of page.data) {
+      if (!item.id?.trim() || seenIds.has(item.id)) {
+        logFinanceOperationalEvent({
+          severity: 'error',
+          eventName: 'finance.webhook.installment.payments_lookup.failed',
+          error: new Error('ASAAS_INSTALLMENT_PAYMENT_ID_DUPLICATE_OR_INVALID'),
+        });
+        return { status: null, method: 'asaas', details: { lookupComplete: false } };
+      }
+      seenIds.add(item.id);
       const status =
         normalizeAsaasPaymentSnapshotStatus({
           status: item.status,
@@ -114,11 +141,33 @@ async function computeStatusViaAsaas(params: {
       payments.push({ id: item.id, status, deleted: item.deleted });
     }
 
-    if (!page.hasMore) break;
-    offset += page.limit;
+    if (page.hasMore) {
+      if (page.data.length === 0 || payments.length >= expectedTotalCount) {
+        logFinanceOperationalEvent({
+          severity: 'error',
+          eventName: 'finance.webhook.installment.payments_lookup.failed',
+          error: new Error('ASAAS_INSTALLMENT_PAYMENT_PAGINATION_DID_NOT_PROGRESS'),
+        });
+        return { status: null, method: 'asaas', details: { lookupComplete: false } };
+      }
+    } else {
+      if (payments.length !== expectedTotalCount) {
+        logFinanceOperationalEvent({
+          severity: 'error',
+          eventName: 'finance.webhook.installment.payments_lookup.failed',
+          error: new Error('ASAAS_INSTALLMENT_PAYMENT_TOTAL_COUNT_MISMATCH'),
+        });
+        return { status: null, method: 'asaas', details: { lookupComplete: false } };
+      }
+      break;
+    }
+
+    offset += pageSize;
 
     // fail-safe: evitar loop infinito caso a API retorne dados inconsistentes
-    if (offset > 10_000) return null;
+    if (offset > 10_000) {
+      return { status: null, method: 'asaas', details: { lookupComplete: false } };
+    }
   }
 
   const activePayments = payments.filter((p) => !p.deleted);
@@ -227,9 +276,20 @@ export async function handleInstallmentWebhook(
         })
       : null;
 
-    const computed =
-      asaasComputed ??
-      computeStatusHeuristically({
+    let computed: {
+      status: InstallmentStatus;
+      method: 'asaas' | 'heuristic';
+      details: Record<string, unknown>;
+    } | null = null;
+
+    if (asaasComputed) {
+      const asaasStatus = asaasComputed.status;
+      if (asaasStatus === null) {
+        return { success: false, error: 'ASAAS_INSTALLMENT_STATUS_LOOKUP_FAILED' };
+      }
+      computed = { status: asaasStatus, method: asaasComputed.method, details: asaasComputed.details };
+    } else {
+      computed = computeStatusHeuristically({
         currentStatus: installmentPlan.status,
         event: payload.event,
         paymentStatus:
@@ -242,6 +302,7 @@ export async function handleInstallmentWebhook(
         installmentNumber: payload.payment.installmentNumber ?? null,
         installmentCount: installmentPlan.installmentCount,
       });
+    }
 
     if (computed && computed.status !== installmentPlan.status) {
       updates.status = computed.status;

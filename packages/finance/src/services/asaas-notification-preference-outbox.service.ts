@@ -186,7 +186,16 @@ export async function processAsaasNotificationPreferenceOutbox(
           lastErrorAt: null,
         },
       });
-      if (completed.count === 0) continue;
+      if (completed.count === 0) {
+        if (sync.updated) {
+          await enqueueAsaasNotificationPreferenceSync({
+            contaId: row.contaId,
+            asaasCustomerId: row.asaasCustomerId,
+            reason: 'PREFERENCE_PUT_COMPLETED_AFTER_CLAIM_LOST',
+          });
+        }
+        continue;
+      }
       result.processed += 1;
       if (sync.updated) result.updated += 1;
       else result.unchanged += 1;

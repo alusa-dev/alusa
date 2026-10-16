@@ -78,12 +78,12 @@ sem evidência do ambiente publicado.
 | 0 — Baseline e ownership | Parcial | Catálogo e manifests conferidos (`36` schedules, `35` rotas únicas); há snapshots de Vercel, Neon e p95 de spans HTTP de jobs no Sentry. Os `count()` do Sentry são spans observados, não execuções exatas, e não medem trabalho útil, atraso, quota ou custo atribuível por job/tenant. Ainda falta baseline comparável de trabalho útil, atrasos e quota por janela. |
 | 1 — Observabilidade | Parcial | Os handlers catalogados registram início/conclusão, duração, contagens seguras e classificação `workStatus`; o auditor agora exige `workStatus` em cada rota agendada. O snapshot de spans HTTP no Sentry fornece p95 de duração por rota, mas seus `count()` não equivalem a execuções exatas e a métrica `alusa.job.completed` ainda não tem amostras históricas porque esta instrumentação não foi publicada. O aceite continua pendente de confirmação de ingestão e comparação pós-publicação. Separadamente, a telemetria de webhooks fornece gauges agregados de backlog/estados e idade da fila via `getWebhookQueueMetrics`, além de distribuições do recebimento ao claim e à conclusão por categoria de evento. Essa cobertura é específica ao fluxo de webhooks: não atribui backlog/lag a jobs ou tenants, não mede `dbQueries` nem custo por job. |
 | 2 — Polling e timers | Pendente | Nenhuma frequência foi reduzida nesta onda. Decisões dependem da janela comparável e da confirmação dos SLAs de webhook e reconciliação. |
-| 3 — Outbox e deduplicação | Parcial | A [matriz de outboxes financeiros e de webhook](../architecture/financial-outbox-coverage.md) registra, por modelo, produtor/fronteira transacional, dedupe, claim, retry e replay/DLQ onde comprovados; o [runbook de recuperação](../runbooks/financial-outbox-recovery.md) mapeia ações existentes e triagem somente leitura. Integrações PostgreSQL local cobrem retry de webhook/side-effect, claim único de rematrícula e fencing de lease para `AsaasNotificationPreferenceOutbox` e `AsaasNotificationSyncOutbox`, preservando Conta B. Esse fencing protege o estado e a finalização no banco, mas não cancela um PUT Asaas já iniciado: a chamada antiga pode terminar depois da recuperação stale e deixar o provedor divergente mesmo se a linha ficar `DONE`. Os testes de rematrícula mantêm o provider mockado; a integração das notificações também não chama provedores externos. Nenhum desses resultados é evidência Neon, staging ou produção. Reparo automático das preferências de notificação não está definido até produto decidir a precedência entre preferências de eventos da escola e canais selecionados na operação de cobrança; comparar remoto/local e escalar divergências ao owner. Owners seguem como bounded contexts e replay por registro não existe para todos os fluxos; falta prova integrada uniforme para os oito outboxes. |
+| 3 — Outbox e deduplicação | Parcial | A [matriz de outboxes financeiros e de webhook](../architecture/financial-outbox-coverage.md) registra, por modelo, produtor/fronteira transacional, dedupe, claim, retry e replay/DLQ onde comprovados; o [runbook de recuperação](../runbooks/financial-outbox-recovery.md) mapeia ações existentes e triagem somente leitura. Integrações PostgreSQL local cobrem retry de webhook/side-effect, claim único de rematrícula, disputa de enqueue/claim de `MatriculaBillingOutbox` e fencing de lease para `AsaasNotificationPreferenceOutbox` e `AsaasNotificationSyncOutbox`, preservando Conta B. O teste novo de matrícula comprovou dedupe concorrente intra-Conta A, um único claim/provisionamento mockado entre dois workers e Conta B ainda PENDING, sem chamar Asaas. O fencing protege o estado/finalização no banco, mas não cancela PUT Asaas já iniciado; se um PUT de preferência termina após perder claim, o worker agora re-enfileira a preferência atual da escola, que prevalece sobre canais da cobrança (fallback apenas sem preferências salvas). Mudança da régua durante sync disparado por cobrança também re-enfileira a intenção corrente. O worker antigo continua incapaz de finalizar a linha nova. Testes usam providers mockados; resultado local não é evidência Neon, staging ou produção. Para divergências persistentes, comparar remoto/local e escalar ao owner. A UI foi alinhada para comunicar que prevalecem as preferências atuais da escola. Owners seguem como bounded contexts e replay por registro não existe para todos os fluxos; falta prova integrada uniforme para os oito outboxes. |
 | 4 — Concorrência por tenant | Parcial | Há preenchimento de lote tenant-fair em processamento de webhooks e limites existentes em alguns workers. Falta medir justiça, contenção e impacto entre tenants sob carga representativa. |
 | 5 — Queries e Neon | Parcial | As projeções locais menores para mapa de eventos são sustentadas por volume SQL de linhas retornadas e overfetch confirmado no código. A projeção observada no Neon antecede essa mudança local ainda sem rollout confirmado; linhas são apenas proxy de volume, não egress medido nem custo atribuível por query. Não houve migration de índice. Falta comparação pós-publicação de linhas, transferência e p95; compute-hours permanecem uma métrica separada. |
 | 6 — API e frontend | Parcial | Fallbacks automáticos e ações explícitas agora emitem métricas de contagem e duração com dimensão de origem/resultado allowlisted. O teste unitário local de `POST /api/cobrancas/[id]/sync-asaas` passou 3/3 e confirma que a busca usa `contaId` autenticado, que as chaves de rate limit contêm somente tenant/usuário/cobrança autenticados e que `invalidateChargeResourceCache` recebe tenant e cobrança autenticados apenas após sucesso (sem invalidação em `skipped`/falha); `pnpm --filter @alusa/web typecheck` também passou. Isso verifica o contrato no checkout, não o comportamento pós-rollout: ainda falta confirmar ingestão e comparar volume/sobreposição após publicação, além de validar cache/invalidação tenant-scoped em produção. |
 | 7 — Organização do workspace | Parcial | Nesta worktree passaram `workspace:check`, validação da configuração cron, auditorias de contrato de jobs, fronteiras de rotas, contrato HTTP, segurança e `pnpm typecheck` completo (16 pacotes). `pnpm lint` terminou com código 0, sem erros e com 898 avisos. `pnpm build:web` e a repetição `pnpm exec turbo run build --filter=@alusa/web --no-cache` terminaram com código 0: 13/13 tarefas, TypeScript e 247/247 páginas; com o cache do Turbo desligado, o webpack ainda registrou `ENOSPC` ao gravar seu cache durante a pressão de disco. O `.next` gerado (2 GB e ignorado pelo Git) foi removido após inspeção para liberar espaço. A validação em clone limpo com instalação congelada, Prisma generate, gates e build do comando Vercel está registrada abaixo; ela não é evidência de deployment. Revisões de arquitetura e adversariais da cobertura de outbox foram concluídas; o aceite operacional continua dependendo das evidências listadas nas fases 0–6 e 8. |
-| 8 — Testes e operação | Parcial | Nesta worktree passaram os testes focados: integração scheduler/outbox em PostgreSQL local `alusa_test` (1 caso selecionado; o arquivo completo havia passado 3/3 antes da extensão de outbox), nova integração do claim da rematrícula contra PostgreSQL local (1/1, sem truncar tabelas), rota de rematrículas (4/4), lock (5/5), quatro suítes unitárias focadas de outbox financeiro (57/57 com setup Vitest isolado sem conexão a DB) e `renewal-outbox.service.test.ts` (4/4, incluindo backoff progressivo, elegibilidade temporal, Conta A/B e corrida stateful entre workers). Antes das correções focadas finais de arquitetura, o Finance suite completo passou nesta worktree: 263 arquivos / 2.195 testes, com 1 arquivo e 1 teste skipped, em 236s usando o banco PostgreSQL local descartável `alusa_test_claim_20261016`; as 352 migrations estavam aplicadas e o schema estava atualizado. Esse resultado é evidência local anterior à correção final do pacote Finance, não do suite completo do monorepo, nem de Neon, staging ou produção. Após as correções de arquitetura passaram quatro suítes de rotas focadas (6/6 testes), a suíte de falha de `cleanup-upload-reservations` (2/2), a suíte do serviço de outbox de notificação Finance (7/7), e os typechecks de `@alusa/web` e `@alusa/finance`; `git diff --check` passou e o gate final de arquitetura foi **APPROVED**. A execução consolidada mais recente de `pnpm test` terminou com exit 0; o log `/tmp/alusa-efficiency-root-test-20261016.log` registra 438 arquivos e 2.070 testes aprovados. Esses totais pertencem ao comando raiz e não são uma soma de contagens por pacote. Em uma execução Finance anterior, o resultado conhecido foi 262 arquivos / 2.193 testes aprovados, com 2 arquivos / 3 testes skipped; essa contagem não é atribuída ao comando raiz atual. Também passaram as três integrações PostgreSQL direcionadas: `packages/finance/src/services/__tests__/notification-outbox-claim.integration.test.ts` (2/2), `apps/web/tests/integration/enrollments/renewal-outbox.claim.integration.test.ts` (1/1) e `apps/web/tests/integration/platform-billing-webhook-worker.integration.test.ts` (1/1). Elas usaram o banco descartável local `alusa_test_efficiency_20261016_03` em loopback; as 352 migrations estavam aplicadas e `prisma migrate status` informou schema atualizado. Esses resultados não são evidência Neon, staging ou produção. Os testes unitários de outbox com Prisma mock não são integração com banco real. A integração das notificações mantém os provedores externos mockados: comprova claim/finalização no banco, mas não uma requisição Asaas em voo que termine após recuperação stale. Esse comportamento pode deixar Asaas divergente mesmo com linha `DONE`; compare estado remoto/local e escale ao owner. Não há reparo automático definido até produto escolher precedência entre preferências de eventos da escola e canais selecionados na operação de cobrança. Não há prova uniforme dos oito fluxos de outbox. Permanecem teste de carga em Neon/staging isolado, cobertura A/B para todos os jobs/read models e métricas/aceite pós-publicação. |
+| 8 — Testes e operação | Parcial | Nesta worktree passaram os testes focados: integração scheduler/outbox em PostgreSQL local `alusa_test` (1 caso selecionado; o arquivo completo havia passado 3/3 antes da extensão de outbox), nova integração do claim da rematrícula contra PostgreSQL local (1/1, sem truncar tabelas), rota de rematrículas (4/4), lock (5/5), quatro suítes unitárias focadas de outbox financeiro (57/57 com setup Vitest isolado sem conexão a DB) e `renewal-outbox.service.test.ts` (4/4, incluindo backoff progressivo, elegibilidade temporal, Conta A/B e corrida stateful entre workers). Antes das correções focadas finais de arquitetura, o Finance suite completo passou nesta worktree: 263 arquivos / 2.195 testes, com 1 arquivo e 1 teste skipped, em 236s usando o banco PostgreSQL local descartável `alusa_test_claim_20261016`; as 352 migrations estavam aplicadas e o schema estava atualizado. Esse resultado é evidência local anterior à correção final do pacote Finance, não do suite completo do monorepo, nem de Neon, staging ou produção. Após as correções de arquitetura passaram quatro suítes de rotas focadas (6/6 testes), a suíte de falha de `cleanup-upload-reservations` (2/2), a suíte do serviço de outbox de notificação Finance (7/7), e os typechecks de `@alusa/web` e `@alusa/finance`; `git diff --check` passou e o gate final de arquitetura foi **APPROVED**. A execução consolidada mais recente de `pnpm test` terminou com exit 0; o log `/tmp/alusa-efficiency-root-test-20261016.log` registra 438 arquivos e 2.070 testes aprovados. Esses totais pertencem ao comando raiz e não são uma soma de contagens por pacote. Em uma execução Finance anterior, o resultado conhecido foi 262 arquivos / 2.193 testes aprovados, com 2 arquivos / 3 testes skipped; essa contagem não é atribuída ao comando raiz atual. Também passaram as três integrações PostgreSQL direcionadas: `packages/finance/src/services/__tests__/notification-outbox-claim.integration.test.ts` (2/2), `apps/web/tests/integration/enrollments/renewal-outbox.claim.integration.test.ts` (1/1) e `apps/web/tests/integration/platform-billing-webhook-worker.integration.test.ts` (1/1). Elas usaram o banco descartável local `alusa_test_efficiency_20261016_03` em loopback; as 352 migrations estavam aplicadas e `prisma migrate status` informou schema atualizado. Depois, passou `apps/web/tests/integration/enrollments/matricula-billing-outbox-race.integration.test.ts` (1/1) no PostgreSQL descartável `alusa_test_matricula_outbox_20261016_01` em loopback, com 352 migrations aplicadas: enqueue deduplicado concorrente na Conta A, claim/provisionamento mockado único e Conta B preservada. O banco foi removido após o teste. Esses resultados não são evidência Neon, staging ou produção. Os testes unitários de outbox com Prisma mock não são integração com banco real. A integração das notificações mantém os provedores externos mockados: comprova claim/finalização no banco, mas não uma requisição Asaas em voo que termine após recuperação stale. Esse comportamento pode deixar Asaas divergente mesmo com linha `DONE`; compare estado remoto/local e escale ao owner. A precedência definida por produto é: preferências salvas da escola prevalecem; canais guardados na cobrança são fallback somente quando ainda não há preferências da Conta. A UI foi alinhada a essa regra. Não há prova uniforme dos oito fluxos de outbox. Permanecem teste de carga em Neon/staging isolado, cobertura A/B para todos os jobs/read models e métricas/aceite pós-publicação. |
 
 Não foi identificada uma branch Neon dedicada a carga sintética. O usuário
 recusou a criação de um novo projeto Neon, então nenhum projeto foi criado e a
@@ -627,6 +627,38 @@ O cron deve acordar o sistema e despachar trabalho. Ele não deve executar uma v
 - retry não cria segunda cobrança ou segunda assinatura;
 - DLQ tem causa, tentativas e forma de recuperação.
 
+**Evidência local adicional (16/10/2026):** o teste
+`packages/lib/src/notifications/pending-inbox-notifications.integration.test.ts`
+passou (1/1) em PostgreSQL descartável local `alusa_test_efficiency_20261016_04`,
+com 352 migrations aplicadas desde o banco vazio. O teste usa Prisma e raw SQL
+reais para provar claim único entre drains concorrentes da Conta A, retry após
+falha transitória, conclusão na segunda tentativa com um único efeito de
+notificação bem-sucedido e Conta B ainda PENDING/inalterada; o provider externo
+fica mockado. É redução de uma lacuna do `PendingInboxNotification`, não prova
+de cobertura uniforme dos oito fluxos nem aceite operacional Neon/staging ou
+produção.
+
+**Evidência local adicional (16/10/2026):**
+`packages/finance/src/family-billing/enqueue-family-billing-outbox.integration.test.ts`
+passou (1/1) no banco descartável PostgreSQL local
+`alusa_test_efficiency_20261016_05`, após 352 migrations aplicadas desde o
+banco vazio. Duas chamadas concorrentes para Conta A e a mesma chave retornaram
+a mesma linha; Conta B manteve linha independente com a mesma `dedupeKey`. O
+teste cobre apenas enqueue, sem provider externo. A cobertura dos oito fluxos
+continua parcial e não há aceite operacional Neon/staging/produção.
+
+**Evidência local adicional (16/10/2026):** no banco PostgreSQL descartável
+`alusa_test_efficiency_20261016_06`, com 352 migrations aplicadas, passaram
+`tenant-notification-preferences.test.ts` (4/4), os testes unitários de
+`sync-customer-notifications-at-charge` e
+`asaas-notification-preference-outbox.service` (9/9 combinados), e
+`notification-outbox-claim.integration.test.ts` (2/2). A integração demonstrou
+que um PUT antigo que termina após perder o fencing claim reabre a linha com a
+preferência atual da Conta e que o drain seguinte converge novamente; Conta B
+permanece pendente. O PUT é mockado, e a validação é local, sem Neon, staging ou
+produção. O banco descartável foi removido após os checks; `prisma migrate status`
+estava limpo antes da remoção.
+
 ### Fase 4 — Concorrência e limites por tenant
 
 **Objetivo:** impedir que uma conta, job ou integração consuma todo o compute.
@@ -728,6 +760,8 @@ ainda evidência de ingestão dessas métricas em produção.
 
 Não foi identificada nesta leitura uma duplicação automática inequívoca que justifique remover consumidores. A ação seguinte é instrumentar/observar chamadas automáticas e explícitas separadamente, verificar cache e invalidação ao alternar conta e avaliar se o limite de `pageSize` da lista `/charges` precisa de um teto equivalente ao da tabela financeira. Nenhuma frequência foi alterada nesta auditoria.
 
+Verificação local adicional: `tests/unit/cobrancas.sync-asaas.post.test.ts` passou com 3/3 testes. A cobertura confirma que a busca usa o `contaId` autenticado, que as chaves do rate limit ficam restritas à conta/usuário/cobrança autorizados e que a invalidação de cache usa conta e cobrança autenticadas apenas após sucesso (sem invalidação em throttle ou falha). É evidência do contrato local da rota; ainda falta evidência pós-rollout em produção sobre chamadas sobrepostas, métricas e comportamento operacional.
+
 ### Fase 7 — Organização do workspace e código limpo
 
 **Objetivo:** garantir que a redução de consumo não crie novos acoplamentos.
@@ -807,6 +841,35 @@ validação local em banco descartável; não é validação Neon/staging nem ev
 de produção. Permanecem pendentes teste de carga em Neon/staging isolado,
 cobertura Conta A/B para todos os jobs e read models, e métricas/aceite
 pós-publicação.
+
+**Validação local adicional (16/10/2026):** `pnpm --filter @alusa/lib exec
+vitest run src/notifications/pending-inbox-notifications.integration.test.ts`
+passou (1/1) no banco descartável local `alusa_test_efficiency_20261016_04`,
+após `prisma migrate deploy` aplicar as 352 migrations. A cobertura exercita o
+claim/retry concorrente de `PendingInboxNotification` com Conta A/B e provider
+mockado. O banco temporário foi removido após o teste. Isso não conclui o teste
+de carga Neon/staging isolado, a cobertura A/B uniforme de todos os jobs/read
+models nem o aceite operacional; nenhum ambiente Neon, staging ou produção foi
+usado ou alterado.
+
+**Status local adicional (16/10/2026):** a precedência definida por produto
+agora está coberta no backend: preferências salvas da escola prevalecem; canais
+guardados na cobrança são fallback somente quando ainda não há preferências da
+Conta. O outbox re-enfileira a intenção atual após PUT stale concluído sem claim,
+sem permitir que o worker antigo finalize a nova linha. Os seletores de canais
+na UI agora comunicam a regra e não apresentam a seleção da cobrança como
+sobrescrita da preferência escolar. Isso não altera os
+gates pendentes de Neon/staging isolado, teste de carga, cobertura A/B de todos
+os jobs e read models, nem aceite operacional.
+
+**Validação local adicional (16/10/2026):**
+`packages/finance/src/family-billing/enqueue-family-billing-outbox.integration.test.ts`
+passou (1/1) em `alusa_test_efficiency_20261016_05`, PostgreSQL descartável em
+loopback com 352 migrations aplicadas. O teste provou convergência concorrente
+do enqueue na Conta A e isolamento da mesma chave na Conta B, sem chamada a
+provider. O banco temporário foi removido após a execução. Não representa
+validação Neon/staging, produção, nem fecha a cobertura A/B de todos os jobs e
+read models ou o aceite operacional.
 
 ## 6. Priorização
 

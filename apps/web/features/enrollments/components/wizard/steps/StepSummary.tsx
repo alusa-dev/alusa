@@ -748,12 +748,15 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
           <div className="rounded-xl bg-slate-50/70 p-4">
             <h3 className="text-sm font-semibold text-gray-900 mb-2">Notificações</h3>
             <p className="text-sm text-gray-600">
-              Canais:{' '}
+              Canais de fallback:{' '}
               <span className="font-medium text-gray-900">
                 {state.notificationChannels.length > 0
                   ? state.notificationChannels.map(notificationLabel).join(', ')
-                  : 'Nenhuma'}
+                  : 'Nenhum selecionado'}
               </span>
+            </p>
+            <p className="mt-1 text-xs text-gray-500">
+              A preferência salva da escola prevalece; esta seleção só é usada quando não há regra salva.
             </p>
           </div>
         )}

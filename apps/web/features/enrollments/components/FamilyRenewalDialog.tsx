@@ -1196,8 +1196,8 @@ export function FamilyRenewalDialog({
             <div className={sectionClass}>
               <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Notificações</span>
               <p className="text-xs text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
-                Canais para avisos de cobranças futuras ao responsável. Toque para confirmar a
-                sugestão da régua global.
+                Preferências salvas da escola sempre prevalecem. Os canais abaixo são fallback
+                quando a conta não tem uma regra salva.
               </p>
               <div className="flex flex-wrap gap-3 pt-2">
                 {(

@@ -250,6 +250,13 @@ describe('asaas-notification-preference-outbox.service', () => {
         data: expect.objectContaining({ status: 'DONE', claimToken: null }),
       }),
     );
+    expect(prismaMock.asaasNotificationPreferenceOutbox.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { uq_asaas_notif_outbox_conta_dedupe: { contaId: 'conta-a', dedupeKey: 'tenant-preferences:cus-a' } },
+        update: expect.objectContaining({ status: 'PENDING', attempts: 0, claimToken: null }),
+        create: expect.objectContaining({ contaId: 'conta-a', asaasCustomerId: 'cus-a' }),
+      }),
+    );
   });
 
   it('move registros que atingiram o limite para EXHAUSTED sem nova chamada externa', async () => {
