@@ -1,10 +1,13 @@
 /** @vitest-environment node */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { reconcileRefundingEventMapOrders, resolveTenantScope } = vi.hoisted(() => ({
+const { reconcileRefundingEventMapOrders, resolveTenantScope, logJobResult } = vi.hoisted(() => ({
   reconcileRefundingEventMapOrders: vi.fn(),
-  resolveTenantScope: vi.fn(),
+  resolveTenantScope: vi.fn(), logJobResult: vi.fn(), logJobFailure: vi.fn(),
 }));
+vi.mock('@/src/server/jobs/job-observability', () => ({
+  resolveTenantScopeForJob: (_name: string, resolve: () => unknown) => resolve(),
+  startJobRun: vi.fn(() => ({ startedAt: Date.now(), correlationId: 'test-run-id' })), logJobResult, logJobFailure: vi.fn() }));
 vi.mock('@alusa/finance', () => ({ reconcileRefundingEventMapOrders }));
 vi.mock('@/lib/auth/tenant-scope', () => ({ resolveTenantScope }));
 
@@ -35,6 +38,7 @@ describe('GET /api/jobs/events-reconcile-refunds', () => {
     ));
 
     expect(response.status).toBe(200);
+    expect(logJobResult).toHaveBeenCalledWith('events-reconcile-refunds', expect.objectContaining({ startedAt: expect.any(Number), correlationId: expect.any(String) }), emptyResult, expect.objectContaining({ workStatus: 'empty' }));
     expect(resolveTenantScope).toHaveBeenCalledWith(expect.any(Request), {
       allowCron: true,
       requestedContaId: 'conta-1',

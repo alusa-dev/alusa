@@ -4,7 +4,7 @@ import { reconcileRefundingEventMapOrders } from '@alusa/finance';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { apiJsonError } from '@/lib/api/standard-response';
-import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -15,14 +15,15 @@ function toPositiveInt(value: string | null, fallback: number, max: number) {
 }
 
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('events-reconcile-refunds', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) return tenantScope.response;
+    startedAt = startJobRun('events-reconcile-refunds');
 
     const result = await reconcileRefundingEventMapOrders({
       contaId: tenantScope.contaId,
@@ -37,6 +38,7 @@ async function run(req: Request) {
       partialFailure: result.errors.length > 0,
       skippedDueToLock: Boolean(result.skippedDueToLock),
       unmatchedRefundCount: result.unmatched,
+      workStatus: result.skippedDueToLock ? 'unknown' : result.processed > 0 ? 'worked' : result.errors.length > 0 ? 'unknown' : 'empty',
     });
     const { errors, ...safeJob } = result;
     return NextResponse.json(
@@ -48,7 +50,7 @@ async function run(req: Request) {
       { status: errors.length > 0 ? 503 : 200 },
     );
   } catch (error) {
-    logJobFailure('events-reconcile-refunds', startedAt, error);
+    if (startedAt) logJobFailure('events-reconcile-refunds', startedAt, error);
     return apiJsonError(500, 'JOB_FAILED', 'Não foi possível reconciliar estornos de ingressos.');
   }
 }

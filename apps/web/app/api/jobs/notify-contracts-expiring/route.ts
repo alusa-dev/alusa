@@ -1,4 +1,4 @@
-import { logJobFailure } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { notifyContractsExpiringJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
@@ -21,24 +21,28 @@ function jsonError(status: number, code: string, message: string) {
  * Alerta contratos que vencem em 7, 3 ou 1 dia(s).
  */
 export async function POST(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const query = notifyContractsExpiringJobQueryDTOSchema.parse({
-      contaId: url.searchParams.get('contaId'),
-    });
-    const tenantScope = await resolveTenantScope(req, {
+        const tenantScope = await resolveTenantScopeForJob('notify-contracts-expiring', () => resolveTenantScope(req, {
       allowCron: true,
-      requestedContaId: query.contaId,
+      requestedContaId: url.searchParams.get('contaId'),
       requireContaIdForCron: false,
-    });
+    }));
     if (!tenantScope.ok) {
       return tenantScope.response;
     }
+    startedAt = startJobRun('notify-contracts-expiring');
+notifyContractsExpiringJobQueryDTOSchema.parse({
+      contaId: url.searchParams.get('contaId'),
+    });
 
     const operationNow = new Date();
     if (tenantScope.contaId) {
       const result = await notifyContractsExpiring(tenantScope.contaId, { now: operationNow });
+      logJobResult('notify-contracts-expiring', startedAt, { tenants: 1, ...result }, {
+        workStatus: result.notified > 0 ? 'worked' : result.evaluated > 0 ? 'unknown' : 'empty',
+      });
       return NextResponse.json({ success: true, tenants: 1, ...result });
     }
 
@@ -52,6 +56,12 @@ export async function POST(req: Request) {
       notified += result.notified;
     }
 
+    logJobResult('notify-contracts-expiring', startedAt, {
+      tenants: contaIds.length,
+      evaluated,
+      notified,
+    }, { workStatus: notified > 0 ? 'worked' : evaluated > 0 ? 'unknown' : 'empty' });
+
     return NextResponse.json({
       success: true,
       tenants: contaIds.length,
@@ -59,7 +69,7 @@ export async function POST(req: Request) {
       notified,
     });
   } catch (error) {
-    logJobFailure('notify-contracts-expiring', startedAt, error);
+    if (startedAt) logJobFailure('notify-contracts-expiring', startedAt, error);
     return jsonError(
       500,
       'ERRO_JOB',

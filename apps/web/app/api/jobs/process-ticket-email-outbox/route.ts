@@ -4,7 +4,7 @@ import { drainFinanceWebhookSideEffectOutbox } from '@alusa/finance';
 
 import { apiJsonError } from '@/lib/api/standard-response';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -15,15 +15,16 @@ function toPositiveInt(value: string | null, fallback: number, max: number) {
 }
 
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
 
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('process-ticket-email-outbox', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) return tenantScope.response;
+    startedAt = startJobRun('process-ticket-email-outbox');
 
     const result = await drainFinanceWebhookSideEffectOutbox({
       contaId: tenantScope.contaId,
@@ -34,6 +35,7 @@ async function run(req: Request) {
     logJobResult('process-ticket-email-outbox', startedAt, result, {
       hasTenantScope: Boolean(tenantScope.contaId),
       partialFailure: result.failed > 0,
+      workStatus: result.attempted > 0 ? 'worked' : result.failed > 0 ? 'unknown' : 'empty',
     });
 
     return NextResponse.json(
@@ -45,7 +47,7 @@ async function run(req: Request) {
       { status: result.failed > 0 ? 503 : 200 },
     );
   } catch (error) {
-    logJobFailure('process-ticket-email-outbox', startedAt, error);
+    if (startedAt) logJobFailure('process-ticket-email-outbox', startedAt, error);
     return apiJsonError(500, 'JOB_FAILED', 'Não foi possível processar a fila de e-mails de ingressos.');
   }
 }

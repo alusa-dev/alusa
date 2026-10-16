@@ -90,28 +90,31 @@ function snapshotRecord(snapshot: Prisma.JsonValue) {
     : {};
 }
 
-function mapStaffSeat(seat: {
-  id: string;
-  originalSeatId: string;
-  levelId: string | null;
-  sectionId: string | null;
-  sectionName: string;
-  lotId: string | null;
-  lotName: string | null;
-  unitPrice: Prisma.Decimal;
-  technicalCode: string;
-  displayLabel: string;
-  rowLabel: string | null;
-  seatNumber: string | null;
-  status: string;
-  accessible: boolean;
-  publicVisible: boolean;
-  x: Prisma.Decimal;
-  y: Prisma.Decimal;
-  size: Prisma.Decimal | null;
-  rotation: Prisma.Decimal;
-  metadata: Prisma.JsonValue;
-}) {
+const staffMapSeatSelect = {
+  id: true,
+  originalSeatId: true,
+  levelId: true,
+  sectionId: true,
+  metadata: true,
+  sectionName: true,
+  lotId: true,
+  lotName: true,
+  unitPrice: true,
+  technicalCode: true,
+  displayLabel: true,
+  rowLabel: true,
+  seatNumber: true,
+  status: true,
+  accessible: true,
+  publicVisible: true,
+  x: true,
+  y: true,
+  size: true,
+  rotation: true,
+} satisfies Prisma.EventMapPublicSeatSelect;
+type StaffMapSeatRecord = Prisma.EventMapPublicSeatGetPayload<{ select: typeof staffMapSeatSelect }>;
+
+function mapStaffSeat(seat: StaffMapSeatRecord) {
   const metadata =
     seat.metadata && typeof seat.metadata === 'object' && !Array.isArray(seat.metadata)
       ? (seat.metadata as Record<string, unknown>)
@@ -182,11 +185,17 @@ async function expireStaffReservations(tx: Prisma.TransactionClient, contaId: st
 async function getPublishedStaffMapOrThrow(db: DbClient, contaId: string, eventId: string, mapId: string) {
   const map = await db.eventMap.findFirst({
     where: { id: mapId, contaId, eventId, status: 'PUBLISHED', publishedVersionId: { not: null } },
-    include: {
+    select: {
+      id: true,
+      name: true,
+      startsAt: true,
+      endsAt: true,
+      locationName: true,
+      locationAddress: true,
+      publishedVersionId: true,
       event: {
         select: {
           id: true,
-          contaId: true,
           name: true,
           startsAt: true,
           endsAt: true,
@@ -251,12 +260,14 @@ export async function getStaffEventMapSalesView(
   const map = await getPublishedStaffMapOrThrow(prisma, ctx.contaId, eventId, mapId);
   const version = await prisma.eventMapVersion.findFirst({
     where: { id: map.publishedVersionId!, contaId: ctx.contaId, eventMapId: map.id },
+    select: { id: true, version: true, snapshot: true, publishedAt: true },
   });
   if (!version) throw new EventsError('VERSAO_PUBLICA_NAO_ENCONTRADA', 'Versão publicada não encontrada.', 404);
 
   const seats = await prisma.eventMapPublicSeat.findMany({
     where: { contaId: ctx.contaId, versionId: version.id },
     orderBy: [{ sectionName: 'asc' }, { rowLabel: 'asc' }, { seatNumber: 'asc' }, { displayLabel: 'asc' }],
+    select: staffMapSeatSelect,
   });
   const ownReservation = holdToken
     ? await prisma.eventMapReservation.findFirst({

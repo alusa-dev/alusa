@@ -4,7 +4,7 @@ import { processFamilyBillingOutboxBatch } from '@/src/server/family-billing/pro
 import { processEnrollmentBillingOutboxBatch } from '@/src/server/enrollments/enrollment-billing-outbox.service';
 import { retryEnrollmentBillingProvisionJob } from '@/src/server/enrollments/retry-enrollment-billing-provision';
 import { apiJsonError } from '@/lib/api/standard-response';
-import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -20,16 +20,17 @@ function jsonError(status: number, code: string, message: string) {
  * e drena outbox familiar pendente na mesma execução.
  */
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('retry-enrollment-billing-provision', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) {
       return tenantScope.response;
     }
+    startedAt = startJobRun('retry-enrollment-billing-provision');
 
     const minAgeMinutes = Number(url.searchParams.get('minAgeMinutes') ?? '5');
     const limit = Number(url.searchParams.get('limit') ?? '25');
@@ -78,10 +79,15 @@ async function run(req: Request) {
       familyAttempted: familyOutbox.attempted,
       familyProcessed: familyOutbox.processed,
       ...individualRetry,
-    }, { dryRun });
+    }, {
+      dryRun,
+      workStatus: enrollmentOutbox.attempted + familyOutbox.attempted + (!dryRun ? individualRetry.retried : 0) > 0
+        ? 'worked'
+        : individualRetry.scanned > 0 ? 'unknown' : 'empty',
+    });
     return NextResponse.json(response);
   } catch (error) {
-    logJobFailure('retry-enrollment-billing-provision', startedAt, error);
+    if (startedAt) logJobFailure('retry-enrollment-billing-provision', startedAt, error);
     return jsonError(500, 'JOB_FAILED', 'Não foi possível processar o job de provisionamento.');
   }
 }

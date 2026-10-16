@@ -1,4 +1,4 @@
-import { logJobFailure } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import {
   enqueueAsaasNotificationPreferenceSyncForTenant,
@@ -26,14 +26,15 @@ function clampPositiveInt(value: string | null, fallback: number, max: number) {
  * Drena a outbox de preferências Asaas. Opcionalmente enfileira primeiro para uma conta.
  */
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('apply-asaas-notification-preferences', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) return tenantScope.response;
+    startedAt = startJobRun('apply-asaas-notification-preferences');
 
     const limit = clampPositiveInt(url.searchParams.get('limit'), 50, 200);
     const enqueue = url.searchParams.get('enqueue') === 'true';
@@ -53,14 +54,28 @@ async function run(req: Request) {
       contaId: tenantScope.contaId,
       limit,
     });
+    logJobResult('apply-asaas-notification-preferences', startedAt, {
+      enqueued,
+      scanned: result.scanned,
+      processed: result.processed,
+      updated: result.updated,
+      failed: result.failed,
+      exhausted: result.exhausted,
+    }, {
+      partialFailure: result.failed > 0 || result.exhausted > 0,
+      workStatus: enqueued + result.processed + result.failed + result.exhausted > 0
+        ? 'worked'
+        : result.scanned > 0 ? 'unknown' : 'empty',
+    });
 
     return NextResponse.json({
-      success: result.failed === 0,
+      success: result.failed === 0 && result.exhausted === 0,
+      outcome: result.failed > 0 || result.exhausted > 0 ? 'partial' : 'completed',
       enqueued,
       result,
     });
   } catch (error) {
-    logJobFailure('apply-asaas-notification-preferences', startedAt, error);
+    if (startedAt) logJobFailure('apply-asaas-notification-preferences', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível aplicar as preferências de notificação.');
   }
 }

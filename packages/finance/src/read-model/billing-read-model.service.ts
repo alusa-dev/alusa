@@ -412,6 +412,7 @@ async function projectStandaloneInstallments(contaId: string, limit: number) {
         sourceUpdatedAt: row.updatedAt,
         projectedAt: now,
       },
+      select: { id: true },
     });
   }
 
@@ -487,6 +488,7 @@ async function projectAcademicInstallments(contaId: string, limit: number) {
         sourceUpdatedAt: row.updatedAt,
         projectedAt: now,
       },
+      select: { id: true },
     });
   }
 

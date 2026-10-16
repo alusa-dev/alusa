@@ -1,4 +1,4 @@
-import { logJobFailure } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
@@ -28,16 +28,17 @@ function clampPositiveInt(value: string | null, fallback: number, max: number) {
  * - staleOlderThanMinutes (opcional): idade mínima, default 60.
  */
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('reconcile-stale-invoices', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) {
       return tenantScope.response;
     }
+    startedAt = startJobRun('reconcile-stale-invoices');
 
     const result = await reconcileStaleInvoices({
       contaId: tenantScope.contaId,
@@ -48,10 +49,29 @@ async function run(req: Request) {
         24 * 60,
       ),
     });
+    logJobResult('reconcile-stale-invoices', startedAt, {
+      scanned: result.scanned,
+      synced: result.synced,
+      failed: result.failed,
+      recovered: result.recovered,
+      paidChargesScanned: result.paidChargesScanned,
+      paidChargesRecovered: result.paidChargesRecovered,
+      paidChargesFailed: result.paidChargesFailed,
+      subscriptionSettingsScanned: result.subscriptionSettingsScanned,
+      subscriptionSettingsSynced: result.subscriptionSettingsSynced,
+      subscriptionSettingsFailed: result.subscriptionSettingsFailed,
+    }, {
+      partialFailure: result.failed > 0,
+      workStatus: result.synced + result.paidChargesRecovered + result.subscriptionSettingsSynced > 0
+        ? 'worked'
+        : result.scanned + result.paidChargesScanned + result.subscriptionSettingsScanned === 0 && result.failed === 0 && result.paidChargesFailed === 0 && result.subscriptionSettingsFailed === 0
+          ? 'empty'
+          : 'unknown',
+    });
 
     return NextResponse.json({ success: result.failed === 0, result });
   } catch (error) {
-    logJobFailure('reconcile-stale-invoices', startedAt, error);
+    if (startedAt) logJobFailure('reconcile-stale-invoices', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconciliar as notas fiscais pendentes.');
   }
 }

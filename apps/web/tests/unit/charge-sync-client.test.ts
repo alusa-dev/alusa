@@ -19,7 +19,26 @@ describe('requestCobrancaAsaasSync', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/cobrancas/charge-concurrent-a/sync-asaas',
-      expect.objectContaining({ method: 'POST' }),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'x-alusa-sync-source': 'explicit_action' }),
+      }),
+    );
+  });
+
+  it('sinaliza a origem de fallback com valor fixo no header', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
+
+    await requestCobrancaAsaasSync('charge-auto-a', {
+      throttleMs: 0,
+      source: 'automatic_fallback',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/cobrancas/charge-auto-a/sync-asaas',
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'x-alusa-sync-source': 'automatic_fallback' }),
+      }),
     );
   });
 

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import { prisma } from '@alusa/database';
 
@@ -189,7 +190,6 @@ export async function processAsaasNotificationSyncOutbox(
   const rows = await prisma.asaasNotificationSyncOutbox.findMany({
     where: {
       ...tenantFilter,
-      attempts: { lt: maxAttempts },
       OR: [
         { status: { in: ['PENDING', 'FAILED'] }, nextAttemptAt: { lte: now } },
         { status: 'PROCESSING', processingAt: { lt: staleProcessingBefore } },
@@ -208,6 +208,8 @@ export async function processAsaasNotificationSyncOutbox(
       attempts: true,
       maxAttempts: true,
       status: true,
+      processingAt: true,
+      claimToken: true,
     },
   });
 
@@ -221,7 +223,38 @@ export async function processAsaasNotificationSyncOutbox(
   };
 
   for (const row of rows) {
-    const attemptLimit = row.maxAttempts ?? maxAttempts;
+    // The caller's cap can tighten a persisted row limit (for example, during
+    // an operator-driven recovery). Neither source may raise the other limit.
+    const attemptLimit = Math.min(row.maxAttempts ?? maxAttempts, maxAttempts);
+    if (row.attempts >= attemptLimit) {
+      const exhausted = await prisma.asaasNotificationSyncOutbox.updateMany({
+        where: {
+          id: row.id,
+          ...tenantFilter,
+          contaId: row.contaId,
+          status: row.status,
+          attempts: { gte: attemptLimit },
+          processingAt: row.processingAt,
+          claimToken: row.claimToken,
+        },
+        data: { status: 'EXHAUSTED', processingAt: null, claimToken: null },
+      });
+      if (exhausted.count > 0) {
+        await recordNotificationSyncAudit({
+          contaId: row.contaId,
+          asaasCustomerId: row.asaasCustomerId,
+          status: 'EXHAUSTED',
+          channels: parseChannels(row.requestedChannels),
+          externalReference: row.externalReference ?? undefined,
+          correlationId: row.correlationId ?? undefined,
+          outboxId: row.id,
+          reason: `Maximum attempts reached (${attemptLimit})`,
+        });
+        result.exhausted += 1;
+      }
+      continue;
+    }
+    const claimToken = randomUUID();
     const claimed = await prisma.asaasNotificationSyncOutbox.updateMany({
       where: {
         id: row.id,
@@ -229,10 +262,13 @@ export async function processAsaasNotificationSyncOutbox(
         contaId: row.contaId,
         status: row.status,
         attempts: { lt: attemptLimit },
+        processingAt: row.processingAt,
+        claimToken: row.claimToken,
       },
       data: {
         status: 'PROCESSING',
         processingAt: new Date(),
+        claimToken,
         attempts: { increment: 1 },
       },
     });
@@ -269,16 +305,18 @@ export async function processAsaasNotificationSyncOutbox(
       );
       if (!sync.success) throw new Error('Preferências de notificação não foram aplicadas');
 
-      await prisma.asaasNotificationSyncOutbox.updateMany({
-        where: { id: row.id, ...tenantFilter, contaId: row.contaId },
+      const completed = await prisma.asaasNotificationSyncOutbox.updateMany({
+        where: { id: row.id, ...tenantFilter, contaId: row.contaId, status: 'PROCESSING', claimToken },
         data: {
           status: 'DONE',
           processingAt: null,
+          claimToken: null,
           processedAt: new Date(),
           lastError: null,
           lastErrorAt: null,
         },
       });
+      if (completed.count === 0) continue;
 
       const auditStatus = sync.warnings.length > 0 ? 'PARTIAL' : 'SUCCESS';
       await recordNotificationSyncAudit({
@@ -297,16 +335,18 @@ export async function processAsaasNotificationSyncOutbox(
     } catch (error) {
       const message = safeErrorMessage(error);
       const exhausted = attempts >= attemptLimit;
-      await prisma.asaasNotificationSyncOutbox.updateMany({
-        where: { id: row.id, ...tenantFilter, contaId: row.contaId },
+      const failedUpdate = await prisma.asaasNotificationSyncOutbox.updateMany({
+        where: { id: row.id, ...tenantFilter, contaId: row.contaId, status: 'PROCESSING', claimToken },
         data: {
           status: exhausted ? 'EXHAUSTED' : 'FAILED',
           processingAt: null,
+          claimToken: null,
           ...(exhausted ? {} : { nextAttemptAt: nextAttemptDate(attempts) }),
           lastError: message,
           lastErrorAt: new Date(),
         },
       });
+      if (failedUpdate.count === 0) continue;
       await recordNotificationSyncAudit({
         contaId: row.contaId,
         asaasCustomerId: row.asaasCustomerId,

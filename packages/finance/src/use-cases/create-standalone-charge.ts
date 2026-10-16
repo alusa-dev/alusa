@@ -646,9 +646,9 @@ export async function createStandaloneCharge(
           actor: input.actor,
         });
 
-        // A seleção explícita de canais deve prevalecer sobre o estado
-        // global do customer. O bloqueio precisa ser removido antes da
-        // cobrança nascer, pois PAYMENT_CREATED é disparado na criação.
+        // Preferências salvas da escola prevalecem; canais da cobrança são
+        // fallback quando não há régua salva. O bloqueio precisa ser removido
+        // antes da cobrança nascer, pois PAYMENT_CREATED dispara na criação.
         if (selectedChannels.length > 0) {
           const enabledResult = await ensureCustomerNotificationsEnabled(
             input.contaId,

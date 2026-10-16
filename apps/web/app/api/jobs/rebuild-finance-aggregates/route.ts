@@ -1,4 +1,4 @@
-import { logJobFailure } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { rebuildFinanceAggregates } from '@alusa/finance';
 
@@ -24,14 +24,15 @@ function parseDate(value: string | null): Date | undefined {
 }
 
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('rebuild-finance-aggregates', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) return tenantScope.response;
+    startedAt = startJobRun('rebuild-finance-aggregates');
 
     const result = await rebuildFinanceAggregates({
       contaId: tenantScope.contaId,
@@ -40,10 +41,16 @@ async function run(req: Request) {
       startDate: parseDate(url.searchParams.get('startDate')),
       endDate: parseDate(url.searchParams.get('endDate')),
     });
+    logJobResult('rebuild-finance-aggregates', startedAt, {
+      accounts: result.accounts,
+      transactionsScanned: result.transactionsScanned,
+      dailyAggregates: result.dailyAggregates,
+      monthlyAggregates: result.monthlyAggregates,
+    }, { workStatus: result.transactionsScanned > 0 ? 'worked' : 'empty' });
 
     return NextResponse.json({ success: true, result });
   } catch (error) {
-    logJobFailure('rebuild-finance-aggregates', startedAt, error);
+    if (startedAt) logJobFailure('rebuild-finance-aggregates', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconstruir os agregados financeiros.');
   }
 }

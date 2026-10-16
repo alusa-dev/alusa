@@ -1,21 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { deleteObjectMock, findManyMock, updateManyMock, releaseMock, tenantListMock } = vi.hoisted(() => ({
+const {
+  deleteObjectMock,
+  findManyMock,
+  updateManyMock,
+  releaseMock,
+  tenantListMock,
+  resolveScopeMock,
+  resolveTenantScopeForJobMock,
+  startJobRunMock,
+  logJobResultMock,
+} = vi.hoisted(() => ({
   deleteObjectMock: vi.fn(),
   findManyMock: vi.fn(),
   updateManyMock: vi.fn(),
   releaseMock: vi.fn(),
   tenantListMock: vi.fn(),
+  resolveScopeMock: vi.fn(),
+  resolveTenantScopeForJobMock: vi.fn(),
+  startJobRunMock: vi.fn(() => ({ startedAt: Date.now(), correlationId: 'test-run-id' })),
+  logJobResultMock: vi.fn(),
 }));
 
 vi.mock('@/lib/r2-storage', () => ({ deleteStorageObject: deleteObjectMock }));
 vi.mock('@/lib/upload-quota.server', () => ({ releaseTenantUpload: releaseMock }));
 vi.mock('@/lib/auth/tenant-scope', () => ({
-  resolveTenantScope: vi.fn().mockResolvedValue({ ok: true, isCron: true }),
+  resolveTenantScope: resolveScopeMock,
 }));
 vi.mock('@/src/server/uploads/upload-cleanup.service', () => ({ listTenantIdsForUploadCleanup: tenantListMock }));
+vi.mock('@/src/server/jobs/job-observability', () => ({
+  resolveTenantScopeForJob: resolveTenantScopeForJobMock,
+  startJobRun: startJobRunMock,
+  logJobResult: logJobResultMock,
+}));
 vi.mock('@/lib/prisma-tenant', () => ({
-  runWithTenant: (_contaId: string, callback: (tx: unknown) => unknown) => callback({
+  runWithTenant: (_contaId: string, callback: (_tx: unknown) => unknown) => callback({
     tenantUploadReservation: { findMany: findManyMock, updateMany: updateManyMock },
   }),
 }));
@@ -25,6 +44,8 @@ import { GET } from '@/app/api/jobs/cleanup-upload-reservations/route';
 describe('GET /api/jobs/cleanup-upload-reservations', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resolveScopeMock.mockResolvedValue({ ok: true, isCron: true, contaId: 'conta-1' });
+    resolveTenantScopeForJobMock.mockImplementation(async (_jobName: string, resolve: () => Promise<unknown>) => resolve());
     tenantListMock.mockResolvedValue([{ id: 'conta-1' }]);
     findManyMock.mockResolvedValue([
       { id: 'pending-1', contaId: 'conta-1', objectKey: 'uploads/pending/conta-1/pending-1', status: 'PENDING', finalObjectKey: null },
@@ -54,5 +75,20 @@ describe('GET /api/jobs/cleanup-upload-reservations', () => {
     expect(updateManyMock).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'inline-1', contaId: 'conta-1', status: 'COMPLETED', pendingCleanedAt: null },
     }));
+  });
+
+  it('records scope rejection before starting the cleanup job', async () => {
+    resolveScopeMock.mockResolvedValueOnce({
+      ok: false,
+      response: new Response('forbidden', { status: 403 }),
+    });
+
+    const response = await GET(new Request('https://alusa.app/api/jobs/cleanup-upload-reservations'));
+
+    expect(response.status).toBe(403);
+    expect(resolveTenantScopeForJobMock).toHaveBeenCalledWith('cleanup-upload-reservations', expect.any(Function));
+    expect(startJobRunMock).not.toHaveBeenCalled();
+    expect(tenantListMock).not.toHaveBeenCalled();
+    expect(findManyMock).not.toHaveBeenCalled();
   });
 });

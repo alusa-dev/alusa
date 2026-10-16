@@ -5,6 +5,7 @@ const mockGetServerSession = vi.hoisted(() => vi.fn());
 const mockRateLimit = vi.hoisted(() => vi.fn());
 const mockResolveCobrancaPaymentLookupForTenant = vi.hoisted(() => vi.fn());
 const mockSyncPaymentStateFromAsaas = vi.hoisted(() => vi.fn());
+const mockInvalidateChargeResourceCache = vi.hoisted(() => vi.fn());
 
 vi.mock('next-auth', () => ({
   getServerSession: () => mockGetServerSession(),
@@ -20,6 +21,10 @@ vi.mock('@/lib/prisma', () => ({
 
 vi.mock('@/lib/rate-limit', () => ({
   rateLimitAsync: mockRateLimit,
+}));
+
+vi.mock('@/lib/cache/invalidation', () => ({
+  invalidateChargeResourceCache: mockInvalidateChargeResourceCache,
 }));
 
 vi.mock('@/src/server/finance/resolve-charge-payment-lookup', () => ({
@@ -73,6 +78,7 @@ describe('POST /api/cobrancas/[id]/sync-asaas', () => {
     });
     expect(mockResolveCobrancaPaymentLookupForTenant).not.toHaveBeenCalled();
     expect(mockSyncPaymentStateFromAsaas).not.toHaveBeenCalled();
+    expect(mockInvalidateChargeResourceCache).not.toHaveBeenCalled();
   });
 
   it('marca sync originado pela UI com intent propria', async () => {
@@ -81,10 +87,32 @@ describe('POST /api/cobrancas/[id]/sync-asaas', () => {
     const response = await POST(request(), { params: Promise.resolve({ id: 'cob-1' }) });
 
     expect(response.status).toBe(200);
+    expect(mockRateLimit.mock.calls.map(([key]) => key)).toEqual([
+      'finance-ui-sync:tenant:conta-1',
+      'finance-ui-sync:user:conta-1:user-1',
+      'finance-ui-sync:charge:conta-1:cob-1',
+    ]);
+    expect(mockRateLimit).toHaveBeenCalledTimes(3);
+    expect(mockResolveCobrancaPaymentLookupForTenant).toHaveBeenCalledWith('conta-1', 'cob-1');
     expect(mockSyncPaymentStateFromAsaas).toHaveBeenCalledWith({
       contaId: 'conta-1',
       asaasPaymentId: 'pay_1',
       intent: 'UI_FALLBACK_SYNC',
     });
+    expect(mockInvalidateChargeResourceCache).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      cobrancaId: 'cob-1',
+      reason: 'charge-sync-asaas',
+    });
+  });
+
+  it('não invalida caches quando o sync não conclui com sucesso', async () => {
+    mockRateLimit.mockResolvedValue({ ok: true, remaining: 10, resetAt: 1 });
+    mockSyncPaymentStateFromAsaas.mockResolvedValue({ success: false, error: 'provider unavailable' });
+
+    const response = await POST(request(), { params: Promise.resolve({ id: 'cob-1' }) });
+
+    expect(response.status).toBe(502);
+    expect(mockInvalidateChargeResourceCache).not.toHaveBeenCalled();
   });
 });

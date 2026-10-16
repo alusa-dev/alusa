@@ -6785,6 +6785,7 @@ model AsaasNotificationPreferenceOutbox {
   attempts      Int       @default(0)
   nextAttemptAt DateTime  @default(now())
   processingAt  DateTime?
+  claimToken    String?
   processedAt   DateTime?
   lastError     String?
   lastErrorAt   DateTime?
@@ -6820,6 +6821,7 @@ model AsaasNotificationSyncOutbox {
   maxAttempts   Int       @default(8)
   nextAttemptAt DateTime  @default(now())
   processingAt  DateTime?
+  claimToken    String?
   processedAt   DateTime?
   lastError     String?
   lastErrorAt   DateTime?

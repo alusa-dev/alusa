@@ -1,4 +1,4 @@
-import { logJobFailure } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { listAccountsWithOpenTransfers, reconcileOpenTransfers } from '@alusa/finance';
 
@@ -19,20 +19,21 @@ function jsonError(status: number, code: string, message: string) {
  * Reconsulta transferências abertas no Asaas fora do caminho de leitura da UI.
  */
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const query = reconcileOpenTransfersJobQueryDTOSchema.parse({
+        const tenantScope = await resolveTenantScopeForJob('reconcile-open-transfers', () => resolveTenantScope(req, {
+      allowCron: true,
+      requestedContaId: url.searchParams.get('contaId'),
+    }));
+    if (!tenantScope.ok) return tenantScope.response;
+    startedAt = startJobRun('reconcile-open-transfers');
+const query = reconcileOpenTransfersJobQueryDTOSchema.parse({
       contaId: url.searchParams.get('contaId'),
       limit: url.searchParams.get('limit'),
       maxAccounts: url.searchParams.get('maxAccounts'),
       minAgeSeconds: url.searchParams.get('minAgeSeconds'),
     });
-    const tenantScope = await resolveTenantScope(req, {
-      allowCron: true,
-      requestedContaId: query.contaId,
-    });
-    if (!tenantScope.ok) return tenantScope.response;
 
     const limit = query.limit;
     const maxAccounts = query.maxAccounts;
@@ -53,6 +54,11 @@ async function run(req: Request) {
 
     const reconciled = results.reduce((sum, item) => sum + item.reconciled, 0);
     const fetched = results.reduce((sum, item) => sum + item.fetched, 0);
+    logJobResult('reconcile-open-transfers', startedAt, {
+      accountsProcessed: results.length,
+      reconciled,
+      fetched,
+    }, { workStatus: fetched > 0 ? 'worked' : results.length > 0 ? 'unknown' : 'empty' });
 
     return NextResponse.json({
       success: true,
@@ -62,7 +68,7 @@ async function run(req: Request) {
       results,
     });
   } catch (error) {
-    logJobFailure('reconcile-open-transfers', startedAt, error);
+    if (startedAt) logJobFailure('reconcile-open-transfers', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconciliar as transferências abertas.');
   }
 }

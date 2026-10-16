@@ -4,7 +4,7 @@ import { inspectEventFinancialInconsistencies } from '@alusa/finance';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { apiJsonError } from '@/lib/api/standard-response';
-import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -15,14 +15,15 @@ function toPositiveInt(value: string | null, fallback: number, max: number) {
 }
 
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('events-inspect-financial-inconsistencies', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) return tenantScope.response;
+    startedAt = startJobRun('events-inspect-financial-inconsistencies');
 
     const result = await inspectEventFinancialInconsistencies({
       contaId: tenantScope.contaId,
@@ -40,6 +41,7 @@ async function run(req: Request) {
       {
         hasTenantScope: Boolean(tenantScope.contaId),
         skippedDueToLock: Boolean(result.skippedDueToLock),
+        workStatus: result.skippedDueToLock ? 'unknown' : result.findings.length > 0 ? 'worked' : 'empty',
       },
     );
     return NextResponse.json({
@@ -53,7 +55,7 @@ async function run(req: Request) {
       },
     });
   } catch (error) {
-    logJobFailure('events-inspect-financial-inconsistencies', startedAt, error);
+    if (startedAt) logJobFailure('events-inspect-financial-inconsistencies', startedAt, error);
     return apiJsonError(
       500,
       'JOB_FAILED',

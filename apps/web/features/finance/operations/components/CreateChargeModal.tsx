@@ -830,7 +830,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                 {/* Step 4: Notificações (opcional) */}
                 {step === 4 && (
                   <SectionCard>
-                    <StepHeader title="Notificações" hint="Selecione como a cobrança será enviada ao cliente." />
+                    <StepHeader title="Notificações" hint="Preferências salvas da escola sempre prevalecem. Os canais marcados são fallback quando a conta não tem uma regra salva." />
                     {loadingNotificationDefaults ? (
                       <p className="text-sm text-slate-500">Carregando configuração atual...</p>
                     ) : null}
@@ -839,8 +839,8 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                     ) : null}
                     {!notificationChannelsTouched && !notificationDefaultsError && !loadingNotificationDefaults ? (
                       <p className="text-sm text-slate-500 mb-3">
-                        Sugestão da régua global. Toque nos canais para confirmar; sem alteração,
-                        mantemos a configuração atual do pagador.
+                        Preferências salvas da escola prevalecem. Os canais abaixo servem como
+                        fallback quando a conta não tem uma regra de notificação salva.
                       </p>
                     ) : null}
                     <div className="flex flex-wrap gap-3">
@@ -1134,7 +1134,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                           {isSubscription && <><span className="text-slate-500">Fim da assinatura</span><span className="font-medium text-slate-900 sm:text-right">{formatDate(watch('endDate'))}</span></>}
                           <span className="text-slate-500">Pagamento</span>
                           <span className="font-medium text-slate-900 sm:text-right">{billingType === 'PIX' ? 'Pix' : billingType === 'BOLETO' ? 'Boleto' : billingType === 'CREDIT_CARD' ? 'Cartão' : 'Cliente escolhe'}</span>
-                          {notificationChannelsTouched && <><span className="text-slate-500">Notificações</span><span className="font-medium text-slate-900 sm:text-right">{notificationChannels.length > 0 ? notificationChannels.map((c) => (c === 'WHATSAPP' ? 'WhatsApp' : c === 'EMAIL' ? 'E-mail' : 'SMS')).join(', ') : 'Nenhuma'}</span></>}
+                          {notificationChannelsTouched && <><span className="text-slate-500">Canais de fallback</span><span className="font-medium text-slate-900 sm:text-right">{notificationChannels.length > 0 ? notificationChannels.map((c) => (c === 'WHATSAPP' ? 'WhatsApp' : c === 'EMAIL' ? 'E-mail' : 'SMS')).join(', ') : 'Nenhum'}</span></>}
                           {watch('description') && <><span className="text-slate-500">Descrição</span><span className="font-medium text-slate-900 sm:text-right">{watch('description')}</span></>}
                         </div>
                       </div>

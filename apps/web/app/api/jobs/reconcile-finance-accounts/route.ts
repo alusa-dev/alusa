@@ -1,4 +1,4 @@
-import { logJobFailure } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { detectWebhookGaps, reconcileAsaasAccountsJob, reconcileWithAsaas } from '@alusa/finance';
@@ -27,16 +27,17 @@ function jsonError(status: number, code: string, message: string) {
  * - includeGaps (opcional, mode=webhooks): inclui detecção de gaps locais
  */
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('reconcile-finance-accounts', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) {
       return tenantScope.response;
     }
+    startedAt = startJobRun('reconcile-finance-accounts');
 
     const contaId = tenantScope.contaId;
     const mode = (url.searchParams.get('mode') ?? 'accounts').toLowerCase();
@@ -72,6 +73,24 @@ async function run(req: Request) {
           : Promise.resolve(null),
       ]);
 
+      logJobResult('reconcile-finance-accounts', startedAt, {
+        checkedPayments: reconcile.checkedPayments,
+        reconciledPayments: reconcile.reconciledPayments,
+        checkedSubscriptions: reconcile.checkedSubscriptions,
+        reconciledSubscriptions: reconcile.reconciledSubscriptions,
+        checkedInstallments: reconcile.checkedInstallments,
+        installmentDrift: reconcile.installmentDrift,
+        errors: reconcile.errors.length,
+        findingCount: gaps
+          ? gaps.chargesWithMissingFinalStatus.length + gaps.subscriptionsWithMissingEvents.length
+          : 0,
+      }, {
+        dryRun,
+        partialFailure: reconcile.errors.length > 0 || reconcile.budgetExhausted,
+        workStatus: reconcile.checkedPayments + reconcile.checkedSubscriptions +
+          reconcile.checkedInstallments > 0 ? 'worked' : 'unknown',
+      });
+
       return NextResponse.json({
         success: true,
         mode: 'webhooks',
@@ -82,13 +101,20 @@ async function run(req: Request) {
 
     const result = await reconcileAsaasAccountsJob({ contaId, forceReconcile });
 
+    logJobResult('reconcile-finance-accounts', startedAt, {
+      processadas: result.processadas,
+      reconciliadas: result.reconciliadas,
+      skippedThrottle: result.skippedThrottle,
+      errors: result.erros.length,
+    }, { partialFailure: result.erros.length > 0, workStatus: result.reconciliadas > 0 ? 'worked' : result.erros.length > 0 || result.skippedThrottle > 0 || result.processadas > 0 ? 'unknown' : 'empty' });
+
     return NextResponse.json({
       success: true,
       mode: 'accounts',
       ...result,
     });
   } catch (error) {
-    logJobFailure('reconcile-finance-accounts', startedAt, error);
+    if (startedAt) logJobFailure('reconcile-finance-accounts', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconciliar as contas financeiras.');
   }
 }

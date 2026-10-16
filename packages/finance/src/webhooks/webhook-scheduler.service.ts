@@ -96,33 +96,96 @@ export interface WebhookMaintenanceResult {
   skippedDueToLock?: boolean;
 }
 
+class SchedulerStepError extends Error {
+  constructor(
+    message: string,
+    readonly detail: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = 'SchedulerStepError';
+  }
+}
+
+type StepFailure = { message: string; detail?: Record<string, unknown> };
+
+const STEP_DETAIL_FIELDS = [
+  'attempted',
+  'processed',
+  'failed',
+  'skipped',
+  'recovered',
+  'accountsChecked',
+  'accountFailures',
+  'driftsFound',
+  'driftsRepaired',
+  'archived',
+  'selected',
+  'marked',
+  'checkedAccounts',
+  'interruptedFound',
+  'recoveredSuccessfully',
+  'recoveryFailed',
+  'asaasCalls',
+  'checkedPayments',
+  'reconciledPayments',
+  'paymentDrift',
+  'checkedSubscriptions',
+  'reconciledSubscriptions',
+  'subscriptionDrift',
+  'checkedInstallments',
+  'installmentDrift',
+  'storeSalesFulfilled',
+  'scanned',
+  'eligible',
+  'enqueued',
+  'deletedFromHot',
+] as const;
+
+function sanitizeStepDetail(result: unknown): Record<string, unknown> {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return {};
+  const value = result as Record<string, unknown>;
+  const detail: Record<string, unknown> = {};
+  for (const field of STEP_DETAIL_FIELDS) {
+    const candidate = value[field];
+    if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate >= 0) {
+      detail[field] = candidate;
+    }
+  }
+  if (Array.isArray(value.errors)) detail.errors = value.errors.length;
+  return detail;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 async function timed<T>(
   stepName: string,
   fn: () => Promise<T>,
+  classifyFailure?: (result: T) => StepFailure | null,
 ): Promise<{ result: T; step: SchedulerStepResult }> {
   const start = Date.now();
   try {
     const result = await fn();
+    const failure = classifyFailure?.(result) ?? null;
     return {
       result,
       step: {
         step: stepName,
-        ok: true,
+        ok: !failure,
         durationMs: Date.now() - start,
-        detail: result && typeof result === 'object' ? (result as Record<string, unknown>) : {},
+        detail: { ...sanitizeStepDetail(result), ...sanitizeStepDetail(failure?.detail) },
+        ...(failure ? { error: failure.message } : {}),
       },
     };
   } catch (err) {
+    const detail = err instanceof SchedulerStepError ? sanitizeStepDetail(err.detail) : {};
     return {
       result: null as T,
       step: {
         step: stepName,
         ok: false,
         durationMs: Date.now() - start,
-        detail: {},
-        error: err instanceof Error ? err.message : String(err),
+        detail,
+        error: err instanceof SchedulerStepError ? err.message : 'STEP_FAILED',
       },
     };
   }
@@ -204,6 +267,9 @@ async function runWebhookSchedulerUnlocked(
         tenantFair: !options.contaId,
         drainSideEffects: false,
       }),
+      (result) => result.failed > 0
+        ? { message: 'QUEUE_ITEMS_FAILED' }
+        : null,
     );
     steps.push(drainStep);
   }
@@ -223,6 +289,9 @@ async function runWebhookSchedulerUnlocked(
       contaId: options.contaId,
       limit: Math.max(50, Math.min(drainLimit, 500)),
     }),
+    (result) => result.failed > 0
+      ? { message: 'SIDE_EFFECTS_FAILED' }
+      : null,
   );
   steps.push(sideEffectsStep);
 
@@ -242,6 +311,9 @@ async function runWebhookSchedulerUnlocked(
         contaId: options.contaId,
         autoRecover: options.recoverInterruptedWebhooks === true,
       }),
+      (result) => result.recoveryFailed > 0 || result.errors.length > 0
+        ? { message: 'HEALTH_CHECK_ERRORS' }
+        : null,
     );
     steps.push(healthStep);
   }
@@ -261,6 +333,7 @@ async function runWebhookSchedulerUnlocked(
       });
 
       const results: Array<{ contaId: string; hasDrift: boolean; repaired: boolean }> = [];
+      let accountFailures = 0;
 
       for (const account of accounts) {
         const contaId = account.financeProfile.contaId;
@@ -284,13 +357,24 @@ async function runWebhookSchedulerUnlocked(
               contaId,
               actor: { type: 'SYSTEM' },
             });
+            if (!repair.repaired && repair.reason !== 'NO_DRIFT') {
+              accountFailures += 1;
+            }
             results.push({ contaId, hasDrift: true, repaired: repair.repaired });
           } else {
             results.push({ contaId, hasDrift: false, repaired: false });
           }
         } catch {
+          accountFailures += 1;
           results.push({ contaId, hasDrift: false, repaired: false });
         }
+      }
+
+      if (accountFailures > 0) {
+        throw new SchedulerStepError('DRIFT_ACCOUNT_FAILURES', {
+          accountsChecked: accounts.length,
+          accountFailures,
+        });
       }
 
       return {
@@ -323,6 +407,9 @@ async function runWebhookSchedulerUnlocked(
         limit: 100,
         dryRun: false,
       }),
+      (result) => result.errors.length > 0
+        ? { message: 'ASAAS_RECONCILIATION_ERRORS' }
+        : null,
     );
     steps.push(reconcileStep);
   }

@@ -1,4 +1,4 @@
-import { logJobFailure } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import { encerrarContratosJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
@@ -27,20 +27,21 @@ function jsonError(status: number, code: string, message: string) {
  * - maxAccounts (opcional): limite do cron multi-tenant, default 25, máximo 100
  */
 export async function POST(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const query = encerrarContratosJobQueryDTOSchema.parse({
-      contaId: url.searchParams.get('contaId'),
-      maxAccounts: url.searchParams.get('maxAccounts'),
-    });
-    const tenantScope = await resolveTenantScope(req, {
+        const tenantScope = await resolveTenantScopeForJob('encerrar-contratos', () => resolveTenantScope(req, {
       allowCron: true,
-      requestedContaId: query.contaId,
-    });
+      requestedContaId: url.searchParams.get('contaId'),
+    }));
     if (!tenantScope.ok) {
       return tenantScope.response;
     }
+    startedAt = startJobRun('encerrar-contratos');
+const query = encerrarContratosJobQueryDTOSchema.parse({
+      contaId: url.searchParams.get('contaId'),
+      maxAccounts: url.searchParams.get('maxAccounts'),
+    });
 
     const maxAccounts = query.maxAccounts;
     const operationNow = new Date();
@@ -67,15 +68,24 @@ export async function POST(req: Request) {
       }
     }
 
+    const updatedEnrollments = results.reduce((total, result) => total + result.atualizados, 0);
+    const eligibleClosures = results.reduce((total, result) => total + result.processados + (result.familyClosure.finalized?.length ?? 0) + (result.familyClosure.pendingFinancialClosure?.length ?? 0), 0);
+    logJobResult('encerrar-contratos', startedAt, {
+      processedAccounts: contaIds.length,
+      updatedEnrollments,
+      eligibleClosures,
+      failed: errors.length,
+    }, { partialFailure: errors.length > 0, workStatus: eligibleClosures > 0 ? 'worked' : errors.length > 0 || tenantScope.contaId ? 'unknown' : 'empty' });
+
     return NextResponse.json({
       success: true,
       processedAccounts: contaIds.length,
-      updatedEnrollments: results.reduce((total, result) => total + result.atualizados, 0),
+      updatedEnrollments,
       results,
       errors,
     });
   } catch (error) {
-    logJobFailure('encerrar-contratos', startedAt, error);
+    if (startedAt) logJobFailure('encerrar-contratos', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível encerrar os contratos expirados.');
   }
 }

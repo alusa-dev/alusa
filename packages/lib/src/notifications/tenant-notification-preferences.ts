@@ -51,24 +51,19 @@ export async function loadTenantNotificationEventPreferences(
 }
 
 /**
- * Aplica a seleção explícita de canais do usuário (wizard/modal) sobre a régua
- * global por evento, preservando enabled, scheduleOffset e canais do provedor
- * (admin).
- *
- * A seleção explícita do wizard é a fonte de verdade para os canais do cliente.
- * Os valores de canal da régua global são apenas os defaults exibidos antes da
- * confirmação e não podem impedir uma escolha feita pelo usuário.
+ * Retorna os canais agregados das preferências salvas da Conta, considerando
+ * somente eventos habilitados. São usados como fallback para eventos remotos
+ * sem entrada correspondente na régua local.
  */
-export function deriveEventPreferencesForChannelSelection(
+export function channelsFromTenantNotificationPreferences(
   tenantPreferences: TenantNotificationEventPreference[],
-  channels: NotificationChannelSelection,
-): TenantNotificationEventPreference[] {
-  return tenantPreferences.map((pref) => ({
-    ...pref,
-    emailEnabledForCustomer: pref.enabled && channels.email,
-    smsEnabledForCustomer: pref.enabled && channels.sms,
-    whatsappEnabledForCustomer: pref.enabled && channels.whatsapp,
-  }));
+): NotificationChannelSelection {
+  const enabledPreferences = tenantPreferences.filter((preference) => preference.enabled);
+  return {
+    email: enabledPreferences.some((preference) => preference.emailEnabledForCustomer),
+    sms: enabledPreferences.some((preference) => preference.smsEnabledForCustomer),
+    whatsapp: enabledPreferences.some((preference) => preference.whatsappEnabledForCustomer),
+  };
 }
 
 export function channelsFromSelection(

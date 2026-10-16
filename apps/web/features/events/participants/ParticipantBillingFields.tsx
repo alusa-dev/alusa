@@ -402,7 +402,7 @@ export function ParticipantBillingFields({
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="right" className="max-w-xs text-left leading-relaxed">
-                      A seleção feita aqui prevalece sobre os padrões da conta.
+                      As preferências salvas da escola prevalecem. A seleção feita aqui é usada como fallback quando a conta não tem uma regra salva.
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>

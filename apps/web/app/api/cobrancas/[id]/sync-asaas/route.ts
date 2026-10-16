@@ -7,6 +7,12 @@ import { resolveCobrancaPaymentLookupForTenant } from '@/src/server/finance/reso
 import { rateLimitAsync } from '@/lib/rate-limit';
 import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { invalidateChargeResourceCache } from '@/lib/cache/invalidation';
+import {
+  CHARGE_SYNC_SOURCE_HEADER,
+  recordChargeSyncTelemetry,
+  resolveChargeSyncSource,
+  type ChargeSyncOutcome,
+} from '@/src/server/finance/charge-sync-observability';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -44,9 +50,12 @@ function jsonSkipped(reason: string, resetAt: number) {
 }
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const startedAt = Date.now();
+  const source = resolveChargeSyncSource(req.headers.get(CHARGE_SYNC_SOURCE_HEADER));
+  let outcome: ChargeSyncOutcome = 'failure';
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) {
@@ -66,6 +75,7 @@ export async function POST(
       60_000,
     );
     if (!tenantLimit.ok) {
+      outcome = 'skipped';
       return jsonSkipped('TENANT_RATE_LIMIT', tenantLimit.resetAt);
     }
 
@@ -75,6 +85,7 @@ export async function POST(
       60_000,
     );
     if (!userLimit.ok) {
+      outcome = 'skipped';
       return jsonSkipped('USER_RATE_LIMIT', userLimit.resetAt);
     }
 
@@ -84,6 +95,7 @@ export async function POST(
       limits.chargeWindowMs,
     );
     if (!chargeLimit.ok) {
+      outcome = 'skipped';
       return jsonSkipped('CHARGE_THROTTLED', chargeLimit.resetAt);
     }
 
@@ -91,6 +103,7 @@ export async function POST(
     const paymentId = paymentLookup?.asaasPaymentId ?? null;
 
     if (!paymentId) {
+      outcome = 'skipped';
       return NextResponse.json(
         { success: false, error: 'Cobrança não encontrada ou sem integração Asaas' },
         { status: 404 },
@@ -104,6 +117,7 @@ export async function POST(
     });
 
     if (!syncResult.success) {
+      outcome = 'failure';
       return NextResponse.json(
         { success: false, error: syncResult.error },
         { status: 502 },
@@ -116,6 +130,7 @@ export async function POST(
       reason: 'charge-sync-asaas',
     });
 
+    outcome = 'success';
     return NextResponse.json({
       success: true,
       message: 'Cobrança sincronizada com o estado oficial do Asaas.',
@@ -135,6 +150,13 @@ export async function POST(
         correlationId,
       },
       { status: 500, headers: { 'cache-control': 'no-store' } },
+    );
+  } finally {
+    recordChargeSyncTelemetry(
+      source,
+      outcome,
+      Date.now() - startedAt,
+      '/api/cobrancas/:id/sync-asaas',
     );
   }
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const { stripeMocks, notifyMock } = vi.hoisted(() => ({
   stripeMocks: { getClient: vi.fn(), retrieveInvoice: vi.fn() },
@@ -19,19 +19,34 @@ vi.mock('@/src/server/platform-billing/platform-billing-notifications', () => ({
   notifyPlatformBillingEvent: notifyMock,
 }));
 
-import { drainStripeWebhookWorker } from '@/src/server/platform-billing/webhook-worker';
-
-const databaseName = process.env.DATABASE_URL
-  ? new URL(process.env.DATABASE_URL).pathname.replace(/^\//, '')
-  : '';
-const isTestDatabase = databaseName === 'alusa_test';
-const prisma = new PrismaClient();
+const isSafeTestDatabase = (() => {
+  try {
+    const url = new URL(process.env.DATABASE_URL ?? '');
+    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    const databaseName = decodeURIComponent(url.pathname.replace(/^\/+/, '')).toLowerCase();
+    const isPostgres = ['postgres:', 'postgresql:'].includes(url.protocol.toLowerCase());
+    const isLoopback = ['localhost', '127.0.0.1', '::1'].includes(hostname);
+    const isDisposableTestDatabase = databaseName === 'alusa_test' || databaseName.startsWith('alusa_test_');
+    return isPostgres && isLoopback && isDisposableTestDatabase;
+  } catch {
+    return false;
+  }
+})();
+const prisma = isSafeTestDatabase ? new PrismaClient() : null;
+let drainStripeWebhookWorker: typeof import('@/src/server/platform-billing/webhook-worker')['drainStripeWebhookWorker'] | undefined;
 
 afterAll(async () => {
-  await prisma.$disconnect();
+  if (prisma) await prisma.$disconnect();
 });
 
-describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL retry', () => {
+describe.skipIf(!isSafeTestDatabase)('platform billing webhook worker PostgreSQL retry', () => {
+  const database = prisma as PrismaClient;
+
+  beforeAll(async () => {
+    const webhookWorker = await import('@/src/server/platform-billing/webhook-worker');
+    drainStripeWebhookWorker = webhookWorker.drainStripeWebhookWorker;
+  });
+
   it('serializes competing inbox drains and recovers after financial writes but before outbox/finalization', async () => {
     const suffix = randomUUID().replaceAll('-', '');
     const contaId = `billing_worker_retry_${suffix}`;
@@ -72,9 +87,9 @@ describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL ret
       lines: { data: [{ pricing: { price_details: { price: priceId } } }] },
     };
 
-    await prisma.conta.create({ data: { id: contaId, nome: 'Webhook worker integration fixture' } });
+    await database.conta.create({ data: { id: contaId, nome: 'Webhook worker integration fixture' } });
     try {
-      await prisma.platformBillingAccount.create({
+      await database.platformBillingAccount.create({
         data: {
           id: accountId,
           contaId,
@@ -89,32 +104,32 @@ describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL ret
           paymentMethodStatus: 'PRESENT',
         },
       });
-      await prisma.platformBillingWebhookEvent.create({
+      await database.platformBillingWebhookEvent.create({
         data: {
           environment: 'TEST', eventId, eventType: 'invoice.paid', contaId,
           status: 'PENDING', attempts: 0, payload,
           nextAttemptAt: new Date(Date.now() - 1_000), correlationId: eventId,
         },
       });
-      await prisma.$executeRaw`
+      await database.$executeRaw`
         UPDATE "PlatformBillingWebhookEvent"
         SET "nextAttemptAt" = LOCALTIMESTAMP - INTERVAL '1 second'
         WHERE "environment" = ${'TEST'}::"PlatformBillingEnvironment" AND "eventId" = ${eventId}
       `;
-      expect(await prisma.platformBillingWebhookEvent.findUnique({
+      expect(await database.platformBillingWebhookEvent.findUnique({
         where: { uq_platform_billing_webhook_env_event: { environment: 'TEST', eventId } },
       })).toMatchObject({ status: 'PENDING', environment: 'TEST', nextAttemptAt: expect.any(Date) });
-      expect(await prisma.platformBillingWebhookEvent.count({
+      expect(await database.platformBillingWebhookEvent.count({
         where: { environment: 'TEST', status: 'PENDING', nextAttemptAt: { lte: new Date() } },
       })).toBeGreaterThan(0);
-      const rawEligible = await prisma.$queryRaw<Array<{ id: string }>>`
+      const rawEligible = await database.$queryRaw<Array<{ id: string }>>`
         SELECT "id" FROM "PlatformBillingWebhookEvent"
         WHERE "environment" = ${'TEST'}::"PlatformBillingEnvironment"
           AND "eventId" = ${eventId}
           AND "status" IN ('PENDING', 'RECEIVED', 'FAILED')
           AND "nextAttemptAt" <= LOCALTIMESTAMP
       `;
-      expect(rawEligible.map(({ id }) => id)).toEqual([(await prisma.platformBillingWebhookEvent.findUniqueOrThrow({
+      expect(rawEligible.map(({ id }) => id)).toEqual([(await database.platformBillingWebhookEvent.findUniqueOrThrow({
         where: { uq_platform_billing_webhook_env_event: { environment: 'TEST', eventId } }, select: { id: true },
       })).id]);
 
@@ -142,7 +157,7 @@ describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL ret
       notifyMock.mockResolvedValue(undefined);
 
       let failNextOutboxWrite = false;
-      const outbox = new Proxy(prisma.platformBillingNotificationOutbox, {
+      const outbox = new Proxy(database.platformBillingNotificationOutbox, {
         get(target, property) {
           if (property === 'upsert') {
             return async (args: Parameters<typeof target.upsert>[0]) => {
@@ -157,7 +172,7 @@ describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL ret
           return typeof value === 'function' ? value.bind(target) : value;
         },
       });
-      const db = new Proxy(prisma, {
+      const db = new Proxy(database, {
         get(target, property) {
           if (property === 'platformBillingNotificationOutbox') return outbox;
           const value = Reflect.get(target, property, target) as unknown;
@@ -172,13 +187,13 @@ describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL ret
       await Promise.race([
         firstRetrieveStarted,
         firstDrain.then(async (result) => {
-          const row = await prisma.platformBillingWebhookEvent.findUnique({
+          const row = await database.platformBillingWebhookEvent.findUnique({
             where: { uq_platform_billing_webhook_env_event: { environment: 'TEST', eventId } },
           });
           throw new Error(`worker finished before Stripe retrieval: ${JSON.stringify({ result, row })}`);
         }),
       ]);
-      const activeLease = await prisma.platformBillingWebhookEvent.findUniqueOrThrow({
+      const activeLease = await database.platformBillingWebhookEvent.findUniqueOrThrow({
         where: { uq_platform_billing_webhook_env_event: { environment: 'TEST', eventId } },
         select: { workerId: true, status: true, attempts: true },
       });
@@ -187,7 +202,7 @@ describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL ret
       expect(competingDrain.workerId).not.toBe(activeLease.workerId);
       expect(activeLease).toMatchObject({ status: 'PROCESSING', attempts: 1 });
 
-      await prisma.$executeRaw`
+      await database.$executeRaw`
         UPDATE "PlatformBillingWebhookEvent"
         SET "processingTimeoutAt" = LOCALTIMESTAMP - INTERVAL '1 second'
         WHERE "environment" = ${'TEST'}::"PlatformBillingEnvironment" AND "eventId" = ${eventId}
@@ -196,13 +211,13 @@ describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL ret
       await Promise.race([
         takeoverStarted,
         takeoverDrain.then(async (result) => {
-          const row = await prisma.platformBillingWebhookEvent.findUnique({
+          const row = await database.platformBillingWebhookEvent.findUnique({
             where: { uq_platform_billing_webhook_env_event: { environment: 'TEST', eventId } },
           });
           throw new Error(`takeover worker finished before retrieval: ${JSON.stringify({ result, row })}`);
         }),
       ]);
-      const takeoverLease = await prisma.platformBillingWebhookEvent.findUniqueOrThrow({
+      const takeoverLease = await database.platformBillingWebhookEvent.findUniqueOrThrow({
         where: { uq_platform_billing_webhook_env_event: { environment: 'TEST', eventId } },
         select: { workerId: true, status: true, attempts: true },
       });
@@ -211,21 +226,21 @@ describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL ret
 
       releaseFirstRetrieve();
       await expect(firstDrain).rejects.toThrow('Stripe webhook lease was lost before failure finalization.');
-      expect(await prisma.platformBillingWebhookEvent.findUniqueOrThrow({ where: { uq_platform_billing_webhook_env_event: { environment: 'TEST', eventId } } }))
+      expect(await database.platformBillingWebhookEvent.findUniqueOrThrow({ where: { uq_platform_billing_webhook_env_event: { environment: 'TEST', eventId } } }))
         .toMatchObject({ status: 'PROCESSING', attempts: 2, workerId: takeoverLease.workerId });
-      expect(await prisma.platformBillingInvoice.count({ where: { environment: 'TEST', stripeInvoiceId: invoiceId, contaId } })).toBe(1);
-      expect(await prisma.platformBillingNotificationOutbox.count({ where: { environment: 'TEST', eventId } })).toBe(0);
+      expect(await database.platformBillingInvoice.count({ where: { environment: 'TEST', stripeInvoiceId: invoiceId, contaId } })).toBe(1);
+      expect(await database.platformBillingNotificationOutbox.count({ where: { environment: 'TEST', eventId } })).toBe(0);
 
       failNextOutboxWrite = true;
       releaseTakeoverRetrieve();
       const secondAttempt = await takeoverDrain;
       expect(secondAttempt).toMatchObject({ claimed: 1, processed: 1, failed: 1, exhausted: 0 });
-      const takeoverEvent = await prisma.platformBillingWebhookEvent.findUniqueOrThrow({
+      const takeoverEvent = await database.platformBillingWebhookEvent.findUniqueOrThrow({
         where: { uq_platform_billing_webhook_env_event: { environment: 'TEST', eventId } },
       });
       expect(takeoverEvent).toMatchObject({ status: 'FAILED', attempts: 2, lastError: 'injected failure after financial mutation' });
 
-      await prisma.$executeRaw`
+      await database.$executeRaw`
         UPDATE "PlatformBillingWebhookEvent"
         SET "nextAttemptAt" = LOCALTIMESTAMP - INTERVAL '1 second'
         WHERE "environment" = ${'TEST'}::"PlatformBillingEnvironment" AND "eventId" = ${eventId}
@@ -234,10 +249,10 @@ describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL ret
       expect(retry).toMatchObject({ claimed: 1, processed: 1, failed: 0, exhausted: 0 });
       expect(retry.notifications).toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
 
-      expect(await prisma.platformBillingWebhookEvent.findUniqueOrThrow({ where: { uq_platform_billing_webhook_env_event: { environment: 'TEST', eventId } } }))
+      expect(await database.platformBillingWebhookEvent.findUniqueOrThrow({ where: { uq_platform_billing_webhook_env_event: { environment: 'TEST', eventId } } }))
         .toMatchObject({ status: 'PROCESSED', attempts: 3, contaId });
-      expect(await prisma.platformBillingInvoice.count({ where: { environment: 'TEST', stripeInvoiceId: invoiceId, contaId } })).toBe(1);
-      expect(await prisma.platformBillingAuditLog.count({
+      expect(await database.platformBillingInvoice.count({ where: { environment: 'TEST', stripeInvoiceId: invoiceId, contaId } })).toBe(1);
+      expect(await database.platformBillingAuditLog.count({
         where: {
           contaId,
           webhookEnvironment: 'TEST',
@@ -248,7 +263,7 @@ describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL ret
         },
       })).toBe(1);
       // Stripe event IDs are scoped by mode. A TEST/LIVE pair must not collide.
-      await prisma.platformBillingAuditLog.createMany({
+      await database.platformBillingAuditLog.createMany({
         data: [{
           contaId,
           billingAccountId: accountId,
@@ -260,11 +275,11 @@ describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL ret
         }],
         skipDuplicates: true,
       });
-      expect(await prisma.platformBillingAuditLog.count({
+      expect(await database.platformBillingAuditLog.count({
         where: { contaId, webhookEventId: eventId, action: 'PLATFORM_BILLING_INVOICE_PAID' },
       })).toBe(2);
       // Administrative audits omit webhook identity and remain append-only.
-      await prisma.platformBillingAuditLog.createMany({
+      await database.platformBillingAuditLog.createMany({
         data: [1, 2].map(() => ({
           contaId,
           billingAccountId: accountId,
@@ -274,21 +289,21 @@ describe.skipIf(!isTestDatabase)('platform billing webhook worker PostgreSQL ret
         })),
         skipDuplicates: true,
       });
-      expect(await prisma.platformBillingAuditLog.count({
+      expect(await database.platformBillingAuditLog.count({
         where: { contaId, action: 'PLATFORM_BILLING_ADMIN_RECONCILED', entityId: accountId },
       })).toBe(2);
-      expect(await prisma.platformBillingNotificationOutbox.findUniqueOrThrow({ where: { uq_platform_billing_notification_env_event: { environment: 'TEST', eventId } } }))
+      expect(await database.platformBillingNotificationOutbox.findUniqueOrThrow({ where: { uq_platform_billing_notification_env_event: { environment: 'TEST', eventId } } }))
         .toMatchObject({ status: 'DELIVERED', contaId });
-      expect(await prisma.platformBillingAccount.findUniqueOrThrow({ where: { id: accountId } }))
+      expect(await database.platformBillingAccount.findUniqueOrThrow({ where: { id: accountId } }))
         .toMatchObject({ status: 'ACTIVE', lastStripeEventId: eventId, lastSuccessfulPaymentAt: new Date(eventCreated * 1000) });
     } finally {
       if (priorPrice === undefined) delete process.env.STRIPE_PRICE_STARTER_MONTHLY;
       else process.env.STRIPE_PRICE_STARTER_MONTHLY = priorPrice;
       if (priorEnvironment === undefined) delete process.env.STRIPE_ENVIRONMENT;
       else process.env.STRIPE_ENVIRONMENT = priorEnvironment;
-      await prisma.platformBillingNotificationOutbox.deleteMany({ where: { environment: 'TEST', eventId } });
-      await prisma.platformBillingWebhookEvent.deleteMany({ where: { environment: 'TEST', eventId } });
-      await prisma.conta.deleteMany({ where: { id: contaId } });
+      await database.platformBillingNotificationOutbox.deleteMany({ where: { environment: 'TEST', eventId } });
+      await database.platformBillingWebhookEvent.deleteMany({ where: { environment: 'TEST', eventId } });
+      await database.conta.deleteMany({ where: { id: contaId } });
     }
   }, 30_000);
 });

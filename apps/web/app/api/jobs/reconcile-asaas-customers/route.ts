@@ -1,4 +1,4 @@
-import { logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 import { NextResponse } from 'next/server';
 import {
   reconcileAsaasCustomerSnapshots,
@@ -21,14 +21,15 @@ function clampPositiveInt(value: string | null, fallback: number, max: number) {
 }
 
 async function run(req: Request) {
-  const startedAt = Date.now();
+  let startedAt: ReturnType<typeof startJobRun> | undefined;
   try {
     const url = new URL(req.url);
-    const tenantScope = await resolveTenantScope(req, {
+    const tenantScope = await resolveTenantScopeForJob('reconcile-asaas-customers', () => resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-    });
+    }));
     if (!tenantScope.ok) return tenantScope.response;
+    startedAt = startJobRun('reconcile-asaas-customers');
 
     const limit = clampPositiveInt(url.searchParams.get('limit'), 50, 200);
     const maxAccounts = clampPositiveInt(url.searchParams.get('maxAccounts'), 20, 100);
@@ -58,7 +59,14 @@ async function run(req: Request) {
         skipped: addresses.skipped,
         failed: snapshots.failed + addresses.failed,
       },
-      { partialFailure: snapshots.failed > 0 || addresses.failed > 0 },
+      {
+        partialFailure: snapshots.failed > 0 || addresses.failed > 0,
+        workStatus: snapshots.updated + snapshots.deleted + addresses.synced > 0
+          ? 'worked'
+          // Address reconciliation can silently skip accounts without credentials,
+          // so a zero scan count does not prove that the eligible set was empty.
+          : 'unknown',
+      },
     );
 
     return NextResponse.json({
@@ -67,7 +75,7 @@ async function run(req: Request) {
       addresses,
     });
   } catch (error) {
-    logJobFailure('reconcile-asaas-customers', startedAt, error);
+    if (startedAt) logJobFailure('reconcile-asaas-customers', startedAt, error);
     return jsonError(500, 'ERRO_JOB', 'Não foi possível reconciliar os clientes financeiros.');
   }
 }

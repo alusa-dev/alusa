@@ -102,7 +102,7 @@ export function StepNotifications({ ctx }: StepNotificationsProps) {
     <SectionCard>
       <StepHeader
         title="Notificações"
-        hint="Os canais escolhidos serão aplicados às cobranças do responsável financeiro nesta instituição, incluindo outras matrículas vinculadas a ele."
+        hint="Preferências salvas da escola sempre prevalecem. Os canais escolhidos são fallback quando a conta não tem uma regra salva."
       />
 
       <div className="space-y-4" role="group" aria-label="Canais de notificação">

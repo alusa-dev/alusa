@@ -609,6 +609,7 @@
         "packages/finance/src/events/event-ticket-sale-operations.ts",
         "packages/finance/src/events/reactivate-event-participant-with-charge.ts",
         "packages/finance/src/events/reconcile-event-map-order-payment.ts",
+        "packages/finance/src/events/refund-event-ticket-sales-by-payment.ts",
         "packages/finance/src/events/register-event-participant-persistence.ts",
         "packages/finance/src/events/sync-public-event-map-order-payment.ts",
         "packages/finance/src/events/update-event-participant-fee.ts",
@@ -701,6 +702,7 @@
       "files": [
         "packages/finance/src/customer/customer-identity.ts",
         "packages/finance/src/events/create-event-registration-charge.ts",
+        "packages/finance/src/events/event-map-payment-transitions.ts",
         "packages/finance/src/family-billing/future-family-billing.ts",
         "packages/finance/src/family-billing/processor.ts",
         "packages/finance/src/fiscal/payer-fiscal-readiness.ts",
@@ -824,6 +826,9 @@
       "declared": true,
       "compatibility": null,
       "files": [
+        "apps/mobile/src/app/(app)/assinaturas/[subscriptionId].tsx",
+        "apps/mobile/src/app/(app)/billing/[chargeId].tsx",
+        "apps/mobile/src/app/(app)/parcelamentos/[installmentId].tsx",
         "apps/mobile/src/features/events/components/EventCostumeLinkSheet.tsx",
         "apps/mobile/src/features/events/components/EventFinancialSheet.tsx"
       ]
@@ -938,6 +943,7 @@
         "apps/web/src/server/enrollments/renewal-http-route.service.ts",
         "apps/web/src/server/enrollments/renewal-process.service.ts",
         "apps/web/src/server/enrollments/renewal.service.ts",
+        "apps/web/src/server/events/event-participant-detail-read.service.ts",
         "apps/web/src/server/events/event-ticket-whatsapp-outbox.service.ts",
         "apps/web/src/server/finance/person-payment-ledger.ts",
         "apps/web/src/server/media/event-map-reference-storage.service.ts",
@@ -1459,6 +1465,7 @@
         "apps/web/lib/perf-logger.ts",
         "apps/web/lib/security/sensitive-redaction.ts",
         "apps/web/lib/upload-quota.server.ts",
+        "apps/web/src/server/finance/charge-sync-observability.ts",
         "apps/web/src/server/jobs/job-observability.ts"
       ]
     },
@@ -1492,7 +1499,11 @@
       "declared": true,
       "compatibility": null,
       "files": [
+        "apps/web/app/(app)/charges/[id]/CobrancaDetalhesClient.tsx",
+        "apps/web/app/(app)/charges/installments/[id]/ParcelamentoDetalheClient.tsx",
+        "apps/web/app/(app)/charges/subscriptions/[id]/AssinaturaDetalheClient.tsx",
         "apps/web/app/(auth)/register/RegisterForm.tsx",
+        "apps/web/app/api/financeiro/relatorios/export/route.ts",
         "apps/web/features/enrollments/enrollment-history-status.ts",
         "apps/web/features/events/costumes/AssignmentActions.tsx",
         "apps/web/features/events/costumes/AssignmentFormDialog.tsx",
@@ -1526,8 +1537,15 @@
         "apps/web/features/events/tickets/TicketLotsTable.tsx",
         "apps/web/features/events/tickets/ticket-sale-ui.ts",
         "apps/web/features/finance/operations/mappers.ts",
+        "apps/web/features/finance/operations/payments/ExportPaidReceiptsDialog.tsx",
+        "apps/web/features/finance/operations/payments/StudentPaymentDetailsClient.tsx",
+        "apps/web/features/finance/operations/payments/components/PaymentDetailsDialog.tsx",
+        "apps/web/features/finance/operations/payments/paid-receipts-pdf.ts",
+        "apps/web/features/finance/operations/payments/payment-history-utils.ts",
+        "apps/web/features/finance/operations/reports/components/ReportDetails.tsx",
         "apps/web/features/finance/operations/tax-invoices/mappers/index.ts",
         "apps/web/features/global-search/queries.ts",
+        "apps/web/features/portal/finance/PortalFinanceiroFeature.tsx",
         "apps/web/features/responsibles/ResponsibleDetailsFeature.tsx",
         "apps/web/features/responsibles/mappers.ts",
         "apps/web/features/sales/dtos/index.ts",
