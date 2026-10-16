@@ -100,7 +100,7 @@ describe('API rate limit policy', () => {
     });
   });
 
-  it('gives report reads their own budget and keeps exports on the expensive-operation limit', async () => {
+  it('gives event and financial report reads their own budget and keeps exports on the expensive-operation limit', async () => {
     process.env.RATE_LIMIT_DISABLE_IN_DEV = 'false';
     delete process.env.UPSTASH_REDIS_REST_URL;
     delete process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -125,6 +125,21 @@ describe('API rate limit policy', () => {
 
     expect(overviewResponse?.status).toBe(429);
     expect(overviewResponse?.headers.get('ratelimit-limit')).toBe('60');
+
+    const eventReportToken = { contaId: `event-report-conta-${suffix}`, id: `event-report-user-${suffix}` };
+    const eventReportPath = ['', 'api', 'events', 'reports', 'event-a'].join('/');
+    const eventReportRequest = () => new Request(`https://app.example.com${eventReportPath}`);
+    let eventReportResponse: Response | null = null;
+    for (let index = 0; index < 61; index += 1) {
+      eventReportResponse = await enforceApiRateLimit(
+        eventReportRequest(),
+        eventReportPath,
+        eventReportToken,
+      );
+    }
+
+    expect(eventReportResponse?.status).toBe(429);
+    expect(eventReportResponse?.headers.get('ratelimit-limit')).toBe('60');
 
     const exportToken = { contaId: `export-conta-${suffix}`, id: `export-user-${suffix}` };
     const exportPath = ['', 'api', 'financeiro', 'relatorios', 'export'].join('/');

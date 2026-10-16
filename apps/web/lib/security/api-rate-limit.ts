@@ -69,10 +69,9 @@ const EXPENSIVE_POLICY: RateLimitPolicy = {
 };
 
 const REPORT_POLICY: RateLimitPolicy = {
-  name: 'financial-report-read',
-  // A report page loads its selected view and a separate 90-day health
-  // overview. Leave room for navigation and filter changes while retaining a
-  // bounded per-user and per-tenant budget for these database-heavy reads.
+  name: 'report-read',
+  // Report pages load selected views and supporting summaries. Leave room for
+  // navigation and filter changes while bounding database-heavy reads.
   limit: 60,
   tenantLimit: 300,
   windowMs: 10 * 60_000,
@@ -170,9 +169,8 @@ function resolvePolicy(pathname: string, method: string): RateLimitPolicy | null
   if (
     normalizedMethod === 'GET' &&
     pathSegments[0] === 'api' &&
-    pathSegments[1] === 'financeiro' &&
-    pathSegments[2] === 'relatorios' &&
-    pathSegments[3] !== 'export'
+    ((pathSegments[1] === 'financeiro' && pathSegments[2] === 'relatorios' && pathSegments[3] !== 'export') ||
+      (pathSegments[1] === 'events' && pathSegments[2] === 'reports'))
   ) {
     return REPORT_POLICY;
   }
