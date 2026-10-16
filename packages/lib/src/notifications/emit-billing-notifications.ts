@@ -28,6 +28,16 @@ function normalizeOccurredAt(value: string | Date | null | undefined): Date | un
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
+export function selectFirstBillingNotificationOccurredAt(
+  candidates: Array<string | Date | null | undefined>,
+): Date | undefined {
+  for (const candidate of candidates) {
+    const normalized = normalizeOccurredAt(candidate);
+    if (normalized) return normalized;
+  }
+  return undefined;
+}
+
 export async function emitBillingNotificationCandidate(
   candidate: BillingNotificationCandidate,
   sourceType: 'ASAAS_WEBHOOK' | 'ASAAS_SYNC',
@@ -41,7 +51,7 @@ export async function emitBillingNotificationCandidate(
     eventId: candidate.eventId ?? null,
     eventName: candidate.event,
     asaasPaymentId: candidate.asaasPaymentId,
-    occurredAt: normalizeOccurredAt(candidate.occurredAt),
+    occurredAt: selectFirstBillingNotificationOccurredAt([candidate.occurredAt]),
     sourceType,
   });
 

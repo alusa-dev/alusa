@@ -29,6 +29,7 @@ import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
 import { isCacheLayerEnabled } from '@/lib/cache/tenant-cache';
 import { privateJson } from '@/lib/private-cache';
 import { logFinanceOperationalEvent } from '@alusa/finance/foundation/operational-log';
+import { parseFirstValidCivilDatePreservingInstant } from '@alusa/finance/mappers/civil-date';
 
 const CHARGE_DETAIL_CACHE_SECONDS = 20;
 const CHARGE_DETAIL_STALE_SECONDS = 40;
@@ -214,8 +215,10 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
           dueDate: charge.dueDate,
         });
 
-        const effectivePaymentDate =
-          remoteAsaasData?.paymentDate ?? remoteAsaasData?.clientPaymentDate ?? null;
+        const effectivePaymentDate = parseFirstValidCivilDatePreservingInstant(
+          remoteAsaasData?.paymentDate,
+          remoteAsaasData?.clientPaymentDate,
+        )?.toISOString() ?? null;
         const effectiveLiquidacaoStatus = resolveStandaloneLiquidacaoStatus({
           displayedStatus: effectiveStatus,
           remotePaymentStatus,
@@ -338,10 +341,10 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
             })
           : localDisplayStatus;
         const effectivePaymentDate =
-          remoteAsaasData?.paymentDate ??
-          remoteAsaasData?.clientPaymentDate ??
-          operationalCharge.paidAt?.toISOString() ??
-          null;
+          parseFirstValidCivilDatePreservingInstant(
+            remoteAsaasData?.paymentDate,
+            remoteAsaasData?.clientPaymentDate,
+          )?.toISOString() ?? operationalCharge.paidAt?.toISOString() ?? null;
         const effectiveLiquidacaoStatus = resolveStandaloneLiquidacaoStatus({
           displayedStatus: effectiveStatus,
           remotePaymentStatus,

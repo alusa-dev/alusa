@@ -14,7 +14,10 @@ import {
   parseAsaasWebhookPayload,
 } from '@alusa/finance';
 import type { AsaasWebhookPayload } from '@alusa/finance';
-import { emitBillingNotificationCandidate } from '@/lib/notifications/emit-billing-notifications';
+import {
+  emitBillingNotificationCandidate,
+  selectFirstBillingNotificationOccurredAt,
+} from '@/lib/notifications/emit-billing-notifications';
 import { invalidateChargesCache } from '@/lib/cache/invalidation';
 import { logApiOperationalEvent, recordApiResponseMetrics } from '@/lib/observability/api-logger';
 import { processAsaasWebhookPostResponse } from '@/src/server/webhooks/asaas-post-response.service';
@@ -197,11 +200,11 @@ export async function POST(req: NextRequest) {
               event: payload.event,
               eventId: payload.id ?? null,
               asaasPaymentId: payload.payment.id,
-              occurredAt:
-                payload.payment.clientPaymentDate
-                ?? payload.payment.paymentDate
-                ?? payload.payment.creditDate
-                ?? null,
+              occurredAt: selectFirstBillingNotificationOccurredAt([
+                payload.payment.clientPaymentDate,
+                payload.payment.paymentDate,
+                payload.payment.creditDate,
+              ]),
             },
             'ASAAS_WEBHOOK',
           );

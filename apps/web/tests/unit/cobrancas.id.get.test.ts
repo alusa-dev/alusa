@@ -83,6 +83,10 @@ vi.mock('@alusa/finance', () => ({
     }
     return input.status ?? null;
   }),
+  resolveOperationalChargePayment: vi.fn(),
+  mapOperationalStatusToCobrancaDisplay: vi.fn((status: string) =>
+    status === 'PAID' ? 'PAGO' : 'PENDENTE',
+  ),
   reconcileAcademicChargesWithAsaas: vi.fn(async () => ({ items: new Map() })),
   resolveCobrancaDisplayStatus: vi.fn(({ status, asaasStatus }) => ({
     label: asaasStatus === 'RECEIVED_IN_CASH' ? 'Recebido em dinheiro' : status,
@@ -113,7 +117,12 @@ vi.mock('@alusa/finance', () => ({
 
 import { prisma } from '@/lib/prisma';
 import { getSessionUser } from '@/lib/auth/session';
-import { getPayment, isAsaasEnabled, reconcileAcademicChargesWithAsaas } from '@alusa/finance';
+import {
+  getPayment,
+  isAsaasEnabled,
+  reconcileAcademicChargesWithAsaas,
+  resolveOperationalChargePayment,
+} from '@alusa/finance';
 import { GET } from '@/app/api/cobrancas/[id]/route';
 
 describe('GET /api/cobrancas/[id]', () => {
@@ -361,6 +370,92 @@ describe('GET /api/cobrancas/[id]', () => {
         liquidacaoStatus: null,
       },
     });
+  });
+
+  it('usa a primeira data válida do Asaas no detalhe standalone', async () => {
+    vi.mocked(getSessionUser).mockResolvedValue({
+      id: 'u1',
+      contaId: 'conta-1',
+      role: 'FINANCEIRO',
+    } as never);
+
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+      id: 'chg-invalid-date',
+      status: 'PAID',
+      contaId: 'conta-1',
+      asaasPaymentId: 'pay-invalid-date',
+      dueDate: new Date('2030-01-10T00:00:00.000Z'),
+      description: 'Cobrança avulsa',
+      billingType: 'PIX',
+      value: 70.4,
+      customerId: null,
+      payerName: 'Cliente',
+      customer: null,
+    } as never);
+
+    vi.mocked(isAsaasEnabled).mockReturnValueOnce(true);
+    vi.mocked(getPayment).mockResolvedValueOnce({
+      id: 'pay-invalid-date',
+      status: 'CONFIRMED',
+      value: 70.4,
+      paymentDate: '2026-02-30',
+      clientPaymentDate: '2026-10-14',
+      creditDate: null,
+    } as never);
+
+    const response = await GET(new NextRequest('http://localhost/api/cobrancas/chg-invalid-date'), {
+      params: { id: 'chg-invalid-date' },
+    });
+
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.data.dataPagamento).toBe('2026-10-14T12:00:00.000Z');
+  });
+
+  it('usa a primeira data válida do Asaas no detalhe operacional de evento', async () => {
+    vi.mocked(getSessionUser).mockResolvedValue({
+      id: 'u1',
+      contaId: 'conta-1',
+      role: 'FINANCEIRO',
+    } as never);
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(resolveOperationalChargePayment).mockResolvedValueOnce({
+      operationalId: 'event-ticket-sale:sale-1',
+      contaId: 'conta-1',
+      eventId: 'event-1',
+      asaasPaymentId: 'pay-event-1',
+      localStatus: 'PAID',
+      value: 70.4,
+      dueDate: new Date('2026-10-14T11:00:00.000Z'),
+      paidAt: new Date('2026-10-14T11:00:00.000Z'),
+      billingType: 'PIX',
+      invoiceUrl: null,
+      description: 'Evento · 1 ingresso(s)',
+      payerName: 'Cliente',
+      alunoId: null,
+      refundedAmount: 0,
+      eventDetails: null,
+    } as never);
+    vi.mocked(isAsaasEnabled).mockReturnValueOnce(true);
+    vi.mocked(getPayment).mockResolvedValueOnce({
+      id: 'pay-event-1',
+      status: 'CONFIRMED',
+      value: 70.4,
+      paymentDate: '2026-02-30',
+      clientPaymentDate: '2026-10-14',
+      creditDate: null,
+    } as never);
+
+    const response = await GET(
+      new NextRequest('http://localhost/api/cobrancas/event-ticket-sale:sale-1'),
+      { params: { id: 'event-ticket-sale:sale-1' } },
+    );
+
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.data.dataPagamento).toBe('2026-10-14T12:00:00.000Z');
   });
 
   it('classifica cobrança standalone de assinatura como recorrente e usa billingType oficial no detalhe', async () => {

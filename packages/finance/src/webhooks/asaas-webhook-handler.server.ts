@@ -1,6 +1,7 @@
 import { prisma } from '@alusa/database';
 import { Prisma, NotificationType, NotificationCategory, NotificationSeverity, Role } from '@prisma/client';
 import { createNotification } from '@alusa/lib/services/notifications.service';
+import { selectFirstBillingNotificationOccurredAt } from '@alusa/lib/notifications/emit-billing-notifications';
 import { handlePaymentWebhook } from './payment-webhook-handler';
 import { handleTransferWebhook } from './transfer-webhook-handler';
 import { handleSubscriptionWebhook } from './subscription-webhook-handler';
@@ -393,11 +394,11 @@ async function processAsaasWebhookForRecord(params: {
           });
         }
       }
-      const occurredAt = [
+      const occurredAt = selectFirstBillingNotificationOccurredAt([
         payload.payment.clientPaymentDate,
         payload.payment.paymentDate,
         payload.payment.creditDate,
-      ].find((value) => typeof value === 'string' && value.length > 0) ?? null;
+      ])?.toISOString() ?? null;
 
       return {
         ok,

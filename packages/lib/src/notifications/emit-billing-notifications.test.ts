@@ -9,7 +9,10 @@ vi.mock('../services/notifications.service', () => ({
   isBillingNotificationEvent: vi.fn(() => true),
 }));
 
-const { emitBillingNotificationCandidate } = await import('./emit-billing-notifications');
+const {
+  emitBillingNotificationCandidate,
+  selectFirstBillingNotificationOccurredAt,
+} = await import('./emit-billing-notifications');
 
 describe('emit billing notification candidate', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -34,5 +37,19 @@ describe('emit billing notification candidate', () => {
     await expect(emitBillingNotificationCandidate({
       contaId: 'conta-a', event: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-1',
     }, 'ASAAS_WEBHOOK')).resolves.toEqual({ emitted: true });
+  });
+
+  it('usa o primeiro timestamp parseável sem tratar data civil isolada como instante', async () => {
+    mocks.createBillingWebhookNotification.mockResolvedValue({
+      outcome: 'not_applicable', reason: 'event_ticket_payment', notificationId: null,
+      created: false, recipientCount: 0,
+    });
+
+    expect(selectFirstBillingNotificationOccurredAt([
+      'not-a-date',
+      '2026-03-27',
+      '2026-03-28 10:30:00',
+      '2026-03-29T12:00:00Z',
+    ])).toEqual(new Date('2026-03-28T13:30:00.000Z'));
   });
 });
