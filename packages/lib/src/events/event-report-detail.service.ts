@@ -106,10 +106,47 @@ export async function getEventReportDetail(
       where: { contaId, eventId, id: { in: studentEntryIds } },
       select: {
         id: true, dueDate: true, status: true, netAmount: true, actualAmount: true,
-        refundedAmount: true, asaasPaymentId: true, realizedAt: true,
+        refundedAmount: true, asaasPaymentId: true, realizedAt: true, type: true,
+        originType: true, category: true, originId: true, expectedAmount: true,
       },
     })
     : [];
+
+  // Legacy registration entries are still stored as MANUAL revenue. Only active
+  // participant links are adjusted because their obligations are represented in
+  // these report totals; originId is not guaranteed to contain the entry id.
+  const linkedLegacyEntries = studentEntries.filter((entry) => entry.type === 'REVENUE' && entry.originType === 'MANUAL');
+  const linkedLegacyByGroup = new Map<string, typeof linkedLegacyEntries>();
+  for (const entry of linkedLegacyEntries) {
+    const key = JSON.stringify([entry.type, entry.status, entry.category, entry.originType, entry.originId]);
+    const group = linkedLegacyByGroup.get(key) ?? [];
+    group.push(entry);
+    linkedLegacyByGroup.set(key, group);
+  }
+  const subtractLinkedAmount = (grouped: Prisma.Decimal | null, linked: typeof linkedLegacyEntries[number][], field: 'expectedAmount' | 'actualAmount' | 'refundedAmount' | 'netAmount') => {
+    if (grouped == null) return null;
+    const linkedTotal = linked.reduce((sum, entry) => sum.add(new Prisma.Decimal(entry[field] ?? 0)), new Prisma.Decimal(0));
+    return new Prisma.Decimal(grouped).sub(linkedTotal);
+  };
+  const adjustedEntries = entries.map((entry) => {
+    const key = JSON.stringify([entry.type, entry.status, entry.category, entry.originType, entry.originId]);
+    const linked = linkedLegacyByGroup.get(key);
+    if (!linked?.length) return entry;
+    return {
+      ...entry,
+      _sum: {
+        expectedAmount: subtractLinkedAmount(entry._sum.expectedAmount, linked, 'expectedAmount'),
+        actualAmount: subtractLinkedAmount(entry._sum.actualAmount, linked, 'actualAmount'),
+        refundedAmount: subtractLinkedAmount(entry._sum.refundedAmount, linked, 'refundedAmount'),
+        netAmount: subtractLinkedAmount(entry._sum.netAmount, linked, 'netAmount'),
+      },
+    };
+  }).filter((entry) => {
+    const key = JSON.stringify([entry.type, entry.status, entry.category, entry.originType, entry.originId]);
+    if (!linkedLegacyByGroup.has(key)) return true;
+    return [entry._sum.expectedAmount, entry._sum.actualAmount, entry._sum.refundedAmount, entry._sum.netAmount]
+      .some((amount) => amount != null && !amount.isZero());
+  });
   const assignmentEntryIds = [...new Set(costumeAssignments.map((assignment) => assignment.revenueEntryId).filter((id): id is string => Boolean(id)))];
   const assignmentEntries = assignmentEntryIds.length
     ? await db.eventFinancialEntry.findMany({
@@ -266,7 +303,7 @@ export async function getEventReportDetail(
     .sort((a, b) => b.quantity - a.quantity || a.sectorName.localeCompare(b.sectorName, 'pt-BR'));
 
   const hasParticipantObligations = activeParticipants._count._all > 0;
-  const relevantEntryGroups = entries.filter((entry) =>
+  const relevantEntryGroups = adjustedEntries.filter((entry) =>
     !['TICKET_SALE', 'EVENT_REGISTRATION'].includes(entry.originType)
     && !(hasParticipantObligations && isUnlinkedEventParticipantFeeEntry({
       type: entry.type,
