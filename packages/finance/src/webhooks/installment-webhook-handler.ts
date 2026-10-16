@@ -109,6 +109,11 @@ async function computeStatusViaAsaas(params: {
       !page ||
       typeof page.hasMore !== 'boolean' ||
       !Array.isArray(page.data) ||
+      !Number.isInteger(page.limit) ||
+      page.limit <= 0 ||
+      page.limit > pageSize ||
+      page.offset !== offset ||
+      page.data.length > page.limit ||
       !Number.isInteger(page.totalCount) ||
       page.totalCount < 0 ||
       (expectedTotalCount !== undefined && page.totalCount !== expectedTotalCount)
@@ -162,7 +167,7 @@ async function computeStatusViaAsaas(params: {
       break;
     }
 
-    offset += pageSize;
+    offset = page.offset + page.data.length;
 
     // fail-safe: evitar loop infinito caso a API retorne dados inconsistentes
     if (offset > 10_000) {

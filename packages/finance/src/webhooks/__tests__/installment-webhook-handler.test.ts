@@ -219,6 +219,50 @@ describe('handleInstallmentWebhook', () => {
     });
   });
 
+  it('deve avançar pelo tamanho efetivo da página informado pelo Asaas', async () => {
+    const { prisma, loadAsaasCredentials } = await import('@alusa/database');
+    const { getInstallment, listInstallmentPayments } = await import('@alusa/asaas');
+
+    vi.mocked(prisma.installmentPlan.findFirst).mockResolvedValueOnce({
+      id: 'ip-effective-page-size',
+      status: 'ACTIVE',
+      statusUpdatedAt: new Date('2026-01-01T00:00:00.000Z'),
+      asaasInstallmentId: 'asaas-inst-effective-page-size',
+      externalReference: 'installmentPlan:ip-effective-page-size',
+      installmentCount: 3,
+    } as never);
+    vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'sandbox_x' } as never);
+    vi.mocked(getInstallment).mockResolvedValueOnce({ id: 'asaas-inst-effective-page-size', deleted: false } as never);
+    vi.mocked(listInstallmentPayments).mockImplementation(async ({ offset = 0 }) => ({
+      object: 'list',
+      hasMore: offset === 0,
+      totalCount: 3,
+      limit: 2,
+      offset,
+      data: (offset === 0
+        ? [
+            { id: 'pay-effective-1', status: 'RECEIVED', deleted: false },
+            { id: 'pay-effective-2', status: 'RECEIVED', deleted: false },
+          ]
+        : [{ id: 'pay-effective-3', status: 'RECEIVED', deleted: false }]),
+    }) as never);
+
+    const res = await handleInstallmentWebhook('t1', {
+      event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay-effective-3',
+        status: 'CONFIRMED',
+        externalReference: 'installmentPlan:ip-effective-page-size',
+        installment: 'asaas-inst-effective-page-size',
+        installmentNumber: 3,
+      },
+    });
+
+    expect(res.success).toBe(true);
+    expect(listInstallmentPayments).toHaveBeenNthCalledWith(1, expect.objectContaining({ offset: 0, limit: 100 }));
+    expect(listInstallmentPayments).toHaveBeenNthCalledWith(2, expect.objectContaining({ offset: 2, limit: 100 }));
+  });
+
   it('deve solicitar retry quando há installmentId mas faltam credenciais Asaas', async () => {
     const { prisma, loadAsaasCredentials } = await import('@alusa/database');
     const { getInstallment, listInstallmentPayments } = await import('@alusa/asaas');
@@ -313,7 +357,7 @@ describe('handleInstallmentWebhook', () => {
       object: 'list',
       hasMore: true,
       totalCount: 10_101,
-      limit: 0,
+      limit: 100,
       offset,
       data: Array.from({ length: 100 }, (_, index) => ({
         id: `pay-${offset + index}`,

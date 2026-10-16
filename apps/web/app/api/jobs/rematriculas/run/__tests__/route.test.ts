@@ -9,6 +9,7 @@ const {
   materializeRenewalContractsMock,
   processRenewalOutboxMock,
   provisionFutureFinancialAgreementsMock,
+  logJobFailureMock,
   logJobResultMock,
 } = vi.hoisted(() => ({
   resolveTenantScopeMock: vi.fn(),
@@ -17,6 +18,7 @@ const {
   materializeRenewalContractsMock: vi.fn(),
   processRenewalOutboxMock: vi.fn(),
   provisionFutureFinancialAgreementsMock: vi.fn(),
+  logJobFailureMock: vi.fn(),
   logJobResultMock: vi.fn(),
 }));
 
@@ -26,7 +28,10 @@ vi.mock('next/server', () => ({
 vi.mock('@/lib/auth/tenant-scope', () => ({ resolveTenantScope: resolveTenantScopeMock }));
 vi.mock('@/src/server/jobs/job-observability', () => ({
   resolveTenantScopeForJob: (_name: string, resolve: () => unknown) => resolve(),
-  startJobRun: vi.fn(() => ({ startedAt: Date.now(), correlationId: 'test-run-id' })), logJobResult: logJobResultMock }));
+  startJobRun: vi.fn(() => ({ startedAt: Date.now(), correlationId: 'test-run-id' })),
+  logJobFailure: logJobFailureMock,
+  logJobResult: logJobResultMock,
+}));
 vi.mock('@/src/server/enrollments/renewal-job-commands.service', () => ({
   activateRenewalProcessesFromJob: activateRenewalProcessesMock,
   listRenewalJobContaIds: listRenewalJobContaIdsMock,
@@ -86,6 +91,24 @@ describe('GET /api/jobs/rematriculas/run', () => {
       }),
       expect.objectContaining({ partialFailure: false, attentionRequired: true }),
     );
+  });
+
+  it('registra falha quando a enumeração de contas falha após iniciar o job', async () => {
+    resolveTenantScopeMock.mockResolvedValueOnce({ ok: true, contaId: null });
+    const error = new Error('private database failure');
+    listRenewalJobContaIdsMock.mockRejectedValueOnce(error);
+
+    const response = await GET(new Request('http://localhost/api/jobs/rematriculas/run'));
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body).toMatchObject({ error: { code: 'ERRO_JOB' } });
+    expect(logJobFailureMock).toHaveBeenCalledWith(
+      'rematriculas-run',
+      expect.objectContaining({ correlationId: 'test-run-id' }),
+      error,
+    );
+    expect(logJobResultMock).not.toHaveBeenCalled();
   });
 
   it('registra falhas parciais sem incluir ids ou mensagens no log', async () => {

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { resolveTenantScopeForJob, startJobRun, logJobResult } from '@/src/server/jobs/job-observability';
+import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } from '@/src/server/jobs/job-observability';
 
 import { reconcileMatriculaCancellationsJobQueryDTOSchema } from '@/features/jobs/dtos';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
@@ -19,54 +19,62 @@ export async function POST(req: Request) {
   }));
   if (!scope.ok) return scope.response;
   const startedAt = startJobRun('reconcile-matricula-cancellations');
-  const query = reconcileMatriculaCancellationsJobQueryDTOSchema.parse({
-    contaId: url.searchParams.get('contaId'),
-    maxAccounts: url.searchParams.get('maxAccounts'),
-    limit: url.searchParams.get('limit'),
-  });
+  try {
+    const query = reconcileMatriculaCancellationsJobQueryDTOSchema.parse({
+      contaId: url.searchParams.get('contaId'),
+      maxAccounts: url.searchParams.get('maxAccounts'),
+      limit: url.searchParams.get('limit'),
+    });
 
-  const maxAccounts = query.maxAccounts;
-  const limit = query.limit;
-  const contaIds = scope.contaId
-    ? [scope.contaId]
-    : await listContasWithPendingMatriculaCancellations({ maxAccounts });
+    const maxAccounts = query.maxAccounts;
+    const limit = query.limit;
+    const contaIds = scope.contaId
+      ? [scope.contaId]
+      : await listContasWithPendingMatriculaCancellations({ maxAccounts });
 
-  const results = [];
-  const errors: Array<{ contaId: string; error: string }> = [];
+    const results = [];
+    const errors: Array<{ contaId: string; error: string }> = [];
 
-  for (const contaId of contaIds) {
-    try {
-      results.push({
-        contaId,
-        ...(await reconcilePendingMatriculaCancellations({ contaId, limit })),
-      });
-    } catch {
-      errors.push({
-        contaId,
-        error: 'Não foi possível reconciliar os cancelamentos desta conta.',
-      });
+    for (const contaId of contaIds) {
+      try {
+        results.push({
+          contaId,
+          ...(await reconcilePendingMatriculaCancellations({ contaId, limit })),
+        });
+      } catch {
+        errors.push({
+          contaId,
+          error: 'Não foi possível reconciliar os cancelamentos desta conta.',
+        });
+      }
     }
+
+    const processed = results.reduce((total, result) => total + result.processed, 0);
+    const reconciled = results.reduce((total, result) => total + result.reconciled.length, 0);
+    const failed = errors.length + results.reduce((total, result) => total + result.errors.length, 0);
+    logJobResult('reconcile-matricula-cancellations', startedAt, {
+      processedAccounts: contaIds.length,
+      processed,
+      reconciled,
+      failed,
+    }, {
+      partialFailure: failed > 0,
+      workStatus: processed > 0 ? 'worked' : failed > 0 ? 'unknown' : 'empty',
+    });
+
+    return NextResponse.json({
+      success: true,
+      processedAccounts: contaIds.length,
+      results,
+      errors,
+    });
+  } catch (error) {
+    logJobFailure('reconcile-matricula-cancellations', startedAt, error);
+    return NextResponse.json(
+      { error: { code: 'ERRO_JOB', message: 'Não foi possível reconciliar os cancelamentos de matrícula.' } },
+      { status: 500, headers: { 'cache-control': 'no-store' } },
+    );
   }
-
-  const processed = results.reduce((total, result) => total + result.processed, 0);
-  const reconciled = results.reduce((total, result) => total + result.reconciled.length, 0);
-  const failed = errors.length + results.reduce((total, result) => total + result.errors.length, 0);
-  logJobResult('reconcile-matricula-cancellations', startedAt, {
-    processedAccounts: contaIds.length,
-    processed,
-    reconciled,
-    failed,
-  }, {
-    partialFailure: failed > 0,
-    workStatus: processed > 0 ? 'worked' : failed > 0 ? 'unknown' : 'empty',
-  });
-
-  return NextResponse.json({
-    success: true,
-    processedAccounts: contaIds.length,
-    results,
-    errors,
-  });
 }
 
 export async function GET(req: Request) {
