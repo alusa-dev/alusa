@@ -34,6 +34,8 @@ const txMock = {
 
 const prismaMock = {
   $transaction: vi.fn(async (callback: (_tx: typeof txMock) => unknown) => callback(txMock)),
+  conta: { findUnique: vi.fn() },
+  asaasResourceOrigin: { findUnique: vi.fn() },
   cobranca: {
     findUnique: vi.fn(),
     findFirst: vi.fn(),
@@ -90,6 +92,8 @@ describe('notifications.service', () => {
     prismaMock.cobranca.findUnique.mockResolvedValue(null);
     prismaMock.cobranca.findFirst.mockResolvedValue(null);
     prismaMock.cobranca.findMany.mockResolvedValue([]);
+    prismaMock.conta.findUnique.mockResolvedValue({ financeIntegrationMode: 'WHITELABEL_BAAS' });
+    prismaMock.asaasResourceOrigin.findUnique.mockResolvedValue(null);
     prismaMock.charge.findUnique.mockResolvedValue(null);
     prismaMock.eventMapOrder.findFirst.mockResolvedValue(null);
     prismaMock.eventTicketSale.findMany.mockResolvedValue([]);
@@ -98,6 +102,113 @@ describe('notifications.service', () => {
     prismaMock.notificationRecipient.findMany.mockResolvedValue([]);
     prismaMock.notificationRecipient.count.mockResolvedValue(0);
     prismaMock.auditLog.create.mockResolvedValue({ id: 'audit-1' });
+  });
+
+  it.each(['', 'panel-reference-123'])('skips an unlinked panel payment without enqueueing entity_missing (%s)', async (externalReference) => {
+    prismaMock.conta.findUnique.mockResolvedValueOnce({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' });
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-external', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-panel',
+      externalReference: externalReference || null,
+    });
+
+    expect(result).toEqual({
+      outcome: 'not_applicable', reason: 'external_account_unlinked_payment',
+      notificationId: null, created: false, recipientCount: 0,
+    });
+    expect(enqueuePending).not.toHaveBeenCalled();
+  });
+
+  it('keeps a canonical Alusa reference in pending inbox when the local charge is missing', async () => {
+    prismaMock.conta.findUnique.mockResolvedValueOnce({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' });
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-external', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-alusa-missing',
+      externalReference: 'alusa:subscription:mat-a:plan-a',
+    });
+
+    expect(result.outcome).toBe('entity_missing');
+    expect(enqueuePending).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-external', asaasPaymentId: 'pay-alusa-missing',
+      externalReference: 'alusa:subscription:mat-a:plan-a',
+    }));
+  });
+
+  it('keeps an unreferenced payment classified ALUSA in pending inbox', async () => {
+    prismaMock.asaasResourceOrigin.findUnique.mockResolvedValueOnce({ origin: 'ALUSA' });
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-alusa-classified',
+    });
+
+    expect(result.outcome).toBe('entity_missing');
+    expect(enqueuePending).toHaveBeenCalledWith(expect.objectContaining({ asaasPaymentId: 'pay-alusa-classified' }));
+  });
+
+  it('makes mode decisions independently for the same provider payment ID across tenants', async () => {
+    prismaMock.conta.findUnique
+      .mockResolvedValueOnce({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' })
+      .mockResolvedValueOnce({ financeIntegrationMode: 'WHITELABEL_BAAS' });
+
+    const externalTenant = await createBillingWebhookNotification({
+      contaId: 'conta-external', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-shared-id',
+    });
+    const whitelabelTenant = await createBillingWebhookNotification({
+      contaId: 'conta-whitelabel', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-shared-id',
+    });
+
+    expect(externalTenant.outcome).toBe('not_applicable');
+    expect(whitelabelTenant.outcome).toBe('entity_missing');
+    expect(enqueuePending).toHaveBeenCalledTimes(1);
+    expect(enqueuePending).toHaveBeenCalledWith(expect.objectContaining({ contaId: 'conta-whitelabel' }));
+  });
+
+  it('rejects an EXTERNAL payment origin mapped to a local Cobranca', async () => {
+    prismaMock.asaasResourceOrigin.findUnique.mockResolvedValueOnce({ origin: 'EXTERNAL' });
+    prismaMock.cobranca.findFirst.mockResolvedValueOnce({
+      id: 'cobranca-local',
+      matriculaId: 'matricula-local',
+      valor: 75,
+      vencimento: new Date('2026-03-13T12:00:00.000Z'),
+      descricao: 'Mensalidade',
+      formaPagamento: 'PIX',
+      matricula: { id: 'matricula-local', aluno: { contaId: 'conta-a', id: 'aluno-a', nome: 'Aluno A' } },
+    });
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-external-local-cobranca',
+    });
+
+    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'external_origin_conflict' });
+    expect(prismaMock.asaasResourceOrigin.findUnique).toHaveBeenCalledWith({
+      where: { uq_asaas_resource_origin_tenant_resource: {
+        contaId: 'conta-a', resourceType: 'PAYMENT', asaasId: 'pay-external-local-cobranca',
+      } },
+      select: { origin: true },
+    });
+    expect(txMock.notification.createMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects an EXTERNAL payment origin mapped to a local Charge', async () => {
+    prismaMock.asaasResourceOrigin.findUnique.mockResolvedValueOnce({ origin: 'EXTERNAL' });
+    prismaMock.charge.findUnique.mockResolvedValueOnce({
+      id: 'charge-local', contaId: 'conta-a', value: 75,
+      dueDate: new Date('2026-03-13T12:00:00.000Z'), description: 'Mensalidade',
+      payerName: 'Aluno A', cobrancaId: null, billingType: 'PIX',
+    });
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-external-local-charge',
+    });
+
+    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'external_origin_conflict' });
+    expect(prismaMock.asaasResourceOrigin.findUnique).toHaveBeenCalledWith({
+      where: { uq_asaas_resource_origin_tenant_resource: {
+        contaId: 'conta-a', resourceType: 'PAYMENT', asaasId: 'pay-external-local-charge',
+      } },
+      select: { origin: true },
+    });
+    expect(txMock.notification.createMany).not.toHaveBeenCalled();
   });
 
   it('cria notificacao e resolve destinatarios por role', async () => {

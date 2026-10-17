@@ -129,7 +129,7 @@ async function findChargeMappingForMatricula(input: {
  * Resolver de Payment do Asaas → Entidade Local
  * Usa ordem de precedência determinística
  */
-export async function resolvePaymentToLocalEntity(
+async function resolvePaymentToLocalEntityForMappings(
   input: PaymentResolveInput
 ): Promise<PaymentResolveResult> {
   const { contaId, asaasPaymentId, externalReference } = input;
@@ -251,14 +251,14 @@ export async function resolvePaymentToLocalEntity(
         }
         return cobrancaId
           ? { type: 'cobranca', cobrancaId }
-          : { type: 'not_found', reason: 'subscription_reference_without_unique_charge' };
+          : { type: 'not_found', reason: 'alusa_subscription_without_local_entity' };
       }
 
       // A canonical academic subscription reference is authoritative. Do not
       // let a Charge found by provider ID or raw externalReference turn an
       // unresolved/conflicting academic payment into a standalone payment.
       if (!subscriptionByReference) {
-        return { type: 'not_found', reason: 'subscription_reference_without_unique_charge' };
+        return { type: 'not_found', reason: 'alusa_subscription_without_local_entity' };
       }
     }
 
@@ -547,7 +547,7 @@ export async function resolvePaymentToLocalEntity(
   // exact Subscription nor a payment-ID mapping was found, do not guess from
   // the provider subscription ID or an installment reference.
   if (isCanonicalV2SubscriptionReference) {
-    return { type: 'not_found', reason: 'subscription_reference_without_unique_charge' };
+    return { type: 'not_found', reason: 'alusa_subscription_without_local_entity' };
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -689,10 +689,56 @@ export async function resolvePaymentToLocalEntity(
     return { type: 'not_found', reason: 'alusa_resource_expected_but_local_entity_missing' };
   }
 
+  const conta = await prisma.conta.findUnique({
+    where: { id: contaId },
+    select: { financeIntegrationMode: true },
+  });
+  if (conta?.financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT') {
+    return { type: 'external', resourceType: 'PAYMENT', asaasId: asaasPaymentId };
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Não encontrado
   // ─────────────────────────────────────────────────────────────────────────
   return { type: 'unknown', reason: 'no_matching_entity_or_origin' };
+}
+
+/**
+ * Keeps origin classification tenant scoped and treats an EXTERNAL origin that
+ * contradicts an existing local mapping as a reconciliation conflict.
+ */
+export async function resolvePaymentToLocalEntity(
+  input: PaymentResolveInput,
+): Promise<PaymentResolveResult> {
+  const result = await resolvePaymentToLocalEntityForMappings(input);
+  if (!['cobranca', 'charge', 'subscription', 'installmentPlan'].includes(result.type)) {
+    return result;
+  }
+
+  const origins = await Promise.all([
+    prisma.asaasResourceOrigin.findUnique({
+      where: { uq_asaas_resource_origin_tenant_resource: {
+        contaId: input.contaId, resourceType: 'PAYMENT', asaasId: input.asaasPaymentId,
+      } },
+      select: { origin: true },
+    }),
+    ...(input.asaasSubscriptionId ? [prisma.asaasResourceOrigin.findUnique({
+      where: { uq_asaas_resource_origin_tenant_resource: {
+        contaId: input.contaId, resourceType: 'SUBSCRIPTION', asaasId: input.asaasSubscriptionId,
+      } },
+      select: { origin: true },
+    })] : []),
+    ...(input.asaasInstallmentId ? [prisma.asaasResourceOrigin.findUnique({
+      where: { uq_asaas_resource_origin_tenant_resource: {
+        contaId: input.contaId, resourceType: 'INSTALLMENT', asaasId: input.asaasInstallmentId,
+      } },
+      select: { origin: true },
+    })] : []),
+  ]);
+  if (origins.some((origin) => origin?.origin === 'EXTERNAL')) {
+    return { type: 'conflict', reason: 'payment_id_mapped_to_different_entity' };
+  }
+  return result;
 }
 
 /**

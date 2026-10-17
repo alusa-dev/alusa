@@ -19,6 +19,9 @@ export type PendingBillingWebhookPayload = {
   eventId?: string | null;
   eventName: BillingNotificationEventInput;
   asaasPaymentId: string;
+  asaasSubscriptionId?: string | null;
+  asaasInstallmentId?: string | null;
+  externalReference?: string | null;
   occurredAt?: string | null;
   sourceType?: 'ASAAS_WEBHOOK' | 'ASAAS_SYNC';
 };
@@ -32,6 +35,9 @@ const pendingBillingWebhookPayloadSchema = z.object({
   eventId: z.string().nullable().optional(),
   eventName: z.string().min(1).refine(isBillingNotificationEvent),
   asaasPaymentId: z.string().min(1),
+  asaasSubscriptionId: z.string().nullable().optional(),
+  asaasInstallmentId: z.string().nullable().optional(),
+  externalReference: z.string().nullable().optional(),
   occurredAt: z.string().nullable().optional(),
   sourceType: z.enum(['ASAAS_WEBHOOK', 'ASAAS_SYNC']).optional(),
 });
@@ -270,6 +276,9 @@ export async function processPendingInboxNotifications(params?: {
         eventId: payload.eventId ?? null,
         eventName: payload.eventName,
         asaasPaymentId: payload.asaasPaymentId,
+        asaasSubscriptionId: payload.asaasSubscriptionId ?? null,
+        asaasInstallmentId: payload.asaasInstallmentId ?? null,
+        externalReference: payload.externalReference ?? null,
         occurredAt: payload.occurredAt ? new Date(payload.occurredAt) : undefined,
         sourceType: payload.sourceType ?? 'ASAAS_WEBHOOK',
       });

@@ -94,4 +94,12 @@ describe('processAsaasWebhookQueue notification timestamp', () => {
       occurredAt: '2026-03-28T13:30:00.000Z',
     })]);
   });
+
+  it('does not create a billing notification candidate for an ignored external panel payment', async () => {
+    mocks.payment.mockResolvedValue({ success: true, skipped: true, skipReason: 'EXTERNAL_PAYMENT_IGNORED' });
+
+    const result = await processAsaasWebhookQueue({ contaId: 'conta-a', limit: 1 });
+
+    expect(result.processedPayments).toEqual([]);
+  });
 });

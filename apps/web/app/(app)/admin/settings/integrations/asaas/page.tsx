@@ -35,6 +35,10 @@ export default async function AsaasIntegrationManagementPage() {
           Gerencie a API key da conta existente do Asaas, acompanhe o vínculo da conta conectada e
           substitua a credencial quando necessário.
         </p>
+        <p className="mt-2 text-sm text-gray-600">
+          Cobranças criadas diretamente no painel do Asaas, sem vínculo com uma cobrança Alusa, não
+          alteram o financeiro local. Uma referência preenchida no painel, por si só, não cria esse vínculo.
+        </p>
       </header>
 
       <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

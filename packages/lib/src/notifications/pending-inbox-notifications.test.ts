@@ -79,6 +79,21 @@ describe('pending inbox notifications', () => {
     expect(String(mocks.queryRaw.mock.calls[0]?.[0]?.sql ?? '')).toContain('SKIP LOCKED');
   });
 
+  it('preserva contexto opcional de origem ao reprocessar notification pendente', async () => {
+    mocks.queryRaw.mockResolvedValue([row({ payload: {
+      contaId: 'conta-1', eventName: 'PAYMENT_CONFIRMED', asaasPaymentId: 'pay-1',
+      asaasSubscriptionId: 'sub-1', asaasInstallmentId: 'inst-1',
+      externalReference: 'alusa:subscription:mat-1:plan-1',
+    } })]);
+
+    await processPendingInboxNotifications({ contaId: 'conta-1', limit: 10 });
+
+    expect(mocks.createBillingWebhookNotification).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', asaasPaymentId: 'pay-1', asaasSubscriptionId: 'sub-1',
+      asaasInstallmentId: 'inst-1', externalReference: 'alusa:subscription:mat-1:plan-1',
+    }));
+  });
+
   it('não permite que o payload troque o tenant persistido na fila', async () => {
     mocks.queryRaw.mockResolvedValue([row({ payload: {
       contaId: 'conta-2',

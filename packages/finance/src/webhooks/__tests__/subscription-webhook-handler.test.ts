@@ -9,6 +9,7 @@ import { handleSubscriptionWebhook } from '../subscription-webhook-handler';
 vi.mock('@alusa/database', () => {
   return {
     prisma: {
+      conta: { findUnique: vi.fn(async () => ({ financeIntegrationMode: 'WHITELABEL_BAAS' })) },
       subscription: {
         findFirst: vi.fn(),
         update: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock('@alusa/database', () => {
         update: vi.fn(),
       },
       billingAgreement: {
+        findFirst: vi.fn(),
         updateMany: vi.fn(async () => ({ count: 0 })),
       },
       asaasIntegrationJob: {
@@ -38,6 +40,7 @@ vi.mock('@alusa/database', () => {
         findFirst: vi.fn(),
         updateMany: vi.fn(async () => ({ count: 1 })),
       },
+      acordoFinanceiroFuturo: { findFirst: vi.fn() },
     },
   };
 });
@@ -53,6 +56,75 @@ vi.mock('../../realtime/finance-realtime-publisher', () => ({
 describe('handleSubscriptionWebhook', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('ignora assinatura criada no painel sem vínculo no modo conta externa', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.conta.findUnique).mockResolvedValueOnce({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' } as never);
+
+    const result = await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_CREATED', eventId: 'evt-panel-sub',
+      subscription: { id: 'sub-panel', status: 'ACTIVE', externalReference: 'referencia-arbitraria' },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(prisma.billingAgreement.updateMany).not.toHaveBeenCalled();
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(issueMocks.upsertFinanceReconciliationIssue).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Subscription', 'subscription', 'subscription-local'],
+    ['StandaloneSubscription', 'standaloneSubscription', 'standalone-local'],
+    ['BillingAgreement', 'billingAgreement', 'billing-agreement-local'],
+    ['Matricula', 'matricula', 'matricula-local'],
+    ['EnrollmentCreationOperation', 'enrollmentCreationOperation', 'enrollment-operation-local'],
+    ['AcordoFinanceiroFuturo', 'acordoFinanceiroFuturo', 'future-agreement-local'],
+  ] as const)('gera alerta HIGH sem mutação para origin EXTERNAL vinculado a %s', async (_label, modelName, entityId) => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValueOnce({ origin: 'EXTERNAL' } as never);
+    const model = prisma[modelName] as { findFirst: ReturnType<typeof vi.fn> };
+    model.findFirst.mockResolvedValueOnce({ id: entityId } as never);
+
+    const result = await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_UPDATED', eventId: `evt-conflict-${entityId}`,
+      subscription: { id: 'sub-shared', status: 'INACTIVE' },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(model.findFirst).toHaveBeenCalledWith({
+      where: { contaId: 'conta-a', asaasSubscriptionId: 'sub-shared' }, select: { id: true },
+    });
+    expect(prisma.billingAgreement.updateMany).not.toHaveBeenCalled();
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(prisma.standaloneSubscription.update).not.toHaveBeenCalled();
+    expect(prisma.matricula.updateMany).not.toHaveBeenCalled();
+    expect(prisma.enrollmentCreationOperation.updateMany).not.toHaveBeenCalled();
+    expect(issueMocks.upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-a', entityId, asaasId: 'sub-shared', severity: 'HIGH',
+      metadata: expect.objectContaining({ reason: 'external_origin_conflicts_with_local_subscription' }),
+    }));
+  });
+
+  it('não muta assinatura local quando origin EXTERNAL conflita com referência canônica', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValueOnce({ origin: 'EXTERNAL' } as never);
+
+    const result = await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_UPDATED', eventId: 'evt-canonical-external',
+      subscription: {
+        id: 'sub-canonical-external', status: 'ACTIVE',
+        externalReference: 'alusa:subscription:mat-a:plan-a',
+      },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(prisma.billingAgreement.updateMany).not.toHaveBeenCalled();
+    expect(prisma.subscription.findFirst).not.toHaveBeenCalled();
+    expect(issueMocks.upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-a', asaasId: 'sub-canonical-external', severity: 'HIGH',
+      metadata: expect.objectContaining({ reason: 'canonical_alusa_reference_classified_external' }),
+    }));
   });
 
   it('persiste triagem idempotente quando assinatura UNKNOWN não possui referência local', async () => {

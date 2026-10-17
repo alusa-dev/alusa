@@ -415,6 +415,8 @@ export async function reconcileMissingBillingNotificationSideEffects(
       evento: true,
       eventId: true,
       asaasPaymentId: true,
+      asaasSubscriptionId: true,
+      payload: true,
       recebidoEm: true,
     },
   });
@@ -429,6 +431,18 @@ export async function reconcileMissingBillingNotificationSideEffects(
     }
 
     eligible += 1;
+    const webhookPayload = webhook.payload && typeof webhook.payload === 'object' && 'payment' in webhook.payload
+      ? webhook.payload.payment
+      : null;
+    const paymentPayload = webhookPayload && typeof webhookPayload === 'object' ? webhookPayload : null;
+    const externalReference = paymentPayload && 'externalReference' in paymentPayload &&
+      typeof paymentPayload.externalReference === 'string'
+      ? paymentPayload.externalReference
+      : null;
+    const asaasInstallmentId = paymentPayload && 'installment' in paymentPayload &&
+      typeof paymentPayload.installment === 'string'
+      ? paymentPayload.installment
+      : null;
     const result = await enqueueBillingNotificationSideEffects({
       contaId: webhook.contaId,
       sourceType: 'ASAAS_WEBHOOK',
@@ -438,6 +452,9 @@ export async function reconcileMissingBillingNotificationSideEffects(
         event: webhook.evento,
         eventId: webhook.eventId,
         asaasPaymentId: webhook.asaasPaymentId,
+        asaasSubscriptionId: webhook.asaasSubscriptionId,
+        asaasInstallmentId,
+        externalReference,
         occurredAt: webhook.recebidoEm,
       }],
     });

@@ -162,9 +162,101 @@ export async function handleSubscriptionWebhook(
   payload: SubscriptionWebhookPayload
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    const externalReference = payload.subscription.externalReference;
+    const hasCanonicalAlusaReference = Boolean(externalReference && (
+      externalReference.startsWith('alusa:') || externalReference.startsWith('subscription:') ||
+      externalReference.startsWith('standalone-subscription:') || externalReference.startsWith('enrollment-op:')
+    ));
+    const [origin, conta] = await Promise.all([
+      prisma.asaasResourceOrigin.findUnique({
+        where: { uq_asaas_resource_origin_tenant_resource: {
+          contaId, resourceType: 'SUBSCRIPTION', asaasId: payload.subscription.id,
+        } },
+        select: { origin: true },
+      }),
+      prisma.conta.findUnique({ where: { id: contaId }, select: { financeIntegrationMode: true } }),
+    ]);
+
+    if (origin?.origin === 'EXTERNAL' && hasCanonicalAlusaReference) {
+      await upsertFinanceReconciliationIssue({
+        contaId,
+        entityType: 'SUBSCRIPTION',
+        entityId: null,
+        asaasId: payload.subscription.id,
+        issueType: 'SUBSCRIPTION_NEEDS_REVIEW',
+        severity: 'HIGH',
+        localStatus: null,
+        remoteStatus: payload.subscription.status ?? null,
+        causeId: payload.eventId,
+        metadata: {
+          source: 'subscription-webhook-handler',
+          reason: 'canonical_alusa_reference_classified_external',
+          event: payload.event,
+          externalReference,
+        },
+      });
+      logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.webhook.subscription.origin_classification_conflict' });
+      return { success: true };
+    }
+
+    if (origin?.origin === 'EXTERNAL' || (
+      conta?.financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT' && !hasCanonicalAlusaReference
+    )) {
+      const [localSubscription, localStandaloneSubscription, localBillingAgreement,
+        localMatricula, localEnrollmentOperation, localFutureAgreement] = await Promise.all([
+        prisma.subscription.findFirst({
+          where: { contaId, asaasSubscriptionId: payload.subscription.id }, select: { id: true },
+        }),
+        prisma.standaloneSubscription.findFirst({
+          where: { contaId, asaasSubscriptionId: payload.subscription.id }, select: { id: true },
+        }),
+        prisma.billingAgreement.findFirst({
+          where: { contaId, asaasSubscriptionId: payload.subscription.id }, select: { id: true },
+        }),
+        prisma.matricula.findFirst({
+          where: { contaId, asaasSubscriptionId: payload.subscription.id }, select: { id: true },
+        }),
+        prisma.enrollmentCreationOperation.findFirst({
+          where: { contaId, asaasSubscriptionId: payload.subscription.id }, select: { id: true },
+        }),
+        prisma.acordoFinanceiroFuturo.findFirst({
+          where: { contaId, asaasSubscriptionId: payload.subscription.id }, select: { id: true },
+        }),
+      ]);
+      const localEntity = localSubscription ?? localStandaloneSubscription ?? localBillingAgreement ??
+        localMatricula ?? localEnrollmentOperation ?? localFutureAgreement;
+      if (origin?.origin === 'EXTERNAL') {
+        if (localEntity) {
+          await upsertFinanceReconciliationIssue({
+            contaId,
+            entityType: 'SUBSCRIPTION',
+            entityId: localEntity.id,
+            asaasId: payload.subscription.id,
+            issueType: 'SUBSCRIPTION_NEEDS_REVIEW',
+            severity: 'HIGH',
+            localStatus: null,
+            remoteStatus: payload.subscription.status ?? null,
+            causeId: payload.eventId,
+            metadata: {
+              source: 'subscription-webhook-handler',
+              reason: 'external_origin_conflicts_with_local_subscription',
+              event: payload.event,
+            },
+          });
+          logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.webhook.subscription.origin_classification_conflict' });
+          return { success: true };
+        }
+        logFinanceOperationalEvent({ severity: 'info', eventName: 'finance.webhook.subscription.external_resource_observed' });
+        return { success: true };
+      }
+      if (!localEntity && origin?.origin !== 'ALUSA') {
+        logFinanceOperationalEvent({ severity: 'info', eventName: 'finance.webhook.subscription.external_resource_observed' });
+        return { success: true };
+      }
+    }
+
     const canonicalStatus = resolveNextStatus(payload);
     await projectCanonicalSubscriptionWebhook({ contaId, payload, nextStatus: canonicalStatus });
-    const externalReference = payload.subscription.externalReference;
 
     const stagedReference = externalReference?.match(/^enrollment-op:([^:]+):subscription$/);
     if (stagedReference) {
@@ -386,7 +478,7 @@ export async function handleSubscriptionWebhook(
       if (origin?.origin === 'EXTERNAL') {
         logFinanceOperationalEvent({ severity: 'info', eventName: 'finance.webhook.subscription.external_resource_observed' });
       } else {
-        const alusaReference = Boolean(externalReference && (
+        const alusaReference = origin?.origin === 'ALUSA' || Boolean(externalReference && (
           externalReference.startsWith('alusa:') || externalReference.startsWith('subscription:') ||
           externalReference.startsWith('standalone-subscription:') || externalReference.startsWith('enrollment-op:')
         ));
@@ -402,7 +494,9 @@ export async function handleSubscriptionWebhook(
           causeId: payload.eventId,
           metadata: {
             source: 'subscription-webhook-handler',
-            reason: alusaReference ? 'alusa_reference_without_local_entity' : 'resource_origin_unknown',
+            reason: origin?.origin === 'ALUSA'
+              ? 'alusa_origin_without_local_entity'
+              : alusaReference ? 'alusa_reference_without_local_entity' : 'resource_origin_unknown',
             event: payload.event,
           },
         });

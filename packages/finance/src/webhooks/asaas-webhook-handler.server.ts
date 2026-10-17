@@ -282,6 +282,8 @@ async function processAsaasWebhookForRecord(params: {
     eventId: string | null;
     asaasPaymentId: string;
     asaasSubscriptionId: string | null;
+    asaasInstallmentId: string | null;
+    externalReference: string | null;
     occurredAt: string | null;
   };
 }> {
@@ -415,6 +417,8 @@ async function processAsaasWebhookForRecord(params: {
               eventId: payload.id ?? null,
               asaasPaymentId: payload.payment.id,
               asaasSubscriptionId: payload.payment.subscription ?? null,
+              asaasInstallmentId: payload.payment.installment ?? null,
+              externalReference: payload.payment.externalReference ?? null,
               occurredAt,
             }
           : undefined,
@@ -1033,6 +1037,8 @@ export async function processAsaasWebhookQueue(params?: {
     eventId: string | null;
     asaasPaymentId: string;
     asaasSubscriptionId: string | null;
+    asaasInstallmentId: string | null;
+    externalReference: string | null;
     occurredAt: string | null;
   }>;
 }> {
@@ -1047,6 +1053,8 @@ export async function processAsaasWebhookQueue(params?: {
     eventId: string | null;
     asaasPaymentId: string;
     asaasSubscriptionId: string | null;
+    asaasInstallmentId: string | null;
+    externalReference: string | null;
     occurredAt: string | null;
   }> = [];
 

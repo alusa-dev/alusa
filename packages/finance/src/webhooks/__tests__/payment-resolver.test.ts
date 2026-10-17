@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock prisma before import
 vi.mock('@alusa/database', () => ({
   prisma: {
+    conta: { findUnique: vi.fn() },
     subscription: { findFirst: vi.fn() },
     standaloneSubscription: { findFirst: vi.fn() },
     installmentPlan: { findFirst: vi.fn() },
@@ -28,6 +29,7 @@ describe('resolvePaymentToLocalEntity', () => {
     vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.charge.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValue(null as never);
+    vi.mocked(prisma.conta.findUnique).mockResolvedValue({ financeIntegrationMode: 'WHITELABEL_BAAS' } as never);
     vi.mocked(prisma.standaloneSubscription.findFirst).mockResolvedValue(null as never);
   });
 
@@ -53,6 +55,59 @@ describe('resolvePaymentToLocalEntity', () => {
     expect(prisma.asaasResourceOrigin.findUnique).toHaveBeenCalledWith(expect.objectContaining({
       where: { uq_asaas_resource_origin_tenant_resource: { contaId: 'conta-a', resourceType: 'SUBSCRIPTION', asaasId: 'sub-shared-id' } },
     }));
+  });
+
+  it('classifica como externa cobrança de painel sem vínculo nem referência canônica no modo conta externa', async () => {
+    vi.mocked(prisma.conta.findUnique).mockResolvedValue({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' } as never);
+
+    const result = await resolvePaymentToLocalEntity({
+      contaId: 'conta-a', asaasPaymentId: 'pay-panel', externalReference: 'referencia-arbitraria-do-painel',
+    });
+
+    expect(result).toEqual({ type: 'external', resourceType: 'PAYMENT', asaasId: 'pay-panel' });
+    expect(prisma.conta.findUnique).toHaveBeenCalledWith({
+      where: { id: 'conta-a' }, select: { financeIntegrationMode: true },
+    });
+  });
+
+  it('mantém como não encontrado referência canônica sem entidade no modo conta externa', async () => {
+    vi.mocked(prisma.conta.findUnique).mockResolvedValue({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' } as never);
+
+    const result = await resolvePaymentToLocalEntity({
+      contaId: 'conta-a', asaasPaymentId: 'pay-alusa-missing', externalReference: 'alusa:subscription:mat-a:plan-a',
+    });
+
+    expect(result).toEqual({ type: 'not_found', reason: 'alusa_subscription_without_local_entity' });
+  });
+
+  it('não ignora vínculo local quando a origem EXTERNAL conflita com ele', async () => {
+    vi.mocked(prisma.charge.findMany).mockResolvedValueOnce([{ id: 'charge-local', cobrancaId: null }] as never);
+    vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValueOnce({ origin: 'EXTERNAL' } as never);
+
+    const result = await resolvePaymentToLocalEntity({
+      contaId: 'conta-a', asaasPaymentId: 'pay-local-conflict',
+    });
+
+    expect(result).toEqual({ type: 'conflict', reason: 'payment_id_mapped_to_different_entity' });
+    expect(prisma.asaasResourceOrigin.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { uq_asaas_resource_origin_tenant_resource: {
+        contaId: 'conta-a', resourceType: 'PAYMENT', asaasId: 'pay-local-conflict',
+      } },
+    }));
+  });
+
+  it('aplica decisão de modo por tenant para o mesmo payment ID', async () => {
+    vi.mocked(prisma.conta.findUnique)
+      .mockResolvedValueOnce({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' } as never)
+      .mockResolvedValueOnce({ financeIntegrationMode: 'WHITELABEL_BAAS' } as never);
+
+    const external = await resolvePaymentToLocalEntity({ contaId: 'conta-a', asaasPaymentId: 'pay-shared' });
+    const whitelabel = await resolvePaymentToLocalEntity({ contaId: 'conta-b', asaasPaymentId: 'pay-shared' });
+
+    expect(external).toEqual({ type: 'external', resourceType: 'PAYMENT', asaasId: 'pay-shared' });
+    expect(whitelabel).toEqual({ type: 'unknown', reason: 'no_matching_entity_or_origin' });
+    expect(prisma.conta.findUnique).toHaveBeenNthCalledWith(1, { where: { id: 'conta-a' }, select: { financeIntegrationMode: true } });
+    expect(prisma.conta.findUnique).toHaveBeenNthCalledWith(2, { where: { id: 'conta-b' }, select: { financeIntegrationMode: true } });
   });
 
   it('não deixa pagamento externo mascarar uma origem Alusa em outro tipo de recurso', async () => {
@@ -217,7 +272,7 @@ describe('resolvePaymentToLocalEntity', () => {
         dueDate,
       });
 
-      expect(result).toEqual({ type: 'not_found', reason: 'subscription_reference_without_unique_charge' });
+      expect(result).toEqual({ type: 'not_found', reason: 'alusa_subscription_without_local_entity' });
       if (!dueDate || dueDate === '2026-02-30') expect(prisma.cobranca.findMany).toHaveBeenCalledTimes(1);
     });
 
@@ -257,7 +312,7 @@ describe('resolvePaymentToLocalEntity', () => {
         dueDate: '2026-08-15',
       });
 
-      expect(result).toEqual({ type: 'not_found', reason: 'subscription_reference_without_unique_charge' });
+      expect(result).toEqual({ type: 'not_found', reason: 'alusa_subscription_without_local_entity' });
       expect(prisma.subscription.findFirst).toHaveBeenCalledTimes(2);
       expect(prisma.matricula.findFirst).toHaveBeenCalledWith({
         where: { contaId: 'conta-a', aluno: { contaId: 'conta-a' }, asaasSubscriptionId: 'asaas-subscription-a' },

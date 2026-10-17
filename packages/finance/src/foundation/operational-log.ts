@@ -10,6 +10,7 @@ export type FinanceOperationalEventName =
   | 'finance.webhook.subscription.processing.failed'
   | 'finance.webhook.subscription.external_resource_observed'
   | 'finance.webhook.subscription.resource_origin_unknown'
+  | 'finance.webhook.subscription.origin_classification_conflict'
   | 'finance.webhook.subscription.local_entity_missing'
   | 'finance.webhook.invoice.realtime_publish.failed'
   | 'finance.webhook.invoice.state_regression_blocked'

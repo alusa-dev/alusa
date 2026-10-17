@@ -42,6 +42,27 @@ describe('processAsaasWebhookQueueWithInbox', () => {
     expect(drainSideEffects).not.toHaveBeenCalled();
   });
 
+  it('propaga referência e IDs externos opcionais até o candidate do inbox', async () => {
+    processQueue.mockResolvedValue({
+      processedPayments: [{
+        contaId: 'conta-a', event: 'PAYMENT_RECEIVED', eventId: 'evt-1',
+        asaasPaymentId: 'pay-1', asaasSubscriptionId: 'sub-1', asaasInstallmentId: 'inst-1',
+        externalReference: 'alusa:subscription:mat-a:plan-a', occurredAt: null,
+      }],
+      processed: 1, failed: 0,
+    });
+
+    await processAsaasWebhookQueueWithInbox({ contaId: 'conta-a', limit: 10, drainSideEffects: false });
+
+    expect(enqueueSideEffects).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-a',
+      candidates: [expect.objectContaining({
+        asaasPaymentId: 'pay-1', asaasSubscriptionId: 'sub-1', asaasInstallmentId: 'inst-1',
+        externalReference: 'alusa:subscription:mat-a:plan-a',
+      })],
+    }));
+  });
+
   it('tenta recuperar no inbox quando a gravação do outbox falha', async () => {
     processQueue.mockResolvedValue({
       processedPayments: [{

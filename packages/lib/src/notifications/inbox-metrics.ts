@@ -7,6 +7,7 @@ export type InboxMetricEvent =
   | 'inbox.skipped.no_recipients'
   | 'inbox.skipped.no_entity'
   | 'inbox.skipped.event_ticket_payment'
+  | 'inbox.skipped.external_unlinked_payment'
   | 'inbox.skipped.unsupported_event'
   | 'inbox.pending.enqueued'
   | 'inbox.pending.lease_lost'

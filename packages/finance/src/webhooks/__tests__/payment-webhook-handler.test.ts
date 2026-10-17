@@ -267,7 +267,7 @@ describe('handlePaymentWebhook', () => {
       event: 'PAYMENT_RECEIVED',
       payment: { id: 'pay-external', status: 'RECEIVED', value: 100, subscription: 'sub-external' },
     });
-    expect(result).toEqual({ success: true });
+    expect(result).toEqual({ success: true, skipped: true, skipReason: 'EXTERNAL_PAYMENT_IGNORED' });
     expect(prisma.cobranca.create).not.toHaveBeenCalled();
     expect(prisma.charge.upsert).not.toHaveBeenCalled();
     expect(mockUpsertFinanceReconciliationIssue).not.toHaveBeenCalled();
@@ -439,7 +439,7 @@ describe('handlePaymentWebhook', () => {
     vi.mocked(isPaymentResolutionPolicyEnabled).mockReturnValue(true);
     mockResolvePaymentToLocalEntity.mockResolvedValue({
       type: 'not_found',
-      reason: 'subscription_reference_without_unique_charge',
+      reason: 'alusa_subscription_without_local_entity',
     });
 
     const result = await handlePaymentWebhook('conta-a', {
@@ -982,7 +982,7 @@ describe('handlePaymentWebhook', () => {
   it('reconcilia referência V2 sem mensalidade antes de confirmar comando ou materializar Charge', async () => {
     const { prisma } = await import('@alusa/database');
     mockResolvePaymentToLocalEntity.mockResolvedValue({
-      type: 'not_found', reason: 'subscription_reference_without_unique_charge',
+      type: 'not_found', reason: 'alusa_subscription_without_local_entity',
     });
     vi.mocked(prisma.charge.findMany).mockResolvedValueOnce([{
       id: 'charge-standalone-existing', cobrancaId: null,

@@ -32,6 +32,9 @@ function groupCandidatesByConta(
       event: payment.event,
       eventId: payment.eventId,
       asaasPaymentId: payment.asaasPaymentId,
+      asaasSubscriptionId: payment.asaasSubscriptionId,
+      asaasInstallmentId: payment.asaasInstallmentId,
+      externalReference: payment.externalReference,
       occurredAt: payment.occurredAt,
     });
     grouped.set(payment.contaId, list);

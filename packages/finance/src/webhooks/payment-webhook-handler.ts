@@ -1262,6 +1262,14 @@ async function handlePaymentWebhookCore(
       dueDate: payload.payment.dueDate,
       installmentNumber: payload.payment.installmentNumber,
     });
+    if (earlyCanonicalResolution.type === 'external') {
+      logPaymentWebhookDiagnostic({
+        severity: 'info',
+        eventName: 'finance.payment_webhook.external_resource_observed',
+        operation: 'resolve_payment_origin',
+      });
+      return { success: true, skipped: true, skipReason: 'EXTERNAL_PAYMENT_IGNORED' };
+    }
     const isCanonicalSubscriptionReference =
       payload.payment.externalReference?.startsWith('alusa:subscription:') ?? false;
     const eventMapOrderReference = payload.payment.externalReference?.startsWith('event-map-order:')
@@ -1566,17 +1574,8 @@ async function handlePaymentWebhookCore(
       return { success: true };
     }
 
-    // Known external resources are observed in the inbox but never projected
-    // into student, enrollment, contract, or charge records. Unknown resources
-    // remain triageable without inventing a financial association.
-    if (earlyCanonicalResolution.type === 'external') {
-      logPaymentWebhookDiagnostic({
-        severity: 'info',
-        eventName: 'finance.payment_webhook.external_resource_observed',
-        operation: 'resolve_payment_origin',
-      });
-      return { success: true };
-    }
+    // The external origin was already short-circuited immediately after the
+    // resolver, before event-map lookup or any financial side effect.
     if (earlyCanonicalResolution.type === 'unknown') {
       await upsertFinanceReconciliationIssue({
         contaId,

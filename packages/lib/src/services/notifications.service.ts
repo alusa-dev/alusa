@@ -76,8 +76,20 @@ export interface CreateNotificationResult {
 
 export type BillingWebhookNotificationResult = Omit<CreateNotificationResult, 'reason'> & {
   outcome: 'completed' | 'not_applicable' | 'entity_missing' | 'inconsistent';
-  reason?: 'unsupported_event' | 'policy_excluded' | 'no_recipients' | 'event_ticket_payment' | 'event_order_sale_link_conflict' | 'entity_missing' | 'notification_result_unclassified';
+  reason?: 'unsupported_event' | 'policy_excluded' | 'no_recipients' | 'event_ticket_payment' | 'event_order_sale_link_conflict' | 'entity_missing' | 'external_account_unlinked_payment' | 'external_origin_conflict' | 'notification_result_unclassified';
 };
+
+function hasCanonicalAlusaPaymentReference(value: string | null | undefined): boolean {
+  const reference = value?.trim();
+  if (!reference) return false;
+  return reference.startsWith('alusa:charge:') ||
+    reference.startsWith('alusa:subscription:') ||
+    reference.startsWith('alusa:installment:') ||
+    reference.startsWith('alusa:standalone:') ||
+    /^(?:subscription|installmentPlan|standaloneCharge|charge|standalone):[^:\s]+/.test(reference) ||
+    /^enrollment-op:[^:\s]+:(?:subscription|fee)$/.test(reference) ||
+    /^(?:event-map-order|event-entry):[^:\s]+$/.test(reference);
+}
 
 function uniq(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
@@ -1268,6 +1280,9 @@ export async function createBillingWebhookNotification(params: {
   eventId?: string | null;
   eventName: BillingNotificationEventInput;
   asaasPaymentId: string;
+  asaasSubscriptionId?: string | null;
+  asaasInstallmentId?: string | null;
+  externalReference?: string | null;
   occurredAt?: Date;
   sourceType?: 'ASAAS_WEBHOOK' | 'ASAAS_SYNC';
 }): Promise<BillingWebhookNotificationResult> {
@@ -1285,6 +1300,43 @@ export async function createBillingWebhookNotification(params: {
     });
     return { outcome: 'not_applicable', reason: 'policy_excluded', notificationId: null, created: false, recipientCount: 0 };
   }
+
+  const origins = await Promise.all([
+    prisma.asaasResourceOrigin.findUnique({
+      where: { uq_asaas_resource_origin_tenant_resource: {
+        contaId: params.contaId, resourceType: 'PAYMENT', asaasId: params.asaasPaymentId,
+      } },
+      select: { origin: true },
+    }),
+    ...(params.asaasSubscriptionId ? [prisma.asaasResourceOrigin.findUnique({
+      where: { uq_asaas_resource_origin_tenant_resource: {
+        contaId: params.contaId, resourceType: 'SUBSCRIPTION', asaasId: params.asaasSubscriptionId,
+      } },
+      select: { origin: true },
+    })] : []),
+    ...(params.asaasInstallmentId ? [prisma.asaasResourceOrigin.findUnique({
+      where: { uq_asaas_resource_origin_tenant_resource: {
+        contaId: params.contaId, resourceType: 'INSTALLMENT', asaasId: params.asaasInstallmentId,
+      } },
+      select: { origin: true },
+    })] : []),
+  ]);
+  const hasExternalOrigin = origins.some((origin) => origin?.origin === 'EXTERNAL');
+
+  const externalOriginConflict = (): BillingWebhookNotificationResult => {
+    logInboxMetric('inbox.failed.origin_inconsistent', {
+      contaId: params.contaId,
+      asaasPaymentId: params.asaasPaymentId,
+      failureReason: 'external_origin_conflict',
+    });
+    return {
+      outcome: 'inconsistent',
+      reason: 'external_origin_conflict',
+      notificationId: null,
+      created: false,
+      recipientCount: 0,
+    };
+  };
 
   const cobranca = await prisma.cobranca.findFirst({
     where: {
@@ -1318,6 +1370,8 @@ export async function createBillingWebhookNotification(params: {
   });
 
   if (cobranca) {
+    if (hasExternalOrigin) return externalOriginConflict();
+
     const content = resolveBillingNotificationContent({
       eventName: normalizedEvent,
       formaPagamento: cobranca.formaPagamento,
@@ -1448,9 +1502,32 @@ export async function createBillingWebhookNotification(params: {
       };
     }
 
+    const hasAlusaOrigin = origins.some((origin) => origin?.origin === 'ALUSA');
+    if (hasAlusaOrigin && hasExternalOrigin) {
+      return { outcome: 'inconsistent', reason: 'external_origin_conflict', notificationId: null, created: false, recipientCount: 0 };
+    }
+    const conta = await prisma.conta.findUnique({
+      where: { id: params.contaId },
+      select: { financeIntegrationMode: true },
+    });
+    if (
+      !hasCanonicalAlusaPaymentReference(params.externalReference) && !hasAlusaOrigin &&
+      (hasExternalOrigin || conta?.financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT')
+    ) {
+      logInboxMetric('inbox.skipped.external_unlinked_payment', {
+        contaId: params.contaId,
+        asaasPaymentId: params.asaasPaymentId,
+        sourceType: params.sourceType ?? 'ASAAS_WEBHOOK',
+      });
+      return { outcome: 'not_applicable', reason: 'external_account_unlinked_payment', notificationId: null, created: false, recipientCount: 0 };
+    }
+
     logInboxMetric('inbox.skipped.no_entity', {
       eventName: normalizedEvent,
       asaasPaymentId: params.asaasPaymentId,
+      asaasSubscriptionId: params.asaasSubscriptionId ?? null,
+      asaasInstallmentId: params.asaasInstallmentId ?? null,
+      externalReference: params.externalReference ?? null,
       sourceType: params.sourceType ?? 'ASAAS_WEBHOOK',
     });
     const pendingInbox = await import('../notifications/pending-inbox-notifications');
@@ -1459,11 +1536,16 @@ export async function createBillingWebhookNotification(params: {
       eventId: params.eventId ?? null,
       eventName: normalizedEvent,
       asaasPaymentId: params.asaasPaymentId,
+      asaasSubscriptionId: params.asaasSubscriptionId ?? null,
+      asaasInstallmentId: params.asaasInstallmentId ?? null,
+      externalReference: params.externalReference ?? null,
       occurredAt: params.occurredAt?.toISOString() ?? null,
       sourceType: params.sourceType ?? 'ASAAS_WEBHOOK',
     });
     return { outcome: 'entity_missing', notificationId: null, created: false, recipientCount: 0 };
   }
+
+  if (hasExternalOrigin) return externalOriginConflict();
 
   const content = resolveBillingNotificationContent({
     eventName: normalizedEvent,

@@ -9,6 +9,9 @@ export type BillingNotificationCandidate = {
   event: string;
   eventId?: string | null;
   asaasPaymentId: string;
+  asaasSubscriptionId?: string | null;
+  asaasInstallmentId?: string | null;
+  externalReference?: string | null;
   occurredAt?: string | Date | null;
 };
 
@@ -51,6 +54,9 @@ export async function emitBillingNotificationCandidate(
     eventId: candidate.eventId ?? null,
     eventName: candidate.event,
     asaasPaymentId: candidate.asaasPaymentId,
+    asaasSubscriptionId: candidate.asaasSubscriptionId,
+    asaasInstallmentId: candidate.asaasInstallmentId,
+    externalReference: candidate.externalReference,
     occurredAt: selectFirstBillingNotificationOccurredAt([candidate.occurredAt]),
     sourceType,
   });
