@@ -2580,10 +2580,7 @@ const eventPaymentChargeSelect = {
   status: true,
   statusUpdatedAt: true,
   value: true,
-  paidValue: true,
-  amount: true,
-  refundedValue: true,
-} as const;
+} satisfies Prisma.ChargeSelect;
 
 export async function loadEventBillingGroupCharges(
   db: DbClient,
